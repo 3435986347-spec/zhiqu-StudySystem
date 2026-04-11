@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>学习统计 - 知趣·象限学习系统</title>
+    <link rel="stylesheet" href="/css/common.css">
+    <link rel="stylesheet" href="/css/pixel-theme.css">
+    <style>
+        .charts-row { display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch; }
+        .chart-box { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+        .chart-trend { flex: 1 1 58%; min-width: 280px; }
+        .chart-pie { flex: 1 1 32%; min-width: 260px; }
+        .trend-tabs { margin-bottom: 12px; display: flex; gap: 8px; }
+        .trend-tabs button { padding: 6px 14px; border: 1px solid #dcdfe6; background: #fff; border-radius: 6px; cursor: pointer; }
+        .trend-tabs button.active { border-color: #409eff; color: #409eff; background: #ecf5ff; }
+        .chart-inner { height: 360px; width: 100%; }
+    </style>
+</head>
+<body>
+    <div id="navbar"></div>
+    <div class="main-content">
+        <h1 style="margin-top:0">学习统计</h1>
+        <div class="stat-cards" id="stat-cards"></div>
+        <div class="charts-row">
+            <div class="chart-box chart-trend">
+                <div class="trend-tabs">
+                    <button type="button" data-type="day" class="active">日</button>
+                    <button type="button" data-type="week">周</button>
+                    <button type="button" data-type="month">月</button>
+                </div>
+                <div id="chart-trend" class="chart-inner"></div>
+            </div>
+            <div class="chart-box chart-pie">
+                <h3 style="margin:0 0 8px;font-size:16px">象限分布</h3>
+                <div id="chart-pie" class="chart-inner"></div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="/js/common.js"></script>
+    <script src="/js/statistics.js"></script>
+</body>
+</html>

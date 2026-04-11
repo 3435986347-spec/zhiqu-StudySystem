@@ -1,0 +1,14 @@
+# Maven 编译产物
+zhiqu-backend/target/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 用户上传文件（运行时生成）
+uploads/
+
+# 系统文件
+.DS_Store
+Thumbs.db

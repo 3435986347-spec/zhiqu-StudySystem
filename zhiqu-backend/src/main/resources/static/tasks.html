@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>任务列表 - 知趣·象限学习系统</title>
+    <link rel="stylesheet" href="/css/common.css">
+    <link rel="stylesheet" href="/css/pixel-theme.css">
+</head>
+<body>
+    <div id="navbar"></div>
+    <div class="main-content">
+        <div class="page-title-row">
+            <div>
+                <a href="/dashboard.html">← 返回看板</a>
+                <h1 style="margin-top:8px">任务列表</h1>
+            </div>
+        </div>
+        <div class="filter-bar">
+            <div class="form-group">
+                <label for="f-quadrant">象限</label>
+                <select id="f-quadrant">
+                    <option value="">全部</option>
+                    <option value="1">1 重要且紧急</option>
+                    <option value="2">2 重要不紧急</option>
+                    <option value="3">3 紧急不重要</option>
+                    <option value="4">4 不重要不紧急</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="f-status">状态</label>
+                <select id="f-status">
+                    <option value="">全部</option>
+                    <option value="0">待办</option>
+                    <option value="1">进行中</option>
+                    <option value="2">已完成</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="f-priority">优先级</label>
+                <select id="f-priority">
+                    <option value="">全部</option>
+                    <option value="0">低</option>
+                    <option value="1">中</option>
+                    <option value="2">高</option>
+                    <option value="3">紧急</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="f-sortBy">排序字段</label>
+                <select id="f-sortBy">
+                    <option value="updatedAt">更新时间</option>
+                    <option value="deadline">截止时间</option>
+                    <option value="priority">优先级</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="f-sortOrder">排序方向</label>
+                <select id="f-sortOrder">
+                    <option value="desc">降序</option>
+                    <option value="asc">升序</option>
+                </select>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-query">查询</button>
+            <button type="button" class="btn btn-success" id="btn-new">新建任务</button>
+        </div>
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>标题</th>
+                        <th>象限</th>
+                        <th>优先级</th>
+                        <th>状态</th>
+                        <th>截止时间</th>
+                        <th>提醒时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="task-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="edit-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-panel">
+            <div class="modal-header">
+                <h2 class="modal-title">编辑任务</h2>
+                <button type="button" class="modal-close" id="edit-modal-close">&times;</button>
+            </div>
+            <form id="form-edit-task">
+                <input type="hidden" id="et-id">
+                <div class="form-group">
+                    <label for="et-title">任务标题</label>
+                    <input id="et-title" required>
+                </div>
+                <div class="form-group">
+                    <label for="et-desc">任务描述</label>
+                    <textarea id="et-desc"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="et-quadrant">象限</label>
+                    <select id="et-quadrant" required>
+                        <option value="1">1 — 重要且紧急</option>
+                        <option value="2">2 — 重要不紧急</option>
+                        <option value="3">3 — 紧急不重要</option>
+                        <option value="4">4 — 不重要不紧急</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="et-priority">优先级</label>
+                    <select id="et-priority">
+                        <option value="0">低</option>
+                        <option value="1">中</option>
+                        <option value="2">高</option>
+                        <option value="3">紧急</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="et-status">状态</label>
+                    <select id="et-status">
+                        <option value="0">待办</option>
+                        <option value="1">进行中</option>
+                        <option value="2">已完成</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="et-deadline">截止时间</label>
+                    <input type="datetime-local" id="et-deadline">
+                </div>
+                <div class="form-group">
+                    <label for="et-reminder">提醒时间</label>
+                    <input type="datetime-local" id="et-reminder">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" id="edit-cancel">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="create-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-panel">
+            <div class="modal-header">
+                <h2 class="modal-title">新建任务</h2>
+                <button type="button" class="modal-close" id="create-modal-close">&times;</button>
+            </div>
+            <form id="form-create-task">
+                <div class="form-group">
+                    <label for="ct-title">任务标题</label>
+                    <input id="ct-title" required>
+                </div>
+                <div class="form-group">
+                    <label for="ct-desc">任务描述</label>
+                    <textarea id="ct-desc"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="ct-quadrant">象限</label>
+                    <select id="ct-quadrant" required>
+                        <option value="1">1 — 重要且紧急</option>
+                        <option value="2">2 — 重要不紧急</option>
+                        <option value="3">3 — 紧急不重要</option>
+                        <option value="4">4 — 不重要不紧急</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="ct-priority">优先级</label>
+                    <select id="ct-priority">
+                        <option value="0">低</option>
+                        <option value="1" selected>中</option>
+                        <option value="2">高</option>
+                        <option value="3">紧急</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="ct-deadline">截止时间</label>
+                    <input type="datetime-local" id="ct-deadline">
+                </div>
+                <div class="form-group">
+                    <label for="ct-reminder">提醒时间</label>
+                    <input type="datetime-local" id="ct-reminder">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" id="create-cancel">取消</button>
+                    <button type="submit" class="btn btn-primary">创建</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/js/common.js"></script>
+    <script src="/js/tasks.js"></script>
+</body>
+</html>

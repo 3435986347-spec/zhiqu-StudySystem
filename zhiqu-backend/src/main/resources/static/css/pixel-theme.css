@@ -1,0 +1,50 @@
+/* 像素风主题：挂在 body.pixel-theme 上 */
+body.pixel-theme {
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+    image-rendering: pixelated;
+}
+
+body.pixel-theme .navbar {
+    border-bottom: 4px solid #303133;
+    box-shadow: none;
+}
+
+body.pixel-theme .card,
+body.pixel-theme .login-card,
+body.pixel-theme .modal-panel,
+body.pixel-theme .stat-card,
+body.pixel-theme .table-wrap {
+    border: 3px solid #303133;
+    box-shadow: 6px 6px 0 #303133;
+    border-radius: 0;
+}
+
+body.pixel-theme .btn,
+body.pixel-theme .nav-btn,
+body.pixel-theme .nav-link {
+    border-radius: 0;
+    border-width: 2px;
+}
+
+body.pixel-theme .btn-primary {
+    box-shadow: 3px 3px 0 #1a5276;
+}
+
+body.pixel-theme .quadrant-grid .quad-card {
+    border: 3px solid #303133;
+    border-radius: 0;
+    box-shadow: 4px 4px 0 #303133;
+}
+
+body.pixel-theme .pomodoro-panel {
+    border: 3px solid #303133;
+    border-radius: 0;
+    box-shadow: 4px 4px 0 #303133;
+}
+
+body.pixel-theme input,
+body.pixel-theme select,
+body.pixel-theme textarea {
+    border-radius: 0 !important;
+    border-width: 2px !important;
+}

@@ -1,0 +1,68 @@
+CREATE TABLE IF NOT EXISTS sys_user (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  username VARCHAR(50) NOT NULL UNIQUE,
+  password VARCHAR(255) NOT NULL,
+  nickname VARCHAR(50),
+  avatar VARCHAR(255),
+  total_study_minutes INT DEFAULT 0,
+  consecutive_days INT DEFAULT 0,
+  last_study_date DATE,
+  achievement_points INT DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted TINYINT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS study_task (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  title VARCHAR(200) NOT NULL,
+  description TEXT,
+  quadrant TINYINT NOT NULL,
+  priority TINYINT DEFAULT 0,
+  status TINYINT DEFAULT 0,
+  deadline DATETIME,
+  reminder_time DATETIME,
+  completed_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted TINYINT DEFAULT 0,
+  CONSTRAINT fk_task_user FOREIGN KEY (user_id) REFERENCES sys_user(id)
+);
+
+CREATE TABLE IF NOT EXISTS study_record (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  task_id BIGINT,
+  study_date DATE NOT NULL,
+  duration_minutes INT NOT NULL,
+  note VARCHAR(500),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_record_user FOREIGN KEY (user_id) REFERENCES sys_user(id),
+  CONSTRAINT fk_record_task FOREIGN KEY (task_id) REFERENCES study_task(id)
+);
+
+CREATE TABLE IF NOT EXISTS achievement_def (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  code VARCHAR(50) UNIQUE,
+  name VARCHAR(100),
+  description VARCHAR(255),
+  icon VARCHAR(255),
+  points INT,
+  condition_type VARCHAR(50),
+  condition_value INT
+);
+
+CREATE TABLE IF NOT EXISTS user_achievement (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  achievement_id BIGINT NOT NULL,
+  unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ua_user FOREIGN KEY (user_id) REFERENCES sys_user(id),
+  CONSTRAINT fk_ua_achievement FOREIGN KEY (achievement_id) REFERENCES achievement_def(id),
+  UNIQUE KEY uk_user_achievement (user_id, achievement_id)
+);
+
+CREATE INDEX idx_task_user_quadrant ON study_task(user_id, quadrant);
+CREATE INDEX idx_task_deadline ON study_task(deadline);
+CREATE INDEX idx_record_user_date ON study_record(user_id, study_date);

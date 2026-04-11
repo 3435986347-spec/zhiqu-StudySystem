@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>看板 - 知趣·象限学习系统</title>
+    <link rel="stylesheet" href="/css/common.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
+    <link rel="stylesheet" href="/css/pixel-theme.css">
+</head>
+<body>
+    <div id="navbar"></div>
+    <div class="main-content">
+        <div class="dashboard-layout">
+            <div class="dashboard-main">
+                <div class="quadrant-grid">
+                    <div class="quad-card q1">
+                        <h3>重要且紧急</h3>
+                        <ul class="task-mini-list" id="quad-list-1"></ul>
+                    </div>
+                    <div class="quad-card q2">
+                        <h3>重要不紧急</h3>
+                        <ul class="task-mini-list" id="quad-list-2"></ul>
+                    </div>
+                    <div class="quad-card q3">
+                        <h3>紧急不重要</h3>
+                        <ul class="task-mini-list" id="quad-list-3"></ul>
+                    </div>
+                    <div class="quad-card q4">
+                        <h3>不重要不紧急</h3>
+                        <ul class="task-mini-list" id="quad-list-4"></ul>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-primary" id="btn-new-task">+ 新增任务</button>
+            </div>
+            <aside class="dashboard-side">
+                <div class="pomodoro-panel">
+                    <h2>番茄钟</h2>
+                    <div class="pomo-round" id="pomo-round"></div>
+                    <div class="pomo-ring-wrap">
+                        <svg width="200" height="200" viewBox="0 0 200 200" aria-hidden="true">
+                            <circle cx="100" cy="100" r="80" fill="none" stroke="#ebeef5" stroke-width="10"/>
+                            <circle id="pomo-ring-fg" cx="100" cy="100" r="80" fill="none" stroke="#409EFF" stroke-width="10" stroke-linecap="round"/>
+                        </svg>
+                        <div class="pomo-center">
+                            <div class="pomo-time" id="pomo-time">25:00</div>
+                            <div class="pomo-phase" id="pomo-phase">待开始</div>
+                        </div>
+                    </div>
+                    <div class="pomo-fields">
+                        <div class="form-group">
+                            <label for="pomo-work-duration">专注时长</label>
+                            <select id="pomo-work-duration"></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="pomo-task">关联任务</label>
+                            <select id="pomo-task"><option value="">（不指定任务）</option></select>
+                        </div>
+                    </div>
+                    <div class="pomo-controls">
+                        <button type="button" class="btn btn-primary" id="pomo-start">开始</button>
+                        <button type="button" class="btn btn-default" id="pomo-pause">暂停</button>
+                        <button type="button" class="btn btn-default" id="pomo-resume">继续</button>
+                        <button type="button" class="btn btn-default" id="pomo-reset">重置</button>
+                        <button type="button" class="btn btn-warning" id="pomo-skip">跳过</button>
+                    </div>
+                    <div class="pomo-today" id="pomo-today">今日：0 个｜0 分钟</div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <div id="task-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-panel">
+            <div class="modal-header">
+                <h2 class="modal-title">新增任务</h2>
+                <button type="button" class="modal-close" id="task-modal-close" aria-label="关闭">&times;</button>
+            </div>
+            <form id="form-new-task">
+                <div class="form-group">
+                    <label for="nt-title">任务标题</label>
+                    <input id="nt-title" required maxlength="200">
+                </div>
+                <div class="form-group">
+                    <label for="nt-desc">任务描述（选填）</label>
+                    <textarea id="nt-desc"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="nt-quadrant">所属象限</label>
+                    <select id="nt-quadrant" required>
+                        <option value="1">1 — 重要且紧急</option>
+                        <option value="2">2 — 重要不紧急</option>
+                        <option value="3">3 — 紧急不重要</option>
+                        <option value="4">4 — 不重要不紧急</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="nt-priority">优先级</label>
+                    <select id="nt-priority">
+                        <option value="0">低</option>
+                        <option value="1" selected>中</option>
+                        <option value="2">高</option>
+                        <option value="3">紧急</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="nt-deadline">截止时间</label>
+                    <input type="datetime-local" id="nt-deadline">
+                </div>
+                <div class="form-group">
+                    <label for="nt-reminder">提醒时间</label>
+                    <input type="datetime-local" id="nt-reminder">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" id="task-modal-cancel">取消</button>
+                    <button type="submit" class="btn btn-primary">创建</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/js/common.js"></script>
+    <script src="/js/pomodoro.js"></script>
+    <script src="/js/dashboard.js"></script>
+</body>
+</html>

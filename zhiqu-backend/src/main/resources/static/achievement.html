@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>成就系统 - 知趣·象限学习系统</title>
+    <link rel="stylesheet" href="/css/common.css">
+    <link rel="stylesheet" href="/css/pixel-theme.css">
+    <style>
+        .ach-head { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 20px; }
+        .ach-meta { font-size: 15px; color: #606266; }
+        .ach-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+        .ach-filters button { padding: 8px 14px; border: 1px solid #dcdfe6; background: #fff; border-radius: 6px; cursor: pointer; }
+        .ach-filters button.active { border-color: #409eff; color: #409eff; background: #ecf5ff; }
+        .ach-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        @media (max-width: 900px) { .ach-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 520px) { .ach-grid { grid-template-columns: 1fr; } }
+        .ach-card { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); position: relative; }
+        .ach-card.locked { opacity: 0.55; }
+        .ach-card.highlight { box-shadow: 0 0 0 2px #67c23a; }
+        .ach-name { font-weight: 600; margin-bottom: 8px; }
+        .ach-desc { font-size: 13px; color: #606266; margin-bottom: 10px; min-height: 40px; }
+        .ach-foot { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div id="navbar"></div>
+    <div class="main-content">
+        <h1 style="margin-top:0">成就系统</h1>
+        <div class="ach-head">
+            <div class="ach-meta" id="ach-summary"></div>
+            <button type="button" class="btn btn-primary" id="btn-check">检测成就</button>
+        </div>
+        <div class="ach-filters" id="ach-filters">
+            <button type="button" data-f="all" class="active">全部</button>
+            <button type="button" data-f="unlocked">已解锁</button>
+            <button type="button" data-f="locked">未解锁</button>
+        </div>
+        <div style="height:16px"></div>
+        <div class="ach-grid" id="ach-grid"></div>
+    </div>
+    <script src="/js/common.js"></script>
+    <script src="/js/achievement.js"></script>
+</body>
+</html>
