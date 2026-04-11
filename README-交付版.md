@@ -1,206 +1,301 @@
-# 知趣·象限学习系统（交付版说明）
+# 知趣·象限自主学习系统
 
-## 1. 项目简介
-
-本项目已从 Electron 单机结构重构为前后端分离 Web 架构：
-
-- 后端：`zhiqu-backend`（Spring Boot 3 + MyBatis-Plus + MySQL + Spring Security + JWT）
-- 前端：`zhiqu-frontend`（Vue 3 + TypeScript + Vite + Pinia + Axios + Element Plus + ECharts）
-
-核心功能包括：认证、任务管理、四象限看板、学习统计、成就系统、提醒功能、个人中心。
+> 基于四象限时间管理法的 Web 学习看板，面向大学生学习规划场景。
+> 后端提供 REST API，前端以静态文件内嵌于 Spring Boot，开箱即用。
 
 ---
 
-## 2. 环境要求
+## 目录
 
-- JDK 17+
-- Maven 3.8+
-- Node.js 18+
-- MySQL 8.x
+- [功能概览](#功能概览)
+- [技术栈](#技术栈)
+- [项目结构](#项目结构)
+- [环境要求](#环境要求)
+- [部署步骤](#部署步骤)
+- [配置说明](#配置说明)
+- [API 接口](#api-接口)
+- [页面路由](#页面路由)
+- [常见问题](#常见问题)
 
 ---
 
-## 3. 一键启动流程
+## 功能概览
 
-### 3.1 初始化数据库
+| 模块 | 说明 |
+|------|------|
+| 用户认证 | 注册、登录、JWT 鉴权、登录状态拦截 |
+| 四象限看板 | 任务按重要/紧急维度分类展示，支持在线状态变更 |
+| 任务管理 | 新建、编辑、删除、状态更新、截止时间与提醒时间 |
+| 番茄钟 | 专注计时、休息提示、自动写入学习记录 |
+| 学习统计 | 连续天数、累计时长、趋势图（日/周/月）、象限分布饼图 |
+| 成就系统 | 自动/手动检测、积分与等级、解锁时间展示 |
+| 个人中心 | 头像上传、昵称编辑、密码修改、个人统计卡 |
+| 主题切换 | 现代风 / 像素风，偏好持久化至 localStorage |
 
-1. 在 MySQL 创建数据库（示例）：
+---
 
-```sql
-CREATE DATABASE zhiqu DEFAULT CHARACTER SET utf8mb4;
+## 技术栈
+
+**后端**
+
+- Java 17 + Spring Boot 3
+- Spring Security + JWT
+- MyBatis-Plus + MySQL 8
+- Maven
+
+**前端**（内嵌于后端 `static/` 目录，无需单独构建）
+
+- 原生 HTML + CSS + JavaScript
+- ECharts 5（统计图表）
+
+---
+
+## 项目结构
+
+```
+软件源代码/
+├── zhiqu-backend/
+│   ├── pom.xml
+│   └── src/main/
+│       ├── java/com/zhiqu/
+│       │   ├── config/          # Security、跨域、静态资源配置
+│       │   ├── controller/      # REST 接口层
+│       │   ├── service/         # 业务逻辑层
+│       │   ├── mapper/          # MyBatis-Plus 数据访问层
+│       │   ├── entity/          # 数据库实体
+│       │   ├── dto/             # 请求/响应 DTO
+│       │   └── security/        # JWT 过滤器与工具类
+│       └── resources/
+│           ├── application.yml  # 应用配置
+│           ├── db/
+│           │   ├── schema.sql   # 建表脚本
+│           │   └── data.sql     # 初始数据（成就定义等）
+│           └── static/          # 前端页面
+│               ├── index.html   # 登录页
+│               ├── dashboard.html
+│               ├── tasks.html
+│               ├── statistics.html
+│               ├── achievement.html
+│               ├── profile.html
+│               ├── css/
+│               └── js/
+├── README.md
+└── README-交付版.md
 ```
 
-2. 依次执行脚本：
+---
 
-- `zhiqu-backend/src/main/resources/db/schema.sql`
-- `zhiqu-backend/src/main/resources/db/data.sql`
+## 环境要求
 
-### 3.2 配置后端数据库连接
+| 依赖 | 最低版本 |
+|------|----------|
+| JDK | 17 |
+| Maven | 3.8 |
+| MySQL | 8.0 |
 
-编辑 `zhiqu-backend/src/main/resources/application.yml`：
+> 前端无需 Node.js，页面已内嵌于后端，随后端启动一并提供服务。
 
-- `spring.datasource.url`
-- `spring.datasource.username`
-- `spring.datasource.password`
+---
 
-### 3.3 启动后端
+## 部署步骤
+
+### 第一步：初始化数据库
+
+在 MySQL 中创建数据库：
+
+```sql
+CREATE DATABASE zhiqu DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+依次执行以下两个脚本（顺序不可颠倒）：
+
+```bash
+# 1. 建表
+mysql -u root -p zhiqu < zhiqu-backend/src/main/resources/db/schema.sql
+
+# 2. 写入初始数据（成就定义等）
+mysql -u root -p zhiqu < zhiqu-backend/src/main/resources/db/data.sql
+```
+
+或在 MySQL 客户端中手动执行文件内容。
+
+---
+
+### 第二步：修改数据库连接配置
+
+编辑 `zhiqu-backend/src/main/resources/application.yml`，将以下三项改为实际值：
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/zhiqu?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai
+    username: root        # ← 改为实际用户名
+    password: yourpasswd  # ← 改为实际密码
+```
+
+> 如需修改服务端口，在同文件中设置 `server.port`，默认为 `8080`。
+
+---
+
+### 第三步：启动后端
 
 ```bash
 cd zhiqu-backend
 mvn spring-boot:run
 ```
 
-默认地址：`http://localhost:8080`
+看到以下日志表示启动成功：
 
-### 3.4 启动前端
-
-```bash
-cd zhiqu-frontend
-npm install
-npm run dev
+```
+Started ZhiquApplication in X.XXX seconds
 ```
 
-默认地址：`http://localhost:5173`
+---
+
+### 第四步：访问系统
+
+浏览器打开：
+
+```
+http://localhost:8080
+```
+
+首次使用请先注册账号，注册后即可登录。
 
 ---
 
-## 4. 功能验收清单
+### 生产环境打包（可选）
 
-### 4.1 用户认证
+如需打包为可独立运行的 JAR 文件，在 `zhiqu-backend` 目录下执行：
 
-- [ ] 注册（用户名/密码/确认密码）
-- [ ] 登录后获取 JWT
-- [ ] 未登录访问受保护路由自动跳转登录
-- [ ] Token 过期返回 401 后自动跳转登录
-- [ ] 登出清除登录态
+```bash
+mvn clean package -DskipTests
+```
 
-### 4.2 任务管理
+生成文件位于 `target/zhiqu-backend-0.0.1-SNAPSHOT.jar`，运行方式：
 
-- [ ] 新建任务（含象限、优先级、状态、截止时间、提醒时间）
-- [ ] 编辑任务
-- [ ] 删除任务
-- [ ] 更新任务状态
-- [ ] 按象限展示（Dashboard 2x2）
-- [ ] 列表页筛选（象限/状态/优先级）与排序（更新时间/截止时间/优先级）
+```bash
+java -jar target/zhiqu-backend-0.0.1-SNAPSHOT.jar
+```
 
-### 4.3 学习统计
+如需指定外部配置文件：
 
-- [ ] 连续学习天数
-- [ ] 累计学习时长
-- [ ] 已完成任务数/总任务数
-- [ ] 学习趋势（日/周/月）
-- [ ] 各象限任务分布图
-
-### 4.4 成就系统
-
-- [ ] 成就列表（已解锁/未解锁）
-- [ ] 手动检测成就
-- [ ] 自动触发成就（登录/完成任务/新增学习记录）
-- [ ] 显示总积分与等级
-- [ ] 显示解锁时间
-
-### 4.5 提醒功能
-
-- [ ] 设置提醒时间 `reminderTime`
-- [ ] Dashboard 页面触发提醒通知（到提醒时间/默认截止前30分钟）
-
-### 4.6 个人中心
-
-- [ ] 头像上传与展示
-- [ ] 昵称编辑
-- [ ] 修改密码
-- [ ] 个人统计卡（成就点/连续学习天数/累计学习分钟）
+```bash
+java -jar zhiqu-backend-0.0.1-SNAPSHOT.jar --spring.config.location=./application.yml
+```
 
 ---
 
-## 5. API 对照（当前实现）
+## 配置说明
 
-### 5.1 认证
+`application.yml` 关键配置项：
 
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `POST /api/auth/logout`
-- `GET /api/auth/info`
-
-### 5.2 任务
-
-- `POST /api/task`
-- `PUT /api/task/{id}`
-- `DELETE /api/task/{id}`
-- `GET /api/task/{id}`
-- `GET /api/task/list`
-- `GET /api/task/quadrant`
-- `PUT /api/task/{id}/status`
-
-### 5.3 学习记录与统计
-
-- `POST /api/record`
-- `GET /api/record/list`
-- `GET /api/record/statistics`
-- `GET /api/record/trend`
-
-### 5.4 成就
-
-- `GET /api/achievement/list`
-- `POST /api/achievement/check`
-
-### 5.5 用户
-
-- `PUT /api/user/profile`
-- `PUT /api/user/password`
-- `POST /api/user/avatar`
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `server.port` | `8080` | HTTP 服务端口 |
+| `spring.datasource.url` | — | MySQL 连接串 |
+| `spring.datasource.username` | — | 数据库用户名 |
+| `spring.datasource.password` | — | 数据库密码 |
+| `jwt.secret` | （内置） | JWT 签名密钥，生产环境建议替换为强随机字符串 |
+| `jwt.expiration` | `86400000` | Token 有效期，单位毫秒（默认 24 小时） |
+| `file.upload-dir` | `uploads/` | 用户头像上传目录，相对于 JAR 所在位置 |
 
 ---
 
-## 6. 前端页面路由
+## API 接口
 
-- `/login` 登录/注册
-- `/` Dashboard 四象限看板
-- `/tasks` 任务列表与管理
-- `/statistics` 学习统计
-- `/achievement` 成就页面
-- `/profile` 个人中心
+所有接口以 `/api` 为前缀。除登录/注册外，其余接口需在请求头携带 Token：
+
+```
+Authorization: Bearer <token>
+```
+
+### 认证
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/auth/register` | 注册 |
+| POST | `/api/auth/login` | 登录，返回 JWT |
+| GET | `/api/auth/info` | 获取当前用户信息 |
+
+### 任务
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/task` | 新建任务 |
+| GET | `/api/task/list` | 任务列表（支持筛选与排序） |
+| GET | `/api/task/quadrant` | 按四象限返回任务 |
+| PUT | `/api/task/{id}` | 编辑任务 |
+| PUT | `/api/task/{id}/status` | 更新任务状态 |
+| DELETE | `/api/task/{id}` | 删除任务 |
+
+### 学习记录与统计
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/record` | 新增学习记录 |
+| GET | `/api/record/list` | 学习记录列表 |
+| GET | `/api/record/statistics` | 综合统计数据 |
+| GET | `/api/record/trend` | 学习趋势（`?type=day/week/month`） |
+
+### 成就
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/achievement/list` | 成就列表（含解锁状态） |
+| POST | `/api/achievement/check` | 触发成就检测 |
+
+### 用户
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| PUT | `/api/user/profile` | 更新昵称 |
+| PUT | `/api/user/password` | 修改密码 |
+| POST | `/api/user/avatar` | 上传头像（multipart/form-data） |
 
 ---
 
-## 7. 主题与界面
+## 页面路由
 
-- 默认现代风格
-- 支持像素风主题切换（顶部导航按钮）
-- 主题偏好存储于本地 `localStorage`
-
----
-
-## 8. 常见问题排查
-
-1. 前端请求失败：
-   - 检查后端是否启动在 `8080`
-   - 检查 Vite 代理配置是否保留
-
-2. 登录失败：
-   - 检查数据库中是否有该用户
-   - 检查密码是否被修改
-
-3. 头像无法访问：
-   - 检查后端 `uploads/` 目录是否创建
-   - 检查后端静态资源映射与 `SecurityConfig` 是否放行 `/uploads/**`
-
-4. 成就不解锁：
-   - 检查是否触发对应条件（登录、完成任务、累计学习时长等）
-   - 手动调用成就检测按钮验证
+| 路径 | 页面 |
+|------|------|
+| `/` 或 `/index.html` | 登录 / 注册 |
+| `/dashboard.html` | 四象限看板 + 番茄钟 |
+| `/tasks.html` | 任务列表与管理 |
+| `/statistics.html` | 学习统计与图表 |
+| `/achievement.html` | 成就系统 |
+| `/profile.html` | 个人中心 |
 
 ---
 
-## 9. 答辩建议（可直接使用）
+## 常见问题
 
-- 先展示架构升级：Electron 单机 -> 前后端分离 Web
-- 再演示核心路径：注册登录 -> 建任务 -> 四象限 -> 统计图 -> 成就解锁 -> 个人中心
-- 最后强调技术点：
-  - JWT 鉴权 + 路由守卫
-  - MyBatis-Plus 逻辑删除与自动填充
-  - ECharts 趋势/分布可视化
-  - 可选像素主题与提醒机制
+**Q：页面打开后一直跳回登录页**
 
----
+- 确认已注册账号并正确输入密码
+- 检查 JWT 是否过期（默认 24 小时），清除浏览器 localStorage 后重新登录
 
-如需提交前打包说明，可再补一份「部署版 README」用于服务器环境（Nginx + Jar + MySQL）。
+**Q：后端启动时报数据库连接错误**
+
+- 确认 MySQL 服务已启动
+- 检查 `application.yml` 中的用户名、密码、数据库名是否正确
+- 确认已执行 `schema.sql` 建表脚本
+
+**Q：头像上传后无法显示**
+
+- 检查后端工作目录下是否存在 `uploads/` 文件夹（首次上传会自动创建，需确保有写入权限）
+- 检查 `SecurityConfig` 是否放行了 `/uploads/**` 路径
+
+**Q：学习统计页面无数据**
+
+- 需先创建任务并通过番茄钟完成至少一条学习记录，统计数据才会有内容
+
+**Q：成就无法解锁**
+
+- 成就在登录、完成任务、新增学习记录时自动触发检测
+- 也可在成就页面点击「检测成就」手动触发
+
+**Q：打包后 JAR 运行正常但头像图片 404**
+
+- JAR 运行时上传目录默认为 JAR 所在目录的 `uploads/` 子目录
+- 确认该目录存在且有读写权限，或通过 `--file.upload-dir=/绝对路径/` 指定
