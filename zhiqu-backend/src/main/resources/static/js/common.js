@@ -115,7 +115,10 @@ function toggleTheme() {
     const next = localStorage.getItem('theme') === 'pixel' ? 'modern' : 'pixel';
     localStorage.setItem('theme', next);
     document.body.classList.toggle('pixel-theme', next === 'pixel');
-    location.reload();
+    const themeBtn = document.querySelector('.theme-btn');
+    if (themeBtn) {
+        themeBtn.textContent = next === 'pixel' ? '现代风' : '像素风';
+    }
 }
 
 function logout() {
