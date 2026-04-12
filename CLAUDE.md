@@ -47,8 +47,13 @@ java -jar target/zhiqu-backend-0.0.1-SNAPSHOT.jar
   - `renderNavbar(containerId)` — injects the shared nav bar including theme toggle.
   - `toggleTheme()` — switches `pixel-theme` CSS class on `<body>` and persists to `localStorage.theme` without page reload.
   - Shared helpers: `showToast`, `formatDateTime`, `quadrantLabel`, `statusLabel`, `priorityLabel`, etc.
-- **`css/pixel-theme.css`** — Pixel art theme overrides; applied by adding `pixel-theme` class to `<body>`.
+- **`css/pixel-theme.css`** — Pixel art theme overrides; applied by adding `pixel-theme` class to `<body>`. Press Start 2P renders ~40% smaller than system fonts — all pixel-theme text needs explicit size overrides (see the `FONT SIZE OVERRIDES` section at the bottom of that file).
 - **`js/pomodoro.js`** — Pomodoro timer logic, used in `dashboard.html`. On completion it calls `/api/record` to write a study record automatically.
+- **`js/calendar.js`** — Month-view task calendar for `dashboard.html`. Exposes two globals: `initCalendar()` (builds DOM shell, call once on `DOMContentLoaded`) and `refreshCalendar(tasks[])` (re-renders grid with the latest flat task array, call after any task CRUD). Groups tasks by `task.deadline.substring(0, 10)`. No new API endpoints needed — data comes from the same `/api/task/quadrant` response already fetched by `dashboard.js`.
+
+### Dashboard layout
+
+`dashboard.html` uses a three-column flex layout: **Calendar** (270 px, sticky) | **Quadrant grid** (flex: 1) | **Pomodoro panel** (280 px). At ≤1100 px the calendar and pomodoro each stack to full width; at ≤800 px the quadrant grid drops to a single column.
 
 ### Key Data Relationships
 
