@@ -1074,3 +1074,185 @@ body.pixel-theme .tomato-icon-wrapper {
   z-index: 2;
   margin-bottom: 4px;
 }
+
+/* ════════════════════════════════════════
+   CALENDAR — PIXEL THEME
+   ════════════════════════════════════════ */
+body.pixel-theme .cal-panel {
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000;
+  position: sticky;
+  top: 76px;
+}
+
+body.pixel-theme .cal-title {
+  font-family: "Press Start 2P", monospace;
+  font-size: 9px;
+  color: var(--pixel-primary);
+  text-shadow: 1px 1px 0 #000;
+  letter-spacing: 1px;
+}
+
+body.pixel-theme .cal-nav {
+  font-family: "Press Start 2P", monospace;
+  font-size: 14px;
+  color: var(--pixel-text-dim);
+  background: var(--pixel-bg-panel);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 2px 2px 0 #000;
+  padding: 4px 8px;
+}
+body.pixel-theme .cal-nav:hover {
+  color: var(--pixel-primary);
+  background: var(--pixel-bg-panel);
+  border-color: var(--pixel-primary);
+}
+
+body.pixel-theme .cal-today-btn {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  background: var(--pixel-bg-panel);
+  border: 2px solid var(--pixel-border);
+  color: var(--pixel-text-dim);
+  box-shadow: 2px 2px 0 #000;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+body.pixel-theme .cal-today-btn:hover {
+  border-color: var(--pixel-primary);
+  color: var(--pixel-primary);
+  background: var(--pixel-bg-panel);
+}
+
+body.pixel-theme .cal-weekdays span {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+}
+body.pixel-theme .cal-weekdays span:first-child,
+body.pixel-theme .cal-weekdays span:last-child {
+  color: var(--pixel-danger);
+  opacity: 0.8;
+}
+
+body.pixel-theme .cal-cell {
+  background: transparent;
+}
+body.pixel-theme .cal-cell:hover {
+  background: rgba(122,162,247,0.08);
+}
+body.pixel-theme .cal-cell-today {
+  background: rgba(122,162,247,0.12);
+  border: 1px solid var(--pixel-primary);
+}
+body.pixel-theme .cal-cell-today .cal-day-num {
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+  border-radius: 0;
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  box-shadow: 2px 2px 0 #000;
+  width: 22px;
+  height: 22px;
+}
+body.pixel-theme .cal-cell-selected {
+  background: rgba(122,162,247,0.14);
+  box-shadow: inset 0 0 0 2px var(--pixel-primary);
+}
+
+body.pixel-theme .cal-day-num {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-text);
+}
+
+body.pixel-theme .cal-dot {
+  border-radius: 0; /* Square pixels! */
+  width: 5px;
+  height: 5px;
+}
+
+body.pixel-theme .cal-task-name {
+  font-family: "Press Start 2P", monospace;
+  font-size: 6px;
+  color: var(--pixel-text-dim);
+  line-height: 1.6;
+}
+
+body.pixel-theme .cal-overflow {
+  font-family: "Press Start 2P", monospace;
+  font-size: 6px;
+  color: var(--pixel-primary);
+}
+
+body.pixel-theme .cal-detail {
+  border-top: 2px solid var(--pixel-border);
+}
+
+body.pixel-theme .cal-detail-header {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-primary);
+  text-shadow: 1px 1px 0 #000;
+}
+
+body.pixel-theme .cal-detail-count {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+  border-radius: 0;
+  box-shadow: 2px 2px 0 #000;
+}
+
+body.pixel-theme .cal-detail-empty {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+}
+
+body.pixel-theme .cal-detail-item {
+  background: var(--pixel-bg-panel);
+  border: 1px solid var(--pixel-border);
+  box-shadow: 2px 2px 0 #000;
+}
+
+body.pixel-theme .cal-det-title {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-text);
+  line-height: 1.8;
+}
+
+body.pixel-theme .cal-det-meta {
+  font-family: "Press Start 2P", monospace;
+  font-size: 6px;
+  color: var(--pixel-text-dim);
+  line-height: 1.8;
+}
+
+body.pixel-theme .cal-month-stats {
+  border-top: 2px solid var(--pixel-border);
+}
+
+body.pixel-theme .cal-stats-row {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  line-height: 2;
+}
+body.pixel-theme .cal-stats-row strong {
+  color: var(--pixel-primary);
+}
+
+body.pixel-theme .cal-stats-bar {
+  background: var(--pixel-border);
+  border-radius: 0;
+  height: 6px;
+  box-shadow: inset 2px 2px 0 rgba(0,0,0,0.4);
+}
+body.pixel-theme .cal-stats-fill {
+  background: var(--pixel-success);
+  border-radius: 0;
+}

@@ -26,6 +26,7 @@ async function loadQuadrants() {
         list.forEach((t) => allTasksFlat.push(t));
     });
     setPomodoroTasks(allTasksFlat);
+    if (typeof refreshCalendar === 'function') refreshCalendar(allTasksFlat);
 
     for (let q = 1; q <= 4; q++) {
         const list = data['q' + q] || [];
@@ -171,6 +172,7 @@ document.getElementById('form-new-task')?.addEventListener('submit', async (e) =
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
+    if (typeof initCalendar === 'function') initCalendar();
     initPomodoro();
     try {
         await loadQuadrants();
