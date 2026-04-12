@@ -4,41 +4,36 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>个人中心 - 知趣·象限学习系统</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/common.css">
+    <link rel="stylesheet" href="/css/profile.css">
     <link rel="stylesheet" href="/css/pixel-theme.css">
-    <style>
-        .profile-top { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; margin-bottom: 28px; }
-        .avatar-block { text-align: center; }
-        .avatar-circle {
-            width: 96px; height: 96px; border-radius: 50%; background: #ecf5ff; color: #409eff;
-            display: flex; align-items: center; justify-content: center; font-size: 36px; font-weight: 600;
-            margin: 0 auto 12px; overflow: hidden; border: 2px solid #dcdfe6;
-        }
-        .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
-        .section { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
-        .section h2 { margin: 0 0 16px; font-size: 17px; }
-    </style>
 </head>
 <body>
     <div id="navbar"></div>
     <div class="main-content">
-        <h1 style="margin-top:0">个人中心</h1>
+        <h1 style="margin-top:0">👤 个人中心</h1>
         <div class="stat-cards" id="profile-stats"></div>
         <div class="profile-top">
-            <div class="avatar-block card" style="padding:20px">
-                <div class="avatar-circle" id="avatar-circle"><span id="avatar-letter"></span><img id="avatar-img" class="hidden" alt="头像"></div>
+            <div class="avatar-block card" style="padding:24px; min-width:160px; text-align:center">
+                <div class="avatar-circle" id="avatar-circle">
+                    <span id="avatar-letter"></span>
+                    <img id="avatar-img" class="hidden" alt="头像">
+                </div>
                 <input type="file" id="avatar-file" accept="image/*" class="hidden">
-                <button type="button" class="btn btn-default" id="btn-avatar">上传头像</button>
+                <button type="button" class="btn btn-default" id="btn-avatar" style="margin-top:4px">上传头像</button>
             </div>
             <div class="section" style="flex:1; min-width:260px">
                 <h2>基本资料</h2>
                 <div class="form-group">
                     <label>用户名</label>
-                    <input id="pf-username" readonly style="background:#f5f7fa">
+                    <input id="pf-username" readonly>
                 </div>
                 <div class="form-group">
                     <label for="pf-nickname">昵称</label>
-                    <input id="pf-nickname">
+                    <input id="pf-nickname" placeholder="设置昵称">
                 </div>
                 <button type="button" class="btn btn-primary" id="btn-save-profile">保存昵称</button>
             </div>
@@ -47,11 +42,11 @@
             <h2>修改密码</h2>
             <div class="form-group">
                 <label for="pf-old-pw">旧密码</label>
-                <input type="password" id="pf-old-pw" autocomplete="current-password">
+                <input type="password" id="pf-old-pw" autocomplete="current-password" placeholder="输入旧密码">
             </div>
             <div class="form-group">
                 <label for="pf-new-pw">新密码</label>
-                <input type="password" id="pf-new-pw" autocomplete="new-password">
+                <input type="password" id="pf-new-pw" autocomplete="new-password" placeholder="输入新密码（至少6位）">
             </div>
             <button type="button" class="btn btn-warning" id="btn-save-pw">更新密码</button>
         </div>

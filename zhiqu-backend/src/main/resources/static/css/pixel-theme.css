@@ -1,50 +1,1076 @@
-/* 像素风主题：挂在 body.pixel-theme 上 */
+/* ╔════════════════════════════════════════════════════════╗
+   ║   知趣·象限 — PIXEL THEME  (8-bit RPG Mode)           ║
+   ║   All styles scoped to body.pixel-theme               ║
+   ╚════════════════════════════════════════════════════════╝ */
+
+/* ── Tokyo Night palette ── */
 body.pixel-theme {
-    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
-    image-rendering: pixelated;
+  --pixel-bg:        #1A1B26;
+  --pixel-bg-card:   #24283B;
+  --pixel-bg-panel:  #1F2335;
+  --pixel-primary:   #7AA2F7;
+  --pixel-success:   #9ECE6A;
+  --pixel-warning:   #E0AF68;
+  --pixel-danger:    #F7768E;
+  --pixel-purple:    #BB9AF7;
+  --pixel-cyan:      #7DCFFF;
+  --pixel-text:      #C0CAF5;
+  --pixel-text-dim:  #565F89;
+  --pixel-border:    #3B4261;
+  --pixel-border2:   #414868;
+
+  /* Overwrite modern-theme shadows/radius with pixel equivalents */
+  --shadow-sm:  4px 4px 0px #000;
+  --shadow-md:  4px 4px 0px #000;
+  --shadow-lg:  6px 6px 0px #000;
+  --shadow-primary: 4px 4px 0px #000;
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+
+  /* Pixel quadrant colors (bright retro palette) */
+  --q1: #F7768E; --q1-bg: #2D1B22; --q1-border: #F7768E;
+  --q2: #7AA2F7; --q2-bg: #1A2040; --q2-border: #7AA2F7;
+  --q3: #E0AF68; --q3-bg: #2A1F10; --q3-border: #E0AF68;
+  --q4: #9ECE6A; --q4-bg: #182310; --q4-border: #9ECE6A;
+
+  font-family: "Press Start 2P", "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.9;
+  background: var(--pixel-bg);
+  color: var(--pixel-text);
+  min-height: 100vh;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
+/* ── Viewport height fix: ensure html is also dark ── */
+html:has(body.pixel-theme) {
+  min-height: 100vh;
+  background: #1A1B26;
+}
+
+/* ── Custom scrollbar ── */
+body.pixel-theme ::-webkit-scrollbar { width: 10px; height: 10px; }
+body.pixel-theme ::-webkit-scrollbar-track { background: var(--pixel-bg); }
+body.pixel-theme ::-webkit-scrollbar-thumb {
+  background: var(--pixel-border2);
+  border: 2px solid var(--pixel-bg);
+}
+body.pixel-theme ::-webkit-scrollbar-thumb:hover { background: var(--pixel-primary); }
+
+/* ── Text selection ── */
+body.pixel-theme ::selection {
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+}
+
+/* ── CRT scanline overlay on entire page ── */
+body.pixel-theme::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.06) 2px,
+    rgba(0,0,0,0.06) 4px
+  );
+}
+
+/* ════════════════════════════════════════
+   BASE OVERRIDES
+   ════════════════════════════════════════ */
+
+body.pixel-theme a { color: var(--pixel-primary); }
+body.pixel-theme a:hover { color: var(--pixel-cyan); }
+
+/* ── Kill all rounded corners ── */
+body.pixel-theme *,
+body.pixel-theme *::before,
+body.pixel-theme *::after {
+  border-radius: 0 !important;
+}
+
+/* ════════════════════════════════════════
+   NAVBAR
+   ════════════════════════════════════════ */
 body.pixel-theme .navbar {
-    border-bottom: 4px solid #303133;
-    box-shadow: none;
+  background: var(--pixel-bg-panel);
+  border-bottom: 2px solid var(--pixel-border);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 2px 0 #000;
+  height: 54px;
+
+  /* Pixel dot separator at bottom */
+  border-image: none;
 }
 
+/* Pixel scanline on navbar bottom */
+body.pixel-theme .navbar::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0; right: 0;
+  height: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--pixel-primary) 0px,
+    var(--pixel-primary) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+body.pixel-theme .navbar-brand {
+  font-family: "Press Start 2P", monospace;
+  font-size: 10px;
+  color: var(--pixel-primary);
+  text-shadow: 2px 2px 0 #000, 0 0 10px rgba(122,162,247,0.5);
+  letter-spacing: 1px;
+}
+body.pixel-theme .navbar-brand::before {
+  content: '⚔️ ';
+  font-size: 12px;
+}
+
+body.pixel-theme .nav-link {
+  color: var(--pixel-text-dim);
+  font-size: 9px;
+  padding: 6px 10px;
+  font-family: "Press Start 2P", monospace;
+  border: 2px solid transparent;
+  transition: all 0.1s;
+}
+body.pixel-theme .nav-link::after { display: none; }
+
+body.pixel-theme .nav-link:hover {
+  color: var(--pixel-primary);
+  background: rgba(122,162,247,0.12);
+  border-color: var(--pixel-primary);
+  text-shadow: 0 0 8px rgba(122,162,247,0.7);
+  transform: none;
+}
+body.pixel-theme .nav-link.active {
+  color: var(--pixel-bg);
+  background: var(--pixel-primary);
+  border-color: var(--pixel-primary);
+  font-weight: 400;
+  box-shadow: 2px 2px 0 #000;
+}
+
+body.pixel-theme .nav-btn {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  padding: 7px 10px;
+  background: var(--pixel-bg-card);
+  color: var(--pixel-text-dim);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 2px 2px 0 #000;
+  transition: all 0.1s;
+  text-transform: uppercase;
+}
+body.pixel-theme .nav-btn:hover {
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+  border-color: var(--pixel-primary);
+  box-shadow: 2px 2px 0 #000;
+  transform: none;
+}
+body.pixel-theme .logout-btn:hover {
+  background: var(--pixel-danger);
+  color: var(--pixel-bg);
+  border-color: var(--pixel-danger);
+}
+
+/* ════════════════════════════════════════
+   CARDS (game-window style)
+   ════════════════════════════════════════ */
 body.pixel-theme .card,
-body.pixel-theme .login-card,
 body.pixel-theme .modal-panel,
 body.pixel-theme .stat-card,
-body.pixel-theme .table-wrap {
-    border: 3px solid #303133;
-    box-shadow: 6px 6px 0 #303133;
-    border-radius: 0;
+body.pixel-theme .table-wrap,
+body.pixel-theme .filter-bar,
+body.pixel-theme .chart-box,
+body.pixel-theme .section,
+body.pixel-theme .pomodoro-panel {
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000;
+  color: var(--pixel-text);
 }
 
-body.pixel-theme .btn,
-body.pixel-theme .nav-btn,
-body.pixel-theme .nav-link {
-    border-radius: 0;
-    border-width: 2px;
+body.pixel-theme .card:hover {
+  transform: none;
+  box-shadow: 4px 4px 0 #000;
+}
+
+/* ════════════════════════════════════════
+   BUTTONS (pixel 3D press effect)
+   ════════════════════════════════════════ */
+body.pixel-theme .btn {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border: 2px solid;
+  box-shadow: 3px 3px 0 #000;
+  padding: 10px 16px;
+  transition: all 0.05s;
+}
+body.pixel-theme .btn:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 #000;
+}
+body.pixel-theme .btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 #000;
 }
 
 body.pixel-theme .btn-primary {
-    box-shadow: 3px 3px 0 #1a5276;
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+  border-color: var(--pixel-primary);
+  box-shadow: 3px 3px 0 #000;
+}
+body.pixel-theme .btn-primary:hover:not(:disabled) {
+  background: #92B4FA;
+  box-shadow: 4px 4px 0 #000;
 }
 
-body.pixel-theme .quadrant-grid .quad-card {
-    border: 3px solid #303133;
-    border-radius: 0;
-    box-shadow: 4px 4px 0 #303133;
+body.pixel-theme .btn-success {
+  background: var(--pixel-success);
+  color: var(--pixel-bg);
+  border-color: var(--pixel-success);
 }
 
+body.pixel-theme .btn-warning {
+  background: var(--pixel-warning);
+  color: var(--pixel-bg);
+  border-color: var(--pixel-warning);
+}
+
+body.pixel-theme .btn-danger {
+  background: var(--pixel-danger);
+  color: var(--pixel-bg);
+  border-color: var(--pixel-danger);
+}
+
+body.pixel-theme .btn-default {
+  background: var(--pixel-bg-card);
+  color: var(--pixel-text);
+  border-color: var(--pixel-border2);
+}
+body.pixel-theme .btn-default:hover:not(:disabled) {
+  background: var(--pixel-border2);
+  color: var(--pixel-text);
+  border-color: var(--pixel-primary);
+}
+
+/* ════════════════════════════════════════
+   INPUTS & SELECTS
+   ════════════════════════════════════════ */
+body.pixel-theme .form-group input,
+body.pixel-theme .form-group select,
+body.pixel-theme .form-group textarea,
+body.pixel-theme .task-mini .status-select {
+  background: var(--pixel-bg-panel);
+  border: 2px solid var(--pixel-border);
+  color: var(--pixel-text);
+  font-family: "Press Start 2P", monospace;
+  font-size: 9px;
+  caret-color: var(--pixel-primary);
+}
+body.pixel-theme .form-group input:focus,
+body.pixel-theme .form-group select:focus,
+body.pixel-theme .form-group textarea:focus {
+  border-color: var(--pixel-primary);
+  box-shadow: 0 0 0 2px rgba(122,162,247,0.25), inset 0 0 8px rgba(122,162,247,0.06);
+  outline: none;
+}
+
+body.pixel-theme .form-group label {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ════════════════════════════════════════
+   TABLE (pixel grid)
+   ════════════════════════════════════════ */
+body.pixel-theme .data-table th,
+body.pixel-theme .data-table td {
+  border-bottom: 1px solid var(--pixel-border);
+  color: var(--pixel-text);
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  padding: 14px 12px;
+}
+body.pixel-theme .data-table th {
+  background: var(--pixel-bg-panel);
+  color: var(--pixel-primary);
+  border-bottom: 2px solid var(--pixel-border);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+body.pixel-theme .data-table tbody tr:nth-child(even) {
+  background: rgba(255,255,255,0.02);
+}
+body.pixel-theme .data-table tbody tr:hover {
+  background: rgba(122,162,247,0.08);
+}
+body.pixel-theme .data-table tbody tr:hover td:first-child {
+  border-left: 3px solid var(--pixel-primary);
+}
+/* ▶ cursor on hover */
+body.pixel-theme .data-table tbody tr:hover td:first-child::before {
+  content: '▶ ';
+  color: var(--pixel-primary);
+  font-size: 8px;
+}
+
+/* ════════════════════════════════════════
+   MODAL
+   ════════════════════════════════════════ */
+body.pixel-theme .modal-backdrop {
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: none;
+}
+body.pixel-theme .modal-panel {
+  animation: pixelModalIn 0.15s steps(4) both;
+  border: 2px solid var(--pixel-primary);
+  box-shadow: 6px 6px 0 #000;
+}
+@keyframes pixelModalIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+body.pixel-theme .modal-title {
+  font-family: "Press Start 2P", monospace;
+  font-size: 11px;
+  color: var(--pixel-primary);
+  text-shadow: 1px 1px 0 #000;
+}
+
+body.pixel-theme .modal-close {
+  color: var(--pixel-text-dim);
+  font-size: 18px;
+}
+body.pixel-theme .modal-close:hover {
+  background: var(--pixel-danger);
+  color: var(--pixel-bg);
+}
+
+/* ════════════════════════════════════════
+   TOAST
+   ════════════════════════════════════════ */
+body.pixel-theme .toast {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  border: 2px solid rgba(255,255,255,0.3);
+  box-shadow: 3px 3px 0 #000;
+  letter-spacing: 0.5px;
+  animation: pixelToastIn 0.15s steps(3) both;
+}
+@keyframes pixelToastIn {
+  from { opacity: 0; transform: translateY(-10px) scaleY(0.5); }
+  to   { opacity: 1; transform: translateY(0) scaleY(1); }
+}
+body.pixel-theme .toast-success { background: var(--pixel-success); color: var(--pixel-bg); }
+body.pixel-theme .toast-warning { background: var(--pixel-warning); color: var(--pixel-bg); }
+body.pixel-theme .toast-error   { background: var(--pixel-danger);  color: var(--pixel-bg); }
+body.pixel-theme .toast-info    { background: var(--pixel-border2); color: var(--pixel-text); }
+
+/* ════════════════════════════════════════
+   STAT CARDS (Game HUD style)
+   ════════════════════════════════════════ */
+body.pixel-theme .stat-cards {
+  gap: 14px;
+}
+body.pixel-theme .stat-card {
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000;
+  border-top: 2px solid var(--pixel-primary);
+  padding: 16px 14px;
+}
+body.pixel-theme .stat-card:hover {
+  transform: none;
+  box-shadow: 4px 4px 0 #000;
+}
+body.pixel-theme .stat-card:nth-child(2) { border-top-color: var(--pixel-success); }
+body.pixel-theme .stat-card:nth-child(3) { border-top-color: var(--pixel-warning); }
+body.pixel-theme .stat-card:nth-child(4) { border-top-color: var(--pixel-danger); }
+
+body.pixel-theme .stat-card .value {
+  font-family: "Press Start 2P", monospace;
+  font-size: 20px;
+  font-weight: 400;
+  background: none;
+  -webkit-background-clip: initial;
+  -webkit-text-fill-color: initial;
+  background-clip: initial;
+  color: var(--pixel-primary);
+  text-shadow: 2px 2px 0 #000;
+  line-height: 1.4;
+}
+body.pixel-theme .stat-card:nth-child(2) .value { color: var(--pixel-success); }
+body.pixel-theme .stat-card:nth-child(3) .value { color: var(--pixel-warning); }
+body.pixel-theme .stat-card:nth-child(4) .value { color: var(--pixel-danger); }
+
+body.pixel-theme .stat-card .label {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 8px;
+  line-height: 1.8;
+}
+
+/* ════════════════════════════════════════
+   TAGS (pixel badge style)
+   ════════════════════════════════════════ */
+body.pixel-theme .tag {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  padding: 3px 8px;
+  border: 1px solid;
+  letter-spacing: 0.5px;
+}
+body.pixel-theme .tag-pending  { background: rgba(122,162,247,0.15); color: var(--pixel-primary); border-color: var(--pixel-primary); }
+body.pixel-theme .tag-doing    { background: rgba(224,175,104,0.15); color: var(--pixel-warning); border-color: var(--pixel-warning); }
+body.pixel-theme .tag-done     { background: rgba(158,206,106,0.15); color: var(--pixel-success); border-color: var(--pixel-success); }
+body.pixel-theme .tag-priority-0 { background: rgba(86,95,137,0.3);  color: var(--pixel-text-dim); border-color: var(--pixel-border); }
+body.pixel-theme .tag-priority-1 { background: rgba(122,162,247,0.15); color: var(--pixel-primary); border-color: var(--pixel-primary); }
+body.pixel-theme .tag-priority-2 { background: rgba(224,175,104,0.15); color: var(--pixel-warning); border-color: var(--pixel-warning); }
+body.pixel-theme .tag-priority-3 { background: rgba(247,118,142,0.15); color: var(--pixel-danger);  border-color: var(--pixel-danger); }
+
+/* ════════════════════════════════════════
+   LOGIN PAGE (CRT terminal style)
+   ════════════════════════════════════════ */
+body.pixel-theme .login-page {
+  background: #0D0E17;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(122,162,247,0.02) 2px,
+      rgba(122,162,247,0.02) 4px
+    ),
+    radial-gradient(ellipse at 50% 50%, rgba(122,162,247,0.06) 0%, transparent 70%);
+}
+body.pixel-theme .login-page::before,
+body.pixel-theme .login-page::after { display: none; }
+
+body.pixel-theme .login-card {
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-primary);
+  box-shadow: 8px 8px 0 #000, 0 0 40px rgba(122,162,247,0.15);
+  padding: 32px 28px 36px;
+  animation: pixelCardIn 0.2s steps(5) both;
+}
+@keyframes pixelCardIn {
+  from { opacity: 0; transform: scaleY(0.2); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+
+/* Pixel border decoration */
+body.pixel-theme .login-card::before {
+  content: '╔══════════════════╗';
+  display: block;
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+  color: var(--pixel-primary);
+  text-align: center;
+  margin-bottom: -8px;
+  opacity: 0.5;
+  letter-spacing: -1px;
+}
+
+body.pixel-theme .login-card h1 {
+  font-family: "Press Start 2P", monospace;
+  font-size: 11px;
+  color: var(--pixel-primary);
+  text-shadow: 2px 2px 0 #000, 0 0 15px rgba(122,162,247,0.5);
+  margin-bottom: 8px;
+  line-height: 1.7;
+  letter-spacing: 1px;
+}
+
+body.pixel-theme .login-sub {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  margin-bottom: 24px;
+}
+
+body.pixel-theme .tabs {
+  background: var(--pixel-bg-panel);
+  border: 2px solid var(--pixel-border);
+  padding: 3px;
+  gap: 3px;
+}
+body.pixel-theme .tab-btn {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-text-dim);
+  text-transform: uppercase;
+}
+body.pixel-theme .tab-btn.active {
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+  box-shadow: 2px 2px 0 #000;
+}
+
+body.pixel-theme .login-actions .btn-primary {
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+  border-color: var(--pixel-primary);
+  box-shadow: 4px 4px 0 #000;
+  font-size: 9px;
+  height: auto;
+  padding: 14px;
+  letter-spacing: 2px;
+}
+body.pixel-theme .login-actions .btn-primary:hover:not(:disabled) {
+  box-shadow: 5px 5px 0 #000;
+  transform: translate(-1px,-1px);
+  text-shadow: 0 0 8px rgba(122,162,247,0.8);
+}
+
+/* ════════════════════════════════════════
+   DASHBOARD — QUADRANT GRID (Game Windows)
+   ════════════════════════════════════════ */
+body.pixel-theme .quad-card {
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000;
+}
+body.pixel-theme .quad-card:hover {
+  transform: translate(-2px,-2px);
+  box-shadow: 6px 6px 0 #000;
+}
+
+/* Q1 — Red */
+body.pixel-theme .quad-card.q1 {
+  border-top: 3px solid var(--q1);
+  box-shadow: 4px 4px 0 #000;
+}
+body.pixel-theme .quad-card.q1 h3 {
+  background: var(--q1-bg);
+  color: var(--q1);
+  border-bottom: 2px solid var(--q1);
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  text-shadow: 1px 1px 0 #000;
+}
+
+/* Q2 — Blue */
+body.pixel-theme .quad-card.q2 {
+  border-top: 3px solid var(--q2);
+}
+body.pixel-theme .quad-card.q2 h3 {
+  background: var(--q2-bg);
+  color: var(--q2);
+  border-bottom: 2px solid var(--q2);
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  text-shadow: 1px 1px 0 #000;
+}
+
+/* Q3 — Orange */
+body.pixel-theme .quad-card.q3 {
+  border-top: 3px solid var(--q3);
+}
+body.pixel-theme .quad-card.q3 h3 {
+  background: var(--q3-bg);
+  color: var(--q3);
+  border-bottom: 2px solid var(--q3);
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  text-shadow: 1px 1px 0 #000;
+}
+
+/* Q4 — Green */
+body.pixel-theme .quad-card.q4 {
+  border-top: 3px solid var(--q4);
+}
+body.pixel-theme .quad-card.q4 h3 {
+  background: var(--q4-bg);
+  color: var(--q4);
+  border-bottom: 2px solid var(--q4);
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  text-shadow: 1px 1px 0 #000;
+}
+
+/* Task mini in pixel theme */
+body.pixel-theme .task-mini {
+  background: var(--pixel-bg-panel);
+  border: 1px solid var(--pixel-border);
+  box-shadow: 2px 2px 0 #000;
+}
+body.pixel-theme .task-mini:hover {
+  border-color: var(--pixel-primary);
+  box-shadow: 2px 2px 0 #000;
+}
+body.pixel-theme .task-mini .title {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-text);
+  line-height: 1.8;
+}
+body.pixel-theme .task-mini .meta {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  line-height: 2;
+}
+body.pixel-theme .task-mini .status-select {
+  font-size: 7px;
+  padding: 6px 8px;
+}
+
+body.pixel-theme .empty-hint {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  line-height: 2;
+}
+body.pixel-theme .empty-hint::before { content: none; }
+body.pixel-theme .empty-hint::after  {
+  content: '[ EMPTY ]';
+  display: block;
+  margin-top: 4px;
+  color: var(--pixel-border2);
+  font-size: 7px;
+}
+
+/* ════════════════════════════════════════
+   POMODORO PANEL (Game Timer)
+   ════════════════════════════════════════ */
 body.pixel-theme .pomodoro-panel {
-    border: 3px solid #303133;
-    border-radius: 0;
-    box-shadow: 4px 4px 0 #303133;
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000;
+  position: relative;
+  overflow: hidden;
 }
 
-body.pixel-theme input,
-body.pixel-theme select,
-body.pixel-theme textarea {
-    border-radius: 0 !important;
-    border-width: 2px !important;
+/* Pixel screen border around ring */
+body.pixel-theme .pomo-ring-wrap {
+  position: relative;
+  border: 3px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000, inset 0 0 20px rgba(0,0,0,0.4);
+  background: var(--pixel-bg-panel);
+  padding: 10px;
+  margin-bottom: 20px;
+}
+
+/* Scanlines on ring screen */
+body.pixel-theme .pomo-ring-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0,0,0,0.08) 3px,
+    rgba(0,0,0,0.08) 4px
+  );
+}
+
+body.pixel-theme .pomodoro-panel h2 {
+  font-family: "Press Start 2P", monospace;
+  font-size: 9px;
+  color: var(--pixel-primary);
+  text-shadow: 1px 1px 0 #000;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+body.pixel-theme .pomodoro-panel h2::before {
+  content: '🍅 ';
+}
+
+body.pixel-theme .pomo-time {
+  font-family: "Press Start 2P", monospace;
+  font-size: 28px;
+  color: var(--pixel-primary);
+  text-shadow: 2px 2px 0 #000, 0 0 12px rgba(122,162,247,0.5);
+  position: relative;
+  z-index: 2;
+}
+
+body.pixel-theme .pomo-phase {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  letter-spacing: 1px;
+  position: relative;
+  z-index: 2;
+}
+
+body.pixel-theme .pomo-round {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-warning);
+  letter-spacing: 0.5px;
+}
+
+body.pixel-theme .pomo-today {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  border-top: 2px solid var(--pixel-border);
+  padding-top: 14px;
+  letter-spacing: 0.5px;
+  line-height: 2;
+}
+
+/* ════════════════════════════════════════
+   STATISTICS (HUD display)
+   ════════════════════════════════════════ */
+body.pixel-theme .chart-box {
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000;
+}
+body.pixel-theme .chart-box h3 {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-primary);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+body.pixel-theme .trend-tabs button {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  background: var(--pixel-bg-panel);
+  border: 2px solid var(--pixel-border);
+  color: var(--pixel-text-dim);
+  box-shadow: 2px 2px 0 #000;
+  padding: 8px 12px;
+}
+body.pixel-theme .trend-tabs button:hover {
+  border-color: var(--pixel-primary);
+  color: var(--pixel-primary);
+  background: var(--pixel-bg-panel);
+  transform: none;
+}
+body.pixel-theme .trend-tabs button.active {
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+  border-color: var(--pixel-primary);
+  box-shadow: 2px 2px 0 #000;
+}
+
+/* ════════════════════════════════════════
+   ACHIEVEMENT CARDS (Game Badges)
+   ════════════════════════════════════════ */
+body.pixel-theme .ach-card {
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000;
+  border-top: 2px solid var(--pixel-border);
+}
+body.pixel-theme .ach-card:hover {
+  transform: translate(-2px,-2px);
+  box-shadow: 6px 6px 0 #000;
+}
+
+/* Unlocked card — gold pixel border */
+body.pixel-theme .ach-card:not(.locked) {
+  border-color: var(--pixel-warning);
+  background: linear-gradient(135deg, var(--pixel-bg-card) 0%, rgba(224,175,104,0.08) 100%);
+  box-shadow: 4px 4px 0 #000, 0 0 16px rgba(224,175,104,0.15);
+}
+body.pixel-theme .ach-card:not(.locked)::before {
+  content: '★';
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-size: 14px;
+  color: var(--pixel-warning);
+  text-shadow: 1px 1px 0 #000;
+}
+
+/* Locked card */
+body.pixel-theme .ach-card.locked {
+  border-color: var(--pixel-border);
+  opacity: 0.45;
+}
+body.pixel-theme .ach-card.locked::before {
+  content: '?';
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-family: "Press Start 2P", monospace;
+  font-size: 14px;
+  color: var(--pixel-border2);
+}
+
+/* Highlight — new unlock animation */
+body.pixel-theme .ach-card.highlight {
+  border-color: var(--pixel-success);
+  box-shadow: 4px 4px 0 #000, 0 0 0 2px var(--pixel-success), 0 0 20px rgba(158,206,106,0.4);
+  animation: pixelUnlock 0.4s steps(4) both;
+}
+@keyframes pixelUnlock {
+  0%  { transform: scale(0.9); opacity: 0; }
+  50% { transform: scale(1.05); }
+  100%{ transform: scale(1); opacity: 1; }
+}
+
+body.pixel-theme .ach-name {
+  font-family: "Press Start 2P", monospace;
+  font-size: 9px;
+  color: var(--pixel-text);
+  line-height: 1.7;
+  padding-right: 20px;
+}
+body.pixel-theme .ach-desc {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  line-height: 2;
+  min-height: 48px;
+}
+body.pixel-theme .ach-foot {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+}
+
+body.pixel-theme .ach-meta {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-warning);
+  text-shadow: 1px 1px 0 #000;
+}
+
+body.pixel-theme .ach-filters button {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  background: var(--pixel-bg-panel);
+  border: 2px solid var(--pixel-border);
+  color: var(--pixel-text-dim);
+  box-shadow: 2px 2px 0 #000;
+  padding: 8px 12px;
+}
+body.pixel-theme .ach-filters button:hover {
+  border-color: var(--pixel-primary);
+  color: var(--pixel-primary);
+  background: var(--pixel-bg-panel);
+}
+body.pixel-theme .ach-filters button.active {
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+  border-color: var(--pixel-primary);
+  box-shadow: 2px 2px 0 #000;
+}
+
+/* ════════════════════════════════════════
+   PROFILE PAGE (RPG Character Panel)
+   ════════════════════════════════════════ */
+body.pixel-theme .avatar-circle {
+  background: var(--pixel-bg-panel);
+  color: var(--pixel-primary);
+  border: 3px solid var(--pixel-primary);
+  box-shadow: 4px 4px 0 #000, 0 0 16px rgba(122,162,247,0.2);
+  border-radius: 0 !important;
+  font-family: "Press Start 2P", monospace;
+  font-size: 28px;
+}
+body.pixel-theme .avatar-circle:hover {
+  box-shadow: 4px 4px 0 #000, 0 0 24px rgba(122,162,247,0.4);
+}
+
+body.pixel-theme .section {
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000;
+}
+body.pixel-theme .section h2 {
+  font-family: "Press Start 2P", monospace;
+  font-size: 9px;
+  color: var(--pixel-primary);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+body.pixel-theme .section h2::before {
+  background: var(--pixel-primary);
+}
+
+/* ════════════════════════════════════════
+   PAGE TITLE
+   ════════════════════════════════════════ */
+body.pixel-theme .page-title-row h1,
+body.pixel-theme h1 {
+  font-family: "Press Start 2P", monospace;
+  font-size: 14px;
+  color: var(--pixel-primary);
+  text-shadow: 2px 2px 0 #000;
+  letter-spacing: 1px;
+}
+
+/* ════════════════════════════════════════
+   FILTER BAR
+   ════════════════════════════════════════ */
+body.pixel-theme .filter-bar {
+  background: var(--pixel-bg-card);
+  border: 2px solid var(--pixel-border);
+  box-shadow: 4px 4px 0 #000;
+}
+
+/* ════════════════════════════════════════
+   LINKS
+   ════════════════════════════════════════ */
+body.pixel-theme a {
+  font-family: "Press Start 2P", monospace;
+  font-size: 9px;
+}
+
+/* ════════════════════════════════════════
+   ERROR MSG
+   ════════════════════════════════════════ */
+body.pixel-theme .error-msg {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-danger);
+  text-shadow: 1px 1px 0 #000;
+  line-height: 2;
+}
+
+/* ════════════════════════════════════════
+   BLINKING CURSOR ANIMATION
+   ════════════════════════════════════════ */
+@keyframes pixelBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+body.pixel-theme .nav-link.active::after {
+  content: '▮';
+  position: static;
+  display: inline;
+  color: var(--pixel-primary);
+  font-size: 10px;
+  margin-left: 4px;
+  animation: pixelBlink 1s step-end infinite;
+  background: none;
+  width: auto;
+  height: auto;
+}
+
+/* ════════════════════════════════════════
+   FONT SIZE OVERRIDES
+   Press Start 2P renders ~40% smaller than
+   system fonts — bump up all key elements
+   ════════════════════════════════════════ */
+
+/* ── Quadrant headers (all 4) ── */
+body.pixel-theme .quad-card.q1 h3,
+body.pixel-theme .quad-card.q2 h3,
+body.pixel-theme .quad-card.q3 h3,
+body.pixel-theme .quad-card.q4 h3 {
+  font-size: 11px;
+  line-height: 2;
+  padding: 12px 14px;
+}
+
+/* ── Task mini items ── */
+body.pixel-theme .task-mini .title {
+  font-size: 10px;
+  line-height: 1.9;
+}
+body.pixel-theme .task-mini .meta {
+  font-size: 9px;
+  line-height: 2;
+}
+body.pixel-theme .task-mini .status-select {
+  font-size: 9px;
+  padding: 8px 10px;
+}
+
+/* ── Empty quadrant state ── */
+body.pixel-theme .empty-hint {
+  font-size: 9px;
+  line-height: 2.2;
+}
+body.pixel-theme .empty-hint::after {
+  font-size: 9px;
+}
+
+/* ── Pomodoro timer ── */
+body.pixel-theme .pomo-time {
+  font-size: 30px;
+}
+body.pixel-theme .pomo-phase {
+  font-size: 9px;
+  letter-spacing: 1px;
+  line-height: 2;
+}
+body.pixel-theme .pomo-round {
+  font-size: 9px;
+  line-height: 2;
+}
+body.pixel-theme .pomo-controls .btn {
+  font-size: 9px;
+  padding: 10px 14px;
+}
+body.pixel-theme .pomo-today {
+  font-size: 9px;
+  line-height: 2;
+}
+body.pixel-theme .pomodoro-panel h2 {
+  font-size: 10px;
+}
+
+/* ════════════════════════════════════════
+   TOMATO ICON — PIXEL VERSION
+   ════════════════════════════════════════ */
+
+/* Hide modern version, show pixel version */
+body.pixel-theme .tomato-modern { display: none; }
+body.pixel-theme .tomato-pixel  { display: block; }
+
+/* Pixel-step breathing animation */
+@keyframes pixelTomatoBreathe {
+  0%, 100% { transform: scale(1);    filter: brightness(1); }
+  50%       { transform: scale(1.14); filter: brightness(1.25) drop-shadow(0 0 6px #F7768E); }
+}
+body.pixel-theme .tomato-icon-wrapper .tomato-icon {
+  animation: pixelTomatoBreathe 2s steps(4) infinite;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Pause animation when wrapper doesn't have .active */
+body.pixel-theme .tomato-icon-wrapper .tomato-icon {
+  animation-play-state: paused;
+}
+body.pixel-theme .tomato-icon-wrapper.active .tomato-icon {
+  animation-play-state: running;
+}
+
+/* Position above timer in pomo-center */
+body.pixel-theme .tomato-icon-wrapper {
+  position: relative;
+  z-index: 2;
+  margin-bottom: 4px;
 }

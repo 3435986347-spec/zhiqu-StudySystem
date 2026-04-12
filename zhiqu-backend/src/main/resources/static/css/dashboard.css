@@ -1,180 +1,301 @@
+/* ═══════════════════════════════════════
+   Dashboard — Quadrant Board + Pomodoro
+   ═══════════════════════════════════════ */
+
+/* ── Layout ── */
 .dashboard-layout {
-    display: flex;
-    gap: 20px;
-    align-items: flex-start;
-    flex-wrap: wrap;
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  flex-wrap: wrap;
 }
 
 .dashboard-main {
-    flex: 1 1 72%;
-    min-width: 280px;
+  flex: 1 1 68%;
+  min-width: 280px;
 }
 
 .dashboard-side {
-    flex: 0 0 280px;
-    max-width: 100%;
+  flex: 0 0 292px;
+  max-width: 100%;
 }
 
+/* ── Add-task button ── */
+#btn-new-task {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ════════════════════════════════
+   QUADRANT GRID
+   ════════════════════════════════ */
 .quadrant-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-    margin-bottom: 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 0;
 }
 
-@media (max-width: 768px) {
-    .quadrant-grid {
-        grid-template-columns: 1fr;
-    }
-    .dashboard-side {
-        flex: 1 1 100%;
-    }
+@media (max-width: 800px) {
+  .quadrant-grid { grid-template-columns: 1fr; }
+  .dashboard-side { flex: 1 1 100%; }
 }
 
-.quadrant-grid .quad-card {
-    min-height: 200px;
-    background: #fff;
-    border-radius: 8px;
-    padding: 14px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+.quad-card {
+  min-height: 220px;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  padding: 0;
+  box-shadow: var(--shadow-md);
+  transition: box-shadow 0.25s, transform 0.25s;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.quad-card:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
 }
 
+/* ── Quadrant header bars ── */
 .quad-card h3 {
-    margin: 0 0 12px;
-    font-size: 15px;
-    color: #409eff;
-    border-bottom: 1px solid #ebeef5;
-    padding-bottom: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 11px 16px;
+  letter-spacing: 0.03em;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.quad-card .quad-body {
+  padding: 12px 14px;
+  flex: 1;
+  overflow-y: auto;
 }
 
-.quad-card.q2 h3 { color: #67c23a; }
-.quad-card.q3 h3 { color: #e6a23c; }
-.quad-card.q4 h3 { color: #909399; }
+/* Q1 — 重要且紧急 (Red) */
+.quad-card.q1 { border-top: 4px solid var(--q1); }
+.quad-card.q1 h3 { color: var(--q1); background: var(--q1-bg); }
 
+/* Q2 — 重要不紧急 (Blue) */
+.quad-card.q2 { border-top: 4px solid var(--q2); }
+.quad-card.q2 h3 { color: var(--q2); background: var(--q2-bg); }
+
+/* Q3 — 紧急不重要 (Orange) */
+.quad-card.q3 { border-top: 4px solid var(--q3); }
+.quad-card.q3 h3 { color: var(--q3); background: var(--q3-bg); }
+
+/* Q4 — 不重要不紧急 (Green) */
+.quad-card.q4 { border-top: 4px solid var(--q4); }
+.quad-card.q4 h3 { color: var(--q4); background: var(--q4-bg); }
+
+/* ── Task mini cards ── */
 .task-mini-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .task-mini {
-    border: 1px solid #ebeef5;
-    border-radius: 6px;
-    padding: 10px;
-    margin-bottom: 8px;
-    font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+  background: var(--bg-main);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  animation: fadeInUp 0.3s ease both;
 }
-
-.task-mini:last-child {
-    margin-bottom: 0;
+.task-mini:hover {
+  border-color: var(--primary);
+  box-shadow: 0 2px 8px rgba(91,141,239,0.10);
 }
 
 .task-mini .title {
-    font-weight: 500;
-    margin-bottom: 6px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+  line-height: 1.4;
 }
 
 .task-mini .meta {
-    color: #909399;
-    font-size: 12px;
-    margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.7;
+  margin-bottom: 8px;
 }
 
 .task-mini .status-select {
-    width: 100%;
-    padding: 6px 8px;
-    font-size: 13px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.task-mini .status-select:focus {
+  border-color: var(--primary);
+  outline: none;
 }
 
+/* ── Empty hint ── */
 .empty-hint {
-    color: #c0c4cc;
-    font-size: 13px;
-    text-align: center;
-    padding: 24px 8px;
+  color: #C4C9D4;
+  font-size: 13px;
+  text-align: center;
+  padding: 32px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.empty-hint::before {
+  content: '📭';
+  font-size: 28px;
+  display: block;
+  margin-bottom: 4px;
+  opacity: 0.5;
 }
 
-/* 番茄钟 */
+/* ════════════════════════════════
+   POMODORO PANEL
+   ════════════════════════════════ */
 .pomodoro-panel {
-    background: #fff;
-    border-radius: 8px;
-    padding: 20px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-    text-align: center;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  padding: 24px 20px;
+  box-shadow: var(--shadow-md);
+  text-align: center;
 }
 
 .pomodoro-panel h2 {
-    margin: 0 0 16px;
-    font-size: 18px;
+  margin: 0 0 12px;
+  font-family: "Poppins", "Noto Sans SC", sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
+/* ── Ring ── */
 .pomo-ring-wrap {
-    position: relative;
-    width: 200px;
-    height: 200px;
-    margin: 0 auto 16px;
+  position: relative;
+  width: 200px;
+  height: 200px;
+  margin: 0 auto 16px;
 }
-
 .pomo-ring-wrap svg {
-    transform: rotate(-90deg);
+  transform: rotate(-90deg);
+  filter: drop-shadow(0 4px 12px rgba(91,141,239,0.15));
 }
 
 .pomo-center {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .pomo-time {
-    font-size: 36px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  font-size: 38px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1;
 }
 
 .pomo-phase {
-    font-size: 14px;
-    color: #909399;
-    margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  letter-spacing: 0.04em;
 }
 
 .pomo-round {
-    font-size: 13px;
-    color: #606266;
-    margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+  min-height: 18px;
 }
 
-.pomo-controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-    margin-bottom: 12px;
+/* ── Breathing animation when working ── */
+@keyframes pomoPulse {
+  0%, 100% { filter: drop-shadow(0 4px 12px rgba(91,141,239,0.15)); }
+  50%       { filter: drop-shadow(0 6px 20px rgba(91,141,239,0.35)); }
+}
+.pomo-ring-wrap.is-working svg {
+  animation: pomoPulse 2s ease-in-out infinite;
 }
 
-.pomo-controls .btn {
-    padding: 8px 14px;
-    font-size: 13px;
-}
-
+/* ── Fields ── */
 .pomo-fields {
-    text-align: left;
-    margin-bottom: 12px;
+  text-align: left;
+  margin-bottom: 14px;
+}
+.pomo-fields .form-group { margin-bottom: 10px; }
+.pomo-fields label { font-size: 12px; }
+
+/* ── Controls ── */
+.pomo-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.pomo-controls .btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  border-radius: 8px;
 }
 
-.pomo-fields .form-group {
-    margin-bottom: 10px;
-}
-
-.pomo-fields label {
-    font-size: 13px;
-}
-
+/* ── Today stats ── */
 .pomo-today {
-    font-size: 13px;
-    color: #606266;
-    padding-top: 8px;
-    border-top: 1px solid #ebeef5;
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-weight: 500;
+}
+
+/* ════════════════════════════════
+   TOMATO ICON (modern theme)
+   ════════════════════════════════ */
+.tomato-icon-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+/* Hide pixel version by default */
+.tomato-pixel { display: none; }
+
+/* Smooth breathing animation */
+@keyframes tomatoBreathe {
+  0%, 100% { transform: scale(1);    opacity: 0.88; }
+  50%       { transform: scale(1.12); opacity: 1; }
+}
+.tomato-icon {
+  animation: tomatoBreathe 3s ease-in-out infinite;
+  /* Pause when not active */
+  animation-play-state: paused;
+  opacity: 0.65;
+  transition: opacity 0.4s;
+}
+.tomato-icon-wrapper.active .tomato-icon {
+  animation-play-state: running;
+  opacity: 1;
 }

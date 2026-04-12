@@ -1,74 +1,148 @@
+/* ═══════════════════════════════
+   Login Page — Modern Style
+   ═══════════════════════════════ */
+
 .login-page {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    background: linear-gradient(135deg, #e8f4ff 0%, #f5f7fa 50%, #ecf5ff 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #F5F7FA;
+  /* Subtle geometric mesh */
+  background-image:
+    radial-gradient(ellipse at 20% 50%, rgba(91,141,239,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 20%, rgba(82,199,122,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 60% 80%, rgba(245,166,35,0.05) 0%, transparent 50%);
 }
 
+/* ── Floating decorative blobs ── */
+.login-page::before,
+.login-page::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+.login-page::before {
+  width: 500px; height: 500px;
+  top: -150px; right: -150px;
+  background: radial-gradient(circle, rgba(91,141,239,0.10) 0%, transparent 70%);
+}
+.login-page::after {
+  width: 400px; height: 400px;
+  bottom: -120px; left: -120px;
+  background: radial-gradient(circle, rgba(82,199,122,0.08) 0%, transparent 70%);
+}
+
+/* ── Card ── */
 .login-card {
-    width: 100%;
-    max-width: 420px;
-    background: #fff;
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(64, 158, 255, 0.12);
-    padding: 28px 32px 32px;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 420px;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 8px 40px rgba(91,141,239,0.12), 0 2px 8px rgba(0,0,0,0.05);
+  padding: 36px 36px 40px;
+  animation: loginCardIn 0.55s cubic-bezier(0.34,1.2,0.64,1) both;
+}
+@keyframes loginCardIn {
+  from { opacity: 0; transform: translateY(24px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* ── Brand ── */
 .login-card h1 {
-    margin: 0 0 8px;
-    font-size: 22px;
-    text-align: center;
-    color: #303133;
+  margin: 0 0 6px;
+  font-family: "Poppins", "Noto Sans SC", sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+  color: #1A1A2E;
+  letter-spacing: -0.02em;
 }
 
 .login-sub {
-    text-align: center;
-    color: #909399;
-    font-size: 14px;
-    margin-bottom: 24px;
+  text-align: center;
+  color: #6B7280;
+  font-size: 13px;
+  margin-bottom: 28px;
 }
 
+/* ── Tabs ── */
 .tabs {
-    display: flex;
-    border-bottom: 1px solid #dcdfe6;
-    margin-bottom: 20px;
+  position: relative;
+  display: flex;
+  margin-bottom: 26px;
+  background: #F5F7FA;
+  border-radius: 10px;
+  padding: 4px;
+  gap: 4px;
 }
 
 .tab-btn {
-    flex: 1;
-    padding: 12px;
-    border: none;
-    background: none;
-    font-size: 15px;
-    color: #606266;
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
+  flex: 1;
+  padding: 10px;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  color: #6B7280;
+  cursor: pointer;
+  border-radius: 7px;
+  transition: all 0.25s;
+  position: relative;
+  z-index: 1;
 }
-
 .tab-btn.active {
-    color: #409eff;
-    font-weight: 500;
-    border-bottom-color: #409eff;
+  color: #5B8DEF;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  font-weight: 600;
 }
 
-.tab-panel.hidden {
-    display: none;
+/* ── Tab panels ── */
+.tab-panel.hidden { display: none; }
+
+/* ── Inputs ── */
+.login-card .form-group input {
+  height: 46px;
+  border-radius: 10px;
+  border: 1.5px solid #E5E7EB;
+  font-size: 15px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.login-card .form-group input:focus {
+  border-color: #5B8DEF;
+  box-shadow: 0 0 0 3px rgba(91,141,239,0.15);
 }
 
-.login-actions {
-    margin-top: 20px;
-}
-
+/* ── Submit button ── */
+.login-actions { margin-top: 24px; }
 .login-actions .btn {
-    width: 100%;
+  width: 100%;
+  height: 48px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 10px;
+  letter-spacing: 0.02em;
+}
+.login-actions .btn-primary {
+  background: linear-gradient(135deg, #5B8DEF 0%, #7B5EA7 100%);
+  box-shadow: 0 4px 20px rgba(91,141,239,0.35);
+}
+.login-actions .btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 28px rgba(91,141,239,0.45);
 }
 
+/* ── Error ── */
 .error-msg {
-    color: #f56c6c;
-    font-size: 13px;
-    margin-top: 8px;
-    min-height: 20px;
+  color: #EF5B5B;
+  font-size: 13px;
+  margin-top: 8px;
+  min-height: 18px;
 }

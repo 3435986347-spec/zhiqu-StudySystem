@@ -1,0 +1,124 @@
+/* ════════════════════════════
+   Achievement Page
+   ════════════════════════════ */
+
+.ach-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.ach-meta {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* ── Filter buttons ── */
+.ach-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.ach-filters button {
+  padding: 8px 18px;
+  border: 1.5px solid var(--border);
+  background: var(--bg-card);
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+.ach-filters button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+}
+.ach-filters button.active {
+  border-color: var(--primary);
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 2px 8px rgba(91,141,239,0.30);
+}
+
+/* ── Achievement grid ── */
+.ach-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+@media (max-width: 900px) { .ach-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 520px)  { .ach-grid { grid-template-columns: 1fr; } }
+
+/* ── Achievement card ── */
+.ach-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  box-shadow: var(--shadow-md);
+  position: relative;
+  border-top: 3px solid var(--success);
+  transition: all 0.25s;
+  animation: fadeInUp 0.3s ease both;
+}
+.ach-card:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-3px);
+}
+
+/* Unlocked: golden shimmer border */
+.ach-card:not(.locked) {
+  border-top-color: var(--warning);
+  background: linear-gradient(135deg, #fff 0%, #fffdf5 100%);
+}
+
+/* Locked: muted */
+.ach-card.locked {
+  opacity: 0.55;
+  border-top-color: var(--border);
+  filter: grayscale(0.3);
+}
+.ach-card.locked:hover {
+  opacity: 0.7;
+}
+
+/* Newly unlocked highlight */
+.ach-card.highlight {
+  box-shadow: 0 0 0 2px var(--success), 0 8px 32px rgba(82,199,122,0.25);
+  animation: achieveGlow 0.6s ease both;
+}
+@keyframes achieveGlow {
+  0%  { box-shadow: 0 0 0 0px var(--success), 0 4px 12px rgba(82,199,122,0.1); }
+  50% { box-shadow: 0 0 0 4px var(--success), 0 12px 40px rgba(82,199,122,0.40); }
+  100%{ box-shadow: 0 0 0 2px var(--success), 0 8px 32px rgba(82,199,122,0.25); }
+}
+
+.ach-name {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.ach-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  min-height: 40px;
+  line-height: 1.6;
+}
+
+.ach-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}

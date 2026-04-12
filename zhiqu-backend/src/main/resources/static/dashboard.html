@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>看板 - 知趣·象限学习系统</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/common.css">
     <link rel="stylesheet" href="/css/dashboard.css">
     <link rel="stylesheet" href="/css/pixel-theme.css">
@@ -15,34 +18,87 @@
             <div class="dashboard-main">
                 <div class="quadrant-grid">
                     <div class="quad-card q1">
-                        <h3>重要且紧急</h3>
-                        <ul class="task-mini-list" id="quad-list-1"></ul>
+                        <h3><span class="q-emoji">🔥</span>重要且紧急</h3>
+                        <div class="quad-body">
+                            <ul class="task-mini-list" id="quad-list-1"></ul>
+                        </div>
                     </div>
                     <div class="quad-card q2">
-                        <h3>重要不紧急</h3>
-                        <ul class="task-mini-list" id="quad-list-2"></ul>
+                        <h3><span class="q-emoji">⭐</span>重要不紧急</h3>
+                        <div class="quad-body">
+                            <ul class="task-mini-list" id="quad-list-2"></ul>
+                        </div>
                     </div>
                     <div class="quad-card q3">
-                        <h3>紧急不重要</h3>
-                        <ul class="task-mini-list" id="quad-list-3"></ul>
+                        <h3><span class="q-emoji">⚡</span>紧急不重要</h3>
+                        <div class="quad-body">
+                            <ul class="task-mini-list" id="quad-list-3"></ul>
+                        </div>
                     </div>
                     <div class="quad-card q4">
-                        <h3>不重要不紧急</h3>
-                        <ul class="task-mini-list" id="quad-list-4"></ul>
+                        <h3><span class="q-emoji">💤</span>不重要不紧急</h3>
+                        <div class="quad-body">
+                            <ul class="task-mini-list" id="quad-list-4"></ul>
+                        </div>
                     </div>
                 </div>
-                <button type="button" class="btn btn-primary" id="btn-new-task">+ 新增任务</button>
+                <button type="button" class="btn btn-primary" id="btn-new-task">＋ 新增任务</button>
             </div>
             <aside class="dashboard-side">
                 <div class="pomodoro-panel">
                     <h2>番茄钟</h2>
                     <div class="pomo-round" id="pomo-round"></div>
-                    <div class="pomo-ring-wrap">
+                    <div class="pomo-ring-wrap" id="pomo-ring-wrap">
                         <svg width="200" height="200" viewBox="0 0 200 200" aria-hidden="true">
-                            <circle cx="100" cy="100" r="80" fill="none" stroke="#ebeef5" stroke-width="10"/>
-                            <circle id="pomo-ring-fg" cx="100" cy="100" r="80" fill="none" stroke="#409EFF" stroke-width="10" stroke-linecap="round"/>
+                            <circle cx="100" cy="100" r="80" fill="none" stroke="#E5E7EB" stroke-width="10"/>
+                            <circle id="pomo-ring-fg" cx="100" cy="100" r="80" fill="none" stroke="#5B8DEF" stroke-width="10" stroke-linecap="round"/>
                         </svg>
                         <div class="pomo-center">
+                            <div class="tomato-icon-wrapper" id="tomato-wrapper">
+                                <!-- 现代风：扁平番茄 -->
+                                <svg class="tomato-icon tomato-modern" viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
+                                    <!-- 茎 -->
+                                    <rect x="29" y="6" width="5" height="10" rx="2.5" fill="#6D4C41"/>
+                                    <!-- 左叶 -->
+                                    <ellipse cx="24" cy="10" rx="9" ry="5" fill="#43A047" transform="rotate(-30 24 10)"/>
+                                    <!-- 右叶 -->
+                                    <ellipse cx="40" cy="10" rx="9" ry="5" fill="#66BB6A" transform="rotate(30 40 10)"/>
+                                    <!-- 番茄主体 -->
+                                    <ellipse cx="32" cy="40" rx="22" ry="20" fill="#E53935"/>
+                                    <!-- 亮面 -->
+                                    <ellipse cx="32" cy="40" rx="22" ry="20" fill="url(#tomatoGrad)"/>
+                                    <!-- 高光 -->
+                                    <ellipse cx="23" cy="33" rx="7" ry="9" fill="rgba(255,255,255,0.22)" transform="rotate(-20 23 33)"/>
+                                    <defs>
+                                        <radialGradient id="tomatoGrad" cx="40%" cy="35%" r="60%">
+                                            <stop offset="0%"   stop-color="#EF5350"/>
+                                            <stop offset="100%" stop-color="#B71C1C"/>
+                                        </radialGradient>
+                                    </defs>
+                                </svg>
+                                <!-- 像素风：星露谷风格 8×8 像素番茄 -->
+                                <svg class="tomato-icon tomato-pixel" viewBox="0 0 16 16" width="44" height="44" aria-hidden="true" style="image-rendering:pixelated">
+                                    <!-- 茎 -->
+                                    <rect x="7" y="1" width="2" height="3" fill="#5D4037"/>
+                                    <!-- 左叶 -->
+                                    <rect x="3" y="2" width="4" height="2" fill="#388E3C"/>
+                                    <rect x="4" y="1" width="3" height="1" fill="#43A047"/>
+                                    <!-- 右叶 -->
+                                    <rect x="9" y="2" width="4" height="2" fill="#43A047"/>
+                                    <rect x="9" y="1" width="3" height="1" fill="#66BB6A"/>
+                                    <!-- 番茄顶 -->
+                                    <rect x="4" y="4"  width="8" height="1" fill="#E53935"/>
+                                    <!-- 番茄主体 -->
+                                    <rect x="3" y="5"  width="10" height="1" fill="#E53935"/>
+                                    <rect x="2" y="6"  width="12" height="5" fill="#E53935"/>
+                                    <rect x="3" y="11" width="10" height="2" fill="#C62828"/>
+                                    <rect x="4" y="13" width="8"  height="1" fill="#B71C1C"/>
+                                    <rect x="5" y="14" width="6"  height="1" fill="#B71C1C"/>
+                                    <!-- 高光 -->
+                                    <rect x="4" y="6"  width="2" height="4" fill="#EF9A9A"/>
+                                    <rect x="4" y="5"  width="1" height="1" fill="#FFCDD2"/>
+                                </svg>
+                            </div>
                             <div class="pomo-time" id="pomo-time">25:00</div>
                             <div class="pomo-phase" id="pomo-phase">待开始</div>
                         </div>
@@ -80,41 +136,45 @@
             <form id="form-new-task">
                 <div class="form-group">
                     <label for="nt-title">任务标题</label>
-                    <input id="nt-title" required maxlength="200">
+                    <input id="nt-title" required maxlength="200" placeholder="输入任务标题">
                 </div>
                 <div class="form-group">
                     <label for="nt-desc">任务描述（选填）</label>
-                    <textarea id="nt-desc"></textarea>
+                    <textarea id="nt-desc" placeholder="详细描述..."></textarea>
                 </div>
-                <div class="form-group">
-                    <label for="nt-quadrant">所属象限</label>
-                    <select id="nt-quadrant" required>
-                        <option value="1">1 — 重要且紧急</option>
-                        <option value="2">2 — 重要不紧急</option>
-                        <option value="3">3 — 紧急不重要</option>
-                        <option value="4">4 — 不重要不紧急</option>
-                    </select>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="nt-quadrant">所属象限</label>
+                        <select id="nt-quadrant" required>
+                            <option value="1">🔥 重要且紧急</option>
+                            <option value="2">⭐ 重要不紧急</option>
+                            <option value="3">⚡ 紧急不重要</option>
+                            <option value="4">💤 不重要不紧急</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="nt-priority">优先级</label>
+                        <select id="nt-priority">
+                            <option value="0">低</option>
+                            <option value="1" selected>中</option>
+                            <option value="2">高</option>
+                            <option value="3">紧急</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="nt-priority">优先级</label>
-                    <select id="nt-priority">
-                        <option value="0">低</option>
-                        <option value="1" selected>中</option>
-                        <option value="2">高</option>
-                        <option value="3">紧急</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="nt-deadline">截止时间</label>
-                    <input type="datetime-local" id="nt-deadline">
-                </div>
-                <div class="form-group">
-                    <label for="nt-reminder">提醒时间</label>
-                    <input type="datetime-local" id="nt-reminder">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="nt-deadline">截止时间</label>
+                        <input type="datetime-local" id="nt-deadline">
+                    </div>
+                    <div class="form-group">
+                        <label for="nt-reminder">提醒时间</label>
+                        <input type="datetime-local" id="nt-reminder">
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-default" id="task-modal-cancel">取消</button>
-                    <button type="submit" class="btn btn-primary">创建</button>
+                    <button type="submit" class="btn btn-primary">创建任务</button>
                 </div>
             </form>
         </div>
@@ -123,5 +183,30 @@
     <script src="/js/common.js"></script>
     <script src="/js/pomodoro.js"></script>
     <script src="/js/dashboard.js"></script>
+    <script>
+    /* Tomato icon animation state — wire to pomodoro buttons without touching pomodoro.js */
+    (function() {
+        var wrapper = null;
+        function getWrapper() {
+            return wrapper || (wrapper = document.getElementById('tomato-wrapper'));
+        }
+        function setActive(on) {
+            var w = getWrapper();
+            if (w) { on ? w.classList.add('active') : w.classList.remove('active'); }
+        }
+        document.addEventListener('DOMContentLoaded', function() {
+            var start  = document.getElementById('pomo-start');
+            var pause  = document.getElementById('pomo-pause');
+            var resume = document.getElementById('pomo-resume');
+            var reset  = document.getElementById('pomo-reset');
+            var skip   = document.getElementById('pomo-skip');
+            if (start)  start.addEventListener('click',  function() { setActive(true); });
+            if (resume) resume.addEventListener('click', function() { setActive(true); });
+            if (pause)  pause.addEventListener('click',  function() { setActive(false); });
+            if (reset)  reset.addEventListener('click',  function() { setActive(false); });
+            if (skip)   skip.addEventListener('click',   function() { setActive(false); });
+        });
+    })();
+    </script>
 </body>
 </html>

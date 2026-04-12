@@ -1,0 +1,28 @@
+/* ════════════════════════════
+   Tasks Page
+   ════════════════════════════ */
+
+/* ── Table action buttons ── */
+.data-table .btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  margin: 0 2px;
+}
+
+/* ── Row cursor ── */
+.data-table tbody tr {
+  cursor: default;
+}
+
+/* ── Strikethrough for completed tasks ── */
+.data-table tr.status-done td:first-child {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+}
+
+/* ── Pixel theme overrides for tasks ── */
+body.pixel-theme .data-table .btn {
+  font-size: 7px;
+  padding: 5px 8px;
+  box-shadow: 2px 2px 0 #000;
+}

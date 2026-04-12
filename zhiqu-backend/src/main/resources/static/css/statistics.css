@@ -1,0 +1,81 @@
+/* ════════════════════════════
+   Statistics Page
+   ════════════════════════════ */
+
+.statistics-title {
+  margin: 0 0 24px;
+  font-family: "Poppins", "Noto Sans SC", sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.charts-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: stretch;
+}
+
+.chart-box {
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  box-shadow: var(--shadow-md);
+  transition: box-shadow 0.25s;
+}
+.chart-box:hover {
+  box-shadow: var(--shadow-lg);
+}
+
+.chart-box h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.chart-trend {
+  flex: 1 1 58%;
+  min-width: 280px;
+}
+
+.chart-pie {
+  flex: 1 1 32%;
+  min-width: 260px;
+}
+
+/* ── Trend tabs ── */
+.trend-tabs {
+  margin-bottom: 14px;
+  display: flex;
+  gap: 8px;
+}
+.trend-tabs button {
+  padding: 7px 16px;
+  border: 1.5px solid var(--border);
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+.trend-tabs button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+}
+.trend-tabs button.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+  font-weight: 600;
+}
+
+.chart-inner {
+  height: 360px;
+  width: 100%;
+}

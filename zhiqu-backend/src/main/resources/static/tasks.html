@@ -4,27 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>任务列表 - 知趣·象限学习系统</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/common.css">
+    <link rel="stylesheet" href="/css/tasks.css">
     <link rel="stylesheet" href="/css/pixel-theme.css">
 </head>
 <body>
     <div id="navbar"></div>
     <div class="main-content">
         <div class="page-title-row">
-            <div>
-                <a href="/dashboard.html">← 返回看板</a>
-                <h1 style="margin-top:8px">任务列表</h1>
-            </div>
+            <h1>📋 任务列表</h1>
+            <a href="/dashboard.html" style="font-size:14px">← 返回看板</a>
         </div>
         <div class="filter-bar">
             <div class="form-group">
                 <label for="f-quadrant">象限</label>
                 <select id="f-quadrant">
                     <option value="">全部</option>
-                    <option value="1">1 重要且紧急</option>
-                    <option value="2">2 重要不紧急</option>
-                    <option value="3">3 紧急不重要</option>
-                    <option value="4">4 不重要不紧急</option>
+                    <option value="1">🔥 重要且紧急</option>
+                    <option value="2">⭐ 重要不紧急</option>
+                    <option value="3">⚡ 紧急不重要</option>
+                    <option value="4">💤 不重要不紧急</option>
                 </select>
             </div>
             <div class="form-group">
@@ -47,7 +49,7 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="f-sortBy">排序字段</label>
+                <label for="f-sortBy">排序</label>
                 <select id="f-sortBy">
                     <option value="updatedAt">更新时间</option>
                     <option value="deadline">截止时间</option>
@@ -55,14 +57,14 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="f-sortOrder">排序方向</label>
+                <label for="f-sortOrder">方向</label>
                 <select id="f-sortOrder">
                     <option value="desc">降序</option>
                     <option value="asc">升序</option>
                 </select>
             </div>
             <button type="button" class="btn btn-primary" id="btn-query">查询</button>
-            <button type="button" class="btn btn-success" id="btn-new">新建任务</button>
+            <button type="button" class="btn btn-success" id="btn-new">＋ 新建任务</button>
         </div>
         <div class="table-wrap">
             <table class="data-table">
@@ -99,23 +101,25 @@
                     <label for="et-desc">任务描述</label>
                     <textarea id="et-desc"></textarea>
                 </div>
-                <div class="form-group">
-                    <label for="et-quadrant">象限</label>
-                    <select id="et-quadrant" required>
-                        <option value="1">1 — 重要且紧急</option>
-                        <option value="2">2 — 重要不紧急</option>
-                        <option value="3">3 — 紧急不重要</option>
-                        <option value="4">4 — 不重要不紧急</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="et-priority">优先级</label>
-                    <select id="et-priority">
-                        <option value="0">低</option>
-                        <option value="1">中</option>
-                        <option value="2">高</option>
-                        <option value="3">紧急</option>
-                    </select>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="et-quadrant">象限</label>
+                        <select id="et-quadrant" required>
+                            <option value="1">🔥 重要且紧急</option>
+                            <option value="2">⭐ 重要不紧急</option>
+                            <option value="3">⚡ 紧急不重要</option>
+                            <option value="4">💤 不重要不紧急</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="et-priority">优先级</label>
+                        <select id="et-priority">
+                            <option value="0">低</option>
+                            <option value="1">中</option>
+                            <option value="2">高</option>
+                            <option value="3">紧急</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label for="et-status">状态</label>
@@ -125,13 +129,15 @@
                         <option value="2">已完成</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label for="et-deadline">截止时间</label>
-                    <input type="datetime-local" id="et-deadline">
-                </div>
-                <div class="form-group">
-                    <label for="et-reminder">提醒时间</label>
-                    <input type="datetime-local" id="et-reminder">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="et-deadline">截止时间</label>
+                        <input type="datetime-local" id="et-deadline">
+                    </div>
+                    <div class="form-group">
+                        <label for="et-reminder">提醒时间</label>
+                        <input type="datetime-local" id="et-reminder">
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-default" id="edit-cancel">取消</button>
@@ -151,37 +157,41 @@
             <form id="form-create-task">
                 <div class="form-group">
                     <label for="ct-title">任务标题</label>
-                    <input id="ct-title" required>
+                    <input id="ct-title" required placeholder="输入任务标题">
                 </div>
                 <div class="form-group">
                     <label for="ct-desc">任务描述</label>
-                    <textarea id="ct-desc"></textarea>
+                    <textarea id="ct-desc" placeholder="详细描述..."></textarea>
                 </div>
-                <div class="form-group">
-                    <label for="ct-quadrant">象限</label>
-                    <select id="ct-quadrant" required>
-                        <option value="1">1 — 重要且紧急</option>
-                        <option value="2">2 — 重要不紧急</option>
-                        <option value="3">3 — 紧急不重要</option>
-                        <option value="4">4 — 不重要不紧急</option>
-                    </select>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ct-quadrant">象限</label>
+                        <select id="ct-quadrant" required>
+                            <option value="1">🔥 重要且紧急</option>
+                            <option value="2">⭐ 重要不紧急</option>
+                            <option value="3">⚡ 紧急不重要</option>
+                            <option value="4">💤 不重要不紧急</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="ct-priority">优先级</label>
+                        <select id="ct-priority">
+                            <option value="0">低</option>
+                            <option value="1" selected>中</option>
+                            <option value="2">高</option>
+                            <option value="3">紧急</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="ct-priority">优先级</label>
-                    <select id="ct-priority">
-                        <option value="0">低</option>
-                        <option value="1" selected>中</option>
-                        <option value="2">高</option>
-                        <option value="3">紧急</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="ct-deadline">截止时间</label>
-                    <input type="datetime-local" id="ct-deadline">
-                </div>
-                <div class="form-group">
-                    <label for="ct-reminder">提醒时间</label>
-                    <input type="datetime-local" id="ct-reminder">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ct-deadline">截止时间</label>
+                        <input type="datetime-local" id="ct-deadline">
+                    </div>
+                    <div class="form-group">
+                        <label for="ct-reminder">提醒时间</label>
+                        <input type="datetime-local" id="ct-reminder">
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-default" id="create-cancel">取消</button>
