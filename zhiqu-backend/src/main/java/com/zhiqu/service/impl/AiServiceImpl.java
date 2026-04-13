@@ -56,23 +56,60 @@ public class AiServiceImpl implements AiService {
 
     @Override
     public List<Map<String, Object>> analyzeContent(Long userId, String content, String fileName) {
+        UserAiConfig config = requireConfig(userId);
+        String userMessage = "文件名：" + fileName + "\n\n文件内容：\n" + content;
+        String aiResponse = callAiApi(config, getAnalyzeSystemPrompt(), userMessage);
+        return parseTasksFromResponse(aiResponse);
+    }
+
+    @Override
+    public List<Map<String, Object>> analyzeImage(Long userId, String base64Image, String mediaType, String fileName) {
+        UserAiConfig config = requireConfig(userId);
+
+        List<Map<String, Object>> userContent = new ArrayList<>();
+        userContent.add(Map.of("type", "text",
+                "text", "请分析这张图片中的课表/行程/学习安排，提取出所有任务。文件名：" + fileName));
+        userContent.add(Map.of(
+                "type", "image_url",
+                "image_url", Map.of("url", "data:" + mediaType + ";base64," + base64Image)
+        ));
+
+        String aiResponse = callAiApiWithVision(config, getAnalyzeSystemPrompt(), userContent);
+        return parseTasksFromResponse(aiResponse);
+    }
+
+    @Override
+    public String chat(Long userId, String message) {
+        UserAiConfig config = requireConfig(userId);
+        String systemPrompt = "你是「知趣·象限学习系统」的 AI 助手，帮助大学生规划学习任务和时间管理。回答简洁友好。";
+        return callAiApi(config, systemPrompt, message);
+    }
+
+    // ── 私有辅助方法 ──────────────────────────────────────
+
+    /** 校验配置并返回，未配置时抛出业务异常 */
+    private UserAiConfig requireConfig(Long userId) {
         UserAiConfig config = getConfig(userId);
         if (config == null || config.getApiKey() == null || config.getApiKey().isBlank()) {
             throw new BusinessException("请先在个人中心配置 AI 模型 API Key");
         }
+        return config;
+    }
 
-        String systemPrompt = """
-                你是一个学习规划助手。用户会发送课表、行程安排或学习计划的内容。
+    /** 统一的文件分析 System Prompt */
+    private String getAnalyzeSystemPrompt() {
+        return """
+                你是一个学习规划助手。用户会发送课表、行程安排或学习计划的内容（可能是文字、图片或PDF）。
                 请分析内容，提取出所有可以作为学习任务的项目。
 
-                请严格按以下 JSON 数组格式返回，不要包含其他任何文字：
+                请严格按以下 JSON 数组格式返回，不要包含任何其他文字，不要用 markdown 代码块包裹：
                 [
                   {
                     "title": "任务标题",
                     "description": "任务描述",
                     "deadline": "YYYY-MM-DD HH:mm:ss 格式的截止时间，如果无法确定则为 null",
-                    "priority": 0-2 的数字（0低 1中 2高）,
-                    "suggestedQuadrant": 1-4 的数字（你建议的象限分类）,
+                    "priority": 0到2的数字（0低1中2高）,
+                    "suggestedQuadrant": 1到4的数字（你建议的象限分类）,
                     "reason": "你建议这个象限的理由（一句话）"
                   }
                 ]
@@ -82,11 +119,14 @@ public class AiServiceImpl implements AiService {
                 2 = 重要不紧急（长期学习计划、技能提升）
                 3 = 紧急不重要（非核心的杂事、通知）
                 4 = 不重要不紧急（可选活动、娱乐）
+
+                如果图片或内容中包含具体的日期和时间信息，请尽量提取为 deadline。
+                如果是周期性课表（如每周一上午的课），请按最近一周生成具体日期的任务。
                 """;
+    }
 
-        String userMessage = "文件名：" + fileName + "\n\n文件内容：\n" + content;
-        String aiResponse = callAiApi(config, systemPrompt, userMessage);
-
+    /** 从 AI 响应中解析结构化任务列表 */
+    private List<Map<String, Object>> parseTasksFromResponse(String aiResponse) {
         try {
             String jsonStr = extractJson(aiResponse);
             JsonNode array = objectMapper.readTree(jsonStr);
@@ -105,24 +145,11 @@ public class AiServiceImpl implements AiService {
             }
             return tasks;
         } catch (Exception e) {
-            int preview = Math.min(200, aiResponse.length());
-            throw new BusinessException("AI 返回格式解析失败，请重试。原始回复：" + aiResponse.substring(0, preview));
+            throw new BusinessException("AI 返回格式解析失败，请重试");
         }
     }
 
-    @Override
-    public String chat(Long userId, String message) {
-        UserAiConfig config = getConfig(userId);
-        if (config == null || config.getApiKey() == null || config.getApiKey().isBlank()) {
-            throw new BusinessException("请先在个人中心配置 AI 模型 API Key");
-        }
-        String systemPrompt = "你是「知趣·象限学习系统」的 AI 助手，帮助大学生规划学习任务和时间管理。回答简洁友好。";
-        return callAiApi(config, systemPrompt, message);
-    }
-
-    /**
-     * 调用 AI API（兼容 OpenAI / DeepSeek / 通义千问等兼容接口）
-     */
+    /** 调用 AI 文本接口（兼容 OpenAI / DeepSeek / 通义千问等） */
     private String callAiApi(UserAiConfig config, String systemPrompt, String userMessage) {
         try {
             HttpHeaders headers = new HttpHeaders();
@@ -147,6 +174,40 @@ public class AiServiceImpl implements AiService {
             throw e;
         } catch (Exception e) {
             throw new BusinessException("AI 接口调用失败：" + e.getMessage());
+        }
+    }
+
+    /** 调用 AI 视觉接口（携带 Base64 图片，OpenAI Vision 格式） */
+    private String callAiApiWithVision(UserAiConfig config, String systemPrompt,
+                                       List<Map<String, Object>> userContent) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(config.getApiKey());
+
+            Map<String, Object> body = new HashMap<>();
+            body.put("model", config.getModelName());
+            body.put("messages", List.of(
+                    Map.of("role", "system", "content", systemPrompt),
+                    Map.of("role", "user", "content", userContent)
+            ));
+            body.put("temperature", 0.3);
+            body.put("max_tokens", 4096);
+
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            ResponseEntity<String> response = restTemplate.postForEntity(config.getApiUrl(), request, String.class);
+
+            JsonNode root = objectMapper.readTree(response.getBody());
+            return root.at("/choices/0/message/content").asText();
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            if (msg.contains("400") || msg.contains("unsupported") || msg.contains("vision")) {
+                throw new BusinessException(
+                        "当前模型不支持图片识别，请在个人中心切换为支持视觉的模型（如 gpt-4o、qwen-vl-plus）");
+            }
+            throw new BusinessException("AI 接口调用失败：" + msg);
         }
     }
 

@@ -1,11 +1,13 @@
 package com.zhiqu.controller;
 
+import com.zhiqu.common.BusinessException;
 import com.zhiqu.common.Result;
 import com.zhiqu.dto.TaskCreateRequest;
 import com.zhiqu.entity.UserAiConfig;
 import com.zhiqu.security.SecurityUtils;
 import com.zhiqu.service.AiService;
 import com.zhiqu.service.StudyTaskService;
+import com.zhiqu.util.FileParseUtil;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -61,18 +63,45 @@ public class AiController {
     }
 
     /**
-     * 上传文件并分析，返回结构化任务列表
+     * 上传文件并分析（支持图片、PDF、文本三种类型）
      */
     @PostMapping("/analyze")
     public Result<List<Map<String, Object>>> analyzeFile(@RequestParam("file") MultipartFile file) {
         Long userId = SecurityUtils.getCurrentUserId();
+        String contentType = file.getContentType();
+        String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "未知文件";
+
         try {
-            String content = new String(file.getBytes(), StandardCharsets.UTF_8);
-            String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "未知文件";
-            List<Map<String, Object>> tasks = aiService.analyzeContent(userId, content, fileName);
+            List<Map<String, Object>> tasks;
+
+            if (FileParseUtil.isImage(contentType)) {
+                // 图片：转 Base64 发给视觉模型
+                String base64 = FileParseUtil.imageToBase64(file);
+                String mediaType = FileParseUtil.getImageMediaType(contentType);
+                tasks = aiService.analyzeImage(userId, base64, mediaType, fileName);
+
+            } else if (FileParseUtil.isPdf(contentType)) {
+                // PDF：提取文本后分析
+                String text = FileParseUtil.extractPdfText(file);
+                if (text == null || text.isBlank()) {
+                    throw new BusinessException("此 PDF 为扫描版，无法提取文字。建议截图后以图片格式上传。");
+                }
+                tasks = aiService.analyzeContent(userId, text, fileName);
+
+            } else if (FileParseUtil.isText(contentType, fileName)) {
+                // 文本文件：直接读取
+                String content = new String(file.getBytes(), StandardCharsets.UTF_8);
+                tasks = aiService.analyzeContent(userId, content, fileName);
+
+            } else {
+                throw new BusinessException("不支持的文件格式。支持：txt、md、csv、json、pdf、png、jpg、jpeg 等");
+            }
+
             return Result.success(tasks);
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException("文件读取失败：" + e.getMessage());
+            throw new BusinessException("文件处理失败：" + e.getMessage());
         }
     }
 

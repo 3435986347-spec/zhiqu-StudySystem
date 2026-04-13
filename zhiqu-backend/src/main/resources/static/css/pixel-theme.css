@@ -1258,54 +1258,54 @@ body.pixel-theme .cal-stats-fill {
 }
 
 /* ════════════════════════════════════════
-   AI 助手对话框 — PIXEL THEME
+   AI 助手嵌入面板 — PIXEL THEME
    ════════════════════════════════════════ */
 
-/* 悬浮按钮 */
-body.pixel-theme .ai-fab {
+/* 面板容器 */
+body.pixel-theme .ai-panel {
   border-radius: 0;
-  background: var(--pixel-primary);
+  border: 2px solid var(--pixel-border);
   box-shadow: 4px 4px 0 #000;
-  border: 2px solid var(--pixel-primary);
-  font-size: 20px;
-}
-body.pixel-theme .ai-fab:hover {
-  transform: translate(-1px, -1px);
-  box-shadow: 5px 5px 0 #000;
-}
-body.pixel-theme .ai-fab:active {
-  transform: translate(2px, 2px);
-  box-shadow: 1px 1px 0 #000;
-}
-
-/* 对话框主体 */
-body.pixel-theme .ai-dialog {
-  border-radius: 0;
-  border: 2px solid var(--pixel-primary);
-  box-shadow: 6px 6px 0 #000;
-  background: var(--pixel-bg-card);
-  animation: pixelModalIn 0.15s steps(4) both;
 }
 
 /* 标题栏 */
-body.pixel-theme .ai-dialog-header {
+body.pixel-theme .ai-panel-header {
   background: var(--pixel-bg-panel);
   border-bottom: 2px solid var(--pixel-primary);
+  background-image: none;
+  filter: none;
 }
-body.pixel-theme .ai-dialog-title {
+body.pixel-theme .ai-panel-header:hover {
+  filter: brightness(1.1);
+}
+body.pixel-theme .ai-panel-title {
   font-family: "Press Start 2P", monospace;
   font-size: 9px;
   color: var(--pixel-primary);
   text-shadow: 1px 1px 0 #000;
   letter-spacing: 1px;
 }
-body.pixel-theme .ai-dialog-close {
+body.pixel-theme .ai-panel-hint {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
   color: var(--pixel-text-dim);
-  font-size: 14px;
+  letter-spacing: 0.5px;
 }
-body.pixel-theme .ai-dialog-close:hover {
-  background: var(--pixel-danger);
-  color: var(--pixel-bg);
+body.pixel-theme .ai-panel-toggle {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-primary);
+}
+
+/* 左侧对话区 */
+body.pixel-theme .ai-chat-side {
+  border-right: 2px solid var(--pixel-border);
+  background: var(--pixel-bg-card);
+}
+
+/* 右侧确认区 */
+body.pixel-theme .ai-confirm-side {
+  background: var(--pixel-bg-panel);
 }
 
 /* 消息气泡 */
@@ -1336,7 +1336,10 @@ body.pixel-theme .ai-thinking {
 /* 拖拽区域 */
 body.pixel-theme .ai-drop-zone {
   border-top: 2px dashed var(--pixel-border);
-  color: var(--pixel-text-dim);
+  background: var(--pixel-bg-card);
+}
+body.pixel-theme .ai-drop-text,
+body.pixel-theme .ai-drop-hint {
   font-family: "Press Start 2P", monospace;
   font-size: 7px;
   letter-spacing: 0.5px;
@@ -1345,6 +1348,8 @@ body.pixel-theme .ai-drop-zone {
 body.pixel-theme .ai-drop-zone.drag-over {
   background: rgba(122,162,247,0.1);
   border-color: var(--pixel-primary);
+}
+body.pixel-theme .ai-drop-zone.drag-over .ai-drop-text {
   color: var(--pixel-primary);
 }
 
@@ -1385,43 +1390,58 @@ body.pixel-theme .ai-send-btn:active {
   box-shadow: 1px 1px 0 #000;
 }
 
-/* 任务确认列表 */
-body.pixel-theme .ai-task-confirm-list {
+/* 右侧确认面板头部 */
+body.pixel-theme .ai-confirm-header {
   background: var(--pixel-bg-panel);
-  border: 1px solid var(--pixel-border);
-  border-radius: 0;
+  border-bottom: 2px solid var(--pixel-border);
 }
-body.pixel-theme .ai-task-confirm-item {
-  background: var(--pixel-bg-card);
-  border: 1px solid var(--pixel-border);
+body.pixel-theme .ai-confirm-title {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-primary);
+  text-shadow: 1px 1px 0 #000;
+}
+body.pixel-theme .ai-confirm-count {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  background: rgba(122,162,247,0.15);
+  color: var(--pixel-primary);
   border-radius: 0;
+  border: 1px solid var(--pixel-primary);
+}
+
+/* 确认任务条目 */
+body.pixel-theme .ai-confirm-item {
+  border-radius: 0;
+  border: 1px solid var(--pixel-border);
+  background: var(--pixel-bg-card);
   box-shadow: 2px 2px 0 #000;
 }
-body.pixel-theme .ai-task-confirm-item:hover {
+body.pixel-theme .ai-confirm-item:hover {
   border-color: var(--pixel-primary);
 }
-body.pixel-theme .ai-task-checkbox {
+body.pixel-theme .ai-confirm-checkbox {
   font-family: "Press Start 2P", monospace;
   font-size: 8px;
   color: var(--pixel-text);
   line-height: 1.9;
 }
-body.pixel-theme .ai-task-desc {
+body.pixel-theme .ai-confirm-desc {
   font-family: "Press Start 2P", monospace;
   font-size: 7px;
   color: var(--pixel-text-dim);
   line-height: 2;
 }
-body.pixel-theme .ai-task-meta {
+body.pixel-theme .ai-confirm-meta {
   font-family: "Press Start 2P", monospace;
   font-size: 7px;
   color: var(--pixel-text-dim);
   line-height: 2;
 }
-body.pixel-theme .ai-task-meta label {
+body.pixel-theme .ai-confirm-meta label {
   color: var(--pixel-text-dim);
 }
-body.pixel-theme .ai-task-meta select {
+body.pixel-theme .ai-confirm-meta select {
   border: 2px solid var(--pixel-border);
   border-radius: 0;
   background: var(--pixel-bg);
@@ -1429,17 +1449,28 @@ body.pixel-theme .ai-task-meta select {
   font-family: "Press Start 2P", monospace;
   font-size: 7px;
 }
-body.pixel-theme .ai-task-deadline {
+body.pixel-theme .ai-confirm-deadline {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
   color: var(--pixel-warning);
+  line-height: 2;
 }
-body.pixel-theme .ai-task-reason {
+body.pixel-theme .ai-confirm-reason {
   font-family: "Press Start 2P", monospace;
   font-size: 6px;
   color: var(--pixel-text-dim);
   line-height: 2;
 }
-body.pixel-theme .ai-task-actions .btn {
-  font-size: 8px;
+
+/* 底部操作按钮区 */
+body.pixel-theme .ai-confirm-actions {
+  border-top: 2px solid var(--pixel-border);
+  background: var(--pixel-bg-panel);
+}
+body.pixel-theme .ai-confirm-actions .btn {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  border-radius: 0;
 }
 
 /* form-hint 在个人中心 pixel 风格 */

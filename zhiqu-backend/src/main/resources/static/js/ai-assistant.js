@@ -1,17 +1,23 @@
 /* ═══════════════════════════════════════════════════
-   ai-assistant.js — AI 助手对话框
+   ai-assistant.js — AI 助手嵌入式面板
    ═══════════════════════════════════════════════════ */
 
 var aiAnalyzedTasks = [];
+var _msgIdCounter = 0;
 
-/* ── 打开 / 关闭对话框 ── */
-function toggleAiDialog() {
-    var dialog = document.getElementById('aiDialog');
-    if (!dialog) return;
-    dialog.classList.toggle('hidden');
-    if (!dialog.classList.contains('hidden')) {
+/* ── 折叠 / 展开面板 ── */
+function toggleAiPanel() {
+    var body   = document.getElementById('aiPanelBody');
+    var toggle = document.getElementById('aiPanelToggle');
+    if (!body) return;
+
+    var isHidden = body.classList.contains('hidden');
+    body.classList.toggle('hidden');
+    if (toggle) toggle.textContent = isHidden ? '收起 ▲' : '展开 ▼';
+
+    if (isHidden) {
         var input = document.getElementById('aiInput');
-        if (input) input.focus();
+        if (input) setTimeout(function () { input.focus(); }, 50);
     }
 }
 
@@ -40,26 +46,47 @@ async function sendAiMessage() {
 async function handleFileUpload(file) {
     if (!file) return;
 
-    var maxSize = 10 * 1024 * 1024;
+    // 确保面板已展开
+    var panelBody = document.getElementById('aiPanelBody');
+    if (panelBody && panelBody.classList.contains('hidden')) {
+        toggleAiPanel();
+    }
+
+    var maxSize = 20 * 1024 * 1024;
     if (file.size > maxSize) {
-        appendMessage('ai', '❌ 文件过大，请上传 10MB 以内的文件');
+        appendMessage('ai', '❌ 文件过大，请上传 20MB 以内的文件');
         return;
     }
 
-    // 支持的文本类型
-    var textTypes = ['text/plain', 'text/csv', 'text/markdown', 'application/json',
-                     'application/csv', '', 'text/x-markdown'];
-    var fileName = file.name || '';
-    var ext = fileName.split('.').pop().toLowerCase();
-    var textExts = ['txt', 'csv', 'md', 'json', 'log', 'xml', 'yaml', 'yml'];
+    var isImg = file.type.startsWith('image/');
+    var isPdf = file.type === 'application/pdf';
+    var fileLabel = isImg ? '🖼️ ' : isPdf ? '📄 ' : '📎 ';
+    fileLabel += escapeHtml(file.name);
 
-    if (!textExts.includes(ext)) {
-        appendMessage('ai', '⚠️ 当前支持文本类文件（txt / csv / md / json 等），图片和 PDF 暂不支持。');
-        return;
+    appendMessage('user', fileLabel);
+
+    // 图片：消息区域内显示缩略图预览
+    if (isImg) {
+        var reader = new FileReader();
+        reader.onload = function (e) {
+            var container = document.getElementById('aiMessages');
+            if (!container) return;
+            var id = 'ai-msg-' + (++_msgIdCounter);
+            var preview = document.createElement('div');
+            preview.id = id;
+            preview.className = 'ai-msg ai-msg-user';
+            preview.innerHTML =
+                '<div class="ai-msg-content ai-img-wrap">' +
+                '<img src="' + e.target.result + '" class="ai-img-preview" alt="上传的图片">' +
+                '</div>' +
+                '<div class="ai-msg-avatar">👤</div>';
+            container.appendChild(preview);
+            container.scrollTop = container.scrollHeight;
+        };
+        reader.readAsDataURL(file);
     }
 
-    appendMessage('user', '📎 上传文件：' + escapeHtml(file.name));
-    var thinkingId = appendThinking('正在分析文件内容，请稍候...');
+    var thinkingId = appendThinking('🔍 正在分析文件内容，请稍候...');
 
     try {
         var res = await api.upload('/ai/analyze', file);
@@ -68,11 +95,11 @@ async function handleFileUpload(file) {
         aiAnalyzedTasks = res.data || [];
 
         if (aiAnalyzedTasks.length === 0) {
-            appendMessage('ai', '未从文件中识别出任务，请检查文件内容或尝试其他文件。');
+            appendMessage('ai', '未从文件中识别出任务，请检查文件内容或换一个文件试试。');
             return;
         }
 
-        appendMessage('ai', '✅ 从文件中识别出 <strong>' + aiAnalyzedTasks.length + '</strong> 条任务，请确认：');
+        appendMessage('ai', '✅ 识别出 <strong>' + aiAnalyzedTasks.length + '</strong> 条任务，请在右侧确认并创建：');
         renderTaskConfirmList(aiAnalyzedTasks);
     } catch (e) {
         removeMessage(thinkingId);
@@ -80,67 +107,67 @@ async function handleFileUpload(file) {
     }
 }
 
-/* ── 渲染待确认任务列表 ── */
+/* ── 渲染任务到右侧确认面板 ── */
 function renderTaskConfirmList(tasks) {
-    var container = document.getElementById('aiMessages');
-    if (!container) return;
+    var confirmSide  = document.getElementById('aiConfirmSide');
+    var confirmList  = document.getElementById('aiConfirmList');
+    var confirmCount = document.getElementById('aiConfirmCount');
 
-    var listDiv = document.createElement('div');
-    listDiv.className = 'ai-task-confirm-list';
+    if (!confirmSide || !confirmList) return;
+
+    confirmSide.classList.remove('hidden');
+    if (confirmCount) confirmCount.textContent = tasks.length + ' 条';
+    confirmList.innerHTML = '';
 
     tasks.forEach(function (task, index) {
         var item = document.createElement('div');
-        item.className = 'ai-task-confirm-item';
+        item.className = 'ai-confirm-item';
 
         var deadlineHtml = task.deadline
-            ? '<span class="ai-task-deadline">截止：' + escapeHtml(task.deadline) + '</span>'
+            ? '<div class="ai-confirm-deadline">⏰ ' + escapeHtml(task.deadline) + '</div>'
+            : '';
+        var reasonHtml = task.reason
+            ? '<div class="ai-confirm-reason">💡 ' + escapeHtml(task.reason) + '</div>'
+            : '';
+        var descHtml = task.description
+            ? '<div class="ai-confirm-desc">' + escapeHtml(task.description) + '</div>'
             : '';
 
         item.innerHTML =
-            '<div class="ai-task-header">' +
-            '  <label class="ai-task-checkbox">' +
+            '<div class="ai-confirm-item-header">' +
+            '  <label class="ai-confirm-checkbox">' +
             '    <input type="checkbox" checked data-index="' + index + '" class="ai-task-check">' +
             '    <strong>' + escapeHtml(task.title) + '</strong>' +
             '  </label>' +
             '</div>' +
-            (task.description ? '<div class="ai-task-desc">' + escapeHtml(task.description) + '</div>' : '') +
-            '<div class="ai-task-meta">' +
-            '  <label>象限：' +
+            descHtml +
+            '<div class="ai-confirm-meta">' +
+            '  <label>象限' +
             '    <select class="ai-task-quadrant" data-index="' + index + '">' +
-            '      <option value="1"' + (task.suggestedQuadrant === 1 ? ' selected' : '') + '>1-重要且紧急</option>' +
-            '      <option value="2"' + (task.suggestedQuadrant === 2 ? ' selected' : '') + '>2-重要不紧急</option>' +
-            '      <option value="3"' + (task.suggestedQuadrant === 3 ? ' selected' : '') + '>3-紧急不重要</option>' +
-            '      <option value="4"' + (task.suggestedQuadrant === 4 ? ' selected' : '') + '>4-不重要不紧急</option>' +
+            '      <option value="1"' + (task.suggestedQuadrant === 1 ? ' selected' : '') + '>重要且紧急</option>' +
+            '      <option value="2"' + (task.suggestedQuadrant === 2 ? ' selected' : '') + '>重要不紧急</option>' +
+            '      <option value="3"' + (task.suggestedQuadrant === 3 ? ' selected' : '') + '>紧急不重要</option>' +
+            '      <option value="4"' + (task.suggestedQuadrant === 4 ? ' selected' : '') + '>不重要不紧急</option>' +
             '    </select>' +
             '  </label>' +
-            '  <label>优先级：' +
+            '  <label>优先级' +
             '    <select class="ai-task-priority" data-index="' + index + '">' +
             '      <option value="0"' + (task.priority === 0 ? ' selected' : '') + '>低</option>' +
             '      <option value="1"' + (task.priority === 1 ? ' selected' : '') + '>中</option>' +
             '      <option value="2"' + (task.priority === 2 ? ' selected' : '') + '>高</option>' +
             '    </select>' +
             '  </label>' +
-            '  ' + deadlineHtml +
             '</div>' +
-            (task.reason ? '<div class="ai-task-reason">💡 ' + escapeHtml(task.reason) + '</div>' : '');
+            deadlineHtml +
+            reasonHtml;
 
-        listDiv.appendChild(item);
+        confirmList.appendChild(item);
     });
-
-    var btnRow = document.createElement('div');
-    btnRow.className = 'ai-task-actions';
-    btnRow.innerHTML =
-        '<button class="btn btn-primary" onclick="confirmAiTasks()">✅ 确认创建选中任务</button>' +
-        '<button class="btn btn-default" onclick="cancelAiTasks(this)">取消</button>';
-    listDiv.appendChild(btnRow);
-
-    container.appendChild(listDiv);
-    container.scrollTop = container.scrollHeight;
 }
 
 /* ── 确认创建 AI 分析出的任务 ── */
 async function confirmAiTasks() {
-    var checkboxes = document.querySelectorAll('.ai-task-check');
+    var checkboxes      = document.querySelectorAll('.ai-task-check');
     var quadrantSelects = document.querySelectorAll('.ai-task-quadrant');
     var prioritySelects = document.querySelectorAll('.ai-task-priority');
 
@@ -150,12 +177,12 @@ async function confirmAiTasks() {
             var task = aiAnalyzedTasks[i];
             if (!task) return;
             tasksToCreate.push({
-                title: task.title,
+                title:       task.title,
                 description: task.description || '',
-                quadrant: parseInt(quadrantSelects[i].value, 10),
-                priority: parseInt(prioritySelects[i].value, 10),
-                deadline: task.deadline || null,
-                status: 0
+                quadrant:    parseInt(quadrantSelects[i].value, 10),
+                priority:    parseInt(prioritySelects[i].value, 10),
+                deadline:    task.deadline || null,
+                status:      0
             });
         }
     });
@@ -174,13 +201,13 @@ async function confirmAiTasks() {
         var created = (res.data && res.data.created) || 0;
         var failed  = (res.data && res.data.failed)  || 0;
         var msg = '🎉 成功创建 ' + created + ' 个任务！';
-        if (failed > 0) msg += '（' + failed + ' 个失败）';
+        if (failed > 0) msg += '（' + failed + ' 个创建失败）';
         appendMessage('ai', msg);
 
-        // 清空待确认列表，移除确认面板
+        // 隐藏右侧确认面板，清空状态
         aiAnalyzedTasks = [];
-        var lists = document.querySelectorAll('.ai-task-confirm-list');
-        lists.forEach(function (el) { el.remove(); });
+        var confirmSide = document.getElementById('aiConfirmSide');
+        if (confirmSide) confirmSide.classList.add('hidden');
 
         // 刷新看板数据
         if (typeof loadQuadrants === 'function') loadQuadrants();
@@ -194,18 +221,14 @@ async function confirmAiTasks() {
 }
 
 /* ── 取消任务确认 ── */
-function cancelAiTasks(btn) {
+function cancelAiTasks() {
     aiAnalyzedTasks = [];
-    // 移除最近的确认列表
-    if (btn) {
-        var list = btn.closest('.ai-task-confirm-list');
-        if (list) list.remove();
-    }
-    appendMessage('ai', '已取消任务创建。');
+    var confirmSide = document.getElementById('aiConfirmSide');
+    if (confirmSide) confirmSide.classList.add('hidden');
+    appendMessage('ai', '已取消。');
 }
 
-/* ── 在对话框中追加消息，返回消息元素 id ── */
-var _msgIdCounter = 0;
+/* ── 追加消息，返回元素 id ── */
 function appendMessage(role, htmlContent) {
     var container = document.getElementById('aiMessages');
     if (!container) return null;
@@ -225,7 +248,7 @@ function appendMessage(role, htmlContent) {
     return id;
 }
 
-/* ── 追加「思考中」占位消息 ── */
+/* ── 追加思考中占位 ── */
 function appendThinking(text) {
     return appendMessage('ai',
         '<span class="ai-thinking">' + (text || '思考中...') + '</span>');
@@ -247,27 +270,26 @@ function escapeHtml(str) {
 }
 
 /* ═══════════════════════════════════════════════════
-   拖拽上传
+   拖拽上传（目标：整个 #aiPanelBody）
    ═══════════════════════════════════════════════════ */
 function initAiDragDrop() {
-    var dialog = document.getElementById('aiDialog');
-    var dropZone = document.getElementById('aiDropZone');
-    if (!dialog) return;
+    var panelBody = document.getElementById('aiPanelBody');
+    var dropZone  = document.getElementById('aiDropZone');
+    if (!panelBody) return;
 
-    dialog.addEventListener('dragover', function (e) {
+    panelBody.addEventListener('dragover', function (e) {
         e.preventDefault();
         e.stopPropagation();
         if (dropZone) dropZone.classList.add('drag-over');
     });
 
-    dialog.addEventListener('dragleave', function (e) {
-        // 只在真正离开对话框时才移除样式
-        if (!dialog.contains(e.relatedTarget)) {
+    panelBody.addEventListener('dragleave', function (e) {
+        if (!panelBody.contains(e.relatedTarget)) {
             if (dropZone) dropZone.classList.remove('drag-over');
         }
     });
 
-    dialog.addEventListener('drop', function (e) {
+    panelBody.addEventListener('drop', function (e) {
         e.preventDefault();
         e.stopPropagation();
         if (dropZone) dropZone.classList.remove('drag-over');
@@ -276,6 +298,15 @@ function initAiDragDrop() {
             handleFileUpload(files[0]);
         }
     });
+
+    // 也支持拖到收起的标题栏时自动展开
+    var header = document.querySelector('.ai-panel-header');
+    if (header) {
+        header.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            if (panelBody.classList.contains('hidden')) toggleAiPanel();
+        });
+    }
 }
 
 document.addEventListener('DOMContentLoaded', function () {

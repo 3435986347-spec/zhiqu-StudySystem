@@ -130,39 +130,60 @@
                 </div>
             </aside>
         </div>
-    </div>
 
-    <!-- ── AI 助手悬浮按钮 ── -->
-    <button class="ai-fab" onclick="toggleAiDialog()" title="AI 学习助手">🤖</button>
-
-    <!-- ── AI 助手对话框 ── -->
-    <div id="aiDialog" class="ai-dialog hidden">
-        <div class="ai-dialog-header">
-            <span class="ai-dialog-title">🤖 AI 学习助手</span>
-            <button class="ai-dialog-close" onclick="toggleAiDialog()" aria-label="关闭">✕</button>
-        </div>
-        <div class="ai-messages" id="aiMessages">
-            <div class="ai-msg ai-msg-ai">
-                <div class="ai-msg-avatar">🤖</div>
-                <div class="ai-msg-content">
-                    你好！我是你的 AI 学习助手。你可以：<br>
-                    📎 <strong>拖拽或上传</strong>课表 / 行程文件，我帮你自动提取学习任务<br>
-                    💬 直接<strong>发消息</strong>咨询学习规划建议
+        <!-- ── AI 学习助手嵌入面板 ── -->
+        <div class="ai-panel" id="aiPanel">
+            <div class="ai-panel-header" onclick="toggleAiPanel()">
+                <span class="ai-panel-title">🤖 AI 学习助手</span>
+                <span class="ai-panel-hint">上传课表 / 行程截图 / PDF，AI 自动识别并生成学习任务</span>
+                <span class="ai-panel-toggle" id="aiPanelToggle">展开 ▼</span>
+            </div>
+            <div class="ai-panel-body hidden" id="aiPanelBody">
+                <div class="ai-panel-content">
+                    <!-- 左侧：对话区域 -->
+                    <div class="ai-chat-side">
+                        <div class="ai-messages" id="aiMessages">
+                            <div class="ai-msg ai-msg-ai">
+                                <div class="ai-msg-avatar">🤖</div>
+                                <div class="ai-msg-content">
+                                    你好！我是你的 AI 学习助手。<br>
+                                    🖼️ <strong>拖拽或上传</strong>课表截图、行程 PDF、文本文件，我帮你自动识别并生成学习任务<br>
+                                    💬 也可以直接<strong>对话</strong>咨询学习规划建议
+                                </div>
+                            </div>
+                        </div>
+                        <div class="ai-drop-zone" id="aiDropZone">
+                            <div class="ai-drop-icon">📂</div>
+                            <div class="ai-drop-text">拖拽文件到此处</div>
+                            <div class="ai-drop-hint">支持图片（png / jpg）、PDF、文本（txt / md / csv / json）</div>
+                        </div>
+                        <div class="ai-input-area">
+                            <label class="ai-upload-btn" title="上传文件">
+                                📎
+                                <input type="file" id="aiFileInput" style="display:none"
+                                       accept=".txt,.csv,.md,.json,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp"
+                                       onchange="handleFileUpload(this.files[0]); this.value='';">
+                            </label>
+                            <input type="text" id="aiInput" class="ai-input"
+                                   placeholder="输入消息，或拖拽 / 点击📎上传文件..."
+                                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiMessage();}">
+                            <button class="ai-send-btn" onclick="sendAiMessage()">发送</button>
+                        </div>
+                    </div>
+                    <!-- 右侧：任务确认区域（默认隐藏） -->
+                    <div class="ai-confirm-side hidden" id="aiConfirmSide">
+                        <div class="ai-confirm-header">
+                            <span class="ai-confirm-title">📋 识别出的任务</span>
+                            <span class="ai-confirm-count" id="aiConfirmCount"></span>
+                        </div>
+                        <div class="ai-confirm-list" id="aiConfirmList"></div>
+                        <div class="ai-confirm-actions">
+                            <button class="btn btn-primary" onclick="confirmAiTasks()">✅ 确认创建选中任务</button>
+                            <button class="btn btn-default" onclick="cancelAiTasks()">取消</button>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
-        <div class="ai-drop-zone" id="aiDropZone">📂 将文件拖拽到此处（支持 txt / csv / md / json）</div>
-        <div class="ai-input-area">
-            <label class="ai-upload-label" title="上传文件">
-                📎
-                <input type="file" id="aiFileInput" style="display:none"
-                       accept=".txt,.csv,.md,.json,.log,.xml,.yaml,.yml"
-                       onchange="handleFileUpload(this.files[0]); this.value='';">
-            </label>
-            <input type="text" id="aiInput" class="ai-input"
-                   placeholder="输入消息或拖拽文件..."
-                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiMessage();}">
-            <button class="ai-send-btn" onclick="sendAiMessage()">发送</button>
         </div>
     </div>
 
