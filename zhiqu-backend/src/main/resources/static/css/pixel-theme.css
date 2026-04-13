@@ -1256,3 +1256,196 @@ body.pixel-theme .cal-stats-fill {
   background: var(--pixel-success);
   border-radius: 0;
 }
+
+/* ════════════════════════════════════════
+   AI 助手对话框 — PIXEL THEME
+   ════════════════════════════════════════ */
+
+/* 悬浮按钮 */
+body.pixel-theme .ai-fab {
+  border-radius: 0;
+  background: var(--pixel-primary);
+  box-shadow: 4px 4px 0 #000;
+  border: 2px solid var(--pixel-primary);
+  font-size: 20px;
+}
+body.pixel-theme .ai-fab:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 #000;
+}
+body.pixel-theme .ai-fab:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 #000;
+}
+
+/* 对话框主体 */
+body.pixel-theme .ai-dialog {
+  border-radius: 0;
+  border: 2px solid var(--pixel-primary);
+  box-shadow: 6px 6px 0 #000;
+  background: var(--pixel-bg-card);
+  animation: pixelModalIn 0.15s steps(4) both;
+}
+
+/* 标题栏 */
+body.pixel-theme .ai-dialog-header {
+  background: var(--pixel-bg-panel);
+  border-bottom: 2px solid var(--pixel-primary);
+}
+body.pixel-theme .ai-dialog-title {
+  font-family: "Press Start 2P", monospace;
+  font-size: 9px;
+  color: var(--pixel-primary);
+  text-shadow: 1px 1px 0 #000;
+  letter-spacing: 1px;
+}
+body.pixel-theme .ai-dialog-close {
+  color: var(--pixel-text-dim);
+  font-size: 14px;
+}
+body.pixel-theme .ai-dialog-close:hover {
+  background: var(--pixel-danger);
+  color: var(--pixel-bg);
+}
+
+/* 消息气泡 */
+body.pixel-theme .ai-msg-content {
+  border-radius: 0;
+  border: 1px solid var(--pixel-border);
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  line-height: 2;
+}
+body.pixel-theme .ai-msg-user .ai-msg-content {
+  background: var(--pixel-primary);
+  border-color: var(--pixel-primary);
+  color: var(--pixel-bg);
+  box-shadow: 2px 2px 0 #000;
+}
+body.pixel-theme .ai-msg-ai .ai-msg-content {
+  background: var(--pixel-bg-panel);
+  color: var(--pixel-text);
+  box-shadow: 2px 2px 0 #000;
+}
+
+/* 思考中动画 */
+body.pixel-theme .ai-thinking {
+  color: var(--pixel-text-dim);
+}
+
+/* 拖拽区域 */
+body.pixel-theme .ai-drop-zone {
+  border-top: 2px dashed var(--pixel-border);
+  color: var(--pixel-text-dim);
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  letter-spacing: 0.5px;
+  line-height: 2;
+}
+body.pixel-theme .ai-drop-zone.drag-over {
+  background: rgba(122,162,247,0.1);
+  border-color: var(--pixel-primary);
+  color: var(--pixel-primary);
+}
+
+/* 输入区 */
+body.pixel-theme .ai-input-area {
+  border-top: 2px solid var(--pixel-border);
+  background: var(--pixel-bg-panel);
+}
+body.pixel-theme .ai-input {
+  border: 2px solid var(--pixel-border);
+  border-radius: 0;
+  background: var(--pixel-bg);
+  color: var(--pixel-text);
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+}
+body.pixel-theme .ai-input:focus {
+  border-color: var(--pixel-primary);
+  box-shadow: 0 0 0 2px rgba(122,162,247,0.2);
+}
+body.pixel-theme .ai-send-btn {
+  border-radius: 0;
+  border: 2px solid var(--pixel-primary);
+  box-shadow: 2px 2px 0 #000;
+  background: var(--pixel-primary);
+  color: var(--pixel-bg);
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  letter-spacing: 1px;
+}
+body.pixel-theme .ai-send-btn:hover {
+  background: #92B4FA;
+  box-shadow: 3px 3px 0 #000;
+  transform: translate(-1px, -1px);
+}
+body.pixel-theme .ai-send-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 #000;
+}
+
+/* 任务确认列表 */
+body.pixel-theme .ai-task-confirm-list {
+  background: var(--pixel-bg-panel);
+  border: 1px solid var(--pixel-border);
+  border-radius: 0;
+}
+body.pixel-theme .ai-task-confirm-item {
+  background: var(--pixel-bg-card);
+  border: 1px solid var(--pixel-border);
+  border-radius: 0;
+  box-shadow: 2px 2px 0 #000;
+}
+body.pixel-theme .ai-task-confirm-item:hover {
+  border-color: var(--pixel-primary);
+}
+body.pixel-theme .ai-task-checkbox {
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  color: var(--pixel-text);
+  line-height: 1.9;
+}
+body.pixel-theme .ai-task-desc {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  line-height: 2;
+}
+body.pixel-theme .ai-task-meta {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  line-height: 2;
+}
+body.pixel-theme .ai-task-meta label {
+  color: var(--pixel-text-dim);
+}
+body.pixel-theme .ai-task-meta select {
+  border: 2px solid var(--pixel-border);
+  border-radius: 0;
+  background: var(--pixel-bg);
+  color: var(--pixel-text);
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+}
+body.pixel-theme .ai-task-deadline {
+  color: var(--pixel-warning);
+}
+body.pixel-theme .ai-task-reason {
+  font-family: "Press Start 2P", monospace;
+  font-size: 6px;
+  color: var(--pixel-text-dim);
+  line-height: 2;
+}
+body.pixel-theme .ai-task-actions .btn {
+  font-size: 8px;
+}
+
+/* form-hint 在个人中心 pixel 风格 */
+body.pixel-theme .form-hint {
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  color: var(--pixel-text-dim);
+  line-height: 2;
+}

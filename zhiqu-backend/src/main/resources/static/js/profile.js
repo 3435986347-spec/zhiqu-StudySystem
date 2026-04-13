@@ -91,4 +91,47 @@ document.getElementById('btn-save-pw').addEventListener('click', async () => {
 
 document.addEventListener('DOMContentLoaded', () => {
     loadInfo().catch((e) => showToast(e.message, 'error'));
+    loadAiConfig();
+});
+
+// ── AI 配置 ──
+
+async function loadAiConfig() {
+    try {
+        const res = await api.get('/ai/config');
+        if (res.data) {
+            const urlEl  = document.getElementById('ai-api-url');
+            const keyEl  = document.getElementById('ai-api-key');
+            const modEl  = document.getElementById('ai-model-name');
+            if (urlEl) urlEl.value  = res.data.apiUrl   || '';
+            if (keyEl) keyEl.placeholder = res.data.apiKey || 'sk-xxxxxxxxxxxx';
+            if (modEl) modEl.value  = res.data.modelName || '';
+        }
+    } catch (e) {
+        // 未配置过，保持默认值即可
+    }
+}
+
+document.getElementById('btn-save-ai')?.addEventListener('click', async () => {
+    const apiUrl    = document.getElementById('ai-api-url')?.value.trim();
+    const apiKey    = document.getElementById('ai-api-key')?.value.trim();
+    const modelName = document.getElementById('ai-model-name')?.value.trim();
+
+    if (!apiKey) {
+        showToast('请输入 API Key', 'warning');
+        return;
+    }
+    try {
+        await api.put('/ai/config', {
+            apiUrl:    apiUrl    || 'https://api.openai.com/v1/chat/completions',
+            apiKey:    apiKey,
+            modelName: modelName || 'gpt-3.5-turbo'
+        });
+        showToast('AI 配置保存成功', 'success');
+        // 清空 Key 输入框，刷新显示脱敏占位
+        document.getElementById('ai-api-key').value = '';
+        await loadAiConfig();
+    } catch (e) {
+        showToast('保存失败：' + (e.message || ''), 'error');
+    }
 });

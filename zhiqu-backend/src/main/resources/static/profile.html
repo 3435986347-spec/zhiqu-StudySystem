@@ -50,6 +50,29 @@
             </div>
             <button type="button" class="btn btn-warning" id="btn-save-pw">更新密码</button>
         </div>
+        <div class="section" id="ai-config-section">
+            <h2>AI 模型配置</h2>
+            <div class="form-group">
+                <label for="ai-api-url">API 接口地址</label>
+                <input type="text" id="ai-api-url" placeholder="https://api.openai.com/v1/chat/completions">
+                <div class="form-hint">
+                    支持 OpenAI、DeepSeek、通义千问等兼容 OpenAI 接口的服务。<br>
+                    DeepSeek: https://api.deepseek.com/v1/chat/completions<br>
+                    通义千问: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="ai-api-key">API Key</label>
+                <input type="password" id="ai-api-key" autocomplete="off" placeholder="sk-xxxxxxxxxxxx">
+                <div class="form-hint">已保存的 Key 会脱敏显示，留空则不修改。</div>
+            </div>
+            <div class="form-group">
+                <label for="ai-model-name">模型名称</label>
+                <input type="text" id="ai-model-name" placeholder="gpt-3.5-turbo">
+                <div class="form-hint">常用：gpt-3.5-turbo、gpt-4o、deepseek-chat、qwen-turbo</div>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-save-ai">保存 AI 配置</button>
+        </div>
     </div>
     <script src="/js/common.js"></script>
     <script src="/js/profile.js"></script>

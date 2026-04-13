@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/css/common.css">
     <link rel="stylesheet" href="/css/dashboard.css">
     <link rel="stylesheet" href="/css/pixel-theme.css">
+    <link rel="stylesheet" href="/css/ai-assistant.css">
 </head>
 <body>
     <div id="navbar"></div>
@@ -131,6 +132,40 @@
         </div>
     </div>
 
+    <!-- ── AI 助手悬浮按钮 ── -->
+    <button class="ai-fab" onclick="toggleAiDialog()" title="AI 学习助手">🤖</button>
+
+    <!-- ── AI 助手对话框 ── -->
+    <div id="aiDialog" class="ai-dialog hidden">
+        <div class="ai-dialog-header">
+            <span class="ai-dialog-title">🤖 AI 学习助手</span>
+            <button class="ai-dialog-close" onclick="toggleAiDialog()" aria-label="关闭">✕</button>
+        </div>
+        <div class="ai-messages" id="aiMessages">
+            <div class="ai-msg ai-msg-ai">
+                <div class="ai-msg-avatar">🤖</div>
+                <div class="ai-msg-content">
+                    你好！我是你的 AI 学习助手。你可以：<br>
+                    📎 <strong>拖拽或上传</strong>课表 / 行程文件，我帮你自动提取学习任务<br>
+                    💬 直接<strong>发消息</strong>咨询学习规划建议
+                </div>
+            </div>
+        </div>
+        <div class="ai-drop-zone" id="aiDropZone">📂 将文件拖拽到此处（支持 txt / csv / md / json）</div>
+        <div class="ai-input-area">
+            <label class="ai-upload-label" title="上传文件">
+                📎
+                <input type="file" id="aiFileInput" style="display:none"
+                       accept=".txt,.csv,.md,.json,.log,.xml,.yaml,.yml"
+                       onchange="handleFileUpload(this.files[0]); this.value='';">
+            </label>
+            <input type="text" id="aiInput" class="ai-input"
+                   placeholder="输入消息或拖拽文件..."
+                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiMessage();}">
+            <button class="ai-send-btn" onclick="sendAiMessage()">发送</button>
+        </div>
+    </div>
+
     <div id="task-modal" class="modal hidden">
         <div class="modal-backdrop"></div>
         <div class="modal-panel">
@@ -188,6 +223,7 @@
     <script src="/js/common.js"></script>
     <script src="/js/pomodoro.js"></script>
     <script src="/js/calendar.js"></script>
+    <script src="/js/ai-assistant.js"></script>
     <script src="/js/dashboard.js"></script>
     <script>
     /* Tomato icon animation state — wire to pomodoro buttons without touching pomodoro.js */

@@ -79,3 +79,11 @@
   color: var(--text-secondary);
   cursor: default;
 }
+
+/* ── Form hint text ── */
+.form-hint {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}

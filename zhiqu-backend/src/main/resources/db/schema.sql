@@ -66,3 +66,14 @@ CREATE TABLE IF NOT EXISTS user_achievement (
 CREATE INDEX idx_task_user_quadrant ON study_task(user_id, quadrant);
 CREATE INDEX idx_task_deadline ON study_task(deadline);
 CREATE INDEX idx_record_user_date ON study_record(user_id, study_date);
+
+CREATE TABLE IF NOT EXISTS user_ai_config (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL UNIQUE,
+  api_url VARCHAR(500) DEFAULT 'https://api.openai.com/v1/chat/completions',
+  api_key VARCHAR(500),
+  model_name VARCHAR(100) DEFAULT 'gpt-3.5-turbo',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ai_config_user FOREIGN KEY (user_id) REFERENCES sys_user(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
