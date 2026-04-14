@@ -27,6 +27,10 @@ public class TaskCreateRequest {
     @Max(value = 2, message = "状态范围是0到2")
     private Integer status;
 
+    private LocalDateTime startTime;
+    private Integer durationMinutes;
+    /** 持续周数：> 1 时走展开创建（每周一条） */
+    private Integer repeatWeeks;
     private LocalDateTime deadline;
     private LocalDateTime reminderTime;
 }

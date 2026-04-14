@@ -138,6 +138,33 @@ public class AiController {
 
                 req.setStatus(0);
 
+                Object startTimeVal = t.get("startTime");
+                if (startTimeVal != null && !startTimeVal.toString().isBlank()) {
+                    try {
+                        req.setStartTime(LocalDateTime.parse(startTimeVal.toString(), DT_FORMATTER));
+                    } catch (DateTimeParseException ignored) {
+                        // 无法解析的开始时间忽略
+                    }
+                }
+
+                Object durationVal = t.get("durationMinutes");
+                if (durationVal != null && !durationVal.toString().isBlank()) {
+                    try {
+                        req.setDurationMinutes(Integer.parseInt(durationVal.toString()));
+                    } catch (NumberFormatException ignored) {
+                        // 无法解析的时长忽略
+                    }
+                }
+
+                Object repeatVal = t.get("repeatWeeks");
+                if (repeatVal != null && !repeatVal.toString().isBlank()) {
+                    try {
+                        req.setRepeatWeeks(Integer.parseInt(repeatVal.toString()));
+                    } catch (NumberFormatException ignored) {
+                        // 无法解析的周数忽略
+                    }
+                }
+
                 Object deadlineVal = t.get("deadline");
                 if (deadlineVal != null && !deadlineVal.toString().isBlank()) {
                     try {
@@ -147,8 +174,12 @@ public class AiController {
                     }
                 }
 
-                studyTaskService.create(userId, req);
-                created++;
+                if (req.getRepeatWeeks() != null && req.getRepeatWeeks() > 1 && req.getStartTime() != null) {
+                    created += studyTaskService.createRepeated(userId, req).size();
+                } else {
+                    studyTaskService.create(userId, req);
+                    created++;
+                }
             } catch (Exception e) {
                 failed++;
             }

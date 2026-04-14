@@ -25,6 +25,8 @@ public class TaskUpdateRequest {
     @Max(value = 2, message = "状态范围是0到2")
     private Integer status;
 
+    private LocalDateTime startTime;
+    private Integer durationMinutes;
     private LocalDateTime deadline;
     private LocalDateTime reminderTime;
 }

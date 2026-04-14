@@ -1,5 +1,6 @@
 package com.zhiqu.util;
 
+import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.web.multipart.MultipartFile;
@@ -47,7 +48,7 @@ public class FileParseUtil {
      * 提取 PDF 文本内容（最多 15000 字符）
      */
     public static String extractPdfText(MultipartFile file) throws IOException {
-        try (PDDocument doc = PDDocument.load(file.getInputStream())) {
+        try (PDDocument doc = Loader.loadPDF(file.getBytes())) {
             PDFTextStripper stripper = new PDFTextStripper();
             String text = stripper.getText(doc);
             if (text.length() > 15000) {

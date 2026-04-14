@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS study_task (
   quadrant TINYINT NOT NULL,
   priority TINYINT DEFAULT 0,
   status TINYINT DEFAULT 0,
+  start_time DATETIME,
+  duration_minutes INT,
+  repeat_weeks INT,
+  repeat_group_id VARCHAR(36),
+  repeat_week_number INT,
   deadline DATETIME,
   reminder_time DATETIME,
   completed_at DATETIME,
@@ -77,3 +82,14 @@ CREATE TABLE IF NOT EXISTS user_ai_config (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_ai_config_user FOREIGN KEY (user_id) REFERENCES sys_user(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ─── 已有数据库升级：为 study_task 添加 start_time / duration_minutes ───
+-- 新装数据库上 CREATE TABLE 已包含这些列，执行时会报 "Duplicate column"，可忽略
+-- 旧库请手动执行以下两句：
+ ALTER TABLE study_task ADD COLUMN start_time DATETIME DEFAULT NULL COMMENT '开始时间' AFTER status;
+ ALTER TABLE study_task ADD COLUMN duration_minutes INT DEFAULT NULL COMMENT '持续时长(分钟)' AFTER start_time;
+
+-- ─── 任务周期重复功能：为 study_task 添加 3 个字段 ───
+ ALTER TABLE study_task ADD COLUMN repeat_weeks INT DEFAULT NULL COMMENT '持续周数' AFTER duration_minutes;
+ ALTER TABLE study_task ADD COLUMN repeat_group_id VARCHAR(36) DEFAULT NULL COMMENT '重复组ID' AFTER repeat_weeks;
+ ALTER TABLE study_task ADD COLUMN repeat_week_number INT DEFAULT NULL COMMENT '第几周(从1开始)' AFTER repeat_group_id;

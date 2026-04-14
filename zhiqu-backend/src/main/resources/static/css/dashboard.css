@@ -190,6 +190,15 @@
   border-radius: 50%;
   background: var(--dot-color, var(--primary));
 }
+.cal-task-time {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--primary);
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  flex-shrink: 0;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+}
 .cal-task-name {
   font-size: 9px;
   color: var(--text-secondary);
@@ -279,6 +288,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.5;
+}
+.cal-det-time {
+  font-size: 10px;
+  color: var(--primary);
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  font-weight: 600;
+  margin-top: 3px;
+  letter-spacing: -0.02em;
 }
 .cal-det-meta {
   font-size: 10px;
@@ -596,4 +613,20 @@
 .tomato-icon-wrapper.active .tomato-icon {
   animation-play-state: running;
   opacity: 1;
+}
+
+/* ── 日历周期重复标记 ── */
+.cal-task-repeat {
+  font-size: 9px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.cal-det-repeat {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(91, 141, 239, 0.12);
+  color: var(--primary, #5B8DEF);
+  font-size: 11px;
+  font-weight: 600;
 }

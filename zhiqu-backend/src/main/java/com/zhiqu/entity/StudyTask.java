@@ -16,6 +16,11 @@ public class StudyTask {
     private Integer quadrant;
     private Integer priority;
     private Integer status;
+    private LocalDateTime startTime;
+    private Integer durationMinutes;
+    private Integer repeatWeeks;
+    private String repeatGroupId;
+    private Integer repeatWeekNumber;
     private LocalDateTime deadline;
     private LocalDateTime reminderTime;
     private LocalDateTime completedAt;

@@ -146,9 +146,18 @@
                 var task = tasks[t];
                 var dotColor = Q_COLORS[task.quadrant] || '#888';
                 var taskTitle = escHtml(task.title);
+                var hm = extractHm(task.startTime);
+                var timeSpan = hm ? '<span class="cal-task-time">' + hm + '</span>' : '';
+                var repeatMark = task.repeatGroupId ? '<span class="cal-task-repeat" title="周期重复">🔁</span>' : '';
+                var titleAttr = (hm ? hm + ' ' : '') + taskTitle +
+                    (task.repeatWeekNumber && task.repeatWeeks
+                        ? ' (第' + task.repeatWeekNumber + '/' + task.repeatWeeks + '周)'
+                        : '');
                 html +=
-                    '<div class="cal-task-row" style="--dot-color:' + dotColor + '" title="' + taskTitle + '">' +
+                    '<div class="cal-task-row" style="--dot-color:' + dotColor + '" title="' + titleAttr + '">' +
                     '<span class="cal-dot"></span>' +
+                    timeSpan +
+                    repeatMark +
                     '<span class="cal-task-name">' + taskTitle + '</span>' +
                     '</div>';
             }
@@ -222,12 +231,39 @@
             var qLabel = Q_LABELS[task.quadrant] || '';
             var stLabel = STATUS_LABELS[task.status] || '';
             var stCls  = task.status === 2 ? 'cal-det-done' : task.status === 1 ? 'cal-det-doing' : '';
+
+            /* 时间段显示 */
+            var timeLine = '';
+            if (task.startTime) {
+                var startHm = extractHm(task.startTime);
+                if (task.durationMinutes) {
+                    var startMs = new Date(String(task.startTime).replace(' ', 'T')).getTime();
+                    if (!isNaN(startMs)) {
+                        var endDate = new Date(startMs + task.durationMinutes * 60000);
+                        var endHm = pad(endDate.getHours()) + ':' + pad(endDate.getMinutes());
+                        timeLine = '🕐 ' + startHm + ' - ' + endHm +
+                                   '（' + fmtDuration(task.durationMinutes) + '）';
+                    } else {
+                        timeLine = '🕐 ' + startHm + ' 开始';
+                    }
+                } else {
+                    timeLine = '🕐 ' + startHm + ' 开始';
+                }
+            } else if (task.deadline) {
+                timeLine = '⏰ 截止 ' + extractHm(task.deadline);
+            }
+
+            var weekInfo = (task.repeatWeekNumber && task.repeatWeeks)
+                ? ' · <span class="cal-det-repeat">🔁 第' + task.repeatWeekNumber + '/' + task.repeatWeeks + '周</span>'
+                : '';
+
             html +=
                 '<div class="cal-detail-item ' + stCls + '" style="--q-color:' + color + '">' +
                 '<span class="cal-det-q-bar"></span>' +
                 '<div class="cal-det-body">' +
                 '<div class="cal-det-title">' + escHtml(task.title) + '</div>' +
-                '<div class="cal-det-meta">' + qLabel + ' · ' + stLabel + '</div>' +
+                (timeLine ? '<div class="cal-det-time">' + timeLine + '</div>' : '') +
+                '<div class="cal-det-meta">' + qLabel + ' · ' + stLabel + weekInfo + '</div>' +
                 '</div>' +
                 '</div>';
         });
@@ -268,12 +304,42 @@
     function buildTaskMap() {
         var map = {};
         allTasks.forEach(function (task) {
-            if (!task.deadline) return;
-            var ds = task.deadline.substring(0, 10);
+            // 优先用 startTime 的日期，没有则用 deadline 的日期
+            var basis = task.startTime || task.deadline;
+            if (!basis) return;
+            var ds = String(basis).substring(0, 10);
             if (!map[ds]) map[ds] = [];
             map[ds].push(task);
         });
+        // 每天内部按 startTime（或 deadline）升序排序
+        Object.keys(map).forEach(function (ds) {
+            map[ds].sort(function (a, b) {
+                var ta = a.startTime || a.deadline || '';
+                var tb = b.startTime || b.deadline || '';
+                return String(ta).localeCompare(String(tb));
+            });
+        });
         return map;
+    }
+
+    /** 从 "YYYY-MM-DD HH:mm:ss" 或 ISO 提取 "HH:mm" */
+    function extractHm(str) {
+        if (!str) return '';
+        var s = String(str).replace('T', ' ');
+        // 期望格式 "YYYY-MM-DD HH:mm..."
+        if (s.length < 16) return '';
+        return s.substring(11, 16);
+    }
+
+    /** 格式化持续时长 → "1h30m" / "45m" */
+    function fmtDuration(m) {
+        if (m == null) return '';
+        if (m >= 60) {
+            var h  = Math.floor(m / 60);
+            var mm = m % 60;
+            return mm > 0 ? h + 'h' + mm + 'm' : h + 'h';
+        }
+        return m + 'm';
     }
 
     function dateStr(d) {

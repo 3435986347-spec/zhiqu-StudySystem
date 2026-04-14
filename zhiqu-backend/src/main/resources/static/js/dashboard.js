@@ -150,20 +150,36 @@ document.getElementById('form-new-task')?.addEventListener('submit', async (e) =
     const description = document.getElementById('nt-desc').value.trim() || null;
     const quadrant = parseInt(document.getElementById('nt-quadrant').value, 10);
     const priority = parseInt(document.getElementById('nt-priority').value, 10);
+    const startTime = toIsoLocalDateTime(document.getElementById('nt-start-time').value);
     const deadline = toIsoLocalDateTime(document.getElementById('nt-deadline').value);
     const reminderTime = toIsoLocalDateTime(document.getElementById('nt-reminder').value);
+    const repeatRaw = document.getElementById('nt-repeat-weeks').value;
+    const repeatWeeks = repeatRaw ? parseInt(repeatRaw, 10) : null;
+
+    if (repeatWeeks && repeatWeeks > 1 && !startTime) {
+        showToast('设置周期重复需要填写开始时间', 'warning');
+        return;
+    }
+
     const body = {
         title,
         description,
         quadrant,
         priority,
         status: 0,
+        startTime,
         deadline,
-        reminderTime
+        reminderTime,
+        repeatWeeks
     };
     try {
-        await api.post('/task', body);
-        showToast('任务已创建', 'success');
+        if (repeatWeeks && repeatWeeks > 1) {
+            await api.post('/task/create-with-repeat', body);
+            showToast('已创建 ' + repeatWeeks + ' 条周期任务', 'success');
+        } else {
+            await api.post('/task', body);
+            showToast('任务已创建', 'success');
+        }
         closeTaskModal();
         await loadQuadrants();
     } catch (err) {

@@ -123,9 +123,19 @@ function renderTaskConfirmList(tasks) {
         var item = document.createElement('div');
         item.className = 'ai-confirm-item';
 
-        var deadlineHtml = task.deadline
-            ? '<div class="ai-confirm-deadline">⏰ ' + escapeHtml(task.deadline) + '</div>'
-            : '';
+        var hasStartTime = !!task.startTime;
+        var hasDuration  = task.durationMinutes != null;
+        var hasDeadline  = !!task.deadline;
+
+        var timeStatusHtml;
+        if (hasStartTime && hasDuration) {
+            timeStatusHtml = '<span class="ai-time-status ai-time-auto">✅ 已自动识别</span>';
+        } else if (hasStartTime || hasDeadline) {
+            timeStatusHtml = '<span class="ai-time-status ai-time-partial">⚠️ 部分识别，请补充</span>';
+        } else {
+            timeStatusHtml = '<span class="ai-time-status ai-time-manual">❓ 未识别，请手动填写</span>';
+        }
+
         var reasonHtml = task.reason
             ? '<div class="ai-confirm-reason">💡 ' + escapeHtml(task.reason) + '</div>'
             : '';
@@ -158,11 +168,110 @@ function renderTaskConfirmList(tasks) {
             '    </select>' +
             '  </label>' +
             '</div>' +
-            deadlineHtml +
+            '<div class="ai-confirm-time-section">' +
+            '  ' + timeStatusHtml +
+            '  <div class="ai-confirm-time-row">' +
+            '    <label>开始时间' +
+            '      <input type="datetime-local" class="ai-task-start-time" data-index="' + index + '"' +
+            '             value="' + (hasStartTime ? toDatetimeLocal(task.startTime) : '') + '">' +
+            '    </label>' +
+            '    <label>持续时长' +
+            '      <div class="ai-duration-input">' +
+            '        <input type="number" class="ai-task-duration" data-index="' + index + '"' +
+            '               value="' + (hasDuration ? task.durationMinutes : '') + '"' +
+            '               placeholder="分钟" min="1" max="480">' +
+            '        <span class="ai-duration-unit">分钟</span>' +
+            '      </div>' +
+            '    </label>' +
+            '  </div>' +
+            '  <div class="ai-confirm-time-row">' +
+            '    <label>截止时间' +
+            '      <input type="datetime-local" class="ai-task-deadline-input" data-index="' + index + '"' +
+            '             value="' + (hasDeadline ? toDatetimeLocal(task.deadline) : '') + '">' +
+            '    </label>' +
+            '  </div>' +
+            '  <div class="ai-duration-quick">' +
+            '    <span class="ai-duration-label">时长：</span>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiDuration(' + index + ', 30)">30分钟</button>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiDuration(' + index + ', 45)">45分钟</button>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiDuration(' + index + ', 60)">1小时</button>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiDuration(' + index + ', 90)">1.5小时</button>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiDuration(' + index + ', 120)">2小时</button>' +
+            '  </div>' +
+            '  <div class="ai-confirm-time-row ai-repeat-row">' +
+            '    <label>持续周数' +
+            '      <div class="ai-repeat-input">' +
+            '        <input type="number" class="ai-task-repeat-weeks" data-index="' + index + '"' +
+            '               value="' + (task.repeatWeeks ? task.repeatWeeks : '') + '"' +
+            '               placeholder="单次" min="1" max="52">' +
+            '        <span class="ai-repeat-unit">周</span>' +
+            '      </div>' +
+            '    </label>' +
+            '    <label class="ai-repeat-hint-label" data-index="' + index + '">' +
+            (task.repeatWeeks && task.repeatWeeks > 1
+                ? '📅 将展开为 ' + task.repeatWeeks + ' 条每周重复的任务'
+                : '留空表示单次任务') +
+            '    </label>' +
+            '  </div>' +
+            '  <div class="ai-repeat-quick">' +
+            '    <span class="ai-duration-label">周数：</span>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiRepeatWeeks(' + index + ', 1)">单次</button>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiRepeatWeeks(' + index + ', 8)">8周</button>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiRepeatWeeks(' + index + ', 16)">16周</button>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiRepeatWeeks(' + index + ', 18)">18周</button>' +
+            '    <button type="button" class="ai-duration-btn" onclick="setAiRepeatWeeks(' + index + ', 20)">20周</button>' +
+            '  </div>' +
+            '</div>' +
             reasonHtml;
 
         confirmList.appendChild(item);
     });
+
+    /* 周数输入联动提示 */
+    document.querySelectorAll('.ai-task-repeat-weeks').forEach(function (input) {
+        input.addEventListener('input', function () {
+            updateRepeatHint(this.getAttribute('data-index'), parseInt(this.value, 10) || 0);
+        });
+    });
+}
+
+/* ── 快捷设置时长 ── */
+function setAiDuration(index, minutes) {
+    var input = document.querySelector('.ai-task-duration[data-index="' + index + '"]');
+    if (input) input.value = minutes;
+}
+
+/* ── 快捷设置周数 ── */
+function setAiRepeatWeeks(index, weeks) {
+    var input = document.querySelector('.ai-task-repeat-weeks[data-index="' + index + '"]');
+    if (!input) return;
+    input.value = weeks === 1 ? '' : weeks;
+    updateRepeatHint(index, weeks === 1 ? 0 : weeks);
+}
+
+/* ── 更新周数联动提示 ── */
+function updateRepeatHint(index, weeks) {
+    var hint = document.querySelector('.ai-repeat-hint-label[data-index="' + index + '"]');
+    if (!hint) return;
+    if (weeks > 1) {
+        hint.textContent = '📅 将展开为 ' + weeks + ' 条每周重复的任务';
+        hint.classList.add('ai-repeat-hint-active');
+    } else {
+        hint.textContent = '留空表示单次任务';
+        hint.classList.remove('ai-repeat-hint-active');
+    }
+}
+
+/* ── 时间格式转换 ── */
+function toDatetimeLocal(dateStr) {
+    if (!dateStr) return '';
+    // "2026-04-15 08:00:00" → "2026-04-15T08:00"
+    return String(dateStr).replace(' ', 'T').substring(0, 16);
+}
+function fromDatetimeLocal(val) {
+    if (!val) return null;
+    // "2026-04-15T08:00" → "2026-04-15 08:00:00"
+    return val.replace('T', ' ') + (val.length === 16 ? ':00' : '');
 }
 
 /* ── 确认创建 AI 分析出的任务 ── */
@@ -170,29 +279,61 @@ async function confirmAiTasks() {
     var checkboxes      = document.querySelectorAll('.ai-task-check');
     var quadrantSelects = document.querySelectorAll('.ai-task-quadrant');
     var prioritySelects = document.querySelectorAll('.ai-task-priority');
+    var startTimeInputs = document.querySelectorAll('.ai-task-start-time');
+    var durationInputs  = document.querySelectorAll('.ai-task-duration');
+    var deadlineInputs  = document.querySelectorAll('.ai-task-deadline-input');
+    var repeatInputs    = document.querySelectorAll('.ai-task-repeat-weeks');
 
     var tasksToCreate = [];
+    var validationError = null;
     checkboxes.forEach(function (cb, i) {
+        if (validationError) return;
         if (cb.checked) {
             var task = aiAnalyzedTasks[i];
             if (!task) return;
+            var durationVal = durationInputs[i] && durationInputs[i].value
+                ? parseInt(durationInputs[i].value, 10)
+                : null;
+            var repeatVal = repeatInputs[i] && repeatInputs[i].value
+                ? parseInt(repeatInputs[i].value, 10)
+                : null;
+            var startTimeVal = startTimeInputs[i] ? fromDatetimeLocal(startTimeInputs[i].value) : null;
+
+            // 校验：填了周数(>1) 但没填开始时间
+            if (repeatVal && repeatVal > 1 && !startTimeVal) {
+                validationError = '任务「' + (task.title || ('#' + (i + 1))) + '」设置了周期重复，需要填写开始时间';
+                return;
+            }
+
             tasksToCreate.push({
-                title:       task.title,
-                description: task.description || '',
-                quadrant:    parseInt(quadrantSelects[i].value, 10),
-                priority:    parseInt(prioritySelects[i].value, 10),
-                deadline:    task.deadline || null,
-                status:      0
+                title:           task.title,
+                description:     task.description || '',
+                quadrant:        parseInt(quadrantSelects[i].value, 10),
+                priority:        parseInt(prioritySelects[i].value, 10),
+                startTime:       startTimeVal,
+                durationMinutes: (durationVal && !isNaN(durationVal)) ? durationVal : null,
+                deadline:        deadlineInputs[i] ? fromDatetimeLocal(deadlineInputs[i].value) : null,
+                repeatWeeks:     (repeatVal && !isNaN(repeatVal)) ? repeatVal : null,
+                status:          0
             });
         }
     });
+    if (validationError) {
+        if (typeof showToast === 'function') showToast(validationError, 'warning');
+        return;
+    }
 
     if (tasksToCreate.length === 0) {
         if (typeof showToast === 'function') showToast('请至少选择一个任务', 'warning');
         return;
     }
 
-    var thinkingId = appendThinking('正在创建 ' + tasksToCreate.length + ' 个任务...');
+    // 计算实际要创建的条数（含周期展开）
+    var totalCount = 0;
+    tasksToCreate.forEach(function (t) {
+        totalCount += (t.repeatWeeks && t.repeatWeeks > 1) ? t.repeatWeeks : 1;
+    });
+    var thinkingId = appendThinking('正在创建 ' + totalCount + ' 条任务（含周期展开）...');
 
     try {
         var res = await api.post('/ai/batch-create-tasks', tasksToCreate);
@@ -209,9 +350,8 @@ async function confirmAiTasks() {
         var confirmSide = document.getElementById('aiConfirmSide');
         if (confirmSide) confirmSide.classList.add('hidden');
 
-        // 刷新看板数据
-        if (typeof loadQuadrants === 'function') loadQuadrants();
-        if (typeof refreshCalendar === 'function') refreshCalendar();
+        // 刷新看板数据（loadQuadrants 内部已调用 refreshCalendar(allTasksFlat)）
+        if (typeof loadQuadrants === 'function') await loadQuadrants();
 
         if (typeof showToast === 'function') showToast('任务创建成功', 'success');
     } catch (e) {

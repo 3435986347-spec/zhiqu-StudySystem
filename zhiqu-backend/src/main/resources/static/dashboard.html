@@ -225,12 +225,22 @@
                 </div>
                 <div class="form-row">
                     <div class="form-group">
+                        <label for="nt-start-time">开始时间</label>
+                        <input type="datetime-local" id="nt-start-time">
+                    </div>
+                    <div class="form-group">
                         <label for="nt-deadline">截止时间</label>
                         <input type="datetime-local" id="nt-deadline">
                     </div>
+                </div>
+                <div class="form-row">
                     <div class="form-group">
                         <label for="nt-reminder">提醒时间</label>
                         <input type="datetime-local" id="nt-reminder">
+                    </div>
+                    <div class="form-group">
+                        <label for="nt-repeat-weeks">持续周数（留空为单次任务）</label>
+                        <input type="number" id="nt-repeat-weeks" placeholder="例如 16" min="1" max="52">
                     </div>
                 </div>
                 <div class="modal-footer">

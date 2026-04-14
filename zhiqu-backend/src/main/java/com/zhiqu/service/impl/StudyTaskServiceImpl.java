@@ -11,8 +11,10 @@ import com.zhiqu.service.StudyTaskService;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -34,6 +36,8 @@ public class StudyTaskServiceImpl implements StudyTaskService {
         task.setQuadrant(request.getQuadrant());
         task.setPriority(request.getPriority() == null ? 0 : request.getPriority());
         task.setStatus(request.getStatus() == null ? 0 : request.getStatus());
+        task.setStartTime(request.getStartTime());
+        task.setDurationMinutes(request.getDurationMinutes());
         task.setDeadline(request.getDeadline());
         task.setReminderTime(request.getReminderTime());
         if (task.getStatus() == 2) {
@@ -41,6 +45,46 @@ public class StudyTaskServiceImpl implements StudyTaskService {
         }
         studyTaskMapper.insert(task);
         return task;
+    }
+
+    @Override
+    public List<StudyTask> createRepeated(Long userId, TaskCreateRequest request) {
+        Integer weeks = request.getRepeatWeeks();
+        if (weeks == null || weeks < 1) {
+            throw new BusinessException("持续周数必须大于 0");
+        }
+        if (request.getStartTime() == null) {
+            throw new BusinessException("设置周期重复需要填写开始时间");
+        }
+        String groupId = weeks > 1 ? UUID.randomUUID().toString() : null;
+        LocalDateTime baseStart = request.getStartTime();
+        LocalDateTime baseDeadline = request.getDeadline();
+        List<StudyTask> created = new ArrayList<>();
+
+        for (int i = 0; i < weeks; i++) {
+            StudyTask task = new StudyTask();
+            task.setUserId(userId);
+            task.setTitle(request.getTitle());
+            task.setDescription(request.getDescription());
+            task.setQuadrant(request.getQuadrant());
+            task.setPriority(request.getPriority() == null ? 0 : request.getPriority());
+            task.setStatus(request.getStatus() == null ? 0 : request.getStatus());
+            task.setDurationMinutes(request.getDurationMinutes());
+            task.setReminderTime(request.getReminderTime());
+            task.setStartTime(baseStart.plusWeeks(i));
+            if (baseDeadline != null) {
+                task.setDeadline(baseDeadline.plusWeeks(i));
+            }
+            task.setRepeatWeeks(weeks);
+            task.setRepeatGroupId(groupId);
+            task.setRepeatWeekNumber(i + 1);
+            if (task.getStatus() == 2) {
+                task.setCompletedAt(LocalDateTime.now());
+            }
+            studyTaskMapper.insert(task);
+            created.add(task);
+        }
+        return created;
     }
 
     @Override
@@ -58,6 +102,8 @@ public class StudyTaskServiceImpl implements StudyTaskService {
             task.setStatus(request.getStatus());
             task.setCompletedAt(request.getStatus() == 2 ? LocalDateTime.now() : null);
         }
+        task.setStartTime(request.getStartTime());
+        task.setDurationMinutes(request.getDurationMinutes());
         task.setDeadline(request.getDeadline());
         task.setReminderTime(request.getReminderTime());
         studyTaskMapper.updateById(task);

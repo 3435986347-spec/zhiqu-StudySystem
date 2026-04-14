@@ -26,6 +26,16 @@ public class StudyTaskController {
         return Result.success(studyTaskService.create(SecurityUtils.getCurrentUserId(), request));
     }
 
+    /** 创建周期重复任务：按 repeatWeeks 展开为多条 */
+    @PostMapping("/create-with-repeat")
+    public Result<Map<String, Object>> createWithRepeat(@RequestBody @Valid TaskCreateRequest request) {
+        List<StudyTask> tasks = studyTaskService.createRepeated(SecurityUtils.getCurrentUserId(), request);
+        return Result.success(Map.of(
+                "created", tasks.size(),
+                "groupId", tasks.isEmpty() ? "" : (tasks.get(0).getRepeatGroupId() == null ? "" : tasks.get(0).getRepeatGroupId())
+        ));
+    }
+
     @PutMapping("/{id}")
     public Result<StudyTask> update(@PathVariable Long id, @RequestBody @Valid TaskUpdateRequest request) {
         return Result.success(studyTaskService.update(SecurityUtils.getCurrentUserId(), id, request));

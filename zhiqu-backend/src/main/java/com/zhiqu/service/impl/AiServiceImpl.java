@@ -107,7 +107,10 @@ public class AiServiceImpl implements AiService {
                   {
                     "title": "任务标题",
                     "description": "任务描述",
-                    "deadline": "YYYY-MM-DD HH:mm:ss 格式的截止时间，如果无法确定则为 null",
+                    "startTime": "YYYY-MM-DD HH:mm:ss 格式的开始时间，如果无法确定则为 null",
+                    "deadline": "YYYY-MM-DD HH:mm:ss 格式的截止/结束时间，如果无法确定则为 null",
+                    "durationMinutes": 持续时长（分钟），整数，如果无法确定则为 null,
+                    "repeatWeeks": 持续周数，整数。单次任务为 null；每周重复的课程填写周数,
                     "priority": 0到2的数字（0低1中2高）,
                     "suggestedQuadrant": 1到4的数字（你建议的象限分类）,
                     "reason": "你建议这个象限的理由（一句话）"
@@ -120,8 +123,17 @@ public class AiServiceImpl implements AiService {
                 3 = 紧急不重要（非核心的杂事、通知）
                 4 = 不重要不紧急（可选活动、娱乐）
 
-                如果图片或内容中包含具体的日期和时间信息，请尽量提取为 deadline。
-                如果是周期性课表（如每周一上午的课），请按最近一周生成具体日期的任务。
+                时间识别规则：
+                - 如果内容中有明确的上课/活动时间（如"周一 8:00-9:30 高等数学"），提取 startTime，并根据结束时间计算 durationMinutes
+                - 如果只有日期没有具体时间（如"4月15日交作业"），startTime 设为 null，deadline 设为该日期 23:59:59
+                - 如果是周期性课表（如"每周一 8:00"），按最近一周生成具体日期的任务
+                - durationMinutes 常见参考：大学课程通常 45 或 90 分钟，自习通常 120 分钟
+                - 如果完全无法判断时长，durationMinutes 设为 null
+                - startTime 和 deadline 都允许为 null，两者独立存在
+                - 如果课表中标注了周数（如"第1-16周"、"共18周"），提取为 repeatWeeks
+                - 如果没有标注周数但明显是学期课程（有上课时间、课程名），默认 repeatWeeks 为 16
+                - 如果是单次作业、考试、活动、一次性任务，repeatWeeks 设为 null
+                - 当 repeatWeeks 不为 null 时，startTime 必须为第一周该课程的具体日期和时间
                 """;
     }
 
@@ -135,8 +147,14 @@ public class AiServiceImpl implements AiService {
                 Map<String, Object> task = new HashMap<>();
                 task.put("title", node.has("title") ? node.get("title").asText() : "");
                 task.put("description", node.has("description") ? node.get("description").asText() : "");
+                task.put("startTime", node.has("startTime") && !node.get("startTime").isNull()
+                        ? node.get("startTime").asText() : null);
                 task.put("deadline", node.has("deadline") && !node.get("deadline").isNull()
                         ? node.get("deadline").asText() : null);
+                task.put("durationMinutes", node.has("durationMinutes") && !node.get("durationMinutes").isNull()
+                        ? node.get("durationMinutes").asInt() : null);
+                task.put("repeatWeeks", node.has("repeatWeeks") && !node.get("repeatWeeks").isNull()
+                        ? node.get("repeatWeeks").asInt() : null);
                 task.put("priority", node.has("priority") ? node.get("priority").asInt(0) : 0);
                 task.put("suggestedQuadrant", node.has("suggestedQuadrant")
                         ? node.get("suggestedQuadrant").asInt(2) : 2);
