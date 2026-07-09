@@ -21,3 +21,6 @@ zhiqu-backend/logs/
 
 # 压缩包（设计稿/部署包等二进制归档不入库）
 *.zip
+
+# 用户上传原件（私有，运行时生成）
+private-uploads/
