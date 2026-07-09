@@ -639,14 +639,15 @@ body.zq-modal-open{overflow:hidden;}
 #zq-doc ul li::marker{color:var(--zq-accent);}
 #zq-doc ol li::marker{color:var(--zq-accent);font-weight:600;}
 
-/* ── Notebook 资料卡片（Claude/ChatGPT 项目知识风格：圆角方块 + 类型徽章，点击下载） ── */
+/* ── Notebook 资料卡片：类型底色铺满整个圆角正方形，底部玻璃化(模糊)信息栏承载完整名称 ── */
 .zq-src-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
-.zq-src-tile{position:relative;display:flex;flex-direction:column;gap:7px;aspect-ratio:1/1;min-height:88px;padding:10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease;overflow:hidden;}
-.zq-src-tile:hover{border-color:var(--zq-primary);box-shadow:var(--zq-sh1);}
-.zq-src-badge{width:34px;height:34px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:9px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:#fff;}
+.zq-src-tile{position:relative;aspect-ratio:1/1;min-height:92px;border:1px solid color-mix(in srgb, var(--srcc, var(--zq-border)) 42%, var(--zq-border-soft));border-radius:var(--zq-rm);background:linear-gradient(155deg, color-mix(in srgb, var(--srcc, var(--zq-text3)) 34%, var(--zq-card)), color-mix(in srgb, var(--srcc, var(--zq-text3)) 14%, var(--zq-card)));cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease;overflow:hidden;}
+.zq-src-tile:hover{border-color:var(--srcc, var(--zq-primary));box-shadow:var(--zq-sh2);transform:translateY(-1px);}
+.zq-src-type{position:absolute;top:9px;left:11px;right:34px;font-size:10.5px;font-weight:700;letter-spacing:.05em;color:color-mix(in srgb, var(--srcc, var(--zq-text2)) 60%, var(--zq-text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.zq-src-glass{position:absolute;left:0;right:0;bottom:0;padding:7px 10px 8px;background:color-mix(in srgb, var(--zq-card) 58%, transparent);backdrop-filter:blur(7px) saturate(1.15);-webkit-backdrop-filter:blur(7px) saturate(1.15);border-top:1px solid color-mix(in srgb, var(--zq-border) 45%, transparent);}
 .zq-src-title{font-size:11.5px;font-weight:600;line-height:1.4;color:var(--zq-text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-all;}
-.zq-src-meta{margin-top:auto;font-size:10px;color:var(--zq-text3);display:flex;align-items:center;gap:5px;}
-.zq-src-tile .zq-src-dl{position:absolute;top:8px;right:8px;width:22px;height:22px;display:none;align-items:center;justify-content:center;border-radius:6px;background:var(--zq-tint);color:var(--zq-primary);font-size:12px;font-weight:700;}
+.zq-src-meta{margin-top:3px;font-size:10px;color:var(--zq-text3);display:flex;align-items:center;gap:5px;}
+.zq-src-tile .zq-src-dl{position:absolute;top:7px;right:7px;width:22px;height:22px;display:none;align-items:center;justify-content:center;border-radius:6px;background:color-mix(in srgb, var(--zq-card) 78%, transparent);backdrop-filter:blur(4px);color:var(--zq-text);font-size:12px;font-weight:700;}
 .zq-src-tile:hover .zq-src-dl{display:flex;}
 
 /* ── 右上角持久通知（测试进行中/完成；Claude 弹窗同风格） ── */

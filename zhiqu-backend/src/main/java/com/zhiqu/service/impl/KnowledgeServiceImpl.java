@@ -160,6 +160,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         String title = required(body.get("title"), "标题不能为空");
         String content = cleanMarkdownContent(required(body.get("content"), "内容不能为空"));
+        // 系统页按标题维护（ensureSystemPage 以标题查找），改名会导致重复建页，后端强制拦截
+        if (page.getId() != null && isSystemKnowledgePage(page) && !title.trim().equals(page.getTitle())) {
+            throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许改名");
+        }
         page.setTitle(limit(title, 120));
         // 字段缺省则保留旧值，避免更新正文时把子页/系统页挪到根节点或重置类型
         Long parentId = body.containsKey("parentId") ? parseLong(body.get("parentId")) : page.getParentId();
@@ -223,6 +227,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public void deletePage(Long userId, Long id) {
         UserKnowledgePage page = ownedPage(userId, id);
+        if (isSystemKnowledgePage(page)) {
+            throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许删除");
+        }
         pageMapper.deleteById(page.getId());
         clearPageLinks(userId, page.getId());
         writeLog(userId, "page.delete", page.getId(), null, null, "删除知识页：" + page.getTitle(), null);
@@ -996,6 +1003,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         return text
                 .replaceAll("\\[\\[([^\\]]*)\\]\\]", "$1")
+                .replaceAll("\\[([^\\]]+)\\]\\([^)]*\\)", "$1")
+                .replaceAll("\\[[ xX]\\]\\s*", "")
                 .replaceAll("(?m)^\\s*(#{1,6}|[-*>]|\\d+[.)])\\s*", "")
                 .replaceAll("\\s+(#{1,6}|[-*>])\\s+", " ")
                 .replaceAll("[*`_~]", "")

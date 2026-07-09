@@ -141,6 +141,16 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     @Transactional
     public void deleteNotebook(Long userId, Long id) {
         AiNotebook notebook = ownedNotebook(userId, id);
+        // 级联清理：分块、私有原件、source 行，最后删 notebook，避免孤儿数据与磁盘泄漏
+        List<AiNotebookSource> sources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
+                .eq(AiNotebookSource::getUserId, userId)
+                .eq(AiNotebookSource::getNotebookId, notebook.getId()));
+        for (AiNotebookSource source : sources) {
+            chunkMapper.delete(new LambdaQueryWrapper<AiSourceChunk>()
+                    .eq(AiSourceChunk::getSourceId, source.getId()));
+            deleteStoredFile(userId, source.getFilePath());
+            sourceMapper.deleteById(source.getId());
+        }
         notebookMapper.deleteById(notebook.getId());
     }
 
@@ -157,6 +167,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         }
         chunkMapper.delete(new LambdaQueryWrapper<AiSourceChunk>()
                 .eq(AiSourceChunk::getSourceId, source.getId()));
+        deleteStoredFile(userId, source.getFilePath());
         sourceMapper.deleteById(source.getId());
     }
 
@@ -270,19 +281,18 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             throw new BusinessException("资料不存在或无权限访问");
         }
         Map<String, Object> result = new LinkedHashMap<>();
-        // 优先给原件；没有原件（URL/手动笔记/历史数据）则导出解析文本
-        if (source.getFilePath() != null && !source.getFilePath().isBlank()) {
-            Path path = Paths.get(source.getFilePath());
-            if (Files.isRegularFile(path)) {
-                try {
-                    result.put("bytes", Files.readAllBytes(path));
-                    String probed = Files.probeContentType(path);
-                    result.put("contentType", probed == null ? "application/octet-stream" : probed);
-                    result.put("filename", source.getTitle() == null ? path.getFileName().toString() : source.getTitle());
-                    return result;
-                } catch (Exception e) {
-                    throw new BusinessException("原件读取失败：" + e.getMessage());
-                }
+        // 优先给原件；没有原件（URL/手动笔记/历史数据）则导出解析文本。
+        // filePath 来自 DB，不直接信任：必须落在本用户的私有目录内才允许读取。
+        Path path = validatedSourceFile(userId, source.getFilePath());
+        if (path != null) {
+            try {
+                result.put("bytes", Files.readAllBytes(path));
+                String probed = Files.probeContentType(path);
+                result.put("contentType", probed == null ? "application/octet-stream" : probed);
+                result.put("filename", source.getTitle() == null ? path.getFileName().toString() : source.getTitle());
+                return result;
+            } catch (Exception e) {
+                throw new BusinessException("原件读取失败：" + e.getMessage());
             }
         }
         List<AiSourceChunk> chunks = chunkMapper.selectList(new LambdaQueryWrapper<AiSourceChunk>()
@@ -311,6 +321,38 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             return configured.normalize();
         }
         return Paths.get(System.getProperty("user.dir")).toAbsolutePath().resolve(configured).normalize();
+    }
+
+    /**
+     * 校验 DB 里的 filePath 确实位于本用户的私有目录下（防路径穿越/符号链接逃逸），
+     * 合法且文件存在时返回规范化路径，否则返回 null（调用方回退导出解析文本）。
+     */
+    private Path validatedSourceFile(Long userId, String filePath) {
+        if (filePath == null || filePath.isBlank()) {
+            return null;
+        }
+        try {
+            Path userRoot = privateUploadRoot().resolve("ai-sources").resolve(String.valueOf(userId)).normalize();
+            Path candidate = Paths.get(filePath).toAbsolutePath().normalize();
+            if (!candidate.startsWith(userRoot) || Files.isSymbolicLink(candidate) || !Files.isRegularFile(candidate)) {
+                return null;
+            }
+            return candidate;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 删除私有原件（仅限本用户目录内的文件），失败静默——DB 清理不因磁盘异常中断 */
+    private void deleteStoredFile(Long userId, String filePath) {
+        Path path = validatedSourceFile(userId, filePath);
+        if (path == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(path);
+        } catch (Exception ignored) {
+        }
     }
 
     private String sanitizeStoredName(String name) {

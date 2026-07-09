@@ -4,7 +4,7 @@
   'use strict';
 
   var API = '/api';
-  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all11';
+  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all12';
   // 根路径 "/" 由 Spring 作为欢迎页返回 index.html（登录页），此时 pathname 为空，
   // 默认必须落到 index.html，否则 bootIndex 不执行、登录按钮无处理器。
   var page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
@@ -1019,7 +1019,7 @@
           + (taskList ? '<div style="font-size:11.5px;font-weight:700;color:var(--zq-text2);margin:3px 0 1px;">一次性任务 · ' + tasks.length + '</div>' + taskList : '')
           + (routineList ? '<div style="font-size:11.5px;font-weight:700;color:var(--zq-text2);margin:6px 0 1px;">例行计划 · ' + routines.length + '</div>' + routineList : '')
           + '</div>'
-          + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">提交后经管理员审核对所有用户可见，请确认勾选内容不含个人隐私信息。</p>'
+          + '<label style="display:flex;align-items:flex-start;gap:8px;margin:0 0 12px;font-size:12px;color:var(--zq-text2);line-height:1.6;cursor:pointer;"><input id="zq-spt-consent" type="checkbox" style="accent-color:var(--zq-primary);margin-top:2px;flex:none;"><span>我确认勾选的内容不含个人隐私信息，同意提交给管理员审核，通过后对所有用户可见。</span></label>'
           + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-spt-cancel">取消</button><button type="button" class="zq-btn" id="zq-spt-ok">提交审核</button></div>',
         onMount: function (b, h) {
           $('#zq-spt-cancel', b).onclick = h.close;
@@ -1030,6 +1030,8 @@
             var taskIds = $all('[data-pick="task"]:checked', b).map(function (c) { return Number(c.value); });
             var routineIds = $all('[data-pick="routine"]:checked', b).map(function (c) { return Number(c.value); });
             if (!taskIds.length && !routineIds.length) return toast('至少勾选一个任务或例行计划', 'error');
+            // 隐私确认必须由用户显式勾选，不代签
+            if (!$('#zq-spt-consent', b).checked) return toast('请先勾选隐私确认', 'error');
             var category = $('#zq-spt-cat', b).value, desc = $('#zq-spt-desc', b).value.trim();
             safe('提交计划模板', async function () {
               await api.post('/shared-plans/from-existing', { title: title, description: desc, category: category, taskIds: taskIds, routineIds: routineIds, shareConsent: true });
@@ -1365,11 +1367,13 @@
     var bar = document.createElement('div');
     bar.id = 'zq-wiki-actions';
     bar.style.cssText = 'display:flex;gap:8px;padding:10px 26px 18px;border-top:1px solid var(--zq-border-soft);background:var(--zq-card);';
-    bar.innerHTML = '<button class="zq-btn" id="zq-wiki-save" style="height:30px;">保存</button><button class="zq-btn-ghost" id="zq-wiki-cancel" style="height:30px;">取消</button><button class="zq-btn-ghost" id="zq-wiki-del" style="height:30px;margin-left:auto;color:var(--zq-bad);">删除本页</button>';
+    // 系统页（index/log/维护规则）不给删除入口，后端也会拦截
+    var isSysPage = state.wikiCur && ['INDEX', 'LOG', 'SCHEMA'].indexOf(String(state.wikiCur.pageType || '').toUpperCase()) >= 0;
+    bar.innerHTML = '<button class="zq-btn" id="zq-wiki-save" style="height:30px;">保存</button><button class="zq-btn-ghost" id="zq-wiki-cancel" style="height:30px;">取消</button>' + (isSysPage ? '' : '<button class="zq-btn-ghost" id="zq-wiki-del" style="height:30px;margin-left:auto;color:var(--zq-bad);">删除本页</button>');
     doc.parentNode.appendChild(bar);
     $('#zq-wiki-save').onclick = saveWikiEdit;
     $('#zq-wiki-cancel').onclick = function () { paintWikiDoc(state.wikiCur); };
-    $('#zq-wiki-del').onclick = async function () { var p = state.wikiCur; if (p && await askConfirm({ title: '删除知识页', message: '删除「' + (p.title || '') + '」？指向它的双链会变成悬空链接。', okText: '删除', danger: true })) safe('删除知识页', async function () { await api.del('/knowledge/pages/' + p.id); await bootKnowledge(); toast('已删除'); }); };
+    if ($('#zq-wiki-del')) $('#zq-wiki-del').onclick = async function () { var p = state.wikiCur; if (p && await askConfirm({ title: '删除知识页', message: '删除「' + (p.title || '') + '」？指向它的双链会变成悬空链接。', okText: '删除', danger: true })) safe('删除知识页', async function () { await api.del('/knowledge/pages/' + p.id); await bootKnowledge(); toast('已删除'); }); };
   }
   function removeWikiActionBar() { var b = document.getElementById('zq-wiki-actions'); if (b) b.remove(); }
   function saveWikiEdit() {
@@ -1437,7 +1441,7 @@
         + '</div>'
         + '<div id="zq-imp-file-box" style="display:none;">'
         + '<div class="zq-field"><label class="zq-label">选择文件</label><input id="zq-imp-file" type="file" class="zq-input" style="height:auto;padding:7px 12px;" accept=".pdf,.xlsx,.xls,.txt,.md,.csv,.json,.xml,.png,.jpg,.jpeg,.webp"></div>'
-        + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">支持 pdf / xlsx / txt / md / csv / json / xml / 图片，上传后自动解析正文并收录为来源。</p>'
+        + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">pdf / xlsx / txt / md / csv / json / xml 会自动解析正文；图片仅记录文件信息，暂不做内容识别。</p>'
         + '</div>'
         + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-imp-cancel">取消</button><button type="button" class="zq-btn" id="zq-imp-ok">导入</button></div>',
       onMount: function (b, h) {
@@ -1846,19 +1850,19 @@
       };
     });
   }
-  // 资料类型 → 徽章文字/颜色（Claude 项目知识风格的圆角方块）
-  function srcBadge(type) {
+  // 资料类型 → 文字标注 + 底色（固定色相，不随主题象限色漂移；整块铺满卡片）
+  function srcTypeInfo(type) {
     var t = String(type || '').toUpperCase();
     var map = {
-      PDF: ['PDF', 'var(--zq-q1)'],
-      EXCEL: ['XLS', 'var(--zq-q2)'],
-      SHEET: ['XLS', 'var(--zq-q2)'],
-      TEXT: ['TXT', 'var(--zq-q3)'],
-      WEB_URL: ['URL', 'var(--zq-primary)'],
-      MANUAL_NOTE: ['NOTE', 'var(--zq-accent)'],
-      IMAGE: ['IMG', 'var(--zq-q4)']
+      PDF: ['PDF 文档', '#c2574f'],
+      EXCEL: ['表格文件', '#3f8f63'],
+      SHEET: ['表格文件', '#3f8f63'],
+      TEXT: ['文本文件', '#3f6fae'],
+      WEB_URL: ['网页链接', '#4a5fc1'],
+      MANUAL_NOTE: ['手动笔记', '#b07d3c'],
+      IMAGE: ['图片文件', '#7e5fb0']
     };
-    return map[t] || [t.slice(0, 4) || 'SRC', 'var(--zq-text3)'];
+    return map[t] || [t || '资料', '#6b7280'];
   }
   function srcStatusLabel(s) { return ({ READY: '已解析', PARSING: '解析中', UPLOADED: '已上传', ERROR: '解析失败' })[String(s || '').toUpperCase()] || (s || ''); }
   // 点击卡片下载：优先 showSaveFilePicker 让用户选保存位置，否则走浏览器默认下载
@@ -1867,14 +1871,16 @@
     try {
       var headers = {}; if (token()) headers.Authorization = 'Bearer ' + token();
       var res = await fetch(API + '/ai/notebooks/' + state.notebookId + '/sources/' + sid + '/download', { headers: headers, credentials: 'same-origin' });
-      // 业务错误会以 JSON Result 返回（HTTP 200），按 content-type 甄别
+      // 附件优先：带 Content-Disposition: attachment 的都是正常文件（含 .json 原件）；
+      // 只有"无附件头 + JSON"才是 GlobalExceptionHandler 包装的业务错误（HTTP 200）
+      var cd = res.headers.get('Content-Disposition') || '';
+      var isAttachment = /attachment/i.test(cd);
       var ct = res.headers.get('Content-Type') || '';
-      if (!res.ok || ct.indexOf('application/json') >= 0) {
+      if (!res.ok || (!isAttachment && ct.indexOf('application/json') >= 0)) {
         var j = null; try { j = await res.json(); } catch (e) {}
         throw new Error((j && j.message) || ('下载失败(' + res.status + ')'));
       }
       var blob = await res.blob();
-      var cd = res.headers.get('Content-Disposition') || '';
       var m = cd.match(/filename\*=UTF-8''([^;]+)/i);
       var fname = m ? decodeURIComponent(m[1]) : (title || '资料');
       if (window.showSaveFilePicker) {
@@ -1903,14 +1909,15 @@
     var list = await api.get('/ai/notebooks/' + state.notebookId + '/sources');
     var host = $('#zq-sources'); if (!host) return;
     host.innerHTML = (list || []).length ? '<div class="zq-src-grid">' + list.map(function (s) {
-      var b = srcBadge(s.sourceType);
+      var info = srcTypeInfo(s.sourceType);
       var title = s.title || s.url || '资料';
-      return '<div class="zq-src-tile" data-source="' + s.id + '" data-source-title="' + esc(title) + '" data-source-url="' + esc(s.url || '') + '" title="点击下载到本地">'
-        + '<span class="zq-src-badge" style="background:' + b[1] + ';">' + esc(b[0]) + '</span>'
+      return '<div class="zq-src-tile" data-source="' + s.id + '" data-source-title="' + esc(title) + '" data-source-url="' + esc(s.url || '') + '" style="--srcc:' + info[1] + ';" title="点击下载到本地">'
+        + '<span class="zq-src-type">' + esc(info[0]) + '</span>'
         + '<span class="zq-src-dl">↓</span>'
+        + '<div class="zq-src-glass">'
         + '<div class="zq-src-title">' + esc(title) + '</div>'
         + '<div class="zq-src-meta"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (String(s.status).toUpperCase() === 'READY' ? 'var(--zq-ok)' : String(s.status).toUpperCase() === 'ERROR' ? 'var(--zq-bad)' : 'var(--zq-text3)') + ';"></span>' + esc(srcStatusLabel(s.status)) + '</div>'
-        + '</div>';
+        + '</div></div>';
     }).join('') + '</div>' : empty('暂无资料');
     $all('[data-source]', host).forEach(function (d) {
       var sid = d.dataset.source, sTitle = d.dataset.sourceTitle, sUrl = d.dataset.sourceUrl;
@@ -1918,7 +1925,8 @@
       d.oncontextmenu = function (e) {
         e.preventDefault();
         var items = [{ label: '下载到本地', onClick: function () { downloadAiSource(sid, sTitle); } }];
-        if (sUrl) items.push({ label: '打开原网址', onClick: function () { window.open(sUrl, '_blank', 'noopener'); } });
+        // 仅放行 http/https，抓取失败留下的畸形 URL 不给打开入口
+        if (sUrl && /^https?:\/\//i.test(sUrl)) items.push({ label: '打开原网址', onClick: function () { window.open(sUrl, '_blank', 'noopener'); } });
         items.push({
           label: '删除该资料', danger: true,
           onClick: async function () {
