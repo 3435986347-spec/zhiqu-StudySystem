@@ -15,6 +15,11 @@ public class SysUser {
     private String password;
     private String nickname;
     private String avatar;
+    private String school;
+    private String major;
+    private String email;
+    private String role;
+    private Integer status;
     private Integer totalStudyMinutes;
     private Integer consecutiveDays;
     private LocalDate lastStudyDate;
@@ -25,6 +30,9 @@ public class SysUser {
 
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;
+
+    @Version
+    private Integer version;
 
     @TableLogic
     private Integer deleted;

@@ -28,18 +28,32 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/auth/**",
+                                "/api/runtime-issue/client",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/uploads/**",
                                 "/",
+                                "/favicon.ico",
                                 "/index.html",
                                 "/dashboard.html",
+                                "/ai-assistant.html",
+                                "/shared-plans.html",
+                                "/knowledge-wiki.html",
+                                "/admin.html",
+                                "/account-admin.html",
+                                "/feedback-admin.html",
+                                "/shared-plan-admin.html",
                                 "/tasks.html",
+                                "/routines.html",
                                 "/statistics.html",
                                 "/achievement.html",
                                 "/profile.html",
+                                "/manifest.json",
+                                "/service-worker.js",
                                 "/css/**",
-                                "/js/**"
+                                "/js/**",
+                                "/vendor/**",
+                                "/assets/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )

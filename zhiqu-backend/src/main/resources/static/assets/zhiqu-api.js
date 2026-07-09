@@ -1,0 +1,1743 @@
+/* 知趣 · 新 UI 接口适配层
+   只负责把 zhiqu-ui 静态页面接回现有 /api 接口，尽量不改变页面结构和视觉。 */
+(function () {
+  'use strict';
+
+  var API = '/api';
+  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all8';
+  // 根路径 "/" 由 Spring 作为欢迎页返回 index.html（登录页），此时 pathname 为空，
+  // 默认必须落到 index.html，否则 bootIndex 不执行、登录按钮无处理器。
+  var page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
+  var state = { user: null, tasks: [], routines: [], notebooks: [], notebookId: null, messages: [] };
+
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (s) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[s];
+    });
+  }
+  function maintainShellCache() {
+    if (!/^https?:$/.test(location.protocol)) return;
+    if ('caches' in window) {
+      caches.keys().then(function (keys) {
+        return Promise.all(keys
+          .filter(function (key) { return key.indexOf('zhiqu-shell-') === 0 && key !== UI_CACHE; })
+          .map(function (key) { return caches.delete(key); }));
+      }).catch(function () {});
+    }
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/service-worker.js')
+        .then(function (registration) { return registration.update().catch(function () {}); })
+        .catch(function () {});
+    }
+  }
+  function token() { return sessionStorage.getItem('token') || localStorage.getItem('token') || ''; }
+  function role() { return sessionStorage.getItem('role') || localStorage.getItem('role') || ''; }
+  function setAuth(data, remember) {
+    if (data && data.token) {
+      sessionStorage.setItem('token', data.token);
+      sessionStorage.setItem('role', data.role || 'USER');
+      if (remember) {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('role', data.role || 'USER');
+      } else {
+        localStorage.removeItem('token');
+        localStorage.removeItem('role');
+      }
+    }
+  }
+  function clearAuth() {
+    sessionStorage.removeItem('token'); sessionStorage.removeItem('role');
+    localStorage.removeItem('token'); localStorage.removeItem('role');
+  }
+  var redirecting = false;
+  function redirectToLogin() {
+    if (redirecting) return;
+    clearAuth();
+    if (page !== 'index.html') { redirecting = true; location.replace('index.html?login=1'); }
+  }
+  function isAuthFailure(json) {
+    if (!json) return false;
+    if (json.code === 401 || json.code === 403) return true;
+    return /未登录|登录状态|登录已过期|请先登录|无权限/.test(json.message || '');
+  }
+  async function request(path, options) {
+    var headers = Object.assign({}, options && options.headers || {});
+    if (token()) headers.Authorization = 'Bearer ' + token();
+    if (options && options.body != null && !(options.body instanceof FormData) && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+    var res = await fetch(API + path, Object.assign({ credentials: 'same-origin' }, options || {}, { headers: headers }));
+    if (res.status === 401 || res.status === 403) {
+      redirectToLogin();
+      throw new Error('未登录或无权限');
+    }
+    var text = await res.text();
+    var json = text ? JSON.parse(text) : {};
+    if (json.code !== 200) {
+      if (isAuthFailure(json)) redirectToLogin();
+      throw new Error(json.message || '请求失败');
+    }
+    return json.data;
+  }
+  var api = {
+    get: function (p) { return request(p, { method: 'GET' }); },
+    post: function (p, b, h) { return request(p, { method: 'POST', body: JSON.stringify(b || {}), headers: h || {} }); },
+    put: function (p, b) { return request(p, { method: 'PUT', body: b == null ? undefined : JSON.stringify(b) }); },
+    del: function (p) { return request(p, { method: 'DELETE' }); },
+    upload: function (p, file, fields) {
+      var fd = new FormData();
+      fd.append('file', file);
+      Object.keys(fields || {}).forEach(function (k) { if (fields[k] != null && fields[k] !== '') fd.append(k, fields[k]); });
+      return request(p, { method: 'POST', body: fd });
+    }
+  };
+
+  function toast(msg, kind) {
+    var el = document.createElement('div');
+    el.textContent = msg;
+    el.style.cssText = 'position:fixed;right:22px;top:22px;z-index:99999;max-width:360px;padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);box-shadow:var(--zq-sh2);color:' + (kind === 'error' ? 'var(--zq-bad)' : 'var(--zq-text)') + ';font-size:13px;font-weight:600;';
+    document.body.appendChild(el);
+    setTimeout(function () { el.remove(); }, 2600);
+  }
+  // 可复用的 Claude 风格居中弹窗：openModal({title, bodyHtml, width, onMount(body,handle), onClose}) → {close, body, mask}
+  function openModal(opts) {
+    opts = opts || {};
+    var mask = document.createElement('div');
+    mask.className = 'zq-modal-mask';
+    var w = opts.width ? ('width:' + opts.width + ';') : '';
+    mask.innerHTML = '<div class="zq-modal" role="dialog" aria-modal="true" style="' + w + '">'
+      + '<div class="zq-modal-head"><h3 class="zq-modal-title">' + esc(opts.title || '') + '</h3>'
+      + '<button type="button" class="zq-modal-close" aria-label="关闭">×</button></div>'
+      + '<div class="zq-modal-body"></div></div>';
+    var body = mask.querySelector('.zq-modal-body');
+    if (opts.bodyHtml != null) body.innerHTML = opts.bodyHtml;
+    else if (opts.bodyNode) body.appendChild(opts.bodyNode);
+    var closed = false;
+    function close() {
+      if (closed) return; closed = true;
+      document.removeEventListener('keydown', onKey);
+      mask.remove();
+      if (!document.querySelector('.zq-modal-mask')) document.body.classList.remove('zq-modal-open');
+      if (opts.onClose) { try { opts.onClose(); } catch (e) {} }
+    }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    mask.addEventListener('mousedown', function (e) { if (e.target === mask) close(); });
+    mask.querySelector('.zq-modal-close').onclick = close;
+    document.addEventListener('keydown', onKey);
+    document.body.classList.add('zq-modal-open');
+    document.body.appendChild(mask);
+    var handle = { close: close, mask: mask, body: body };
+    if (opts.onMount) { try { opts.onMount(body, handle); } catch (e) {} }
+    var first = body.querySelector('input,textarea,select,button'); if (first) { try { first.focus(); } catch (e) {} }
+    return handle;
+  }
+  // ── 弹窗版 prompt/confirm/alert（替换浏览器原生弹框，统一 Claude 风格） ──
+  // askText({title,label,placeholder,value,textarea,okText}) → Promise<string|null>（取消返回 null）
+  function askText(opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      var done = false;
+      var field = opts.textarea
+        ? '<textarea id="zq-ask-input" class="zq-textarea" style="min-height:100px;" placeholder="' + esc(opts.placeholder || '') + '">' + esc(opts.value || '') + '</textarea>'
+        : '<input id="zq-ask-input" class="zq-input" placeholder="' + esc(opts.placeholder || '') + '" value="' + esc(opts.value || '') + '">';
+      openModal({
+        title: opts.title || '请输入',
+        bodyHtml:
+          '<div class="zq-field">' + (opts.label ? '<label class="zq-label">' + esc(opts.label) + '</label>' : '') + field + '</div>'
+          + (opts.hint ? '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">' + esc(opts.hint) + '</p>' : '')
+          + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" data-ask="cancel">取消</button><button type="button" class="zq-btn" data-ask="ok">' + esc(opts.okText || '确定') + '</button></div>',
+        onMount: function (b, h) {
+          var input = $('#zq-ask-input', b);
+          try { input.select(); } catch (e) {}
+          function finish(v) { if (done) return; done = true; h.close(); resolve(v); }
+          $('[data-ask="cancel"]', b).onclick = function () { finish(null); };
+          $('[data-ask="ok"]', b).onclick = function () { finish(input.value); };
+          if (!opts.textarea) input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); finish(input.value); } });
+        },
+        onClose: function () { if (!done) { done = true; resolve(null); } }
+      });
+    });
+  }
+  // askConfirm({title,message,okText,danger}) → Promise<boolean>
+  function askConfirm(opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      var done = false;
+      openModal({
+        title: opts.title || '确认操作',
+        bodyHtml:
+          '<p style="margin:0 0 16px;font-size:13.5px;line-height:1.7;color:var(--zq-text2);white-space:pre-wrap;">' + esc(opts.message || '确定继续吗？') + '</p>'
+          + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" data-ask="cancel">取消</button><button type="button" class="zq-btn" data-ask="ok"' + (opts.danger ? ' style="background:var(--zq-bad);"' : '') + '>' + esc(opts.okText || '确定') + '</button></div>',
+        onMount: function (b, h) {
+          function finish(v) { if (done) return; done = true; h.close(); resolve(v); }
+          $('[data-ask="cancel"]', b).onclick = function () { finish(false); };
+          $('[data-ask="ok"]', b).onclick = function () { finish(true); };
+        },
+        onClose: function () { if (!done) { done = true; resolve(false); } }
+      });
+    });
+  }
+  // showInfo({title,message,html}) → Promise<void>
+  function showInfo(opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      var done = false;
+      openModal({
+        title: opts.title || '提示',
+        bodyHtml:
+          (opts.html || '<p style="margin:0 0 16px;font-size:13.5px;line-height:1.7;color:var(--zq-text2);white-space:pre-wrap;">' + esc(opts.message || '') + '</p>')
+          + '<div class="zq-modal-actions"><button type="button" class="zq-btn" data-ask="ok">知道了</button></div>',
+        onMount: function (b, h) {
+          $('[data-ask="ok"]', b).onclick = function () { if (done) return; done = true; h.close(); resolve(); };
+        },
+        onClose: function () { if (!done) { done = true; resolve(); } }
+      });
+    });
+  }
+  function empty(msg) { return '<div style="padding:18px;text-align:center;color:var(--zq-text3);font-size:12.5px;">' + esc(msg || '暂无数据') + '</div>'; }
+  function fmtDate(v) { return v ? String(v).replace('T', ' ').slice(0, 16) : '—'; }
+  function d10(v) { return v ? String(v).slice(0, 10) : ''; }
+  function hm(v) { return v ? String(v).replace('T', ' ').slice(11, 16) : ''; }
+  function today() { return new Date().toISOString().slice(0, 10); }
+  function weekRange(offset) {
+    var now = new Date();
+    var day = now.getDay() || 7;
+    var mon = new Date(now); mon.setDate(now.getDate() - day + 1 + (offset || 0) * 7);
+    var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    return [mon.toISOString().slice(0, 10), sun.toISOString().slice(0, 10)];
+  }
+  function qLabel(q) { return ({ 1: '重要且紧急', 2: '重要不紧急', 3: '紧急不重要', 4: '不重要不紧急' })[q] || '未分类'; }
+  function qKey(q) { return ({ 1: 'q1', 2: 'q2', 3: 'q3', 4: 'q4' })[q] || 'q4'; }
+  function pLabel(p) { return ({ 0: '低', 1: '中', 2: '高', 3: '紧急' })[p] || '中'; }
+  function sLabel(s) { return ({ 0: '待办', 1: '进行中', 2: '已完成' })[s] || '待办'; }
+  function normalizeTask(t) {
+    return Object.assign({}, t, {
+      title: t.title || t.name || '未命名任务',
+      description: t.description || '',
+      quadrant: Number(t.quadrant || t.q || 2),
+      priority: Number(t.priority == null ? 1 : t.priority),
+      status: Number(t.status == null ? 0 : t.status)
+    });
+  }
+  function renderInitError(err) {
+    if (page === 'index.html') return;
+    var main = $('.zq-main') || $('main') || document.body;
+    if (!main) return;
+    var message = err && err.message ? err.message : '页面数据加载失败';
+    main.innerHTML = '<section class="zq-card" style="max-width:720px;margin:40px auto;padding:24px;">'
+      + '<p class="zq-eyebrow">加载失败</p>'
+      + '<h1 class="zq-h1" style="margin-bottom:10px;">页面接口暂时不可用</h1>'
+      + '<p style="margin:0 0 16px;color:var(--zq-text2);font-size:13px;line-height:1.8;">'
+      + esc(message)
+      + '</p><button class="zq-btn" onclick="location.reload()">重新加载</button>'
+      + '</section>';
+  }
+  async function safe(name, fn, options) {
+    try { return await fn(); } catch (e) {
+      if (redirecting) return;
+      console.error('[zhiqu-api]', name, e);
+      toast(e.message || name + '失败', 'error');
+      if (options && options.renderError) renderInitError(e);
+    }
+  }
+
+  async function initAuth() {
+    if (page === 'index.html') return null;
+    state.user = await api.get('/auth/info');
+    updateSidebarUser(state.user);
+    return state.user;
+  }
+  function updateSidebarUser(u) {
+    var box = $('.zq-user');
+    if (!box || !u) return;
+    var name = u.nickname || u.username || '知趣用户';
+    var r = u.role || role() || 'USER';
+    var avatar = u.avatar ? '<img src="' + esc(u.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">' : esc(name.slice(0, 1));
+    box.innerHTML = '<div class="zq-avatar">' + avatar + '</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(name) + '</div><div style="font-size:11px;color:var(--zq-text3);">' + esc(r === 'ADMIN' ? '管理员' : '普通用户') + '</div></div>';
+  }
+
+  var AUTH_FORM_HTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--zq-border-soft);margin-bottom:18px;">'
+    + '<button type="button" data-authtab="login" style="height:38px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:700;color:var(--zq-primary);border-bottom:2px solid var(--zq-primary);">登录</button>'
+    + '<button type="button" data-authtab="register" style="height:38px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:500;color:var(--zq-text2);border-bottom:2px solid transparent;">注册</button>'
+    + '</div>'
+    + '<form id="form-login" style="display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">'
+    + '<div class="zq-field"><label class="zq-label">用户名</label><input class="zq-input" placeholder="请输入用户名"></div>'
+    + '<div class="zq-field"><label class="zq-label">密码</label><input class="zq-input" type="password" placeholder="请输入密码"></div>'
+    + '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--zq-text2);cursor:pointer;"><input type="checkbox" style="accent-color:var(--zq-primary);"><span>记住登录状态</span></label>'
+    + '<button class="zq-btn" style="height:38px;">登 录</button>'
+    + '</form>'
+    + '<form id="form-reg" style="display:none;flex-direction:column;gap:14px;" onsubmit="return false;">'
+    + '<div class="zq-field"><label class="zq-label">用户名</label><input class="zq-input" placeholder="请输入用户名"></div>'
+    + '<div class="zq-field"><label class="zq-label">密码</label><input class="zq-input" type="password" placeholder="至少 6 位密码"></div>'
+    + '<div class="zq-field"><label class="zq-label">确认密码</label><input class="zq-input" type="password" placeholder="再次输入密码"></div>'
+    + '<button class="zq-btn" style="height:38px;">注 册</button>'
+    + '</form>';
+  function switchAuthTab(root, tab) {
+    var lg = tab !== 'register';
+    var fl = $('#form-login', root), fr = $('#form-reg', root);
+    if (fl) fl.style.display = lg ? 'flex' : 'none';
+    if (fr) fr.style.display = lg ? 'none' : 'flex';
+    $all('[data-authtab]', root).forEach(function (t) {
+      var on = t.getAttribute('data-authtab') === (lg ? 'login' : 'register');
+      t.style.fontWeight = on ? '700' : '500';
+      t.style.color = on ? 'var(--zq-primary)' : 'var(--zq-text2)';
+      t.style.borderBottomColor = on ? 'var(--zq-primary)' : 'transparent';
+    });
+  }
+  function wireAuthForms(root) {
+    var login = $('#form-login', root), reg = $('#form-reg', root);
+    $all('[data-authtab]', root).forEach(function (t) { t.onclick = function () { switchAuthTab(root, t.getAttribute('data-authtab')); }; });
+    if (login) login.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var ins = $all('input', login);
+      var remember = !!(ins[2] && ins[2].checked);
+      safe('登录', async function () {
+        var data = await api.post('/auth/login', { username: ins[0].value.trim(), password: ins[1].value, rememberMe: remember });
+        setAuth(data, remember);
+        location.href = 'dashboard.html';
+      });
+    });
+    if (reg) reg.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var ins = $all('input', reg);
+      if (ins[1].value !== ins[2].value) return toast('两次密码不一致', 'error');
+      safe('注册', async function () {
+        await api.post('/auth/register', { username: ins[0].value.trim(), password: ins[1].value, confirmPassword: ins[2].value });
+        toast('注册成功，请登录');
+        switchAuthTab(root, 'login');
+      });
+    });
+  }
+  function openAuthModal(tab) {
+    return openModal({
+      title: tab === 'register' ? '注册知趣账号' : '登录知趣',
+      width: '400px',
+      bodyHtml: AUTH_FORM_HTML,
+      onMount: function (body) { wireAuthForms(body); switchAuthTab(body, tab || 'login'); }
+    });
+  }
+  function bootIndex() {
+    if (token()) { location.href = 'dashboard.html'; return; }
+    $all('[data-auth]').forEach(function (b) { b.onclick = function () { openAuthModal(b.getAttribute('data-auth')); }; });
+    var q = new URLSearchParams(location.search);
+    if (q.get('login') != null) openAuthModal(q.get('login') === 'register' ? 'register' : 'login');
+  }
+
+  async function bootDashboard() {
+    if (state.weekOffset == null) state.weekOffset = 0;
+    var r = weekRange(state.weekOffset);
+    var data = await api.get('/dashboard/overview?from=' + r[0] + '&to=' + r[1]);
+    var sum = data.summary || {};
+    var statNums = $all('.zq-stat-num');
+    if (statNums[0]) statNums[0].textContent = sum.pendingToday == null ? sum.todayTasks || 0 : sum.pendingToday;
+    if (statNums[1]) statNums[1].textContent = sum.overdue || 0;
+    if (statNums[2]) statNums[2].textContent = sum.remindersToday || 0;
+    if (statNums[3]) statNums[3].textContent = (sum.routineDone || 0) + '/' + (sum.routineTotal || 0);
+    var headerDate = $('header span');
+    var todayRow = (data.days || []).find(function (d) { return d.today; });
+    if (headerDate) headerDate.textContent = today() + (todayRow && todayRow.weekday ? ' · ' + todayRow.weekday : '');
+    renderWeek(data.days || []);
+    renderToday((data.days || []).find(function (d) { return d.today; })?.items || []);
+    renderQuadrants(data.quadrants || []);
+    renderDeadlines(data.upcomingDeadlines || []);
+    // 周历标题随范围更新
+    var weekSection = $('#zq-week') && $('#zq-week').closest('section');
+    var weekTitle = weekSection && weekSection.querySelector('.zq-h2');
+    if (weekTitle) weekTitle.textContent = r[0].slice(5).replace('-', '/') + ' – ' + r[1].slice(5).replace('-', '/');
+    $all('[data-week-nav]').forEach(function (b) {
+      b.onclick = function () {
+        var nav = b.dataset.weekNav;
+        state.weekOffset = nav === 'today' ? 0 : (state.weekOffset + (nav === 'next' ? 1 : -1));
+        bootDashboard();
+      };
+    });
+    var add = $('header .zq-btn');
+    if (add) add.onclick = function () { location.href = 'tasks.html'; };
+    await populatePomoTasks();
+    await updatePomoCount();
+    if (window.zqApi) window.zqApi.afterRecord = function () { bootDashboard(); };
+  }
+  async function populatePomoTasks() {
+    var sel = $('#zq-pomo-task'); if (!sel) return;
+    try {
+      var tasks = (await api.get('/task/list?status=0')).map(normalizeTask);
+      sel.innerHTML = '<option value="">（不指定任务）</option>' + tasks.slice(0, 50).map(function (t) {
+        return '<option value="' + t.id + '">' + esc(t.title) + '</option>';
+      }).join('');
+    } catch (e) { /* 忽略：下拉保持默认项 */ }
+  }
+  async function updatePomoCount() {
+    var host = $('#zq-pomo-count'); if (!host) return;
+    try {
+      var recs = await api.get('/record/list');
+      var t = today();
+      var todays = (recs || []).filter(function (rec) { return d10(rec.studyDate) === t; });
+      var mins = todays.reduce(function (a, rec) { return a + (rec.durationMinutes || 0); }, 0);
+      host.textContent = '今日：' + todays.length + ' 个 ｜ ' + mins + ' 分钟';
+    } catch (e) { /* 忽略 */ }
+  }
+  function renderWeek(days) {
+    var host = $('#zq-week');
+    if (!host) return;
+    host.innerHTML = days.length ? days.map(function (d) {
+      var items = (d.items || []).slice(0, 5).map(function (it) {
+        return '<div style="display:grid;grid-template-columns:36px minmax(0,1fr);gap:6px;align-items:center;padding:6px 7px;border-radius:var(--zq-rs);background:' + (it.kind === 'ROUTINE' ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid var(--zq-border-soft);"><span class="zq-mono" style="color:var(--zq-primary);font-size:10.5px;font-weight:600;">' + esc(it.time || hm(it.deadline) || '') + '</span><span style="min-width:0;overflow:hidden;color:var(--zq-text);font-size:11.5px;font-weight:500;text-overflow:ellipsis;white-space:nowrap;">' + esc(it.title) + '</span></div>';
+      }).join('') || '<div style="padding:10px 0;text-align:center;color:var(--zq-text3);font-size:11.5px;">无安排</div>';
+      return '<div style="min-height:225px;padding:10px;border:1px solid ' + (d.today ? 'var(--zq-primary)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (d.today ? 'var(--zq-tint)' : 'var(--zq-card-soft)') + ';"><div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;"><span style="color:' + (d.today ? 'var(--zq-primary)' : 'var(--zq-text2)') + ';font-size:11.5px;font-weight:700;">' + esc(d.weekday) + '</span><strong class="zq-mono" style="font-size:18px;color:' + (d.today ? 'var(--zq-primary)' : 'var(--zq-text)') + ';">' + esc(d.day) + '</strong></div><div style="display:flex;flex-direction:column;gap:7px;">' + items + '</div></div>';
+    }).join('') : empty('暂无本周安排');
+  }
+  function renderToday(items) {
+    var host = $('#zq-today');
+    if (!host) return;
+    host.innerHTML = items.length ? items.map(function (x) {
+      var routine = x.kind === 'ROUTINE';
+      var q = routine ? 'routine' : qKey(x.quadrant);
+      var color = routine ? 'var(--zq-primary)' : 'var(--zq-' + q + ')';
+      return '<div style="display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:' + (routine ? 'var(--zq-tint)' : 'var(--zq-card)') + ';opacity:' + (x.status === 2 || x.completed ? .58 : 1) + ';"><span class="zq-mono" style="color:var(--zq-primary);font-size:12.5px;font-weight:600;">' + esc(x.time || hm(x.deadline) || '') + '</span><div style="min-width:0;"><div style="font-size:13.5px;font-weight:600;line-height:1.35;">' + esc(x.title) + '</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;align-items:center;"><span class="zq-badge" style="background:var(--zq-tint);color:' + color + ';">' + esc(routine ? '例行' : qLabel(x.quadrant)) + '</span><span style="color:var(--zq-text2);font-size:11.5px;">' + esc(x.description || fmtDate(x.deadline)) + '</span></div></div><button class="zq-btn-ghost" data-task-done="' + esc(x.id || '') + '" data-kind="' + esc(x.kind || '') + '" style="height:28px;padding:0 11px;font-size:12px;">' + (x.status === 2 || x.completed ? '已完成' : '完成') + '</button></div>';
+    }).join('') : empty('今天暂时没有安排');
+    $all('[data-task-done]', host).forEach(function (btn) {
+      btn.onclick = function () {
+        var id = btn.getAttribute('data-task-done');
+        if (!id) return;
+        safe('完成', async function () {
+          if (btn.getAttribute('data-kind') === 'ROUTINE') await api.post('/routine/' + id + '/checkin', { checkDate: today(), status: 'DONE' });
+          else await api.put('/task/' + id + '/status?status=2');
+          await bootDashboard();
+        });
+      };
+    });
+  }
+  function renderQuadrants(rows) {
+    var host = $('#zq-quad'); if (!host) return;
+    host.innerHTML = rows.map(function (row) {
+      var q = qKey(row.quadrant);
+      var items = (row.items || []).map(function (x) { return '<div style="padding:7px 9px;border-radius:var(--zq-rs);background:var(--zq-' + q + '-bg);font-size:12px;font-weight:500;line-height:1.45;">' + esc(x.title) + '</div>'; }).join('') || '<div style="font-size:12px;color:var(--zq-text3);">暂无关键任务</div>';
+      return '<div style="min-height:150px;padding:13px;border:1px solid var(--zq-' + q + '-border);border-radius:var(--zq-rs);background:var(--zq-card);border-top:3px solid var(--zq-' + q + ');"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;"><span style="font-size:12px;font-weight:700;color:var(--zq-' + q + ');white-space:nowrap;">' + qLabel(row.quadrant) + '</span><span class="zq-mono" style="font-size:12px;font-weight:600;color:var(--zq-text3);">' + (row.total || 0) + ' 项</span></div><div style="display:flex;flex-direction:column;gap:7px;">' + items + '</div></div>';
+    }).join('');
+  }
+  function renderDeadlines(list) {
+    var host = $('#zq-ddl'); if (!host) return;
+    host.innerHTML = list.length ? list.map(function (d) {
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--zq-border-soft);"><div style="min-width:0;"><strong style="display:block;font-size:12.5px;line-height:1.35;font-weight:600;">' + esc(d.title) + '</strong><span style="display:block;margin-top:3px;color:var(--zq-text2);font-size:11.5px;">' + esc(fmtDate(d.deadline)) + '</span></div><span class="zq-badge zq-mono" style="flex:none;background:var(--zq-card-soft);color:var(--zq-text2);">DDL</span></div>';
+    }).join('') : empty('暂无临近 DDL');
+  }
+
+  async function bootTasks() {
+    var selects = $all('.zq-card .zq-select');
+    var queryBtn = $all('.zq-card .zq-btn')[0], newBtn = $all('.zq-card .zq-btn')[1];
+    if (queryBtn) queryBtn.onclick = loadTasks;
+    if (newBtn) newBtn.onclick = createTaskPrompt;
+    await loadTasks();
+    async function loadTasks() {
+      var params = new URLSearchParams();
+      var q = selects[0] ? selects[0].selectedIndex : 0, s = selects[1] ? selects[1].selectedIndex : 0, p = selects[2] ? selects[2].selectedIndex : 0;
+      if (q) params.set('quadrant', q);
+      if (s) params.set('status', s - 1);
+      if (p) params.set('priority', p - 1);
+      params.set('sortBy', selects[3] && selects[3].selectedIndex === 1 ? 'deadline' : selects[3] && selects[3].selectedIndex === 2 ? 'priority' : 'updatedAt');
+      params.set('sortOrder', selects[4] && selects[4].selectedIndex === 1 ? 'asc' : 'desc');
+      state.tasks = (await api.get('/task/list?' + params.toString())).map(normalizeTask);
+      renderTaskRows(state.tasks);
+    }
+  }
+  function renderTaskRows(list) {
+    var host = $('#zq-rows'); if (!host) return;
+    host.innerHTML = list.length ? list.map(function (t) {
+      var q = qKey(t.quadrant);
+      return '<div style="display:grid;grid-template-columns:minmax(200px,2.2fr) 104px 64px 78px 118px 118px 108px;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--zq-border-soft);opacity:' + (t.status === 2 ? .55 : 1) + ';"><div style="min-width:0;"><div style="font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.title) + '</div><div style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.description || '—') + '</div></div><span><span class="zq-badge" style="background:var(--zq-' + q + '-bg);color:var(--zq-' + q + ');">' + qLabel(t.quadrant) + '</span></span><span style="font-size:12.5px;font-weight:600;">' + pLabel(t.priority) + '</span><span><button data-cycle-task="' + t.id + '" style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px solid var(--zq-border);border-radius:999px;background:var(--zq-card-soft);color:var(--zq-text2);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">' + sLabel(t.status) + '</button></span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(fmtDate(t.deadline)) + '</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(fmtDate(t.reminderTime)) + '</span><span style="display:flex;justify-content:flex-end;gap:6px;"><button class="zq-btn-ghost" data-edit-task="' + t.id + '" style="height:26px;padding:0 10px;font-size:12px;">编辑</button><button class="zq-btn-ghost" data-del-task="' + t.id + '" style="height:26px;padding:0 10px;font-size:12px;">删除</button></span></div>';
+    }).join('') : empty('暂无任务');
+    var foot = $('.zq-table > div:last-child span');
+    if (foot) foot.textContent = '共 ' + list.length + ' 条';
+    $all('[data-cycle-task]', host).forEach(function (b) { b.onclick = function () { cycleTask(Number(b.dataset.cycleTask)); }; });
+    $all('[data-del-task]', host).forEach(function (b) { b.onclick = function () { deleteTask(Number(b.dataset.delTask)); }; });
+    $all('[data-edit-task]', host).forEach(function (b) { b.onclick = function () { editTaskPrompt(Number(b.dataset.editTask)); }; });
+  }
+  async function createTaskPrompt() {
+    var title = await askText({ title: '新建任务', label: '任务标题', placeholder: '例如：数学二轮 · 重积分专题' }); if (!title || !title.trim()) return;
+    await safe('创建任务', async function () {
+      await api.post('/task', { title: title.trim(), description: '', quadrant: 2, priority: 1, status: 0 }, { 'Idempotency-Key': 'ui-' + Date.now() });
+      toast('任务已创建'); await bootTasks();
+    });
+  }
+  async function editTaskPrompt(id) {
+    var t = state.tasks.find(function (x) { return x.id === id; }); if (!t) return;
+    var title = await askText({ title: '修改任务', label: '任务标题', value: t.title }); if (!title || !title.trim()) return;
+    await safe('修改任务', async function () {
+      await api.put('/task/' + id, Object.assign({}, t, { title: title.trim() }));
+      toast('任务已保存'); await bootTasks();
+    });
+  }
+  async function deleteTask(id) {
+    if (!await askConfirm({ title: '删除任务', message: '确定删除这个任务？删除后不可恢复。', okText: '删除', danger: true })) return;
+    await safe('删除任务', async function () { await api.del('/task/' + id); await bootTasks(); });
+  }
+  async function cycleTask(id) {
+    var t = state.tasks.find(function (x) { return x.id === id; }); if (!t) return;
+    await safe('切换状态', async function () { await api.put('/task/' + id + '/status?status=' + ((t.status + 1) % 3)); await bootTasks(); });
+  }
+
+  async function bootRoutines() {
+    await loadRoutineSources(0);
+    await loadRoutines();
+    var buttons = $all('button.zq-btn, button.zq-btn-ghost');
+    var createBtn = buttons.find(function (b) { return /创建例行计划/.test(b.textContent); });
+    if (createBtn) createBtn.onclick = createRoutineFromForm;
+    var genBtn = buttons.find(function (b) { return /生成例行计划/.test(b.textContent); });
+    if (genBtn) genBtn.onclick = generateRoutinesFromTasks;
+    var genSection = $all('section').find(function (s) { return /从任务生成/.test(s.textContent); });
+    if (genSection) {
+      var filterSel = $('select', genSection);
+      var refreshBtn = $all('button', genSection).find(function (b) { return /刷新/.test(b.textContent); });
+      if (filterSel) filterSel.onchange = function () { loadRoutineSources(filterSel.selectedIndex); };
+      if (refreshBtn) refreshBtn.onclick = function () { loadRoutineSources(filterSel ? filterSel.selectedIndex : 0); };
+    }
+    // 星期选择器接线（点亮/熄灭），仅前端状态，提交时读取
+    $all('#zq-wd button').forEach(function (b) {
+      if (b.dataset.wired) return; b.dataset.wired = '1';
+      b.addEventListener('click', function () {
+        b.dataset.on = b.dataset.on === '1' ? '0' : '1';
+        var on = b.dataset.on === '1';
+        b.style.borderColor = on ? 'var(--zq-primary)' : 'var(--zq-border)';
+        b.style.background = on ? 'var(--zq-tint)' : 'var(--zq-card)';
+        b.style.color = on ? 'var(--zq-primary)' : 'var(--zq-text2)';
+      });
+    });
+  }
+  async function loadRoutineSources(statusIdx) {
+    var params = statusIdx === 1 ? '?status=0' : statusIdx === 2 ? '?status=1' : '';
+    var tasks = (await api.get('/task/list' + params)).map(normalizeTask);
+    renderRoutineSources(tasks);
+  }
+  function selectedWeekdays() {
+    var days = [];
+    $all('#zq-wd button').forEach(function (b, i) { if (b.dataset.on === '1') days.push(i + 1); });
+    return days;
+  }
+  async function generateRoutinesFromTasks() {
+    var genSection = $all('section').find(function (s) { return /从任务生成/.test(s.textContent); });
+    if (!genSection) return;
+    var checked = $all('#zq-src input[type="checkbox"]').filter(function (c) { return c.checked; });
+    if (!checked.length) return toast('请先勾选要生成的任务', 'error');
+    var selects = $all('select', genSection);
+    var freqSel = selects[1], remindSel = selects[2];
+    var frequency = freqSel && freqSel.selectedIndex === 1 ? 'WEEKLY' : 'DAILY';
+    var duration = Number(($('input[type="number"]', genSection) || {}).value || 45);
+    var pref = ($('input[type="time"]', genSection) || {}).value || '08:00';
+    var reminderEnabled = !remindSel || remindSel.selectedIndex === 0;
+    var days = selectedWeekdays();
+    await safe('生成例行计划', async function () {
+      for (var i = 0; i < checked.length; i++) {
+        var label = checked[i].closest('label');
+        var titleEl = label && label.querySelector('div > div');
+        var title = titleEl ? titleEl.textContent : '例行计划';
+        var payload = { title: title, frequency: frequency, durationMinutes: duration, preferredTime: pref, reminderEnabled: reminderEnabled, startDate: today() };
+        if (frequency === 'WEEKLY' && days.length) payload.daysOfWeek = days;
+        await api.post('/routine', payload);
+      }
+      toast('已生成 ' + checked.length + ' 个例行计划');
+      await loadRoutines();
+    });
+  }
+  function renderRoutineSources(tasks) {
+    var host = $('#zq-src'); if (!host) return;
+    host.innerHTML = tasks.slice(0, 20).map(function (t) {
+      return '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);cursor:pointer;"><input type="checkbox" value="' + t.id + '" style="accent-color:var(--zq-primary);"><div style="min-width:0;flex:1;"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.title) + '</div><div style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;">' + esc(qLabel(t.quadrant) + ' · ' + sLabel(t.status)) + '</div></div></label>';
+    }).join('') || empty('暂无可选择任务');
+  }
+  async function loadRoutines() {
+    var host = $('#zq-rt'); if (!host) return;
+    var list = await api.get('/routine/list');
+    host.innerHTML = list.length ? list.map(function (r) {
+      return '<div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><div class="zq-mono" style="flex:none;min-width:46px;height:32px;padding:0 8px;border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">' + esc((r.preferredTime || '08:00').slice(0, 5)) + '</div><div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(r.title) + '</div><div style="font-size:11.5px;color:var(--zq-text2);margin-top:3px;">' + esc((r.frequency || 'DAILY') + ' · ' + (r.durationMinutes || 0) + ' 分钟') + '</div></div><button data-check-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">标记完成</button><button data-del-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">删除</button></div>';
+    }).join('') : empty('暂无例行计划');
+    $all('[data-check-routine]', host).forEach(function (b) { b.onclick = async function () { await api.post('/routine/' + b.dataset.checkRoutine + '/checkin', { checkDate: today(), status: 'DONE' }); await loadRoutines(); }; });
+    $all('[data-del-routine]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '删除例行计划', message: '删除这个例行计划？相关的未来提醒会一并停止。', okText: '删除', danger: true })) { await api.del('/routine/' + b.dataset.delRoutine); await loadRoutines(); } }; });
+  }
+  async function createRoutineFromForm() {
+    var section = $all('section').find(function (s) { return /新建例行计划/.test(s.textContent); });
+    if (!section) return;
+    var title = $('input[placeholder*="英语单词"]', section).value.trim();
+    if (!title) return toast('请输入标题', 'error');
+    await safe('创建例行计划', async function () {
+      await api.post('/routine', {
+        title: title,
+        description: $('textarea', section).value || '',
+        frequency: $('select', section).selectedIndex === 0 ? 'DAILY' : 'WEEKLY',
+        durationMinutes: Number($('input[type="number"]', section).value || 45),
+        startDate: $('input[type="date"]', section).value || today(),
+        endDate: $all('input[type="date"]', section)[1]?.value || '',
+        preferredTime: '08:00',
+        reminderEnabled: true
+      });
+      toast('例行计划已创建'); await loadRoutines();
+    });
+  }
+
+  async function bootStatistics() {
+    var stat = await api.get('/record/statistics');
+    var nums = $all('.zq-stat-num');
+    if (nums[0]) nums[0].textContent = stat.consecutiveDays || 0;
+    if (nums[1]) nums[1].textContent = stat.totalMinutes || stat.totalStudyMinutes || 0;
+    if (nums[2]) nums[2].textContent = stat.completedTasks || 0;
+    if (nums[3]) nums[3].textContent = stat.totalTasks || 0;
+    window.setTab = function (k) { highlightStatTab(k); paintTrend(k); };
+    await paintTrend('day');
+    highlightStatTab('day');
+    await renderQuadrantDonut();
+  }
+  function highlightStatTab(k) {
+    $all('#zq-tabs button').forEach(function (b) {
+      var on = b.dataset.k === k;
+      b.style.background = on ? 'var(--zq-primary)' : 'var(--zq-card)';
+      b.style.color = on ? 'var(--zq-on-primary)' : 'var(--zq-text2)';
+    });
+  }
+  async function renderQuadrantDonut() {
+    var donut = $('#zq-donut'); if (!donut) return;
+    var tasks = (await api.get('/task/list')).map(normalizeTask);
+    var counts = [0, 0, 0, 0];
+    tasks.forEach(function (t) { var q = Number(t.quadrant); if (q >= 1 && q <= 4) counts[q - 1]++; });
+    var total = counts.reduce(function (a, b) { return a + b; }, 0);
+    var C = 2 * Math.PI * 66, acc = 0;
+    donut.innerHTML = total ? counts.map(function (n, i) {
+      if (!n) return '';
+      var len = n / total * C;
+      var seg = '<circle cx="86" cy="86" r="66" fill="none" stroke="var(--zq-q' + (i + 1) + ')" stroke-width="22" stroke-dasharray="' + len.toFixed(1) + ' ' + (C - len).toFixed(1) + '" stroke-dashoffset="' + (-acc).toFixed(1) + '" transform="rotate(-90 86 86)"></circle>';
+      acc += len; return seg;
+    }).join('') : '<circle cx="86" cy="86" r="66" fill="none" stroke="var(--zq-card-soft)" stroke-width="22"></circle>';
+    var wrap = donut.parentElement;
+    var center = wrap && wrap.querySelector('.zq-mono');
+    if (center) center.textContent = total;
+    var legendHost = $('#zq-legend');
+    if (legendHost) {
+      var labels = ['重要且紧急', '重要不紧急', '紧急不重要', '不重要不紧急'];
+      legendHost.innerHTML = counts.map(function (n, i) {
+        var pct = total ? Math.round(n / total * 100) : 0;
+        return '<div style="display:flex; align-items:center; gap:8px; font-size:12.5px;"><span style="width:10px; height:10px; flex:none; border-radius:3px; background:var(--zq-q' + (i + 1) + ');"></span><span style="flex:1; color:var(--zq-text2);">' + labels[i] + '</span><span class="zq-mono" style="font-weight:600;">' + n + ' 项 · ' + pct + '%</span></div>';
+      }).join('');
+    }
+  }
+  async function paintTrend(type) {
+    var list = await api.get('/record/trend?type=' + encodeURIComponent(type));
+    var vals = list.map(function (x) { return Number(x.minutes || x.totalMinutes || x.value || 0); });
+    var labels = list.map(function (x) { return x.label || x.date || x.period || ''; });
+    var max = Math.max.apply(null, vals.concat([1]));
+    var host = $('#zq-bars'); if (!host) return;
+    host.innerHTML = vals.map(function (v, i) {
+      var h = Math.max(3, Math.round(v / max * 168));
+      return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;height:100%;justify-content:flex-end;"><span class="zq-mono" style="font-size:10px;color:var(--zq-text3);">' + v + '</span><div style="width:100%;max-width:34px;height:' + h + 'px;border-radius:4px 4px 2px 2px;background:var(--zq-tint-strong);"></div><span style="font-size:10.5px;color:var(--zq-text3);white-space:nowrap;">' + esc(labels[i]) + '</span></div>';
+    }).join('') || empty('暂无趋势数据');
+  }
+
+  async function bootAchievement() {
+    var info = state.user || {};
+    var list = await api.get('/achievement/list');
+    state.achievements = list;
+    var unlockedList = list.filter(function (x) { return x.unlocked || x.unlockedAt; });
+    var nums = $all('.zq-stat-num');
+    if (nums[0]) nums[0].textContent = unlockedList.length;
+    if (nums[1]) nums[1].textContent = list.length;
+    if (nums[2]) nums[2].textContent = info.achievementPoints || 0;
+    // 「最近解锁」卡片（第 4 个 .zq-stat，无 .zq-stat-num）
+    var lastCard = $all('.zq-stat')[3];
+    if (lastCard) {
+      var recent = unlockedList.slice().sort(function (a, b) {
+        return String(b.unlockedAt || '').localeCompare(String(a.unlockedAt || ''));
+      })[0];
+      var strong = lastCard.querySelector('strong');
+      var spans = lastCard.querySelectorAll('span');
+      if (recent) {
+        if (strong) strong.textContent = recent.name || recent.title || recent.achievementName || '成就';
+        if (spans[1]) spans[1].textContent = recent.unlockedAt ? d10(recent.unlockedAt) + ' 解锁' : '已解锁';
+      } else {
+        if (strong) strong.textContent = '暂无';
+        if (spans[1]) spans[1].textContent = '继续加油';
+      }
+    }
+    window.setF = function (k) {
+      $all('#zq-filters button').forEach(function (b) {
+        var on = b.dataset.k === k;
+        b.style.background = on ? 'var(--zq-primary)' : 'var(--zq-card)';
+        b.style.color = on ? 'var(--zq-on-primary)' : 'var(--zq-text2)';
+      });
+      renderAchList(k);
+    };
+    renderAchList('all');
+  }
+  function renderAchList(filter) {
+    var host = $('#zq-ach'); if (!host) return;
+    var list = (state.achievements || []).filter(function (a) {
+      var on = !!(a.unlocked || a.unlockedAt);
+      return filter === 'all' ? true : (filter === 'on' ? on : !on);
+    });
+    host.innerHTML = list.map(function (a) {
+      var on = !!(a.unlocked || a.unlockedAt);
+      var name = a.name || a.title || a.achievementName || '成就';
+      var desc = a.description || '';
+      var points = a.points || a.score || 0;
+      return '<article style="padding:16px;border:1px solid ' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);opacity:' + (on ? 1 : .82) + ';"><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;"><div style="width:42px;height:42px;flex:none;border-radius:50%;background:' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-card-soft)') + ';color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';display:flex;align-items:center;justify-content:center;font-size:18px;">✪</div><div style="min-width:0;"><h3 style="margin:0;font-size:14.5px;font-weight:700;">' + esc(name) + '</h3><span style="font-size:11.5px;color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';font-weight:600;">' + (on ? '已解锁' : '进行中') + '</span></div></div><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;min-height:38px;">' + esc(desc) + '</p><div style="display:flex;justify-content:flex-end;font-size:11.5px;color:var(--zq-text3);"><span class="zq-mono">+' + points + ' 点</span></div></article>';
+    }).join('') || empty('暂无成就');
+  }
+
+  async function bootProfile() {
+    var u = state.user || {};
+    var card = $('.zq-card-lg');
+    if (card) {
+      var av = card.querySelector('div[style*="76px"]');
+      if (av) av.textContent = (u.nickname || u.username || '知').slice(0, 1);
+      var h = card.querySelector('.zq-h2'); if (h) h.textContent = u.nickname || u.username || '知趣用户';
+      var badge = card.querySelector('.zq-badge'); if (badge) badge.textContent = (u.role === 'ADMIN' ? '管理员' : '普通用户');
+      var nums = card.querySelectorAll('.zq-mono');
+      if (nums[0]) nums[0].textContent = u.consecutiveDays || 0;
+      if (nums[2]) nums[2].textContent = Math.round((u.totalStudyMinutes || 0) / 60 * 10) / 10 + 'h';
+      safe('学习统计', async function () { var stat = await api.get('/record/statistics'); if (nums[1]) nums[1].textContent = stat.completedTasks || 0; });
+    }
+    var basic = $all('section').find(function (s) { return /基本资料/.test(s.textContent); });
+    if (basic) {
+      var ins = $all('input', basic);
+      if (ins[0]) ins[0].value = u.username || '';
+      if (ins[1]) ins[1].value = u.nickname || '';
+      if (ins[2]) ins[2].value = u.school || '';
+      if (ins[3]) ins[3].value = u.major || '';
+      if (ins[4]) ins[4].value = u.email || '';
+      var save = $('.zq-btn', basic);
+      if (save) save.onclick = function () {
+        safe('保存资料', async function () {
+          var data = await api.put('/user/profile', { nickname: ins[1].value.trim(), school: ins[2] ? ins[2].value.trim() : '', major: ins[3] ? ins[3].value.trim() : '', email: ins[4] ? ins[4].value.trim() : '' });
+          Object.assign(state.user, data);
+          toast('资料已保存');
+        });
+      };
+    }
+    // 早八提醒开关 ↔ /reminder/settings
+    var morning = $('#zq-morning');
+    if (morning) {
+      var settings = await safe('提醒设置', function () { return api.get('/reminder/settings'); });
+      setMorningToggle(morning, settings && settings.enabled);
+      morning.onclick = function () {
+        var next = morning.dataset.on !== '1';
+        safe('保存提醒', async function () {
+          await api.put('/reminder/settings', { channel: (settings && settings.channel) || 'PUSHPLUS', enabled: next });
+          setMorningToggle(morning, next);
+          toast(next ? '早八提醒已开启' : '早八提醒已关闭');
+        });
+      };
+    }
+    // 账号与安全：真实最近登录
+    var secu = $all('section').find(function (s) { return /账号与安全/.test(s.textContent); });
+    if (secu) {
+      safe('登录历史', async function () {
+        var hist = await api.get('/user/login-history?limit=5');
+        var latest = hist && hist[0];
+        var container = secu.querySelector('h3 + div');
+        var rows = container ? container.children : [];
+        if (rows[0] && rows[0].children[1]) rows[0].children[1].textContent = latest ? (fmtDate(latest.loginAt) + (latest.ip ? ' · ' + latest.ip : '')) : '暂无记录';
+        if (rows[1] && rows[1].children[1]) rows[1].children[1].textContent = latest && latest.userAgent ? shortUA(latest.userAgent) : '—';
+      });
+    }
+    var logout = $('a[href="index.html"].zq-btn-ghost');
+    if (logout) logout.onclick = function (e) { e.preventDefault(); safe('退出', async function () { await api.post('/auth/logout', {}); clearAuth(); location.href = 'index.html'; }); };
+    var pw = $all('section').find(function (s) { return /修改密码/.test(s.textContent); });
+    if (pw) {
+      var pis = $all('input', pw), b = $('.zq-btn', pw);
+      if (b) b.onclick = function () {
+        if (pis[1].value !== pis[2].value) return toast('两次新密码不一致', 'error');
+        safe('修改密码', async function () { await api.put('/user/password', { oldPassword: pis[0].value, newPassword: pis[1].value }); toast('密码已更新'); pis.forEach(function (i) { i.value = ''; }); });
+      };
+    }
+    wireModelForm();
+    await loadModels();
+  }
+  function setMorningToggle(btn, on) {
+    btn.dataset.on = on ? '1' : '0';
+    var knob = btn.firstElementChild;
+    if (knob) knob.style.left = on ? '21px' : '3px';
+    btn.style.background = on ? 'var(--zq-primary)' : 'var(--zq-border)';
+  }
+  function shortUA(ua) {
+    ua = String(ua || '');
+    var os = /Windows/.test(ua) ? 'Windows' : /Mac OS|Macintosh/.test(ua) ? 'macOS' : /Android/.test(ua) ? 'Android' : /iPhone|iPad|iOS/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : '';
+    var br = /Edg\//.test(ua) ? 'Edge' : /Chrome/.test(ua) ? 'Chrome' : /Firefox/.test(ua) ? 'Firefox' : /Safari/.test(ua) ? 'Safari' : '浏览器';
+    return (br + (os ? ' · ' + os : '')) || ua.slice(0, 40);
+  }
+  var MODEL_PROVIDERS = ['OPENAI_COMPATIBLE', 'ANTHROPIC', 'OLLAMA', 'VLLM', 'GEMINI'];
+  // /ai/models 返回的是对象 {systemModels, userModels, defaultModelId,...}，统一拍平成数组
+  function normalizeModelList(data) {
+    if (Array.isArray(data)) return data;
+    if (!data) return [];
+    var mine = (data.userModels || []).map(function (m) { return Object.assign({ ownerType: 'USER' }, m); });
+    var sys = (data.systemModels || []).map(function (m) { return Object.assign({ ownerType: 'SYSTEM' }, m); });
+    return mine.concat(sys);
+  }
+  function probeText(s) { s = String(s || '').toUpperCase(); if (!s || s === 'UNTESTED') return '未测试'; if (/PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return '通过'; if (/UNSUPPORT|\bNO\b|FALSE/.test(s)) return '不支持'; if (/FAIL|ERROR/.test(s)) return '失败'; if (/PROB|TESTING|RUNNING/.test(s)) return '测试中'; return s; }
+  function probeColor(s) { s = String(s || '').toUpperCase(); if (/PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return 'var(--zq-ok)'; if (/FAIL|ERROR/.test(s)) return 'var(--zq-bad)'; return 'var(--zq-text3)'; }
+  function modelTile(k, v, c) { return '<div style="min-width:0;"><span style="display:block;font-size:10.5px;color:var(--zq-text3);">' + esc(k) + '</span><strong style="display:block;margin-top:3px;font-size:11.5px;font-weight:600;color:' + c + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(v) + '</strong></div>'; }
+  async function loadModels() {
+    var host = $('#zq-models'); if (!host) return;
+    var modelData = await api.get('/ai/models');
+    state.models = normalizeModelList(modelData);
+    host.innerHTML = (state.models || []).map(function (m) {
+      var mine = m.ownerType !== 'SYSTEM';
+      return '<article style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);padding:12px 14px;"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;"><div style="font-size:13.5px;font-weight:700;">' + esc(m.label || m.displayName || m.name) + '</div><div class="zq-mono" style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;">' + esc(m.modelName || '') + '</div></div><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);font-weight:700;">' + esc(mine ? '我的' : '系统') + '</span></div>'
+        + '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:11px;padding-top:11px;border-top:1px solid var(--zq-border-soft);">'
+        + modelTile('Provider', m.providerType || '—', 'var(--zq-text2)')
+        + modelTile('连通性', probeText(m.capabilityProbeStatus), probeColor(m.capabilityProbeStatus))
+        + modelTile('视觉', probeText(m.visionStatus), probeColor(m.visionStatus))
+        + modelTile('深度思考', probeText(m.reasoningStatus), probeColor(m.reasoningStatus))
+        + '</div>'
+        + '<div style="margin-top:9px;font-size:11.5px;color:var(--zq-text3);">Key：' + esc(m.apiKeyMasked || m.maskedApiKey || '—') + (m.lastProbeAt ? ' · 上次探测 ' + esc(fmtDate(m.lastProbeAt)) : '') + '</div>'
+        + '<div style="display:flex;gap:6px;margin-top:11px;flex-wrap:wrap;">' + (mine ? '<button class="zq-btn-ghost" data-model-edit="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">编辑</button>' : '') + '<button class="zq-btn-ghost" data-model-test="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">测试连通</button><button class="zq-btn-ghost" data-model-probe="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">能力测试</button>' + (mine ? '<button class="zq-btn-ghost" data-model-del="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">删除</button>' : '') + '</div></article>';
+    }).join('') || empty('暂无模型配置');
+    $all('[data-model-edit]', host).forEach(function (b) { b.onclick = function () { editModel(Number(b.dataset.modelEdit)); }; });
+    $all('[data-model-test]', host).forEach(function (b) { b.onclick = function () { safe('测试模型', async function () { var r = await api.post('/ai/models/' + b.dataset.modelTest + '/test', {}); toast('连通性：' + (r && (r.message || r.status || (r.ok ? '通过' : '完成')) || '完成')); await loadModels(); }); }; });
+    $all('[data-model-probe]', host).forEach(function (b) { b.onclick = function () { safe('能力测试', async function () { await api.post('/ai/models/' + b.dataset.modelProbe + '/probe', {}); toast('能力探测完成'); await loadModels(); }); }; });
+    $all('[data-model-del]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '删除模型', message: '删除该模型配置？已保存的 API Key 会一并移除。', okText: '删除', danger: true })) safe('删除模型', async function () { await api.del('/ai/models/' + b.dataset.modelDel); await loadModels(); }); }; });
+  }
+  function modelFormEls() {
+    var section = $all('section').find(function (s) { return /AI 模型配置/.test(s.textContent); });
+    if (!section) return null;
+    var ins = $all('input', section);
+    return { section: section, display: ins[0], modelName: ins[1], apiUrl: ins[2], apiKey: ins[3], provider: $('select', section) };
+  }
+  function clearModelForm(els) {
+    els = els || modelFormEls(); if (!els) return;
+    ['display', 'modelName', 'apiUrl', 'apiKey'].forEach(function (k) { if (els[k]) els[k].value = ''; });
+    if (els.provider) els.provider.selectedIndex = 0;
+  }
+  function wireModelForm() {
+    var els = modelFormEls(); if (!els) return;
+    var saveBtn = $all('button', els.section).find(function (b) { return /保存模型/.test(b.textContent); });
+    var newBtn = $all('button', els.section).find(function (b) { return /新建模型/.test(b.textContent); });
+    if (newBtn) newBtn.onclick = function () { state.editingModelId = null; clearModelForm(els); toast('已切换到新建模型'); };
+    if (saveBtn) saveBtn.onclick = function () {
+      var body = {
+        displayName: els.display ? els.display.value.trim() : '',
+        providerType: MODEL_PROVIDERS[els.provider ? els.provider.selectedIndex : 0] || 'OPENAI_COMPATIBLE',
+        modelName: els.modelName ? els.modelName.value.trim() : '',
+        apiUrl: els.apiUrl ? els.apiUrl.value.trim() : ''
+      };
+      if (els.apiKey && els.apiKey.value.trim()) body.apiKey = els.apiKey.value.trim();
+      if (!body.modelName) return toast('请填写模型名称', 'error');
+      safe('保存模型', async function () {
+        if (state.editingModelId) await api.put('/ai/models/' + state.editingModelId, body);
+        else await api.post('/ai/models', body);
+        toast('模型已保存'); state.editingModelId = null; clearModelForm(els); await loadModels();
+      });
+    };
+  }
+  function editModel(id) {
+    var els = modelFormEls(); if (!els) return;
+    var m = (state.models || []).find(function (x) { return x.id === id; }); if (!m) return;
+    state.editingModelId = id;
+    if (els.display) els.display.value = m.label || m.displayName || '';
+    if (els.modelName) els.modelName.value = m.modelName || '';
+    if (els.apiUrl) els.apiUrl.value = m.apiUrl || m.baseUrl || '';
+    if (els.apiKey) els.apiKey.value = '';
+    var idx = MODEL_PROVIDERS.indexOf(m.providerType);
+    if (els.provider) els.provider.selectedIndex = idx >= 0 ? idx : 0;
+    els.section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    toast('正在编辑：' + (m.label || m.displayName || m.modelName || '模型'));
+  }
+
+  async function bootAdmin() {
+    var overview = await api.get('/admin/overview');
+    var traffic = overview.traffic || {};
+    var metrics = [
+      ['注册用户', overview.userCount || 0, '总量', 'var(--zq-text)'],
+      ['开放反馈', overview.feedbackOpenCount || 0, '待处理', 'var(--zq-primary)'],
+      ['运行异常', overview.runtimeIssueOpenCount || 0, '待处理', 'var(--zq-bad)'],
+      ['今日请求', traffic.todayRequests || traffic.requestCount || 0, '实时', 'var(--zq-text)'],
+      ['AI 调用', traffic.aiRequests || 0, '今日', 'var(--zq-text)'],
+      ['限流拦截', traffic.rateLimited || 0, '今日', 'var(--zq-text)']
+    ];
+    var host = $('#zq-metrics');
+    if (host) host.innerHTML = metrics.map(function (m) { return '<article class="zq-stat" style="padding:14px 16px;"><span class="zq-stat-label" style="font-size:11.5px;">' + esc(m[0]) + '</span><strong class="zq-mono" style="display:block;margin-top:7px;font-size:23px;line-height:1;color:' + m[3] + ';">' + esc(m[1]) + '</strong><span style="display:block;margin-top:5px;font-size:11px;color:var(--zq-text3);">' + esc(m[2]) + '</span></article>'; }).join('');
+    renderTrafficChart(traffic.minuteBuckets || {});
+    await bootAdminIssues();
+    var refresh = $('header button'); if (refresh) refresh.onclick = function () { safe('刷新后台', bootAdmin); };
+  }
+  function renderTrafficChart(buckets) {
+    var host = $('#zq-traffic'); if (!host) return;
+    var keys = Object.keys(buckets || {});
+    if (!keys.length) { host.innerHTML = empty('近 15 分钟暂无请求'); return; }
+    var vals = keys.map(function (k) { return Number(buckets[k]) || 0; });
+    var max = Math.max.apply(null, vals.concat([1]));
+    host.innerHTML = keys.map(function (k, i) {
+      var h = Math.max(4, Math.round(vals[i] / max * 128));
+      var last = i === keys.length - 1;
+      return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end;min-width:0;"><span class="zq-mono" style="font-size:9.5px;color:var(--zq-text3);">' + vals[i] + '</span><div title="' + esc(k) + ' · ' + vals[i] + ' 次" style="width:100%;max-width:30px;height:' + h + 'px;border-radius:3px 3px 2px 2px;background:' + (last ? 'var(--zq-primary)' : 'var(--zq-tint-strong)') + ';"></div><span style="font-size:10px;color:var(--zq-text3);white-space:nowrap;">' + esc(k) + '</span></div>';
+    }).join('');
+  }
+  async function bootAdminIssues() {
+    var host = $('#zq-health');
+    if (!host) return;
+    var list = await api.get('/admin/runtime-issues?status=OPEN');
+    host.innerHTML = list.slice(0, 8).map(function (i) {
+      return '<div style="padding:9px 0;border-bottom:1px solid var(--zq-border-soft);"><div style="display:flex;justify-content:space-between;gap:10px;"><strong style="font-size:12.5px;">' + esc(i.category || i.severity || '异常') + '</strong><span class="zq-mono" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(i.createdAt)) + '</span></div><div style="margin-top:4px;font-size:12px;color:var(--zq-text2);line-height:1.45;">' + esc(i.message || '') + '</div></div>';
+    }).join('') || empty('当前没有开放异常');
+  }
+
+  async function bootFeedbackAdmin() {
+    state.feedback = await api.get('/admin/feedback');
+    // 用真实状态（OPEN/CLOSED）重建筛选条，替换演示的三态筛选
+    var bar = $('#zq-filters');
+    if (bar) {
+      var opts = [['all', '全部'], ['OPEN', '待处理'], ['CLOSED', '已关闭']];
+      bar.innerHTML = opts.map(function (o, i) {
+        return '<button type="button" data-fb="' + o[0] + '" style="height:30px;padding:0 14px;border:none;cursor:pointer;font-size:12.5px;font-weight:600;background:' + (i === 0 ? 'var(--zq-primary)' : 'var(--zq-card)') + ';color:' + (i === 0 ? 'var(--zq-on-primary)' : 'var(--zq-text2)') + ';">' + o[1] + '</button>';
+      }).join('');
+      $all('[data-fb]', bar).forEach(function (b) {
+        b.onclick = function () {
+          $all('[data-fb]', bar).forEach(function (x) {
+            var on = x === b; x.style.background = on ? 'var(--zq-primary)' : 'var(--zq-card)'; x.style.color = on ? 'var(--zq-on-primary)' : 'var(--zq-text2)';
+          });
+          renderFeedbackList(b.dataset.fb);
+        };
+      });
+    }
+    window.setF = function () {};
+    renderFeedbackList('all');
+  }
+  function renderFeedbackList(filter) {
+    var host = $('#zq-list'); if (!host) return;
+    var list = (state.feedback || []).filter(function (f) {
+      var status = (f.status || 'OPEN').toUpperCase();
+      return filter === 'all' ? true : status === filter;
+    });
+    host.innerHTML = list.map(function (f) {
+      var open = (f.status || 'OPEN').toUpperCase() !== 'CLOSED';
+      return '<article class="zq-card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;"><span class="zq-badge" style="background:' + (open ? 'var(--zq-bad-tint)' : 'var(--zq-ok-tint)') + ';color:' + (open ? 'var(--zq-bad)' : 'var(--zq-ok)') + ';font-weight:700;">' + esc(open ? '待处理' : '已关闭') + '</span><span style="font-size:12.5px;font-weight:600;">' + esc(f.nickname || f.username || ('用户 #' + (f.userId || ''))) + '</span><span class="zq-mono" style="font-size:11.5px;color:var(--zq-text3);">' + esc(fmtDate(f.createdAt)) + '</span>' + (open ? '<span style="margin-left:auto;"><button data-close-feedback="' + f.id + '" class="zq-btn-ghost" style="height:26px;padding:0 11px;font-size:12px;">关闭</button></span>' : '') + '</div><p style="margin:0;font-size:13px;line-height:1.6;">' + esc(f.content || '') + '</p></article>';
+    }).join('') || empty('暂无反馈');
+    $all('[data-close-feedback]', host).forEach(function (b) { b.onclick = async function () { await api.put('/admin/feedback/' + b.dataset.closeFeedback + '/close'); await bootFeedbackAdmin(); }; });
+  }
+
+  async function bootAccountAdmin() {
+    var header = $('.zq-main header') || $('header');
+    var searchInput = header && $('input', header);
+    var roleSel = header && $('select', header);
+    var queryBtn = header && $all('button', header).find(function (b) { return /查询/.test(b.textContent); });
+    if (queryBtn) queryBtn.onclick = function () { loadAccounts(searchInput ? searchInput.value.trim() : '', roleSel ? roleSel.selectedIndex : 0); };
+    if (searchInput) searchInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); if (queryBtn) queryBtn.onclick(); } });
+    await loadAccounts('', 0);
+  }
+  async function loadAccounts(keyword, roleIdx) {
+    var host = $('#zq-rows'); if (!host) return;
+    var qs = 'page=1&size=100';
+    if (keyword) qs += '&keyword=' + encodeURIComponent(keyword);
+    if (roleIdx === 1) qs += '&role=ADMIN';
+    else if (roleIdx === 2) qs += '&role=USER';
+    var list = await api.get('/admin/users?' + qs);
+    var records = list.records || [];
+    host.innerHTML = records.map(function (u) {
+      var disabled = Number(u.status) === 0;
+      return '<div style="display:grid;grid-template-columns:minmax(120px,1.1fr) minmax(150px,1.3fr) 74px 62px 102px 104px 128px;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--zq-border-soft);opacity:' + (disabled ? .6 : 1) + ';"><div style="display:flex;align-items:center;gap:9px;min-width:0;"><div style="width:28px;height:28px;flex:none;border-radius:50%;background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;">' + esc((u.nickname || u.username || '知').slice(0, 1)) + '</div><span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(u.nickname || u.username) + '</span></div><span style="font-size:12.5px;color:var(--zq-text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(u.email || u.username) + '</span><span><span class="zq-badge" style="background:' + (u.role === 'ADMIN' ? 'var(--zq-tint)' : 'var(--zq-card-soft)') + ';color:' + (u.role === 'ADMIN' ? 'var(--zq-primary)' : 'var(--zq-text2)') + ';">' + esc(u.role === 'ADMIN' ? '管理员' : '普通用户') + '</span></span><span style="font-size:12px;font-weight:600;color:' + (disabled ? 'var(--zq-bad)' : 'var(--zq-ok)') + ';">' + (disabled ? '已禁用' : '正常') + '</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(u.achievementPoints || 0) + ' 点</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(fmtDate(u.updatedAt || u.createdAt)) + '</span><span style="display:flex;justify-content:flex-end;gap:6px;"><button data-reset-user="' + u.id + '" class="zq-btn-ghost" style="height:26px;padding:0 8px;font-size:11.5px;">重置密码</button><button data-toggle-user="' + u.id + '" data-next="' + (disabled ? 1 : 0) + '" class="zq-btn-ghost" style="height:26px;padding:0 8px;font-size:11.5px;">' + (disabled ? '启用' : '禁用') + '</button><button data-delete-user="' + u.id + '" class="zq-btn-ghost" style="height:26px;padding:0 8px;font-size:11.5px;">删除</button></span></div>';
+    }).join('') || empty('暂无账号');
+    var foot = $('.zq-table > div:last-child');
+    if (foot) foot.textContent = '共 ' + (list.total || records.length) + ' 个账号';
+    var reload = function () { loadAccounts(keyword, roleIdx); };
+    $all('[data-delete-user]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '删除账号', message: '确认删除该账号？其数据将按软删除规则处理。', okText: '删除', danger: true })) safe('删除账号', async function () { await api.del('/admin/users/' + b.dataset.deleteUser); reload(); }); }; });
+    $all('[data-toggle-user]', host).forEach(function (b) { b.onclick = function () { safe('更新状态', async function () { await api.put('/admin/users/' + b.dataset.toggleUser + '/status?status=' + b.dataset.next); reload(); }); }; });
+    $all('[data-reset-user]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '重置密码', message: '重置该账号密码为随机临时密码？原密码将立即失效。', okText: '重置' })) safe('重置密码', async function () { var res = await api.post('/admin/users/' + b.dataset.resetUser + '/reset-password', {}); var pw = res && res.tempPassword ? res.tempPassword : '(已重置)'; await showInfo({ title: '密码已重置', html: '<p style="margin:0 0 10px;font-size:13px;color:var(--zq-text2);">临时密码（请复制并转交用户，登录后尽快修改）：</p><div class="zq-mono" style="margin:0 0 16px;padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:15px;font-weight:600;user-select:all;">' + esc(pw) + '</div>' }); }); }; });
+  }
+
+  var CAT_LABEL = { EXAM: '考试备考', COMPUTER: '计算机学习', LANGUAGE: '语言学习', GENERAL: '通用规划' };
+  var CAT_KEY = { EXAM: 'q1', COMPUTER: 'q2', LANGUAGE: 'q3', GENERAL: 'q4' };
+  async function bootSharedPlans() {
+    var filterCard = $('.zq-card');
+    var selects = filterCard ? $all('select', filterCard) : [];
+    var submitBtn = $('header .zq-btn');
+    if (submitBtn) submitBtn.onclick = submitPlanTemplate;
+    var refreshBtn = filterCard && $all('button', filterCard).find(function (b) { return /刷新/.test(b.textContent); });
+    var doLoad = function () {
+      var cats = ['', 'EXAM', 'COMPUTER', 'LANGUAGE', 'GENERAL'];
+      var category = selects[0] ? cats[selects[0].selectedIndex] : '';
+      var sort = selects[1] && selects[1].selectedIndex === 1 ? 'likeCount' : 'time';
+      var order = selects[2] && selects[2].selectedIndex === 1 ? 'asc' : 'desc';
+      loadPlans(category, sort, order);
+    };
+    if (refreshBtn) refreshBtn.onclick = doLoad;
+    selects.forEach(function (s) { s.onchange = doLoad; });
+    await loadPlans('', 'time', 'desc');
+  }
+  async function loadPlans(category, sort, order) {
+    var host = $('#zq-plans'); if (!host) return;
+    var qs = [];
+    if (category) qs.push('category=' + category);
+    if (sort) qs.push('sort=' + sort);
+    if (order) qs.push('order=' + order);
+    var plans = await api.get('/shared-plans' + (qs.length ? '?' + qs.join('&') : ''));
+    host.innerHTML = plans.map(function (p) {
+      var cat = (p.category || 'GENERAL').toUpperCase();
+      var k = CAT_KEY[cat] || 'q4';
+      return '<article data-plan="' + p.id + '" style="padding:16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);cursor:pointer;"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;"><span class="zq-badge" style="background:var(--zq-' + k + '-bg);color:var(--zq-' + k + ');font-weight:700;">' + esc(CAT_LABEL[cat] || '通用规划') + '</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text3);">♡ ' + esc(p.likeCount || 0) + '</span></div><h3 style="margin:0 0 6px;font-size:15.5px;font-weight:700;">' + esc(p.title || p.name) + '</h3><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(p.description || '') + '</p><div style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--zq-text3);border-top:1px solid var(--zq-border-soft);padding-top:9px;"><span>' + esc(p.targetAudience || p.audience || '通用') + '</span><span>' + esc(p.creatorNickname || (p.creator && (p.creator.nickname || p.creator.username)) || '') + '</span></div></article>';
+    }).join('') || empty('暂无参考计划');
+    $all('[data-plan]', host).forEach(function (b) { b.onclick = function () { openPlan(Number(b.dataset.plan)); }; });
+  }
+  function submitPlanTemplate() {
+    openModal({
+      title: '分享我的计划',
+      width: '480px',
+      bodyHtml:
+        '<div class="zq-field"><label class="zq-label">模板标题</label><input id="zq-spt-title" class="zq-input" placeholder="例如：408 暑期基础 30 天"></div>'
+        + '<div class="zq-field"><label class="zq-label">分类</label><select id="zq-spt-cat" class="zq-select"><option value="EXAM">考试备考</option><option value="COMPUTER">计算机学习</option><option value="LANGUAGE">语言学习</option><option value="GENERAL" selected>通用规划</option></select></div>'
+        + '<div class="zq-field"><label class="zq-label">简介（可留空）</label><textarea id="zq-spt-desc" class="zq-textarea" style="min-height:90px;" placeholder="一句话说明这套计划适合谁、怎么用"></textarea></div>'
+        + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">将从你现有的任务与例行计划生成模板（各最多 30 条），提交后经管理员审核对所有用户可见。请确认不含个人隐私信息。</p>'
+        + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-spt-cancel">取消</button><button type="button" class="zq-btn" id="zq-spt-ok">提交审核</button></div>',
+      onMount: function (b, h) {
+        $('#zq-spt-cancel', b).onclick = h.close;
+        $('#zq-spt-ok', b).onclick = function () {
+          var title = $('#zq-spt-title', b).value.trim(); if (!title) return toast('请填写模板标题', 'error');
+          var category = $('#zq-spt-cat', b).value, desc = $('#zq-spt-desc', b).value.trim();
+          safe('提交计划模板', async function () {
+            var tasks = (await api.get('/task/list')).map(normalizeTask);
+            var routines = await api.get('/routine/list');
+            var taskIds = tasks.slice(0, 30).map(function (t) { return t.id; });
+            var routineIds = (routines || []).slice(0, 30).map(function (r) { return r.id; });
+            if (!taskIds.length && !routineIds.length) { toast('你还没有任务或例行计划，无法生成模板', 'error'); return; }
+            await api.post('/shared-plans/from-existing', { title: title, description: desc, category: category, taskIds: taskIds, routineIds: routineIds, shareConsent: true });
+            h.close(); toast('已提交，等待管理员审核');
+          });
+        };
+      }
+    });
+  }
+  async function openPlan(id) {
+    await safe('计划详情', async function () {
+      var p = await api.get('/shared-plans/' + id);
+      var tasks = p.tasks || p.taskTemplates || [];
+      var routines = p.routines || p.routineTemplates || [];
+      var modal = $('#zq-modal');
+      if (!modal) {
+        await showInfo({ title: p.title || '参考计划', message: (p.description || '') + '\n\n任务：' + tasks.length + ' 个\n例行计划：' + routines.length + ' 个' });
+        return;
+      }
+      $('#zm-title').textContent = p.title || '参考计划';
+      $('#zm-meta').textContent = (p.creator && (p.creator.nickname || p.creator.username) ? '来自 ' + (p.creator.nickname || p.creator.username) + ' · ' : '') + (p.category || '未分类') + ' · 已审核';
+      $('#zm-likes').textContent = (p.liked ? '♥ ' : '♡ ') + (p.likeCount || 0);
+      $('#zm-desc').textContent = p.description || '';
+      $('#zm-aud').textContent = '适用：' + (p.targetAudience || p.audience || '未注明');
+      $('#zm-items').innerHTML = [
+        '<strong style="font-size:12px;">一次性任务 ' + tasks.length + ' 个</strong>',
+        tasks.map(function (x) { return '<div style="padding:8px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:12.5px;">' + esc(x.title || x.name || '') + '</div>'; }).join(''),
+        '<strong style="font-size:12px;margin-top:8px;">例行计划 ' + routines.length + ' 个</strong>',
+        routines.map(function (x) { return '<div style="padding:8px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:12.5px;">' + esc(x.title || x.name || '') + '</div>'; }).join('')
+      ].join('');
+      var buttons = $all('#zq-modal .zq-btn, #zq-modal .zq-btn-ghost');
+      var applyBtn = buttons.find(function (b) { return /套用/.test(b.textContent); });
+      if (applyBtn) applyBtn.onclick = async function () {
+        var startDate = await askText({ title: '套用参考计划', label: '开始日期', value: today(), hint: '格式 YYYY-MM-DD，计划内任务将从该日期起排入你的日历。', okText: '套用' });
+        if (!startDate || !startDate.trim()) return;
+        await api.post('/shared-plans/' + id + '/apply', { startDate: startDate.trim() });
+        toast('已套用到你的日历');
+        modal.style.display = 'none';
+      };
+      $('#zm-likes').onclick = async function () {
+        var res = await api.post('/shared-plans/' + id + '/like', {});
+        $('#zm-likes').textContent = (res.liked ? '♥ ' : '♡ ') + (res.likeCount || 0);
+        await bootSharedPlans();
+      };
+      $('#zm-likes').style.cursor = 'pointer';
+      modal.style.display = 'flex';
+    });
+  }
+
+  var SP_CAT = { EXAM: '考试备考', COMPUTER: '计算机学习', LANGUAGE: '语言学习', GENERAL: '通用规划' };
+  async function bootSharedPlanAdmin() {
+    var list = await api.get('/admin/shared-plans');
+    var host = $('#zq-reviews');
+    if (!host) return;
+    var groups = { PENDING: [], APPROVED: [], OFFLINE: [], REJECTED: [] };
+    (list || []).forEach(function (p) { (groups[String(p.status || '').toUpperCase()] || (groups.PENDING)).push(p); });
+    var pendEl = $('#zq-pending');
+    if (pendEl) pendEl.textContent = '待审核 ' + groups.PENDING.length + ' 个 · 已发布 ' + groups.APPROVED.length + ' 个';
+    function creator(p) { return esc((p.creator && (p.creator.nickname || p.creator.username)) || p.creatorNickname || p.username || '匿名'); }
+    function catName(p) { return esc(p.categoryName || SP_CAT[String(p.category || '').toUpperCase()] || p.category || '未分类'); }
+    function card(p, actions, dim) {
+      return '<article class="zq-card" style="' + (dim ? 'opacity:.72;' : '') + '">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;"><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);">' + catName(p) + '</span><span class="zq-mono" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(p.createdAt)) + '</span></div>'
+        + '<h3 style="margin:0 0 5px;font-size:15px;font-weight:700;">' + esc(p.title || p.name || '未命名') + '</h3>'
+        + '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;">' + esc(p.description || '（无简介）') + '</p>'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:10px;border-top:1px solid var(--zq-border-soft);"><span style="font-size:12px;color:var(--zq-text3);">' + creator(p) + '</span><span style="display:flex;gap:6px;">' + actions + '</span></div></article>';
+    }
+    function section(title, items, render) {
+      if (!items.length) return '';
+      return '<div style="grid-column:1/-1;margin:8px 2px 0;font-size:12.5px;font-weight:700;color:var(--zq-text2);">' + title + ' · ' + items.length + '</div>' + items.map(render).join('');
+    }
+    var html = '';
+    html += section('待审核', groups.PENDING, function (p) {
+      return card(p, '<button data-sp-ok="' + p.id + '" class="zq-btn-ghost" style="height:28px;color:var(--zq-ok);">通过</button><button data-sp-no="' + p.id + '" class="zq-btn-ghost" style="height:28px;color:var(--zq-bad);">驳回</button>');
+    });
+    html += section('已发布', groups.APPROVED, function (p) {
+      return card(p, '<button data-sp-edit="' + p.id + '" class="zq-btn-ghost" style="height:28px;">修改</button><button data-sp-down="' + p.id + '" class="zq-btn-ghost" style="height:28px;color:var(--zq-warn);">下架</button>');
+    });
+    html += section('已下架', groups.OFFLINE, function (p) {
+      return card(p, '<button data-sp-ok="' + p.id + '" class="zq-btn-ghost" style="height:28px;color:var(--zq-ok);">重新发布</button><button data-sp-edit="' + p.id + '" class="zq-btn-ghost" style="height:28px;">修改</button><button data-sp-del="' + p.id + '" class="zq-btn-ghost" style="height:28px;color:var(--zq-bad);">删除</button>', true);
+    });
+    html += section('已驳回', groups.REJECTED, function (p) {
+      return card(p, '<button data-sp-ok="' + p.id + '" class="zq-btn-ghost" style="height:28px;color:var(--zq-ok);">通过</button><button data-sp-del="' + p.id + '" class="zq-btn-ghost" style="height:28px;color:var(--zq-bad);">删除</button>', true);
+    });
+    host.innerHTML = html || empty('暂无共享计划');
+    $all('[data-sp-ok]', host).forEach(function (b) { b.onclick = function () { safe('通过', async function () { await api.put('/admin/shared-plans/' + b.dataset.spOk + '/review?action=APPROVE'); toast('已通过发布'); await bootSharedPlanAdmin(); }); }; });
+    $all('[data-sp-no]', host).forEach(function (b) { b.onclick = async function () { var note = await askText({ title: '驳回共享计划', label: '驳回原因（可选，将展示给提交者）', textarea: true, okText: '驳回' }); if (note === null) return; safe('驳回', async function () { await api.put('/admin/shared-plans/' + b.dataset.spNo + '/review?action=REJECT&note=' + encodeURIComponent(note || '')); toast('已驳回'); await bootSharedPlanAdmin(); }); }; });
+    $all('[data-sp-down]', host).forEach(function (b) { b.onclick = function () { safe('下架', async function () { await api.put('/admin/shared-plans/' + b.dataset.spDown + '/review?action=TAKEDOWN'); toast('已下架'); await bootSharedPlanAdmin(); }); }; });
+    $all('[data-sp-del]', host).forEach(function (b) { b.onclick = async function () { if (!await askConfirm({ title: '删除共享计划', message: '确定删除该共享计划？此操作不可恢复。', okText: '删除', danger: true })) return; safe('删除', async function () { await api.del('/admin/shared-plans/' + b.dataset.spDel); toast('已删除'); await bootSharedPlanAdmin(); }); }; });
+    $all('[data-sp-edit]', host).forEach(function (b) { b.onclick = function () { editSharedPlan(b.dataset.spEdit); }; });
+  }
+  function editSharedPlan(id) {
+    safe('加载共享计划', async function () {
+      var d = await api.get('/admin/shared-plans/' + id);
+      var catOptions = Object.keys(SP_CAT).map(function (k) { return '<option value="' + k + '"' + (String(d.category || '').toUpperCase() === k ? ' selected' : '') + '>' + SP_CAT[k] + '</option>'; }).join('');
+      openModal({
+        title: '修改共享计划',
+        width: '520px',
+        bodyHtml:
+          '<div class="zq-field"><label class="zq-label">标题</label><input id="zq-sp-title" class="zq-input" value="' + esc(d.title || '') + '"></div>'
+          + '<div class="zq-field"><label class="zq-label">分类</label><select id="zq-sp-cat" class="zq-select">' + catOptions + '</select></div>'
+          + '<div class="zq-field"><label class="zq-label">简介</label><textarea id="zq-sp-desc" class="zq-textarea" style="min-height:100px;">' + esc(d.description || '') + '</textarea></div>'
+          + '<div class="zq-field"><label class="zq-label">适用人群（可选）</label><input id="zq-sp-aud" class="zq-input" value="' + esc(d.targetAudience || '') + '"></div>'
+          + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-sp-cancel">取消</button><button type="button" class="zq-btn" id="zq-sp-save">保存</button></div>',
+        onMount: function (bd, h) {
+          $('#zq-sp-cancel', bd).onclick = h.close;
+          $('#zq-sp-save', bd).onclick = function () {
+            var title = $('#zq-sp-title', bd).value.trim(); if (!title) return toast('请填写标题', 'error');
+            safe('保存共享计划', async function () {
+              await api.put('/admin/shared-plans/' + id, { title: title, category: $('#zq-sp-cat', bd).value, description: $('#zq-sp-desc', bd).value, targetAudience: $('#zq-sp-aud', bd).value });
+              h.close(); toast('已保存'); await bootSharedPlanAdmin();
+            });
+          };
+        }
+      });
+    });
+  }
+
+  var WIKI_TYPE_MAP = { 目标: 'GOAL', 计划: 'PROJECT', 偏好: 'PREFERENCE', 薄弱点: 'WEAKNESS', 资料: 'RESOURCE', 对话摘要: 'MEMORY', index: 'INDEX', 规则: 'SCHEMA', log: 'LOG' };
+  async function bootKnowledge() {
+    state.wikiPages = flattenKnowledge((await api.get('/knowledge/document-tree')) || []);
+    state.wikiCur = state.wikiPages[0] || null;
+    state.wikiFilter = { q: '', type: '' };
+    var header = $('.zq-main header') || $('header');
+    (header ? $all('button', header) : []).forEach(function (b) {
+      var t = b.textContent;
+      if (/新建知识页/.test(t)) b.onclick = createWikiPage;
+      else if (/导入来源/.test(t)) b.onclick = importWikiSource;
+      else if (/健康检查/.test(t)) b.onclick = runWikiLint;
+      else if (/图谱/.test(t)) b.onclick = showWikiGraph;
+      else if (/待合入变更/.test(t)) { b.id = 'zq-patch-btn'; b.textContent = '待合入变更'; b.onclick = showWikiPatchSets; }
+    });
+    refreshWikiPatchBadge();
+    var aside = $('#zq-tree') && $('#zq-tree').closest('aside');
+    if (aside) {
+      var searchInput = $('input', aside), typeSel = $('select', aside);
+      if (searchInput) searchInput.oninput = function () { state.wikiFilter.q = searchInput.value.trim(); paintWikiTree(); };
+      if (typeSel) typeSel.onchange = function () { state.wikiFilter.type = typeSel.selectedIndex === 0 ? '' : typeSel.options[typeSel.selectedIndex].text; paintWikiTree(); };
+    }
+    wireWikiEditor();
+    paintWikiTree();
+    if (state.wikiCur) paintWikiDoc(state.wikiCur);
+  }
+  function paintWikiTree() {
+    var tree = $('#zq-tree'); if (!tree) return;
+    // 目录页数：接真实数据（原“9 页”为静态占位），同时更新收起后的竖条标签
+    var total = (state.wikiPages || []).length;
+    var cntEl = $('#zq-tree-count'); if (cntEl) cntEl.textContent = total + ' 页';
+    var toc = $('#zq-wiki-toc');
+    if (toc) {
+      var lbl = '目录 · ' + total + ' 页';
+      toc.setAttribute('data-zq-label', lbl);
+      var rl = $('.zq-rlabel', toc); if (rl) rl.textContent = lbl;
+    }
+    var f = state.wikiFilter || { q: '', type: '' };
+    var wantType = f.type ? (WIKI_TYPE_MAP[f.type] || f.type.toUpperCase()) : '';
+    var pages = (state.wikiPages || []).filter(function (p) {
+      if (f.q && (p.title || '').toLowerCase().indexOf(f.q.toLowerCase()) < 0) return false;
+      if (wantType && String(p.pageType || p.type || '').toUpperCase() !== wantType) return false;
+      return true;
+    });
+    tree.innerHTML = pages.map(function (p) {
+      var active = state.wikiCur && p.id === state.wikiCur.id;
+      return '<a data-wiki="' + p.id + '" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--zq-rs);cursor:pointer;background:' + (active ? 'var(--zq-tint)' : 'transparent') + ';"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:' + (active ? 700 : 500) + ';color:var(--zq-text2);">' + esc(p.title) + '</span></a>';
+    }).join('') || empty('无匹配页面');
+    $all('[data-wiki]', tree).forEach(function (a) { a.onclick = function () { var p = (state.wikiPages || []).find(function (x) { return String(x.id) === a.dataset.wiki; }); if (p) paintWikiDoc(p); }; });
+  }
+  async function paintWikiDoc(p) {
+    state.wikiCur = p;
+    removeWikiActionBar();
+    var doc = $('#zq-doc'), title = $('#zq-doc-title');
+    if (title) title.textContent = p.title || '知识页';
+    // document-tree 只给了折叠后的 summary，正文要按需拉完整内容
+    if (!p._full && p.id != null) {
+      var detail = await safe('知识页', function () { return api.get('/knowledge/pages/' + p.id); });
+      if (detail) { p.content = detail.content; p.pageType = detail.pageType || p.pageType; p.parentId = detail.parentId; p.sortOrder = detail.sortOrder; p.pinned = detail.pinned; p._full = true; }
+    }
+    if (state.wikiCur !== p) return;
+    if (doc) {
+      doc.dataset.editing = '0'; doc.dataset.source = '0';
+      doc.contentEditable = 'false';
+      doc.innerHTML = renderMarkdown(p.content || p.summary || '');
+      wireWikiLinks(doc);
+    }
+    var insp = $('#zq-insp');
+    if (insp) insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">点击正文即可编辑 · [[双链]]可跳转</span></div>';
+    paintWikiTree();
+  }
+  function wireWikiLinks(doc) {
+    $all('[data-wikilink]', doc).forEach(function (a) {
+      a.onclick = function (e) {
+        if (doc.dataset.editing === '1') return;
+        e.preventDefault();
+        var t = a.getAttribute('data-wikilink');
+        var target = (state.wikiPages || []).find(function (x) { return (x.title || '') === t; });
+        if (target) paintWikiDoc(target); else toast('页面不存在：' + t, 'error');
+      };
+    });
+  }
+  function wireWikiEditor() {
+    var doc = $('#zq-doc'); if (!doc) return;
+    doc.style.cursor = 'text';
+    doc.onclick = function () { if (state.wikiCur && doc.dataset.editing !== '1') enterWikiEdit(); };
+    // 任务勾选框：勾选即切换删除线样式；未在编辑态则进入编辑态以便保存
+    doc.addEventListener('change', function (e) {
+      var cb = e.target;
+      if (!cb || cb.type !== 'checkbox') return;
+      var span = cb.nextElementSibling;
+      if (span) { span.style.textDecoration = cb.checked ? 'line-through' : 'none'; span.style.color = cb.checked ? 'var(--zq-text3)' : 'var(--zq-text)'; }
+      if (doc.dataset.editing !== '1') enterWikiEdit();
+    });
+    var section = doc.closest('section'); if (!section) return;
+    $all('[data-wiki-cmd]', section).forEach(function (b) {
+      b.onclick = function (e) { e.preventDefault(); wikiToolbar(b.getAttribute('data-wiki-cmd')); };
+    });
+    var blockSel = $('#zq-wiki-block', section);
+    if (blockSel) blockSel.onchange = function () {
+      if (!state.wikiCur) return; ensureWikiEditing();
+      if (doc.dataset.source === '1') return;
+      var v = blockSel.value;
+      if (v === 'QUOTE') document.execCommand('formatBlock', false, 'BLOCKQUOTE');
+      else if (v === 'CODE') document.execCommand('formatBlock', false, 'PRE');
+      else if (v === 'UL') document.execCommand('insertUnorderedList');
+      else if (v === 'OL') document.execCommand('insertOrderedList');
+      else if (v === 'HR') document.execCommand('insertHorizontalRule');
+      else if (v === 'TASK') document.execCommand('insertHTML', false, '<div class="zq-task-row" style="display:flex;gap:9px;align-items:flex-start;margin:7px 0;"><input type="checkbox" contenteditable="false" style="accent-color:var(--zq-primary);margin-top:5px;flex:none;"><span>待办事项</span></div>');
+      else document.execCommand('formatBlock', false, v);
+      blockSel.value = 'P';
+    };
+  }
+  function ensureWikiEditing() { var doc = $('#zq-doc'); if (doc && doc.dataset.editing !== '1') enterWikiEdit(); }
+  function enterWikiEdit() {
+    var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || doc.dataset.editing === '1') return;
+    doc.dataset.editing = '1'; doc.dataset.source = '0';
+    doc.contentEditable = 'true'; doc.style.outline = 'none';
+    doc.focus();
+    showWikiActionBar();
+  }
+  function wikiToolbar(cmd) {
+    ensureWikiEditing();
+    var doc = $('#zq-doc');
+    if (doc.dataset.source === '1' && cmd !== 'source') return;
+    if (cmd === 'bold') document.execCommand('bold');
+    else if (cmd === 'italic') document.execCommand('italic');
+    else if (cmd === 'underline') document.execCommand('underline');
+    else if (cmd === 'code') { var s = window.getSelection().toString(); if (s) document.execCommand('insertHTML', false, '<code style="background:var(--zq-card-soft);padding:1px 5px;border-radius:4px;">' + esc(s) + '</code>'); }
+    else if (cmd === 'link') {
+      // 弹窗会夺走 contentEditable 焦点，先存选区、恢复后再 createLink
+      var sel0 = window.getSelection();
+      var savedRange = sel0.rangeCount ? sel0.getRangeAt(0).cloneRange() : null;
+      askText({ title: '插入链接', label: '链接地址', placeholder: 'https://…', okText: '插入' }).then(function (url) {
+        if (!url || !url.trim()) return;
+        doc.focus();
+        if (savedRange) { var s = window.getSelection(); s.removeAllRanges(); s.addRange(savedRange); }
+        document.execCommand('createLink', false, url.trim());
+      });
+    }
+    else if (cmd === 'source') toggleWikiSource();
+  }
+  function toggleWikiSource() {
+    var doc = $('#zq-doc'); if (!doc) return;
+    if (doc.dataset.source === '1') {
+      var ta = $('#zq-src-ta'); var md = ta ? ta.value : '';
+      doc.dataset.source = '0'; doc.contentEditable = 'true';
+      doc.innerHTML = renderMarkdown(md); doc.focus();
+    } else {
+      var md2 = htmlToMarkdown(doc);
+      doc.dataset.source = '1'; doc.contentEditable = 'false';
+      doc.innerHTML = '<textarea id="zq-src-ta" style="width:100%;min-height:360px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);padding:12px;font-size:13px;line-height:1.7;font-family:var(--zq-fontM,monospace);background:var(--zq-input-bg);color:var(--zq-text);resize:vertical;box-sizing:border-box;"></textarea>';
+      $('#zq-src-ta').value = md2;
+    }
+  }
+  function showWikiActionBar() {
+    removeWikiActionBar();
+    var doc = $('#zq-doc'); if (!doc) return;
+    var bar = document.createElement('div');
+    bar.id = 'zq-wiki-actions';
+    bar.style.cssText = 'display:flex;gap:8px;padding:10px 26px 18px;border-top:1px solid var(--zq-border-soft);background:var(--zq-card);';
+    bar.innerHTML = '<button class="zq-btn" id="zq-wiki-save" style="height:30px;">保存</button><button class="zq-btn-ghost" id="zq-wiki-cancel" style="height:30px;">取消</button><button class="zq-btn-ghost" id="zq-wiki-del" style="height:30px;margin-left:auto;color:var(--zq-bad);">删除本页</button>';
+    doc.parentNode.appendChild(bar);
+    $('#zq-wiki-save').onclick = saveWikiEdit;
+    $('#zq-wiki-cancel').onclick = function () { paintWikiDoc(state.wikiCur); };
+    $('#zq-wiki-del').onclick = async function () { var p = state.wikiCur; if (p && await askConfirm({ title: '删除知识页', message: '删除「' + (p.title || '') + '」？指向它的双链会变成悬空链接。', okText: '删除', danger: true })) safe('删除知识页', async function () { await api.del('/knowledge/pages/' + p.id); await bootKnowledge(); toast('已删除'); }); };
+  }
+  function removeWikiActionBar() { var b = document.getElementById('zq-wiki-actions'); if (b) b.remove(); }
+  function saveWikiEdit() {
+    var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p) return;
+    var md = doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
+    safe('保存知识页', async function () {
+      var updated = await api.put('/knowledge/pages/' + p.id, { title: p.title, content: md, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned });
+      p.content = md;
+      if (updated && updated.updatedAt) p.updatedAt = updated.updatedAt;
+      paintWikiDoc(p);
+      toast('已保存');
+    });
+  }
+  async function createWikiPage() {
+    var title = await askText({ title: '新建知识页', label: '页面标题', placeholder: '例如：英语作文素材库' }); if (!title || !title.trim()) return; title = title.trim();
+    await safe('新建知识页', async function () {
+      await api.post('/knowledge/pages', { title: title, content: '# ' + title + '\n\n', pageType: 'NOTE' });
+      await bootKnowledge(); toast('已创建');
+    });
+  }
+  function importWikiSource() {
+    openModal({
+      title: '导入来源',
+      bodyHtml:
+        '<div class="zq-field"><label class="zq-label">来源标题</label><input id="zq-imp-title" class="zq-input" placeholder="例如：408 考试大纲"></div>'
+        + '<div class="zq-field"><label class="zq-label">类型</label><select id="zq-imp-type" class="zq-select"><option value="NOTE">笔记 / 文本</option><option value="URL">网址链接</option><option value="FILE">资料摘录</option></select></div>'
+        + '<div class="zq-field"><label class="zq-label">内容 / 链接</label><textarea id="zq-imp-content" class="zq-textarea" style="min-height:120px;" placeholder="粘贴文本，或填入 http/https 链接"></textarea></div>'
+        + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-imp-cancel">取消</button><button type="button" class="zq-btn" id="zq-imp-ok">导入</button></div>',
+      onMount: function (b, h) {
+        $('#zq-imp-cancel', b).onclick = h.close;
+        $('#zq-imp-ok', b).onclick = function () {
+          var title = $('#zq-imp-title', b).value.trim();
+          var content = $('#zq-imp-content', b).value;
+          var type = $('#zq-imp-type', b).value;
+          if (!title) return toast('请填写来源标题', 'error');
+          safe('导入来源', async function () {
+            await api.post('/knowledge/sources', { title: title, content: content, sourceType: type });
+            h.close(); toast('来源已导入');
+          });
+        };
+      }
+    });
+  }
+  async function runWikiLint() {
+    await safe('健康检查', async function () {
+      var report = await api.get('/knowledge/lint/report');
+      var issues = (report && (report.issues || report.findings || report.items)) || [];
+      if (!Array.isArray(issues)) issues = [];
+      var count = issues.length || ((report && report.total) || 0);
+      var listHtml = issues.slice(0, 20).map(function (it) {
+        var text = typeof it === 'string' ? it : (it.message || it.title || it.description || JSON.stringify(it));
+        return '<div style="display:flex;gap:8px;padding:7px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:12.5px;line-height:1.55;"><span style="color:var(--zq-warn);flex:none;">⚠</span><span>' + esc(text) + '</span></div>';
+      }).join('');
+      await showInfo({
+        title: '健康检查',
+        html: count
+          ? '<p style="margin:0 0 12px;font-size:13px;color:var(--zq-text2);">发现 ' + count + ' 个问题（如悬空链接等）：</p><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-height:280px;overflow-y:auto;">' + listHtml + '</div>'
+          : '<p style="margin:0 0 16px;font-size:13.5px;color:var(--zq-ok);font-weight:600;">✓ 未发现问题，知识库链接完好。</p>'
+      });
+    });
+  }
+  // 待合入变更按钮：显示真实的 PENDING patch-set 数量（预置的 “2” 是静态占位，已移除）
+  async function refreshWikiPatchBadge() {
+    var b = $('#zq-patch-btn'); if (!b) return;
+    try {
+      var list = await api.get('/knowledge/patch-sets?status=PENDING');
+      var n = (list || []).length;
+      b.textContent = n ? ('待合入变更 ' + n) : '待合入变更';
+      b.style.display = '';
+    } catch (e) { b.textContent = '待合入变更'; }
+  }
+  var WIKI_TYPE_COLOR = { GOAL: 'var(--zq-q2)', PROJECT: 'var(--zq-primary)', PREFERENCE: 'var(--zq-q4)', WEAKNESS: 'var(--zq-q1)', RESOURCE: 'var(--zq-q3)', MEMORY: 'var(--zq-accent)', INDEX: 'var(--zq-text3)', SCHEMA: 'var(--zq-text3)', LOG: 'var(--zq-text3)', NOTE: 'var(--zq-text2)' };
+  async function showWikiGraph() {
+    await safe('知识图谱', async function () {
+      var g = await api.get('/knowledge/graph');
+      var nodes = (g && g.nodes) || [];
+      var links = (g && g.links) || [];
+      if (!nodes.length) { await showInfo({ title: '知识图谱', message: '还没有知识页，先创建几页并用 [[双链]] 互相引用吧。' }); return; }
+      // 环形布局：入度高的页放内圈
+      var W = 560, H = 420, cx = W / 2, cy = H / 2;
+      var sorted = nodes.slice().sort(function (a, b) { return (b.degree || 0) - (a.degree || 0); });
+      var pos = {};
+      sorted.forEach(function (n, i) {
+        var ring = i === 0 ? 0 : (i <= 6 ? 1 : 2);
+        var radius = ring === 0 ? 0 : ring === 1 ? 118 : 180;
+        var ringIdx = ring === 0 ? 0 : ring === 1 ? i - 1 : i - 7;
+        var ringCount = ring === 0 ? 1 : ring === 1 ? Math.min(6, sorted.length - 1) : Math.max(1, sorted.length - 7);
+        var angle = (ringIdx / ringCount) * Math.PI * 2 - Math.PI / 2;
+        pos[n.id] = { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
+      });
+      var edgesSvg = links.map(function (l) {
+        var s = pos[l.sourcePageId], t = pos[l.targetPageId];
+        if (!s) return '';
+        if (!t) { // 悬空链接：画到外圈的虚线短线
+          return '<line x1="' + s.x + '" y1="' + s.y + '" x2="' + (s.x + 26) + '" y2="' + (s.y - 26) + '" stroke="var(--zq-bad)" stroke-width="1" stroke-dasharray="3,3" opacity=".6"/>';
+        }
+        return '<line x1="' + s.x + '" y1="' + s.y + '" x2="' + t.x + '" y2="' + t.y + '" stroke="var(--zq-border)" stroke-width="1.2" opacity=".8"/>';
+      }).join('');
+      var nodesSvg = sorted.map(function (n) {
+        var p = pos[n.id];
+        var r = Math.min(16, 7 + (n.degree || 0) * 2);
+        var color = WIKI_TYPE_COLOR[String(n.type || 'NOTE').toUpperCase()] || 'var(--zq-text2)';
+        var label = String(n.title || '').length > 9 ? String(n.title).slice(0, 8) + '…' : String(n.title || '');
+        return '<g data-graph-node="' + n.id + '" style="cursor:pointer;">'
+          + '<circle cx="' + p.x + '" cy="' + p.y + '" r="' + r + '" fill="' + color + '" opacity=".88"><title>' + esc(n.title || '') + '</title></circle>'
+          + '<text x="' + p.x + '" y="' + (p.y + r + 13) + '" text-anchor="middle" style="font-size:10.5px;fill:var(--zq-text2);">' + esc(label) + '</text></g>';
+      }).join('');
+      var legend = Object.keys(WIKI_TYPE_COLOR).filter(function (k) {
+        return nodes.some(function (n) { return String(n.type || 'NOTE').toUpperCase() === k; });
+      }).map(function (k) {
+        return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--zq-text2);"><i style="width:9px;height:9px;border-radius:50%;background:' + WIKI_TYPE_COLOR[k] + ';display:inline-block;"></i>' + k + '</span>';
+      }).join('');
+      var missing = (g && g.missingTargets && g.missingTargets.length) || 0;
+      openModal({
+        title: '知识图谱 · ' + nodes.length + ' 页 / ' + links.length + ' 链接',
+        width: '620px',
+        bodyHtml:
+          '<div style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card-soft);overflow:hidden;"><svg viewBox="0 0 ' + W + ' ' + H + '" style="display:block;width:100%;height:auto;">' + edgesSvg + nodesSvg + '</svg></div>'
+          + '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">' + legend + '</div>'
+          + (missing ? '<p style="margin:10px 0 0;font-size:12px;color:var(--zq-bad);">⚠ ' + missing + ' 个悬空链接（红色虚线），可运行「健康检查」查看明细。</p>' : '')
+          + '<p style="margin:8px 0 0;font-size:11.5px;color:var(--zq-text3);">节点大小 = 被引用次数 · 点击节点跳转到对应页面</p>',
+        onMount: function (b, h) {
+          $all('[data-graph-node]', b).forEach(function (gn) {
+            gn.onclick = function () {
+              var target = (state.wikiPages || []).find(function (x) { return String(x.id) === gn.getAttribute('data-graph-node'); });
+              if (target) { h.close(); paintWikiDoc(target); }
+            };
+          });
+        }
+      });
+    });
+  }
+  async function showWikiPatchSets() {
+    await safe('待合入变更', async function () {
+      var list = await api.get('/knowledge/patch-sets?status=PENDING');
+      var n = (list || []).length;
+      await refreshWikiPatchBadge();
+      if (!n) { await showInfo({ title: '待合入变更', message: '当前没有待合入的变更。AI 对知识库的修改建议会先出现在这里，确认后才写入正文。' }); return; }
+      var items = list.slice(0, 10).map(function (ps) {
+        return '<div style="padding:9px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:12.5px;line-height:1.6;"><strong>' + esc(ps.title || ps.summary || ('变更 #' + ps.id)) + '</strong>' + (ps.createdAt ? '<span class="zq-mono" style="float:right;font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(ps.createdAt)) + '</span>' : '') + '</div>';
+      }).join('');
+      await showInfo({ title: '待合入变更 · ' + n + ' 组', html: '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:300px;overflow-y:auto;">' + items + '</div><p style="margin:0 0 14px;font-size:12px;color:var(--zq-text3);">逐条审阅与合入将在后续版本提供。</p>' });
+    });
+  }
+  function flattenKnowledge(nodes) {
+    var out = [];
+    function walk(n) {
+      (Array.isArray(n) ? n : [n]).forEach(function (x) {
+        if (!x) return;
+        out.push(x);
+        walk(x.children || []);
+      });
+    }
+    walk(nodes);
+    return out;
+  }
+  function mdInline(t) {
+    t = esc(t)
+      .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/g, '<u>$1</u>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code style="background:var(--zq-card-soft);padding:1px 5px;border-radius:4px;font-size:.92em;">$1</code>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;">$1</a>')
+      .replace(/\[\[([^\]]+)\]\]/g, '<a data-wikilink="$1" style="color:var(--zq-primary);cursor:pointer;border-bottom:1px dashed var(--zq-tint-strong);">$1</a>');
+    return t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  }
+  // 完整块类型渲染，对齐 claude design 静态模板：标题/正文/列表/任务勾选/引用/代码块/分隔线/相关页面双链
+  function renderMarkdown(md) {
+    var lines = String(md || '').replace(/\r/g, '').split('\n');
+    var html = '', inUl = false, inOl = false, inCode = false, codeBuf = [], quoteBuf = [];
+    var sizes = { 1: '20px;font-weight:800', 2: '17px;font-weight:700', 3: '15.5px;font-weight:700;border-bottom:1px solid var(--zq-border-soft);padding-bottom:6px' };
+    function closeUl() { if (inUl) { html += '</ul>'; inUl = false; } }
+    function closeOl() { if (inOl) { html += '</ol>'; inOl = false; } }
+    function flushQuote() {
+      if (!quoteBuf.length) return;
+      html += '<blockquote style="margin:12px 0;padding:10px 16px;border-left:3px solid var(--zq-accent);background:var(--zq-card-soft);border-radius:0 var(--zq-rs) var(--zq-rs) 0;font-size:13px;line-height:1.7;color:var(--zq-text2);">' + quoteBuf.join('<br>') + '</blockquote>';
+      quoteBuf = [];
+    }
+    function closeBlocks() { closeUl(); closeOl(); flushQuote(); }
+    lines.forEach(function (line) {
+      if (/^```/.test(line.trim())) {
+        if (inCode) {
+          html += '<pre style="margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;"><code class="zq-mono" style="font-size:12.5px;line-height:1.65;white-space:pre;">' + esc(codeBuf.join('\n')) + '</code></pre>';
+          codeBuf = []; inCode = false;
+        } else { closeBlocks(); inCode = true; }
+        return;
+      }
+      if (inCode) { codeBuf.push(line); return; }
+      var h = line.match(/^(#{1,3})\s+(.+)$/);
+      var task = line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
+      var li = line.match(/^[-*]\s+(.+)$/);
+      var ol = line.match(/^\d+[.)]\s+(.+)$/);
+      var q = line.match(/^>\s?(.*)$/);
+      if (h) { closeBlocks(); var lvl = h[1].length; html += '<h' + lvl + ' style="margin:14px 0 8px;font-size:' + sizes[lvl] + ';">' + mdInline(h[2]) + '</h' + lvl + '>'; }
+      else if (task) {
+        closeBlocks();
+        var done = task[1].toLowerCase() === 'x';
+        html += '<div class="zq-task-row" style="display:flex;gap:9px;align-items:flex-start;margin:7px 0;"><input type="checkbox" ' + (done ? 'checked ' : '') + 'contenteditable="false" style="accent-color:var(--zq-primary);margin-top:5px;flex:none;"><span style="text-decoration:' + (done ? 'line-through' : 'none') + ';color:' + (done ? 'var(--zq-text3)' : 'var(--zq-text)') + ';">' + mdInline(task[2]) + '</span></div>';
+      }
+      else if (li) { closeOl(); flushQuote(); if (!inUl) { html += '<ul style="margin:8px 0;padding-left:22px;">'; inUl = true; } html += '<li style="margin:4px 0;">' + mdInline(li[1]) + '</li>'; }
+      else if (ol) { closeUl(); flushQuote(); if (!inOl) { html += '<ol style="margin:8px 0;padding-left:24px;">'; inOl = true; } html += '<li style="margin:4px 0;">' + mdInline(ol[1]) + '</li>'; }
+      else if (q) { closeUl(); closeOl(); quoteBuf.push(mdInline(q[1])); }
+      else if (/^(-{3,}|\*{3,})$/.test(line.trim())) { closeBlocks(); html += '<hr style="margin:16px 0;border:none;border-top:1px solid var(--zq-border-soft);">'; }
+      else if (line.trim() === '') { closeBlocks(); }
+      else { closeBlocks(); html += '<p style="margin:8px 0;">' + mdInline(line) + '</p>'; }
+    });
+    if (inCode) { html += '<pre style="margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;"><code class="zq-mono" style="font-size:12.5px;line-height:1.65;white-space:pre;">' + esc(codeBuf.join('\n')) + '</code></pre>'; }
+    closeBlocks();
+    return '<div style="font-size:13.5px;line-height:1.75;">' + (html || '<p></p>') + '</div>';
+  }
+  function htmlToMarkdown(root) {
+    function walk(node) {
+      var out = '';
+      Array.prototype.forEach.call(node.childNodes, function (n) {
+        if (n.nodeType === 3) { out += n.nodeValue.replace(/ /g, ' '); return; }
+        if (n.nodeType !== 1) return;
+        var tag = n.tagName.toUpperCase();
+        if (tag === 'BR') { out += '\n'; return; }
+        if (tag === 'HR') { out += '\n---\n\n'; return; }
+        if (tag === 'INPUT') { if ((n.getAttribute('type') || '').toLowerCase() === 'checkbox') out += n.checked ? '- [x] ' : '- [ ] '; return; }
+        var inner = walk(n);
+        switch (tag) {
+          case 'H1': out += '\n# ' + inner.trim() + '\n\n'; break;
+          case 'H2': out += '\n## ' + inner.trim() + '\n\n'; break;
+          case 'H3': out += '\n### ' + inner.trim() + '\n\n'; break;
+          case 'STRONG': case 'B': out += '**' + inner + '**'; break;
+          case 'EM': case 'I': out += '*' + inner + '*'; break;
+          case 'U': out += '<u>' + inner + '</u>'; break;
+          case 'PRE': { var codeTxt = (n.textContent || '').replace(/\n$/, ''); out += '\n```\n' + codeTxt + '\n```\n\n'; break; }
+          case 'CODE': out += '`' + inner + '`'; break;
+          case 'BLOCKQUOTE': out += '\n' + inner.trim().split('\n').map(function (l) { return '> ' + l; }).join('\n') + '\n\n'; break;
+          case 'A': { var wl = n.getAttribute('data-wikilink'); var href = n.getAttribute('href'); if (wl) out += '[[' + wl + ']]'; else if (href) out += '[' + (inner || href) + '](' + href + ')'; else out += inner; break; }
+          case 'LI': out += (n.parentNode && n.parentNode.tagName === 'OL' ? '1. ' : '- ') + inner.trim() + '\n'; break;
+          case 'UL': case 'OL': out += '\n' + inner + '\n'; break;
+          case 'P': case 'DIV': out += inner.trim() + '\n\n'; break;
+          default: out += inner;
+        }
+      });
+      return out;
+    }
+    return walk(root).replace(/\n{3,}/g, '\n\n').trim() + '\n';
+  }
+
+  async function bootAiAssistant() {
+    window.send = sendAiMessage;
+    window.tgl = aiToggle;
+    if ($('#zq-web')) $('#zq-web').dataset.on = '0';
+    if ($('#zq-think')) $('#zq-think').dataset.on = '1';
+    await Promise.all([loadAiMessages(), loadAiNotebooks(), loadAiModelSelect()]);
+    await renderAgentPanels();
+    var uploadBtn = $all('button').find(function (b) { return b.textContent.trim() === '上传'; });
+    if (uploadBtn) uploadBtn.onclick = function () { pickFile(function (file) { safe('文件分析', async function () { await api.upload('/ai/analyze', file); toast('文件已上传分析'); }); }); };
+    var addFileBtn = $all('button').find(function (b) { return /上传资料/.test(b.textContent); });
+    if (addFileBtn) addFileBtn.onclick = function () { if (!state.notebookId) return toast('请先选择 Notebook', 'error'); pickFile(function (file) { safe('上传资料', async function () { await api.upload('/ai/notebooks/' + state.notebookId + '/sources/upload', file); toast('资料已上传'); await loadAiSources(); }); }); };
+    var addUrlBtn = $all('button').find(function (b) { return /添加\s*URL/.test(b.textContent); });
+    if (addUrlBtn) addUrlBtn.onclick = async function () { if (!state.notebookId) return toast('请先选择 Notebook', 'error'); var url = await askText({ title: '添加 URL 资料', label: '资料网址', placeholder: 'https://…', hint: '添加后将自动抓取网页内容并解析进当前 Notebook。', okText: '添加' }); if (!url || !url.trim()) return; safe('添加 URL', async function () { await api.post('/ai/notebooks/' + state.notebookId + '/sources', { url: url.trim() }); toast('已添加，正在抓取解析'); await loadAiSources(); }); };
+    var newNbBtn = $('#zq-new-notebook');
+    if (newNbBtn) newNbBtn.onclick = function () {
+      openModal({
+        title: '新建 Notebook',
+        bodyHtml:
+          '<div class="zq-field"><label class="zq-label">名称</label><input id="zq-nb-name" class="zq-input" placeholder="例如：考研数学资料" value="新资料本"></div>'
+          + '<div class="zq-field"><label class="zq-label">说明（可选）</label><textarea id="zq-nb-desc" class="zq-textarea" style="min-height:70px;" placeholder="这个资料本用来收集什么"></textarea></div>'
+          + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-nb-cancel">取消</button><button type="button" class="zq-btn" id="zq-nb-ok">创建</button></div>',
+        onMount: function (b, h) {
+          var name = $('#zq-nb-name', b); try { name.select(); } catch (e) {}
+          $('#zq-nb-cancel', b).onclick = h.close;
+          $('#zq-nb-ok', b).onclick = function () {
+            var title = name.value.trim(); if (!title) return toast('请填写名称', 'error');
+            var description = $('#zq-nb-desc', b).value.trim();
+            safe('新建 Notebook', async function () {
+              var nb = await api.post('/ai/notebooks', { title: title, description: description });
+              state.notebookId = nb && nb.id ? nb.id : state.notebookId;
+              h.close(); await loadAiNotebooks(); toast('已新建 Notebook');
+            });
+          };
+        }
+      });
+    };
+  }
+  function pickFile(cb) {
+    var input = document.createElement('input'); input.type = 'file';
+    input.onchange = function () { if (input.files[0]) cb(input.files[0]); };
+    input.click();
+  }
+  function aiToggle(k) {
+    var b = document.getElementById(k === 'web' ? 'zq-web' : 'zq-think'); if (!b) return;
+    var on = b.dataset.on !== '1'; b.dataset.on = on ? '1' : '0';
+    b.style.border = '1px solid ' + (on ? 'var(--zq-tint-strong)' : 'var(--zq-border)');
+    b.style.background = on ? 'var(--zq-tint)' : 'var(--zq-card)';
+    b.style.color = on ? 'var(--zq-primary)' : 'var(--zq-text2)';
+    b.style.fontWeight = '600';
+  }
+  async function loadAiModelSelect() {
+    var sel = $('#zq-model'); if (!sel) return;
+    try {
+      var models = normalizeModelList(await api.get('/ai/models'));
+      sel.innerHTML = '<option value="">默认模型</option>' + (models || []).map(function (m) {
+        return '<option value="' + m.id + '">' + esc(m.label || m.displayName || m.modelName) + '</option>';
+      }).join('');
+    } catch (e) { /* 保持默认项 */ }
+  }
+  function renderSteps(steps) {
+    var host = $('#zq-steps'); if (!host) return;
+    host.innerHTML = steps.length ? steps.map(function (s, i) {
+      var status = (s.status || 'DONE').toUpperCase();
+      var color = status === 'DONE' || status === 'COMPLETED' ? 'var(--zq-ok)' : status === 'FAILED' ? 'var(--zq-bad)' : 'var(--zq-text3)';
+      var last = i === steps.length - 1;
+      return '<div style="display:flex;gap:9px;padding:5px 0;"><div style="display:flex;flex-direction:column;align-items:center;flex:none;width:10px;"><span style="width:8px;height:8px;border-radius:50%;background:' + color + ';margin-top:4px;"></span>' + (last ? '' : '<span style="flex:1;width:1px;background:var(--zq-border-soft);margin-top:2px;"></span>') + '</div><div style="min-width:0;padding-bottom:6px;"><div style="font-size:11.5px;font-weight:600;">' + esc(s.title || s.name || s.stepType || ('步骤 ' + (i + 1))) + '</div><div class="zq-mono" style="font-size:10px;color:' + color + ';margin-top:1px;">' + esc(status) + '</div></div></div>';
+    }).join('') : empty('暂无执行记录');
+  }
+  function renderArtifacts(artifacts) {
+    var host = $('#zq-artifacts'); if (!host) return;
+    host.innerHTML = artifacts.length ? artifacts.map(function (a) {
+      var st = (a.status || '').toUpperCase();
+      var draft = st === 'DRAFT' || st === 'PENDING';
+      return '<div style="padding:9px 11px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span class="zq-mono" style="font-size:9.5px;font-weight:600;color:var(--zq-primary);">' + esc(a.artifactType || a.type || 'ARTIFACT') + '</span><em style="font-style:normal;font-size:9.5px;color:var(--zq-text3);" class="zq-mono">' + esc(a.status || '') + '</em></div><div style="font-size:11.5px;font-weight:600;margin-top:4px;line-height:1.4;">' + esc(a.title || '产物') + '</div>' + (draft ? '<div style="display:flex;gap:6px;margin-top:7px;"><button data-art-ok="' + a.id + '" style="height:22px;padding:0 9px;border:1px solid var(--zq-tint-strong);border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);font-size:10.5px;font-weight:600;cursor:pointer;">确认</button><button data-art-no="' + a.id + '" class="zq-btn-ghost" style="height:22px;padding:0 9px;font-size:10.5px;">忽略</button></div>' : '') + '</div>';
+    }).join('') : empty('暂无产物');
+    $all('[data-art-ok]', host).forEach(function (b) { b.onclick = function () { safe('确认产物', async function () { await api.post('/ai/artifacts/' + b.dataset.artOk + '/confirm', {}); toast('已确认'); await renderAgentPanels(); }); }; });
+    $all('[data-art-no]', host).forEach(function (b) { b.onclick = function () { safe('忽略产物', async function () { await api.post('/ai/artifacts/' + b.dataset.artNo + '/discard', {}); toast('已忽略'); await renderAgentPanels(); }); }; });
+  }
+  async function renderAgentPanels() {
+    if (!$('#zq-steps') && !$('#zq-artifacts')) return;
+    var runs = await safe('执行轨迹', function () { return api.get('/ai/agent-runs' + (state.notebookId ? '?notebookId=' + state.notebookId : '')); });
+    var latest = runs && runs.length ? runs[0] : null;
+    var detail = latest ? await safe('执行详情', function () { return api.get('/ai/agent-runs/' + latest.id); }) : null;
+    renderSteps((detail && (detail.steps || detail.stepList)) || []);
+    renderArtifacts((detail && (detail.artifacts || detail.artifactList)) || []);
+  }
+  async function loadAiMessages() {
+    var list = await api.get('/ai/messages?limit=50');
+    state.messages = list || [];
+    var sync = $('#zq-sync-count'); if (sync) sync.textContent = '已同步 ' + state.messages.length + ' 条历史消息';
+    renderAiMessages();
+  }
+  function renderAiMessages() {
+    var host = $('#zq-chat'); if (!host) return;
+    host.innerHTML = (state.messages.length ? state.messages : [{ role: 'assistant', content: '你好！我是你的 AI 学习助手。' }]).map(function (m) {
+      var me = m.role === 'user';
+      var name = me ? '我' : 'AI';
+      var reason = (!me && m.reasoning) ? '<div style="margin-bottom:9px;padding:8px 11px;border-left:2px solid var(--zq-tint-strong);background:var(--zq-card-soft);border-radius:0 6px 6px 0;"><strong style="display:block;font-size:10.5px;font-weight:700;color:var(--zq-text3);letter-spacing:.05em;margin-bottom:4px;">深度思考</strong><span style="font-size:11.5px;color:var(--zq-text3);line-height:1.6;white-space:pre-wrap;">' + esc(m.reasoning) + '</span></div>' : '';
+      var body = m.content ? renderMarkdown(m.content) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
+      return '<div style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div style="max-width:72%;padding:11px 14px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + reason + body + '</div></div>';
+    }).join('');
+    host.scrollTop = host.scrollHeight;
+  }
+  async function loadAiNotebooks() {
+    var list = await api.get('/ai/notebooks');
+    state.notebooks = list || [];
+    if (!state.notebooks.length) {
+      var nb = await api.post('/ai/notebooks', { title: '默认 Notebook' });
+      state.notebooks = [nb];
+    }
+    if (!state.notebookId) state.notebookId = state.notebooks[0].id;
+    renderNotebooks();
+    await loadAiSources();
+  }
+  function renderNotebooks() {
+    var host = $('#zq-notebooks'); if (!host) return;
+    host.innerHTML = (state.notebooks || []).map(function (nb) {
+      var active = nb.id === state.notebookId;
+      return '<div data-notebook="' + nb.id + '" style="padding:9px 11px;border:1px solid ' + (active ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (active ? 'var(--zq-tint)' : 'var(--zq-card)') + ';cursor:pointer;"><div style="font-size:12.5px;font-weight:600;">' + esc(nb.title || 'Notebook') + '</div><div style="font-size:11px;color:var(--zq-text3);margin-top:2px;">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
+    }).join('') || empty('暂无 Notebook');
+    $all('[data-notebook]', host).forEach(function (d) { d.onclick = function () { state.notebookId = Number(d.dataset.notebook); renderNotebooks(); loadAiSources(); }; });
+  }
+  async function loadAiSources() {
+    if (!state.notebookId) return;
+    var list = await api.get('/ai/notebooks/' + state.notebookId + '/sources');
+    var host = $('#zq-sources'); if (!host) return;
+    host.innerHTML = (list || []).map(function (s) {
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><span class="zq-mono" style="flex:none;display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:4px;background:var(--zq-tint);color:var(--zq-primary);font-size:9.5px;font-weight:600;">' + esc(s.sourceType || 'SRC') + '</span><div style="min-width:0;"><div style="font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(s.title || s.url || '资料') + '</div><div style="font-size:10.5px;color:var(--zq-text3);">' + esc(s.status || '') + '</div></div></div>';
+    }).join('') || empty('暂无资料');
+  }
+  async function streamAiChat(body, handlers) {
+    var headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' };
+    if (token()) headers.Authorization = 'Bearer ' + token();
+    var res = await fetch(API + '/ai/chat/stream', { method: 'POST', credentials: 'same-origin', headers: headers, body: JSON.stringify(body) });
+    if (res.status === 401 || res.status === 403) { redirectToLogin(); throw new Error('未登录或无权限'); }
+    if (!res.ok || !res.body) throw new Error('流式连接失败(' + res.status + ')');
+    var reader = res.body.getReader(), decoder = new TextDecoder('utf-8'), buf = '';
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buf += decoder.decode(chunk.value, { stream: true });
+      var idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        var frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        var event = 'message', dataStr = '';
+        frame.split('\n').forEach(function (l) {
+          if (l.indexOf('event:') === 0) event = l.slice(6).trim();
+          else if (l.indexOf('data:') === 0) dataStr += l.slice(5).trim();
+        });
+        var data = {};
+        if (dataStr) { try { data = JSON.parse(dataStr); } catch (e) { data = { text: dataStr }; } }
+        handlers(event, data);
+      }
+    }
+  }
+  function upsertAgentStep(raw, done) {
+    var step = raw.step || raw;
+    var id = step.id || step.stepId || step.title || (state.agentSteps.length + 1);
+    var existing = state.agentSteps.find(function (s) { return s._id === id; });
+    if (existing) { existing.status = done ? 'DONE' : (step.status || existing.status); if (step.title) existing.title = step.title; }
+    else state.agentSteps.push({ _id: id, title: step.title || step.name || step.stepType || ('步骤 ' + (state.agentSteps.length + 1)), status: done ? 'DONE' : (step.status || 'RUNNING') });
+    renderSteps(state.agentSteps);
+  }
+  async function sendAiMessage() {
+    var inp = $('#zq-draft'), txt = inp && inp.value.trim();
+    if (!txt) return;
+    inp.value = '';
+    var assistant = { role: 'assistant', content: '', reasoning: '', status: 'STREAMING' };
+    state.messages.push({ role: 'user', content: txt }, assistant);
+    renderAiMessages();
+    state.agentSteps = []; state.agentArtifacts = [];
+    renderSteps([]); renderArtifacts([]);
+    var modelSel = $('#zq-model');
+    var body = {
+      message: txt,
+      modelConfigId: modelSel && modelSel.value ? Number(modelSel.value) : null,
+      enableWebSearch: !!($('#zq-web') && $('#zq-web').dataset.on === '1'),
+      reasoningMode: ($('#zq-think') && $('#zq-think').dataset.on === '1') ? 'DEEP' : 'OFF',
+      notebookId: state.notebookId || null,
+      agentMode: 'AUTO',
+      contextOptions: { includeWiki: true }
+    };
+    await safe('AI 发送', async function () {
+      try {
+        await streamAiChat(body, function (event, data) {
+          if (event === 'message.delta') { assistant.content += (data.text || data.delta || data.content || ''); renderAiMessages(); }
+          else if (event === 'reasoning.delta') { assistant.reasoning += (data.text || data.delta || ''); renderAiMessages(); }
+          else if (event === 'agent.step.start') { upsertAgentStep(data, false); }
+          else if (event === 'agent.step.done') { upsertAgentStep(data, true); }
+          else if (event === 'artifact.created') { state.agentArtifacts.push(data.artifact || data); renderArtifacts(state.agentArtifacts); }
+          else if (event === 'done') { if (data && data.content && !assistant.content) assistant.content = data.content; assistant.status = ''; renderAiMessages(); }
+          else if (event === 'error') { assistant.status = ''; assistant.content = assistant.content || ('（出错：' + (data.message || '未知错误') + '）'); renderAiMessages(); }
+        });
+      } catch (e) {
+        assistant.status = ''; if (!assistant.content) assistant.content = '（连接中断，可稍后刷新查看）'; renderAiMessages();
+        throw e;
+      }
+      assistant.status = ''; renderAiMessages();
+      await loadAiMessages();
+      await renderAgentPanels();
+    });
+  }
+
+  function revealContent() { try { document.documentElement.classList.remove('zq-booting'); } catch (e) {} }
+  function route() {
+    maintainShellCache();
+    safe('初始化', async function () {
+      try {
+        if (page === 'index.html' || $('#form-login')) { revealContent(); return bootIndex(); }
+        await initAuth();
+        var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'routines.html': bootRoutines, 'statistics.html': bootStatistics, 'achievement.html': bootAchievement, 'profile.html': bootProfile, 'admin.html': bootAdmin, 'feedback-admin.html': bootFeedbackAdmin, 'account-admin.html': bootAccountAdmin, 'shared-plans.html': bootSharedPlans, 'shared-plan-admin.html': bootSharedPlanAdmin, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
+        if (boots[page]) await boots[page]();
+      } finally {
+        revealContent();
+      }
+    }, { renderError: true });
+  }
+
+  window.zqApi = { api: api, reload: route };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', route); else route();
+})();

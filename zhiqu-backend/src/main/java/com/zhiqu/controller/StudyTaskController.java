@@ -4,8 +4,11 @@ import com.zhiqu.common.Result;
 import com.zhiqu.dto.TaskCreateRequest;
 import com.zhiqu.dto.TaskUpdateRequest;
 import com.zhiqu.entity.StudyTask;
+import com.zhiqu.entity.TaskReminder;
 import com.zhiqu.security.SecurityUtils;
+import com.zhiqu.service.ReminderPlanService;
 import com.zhiqu.service.StudyTaskService;
+import com.zhiqu.service.concurrency.IdempotencyService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,24 +19,37 @@ import java.util.Map;
 @RequestMapping("/api/task")
 public class StudyTaskController {
     private final StudyTaskService studyTaskService;
+    private final ReminderPlanService reminderPlanService;
+    private final IdempotencyService idempotencyService;
 
-    public StudyTaskController(StudyTaskService studyTaskService) {
+    public StudyTaskController(StudyTaskService studyTaskService,
+                               ReminderPlanService reminderPlanService,
+                               IdempotencyService idempotencyService) {
         this.studyTaskService = studyTaskService;
+        this.reminderPlanService = reminderPlanService;
+        this.idempotencyService = idempotencyService;
     }
 
     @PostMapping
-    public Result<StudyTask> create(@RequestBody @Valid TaskCreateRequest request) {
-        return Result.success(studyTaskService.create(SecurityUtils.getCurrentUserId(), request));
+    public Result<StudyTask> create(@RequestBody @Valid TaskCreateRequest request,
+                                    @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        return idempotencyService.execute(userId, idempotencyKey,
+                () -> Result.success(studyTaskService.create(userId, request)));
     }
 
     /** 创建周期重复任务：按 repeatWeeks 展开为多条 */
-    @PostMapping("/create-with-repeat")
-    public Result<Map<String, Object>> createWithRepeat(@RequestBody @Valid TaskCreateRequest request) {
-        List<StudyTask> tasks = studyTaskService.createRepeated(SecurityUtils.getCurrentUserId(), request);
-        return Result.success(Map.of(
-                "created", tasks.size(),
-                "groupId", tasks.isEmpty() ? "" : (tasks.get(0).getRepeatGroupId() == null ? "" : tasks.get(0).getRepeatGroupId())
-        ));
+    @PostMapping({"/create-with-repeat", "/repeat"})
+    public Result<Map<String, Object>> createWithRepeat(@RequestBody @Valid TaskCreateRequest request,
+                                                        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        return idempotencyService.execute(userId, idempotencyKey, () -> {
+            List<StudyTask> tasks = studyTaskService.createRepeated(userId, request);
+            return Result.success(Map.of(
+                    "created", tasks.size(),
+                    "groupId", tasks.isEmpty() ? "" : (tasks.get(0).getRepeatGroupId() == null ? "" : tasks.get(0).getRepeatGroupId())
+            ));
+        });
     }
 
     @PutMapping("/{id}")
@@ -50,6 +66,13 @@ public class StudyTaskController {
     @GetMapping("/{id}")
     public Result<StudyTask> detail(@PathVariable Long id) {
         return Result.success(studyTaskService.detail(SecurityUtils.getCurrentUserId(), id));
+    }
+
+    @GetMapping("/{id}/reminders")
+    public Result<List<TaskReminder>> reminders(@PathVariable Long id) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        studyTaskService.detail(userId, id);
+        return Result.success(reminderPlanService.listTaskReminders(userId, id));
     }
 
     @GetMapping("/list")

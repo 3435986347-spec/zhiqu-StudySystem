@@ -12,3 +12,12 @@ uploads/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 运行日志
+zhiqu-backend/logs/
+
+# Claude Code 会话配置
+.claude/
+
+# 压缩包（设计稿/部署包等二进制归档不入库）
+*.zip

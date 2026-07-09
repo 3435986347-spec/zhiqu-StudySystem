@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>账号管理 - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
+        <header style="display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:4px 2px 2px; flex-wrap:wrap;">
+          <div><p class="zq-eyebrow">管理员</p><h1 class="zq-h1">账号管理</h1></div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <input class="zq-input" placeholder="搜索用户名 / 邮箱" style="width:200px;">
+            <select class="zq-select"><option>全部角色</option><option>管理员</option><option>普通用户</option></select>
+            <button class="zq-btn">查询</button>
+          </div>
+        </header>
+
+        <div class="zq-table">
+          <div class="zq-scroll-x"><div style="min-width:830px;">
+            <div class="zq-thead" style="display:grid; grid-template-columns:minmax(120px,1.1fr) minmax(150px,1.3fr) 74px 62px 102px 104px 128px; gap:8px; align-items:center;">
+              <span>用户</span><span>邮箱</span><span>角色</span><span>状态</span><span>成就点数</span><span>最近活跃</span><span style="text-align:right;">操作</span>
+            </div>
+            <div id="zq-rows"></div>
+          </div></div>
+          <div style="padding:10px 16px; font-size:12px; color:var(--zq-text3);">共 1,284 个账号 · 第 1 / 184 页 · 禁用后该账号无法登录，数据保留</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js"></script>
+  <script>
+    var users=[
+      ['王明远','wangmy@ninfan.com',1,1,94,'07-04 09:12'],
+      ['李晓彤','lixt@stumail.cn',0,1,88,'07-04 08:47'],
+      ['陈宇航','chenyh@stumail.cn',0,1,76,'07-03 23:05'],
+      ['赵一鸣','zhaoym@stumail.cn',0,0,41,'06-27 18:33'],
+      ['林可','linke@stumail.cn',0,1,83,'07-04 07:58'],
+      ['苏文','suwen@stumail.cn',0,1,67,'07-03 21:14'],
+      ['何嘉懿','hejy@stumail.cn',0,1,91,'07-04 10:02']
+    ];
+    function render(){
+      document.getElementById('zq-rows').innerHTML = users.map(function(u,i){
+        var admin=u[2], on=u[3];
+        return '<div style="display:grid; grid-template-columns:minmax(120px,1.1fr) minmax(150px,1.3fr) 74px 62px 102px 104px 128px; gap:8px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--zq-border-soft); opacity:'+(on?1:0.6)+';">'
+          + '<div style="display:flex; align-items:center; gap:9px; min-width:0;"><div style="width:28px; height:28px; flex:none; border-radius:50%; background:var(--zq-tint); color:var(--zq-primary); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700;">'+u[0].slice(-1)+'</div><span style="font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+u[0]+'</span></div>'
+          + '<span style="font-size:12.5px; color:var(--zq-text2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+u[1]+'</span>'
+          + '<span><span class="zq-badge" style="background:'+(admin?'var(--zq-tint)':'var(--zq-card-soft)')+'; color:'+(admin?'var(--zq-primary)':'var(--zq-text2)')+';">'+(admin?'管理员':'普通用户')+'</span></span>'
+          + '<span style="font-size:12px; font-weight:600; color:'+(on?'var(--zq-ok)':'var(--zq-bad)')+';">'+(on?'正常':'已禁用')+'</span>'
+          + '<span style="display:flex; align-items:center; gap:7px;"><span style="width:44px; height:5px; border-radius:999px; background:var(--zq-card-soft); overflow:hidden; display:inline-block;"><i style="display:block; width:'+u[4]+'%; height:100%; background:var(--zq-primary); border-radius:inherit;"></i></span><span class="zq-mono" style="font-size:11.5px; color:var(--zq-text2);">'+u[4]+'%</span></span>'
+          + '<span class="zq-mono" style="font-size:12px; color:var(--zq-text2);">'+u[5]+'</span>'
+          + '<span style="display:flex; justify-content:flex-end; gap:6px;"><button class="zq-btn-ghost" style="height:26px; padding:0 8px; font-size:11.5px;">重置密码</button><button onclick="users['+i+'][3]=users['+i+'][3]?0:1;render()" style="height:26px; padding:0 8px; border:1px solid '+(on?'var(--zq-border)':'var(--zq-ok-tint)')+'; border-radius:var(--zq-rs); background:'+(on?'var(--zq-card)':'var(--zq-ok-tint)')+'; color:'+(on?'var(--zq-text2)':'var(--zq-ok)')+'; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;">'+(on?'禁用':'启用')+'</button></span>'
+          + '</div>';
+      }).join('');
+    }
+    render();
+  </script>
+  <script src="assets/zhiqu-api.js?v=20260707-wire-all8"></script>
+</body>
+</html>
+

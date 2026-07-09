@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 助手 - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
+        <header style="padding:4px 2px 2px;">
+          <p class="zq-eyebrow">智能规划</p><h1 class="zq-h1">AI 助手</h1>
+          <span style="display:block; margin-top:6px; color:var(--zq-text2); font-size:13px;">继续历史对话、识别文件并创建任务。</span>
+        </header>
+
+        <section style="border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh2); overflow:hidden; display:flex; flex-direction:column; min-height:560px;">
+          <div style="display:flex; align-items:center; gap:12px; padding:12px 18px; border-bottom:1px solid var(--zq-border-soft); background:var(--zq-card-soft);">
+            <span style="font-size:13.5px; font-weight:700;">AI 助手</span>
+            <span style="font-size:12px; color:var(--zq-text2);">对话规划学习、上传课表 / PDF / 表格并生成任务</span>
+            <span style="margin-left:auto; display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--zq-ok);"><span style="width:7px; height:7px; border-radius:50%; background:var(--zq-ok); animation:zqPulse 2s infinite;"></span><span id="zq-sync-count">正在同步历史消息…</span></span>
+          </div>
+
+          <div style="flex:1; display:flex; gap:0; min-height:0; align-items:stretch;">
+            <!-- Notebook（默认收起） -->
+            <aside data-zq-collapse="left" data-zq-label="Notebook · 资料" style="flex:0 0 218px; border-right:1px solid var(--zq-border-soft); background:var(--zq-card-soft); display:flex; flex-direction:column; min-width:0; max-height:560px; overflow-y:auto;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft);"><div><strong style="display:block; font-size:12.5px; font-weight:700;">Notebook</strong><span style="font-size:11px; color:var(--zq-text3);">资料工作区</span></div><button id="zq-new-notebook" class="zq-btn-ghost" style="height:26px; padding:0 10px; font-size:11.5px; white-space:nowrap; margin-right:26px;">＋ 新建</button></div>
+              <div id="zq-notebooks" style="padding:10px 12px; display:flex; flex-direction:column; gap:6px; border-bottom:1px solid var(--zq-border-soft);"></div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:10px 12px;">
+                <button class="zq-btn-ghost" style="height:28px; border-style:dashed; font-size:11.5px;">上传资料</button>
+                <button class="zq-btn-ghost" style="height:28px; border-style:dashed; font-size:11.5px;">添加 URL</button>
+              </div>
+              <div style="padding:2px 12px 14px; display:flex; flex-direction:column; gap:6px;" id="zq-sources"></div>
+            </aside>
+
+            <!-- 对话 -->
+            <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+              <div id="zq-chat" style="flex:1; overflow-y:auto; padding:20px 22px; display:flex; flex-direction:column; gap:16px; max-height:430px;"></div>
+              <div style="padding:12px 18px 16px; border-top:1px solid var(--zq-border-soft); display:flex; flex-direction:column; gap:10px;">
+                <div style="border:1.5px dashed var(--zq-border); border-radius:var(--zq-rs); padding:10px 14px; display:flex; align-items:center; gap:10px; color:var(--zq-text3); font-size:12.5px;"><span style="font-weight:700;">＋</span><span>拖拽文件到此处 · 支持图片、PDF、Excel、文本（csv / txt / md / json）</span></div>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <button class="zq-btn-ghost" style="height:32px; font-size:12.5px;">上传</button>
+                  <input id="zq-draft" placeholder="输入消息，回车发送..." style="flex:1; min-width:200px; height:32px; padding:0 12px; border:1px solid var(--zq-border); border-radius:var(--zq-rs); background:var(--zq-input-bg); color:var(--zq-text); font-size:13px;">
+                  <button id="zq-web" onclick="tgl('web')" class="zq-btn-ghost" style="height:32px; padding:0 11px; font-size:12px;">联网</button>
+                  <button id="zq-think" onclick="tgl('think')" style="height:32px; padding:0 11px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12px; font-weight:600; cursor:pointer;">深度思考</button>
+                  <select id="zq-model" class="zq-select" style="height:32px; max-width:150px; font-size:12px;"><option value="">默认模型</option></select>
+                  <button id="zq-send" onclick="send()" class="zq-btn" style="height:32px;">发送</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 执行轨迹 / 产物（默认收起） -->
+            <aside data-zq-collapse="right" data-zq-label="执行轨迹 · 产物" style="flex:0 0 262px; border-left:1px solid var(--zq-border-soft); background:var(--zq-card-soft); display:flex; flex-direction:column; min-width:0; max-height:560px; overflow-y:auto;">
+              <div style="padding:12px 14px; border-bottom:1px solid var(--zq-border-soft);">
+                <strong style="display:block; font-size:12.5px; font-weight:700;">执行轨迹</strong><span style="font-size:11px; color:var(--zq-text3);">Agent Pipeline</span>
+                <div id="zq-steps" style="display:flex; flex-direction:column; margin-top:10px;"></div>
+              </div>
+              <div style="padding:12px 14px;">
+                <strong style="display:block; font-size:12.5px; font-weight:700;">产物</strong><span style="font-size:11px; color:var(--zq-text3);">Artifacts</span>
+                <div id="zq-artifacts" style="display:flex; flex-direction:column; gap:7px; margin-top:10px;"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js"></script>
+  <script>
+    document.getElementById('zq-sources').innerHTML = [['PDF','高数讲义 第7章.pdf','2.4 MB · 已解析'],['XLSX','2026 秋季课表.xlsx','18 KB · 已生成任务'],['URL','408 考试大纲（官网）','网页 · 已收录']].map(function(s){
+      return '<div style="display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card);"><span class="zq-mono" style="flex:none; display:inline-flex; align-items:center; height:17px; padding:0 6px; border-radius:4px; background:var(--zq-tint); color:var(--zq-primary); font-size:9.5px; font-weight:600;">'+s[0]+'</span><div style="min-width:0;"><div style="font-size:11.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+s[1]+'</div><div style="font-size:10.5px; color:var(--zq-text3);">'+s[2]+'</div></div></div>';
+    }).join('');
+
+    var chat=[
+      {who:'AI',text:'你好！我是你的 AI 学习助手。\n· 可以继续之前的聊天，我会读取最近的对话记录。\n· 可以上传课表、PDF、Excel、CSV 或图片，我会识别任务并让你确认创建。\n· 可以让我记住长期目标和偏好，例如考研年份、科目、薄弱项和提醒习惯。'},
+      {who:'我',text:'帮我把下周的复习安排一下，数学优先，周二周四晚上有实验室值班。'},
+      {who:'AI',text:'好的，已按你的偏好排好：\n· 周一/三/五 08:30–11:30 数学二轮（重积分 → 级数）\n· 周二/四 19:30–22:00 改为数学 2.5 小时（避开值班）\n· 每日 19:30 前保留 1 小时英语阅读\n需要我直接生成对应任务和例行计划吗？'}
+    ];
+    function paintChat(){
+      document.getElementById('zq-chat').innerHTML = chat.map(function(m){
+        var me=m.who==='我';
+        var reason = m.reasoning ? '<div style="margin-bottom:9px; padding:8px 11px; border-left:2px solid var(--zq-tint-strong); background:var(--zq-card-soft); border-radius:0 6px 6px 0;"><strong style="display:block; font-size:10.5px; font-weight:700; color:var(--zq-text3); letter-spacing:.05em; margin-bottom:4px;">深度思考</strong><span style="font-size:11.5px; color:var(--zq-text3); line-height:1.6; white-space:pre-wrap;">'+m.reasoning+'</span></div>' : '';
+        var think = m.thinking ? '<span style="color:var(--zq-text3); animation:zqPulse 1.2s ease infinite;">正在思考…</span>' : '';
+        var cursor = m.streaming ? '<span style="display:inline-block; width:2px; height:14px; margin-left:2px; vertical-align:-2px; background:var(--zq-primary); animation:zqPulse .9s ease infinite;"></span>' : '';
+        return '<div style="display:flex; gap:10px; flex-direction:'+(me?'row-reverse':'row')+';"><div style="width:30px; height:30px; flex:none; border-radius:50%; background:'+(me?'var(--zq-card-soft)':'var(--zq-primary)')+'; color:'+(me?'var(--zq-text2)':'var(--zq-on-primary)')+'; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700;">'+m.who+'</div><div style="max-width:72%; padding:11px 14px; border-radius:var(--zq-rm); background:'+(me?'var(--zq-tint)':'var(--zq-card)')+'; border:1px solid '+(me?'var(--zq-tint-strong)':'var(--zq-border-soft)')+'; font-size:13.5px; line-height:1.65;">'+reason+think+'<span style="white-space:pre-wrap;">'+m.text+'</span>'+cursor+'</div></div>';
+      }).join('');
+    }
+    var steps=[['读取知识 Wiki（_index → 相关页）','DONE','var(--zq-ok)'],['检索课表 · 检测时间冲突','DONE','var(--zq-ok)'],['生成计划草稿','DONE','var(--zq-ok)'],['写入任务（待用户确认）','WAITING','var(--zq-text3)']];
+    document.getElementById('zq-steps').innerHTML = steps.map(function(s,i){
+      var last=i===steps.length-1;
+      return '<div style="display:flex; gap:9px; padding:5px 0;"><div style="display:flex; flex-direction:column; align-items:center; flex:none; width:10px;"><span style="width:8px; height:8px; border-radius:50%; background:'+s[2]+'; margin-top:4px;"></span>'+(last?'':'<span style="flex:1; width:1px; background:var(--zq-border-soft); margin-top:2px;"></span>')+'</div><div style="min-width:0; padding-bottom:6px;"><div style="font-size:11.5px; font-weight:600;">'+s[0]+'</div><div class="zq-mono" style="font-size:10px; color:'+s[2]+'; margin-top:1px;">'+s[1]+'</div></div></div>';
+    }).join('');
+    document.getElementById('zq-artifacts').innerHTML = [['PLAN','下周复习计划（数学优先）','DRAFT','var(--zq-warn)',1],['SUMMARY','06-28 对话摘要 → 知识 Wiki','CONFIRMED','var(--zq-ok)',0]].map(function(a){
+      var draft = a[4] ? '<div style="display:flex; gap:6px; margin-top:7px;"><button style="height:22px; padding:0 9px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:10.5px; font-weight:600; cursor:pointer;">确认</button><button class="zq-btn-ghost" style="height:22px; padding:0 9px; font-size:10.5px;">忽略</button></div>' : '';
+      return '<div style="padding:9px 11px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card);"><div style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span class="zq-mono" style="font-size:9.5px; font-weight:600; color:var(--zq-primary);">'+a[0]+'</span><em style="font-style:normal; font-size:9.5px; color:'+a[3]+';" class="zq-mono">'+a[2]+'</em></div><div style="font-size:11.5px; font-weight:600; margin-top:4px; line-height:1.4;">'+a[1]+'</div>'+draft+'</div>';
+    }).join('');
+
+    var web=false, think=true, timer=null;
+    function tgl(k){ if(k==='web'){web=!web;style('zq-web',web);} else {think=!think;style('zq-think',think);} }
+    function style(id,on){ var b=document.getElementById(id); b.style.border='1px solid '+(on?'var(--zq-tint-strong)':'var(--zq-border)'); b.style.background=on?'var(--zq-tint)':'var(--zq-card)'; b.style.color=on?'var(--zq-primary)':'var(--zq-text2)'; b.style.fontWeight='600'; }
+    style('zq-web',false); style('zq-think',true);
+    function scrollChat(){ var c=document.getElementById('zq-chat'); c.scrollTop=c.scrollHeight; }
+    function send(){
+      var btn=document.getElementById('zq-send');
+      if(timer){ clearInterval(timer); timer=null; var last=chat[chat.length-1]; last.streaming=false; last.thinking=false; if(!last.text) last.text='（已停止生成）'; btn.textContent='发送'; paintChat(); return; }
+      var inp=document.getElementById('zq-draft'), txt=inp.value.trim(); if(!txt) return;
+      chat.push({who:'我',text:txt}); inp.value='';
+      var ai={who:'AI',text:'',reasoning:'',thinking:true,streaming:true}; chat.push(ai); btn.textContent='停止'; paintChat(); scrollChat();
+      var rFull = think ? '读取知识 Wiki：_index → [[暑期复习主线]] / [[学习偏好与提醒习惯]]，检索到 3 个相关片段。\n检测到冲突：周二/周四 19:00–21:00 实验室值班与数学时间块重叠。\n结论：数学移至晚间 2.5 小时，保留每日英语阅读节奏。' : '';
+      var aFull = '收到。结合你的目标与偏好，建议这样安排：\n· 周一/三/五 08:30–11:30 数学二轮（重积分 → 级数）\n· 周二/四 19:30–22:00 数学 2.5 小时（避开值班）\n· 每日 19:30 前完成 1 小时英语阅读精读\n· 周六上午小卷自测 90 分钟\n\n已在右侧生成 4 条可写入的计划，勾选确认即可落地。';
+      var phase=rFull?0:1, i=0, started=Date.now();
+      timer=setInterval(function(){
+        if(Date.now()-started<500){ paintChat(); return; }
+        ai.thinking=false;
+        if(phase===0){ i+=3+Math.floor(Math.random()*5); ai.reasoning=rFull.slice(0,i); if(i>=rFull.length){phase=1;i=0;} }
+        else { i+=2+Math.floor(Math.random()*5); ai.text=aFull.slice(0,i); if(i>=aFull.length){ clearInterval(timer); timer=null; ai.streaming=false; btn.textContent='发送'; } }
+        paintChat(); scrollChat();
+      },50);
+    }
+    document.getElementById('zq-draft').addEventListener('keydown',function(e){ if(e.key==='Enter') send(); });
+    paintChat();
+  </script>
+  <script src="assets/zhiqu-api.js?v=20260707-wire-all8"></script>
+</body>
+</html>
+

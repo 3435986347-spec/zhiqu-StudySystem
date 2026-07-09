@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>参考计划 - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
+        <header style="display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:4px 2px 2px;">
+          <div>
+            <p class="zq-eyebrow">计划库</p><h1 class="zq-h1">参考计划</h1>
+            <span style="display:block; margin-top:6px; color:var(--zq-text2); font-size:13px;">把经过审核的学习计划套用到自己的日历里，任务和例行计划会按开始日期自动展开。</span>
+          </div>
+          <button class="zq-btn">提交计划模板</button>
+        </header>
+
+        <div class="zq-card" style="display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">
+          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">分类</label><select class="zq-select" style="min-width:130px;"><option>全部</option><option>考试备考</option><option>计算机学习</option><option>语言学习</option><option>通用规划</option></select></div>
+          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">排序</label><select class="zq-select" style="min-width:110px;"><option>发布时间</option><option>赞数</option></select></div>
+          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">方向</label><select class="zq-select" style="min-width:88px;"><option>倒序</option><option>正序</option></select></div>
+          <button class="zq-btn-ghost">刷新</button>
+          <span style="margin-left:auto; font-size:12.5px; color:var(--zq-text3);">已审核模板 · 4 个</span>
+        </div>
+
+        <div id="zq-plans" style="display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px;"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 详情弹窗 -->
+  <div id="zq-modal" style="display:none; position:fixed; inset:0; z-index:2000; align-items:center; justify-content:center; padding:24px;">
+    <div onclick="closeModal()" style="position:absolute; inset:0; background:rgba(15,20,28,.45);"></div>
+    <div style="position:relative; width:600px; max-width:100%; max-height:86vh; overflow-y:auto; background:var(--zq-card); border:1px solid var(--zq-border-soft); border-radius:var(--zq-rl); box-shadow:var(--zq-sh2); padding:22px 24px; animation:zqFadeIn .22s ease both;">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:6px;">
+        <h2 id="zm-title" class="zq-h2"></h2>
+        <button onclick="closeModal()" style="width:28px; height:28px; flex:none; border:none; background:none; color:var(--zq-text3); font-size:20px; cursor:pointer; line-height:1;">×</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px; font-size:12px; color:var(--zq-text3); flex-wrap:wrap;"><span id="zm-meta"></span><span class="zq-mono" id="zm-likes"></span></div>
+      <p id="zm-desc" style="margin:0 0 14px; font-size:13.5px; color:var(--zq-text2); line-height:1.65;"></p>
+      <div id="zm-aud" style="padding:10px 12px; border-radius:var(--zq-rs); background:var(--zq-tint); font-size:12.5px; color:var(--zq-text2); margin-bottom:16px;"></div>
+      <h3 style="margin:0 0 10px; font-size:14px; font-weight:700;">包含内容</h3>
+      <div id="zm-items" style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; padding-top:14px; border-top:1px solid var(--zq-border-soft);">
+        <button onclick="closeModal()" class="zq-btn-ghost">取消</button>
+        <button onclick="closeModal()" class="zq-btn">套用到我的日历</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/zhiqu-ui.js"></script>
+  <script>
+    var cat = { EXAM:['考试备考','q1'], COMPUTER:['计算机学习','q2'], LANGUAGE:['语言学习','q3'], GENERAL:['通用规划','q4'] };
+    var plans = [
+      { title:'408 暑假基础巩固计划（8 周）', cat:'EXAM', likes:216, aud:'计算机考研 · 每天约 4 小时', meta:'数缘学姐 · 06-18 发布', desc:'数据结构 + 组成原理双线推进，每周一次自测；附错题归档模板与复盘节奏建议。', items:['每日：数据结构 2h（教材+习题）','每日：组成原理 1.5h（视频+笔记）','每周六：408 真题小卷自测','每周日：错题复盘 + 下周排期','例行：晨间单词 30 个'] },
+      { title:'英语六级 6 周冲刺', cat:'LANGUAGE', likes:158, aud:'目标 500+ · 每天 1.5 小时', meta:'柠檬不酸 · 06-22 发布', desc:'真题驱动：前 3 周分题型精练，后 3 周整卷模考；听力每日跟读打卡。', items:['每日：听力精听 25 分钟','每日：阅读 2 篇限时训练','每周三/日：写作或翻译各 1 篇','第 4 周起：周末整卷模考','例行：睡前单词复盘 15 分钟'] },
+      { title:'大二暑期 Java 后端入门路线', cat:'COMPUTER', likes:132, aud:'零基础转后端 · 每天 3 小时', meta:'慢跑的鲸 · 06-25 发布', desc:'从 Java 基础到 Spring Boot 小项目，每周一个可运行的里程碑，配套练手仓库。', items:['第 1-2 周：Java 语法 + 集合/IO','第 3 周：MySQL 基础 + JDBC','第 4-5 周：Spring Boot 入门','第 6 周：做一个记账小项目','例行：每日 LeetCode 简单题 1 道'] },
+      { title:'期末周高效备考模板（通用）', cat:'GENERAL', likes:97, aud:'多门课并行 · 两周内', meta:'知趣官方 · 06-10 发布', desc:'按考试日期倒排优先级，将每门课拆成「过一遍 / 做题 / 背诵」三段，自动铺到日历。', items:['D-14：列出全部考试与资料清单','D-12：每门课过一遍框架','D-7：真题/往年卷各 1 套','D-3：只做错题与背诵点','每日：睡前 10 分钟次日排期'] }
+    ];
+    document.getElementById('zq-plans').innerHTML = plans.map(function(p,i){
+      var c=cat[p.cat];
+      return '<article onclick="openModal('+i+')" style="padding:16px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh1); cursor:pointer; transition:border-color .15s, box-shadow .15s;" onmouseover="this.style.borderColor=\'var(--zq-primary)\';this.style.boxShadow=\'var(--zq-sh2)\'" onmouseout="this.style.borderColor=\'var(--zq-border-soft)\';this.style.boxShadow=\'var(--zq-sh1)\'">'
+        + '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;"><span class="zq-badge" style="background:var(--zq-'+c[1]+'-bg); color:var(--zq-'+c[1]+'); font-weight:700;">'+c[0]+'</span><span class="zq-mono" style="font-size:12px; color:var(--zq-text3);">♡ '+p.likes+'</span></div>'
+        + '<h3 style="margin:0 0 6px; font-size:15.5px; font-weight:700; letter-spacing:-.01em;">'+p.title+'</h3>'
+        + '<p style="margin:0 0 10px; font-size:12.5px; color:var(--zq-text2); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">'+p.desc+'</p>'
+        + '<div style="display:flex; align-items:center; justify-content:space-between; font-size:11.5px; color:var(--zq-text3); border-top:1px solid var(--zq-border-soft); padding-top:9px;"><span>'+p.aud+'</span><span>'+p.meta+'</span></div></article>';
+    }).join('');
+
+    function openModal(i){
+      var p=plans[i];
+      document.getElementById('zm-title').textContent=p.title;
+      document.getElementById('zm-meta').textContent=p.meta+' · 已审核';
+      document.getElementById('zm-likes').textContent='♡ '+p.likes;
+      document.getElementById('zm-desc').textContent=p.desc;
+      document.getElementById('zm-aud').textContent='适用：'+p.aud;
+      document.getElementById('zm-items').innerHTML=p.items.map(function(x){ return '<div style="display:flex; gap:10px; align-items:flex-start; padding:9px 12px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card-soft); font-size:13px; line-height:1.5;"><span style="color:var(--zq-accent); flex:none; font-weight:700;">·</span><span>'+x+'</span></div>'; }).join('');
+      var mo=document.getElementById('zq-modal'); mo.style.display='flex';
+    }
+    function closeModal(){ document.getElementById('zq-modal').style.display='none'; }
+  </script>
+  <script src="assets/zhiqu-api.js?v=20260707-wire-all8"></script>
+</body>
+</html>
+

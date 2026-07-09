@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>共享计划审核 - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
+        <header style="display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:4px 2px 2px;">
+          <div>
+            <p class="zq-eyebrow">管理员</p><h1 class="zq-h1">共享计划审核</h1>
+            <span style="display:block; margin-top:6px; color:var(--zq-text2); font-size:13px;">通过后进入「参考计划」库，所有用户可套用。</span>
+          </div>
+          <span id="zq-pending" style="font-size:12.5px; color:var(--zq-text3);"></span>
+        </header>
+        <div id="zq-reviews" style="display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px;"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js"></script>
+  <script>
+    var cat={EXAM:['考试备考','q1'],COMPUTER:['计算机学习','q2'],LANGUAGE:['语言学习','q3'],GENERAL:['通用规划','q4']};
+    var rv=[
+      ['专升本英语 90 天计划','LANGUAGE','柠檬不酸','07-03 提交','21 个任务 · 3 个例行',0,'从词汇到真题三阶段，每天 1.5 小时，附每周自测卷。'],
+      ['大一 C 语言入门 6 周','COMPUTER','慢跑的鲸','07-02 提交','18 个任务 · 2 个例行',0,'每周一个小项目驱动语法学习，最后一周做贪吃蛇。'],
+      ['教资科目二冲刺两周','EXAM','早起的猫','07-01 提交','14 个任务 · 1 个例行',0,'简答题背诵包 + 每日一套选择题限时训练。'],
+      ['暑期健身作息模板','GENERAL','阿哲','06-30 提交','8 个任务 · 4 个例行',0,'学习计划之外的作息锚点：晨跑、力量、拉伸轮换。']
+    ];
+    function paint(){
+      document.getElementById('zq-pending').textContent='待审核 '+rv.filter(function(r){return r[5]===0;}).length+' 个';
+      document.getElementById('zq-reviews').innerHTML=rv.map(function(r,i){
+        var c=cat[r[1]], pending=r[5]===0;
+        var action = pending
+          ? '<span style="display:inline-flex; gap:6px;"><button onclick="rv['+i+'][5]=1;paint()" style="height:28px; padding:0 13px; border:1px solid var(--zq-ok-tint); border-radius:var(--zq-rs); background:var(--zq-ok-tint); color:var(--zq-ok); font-size:12.5px; font-weight:600; cursor:pointer;">通过</button><button onclick="rv['+i+'][5]=2;paint()" style="height:28px; padding:0 13px; border:1px solid var(--zq-bad-tint); border-radius:var(--zq-rs); background:var(--zq-bad-tint); color:var(--zq-bad); font-size:12.5px; font-weight:600; cursor:pointer;">驳回</button></span>'
+          : '<span class="zq-badge" style="background:'+(r[5]===1?'var(--zq-ok-tint)':'var(--zq-bad-tint)')+'; color:'+(r[5]===1?'var(--zq-ok)':'var(--zq-bad)')+'; font-weight:700;">'+(r[5]===1?'已通过':'已驳回')+'</span>';
+        return '<article style="padding:16px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh1); opacity:'+(r[5]===2?0.62:1)+';">'
+          + '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;"><span class="zq-badge" style="background:var(--zq-'+c[1]+'-bg); color:var(--zq-'+c[1]+'); font-weight:700;">'+c[0]+'</span><span class="zq-mono" style="font-size:11.5px; color:var(--zq-text3);">'+r[3]+'</span></div>'
+          + '<h3 style="margin:0 0 6px; font-size:15.5px; font-weight:700;">'+r[0]+'</h3>'
+          + '<p style="margin:0 0 10px; font-size:12.5px; color:var(--zq-text2); line-height:1.55;">'+r[6]+'</p>'
+          + '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:10px; border-top:1px solid var(--zq-border-soft);"><span style="font-size:12px; color:var(--zq-text3);">'+r[2]+' · '+r[4]+'</span>'+action+'</div></article>';
+      }).join('');
+    }
+    paint();
+  </script>
+  <script src="assets/zhiqu-api.js?v=20260707-wire-all8"></script>
+</body>
+</html>
+

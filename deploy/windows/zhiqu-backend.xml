@@ -1,0 +1,16 @@
+<service>
+  <id>zhiqu-backend</id>
+  <name>Zhiqu Backend</name>
+  <description>Zhiqu quadrant learning backend Spring Boot service.</description>
+  <executable>java</executable>
+  <arguments>-jar "%BASE%\zhiqu-backend-0.0.1-SNAPSHOT.jar" --spring.config.location=file:./application-prod.yml</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <startmode>Automatic</startmode>
+  <env name="TZ" value="Asia/Shanghai"/>
+  <logpath>%BASE%\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10485760</sizeThreshold>
+    <keepFiles>10</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

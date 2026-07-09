@@ -20,6 +20,32 @@
   color: var(--text-secondary);
 }
 
+.draft-recovery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(47, 95, 115, 0.2);
+  border-radius: 7px;
+  background: #F3F8F8;
+  color: #2F5F73;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.draft-recovery .text-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2F5F73;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* ── Pixel theme overrides for tasks ── */
 body.pixel-theme .data-table .btn {
   font-size: 7px;
