@@ -16,11 +16,16 @@ import com.zhiqu.service.ai.WebResearchService;
 import com.zhiqu.service.ai.WebSearchProvider;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.util.FileParseUtil;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -34,6 +39,10 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private static final int CHUNK_OVERLAP = 180;
     private static final int MAX_CONTEXT_CHUNKS = 8;
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /** 原件私有存储目录：不在 /uploads/** 公开映射内，只能经鉴权下载端点访问 */
+    @Value("${app.private-upload-dir:private-uploads}")
+    private String privateUploadDir;
 
     private final AiNotebookMapper notebookMapper;
     private final AiNotebookSourceMapper sourceMapper;
@@ -224,6 +233,16 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         String fileName = file.getOriginalFilename() == null ? "未命名文件" : file.getOriginalFilename();
         AiNotebookSource source = createSourceShell(userId, resolvedNotebookId, inferSourceType(file.getContentType(), fileName),
                 limit(fileName, 180), null, null);
+        // 原件落盘（私有目录），供后续下载；落盘失败不影响解析，下载会回退为导出解析文本
+        try {
+            Path dir = privateUploadRoot().resolve("ai-sources").resolve(String.valueOf(userId));
+            Files.createDirectories(dir);
+            Path target = dir.resolve(source.getId() + "-" + sanitizeStoredName(fileName));
+            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+            source.setFilePath(target.toString());
+            sourceMapper.updateById(source);
+        } catch (Exception ignored) {
+        }
         try {
             source.setStatus("PARSING");
             sourceMapper.updateById(source);
@@ -238,6 +257,68 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             sourceMapper.updateById(source);
         }
         return sourceRow(sourceMapper.selectById(source.getId()));
+    }
+
+    @Override
+    public Map<String, Object> downloadSource(Long userId, Long notebookId, Long sourceId) {
+        ownedNotebook(userId, notebookId);
+        AiNotebookSource source = sourceMapper.selectOne(new LambdaQueryWrapper<AiNotebookSource>()
+                .eq(AiNotebookSource::getUserId, userId)
+                .eq(AiNotebookSource::getNotebookId, notebookId)
+                .eq(AiNotebookSource::getId, sourceId));
+        if (source == null) {
+            throw new BusinessException("资料不存在或无权限访问");
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        // 优先给原件；没有原件（URL/手动笔记/历史数据）则导出解析文本
+        if (source.getFilePath() != null && !source.getFilePath().isBlank()) {
+            Path path = Paths.get(source.getFilePath());
+            if (Files.isRegularFile(path)) {
+                try {
+                    result.put("bytes", Files.readAllBytes(path));
+                    String probed = Files.probeContentType(path);
+                    result.put("contentType", probed == null ? "application/octet-stream" : probed);
+                    result.put("filename", source.getTitle() == null ? path.getFileName().toString() : source.getTitle());
+                    return result;
+                } catch (Exception e) {
+                    throw new BusinessException("原件读取失败：" + e.getMessage());
+                }
+            }
+        }
+        List<AiSourceChunk> chunks = chunkMapper.selectList(new LambdaQueryWrapper<AiSourceChunk>()
+                .eq(AiSourceChunk::getSourceId, source.getId())
+                .orderByAsc(AiSourceChunk::getChunkIndex));
+        if (chunks.isEmpty()) {
+            throw new BusinessException("该资料没有可下载的内容");
+        }
+        StringBuilder text = new StringBuilder();
+        if (source.getUrl() != null && !source.getUrl().isBlank()) {
+            text.append("来源网址：").append(source.getUrl()).append("\n\n");
+        }
+        for (AiSourceChunk chunk : chunks) {
+            text.append(chunk.getContent() == null ? "" : chunk.getContent());
+        }
+        String base = source.getTitle() == null || source.getTitle().isBlank() ? "资料" : source.getTitle();
+        result.put("bytes", text.toString().getBytes(StandardCharsets.UTF_8));
+        result.put("contentType", "text/plain;charset=UTF-8");
+        result.put("filename", base.toLowerCase().endsWith(".txt") ? base : base + ".txt");
+        return result;
+    }
+
+    private Path privateUploadRoot() {
+        Path configured = Paths.get(privateUploadDir);
+        if (configured.isAbsolute()) {
+            return configured.normalize();
+        }
+        return Paths.get(System.getProperty("user.dir")).toAbsolutePath().resolve(configured).normalize();
+    }
+
+    private String sanitizeStoredName(String name) {
+        String cleaned = String.valueOf(name).replaceAll("[\\\\/:*?\"<>|\\r\\n]", "_").trim();
+        if (cleaned.isBlank()) {
+            cleaned = "file";
+        }
+        return cleaned.length() > 120 ? cleaned.substring(cleaned.length() - 120) : cleaned;
     }
 
     @Override
@@ -796,6 +877,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         row.put("url", source.getUrl());
         row.put("status", source.getStatus());
         row.put("parseError", source.getParseError());
+        row.put("hasFile", source.getFilePath() != null && !source.getFilePath().isBlank());
         row.put("createdAt", source.getCreatedAt());
         row.put("updatedAt", source.getUpdatedAt());
         row.put("chunkCount", chunkMapper.selectCount(new LambdaQueryWrapper<AiSourceChunk>()

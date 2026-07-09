@@ -4,7 +4,7 @@
   'use strict';
 
   var API = '/api';
-  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all10';
+  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all11';
   // 根路径 "/" 由 Spring 作为欢迎页返回 index.html（登录页），此时 pathname 为空，
   // 默认必须落到 index.html，否则 bootIndex 不执行、登录按钮无处理器。
   var page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
@@ -1846,25 +1846,87 @@
       };
     });
   }
+  // 资料类型 → 徽章文字/颜色（Claude 项目知识风格的圆角方块）
+  function srcBadge(type) {
+    var t = String(type || '').toUpperCase();
+    var map = {
+      PDF: ['PDF', 'var(--zq-q1)'],
+      EXCEL: ['XLS', 'var(--zq-q2)'],
+      SHEET: ['XLS', 'var(--zq-q2)'],
+      TEXT: ['TXT', 'var(--zq-q3)'],
+      WEB_URL: ['URL', 'var(--zq-primary)'],
+      MANUAL_NOTE: ['NOTE', 'var(--zq-accent)'],
+      IMAGE: ['IMG', 'var(--zq-q4)']
+    };
+    return map[t] || [t.slice(0, 4) || 'SRC', 'var(--zq-text3)'];
+  }
+  function srcStatusLabel(s) { return ({ READY: '已解析', PARSING: '解析中', UPLOADED: '已上传', ERROR: '解析失败' })[String(s || '').toUpperCase()] || (s || ''); }
+  // 点击卡片下载：优先 showSaveFilePicker 让用户选保存位置，否则走浏览器默认下载
+  async function downloadAiSource(sid, title) {
+    var n = notice('正在准备下载「' + title + '」…');
+    try {
+      var headers = {}; if (token()) headers.Authorization = 'Bearer ' + token();
+      var res = await fetch(API + '/ai/notebooks/' + state.notebookId + '/sources/' + sid + '/download', { headers: headers, credentials: 'same-origin' });
+      // 业务错误会以 JSON Result 返回（HTTP 200），按 content-type 甄别
+      var ct = res.headers.get('Content-Type') || '';
+      if (!res.ok || ct.indexOf('application/json') >= 0) {
+        var j = null; try { j = await res.json(); } catch (e) {}
+        throw new Error((j && j.message) || ('下载失败(' + res.status + ')'));
+      }
+      var blob = await res.blob();
+      var cd = res.headers.get('Content-Disposition') || '';
+      var m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+      var fname = m ? decodeURIComponent(m[1]) : (title || '资料');
+      if (window.showSaveFilePicker) {
+        try {
+          var handle = await window.showSaveFilePicker({ suggestedName: fname });
+          var writable = await handle.createWritable();
+          await writable.write(blob); await writable.close();
+          n.update('已保存：' + fname, { done: true });
+          return;
+        } catch (e2) {
+          if (e2 && e2.name === 'AbortError') { n.close(); return; } // 用户取消选位置
+          // 其他失败回退到浏览器默认下载
+        }
+      }
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = fname;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+      n.update('已开始下载：' + fname, { done: true });
+    } catch (e) {
+      n.update('下载失败：' + (e.message || '未知错误'), { error: true });
+    }
+  }
   async function loadAiSources() {
     if (!state.notebookId) return;
     var list = await api.get('/ai/notebooks/' + state.notebookId + '/sources');
     var host = $('#zq-sources'); if (!host) return;
-    host.innerHTML = (list || []).map(function (s) {
-      return '<div data-source="' + s.id + '" data-source-title="' + esc(s.title || s.url || '资料') + '" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><span class="zq-mono" style="flex:none;display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:4px;background:var(--zq-tint);color:var(--zq-primary);font-size:9.5px;font-weight:600;">' + esc(s.sourceType || 'SRC') + '</span><div style="min-width:0;"><div style="font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(s.title || s.url || '资料') + '</div><div style="font-size:10.5px;color:var(--zq-text3);">' + esc(s.status || '') + '</div></div></div>';
-    }).join('') || empty('暂无资料');
-    // 右键资料 → 删除
+    host.innerHTML = (list || []).length ? '<div class="zq-src-grid">' + list.map(function (s) {
+      var b = srcBadge(s.sourceType);
+      var title = s.title || s.url || '资料';
+      return '<div class="zq-src-tile" data-source="' + s.id + '" data-source-title="' + esc(title) + '" data-source-url="' + esc(s.url || '') + '" title="点击下载到本地">'
+        + '<span class="zq-src-badge" style="background:' + b[1] + ';">' + esc(b[0]) + '</span>'
+        + '<span class="zq-src-dl">↓</span>'
+        + '<div class="zq-src-title">' + esc(title) + '</div>'
+        + '<div class="zq-src-meta"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (String(s.status).toUpperCase() === 'READY' ? 'var(--zq-ok)' : String(s.status).toUpperCase() === 'ERROR' ? 'var(--zq-bad)' : 'var(--zq-text3)') + ';"></span>' + esc(srcStatusLabel(s.status)) + '</div>'
+        + '</div>';
+    }).join('') + '</div>' : empty('暂无资料');
     $all('[data-source]', host).forEach(function (d) {
+      var sid = d.dataset.source, sTitle = d.dataset.sourceTitle, sUrl = d.dataset.sourceUrl;
+      d.onclick = function () { downloadAiSource(sid, sTitle); };
       d.oncontextmenu = function (e) {
         e.preventDefault();
-        var sid = d.dataset.source, sTitle = d.dataset.sourceTitle;
-        popMenu(e.clientX, e.clientY, [{
+        var items = [{ label: '下载到本地', onClick: function () { downloadAiSource(sid, sTitle); } }];
+        if (sUrl) items.push({ label: '打开原网址', onClick: function () { window.open(sUrl, '_blank', 'noopener'); } });
+        items.push({
           label: '删除该资料', danger: true,
           onClick: async function () {
             if (!await askConfirm({ title: '删除资料', message: '删除「' + sTitle + '」？其解析内容将从 Notebook 中移除。', okText: '删除', danger: true })) return;
             safe('删除资料', async function () { await api.del('/ai/notebooks/' + state.notebookId + '/sources/' + sid); toast('已删除'); await loadAiNotebooks(); });
           }
-        }]);
+        });
+        popMenu(e.clientX, e.clientY, items);
       };
     });
   }

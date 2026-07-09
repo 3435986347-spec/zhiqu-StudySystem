@@ -13,11 +13,14 @@ import com.zhiqu.service.StudyTaskService;
 import com.zhiqu.service.ai.WebResearchService;
 import com.zhiqu.service.concurrency.IdempotencyService;
 import com.zhiqu.util.FileParseUtil;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -216,6 +219,17 @@ public class AiController {
     public Result<Void> deleteNotebookSource(@PathVariable Long id, @PathVariable Long sourceId) {
         aiWorkspaceService.deleteSource(SecurityUtils.getCurrentUserId(), id, sourceId);
         return Result.success();
+    }
+
+    @GetMapping("/notebooks/{id}/sources/{sourceId}/download")
+    public ResponseEntity<byte[]> downloadNotebookSource(@PathVariable Long id, @PathVariable Long sourceId) {
+        Map<String, Object> data = aiWorkspaceService.downloadSource(SecurityUtils.getCurrentUserId(), id, sourceId);
+        String filename = String.valueOf(data.get("filename"));
+        String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
+                .header(HttpHeaders.CONTENT_TYPE, String.valueOf(data.get("contentType")))
+                .body((byte[]) data.get("bytes"));
     }
 
     @GetMapping("/agent-runs/{id}")

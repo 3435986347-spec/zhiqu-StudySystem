@@ -639,6 +639,16 @@ body.zq-modal-open{overflow:hidden;}
 #zq-doc ul li::marker{color:var(--zq-accent);}
 #zq-doc ol li::marker{color:var(--zq-accent);font-weight:600;}
 
+/* ── Notebook 资料卡片（Claude/ChatGPT 项目知识风格：圆角方块 + 类型徽章，点击下载） ── */
+.zq-src-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.zq-src-tile{position:relative;display:flex;flex-direction:column;gap:7px;aspect-ratio:1/1;min-height:88px;padding:10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease;overflow:hidden;}
+.zq-src-tile:hover{border-color:var(--zq-primary);box-shadow:var(--zq-sh1);}
+.zq-src-badge{width:34px;height:34px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:9px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:#fff;}
+.zq-src-title{font-size:11.5px;font-weight:600;line-height:1.4;color:var(--zq-text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-all;}
+.zq-src-meta{margin-top:auto;font-size:10px;color:var(--zq-text3);display:flex;align-items:center;gap:5px;}
+.zq-src-tile .zq-src-dl{position:absolute;top:8px;right:8px;width:22px;height:22px;display:none;align-items:center;justify-content:center;border-radius:6px;background:var(--zq-tint);color:var(--zq-primary);font-size:12px;font-weight:700;}
+.zq-src-tile:hover .zq-src-dl{display:flex;}
+
 /* ── 右上角持久通知（测试进行中/完成；Claude 弹窗同风格） ── */
 .zq-notice{position:fixed;top:22px;right:22px;z-index:9000;display:flex;align-items:center;gap:9px;max-width:340px;padding:11px 16px;border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);color:var(--zq-text);box-shadow:0 12px 36px rgba(0,0,0,.18);font-size:13px;font-weight:600;transition:opacity .2s ease;animation:zqModalIn .22s cubic-bezier(.2,.8,.2,1) both;}
 .zq-notice .zq-notice-dot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--zq-primary);animation:zqPulse 1.1s ease infinite;}
