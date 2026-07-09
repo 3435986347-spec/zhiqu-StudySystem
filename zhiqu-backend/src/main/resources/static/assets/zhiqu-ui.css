@@ -638,3 +638,9 @@ body.zq-modal-open{overflow:hidden;}
 /* Wiki 文档视图：列表圆点用强调色，对齐 claude design 模板 */
 #zq-doc ul li::marker{color:var(--zq-accent);}
 #zq-doc ol li::marker{color:var(--zq-accent);font-weight:600;}
+
+/* ── 右上角持久通知（测试进行中/完成；Claude 弹窗同风格） ── */
+.zq-notice{position:fixed;top:22px;right:22px;z-index:9000;display:flex;align-items:center;gap:9px;max-width:340px;padding:11px 16px;border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);color:var(--zq-text);box-shadow:0 12px 36px rgba(0,0,0,.18);font-size:13px;font-weight:600;transition:opacity .2s ease;animation:zqModalIn .22s cubic-bezier(.2,.8,.2,1) both;}
+.zq-notice .zq-notice-dot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--zq-primary);animation:zqPulse 1.1s ease infinite;}
+.zq-notice.zq-notice-done .zq-notice-dot{background:var(--zq-ok);animation:none;}
+.zq-notice.zq-notice-error .zq-notice-dot{background:var(--zq-bad);animation:none;}

@@ -4,7 +4,7 @@
   'use strict';
 
   var API = '/api';
-  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all8';
+  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all10';
   // 根路径 "/" 由 Spring 作为欢迎页返回 index.html（登录页），此时 pathname 为空，
   // 默认必须落到 index.html，否则 bootIndex 不执行、登录按钮无处理器。
   var page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
@@ -100,6 +100,26 @@
     el.style.cssText = 'position:fixed;right:22px;top:22px;z-index:99999;max-width:360px;padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);box-shadow:var(--zq-sh2);color:' + (kind === 'error' ? 'var(--zq-bad)' : 'var(--zq-text)') + ';font-size:13px;font-weight:600;';
     document.body.appendChild(el);
     setTimeout(function () { el.remove(); }, 2600);
+  }
+  // 右上角持久通知（Claude 弹窗风格）：notice('正在测试…') → {update(msg,{done}), close()}
+  // update 传 {done:true} 时切换为完成态并在 2s 后自动消失
+  function notice(msg) {
+    var el = document.createElement('div');
+    el.className = 'zq-notice';
+    el.innerHTML = '<span class="zq-notice-dot"></span><span class="zq-notice-text"></span>';
+    el.querySelector('.zq-notice-text').textContent = msg;
+    document.body.appendChild(el);
+    var closed = false;
+    function close() { if (closed) return; closed = true; el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 220); }
+    return {
+      update: function (m, opts) {
+        if (closed) return;
+        el.querySelector('.zq-notice-text').textContent = m;
+        if (opts && opts.done) { el.classList.add('zq-notice-done'); setTimeout(close, 2000); }
+        if (opts && opts.error) { el.classList.add('zq-notice-error'); setTimeout(close, 3000); }
+      },
+      close: close
+    };
   }
   // 可复用的 Claude 风格居中弹窗：openModal({title, bodyHtml, width, onMount(body,handle), onClose}) → {close, body, mask}
   function openModal(opts) {
@@ -772,8 +792,9 @@
     var sys = (data.systemModels || []).map(function (m) { return Object.assign({ ownerType: 'SYSTEM' }, m); });
     return mine.concat(sys);
   }
-  function probeText(s) { s = String(s || '').toUpperCase(); if (!s || s === 'UNTESTED') return '未测试'; if (/PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return '通过'; if (/UNSUPPORT|\bNO\b|FALSE/.test(s)) return '不支持'; if (/FAIL|ERROR/.test(s)) return '失败'; if (/PROB|TESTING|RUNNING/.test(s)) return '测试中'; return s; }
-  function probeColor(s) { s = String(s || '').toUpperCase(); if (/PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return 'var(--zq-ok)'; if (/FAIL|ERROR/.test(s)) return 'var(--zq-bad)'; return 'var(--zq-text3)'; }
+  // 后端实际取值：VERIFIED / FAILED / UNSUPPORTED / UNTESTED。注意先判 UNSUPPORT，否则会被 SUPPORT 误吞
+  function probeText(s) { s = String(s || '').toUpperCase(); if (!s || s === 'UNTESTED') return '未测试'; if (/UNSUPPORT|NOT_SUPPORT|\bNO\b|FALSE/.test(s)) return '不支持'; if (/VERIFIED|PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return '通过'; if (/FAIL|ERROR/.test(s)) return '失败'; if (/PROB|TESTING|RUNNING/.test(s)) return '测试中'; return s; }
+  function probeColor(s) { s = String(s || '').toUpperCase(); if (/UNSUPPORT|NOT_SUPPORT/.test(s)) return 'var(--zq-text3)'; if (/VERIFIED|PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return 'var(--zq-ok)'; if (/FAIL|ERROR/.test(s)) return 'var(--zq-bad)'; return 'var(--zq-text3)'; }
   function modelTile(k, v, c) { return '<div style="min-width:0;"><span style="display:block;font-size:10.5px;color:var(--zq-text3);">' + esc(k) + '</span><strong style="display:block;margin-top:3px;font-size:11.5px;font-weight:600;color:' + c + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(v) + '</strong></div>'; }
   async function loadModels() {
     var host = $('#zq-models'); if (!host) return;
@@ -792,8 +813,8 @@
         + '<div style="display:flex;gap:6px;margin-top:11px;flex-wrap:wrap;">' + (mine ? '<button class="zq-btn-ghost" data-model-edit="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">编辑</button>' : '') + '<button class="zq-btn-ghost" data-model-test="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">测试连通</button><button class="zq-btn-ghost" data-model-probe="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">能力测试</button>' + (mine ? '<button class="zq-btn-ghost" data-model-del="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">删除</button>' : '') + '</div></article>';
     }).join('') || empty('暂无模型配置');
     $all('[data-model-edit]', host).forEach(function (b) { b.onclick = function () { editModel(Number(b.dataset.modelEdit)); }; });
-    $all('[data-model-test]', host).forEach(function (b) { b.onclick = function () { safe('测试模型', async function () { var r = await api.post('/ai/models/' + b.dataset.modelTest + '/test', {}); toast('连通性：' + (r && (r.message || r.status || (r.ok ? '通过' : '完成')) || '完成')); await loadModels(); }); }; });
-    $all('[data-model-probe]', host).forEach(function (b) { b.onclick = function () { safe('能力测试', async function () { await api.post('/ai/models/' + b.dataset.modelProbe + '/probe', {}); toast('能力探测完成'); await loadModels(); }); }; });
+    $all('[data-model-test]', host).forEach(function (b) { b.onclick = async function () { var n = notice('正在测试连通性…'); try { var r = await api.post('/ai/models/' + b.dataset.modelTest + '/test', {}); n.update('连通性测试完成：' + (r && (r.message || r.status || (r.ok ? '通过' : '完成')) || '完成'), { done: true }); await loadModels(); } catch (e) { n.update('连通性测试失败：' + (e.message || '未知错误'), { error: true }); } }; });
+    $all('[data-model-probe]', host).forEach(function (b) { b.onclick = async function () { var n = notice('正在进行能力测试…'); try { await api.post('/ai/models/' + b.dataset.modelProbe + '/probe', {}); n.update('能力测试完成', { done: true }); await loadModels(); } catch (e) { n.update('能力测试失败：' + (e.message || '未知错误'), { error: true }); } }; });
     $all('[data-model-del]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '删除模型', message: '删除该模型配置？已保存的 API Key 会一并移除。', okText: '删除', danger: true })) safe('删除模型', async function () { await api.del('/ai/models/' + b.dataset.modelDel); await loadModels(); }); }; });
   }
   function modelFormEls() {
@@ -977,31 +998,46 @@
     $all('[data-plan]', host).forEach(function (b) { b.onclick = function () { openPlan(Number(b.dataset.plan)); }; });
   }
   function submitPlanTemplate() {
-    openModal({
-      title: '分享我的计划',
-      width: '480px',
-      bodyHtml:
-        '<div class="zq-field"><label class="zq-label">模板标题</label><input id="zq-spt-title" class="zq-input" placeholder="例如：408 暑期基础 30 天"></div>'
-        + '<div class="zq-field"><label class="zq-label">分类</label><select id="zq-spt-cat" class="zq-select"><option value="EXAM">考试备考</option><option value="COMPUTER">计算机学习</option><option value="LANGUAGE">语言学习</option><option value="GENERAL" selected>通用规划</option></select></div>'
-        + '<div class="zq-field"><label class="zq-label">简介（可留空）</label><textarea id="zq-spt-desc" class="zq-textarea" style="min-height:90px;" placeholder="一句话说明这套计划适合谁、怎么用"></textarea></div>'
-        + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">将从你现有的任务与例行计划生成模板（各最多 30 条），提交后经管理员审核对所有用户可见。请确认不含个人隐私信息。</p>'
-        + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-spt-cancel">取消</button><button type="button" class="zq-btn" id="zq-spt-ok">提交审核</button></div>',
-      onMount: function (b, h) {
-        $('#zq-spt-cancel', b).onclick = h.close;
-        $('#zq-spt-ok', b).onclick = function () {
-          var title = $('#zq-spt-title', b).value.trim(); if (!title) return toast('请填写模板标题', 'error');
-          var category = $('#zq-spt-cat', b).value, desc = $('#zq-spt-desc', b).value.trim();
-          safe('提交计划模板', async function () {
-            var tasks = (await api.get('/task/list')).map(normalizeTask);
-            var routines = await api.get('/routine/list');
-            var taskIds = tasks.slice(0, 30).map(function (t) { return t.id; });
-            var routineIds = (routines || []).slice(0, 30).map(function (r) { return r.id; });
-            if (!taskIds.length && !routineIds.length) { toast('你还没有任务或例行计划，无法生成模板', 'error'); return; }
-            await api.post('/shared-plans/from-existing', { title: title, description: desc, category: category, taskIds: taskIds, routineIds: routineIds, shareConsent: true });
-            h.close(); toast('已提交，等待管理员审核');
-          });
-        };
+    safe('加载我的任务', async function () {
+      var tasks = ((await api.get('/task/list')) || []).map(normalizeTask).slice(0, 30);
+      var routines = ((await api.get('/routine/list')) || []).slice(0, 30);
+      if (!tasks.length && !routines.length) { toast('你还没有任务或例行计划，无法生成模板', 'error'); return; }
+      function checkRow(kind, x) {
+        return '<label style="display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);cursor:pointer;font-size:12.5px;"><input type="checkbox" data-pick="' + kind + '" value="' + x.id + '" checked style="accent-color:var(--zq-primary);flex:none;"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(x.title || x.name || '') + '</span></label>';
       }
+      var taskList = tasks.map(function (t) { return checkRow('task', t); }).join('');
+      var routineList = routines.map(function (r) { return checkRow('routine', r); }).join('');
+      openModal({
+        title: '分享我的计划',
+        width: '520px',
+        bodyHtml:
+          '<div class="zq-field"><label class="zq-label">模板标题</label><input id="zq-spt-title" class="zq-input" placeholder="例如：408 暑期基础 30 天"></div>'
+          + '<div class="zq-field"><label class="zq-label">分类</label><select id="zq-spt-cat" class="zq-select"><option value="EXAM">考试备考</option><option value="COMPUTER">计算机学习</option><option value="LANGUAGE">语言学习</option><option value="GENERAL" selected>通用规划</option></select></div>'
+          + '<div class="zq-field"><label class="zq-label">简介（可留空）</label><textarea id="zq-spt-desc" class="zq-textarea" style="min-height:70px;" placeholder="一句话说明这套计划适合谁、怎么用"></textarea></div>'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;margin:2px 0 7px;"><span class="zq-label">勾选要分享的内容</span><span style="display:flex;gap:8px;"><button type="button" class="zq-btn-ghost" id="zq-spt-all" style="height:24px;padding:0 9px;font-size:11.5px;">全选</button><button type="button" class="zq-btn-ghost" id="zq-spt-none" style="height:24px;padding:0 9px;font-size:11.5px;">清空</button></span></div>'
+          + '<div style="max-height:250px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;margin-bottom:10px;">'
+          + (taskList ? '<div style="font-size:11.5px;font-weight:700;color:var(--zq-text2);margin:3px 0 1px;">一次性任务 · ' + tasks.length + '</div>' + taskList : '')
+          + (routineList ? '<div style="font-size:11.5px;font-weight:700;color:var(--zq-text2);margin:6px 0 1px;">例行计划 · ' + routines.length + '</div>' + routineList : '')
+          + '</div>'
+          + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">提交后经管理员审核对所有用户可见，请确认勾选内容不含个人隐私信息。</p>'
+          + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-spt-cancel">取消</button><button type="button" class="zq-btn" id="zq-spt-ok">提交审核</button></div>',
+        onMount: function (b, h) {
+          $('#zq-spt-cancel', b).onclick = h.close;
+          $('#zq-spt-all', b).onclick = function () { $all('[data-pick]', b).forEach(function (c) { c.checked = true; }); };
+          $('#zq-spt-none', b).onclick = function () { $all('[data-pick]', b).forEach(function (c) { c.checked = false; }); };
+          $('#zq-spt-ok', b).onclick = function () {
+            var title = $('#zq-spt-title', b).value.trim(); if (!title) return toast('请填写模板标题', 'error');
+            var taskIds = $all('[data-pick="task"]:checked', b).map(function (c) { return Number(c.value); });
+            var routineIds = $all('[data-pick="routine"]:checked', b).map(function (c) { return Number(c.value); });
+            if (!taskIds.length && !routineIds.length) return toast('至少勾选一个任务或例行计划', 'error');
+            var category = $('#zq-spt-cat', b).value, desc = $('#zq-spt-desc', b).value.trim();
+            safe('提交计划模板', async function () {
+              await api.post('/shared-plans/from-existing', { title: title, description: desc, category: category, taskIds: taskIds, routineIds: routineIds, shareConsent: true });
+              h.close(); toast('已提交，等待管理员审核');
+            });
+          };
+        }
+      });
     });
   }
   async function openPlan(id) {
@@ -1058,7 +1094,7 @@
     function card(p, actions, dim) {
       return '<article class="zq-card" style="' + (dim ? 'opacity:.72;' : '') + '">'
         + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;"><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);">' + catName(p) + '</span><span class="zq-mono" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(p.createdAt)) + '</span></div>'
-        + '<h3 style="margin:0 0 5px;font-size:15px;font-weight:700;">' + esc(p.title || p.name || '未命名') + '</h3>'
+        + '<h3 data-sp-view="' + p.id + '" title="点击查看完整内容" style="margin:0 0 5px;font-size:15px;font-weight:700;cursor:pointer;">' + esc(p.title || p.name || '未命名') + ' <span style="font-size:11px;font-weight:500;color:var(--zq-primary);">查看 ›</span></h3>'
         + '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;">' + esc(p.description || '（无简介）') + '</p>'
         + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:10px;border-top:1px solid var(--zq-border-soft);"><span style="font-size:12px;color:var(--zq-text3);">' + creator(p) + '</span><span style="display:flex;gap:6px;">' + actions + '</span></div></article>';
     }
@@ -1085,6 +1121,39 @@
     $all('[data-sp-down]', host).forEach(function (b) { b.onclick = function () { safe('下架', async function () { await api.put('/admin/shared-plans/' + b.dataset.spDown + '/review?action=TAKEDOWN'); toast('已下架'); await bootSharedPlanAdmin(); }); }; });
     $all('[data-sp-del]', host).forEach(function (b) { b.onclick = async function () { if (!await askConfirm({ title: '删除共享计划', message: '确定删除该共享计划？此操作不可恢复。', okText: '删除', danger: true })) return; safe('删除', async function () { await api.del('/admin/shared-plans/' + b.dataset.spDel); toast('已删除'); await bootSharedPlanAdmin(); }); }; });
     $all('[data-sp-edit]', host).forEach(function (b) { b.onclick = function () { editSharedPlan(b.dataset.spEdit); }; });
+    $all('[data-sp-view]', host).forEach(function (t) { t.onclick = function () { viewSharedPlan(t.dataset.spView); }; });
+  }
+  function viewSharedPlan(id) {
+    safe('计划详情', async function () {
+      var d = await api.get('/admin/shared-plans/' + id);
+      var itemRow = function (x, extra) {
+        return '<div style="padding:8px 11px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);"><div style="font-size:12.5px;font-weight:600;">' + esc(x.title || '') + '</div>'
+          + (x.description ? '<div style="font-size:11.5px;color:var(--zq-text2);margin-top:2px;line-height:1.5;">' + esc(x.description) + '</div>' : '')
+          + '<div class="zq-mono" style="font-size:10.5px;color:var(--zq-text3);margin-top:3px;">' + esc(extra) + '</div></div>';
+      };
+      var tasks = (d.tasks || []).map(function (t) {
+        return itemRow(t, '第' + (t.relativeStartDay == null ? 0 : t.relativeStartDay) + '天起 · 截止第' + (t.relativeDeadlineDay == null ? '—' : t.relativeDeadlineDay) + '天' + (t.preferredTime ? ' · ' + t.preferredTime : '') + (t.durationMinutes ? ' · ' + t.durationMinutes + '分钟' : ''));
+      }).join('');
+      var routines = (d.routines || []).map(function (r) {
+        return itemRow(r, (r.frequency || 'DAILY') + (r.preferredTime ? ' · ' + r.preferredTime : '') + (r.durationMinutes ? ' · ' + r.durationMinutes + '分钟' : '') + ' · 第' + (r.relativeStartDay == null ? 0 : r.relativeStartDay) + '~' + (r.relativeEndDay == null ? '—' : r.relativeEndDay) + '天');
+      }).join('');
+      var reviews = (d.reviews || []).map(function (rv) {
+        return '<div style="font-size:11.5px;color:var(--zq-text2);line-height:1.6;"><span class="zq-mono" style="color:var(--zq-text3);">' + esc(fmtDate(rv.createdAt)) + '</span> ' + esc(rv.action || '') + (rv.note ? ' · ' + esc(rv.note) : '') + '</div>';
+      }).join('');
+      function sec(t, body) { return body ? '<h4 style="margin:14px 0 7px;font-size:12.5px;font-weight:700;">' + t + '</h4><div style="display:flex;flex-direction:column;gap:6px;">' + body + '</div>' : ''; }
+      openModal({
+        title: (d.title || '共享计划') + ' · ' + esc(d.status || ''),
+        width: '560px',
+        bodyHtml:
+          '<p style="margin:0 0 4px;font-size:13px;color:var(--zq-text2);line-height:1.7;">' + esc(d.description || '（无简介）') + '</p>'
+          + '<div style="font-size:12px;color:var(--zq-text3);">' + esc(d.categoryName || d.category || '') + (d.targetAudience ? ' · 适用：' + esc(d.targetAudience) : '') + ' · ♡ ' + (d.likeCount || 0) + ' · 套用 ' + (d.applyCount || 0) + '</div>'
+          + sec('一次性任务 · ' + (d.tasks || []).length, tasks || '')
+          + sec('例行计划 · ' + (d.routines || []).length, routines || '')
+          + sec('审核记录', reviews || '')
+          + '<div class="zq-modal-actions" style="margin-top:16px;"><button type="button" class="zq-btn" data-view-close>关闭</button></div>',
+        onMount: function (b, h) { $('[data-view-close]', b).onclick = h.close; }
+      });
+    });
   }
   function editSharedPlan(id) {
     safe('加载共享计划', async function () {
@@ -1188,6 +1257,7 @@
       a.onclick = function (e) {
         if (doc.dataset.editing === '1') return;
         e.preventDefault();
+        e.stopPropagation(); // 阻止冒泡到正文容器，否则跳转后的目标页会立刻进入编辑态
         var t = a.getAttribute('data-wikilink');
         var target = (state.wikiPages || []).find(function (x) { return (x.title || '') === t; });
         if (target) paintWikiDoc(target); else toast('页面不存在：' + t, 'error');
@@ -1197,7 +1267,11 @@
   function wireWikiEditor() {
     var doc = $('#zq-doc'); if (!doc) return;
     doc.style.cursor = 'text';
-    doc.onclick = function () { if (state.wikiCur && doc.dataset.editing !== '1') enterWikiEdit(); };
+    // 点正文进入编辑，但链接/勾选框/按钮等正文内控件的点击不算（外链点击、双链跳转不应触发编辑）
+    doc.onclick = function (e) {
+      if (e.target && e.target.closest && e.target.closest('a,input,button')) return;
+      if (state.wikiCur && doc.dataset.editing !== '1') enterWikiEdit();
+    };
     // 任务勾选框：勾选即切换删除线样式；未在编辑态则进入编辑态以便保存
     doc.addEventListener('change', function (e) {
       var cb = e.target;
@@ -1224,6 +1298,24 @@
       else document.execCommand('formatBlock', false, v);
       blockSel.value = 'P';
     };
+    // 标题点击改名（系统页 index/log/维护规则 除外）
+    var titleEl = $('#zq-doc-title');
+    if (titleEl) {
+      titleEl.style.cursor = 'pointer';
+      titleEl.title = '点击修改页面名称';
+      titleEl.onclick = async function () {
+        var p = state.wikiCur; if (!p) return;
+        if (['INDEX', 'LOG', 'SCHEMA'].indexOf(String(p.pageType || '').toUpperCase()) >= 0) return toast('系统页不可改名', 'error');
+        var name = await askText({ title: '修改页面名称', label: '页面名称', value: p.title || '' });
+        if (!name || !name.trim() || name.trim() === p.title) return;
+        safe('修改名称', async function () {
+          await api.put('/knowledge/pages/' + p.id, { title: name.trim(), content: p.content, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned });
+          p.title = name.trim();
+          titleEl.textContent = p.title;
+          paintWikiTree(); toast('名称已更新');
+        });
+      };
+    }
   }
   function ensureWikiEditing() { var doc = $('#zq-doc'); if (doc && doc.dataset.editing !== '1') enterWikiEdit(); }
   function enterWikiEdit() {
@@ -1291,11 +1383,46 @@
       toast('已保存');
     });
   }
-  async function createWikiPage() {
-    var title = await askText({ title: '新建知识页', label: '页面标题', placeholder: '例如：英语作文素材库' }); if (!title || !title.trim()) return; title = title.trim();
-    await safe('新建知识页', async function () {
-      await api.post('/knowledge/pages', { title: title, content: '# ' + title + '\n\n', pageType: 'NOTE' });
-      await bootKnowledge(); toast('已创建');
+  var WIKI_PAGE_TYPES = [['GOAL', '目标'], ['PROJECT', '计划'], ['PREFERENCE', '偏好'], ['WEAKNESS', '薄弱点'], ['RESOURCE', '资料'], ['MEMORY', '对话摘要'], ['NOTE', '备注']];
+  // 按类型给初始骨架，对齐 claude design 模板各类型页面的结构
+  function wikiSkeleton(type, title) {
+    var body = ({
+      GOAL: '## 目标\n\n\n## 阶段里程碑\n- [ ] \n\n## 风险与对策\n- ',
+      PROJECT: '## 时间块安排\n- \n\n## 每周检查点\n- [ ] ',
+      PREFERENCE: '## 作息偏好\n- \n\n## 提醒方式\n- ',
+      WEAKNESS: '## 高频错误\n- \n\n## 待攻克专题\n- [ ] ',
+      RESOURCE: '## 教材与讲义\n- \n\n## 题库\n- ',
+      MEMORY: '## 结论\n\n\n## 待办\n- [ ] '
+    })[type] || '';
+    return '# ' + title + '\n\n' + body + '\n';
+  }
+  function createWikiPage() {
+    var parentOptions = '<option value="">（根节点）</option>' + (state.wikiPages || []).filter(function (p) {
+      return ['INDEX', 'LOG', 'SCHEMA'].indexOf(String(p.pageType || '').toUpperCase()) < 0;
+    }).map(function (p) { return '<option value="' + p.id + '">' + esc(p.title) + '</option>'; }).join('');
+    var typeOptions = WIKI_PAGE_TYPES.map(function (t) { return '<option value="' + t[0] + '"' + (t[0] === 'NOTE' ? ' selected' : '') + '>' + t[1] + '（' + t[0] + '）</option>'; }).join('');
+    openModal({
+      title: '新建知识页',
+      bodyHtml:
+        '<div class="zq-field"><label class="zq-label">页面标题</label><input id="zq-np-title" class="zq-input" placeholder="例如：英语作文素材库"></div>'
+        + '<div class="zq-field"><label class="zq-label">类型</label><select id="zq-np-type" class="zq-select">' + typeOptions + '</select></div>'
+        + '<div class="zq-field"><label class="zq-label">父节点</label><select id="zq-np-parent" class="zq-select">' + parentOptions + '</select></div>'
+        + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">将按类型生成初始结构（小节 / 任务项），创建后点正文即可继续编辑。</p>'
+        + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-np-cancel">取消</button><button type="button" class="zq-btn" id="zq-np-ok">创建</button></div>',
+      onMount: function (b, h) {
+        $('#zq-np-cancel', b).onclick = h.close;
+        $('#zq-np-ok', b).onclick = function () {
+          var title = $('#zq-np-title', b).value.trim(); if (!title) return toast('请填写页面标题', 'error');
+          var type = $('#zq-np-type', b).value;
+          var parentId = $('#zq-np-parent', b).value;
+          safe('新建知识页', async function () {
+            var body = { title: title, content: wikiSkeleton(type, title), pageType: type };
+            if (parentId) body.parentId = Number(parentId);
+            await api.post('/knowledge/pages', body);
+            h.close(); await bootKnowledge(); toast('已创建');
+          });
+        };
+      }
     });
   }
   function importWikiSource() {
@@ -1303,13 +1430,39 @@
       title: '导入来源',
       bodyHtml:
         '<div class="zq-field"><label class="zq-label">来源标题</label><input id="zq-imp-title" class="zq-input" placeholder="例如：408 考试大纲"></div>'
+        + '<div class="zq-field"><label class="zq-label">导入方式</label><select id="zq-imp-mode" class="zq-select"><option value="TEXT">粘贴文本 / 链接</option><option value="UPLOAD">上传文件解析</option></select></div>'
+        + '<div id="zq-imp-text-box">'
         + '<div class="zq-field"><label class="zq-label">类型</label><select id="zq-imp-type" class="zq-select"><option value="NOTE">笔记 / 文本</option><option value="URL">网址链接</option><option value="FILE">资料摘录</option></select></div>'
-        + '<div class="zq-field"><label class="zq-label">内容 / 链接</label><textarea id="zq-imp-content" class="zq-textarea" style="min-height:120px;" placeholder="粘贴文本，或填入 http/https 链接"></textarea></div>'
+        + '<div class="zq-field"><label class="zq-label">内容 / 链接</label><textarea id="zq-imp-content" class="zq-textarea" style="min-height:110px;" placeholder="粘贴文本，或填入 http/https 链接"></textarea></div>'
+        + '</div>'
+        + '<div id="zq-imp-file-box" style="display:none;">'
+        + '<div class="zq-field"><label class="zq-label">选择文件</label><input id="zq-imp-file" type="file" class="zq-input" style="height:auto;padding:7px 12px;" accept=".pdf,.xlsx,.xls,.txt,.md,.csv,.json,.xml,.png,.jpg,.jpeg,.webp"></div>'
+        + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">支持 pdf / xlsx / txt / md / csv / json / xml / 图片，上传后自动解析正文并收录为来源。</p>'
+        + '</div>'
         + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-imp-cancel">取消</button><button type="button" class="zq-btn" id="zq-imp-ok">导入</button></div>',
       onMount: function (b, h) {
+        var modeSel = $('#zq-imp-mode', b);
+        modeSel.onchange = function () {
+          var up = modeSel.value === 'UPLOAD';
+          $('#zq-imp-text-box', b).style.display = up ? 'none' : '';
+          $('#zq-imp-file-box', b).style.display = up ? '' : 'none';
+        };
         $('#zq-imp-cancel', b).onclick = h.close;
         $('#zq-imp-ok', b).onclick = function () {
           var title = $('#zq-imp-title', b).value.trim();
+          if (modeSel.value === 'UPLOAD') {
+            var file = $('#zq-imp-file', b).files[0];
+            if (!file) return toast('请选择要上传的文件', 'error');
+            var n = notice('正在上传并解析「' + (title || file.name) + '」…');
+            h.close();
+            safe('上传来源', async function () {
+              try {
+                await api.upload('/knowledge/sources/upload', file, title ? { title: title } : {});
+                n.update('来源解析完成', { done: true });
+              } catch (e) { n.update('解析失败：' + (e.message || '未知错误'), { error: true }); throw e; }
+            });
+            return;
+          }
           var content = $('#zq-imp-content', b).value;
           var type = $('#zq-imp-type', b).value;
           if (!title) return toast('请填写来源标题', 'error');
@@ -1416,10 +1569,12 @@
       var n = (list || []).length;
       await refreshWikiPatchBadge();
       if (!n) { await showInfo({ title: '待合入变更', message: '当前没有待合入的变更。AI 对知识库的修改建议会先出现在这里，确认后才写入正文。' }); return; }
-      var items = list.slice(0, 10).map(function (ps) {
+      var SHOW_MAX = 10;
+      var items = list.slice(0, SHOW_MAX).map(function (ps) {
         return '<div style="padding:9px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:12.5px;line-height:1.6;"><strong>' + esc(ps.title || ps.summary || ('变更 #' + ps.id)) + '</strong>' + (ps.createdAt ? '<span class="zq-mono" style="float:right;font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(ps.createdAt)) + '</span>' : '') + '</div>';
       }).join('');
-      await showInfo({ title: '待合入变更 · ' + n + ' 组', html: '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:300px;overflow-y:auto;">' + items + '</div><p style="margin:0 0 14px;font-size:12px;color:var(--zq-text3);">逐条审阅与合入将在后续版本提供。</p>' });
+      var more = n > SHOW_MAX ? '<div style="padding:7px 12px;font-size:12px;color:var(--zq-text3);text-align:center;">仅显示前 ' + SHOW_MAX + ' 条，还有 ' + (n - SHOW_MAX) + ' 条未展示</div>' : '';
+      await showInfo({ title: '待合入变更 · ' + n + ' 组', html: '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:300px;overflow-y:auto;">' + items + more + '</div><p style="margin:0 0 14px;font-size:12px;color:var(--zq-text3);">逐条审阅与合入将在后续版本提供。</p>' });
     });
   }
   function flattenKnowledge(nodes) {
@@ -1585,7 +1740,9 @@
       var status = (s.status || 'DONE').toUpperCase();
       var color = status === 'DONE' || status === 'COMPLETED' ? 'var(--zq-ok)' : status === 'FAILED' ? 'var(--zq-bad)' : 'var(--zq-text3)';
       var last = i === steps.length - 1;
-      return '<div style="display:flex;gap:9px;padding:5px 0;"><div style="display:flex;flex-direction:column;align-items:center;flex:none;width:10px;"><span style="width:8px;height:8px;border-radius:50%;background:' + color + ';margin-top:4px;"></span>' + (last ? '' : '<span style="flex:1;width:1px;background:var(--zq-border-soft);margin-top:2px;"></span>') + '</div><div style="min-width:0;padding-bottom:6px;"><div style="font-size:11.5px;font-weight:600;">' + esc(s.title || s.name || s.stepType || ('步骤 ' + (i + 1))) + '</div><div class="zq-mono" style="font-size:10px;color:' + color + ';margin-top:1px;">' + esc(status) + '</div></div></div>';
+      var stepName = s.publicSummary || s.title || s.name || s.agentType || ('步骤 ' + (i + 1));
+      var metaLine = (s.agentType && s.publicSummary ? s.agentType + ' · ' : '') + status;
+      return '<div style="display:flex;gap:9px;padding:5px 0;"><div style="display:flex;flex-direction:column;align-items:center;flex:none;width:10px;"><span style="width:8px;height:8px;border-radius:50%;background:' + color + ';margin-top:4px;"></span>' + (last ? '' : '<span style="flex:1;width:1px;background:var(--zq-border-soft);margin-top:2px;"></span>') + '</div><div style="min-width:0;padding-bottom:6px;"><div style="font-size:11.5px;font-weight:600;line-height:1.45;">' + esc(stepName) + '</div><div class="zq-mono" style="font-size:10px;color:' + color + ';margin-top:1px;">' + esc(metaLine) + '</div></div></div>';
     }).join('') : empty('暂无执行记录');
   }
   function renderArtifacts(artifacts) {
@@ -1617,7 +1774,7 @@
     host.innerHTML = (state.messages.length ? state.messages : [{ role: 'assistant', content: '你好！我是你的 AI 学习助手。' }]).map(function (m) {
       var me = m.role === 'user';
       var name = me ? '我' : 'AI';
-      var reason = (!me && m.reasoning) ? '<div style="margin-bottom:9px;padding:8px 11px;border-left:2px solid var(--zq-tint-strong);background:var(--zq-card-soft);border-radius:0 6px 6px 0;"><strong style="display:block;font-size:10.5px;font-weight:700;color:var(--zq-text3);letter-spacing:.05em;margin-bottom:4px;">深度思考</strong><span style="font-size:11.5px;color:var(--zq-text3);line-height:1.6;white-space:pre-wrap;">' + esc(m.reasoning) + '</span></div>' : '';
+      var reason = (!me && m.reasoning) ? '<details open style="margin-bottom:9px;padding:8px 11px;border-left:2px solid var(--zq-tint-strong);background:var(--zq-card-soft);border-radius:0 6px 6px 0;"><summary style="cursor:pointer;font-size:10.5px;font-weight:700;color:var(--zq-text3);letter-spacing:.05em;user-select:none;">深度思考（点击折叠）</summary><span style="display:block;margin-top:4px;font-size:11.5px;color:var(--zq-text3);line-height:1.6;white-space:pre-wrap;">' + esc(m.reasoning) + '</span></details>' : '';
       var body = m.content ? renderMarkdown(m.content) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
       return '<div style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div style="max-width:72%;padding:11px 14px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + reason + body + '</div></div>';
     }).join('');
@@ -1634,21 +1791,82 @@
     renderNotebooks();
     await loadAiSources();
   }
+  // 右键浮出菜单（资料删除 / notebook 改名共用），点击别处自动关闭
+  function popMenu(x, y, items) {
+    var old = document.getElementById('zq-popmenu'); if (old) old.remove();
+    var menu = document.createElement('div');
+    menu.id = 'zq-popmenu';
+    menu.style.cssText = 'position:fixed;z-index:9500;min-width:120px;padding:5px;background:var(--zq-card);border:1px solid var(--zq-border);border-radius:var(--zq-rm);box-shadow:0 12px 36px rgba(0,0,0,.2);';
+    items.forEach(function (it) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = it.label;
+      b.style.cssText = 'display:block;width:100%;padding:8px 12px;border:none;border-radius:var(--zq-rs);background:transparent;color:' + (it.danger ? 'var(--zq-bad)' : 'var(--zq-text)') + ';font-size:12.5px;text-align:left;cursor:pointer;';
+      b.onmouseenter = function () { b.style.background = 'var(--zq-tint)'; };
+      b.onmouseleave = function () { b.style.background = 'transparent'; };
+      b.onclick = function () { menu.remove(); it.onClick(); };
+      menu.appendChild(b);
+    });
+    document.body.appendChild(menu);
+    var w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
+    setTimeout(function () {
+      document.addEventListener('mousedown', function once(e) {
+        if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', once); }
+      });
+    }, 0);
+  }
+  function renameNotebook(nb) {
+    askText({ title: '重命名 Notebook', label: '名称', value: nb.title || '' }).then(function (name) {
+      if (!name || !name.trim() || name.trim() === nb.title) return;
+      safe('重命名', async function () {
+        await api.put('/ai/notebooks/' + nb.id, { title: name.trim() });
+        toast('已重命名'); await loadAiNotebooks();
+      });
+    });
+  }
   function renderNotebooks() {
     var host = $('#zq-notebooks'); if (!host) return;
     host.innerHTML = (state.notebooks || []).map(function (nb) {
       var active = nb.id === state.notebookId;
-      return '<div data-notebook="' + nb.id + '" style="padding:9px 11px;border:1px solid ' + (active ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (active ? 'var(--zq-tint)' : 'var(--zq-card)') + ';cursor:pointer;"><div style="font-size:12.5px;font-weight:600;">' + esc(nb.title || 'Notebook') + '</div><div style="font-size:11px;color:var(--zq-text3);margin-top:2px;">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
+      return '<div data-notebook="' + nb.id + '" style="padding:9px 11px;border:1px solid ' + (active ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (active ? 'var(--zq-tint)' : 'var(--zq-card)') + ';cursor:pointer;"><div data-nb-name="' + nb.id + '" title="' + (active ? '点击重命名' : '') + '" style="font-size:12.5px;font-weight:600;">' + esc(nb.title || 'Notebook') + '</div><div style="font-size:11px;color:var(--zq-text3);margin-top:2px;">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
     }).join('') || empty('暂无 Notebook');
-    $all('[data-notebook]', host).forEach(function (d) { d.onclick = function () { state.notebookId = Number(d.dataset.notebook); renderNotebooks(); loadAiSources(); }; });
+    $all('[data-notebook]', host).forEach(function (d) {
+      var id = Number(d.dataset.notebook);
+      var nb = (state.notebooks || []).find(function (x) { return x.id === id; });
+      d.onclick = function (e) {
+        // 已选中的 notebook 再点名字 → 改名；否则点击切换
+        if (id === state.notebookId && e.target.closest('[data-nb-name]')) { renameNotebook(nb); return; }
+        state.notebookId = id; renderNotebooks(); loadAiSources(); renderAgentPanels();
+      };
+      d.oncontextmenu = function (e) {
+        e.preventDefault();
+        popMenu(e.clientX, e.clientY, [{ label: '重命名', onClick: function () { renameNotebook(nb); } }]);
+      };
+    });
   }
   async function loadAiSources() {
     if (!state.notebookId) return;
     var list = await api.get('/ai/notebooks/' + state.notebookId + '/sources');
     var host = $('#zq-sources'); if (!host) return;
     host.innerHTML = (list || []).map(function (s) {
-      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><span class="zq-mono" style="flex:none;display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:4px;background:var(--zq-tint);color:var(--zq-primary);font-size:9.5px;font-weight:600;">' + esc(s.sourceType || 'SRC') + '</span><div style="min-width:0;"><div style="font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(s.title || s.url || '资料') + '</div><div style="font-size:10.5px;color:var(--zq-text3);">' + esc(s.status || '') + '</div></div></div>';
+      return '<div data-source="' + s.id + '" data-source-title="' + esc(s.title || s.url || '资料') + '" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><span class="zq-mono" style="flex:none;display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:4px;background:var(--zq-tint);color:var(--zq-primary);font-size:9.5px;font-weight:600;">' + esc(s.sourceType || 'SRC') + '</span><div style="min-width:0;"><div style="font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(s.title || s.url || '资料') + '</div><div style="font-size:10.5px;color:var(--zq-text3);">' + esc(s.status || '') + '</div></div></div>';
     }).join('') || empty('暂无资料');
+    // 右键资料 → 删除
+    $all('[data-source]', host).forEach(function (d) {
+      d.oncontextmenu = function (e) {
+        e.preventDefault();
+        var sid = d.dataset.source, sTitle = d.dataset.sourceTitle;
+        popMenu(e.clientX, e.clientY, [{
+          label: '删除该资料', danger: true,
+          onClick: async function () {
+            if (!await askConfirm({ title: '删除资料', message: '删除「' + sTitle + '」？其解析内容将从 Notebook 中移除。', okText: '删除', danger: true })) return;
+            safe('删除资料', async function () { await api.del('/ai/notebooks/' + state.notebookId + '/sources/' + sid); toast('已删除'); await loadAiNotebooks(); });
+          }
+        }]);
+      };
+    });
   }
   async function streamAiChat(body, handlers) {
     var headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' };

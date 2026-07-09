@@ -15,6 +15,8 @@ public interface AiWorkspaceService {
 
     void deleteNotebook(Long userId, Long id);
 
+    void deleteSource(Long userId, Long notebookId, Long sourceId);
+
     AiNotebook ensureDefaultNotebook(Long userId);
 
     List<Map<String, Object>> listSources(Long userId, Long notebookId);

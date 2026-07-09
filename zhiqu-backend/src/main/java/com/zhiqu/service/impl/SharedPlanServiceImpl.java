@@ -416,12 +416,14 @@ public class SharedPlanServiceImpl implements SharedPlanService {
             throw new BusinessException("共享计划不存在");
         }
         String normalized;
-        if ("APPROVE".equalsIgnoreCase(action)) {
+        if ("APPROVE".equalsIgnoreCase(action) || "APPROVED".equalsIgnoreCase(action)) {
             normalized = "APPROVED";
         } else if ("TAKEDOWN".equalsIgnoreCase(action) || "OFFLINE".equalsIgnoreCase(action)) {
             normalized = "OFFLINE";
-        } else {
+        } else if ("REJECT".equalsIgnoreCase(action) || "REJECTED".equalsIgnoreCase(action)) {
             normalized = "REJECTED";
+        } else {
+            throw new BusinessException("不支持的审核操作：" + action);
         }
         template.setStatus(normalized);
         template.setReviewedBy(adminUserId);

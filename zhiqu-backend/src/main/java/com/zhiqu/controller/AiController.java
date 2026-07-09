@@ -212,6 +212,12 @@ public class AiController {
         return Result.success(aiWorkspaceService.uploadSource(SecurityUtils.getCurrentUserId(), id, file));
     }
 
+    @DeleteMapping("/notebooks/{id}/sources/{sourceId}")
+    public Result<Void> deleteNotebookSource(@PathVariable Long id, @PathVariable Long sourceId) {
+        aiWorkspaceService.deleteSource(SecurityUtils.getCurrentUserId(), id, sourceId);
+        return Result.success();
+    }
+
     @GetMapping("/agent-runs/{id}")
     public Result<Map<String, Object>> getAgentRun(@PathVariable Long id) {
         return Result.success(aiWorkspaceService.getRun(SecurityUtils.getCurrentUserId(), id));

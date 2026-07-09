@@ -137,6 +137,22 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
 
     @Override
     @Transactional
+    public void deleteSource(Long userId, Long notebookId, Long sourceId) {
+        ownedNotebook(userId, notebookId);
+        AiNotebookSource source = sourceMapper.selectOne(new LambdaQueryWrapper<AiNotebookSource>()
+                .eq(AiNotebookSource::getUserId, userId)
+                .eq(AiNotebookSource::getNotebookId, notebookId)
+                .eq(AiNotebookSource::getId, sourceId));
+        if (source == null) {
+            throw new BusinessException("资料不存在或无权限访问");
+        }
+        chunkMapper.delete(new LambdaQueryWrapper<AiSourceChunk>()
+                .eq(AiSourceChunk::getSourceId, source.getId()));
+        sourceMapper.deleteById(source.getId());
+    }
+
+    @Override
+    @Transactional
     public AiNotebook ensureDefaultNotebook(Long userId) {
         AiNotebook existing = notebookMapper.selectOne(new LambdaQueryWrapper<AiNotebook>()
                 .eq(AiNotebook::getUserId, userId)

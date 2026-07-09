@@ -585,11 +585,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         List<KnowledgePageLink> links = linkMapper.selectList(new LambdaQueryWrapper<KnowledgePageLink>()
                 .eq(KnowledgePageLink::getUserId, userId));
         Map<String, Object> lint = buildLintReport(userId, pages, links);
-        Map<Long, Integer> degree = new LinkedHashMap<>();
+        // degree 语义 = 入度（被引用次数）；出链数单独给 outDegree，避免“引用了很多页的索引页”被误判为核心节点
+        Map<Long, Integer> inDegree = new LinkedHashMap<>();
+        Map<Long, Integer> outDegree = new LinkedHashMap<>();
         for (KnowledgePageLink link : links) {
-            degree.put(link.getSourcePageId(), degree.getOrDefault(link.getSourcePageId(), 0) + 1);
+            outDegree.put(link.getSourcePageId(), outDegree.getOrDefault(link.getSourcePageId(), 0) + 1);
             if (link.getTargetPageId() != null) {
-                degree.put(link.getTargetPageId(), degree.getOrDefault(link.getTargetPageId(), 0) + 1);
+                inDegree.put(link.getTargetPageId(), inDegree.getOrDefault(link.getTargetPageId(), 0) + 1);
             }
         }
         Map<String, Object> result = new LinkedHashMap<>();
@@ -599,17 +601,18 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             row.put("title", page.getTitle());
             row.put("type", page.getPageType());
             row.put("pinned", page.getPinned() != null && page.getPinned() == 1);
-            row.put("degree", degree.getOrDefault(page.getId(), 0));
+            row.put("degree", inDegree.getOrDefault(page.getId(), 0));
+            row.put("outDegree", outDegree.getOrDefault(page.getId(), 0));
             return row;
         }).toList());
         result.put("links", links.stream().map(this::linkRow).toList());
         result.put("hubs", pages.stream()
-                .filter(page -> degree.getOrDefault(page.getId(), 0) > 1)
-                .sorted((a, b) -> Integer.compare(degree.getOrDefault(b.getId(), 0), degree.getOrDefault(a.getId(), 0)))
+                .filter(page -> inDegree.getOrDefault(page.getId(), 0) > 1)
+                .sorted((a, b) -> Integer.compare(inDegree.getOrDefault(b.getId(), 0), inDegree.getOrDefault(a.getId(), 0)))
                 .limit(8)
                 .map(page -> {
                     Map<String, Object> row = treeNode(page);
-                    row.put("degree", degree.getOrDefault(page.getId(), 0));
+                    row.put("degree", inDegree.getOrDefault(page.getId(), 0));
                     return row;
                 }).toList());
         result.put("orphanPages", lint.get("orphanPages"));
@@ -976,11 +979,28 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             }
             builder.append("- [[").append(page.getTitle()).append("]]");
             if (!shouldHideIndexSummary(page) && hasText(page.getContentSummary())) {
-                builder.append(" — ").append(limit(page.getContentSummary(), 90));
+                builder.append(" — ").append(limit(stripMarkdownMarks(page.getContentSummary()), 90));
             }
             builder.append("\n");
         }
         return builder.toString().trim();
+    }
+
+    /**
+     * 摘要是压平的页面正文，包含 # - > ` ** [[]] 等 markdown 记号，
+     * 直接拼进 index 列表项会以原始符号展示，这里剥掉记号只留内文。
+     */
+    private String stripMarkdownMarks(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text
+                .replaceAll("\\[\\[([^\\]]*)\\]\\]", "$1")
+                .replaceAll("(?m)^\\s*(#{1,6}|[-*>]|\\d+[.)])\\s*", "")
+                .replaceAll("\\s+(#{1,6}|[-*>])\\s+", " ")
+                .replaceAll("[*`_~]", "")
+                .replaceAll("\\s{2,}", " ")
+                .trim();
     }
 
     private String buildLogPageContent(Long userId) {
