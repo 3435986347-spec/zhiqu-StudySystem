@@ -4,7 +4,7 @@
   'use strict';
 
   var API = '/api';
-  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all13';
+  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all14';
   // 根路径 "/" 由 Spring 作为欢迎页返回 index.html（登录页），此时 pathname 为空，
   // 默认必须落到 index.html，否则 bootIndex 不执行、登录按钮无处理器。
   var page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
@@ -1217,6 +1217,7 @@
       else if (/导入来源/.test(t)) b.onclick = importWikiSource;
       else if (/健康检查/.test(t)) b.onclick = runWikiLint;
       else if (/图谱/.test(t)) b.onclick = showWikiGraph;
+      else if (/导出/.test(t)) b.onclick = exportWikiMarkdown;
       else if (/待合入变更/.test(t)) { b.id = 'zq-patch-btn'; b.textContent = '待合入变更'; b.onclick = showWikiPatchSets; }
     });
     refreshWikiPatchBadge();
@@ -1269,6 +1270,7 @@
       doc.dataset.editing = '0'; doc.dataset.source = '0';
       doc.contentEditable = 'false';
       doc.innerHTML = renderMarkdown(p.content || p.summary || '');
+      renderMathIn(doc);
       wireWikiLinks(doc);
     }
     var insp = $('#zq-insp');
@@ -1367,6 +1369,42 @@
         document.execCommand('createLink', false, url.trim());
       });
     }
+    else if (cmd === 'math') {
+      var selM = window.getSelection();
+      var savedM = selM.rangeCount ? selM.getRangeAt(0).cloneRange() : null;
+      askText({ title: '插入公式块', label: 'LaTeX 公式', placeholder: '例如：\\int_a^b f(x)\\,dx', hint: '行内公式可直接在正文里写 $...$，保存后自动渲染。', okText: '插入' }).then(function (tex) {
+        if (!tex || !tex.trim()) return;
+        doc.focus();
+        if (savedM) { var sm = window.getSelection(); sm.removeAllRanges(); sm.addRange(savedM); }
+        document.execCommand('insertHTML', false, mathBlockHtml(tex.trim()) + '<p><br></p>');
+        renderMathIn(doc);
+      });
+    }
+    else if (cmd === 'ref') {
+      var selR = window.getSelection();
+      var savedR = selR.rangeCount ? selR.getRangeAt(0).cloneRange() : null;
+      var m = openModal({
+        title: '插入参考链接',
+        bodyHtml:
+          '<div class="zq-field"><label class="zq-label">显示标题</label><input id="zq-ref-title" class="zq-input" placeholder="例如：王道考研官网"></div>'
+          + '<div class="zq-field" style="margin-top:12px;"><label class="zq-label">链接地址</label><input id="zq-ref-url" class="zq-input" placeholder="https://…"></div>'
+          + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;"><button class="zq-btn-ghost" id="zq-ref-cancel" style="height:32px;">取消</button><button class="zq-btn" id="zq-ref-ok" style="height:32px;">插入</button></div>',
+        onMount: function (body, handle) {
+          body.querySelector('#zq-ref-cancel').onclick = handle.close;
+          body.querySelector('#zq-ref-ok').onclick = function () {
+            var t = body.querySelector('#zq-ref-title').value.trim();
+            var u = body.querySelector('#zq-ref-url').value.trim();
+            if (!u) return toast('请填写链接地址', 'error');
+            if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+            handle.close();
+            doc.focus();
+            if (savedR) { var sr = window.getSelection(); sr.removeAllRanges(); sr.addRange(savedR); }
+            document.execCommand('insertHTML', false, '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer" style="color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;">' + esc(t || u) + '</a>&nbsp;');
+          };
+          body.querySelector('#zq-ref-title').focus();
+        }
+      });
+    }
     else if (cmd === 'source') toggleWikiSource();
   }
   function toggleWikiSource() {
@@ -1374,7 +1412,7 @@
     if (doc.dataset.source === '1') {
       var ta = $('#zq-src-ta'); var md = ta ? ta.value : '';
       doc.dataset.source = '0'; doc.contentEditable = 'true';
-      doc.innerHTML = renderMarkdown(md); doc.focus();
+      doc.innerHTML = renderMarkdown(md); renderMathIn(doc); doc.focus();
     } else {
       var md2 = htmlToMarkdown(doc);
       doc.dataset.source = '1'; doc.contentEditable = 'false';
@@ -1408,6 +1446,41 @@
       toast('已保存');
     });
   }
+  // 导出整个知识 Wiki 为 Obsidian 风格 Markdown zip；优先让用户选保存位置
+  async function exportWikiMarkdown() {
+    var n = notice('正在打包知识 Wiki…');
+    try {
+      var headers = {}; if (token()) headers.Authorization = 'Bearer ' + token();
+      var res = await fetch(API + '/knowledge/export/markdown', { headers: headers, credentials: 'same-origin' });
+      var cd = res.headers.get('Content-Disposition') || '';
+      var isAttachment = /attachment/i.test(cd);
+      var ct = res.headers.get('Content-Type') || '';
+      if (!res.ok || (!isAttachment && ct.indexOf('application/json') >= 0)) {
+        var j = null; try { j = await res.json(); } catch (e) {}
+        throw new Error((j && j.message) || ('导出失败(' + res.status + ')'));
+      }
+      var blob = await res.blob();
+      var fname = 'zhiqu-wiki-markdown.zip';
+      if (window.showSaveFilePicker) {
+        try {
+          var handle = await window.showSaveFilePicker({ suggestedName: fname, types: [{ description: 'Zip 压缩包', accept: { 'application/zip': ['.zip'] } }] });
+          var writable = await handle.createWritable();
+          await writable.write(blob); await writable.close();
+          n.update('已导出：' + fname, { done: true });
+          return;
+        } catch (e2) {
+          if (e2 && e2.name === 'AbortError') { n.close(); return; }
+        }
+      }
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = fname;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+      n.update('已开始下载：' + fname, { done: true });
+    } catch (e) {
+      n.update('导出失败：' + (e.message || '未知错误'), { error: true });
+    }
+  }
   var WIKI_PAGE_TYPES = [['GOAL', '目标'], ['PROJECT', '计划'], ['PREFERENCE', '偏好'], ['WEAKNESS', '薄弱点'], ['RESOURCE', '资料'], ['MEMORY', '对话摘要'], ['NOTE', '备注']];
   // 按类型给初始骨架，对齐 claude design 模板各类型页面的结构
   function wikiSkeleton(type, title) {
@@ -1416,7 +1489,7 @@
       PROJECT: '## 时间块安排\n- \n\n## 每周检查点\n- [ ] ',
       PREFERENCE: '## 作息偏好\n- \n\n## 提醒方式\n- ',
       WEAKNESS: '## 高频错误\n- \n\n## 待攻克专题\n- [ ] ',
-      RESOURCE: '## 教材与讲义\n- \n\n## 题库\n- ',
+      RESOURCE: '## 教材与讲义\n- \n\n## 题库\n- \n\n## 参考链接\n- ',
       MEMORY: '## 结论\n\n\n## 待办\n- [ ] '
     })[type] || '';
     return '# ' + title + '\n\n' + body + '\n';
@@ -1614,9 +1687,23 @@
     walk(nodes);
     return out;
   }
+  // 公式块 HTML：data-tex 存源码（esc 后），KaTeX 就绪后由 renderMathIn 真渲染，否则显示样式化源码
+  function mathBlockHtml(tex) {
+    return '<div class="zq-math" data-tex="' + esc(tex) + '" contenteditable="false" style="margin:12px 0;padding:13px 16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);text-align:center;overflow-x:auto;font-size:15px;"><span class="zq-mono" style="font-size:12.5px;color:var(--zq-text2);">' + esc(tex) + '</span></div>';
+  }
   function mdInline(t) {
     t = esc(t)
       .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/g, '<u>$1</u>')
+      .replace(/\$\$([^$\n]{1,200}?)\$\$/g, function (m, tex) {
+        // 行中出现的 $$…$$ 先于单 $ 处理，否则会被拆成 "$ + 行内公式 + $" 留下游离美元符
+        if (!/[\\^_{}a-zA-Z]/.test(tex)) return m;
+        return '<span class="zq-math-i" data-tex="' + tex.replace(/"/g, '&quot;') + '" contenteditable="false" style="padding:0 2px;"><span class="zq-mono" style="font-size:.92em;color:var(--zq-text2);">' + tex + '</span></span>';
+      })
+      .replace(/\$([^$\n]{1,200}?)\$/g, function (m, tex) {
+        // 行内公式：要求含 LaTeX 特征字符，避免把"花了$5和$10"这类金额误判成公式
+        if (!/[\\^_{}a-zA-Z]/.test(tex)) return m;
+        return '<span class="zq-math-i" data-tex="' + tex.replace(/"/g, '&quot;') + '" contenteditable="false" style="padding:0 2px;"><span class="zq-mono" style="font-size:.92em;color:var(--zq-text2);">' + tex + '</span></span>';
+      })
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/`([^`]+)`/g, '<code style="background:var(--zq-card-soft);padding:1px 5px;border-radius:4px;font-size:.92em;">$1</code>')
       .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;">$1</a>')
@@ -1625,8 +1712,12 @@
   }
   // 完整块类型渲染，对齐 claude design 静态模板：标题/正文/列表/任务勾选/引用/代码块/分隔线/相关页面双链
   function renderMarkdown(md) {
-    var lines = String(md || '').replace(/\r/g, '').split('\n');
-    var html = '', inUl = false, inOl = false, inCode = false, codeBuf = [], quoteBuf = [], tableBuf = [];
+    // 归一化 LaTeX 定界符：模型输出常用 \(...\) / \[...\]，统一转成 $ / $$ 再走块解析
+    var src = String(md || '').replace(/\r/g, '')
+      .replace(/\\\[([\s\S]+?)\\\]/g, function (m, tex) { return '\n$$\n' + tex.trim() + '\n$$\n'; })
+      .replace(/\\\((.+?)\\\)/g, function (m, tex) { return '$' + tex.trim() + '$'; });
+    var lines = src.split('\n');
+    var html = '', inUl = false, inOl = false, inCode = false, inMath = false, codeBuf = [], mathBuf = [], quoteBuf = [], tableBuf = [];
     var sizes = { 1: '20px;font-weight:800', 2: '17px;font-weight:700', 3: '15.5px;font-weight:700;border-bottom:1px solid var(--zq-border-soft);padding-bottom:6px', 4: '14px;font-weight:700' };
     function closeUl() { if (inUl) { html += '</ul>'; inUl = false; } }
     function closeOl() { if (inOl) { html += '</ol>'; inOl = false; } }
@@ -1661,6 +1752,19 @@
         return;
       }
       if (inCode) { codeBuf.push(line); return; }
+      // 公式块：$$…$$（支持单行 $$tex$$ 与多行围栏）
+      var lt = line.trim();
+      if (inMath) {
+        if (/\$\$\s*$/.test(lt)) {
+          var tail = lt.replace(/\$\$\s*$/, '').trim();
+          if (tail) mathBuf.push(tail);
+          html += mathBlockHtml(mathBuf.join('\n'));
+          mathBuf = []; inMath = false;
+        } else { mathBuf.push(line); }
+        return;
+      }
+      if (/^\$\$(.+)\$\$$/.test(lt)) { closeBlocks(); html += mathBlockHtml(lt.slice(2, -2).trim()); return; }
+      if (/^\$\$/.test(lt)) { closeBlocks(); inMath = true; var head = lt.slice(2).trim(); if (head) mathBuf.push(head); return; }
       if (/^\|.*\|\s*$/.test(line.trim())) { closeUl(); closeOl(); flushQuote(); tableBuf.push(line.trim()); return; }
       flushTable();
       var h = line.match(/^(#{1,4})\s+(.+)$/);
@@ -1682,8 +1786,44 @@
       else { closeBlocks(); html += '<p style="margin:8px 0;">' + mdInline(line) + '</p>'; }
     });
     if (inCode) { html += '<pre style="margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;"><code class="zq-mono" style="font-size:12.5px;line-height:1.65;white-space:pre;">' + esc(codeBuf.join('\n')) + '</code></pre>'; }
+    if (inMath && mathBuf.length) { html += mathBlockHtml(mathBuf.join('\n')); }
     closeBlocks();
     return '<div style="font-size:13.5px;line-height:1.75;">' + (html || '<p></p>') + '</div>';
+  }
+  // KaTeX 懒加载：页面出现公式节点时才注入 CDN 资源；加载失败保留样式化源码降级显示
+  var katexState = 0; // 0=未加载 1=加载中 2=就绪 3=失败
+  var katexPending = [];
+  function paintMath(nodes) {
+    Array.prototype.forEach.call(nodes, function (el) {
+      if (el.dataset.mathDone === '1') return;
+      var tex = el.getAttribute('data-tex') || '';
+      try {
+        el.innerHTML = window.katex.renderToString(tex, { throwOnError: false, displayMode: el.classList.contains('zq-math') });
+        el.dataset.mathDone = '1';
+      } catch (e) { /* 渲染失败保留源码 */ }
+    });
+  }
+  function renderMathIn(root) {
+    if (!root) return;
+    var nodes = root.querySelectorAll('[data-tex]');
+    if (!nodes.length) return;
+    if (window.katex) { paintMath(nodes); return; }
+    if (katexState === 3) return;
+    katexPending.push(root);
+    if (katexState === 1) return;
+    katexState = 1;
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css';
+    document.head.appendChild(link);
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js';
+    s.onload = function () {
+      katexState = 2;
+      katexPending.splice(0).forEach(function (r) { paintMath(r.querySelectorAll('[data-tex]')); });
+    };
+    s.onerror = function () { katexState = 3; katexPending = []; };
+    document.head.appendChild(s);
   }
   function htmlToMarkdown(root) {
     function walk(node) {
@@ -1691,6 +1831,12 @@
       Array.prototype.forEach.call(node.childNodes, function (n) {
         if (n.nodeType === 3) { out += n.nodeValue.replace(/ /g, ' '); return; }
         if (n.nodeType !== 1) return;
+        // 公式节点：不递归 KaTeX 生成的 DOM，直接还原 $$…$$ / $…$ 源码
+        if (n.getAttribute && n.getAttribute('data-tex') !== null) {
+          var tex = n.getAttribute('data-tex');
+          out += (n.classList && n.classList.contains('zq-math')) ? '\n$$\n' + tex + '\n$$\n\n' : ('$' + tex + '$');
+          return;
+        }
         var tag = n.tagName.toUpperCase();
         if (tag === 'BR') { out += '\n'; return; }
         if (tag === 'HR') { out += '\n---\n\n'; return; }
@@ -1847,6 +1993,7 @@
       var body = m.content ? renderMarkdown(me ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
       return '<div style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div style="max-width:72%;padding:11px 14px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + reason + body + '</div></div>';
     }).join('');
+    renderMathIn(host);
     host.scrollTop = host.scrollHeight;
   }
   async function loadAiNotebooks() {

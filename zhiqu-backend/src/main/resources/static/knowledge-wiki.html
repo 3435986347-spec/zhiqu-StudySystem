@@ -24,6 +24,7 @@
             <button style="height:30px; padding:0 12px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12.5px; font-weight:600; cursor:pointer;">待合入变更</button>
             <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">健康检查</button>
             <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">图谱</button>
+            <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">导出</button>
             <button class="zq-btn" style="height:30px; font-size:12.5px;">新建知识页</button>
           </div>
         </header>
@@ -64,6 +65,8 @@
                   <button data-wiki-cmd="underline" class="zq-tbtn" style="text-decoration:underline;">U</button>
                   <button data-wiki-cmd="code" class="zq-tbtn zq-mono">`</button>
                   <button data-wiki-cmd="link" class="zq-tbtn">链接</button>
+                  <button data-wiki-cmd="math" class="zq-tbtn">公式</button>
+                  <button data-wiki-cmd="ref" class="zq-tbtn">参考</button>
                   <button data-wiki-cmd="source" class="zq-tbtn">源码</button>
                 </div>
               </div>
@@ -135,7 +138,7 @@
     function sel(i){ cur=i; paintTree(); paintDoc(); }
     paintTree(); paintDoc();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260707-wire-all13"></script>
+  <script src="assets/zhiqu-api.js?v=20260707-wire-all14"></script>
 </body>
 </html>
 
