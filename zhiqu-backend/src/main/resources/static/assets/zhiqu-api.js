@@ -4,7 +4,7 @@
   'use strict';
 
   var API = '/api';
-  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all14';
+  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all16';
   // 根路径 "/" 由 Spring 作为欢迎页返回 index.html（登录页），此时 pathname 为空，
   // 默认必须落到 index.html，否则 bootIndex 不执行、登录按钮无处理器。
   var page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
@@ -1253,7 +1253,17 @@
       var active = state.wikiCur && p.id === state.wikiCur.id;
       return '<a data-wiki="' + p.id + '" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--zq-rs);cursor:pointer;background:' + (active ? 'var(--zq-tint)' : 'transparent') + ';"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:' + (active ? 700 : 500) + ';color:var(--zq-text2);">' + esc(p.title) + '</span></a>';
     }).join('') || empty('无匹配页面');
-    $all('[data-wiki]', tree).forEach(function (a) { a.onclick = function () { var p = (state.wikiPages || []).find(function (x) { return String(x.id) === a.dataset.wiki; }); if (p) paintWikiDoc(p); }; });
+    $all('[data-wiki]', tree).forEach(function (a) {
+      var pageOf = function () { return (state.wikiPages || []).find(function (x) { return String(x.id) === a.dataset.wiki; }); };
+      a.onclick = function () { var p = pageOf(); if (p) paintWikiDoc(p); };
+      a.oncontextmenu = function (e) {
+        e.preventDefault();
+        var p = pageOf(); if (!p) return;
+        var items = [{ label: '打开', onClick: function () { paintWikiDoc(p); } }];
+        if (!isSystemWikiPage(p)) items.push({ label: '删除该页', danger: true, onClick: function () { deleteWikiPage(p); } });
+        popMenu(e.clientX, e.clientY, items);
+      };
+    });
   }
   async function paintWikiDoc(p) {
     state.wikiCur = p;
@@ -1296,6 +1306,15 @@
     doc.onclick = function (e) {
       if (e.target && e.target.closest && e.target.closest('a,input,button')) return;
       if (state.wikiCur && doc.dataset.editing !== '1') enterWikiEdit();
+    };
+    // 右键菜单：编辑本页 / 删除本页；编辑态不拦截（保留浏览器原生菜单做粘贴等操作）
+    doc.oncontextmenu = function (e) {
+      if (doc.dataset.editing === '1' || !state.wikiCur) return;
+      e.preventDefault();
+      var p = state.wikiCur;
+      var items = [{ label: '编辑本页', onClick: function () { enterWikiEdit(); } }];
+      if (!isSystemWikiPage(p)) items.push({ label: '删除本页', danger: true, onClick: function () { deleteWikiPage(p); } });
+      popMenu(e.clientX, e.clientY, items);
     };
     // 任务勾选框：勾选即切换删除线样式；未在编辑态则进入编辑态以便保存
     doc.addEventListener('change', function (e) {
@@ -1432,7 +1451,15 @@
     doc.parentNode.appendChild(bar);
     $('#zq-wiki-save').onclick = saveWikiEdit;
     $('#zq-wiki-cancel').onclick = function () { paintWikiDoc(state.wikiCur); };
-    if ($('#zq-wiki-del')) $('#zq-wiki-del').onclick = async function () { var p = state.wikiCur; if (p && await askConfirm({ title: '删除知识页', message: '删除「' + (p.title || '') + '」？指向它的双链会变成悬空链接。', okText: '删除', danger: true })) safe('删除知识页', async function () { await api.del('/knowledge/pages/' + p.id); await bootKnowledge(); toast('已删除'); }); };
+    if ($('#zq-wiki-del')) $('#zq-wiki-del').onclick = function () { deleteWikiPage(state.wikiCur); };
+  }
+  function isSystemWikiPage(p) { return !!p && ['INDEX', 'LOG', 'SCHEMA'].indexOf(String(p.pageType || '').toUpperCase()) >= 0; }
+  // 删除知识页：action bar 按钮与右键菜单共用（系统页由调用方隐藏入口，后端也会拦截）
+  async function deleteWikiPage(p) {
+    if (!p) return;
+    if (await askConfirm({ title: '删除知识页', message: '删除「' + (p.title || '') + '」？指向它的双链会变成悬空链接。', okText: '删除', danger: true })) {
+      safe('删除知识页', async function () { await api.del('/knowledge/pages/' + p.id); await bootKnowledge(); toast('已删除'); });
+    }
   }
   function removeWikiActionBar() { var b = document.getElementById('zq-wiki-actions'); if (b) b.remove(); }
   function saveWikiEdit() {
@@ -1691,31 +1718,55 @@
   function mathBlockHtml(tex) {
     return '<div class="zq-math" data-tex="' + esc(tex) + '" contenteditable="false" style="margin:12px 0;padding:13px 16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);text-align:center;overflow-x:auto;font-size:15px;"><span class="zq-mono" style="font-size:12.5px;color:var(--zq-text2);">' + esc(tex) + '</span></div>';
   }
+  function inlineMathSpan(tex) {
+    return '<span class="zq-math-i" data-tex="' + tex.replace(/"/g, '&quot;') + '" contenteditable="false" style="padding:0 2px;"><span class="zq-mono" style="font-size:.92em;color:var(--zq-text2);">' + tex + '</span></span>';
+  }
   function mdInline(t) {
-    t = esc(t)
+    t = esc(t);
+    // 行内代码先抽成占位符：反引号里的 $、*、[ 等都是字面量，不参与公式/加粗/链接解析
+    var codeSlots = [];
+    t = t.replace(/`([^`]+)`/g, function (m, c) { codeSlots.push(c); return '\u0001' + (codeSlots.length - 1) + '\u0001'; });
+    t = t
       .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/g, '<u>$1</u>')
       .replace(/\$\$([^$\n]{1,200}?)\$\$/g, function (m, tex) {
         // 行中出现的 $$…$$ 先于单 $ 处理，否则会被拆成 "$ + 行内公式 + $" 留下游离美元符
         if (!/[\\^_{}a-zA-Z]/.test(tex)) return m;
-        return '<span class="zq-math-i" data-tex="' + tex.replace(/"/g, '&quot;') + '" contenteditable="false" style="padding:0 2px;"><span class="zq-mono" style="font-size:.92em;color:var(--zq-text2);">' + tex + '</span></span>';
+        return inlineMathSpan(tex);
       })
       .replace(/\$([^$\n]{1,200}?)\$/g, function (m, tex) {
         // 行内公式：要求含 LaTeX 特征字符，避免把"花了$5和$10"这类金额误判成公式
         if (!/[\\^_{}a-zA-Z]/.test(tex)) return m;
-        return '<span class="zq-math-i" data-tex="' + tex.replace(/"/g, '&quot;') + '" contenteditable="false" style="padding:0 2px;"><span class="zq-mono" style="font-size:.92em;color:var(--zq-text2);">' + tex + '</span></span>';
+        return inlineMathSpan(tex);
       })
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/`([^`]+)`/g, '<code style="background:var(--zq-card-soft);padding:1px 5px;border-radius:4px;font-size:.92em;">$1</code>')
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;">$1</a>')
+      // URL 支持一层配对括号（如维基百科的 Function_(mathematics)），不再截断在第一个 )
+      .replace(/\[([^\]]+)\]\((https?:\/\/(?:[^()\s]|\([^()]*\))+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;">$1</a>')
       .replace(/\[\[([^\]]+)\]\]/g, '<a data-wikilink="$1" style="color:var(--zq-primary);cursor:pointer;border-bottom:1px dashed var(--zq-tint-strong);">$1</a>');
-    return t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    return t.replace(/\u0001(\d+)\u0001/g, function (m, i) {
+      return '<code style="background:var(--zq-card-soft);padding:1px 5px;border-radius:4px;font-size:.92em;">' + codeSlots[+i] + '</code>';
+    });
   }
   // 完整块类型渲染，对齐 claude design 静态模板：标题/正文/列表/任务勾选/引用/代码块/分隔线/相关页面双链
   function renderMarkdown(md) {
-    // 归一化 LaTeX 定界符：模型输出常用 \(...\) / \[...\]，统一转成 $ / $$ 再走块解析
-    var src = String(md || '').replace(/\r/g, '')
-      .replace(/\\\[([\s\S]+?)\\\]/g, function (m, tex) { return '\n$$\n' + tex.trim() + '\n$$\n'; })
-      .replace(/\\\((.+?)\\\)/g, function (m, tex) { return '$' + tex.trim() + '$'; });
+    // 归一化 LaTeX 定界符：模型输出常用 \(...\) / \[...\]，统一转成 $ / $$ 再走块解析。
+    // 必须绕开 ``` 围栏代码段，否则代码里的字面 \[..\] 会被改写，编辑保存后造成永久破坏
+    function normalizeMathDelims(text) {
+      return text
+        .replace(/\\\[([\s\S]+?)\\\]/g, function (m, tex) { return '\n$$\n' + tex.trim() + '\n$$\n'; })
+        .replace(/\\\((.+?)\\\)/g, function (m, tex) { return '$' + tex.trim() + '$'; });
+    }
+    var rawLines = String(md || '').replace(/\r/g, '').split('\n');
+    var segs = [], segBuf = [], fenced = false;
+    rawLines.forEach(function (line) {
+      if (/^```/.test(line.trim())) {
+        segs.push({ code: fenced, text: segBuf.join('\n') }); segBuf = [];
+        segs.push({ code: true, text: line });
+        fenced = !fenced;
+      } else { segBuf.push(line); }
+    });
+    segs.push({ code: fenced, text: segBuf.join('\n') });
+    var src = segs.map(function (s) { return s.code ? s.text : normalizeMathDelims(s.text); }).join('\n');
     var lines = src.split('\n');
     var html = '', inUl = false, inOl = false, inCode = false, inMath = false, codeBuf = [], mathBuf = [], quoteBuf = [], tableBuf = [];
     var sizes = { 1: '20px;font-weight:800', 2: '17px;font-weight:700', 3: '15.5px;font-weight:700;border-bottom:1px solid var(--zq-border-soft);padding-bottom:6px', 4: '14px;font-weight:700' };
@@ -1790,7 +1841,8 @@
     closeBlocks();
     return '<div style="font-size:13.5px;line-height:1.75;">' + (html || '<p></p>') + '</div>';
   }
-  // KaTeX 懒加载：页面出现公式节点时才注入 CDN 资源；加载失败保留样式化源码降级显示
+  // KaTeX 懒加载：页面出现公式节点时才注入本地 vendor 资源（不依赖外网 CDN，随 JAR 分发、SW 可缓存）。
+  // JS 与 CSS 都就绪才开始排版——只成功一半（如 CSS 加载失败）时保留样式化源码降级，不显示裸 KaTeX DOM。
   var katexState = 0; // 0=未加载 1=加载中 2=就绪 3=失败
   var katexPending = [];
   function paintMath(nodes) {
@@ -1807,22 +1859,28 @@
     if (!root) return;
     var nodes = root.querySelectorAll('[data-tex]');
     if (!nodes.length) return;
-    if (window.katex) { paintMath(nodes); return; }
+    if (katexState === 2 && window.katex) { paintMath(nodes); return; }
     if (katexState === 3) return;
     katexPending.push(root);
     if (katexState === 1) return;
     katexState = 1;
-    var link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css';
-    document.head.appendChild(link);
-    var s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js';
-    s.onload = function () {
+    var cssReady = false, jsReady = false;
+    function maybeReady() {
+      if (!cssReady || !jsReady || !window.katex) return;
       katexState = 2;
       katexPending.splice(0).forEach(function (r) { paintMath(r.querySelectorAll('[data-tex]')); });
-    };
-    s.onerror = function () { katexState = 3; katexPending = []; };
+    }
+    function fail() { katexState = 3; katexPending = []; }
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'assets/vendor/katex/katex.min.css';
+    link.onload = function () { cssReady = true; maybeReady(); };
+    link.onerror = fail;
+    document.head.appendChild(link);
+    var s = document.createElement('script');
+    s.src = 'assets/vendor/katex/katex.min.js';
+    s.onload = function () { jsReady = true; maybeReady(); };
+    s.onerror = fail;
     document.head.appendChild(s);
   }
   function htmlToMarkdown(root) {

@@ -732,8 +732,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (ZipOutputStream zip = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
+                // 标题允许重复，且清洗/截断后也可能碰撞；zip 重名条目会直接抛异常导致整包失败
+                java.util.Set<String> usedNames = new java.util.HashSet<>();
                 for (UserKnowledgePage page : pages) {
-                    String fileName = safeMarkdownFileName(page.getTitle()) + ".md";
+                    String base = safeMarkdownFileName(page.getTitle());
+                    String fileName = base + ".md";
+                    if (!usedNames.add(fileName)) {
+                        fileName = base + "-" + page.getId() + ".md";
+                        usedNames.add(fileName);
+                    }
                     zip.putNextEntry(new ZipEntry("wiki/" + fileName));
                     String content = markdownExportContent(page);
                     zip.write(content.getBytes(StandardCharsets.UTF_8));
@@ -1166,15 +1173,17 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private String markdownExportContent(UserKnowledgePage page) {
         String content = cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent()));
+        // 标题必须加引号转义，否则「阶段: 复习」这类含冒号的标题会生成无效 YAML
+        String yamlTitle = String.valueOf(page.getTitle()).replace("\\", "\\\\").replace("\"", "\\\"");
         return """
                 ---
-                title: %s
+                title: "%s"
                 type: %s
                 updated: %s
                 ---
 
                 %s
-                """.formatted(page.getTitle(), page.getPageType(), page.getUpdatedAt(), content).trim();
+                """.formatted(yamlTitle, page.getPageType(), page.getUpdatedAt(), content).trim();
     }
 
     private String safeMarkdownFileName(String title) {

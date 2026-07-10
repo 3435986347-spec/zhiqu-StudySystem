@@ -1,4 +1,4 @@
-const ZHIQU_CACHE = 'zhiqu-shell-v20260707-wire-all14';
+const ZHIQU_CACHE = 'zhiqu-shell-v20260707-wire-all16';
 
 const SHELL_ASSETS = [
     '/',
@@ -18,7 +18,9 @@ const SHELL_ASSETS = [
     '/shared-plan-admin.html',
     '/assets/zhiqu-ui.css',
     '/assets/zhiqu-ui.js',
-    '/assets/zhiqu-api.js'
+    '/assets/zhiqu-api.js',
+    '/assets/vendor/katex/katex.min.css',
+    '/assets/vendor/katex/katex.min.js'
 ];
 
 self.addEventListener('install', (event) => {

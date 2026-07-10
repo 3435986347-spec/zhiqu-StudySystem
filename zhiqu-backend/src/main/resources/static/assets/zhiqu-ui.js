@@ -58,6 +58,14 @@
       + '</div>'
       + '<div class="zq-user"><div class="zq-avatar">远</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);">王明远</div><div style="font-size:11px;color:var(--zq-text3);">管理员</div></div></div>';
     wireSwitch(host);
+    // 跨页面保留导航滚动位置：MPA 每次跳转都重建侧栏，不记忆的话 scrollTop 会归零
+    var nav = host.querySelector('.zq-nav');
+    if (nav) {
+      try { nav.scrollTop = Number(sessionStorage.getItem('zq.navScroll') || 0); } catch (e) {}
+      nav.addEventListener('scroll', function () {
+        try { sessionStorage.setItem('zq.navScroll', String(nav.scrollTop)); } catch (e) {}
+      });
+    }
   }
 
   // ── 主题切换弹层 ──
