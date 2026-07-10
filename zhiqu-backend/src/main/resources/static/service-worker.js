@@ -1,4 +1,4 @@
-const ZHIQU_CACHE = 'zhiqu-shell-v20260707-wire-all12';
+const ZHIQU_CACHE = 'zhiqu-shell-v20260707-wire-all13';
 
 const SHELL_ASSETS = [
     '/',

@@ -86,7 +86,7 @@ public class OpenAiChatCompatibleAdapter implements ModelStreamAdapter {
         String delta = AiStreamAdapterSupport.firstTextAt(root,
                 "/choices/0/delta/content",
                 "/choices/0/message/content");
-        if (AiStreamAdapterSupport.hasText(delta)) {
+        if (AiStreamAdapterSupport.hasContent(delta)) {
             content.append(delta);
             sink.accept(NormalizedStreamEvent.message(delta));
         }
@@ -95,7 +95,7 @@ public class OpenAiChatCompatibleAdapter implements ModelStreamAdapter {
                     "/choices/0/delta/reasoning_content",
                     "/choices/0/delta/reasoning",
                     "/choices/0/message/reasoning_content");
-            if (AiStreamAdapterSupport.hasText(thought)) {
+            if (AiStreamAdapterSupport.hasContent(thought)) {
                 reasoning.append(thought);
                 sink.accept(NormalizedStreamEvent.reasoning(thought));
             }

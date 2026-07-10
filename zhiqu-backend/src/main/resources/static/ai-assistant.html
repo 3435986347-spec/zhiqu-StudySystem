@@ -48,7 +48,7 @@
                   <input id="zq-draft" placeholder="输入消息，回车发送..." style="flex:1; min-width:200px; height:32px; padding:0 12px; border:1px solid var(--zq-border); border-radius:var(--zq-rs); background:var(--zq-input-bg); color:var(--zq-text); font-size:13px;">
                   <button id="zq-web" onclick="tgl('web')" class="zq-btn-ghost" style="height:32px; padding:0 11px; font-size:12px;">联网</button>
                   <button id="zq-think" onclick="tgl('think')" style="height:32px; padding:0 11px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12px; font-weight:600; cursor:pointer;">深度思考</button>
-                  <select id="zq-model" class="zq-select" style="height:32px; max-width:150px; font-size:12px;"><option value="">默认模型</option></select>
+                  <select id="zq-model" class="zq-select" style="height:32px; max-width:150px; min-width:0; flex:0 1 150px; font-size:12px;"><option value="">默认模型</option></select>
                   <button id="zq-send" onclick="send()" class="zq-btn" style="height:32px;">发送</button>
                 </div>
               </div>
@@ -126,7 +126,7 @@
     document.getElementById('zq-draft').addEventListener('keydown',function(e){ if(e.key==='Enter') send(); });
     paintChat();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260707-wire-all12"></script>
+  <script src="assets/zhiqu-api.js?v=20260707-wire-all13"></script>
 </body>
 </html>
 

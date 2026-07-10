@@ -95,14 +95,14 @@ public class OpenAiResponsesAdapter implements ModelStreamAdapter {
         }
         if (type.contains("output_text.delta")) {
             String text = root.path("delta").asText("");
-            if (AiStreamAdapterSupport.hasText(text)) {
+            if (AiStreamAdapterSupport.hasContent(text)) {
                 content.append(text);
                 sink.accept(NormalizedStreamEvent.message(text));
             }
         }
         if (type.contains("reasoning") && type.contains("delta")) {
             String text = root.path("delta").asText("");
-            if (AiStreamAdapterSupport.hasText(text)) {
+            if (AiStreamAdapterSupport.hasContent(text)) {
                 reasoning.append(text);
                 sink.accept(NormalizedStreamEvent.reasoning(text));
             }

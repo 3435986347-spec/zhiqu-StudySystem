@@ -4,7 +4,7 @@
   'use strict';
 
   var API = '/api';
-  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all12';
+  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all13';
   // 根路径 "/" 由 Spring 作为欢迎页返回 index.html（登录页），此时 pathname 为空，
   // 默认必须落到 index.html，否则 bootIndex 不执行、登录按钮无处理器。
   var page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
@@ -707,7 +707,28 @@
     var card = $('.zq-card-lg');
     if (card) {
       var av = card.querySelector('div[style*="76px"]');
-      if (av) av.textContent = (u.nickname || u.username || '知').slice(0, 1);
+      if (av) {
+        var paintAvatar = function () {
+          // 与侧边栏保持一致：有头像显示头像，否则显示昵称首字
+          av.innerHTML = state.user && state.user.avatar
+            ? '<img src="' + esc(state.user.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
+            : esc((u.nickname || u.username || '知').slice(0, 1));
+        };
+        paintAvatar();
+        av.style.cursor = 'pointer';
+        av.title = '点击更换头像';
+        av.onclick = function () {
+          pickFile(function (file) {
+            safe('上传头像', async function () {
+              var r = await api.upload('/user/avatar', file);
+              state.user.avatar = (r && r.avatar) || '';
+              paintAvatar();
+              updateSidebarUser(state.user);
+              toast('头像已更新');
+            });
+          });
+        };
+      }
       var h = card.querySelector('.zq-h2'); if (h) h.textContent = u.nickname || u.username || '知趣用户';
       var badge = card.querySelector('.zq-badge'); if (badge) badge.textContent = (u.role === 'ADMIN' ? '管理员' : '普通用户');
       var nums = card.querySelectorAll('.zq-mono');
@@ -1605,8 +1626,8 @@
   // 完整块类型渲染，对齐 claude design 静态模板：标题/正文/列表/任务勾选/引用/代码块/分隔线/相关页面双链
   function renderMarkdown(md) {
     var lines = String(md || '').replace(/\r/g, '').split('\n');
-    var html = '', inUl = false, inOl = false, inCode = false, codeBuf = [], quoteBuf = [];
-    var sizes = { 1: '20px;font-weight:800', 2: '17px;font-weight:700', 3: '15.5px;font-weight:700;border-bottom:1px solid var(--zq-border-soft);padding-bottom:6px' };
+    var html = '', inUl = false, inOl = false, inCode = false, codeBuf = [], quoteBuf = [], tableBuf = [];
+    var sizes = { 1: '20px;font-weight:800', 2: '17px;font-weight:700', 3: '15.5px;font-weight:700;border-bottom:1px solid var(--zq-border-soft);padding-bottom:6px', 4: '14px;font-weight:700' };
     function closeUl() { if (inUl) { html += '</ul>'; inUl = false; } }
     function closeOl() { if (inOl) { html += '</ol>'; inOl = false; } }
     function flushQuote() {
@@ -1614,7 +1635,23 @@
       html += '<blockquote style="margin:12px 0;padding:10px 16px;border-left:3px solid var(--zq-accent);background:var(--zq-card-soft);border-radius:0 var(--zq-rs) var(--zq-rs) 0;font-size:13px;line-height:1.7;color:var(--zq-text2);">' + quoteBuf.join('<br>') + '</blockquote>';
       quoteBuf = [];
     }
-    function closeBlocks() { closeUl(); closeOl(); flushQuote(); }
+    function flushTable() {
+      if (!tableBuf.length) return;
+      var rows = tableBuf.map(function (l) {
+        return l.replace(/^\|/, '').replace(/\|\s*$/, '').split('|').map(function (c) { return c.trim(); });
+      });
+      var cellCss = 'border:1px solid var(--zq-border-soft);padding:6px 10px;text-align:left;vertical-align:top;';
+      var hasHeader = rows.length > 1 && rows[1].length && rows[1].every(function (c) { return c === '' || /^:?-{2,}:?$/.test(c); }) && rows[1].some(function (c) { return /-{2,}/.test(c); });
+      var out = '<div style="overflow-x:auto;margin:12px 0;"><table style="border-collapse:collapse;width:100%;font-size:12.5px;line-height:1.6;">';
+      if (hasHeader) {
+        out += '<thead><tr>' + rows[0].map(function (c) { return '<th style="' + cellCss + 'background:var(--zq-card-soft);font-weight:700;">' + mdInline(c) + '</th>'; }).join('') + '</tr></thead>';
+        rows = rows.slice(2);
+      }
+      out += '<tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td style="' + cellCss + '">' + mdInline(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
+      html += out;
+      tableBuf = [];
+    }
+    function closeBlocks() { closeUl(); closeOl(); flushQuote(); flushTable(); }
     lines.forEach(function (line) {
       if (/^```/.test(line.trim())) {
         if (inCode) {
@@ -1624,7 +1661,9 @@
         return;
       }
       if (inCode) { codeBuf.push(line); return; }
-      var h = line.match(/^(#{1,3})\s+(.+)$/);
+      if (/^\|.*\|\s*$/.test(line.trim())) { closeUl(); closeOl(); flushQuote(); tableBuf.push(line.trim()); return; }
+      flushTable();
+      var h = line.match(/^(#{1,4})\s+(.+)$/);
       var task = line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
       var li = line.match(/^[-*]\s+(.+)$/);
       var ol = line.match(/^\d+[.)]\s+(.+)$/);
@@ -1661,12 +1700,23 @@
           case 'H1': out += '\n# ' + inner.trim() + '\n\n'; break;
           case 'H2': out += '\n## ' + inner.trim() + '\n\n'; break;
           case 'H3': out += '\n### ' + inner.trim() + '\n\n'; break;
+          case 'H4': out += '\n#### ' + inner.trim() + '\n\n'; break;
           case 'STRONG': case 'B': out += '**' + inner + '**'; break;
           case 'EM': case 'I': out += '*' + inner + '*'; break;
           case 'U': out += '<u>' + inner + '</u>'; break;
           case 'PRE': { var codeTxt = (n.textContent || '').replace(/\n$/, ''); out += '\n```\n' + codeTxt + '\n```\n\n'; break; }
           case 'CODE': out += '`' + inner + '`'; break;
           case 'BLOCKQUOTE': out += '\n' + inner.trim().split('\n').map(function (l) { return '> ' + l; }).join('\n') + '\n\n'; break;
+          case 'TABLE': {
+            var md = '\n';
+            Array.prototype.forEach.call(n.querySelectorAll('tr'), function (tr, ri) {
+              var cells = Array.prototype.map.call(tr.querySelectorAll('th,td'), function (c) { return walk(c).replace(/\n+/g, ' ').trim(); });
+              md += '| ' + cells.join(' | ') + ' |\n';
+              if (ri === 0 && tr.querySelector('th')) md += '|' + cells.map(function () { return ' --- '; }).join('|') + '|\n';
+            });
+            out += md + '\n';
+            break;
+          }
           case 'A': { var wl = n.getAttribute('data-wikilink'); var href = n.getAttribute('href'); if (wl) out += '[[' + wl + ']]'; else if (href) out += '[' + (inner || href) + '](' + href + ')'; else out += inner; break; }
           case 'LI': out += (n.parentNode && n.parentNode.tagName === 'OL' ? '1. ' : '- ') + inner.trim() + '\n'; break;
           case 'UL': case 'OL': out += '\n' + inner + '\n'; break;
@@ -1773,13 +1823,28 @@
     var sync = $('#zq-sync-count'); if (sync) sync.textContent = '已同步 ' + state.messages.length + ' 条历史消息';
     renderAiMessages();
   }
+  // 历史坏数据修复：早期流式链路会丢弃纯换行增量，整条消息被压成一行。
+  // 只对"记号多、换行几乎为零"的消息做启发式回填换行，健康消息原样返回。
+  function reflowFlatMarkdown(text) {
+    var s = String(text || '');
+    var newlines = (s.match(/\n/g) || []).length;
+    var headingHits = (s.match(/#{2,4}/g) || []).length;
+    if (newlines >= 3 || s.length < 120 || (headingHits < 2 && !/\|\s*:?-{3,}/.test(s))) return s;
+    return s
+      .replace(/\s*(#{2,6})\s*/g, '\n\n$1 ')
+      .replace(/([^|:\-\n])(-{3,})(?!-)/g, '$1\n\n---\n\n')
+      .replace(/\|\s+\|/g, '|\n|')
+      .replace(/([。：；！？])\s*\|/g, '$1\n|')
+      .replace(/([^\n\d])- (?=\S)/g, '$1\n- ')
+      .replace(/([。；！？])\s*(\d+)[.、]\s+(?=\S)/g, '$1\n$2. ');
+  }
   function renderAiMessages() {
     var host = $('#zq-chat'); if (!host) return;
     host.innerHTML = (state.messages.length ? state.messages : [{ role: 'assistant', content: '你好！我是你的 AI 学习助手。' }]).map(function (m) {
       var me = m.role === 'user';
       var name = me ? '我' : 'AI';
       var reason = (!me && m.reasoning) ? '<details open style="margin-bottom:9px;padding:8px 11px;border-left:2px solid var(--zq-tint-strong);background:var(--zq-card-soft);border-radius:0 6px 6px 0;"><summary style="cursor:pointer;font-size:10.5px;font-weight:700;color:var(--zq-text3);letter-spacing:.05em;user-select:none;">深度思考（点击折叠）</summary><span style="display:block;margin-top:4px;font-size:11.5px;color:var(--zq-text3);line-height:1.6;white-space:pre-wrap;">' + esc(m.reasoning) + '</span></details>' : '';
-      var body = m.content ? renderMarkdown(m.content) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
+      var body = m.content ? renderMarkdown(me ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
       return '<div style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div style="max-width:72%;padding:11px 14px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + reason + body + '</div></div>';
     }).join('');
     host.scrollTop = host.scrollHeight;

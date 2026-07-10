@@ -22,6 +22,14 @@ final class AiStreamAdapterSupport {
         return value != null && !value.trim().isEmpty();
     }
 
+    /**
+     * 流式增量专用：纯换行/空格的增量（如 "\n\n"）是合法内容，不能按 hasText 丢弃，
+     * 否则模型逐段输出时所有段落换行都会蒸发，正文被压成一行。
+     */
+    static boolean hasContent(String value) {
+        return value != null && !value.isEmpty();
+    }
+
     static boolean isReasoningRequested(String mode) {
         String normalized = mode == null ? "OFF" : mode.trim().toUpperCase(Locale.ROOT);
         return "AUTO".equals(normalized) || "DEEP".equals(normalized);
@@ -124,7 +132,7 @@ final class AiStreamAdapterSupport {
         for (String path : paths) {
             JsonNode node = root.at(path);
             String text = firstText(node);
-            if (hasText(text)) {
+            if (hasContent(text)) {
                 return text;
             }
         }
@@ -140,7 +148,7 @@ final class AiStreamAdapterSupport {
                 continue;
             }
             String text = node.isTextual() ? node.asText("") : node.toString();
-            if (hasText(text)) {
+            if (hasContent(text)) {
                 return text;
             }
         }

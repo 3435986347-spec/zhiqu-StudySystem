@@ -161,24 +161,35 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         String title = required(body.get("title"), "标题不能为空");
         String content = cleanMarkdownContent(required(body.get("content"), "内容不能为空"));
         // 系统页按标题维护（ensureSystemPage 以标题查找），改名会导致重复建页，后端强制拦截
-        if (page.getId() != null && isSystemKnowledgePage(page) && !title.trim().equals(page.getTitle())) {
+        boolean systemPage = page.getId() != null && isSystemKnowledgePage(page);
+        if (systemPage && !title.trim().equals(page.getTitle())) {
             throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许改名");
         }
-        page.setTitle(limit(title, 120));
-        // 字段缺省则保留旧值，避免更新正文时把子页/系统页挪到根节点或重置类型
-        Long parentId = body.containsKey("parentId") ? parseLong(body.get("parentId")) : page.getParentId();
-        if (parentId != null) {
-            if (page.getId() != null && page.getId().equals(parentId)) {
-                throw new BusinessException("不能把知识页挂到自己下面");
-            }
-            ownedPage(userId, parentId);
+        // 普通页占用系统保留标题会和 ensureSystemPage 的按标题查找相撞
+        if (!systemPage && isSystemPageTitle(title)) {
+            throw new BusinessException("「index / log / Wiki 维护规则」是系统保留标题，请换一个");
         }
-        page.setParentId(parentId);
-        String keepType = page.getPageType() != null ? page.getPageType() : "NOTE";
-        page.setPageType(limit(value(body.get("pageType"), keepType).toUpperCase(), 40));
-        page.setSortOrder(defaultInt(body.get("sortOrder"), page.getSortOrder() == null ? 0 : page.getSortOrder()));
-        int keepPinned = page.getPinned() != null ? page.getPinned() : 0;
-        page.setPinned(body.containsKey("pinned") ? (booleanValue(body.get("pinned")) ? 1 : 0) : keepPinned);
+        page.setTitle(limit(title, 120));
+        if (systemPage) {
+            // 系统页锁定结构属性：忽略请求里的 parentId/pageType/pinned，
+            // 否则可先把 pageType 改成 NOTE 再绕过删除/改名保护
+            page.setSortOrder(defaultInt(body.get("sortOrder"), page.getSortOrder() == null ? 0 : page.getSortOrder()));
+        } else {
+            // 字段缺省则保留旧值，避免更新正文时把子页挪到根节点或重置类型
+            Long parentId = body.containsKey("parentId") ? parseLong(body.get("parentId")) : page.getParentId();
+            if (parentId != null) {
+                if (page.getId() != null && page.getId().equals(parentId)) {
+                    throw new BusinessException("不能把知识页挂到自己下面");
+                }
+                ownedPage(userId, parentId);
+            }
+            page.setParentId(parentId);
+            String keepType = page.getPageType() != null ? page.getPageType() : "NOTE";
+            page.setPageType(limit(value(body.get("pageType"), keepType).toUpperCase(), 40));
+            page.setSortOrder(defaultInt(body.get("sortOrder"), page.getSortOrder() == null ? 0 : page.getSortOrder()));
+            int keepPinned = page.getPinned() != null ? page.getPinned() : 0;
+            page.setPinned(body.containsKey("pinned") ? (booleanValue(body.get("pinned")) ? 1 : 0) : keepPinned);
+        }
         page.setEncryptedContent(cryptoService.encrypt(content));
         page.setContentSummary(limit(content.replaceAll("\\s+", " "), 500));
         page.setEncryptionVersion("v1");
@@ -197,6 +208,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public Map<String, Object> movePage(Long userId, Long id, Map<String, Object> body) {
         UserKnowledgePage page = ownedPage(userId, id);
+        if (isSystemKnowledgePage(page)) {
+            throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许移动");
+        }
         Long parentId = parseLong(body == null ? null : body.get("parentId"));
         if (parentId != null) {
             if (page.getId().equals(parentId)) {
@@ -966,6 +980,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             existing.setEncryptedContent(cryptoService.encrypt(content));
             existing.setContentSummary(limit(content.replaceAll("\\s+", " "), 500));
             existing.setPinned(1);
+            // 自愈：历史数据里系统页的类型/挂载点可能被改坏（曾导致 index 摘要递归自嵌套），强制恢复规范值
+            existing.setPageType(type);
+            existing.setParentId(null);
+            existing.setSortOrder(order);
             pageMapper.updateById(existing);
             syncPageLinks(userId, existing.getId(), content);
         }
@@ -979,7 +997,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         StringBuilder builder = new StringBuilder("# index\n\n");
         String currentType = "";
         for (UserKnowledgePage page : pages) {
+            // 按类型和标题双重排除自身：类型被改坏的 index 页若被列入，
+            // 其摘要（上一版 index 压平文本）会随每次重建递归自嵌套
             if ("INDEX".equals(page.getPageType())) continue;
+            if (page.getTitle() != null && "index".equalsIgnoreCase(page.getTitle().trim())) continue;
             if (!String.valueOf(page.getPageType()).equals(currentType)) {
                 currentType = String.valueOf(page.getPageType());
                 builder.append("\n## ").append(typeLabelForMarkdown(currentType)).append("\n");
@@ -1132,7 +1153,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private boolean isSystemKnowledgePage(UserKnowledgePage page) {
         if (page == null) return false;
         String type = String.valueOf(page.getPageType()).toUpperCase();
-        return "INDEX".equals(type) || "LOG".equals(type) || "SCHEMA".equals(type);
+        if ("INDEX".equals(type) || "LOG".equals(type) || "SCHEMA".equals(type)) return true;
+        // pageType 可能被历史请求改坏，而 ensureSystemPage 按标题查找并覆写内容，
+        // 同名页面事实上就是系统页——标题才是稳定锚点
+        return isSystemPageTitle(page.getTitle());
+    }
+
+    private boolean isSystemPageTitle(String title) {
+        String trimmed = title == null ? "" : title.trim();
+        return "index".equalsIgnoreCase(trimmed) || "log".equalsIgnoreCase(trimmed) || "Wiki 维护规则".equals(trimmed);
     }
 
     private String markdownExportContent(UserKnowledgePage page) {

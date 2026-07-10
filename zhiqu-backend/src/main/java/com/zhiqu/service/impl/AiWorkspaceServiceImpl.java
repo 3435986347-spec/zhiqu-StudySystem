@@ -254,6 +254,13 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             sourceMapper.updateById(source);
         } catch (Exception ignored) {
         }
+        if ("IMAGE".equals(source.getSourceType())) {
+            // 图片只存档原件，不做内容解析（无分块 → 不进问答上下文），状态停留在"已上传"
+            source.setStatus("UPLOADED");
+            source.setParseError(null);
+            sourceMapper.updateById(source);
+            return sourceRow(sourceMapper.selectById(source.getId()));
+        }
         try {
             source.setStatus("PARSING");
             sourceMapper.updateById(source);
@@ -778,7 +785,16 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private String inferSourceType(String contentType, String fileName) {
         if (FileParseUtil.isPdf(contentType)) return "PDF";
         if (FileParseUtil.isExcel(contentType, fileName)) return "EXCEL";
+        if (isImageUpload(contentType, fileName)) return "IMAGE";
         return "TEXT";
+    }
+
+    private boolean isImageUpload(String contentType, String fileName) {
+        if (FileParseUtil.isImage(contentType)) return true;
+        // 部分浏览器/客户端上传时 contentType 是 octet-stream，按后缀兜底
+        String lower = fileName == null ? "" : fileName.toLowerCase();
+        return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+                || lower.endsWith(".gif") || lower.endsWith(".webp") || lower.endsWith(".bmp");
     }
 
     private List<Map<String, Object>> wikiContext(Long userId, Map<String, Object> contextOptions) {

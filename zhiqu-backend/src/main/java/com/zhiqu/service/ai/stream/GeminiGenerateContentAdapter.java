@@ -100,7 +100,7 @@ public class GeminiGenerateContentAdapter implements ModelStreamAdapter {
         if (parts.isArray()) {
             for (JsonNode part : parts) {
                 String text = part.path("text").asText("");
-                if (AiStreamAdapterSupport.hasText(text)) {
+                if (AiStreamAdapterSupport.hasContent(text)) {
                     content.append(text);
                     sink.accept(NormalizedStreamEvent.message(text));
                 }

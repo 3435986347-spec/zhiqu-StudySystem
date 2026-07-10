@@ -83,7 +83,7 @@ public class AnthropicMessagesAdapter implements ModelStreamAdapter {
         String deltaType = delta.path("type").asText("");
         if ("text_delta".equals(deltaType)) {
             String text = delta.path("text").asText("");
-            if (AiStreamAdapterSupport.hasText(text)) {
+            if (AiStreamAdapterSupport.hasContent(text)) {
                 content.append(text);
                 sink.accept(NormalizedStreamEvent.message(text));
             }
@@ -91,7 +91,7 @@ public class AnthropicMessagesAdapter implements ModelStreamAdapter {
         if (AiStreamAdapterSupport.isReasoningRequested(request.reasoningMode()) &&
                 ("thinking_delta".equals(deltaType) || deltaType.contains("thinking"))) {
             String thought = AiStreamAdapterSupport.firstText(delta.path("thinking"), delta.path("text"));
-            if (AiStreamAdapterSupport.hasText(thought)) {
+            if (AiStreamAdapterSupport.hasContent(thought)) {
                 reasoning.append(thought);
                 sink.accept(NormalizedStreamEvent.reasoning(thought));
             }

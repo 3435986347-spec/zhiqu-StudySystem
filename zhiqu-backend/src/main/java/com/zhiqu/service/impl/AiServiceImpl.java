@@ -598,8 +598,9 @@ public class AiServiceImpl implements AiService {
             Map<String, Object> usage = new LinkedHashMap<>();
             startTask(emitter, requestId, agentRun, finalWriterTask);
             finalWriterStep = startAgentStep(emitter, requestId, agentRun, finalWriterTask, "FINAL_WRITER", 4, "正在生成最终回答");
+            // 注意：增量判空用非空而不是非空白——纯换行增量（"\n\n"）是段落分隔，丢弃会把正文压成一行
             AiCallResult aiCallResult = callAiApiStream(config, messages, normalizedReasoningMode, event -> {
-                if ("message.delta".equals(event.type()) && hasText(event.text())) {
+                if ("message.delta".equals(event.type()) && event.text() != null && !event.text().isEmpty()) {
                     reply.append(event.text());
                     emitSse(emitter, "message.delta", Map.of(
                             "requestId", requestId,
@@ -608,7 +609,7 @@ public class AiServiceImpl implements AiService {
                             "text", event.text()
                     ));
                 } else if ("reasoning.delta".equals(event.type())) {
-                    if (isReasoningRequested(normalizedReasoningMode) && hasText(event.text())) {
+                    if (isReasoningRequested(normalizedReasoningMode) && event.text() != null && !event.text().isEmpty()) {
                         reasoning.append(event.text());
                         emitSse(emitter, "reasoning.delta", Map.of(
                                 "requestId", requestId,
