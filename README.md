@@ -13,9 +13,9 @@
 | 任务管理 | 创建、编辑、删除任务，支持 DDL、优先级、状态、象限、乐观锁版本控制 |
 | 例行计划 | 适合每天背单词、每周复盘、固定训练等重复事项，不把日常计划展开成大量任务 |
 | 早八提醒 | 每天 08:00 汇总临近 DDL 和当天例行计划，支持 PushPlus 等外部提醒渠道 |
-| AI 助手 | 多模型切换、对话、Markdown 渲染、文件识别、计划生成、任务/例行计划写入 |
-| 模型配置 | 支持系统模型与个人模型，个人中心可添加 OpenAI-compatible、Anthropic、Ollama、vLLM 等配置 |
-| 知识 Wiki | Obsidian/Karpathy 风格个人知识空间，Raw Source、Patch Set、Wiki Pages、index/log、双链、图谱、健康检查 |
+| AI 助手 | 多模型切换、流式对话、深度思考（可折叠）、Markdown/表格/公式渲染；Notebook 资料工作区支持 PDF/Excel/文本切块和图片存档；顺序 Agent/TaskGraph 提供执行轨迹、Claim/Evidence、Verifier 与可确认产物；支持计划生成及任务/例行计划写入 |
+| 模型配置 | 支持系统模型与个人模型，个人中心可添加 OpenAI-compatible、Anthropic、Gemini、Ollama、vLLM 等配置，附连通性/能力测试 |
+| 知识 Wiki | Obsidian/Karpathy 风格个人知识空间，Raw Source、Patch Set、Wiki Pages、index/log、双链、图谱、健康检查；文档视图支持所见即所得编辑、公式块（本地 KaTeX）、参考链接、右键删除、整站 Markdown 导出 |
 | 参考计划 | 用户可提交计划模板，后台审核后发布，其他用户可按开始日期套用到自己的学习日历 |
 | 成就系统 | 根据学习记录、任务完成、连续天数等自动解锁成就 |
 | 监管后台 | 查看流量、账号、反馈、运行异常、参考计划审核等运营与安全信息 |
@@ -27,7 +27,7 @@
 后端：
 
 - Java 17
-- Spring Boot 3.3
+- Spring Boot 3.3.5
 - Spring Security
 - MyBatis-Plus
 - MySQL 8
@@ -37,10 +37,12 @@
 
 前端：
 
-- 原生 HTML / CSS / JavaScript
-- 静态文件内嵌在 Spring Boot JAR 中
-- Vditor、KaTeX、DOMPurify
-- PWA Manifest / Service Worker
+- 原生 HTML / CSS / JavaScript，无构建步骤，静态文件内嵌在 Spring Boot JAR 中
+- 统一 UI 皮肤 `assets/zhiqu-ui.css`（5 套配色 × 浅/深主题，CSS 变量驱动）
+- 统一接口适配层 `assets/zhiqu-api.js`（JWT 自动附带、Claude 风格弹窗/通知、Markdown/表格/公式渲染、各页 boot 逻辑）
+- 侧边导航与主题切换 `assets/zhiqu-ui.js`
+- KaTeX 本地内置（`assets/vendor/katex/`，公式离线渲染，不依赖外网 CDN）
+- PWA Manifest / Service Worker（外壳资源与字体预缓存，支持离线）
 
 部署：
 
@@ -94,12 +96,13 @@ zhiqu-backend/
 
 ```text
 static/
-├─ index.html                  # 登录页
+├─ index.html                  # 落地页 + 登录/注册弹窗
 ├─ dashboard.html              # 学习看板
 ├─ ai-assistant.html           # AI 助手
 ├─ tasks.html                  # 任务管理
 ├─ routines.html               # 例行计划
 ├─ shared-plans.html           # 参考计划
+├─ shared-plan-admin.html      # 参考计划审核
 ├─ knowledge-wiki.html         # 知识 Wiki
 ├─ statistics.html             # 统计
 ├─ achievement.html            # 成就
@@ -107,12 +110,16 @@ static/
 ├─ admin.html                  # 监管后台
 ├─ account-admin.html          # 账号管理
 ├─ feedback-admin.html         # 反馈管理
-├─ css/
-├─ js/
-├─ vendor/
+├─ assets/                     # 当前前端：统一皮肤 / 接口适配层 / 导航
+│  ├─ zhiqu-ui.css             #   5 套配色 × 浅/深主题
+│  ├─ zhiqu-ui.js              #   侧边导航 + 主题切换
+│  ├─ zhiqu-api.js             #   接口适配 + 弹窗 + Markdown/公式渲染 + 各页 boot
+│  └─ vendor/katex/            #   本地内置 KaTeX（js/css/字体）
 ├─ manifest.json
-└─ service-worker.js
+└─ service-worker.js           # PWA 外壳与字体预缓存（版本号即缓存 key）
 ```
+
+> 说明：`static/css/`、`static/js/`、`static/vendor/` 为改版前的旧前端，已不再被页面引用，保留仅作历史参考。
 
 数据库迁移：
 
@@ -129,8 +136,18 @@ db/migration/
 ├─ V9__concurrency_hardening.sql
 ├─ V10__product_privacy_models.sql
 ├─ V11__knowledge_wiki_plan_selection.sql
-└─ V12__obsidian_wiki_workspace.sql
+├─ V12__obsidian_wiki_workspace.sql
+├─ V13__shared_plan_ai_wiki_enhancements.sql
+├─ V14__ai_model_probe_status.sql
+├─ V15__ai_message_research_metadata.sql
+├─ V16__ai_message_stream_metadata.sql
+├─ V17__ai_message_lifecycle_status.sql
+├─ V18__ai_notebook_agent_pipeline.sql
+├─ V19__ai_agent_taskgraph_claims_verifier.sql
+└─ V20__profile_account_login_history.sql
 ```
+
+当前数据库结构由 Flyway `V1`–`V20` 按顺序维护。已有数据库启动时会继续执行尚未应用的迁移；新数据库会从 `V1` 完整升级到最新版本。
 
 ## 本地开发
 
