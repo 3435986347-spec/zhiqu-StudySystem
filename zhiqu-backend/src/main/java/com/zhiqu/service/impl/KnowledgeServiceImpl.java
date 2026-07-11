@@ -246,6 +246,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         pageMapper.deleteById(page.getId());
         clearPageLinks(userId, page.getId());
+        detachInboundLinks(userId, page.getId());
         writeLog(userId, "page.delete", page.getId(), null, null, "删除知识页：" + page.getTitle(), null);
     }
 
@@ -274,35 +275,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (!"PENDING".equals(revision.getStatus())) {
             throw new BusinessException("该建议已处理");
         }
-        String content = cleanMarkdownContent(cryptoService.decrypt(revision.getEncryptedContent()));
-        UserKnowledgePage page = revision.getPageId() == null ? null : pageMapper.selectById(revision.getPageId());
         if ("DELETE".equalsIgnoreCase(revision.getActionType())) {
-            if (page != null && page.getUserId().equals(userId)) {
-                pageMapper.deleteById(page.getId());
-            }
+            deleteRevisionTarget(userId, revision.getPageId());
         } else {
-            if (page == null) {
-                page = new UserKnowledgePage();
-                page.setUserId(userId);
-                page.setPageType(inferPageType(revision.getTitle(), content));
-                page.setSortOrder(0);
-                page.setPinned(0);
-            }
-            page.setTitle(limit(value(revision.getTitle(), "对话提炼记忆"), 120));
-            page.setEncryptedContent(cryptoService.encrypt(content));
-            page.setContentSummary(limit(content.replaceAll("\\s+", " "), 500));
-            page.setSourceMessageId(revision.getSourceMessageId());
-            page.setSourceConversationId(revision.getSourceConversationId());
-            page.setEncryptionVersion("v1");
-            if (page.getId() == null) {
-                pageMapper.insert(page);
-            } else {
-                pageMapper.updateById(page);
-            }
-            syncPageLinks(userId, page.getId(), content);
+            UserKnowledgePage page = upsertRevisionPage(userId, revision, Map.of(), false);
             writeLog(userId, "revision.apply", page.getId(), revision.getPatchSetId(), null,
                     "合入知识草稿：" + page.getTitle(), page.getContentSummary());
-            revision.setPageId(page.getId());
         }
         revision.setStatus("APPROVED");
         revision.setAppliedAt(LocalDateTime.now());
@@ -318,61 +296,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         UserKnowledgeRevision revision = ownedRevision(userId, id);
         if (!"PENDING".equals(revision.getStatus())) {
-            throw new BusinessException("璇ュ缓璁凡澶勭悊");
+            throw new BusinessException("该建议已处理");
         }
         if ("DELETE".equalsIgnoreCase(revision.getActionType())) {
-            if (revision.getPageId() != null) {
-                UserKnowledgePage page = pageMapper.selectById(revision.getPageId());
-                if (page != null && page.getUserId().equals(userId)) {
-                    pageMapper.deleteById(page.getId());
-                }
-            }
+            deleteRevisionTarget(userId, revision.getPageId());
             revision.setStatus("APPROVED");
             revision.setAppliedAt(LocalDateTime.now());
             revisionMapper.updateById(revision);
             return revisionRow(revision);
         }
 
-        String content = cleanMarkdownContent(value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent())));
-        String title = value(body.get("title"), value(revision.getTitle(), "AI Wiki 草稿"));
-        Long pageId = parseLong(body.get("pageId"));
-        if (pageId == null) {
-            pageId = revision.getPageId();
-        }
-        UserKnowledgePage page = pageId == null ? null : ownedPage(userId, pageId);
-        if (page == null) {
-            page = new UserKnowledgePage();
-            page.setUserId(userId);
-        }
-
-        Long parentId = parseLong(body.get("parentId"));
-        if (parentId != null) {
-            if (page.getId() != null && page.getId().equals(parentId)) {
-                throw new BusinessException("涓嶈兘鎶婄煡璇嗛〉鎸傚埌鑷繁涓嬮潰");
-            }
-            ownedPage(userId, parentId);
-        }
-        page.setParentId(parentId);
-        page.setTitle(limit(title, 120));
-        page.setPageType(limit(value(body.get("pageType"), value(page.getPageType(), inferPageType(title, content))).toUpperCase(), 40));
-        page.setSortOrder(defaultInt(body.get("sortOrder"), page.getSortOrder() == null ? 0 : page.getSortOrder()));
-        page.setPinned(body.containsKey("pinned")
-                ? (booleanValue(body.get("pinned")) ? 1 : 0)
-                : (page.getPinned() == null ? 0 : page.getPinned()));
-        page.setEncryptedContent(cryptoService.encrypt(content));
-        page.setContentSummary(limit(content.replaceAll("\\s+", " "), 500));
-        page.setSourceMessageId(revision.getSourceMessageId());
-        page.setSourceConversationId(revision.getSourceConversationId());
-        page.setEncryptionVersion("v1");
-        if (page.getId() == null) {
-            pageMapper.insert(page);
-        } else {
-            pageMapper.updateById(page);
-        }
-        syncPageLinks(userId, page.getId(), content);
+        UserKnowledgePage page = upsertRevisionPage(userId, revision, body, true);
         writeLog(userId, "revision.apply", page.getId(), revision.getPatchSetId(), null,
                 "合入知识草稿：" + page.getTitle(), page.getContentSummary());
-
         revision.setStatus("APPROVED");
         revision.setAppliedAt(LocalDateTime.now());
         revisionMapper.updateById(revision);
@@ -732,14 +668,17 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (ZipOutputStream zip = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
-                // 标题允许重复，且清洗/截断后也可能碰撞；zip 重名条目会直接抛异常导致整包失败
+                // 标题允许重复，且清洗/截断后也可能碰撞；zip 重名条目会直接抛异常导致整包失败。
+                // 追加 ID 后仍可能撞上恰好叫「标题-ID」的页面，循环加序号直到唯一
+                // 大小写不敏感去重：Plan.md 与 plan.md 在 zip 里是两条，但解到 Windows/Obsidian 目录会互相覆盖
                 java.util.Set<String> usedNames = new java.util.HashSet<>();
                 for (UserKnowledgePage page : pages) {
                     String base = safeMarkdownFileName(page.getTitle());
                     String fileName = base + ".md";
-                    if (!usedNames.add(fileName)) {
-                        fileName = base + "-" + page.getId() + ".md";
-                        usedNames.add(fileName);
+                    int seq = 2;
+                    while (!usedNames.add(fileName.toLowerCase(java.util.Locale.ROOT))) {
+                        fileName = base + "-" + page.getId() + (seq > 2 ? "-" + seq : "") + ".md";
+                        seq++;
                     }
                     zip.putNextEntry(new ZipEntry("wiki/" + fileName));
                     String content = markdownExportContent(page);
@@ -760,49 +699,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         if (body == null) body = Map.of();
         if ("DELETE".equalsIgnoreCase(revision.getActionType())) {
-            if (revision.getPageId() != null) {
-                UserKnowledgePage page = pageMapper.selectById(revision.getPageId());
-                if (page != null && page.getUserId().equals(userId)) {
-                    pageMapper.deleteById(page.getId());
-                    clearPageLinks(userId, page.getId());
-                }
-            }
+            deleteRevisionTarget(userId, revision.getPageId());
             revision.setStatus("APPROVED");
             revision.setAppliedAt(LocalDateTime.now());
             revisionMapper.updateById(revision);
             return revisionRow(revision);
         }
 
-        String content = cleanMarkdownContent(value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent())));
-        String title = value(body.get("title"), value(revision.getTitle(), "AI Wiki 草稿"));
-        Long pageId = parseLong(body.get("pageId"));
-        if (pageId == null) pageId = revision.getPageId();
-        UserKnowledgePage page = pageId == null ? null : ownedPage(userId, pageId);
-        if (page == null) {
-            page = new UserKnowledgePage();
-            page.setUserId(userId);
-        }
-        Long parentId = parseLong(body.get("parentId"));
-        if (parentId != null) ownedPage(userId, parentId);
-        page.setParentId(parentId);
-        page.setTitle(limit(title, 120));
-        page.setPageType(limit(value(body.get("pageType"), value(page.getPageType(), inferPageType(title, content))).toUpperCase(), 40));
-        page.setSortOrder(defaultInt(body.get("sortOrder"), page.getSortOrder() == null ? 0 : page.getSortOrder()));
-        page.setPinned(body.containsKey("pinned")
-                ? (booleanValue(body.get("pinned")) ? 1 : 0)
-                : (page.getPinned() == null ? 0 : page.getPinned()));
-        page.setEncryptedContent(cryptoService.encrypt(content));
-        page.setContentSummary(limit(content.replaceAll("\\s+", " "), 500));
-        page.setSourceMessageId(revision.getSourceMessageId());
-        page.setSourceConversationId(revision.getSourceConversationId());
-        page.setEncryptionVersion("v1");
-        if (page.getId() == null) {
-            pageMapper.insert(page);
-        } else {
-            pageMapper.updateById(page);
-        }
-        syncPageLinks(userId, page.getId(), content);
-        revision.setPageId(page.getId());
+        UserKnowledgePage page = upsertRevisionPage(userId, revision, body, true);
         revision.setStatus("APPROVED");
         revision.setAppliedAt(LocalDateTime.now());
         revisionMapper.updateById(revision);
@@ -938,6 +842,86 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         for (KnowledgePageLink link : links) {
             linkMapper.deleteById(link.getId());
         }
+    }
+
+    // 目标页被删除后，指向它的入链置为悬空（targetPageId=null），健康检查才能报出
+    private void detachInboundLinks(Long userId, Long pageId) {
+        List<KnowledgePageLink> inbound = linkMapper.selectList(new LambdaQueryWrapper<KnowledgePageLink>()
+                .eq(KnowledgePageLink::getUserId, userId)
+                .eq(KnowledgePageLink::getTargetPageId, pageId));
+        for (KnowledgePageLink link : inbound) {
+            link.setTargetPageId(null);
+            linkMapper.updateById(link);
+        }
+    }
+
+    // Revision/Patch 合入知识页的统一入口：所有权校验 + 系统页字段锁定 + 保留标题校验（与 savePage 一致）。
+    // 关键：pageId 可能来自客户端提交的 patch 项，必须按 userId 校验归属，杜绝猜 ID 覆盖他人知识页。
+    // allowStructure=true 才接受 body 里的 parentId/pageType/sortOrder/pinned（approveRevision 只改正文和标题，传 false）。
+    private UserKnowledgePage upsertRevisionPage(Long userId, UserKnowledgeRevision revision,
+                                                 Map<String, Object> body, boolean allowStructure) {
+        if (body == null) body = Map.of();
+        String content = cleanMarkdownContent(value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent())));
+        String title = limit(value(body.get("title"), value(revision.getTitle(), "AI Wiki 草稿")), 120);
+        Long pageId = parseLong(body.get("pageId"));
+        if (pageId == null) pageId = revision.getPageId();
+        UserKnowledgePage page = pageId == null ? null : ownedPage(userId, pageId);
+        boolean systemPage = page != null && isSystemKnowledgePage(page);
+        if (systemPage && !title.trim().equals(page.getTitle())) {
+            throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许改名");
+        }
+        if (!systemPage && isSystemPageTitle(title)) {
+            throw new BusinessException("「index / log / Wiki 维护规则」是系统保留标题，请换一个");
+        }
+        if (page == null) {
+            page = new UserKnowledgePage();
+            page.setUserId(userId);
+            page.setPageType(inferPageType(title, content));
+            page.setSortOrder(0);
+            page.setPinned(0);
+        }
+        page.setTitle(title);
+        if (allowStructure && !systemPage) {
+            Long parentId = parseLong(body.get("parentId"));
+            if (parentId != null) {
+                if (page.getId() != null && page.getId().equals(parentId)) {
+                    throw new BusinessException("不能把知识页挂到自己下面");
+                }
+                ownedPage(userId, parentId);
+            }
+            page.setParentId(parentId);
+            page.setPageType(limit(value(body.get("pageType"), value(page.getPageType(), inferPageType(title, content))).toUpperCase(), 40));
+            page.setSortOrder(defaultInt(body.get("sortOrder"), page.getSortOrder() == null ? 0 : page.getSortOrder()));
+            page.setPinned(body.containsKey("pinned")
+                    ? (booleanValue(body.get("pinned")) ? 1 : 0)
+                    : (page.getPinned() == null ? 0 : page.getPinned()));
+        }
+        page.setEncryptedContent(cryptoService.encrypt(content));
+        page.setContentSummary(limit(content.replaceAll("\\s+", " "), 500));
+        page.setSourceMessageId(revision.getSourceMessageId());
+        page.setSourceConversationId(revision.getSourceConversationId());
+        page.setEncryptionVersion("v1");
+        if (page.getId() == null) {
+            pageMapper.insert(page);
+        } else {
+            pageMapper.updateById(page);
+        }
+        syncPageLinks(userId, page.getId(), content);
+        revision.setPageId(page.getId());
+        return page;
+    }
+
+    // Revision/Patch 的 DELETE 分支统一入口：归属校验 + 系统页拦截 + 双链清理（出链删除、入链置空）
+    private void deleteRevisionTarget(Long userId, Long pageId) {
+        if (pageId == null) return;
+        UserKnowledgePage page = pageMapper.selectById(pageId);
+        if (page == null || !page.getUserId().equals(userId)) return;
+        if (isSystemKnowledgePage(page)) {
+            throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许删除");
+        }
+        pageMapper.deleteById(page.getId());
+        clearPageLinks(userId, page.getId());
+        detachInboundLinks(userId, page.getId());
     }
 
     private UserKnowledgePage findPageByTitle(Long userId, String title) {
@@ -1187,8 +1171,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private String safeMarkdownFileName(String title) {
-        String value = value(title, "untitled").replaceAll("[\\\\/:*?\"<>|]", "-").trim();
-        return value.isBlank() ? "untitled" : limit(value, 80);
+        // 清洗 Windows/ZIP 非法字符（含斜杠），去掉结尾的点和空格（Windows 不允许），避开 CON/PRN 等保留设备名
+        String value = value(title, "untitled").replaceAll("[\\\\/:*?\"<>|]", "-")
+                .replaceAll("[ .]+$", "").trim();
+        if (value.isBlank()) {
+            value = "untitled";
+        }
+        if (value.matches("(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])$")) {
+            value = "_" + value;
+        }
+        return limit(value, 80);
     }
 
     private String normalizeTitle(String title) {

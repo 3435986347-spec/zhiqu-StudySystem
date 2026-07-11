@@ -4,7 +4,7 @@
   'use strict';
 
   var API = '/api';
-  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all16';
+  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all18';
   // 根路径 "/" 由 Spring 作为欢迎页返回 index.html（登录页），此时 pathname 为空，
   // 默认必须落到 index.html，否则 bootIndex 不执行、登录按钮无处理器。
   var page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
@@ -1752,9 +1752,13 @@
     // 归一化 LaTeX 定界符：模型输出常用 \(...\) / \[...\]，统一转成 $ / $$ 再走块解析。
     // 必须绕开 ``` 围栏代码段，否则代码里的字面 \[..\] 会被改写，编辑保存后造成永久破坏
     function normalizeMathDelims(text) {
-      return text
+      // 行内代码里的 \(..\) / \[..\] 是字面量，先抽成占位符护住，替换完再还原
+      var codeSpans = [];
+      var t = text.replace(/`[^`\n]+`/g, function (m) { codeSpans.push(m); return '\u0002' + (codeSpans.length - 1) + '\u0002'; });
+      t = t
         .replace(/\\\[([\s\S]+?)\\\]/g, function (m, tex) { return '\n$$\n' + tex.trim() + '\n$$\n'; })
         .replace(/\\\((.+?)\\\)/g, function (m, tex) { return '$' + tex.trim() + '$'; });
+      return t.replace(/\u0002(\d+)\u0002/g, function (m, i) { return codeSpans[+i]; });
     }
     var rawLines = String(md || '').replace(/\r/g, '').split('\n');
     var segs = [], segBuf = [], fenced = false;
