@@ -10,39 +10,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 覆盖写安全判定（Wiki 工具智能体“长页防丢”根治逻辑）的单元测试。
+ * 不变量：对已存在的页，只有本轮【完整读取过】才允许整页覆盖。
  * 该判定是纯函数，不依赖 Spring 上下文或数据库，可稳定复现。
  */
 class WikiToolGuardTest {
 
-    /** 本轮该页被截断读取 → 拒绝整页覆盖，避免据不全内容覆盖丢尾。 */
+    /** 关键场景：模型跳过 read_wiki_page，直接覆盖一个已有页 → fullyReadTitles 为空 → 拒绝。 */
     @Test
-    void refusesOverwriteWhenTargetReadIncompletely() {
-        Set<String> incomplete = new HashSet<>();
-        incomplete.add("英语学习偏好");
-        assertTrue(AiServiceImpl.refuseFullOverwrite(incomplete, "英语学习偏好", 100));
+    void refusesOverwriteWhenExistingPageNeverRead() {
+        assertTrue(AiServiceImpl.refuseExistingPageOverwrite(new HashSet<>(), "英语学习偏好"));
     }
 
-    /** 现有正文超过可完整读取上限 → 即便本轮未标记，也禁止整页覆盖（模型可能跳过 read）。 */
+    /** 读过但被截断（未进入 fullyReadTitles）→ 视同未完整读取 → 拒绝。 */
     @Test
-    void refusesOverwriteWhenExistingPageExceedsFullReadLimit() {
-        assertTrue(AiServiceImpl.refuseFullOverwrite(new HashSet<>(), "长页", AiServiceImpl.WIKI_READ_FULL_LIMIT + 1));
+    void refusesOverwriteWhenReadButTruncated() {
+        Set<String> fullyRead = new HashSet<>(); // 截断读不加入该集合
+        assertTrue(AiServiceImpl.refuseExistingPageOverwrite(fullyRead, "长页"));
     }
 
-    /** 正常大小且完整读取的页面 → 允许生成覆盖草稿。 */
+    /** 本轮完整读取过该页 → 允许整页覆盖。 */
     @Test
-    void allowsOverwriteForNormalFullyReadPage() {
-        assertFalse(AiServiceImpl.refuseFullOverwrite(new HashSet<>(), "普通页", 5000));
+    void allowsOverwriteWhenFullyReadThisTurn() {
+        Set<String> fullyRead = new HashSet<>();
+        fullyRead.add("英语学习偏好");
+        assertFalse(AiServiceImpl.refuseExistingPageOverwrite(fullyRead, "英语学习偏好"));
     }
 
-    /** 恰好等于上限（未截断）→ 允许覆盖，边界不误伤。 */
+    /** 完整读取了另一页，不代表可覆盖当前页 → 拒绝。 */
     @Test
-    void allowsOverwriteAtExactlyLimit() {
-        assertFalse(AiServiceImpl.refuseFullOverwrite(new HashSet<>(), "边界页", AiServiceImpl.WIKI_READ_FULL_LIMIT));
+    void distinctTitleNotCoveredByAnotherFullRead() {
+        Set<String> fullyRead = new HashSet<>();
+        fullyRead.add("页面a");
+        assertTrue(AiServiceImpl.refuseExistingPageOverwrite(fullyRead, "页面b"));
     }
 
-    /** incompleteTitles 为空且现有正文为空（新建/小页）→ 允许。 */
+    /** 空集合（防御性 null）→ 拒绝。 */
     @Test
-    void allowsOverwriteForNullSetAndEmptyExisting() {
-        assertFalse(AiServiceImpl.refuseFullOverwrite(null, "新页", 0));
+    void refusesOverwriteForNullSet() {
+        assertTrue(AiServiceImpl.refuseExistingPageOverwrite(null, "任意页"));
     }
 }

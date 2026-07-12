@@ -107,6 +107,7 @@ public class AiServiceImpl implements AiService {
     private final ModelStreamAdapterFactory modelStreamAdapterFactory;
     private final SensitiveCryptoService cryptoService;
     private final RestTemplate restTemplate;
+    private final RestTemplate toolTurnRestTemplate;
     private final ObjectMapper objectMapper;
     private final boolean systemDefaultEnabled;
     private final String systemDisplayName;
@@ -168,6 +169,7 @@ public class AiServiceImpl implements AiService {
         this.modelStreamAdapterFactory = modelStreamAdapterFactory;
         this.cryptoService = cryptoService;
         this.restTemplate = createAiRestTemplate();
+        this.toolTurnRestTemplate = createToolTurnRestTemplate();
         this.objectMapper = new ObjectMapper();
         this.systemDefaultEnabled = systemDefaultEnabled;
         this.systemDisplayName = systemDisplayName;
@@ -184,6 +186,14 @@ public class AiServiceImpl implements AiService {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
         factory.setReadTimeout(60_000);
+        return new RestTemplate(factory);
+    }
+
+    /** 工具循环专用：读取超时更短(25s)，配合每轮墙钟预算把回答前的阻塞时间收敛在可控范围。 */
+    private RestTemplate createToolTurnRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(25_000);
         return new RestTemplate(factory);
     }
 
@@ -1891,10 +1901,13 @@ public class AiServiceImpl implements AiService {
             return false;
         }
         String text = message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
-        boolean mentionsWiki = text.contains("知识wiki")
-                || text.contains("wiki")
+        // 与 looksWikiToolIntent 的“提及 Wiki”词表保持一致，避免“写进笔记/写入知识页”触发了工具流程却拿不到写工具
+        boolean mentionsWiki = text.contains("wiki")
                 || text.contains("知识库")
-                || text.contains("知识树");
+                || text.contains("知识页")
+                || text.contains("知识树")
+                || text.contains("笔记")
+                || text.contains("我记");
         boolean asksWrite = text.contains("写进")
                 || text.contains("写入")
                 || text.contains("存入")
@@ -2380,21 +2393,33 @@ public class AiServiceImpl implements AiService {
         return s.isEmpty() ? def : s;
     }
 
-    /** read_wiki_page 可完整返回的正文上限；超过则视为“未完整读取”，超长页禁止整页覆盖。 */
+    /** read_wiki_page 可完整返回的正文上限；超过则视为“未完整读取”，该页禁止整页覆盖。 */
     static final int WIKI_READ_FULL_LIMIT = 16000;
+    /** 注入最终回答的 Wiki 上下文上限：留出单页完整正文 + 检索结果/包装文本的余量。 */
+    static final int WIKI_CONTEXT_LIMIT = 20000;
 
     /**
-     * 覆盖写安全判定（代码级根治，不依赖提示词）：目标页本轮被截断读取、或现有正文超过可完整读取上限时，
-     * 拒绝整页覆盖，避免模型据不全内容生成覆盖草稿导致确认后尾部丢失。仅对“已存在的页”生效。
+     * 覆盖写安全判定（代码级根治，不依赖提示词）：对“已存在的页”，只有本轮【完整读取过】才允许整页覆盖；
+     * 未读取、或读取被截断（未进入 fullyReadTitles）一律拒绝，避免模型据不全/凭空内容覆盖导致确认后丢失。
+     * 新建页（调用方 existing==null）不走此判定。
      */
-    static boolean refuseFullOverwrite(java.util.Set<String> incompleteTitles, String normTitle, int existingContentLen) {
-        return (incompleteTitles != null && incompleteTitles.contains(normTitle)) || existingContentLen > WIKI_READ_FULL_LIMIT;
+    static boolean refuseExistingPageOverwrite(java.util.Set<String> fullyReadTitles, String normTitle) {
+        return fullyReadTitles == null || !fullyReadTitles.contains(normTitle);
     }
 
-    /** 一次工具循环内的可变状态：本轮读取不完整的页标题、已生成草稿的页标题（用于幂等与防丢）。 */
+    /** 一次工具循环内的可变状态：本轮【完整读取过】的页标题、已生成草稿的页标题（用于防丢与幂等）。 */
     private static final class WikiLoopState {
-        final java.util.Set<String> incompleteTitles = new java.util.HashSet<>();
+        final java.util.Set<String> fullyReadTitles = new java.util.HashSet<>();
         final java.util.Set<String> patchedTitles = new java.util.HashSet<>();
+    }
+
+    // create_wiki_patch 幂等的进程内条带锁：按 用户+标题 哈希分桶，锁内“查已存在 PENDING → 创建”避免并发双插。
+    private static final int WIKI_PATCH_STRIPES = 64;
+    private final Object[] wikiPatchLocks = java.util.stream.IntStream.range(0, WIKI_PATCH_STRIPES)
+            .mapToObj(i -> new Object()).toArray();
+
+    private Object wikiPatchLock(Long userId, String normTitle) {
+        return wikiPatchLocks[Math.floorMod(java.util.Objects.hash(userId, normTitle), WIKI_PATCH_STRIPES)];
     }
 
     private String normWikiTitle(String t) {
@@ -2455,7 +2480,8 @@ public class AiServiceImpl implements AiService {
             List<Map<String, Object>> tools = buildWikiTools(canWrite);
             long loopStart = System.currentTimeMillis();
             for (int round = 0; round < 4; round++) {
-                // 墙钟预算：回答前的同步工具循环最多占用 30s，避免拖垮 SSE 首个 token（慢模型下尤甚）。
+                // 墙钟预算：每轮开始前检查，累计超 30s 不再发起新一轮；单轮读取超时另限 25s（toolTurnRestTemplate），
+                // 故回答前阻塞上界约 30s+25s，远小于 300s SSE 总超时（不是硬性 30s 上限）。
                 if (System.currentTimeMillis() - loopStart > 30_000L) {
                     log.warn("Wiki 工具循环超时预算，提前结束 userId={} round={}", userId, round);
                     break;
@@ -2492,7 +2518,7 @@ public class AiServiceImpl implements AiService {
         } catch (Exception e) {
             log.warn("Wiki 工具循环失败（不影响主回答） userId={} err={}", userId, e.getMessage());
         }
-        return new WikiAgentResult(limitText(context.toString(), WIKI_READ_FULL_LIMIT), wrotePatch);
+        return new WikiAgentResult(limitText(context.toString(), WIKI_CONTEXT_LIMIT), wrotePatch);
     }
 
     /** 非流式发起一轮带工具的对话（tool_choice=auto），返回 choices[0].message 节点（含可能的 tool_calls）；无则 null。 */
@@ -2513,7 +2539,7 @@ public class AiServiceImpl implements AiService {
         body.put("tool_choice", "auto"); // 由模型自行决定调用哪个工具或直接作答
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<String> response = restTemplate.postForEntity(
+            ResponseEntity<String> response = toolTurnRestTemplate.postForEntity(
                     resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
             JsonNode message = objectMapper.readTree(response.getBody()).at("/choices/0/message");
             return message.isMissingNode() ? null : message;
@@ -2600,12 +2626,12 @@ public class AiServiceImpl implements AiService {
                     if (page == null) {
                         return WikiToolExecution.read("未找到标题为「" + title + "」的页面，可先用 search_wiki 确认标题。");
                     }
-                    // 放宽截断上限，覆盖绝大多数真实页面；仍超长则显式标记 truncated，并记录该页“本轮读取不完整”，
-                    // 供 create_wiki_patch 代码级拒绝整页覆盖（不依赖模型是否听从提示词）。
+                    // 放宽截断上限，覆盖绝大多数真实页面；仅在“完整读取（未截断）”时记录该页，
+                    // 作为 create_wiki_patch 允许整页覆盖的必要前提（未读/截断读都不会进入该集合）。
                     String full = String.valueOf(value(page.get("content"), ""));
                     boolean truncated = full.length() > WIKI_READ_FULL_LIMIT;
-                    if (truncated) {
-                        state.incompleteTitles.add(normWikiTitle(String.valueOf(value(page.get("title"), title))));
+                    if (!truncated) {
+                        state.fullyReadTitles.add(normWikiTitle(String.valueOf(value(page.get("title"), title))));
                     }
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("title", value(page.get("title"), title));
@@ -2627,41 +2653,41 @@ public class AiServiceImpl implements AiService {
                     String norm = existing != null
                             ? normWikiTitle(String.valueOf(value(existing.get("title"), title)))
                             : normWikiTitle(title);
-                    // P1 防丢：目标页已存在且本轮未完整读取，或现有正文超过可完整读取上限 → 代码级拒绝整页覆盖。
-                    if (existing != null) {
-                        int existingLen = String.valueOf(value(existing.get("content"), "")).length();
-                        if (refuseFullOverwrite(state.incompleteTitles, norm, existingLen)) {
-                            return WikiToolExecution.read("目标页「" + title + "」内容较长且本轮未完整读取，"
-                                    + "为避免整页覆盖丢失内容，未生成草稿；请让用户在 Wiki 里手动编辑该页。");
-                        }
+                    // P1 防丢：已存在的页只有本轮【完整读取过】才允许整页覆盖（未读/截断读都拒绝），杜绝跳过 read 直接覆盖。
+                    if (existing != null && refuseExistingPageOverwrite(state.fullyReadTitles, norm)) {
+                        return WikiToolExecution.read("目标页「" + title + "」本轮未完整读取，为避免整页覆盖丢失内容，未生成草稿；"
+                                + "请先用 read_wiki_page 读取全文再修改，或让用户手动编辑该页。");
                     }
                     // P1 幂等（本轮）：同一循环内已为该标题生成过草稿，不重复创建。
                     if (state.patchedTitles.contains(norm)) {
                         return WikiToolExecution.wrote("本轮已为「" + title + "」生成过待合入草稿，未重复创建。");
                     }
-                    // P1 幂等（跨请求）：已存在同名 PENDING 草稿（如用户超时重试），不再新增，指向已有草稿。
-                    for (Map<String, Object> ps : knowledgeService.listPatchSets(userId, "PENDING")) {
-                        if (norm.equals(normWikiTitle(String.valueOf(value(ps.get("title"), ""))))) {
-                            state.patchedTitles.add(norm);
-                            return WikiToolExecution.wrote("已存在同名「待合入变更」草稿（#" + value(ps.get("id"), "?")
-                                    + "），未重复创建；请先到审核面板处理。");
+                    // P1 幂等 + 并发安全：按 用户+标题 加锁，锁内“查已存在 PENDING → 创建”，防两个并发请求同时查不到各自插入。
+                    // 注：进程内条带锁，适用于当前单实例部署；横向扩容需改 DB 唯一约束 / 分布式锁 / Idempotency-Key。
+                    synchronized (wikiPatchLock(userId, norm)) {
+                        for (Map<String, Object> ps : knowledgeService.listPatchSets(userId, "PENDING")) {
+                            if (norm.equals(normWikiTitle(String.valueOf(value(ps.get("title"), ""))))) {
+                                state.patchedTitles.add(norm);
+                                return WikiToolExecution.wrote("已存在同名「待合入变更」草稿（#" + value(ps.get("id"), "?")
+                                        + "），未重复创建；请先到审核面板处理。");
+                            }
                         }
+                        Map<String, Object> item = new LinkedHashMap<>();
+                        item.put("actionType", "UPSERT");
+                        item.put("title", title);
+                        item.put("content", content);
+                        item.put("pageType", String.valueOf(value(args.get("pageType"), "NOTE")).toUpperCase(Locale.ROOT));
+                        if (existing != null && existing.get("id") != null) {
+                            item.put("pageId", existing.get("id"));
+                        }
+                        Map<String, Object> patchBody = new LinkedHashMap<>();
+                        patchBody.put("title", title);
+                        patchBody.put("summary", "AI 工具建议的 Wiki 变更：" + title);
+                        patchBody.put("triggerType", "AGENT");
+                        patchBody.put("items", List.of(item));
+                        knowledgeService.createPatchSet(userId, patchBody);
+                        state.patchedTitles.add(norm);
                     }
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("actionType", "UPSERT");
-                    item.put("title", title);
-                    item.put("content", content);
-                    item.put("pageType", String.valueOf(value(args.get("pageType"), "NOTE")).toUpperCase(Locale.ROOT));
-                    if (existing != null && existing.get("id") != null) {
-                        item.put("pageId", existing.get("id"));
-                    }
-                    Map<String, Object> patchBody = new LinkedHashMap<>();
-                    patchBody.put("title", title);
-                    patchBody.put("summary", "AI 工具建议的 Wiki 变更：" + title);
-                    patchBody.put("triggerType", "AGENT");
-                    patchBody.put("items", List.of(item));
-                    knowledgeService.createPatchSet(userId, patchBody);
-                    state.patchedTitles.add(norm);
                     return WikiToolExecution.wrote("已生成「待合入变更」草稿：" + title + (existing != null ? "（更新现有页）" : "（新建页）")
                             + "。请到知识 Wiki 的“待合入变更”面板确认后落库。");
                 }
@@ -2695,11 +2721,15 @@ public class AiServiceImpl implements AiService {
         if (!hasText(message)) {
             return false;
         }
-        String t = message.toLowerCase(Locale.ROOT);
+        String t = message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
         boolean mentionsWiki = t.contains("wiki") || t.contains("知识库") || t.contains("知识页")
                 || t.contains("笔记") || t.contains("知识树") || t.contains("我记");
-        boolean readOrWrite = t.contains("记录") || t.contains("写到") || t.contains("写入") || t.contains("整理到")
-                || t.contains("更新") || t.contains("补充") || t.contains("新建") || t.contains("存到") || t.contains("存进")
+        // readOrWrite 是 looksWikiWriteIntent.asksWrite 的超集，保证“写意图 ⟹ 工具意图”（否则会启动 Agent 却不给写工具）
+        boolean readOrWrite = t.contains("记录") || t.contains("写到") || t.contains("写入") || t.contains("写进")
+                || t.contains("整理到") || t.contains("同步到") || t.contains("更新") || t.contains("补充")
+                || t.contains("新建") || t.contains("存到") || t.contains("存进") || t.contains("存入")
+                || t.contains("保存") || t.contains("收录") || t.contains("放进") || t.contains("放到")
+                || t.contains("加入") || t.contains("记到") || t.contains("记进")
                 || t.contains("查") || t.contains("看看") || t.contains("找") || t.contains("读");
         return mentionsWiki && readOrWrite;
     }
