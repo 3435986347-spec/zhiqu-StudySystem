@@ -2158,19 +2158,196 @@ public class AiServiceImpl implements AiService {
         if (!looksTaskCreationIntent(userMessage)) {
             return empty;
         }
-        try {
-            String aiResponse = callAiApi(config, getChatTaskExtractionPrompt(), """
-                    用户刚才的请求：
-                    %s
+        String userPrompt = """
+                用户刚才的请求：
+                %s
 
-                    助手刚才给出的计划：
-                    %s
-                    """.formatted(userMessage, assistantReply));
+                助手刚才给出的计划：
+                %s
+                """.formatted(userMessage, assistantReply);
+        // 优先走真正的工具调用（Function Calling）：把 create_study_plan 的 tools schema 发给模型，
+        // 由模型自己决定并返回 tool_call，后端解析其 arguments 落成计划草稿（保留用户确认后落库）。
+        // OpenAI 协议兼容；不支持工具的提供方或调用失败时，回退到下面的结构化输出方案。
+        if (!"ANTHROPIC".equals(normalizeProviderType(config.getProviderType()))) {
+            try {
+                String toolArgs = callStudyPlanToolCall(config, getStudyPlanToolSystemPrompt(), userPrompt);
+                if (hasText(toolArgs)) {
+                    return parsePlanFromResponse(toolArgs);
+                }
+            } catch (Exception ignored) {
+                // 该模型/网关不支持 tools 或调用失败，回退到结构化输出
+            }
+        }
+        try {
+            String aiResponse = callAiApi(config, getChatTaskExtractionPrompt(), userPrompt);
             return parsePlanFromResponse(aiResponse);
         } catch (Exception ignored) {
             // 对话本身已经成功，任务抽取失败时不影响聊天回复。
             return empty;
         }
+    }
+
+    /**
+     * 真正的 Function Calling：以 OpenAI 工具调用协议发送 create_study_plan 的 schema，
+     * 强制 tool_choice 保证拿到结构化 tool_call，返回其 arguments 的 JSON 字符串（与 {tasks,routines} 同形）。
+     * 无 tool_call 时返回空串，交由上层回退。
+     */
+    private String callStudyPlanToolCall(AiModelConfig config, String systemPrompt, String userMessage) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String apiKey = decryptedApiKey(config);
+        if (hasText(apiKey)) {
+            headers.setBearerAuth(apiKey);
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("model", config.getModelName());
+        body.put("messages", List.of(
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", userMessage)));
+        body.put("temperature", 0.2);
+        body.put("max_tokens", 4096);
+        body.put("tools", buildCreateStudyPlanTools());
+        // 已判定为写计划意图，强制模型调用该工具，稳定拿到结构化调用参数
+        body.put("tool_choice", Map.of("type", "function", "function", Map.of("name", "create_study_plan")));
+        try {
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            ResponseEntity<String> response = restTemplate.postForEntity(
+                    resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
+            JsonNode toolCalls = objectMapper.readTree(response.getBody()).at("/choices/0/message/tool_calls");
+            if (!toolCalls.isArray() || toolCalls.isEmpty()) {
+                return "";
+            }
+            JsonNode chosen = null;
+            for (JsonNode call : toolCalls) {
+                if ("create_study_plan".equals(call.at("/function/name").asText(""))) {
+                    chosen = call;
+                    break;
+                }
+            }
+            if (chosen == null) {
+                chosen = toolCalls.get(0);
+            }
+            JsonNode args = chosen.at("/function/arguments");
+            // OpenAI 规范里 arguments 是 JSON 字符串；个别网关直接给对象，两种都兼容
+            if (args.isTextual()) {
+                return args.asText("");
+            }
+            return args.isMissingNode() ? "" : args.toString();
+        } catch (RestClientResponseException e) {
+            throw new BusinessException(formatAiHttpError(e));
+        } catch (Exception e) {
+            // 解析失败等一律上抛，由调用方回退到结构化输出
+            throw new BusinessException("工具调用失败：" + e.getMessage());
+        }
+    }
+
+    /** create_study_plan 工具的 OpenAI schema：模型据此决定并填充一次性任务与例行计划 */
+    private List<Map<String, Object>> buildCreateStudyPlanTools() {
+        Map<String, Object> taskProps = new LinkedHashMap<>();
+        taskProps.put("title", schemaProp("string", "任务标题，简洁明确"));
+        taskProps.put("description", schemaProp("string", "任务说明，含背景/范围/验收标准"));
+        taskProps.put("startTime", schemaProp("string", "YYYY-MM-DD HH:mm:ss 开始时间，无法确定则省略"));
+        taskProps.put("deadline", schemaProp("string", "YYYY-MM-DD HH:mm:ss 截止时间，无法确定则省略"));
+        taskProps.put("durationMinutes", schemaProp("integer", "预计时长（分钟）"));
+        taskProps.put("taskType", schemaProp("string", "assignment/exam/report/presentation/course/activity/other 中最接近的一类"));
+        taskProps.put("difficulty", schemaProp("integer", "1..5，1很简单 5很复杂"));
+        taskProps.put("suggestedReminderOffsets", schemaArray("integer", "提前提醒天数，如 [7,4,2]；无 deadline 则为空数组"));
+        taskProps.put("reminderReason", schemaProp("string", "提醒节奏的一句话理由"));
+        taskProps.put("priority", schemaProp("integer", "0低 1中 2高"));
+        taskProps.put("suggestedQuadrant", schemaProp("integer", "1重要且紧急 2重要不紧急 3紧急不重要 4不重要不紧急"));
+        taskProps.put("reason", schemaProp("string", "象限建议的一句话理由"));
+        Map<String, Object> taskItem = new LinkedHashMap<>();
+        taskItem.put("type", "object");
+        taskItem.put("properties", taskProps);
+        taskItem.put("required", List.of("title"));
+
+        Map<String, Object> routineProps = new LinkedHashMap<>();
+        routineProps.put("title", schemaProp("string", "例行计划标题，如 每天背单词"));
+        routineProps.put("description", schemaProp("string", "例行计划说明"));
+        routineProps.put("frequency", schemaEnum("重复频率", "DAILY", "WEEKLY"));
+        routineProps.put("daysOfWeek", schemaArray("integer", "周一=1..周日=7；DAILY 可为空数组"));
+        routineProps.put("startDate", schemaProp("string", "YYYY-MM-DD"));
+        routineProps.put("endDate", schemaProp("string", "YYYY-MM-DD，无法确定则用今天起 30 天后"));
+        routineProps.put("preferredTime", schemaProp("string", "HH:mm，无法确定则省略"));
+        routineProps.put("durationMinutes", schemaProp("integer", "预计时长（分钟）"));
+        routineProps.put("taskType", schemaProp("string", "assignment/exam/report/presentation/course/activity/other"));
+        routineProps.put("difficulty", schemaProp("integer", "1..5"));
+        routineProps.put("priority", schemaProp("integer", "0低 1中 2高"));
+        routineProps.put("suggestedQuadrant", schemaProp("integer", "1..4"));
+        routineProps.put("reminderEnabled", schemaProp("boolean", "是否开启提醒"));
+        routineProps.put("reminderOffsets", schemaArray("integer", "提醒偏移，通常 [0]"));
+        routineProps.put("reminderReason", schemaProp("string", "为何适合做成例行计划"));
+        Map<String, Object> routineItem = new LinkedHashMap<>();
+        routineItem.put("type", "object");
+        routineItem.put("properties", routineProps);
+        routineItem.put("required", List.of("title", "frequency"));
+
+        Map<String, Object> props = new LinkedHashMap<>();
+        props.put("tasks", schemaArrayOf(taskItem, "一次性任务/里程碑：有明确 DDL 或阶段交付物的项目"));
+        props.put("routines", schemaArrayOf(routineItem, "每天/每周重复执行的例行计划，不要展开成大量 tasks"));
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("type", "object");
+        params.put("properties", props);
+        params.put("required", List.of("tasks", "routines"));
+
+        Map<String, Object> function = new LinkedHashMap<>();
+        function.put("name", "create_study_plan");
+        function.put("description", "把用户认可的学习计划拆解为可写入知趣系统的一次性任务(tasks)和例行计划(routines)，"
+                + "生成草稿供用户确认后落库。当用户希望把计划写进系统时调用；没有可落地项时两个数组都传空。");
+        function.put("parameters", params);
+
+        Map<String, Object> tool = new LinkedHashMap<>();
+        tool.put("type", "function");
+        tool.put("function", function);
+        return List.of(tool);
+    }
+
+    private Map<String, Object> schemaProp(String type, String description) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", type);
+        m.put("description", description);
+        return m;
+    }
+
+    private Map<String, Object> schemaArray(String itemType, String description) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", "array");
+        m.put("items", Map.of("type", itemType));
+        m.put("description", description);
+        return m;
+    }
+
+    private Map<String, Object> schemaArrayOf(Map<String, Object> item, String description) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", "array");
+        m.put("items", item);
+        m.put("description", description);
+        return m;
+    }
+
+    private Map<String, Object> schemaEnum(String description, String... values) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", "string");
+        m.put("enum", List.of(values));
+        m.put("description", description);
+        return m;
+    }
+
+    private String getStudyPlanToolSystemPrompt() {
+        String today = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString();
+        return """
+                你是「知趣·象限学习系统」的计划落库助手。今天是 %s，时区 Asia/Shanghai。
+                你会收到用户的计划创建请求和助手刚给出的学习计划。请判断其中真正适合写入系统的内容，
+                并调用 create_study_plan 工具提交：有明确 DDL、阶段交付物、考试、报告的进入 tasks；
+                每天、每周、长期重复执行的学习动作进入 routines，不要展开成大量 tasks。
+
+                规则：
+                - 只提交真正可落地的项目，不要把闲聊、解释、纯建议写进去；没有可落地项则 tasks 和 routines 都传空数组。
+                - 只有日期没有具体时间时，deadline 用当天 23:59:59；“7月1日前”“本周日之前”等相对时间按今天换算成具体 deadline。
+                - 长期阶段（如“基础期 2026.7-2027.3”）可生成阶段末检查任务，deadline 为该阶段最后一天 23:59:59。
+                - 提醒偏移：考试/报告/难度4-5 用 [14,7,4,2,1]；普通作业/难度3 用 [7,4,2]；简单任务 用 [4,2,1]；无 deadline 用 []。
+                - 象限：1 重要且紧急，2 重要不紧急，3 紧急不重要，4 不重要不紧急。
+                """.formatted(today);
     }
 
     private boolean looksTaskCreationIntent(String message) {
