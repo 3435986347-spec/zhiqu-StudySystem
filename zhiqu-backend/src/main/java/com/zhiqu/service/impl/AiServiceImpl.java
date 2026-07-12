@@ -1,6 +1,7 @@
 package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
@@ -32,6 +33,8 @@ import com.zhiqu.mapper.UserKnowledgeRevisionMapper;
 import com.zhiqu.service.AgentBlackboardService;
 import com.zhiqu.service.AgentTaskGraphService;
 import com.zhiqu.service.AiService;
+import com.zhiqu.service.KnowledgeService;
+import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.AiWorkspaceService;
 import com.zhiqu.service.MultiAgentOrchestrator;
 import com.zhiqu.service.ReminderPlanService;
@@ -93,6 +96,7 @@ public class AiServiceImpl implements AiService {
     private final KnowledgePatchSetMapper knowledgePatchSetMapper;
     private final KnowledgeSourceMapper knowledgeSourceMapper;
     private final ReminderPlanService reminderPlanService;
+    private final KnowledgeService knowledgeService;
     private final AiWorkspaceService aiWorkspaceService;
     private final AgentTaskGraphService agentTaskGraphService;
     private final AgentBlackboardService agentBlackboardService;
@@ -124,6 +128,7 @@ public class AiServiceImpl implements AiService {
                          KnowledgePatchSetMapper knowledgePatchSetMapper,
                          KnowledgeSourceMapper knowledgeSourceMapper,
                          ReminderPlanService reminderPlanService,
+                         @Lazy KnowledgeService knowledgeService,
                          AiWorkspaceService aiWorkspaceService,
                          AgentTaskGraphService agentTaskGraphService,
                          AgentBlackboardService agentBlackboardService,
@@ -152,6 +157,7 @@ public class AiServiceImpl implements AiService {
         this.knowledgePatchSetMapper = knowledgePatchSetMapper;
         this.knowledgeSourceMapper = knowledgeSourceMapper;
         this.reminderPlanService = reminderPlanService;
+        this.knowledgeService = knowledgeService;
         this.aiWorkspaceService = aiWorkspaceService;
         this.agentTaskGraphService = agentTaskGraphService;
         this.agentBlackboardService = agentBlackboardService;
@@ -661,6 +667,7 @@ public class AiServiceImpl implements AiService {
             emitAgentStepDone(emitter, requestId, agentRun, finalWriterStep);
             completeTask(emitter, requestId, agentRun, finalWriterTask, Map.of("contentLength", finalReply.length()), "Final answer generated");
             Map<String, Object> suggestedPlan = suggestPlanFromChatIfNeeded(config, limitedMessage, finalReply);
+            runWikiAgentIfNeeded(config, userId, limitedMessage, finalReply);
             if (plannerStep != null) {
                 Map<String, Object> planArtifactContent = new LinkedHashMap<>();
                 planArtifactContent.put("tasks", suggestedPlan.get("tasks"));
@@ -2348,6 +2355,250 @@ public class AiServiceImpl implements AiService {
                 - 提醒偏移：考试/报告/难度4-5 用 [14,7,4,2,1]；普通作业/难度3 用 [7,4,2]；简单任务 用 [4,2,1]；无 deadline 用 []。
                 - 象限：1 重要且紧急，2 重要不紧急，3 紧急不重要，4 不重要不紧急。
                 """.formatted(today);
+    }
+
+    /** 取值：为 null 或空串时回退默认值 */
+    private String value(Object v, String def) {
+        if (v == null) {
+            return def;
+        }
+        String s = String.valueOf(v);
+        return s.isEmpty() ? def : s;
+    }
+
+    // ===== 知识 Wiki 多工具智能体（真正的 Function Calling 循环）=====
+    // 读工具 search_wiki / read_wiki_page 只读、按 userId 隔离；写工具 create_wiki_patch 走
+    // createPatchSet 落进「待合入变更」审核队列，用户确认后才入库（复用已加固的归属/系统页保护）。
+    // 关键：全程用显式传入的 userId，不依赖 SecurityContext（本方法运行在 SSE 异步线程，上下文不传播）。
+    private void runWikiAgentIfNeeded(AiModelConfig config, Long userId, String userMessage, String assistantReply) {
+        if (!looksWikiToolIntent(userMessage)) {
+            return;
+        }
+        if ("ANTHROPIC".equals(normalizeProviderType(config.getProviderType()))) {
+            return; // 仅 OpenAI 兼容协议实现工具循环
+        }
+        try {
+            List<Map<String, Object>> messages = new ArrayList<>();
+            messages.add(Map.of("role", "system", "content", getWikiToolSystemPrompt()));
+            messages.add(Map.of("role", "user", "content",
+                    userMessage + "\n\n（助手已给出的回复，供参考）：\n" + limitText(assistantReply, 1500)));
+            List<Map<String, Object>> tools = buildWikiTools();
+            for (int round = 0; round < 5; round++) {
+                JsonNode message = callOpenAiToolTurn(config, messages, tools);
+                if (message == null) {
+                    break;
+                }
+                // 原样回填助手轮（含 tool_calls），作为下一轮上下文
+                messages.add(objectMapper.convertValue(message, new TypeReference<Map<String, Object>>() {}));
+                JsonNode toolCalls = message.path("tool_calls");
+                if (!toolCalls.isArray() || toolCalls.isEmpty()) {
+                    break; // 模型给出最终答复，结束循环
+                }
+                for (JsonNode call : toolCalls) {
+                    String name = call.at("/function/name").asText("");
+                    JsonNode argsNode = call.at("/function/arguments");
+                    String argsRaw = argsNode.isTextual() ? argsNode.asText("") : (argsNode.isMissingNode() ? "{}" : argsNode.toString());
+                    String result = executeWikiTool(userId, name, argsRaw);
+                    Map<String, Object> toolMsg = new LinkedHashMap<>();
+                    toolMsg.put("role", "tool");
+                    toolMsg.put("tool_call_id", call.path("id").asText(""));
+                    toolMsg.put("name", name);
+                    toolMsg.put("content", result);
+                    messages.add(toolMsg);
+                }
+            }
+        } catch (Exception ignored) {
+            // 工具循环失败不影响主聊天回复
+        }
+    }
+
+    /** 非流式发起一轮带工具的对话（tool_choice=auto），返回 choices[0].message 节点（含可能的 tool_calls）；无则 null。 */
+    private JsonNode callOpenAiToolTurn(AiModelConfig config, List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String apiKey = decryptedApiKey(config);
+        if (hasText(apiKey)) {
+            headers.setBearerAuth(apiKey);
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("model", config.getModelName());
+        body.put("messages", messages);
+        body.put("temperature", 0.2);
+        body.put("max_tokens", 4096);
+        body.put("tools", tools);
+        body.put("tool_choice", "auto"); // 由模型自行决定调用哪个工具或直接作答
+        try {
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            ResponseEntity<String> response = restTemplate.postForEntity(
+                    resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
+            JsonNode message = objectMapper.readTree(response.getBody()).at("/choices/0/message");
+            return message.isMissingNode() ? null : message;
+        } catch (RestClientResponseException e) {
+            throw new BusinessException(formatAiHttpError(e));
+        } catch (Exception e) {
+            throw new BusinessException("Wiki 工具调用失败：" + e.getMessage());
+        }
+    }
+
+    private List<Map<String, Object>> buildWikiTools() {
+        List<Map<String, Object>> tools = new ArrayList<>();
+        Map<String, Object> searchProps = new LinkedHashMap<>();
+        searchProps.put("query", schemaProp("string", "检索关键词（匹配标题、摘要与正文）"));
+        tools.add(wikiTool("search_wiki",
+                "在用户自己的知识 Wiki 里按关键词检索页面，返回匹配到的页面标题、类型与摘要。涉及用户已有笔记/计划/偏好时先检索。",
+                searchProps, List.of("query")));
+
+        Map<String, Object> readProps = new LinkedHashMap<>();
+        readProps.put("title", schemaProp("string", "要读取的页面标题（需与检索结果中的标题一致）"));
+        tools.add(wikiTool("read_wiki_page",
+                "读取指定标题页面的完整正文，用于在编辑前了解现有内容或引用细节。",
+                readProps, List.of("title")));
+
+        Map<String, Object> patchProps = new LinkedHashMap<>();
+        patchProps.put("title", schemaProp("string", "目标页面标题；标题已存在则视为更新该页，否则新建"));
+        patchProps.put("content", schemaProp("string", "页面的完整 Markdown 正文（会整页覆盖，不要只给片段）"));
+        patchProps.put("pageType", schemaProp("string", "GOAL/PROJECT/PREFERENCE/WEAKNESS/RESOURCE/MEMORY/NOTE，默认 NOTE"));
+        tools.add(wikiTool("create_wiki_patch",
+                "把对知识 Wiki 的新增或修改生成为“待合入变更”草稿，交用户在审核面板确认后才落库（不会直接改库）。系统页 index/log/维护规则不可修改。",
+                patchProps, List.of("title", "content")));
+        return tools;
+    }
+
+    private Map<String, Object> wikiTool(String name, String description, Map<String, Object> props, List<String> required) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("type", "object");
+        params.put("properties", props);
+        params.put("required", required);
+        Map<String, Object> function = new LinkedHashMap<>();
+        function.put("name", name);
+        function.put("description", description);
+        function.put("parameters", params);
+        Map<String, Object> tool = new LinkedHashMap<>();
+        tool.put("type", "function");
+        tool.put("function", function);
+        return tool;
+    }
+
+    /** 执行一个 Wiki 工具，返回给模型的文本结果。所有读写都按显式 userId 隔离。 */
+    private String executeWikiTool(Long userId, String name, String argsJson) {
+        Map<String, Object> args;
+        try {
+            args = objectMapper.readValue(hasText(argsJson) ? argsJson : "{}", new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            return "参数解析失败：" + e.getMessage();
+        }
+        try {
+            switch (name == null ? "" : name) {
+                case "search_wiki": {
+                    String q = String.valueOf(value(args.get("query"), "")).trim().toLowerCase(Locale.ROOT);
+                    List<Map<String, Object>> hits = new ArrayList<>();
+                    for (Map<String, Object> p : knowledgeService.listPages(userId)) {
+                        String title = String.valueOf(value(p.get("title"), ""));
+                        String summary = String.valueOf(value(p.get("summary"), ""));
+                        String content = String.valueOf(value(p.get("content"), ""));
+                        if (q.isEmpty() || (title + " " + summary + " " + content).toLowerCase(Locale.ROOT).contains(q)) {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("title", title);
+                            row.put("type", value(p.get("pageType"), "NOTE"));
+                            row.put("summary", limitText(summary, 120));
+                            hits.add(row);
+                            if (hits.size() >= 12) break;
+                        }
+                    }
+                    return objectMapper.writeValueAsString(Map.of("count", hits.size(), "pages", hits));
+                }
+                case "read_wiki_page": {
+                    String title = String.valueOf(value(args.get("title"), "")).trim();
+                    Map<String, Object> page = findUserPageByTitle(userId, title);
+                    if (page == null) {
+                        return "未找到标题为「" + title + "」的页面，可先用 search_wiki 确认标题。";
+                    }
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("title", value(page.get("title"), title));
+                    row.put("type", value(page.get("pageType"), "NOTE"));
+                    row.put("content", limitText(String.valueOf(value(page.get("content"), "")), 3000));
+                    return objectMapper.writeValueAsString(row);
+                }
+                case "create_wiki_patch": {
+                    String title = String.valueOf(value(args.get("title"), "")).trim();
+                    String content = String.valueOf(value(args.get("content"), "")).trim();
+                    if (title.isEmpty() || content.isEmpty()) {
+                        return "title 和 content 不能为空。";
+                    }
+                    if (isReservedWikiTitle(title)) {
+                        return "系统页（index / log / Wiki 维护规则）不允许通过工具修改。";
+                    }
+                    Map<String, Object> existing = findUserPageByTitle(userId, title);
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("actionType", "UPSERT");
+                    item.put("title", title);
+                    item.put("content", content);
+                    item.put("pageType", String.valueOf(value(args.get("pageType"), "NOTE")).toUpperCase(Locale.ROOT));
+                    if (existing != null && existing.get("id") != null) {
+                        item.put("pageId", existing.get("id"));
+                    }
+                    Map<String, Object> patchBody = new LinkedHashMap<>();
+                    patchBody.put("title", title);
+                    patchBody.put("summary", "AI 工具建议的 Wiki 变更：" + title);
+                    patchBody.put("triggerType", "AGENT");
+                    patchBody.put("items", List.of(item));
+                    knowledgeService.createPatchSet(userId, patchBody);
+                    return "已生成「待合入变更」草稿：" + title + (existing != null ? "（更新现有页）" : "（新建页）")
+                            + "。请到知识 Wiki 的“待合入变更”面板确认后落库。";
+                }
+                default:
+                    return "未知工具：" + name;
+            }
+        } catch (Exception e) {
+            return "工具执行失败：" + e.getMessage();
+        }
+    }
+
+    private Map<String, Object> findUserPageByTitle(Long userId, String title) {
+        if (!hasText(title)) {
+            return null;
+        }
+        String norm = title.trim().toLowerCase(Locale.ROOT);
+        for (Map<String, Object> p : knowledgeService.listPages(userId)) {
+            if (norm.equals(String.valueOf(value(p.get("title"), "")).trim().toLowerCase(Locale.ROOT))) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    private boolean isReservedWikiTitle(String title) {
+        String t = title == null ? "" : title.trim();
+        return "index".equalsIgnoreCase(t) || "log".equalsIgnoreCase(t) || "Wiki 维护规则".equals(t);
+    }
+
+    private boolean looksWikiToolIntent(String message) {
+        if (!hasText(message)) {
+            return false;
+        }
+        String t = message.toLowerCase(Locale.ROOT);
+        boolean mentionsWiki = t.contains("wiki") || t.contains("知识库") || t.contains("知识页")
+                || t.contains("笔记") || t.contains("知识树") || t.contains("我记");
+        boolean readOrWrite = t.contains("记录") || t.contains("写到") || t.contains("写入") || t.contains("整理到")
+                || t.contains("更新") || t.contains("补充") || t.contains("新建") || t.contains("存到") || t.contains("存进")
+                || t.contains("查") || t.contains("看看") || t.contains("找") || t.contains("读");
+        return mentionsWiki && readOrWrite;
+    }
+
+    private String getWikiToolSystemPrompt() {
+        return """
+                你是「知趣·象限学习系统」的知识 Wiki 助理。你可以调用工具读取和修改用户自己的知识 Wiki：
+                - search_wiki(query)：按关键词检索用户的 Wiki 页面。
+                - read_wiki_page(title)：读取某页完整正文。
+                - create_wiki_patch(title, content, pageType?)：把新增/修改生成为“待合入变更”草稿，用户确认后才落库。
+
+                要求：
+                - 需要引用或修改用户已有内容时，先 search_wiki，再按需 read_wiki_page，最后才 create_wiki_patch，避免凭空覆盖。
+                - 修改页面时 content 必须是整页的完整 Markdown（工具会整页覆盖），不要只给片段。
+                - 系统页 index / log / Wiki 维护规则 不可修改。
+                - 只有用户明确想记录/整理/更新到 Wiki 时才写；只是提问或闲聊则只读或不调用工具。
+                - 完成后用一两句中文说明你查到了什么、生成了哪些待确认草稿。
+                """;
     }
 
     private boolean looksTaskCreationIntent(String message) {
