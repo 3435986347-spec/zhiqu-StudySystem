@@ -365,7 +365,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 UserKnowledgeRevision revision = new UserKnowledgeRevision();
                 revision.setUserId(userId);
                 revision.setPatchSetId(patchSet.getId());
-                revision.setPageId(parseLong(item.get("pageId")));
+                Long targetPageId = parseLong(item.get("pageId"));
+                revision.setPageId(targetPageId);
+                // 记录目标页当前正文哈希作为基准，合入前据此检测“草稿生成后原页已被改动”的冲突
+                revision.setBaseContentHash(currentPageContentHash(userId, targetPageId));
                 revision.setActionType(limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20));
                 revision.setTitle(limit(value(item.get("title"), patchSet.getTitle()), 120));
                 revision.setEncryptedContent(cryptoService.encrypt(cleanMarkdownContent(value(item.get("content"), ""))));
@@ -866,6 +869,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         Long pageId = parseLong(body.get("pageId"));
         if (pageId == null) pageId = revision.getPageId();
         UserKnowledgePage page = pageId == null ? null : ownedPage(userId, pageId);
+        // 草稿基准冲突检测：草稿生成后若原页正文已被改动（当前哈希 ≠ 基准哈希），拒绝整页覆盖，
+        // 避免陈旧草稿吞掉用户后来的改动。仅在基准存在且指向同一页时生效；老数据/新建页基准为空，跳过。
+        if (page != null && revision.getBaseContentHash() != null
+                && page.getId().equals(revision.getPageId())
+                && !revision.getBaseContentHash().equals(contentHash(cryptoService.decrypt(page.getEncryptedContent())))) {
+            throw new BusinessException("该页在草稿生成后已被修改，为避免覆盖你的改动，请重新生成草稿再合入。");
+        }
         boolean systemPage = page != null && isSystemKnowledgePage(page);
         if (systemPage && !title.trim().equals(page.getTitle())) {
             throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许改名");
@@ -922,6 +932,29 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         pageMapper.deleteById(page.getId());
         clearPageLinks(userId, page.getId());
         detachInboundLinks(userId, page.getId());
+    }
+
+    /** 计算指定用户某页当前正文的哈希，作为草稿基准；页不存在/非本人时返回 null（无基准即不做冲突拦截）。 */
+    private String currentPageContentHash(Long userId, Long pageId) {
+        if (pageId == null) return null;
+        UserKnowledgePage page = pageMapper.selectById(pageId);
+        if (page == null || !userId.equals(page.getUserId())) return null;
+        return contentHash(cryptoService.decrypt(page.getEncryptedContent()));
+    }
+
+    /** 内容 SHA-256 十六进制哈希；用于草稿基准版本比对。异常时返回 null（视为无基准，宁可放行也不误拦）。 */
+    private String contentHash(String content) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(value(content, "").getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private UserKnowledgePage findPageByTitle(Long userId, String title) {

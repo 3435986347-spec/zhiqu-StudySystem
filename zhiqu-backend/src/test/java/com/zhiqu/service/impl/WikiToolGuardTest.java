@@ -49,4 +49,37 @@ class WikiToolGuardTest {
     void refusesOverwriteForNullSet() {
         assertTrue(AiServiceImpl.refuseExistingPageOverwrite(null, "任意页"));
     }
+
+    // ===== 写/工具意图分类 =====
+
+    /** “更新知识页”既是工具意图也是写意图（此前只触发工具循环却拿不到写工具的缺口）。 */
+    @Test
+    void updateKnowledgePageIsWriteIntent() {
+        assertTrue(AiServiceImpl.looksWikiToolIntent("更新知识页里的算法笔记"));
+        assertTrue(AiServiceImpl.looksWikiWriteIntent("更新知识页里的算法笔记"));
+    }
+
+    /** 不变量：写意图 ⟹ 工具意图（否则会启动 Agent 却不下发写工具）。 */
+    @Test
+    void writeIntentImpliesToolIntent() {
+        String[] writes = {"把这段写进笔记", "写入知识页", "更新知识wiki", "保存到知识库", "记录到笔记", "补充到知识树", "新建一个知识页"};
+        for (String m : writes) {
+            assertTrue(AiServiceImpl.looksWikiWriteIntent(m), "应判为写意图: " + m);
+            assertTrue(AiServiceImpl.looksWikiToolIntent(m), "写意图必然是工具意图: " + m);
+        }
+    }
+
+    /** 纯查询是工具意图但不是写意图（最小权限：不下发写工具）。 */
+    @Test
+    void pureQueryIsToolButNotWrite() {
+        assertTrue(AiServiceImpl.looksWikiToolIntent("查一下我知识wiki里的英语偏好"));
+        assertFalse(AiServiceImpl.looksWikiWriteIntent("查一下我知识wiki里的英语偏好"));
+    }
+
+    /** 与 Wiki 无关的消息两者都不触发。 */
+    @Test
+    void nonWikiMessageTriggersNeither() {
+        assertFalse(AiServiceImpl.looksWikiToolIntent("今天天气怎么样"));
+        assertFalse(AiServiceImpl.looksWikiWriteIntent("帮我写一首诗"));
+    }
 }

@@ -327,7 +327,7 @@ public class AiServiceImpl implements AiService {
                 userId,
                 conversation.getId(),
                 "assistant",
-                limitText(finalReply, MESSAGE_MAX_LENGTH),
+                limitRawMarkdown(finalReply, MESSAGE_MAX_LENGTH),
                 isReasoningRequested(normalizedReasoningMode) ? aiCallResult.reasoningSummary() : "",
                 citationRows(citations),
                 retrievalStatus,
@@ -669,9 +669,9 @@ public class AiServiceImpl implements AiService {
                 reasoning.append(aiCallResult.reasoningSummary());
             }
 
-            String finalReply = limitText(reply.toString(), MESSAGE_MAX_LENGTH);
+            String finalReply = limitRawMarkdown(reply.toString(), MESSAGE_MAX_LENGTH);
             String finalReasoningSummary = isReasoningRequested(normalizedReasoningMode)
-                    ? limitText(reasoning.toString(), 2000)
+                    ? limitRawMarkdown(reasoning.toString(), 2000)
                     : "";
             completeAssistantMessage(
                     assistantMessage,
@@ -1896,8 +1896,8 @@ public class AiServiceImpl implements AiService {
                 .trim();
     }
 
-    private boolean looksWikiWriteIntent(String message) {
-        if (!hasText(message)) {
+    static boolean looksWikiWriteIntent(String message) {
+        if (message == null || message.isBlank()) {
             return false;
         }
         String text = message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
@@ -1908,9 +1908,13 @@ public class AiServiceImpl implements AiService {
                 || text.contains("知识树")
                 || text.contains("笔记")
                 || text.contains("我记");
+        // 写动词需与 looksWikiToolIntent.readOrWrite 里的“写类”动词等价，保证“写意图 ⟹ 工具意图且下发写工具”
         boolean asksWrite = text.contains("写进")
                 || text.contains("写入")
+                || text.contains("写到")
                 || text.contains("存入")
+                || text.contains("存到")
+                || text.contains("存进")
                 || text.contains("保存")
                 || text.contains("收录")
                 || text.contains("放进")
@@ -1919,7 +1923,11 @@ public class AiServiceImpl implements AiService {
                 || text.contains("整理到")
                 || text.contains("同步到")
                 || text.contains("记到")
-                || text.contains("记进");
+                || text.contains("记进")
+                || text.contains("记录")
+                || text.contains("更新")
+                || text.contains("补充")
+                || text.contains("新建");
         return mentionsWiki && asksWrite;
     }
 
@@ -2480,8 +2488,8 @@ public class AiServiceImpl implements AiService {
             List<Map<String, Object>> tools = buildWikiTools(canWrite);
             long loopStart = System.currentTimeMillis();
             for (int round = 0; round < 4; round++) {
-                // 墙钟预算：每轮开始前检查，累计超 30s 不再发起新一轮；单轮读取超时另限 25s（toolTurnRestTemplate），
-                // 故回答前阻塞上界约 30s+25s，远小于 300s SSE 总超时（不是硬性 30s 上限）。
+                // 墙钟预算（软限）：每轮开始前检查，累计超 30s 不再发起新一轮。末轮可能在第 ~30s 才启动，
+                // 叠加单轮 连接10s+读取25s（toolTurnRestTemplate）后最坏约 65s（另加 DNS/本地执行）；仍远小于 300s SSE 总超时。
                 if (System.currentTimeMillis() - loopStart > 30_000L) {
                     log.warn("Wiki 工具循环超时预算，提前结束 userId={} round={}", userId, round);
                     break;
@@ -2518,7 +2526,7 @@ public class AiServiceImpl implements AiService {
         } catch (Exception e) {
             log.warn("Wiki 工具循环失败（不影响主回答） userId={} err={}", userId, e.getMessage());
         }
-        return new WikiAgentResult(limitText(context.toString(), WIKI_CONTEXT_LIMIT), wrotePatch);
+        return new WikiAgentResult(limitRawMarkdown(context.toString(), WIKI_CONTEXT_LIMIT), wrotePatch);
     }
 
     /** 非流式发起一轮带工具的对话（tool_choice=auto），返回 choices[0].message 节点（含可能的 tool_calls）；无则 null。 */
@@ -2717,8 +2725,8 @@ public class AiServiceImpl implements AiService {
         return "index".equalsIgnoreCase(t) || "log".equalsIgnoreCase(t) || "Wiki 维护规则".equals(t);
     }
 
-    private boolean looksWikiToolIntent(String message) {
-        if (!hasText(message)) {
+    static boolean looksWikiToolIntent(String message) {
+        if (message == null || message.isBlank()) {
             return false;
         }
         String t = message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
@@ -3923,6 +3931,17 @@ public class AiServiceImpl implements AiService {
             return text;
         }
         return text.substring(0, maxLength) + "...";
+    }
+
+    /** 仅按长度截断，保留换行/空白（用于会被前端渲染的 Markdown 正文，避免表格/标题/列表被压平）。 */
+    private String limitRawMarkdown(String value, int maxLength) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength) + "...";
     }
 
     /** 从 AI 响应文本中提取 JSON 数组部分 */

@@ -20,6 +20,8 @@ public class UserKnowledgeRevision {
     private Long sourceMessageId;
     private Long sourceConversationId;
     private String encryptionVersion;
+    /** 草稿生成时目标页正文的哈希；合入前比对当前页哈希，检测“草稿生成后原页已被改动”的冲突。为空表示无基准（老数据/新建页）。 */
+    private String baseContentHash;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
