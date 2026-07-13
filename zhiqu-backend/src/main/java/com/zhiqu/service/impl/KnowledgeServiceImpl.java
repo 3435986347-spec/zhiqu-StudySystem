@@ -337,7 +337,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public Map<String, Object> createPatchSet(Long userId, Map<String, Object> body) {
+        // 公共入口：不接受客户端携带的 baseContentHash，基准一律由服务端就地计算（当前页状态哈希）。
+        return createPatchSet(userId, body, Map.of());
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> createPatchSet(Long userId, Map<String, Object> body, Map<Long, String> trustedBaseHashByPageId) {
         if (body == null) body = Map.of();
+        if (trustedBaseHashByPageId == null) trustedBaseHashByPageId = Map.of();
         KnowledgePatchSet patchSet = new KnowledgePatchSet();
         patchSet.setUserId(userId);
         patchSet.setTitle(limit(value(body.get("title"), "Wiki 变更建议"), 180));
@@ -367,12 +375,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 revision.setPatchSetId(patchSet.getId());
                 Long targetPageId = parseLong(item.get("pageId"));
                 revision.setPageId(targetPageId);
-                // 基准哈希优先取“读取时快照”（AI 工具在 read_wiki_page 时捕获并随 item 携带），
-                // 杜绝 read→create 之间原页被用户改动、却按创建时的新状态记基准，导致陈旧草稿仍能覆盖。
-                // 无快照（纯 UI/来源路径，无异步读取间隙）时退回创建时读取当前页状态哈希。
-                String providedBase = value(item.get("baseContentHash"), "");
-                revision.setBaseContentHash(hasText(providedBase)
-                        ? providedBase
+                // 基准哈希只信任服务端来源：AI 工具经内部 3 参方法传入的“读取时快照”，或退回服务端当前页状态哈希；
+                // 绝不读取公共请求体里的 item.baseContentHash（否则客户端可伪造基准、破坏冲突检测不变量）。
+                String trustedBase = targetPageId == null ? null : trustedBaseHashByPageId.get(targetPageId);
+                revision.setBaseContentHash(hasText(trustedBase)
+                        ? trustedBase
                         : currentPageContentHash(userId, targetPageId));
                 revision.setActionType(limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20));
                 revision.setTitle(limit(value(item.get("title"), patchSet.getTitle()), 120));
@@ -883,10 +890,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             pageId = bodyPageId; // 无目标草稿：允许 UI 指定合并到某已有页（null 表示新建页）
         }
         UserKnowledgePage page = pageId == null ? null : ownedPage(userId, pageId);
+        // P2：目标是已有页、但草稿没有基准版本（V21 之前的旧草稿，或无目标草稿被 body 指向了某已有页），
+        // 无从判断草稿生成后原页是否已被改动，直接整页覆盖有丢内容风险 —— 拒绝并要求重新生成带基准的草稿。
+        if (page != null && revision.getBaseContentHash() == null) {
+            throw new BusinessException("该草稿缺少基准版本，无法安全覆盖已有页；请对目标页重新生成草稿（会记录基准）后再合入。");
+        }
         // 草稿基准冲突检测：草稿生成后若原页状态（标题+正文）已被改动（当前哈希 ≠ 基准哈希），拒绝整页覆盖，
-        // 避免陈旧草稿吞掉用户后来的改动。基准始终指向本草稿绑定的目标页（上面已杜绝改指），老数据/新建页/无目标草稿基准为空则跳过。
-        if (page != null && revision.getBaseContentHash() != null
-                && !revision.getBaseContentHash().equals(pageStateHash(page))) {
+        // 避免陈旧草稿吞掉用户后来的改动。基准始终指向本草稿绑定的目标页（上面已杜绝改指）。
+        if (page != null && !revision.getBaseContentHash().equals(pageStateHash(page))) {
             throw new BusinessException("该页在草稿生成后已被修改，为避免覆盖你的改动，请重新生成草稿再合入。");
         }
         boolean systemPage = page != null && isSystemKnowledgePage(page);
@@ -965,17 +976,23 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return pageStateHash(page);
     }
 
-    /** 供 AI 工具在 read_wiki_page 时捕获“读取快照”基准哈希，与合入前比对同源，杜绝 read→create 间隙原页被改导致基准偏新。 */
+    /**
+     * 纯内存计算页状态哈希 = 标题 + 正文（含标题，故用户仅改名也能被冲突检测捕获）。
+     * 供 AI 工具就地对“刚返回给模型的同一份 title + full”取基准，不再二次查库，消除 read→hash 之间的改动窗口。
+     */
     @Override
-    public String pageContentHash(Long userId, Long pageId) {
-        return currentPageContentHash(userId, pageId);
+    public String pageStateHash(String title, String content) {
+        // 标题单独占一行与正文隔开，避免“标题尾+正文首”拼接歧义（内部变更检测哈希，非安全边界）
+        return contentHash(value(title, "") + "\n\n" + value(content, ""));
     }
 
-    /** 页面状态哈希 = 标题 + 正文（含标题，故用户仅改名也能被冲突检测捕获，避免陈旧草稿悄悄恢复旧标题）。 */
+    /**
+     * 从实体计算页状态哈希，用于合入前比对。正文用 cleanMarkdownContent(解密) —— 与 documentTree/read_wiki_page
+     * 返回给模型的正文同源，保证“读取时快照”与“合入时当前状态”可逐字比较。
+     */
     private String pageStateHash(UserKnowledgePage page) {
         if (page == null) return null;
-        // 标题单独占一行与正文隔开，避免“标题尾+正文首”拼接歧义（内部变更检测哈希，非安全边界）
-        return contentHash(value(page.getTitle(), "") + "\n\n" + cryptoService.decrypt(page.getEncryptedContent()));
+        return pageStateHash(page.getTitle(), cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent())));
     }
 
     /** 内容 SHA-256 十六进制哈希；用于草稿基准版本比对。异常时返回 null（视为无基准，宁可放行也不误拦）。 */

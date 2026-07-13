@@ -2153,6 +2153,10 @@ function openCreateModal(options) {
     setValue('wiki-create-parent', options.parentId || '');
     setValue('wiki-create-type', options.pageType || 'NOTE');
     setValue('wiki-create-content', options.content || '');
+    // 记录父节点初始值：合入 AI 草稿到已有页时，只有用户真的改了父节点才发送 parentId，
+    // 避免用一个未修改（可能未正确预填）的值把已挂载子页移到根目录。
+    const createModalEl = document.getElementById('wikiCreateModal');
+    if (createModalEl) createModalEl.dataset.initialParent = String(options.parentId || '');
     setText('wiki-create-title', options.revisionId ? '编辑 AI 草稿' : '新建知识页');
     renderParentOptions();
     document.getElementById('wikiCreateModal')?.classList.remove('hidden');
@@ -2172,22 +2176,31 @@ async function submitCreateForm(event) {
         showToast('请填写标题和内容', 'warning');
         return;
     }
-    const body = {
-        title,
-        content,
-        pageType: valueOf('wiki-create-type') || 'NOTE',
-        parentId: valueOf('wiki-create-parent') || null,
-        sortOrder: siblingCount(valueOf('wiki-create-parent') || null) * 10,
-        pinned: false
-    };
+    const parentVal = valueOf('wiki-create-parent') || null;
     const revisionId = valueOf('wiki-create-revision-id');
     const pageId = valueOf('wiki-create-page-id');
     let res;
     if (revisionId) {
-        body.pageId = pageId || null;
+        // 合入 AI 草稿：只发送本弹窗里用户能改的字段（标题/正文/类型），
+        // 不发 sortOrder/pinned（本弹窗无此控件，发送会把已有页的排序位置和置顶状态重置）；
+        // parentId 仅在用户真的改动了父节点时才发送，否则保留原挂载点。
+        const body = { title, content, pageType: valueOf('wiki-create-type') || 'NOTE', pageId: pageId || null };
+        const initialParent = (document.getElementById('wikiCreateModal')?.dataset.initialParent) || '';
+        if (String(parentVal || '') !== initialParent) {
+            body.parentId = parentVal;
+        }
         res = await api.post('/knowledge/revisions/' + revisionId + '/apply', body);
         showToast('AI 草稿已写入 Wiki', 'success');
     } else {
+        // 新建页：结构字段均为本次创建的初始值，照常发送。
+        const body = {
+            title,
+            content,
+            pageType: valueOf('wiki-create-type') || 'NOTE',
+            parentId: parentVal,
+            sortOrder: siblingCount(parentVal) * 10,
+            pinned: false
+        };
         res = await api.post('/knowledge/pages', body);
         showToast('知识页已创建', 'success');
     }

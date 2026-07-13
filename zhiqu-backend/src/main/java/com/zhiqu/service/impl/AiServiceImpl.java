@@ -2639,17 +2639,15 @@ public class AiServiceImpl implements AiService {
                     }
                     // 放宽截断上限，覆盖绝大多数真实页面；仅在“完整读取（未截断）”时记录该页，
                     // 作为 create_wiki_patch 允许整页覆盖的必要前提（未读/截断读都不会进入该集合）。
+                    String pageTitle = String.valueOf(value(page.get("title"), title));
                     String full = String.valueOf(value(page.get("content"), ""));
                     boolean truncated = full.length() > WIKI_READ_FULL_LIMIT;
                     if (!truncated) {
-                        String normRead = normWikiTitle(String.valueOf(value(page.get("title"), title)));
+                        String normRead = normWikiTitle(pageTitle);
                         state.fullyReadTitles.add(normRead);
-                        // 读取时即捕获页状态基准快照，随后 create_wiki_patch 携带给后端；
-                        // 这样基准反映 Agent 实际读到的版本，read→create 间隙若原页被改，合入会被冲突检测拦下。
-                        Object pid = page.get("id");
-                        if (pid instanceof Number pidNum) {
-                            state.readBaseHash.put(normRead, knowledgeService.pageContentHash(userId, pidNum.longValue()));
-                        }
+                        // 就地对“刚返回给模型的同一份 title + full”在内存算基准哈希，绝不二次查库：
+                        // 否则 listPages 得到正文 A、再查库时页已改成 B，模型看到 A 基准却记成 B，陈旧草稿仍能覆盖 B。
+                        state.readBaseHash.put(normRead, knowledgeService.pageStateHash(pageTitle, full));
                     }
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("title", value(page.get("title"), title));
@@ -2695,13 +2693,14 @@ public class AiServiceImpl implements AiService {
                         item.put("title", title);
                         item.put("content", content);
                         item.put("pageType", String.valueOf(value(args.get("pageType"), "NOTE")).toUpperCase(Locale.ROOT));
+                        // 读取快照基准通过服务端内部 3 参方法可信传入（不进公共请求体，杜绝伪造），
+                        // 键为目标 pageId；本页必已完整读取过（见上方覆盖守卫），故快照必在 readBaseHash 中。
+                        Map<Long, String> trustedBase = new java.util.HashMap<>();
                         if (existing != null && existing.get("id") != null) {
                             item.put("pageId", existing.get("id"));
-                            // 携带 read 时捕获的基准快照（本页必已完整读取过，见上方覆盖守卫），
-                            // 让后端以“读取时”而非“创建草稿时”的状态记基准，杜绝陈旧覆盖窗口。
                             String base = state.readBaseHash.get(norm);
-                            if (hasText(base)) {
-                                item.put("baseContentHash", base);
+                            if (hasText(base) && existing.get("id") instanceof Number pidNum) {
+                                trustedBase.put(pidNum.longValue(), base);
                             }
                         }
                         Map<String, Object> patchBody = new LinkedHashMap<>();
@@ -2709,7 +2708,7 @@ public class AiServiceImpl implements AiService {
                         patchBody.put("summary", "AI 工具建议的 Wiki 变更：" + title);
                         patchBody.put("triggerType", "AGENT");
                         patchBody.put("items", List.of(item));
-                        knowledgeService.createPatchSet(userId, patchBody);
+                        knowledgeService.createPatchSet(userId, patchBody, trustedBase);
                         state.patchedTitles.add(norm);
                     }
                     return WikiToolExecution.wrote("已生成「待合入变更」草稿：" + title + (existing != null ? "（更新现有页）" : "（新建页）")

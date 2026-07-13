@@ -3497,13 +3497,13 @@ async function saveAiWikiDraftModal() {
         if (typeof showToast === 'function') showToast('请填写标题和正文', 'warning');
         return;
     }
+    // 只发送本弹窗里用户实际能改的字段（标题/正文/类型）。不发 parentId/pinned：
+    // 后端仅改动 body 显式携带的结构字段，漏发即保留原值，避免把已挂载子页移到根、或重置置顶状态。
     await api.post('/knowledge/revisions/' + _currentAiWikiDraft.id + '/apply', {
         pageId: _currentAiWikiDraft.pageId || null,
         title: title,
         content: content,
-        pageType: pageType,
-        parentId: null,
-        pinned: false
+        pageType: pageType
     });
     closeAiWikiDraftModal();
     if (typeof showToast === 'function') showToast('已写入知识 Wiki', 'success');
