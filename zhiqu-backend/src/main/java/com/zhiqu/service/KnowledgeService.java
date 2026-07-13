@@ -35,6 +35,9 @@ public interface KnowledgeService {
 
     Map<String, Object> createPatchSet(Long userId, Map<String, Object> body);
 
+    /** 计算指定用户某页当前状态（标题+正文）哈希，供 AI 工具在 read 时捕获草稿基准快照；页不存在/非本人返回 null。 */
+    String pageContentHash(Long userId, Long pageId);
+
     Map<String, Object> listSources(Long userId, String query, String type, int page, int size);
 
     Map<String, Object> createSource(Long userId, Map<String, Object> body);

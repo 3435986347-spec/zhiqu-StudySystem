@@ -367,8 +367,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 revision.setPatchSetId(patchSet.getId());
                 Long targetPageId = parseLong(item.get("pageId"));
                 revision.setPageId(targetPageId);
-                // 记录目标页当前正文哈希作为基准，合入前据此检测“草稿生成后原页已被改动”的冲突
-                revision.setBaseContentHash(currentPageContentHash(userId, targetPageId));
+                // 基准哈希优先取“读取时快照”（AI 工具在 read_wiki_page 时捕获并随 item 携带），
+                // 杜绝 read→create 之间原页被用户改动、却按创建时的新状态记基准，导致陈旧草稿仍能覆盖。
+                // 无快照（纯 UI/来源路径，无异步读取间隙）时退回创建时读取当前页状态哈希。
+                String providedBase = value(item.get("baseContentHash"), "");
+                revision.setBaseContentHash(hasText(providedBase)
+                        ? providedBase
+                        : currentPageContentHash(userId, targetPageId));
                 revision.setActionType(limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20));
                 revision.setTitle(limit(value(item.get("title"), patchSet.getTitle()), 120));
                 revision.setEncryptedContent(cryptoService.encrypt(cleanMarkdownContent(value(item.get("content"), ""))));
@@ -866,14 +871,22 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (body == null) body = Map.of();
         String content = cleanMarkdownContent(value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent())));
         String title = limit(value(body.get("title"), value(revision.getTitle(), "AI Wiki 草稿")), 120);
-        Long pageId = parseLong(body.get("pageId"));
-        if (pageId == null) pageId = revision.getPageId();
+        // 目标页解析：已绑定目标的草稿，合入时 pageId 不可被 body 改指到其它页——否则可传另一本人页面 ID
+        // 绕过基准冲突校验、把草稿整页写到一个本轮未读过的页上。无目标草稿才允许 body 指定合并目标。
+        Long bodyPageId = parseLong(body.get("pageId"));
+        Long pageId = revision.getPageId();
+        if (pageId != null) {
+            if (bodyPageId != null && !bodyPageId.equals(pageId)) {
+                throw new BusinessException("该草稿已绑定目标页，合入时不能改指到其它页；如需写入其它页请重新生成草稿。");
+            }
+        } else {
+            pageId = bodyPageId; // 无目标草稿：允许 UI 指定合并到某已有页（null 表示新建页）
+        }
         UserKnowledgePage page = pageId == null ? null : ownedPage(userId, pageId);
-        // 草稿基准冲突检测：草稿生成后若原页正文已被改动（当前哈希 ≠ 基准哈希），拒绝整页覆盖，
-        // 避免陈旧草稿吞掉用户后来的改动。仅在基准存在且指向同一页时生效；老数据/新建页基准为空，跳过。
+        // 草稿基准冲突检测：草稿生成后若原页状态（标题+正文）已被改动（当前哈希 ≠ 基准哈希），拒绝整页覆盖，
+        // 避免陈旧草稿吞掉用户后来的改动。基准始终指向本草稿绑定的目标页（上面已杜绝改指），老数据/新建页/无目标草稿基准为空则跳过。
         if (page != null && revision.getBaseContentHash() != null
-                && page.getId().equals(revision.getPageId())
-                && !revision.getBaseContentHash().equals(contentHash(cryptoService.decrypt(page.getEncryptedContent())))) {
+                && !revision.getBaseContentHash().equals(pageStateHash(page))) {
             throw new BusinessException("该页在草稿生成后已被修改，为避免覆盖你的改动，请重新生成草稿再合入。");
         }
         boolean systemPage = page != null && isSystemKnowledgePage(page);
@@ -892,19 +905,29 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         page.setTitle(title);
         if (allowStructure && !systemPage) {
-            Long parentId = parseLong(body.get("parentId"));
-            if (parentId != null) {
-                if (page.getId() != null && page.getId().equals(parentId)) {
-                    throw new BusinessException("不能把知识页挂到自己下面");
+            // 结构字段仅在 body 显式携带对应键时才改动，否则保留原值：
+            // Patch Set 合入（applyPatchSet 传空 body）不得把已挂载的子页悄悄移到根目录（丢失目录层级）。
+            if (body.containsKey("parentId")) {
+                Long parentId = parseLong(body.get("parentId"));
+                if (parentId != null) {
+                    if (page.getId() != null && page.getId().equals(parentId)) {
+                        throw new BusinessException("不能把知识页挂到自己下面");
+                    }
+                    ownedPage(userId, parentId);
                 }
-                ownedPage(userId, parentId);
+                page.setParentId(parentId);
             }
-            page.setParentId(parentId);
-            page.setPageType(limit(value(body.get("pageType"), value(page.getPageType(), inferPageType(title, content))).toUpperCase(), 40));
-            page.setSortOrder(defaultInt(body.get("sortOrder"), page.getSortOrder() == null ? 0 : page.getSortOrder()));
-            page.setPinned(body.containsKey("pinned")
-                    ? (booleanValue(body.get("pinned")) ? 1 : 0)
-                    : (page.getPinned() == null ? 0 : page.getPinned()));
+            if (body.containsKey("pageType")) {
+                page.setPageType(limit(value(body.get("pageType"), value(page.getPageType(), inferPageType(title, content))).toUpperCase(), 40));
+            } else if (page.getPageType() == null) {
+                page.setPageType(inferPageType(title, content));
+            }
+            if (body.containsKey("sortOrder")) {
+                page.setSortOrder(defaultInt(body.get("sortOrder"), page.getSortOrder() == null ? 0 : page.getSortOrder()));
+            }
+            if (body.containsKey("pinned")) {
+                page.setPinned(booleanValue(body.get("pinned")) ? 1 : 0);
+            }
         }
         page.setEncryptedContent(cryptoService.encrypt(content));
         page.setContentSummary(limit(content.replaceAll("\\s+", " "), 500));
@@ -934,12 +957,25 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         detachInboundLinks(userId, page.getId());
     }
 
-    /** 计算指定用户某页当前正文的哈希，作为草稿基准；页不存在/非本人时返回 null（无基准即不做冲突拦截）。 */
+    /** 计算指定用户某页当前状态的哈希，作为草稿基准；页不存在/非本人时返回 null（无基准即不做冲突拦截）。 */
     private String currentPageContentHash(Long userId, Long pageId) {
         if (pageId == null) return null;
         UserKnowledgePage page = pageMapper.selectById(pageId);
         if (page == null || !userId.equals(page.getUserId())) return null;
-        return contentHash(cryptoService.decrypt(page.getEncryptedContent()));
+        return pageStateHash(page);
+    }
+
+    /** 供 AI 工具在 read_wiki_page 时捕获“读取快照”基准哈希，与合入前比对同源，杜绝 read→create 间隙原页被改导致基准偏新。 */
+    @Override
+    public String pageContentHash(Long userId, Long pageId) {
+        return currentPageContentHash(userId, pageId);
+    }
+
+    /** 页面状态哈希 = 标题 + 正文（含标题，故用户仅改名也能被冲突检测捕获，避免陈旧草稿悄悄恢复旧标题）。 */
+    private String pageStateHash(UserKnowledgePage page) {
+        if (page == null) return null;
+        // 标题单独占一行与正文隔开，避免“标题尾+正文首”拼接歧义（内部变更检测哈希，非安全边界）
+        return contentHash(value(page.getTitle(), "") + "\n\n" + cryptoService.decrypt(page.getEncryptedContent()));
     }
 
     /** 内容 SHA-256 十六进制哈希；用于草稿基准版本比对。异常时返回 null（视为无基准，宁可放行也不误拦）。 */

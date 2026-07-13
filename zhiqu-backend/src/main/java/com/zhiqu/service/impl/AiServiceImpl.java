@@ -1665,7 +1665,7 @@ public class AiServiceImpl implements AiService {
         message.setRole(role);
         message.setContent(content);
         message.setStatus("DONE");
-        message.setReasoningSummary(hasText(reasoningSummary) ? limitText(reasoningSummary, 2000) : null);
+        message.setReasoningSummary(hasText(reasoningSummary) ? limitRawMarkdown(reasoningSummary, 2000) : null);
         message.setCitationsJson(toJson(citations == null ? List.of() : citations));
         message.setRetrievalStatusJson(toJson(retrievalStatus == null ? Map.of() : retrievalStatus));
         message.setUsageJson(toJson(usage == null ? Map.of() : usage));
@@ -1706,7 +1706,7 @@ public class AiServiceImpl implements AiService {
                                           boolean webSearchEnabled) {
         message.setContent(content == null ? "" : content);
         message.setStatus("DONE");
-        message.setReasoningSummary(hasText(reasoningSummary) ? limitText(reasoningSummary, 2000) : null);
+        message.setReasoningSummary(hasText(reasoningSummary) ? limitRawMarkdown(reasoningSummary, 2000) : null);
         message.setCitationsJson(toJson(citations == null ? List.of() : citations));
         message.setRetrievalStatusJson(toJson(retrievalStatus == null ? Map.of() : retrievalStatus));
         message.setUsageJson(toJson(usage == null ? Map.of() : usage));
@@ -1945,7 +1945,7 @@ public class AiServiceImpl implements AiService {
         source.setSourceType("CHAT");
         source.setTitle(limitText("对话来源：" + title, 180));
         source.setSourceRef("conversation:" + conversationId + "/message:" + sourceMessageId);
-        source.setEncryptedContent(cryptoService.encrypt(limitText("用户：\n" + userMessage + "\n\n助手：\n" + assistantReply, 12000)));
+        source.setEncryptedContent(cryptoService.encrypt(limitRawMarkdown("用户：\n" + userMessage + "\n\n助手：\n" + assistantReply, 12000)));
         source.setEncryptionVersion("v1");
         source.setContentSummary(limitText(cleanWikiDraftContent(content).replaceAll("\\s+", " "), 780));
         source.setConversationId(conversationId);
@@ -1968,7 +1968,7 @@ public class AiServiceImpl implements AiService {
         revision.setPatchSetId(patchSet.getId());
         revision.setActionType("UPSERT");
         revision.setTitle(patchSet.getTitle());
-        revision.setEncryptedContent(cryptoService.encrypt(limitText(content, 5000)));
+        revision.setEncryptedContent(cryptoService.encrypt(limitRawMarkdown(content, 5000)));
         revision.setEncryptionVersion("v1");
         revision.setStatus("PENDING");
         revision.setSourceMessageId(sourceMessageId);
@@ -2419,6 +2419,9 @@ public class AiServiceImpl implements AiService {
     private static final class WikiLoopState {
         final java.util.Set<String> fullyReadTitles = new java.util.HashSet<>();
         final java.util.Set<String> patchedTitles = new java.util.HashSet<>();
+        // 完整读取某页时捕获的“读取快照”基准哈希（normTitle -> 页状态哈希），
+        // 随 create_wiki_patch 携带给后端，确保基准反映 Agent 实际读到的版本，而非创建草稿时的新版本。
+        final java.util.Map<String, String> readBaseHash = new java.util.HashMap<>();
     }
 
     // create_wiki_patch 幂等的进程内条带锁：按 用户+标题 哈希分桶，锁内“查已存在 PENDING → 创建”避免并发双插。
@@ -2639,7 +2642,14 @@ public class AiServiceImpl implements AiService {
                     String full = String.valueOf(value(page.get("content"), ""));
                     boolean truncated = full.length() > WIKI_READ_FULL_LIMIT;
                     if (!truncated) {
-                        state.fullyReadTitles.add(normWikiTitle(String.valueOf(value(page.get("title"), title))));
+                        String normRead = normWikiTitle(String.valueOf(value(page.get("title"), title)));
+                        state.fullyReadTitles.add(normRead);
+                        // 读取时即捕获页状态基准快照，随后 create_wiki_patch 携带给后端；
+                        // 这样基准反映 Agent 实际读到的版本，read→create 间隙若原页被改，合入会被冲突检测拦下。
+                        Object pid = page.get("id");
+                        if (pid instanceof Number pidNum) {
+                            state.readBaseHash.put(normRead, knowledgeService.pageContentHash(userId, pidNum.longValue()));
+                        }
                     }
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("title", value(page.get("title"), title));
@@ -2687,6 +2697,12 @@ public class AiServiceImpl implements AiService {
                         item.put("pageType", String.valueOf(value(args.get("pageType"), "NOTE")).toUpperCase(Locale.ROOT));
                         if (existing != null && existing.get("id") != null) {
                             item.put("pageId", existing.get("id"));
+                            // 携带 read 时捕获的基准快照（本页必已完整读取过，见上方覆盖守卫），
+                            // 让后端以“读取时”而非“创建草稿时”的状态记基准，杜绝陈旧覆盖窗口。
+                            String base = state.readBaseHash.get(norm);
+                            if (hasText(base)) {
+                                item.put("baseContentHash", base);
+                            }
                         }
                         Map<String, Object> patchBody = new LinkedHashMap<>();
                         patchBody.put("title", title);
