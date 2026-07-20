@@ -23,6 +23,11 @@ C:\zhiqu\
 ├─ application-prod.yml
 ├─ zhiqu-backend.xml
 ├─ zhiqu-backend.exe
+├─ zhiqu-rag.xml
+├─ zhiqu-rag.exe
+├─ rag-service\
+├─ models\bge-small-zh-v1.5\
+├─ rag-data\
 ├─ create-database.sql
 ├─ uploads\
 ├─ logs\
@@ -92,6 +97,39 @@ C:\caddy\caddy-service.exe
 ```
 
 注意：WinSW 的 exe 文件名要和 XML 文件名对应。
+
+### 6. Python RAG Sidecar（可选）
+
+语义检索默认关闭，未安装 sidecar 时系统继续使用原有关键词检索。启用前准备 Python 3.11，并把 `rag-service` 整体复制到：
+
+```text
+C:\zhiqu\rag-service
+```
+
+在可联网的部署准备环境创建虚拟环境并安装锁定依赖：
+
+```powershell
+cd C:\zhiqu\rag-service
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+```
+
+模型必须提前下载并固定 revision，完整目录复制到：
+
+```text
+C:\zhiqu\models\bge-small-zh-v1.5
+```
+
+生产机首次启动不会联网下载模型。复制 `.env.example` 为 `.env`，填写与 `application-prod.yml` 相同的随机 `service token` 和真实模型 revision。再把 WinSW x64 复制为 `C:\zhiqu\zhiqu-rag.exe`，并执行：
+
+```powershell
+cd C:\zhiqu
+.\install-rag-service.ps1
+```
+
+使用 `Authorization: Bearer <service token>` 请求 `http://127.0.0.1:8001/health/live` 确认可访问后，将 `application-prod.yml` 的 `app.rag.enabled` 改为 `true`，重启后端，在监管后台创建第一代索引；代次构建完成后再手动启用。sidecar 只监听回环地址，不要开放公网 `8001`。
+
+当前 Sidecar 一次只服务一个模型/index version。同版本索引可在监管后台蓝绿重建和回滚；升级模型时应先保持 Feature Flag 关闭或接受关键词降级窗口，部署匹配新版本的 Sidecar 后再重建并启用，不能把它表述为跨模型版本无缝切换。
 
 ## 三、本地打包 JAR
 

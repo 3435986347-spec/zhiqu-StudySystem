@@ -58,6 +58,22 @@ app:
     trust-forwarded-headers: true
   crypto:
     master-key: CHANGE_ME_TO_A_LONG_RANDOM_CRYPTO_MASTER_KEY
+  rag:
+    enabled: false
+    base-url: http://127.0.0.1:8001
+    service-token: CHANGE_ME_RAG_SERVICE_TOKEN
+    connect-timeout-ms: 300
+    read-timeout-ms: 1800
+    candidate-k: 24
+    final-k: 8
+    max-context-chars: 10000
+    max-per-source: 3
+    max-snippet-chars: 1600
+    fallback-enabled: true
+    index-version: bge-small-zh-v1.5@PINNED_REVISION-token448-overlap64-v1-cosine
+    worker-delay-ms: 1000
+    worker-batch-size: 4
+    max-attempts: 8
 
 logging:
   file:

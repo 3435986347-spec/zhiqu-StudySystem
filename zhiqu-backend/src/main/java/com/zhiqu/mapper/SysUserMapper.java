@@ -4,12 +4,20 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.zhiqu.entity.SysUser;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDate;
 
 @Mapper
 public interface SysUserMapper extends BaseMapper<SysUser> {
+    @Select("""
+            SELECT id FROM sys_user
+            WHERE id = #{userId} AND deleted = 0
+            FOR UPDATE
+            """)
+    Long lockKnowledgeTreeOwner(@Param("userId") Long userId);
+
     @Update("""
             UPDATE sys_user
             SET total_study_minutes = COALESCE(total_study_minutes, 0) + #{minutes},

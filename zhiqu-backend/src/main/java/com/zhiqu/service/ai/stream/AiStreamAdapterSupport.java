@@ -35,6 +35,43 @@ final class AiStreamAdapterSupport {
         return "AUTO".equals(normalized) || "DEEP".equals(normalized);
     }
 
+    /**
+     * 按配置决定是否写入 temperature。
+     * 新一代模型（如 Claude fable / opus-4 系列）已废弃 temperature，配置留空即不发送，
+     * 避免 400 "temperature is deprecated for this model"；需要固定温度的老模型可在
+     * app.ai.temperature 填数字。配置为空或非数字一律不发送。
+     */
+    static void applyTemperature(Map<String, Object> target, String configured) {
+        if (!hasText(configured)) {
+            return;
+        }
+        try {
+            target.put("temperature", Double.parseDouble(configured.trim()));
+        } catch (NumberFormatException ignored) {
+            // 非数字视为不发送
+        }
+    }
+
+    /**
+     * 按模型代际选择 Anthropic 思考参数格式：
+     *  - claude-2/claude-3 系（含 3.5/3.7）：旧格式 thinking:{type:enabled, budget_tokens}
+     *  - 其余（fable / opus-4+ / sonnet-4+ / haiku-4+ 等新代）：thinking:{type:adaptive} + output_config.effort
+     * 新代模型发旧格式会被拒（400 "thinking.type: enabled is not supported"），已由 fable-5 实测确认。
+     */
+    static void applyAnthropicThinking(Map<String, Object> body, String reasoningMode, String modelName) {
+        if (!isReasoningRequested(reasoningMode)) {
+            return;
+        }
+        String name = modelName == null ? "" : modelName.toLowerCase(Locale.ROOT);
+        boolean deep = "DEEP".equalsIgnoreCase(reasoningMode);
+        if (name.contains("claude-2") || name.contains("claude-3")) {
+            body.put("thinking", Map.of("type", "enabled", "budget_tokens", deep ? 2048 : 1024));
+        } else {
+            body.put("thinking", Map.of("type", "adaptive"));
+            body.put("output_config", Map.of("effort", deep ? "high" : "medium"));
+        }
+    }
+
     static RestTemplate timeoutRestTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);

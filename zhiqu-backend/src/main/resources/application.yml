@@ -56,6 +56,11 @@ app:
     master-key: ${ZHIQU_CRYPTO_MASTER_KEY:zhiqu-dev-master-key-change-in-production-2026}
   ai:
     anthropic-version: 2023-06-01
+    # 采样温度。留空 = 不发送 temperature 参数。
+    # 新一代模型（如 Claude fable / opus-4 系列）已废弃 temperature，发送会报
+    # 400 "temperature is deprecated for this model"，因此默认不发送。
+    # 需要固定温度的老模型（OpenAI 兼容 / 本地模型等）可填数字，如 0.3。
+    temperature: ""
     system-default-enabled: false
     system-display-name: 知趣默认模型
     system-provider-type: OPENAI_COMPATIBLE
@@ -73,5 +78,21 @@ app:
       max-pages: 4
       max-content-chars: 3500
       block-private-network: true
+  rag:
+    enabled: ${ZHIQU_RAG_ENABLED:false}
+    base-url: ${ZHIQU_RAG_BASE_URL:http://127.0.0.1:8001}
+    service-token: ${RAG_SERVICE_TOKEN:}
+    connect-timeout-ms: 300
+    read-timeout-ms: 1800
+    candidate-k: 24
+    final-k: 8
+    max-context-chars: 10000
+    max-per-source: 3
+    max-snippet-chars: 1600
+    fallback-enabled: true
+    index-version: ${RAG_INDEX_VERSION:bge-small-zh-v1.5@pinned-token448-overlap64-v1-cosine}
+    worker-delay-ms: 1000
+    worker-batch-size: 4
+    max-attempts: 8
   push:
     vapid-public-key: ${ZHIQU_WEB_PUSH_PUBLIC_KEY:}

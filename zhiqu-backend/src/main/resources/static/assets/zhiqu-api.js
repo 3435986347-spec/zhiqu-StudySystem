@@ -4,11 +4,19 @@
   'use strict';
 
   var API = '/api';
-  var UI_CACHE = 'zhiqu-shell-v20260707-wire-all18';
   // 根路径 "/" 由 Spring 作为欢迎页返回 index.html（登录页），此时 pathname 为空，
   // 默认必须落到 index.html，否则 bootIndex 不执行、登录按钮无处理器。
   var page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
-  var state = { user: null, tasks: [], routines: [], notebooks: [], notebookId: null, messages: [] };
+  var state = {
+    user: null,
+    tasks: [],
+    routines: [],
+    notebooks: [],
+    notebookId: null,
+    messages: [],
+    pendingSources: [],
+    reasoningExpanded: Object.create(null)
+  };
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -19,13 +27,8 @@
   }
   function maintainShellCache() {
     if (!/^https?:$/.test(location.protocol)) return;
-    if ('caches' in window) {
-      caches.keys().then(function (keys) {
-        return Promise.all(keys
-          .filter(function (key) { return key.indexOf('zhiqu-shell-') === 0 && key !== UI_CACHE; })
-          .map(function (key) { return caches.delete(key); }));
-      }).catch(function () {});
-    }
+    // Old shell caches are removed exclusively by the active Service Worker's activate handler.
+    // Keeping one owner avoids the page deleting a newly installed cache with a stale version constant.
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/service-worker.js')
         .then(function (registration) { return registration.update().catch(function () {}); })
@@ -899,6 +902,7 @@
     if (host) host.innerHTML = metrics.map(function (m) { return '<article class="zq-stat" style="padding:14px 16px;"><span class="zq-stat-label" style="font-size:11.5px;">' + esc(m[0]) + '</span><strong class="zq-mono" style="display:block;margin-top:7px;font-size:23px;line-height:1;color:' + m[3] + ';">' + esc(m[1]) + '</strong><span style="display:block;margin-top:5px;font-size:11px;color:var(--zq-text3);">' + esc(m[2]) + '</span></article>'; }).join('');
     renderTrafficChart(traffic.minuteBuckets || {});
     await bootAdminIssues();
+    await bootAdminRag();
     var refresh = $('header button'); if (refresh) refresh.onclick = function () { safe('刷新后台', bootAdmin); };
   }
   function renderTrafficChart(buckets) {
@@ -920,6 +924,75 @@
     host.innerHTML = list.slice(0, 8).map(function (i) {
       return '<div style="padding:9px 0;border-bottom:1px solid var(--zq-border-soft);"><div style="display:flex;justify-content:space-between;gap:10px;"><strong style="font-size:12.5px;">' + esc(i.category || i.severity || '异常') + '</strong><span class="zq-mono" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(i.createdAt)) + '</span></div><div style="margin-top:4px;font-size:12px;color:var(--zq-text2);line-height:1.45;">' + esc(i.message || '') + '</div></div>';
     }).join('') || empty('当前没有开放异常');
+  }
+  async function bootAdminRag() {
+    var host = $('#zq-rag-status');
+    if (!host) return;
+    var status;
+    try {
+      status = await api.get('/admin/rag/status');
+    } catch (error) {
+      host.innerHTML = '<div class="zq-empty">RAG 状态读取失败：' + esc(error.message || '未知错误') + '</div>';
+      return;
+    }
+    var sidecar = status.sidecar || {}, active = status.activeGeneration || {};
+    var jobs = status.jobs || {}, metrics = status.metrics || {};
+    var deadJobs = Number(jobs.DEAD || 0) ? await api.get('/admin/rag/jobs?status=DEAD') : [];
+    var generations = (status.generations || []).slice(0, 6);
+    var expected = Number(active.expectedSourceCount || 0);
+    var progress = expected ? Math.round(Number(active.indexedSourceCount || 0) / expected * 100) : 0;
+    host.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;">'
+      + ragMetric('服务状态', status.enabled ? (sidecar.ready ? '可用' : '未就绪') : '未启用', sidecar.ready ? 'var(--zq-ok)' : 'var(--zq-warn)')
+      + ragMetric('活动索引', active.indexVersion || '尚未启用', 'var(--zq-text)')
+      + ragMetric('索引进度', active.id ? progress + '%' : '—', 'var(--zq-primary)')
+      + ragMetric('任务积压', Number(jobs.PENDING || 0) + Number(jobs.RETRY || 0), Number(jobs.DEAD || 0) ? 'var(--zq-bad)' : 'var(--zq-text)')
+      + '</div><div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12px;color:var(--zq-text2);">'
+      + '<span>查询 P50：<b class="zq-mono">' + esc(metrics.queryP50Ms == null ? '—' : metrics.queryP50Ms + ' ms') + '</b></span>'
+      + '<span>查询 P95：<b class="zq-mono">' + esc(metrics.queryP95Ms == null ? '—' : metrics.queryP95Ms + ' ms') + '</b></span>'
+      + '<span>关键词降级：<b class="zq-mono">' + esc(metrics.fallbackCount || 0) + '</b></span>'
+      + '<span>越权候选丢弃：<b class="zq-mono">' + esc(metrics.crossScopeDrops || 0) + '</b></span>'
+      + '<span>DEAD：<b class="zq-mono">' + esc(jobs.DEAD || 0) + '</b></span></div>'
+      + (generations.length ? '<div style="margin-top:14px;border-top:1px solid var(--zq-border-soft);">' + generations.map(function (item) {
+          var canActivate = item.status === 'READY' || item.status === 'RETIRED';
+          var canDiscard = item.status === 'FAILED';
+          return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--zq-border-soft);font-size:12px;">'
+            + '<span class="zq-mono" style="width:32px;color:var(--zq-text3);">#' + esc(item.id) + '</span><strong style="min-width:76px;">' + esc(item.status) + '</strong>'
+            + '<span style="flex:1;min-width:0;overflow-wrap:anywhere;color:var(--zq-text2);">' + esc(item.indexVersion || '') + ' · ' + esc(item.indexedSourceCount || 0) + '/' + esc(item.expectedSourceCount || 0) + '</span>'
+            + (canActivate ? '<button type="button" class="zq-btn-ghost" data-rag-activate="' + item.id + '" style="height:26px;padding:0 9px;">' + (item.status === 'RETIRED' ? '回滚' : '启用') + '</button>' : '')
+            + (canDiscard ? '<button type="button" class="zq-btn-ghost" data-rag-discard="' + item.id + '" style="height:26px;padding:0 9px;color:var(--zq-bad);">丢弃</button>' : '') + '</div>';
+        }).join('') + '</div>' : '')
+      + (deadJobs.length ? '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--zq-bad);">失败任务（' + deadJobs.length + '）</summary><div>' + deadJobs.slice(0, 10).map(function (job) {
+          return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--zq-border-soft);font-size:12px;"><span class="zq-mono">#' + esc(job.id) + '</span><span style="flex:1;min-width:0;overflow-wrap:anywhere;">' + esc(job.operation) + ' · ' + esc(job.lastError || '未知错误') + '</span><button type="button" class="zq-btn-ghost" data-rag-retry="' + job.id + '" style="height:26px;padding:0 9px;">重试</button></div>';
+        }).join('') + '</div></details>' : '')
+      + '<div style="display:flex;gap:8px;margin-top:14px;"><button type="button" class="zq-btn-ghost" id="zq-rag-refresh" style="height:30px;">刷新状态</button>'
+      + '<button type="button" class="zq-btn-ghost" id="zq-rag-rebuild" style="height:30px;">新建重建代次</button></div>';
+    var refresh = $('#zq-rag-refresh');
+    if (refresh) refresh.onclick = function () { safe('刷新 RAG 状态', bootAdminRag); };
+    var rebuild = $('#zq-rag-rebuild');
+    if (rebuild) rebuild.onclick = async function () {
+      if (!await askConfirm({ title: '重建语义索引', message: '系统会创建新索引代次，当前活动索引会继续提供服务。确认开始？', okText: '开始重建' })) return;
+      safe('创建重建任务', async function () { await api.post('/admin/rag/rebuild', {}); toast('已创建重建代次'); await bootAdminRag(); });
+    };
+    $all('[data-rag-activate]', host).forEach(function (button) {
+      button.onclick = function () { safe('启用索引代次', async function () { await api.post('/admin/rag/generations/' + button.dataset.ragActivate + '/activate', {}); toast('索引代次已启用'); await bootAdminRag(); }); };
+    });
+    $all('[data-rag-retry]', host).forEach(function (button) {
+      button.onclick = function () { safe('重试索引任务', async function () { await api.post('/admin/rag/jobs/' + button.dataset.ragRetry + '/retry', {}); toast('任务已重新排队'); await bootAdminRag(); }); };
+    });
+    $all('[data-rag-discard]', host).forEach(function (button) {
+      button.onclick = async function () {
+        if (!await askConfirm({ title: '丢弃失败索引', message: '将删除该失败代次已生成的向量数据，且不能恢复。确认继续？', okText: '确认丢弃' })) return;
+        safe('丢弃失败索引代次', async function () {
+          await api.post('/admin/rag/generations/' + button.dataset.ragDiscard + '/discard', {});
+          toast('失败索引已进入清理队列');
+          await bootAdminRag();
+        });
+      };
+    });
+  }
+  function ragMetric(label, value, color) {
+    return '<div style="padding:10px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);min-width:0;"><span style="display:block;font-size:11px;color:var(--zq-text3);">'
+      + esc(label) + '</span><strong style="display:block;margin-top:5px;font-size:13px;color:' + color + ';overflow-wrap:anywhere;">' + esc(value) + '</strong></div>';
   }
 
   async function bootFeedbackAdmin() {
@@ -1273,7 +1346,7 @@
     // document-tree 只给了折叠后的 summary，正文要按需拉完整内容
     if (!p._full && p.id != null) {
       var detail = await safe('知识页', function () { return api.get('/knowledge/pages/' + p.id); });
-      if (detail) { p.content = detail.content; p.pageType = detail.pageType || p.pageType; p.parentId = detail.parentId; p.sortOrder = detail.sortOrder; p.pinned = detail.pinned; p._full = true; }
+      if (detail) { p.content = detail.content; p.pageType = detail.pageType || p.pageType; p.parentId = detail.parentId; p.sortOrder = detail.sortOrder; p.pinned = detail.pinned; p.version = detail.version; p._full = true; }
     }
     if (state.wikiCur !== p) return;
     if (doc) {
@@ -1350,11 +1423,16 @@
       titleEl.onclick = async function () {
         var p = state.wikiCur; if (!p) return;
         if (['INDEX', 'LOG', 'SCHEMA'].indexOf(String(p.pageType || '').toUpperCase()) >= 0) return toast('系统页不可改名', 'error');
-        var name = await askText({ title: '修改页面名称', label: '页面名称', value: p.title || '' });
-        if (!name || !name.trim() || name.trim() === p.title) return;
+        var name = await askText({ title: '修改页面名称', label: '页面名称', value: p._pendingTitle || p.title || '' });
+        if (!name || !name.trim()) return;
+        if (name.trim() === p.title) { p._pendingTitle = null; titleEl.textContent = p.title; return; }
+        p._pendingTitle = name.trim();
+        titleEl.textContent = p._pendingTitle;
         safe('修改名称', async function () {
-          await api.put('/knowledge/pages/' + p.id, { title: name.trim(), content: p.content, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned });
-          p.title = name.trim();
+          var updated = await api.put('/knowledge/pages/' + p.id, { title: p._pendingTitle, content: p.content, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned, version: p.version });
+          p.title = updated && updated.title ? updated.title : p._pendingTitle;
+          p._pendingTitle = null;
+          if (updated && updated.version != null) p.version = updated.version;
           titleEl.textContent = p.title;
           paintWikiTree(); toast('名称已更新');
         });
@@ -1457,8 +1535,8 @@
   // 删除知识页：action bar 按钮与右键菜单共用（系统页由调用方隐藏入口，后端也会拦截）
   async function deleteWikiPage(p) {
     if (!p) return;
-    if (await askConfirm({ title: '删除知识页', message: '删除「' + (p.title || '') + '」？指向它的双链会变成悬空链接。', okText: '删除', danger: true })) {
-      safe('删除知识页', async function () { await api.del('/knowledge/pages/' + p.id); await bootKnowledge(); toast('已删除'); });
+    if (await askConfirm({ title: '删除知识页', message: '删除「' + (p.title || '') + '」？它的直接子页会自动迁移到上级目录，指向它的双链会变成悬空链接。', okText: '删除', danger: true })) {
+      safe('删除知识页', async function () { await api.del('/knowledge/pages/' + p.id + '?version=' + encodeURIComponent(p.version)); await bootKnowledge(); toast('已删除'); });
     }
   }
   function removeWikiActionBar() { var b = document.getElementById('zq-wiki-actions'); if (b) b.remove(); }
@@ -1466,8 +1544,9 @@
     var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p) return;
     var md = doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
     safe('保存知识页', async function () {
-      var updated = await api.put('/knowledge/pages/' + p.id, { title: p.title, content: md, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned });
-      p.content = md;
+      var updated = await api.put('/knowledge/pages/' + p.id, { title: p.title, content: md, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned, version: p.version });
+      p.content = updated && updated.content != null ? updated.content : md;
+      if (updated && updated.version != null) p.version = updated.version;
       if (updated && updated.updatedAt) p.updatedAt = updated.updatedAt;
       paintWikiDoc(p);
       toast('已保存');
@@ -1938,17 +2017,35 @@
   }
 
   async function bootAiAssistant() {
-    window.send = sendAiMessage;
-    window.tgl = aiToggle;
-    if ($('#zq-web')) $('#zq-web').dataset.on = '0';
-    if ($('#zq-think')) $('#zq-think').dataset.on = '1';
-    await Promise.all([loadAiMessages(), loadAiNotebooks(), loadAiModelSelect()]);
+    setAiToggleState('web', false);
+    setAiToggleState('think', false);
+    var webBtn = $('#zq-web'), thinkBtn = $('#zq-think'), sendBtn = $('#zq-send'), draft = $('#zq-draft');
+    if (webBtn) webBtn.onclick = function () { aiToggle('web'); };
+    if (thinkBtn) thinkBtn.onclick = function () { aiToggle('think'); };
+    if (sendBtn) sendBtn.onclick = sendAiMessage;
+    if (draft) draft.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendAiMessage();
+      }
+    });
+
+    // 先确定当前 Notebook，聊天记录按 Notebook 隔离加载。
+    await Promise.all([loadAiNotebooks(), loadAiModelSelect()]);
+    await loadAiMessages();
     await renderAgentPanels();
-    var uploadBtn = $all('button').find(function (b) { return b.textContent.trim() === '上传'; });
-    if (uploadBtn) uploadBtn.onclick = function () { pickFile(function (file) { safe('文件分析', async function () { await api.upload('/ai/analyze', file); toast('文件已上传分析'); }); }); };
-    var addFileBtn = $all('button').find(function (b) { return /上传资料/.test(b.textContent); });
-    if (addFileBtn) addFileBtn.onclick = function () { if (!state.notebookId) return toast('请先选择 Notebook', 'error'); pickFile(function (file) { safe('上传资料', async function () { await api.upload('/ai/notebooks/' + state.notebookId + '/sources/upload', file); toast('资料已上传'); await loadAiSources(); }); }); };
-    var addUrlBtn = $all('button').find(function (b) { return /添加\s*URL/.test(b.textContent); });
+
+    var sourceUpload = $('#zq-source-upload');
+    if (sourceUpload) sourceUpload.onclick = function () {
+      chooseAiFiles(function (files) { uploadAiFiles(files, false); });
+    };
+    var chatUpload = $('#zq-chat-upload');
+    if (chatUpload) chatUpload.onclick = function () {
+      chooseAiFiles(function (files) { uploadAiFiles(files, true); });
+    };
+    bindAiDropZone();
+
+    var addUrlBtn = $('#zq-add-url');
     if (addUrlBtn) addUrlBtn.onclick = async function () { if (!state.notebookId) return toast('请先选择 Notebook', 'error'); var url = await askText({ title: '添加 URL 资料', label: '资料网址', placeholder: 'https://…', hint: '添加后将自动抓取网页内容并解析进当前 Notebook。', okText: '添加' }); if (!url || !url.trim()) return; safe('添加 URL', async function () { await api.post('/ai/notebooks/' + state.notebookId + '/sources', { url: url.trim() }); toast('已添加，正在抓取解析'); await loadAiSources(); }); };
     var newNbBtn = $('#zq-new-notebook');
     if (newNbBtn) newNbBtn.onclick = function () {
@@ -1967,25 +2064,165 @@
             safe('新建 Notebook', async function () {
               var nb = await api.post('/ai/notebooks', { title: title, description: description });
               state.notebookId = nb && nb.id ? nb.id : state.notebookId;
-              h.close(); await loadAiNotebooks(); toast('已新建 Notebook');
+              h.close(); await loadAiNotebooks(); await loadAiMessages(); toast('已新建 Notebook');
             });
           };
         }
       });
     };
   }
+
   function pickFile(cb) {
     var input = document.createElement('input'); input.type = 'file';
     input.onchange = function () { if (input.files[0]) cb(input.files[0]); };
     input.click();
   }
+
+  function chooseAiFiles(cb) {
+    if (!state.notebookId) {
+      toast('请先新建或选择 Notebook，再上传资料', 'error');
+      return;
+    }
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.pdf,.xlsx,.xls,.csv,.txt,.md,.json,.docx,.png,.jpg,.jpeg,.webp';
+    input.onchange = function () {
+      var files = Array.prototype.slice.call(input.files || []);
+      if (files.length) cb(files);
+    };
+    input.click();
+  }
+
+  function setAiToggleState(kind, on) {
+    var button = document.getElementById(kind === 'web' ? 'zq-web' : 'zq-think');
+    if (!button) return;
+    button.dataset.on = on ? '1' : '0';
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    button.style.border = '1px solid ' + (on ? 'var(--zq-tint-strong)' : 'var(--zq-border)');
+    button.style.background = on ? 'var(--zq-tint)' : 'var(--zq-card)';
+    button.style.color = on ? 'var(--zq-primary)' : 'var(--zq-text2)';
+    button.style.fontWeight = '600';
+  }
+
   function aiToggle(k) {
-    var b = document.getElementById(k === 'web' ? 'zq-web' : 'zq-think'); if (!b) return;
-    var on = b.dataset.on !== '1'; b.dataset.on = on ? '1' : '0';
-    b.style.border = '1px solid ' + (on ? 'var(--zq-tint-strong)' : 'var(--zq-border)');
-    b.style.background = on ? 'var(--zq-tint)' : 'var(--zq-card)';
-    b.style.color = on ? 'var(--zq-primary)' : 'var(--zq-text2)';
-    b.style.fontWeight = '600';
+    var button = document.getElementById(k === 'web' ? 'zq-web' : 'zq-think');
+    if (!button) return;
+    setAiToggleState(k, button.dataset.on !== '1');
+  }
+
+  function setAiDropState(text, mode) {
+    var zone = $('#zq-drop-zone'), status = $('#zq-drop-status');
+    if (status && text) status.textContent = text;
+    if (!zone) return;
+    zone.classList.toggle('is-uploading', mode === 'uploading');
+    zone.classList.toggle('is-error', mode === 'error');
+  }
+
+  function bindAiDropZone() {
+    var zone = $('#zq-drop-zone');
+    if (!zone) return;
+    ['dragenter', 'dragover'].forEach(function (name) {
+      zone.addEventListener(name, function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        zone.classList.add('is-dragging');
+      });
+    });
+    ['dragleave', 'drop'].forEach(function (name) {
+      zone.addEventListener(name, function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        zone.classList.remove('is-dragging');
+      });
+    });
+    zone.addEventListener('drop', function (event) {
+      var files = Array.prototype.slice.call(event.dataTransfer && event.dataTransfer.files || []);
+      if (files.length) uploadAiFiles(files, true);
+    });
+    zone.addEventListener('click', function () {
+      chooseAiFiles(function (files) { uploadAiFiles(files, true); });
+    });
+    zone.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        chooseAiFiles(function (files) { uploadAiFiles(files, true); });
+      }
+    });
+  }
+
+  function clearPendingSources() {
+    state.pendingSources = [];
+    renderAiAttachments();
+  }
+
+  function clearUsedPendingSources(ids) {
+    var used = (ids || []).map(Number);
+    state.pendingSources = state.pendingSources.filter(function (item) {
+      return used.indexOf(Number(item.id)) < 0;
+    });
+    renderAiAttachments();
+  }
+
+  function addPendingSource(source) {
+    if (!source || !source.id || String(source.status || '').toUpperCase() !== 'READY') return;
+    if (!state.pendingSources.some(function (item) { return Number(item.id) === Number(source.id); })) {
+      state.pendingSources.push(source);
+    }
+    renderAiAttachments();
+  }
+
+  function renderAiAttachments() {
+    var host = $('#zq-attachments');
+    if (!host) return;
+    host.hidden = !state.pendingSources.length;
+    host.innerHTML = state.pendingSources.map(function (source) {
+      return '<span class="zq-ai-attachment"><span class="zq-ai-attachment-type">' + esc(srcTypeInfo(source.sourceType)[0]) + '</span><span title="' + esc(source.title || '资料') + '">' + esc(source.title || '资料') + '</span><button type="button" data-remove-source="' + source.id + '" aria-label="移除附件">×</button></span>';
+    }).join('');
+    $all('[data-remove-source]', host).forEach(function (button) {
+      button.onclick = function () {
+        var id = Number(button.dataset.removeSource);
+        state.pendingSources = state.pendingSources.filter(function (item) { return Number(item.id) !== id; });
+        renderAiAttachments();
+      };
+    });
+  }
+
+  async function uploadAiFiles(files, attachToNextMessage) {
+    if (!state.notebookId) {
+      toast('请先新建或选择 Notebook，再上传资料', 'error');
+      return;
+    }
+    var notebookId = state.notebookId;
+    var list = Array.prototype.slice.call(files || []).filter(Boolean);
+    if (!list.length) return;
+    setAiDropState('正在上传 0 / ' + list.length + '…', 'uploading');
+    var readyCount = 0, archiveCount = 0, errorCount = 0;
+    for (var i = 0; i < list.length; i++) {
+      setAiDropState('正在上传 ' + (i + 1) + ' / ' + list.length + '：' + list[i].name, 'uploading');
+      try {
+        var source = await api.upload('/ai/notebooks/' + notebookId + '/sources/upload', list[i]);
+        var status = String(source && source.status || '').toUpperCase();
+        if (status === 'READY') {
+          readyCount++;
+          if (attachToNextMessage && notebookId === state.notebookId) addPendingSource(source);
+        } else if (status === 'UPLOADED') {
+          archiveCount++;
+        } else {
+          errorCount++;
+        }
+      } catch (error) {
+        errorCount++;
+      }
+    }
+    if (notebookId === state.notebookId) {
+      await loadAiNotebooks();
+    }
+    var summary = readyCount + ' 份可用于问答';
+    if (archiveCount) summary += '，' + archiveCount + ' 份仅存档';
+    if (errorCount) summary += '，' + errorCount + ' 份失败';
+    setAiDropState(summary, errorCount && !readyCount ? 'error' : 'done');
+    toast('上传完成：' + summary, errorCount && !readyCount ? 'error' : undefined);
   }
   async function loadAiModelSelect() {
     var sel = $('#zq-model'); if (!sel) return;
@@ -2007,26 +2244,312 @@
       return '<div style="display:flex;gap:9px;padding:5px 0;"><div style="display:flex;flex-direction:column;align-items:center;flex:none;width:10px;"><span style="width:8px;height:8px;border-radius:50%;background:' + color + ';margin-top:4px;"></span>' + (last ? '' : '<span style="flex:1;width:1px;background:var(--zq-border-soft);margin-top:2px;"></span>') + '</div><div style="min-width:0;padding-bottom:6px;"><div style="font-size:11.5px;font-weight:600;line-height:1.45;">' + esc(stepName) + '</div><div class="zq-mono" style="font-size:10px;color:' + color + ';margin-top:1px;">' + esc(metaLine) + '</div></div></div>';
     }).join('') : empty('暂无执行记录');
   }
+
+  function artifactTypeLabel(type) {
+    return ({
+      CITATION: '资料引用',
+      FAILED_SOURCE: '抓取失败',
+      PLAN_DRAFT: '计划草稿',
+      TASK_DRAFT: '任务草稿',
+      ROUTINE_DRAFT: '例行计划草稿',
+      WIKI_DRAFT: 'Wiki 草稿',
+      NOTE_DRAFT: '笔记草稿'
+    })[String(type || '').toUpperCase()] || '其他产物';
+  }
+
+  function artifactStatusLabel(status) {
+    return ({
+      DRAFT: '待确认',
+      PENDING: '待确认',
+      CONFIRMED: '已确认',
+      DISCARDED: '已忽略',
+      FAILED: '失败'
+    })[String(status || '').toUpperCase()] || (status || '');
+  }
+
+  function normalizeArtifact(raw) {
+    var source = raw && raw.artifact ? raw.artifact : (raw || {});
+    return Object.assign({}, source, {
+      id: source.id || source.artifactId || (raw && raw.artifactId),
+      artifactType: source.artifactType || source.type || (raw && raw.artifactType),
+      title: source.title || (raw && raw.title),
+      status: source.status || (raw && raw.status)
+    });
+  }
+
+  function artifactContent(artifact) {
+    return artifact && artifact.content && typeof artifact.content === 'object' ? artifact.content : {};
+  }
+
+  function artifactTextPreview(artifact) {
+    var content = artifactContent(artifact);
+    var text = artifact.preview || content.preview || content.snippet || content.content || content.description || content.reason || content.error || '';
+    text = String(text || '').replace(/\s+/g, ' ').trim();
+    if (text.length > 190) text = text.slice(0, 187) + '…';
+    return text;
+  }
+
+  function artifactItemTitles(artifact) {
+    if (Array.isArray(artifact.itemTitles)) return artifact.itemTitles.map(String);
+    var content = artifactContent(artifact), titles = [];
+    ['tasks', 'routines', 'items', 'pages'].forEach(function (key) {
+      if (!Array.isArray(content[key])) return;
+      content[key].forEach(function (item) {
+        var title = item && (item.title || item.name || item.content);
+        if (title && titles.length < 8) titles.push(String(title));
+      });
+    });
+    return titles;
+  }
+
+  function groupArtifacts(artifacts) {
+    var output = [], citationGroups = Object.create(null);
+    (artifacts || []).map(normalizeArtifact).forEach(function (artifact) {
+      if (String(artifact.artifactType || '').toUpperCase() !== 'CITATION') {
+        output.push(artifact);
+        return;
+      }
+      var content = artifactContent(artifact);
+      var sourceId = content.sourceId != null ? content.sourceId : artifact.sourceId;
+      var sourceUrl = content.url || artifact.url;
+      var key = sourceId != null ? 'source:' + sourceId
+        : sourceUrl ? 'url:' + sourceUrl
+          : 'title:' + (artifact.title || content.title || artifact.id);
+      if (!citationGroups[key]) {
+        citationGroups[key] = Object.assign({}, artifact, { _citationParts: [] });
+        output.push(citationGroups[key]);
+      }
+      citationGroups[key]._citationParts.push(artifact);
+    });
+    return output;
+  }
+
+  function artifactDetailsHtml(artifact) {
+    var type = String(artifact.artifactType || '').toUpperCase();
+    if (type === 'CITATION') {
+      var parts = artifact._citationParts || [artifact];
+      return parts.map(function (part, index) {
+        var content = artifactContent(part);
+        var chunkIndex = content.chunkIndex != null ? content.chunkIndex : part.chunkIndex;
+        var label = chunkIndex != null ? '片段 ' + (Number(chunkIndex) + 1) : '命中片段 ' + (index + 1);
+        var snippet = content.content || content.snippet || part.preview || '暂无片段预览';
+        return '<div class="zq-artifact-part"><strong>' + esc(label) + '</strong><span>' + esc(snippet) + '</span></div>';
+      }).join('');
+    }
+    var content = artifactContent(artifact);
+    var safeJson = Object.keys(content).length ? JSON.stringify(content, null, 2) : JSON.stringify({
+      title: artifact.title || '',
+      preview: artifact.preview || '',
+      itemCount: artifact.itemCount || 0,
+      itemTitles: artifact.itemTitles || []
+    }, null, 2);
+    return '<pre class="zq-artifact-json">' + esc(safeJson) + '</pre>';
+  }
+
+  // ── AI 计划草稿确认弹窗 ────────────────────────────────────────────────
+  // 计划不会自动进日历：AI 生成后先落成 DRAFT 产物，弹窗让用户 忽略/修改/确认，
+  // 只有「确认」才调 /ai/artifacts/{id}/confirm 真正写入任务与例行计划。
+  var PLAN_DRAFT_TYPES = ['PLAN_DRAFT', 'TASK_DRAFT', 'ROUTINE_DRAFT'];
+  var shownPlanModals = Object.create(null); // 已弹过的产物 id，避免同一草稿反复打扰
+
+  function isPlanDraft(artifact) {
+    var type = String(artifact.artifactType || '').toUpperCase();
+    var status = String(artifact.status || '').toUpperCase();
+    return PLAN_DRAFT_TYPES.indexOf(type) >= 0 && (status === 'DRAFT' || status === 'PENDING');
+  }
+
+  // 取出草稿里的条目副本；保留原始字段（象限/时长/提醒等），弹窗只覆盖用户改过的字段后原样回传
+  function planDraftItems(artifact) {
+    var content = artifactContent(artifact);
+    var type = String(artifact.artifactType || '').toUpperCase();
+    var tasks = Array.isArray(content.tasks) ? content.tasks
+      : Array.isArray(content.suggestedTasks) ? content.suggestedTasks : [];
+    var routines = Array.isArray(content.routines) ? content.routines
+      : Array.isArray(content.suggestedRoutines) ? content.suggestedRoutines : [];
+    if (!tasks.length && type === 'TASK_DRAFT' && content.title) tasks = [content];
+    if (!routines.length && type === 'ROUTINE_DRAFT' && content.title) routines = [content];
+    var copy = function (item) { return Object.assign({}, item); };
+    return { tasks: tasks.map(copy), routines: routines.map(copy) };
+  }
+
+  function planTaskMeta(item) {
+    var bits = [];
+    if (item.deadline) bits.push('截止 ' + item.deadline);
+    if (item.startTime) bits.push('开始 ' + item.startTime);
+    if (item.durationMinutes) bits.push(item.durationMinutes + ' 分钟');
+    var q = item.quadrant || item.suggestedQuadrant;
+    if (q) bits.push('第 ' + q + ' 象限');
+    return bits.join(' · ');
+  }
+  function planRoutineMeta(item) {
+    var bits = [];
+    if (item.frequency) bits.push(String(item.frequency));
+    if (item.preferredTime) bits.push(item.preferredTime);
+    if (item.durationMinutes) bits.push(item.durationMinutes + ' 分钟');
+    if (item.startDate) bits.push(item.startDate + (item.endDate ? ' → ' + item.endDate : ''));
+    return bits.join(' · ');
+  }
+
+  function openPlanConfirmModal(artifact) {
+    var data = planDraftItems(artifact);
+    if (!data.tasks.length && !data.routines.length) return null;
+    shownPlanModals[artifact.id] = true;
+    var editing = false;
+    var picked = {
+      tasks: data.tasks.map(function () { return true; }),
+      routines: data.routines.map(function () { return true; })
+    };
+    var handle = openModal({ title: 'AI 生成的学习计划', width: 640, bodyHtml: '<div class="zq-plan-confirm"></div>' });
+    var root = handle.body.querySelector('.zq-plan-confirm');
+
+    function rowHtml(kind, item, index, metaFn) {
+      var whenValue = kind === 'tasks'
+        ? (item.deadline || item.startTime || '')
+        : (item.preferredTime || '');
+      var inner = editing
+        ? '<input class="zq-plan-title" data-kind="' + kind + '" data-i="' + index + '" value="' + esc(String(item.title || '')) + '">'
+          + '<input class="zq-plan-when" data-kind="' + kind + '" data-i="' + index + '" value="' + esc(String(whenValue)) + '"'
+          + ' placeholder="' + (kind === 'tasks' ? '截止时间，如 2026-07-15 23:59:59' : '时间，如 08:00') + '">'
+        : '<div class="zq-plan-name">' + esc(String(item.title || '未命名')) + '</div>'
+          + (metaFn(item) ? '<div class="zq-plan-meta">' + esc(metaFn(item)) + '</div>' : '');
+      return '<label class="zq-plan-row">'
+        + '<input type="checkbox" data-pick="' + kind + '" data-i="' + index + '"' + (picked[kind][index] ? ' checked' : '') + '>'
+        + '<div class="zq-plan-row-body">' + inner + '</div></label>';
+    }
+
+    function paint() {
+      var html = '<p class="zq-plan-hint">' + (editing
+        ? '勾选要写入的条目，并可直接修改标题与时间。'
+        : 'AI 建议了以下安排，<strong>确认后才会写入你的日历</strong>。') + '</p>';
+      if (data.tasks.length) {
+        html += '<div class="zq-plan-group"><h4>任务 · ' + data.tasks.length + '</h4>'
+          + data.tasks.map(function (t, i) { return rowHtml('tasks', t, i, planTaskMeta); }).join('') + '</div>';
+      }
+      if (data.routines.length) {
+        html += '<div class="zq-plan-group"><h4>例行计划 · ' + data.routines.length + '</h4>'
+          + data.routines.map(function (r, i) { return rowHtml('routines', r, i, planRoutineMeta); }).join('') + '</div>';
+      }
+      html += '<div class="zq-plan-actions">'
+        + '<button type="button" class="zq-btn-ghost" data-plan="ignore">忽略</button>'
+        + '<button type="button" data-plan="edit">' + (editing ? '完成修改' : '修改') + '</button>'
+        + '<button type="button" class="zq-btn-primary" data-plan="ok">确认写入</button>'
+        + '</div>';
+      root.innerHTML = html;
+      wire();
+    }
+
+    function wire() {
+      $all('[data-pick]', root).forEach(function (cb) {
+        cb.onchange = function () { picked[cb.dataset.pick][Number(cb.dataset.i)] = cb.checked; };
+      });
+      $all('.zq-plan-title', root).forEach(function (inp) {
+        inp.oninput = function () { data[inp.dataset.kind][Number(inp.dataset.i)].title = inp.value; };
+      });
+      $all('.zq-plan-when', root).forEach(function (inp) {
+        inp.oninput = function () {
+          var item = data[inp.dataset.kind][Number(inp.dataset.i)];
+          if (inp.dataset.kind !== 'tasks') { item.preferredTime = inp.value; return; }
+          // 原来用哪个字段表达时间，就改回哪个，避免把 startTime 计划误写成 deadline
+          if (!item.deadline && item.startTime) item.startTime = inp.value; else item.deadline = inp.value;
+        };
+      });
+      $('[data-plan="edit"]', root).onclick = function () { editing = !editing; paint(); };
+      $('[data-plan="ignore"]', root).onclick = function () {
+        safe('忽略计划', async function () {
+          await api.post('/ai/artifacts/' + artifact.id + '/discard', {});
+          handle.close(); toast('已忽略该计划'); await renderAgentPanels();
+        });
+      };
+      $('[data-plan="ok"]', root).onclick = function () {
+        var tasks = data.tasks.filter(function (_, i) { return picked.tasks[i]; });
+        var routines = data.routines.filter(function (_, i) { return picked.routines[i]; });
+        if (!tasks.length && !routines.length) { toast('请至少勾选一项，或点「忽略」'); return; }
+        safe('确认计划', async function () {
+          // 始终回传当前条目（可能已勾选/编辑过），后端据此覆盖草稿再落库
+          await api.post('/ai/artifacts/' + artifact.id + '/confirm', { tasks: tasks, routines: routines });
+          handle.close(); toast('已写入日历'); await renderAgentPanels();
+        });
+      };
+    }
+    paint();
+    return handle;
+  }
+
   function renderArtifacts(artifacts) {
     var host = $('#zq-artifacts'); if (!host) return;
-    host.innerHTML = artifacts.length ? artifacts.map(function (a) {
-      var st = (a.status || '').toUpperCase();
-      var draft = st === 'DRAFT' || st === 'PENDING';
-      return '<div style="padding:9px 11px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span class="zq-mono" style="font-size:9.5px;font-weight:600;color:var(--zq-primary);">' + esc(a.artifactType || a.type || 'ARTIFACT') + '</span><em style="font-style:normal;font-size:9.5px;color:var(--zq-text3);" class="zq-mono">' + esc(a.status || '') + '</em></div><div style="font-size:11.5px;font-weight:600;margin-top:4px;line-height:1.4;">' + esc(a.title || '产物') + '</div>' + (draft ? '<div style="display:flex;gap:6px;margin-top:7px;"><button data-art-ok="' + a.id + '" style="height:22px;padding:0 9px;border:1px solid var(--zq-tint-strong);border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);font-size:10.5px;font-weight:600;cursor:pointer;">确认</button><button data-art-no="' + a.id + '" class="zq-btn-ghost" style="height:22px;padding:0 9px;font-size:10.5px;">忽略</button></div>' : '') + '</div>';
+    var grouped = groupArtifacts(artifacts);
+    host.innerHTML = grouped.length ? grouped.map(function (artifact) {
+      var type = String(artifact.artifactType || '').toUpperCase();
+      var status = String(artifact.status || '').toUpperCase();
+      var draft = ['PLAN_DRAFT', 'TASK_DRAFT', 'ROUTINE_DRAFT', 'WIKI_DRAFT', 'NOTE_DRAFT'].indexOf(type) >= 0
+        && (status === 'DRAFT' || status === 'PENDING');
+      var content = artifactContent(artifact);
+      var parts = artifact._citationParts || [];
+      var hitCount = parts.length || Number(artifact.hitCount || 0);
+      var sourceType = content.sourceType || artifact.sourceType || '';
+      var sourceInfo = type === 'CITATION'
+        ? ((sourceType ? srcTypeInfo(sourceType)[0] + ' · ' : '') + (hitCount || 1) + ' 个命中片段')
+        : '';
+      var titles = artifactItemTitles(artifact);
+      var itemCount = Number(artifact.itemCount || titles.length || 0);
+      var draftInfo = itemCount ? itemCount + ' 个项目' : '';
+      var meta = sourceInfo || draftInfo;
+      var preview = artifactTextPreview(parts[0] || artifact);
+      var url = content.url || artifact.url || '';
+      var title = artifact.title || content.title || artifactTypeLabel(type);
+      var titleHtml = /^https?:\/\//i.test(url)
+        ? '<a class="zq-artifact-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(title) + '</a>'
+        : esc(title);
+      var itemHtml = titles.length ? '<ul class="zq-artifact-items">' + titles.slice(0, 5).map(function (item) { return '<li>' + esc(item) + '</li>'; }).join('') + '</ul>' : '';
+      return '<article class="zq-artifact-card">'
+        + '<div class="zq-artifact-head"><span>' + esc(artifactTypeLabel(type)) + '</span><em>' + esc(artifactStatusLabel(status)) + '</em></div>'
+        + '<div class="zq-artifact-title">' + titleHtml + '</div>'
+        + (meta ? '<div class="zq-artifact-meta">' + esc(meta) + '</div>' : '')
+        + (preview ? '<p class="zq-artifact-preview">' + esc(preview) + '</p>' : '')
+        + itemHtml
+        + '<details class="zq-artifact-details"><summary>展开详情</summary>' + artifactDetailsHtml(artifact) + '</details>'
+        + (draft ? '<div class="zq-artifact-actions">'
+            // 计划类草稿：优先走弹窗（可逐条勾选/修改），点这里可随时切回完整视图重看
+            + (isPlanDraft(artifact) ? '<button data-art-view="' + artifact.id + '">查看并确认</button>' : '<button data-art-ok="' + artifact.id + '">确认</button>')
+            + '<button data-art-no="' + artifact.id + '" class="zq-btn-ghost">忽略</button></div>' : '')
+        + '</article>';
     }).join('') : empty('暂无产物');
+    $all('[data-art-view]', host).forEach(function (b) {
+      b.onclick = function () {
+        var target = grouped.filter(function (a) { return String(a.id) === String(b.dataset.artView); })[0];
+        if (target) openPlanConfirmModal(target);
+      };
+    });
     $all('[data-art-ok]', host).forEach(function (b) { b.onclick = function () { safe('确认产物', async function () { await api.post('/ai/artifacts/' + b.dataset.artOk + '/confirm', {}); toast('已确认'); await renderAgentPanels(); }); }; });
     $all('[data-art-no]', host).forEach(function (b) { b.onclick = function () { safe('忽略产物', async function () { await api.post('/ai/artifacts/' + b.dataset.artNo + '/discard', {}); toast('已忽略'); await renderAgentPanels(); }); }; });
   }
   async function renderAgentPanels() {
     if (!$('#zq-steps') && !$('#zq-artifacts')) return;
-    var runs = await safe('执行轨迹', function () { return api.get('/ai/agent-runs' + (state.notebookId ? '?notebookId=' + state.notebookId : '')); });
+    var nbId = state.notebookId;
+    var runs = await safe('执行轨迹', function () { return api.get('/ai/agent-runs' + (nbId ? '?notebookId=' + nbId : '')); });
+    if (!nbId && Array.isArray(runs)) {
+      // 空 Notebook 工作区只展示真正不绑定 Notebook 的普通聊天 Run，
+      // 避免已删除 Notebook 的历史轨迹重新出现在右侧。
+      runs = runs.filter(function (run) { return run.notebookId == null; });
+    }
     var latest = runs && runs.length ? runs[0] : null;
     var detail = latest ? await safe('执行详情', function () { return api.get('/ai/agent-runs/' + latest.id); }) : null;
+    if (nbId !== state.notebookId) return; // 响应期间已切换 notebook,丢弃过期数据
     renderSteps((detail && (detail.steps || detail.stepList)) || []);
-    renderArtifacts((detail && (detail.artifacts || detail.artifactList)) || []);
+    var artifacts = (detail && (detail.artifacts || detail.artifactList)) || [];
+    renderArtifacts(artifacts);
+    // 新生成的计划草稿主动弹窗：右侧产物卡片容易被忽略，而计划要用户确认后才写入日历，
+    // 不弹的话用户会以为"什么都没发生"。每个草稿只弹一次，之后可从卡片「查看并确认」重开。
+    var freshPlan = groupArtifacts(artifacts).filter(function (a) {
+      return isPlanDraft(a) && !shownPlanModals[a.id];
+    })[0];
+    if (freshPlan) openPlanConfirmModal(freshPlan);
   }
   async function loadAiMessages() {
-    var list = await api.get('/ai/messages?limit=50');
+    // 聊天记录按 notebook 隔离:后端会话 key = notebook-{id},切换 notebook 时重新拉取
+    var nbId = state.notebookId;
+    var list = await api.get('/ai/messages?limit=50' + (nbId ? '&notebookId=' + nbId : ''));
+    if (nbId !== state.notebookId) return; // 响应期间已切换 notebook,防止慢响应覆盖新窗口
     state.messages = list || [];
     var sync = $('#zq-sync-count'); if (sync) sync.textContent = '已同步 ' + state.messages.length + ' 条历史消息';
     renderAiMessages();
@@ -2039,35 +2562,86 @@
     var headingHits = (s.match(/#{2,4}/g) || []).length;
     if (newlines >= 3 || s.length < 120 || (headingHits < 2 && !/\|\s*:?-{3,}/.test(s))) return s;
     return s
-      .replace(/\s*(#{2,6})\s*/g, '\n\n$1 ')
-      .replace(/([^|:\-\n])(-{3,})(?!-)/g, '$1\n\n---\n\n')
       .replace(/\|\s+\|/g, '|\n|')
+      .replace(/\s*(#{2,6})\s*/g, '\n\n$1 ')
+      .replace(/(#{2,6}[^|\n]*?)\s+\|/g, '$1\n\n|')
+      .replace(/([^|:\-\n])(-{3,})(?!-)(?!\s*\|)/g, '$1\n\n---\n\n')
       .replace(/([。：；！？])\s*\|/g, '$1\n|')
-      .replace(/([^\n\d])- (?=\S)/g, '$1\n- ')
+      .replace(/([^\n\d-])- (?=\S)/g, '$1\n- ')
       .replace(/([。；！？])\s*(\d+)[.、]\s+(?=\S)/g, '$1\n$2. ');
   }
-  function renderAiMessages() {
+  function renderAiMessages(opts) {
     var host = $('#zq-chat'); if (!host) return;
-    host.innerHTML = (state.messages.length ? state.messages : [{ role: 'assistant', content: '你好！我是你的 AI 学习助手。' }]).map(function (m) {
+    var keepScroll = opts && opts.keepScroll, prevScroll = host.scrollTop;
+    $all('details[data-reason-key]', host).forEach(function (details) {
+      state.reasoningExpanded[details.dataset.reasonKey] = details.open;
+    });
+    host.innerHTML = state.messages.map(function (m, i) {
       var me = m.role === 'user';
       var name = me ? '我' : 'AI';
-      var reason = (!me && m.reasoning) ? '<details open style="margin-bottom:9px;padding:8px 11px;border-left:2px solid var(--zq-tint-strong);background:var(--zq-card-soft);border-radius:0 6px 6px 0;"><summary style="cursor:pointer;font-size:10.5px;font-weight:700;color:var(--zq-text3);letter-spacing:.05em;user-select:none;">深度思考（点击折叠）</summary><span style="display:block;margin-top:4px;font-size:11.5px;color:var(--zq-text3);line-height:1.6;white-space:pre-wrap;">' + esc(m.reasoning) + '</span></details>' : '';
-      var body = m.content ? renderMarkdown(me ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
-      return '<div style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div style="max-width:72%;padding:11px 14px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + reason + body + '</div></div>';
+      var reasoningMode = String(m.reasoningMode || 'OFF').toUpperCase();
+      var reasoningText = m.reasoningSummary || m.reasoning || '';
+      var reasonKey = String(m._clientKey || m.id || m.requestId || ('assistant-' + i));
+      var reason = (!me && reasoningMode !== 'OFF' && reasoningText)
+        ? '<details class="zq-ai-reasoning" data-reason-key="' + esc(reasonKey) + '"' + (state.reasoningExpanded[reasonKey] ? ' open' : '') + '><summary>思考摘要</summary><span>' + esc(reasoningText) + '</span></details>'
+        : '';
+      // 流式中的内容换行完好且可能只收到半截,跳过压平回填,防止启发式误触
+      var body = m.content ? renderMarkdown((me || m.status === 'STREAMING') ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
+      return '<div data-msg-idx="' + i + '" style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div style="max-width:72%;padding:11px 14px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + reason + body + '</div></div>';
     }).join('');
+    $all('details[data-reason-key]', host).forEach(function (details) {
+      details.ontoggle = function () {
+        state.reasoningExpanded[details.dataset.reasonKey] = details.open;
+      };
+    });
+    // 右键删除消息:仅真实历史消息(有 id)可删;流式中的临时消息尚未入库,不弹菜单
+    if (state.messages.length) $all('[data-msg-idx]', host).forEach(function (d) {
+      d.oncontextmenu = function (e) {
+        var m = state.messages[Number(d.dataset.msgIdx)];
+        if (!m || !m.id) return;
+        e.preventDefault();
+        popMenu(e.clientX, e.clientY, [{
+          label: '删除消息', danger: true,
+          onClick: async function () {
+            if (!await askConfirm({ title: '删除消息', message: '删除这条消息？删除后不可恢复。', okText: '删除', danger: true })) return;
+            safe('删除消息', async function () {
+              await api.del('/ai/messages/' + m.id);
+              state.messages = state.messages.filter(function (x) { return x !== m; });
+              toast('已删除');
+              renderAiMessages({ keepScroll: true });
+            });
+          }
+        }]);
+      };
+    });
     renderMathIn(host);
-    host.scrollTop = host.scrollHeight;
+    // 删除消息等场景保持原滚动位置;其余(加载/流式)跟随到底部
+    host.scrollTop = keepScroll ? prevScroll : host.scrollHeight;
   }
   async function loadAiNotebooks() {
     var list = await api.get('/ai/notebooks');
     state.notebooks = list || [];
     if (!state.notebooks.length) {
-      var nb = await api.post('/ai/notebooks', { title: '默认 Notebook' });
-      state.notebooks = [nb];
+      state.notebookId = null;
+      clearPendingSources();
+      renderNotebooks();
+      await loadAiSources();
+      renderSteps([]);
+      renderArtifacts([]);
+      return;
     }
-    if (!state.notebookId) state.notebookId = state.notebooks[0].id;
+    var selectedStillExists = state.notebooks.some(function (item) { return Number(item.id) === Number(state.notebookId); });
+    if (!selectedStillExists) state.notebookId = state.notebooks[0].id;
     renderNotebooks();
     await loadAiSources();
+  }
+  function renderCurrentNotebookLabel() {
+    var label = $('#zq-current-notebook');
+    if (!label) return;
+    var current = (state.notebooks || []).find(function (item) {
+      return Number(item.id) === Number(state.notebookId);
+    });
+    label.textContent = current ? '当前 Notebook：' + (current.title || '未命名') : '普通聊天（未选择 Notebook）';
   }
   // 右键浮出菜单（资料删除 / notebook 改名共用），点击别处自动关闭
   function popMenu(x, y, items) {
@@ -2106,21 +2680,55 @@
   }
   function renderNotebooks() {
     var host = $('#zq-notebooks'); if (!host) return;
+    renderCurrentNotebookLabel();
     host.innerHTML = (state.notebooks || []).map(function (nb) {
       var active = nb.id === state.notebookId;
       return '<div data-notebook="' + nb.id + '" style="padding:9px 11px;border:1px solid ' + (active ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (active ? 'var(--zq-tint)' : 'var(--zq-card)') + ';cursor:pointer;"><div data-nb-name="' + nb.id + '" title="' + (active ? '点击重命名' : '') + '" style="font-size:12.5px;font-weight:600;">' + esc(nb.title || 'Notebook') + '</div><div style="font-size:11px;color:var(--zq-text3);margin-top:2px;">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
-    }).join('') || empty('暂无 Notebook');
+    }).join('') || '<div class="zq-ai-empty-notebook"><strong>暂无 Notebook</strong><span>普通聊天仍可使用；上传资料前请先新建。</span></div>';
     $all('[data-notebook]', host).forEach(function (d) {
       var id = Number(d.dataset.notebook);
       var nb = (state.notebooks || []).find(function (x) { return x.id === id; });
       d.onclick = function (e) {
         // 已选中的 notebook 再点名字 → 改名；否则点击切换
         if (id === state.notebookId && e.target.closest('[data-nb-name]')) { renameNotebook(nb); return; }
-        state.notebookId = id; renderNotebooks(); loadAiSources(); renderAgentPanels();
+        state.notebookId = id;
+        clearPendingSources();
+        state.messages = [];
+        renderNotebooks();
+        renderAiMessages();
+        renderSteps([]);
+        renderArtifacts([]);
+        loadAiSources();
+        renderAgentPanels();
+        safe('加载聊天记录', loadAiMessages);
       };
       d.oncontextmenu = function (e) {
         e.preventDefault();
-        popMenu(e.clientX, e.clientY, [{ label: '重命名', onClick: function () { renameNotebook(nb); } }]);
+        popMenu(e.clientX, e.clientY, [
+          { label: '重命名', onClick: function () { renameNotebook(nb); } },
+          {
+            label: '删除 Notebook', danger: true,
+            onClick: async function () {
+              if (!await askConfirm({ title: '删除 Notebook', message: '删除「' + (nb.title || 'Notebook') + '」？其中的聊天记录、上传资料与 URL 将一并删除，且不可恢复。', okText: '删除', danger: true })) return;
+              safe('删除 Notebook', async function () {
+                await api.del('/ai/notebooks/' + nb.id);
+                // 删的是当前选中项时必须清掉,让 loadAiNotebooks 回落到剩余的第一个
+                if (state.notebookId === nb.id) {
+                  state.notebookId = null;
+                  state.messages = [];
+                  clearPendingSources();
+                  renderAiMessages();
+                  renderSteps([]);
+                  renderArtifacts([]);
+                }
+                toast('已删除');
+                await loadAiNotebooks();
+                await loadAiMessages();
+                await renderAgentPanels();
+              });
+            }
+          }
+        ]);
       };
     });
   }
@@ -2138,7 +2746,24 @@
     };
     return map[t] || [t || '资料', '#6b7280'];
   }
-  function srcStatusLabel(s) { return ({ READY: '已解析', PARSING: '解析中', UPLOADED: '已上传', ERROR: '解析失败' })[String(s || '').toUpperCase()] || (s || ''); }
+  function srcStatusLabel(s) {
+    return ({
+      READY: '已解析，可用于问答',
+      PARSING: '正在解析，暂不可用',
+      UPLOADED: '仅存档，暂未进入问答',
+      ERROR: '解析失败，暂不可用'
+    })[String(s || '').toUpperCase()] || (s || '');
+  }
+  function srcIndexStatusLabel(source) {
+    if (String(source && source.status || '').toUpperCase() !== 'READY') return '';
+    var status = String(source && source.indexStatus || 'NOT_INDEXED').toUpperCase();
+    return ({
+      PENDING: '语义索引中',
+      INDEXED: '语义检索可用',
+      ERROR: '索引失败，当前使用关键词检索',
+      NOT_INDEXED: '当前使用关键词检索'
+    })[status] || '当前使用关键词检索';
+  }
   // 点击卡片下载：优先 showSaveFilePicker 让用户选保存位置，否则走浏览器默认下载
   async function downloadAiSource(sid, title) {
     var n = notice('正在准备下载「' + title + '」…');
@@ -2179,18 +2804,28 @@
     }
   }
   async function loadAiSources() {
-    if (!state.notebookId) return;
-    var list = await api.get('/ai/notebooks/' + state.notebookId + '/sources');
     var host = $('#zq-sources'); if (!host) return;
+    if (!state.notebookId) {
+      host.innerHTML = '<div class="zq-ai-source-empty"><strong>尚未选择 Notebook</strong><span>新建 Notebook 后即可上传资料。</span></div>';
+      return;
+    }
+    var nbId = state.notebookId;
+    var list = await api.get('/ai/notebooks/' + nbId + '/sources');
+    if (nbId !== state.notebookId) return; // 响应期间已切换 notebook,丢弃过期资料列表
     host.innerHTML = (list || []).length ? '<div class="zq-src-grid">' + list.map(function (s) {
       var info = srcTypeInfo(s.sourceType);
       var title = s.title || s.url || '资料';
-      return '<div class="zq-src-tile" data-source="' + s.id + '" data-source-title="' + esc(title) + '" data-source-url="' + esc(s.url || '') + '" style="--srcc:' + info[1] + ';" title="点击下载到本地">'
+      var status = String(s.status || '').toUpperCase();
+      var indexText = srcIndexStatusLabel(s);
+      var statusText = srcStatusLabel(status) + (status === 'ERROR' && s.parseError ? '：' + s.parseError : '')
+        + (indexText ? ' · ' + indexText : '');
+      return '<div class="zq-src-tile" data-source="' + s.id + '" data-source-title="' + esc(title) + '" data-source-url="' + esc(s.url || '') + '" style="--srcc:' + info[1] + ';" title="' + esc(statusText) + '">'
         + '<span class="zq-src-type">' + esc(info[0]) + '</span>'
         + '<span class="zq-src-dl">↓</span>'
         + '<div class="zq-src-glass">'
         + '<div class="zq-src-title">' + esc(title) + '</div>'
-        + '<div class="zq-src-meta"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (String(s.status).toUpperCase() === 'READY' ? 'var(--zq-ok)' : String(s.status).toUpperCase() === 'ERROR' ? 'var(--zq-bad)' : 'var(--zq-text3)') + ';"></span>' + esc(srcStatusLabel(s.status)) + '</div>'
+        + '<div class="zq-src-meta"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (status === 'READY' ? 'var(--zq-ok)' : status === 'ERROR' ? 'var(--zq-bad)' : 'var(--zq-text3)') + ';"></span><span>' + esc(srcStatusLabel(status)) + '</span></div>'
+        + (indexText ? '<div class="zq-src-meta" style="margin-top:4px;"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (String(s.indexStatus || '').toUpperCase() === 'INDEXED' ? 'var(--zq-primary)' : String(s.indexStatus || '').toUpperCase() === 'ERROR' ? 'var(--zq-warn)' : 'var(--zq-text3)') + ';"></span><span>' + esc(indexText) + '</span></div>' : '')
         + '</div></div>';
     }).join('') + '</div>' : empty('暂无资料');
     $all('[data-source]', host).forEach(function (d) {
@@ -2219,21 +2854,34 @@
     if (res.status === 401 || res.status === 403) { redirectToLogin(); throw new Error('未登录或无权限'); }
     if (!res.ok || !res.body) throw new Error('流式连接失败(' + res.status + ')');
     var reader = res.body.getReader(), decoder = new TextDecoder('utf-8'), buf = '';
+    // 业务终止事件(done/error)送达后,个别容器/代理收尾时不发终止 chunk,读取器会报 network error;
+    // 此时流在语义上已完整,按正常结束处理,不让收尾噪声打断发送方后续流程
+    var terminalSeen = false;
     while (true) {
-      var chunk = await reader.read();
+      var chunk;
+      try {
+        chunk = await reader.read();
+      } catch (e) {
+        if (terminalSeen) break;
+        throw e;
+      }
       if (chunk.done) break;
       buf += decoder.decode(chunk.value, { stream: true });
-      var idx;
-      while ((idx = buf.indexOf('\n\n')) >= 0) {
-        var frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
-        var event = 'message', dataStr = '';
-        frame.split('\n').forEach(function (l) {
+      // SSE 帧边界:规范允许 LF/CRLF/CR 三种行尾,空行即帧结束
+      var m;
+      while ((m = /\r\n\r\n|\n\n|\r\r/.exec(buf))) {
+        var frame = buf.slice(0, m.index); buf = buf.slice(m.index + m[0].length);
+        var event = 'message', dataLines = [];
+        frame.split(/\r\n|\n|\r/).forEach(function (l) {
           if (l.indexOf('event:') === 0) event = l.slice(6).trim();
-          else if (l.indexOf('data:') === 0) dataStr += l.slice(5).trim();
+          // SSE 规范:多条 data: 行以 \n 连接还原;只剥一个可选前导空格,不 trim(防止破坏换行/空白)
+          else if (l.indexOf('data:') === 0) dataLines.push(l.slice(5).replace(/^ /, ''));
         });
+        var dataStr = dataLines.join('\n');
         var data = {};
         if (dataStr) { try { data = JSON.parse(dataStr); } catch (e) { data = { text: dataStr }; } }
         handlers(event, data);
+        if (event === 'done' || event === 'error') terminalSeen = true;
       }
     }
   }
@@ -2246,11 +2894,27 @@
     renderSteps(state.agentSteps);
   }
   async function sendAiMessage() {
+    if (state.aiSending) return; // 发送中保护:双击/回车连发只算一次
     var inp = $('#zq-draft'), txt = inp && inp.value.trim();
     if (!txt) return;
     inp.value = '';
-    var assistant = { role: 'assistant', content: '', reasoning: '', status: 'STREAMING' };
-    state.messages.push({ role: 'user', content: txt }, assistant);
+    state.aiSending = true;
+    var sendButton = $('#zq-send');
+    if (sendButton) { sendButton.disabled = true; sendButton.textContent = '生成中'; }
+    var reasoningMode = ($('#zq-think') && $('#zq-think').dataset.on === '1') ? 'DEEP' : 'OFF';
+    var selectedSourceIds = state.pendingSources
+      .filter(function (source) { return String(source.status || '').toUpperCase() === 'READY'; })
+      .map(function (source) { return Number(source.id); });
+    var clientKey = 'stream-' + Date.now();
+    var assistant = {
+      role: 'assistant',
+      content: '',
+      reasoningSummary: '',
+      reasoningMode: reasoningMode,
+      status: 'STREAMING',
+      _clientKey: clientKey
+    };
+    state.messages.push({ role: 'user', content: txt, _clientKey: clientKey + '-user' }, assistant);
     renderAiMessages();
     state.agentSteps = []; state.agentArtifacts = [];
     renderSteps([]); renderArtifacts([]);
@@ -2259,30 +2923,85 @@
       message: txt,
       modelConfigId: modelSel && modelSel.value ? Number(modelSel.value) : null,
       enableWebSearch: !!($('#zq-web') && $('#zq-web').dataset.on === '1'),
-      reasoningMode: ($('#zq-think') && $('#zq-think').dataset.on === '1') ? 'DEEP' : 'OFF',
+      reasoningMode: reasoningMode,
       notebookId: state.notebookId || null,
       agentMode: 'AUTO',
-      contextOptions: { includeWiki: true }
+      contextOptions: {
+        includeWiki: true,
+        selectedSourceIds: selectedSourceIds
+      }
     };
-    await safe('AI 发送', async function () {
+    // SSE 回调期间用户可能切换 notebook:快照发送时的 id,不再渲染/改写新窗口的全局流式状态
+    var sentNb = state.notebookId;
+    var sameNb = function () { return sentNb === state.notebookId; };
+    // 后端 done 事件带 dropped/CANCELED:notebook 在流式期间被删除(可能来自其他标签页/API),
+    // 本轮问答未入库——不能把已收到的回答当成功结果留在页面上
+    var dropped = false;
+    var completed = false;
+    try {
+      await safe('AI 发送', async function () {
       try {
         await streamAiChat(body, function (event, data) {
-          if (event === 'message.delta') { assistant.content += (data.text || data.delta || data.content || ''); renderAiMessages(); }
-          else if (event === 'reasoning.delta') { assistant.reasoning += (data.text || data.delta || ''); renderAiMessages(); }
-          else if (event === 'agent.step.start') { upsertAgentStep(data, false); }
-          else if (event === 'agent.step.done') { upsertAgentStep(data, true); }
-          else if (event === 'artifact.created') { state.agentArtifacts.push(data.artifact || data); renderArtifacts(state.agentArtifacts); }
-          else if (event === 'done') { if (data && data.content && !assistant.content) assistant.content = data.content; assistant.status = ''; renderAiMessages(); }
-          else if (event === 'error') { assistant.status = ''; assistant.content = assistant.content || ('（出错：' + (data.message || '未知错误') + '）'); renderAiMessages(); }
+          if (event === 'message.delta') { assistant.content += (data.text || data.delta || data.content || ''); if (sameNb()) renderAiMessages(); }
+          else if (event === 'reasoning.delta' && reasoningMode !== 'OFF') {
+            assistant.reasoningSummary += (data.text || data.delta || '');
+            if (sameNb()) renderAiMessages();
+          }
+          else if (event === 'agent.step.start') { if (sameNb()) upsertAgentStep(data, false); }
+          else if (event === 'agent.step.done') { if (sameNb()) upsertAgentStep(data, true); }
+          else if (event === 'artifact.created') {
+            if (sameNb()) {
+              var incoming = normalizeArtifact(data);
+              var existingIndex = state.agentArtifacts.findIndex(function (item) {
+                return Number(normalizeArtifact(item).id) === Number(incoming.id);
+              });
+              if (existingIndex >= 0) state.agentArtifacts[existingIndex] = incoming;
+              else state.agentArtifacts.push(incoming);
+              renderArtifacts(state.agentArtifacts);
+            }
+          }
+          else if (event === 'done') {
+            if (data && (data.dropped || data.status === 'CANCELED')) {
+              dropped = true;
+              assistant.status = '';
+              toast(data.message || 'Notebook 已删除，本轮回答未保存', 'error');
+            } else {
+              if (data && data.content && !assistant.content) assistant.content = data.content;
+              if (reasoningMode !== 'OFF' && data && data.reasoningSummary) {
+                assistant.reasoningSummary = data.reasoningSummary;
+              }
+              if (data && data.assistantMessageId) assistant.id = data.assistantMessageId;
+              if (data && data.requestId) assistant.requestId = data.requestId;
+              assistant.status = '';
+              completed = true;
+              if (sameNb()) renderAiMessages();
+            }
+          }
+          else if (event === 'error') { assistant.status = ''; assistant.content = assistant.content || ('（出错：' + (data.message || '未知错误') + '）'); if (sameNb()) renderAiMessages(); }
         });
       } catch (e) {
         assistant.status = ''; if (!assistant.content) assistant.content = '（连接中断，可稍后刷新查看）'; renderAiMessages();
         throw e;
       }
-      assistant.status = ''; renderAiMessages();
+      if (dropped) {
+        // 当前会话若还挂在已删 notebook 上,回落到默认选择(与右键删除 notebook 的刷新流程一致);
+        // 重新拉列表+消息会自然清掉未保存的临时问答
+        if (sameNb()) state.notebookId = null;
+        await loadAiNotebooks();
+        await loadAiMessages();
+        await renderAgentPanels();
+        return;
+      }
+      assistant.status = '';
+      if (completed && sameNb()) clearUsedPendingSources(selectedSourceIds);
+      renderAiMessages();
       await loadAiMessages();
       await renderAgentPanels();
-    });
+      });
+    } finally {
+      state.aiSending = false;
+      if (sendButton) { sendButton.disabled = false; sendButton.textContent = '发送'; }
+    }
   }
 
   function revealContent() { try { document.documentElement.classList.remove('zq-booting'); } catch (e) {} }

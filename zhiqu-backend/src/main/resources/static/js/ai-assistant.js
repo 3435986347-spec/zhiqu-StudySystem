@@ -839,8 +839,87 @@ async function loadAiChatHistory() {
             statusEl.textContent = messages.length ? ('已载入 ' + messages.length + ' 条记录') : '暂无历史记录';
         }
         if (!messages.length) scrollAiToLatest(true);
+        var hasStreamingMsg = messages.some(function (m) {
+            return normalizeAiMessageRole(m.role) === 'ai' && normalizeAiMessageStatus(m.status) === 'STREAMING';
+        });
+        if (hasStreamingMsg) startAiPolling();   // 有进行中的回答：切回来自动轮询到 DONE
+        restoreAiPlanFromHistory(messages);      // 恢复此前生成的任务确认面板
     } catch (e) {
         if (statusEl) statusEl.textContent = '聊天记录读取失败';
+    }
+}
+
+// ===== 后台流式恢复 =====
+// AI 在后端用异步线程执行，切走页面它会继续跑完并把消息写成 DONE。
+// 切回来时前端只拉过一次历史，若那一下还没跑完（STREAMING/空内容）就会停在“生成中”。
+// 这里补上轮询：发现有 STREAMING 的 AI 消息就每隔几秒查一次，后端一 DONE 就把内容刷出来。
+var _aiPollTimer = null;
+var _aiPollStart = 0;
+var AI_POLL_INTERVAL_MS = 2500;
+var AI_POLL_MAX_MS = 5 * 60 * 1000;
+
+function stopAiPolling() {
+    if (_aiPollTimer) {
+        clearTimeout(_aiPollTimer);
+        _aiPollTimer = null;
+    }
+}
+
+function startAiPolling() {
+    if (_activeAiStream) return;   // 本页正在读流，交给流处理
+    if (_aiPollTimer) return;      // 已在轮询
+    _aiPollStart = Date.now();
+    _aiPollTimer = setTimeout(pollPendingAiMessages, AI_POLL_INTERVAL_MS);
+}
+
+// 用最新历史条目更新已渲染的 AI 消息（STREAMING→DONE/ERROR 时把正文刷出来）
+function updateRenderedAiMessage(item) {
+    var messageId = normalizeAiMessageId(item && item.id);
+    if (messageId == null) return;
+    var msg = document.querySelector('#aiMessages [data-message-id="' + String(messageId) + '"]');
+    if (!msg) return;
+    var contentEl = msg.querySelector('.ai-msg-content');
+    if (!contentEl) return;
+    contentEl.innerHTML = renderAiHistoryMessage(item);
+    contentEl.classList.remove('ai-streaming');
+}
+
+async function pollPendingAiMessages() {
+    _aiPollTimer = null;
+    if (_activeAiStream) return;   // 本页已恢复流式，交给流处理
+    try {
+        var res = await api.get('/ai/messages?limit=50');
+        var messages = res.data || [];
+        var stillStreaming = false;
+        messages.forEach(function (item) {
+            if (normalizeAiMessageRole(item.role) !== 'ai') return;
+            updateRenderedAiMessage(item);
+            if (normalizeAiMessageStatus(item.status) === 'STREAMING') stillStreaming = true;
+        });
+        restoreAiPlanFromHistory(messages);   // 后台生成的计划：轮询到后恢复确认面板
+        if (stillStreaming && Date.now() - _aiPollStart < AI_POLL_MAX_MS) {
+            _aiPollTimer = setTimeout(pollPendingAiMessages, AI_POLL_INTERVAL_MS);
+        }
+    } catch (e) {
+        // 网络抖动：停止轮询，下次页面可见或刷新时再恢复
+    }
+}
+
+// 从历史/轮询消息里恢复“已生成的任务确认面板”（切走后台跑完、切回来也能看到）
+function restoreAiPlanFromHistory(messages) {
+    if (aiAnalyzedTasks.length || aiAnalyzedRoutines.length) return; // 已有面板（如 sessionStorage 恢复），不覆盖
+    if (!Array.isArray(messages)) return;
+    for (var i = messages.length - 1; i >= 0; i--) {
+        var m = messages[i];
+        if (normalizeAiMessageRole(m.role) !== 'ai') continue;
+        var tasks = Array.isArray(m.suggestedTasks) ? m.suggestedTasks : [];
+        var routines = Array.isArray(m.suggestedRoutines) ? m.suggestedRoutines : [];
+        if (tasks.length || routines.length) {
+            aiAnalyzedTasks = tasks;
+            aiAnalyzedRoutines = routines;
+            renderTaskConfirmList(tasks, routines);
+            break;
+        }
     }
 }
 
@@ -3578,6 +3657,10 @@ document.addEventListener('DOMContentLoaded', function () {
     restoreAiState();
     loadAiChatHistory();
     scrollAiToLatest(true);
+    // 切回本页/标签页可见时，若后端还有进行中的回答，自动轮询刷新
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') startAiPolling();
+    });
 });
 
 async function loadAiModelsForChat() {

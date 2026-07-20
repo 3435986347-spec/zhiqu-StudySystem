@@ -160,7 +160,8 @@ public class AiController {
         Long modelConfigId = parseLong(body.get("modelConfigId"));
         Boolean enableWebSearch = parseBoolean(body.get("enableWebSearch"));
         String reasoningMode = String.valueOf(body.getOrDefault("reasoningMode", "OFF"));
-        return Result.success(aiService.chat(userId, message, modelConfigId, enableWebSearch, reasoningMode));
+        Long notebookId = parseLong(body.get("notebookId"));
+        return Result.success(aiService.chat(userId, message, modelConfigId, enableWebSearch, reasoningMode, notebookId));
     }
 
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -242,9 +243,11 @@ public class AiController {
         return Result.success(aiWorkspaceService.listRuns(SecurityUtils.getCurrentUserId(), notebookId));
     }
 
+    /** body 可选：{tasks:[...], routines:[...]} —— 用户在确认弹窗里“修改”后提交的条目，覆盖草稿原内容后再落库。 */
     @PostMapping("/artifacts/{id}/confirm")
-    public Result<Map<String, Object>> confirmArtifact(@PathVariable Long id) {
-        return Result.success(aiWorkspaceService.confirmArtifact(SecurityUtils.getCurrentUserId(), id));
+    public Result<Map<String, Object>> confirmArtifact(@PathVariable Long id,
+                                                       @RequestBody(required = false) Map<String, Object> body) {
+        return Result.success(aiWorkspaceService.confirmArtifact(SecurityUtils.getCurrentUserId(), id, body));
     }
 
     @PostMapping("/artifacts/{id}/discard")
@@ -306,9 +309,10 @@ public class AiController {
 
     @GetMapping("/messages")
     public Result<List<Map<String, Object>>> getMessages(
-            @RequestParam(defaultValue = "50") Integer limit) {
+            @RequestParam(defaultValue = "50") Integer limit,
+            @RequestParam(required = false) Long notebookId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        return Result.success(aiService.getRecentChatMessages(userId, limit));
+        return Result.success(aiService.getRecentChatMessages(userId, notebookId, limit));
     }
 
     @DeleteMapping("/messages/{id}")

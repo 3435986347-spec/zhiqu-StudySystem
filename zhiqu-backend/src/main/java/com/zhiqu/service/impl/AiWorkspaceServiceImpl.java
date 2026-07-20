@@ -1,12 +1,21 @@
 package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.dto.TaskCreateRequest;
 import com.zhiqu.entity.*;
 import com.zhiqu.mapper.*;
+import com.zhiqu.rag.ContextBudgeter;
+import com.zhiqu.rag.ContextCandidateHydrator;
+import com.zhiqu.rag.RagIndexJobService;
+import com.zhiqu.rag.RagContentHashService;
+import com.zhiqu.rag.RagMetricsService;
+import com.zhiqu.rag.RagProperties;
+import com.zhiqu.rag.RagRetriever;
+import com.zhiqu.rag.SourceScopeResolver;
 import com.zhiqu.service.AgentBlackboardService;
 import com.zhiqu.service.AgentTaskGraphService;
 import com.zhiqu.service.AiWorkspaceService;
@@ -15,10 +24,13 @@ import com.zhiqu.service.StudyTaskService;
 import com.zhiqu.service.ai.WebResearchService;
 import com.zhiqu.service.ai.WebSearchProvider;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
+import com.zhiqu.service.support.ConversationLockRegistry;
 import com.zhiqu.util.FileParseUtil;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
@@ -51,6 +63,10 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private final AiAgentStepMapper stepMapper;
     private final AiAgentArtifactMapper artifactMapper;
     private final AiMessageMapper messageMapper;
+    private final AiConversationMapper conversationMapper;
+    /** 会话临界区互斥(与 AiServiceImpl 共用):删除 Notebook 需与聊天落库串行 */
+    private final ConversationLockRegistry conversationLocks;
+    private final TransactionTemplate deleteTx;
     private final KnowledgeSourceMapper knowledgeSourceMapper;
     private final KnowledgePatchSetMapper knowledgePatchSetMapper;
     private final UserKnowledgeRevisionMapper knowledgeRevisionMapper;
@@ -61,6 +77,14 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private final RoutineService routineService;
     private final AgentTaskGraphService taskGraphService;
     private final AgentBlackboardService blackboardService;
+    private final RagIndexJobService ragIndexJobService;
+    private final RagContentHashService ragContentHashService;
+    private final SourceScopeResolver sourceScopeResolver;
+    private final RagRetriever ragRetriever;
+    private final ContextCandidateHydrator contextCandidateHydrator;
+    private final ContextBudgeter contextBudgeter;
+    private final RagProperties ragProperties;
+    private final RagMetricsService ragMetricsService;
     private final ObjectMapper objectMapper;
 
     public AiWorkspaceServiceImpl(AiNotebookMapper notebookMapper,
@@ -70,6 +94,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                                   AiAgentStepMapper stepMapper,
                                   AiAgentArtifactMapper artifactMapper,
                                   AiMessageMapper messageMapper,
+                                  AiConversationMapper conversationMapper,
                                   KnowledgeSourceMapper knowledgeSourceMapper,
                                   KnowledgePatchSetMapper knowledgePatchSetMapper,
                                   UserKnowledgeRevisionMapper knowledgeRevisionMapper,
@@ -80,6 +105,16 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                                   RoutineService routineService,
                                   AgentTaskGraphService taskGraphService,
                                   AgentBlackboardService blackboardService,
+                                  RagIndexJobService ragIndexJobService,
+                                  RagContentHashService ragContentHashService,
+                                  SourceScopeResolver sourceScopeResolver,
+                                  RagRetriever ragRetriever,
+                                  ContextCandidateHydrator contextCandidateHydrator,
+                                  ContextBudgeter contextBudgeter,
+                                  RagProperties ragProperties,
+                                  RagMetricsService ragMetricsService,
+                                  ConversationLockRegistry conversationLocks,
+                                  PlatformTransactionManager transactionManager,
                                   ObjectMapper objectMapper) {
         this.notebookMapper = notebookMapper;
         this.sourceMapper = sourceMapper;
@@ -88,6 +123,9 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         this.stepMapper = stepMapper;
         this.artifactMapper = artifactMapper;
         this.messageMapper = messageMapper;
+        this.conversationMapper = conversationMapper;
+        this.conversationLocks = conversationLocks;
+        this.deleteTx = new TransactionTemplate(transactionManager);
         this.knowledgeSourceMapper = knowledgeSourceMapper;
         this.knowledgePatchSetMapper = knowledgePatchSetMapper;
         this.knowledgeRevisionMapper = knowledgeRevisionMapper;
@@ -98,12 +136,19 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         this.routineService = routineService;
         this.taskGraphService = taskGraphService;
         this.blackboardService = blackboardService;
+        this.ragIndexJobService = ragIndexJobService;
+        this.ragContentHashService = ragContentHashService;
+        this.sourceScopeResolver = sourceScopeResolver;
+        this.ragRetriever = ragRetriever;
+        this.contextCandidateHydrator = contextCandidateHydrator;
+        this.contextBudgeter = contextBudgeter;
+        this.ragProperties = ragProperties;
+        this.ragMetricsService = ragMetricsService;
         this.objectMapper = objectMapper;
     }
 
     @Override
     public List<Map<String, Object>> listNotebooks(Long userId) {
-        ensureDefaultNotebook(userId);
         return notebookMapper.selectList(new LambdaQueryWrapper<AiNotebook>()
                         .eq(AiNotebook::getUserId, userId)
                         .orderByDesc(AiNotebook::getUpdatedAt)
@@ -138,20 +183,38 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     }
 
     @Override
-    @Transactional
     public void deleteNotebook(Long userId, Long id) {
-        AiNotebook notebook = ownedNotebook(userId, id);
-        // 级联清理：分块、私有原件、source 行，最后删 notebook，避免孤儿数据与磁盘泄漏
-        List<AiNotebookSource> sources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
-                .eq(AiNotebookSource::getUserId, userId)
-                .eq(AiNotebookSource::getNotebookId, notebook.getId()));
-        for (AiNotebookSource source : sources) {
-            chunkMapper.delete(new LambdaQueryWrapper<AiSourceChunk>()
-                    .eq(AiSourceChunk::getSourceId, source.getId()));
-            deleteStoredFile(userId, source.getFilePath());
-            sourceMapper.deleteById(source.getId());
-        }
-        notebookMapper.deleteById(notebook.getId());
+        // 用户锁 + 短事务(先锁后开事务):与聊天「会话解析+落库」临界区串行,慢模型旧请求无法穿透写入已删会话
+        conversationLocks.runWithUserLock(userId, () -> deleteTx.executeWithoutResult(tx -> {
+            AiNotebook notebook = ownedNotebook(userId, id);
+            // 级联清理：分块、私有原件、source 行，最后删 notebook，避免孤儿数据与磁盘泄漏
+            List<AiNotebookSource> sources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
+                    .eq(AiNotebookSource::getUserId, userId)
+                    .eq(AiNotebookSource::getNotebookId, notebook.getId()));
+            ragIndexJobService.enqueueDeleteNotebook(userId, notebook.getId());
+            for (AiNotebookSource source : sources) {
+                chunkMapper.delete(new LambdaQueryWrapper<AiSourceChunk>()
+                        .eq(AiSourceChunk::getSourceId, source.getId()));
+                deleteStoredFile(userId, source.getFilePath());
+                sourceMapper.deleteById(source.getId());
+            }
+            notebookMapper.deleteById(notebook.getId());
+            // 该 notebook 的专属会话与聊天记录一并软删，否则已删 notebook 的聊天仍可被读取/续写
+            AiConversation conversation = conversationMapper.selectOne(new LambdaQueryWrapper<AiConversation>()
+                    .eq(AiConversation::getUserId, userId)
+                    .eq(AiConversation::getConversationKey, AiConversation.notebookKey(notebook.getId())));
+            if (conversation != null) {
+                messageMapper.delete(new LambdaQueryWrapper<AiMessage>()
+                        .eq(AiMessage::getUserId, userId)
+                        .eq(AiMessage::getConversationId, conversation.getId()));
+                conversationMapper.deleteById(conversation.getId());
+            }
+        }));
+    }
+
+    @Override
+    public AiNotebook requireOwnedNotebook(Long userId, Long id) {
+        return ownedNotebook(userId, id);
     }
 
     @Override
@@ -165,6 +228,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         if (source == null) {
             throw new BusinessException("资料不存在或无权限访问");
         }
+        ragIndexJobService.enqueueDeleteSource(userId, notebookId, sourceId);
         chunkMapper.delete(new LambdaQueryWrapper<AiSourceChunk>()
                 .eq(AiSourceChunk::getSourceId, source.getId()));
         deleteStoredFile(userId, source.getFilePath());
@@ -222,15 +286,19 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                 }
                 parsed = fetched.snippet();
             }
-            writeChunks(source, parsed, Map.of("sourceType", sourceType));
+            source.setContentHash(writeChunks(source, parsed, Map.of("sourceType", sourceType)));
             source.setStatus("READY");
             source.setParseError(null);
+            source.setIndexStatus("PENDING");
+            source.setIndexError(null);
             sourceMapper.updateById(source);
         } catch (Exception e) {
             source.setStatus("ERROR");
             source.setParseError(limit(errorMessage(e), 1000));
+            source.setIndexStatus("NOT_INDEXED");
             sourceMapper.updateById(source);
         }
+        if ("READY".equals(source.getStatus())) ragIndexJobService.enqueueSource(source);
         return sourceRow(sourceMapper.selectById(source.getId()));
     }
 
@@ -258,6 +326,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             // 图片只存档原件，不做内容解析（无分块 → 不进问答上下文），状态停留在"已上传"
             source.setStatus("UPLOADED");
             source.setParseError(null);
+            source.setIndexStatus("NOT_INDEXED");
             sourceMapper.updateById(source);
             return sourceRow(sourceMapper.selectById(source.getId()));
         }
@@ -265,15 +334,19 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             source.setStatus("PARSING");
             sourceMapper.updateById(source);
             String parsed = extractFileText(file);
-            writeChunks(source, parsed, Map.of("fileName", fileName));
+            source.setContentHash(writeChunks(source, parsed, Map.of("fileName", fileName)));
             source.setStatus("READY");
             source.setParseError(null);
+            source.setIndexStatus("PENDING");
+            source.setIndexError(null);
             sourceMapper.updateById(source);
         } catch (Exception e) {
             source.setStatus("ERROR");
             source.setParseError(limit(errorMessage(e), 1000));
+            source.setIndexStatus("NOT_INDEXED");
             sourceMapper.updateById(source);
         }
+        if ("READY".equals(source.getStatus())) ragIndexJobService.enqueueSource(source);
         return sourceRow(sourceMapper.selectById(source.getId()));
     }
 
@@ -383,42 +456,65 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             }
             return List.of();
         }
-        ownedNotebook(userId, notebookId);
-        LambdaQueryWrapper<AiNotebookSource> sourceQuery = new LambdaQueryWrapper<AiNotebookSource>()
-                .eq(AiNotebookSource::getUserId, userId)
-                .eq(AiNotebookSource::getNotebookId, notebookId)
-                .eq(AiNotebookSource::getStatus, "READY");
+        List<AiNotebookSource> sources = sourceScopeResolver.resolve(userId, notebookId, selectedIds);
+        String query = text(contextOptions == null ? null : contextOptions.get("query"), "");
+        RagRetriever.RetrievalResult retrieval = ragRetriever.retrieve(
+                UUID.randomUUID().toString(), userId, notebookId, sources, query);
+        List<Map<String, Object>> vectorRows = contextCandidateHydrator.hydrate(
+                userId, notebookId, sources, retrieval);
+        if (retrieval.available() && vectorRows.isEmpty() && ragProperties.isFallbackEnabled()) {
+            ragMetricsService.recordFallback("NO_VALID_VECTOR_CANDIDATE");
+        }
+
+        Set<Long> legacySourceIds = new LinkedHashSet<>();
+        if (ragProperties.isFallbackEnabled()) {
+            if (!retrieval.available() || vectorRows.isEmpty()) {
+                sources.forEach(source -> legacySourceIds.add(source.getId()));
+            } else {
+                sources.stream().map(AiNotebookSource::getId)
+                        .filter(id -> !retrieval.indexedSourceIds().contains(id))
+                        .forEach(legacySourceIds::add);
+            }
+        }
+        List<Map<String, Object>> legacyRows = legacyContextRows(sources, legacySourceIds, query);
         if (!selectedIds.isEmpty()) {
-            sourceQuery.in(AiNotebookSource::getId, selectedIds);
+            legacyRows.forEach(row -> {
+                if (selectedIds.contains(parseLong(row.get("sourceId"), null))) row.put("_explicit", true);
+            });
         }
-        List<AiNotebookSource> sources = sourceMapper.selectList(sourceQuery.orderByDesc(AiNotebookSource::getUpdatedAt));
-        if (!selectedIds.isEmpty() && sources.size() != selectedIds.size()) {
-            throw new BusinessException("选择的资料不存在、不可用或无权限访问");
+        List<Map<String, Object>> supplements = new ArrayList<>(legacyRows);
+        if (contextOptions != null && Boolean.TRUE.equals(contextOptions.get("includeWiki"))) {
+            supplements.addAll(wikiContext(userId, contextOptions));
         }
+        List<Map<String, Object>> selected = contextBudgeter.select(vectorRows, supplements, sources.size());
+        ragMetricsService.recordCandidateFlow(vectorRows.size(), selected.size());
+        return selected;
+    }
+
+    private List<Map<String, Object>> legacyContextRows(List<AiNotebookSource> sources,
+                                                        Set<Long> sourceIds,
+                                                        String query) {
+        if (sourceIds == null || sourceIds.isEmpty()) return List.of();
         List<Map<String, Object>> rows = new ArrayList<>();
         for (AiNotebookSource source : sources) {
+            if (!sourceIds.contains(source.getId())) continue;
             List<AiSourceChunk> chunks = chunkMapper.selectList(new LambdaQueryWrapper<AiSourceChunk>()
                     .eq(AiSourceChunk::getSourceId, source.getId())
                     .orderByAsc(AiSourceChunk::getChunkIndex)
-                    .last("LIMIT " + Math.max(2, MAX_CONTEXT_CHUNKS)));
+                    .last("LIMIT " + Math.max(2, MAX_CONTEXT_CHUNKS * 3)));
             for (AiSourceChunk chunk : chunks) {
-                rows.add(Map.of(
-                        "sourceId", source.getId(),
-                        "title", source.getTitle(),
-                        "sourceType", source.getSourceType(),
-                        "chunkIndex", chunk.getChunkIndex(),
-                        "content", chunk.getContent()
-                ));
-                if (rows.size() >= MAX_CONTEXT_CHUNKS * 3) {
-                    break;
-                }
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("sourceId", source.getId());
+                row.put("title", source.getTitle());
+                row.put("sourceType", source.getSourceType());
+                row.put("chunkIndex", chunk.getChunkIndex());
+                row.put("chunkId", chunk.getId());
+                row.put("content", chunk.getContent());
+                row.put("retrievalMode", "LEGACY");
+                rows.add(row);
             }
         }
-        if (contextOptions != null && Boolean.TRUE.equals(contextOptions.get("includeWiki"))) {
-            rows.addAll(wikiContext(userId, contextOptions));
-        }
-        rows = sortContextRows(rows, text(contextOptions == null ? null : contextOptions.get("query"), ""));
-        return rows.size() > MAX_CONTEXT_CHUNKS ? rows.subList(0, MAX_CONTEXT_CHUNKS) : rows;
+        return sortContextRows(rows, query);
     }
 
     @Override
@@ -560,6 +656,37 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     }
 
     @Override
+    @Transactional
+    public void rebindRunMessages(AiAgentRun run, AiMessage userMessage, AiMessage assistantMessage) {
+        if (run == null || userMessage == null || assistantMessage == null) {
+            return;
+        }
+        Long staleUserMessageId = run.getUserMessageId();
+        run.setUserMessageId(userMessage.getId());
+        run.setAssistantMessageId(assistantMessage.getId());
+        runMapper.updateById(run);
+        // 检索阶段已产出的 artifact 以旧用户消息为来源，一并改指存活的新行，避免执行轨迹悬挂在软删消息上
+        if (staleUserMessageId != null && !staleUserMessageId.equals(userMessage.getId())) {
+            artifactMapper.update(null, new LambdaUpdateWrapper<AiAgentArtifact>()
+                    .eq(AiAgentArtifact::getRunId, run.getId())
+                    .eq(AiAgentArtifact::getSourceMessageId, staleUserMessageId)
+                    .set(AiAgentArtifact::getSourceMessageId, userMessage.getId()));
+        }
+    }
+
+    @Override
+    @Transactional
+    public void cancelRun(AiAgentRun run, String reason) {
+        if (run == null) {
+            return;
+        }
+        run.setStatus("CANCELED");
+        run.setCompletedAt(LocalDateTime.now());
+        run.setErrorMessage(limit(reason, 500));
+        runMapper.updateById(run);
+    }
+
+    @Override
     public Map<String, Object> getRun(Long userId, Long runId) {
         AiAgentRun run = ownedRun(userId, runId);
         return runRow(run, true);
@@ -567,6 +694,9 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
 
     @Override
     public List<Map<String, Object>> listRuns(Long userId, Long notebookId) {
+        if (notebookId != null) {
+            ownedNotebook(userId, notebookId);
+        }
         LambdaQueryWrapper<AiAgentRun> query = new LambdaQueryWrapper<AiAgentRun>()
                 .eq(AiAgentRun::getUserId, userId)
                 .orderByDesc(AiAgentRun::getCreatedAt)
@@ -579,7 +709,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
 
     @Override
     @Transactional
-    public Map<String, Object> confirmArtifact(Long userId, Long id) {
+    public Map<String, Object> confirmArtifact(Long userId, Long id, Map<String, Object> editedPlan) {
         AiAgentArtifact artifact = artifactMapper.selectByIdForUpdate(id);
         if (artifact == null) {
             throw new BusinessException("草稿不存在");
@@ -598,6 +728,9 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         } else if ("PLAN_DRAFT".equals(artifact.getArtifactType())
                 || "TASK_DRAFT".equals(artifact.getArtifactType())
                 || "ROUTINE_DRAFT".equals(artifact.getArtifactType())) {
+            // 用户在确认弹窗里“修改”过：以提交的条目覆盖草稿内容后再落库，
+            // 并把覆盖后的内容写回 artifact，使产物记录与实际创建的任务一致。
+            applyPlanEdits(artifact, editedPlan);
             Map<String, Object> result = confirmPlanArtifact(userId, artifact);
             artifact.setContentJson(toJson(merge(parseMap(artifact.getContentJson()), Map.of("confirmResult", result))));
             artifact.setTargetType(text(result.get("targetType"), "PLAN_BATCH"));
@@ -609,6 +742,28 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         artifact.setStatus("CONFIRMED");
         artifactMapper.updateById(artifact);
         return artifactRow(artifactMapper.selectById(id), run);
+    }
+
+    /**
+     * 把用户在确认弹窗里“修改”后的条目覆盖到草稿内容上（仅计划类草稿）。
+     * 只接受 tasks / routines 两个列表；未提供则保持原草稿不变（向后兼容旧的无 body 确认）。
+     * 条目本身仍走 toTaskCreateRequest/routineService 的字段校验与用户隔离，不放大权限。
+     */
+    private void applyPlanEdits(AiAgentArtifact artifact, Map<String, Object> editedPlan) {
+        if (editedPlan == null) return;
+        boolean hasTasks = editedPlan.get("tasks") instanceof List<?>;
+        boolean hasRoutines = editedPlan.get("routines") instanceof List<?>;
+        if (!hasTasks && !hasRoutines) return;
+        Map<String, Object> content = parseMap(artifact.getContentJson());
+        if (hasTasks) {
+            content.put("tasks", mapList(editedPlan.get("tasks")));
+            content.remove("suggestedTasks");
+        }
+        if (hasRoutines) {
+            content.put("routines", mapList(editedPlan.get("routines")));
+            content.remove("suggestedRoutines");
+        }
+        artifact.setContentJson(toJson(content));
     }
 
     private Map<String, Object> confirmPlanArtifact(Long userId, AiAgentArtifact artifact) {
@@ -732,16 +887,18 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         source.setUrl(url);
         source.setFilePath(filePath);
         source.setStatus("UPLOADED");
+        source.setIndexStatus("NOT_INDEXED");
         sourceMapper.insert(source);
         return source;
     }
 
-    private void writeChunks(AiNotebookSource source, String content, Map<String, Object> metadata) {
+    private String writeChunks(AiNotebookSource source, String content, Map<String, Object> metadata) {
         String text = content == null ? "" : content.trim();
         if (text.isBlank()) {
             throw new BusinessException("资料内容为空，无法解析");
         }
         int index = 0;
+        List<String> parentChunkTexts = new ArrayList<>();
         for (String chunk : splitChunks(text)) {
             AiSourceChunk entity = new AiSourceChunk();
             entity.setSourceId(source.getId());
@@ -750,7 +907,9 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             entity.setContent(chunk);
             entity.setMetadataJson(toJson(metadata == null ? Map.of() : metadata));
             chunkMapper.insert(entity);
+            parentChunkTexts.add(chunk);
         }
+        return ragContentHashService.hashChunkTexts(parentChunkTexts);
     }
 
     private List<String> splitChunks(String text) {
@@ -810,13 +969,14 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         }
         List<Map<String, Object>> rows = new ArrayList<>();
         for (UserKnowledgePage page : pages) {
-            rows.add(Map.of(
-                    "sourceId", "wiki:" + page.getId(),
-                    "title", page.getTitle(),
-                    "sourceType", "WIKI_PAGE",
-                    "chunkIndex", 0,
-                    "content", limit(text(page.getContentSummary(), page.getTitle()), 1600)
-            ));
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("sourceId", "wiki:" + page.getId());
+            row.put("title", page.getTitle());
+            row.put("sourceType", "WIKI_PAGE");
+            row.put("chunkIndex", 0);
+            row.put("content", limit(text(page.getContentSummary(), page.getTitle()), 1600));
+            row.put("_explicit", true);
+            rows.add(row);
         }
         return rows;
     }
@@ -904,6 +1064,9 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         if (run == null) {
             throw new BusinessException("AgentRun 不存在或无权限访问");
         }
+        if (run.getNotebookId() != null) {
+            ownedNotebook(userId, run.getNotebookId());
+        }
         return run;
     }
 
@@ -935,6 +1098,11 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         row.put("url", source.getUrl());
         row.put("status", source.getStatus());
         row.put("parseError", source.getParseError());
+        row.put("contentHash", source.getContentHash());
+        row.put("indexStatus", source.getIndexStatus());
+        row.put("indexVersion", source.getIndexVersion());
+        row.put("indexError", source.getIndexError());
+        row.put("indexedAt", source.getIndexedAt());
         row.put("hasFile", source.getFilePath() != null && !source.getFilePath().isBlank());
         row.put("createdAt", source.getCreatedAt());
         row.put("updatedAt", source.getUpdatedAt());

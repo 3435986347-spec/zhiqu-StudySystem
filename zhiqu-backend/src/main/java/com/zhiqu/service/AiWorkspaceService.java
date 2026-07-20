@@ -15,6 +15,9 @@ public interface AiWorkspaceService {
 
     void deleteNotebook(Long userId, Long id);
 
+    /** 校验 notebook 存在且属于当前用户（含未软删），不满足时抛业务异常；供会话读写入口统一复用 */
+    AiNotebook requireOwnedNotebook(Long userId, Long id);
+
     void deleteSource(Long userId, Long notebookId, Long sourceId);
 
     Map<String, Object> downloadSource(Long userId, Long notebookId, Long sourceId);
@@ -51,11 +54,17 @@ public interface AiWorkspaceService {
 
     void errorRun(AiAgentRun run, Exception error);
 
+    /** 流式竞态重建消息对后，把 run 的两个消息外键与本 run 名下 artifact 的来源消息重绑到实际存活的行 */
+    void rebindRunMessages(AiAgentRun run, AiMessage userMessage, AiMessage assistantMessage);
+
+    /** Notebook 已删、迟到回答被丢弃：run 标记为 CANCELED（与 DONE/ERROR 区分，不再产出后续产物） */
+    void cancelRun(AiAgentRun run, String reason);
+
     Map<String, Object> getRun(Long userId, Long runId);
 
     List<Map<String, Object>> listRuns(Long userId, Long notebookId);
 
-    Map<String, Object> confirmArtifact(Long userId, Long id);
+    Map<String, Object> confirmArtifact(Long userId, Long id, Map<String, Object> editedPlan);
 
     Map<String, Object> discardArtifact(Long userId, Long id);
 }

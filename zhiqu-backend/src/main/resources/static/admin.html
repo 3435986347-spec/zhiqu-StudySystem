@@ -32,33 +32,19 @@
           <section class="zq-card zq-card-lg">
             <h2 class="zq-h2" style="font-size:16px; margin-bottom:12px;">运行状态</h2>
             <div id="zq-health" style="display:flex; flex-direction:column;"></div>
-            <div style="margin-top:12px; padding:10px 12px; border-radius:var(--zq-rs); background:var(--zq-warn-tint); font-size:12px; color:var(--zq-warn); line-height:1.55;">⚠ 07-03 22:41 PushPlus 推送延迟 2 次，已自动重试成功。</div>
           </section>
         </div>
+        <section class="zq-card zq-card-lg">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
+            <div><h2 class="zq-h2" style="font-size:16px;">RAG 语义检索</h2><p style="margin-top:5px;font-size:12px;color:var(--zq-text3);">Sidecar、索引代次、任务积压与自动降级</p></div>
+          </div>
+          <div id="zq-rag-status"><div class="zq-empty">正在读取语义检索状态…</div></div>
+        </section>
       </div>
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js"></script>
-  <script>
-    var metrics=[['注册用户','1,284','本周 +23','var(--zq-text)'],['今日活跃','312','峰值 09:00–11:00','var(--zq-primary)'],['今日新增任务','968','人均 3.1 个','var(--zq-text)'],['今日番茄钟','517','合计 2.4 万分钟','var(--zq-text)'],['共享计划','46','4 个待审核','var(--zq-text)'],['AI 调用','2,193','今日 · 1.8M token','var(--zq-text)']];
-    document.getElementById('zq-metrics').innerHTML = metrics.map(function(m){
-      return '<article class="zq-stat" style="padding:14px 16px;"><span class="zq-stat-label" style="font-size:11.5px;">'+m[0]+'</span><strong class="zq-mono" style="display:block; margin-top:7px; font-size:23px; line-height:1; color:'+m[3]+';">'+m[1]+'</strong><span style="display:block; margin-top:5px; font-size:11px; color:var(--zq-text3);">'+m[2]+'</span></article>';
-    }).join('');
-
-    var tv=[188,205,242,231,198,176,214,236,258,247,225,209,278,312], tl=['6/21','6/22','6/23','6/24','6/25','6/26','6/27','6/28','6/29','6/30','7/1','7/2','7/3','7/4'], max=Math.max.apply(null,tv);
-    document.getElementById('zq-traffic').innerHTML = tv.map(function(v,i){
-      var h=Math.max(4,Math.round(v/max*128)), last=i===tv.length-1;
-      return '<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:5px; height:100%; justify-content:flex-end; min-width:0;"><span class="zq-mono" style="font-size:9.5px; color:var(--zq-text3);">'+v+'</span><div title="'+tl[i]+' · '+v+' 人" style="width:100%; max-width:30px; height:'+h+'px; border-radius:3px 3px 2px 2px; background:'+(last?'var(--zq-primary)':'var(--zq-tint-strong)')+';"></div><span style="font-size:10px; color:var(--zq-text3); white-space:nowrap;">'+tl[i]+'</span></div>';
-    }).join('');
-
-    var health=[['API 服务','正常 · 99.98%',1],['MySQL','正常 · 12ms',1],['Redis 缓存','正常 · 3ms',1],['AI 网关','正常 · 421ms',1],['PushPlus 推送','波动 · 已重试',0]];
-    document.getElementById('zq-health').innerHTML = health.map(function(h){
-      var c=h[2]?'var(--zq-ok)':'var(--zq-warn)';
-      return '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft);"><div style="display:flex; align-items:center; gap:9px; min-width:0;"><span style="width:8px; height:8px; flex:none; border-radius:50%; background:'+c+';"></span><span style="font-size:12.5px; font-weight:600;">'+h[0]+'</span></div><span class="zq-mono" style="font-size:11.5px; color:'+c+';">'+h[1]+'</span></div>';
-    }).join('');
-  </script>
-  <script src="assets/zhiqu-api.js?v=20260707-wire-all18"></script>
+  <script src="assets/zhiqu-ui.js?v=20260720-plan-confirm"></script>
+  <script src="assets/zhiqu-api.js?v=20260720-plan-confirm-rag-lease1"></script>
 </body>
 </html>
-

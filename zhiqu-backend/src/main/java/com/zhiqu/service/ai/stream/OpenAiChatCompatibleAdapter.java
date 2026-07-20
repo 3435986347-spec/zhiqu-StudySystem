@@ -3,6 +3,7 @@ package com.zhiqu.service.ai.stream;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
@@ -20,6 +21,9 @@ import java.util.function.Consumer;
 public class OpenAiChatCompatibleAdapter implements ModelStreamAdapter {
     protected final ObjectMapper objectMapper;
     protected final RestTemplate restTemplate;
+
+    @Value("${app.ai.temperature:}")
+    protected String temperature;
 
     public OpenAiChatCompatibleAdapter() {
         this.objectMapper = new ObjectMapper();
@@ -43,7 +47,7 @@ public class OpenAiChatCompatibleAdapter implements ModelStreamAdapter {
             Map<String, Object> body = new HashMap<>();
             body.put("model", request.config().getModelName());
             body.put("messages", request.messages());
-            body.put("temperature", 0.3);
+            AiStreamAdapterSupport.applyTemperature(body, temperature);
             body.put("max_tokens", 4096);
             body.put("stream", true);
             AiStreamAdapterSupport.applyOpenAiReasoningOptions(request.config(), body, request.reasoningMode());

@@ -26,7 +26,7 @@ public interface AiService {
     Map<String, Object> chat(Long userId, String message, Long modelConfigId);
 
     Map<String, Object> chat(Long userId, String message, Long modelConfigId,
-                             Boolean enableWebSearch, String reasoningMode);
+                             Boolean enableWebSearch, String reasoningMode, Long notebookId);
 
     SseEmitter streamChat(Long userId, String message, Long modelConfigId,
                           Boolean enableWebSearch, String reasoningMode);
@@ -52,8 +52,8 @@ public interface AiService {
     /** 获取长期记忆与最近对话摘要 */
     Map<String, Object> getMemory(Long userId);
 
-    /** 获取最近聊天记录 */
-    List<Map<String, Object>> getRecentChatMessages(Long userId, int limit);
+    /** 获取最近聊天记录（会话按 notebook 隔离，notebookId 为空时读历史默认会话） */
+    List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit);
 
     /** 删除单条聊天消息 */
     void deleteChatMessage(Long userId, Long messageId);

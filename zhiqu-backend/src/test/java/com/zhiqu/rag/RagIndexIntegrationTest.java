@@ -1,0 +1,332 @@
+package com.zhiqu.rag;
+
+import com.zhiqu.common.BusinessException;
+import com.zhiqu.entity.AiNotebookSource;
+import com.zhiqu.entity.RagIndexGeneration;
+import com.zhiqu.entity.RagIndexJob;
+import com.zhiqu.mapper.AiNotebookSourceMapper;
+import com.zhiqu.mapper.RagIndexGenerationMapper;
+import com.zhiqu.mapper.RagIndexJobMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+@Testcontainers
+@DisabledIfSystemProperty(named = "zhiqu.skipDockerTests", matches = "true",
+        disabledReason = "Docker integration tests were explicitly disabled")
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK, properties = {
+        "spring.task.scheduling.enabled=false",
+        "app.cookie.secure=false",
+        "app.rag.enabled=false"
+})
+class RagIndexIntegrationTest {
+    static {
+        System.setProperty("api.version", System.getProperty("api.version", "1.40"));
+    }
+
+    @Container
+    @ServiceConnection
+    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0.36")
+            .withDatabaseName("zhiqu_rag_test")
+            .withUsername("zhiqu")
+            .withPassword("zhiqu");
+
+    @Autowired private JdbcTemplate jdbc;
+    @Autowired private TransactionTemplate transactions;
+    @Autowired private RagIndexJobService jobService;
+    @Autowired private SourceScopeResolver scopeResolver;
+    @Autowired private AiNotebookSourceMapper sourceMapper;
+    @Autowired private RagIndexGenerationMapper generationMapper;
+    @Autowired private RagIndexJobMapper jobMapper;
+    @Autowired private RagAdminService adminService;
+
+    private Long userId;
+    private Long notebookId;
+    private Long sourceId;
+    private Long generationId;
+
+    @BeforeEach
+    void prepareData() {
+        // 用例隔离：这些集成用例共享同一测试库。prepareData 每次都新建一个 ACTIVE generation
+        // 却不清理旧的，跑多个用例后 ACTIVE generation / PENDING job 会累积，导致 enqueueSource
+        // 依 active generation 数多建 job，PENDING 计数从 1 变 2（legacyReadySourceGetsHashAndDurableJob 失败）。
+        // 每个用例开始前先清空遗留状态：先删叶子表 job / state，再把旧 ACTIVE generation 退役。
+        jdbc.update("DELETE FROM rag_index_job");
+        jdbc.update("DELETE FROM rag_source_index_state");
+        jdbc.update("UPDATE rag_index_generation SET status='RETIRED' WHERE status='ACTIVE'");
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        jdbc.update("INSERT INTO sys_user(username,password,nickname,role,deleted) VALUES(?,?,?,'USER',0)",
+                "rag_" + suffix, "test-password", "RAG Test");
+        userId = jdbc.queryForObject("SELECT id FROM sys_user WHERE username=?", Long.class, "rag_" + suffix);
+        jdbc.update("INSERT INTO ai_notebook(user_id,title,status,deleted) VALUES(?,?,'ACTIVE',0)", userId, "RAG Notebook");
+        notebookId = jdbc.queryForObject("SELECT id FROM ai_notebook WHERE user_id=? ORDER BY id DESC LIMIT 1", Long.class, userId);
+        jdbc.update("INSERT INTO ai_notebook_source(user_id,notebook_id,source_type,title,status,index_status,deleted) " +
+                        "VALUES(?,?,'TEXT','legacy.txt','READY','NOT_INDEXED',0)", userId, notebookId);
+        sourceId = jdbc.queryForObject("SELECT id FROM ai_notebook_source WHERE notebook_id=? ORDER BY id DESC LIMIT 1", Long.class, notebookId);
+        jdbc.update("INSERT INTO ai_source_chunk(source_id,chunk_index,content) VALUES(?,0,?)", sourceId, "第一段资料内容");
+        jdbc.update("INSERT INTO rag_index_generation(index_version,collection_name,status) VALUES(?,?,'ACTIVE')",
+                "bge-small-zh-v1.5@test", "rag_test_" + suffix);
+        generationId = jdbc.queryForObject("SELECT id FROM rag_index_generation ORDER BY id DESC LIMIT 1", Long.class);
+    }
+
+    @Test
+    void v24SchemaWasApplied() {
+        Integer columns = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.columns " +
+                "WHERE table_schema=DATABASE() AND table_name='ai_notebook_source' " +
+                "AND column_name IN ('content_hash','index_status','index_version','index_error','indexed_at')", Integer.class);
+        assertEquals(5, columns);
+        Integer tables = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() " +
+                "AND table_name IN ('rag_index_generation','rag_source_index_state','rag_index_job')", Integer.class);
+        assertEquals(3, tables);
+    }
+
+    @Test
+    void v26LeaseFencingSchemaWasApplied() {
+        Integer columns = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.columns " +
+                "WHERE table_schema=DATABASE() AND table_name='rag_index_job' AND column_name='lease_version'",
+                Integer.class);
+        assertEquals(1, columns);
+    }
+
+    @Test
+    void outboxWriteRollsBackWithSourceTransaction() {
+        assertThrows(IllegalStateException.class, () -> transactions.executeWithoutResult(status -> {
+            jobService.enqueueSource(sourceMapper.selectById(sourceId));
+            throw new IllegalStateException("force rollback");
+        }));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_job WHERE source_id=?", Integer.class, sourceId));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM rag_source_index_state WHERE source_id=?", Integer.class, sourceId));
+        assertEquals("NOT_INDEXED", jdbc.queryForObject("SELECT index_status FROM ai_notebook_source WHERE id=?", String.class, sourceId));
+    }
+
+    @Test
+    void legacyReadySourceGetsHashAndDurableJob() {
+        AiNotebookSource source = sourceMapper.selectById(sourceId);
+        jobService.enqueueSource(source);
+        String hash = jdbc.queryForObject("SELECT content_hash FROM ai_notebook_source WHERE id=?", String.class, sourceId);
+        assertNotNull(hash);
+        assertEquals(64, hash.length());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_job WHERE source_id=? AND status='PENDING'", Integer.class, sourceId));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM rag_source_index_state WHERE source_id=? AND generation_id=?", Integer.class, sourceId, generationId));
+    }
+
+    @Test
+    void staleRunningJobCanBeReclaimed() {
+        jdbc.update("INSERT INTO rag_index_job(dedupe_key,operation,generation_id,user_id,notebook_id,source_id,status,attempts,locked_at,locked_by) " +
+                        "VALUES(?,?,?,?,?,?,'RUNNING',2,?,?)", "stale:" + UUID.randomUUID(), "UPSERT_SOURCE",
+                generationId, userId, notebookId, sourceId, LocalDateTime.now().minusMinutes(6), "dead-worker");
+        // Earlier test cases intentionally leave durable pending jobs behind. Claim a full
+        // worker-sized window so this assertion does not depend on JUnit execution order.
+        List<RagIndexJob> claimed = jobService.claimDueJobs(20, "replacement-worker");
+        RagIndexJob job = claimed.stream().filter(item -> sourceId.equals(item.getSourceId())).findFirst().orElseThrow();
+        assertEquals(3, job.getAttempts());
+        assertEquals("replacement-worker", job.getLockedBy());
+        assertEquals(1L, job.getLeaseVersion());
+    }
+
+    @Test
+    void staleWorkerCannotOverwriteReclaimedTerminalState() {
+        String dedupe = "lease-race:" + UUID.randomUUID();
+        jdbc.update("INSERT INTO rag_index_job(dedupe_key,operation,user_id,notebook_id,source_id,status,attempts) " +
+                        "VALUES(?,?,?,?,?,'PENDING',0)", dedupe, "DELETE_SOURCE", userId, notebookId, sourceId);
+        Long jobId = jdbc.queryForObject("SELECT id FROM rag_index_job WHERE dedupe_key=?", Long.class, dedupe);
+
+        RagIndexJob firstLease = jobService.claimDueJobs(20, "worker-1").stream()
+                .filter(item -> jobId.equals(item.getId())).findFirst().orElseThrow();
+        jdbc.update("UPDATE rag_index_job SET locked_at=? WHERE id=?",
+                LocalDateTime.now().minusMinutes(6), jobId);
+        RagIndexJob secondLease = jobService.claimDueJobs(20, "worker-2").stream()
+                .filter(item -> jobId.equals(item.getId())).findFirst().orElseThrow();
+
+        assertNotEquals(firstLease.getLeaseVersion(), secondLease.getLeaseVersion());
+        assertTrue(jobService.complete(secondLease));
+        assertFalse(jobService.complete(firstLease));
+        assertFalse(jobService.handleFailure(firstLease, null, null,
+                new IllegalStateException("late failure from stale worker")));
+
+        RagIndexJob stored = jobMapper.selectById(jobId);
+        assertEquals("COMPLETED", stored.getStatus());
+        assertEquals(secondLease.getLeaseVersion(), stored.getLeaseVersion());
+        assertEquals(null, stored.getLastError());
+    }
+
+    @Test
+    void deletedSourceImmediatelyLeavesRetrievalScope() {
+        assertEquals(1, scopeResolver.resolve(userId, notebookId, List.of(sourceId)).size());
+        sourceMapper.deleteById(sourceId);
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> scopeResolver.resolve(userId, notebookId, List.of(sourceId)));
+        assertTrue(error.getMessage().contains("不存在") || error.getMessage().contains("不可用"));
+        assertTrue(scopeResolver.resolve(userId, notebookId, List.of()).isEmpty());
+    }
+
+    @Test
+    void deadJobMovesBuildingGenerationToFailed() {
+        RagIndexGeneration generation = createBuildingGeneration();
+        AiNotebookSource source = sourceMapper.selectById(sourceId);
+        jobService.enqueueGenerationSources(generation, List.of(source));
+        RagIndexJob job = jobMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<RagIndexJob>()
+                .eq(RagIndexJob::getGenerationId, generation.getId())
+                .eq(RagIndexJob::getSourceId, sourceId)
+                .last("LIMIT 1"));
+        job = claimForFailure(job.getId(), 8, "dead-worker");
+
+        assertTrue(jobService.handleFailure(job, source, generation, new IllegalStateException("forced failure")));
+
+        assertEquals("DEAD", jobMapper.selectById(job.getId()).getStatus());
+        assertEquals("FAILED", generationMapper.selectById(generation.getId()).getStatus());
+    }
+
+    @Test
+    void concurrentFinalDeadJobsConvergeGenerationToFailed() throws Exception {
+        RagIndexGeneration generation = createBuildingGeneration();
+        Long secondSourceId = createReadySource("second.txt", "second source content");
+        jobService.enqueueGenerationSources(generation,
+                List.of(sourceMapper.selectById(sourceId), sourceMapper.selectById(secondSourceId)));
+        List<RagIndexJob> jobs = jobMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<RagIndexJob>()
+                        .eq(RagIndexJob::getGenerationId, generation.getId())
+                        .in(RagIndexJob::getSourceId, sourceId, secondSourceId)
+                        .orderByAsc(RagIndexJob::getId));
+        assertEquals(2, jobs.size());
+        jobs.replaceAll(job -> claimForFailure(job.getId(), 8, "dead-worker-" + job.getId()));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<Boolean>> results = jobs.stream().map(job -> executor.submit(() -> {
+                ready.countDown();
+                assertTrue(start.await(10, TimeUnit.SECONDS));
+                return jobService.handleFailure(jobMapper.selectById(job.getId()),
+                        sourceMapper.selectById(job.getSourceId()),
+                        generationMapper.selectById(generation.getId()),
+                        new IllegalStateException("concurrent forced failure"));
+            })).toList();
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            for (Future<Boolean> result : results) assertTrue(result.get(20, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_job " +
+                "WHERE generation_id=? AND status='DEAD'", Integer.class, generation.getId()));
+        assertEquals("FAILED", generationMapper.selectById(generation.getId()).getStatus());
+    }
+
+    @Test
+    void retryRejectsDeadJobFromFailedGeneration() {
+        RagIndexGeneration generation = createBuildingGeneration();
+        AiNotebookSource source = sourceMapper.selectById(sourceId);
+        jobService.enqueueGenerationSources(generation, List.of(source));
+        RagIndexJob job = jobMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<RagIndexJob>()
+                        .eq(RagIndexJob::getGenerationId, generation.getId())
+                        .eq(RagIndexJob::getSourceId, sourceId).last("LIMIT 1"));
+        job = claimForFailure(job.getId(), 8, "retry-dead-worker");
+        assertTrue(jobService.handleFailure(job, source, generation, new IllegalStateException("forced failure")));
+
+        BusinessException error = assertThrows(BusinessException.class, () -> adminService.retry(job.getId()));
+
+        assertTrue(error.getMessage().contains("索引代次已失败"));
+        assertEquals("DEAD", jobMapper.selectById(job.getId()).getStatus());
+        assertEquals("FAILED", generationMapper.selectById(generation.getId()).getStatus());
+    }
+
+    @Test
+    void generationExpansionPreservesCurrentIndexedState() {
+        RagIndexGeneration generation = createBuildingGeneration();
+        AiNotebookSource source = sourceMapper.selectById(sourceId);
+        jobService.enqueueGenerationSources(generation, List.of(source));
+        jdbc.update("UPDATE rag_source_index_state SET status='INDEXED', vector_count=3 " +
+                "WHERE source_id=? AND generation_id=?", sourceId, generation.getId());
+        jdbc.update("UPDATE rag_index_job SET status='COMPLETED', completed_at=NOW() " +
+                "WHERE source_id=? AND generation_id=?", sourceId, generation.getId());
+
+        jobService.enqueueGenerationSources(generationMapper.selectById(generation.getId()), List.of(sourceMapper.selectById(sourceId)));
+
+        assertEquals("INDEXED", jdbc.queryForObject("SELECT status FROM rag_source_index_state " +
+                "WHERE source_id=? AND generation_id=?", String.class, sourceId, generation.getId()));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_job WHERE source_id=? AND generation_id=?",
+                Integer.class, sourceId, generation.getId()));
+        assertEquals(1, generationMapper.selectById(generation.getId()).getIndexedSourceCount());
+    }
+
+    @Test
+    void purgingGenerationCannotBeReactivated() {
+        jdbc.update("UPDATE rag_index_generation SET status='RETIRED', retired_at=NOW() WHERE id=?", generationId);
+        assertTrue(jobService.claimGenerationForPurge(generationId));
+        assertEquals("PURGING", generationMapper.selectById(generationId).getStatus());
+
+        BusinessException error = assertThrows(BusinessException.class, () -> adminService.activate(generationId));
+
+        assertTrue(error.getMessage().contains("已构建完成"));
+        assertEquals("PURGING", generationMapper.selectById(generationId).getStatus());
+    }
+
+    @Test
+    void failedGenerationCanBeDiscardedAndPurged() {
+        RagIndexGeneration generation = createBuildingGeneration();
+        jdbc.update("UPDATE rag_index_generation SET status='FAILED', completed_at=NOW() WHERE id=?",
+                generation.getId());
+
+        Map<String, Object> discarded = adminService.discardFailedGeneration(generation.getId());
+
+        assertEquals("PURGING", discarded.get("status"));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_job " +
+                "WHERE generation_id=? AND operation='DELETE_GENERATION' AND status='PENDING'",
+                Integer.class, generation.getId()));
+        jobService.markGenerationPurged(generation.getId());
+        assertEquals("PURGED", generationMapper.selectById(generation.getId()).getStatus());
+    }
+
+    private RagIndexJob claimForFailure(Long jobId, int attempts, String workerId) {
+        jdbc.update("UPDATE rag_index_job SET status='RUNNING', attempts=?, locked_at=NOW(), locked_by=?, " +
+                "lease_version=lease_version+1 WHERE id=?", attempts, workerId, jobId);
+        return jobMapper.selectById(jobId);
+    }
+
+    private RagIndexGeneration createBuildingGeneration() {
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        jdbc.update("INSERT INTO rag_index_generation(index_version,collection_name,status) VALUES(?,?,'BUILDING')",
+                "bge-small-zh-v1.5@test", "rag_build_" + suffix);
+        Long id = jdbc.queryForObject("SELECT id FROM rag_index_generation WHERE collection_name=?", Long.class,
+                "rag_build_" + suffix);
+        return generationMapper.selectById(id);
+    }
+
+    private Long createReadySource(String title, String content) {
+        jdbc.update("INSERT INTO ai_notebook_source(user_id,notebook_id,source_type,title,status,index_status,deleted) " +
+                "VALUES(?,?,'TEXT',?,'READY','NOT_INDEXED',0)", userId, notebookId, title);
+        Long id = jdbc.queryForObject("SELECT id FROM ai_notebook_source WHERE notebook_id=? " +
+                "ORDER BY id DESC LIMIT 1", Long.class, notebookId);
+        jdbc.update("INSERT INTO ai_source_chunk(source_id,chunk_index,content) VALUES(?,0,?)", id, content);
+        return id;
+    }
+}

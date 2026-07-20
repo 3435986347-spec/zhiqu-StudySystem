@@ -3,6 +3,7 @@ package com.zhiqu.service.ai.stream;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,9 @@ public class AnthropicMessagesAdapter implements ModelStreamAdapter {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RestTemplate restTemplate = AiStreamAdapterSupport.timeoutRestTemplate();
 
+    @Value("${app.ai.temperature:}")
+    private String temperature;
+
     @Override
     public boolean supports(String providerType) {
         return "ANTHROPIC".equals(providerType == null ? "" : providerType.toUpperCase(Locale.ROOT));
@@ -37,12 +41,7 @@ public class AnthropicMessagesAdapter implements ModelStreamAdapter {
         try {
             Map<String, Object> body = anthropicBody(request);
             body.put("stream", true);
-            if (AiStreamAdapterSupport.isReasoningRequested(request.reasoningMode())) {
-                body.put("thinking", Map.of(
-                        "type", "enabled",
-                        "budget_tokens", "DEEP".equals(request.reasoningMode()) ? 2048 : 1024
-                ));
-            }
+            AiStreamAdapterSupport.applyAnthropicThinking(body, request.reasoningMode(), request.config().getModelName());
             restTemplate.execute(
                     AiStreamAdapterSupport.resolveAnthropicMessagesUrl(request.config().getApiUrl()),
                     HttpMethod.POST,
@@ -144,7 +143,7 @@ public class AnthropicMessagesAdapter implements ModelStreamAdapter {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.config().getModelName());
         body.put("max_tokens", 4096);
-        body.put("temperature", 0.3);
+        AiStreamAdapterSupport.applyTemperature(body, temperature);
         if (system.length() > 0) body.put("system", system.toString());
         body.put("messages", anthMessages);
         return body;

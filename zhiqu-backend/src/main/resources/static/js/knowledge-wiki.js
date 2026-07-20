@@ -531,7 +531,7 @@ async function handleDocumentAction(action, id) {
     if (action === 'delete') {
         const ok = await showConfirm('确定删除这条知识页吗？');
         if (!ok) return;
-        await api.delete('/knowledge/pages/' + id);
+        await api.delete('/knowledge/pages/' + id + '?version=' + encodeURIComponent(node.version));
         showToast('知识页已删除', 'success');
         await loadWiki();
         return;
@@ -1900,14 +1900,16 @@ async function persistBlocks(pageId, rerender) {
     const safeContent = content || EMPTY_WIKI_CONTENT;
     node.content = content;
     try {
-        await api.put('/knowledge/pages/' + pageId, {
+        const updated = await api.put('/knowledge/pages/' + pageId, {
             title: node.title || 'Untitled',
             content: safeContent,
             pageType: node.pageType || 'NOTE',
             parentId: node.parentId || null,
             sortOrder: node.sortOrder || 0,
-            pinned: node.pinned === true
+            pinned: node.pinned === true,
+            version: node.version
         });
+        if (updated?.data?.version != null) node.version = updated.data.version;
     } catch (error) {
         showToast(error.message || '知识页保存失败', 'error');
         return;
@@ -1984,14 +1986,16 @@ async function saveTitleEditor() {
     const node = findNode(editor.id);
     try {
         const content = node?.content || serializeWikiBlocks(getBlocks(editor.id)) || EMPTY_WIKI_CONTENT;
-        await api.put('/knowledge/pages/' + editor.id, {
+        const updated = await api.put('/knowledge/pages/' + editor.id, {
             title,
             content,
             pageType: node?.pageType || 'NOTE',
             parentId: node?.parentId || null,
             sortOrder: node?.sortOrder || 0,
-            pinned: node?.pinned === true
+            pinned: node?.pinned === true,
+            version: node?.version
         });
+        if (node && updated?.data?.version != null) node.version = updated.data.version;
         showToast('标题已保存', 'success');
     } catch (error) {
         updateCachedNodeTitle(editor.id, previousTitle);
@@ -2131,14 +2135,16 @@ async function saveInlineEditor() {
         showToast('请填写标题和内容', 'warning');
         return;
     }
-    await api.put('/knowledge/pages/' + id, {
+    const updated = await api.put('/knowledge/pages/' + id, {
         title,
         content,
         pageType: node.pageType || 'NOTE',
         parentId: node.parentId || null,
         sortOrder: node.sortOrder || 0,
-        pinned: node.pinned === true
+        pinned: node.pinned === true,
+        version: node.version
     });
+    if (updated?.data?.version != null) node.version = updated.data.version;
     showToast('知识页已保存', 'success');
     activeEditor = null;
     await loadWiki();
@@ -2357,7 +2363,8 @@ async function moveNode(node, direction) {
     }
     await api.put('/knowledge/pages/' + node.id + '/move', {
         parentId: node.parentId || null,
-        sortOrder: targetIndex
+        sortOrder: targetIndex,
+        version: node.version
     });
     await loadWiki();
     scrollToNode(node.id);

@@ -13,7 +13,7 @@
 | 任务管理 | 创建、编辑、删除任务，支持 DDL、优先级、状态、象限、乐观锁版本控制 |
 | 例行计划 | 适合每天背单词、每周复盘、固定训练等重复事项，不把日常计划展开成大量任务 |
 | 早八提醒 | 每天 08:00 汇总临近 DDL 和当天例行计划，支持 PushPlus 等外部提醒渠道 |
-| AI 助手 | 多模型切换、流式对话、深度思考（可折叠）、Markdown/表格/公式渲染；Notebook 资料工作区支持 PDF/Excel/文本切块和图片存档；顺序 Agent/TaskGraph 提供执行轨迹、Claim/Evidence、Verifier 与可确认产物；支持计划生成及任务/例行计划写入 |
+| AI 助手 | 多模型切换、流式对话、深度思考（可折叠）、Markdown/表格/公式渲染；Notebook 资料工作区支持 PDF/Excel/文本切块和图片存档；可选 Python RAG sidecar 提供 BGE 中文语义检索，异常时自动降级到关键词检索；顺序 Agent/TaskGraph 提供执行轨迹、Claim/Evidence、Verifier 与可确认产物 |
 | 模型配置 | 支持系统模型与个人模型，个人中心可添加 OpenAI-compatible、Anthropic、Gemini、Ollama、vLLM 等配置，附连通性/能力测试 |
 | 知识 Wiki | Obsidian/Karpathy 风格个人知识空间，Raw Source、Patch Set、Wiki Pages、index/log、双链、图谱、健康检查；文档视图支持所见即所得编辑、公式块（本地 KaTeX）、参考链接、右键删除、整站 Markdown 导出 |
 | 参考计划 | 用户可提交计划模板，后台审核后发布，其他用户可按开始日期套用到自己的学习日历 |
@@ -35,6 +35,14 @@
 - Redis
 - Flyway
 - Maven
+
+可选语义检索 Sidecar：
+
+- Python 3.11 / FastAPI / Uvicorn（仅监听 `127.0.0.1`）
+- `BAAI/bge-small-zh-v1.5` 本地固定 revision
+- Chroma cosine 索引（可重建，不保存权威正文）
+- MySQL Outbox 负责幂等索引、重试、删除和同模型版本的集合蓝绿重建
+- P0 Sidecar 一次只加载一个模型版本；升级 Embedding 模型时会短暂降级到关键词检索，再切换新索引
 
 前端：
 
@@ -59,6 +67,7 @@
 ```text
 软件源代码/
 ├─ zhiqu-backend/              # 主项目，Spring Boot 单体应用
+├─ rag-service/                # 可选本地语义检索 sidecar
 ├─ deploy/                     # 部署脚本和配置模板
 ├─ README.md                   # 项目说明
 ├─ README-交付版.md

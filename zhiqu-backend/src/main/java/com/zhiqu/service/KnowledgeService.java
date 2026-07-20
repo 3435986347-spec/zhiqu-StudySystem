@@ -19,7 +19,7 @@ public interface KnowledgeService {
 
     Map<String, Object> movePage(Long userId, Long id, Map<String, Object> body);
 
-    void deletePage(Long userId, Long id);
+    void deletePage(Long userId, Long id, Integer version);
 
     List<Map<String, Object>> listRevisions(Long userId);
 
@@ -39,7 +39,10 @@ public interface KnowledgeService {
      * 内部专用：以“可信的读取快照基准哈希”创建 Wiki 草稿。仅供服务端内部调用方（如 AI 工具循环）传入
      * pageId -> 读取时状态哈希；公共 createPatchSet/DTO 不接受该字段，避免客户端伪造基准破坏冲突检测。
      */
-    Map<String, Object> createPatchSet(Long userId, Map<String, Object> body, Map<Long, String> trustedBaseHashByPageId);
+    Map<String, Object> createPatchSet(Long userId, Map<String, Object> body,
+                                       Map<Long, KnowledgePageSnapshot> trustedSnapshotsByPageId);
+
+    KnowledgePageSnapshot findPageSnapshotByTitle(Long userId, String title);
 
     /** 纯内存计算“标题+正文”的页状态哈希（不查库），供 AI 工具就地对刚返回给模型的同一份内容取基准快照。 */
     String pageStateHash(String title, String content);

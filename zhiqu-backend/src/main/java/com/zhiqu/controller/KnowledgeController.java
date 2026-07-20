@@ -65,8 +65,9 @@ public class KnowledgeController {
     }
 
     @DeleteMapping("/pages/{id}")
-    public Result<Void> deletePage(@PathVariable Long id) {
-        knowledgeService.deletePage(SecurityUtils.getCurrentUserId(), id);
+    public Result<Void> deletePage(@PathVariable Long id,
+                                   @RequestParam Integer version) {
+        knowledgeService.deletePage(SecurityUtils.getCurrentUserId(), id, version);
         return Result.success();
     }
 

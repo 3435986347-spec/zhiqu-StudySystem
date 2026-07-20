@@ -23,6 +23,7 @@ public class AiMessage {
     private String citationsJson;
     private String retrievalStatusJson;
     private String usageJson;
+    private String suggestedPlanJson;
     private String reasoningMode;
     private Boolean webSearchEnabled;
     private LocalDateTime completedAt;

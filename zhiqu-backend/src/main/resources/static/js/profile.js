@@ -401,7 +401,7 @@ async function loadKnowledgePages() {
             '  <div class="knowledge-title">' + escapeHtml(row.title || '') + '</div>' +
             '  <div class="knowledge-meta">' + escapeHtml(row.pageType || 'NOTE') + '</div>' +
             '  <p>' + escapeHtml(row.content || '') + '</p>' +
-            '  <button class="btn btn-default btn-sm" onclick="deleteKnowledgePage(' + row.id + ')">删除</button>' +
+            '  <button class="btn btn-default btn-sm" onclick="deleteKnowledgePage(' + row.id + ',' + Number(row.version || 0) + ')">删除</button>' +
             '</div>'
         )).join('') : '<div class="empty-line">还没有已确认知识。</div>';
     } catch (e) {
@@ -469,11 +469,11 @@ async function rejectKnowledgeRevision(id) {
     }
 }
 
-async function deleteKnowledgePage(id) {
+async function deleteKnowledgePage(id, version) {
     const ok = await showConfirm('确定删除这条知识？');
     if (!ok) return;
     try {
-        await api.delete('/knowledge/pages/' + id);
+        await api.delete('/knowledge/pages/' + id + '?version=' + encodeURIComponent(version));
         showToast('知识已删除', 'success');
         await loadKnowledgePages();
     } catch (e) {

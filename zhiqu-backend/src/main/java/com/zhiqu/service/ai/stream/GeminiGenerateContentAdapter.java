@@ -3,6 +3,7 @@ package com.zhiqu.service.ai.stream;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
@@ -23,6 +24,9 @@ public class GeminiGenerateContentAdapter implements ModelStreamAdapter {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RestTemplate restTemplate = AiStreamAdapterSupport.timeoutRestTemplate();
 
+    @Value("${app.ai.temperature:}")
+    private String temperature;
+
     @Override
     public boolean supports(String providerType) {
         return "GEMINI".equals(providerType == null ? "" : providerType.toUpperCase(Locale.ROOT));
@@ -35,7 +39,10 @@ public class GeminiGenerateContentAdapter implements ModelStreamAdapter {
         try {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("contents", toGeminiContents(request.messages()));
-            body.put("generationConfig", Map.of("temperature", 0.3, "maxOutputTokens", 4096));
+            Map<String, Object> generationConfig = new LinkedHashMap<>();
+            generationConfig.put("maxOutputTokens", 4096);
+            AiStreamAdapterSupport.applyTemperature(generationConfig, temperature);
+            body.put("generationConfig", generationConfig);
 
             restTemplate.execute(
                     AiStreamAdapterSupport.resolveGeminiStreamUrl(request.config()),

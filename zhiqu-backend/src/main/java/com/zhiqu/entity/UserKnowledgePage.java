@@ -23,6 +23,9 @@ public class UserKnowledgePage {
     private LocalDateTime lastUsedAt;
     private String encryptionVersion;
 
+    @Version
+    private Integer version;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

@@ -12,8 +12,10 @@ import com.zhiqu.mapper.KnowledgeOperationLogMapper;
 import com.zhiqu.mapper.KnowledgePageLinkMapper;
 import com.zhiqu.mapper.KnowledgePatchSetMapper;
 import com.zhiqu.mapper.KnowledgeSourceMapper;
+import com.zhiqu.mapper.SysUserMapper;
 import com.zhiqu.mapper.UserKnowledgePageMapper;
 import com.zhiqu.mapper.UserKnowledgeRevisionMapper;
+import com.zhiqu.service.KnowledgePageSnapshot;
 import com.zhiqu.service.KnowledgeService;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.util.FileParseUtil;
@@ -43,6 +45,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final long MAX_SOURCE_UPLOAD_BYTES = 20L * 1024L * 1024L;
 
     private final UserKnowledgePageMapper pageMapper;
+    private final SysUserMapper userMapper;
     private final UserKnowledgeRevisionMapper revisionMapper;
     private final KnowledgeSourceMapper sourceMapper;
     private final KnowledgePatchSetMapper patchSetMapper;
@@ -51,6 +54,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final SensitiveCryptoService cryptoService;
 
     public KnowledgeServiceImpl(UserKnowledgePageMapper pageMapper,
+                                SysUserMapper userMapper,
                                 UserKnowledgeRevisionMapper revisionMapper,
                                 KnowledgeSourceMapper sourceMapper,
                                 KnowledgePatchSetMapper patchSetMapper,
@@ -58,6 +62,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                                 KnowledgeOperationLogMapper operationLogMapper,
                                 SensitiveCryptoService cryptoService) {
         this.pageMapper = pageMapper;
+        this.userMapper = userMapper;
         this.revisionMapper = revisionMapper;
         this.sourceMapper = sourceMapper;
         this.patchSetMapper = patchSetMapper;
@@ -150,9 +155,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public Map<String, Object> savePage(Long userId, Long id, Map<String, Object> body) {
+        if (body == null) body = Map.of();
+        if (id == null || body.containsKey("parentId")) {
+            lockKnowledgeTree(userId);
+        }
         UserKnowledgePage page = null;
         if (id != null) {
             page = ownedPage(userId, id);
+            assertExpectedVersion(page, requiredVersion(body));
         }
         if (page == null) {
             page = new UserKnowledgePage();
@@ -177,12 +187,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         } else {
             // 字段缺省则保留旧值，避免更新正文时把子页挪到根节点或重置类型
             Long parentId = body.containsKey("parentId") ? parseLong(body.get("parentId")) : page.getParentId();
-            if (parentId != null) {
-                if (page.getId() != null && page.getId().equals(parentId)) {
-                    throw new BusinessException("不能把知识页挂到自己下面");
-                }
-                ownedPage(userId, parentId);
-            }
+            validateParentAssignment(userId, page.getId(), parentId);
             page.setParentId(parentId);
             String keepType = page.getPageType() != null ? page.getPageType() : "NOTE";
             page.setPageType(limit(value(body.get("pageType"), keepType).toUpperCase(), 40));
@@ -197,7 +202,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             pageMapper.insert(page);
             writeLog(userId, "page.create", page.getId(), null, null, "创建知识页：" + page.getTitle(), page.getContentSummary());
         } else {
-            pageMapper.updateById(page);
+            updatePageOrThrow(page);
             writeLog(userId, "page.update", page.getId(), null, null, "更新知识页：" + page.getTitle(), page.getContentSummary());
         }
         syncPageLinks(userId, page.getId(), content);
@@ -207,24 +212,18 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public Map<String, Object> movePage(Long userId, Long id, Map<String, Object> body) {
+        lockKnowledgeTree(userId);
         UserKnowledgePage page = ownedPage(userId, id);
+        assertExpectedVersion(page, requiredVersion(body));
         if (isSystemKnowledgePage(page)) {
             throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许移动");
         }
         Long parentId = parseLong(body == null ? null : body.get("parentId"));
-        if (parentId != null) {
-            if (page.getId().equals(parentId)) {
-                throw new BusinessException("不能把知识页移动到自己下面");
-            }
-            ownedPage(userId, parentId);
-            if (isDescendant(userId, parentId, page.getId())) {
-                throw new BusinessException("不能把知识页移动到自己的子节点下面");
-            }
-        }
+        validateParentAssignment(userId, page.getId(), parentId);
 
         int targetIndex = Math.max(0, defaultInt(body == null ? null : body.get("sortOrder"), 0));
         page.setParentId(parentId);
-        pageMapper.updateById(page);
+        updatePageOrThrow(page);
 
         List<UserKnowledgePage> siblings = siblingPages(userId, parentId);
         siblings.removeIf(item -> item.getId().equals(page.getId()));
@@ -232,22 +231,26 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         for (int i = 0; i < siblings.size(); i++) {
             UserKnowledgePage item = siblings.get(i);
             item.setSortOrder(i * 10);
-            pageMapper.updateById(item);
+            updatePageOrThrow(item);
         }
         return pageRow(pageMapper.selectById(page.getId()));
     }
 
     @Override
     @Transactional
-    public void deletePage(Long userId, Long id) {
-        UserKnowledgePage page = ownedPage(userId, id);
+    public void deletePage(Long userId, Long id, Integer version) {
+        lockKnowledgeTree(userId);
+        UserKnowledgePage page = ownedPageForUpdate(userId, id);
+        assertExpectedVersion(page, version);
         if (isSystemKnowledgePage(page)) {
             throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许删除");
         }
-        pageMapper.deleteById(page.getId());
-        clearPageLinks(userId, page.getId());
-        detachInboundLinks(userId, page.getId());
+        int movedChildren = deletePageAndReparentChildren(userId, page);
         writeLog(userId, "page.delete", page.getId(), null, null, "删除知识页：" + page.getTitle(), null);
+        if (movedChildren > 0) {
+            writeLog(userId, "page.children.reparent", page.getId(), null, null,
+                    "迁移被删除页面的子页", "已将 " + movedChildren + " 个直接子页迁移到上级目录");
+        }
     }
 
     @Override
@@ -271,21 +274,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public Map<String, Object> approveRevision(Long userId, Long id) {
-        UserKnowledgeRevision revision = ownedRevision(userId, id);
+        UserKnowledgeRevision revision = lockRevisionForUpdate(userId, id);
+        assertStandaloneRevision(revision);
         if (!"PENDING".equals(revision.getStatus())) {
-            throw new BusinessException("该建议已处理");
+            return resolvedRevisionResult(revision);
         }
-        if ("DELETE".equalsIgnoreCase(revision.getActionType())) {
-            deleteRevisionTarget(userId, revision.getPageId());
-        } else {
-            UserKnowledgePage page = upsertRevisionPage(userId, revision, Map.of(), false);
-            writeLog(userId, "revision.apply", page.getId(), revision.getPatchSetId(), null,
-                    "合入知识草稿：" + page.getTitle(), page.getContentSummary());
-        }
-        revision.setStatus("APPROVED");
-        revision.setAppliedAt(LocalDateTime.now());
-        revisionMapper.updateById(revision);
-        return revisionRow(revision);
+        applyRevisionInternal(userId, revision, Map.of(), false);
+        return revisionRow(revisionMapper.selectById(revision.getId()));
     }
 
     @Override
@@ -294,31 +289,25 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (body == null) {
             body = Map.of();
         }
-        UserKnowledgeRevision revision = ownedRevision(userId, id);
+        UserKnowledgeRevision revision = lockRevisionForUpdate(userId, id);
+        assertStandaloneRevision(revision);
         if (!"PENDING".equals(revision.getStatus())) {
-            throw new BusinessException("该建议已处理");
+            return resolvedRevisionResult(revision);
         }
-        if ("DELETE".equalsIgnoreCase(revision.getActionType())) {
-            deleteRevisionTarget(userId, revision.getPageId());
-            revision.setStatus("APPROVED");
-            revision.setAppliedAt(LocalDateTime.now());
-            revisionMapper.updateById(revision);
-            return revisionRow(revision);
-        }
-
-        UserKnowledgePage page = upsertRevisionPage(userId, revision, body, true);
-        writeLog(userId, "revision.apply", page.getId(), revision.getPatchSetId(), null,
-                "合入知识草稿：" + page.getTitle(), page.getContentSummary());
-        revision.setStatus("APPROVED");
-        revision.setAppliedAt(LocalDateTime.now());
-        revisionMapper.updateById(revision);
-        return pageRow(pageMapper.selectById(page.getId()));
+        return applyRevisionInternal(userId, revision, body, true);
     }
 
     @Override
     @Transactional
     public void rejectRevision(Long userId, Long id) {
-        UserKnowledgeRevision revision = ownedRevision(userId, id);
+        UserKnowledgeRevision revision = lockRevisionForUpdate(userId, id);
+        assertStandaloneRevision(revision);
+        if (!"PENDING".equals(revision.getStatus())) {
+            if ("REJECTED".equals(revision.getStatus())) {
+                return;
+            }
+            throw new BusinessException("该建议已处理");
+        }
         revision.setStatus("REJECTED");
         revisionMapper.updateById(revision);
     }
@@ -337,15 +326,21 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public Map<String, Object> createPatchSet(Long userId, Map<String, Object> body) {
-        // 公共入口：不接受客户端携带的 baseContentHash，基准一律由服务端就地计算（当前页状态哈希）。
-        return createPatchSet(userId, body, Map.of());
+        return createPatchSetInternal(userId, body, Map.of(), false);
     }
 
     @Override
     @Transactional
-    public Map<String, Object> createPatchSet(Long userId, Map<String, Object> body, Map<Long, String> trustedBaseHashByPageId) {
+    public Map<String, Object> createPatchSet(Long userId, Map<String, Object> body,
+                                               Map<Long, KnowledgePageSnapshot> trustedSnapshotsByPageId) {
+        return createPatchSetInternal(userId, body, trustedSnapshotsByPageId, true);
+    }
+
+    private Map<String, Object> createPatchSetInternal(Long userId, Map<String, Object> body,
+                                                        Map<Long, KnowledgePageSnapshot> trustedSnapshotsByPageId,
+                                                        boolean trustedInternalRequest) {
         if (body == null) body = Map.of();
-        if (trustedBaseHashByPageId == null) trustedBaseHashByPageId = Map.of();
+        if (trustedSnapshotsByPageId == null) trustedSnapshotsByPageId = Map.of();
         KnowledgePatchSet patchSet = new KnowledgePatchSet();
         patchSet.setUserId(userId);
         patchSet.setTitle(limit(value(body.get("title"), "Wiki 变更建议"), 180));
@@ -375,12 +370,21 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 revision.setPatchSetId(patchSet.getId());
                 Long targetPageId = parseLong(item.get("pageId"));
                 revision.setPageId(targetPageId);
-                // 基准哈希只信任服务端来源：AI 工具经内部 3 参方法传入的“读取时快照”，或退回服务端当前页状态哈希；
-                // 绝不读取公共请求体里的 item.baseContentHash（否则客户端可伪造基准、破坏冲突检测不变量）。
-                String trustedBase = targetPageId == null ? null : trustedBaseHashByPageId.get(targetPageId);
-                revision.setBaseContentHash(hasText(trustedBase)
-                        ? trustedBase
-                        : currentPageContentHash(userId, targetPageId));
+                if (targetPageId != null) {
+                    if (trustedInternalRequest) {
+                        KnowledgePageSnapshot snapshot = trustedSnapshotsByPageId.get(targetPageId);
+                        if (snapshot == null || !targetPageId.equals(snapshot.pageId())) {
+                            throw new BusinessException("目标知识页缺少可信读取快照，请重新读取后再生成草稿");
+                        }
+                        revision.setBaseContentHash(snapshot.stateHash());
+                        revision.setBasePageVersion(snapshot.version());
+                    } else {
+                        UserKnowledgePage targetPage = ownedPage(userId, targetPageId);
+                        assertExpectedVersion(targetPage, requiredBasePageVersion(item));
+                        revision.setBaseContentHash(pageStateHash(targetPage));
+                        revision.setBasePageVersion(targetPage.getVersion());
+                    }
+                }
                 revision.setActionType(limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20));
                 revision.setTitle(limit(value(item.get("title"), patchSet.getTitle()), 120));
                 revision.setEncryptedContent(cryptoService.encrypt(cleanMarkdownContent(value(item.get("content"), ""))));
@@ -391,6 +395,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         writeLog(userId, "patch.create", null, patchSet.getId(), null, "生成 Wiki 变更包：" + patchSet.getTitle(), patchSet.getSummary());
         return patchSetRow(patchSetMapper.selectById(patchSet.getId()));
+    }
+
+    @Override
+    public KnowledgePageSnapshot findPageSnapshotByTitle(Long userId, String title) {
+        UserKnowledgePage page = findPageByTitle(userId, title);
+        if (page == null) return null;
+        String content = cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent()));
+        return new KnowledgePageSnapshot(page.getId(), page.getTitle(), page.getPageType(), content,
+                page.getVersion(), pageStateHash(page.getTitle(), content));
     }
 
     @Override
@@ -509,20 +522,41 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public Map<String, Object> applyPatchSet(Long userId, Long id) {
-        KnowledgePatchSet patchSet = ownedPatchSet(userId, id);
-        if (!"PENDING".equals(patchSet.getStatus())) {
-            throw new BusinessException("该变更包已处理");
-        }
-        List<UserKnowledgeRevision> revisions = revisionMapper.selectList(new LambdaQueryWrapper<UserKnowledgeRevision>()
-                .eq(UserKnowledgeRevision::getUserId, userId)
-                .eq(UserKnowledgeRevision::getPatchSetId, id)
-                .eq(UserKnowledgeRevision::getStatus, "PENDING")
-                .orderByAsc(UserKnowledgeRevision::getId));
+        KnowledgePatchSet patchSet = lockedPatchSet(userId, id);
+        List<UserKnowledgeRevision> revisions = revisionMapper.selectByPatchSetForUpdate(userId, id);
         if (revisions.isEmpty()) {
-            throw new BusinessException("变更包没有可合入的内容");
+            throw new BusinessException("变更包没有可处理的内容");
         }
-        for (UserKnowledgeRevision revision : revisions) {
-            applyRevisionInternal(userId, revision, Map.of());
+        if (!"PENDING".equals(patchSet.getStatus())) {
+            if ("APPROVED".equals(patchSet.getStatus())) {
+                assertAllRevisionStatuses(revisions, "APPROVED", "变更包状态与子建议不一致，无法按已合入处理");
+                return patchSetRow(patchSet);
+            }
+            if ("PARTIAL".equals(patchSet.getStatus())) {
+                throw new BusinessException("该变更包的历史建议曾被部分合入、部分驳回，不能再次整包合入");
+            }
+            if ("REJECTED".equals(patchSet.getStatus())) {
+                throw new BusinessException("该变更包已驳回，不能合入");
+            }
+            throw new BusinessException("该变更包已处理，不能合入");
+        }
+        if (hasRevisionStatus(revisions, "REJECTED")) {
+            throw new BusinessException("该变更包包含已驳回的建议，不能整包合入");
+        }
+        assertOnlyRevisionStatuses(revisions, Set.of("PENDING", "APPROVED"));
+        List<UserKnowledgeRevision> pending = revisions.stream()
+                .filter(revision -> "PENDING".equals(revision.getStatus()))
+                .toList();
+        if (pending.stream().anyMatch(revision -> "DELETE".equalsIgnoreCase(revision.getActionType()))) {
+            lockKnowledgeTree(userId);
+        }
+        lockRevisionTargetPages(userId, pending);
+        List<UserKnowledgeRevision> executionOrder = new ArrayList<>(pending);
+        executionOrder.sort(Comparator
+                .comparing((UserKnowledgeRevision revision) -> "DELETE".equalsIgnoreCase(revision.getActionType()))
+                .thenComparing(UserKnowledgeRevision::getId));
+        for (UserKnowledgeRevision revision : executionOrder) {
+            applyRevisionInternal(userId, revision, Map.of(), true);
         }
         patchSet.setStatus("APPROVED");
         patchSet.setAppliedAt(LocalDateTime.now());
@@ -534,17 +568,33 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public void rejectPatchSet(Long userId, Long id) {
-        KnowledgePatchSet patchSet = ownedPatchSet(userId, id);
+        KnowledgePatchSet patchSet = lockedPatchSet(userId, id);
+        List<UserKnowledgeRevision> revisions = revisionMapper.selectByPatchSetForUpdate(userId, id);
+        if (revisions.isEmpty()) {
+            throw new BusinessException("变更包没有可处理的内容");
+        }
+        if (!"PENDING".equals(patchSet.getStatus())) {
+            if ("REJECTED".equals(patchSet.getStatus())) {
+                assertAllRevisionStatuses(revisions, "REJECTED", "变更包状态与子建议不一致，无法按已驳回处理");
+                return;
+            }
+            if ("PARTIAL".equals(patchSet.getStatus())) {
+                throw new BusinessException("该变更包的历史建议曾被部分合入、部分驳回，不能再次整包驳回");
+            }
+            throw new BusinessException("该变更包已处理");
+        }
+        if (hasRevisionStatus(revisions, "APPROVED")) {
+            throw new BusinessException("该变更包已有建议完成合入，不能整包驳回");
+        }
+        assertOnlyRevisionStatuses(revisions, Set.of("PENDING", "REJECTED"));
+        for (UserKnowledgeRevision revision : revisions) {
+            if ("PENDING".equals(revision.getStatus())) {
+                revision.setStatus("REJECTED");
+                revisionMapper.updateById(revision);
+            }
+        }
         patchSet.setStatus("REJECTED");
         patchSetMapper.updateById(patchSet);
-        List<UserKnowledgeRevision> revisions = revisionMapper.selectList(new LambdaQueryWrapper<UserKnowledgeRevision>()
-                .eq(UserKnowledgeRevision::getUserId, userId)
-                .eq(UserKnowledgeRevision::getPatchSetId, id)
-                .eq(UserKnowledgeRevision::getStatus, "PENDING"));
-        for (UserKnowledgeRevision revision : revisions) {
-            revision.setStatus("REJECTED");
-            revisionMapper.updateById(revision);
-        }
         writeLog(userId, "patch.reject", null, patchSet.getId(), null, "忽略 Wiki 变更包：" + patchSet.getTitle(), patchSet.getSummary());
     }
 
@@ -708,26 +758,102 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
     }
 
-    private Map<String, Object> applyRevisionInternal(Long userId, UserKnowledgeRevision revision, Map<String, Object> body) {
+    private Map<String, Object> applyRevisionInternal(Long userId, UserKnowledgeRevision revision,
+                                                      Map<String, Object> body, boolean allowStructure) {
         if (!"PENDING".equals(revision.getStatus())) {
             throw new BusinessException("该建议已处理");
         }
         if (body == null) body = Map.of();
         if ("DELETE".equalsIgnoreCase(revision.getActionType())) {
-            deleteRevisionTarget(userId, revision.getPageId());
+            deleteRevisionTarget(userId, revision);
             revision.setStatus("APPROVED");
             revision.setAppliedAt(LocalDateTime.now());
             revisionMapper.updateById(revision);
             return revisionRow(revision);
         }
 
-        UserKnowledgePage page = upsertRevisionPage(userId, revision, body, true);
+        UserKnowledgePage page = upsertRevisionPage(userId, revision, body, allowStructure);
         revision.setStatus("APPROVED");
         revision.setAppliedAt(LocalDateTime.now());
         revisionMapper.updateById(revision);
         writeLog(userId, "revision.apply", page.getId(), revision.getPatchSetId(), null,
                 "合入知识草稿：" + page.getTitle(), page.getContentSummary());
         return pageRow(pageMapper.selectById(page.getId()));
+    }
+
+    private Map<String, Object> resolvedRevisionResult(UserKnowledgeRevision revision) {
+        if ("REJECTED".equals(revision.getStatus())) {
+            throw new BusinessException("该建议已驳回，不能合入");
+        }
+        if (!"APPROVED".equals(revision.getStatus())) {
+            throw new BusinessException("该建议已处理，不能合入");
+        }
+        if (revision.getPageId() != null) {
+            UserKnowledgePage page = pageMapper.selectById(revision.getPageId());
+            if (page != null) {
+                return pageRow(page);
+            }
+        }
+        return revisionRow(revision);
+    }
+
+    private void assertStandaloneRevision(UserKnowledgeRevision revision) {
+        if (revision.getPatchSetId() != null) {
+            throw new BusinessException("该建议属于 Wiki 变更包，请通过变更包统一合入或驳回");
+        }
+    }
+
+    private boolean hasRevisionStatus(List<UserKnowledgeRevision> revisions, String status) {
+        return revisions.stream().anyMatch(revision -> status.equals(revision.getStatus()));
+    }
+
+    private void assertAllRevisionStatuses(List<UserKnowledgeRevision> revisions, String status, String message) {
+        if (revisions.stream().anyMatch(revision -> !status.equals(revision.getStatus()))) {
+            throw new BusinessException(message);
+        }
+    }
+
+    private void assertOnlyRevisionStatuses(List<UserKnowledgeRevision> revisions, Set<String> allowed) {
+        if (revisions.stream().anyMatch(revision -> !allowed.contains(revision.getStatus()))) {
+            throw new BusinessException("变更包包含未知的子建议状态，无法继续处理");
+        }
+    }
+
+    private void lockRevisionTargetPages(Long userId, List<UserKnowledgeRevision> revisions) {
+        List<Long> pageIds = revisions.stream()
+                .map(UserKnowledgeRevision::getPageId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+        if (pageIds.isEmpty()) {
+            return;
+        }
+        List<UserKnowledgePage> lockedPages = pageMapper.selectOwnedByIdsForUpdate(userId, pageIds);
+        if (lockedPages.size() != pageIds.size()) {
+            throw new BusinessException("变更包包含不存在或无权访问的知识页");
+        }
+    }
+
+    private KnowledgePatchSet lockedPatchSet(Long userId, Long id) {
+        KnowledgePatchSet patchSet = patchSetMapper.selectOwnedByIdForUpdate(userId, id);
+        if (patchSet == null) {
+            throw new BusinessException("Wiki 变更包不存在或无权访问");
+        }
+        return patchSet;
+    }
+
+    /** Lock order is always PatchSet -> Revision to avoid apply/reject deadlocks. */
+    private UserKnowledgeRevision lockRevisionForUpdate(Long userId, Long id) {
+        UserKnowledgeRevision current = ownedRevision(userId, id);
+        if (current.getPatchSetId() != null) {
+            lockedPatchSet(userId, current.getPatchSetId());
+        }
+        UserKnowledgeRevision locked = revisionMapper.selectOwnedByIdForUpdate(userId, id);
+        if (locked == null) {
+            throw new BusinessException("知识变更建议不存在或无权访问");
+        }
+        return locked;
     }
 
     private KnowledgePatchSet ownedPatchSet(Long userId, Long id) {
@@ -876,6 +1002,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private UserKnowledgePage upsertRevisionPage(Long userId, UserKnowledgeRevision revision,
                                                  Map<String, Object> body, boolean allowStructure) {
         if (body == null) body = Map.of();
+        if (allowStructure && body.containsKey("parentId")) {
+            lockKnowledgeTree(userId);
+        }
         String content = cleanMarkdownContent(value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent())));
         String title = limit(value(body.get("title"), value(revision.getTitle(), "AI Wiki 草稿")), 120);
         // 目标页解析：已绑定目标的草稿，合入时 pageId 不可被 body 改指到其它页——否则可传另一本人页面 ID
@@ -889,17 +1018,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         } else {
             pageId = bodyPageId; // 无目标草稿：允许 UI 指定合并到某已有页（null 表示新建页）
         }
-        UserKnowledgePage page = pageId == null ? null : ownedPage(userId, pageId);
-        // P2：目标是已有页、但草稿没有基准版本（V21 之前的旧草稿，或无目标草稿被 body 指向了某已有页），
-        // 无从判断草稿生成后原页是否已被改动，直接整页覆盖有丢内容风险 —— 拒绝并要求重新生成带基准的草稿。
-        if (page != null && revision.getBaseContentHash() == null) {
-            throw new BusinessException("该草稿缺少基准版本，无法安全覆盖已有页；请对目标页重新生成草稿（会记录基准）后再合入。");
-        }
-        // 草稿基准冲突检测：草稿生成后若原页状态（标题+正文）已被改动（当前哈希 ≠ 基准哈希），拒绝整页覆盖，
-        // 避免陈旧草稿吞掉用户后来的改动。基准始终指向本草稿绑定的目标页（上面已杜绝改指）。
-        if (page != null && !revision.getBaseContentHash().equals(pageStateHash(page))) {
-            throw new BusinessException("该页在草稿生成后已被修改，为避免覆盖你的改动，请重新生成草稿再合入。");
-        }
+        UserKnowledgePage page = pageId == null ? null : ownedPageForUpdate(userId, pageId);
+        if (page != null) assertRevisionTargetUnchanged(revision, page);
         boolean systemPage = page != null && isSystemKnowledgePage(page);
         if (systemPage && !title.trim().equals(page.getTitle())) {
             throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许改名");
@@ -920,12 +1040,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             // Patch Set 合入（applyPatchSet 传空 body）不得把已挂载的子页悄悄移到根目录（丢失目录层级）。
             if (body.containsKey("parentId")) {
                 Long parentId = parseLong(body.get("parentId"));
-                if (parentId != null) {
-                    if (page.getId() != null && page.getId().equals(parentId)) {
-                        throw new BusinessException("不能把知识页挂到自己下面");
-                    }
-                    ownedPage(userId, parentId);
-                }
+                validateParentAssignment(userId, page.getId(), parentId);
                 page.setParentId(parentId);
             }
             if (body.containsKey("pageType")) {
@@ -948,7 +1063,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (page.getId() == null) {
             pageMapper.insert(page);
         } else {
-            pageMapper.updateById(page);
+            updatePageOrThrow(page);
         }
         syncPageLinks(userId, page.getId(), content);
         revision.setPageId(page.getId());
@@ -956,24 +1071,52 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     // Revision/Patch 的 DELETE 分支统一入口：归属校验 + 系统页拦截 + 双链清理（出链删除、入链置空）
-    private void deleteRevisionTarget(Long userId, Long pageId) {
-        if (pageId == null) return;
-        UserKnowledgePage page = pageMapper.selectById(pageId);
-        if (page == null || !page.getUserId().equals(userId)) return;
+    private void deleteRevisionTarget(Long userId, UserKnowledgeRevision revision) {
+        if (revision.getPageId() == null) {
+            throw new BusinessException("删除草稿缺少目标知识页");
+        }
+        lockKnowledgeTree(userId);
+        UserKnowledgePage page = ownedPageForUpdate(userId, revision.getPageId());
+        assertRevisionTargetUnchanged(revision, page);
         if (isSystemKnowledgePage(page)) {
             throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许删除");
         }
-        pageMapper.deleteById(page.getId());
-        clearPageLinks(userId, page.getId());
-        detachInboundLinks(userId, page.getId());
+        deletePageAndReparentChildren(userId, page);
     }
 
-    /** 计算指定用户某页当前状态的哈希，作为草稿基准；页不存在/非本人时返回 null（无基准即不做冲突拦截）。 */
-    private String currentPageContentHash(Long userId, Long pageId) {
-        if (pageId == null) return null;
-        UserKnowledgePage page = pageMapper.selectById(pageId);
-        if (page == null || !userId.equals(page.getUserId())) return null;
-        return pageStateHash(page);
+    private int deletePageAndReparentChildren(Long userId, UserKnowledgePage page) {
+        List<UserKnowledgePage> children = pageMapper.selectDirectChildrenForUpdate(userId, page.getId());
+        children.sort(Comparator
+                .comparing((UserKnowledgePage child) -> child.getSortOrder() == null ? 0 : child.getSortOrder())
+                .thenComparing(UserKnowledgePage::getId));
+        int nextSortOrder = siblingPages(userId, page.getParentId()).stream()
+                .filter(sibling -> !sibling.getId().equals(page.getId()))
+                .map(UserKnowledgePage::getSortOrder)
+                .filter(java.util.Objects::nonNull)
+                .max(Integer::compareTo)
+                .orElse(-10) + 10;
+        for (UserKnowledgePage child : children) {
+            int affected = pageMapper.reparentByVersion(userId, child.getId(), page.getParentId(),
+                    nextSortOrder, child.getVersion());
+            if (affected != 1) {
+                throw knowledgePageConflict();
+            }
+            nextSortOrder += 10;
+        }
+        softDeletePageOrThrow(userId, page);
+        clearPageLinks(userId, page.getId());
+        detachInboundLinks(userId, page.getId());
+        return children.size();
+    }
+
+    private void assertRevisionTargetUnchanged(UserKnowledgeRevision revision, UserKnowledgePage page) {
+        if (revision.getBaseContentHash() == null || revision.getBasePageVersion() == null) {
+            throw new BusinessException("该草稿缺少可靠基准版本，无法安全修改已有页；请重新生成草稿后再合入。");
+        }
+        if (!revision.getBasePageVersion().equals(page.getVersion())
+                || !revision.getBaseContentHash().equals(pageStateHash(page))) {
+            throw knowledgePageConflict();
+        }
     }
 
     /**
@@ -995,7 +1138,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return pageStateHash(page.getTitle(), cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent())));
     }
 
-    /** 内容 SHA-256 十六进制哈希；用于草稿基准版本比对。异常时返回 null（视为无基准，宁可放行也不误拦）。 */
+    /** 内容 SHA-256 十六进制哈希；异常时返回 null，后续按“无可靠基准”拒绝覆盖已有页。 */
     private String contentHash(String content) {
         try {
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
@@ -1061,7 +1204,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             existing.setPageType(type);
             existing.setParentId(null);
             existing.setSortOrder(order);
-            pageMapper.updateById(existing);
+            // Derived system pages are refreshed during reads. If another request won the update,
+            // keep that winner and let the next read rebuild instead of failing the whole page load.
+            if (pageMapper.updateById(existing) != 1) return;
             syncPageLinks(userId, existing.getId(), content);
         }
     }
@@ -1297,6 +1442,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return page;
     }
 
+    private UserKnowledgePage ownedPageForUpdate(Long userId, Long id) {
+        UserKnowledgePage page = pageMapper.selectOwnedByIdForUpdate(userId, id);
+        if (page == null) {
+            throw new BusinessException("知识页不存在或无权访问");
+        }
+        return page;
+    }
+
     private UserKnowledgeRevision ownedRevision(Long userId, Long id) {
         UserKnowledgeRevision revision = revisionMapper.selectOne(new LambdaQueryWrapper<UserKnowledgeRevision>()
                 .eq(UserKnowledgeRevision::getId, id)
@@ -1315,11 +1468,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         row.put("sortOrder", page.getSortOrder());
         row.put("pinned", page.getPinned() != null && page.getPinned() == 1);
         row.put("title", page.getTitle());
-        row.put("content", cryptoService.decrypt(page.getEncryptedContent()));
+        row.put("content", cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent())));
         row.put("summary", page.getContentSummary());
         row.put("sourceMessageId", page.getSourceMessageId());
         row.put("sourceConversationId", page.getSourceConversationId());
         row.put("lastUsedAt", page.getLastUsedAt());
+        row.put("version", page.getVersion());
         row.put("updatedAt", page.getUpdatedAt());
         return row;
     }
@@ -1333,6 +1487,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         row.put("pinned", page.getPinned() != null && page.getPinned() == 1);
         row.put("title", page.getTitle());
         row.put("summary", page.getContentSummary());
+        row.put("version", page.getVersion());
         row.put("updatedAt", page.getUpdatedAt());
         row.put("children", new ArrayList<Map<String, Object>>());
         return row;
@@ -1380,6 +1535,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         row.put("status", revision.getStatus());
         row.put("sourceMessageId", revision.getSourceMessageId());
         row.put("sourceConversationId", revision.getSourceConversationId());
+        row.put("baseContentHash", revision.getBaseContentHash());
+        row.put("basePageVersion", revision.getBasePageVersion());
         row.put("createdAt", revision.getCreatedAt());
         row.put("appliedAt", revision.getAppliedAt());
         return row;
@@ -1391,6 +1548,55 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             throw new BusinessException(message);
         }
         return text;
+    }
+
+    private int requiredVersion(Map<String, Object> body) {
+        if (body == null || !body.containsKey("version") || body.get("version") == null) {
+            throw new BusinessException("缺少知识页版本，请刷新后重试");
+        }
+        try {
+            int version = Integer.parseInt(String.valueOf(body.get("version")));
+            if (version < 0) throw new NumberFormatException();
+            return version;
+        } catch (NumberFormatException e) {
+            throw new BusinessException("知识页版本无效，请刷新后重试");
+        }
+    }
+
+    private int requiredBasePageVersion(Map<String, Object> item) {
+        if (item == null || !item.containsKey("basePageVersion") || item.get("basePageVersion") == null) {
+            throw new BusinessException("目标知识页缺少基准版本，请重新读取后再提交草稿");
+        }
+        try {
+            int version = Integer.parseInt(String.valueOf(item.get("basePageVersion")));
+            if (version < 0) throw new NumberFormatException();
+            return version;
+        } catch (NumberFormatException e) {
+            throw new BusinessException("目标知识页基准版本无效，请重新读取后再提交草稿");
+        }
+    }
+
+    private void assertExpectedVersion(UserKnowledgePage page, Integer expectedVersion) {
+        if (expectedVersion == null) {
+            throw new BusinessException("缺少知识页版本，请刷新后重试");
+        }
+        if (page.getVersion() == null || !expectedVersion.equals(page.getVersion())) {
+            throw knowledgePageConflict();
+        }
+    }
+
+    private void updatePageOrThrow(UserKnowledgePage page) {
+        if (pageMapper.updateById(page) != 1) throw knowledgePageConflict();
+    }
+
+    private void softDeletePageOrThrow(Long userId, UserKnowledgePage page) {
+        if (pageMapper.softDeleteByVersion(userId, page.getId(), page.getVersion()) != 1) {
+            throw knowledgePageConflict();
+        }
+    }
+
+    private BusinessException knowledgePageConflict() {
+        return new BusinessException("知识页已被其他窗口修改，请刷新后重试");
     }
 
     private String value(Object value, String fallback) {
@@ -1437,13 +1643,40 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return pageMapper.selectList(query);
     }
 
+    private void lockKnowledgeTree(Long userId) {
+        if (userMapper.lockKnowledgeTreeOwner(userId) == null) {
+            throw new BusinessException("用户不存在或无权修改知识目录");
+        }
+    }
+
+    private void validateParentAssignment(Long userId, Long pageId, Long parentId) {
+        if (parentId == null) {
+            return;
+        }
+        if (pageId != null && pageId.equals(parentId)) {
+            throw new BusinessException("不能把知识页挂到自己下面");
+        }
+        ownedPage(userId, parentId);
+        if (pageId != null && isDescendant(userId, parentId, pageId)) {
+            throw new BusinessException("不能把知识页挂到自己的子节点下面");
+        }
+    }
+
     private boolean isDescendant(Long userId, Long possibleChildId, Long ancestorId) {
         UserKnowledgePage cursor = ownedPage(userId, possibleChildId);
-        while (cursor.getParentId() != null) {
-            if (cursor.getParentId().equals(ancestorId)) {
+        Set<Long> visited = new HashSet<>();
+        while (cursor != null) {
+            if (!visited.add(cursor.getId())) {
+                throw new BusinessException("知识目录已存在循环关系，请先修复后重试");
+            }
+            Long parentId = cursor.getParentId();
+            if (parentId == null) {
+                return false;
+            }
+            if (parentId.equals(ancestorId)) {
                 return true;
             }
-            cursor = ownedPage(userId, cursor.getParentId());
+            cursor = ownedPage(userId, parentId);
         }
         return false;
     }

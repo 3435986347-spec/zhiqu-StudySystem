@@ -10,6 +10,7 @@ import com.zhiqu.entity.UserFeedback;
 import com.zhiqu.mapper.RuntimeIssueMapper;
 import com.zhiqu.mapper.SysUserMapper;
 import com.zhiqu.mapper.UserFeedbackMapper;
+import com.zhiqu.rag.RagAdminService;
 import com.zhiqu.security.SecurityUtils;
 import com.zhiqu.service.AdminGuard;
 import com.zhiqu.service.SharedPlanEventService;
@@ -43,6 +44,7 @@ public class AdminController {
     private final SharedPlanService sharedPlanService;
     private final SharedPlanEventService eventService;
     private final PasswordEncoder passwordEncoder;
+    private final RagAdminService ragAdminService;
 
     public AdminController(AdminGuard adminGuard,
                            TrafficMonitorService trafficMonitorService,
@@ -51,7 +53,8 @@ public class AdminController {
                            RuntimeIssueMapper runtimeIssueMapper,
                            SharedPlanService sharedPlanService,
                            SharedPlanEventService eventService,
-                           PasswordEncoder passwordEncoder) {
+                           PasswordEncoder passwordEncoder,
+                           RagAdminService ragAdminService) {
         this.adminGuard = adminGuard;
         this.trafficMonitorService = trafficMonitorService;
         this.userMapper = userMapper;
@@ -60,6 +63,7 @@ public class AdminController {
         this.sharedPlanService = sharedPlanService;
         this.eventService = eventService;
         this.passwordEncoder = passwordEncoder;
+        this.ragAdminService = ragAdminService;
     }
 
     @GetMapping("/overview")
@@ -267,6 +271,48 @@ public class AdminController {
         requireAdmin();
         sharedPlanService.deleteByAdmin(id);
         return Result.success();
+    }
+
+    @GetMapping("/rag/status")
+    public Result<Map<String, Object>> ragStatus() {
+        requireAdmin();
+        return Result.success(ragAdminService.status());
+    }
+
+    @GetMapping("/rag/jobs")
+    public Result<List<Map<String, Object>>> ragJobs(@RequestParam(required = false) String status) {
+        requireAdmin();
+        return Result.success(ragAdminService.jobs(status));
+    }
+
+    @PostMapping("/rag/jobs/{id}/retry")
+    public Result<Map<String, Object>> retryRagJob(@PathVariable Long id) {
+        requireAdmin();
+        return Result.success(ragAdminService.retry(id));
+    }
+
+    @PostMapping("/rag/sources/{id}/reindex")
+    public Result<Map<String, Object>> reindexRagSource(@PathVariable Long id) {
+        requireAdmin();
+        return Result.success(ragAdminService.reindexSource(id));
+    }
+
+    @PostMapping("/rag/rebuild")
+    public Result<Map<String, Object>> rebuildRagIndex() {
+        requireAdmin();
+        return Result.success(ragAdminService.rebuild());
+    }
+
+    @PostMapping("/rag/generations/{id}/activate")
+    public Result<Map<String, Object>> activateRagGeneration(@PathVariable Long id) {
+        requireAdmin();
+        return Result.success(ragAdminService.activate(id));
+    }
+
+    @PostMapping("/rag/generations/{id}/discard")
+    public Result<Map<String, Object>> discardFailedRagGeneration(@PathVariable Long id) {
+        requireAdmin();
+        return Result.success(ragAdminService.discardFailedGeneration(id));
     }
 
     @GetMapping("/events")
