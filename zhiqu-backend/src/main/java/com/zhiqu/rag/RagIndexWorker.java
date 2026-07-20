@@ -57,6 +57,11 @@ public class RagIndexWorker {
                 assertLease(job);
                 process(job);
                 jobService.complete(job);
+            } catch (StaleMutationException e) {
+                // 墓碑拒绝了这次陈旧写入：目标已被更新的删除/写入取代，属于预期结果而非故障。
+                // 若走 handleFailure，会 RETRY 到 DEAD 并把 source 标成 ERROR，
+                // 最终 refreshGenerationProgress 把整个索引代次判为 FAILED。
+                jobService.supersede(job, e);
             } catch (Exception e) {
                 AiNotebookSource source = job.getSourceId() == null ? null : sourceMapper.selectById(job.getSourceId());
                 RagIndexGeneration generation = job.getGenerationId() == null ? null

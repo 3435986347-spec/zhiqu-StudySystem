@@ -244,6 +244,26 @@ public class RagIndexJobService {
         return new FailureTransition(updated == 1, dead);
     }
 
+    /**
+     * 处理「陈旧写入被墓碑拒绝」（sidecar 409 STALE_MUTATION）。
+     *
+     * <p>该作业已被更新的删除/写入取代，重试只会再拿到 409，因此直接转终态 SUPERSEDED：
+     * 不写 source 的 ERROR 状态、不计入 DEAD，避免一次正常覆盖被放大成整代次 FAILED。
+     * 仍然刷新代次进度，保证计数准确。
+     */
+    @Transactional
+    public boolean supersede(RagIndexJob job, Exception error) {
+        RagIndexGeneration generation = job.getGenerationId() == null ? null
+                : generationMapper.lockById(job.getGenerationId());
+        String reason = limit(error == null || error.getMessage() == null
+                ? "Superseded by a newer RAG mutation" : error.getMessage(), 1000);
+        int updated = jobMapper.supersedeLease(job.getId(), job.getLockedBy(), job.getLeaseVersion(),
+                LocalDateTime.now(), reason);
+        if (updated != 1) return false;
+        refreshGenerationProgressLocked(generation);
+        return true;
+    }
+
     @Transactional
     public boolean handleFailure(RagIndexJob job, AiNotebookSource source,
                                  RagIndexGeneration generation, Exception error) {
