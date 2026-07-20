@@ -13,7 +13,7 @@
 | 任务管理 | 创建、编辑、删除任务，支持 DDL、优先级、状态、象限、乐观锁版本控制 |
 | 例行计划 | 适合每天背单词、每周复盘、固定训练等重复事项，不把日常计划展开成大量任务 |
 | 早八提醒 | 每天 08:00 汇总临近 DDL 和当天例行计划，支持 PushPlus 等外部提醒渠道 |
-| AI 助手 | 多模型切换、流式对话、深度思考（可折叠）、Markdown/表格/公式渲染；Notebook 资料工作区支持 PDF/Excel/文本切块和图片存档；可选 Python RAG sidecar 提供 BGE 中文语义检索，异常时自动降级到关键词检索；顺序 Agent/TaskGraph 提供执行轨迹、Claim/Evidence、Verifier 与可确认产物 |
+| AI 助手 | 多模型切换、流式对话、深度思考（可折叠）、Markdown/表格/公式渲染；Notebook 资料工作区支持 PDF/Excel/文本切块和图片存档；可选 Python RAG sidecar 提供 BGE 中文语义检索，异常时自动降级到关键词检索；顺序 Agent/TaskGraph 提供执行轨迹、Claim/Evidence、Verifier 与可确认产物；AI 生成的学习计划**不会自动写入日历**，而是弹出确认窗口，可逐条勾选、修改标题与时间后再「确认写入」，或直接忽略 |
 | 模型配置 | 支持系统模型与个人模型，个人中心可添加 OpenAI-compatible、Anthropic、Gemini、Ollama、vLLM 等配置，附连通性/能力测试 |
 | 知识 Wiki | Obsidian/Karpathy 风格个人知识空间，Raw Source、Patch Set、Wiki Pages、index/log、双链、图谱、健康检查；文档视图支持所见即所得编辑、公式块（本地 KaTeX）、参考链接、右键删除、整站 Markdown 导出 |
 | 参考计划 | 用户可提交计划模板，后台审核后发布，其他用户可按开始日期套用到自己的学习日历 |
@@ -216,6 +216,15 @@ mvn spring-boot:run
 http://localhost:8080
 ```
 
+> 如果仓库路径里含中文，`mvn spring-boot:run` 可能报
+> `Could not find or load main class com.zhiqu.ZhiquApplication`。
+> 这时改成先打包再运行：
+>
+> ```powershell
+> mvn clean package -DskipTests
+> java -jar target/zhiqu-backend-0.0.1-SNAPSHOT.jar
+> ```
+
 ## 打包
 
 ```powershell
@@ -310,6 +319,7 @@ app:
 3306  MySQL
 6379  Redis
 8080  Spring Boot
+8001  Python RAG Sidecar（启用语义检索时）
 ```
 
 可以在本机电脑测试：
@@ -318,9 +328,10 @@ app:
 Test-NetConnection 服务器IP -Port 6379
 Test-NetConnection 服务器IP -Port 3306
 Test-NetConnection 服务器IP -Port 8080
+Test-NetConnection 服务器IP -Port 8001
 ```
 
-安全状态下这三个都应该是：
+安全状态下这几个都应该是：
 
 ```text
 TcpTestSucceeded : False

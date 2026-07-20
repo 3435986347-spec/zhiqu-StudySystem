@@ -8,6 +8,9 @@
 Windows Server + Spring Boot JAR + MySQL 8 + Redis + Caddy + WinSW
 ```
 
+语义检索（RAG）为**可选**组件：额外多一个本地 Python sidecar（`rag-service`，监听 `127.0.0.1:8001`）。
+不安装时系统自动回退到关键词检索，其余功能不受影响。
+
 ## 目录结构
 
 ```text
@@ -24,9 +27,15 @@ deploy/
    ├─ uninstall-zhiqu-service.ps1       # 卸载后端 Windows 服务
    ├─ install-caddy-service.ps1         # 安装 Caddy Windows 服务
    ├─ uninstall-caddy-service.ps1       # 卸载 Caddy Windows 服务
+   ├─ zhiqu-rag.xml                     # WinSW RAG sidecar 服务配置（可选）
+   ├─ install-rag-service.ps1           # 安装 RAG sidecar Windows 服务（可选）
+   ├─ uninstall-rag-service.ps1         # 卸载 RAG sidecar Windows 服务（可选）
    ├─ backup-zhiqu.ps1                  # 备份脚本
    └─ install-zhiqu-backup-task.ps1     # 安装定时备份任务
 ```
+
+RAG sidecar 的源码与依赖不在本目录，位于仓库根部的 `rag-service/`（安装步骤见
+`deploy/windows/README.md` 第六节）。
 
 ## 推荐阅读顺序
 
@@ -67,6 +76,7 @@ deploy/windows/Caddyfile.example
 3306  MySQL
 6379  Redis
 8080  Spring Boot
+8001  Python RAG Sidecar（启用语义检索时）
 ```
 
 生产配置中的密钥必须换成强随机字符串：
@@ -76,6 +86,18 @@ jwt.secret
 app.crypto.master-key
 spring.datasource.password
 spring.data.redis.password
+app.rag.service-token        启用 RAG 时，后端与 sidecar 必须填同一个随机串
 ```
+
+以下 Key 不要写进配置文件，用环境变量注入（服务配置或系统环境变量）：
+
+```text
+ZHIQU_SYSTEM_AI_API_KEY      系统级默认模型的 API Key
+ZHIQU_WEB_SEARCH_API_KEY     联网搜索的 API Key
+ZHIQU_WEB_PUSH_PUBLIC_KEY    Web Push VAPID 公钥
+```
+
+注意：`app.crypto.master-key` 一旦更换，**历史加密数据（AI Key、知识页正文等）将无法解密**，
+更换前必须先备份并做好迁移方案。
 
 如果 Redis 没有密码，必须确保它只监听 `127.0.0.1`，并且云安全组和 Windows 防火墙都关闭公网 `6379`。

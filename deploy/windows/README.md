@@ -354,6 +354,7 @@ your-domain.com {
 3306  MySQL
 6379  Redis
 8080  Spring Boot
+8001  Python RAG Sidecar（启用语义检索时才有）
 ```
 
 ### 云服务器安全组
@@ -364,6 +365,7 @@ your-domain.com {
 3306
 6379
 8080
+8001
 ```
 
 只保留：
@@ -383,6 +385,7 @@ your-domain.com {
 New-NetFirewallRule -DisplayName "Block Redis Public 6379" -Direction Inbound -Action Block -Protocol TCP -LocalPort 6379
 New-NetFirewallRule -DisplayName "Block MySQL Public 3306" -Direction Inbound -Action Block -Protocol TCP -LocalPort 3306
 New-NetFirewallRule -DisplayName "Block Spring Boot Public 8080" -Direction Inbound -Action Block -Protocol TCP -LocalPort 8080
+New-NetFirewallRule -DisplayName "Block RAG Sidecar Public 8001" -Direction Inbound -Action Block -Protocol TCP -LocalPort 8001
 ```
 
 ### 从本机电脑验证
@@ -533,7 +536,34 @@ C:\zhiqu\zhiqu-backend-0.0.1-SNAPSHOT.jar
 Restart-Service zhiqu-backend
 ```
 
-如果新增了 Flyway 迁移脚本，后端启动时会自动执行。
+如果新增了 Flyway 迁移脚本，后端启动时会自动执行。当前基线为 `V26`，其中与升级相关的有：
+
+```text
+V22  知识页乐观锁（user_knowledge_page.version、user_knowledge_revision.base_page_version）
+V23  知识历史数据修复
+V24  RAG 语义索引表
+V25  AI 计划草稿持久化（ai_message.suggested_plan_json）
+V26  RAG 索引任务租约防护
+```
+
+升级注意：
+
+- 迁移只增列/增表，可向前兼容；但**升级前务必先备份数据库**（见「十四、备份」）。
+- `V22` 之后知识页写接口会校验 `version`，务必让浏览器强制刷新拿到新前端；本次前端资源版本为
+  `20260720-plan-confirm`，Service Worker 缓存名同步变更，用户刷新后会自动清理旧缓存。
+- 如果启用了语义检索，升级 JAR 后 sidecar 也要一起更新并重启：
+
+```powershell
+Restart-Service zhiqu-rag
+Restart-Service zhiqu-backend
+```
+
+- `rag-service` 的 Python 依赖有变动时，需要在虚拟环境里重新安装：
+
+```powershell
+cd C:\zhiqu\rag-service
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+```
 
 ## 十四、备份
 

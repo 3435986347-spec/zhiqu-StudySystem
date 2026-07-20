@@ -31,6 +31,8 @@ spring:
     redis:
       host: 127.0.0.1
       port: 6379
+      # Redis 必须设密码；若确实没设，务必确认它只监听 127.0.0.1 且公网 6379 已封禁。
+      password: CHANGE_ME_REDIS_PASSWORD
       database: 0
       timeout: 3000ms
 
@@ -58,6 +60,35 @@ app:
     trust-forwarded-headers: true
   crypto:
     master-key: CHANGE_ME_TO_A_LONG_RANDOM_CRYPTO_MASTER_KEY
+  ai:
+    anthropic-version: 2023-06-01
+    # 采样温度。留空 = 不发送 temperature 参数。
+    # 新一代模型（Claude opus-4 / fable 等）已废弃该参数，发送会报 400；老模型可填 0.3 之类。
+    temperature: ""
+    # 系统级默认模型：开启后所有用户可直接使用，API Key 会被加密存库。
+    # 不需要就保持 false，让用户各自在「个人中心」配置自己的模型。
+    system-default-enabled: false
+    system-display-name: 知趣默认模型
+    system-provider-type: OPENAI_COMPATIBLE
+    system-api-url: https://api.openai.com/v1/chat/completions
+    system-model-name: gpt-4o-mini
+    # 真实 Key 不要写进文件，用环境变量注入（系统属性/服务配置里设 ZHIQU_SYSTEM_AI_API_KEY）
+    system-api-key: ${ZHIQU_SYSTEM_AI_API_KEY:}
+    web-search:
+      provider: tavily
+      # 同样用环境变量注入，不要提交真实 Key
+      api-key: ${ZHIQU_WEB_SEARCH_API_KEY:}
+      endpoint: ${ZHIQU_WEB_SEARCH_ENDPOINT:}
+      max-results: 5
+    web-fetch:
+      timeout-ms: 8000
+      max-pages: 4
+      max-content-chars: 3500
+      # 必须保持 true：禁止 AI 抓取内网地址，防 SSRF
+      block-private-network: true
+  push:
+    # Web Push 公钥（VAPID）。不配则浏览器推送不可用，其余功能不受影响。
+    vapid-public-key: ${ZHIQU_WEB_PUSH_PUBLIC_KEY:}
   rag:
     enabled: false
     base-url: http://127.0.0.1:8001
