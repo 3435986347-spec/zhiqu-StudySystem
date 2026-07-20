@@ -31,6 +31,9 @@ MAX_PAGES = 200
 MAX_OUTPUT_CHARS = 500_000
 SAFE_CASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 VISIBILITIES = ("PUBLIC", "PRIVATE")
+APPROVED_LICENSES = {
+    "APACHE-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "PUBLIC-DOMAIN",
+}
 
 
 def normalize(value: str) -> str:
@@ -110,8 +113,11 @@ def heading_metrics(expected: list[dict[str, Any]], result: dict[str, Any]) -> d
     matches = 0
     level_matches = 0
     for target in expected:
+        target_page = positive_int(target.get("page"))
         for index, candidate in enumerate(actual):
-            if index in used or not match_text(str(target.get("text", "")), str(candidate.get("content", ""))):
+            candidate_page = positive_int(candidate.get("page"))
+            if index in used or target_page is None or candidate_page != target_page \
+                    or not match_text(str(target.get("text", "")), str(candidate.get("content", ""))):
                 continue
             used.add(index)
             matches += 1
@@ -225,7 +231,9 @@ def quality_score(metrics: dict[str, Any]) -> float | None:
     if reading_values:
         weighted.append((0.25, statistics.mean(reading_values)))
     if metrics.get("headings"):
-        weighted.append((0.20, float(metrics["headings"]["f1"])))
+        weighted.append((0.20, statistics.mean([
+            float(metrics["headings"]["f1"]), float(metrics["headings"]["levelAccuracy"]),
+        ])))
     if metrics.get("tables"):
         weighted.append((0.20, statistics.mean([metrics["tables"]["cellF1"], metrics["tables"]["shapeAccuracy"]])))
     total = sum(weight for weight, _ in weighted)
@@ -456,7 +464,9 @@ def corpus_gate_reasons(cases: list[dict[str, Any]], coverage: dict[str, Any],
     for case in cases:
         if case.get("visibility") != "PUBLIC":
             continue
-        if str(case.get("license") or "").upper() in {"", "UNKNOWN", "REVIEW_REQUIRED"}:
+        license_id = str(case.get("license") or "").upper()
+        review_status = str(case.get("licenseReviewStatus") or "").upper()
+        if review_status != "APPROVED" or license_id not in APPROVED_LICENSES:
             reasons.append(f"{case['id']} public license requires review")
             continue
         required = ("sourceUrl", "licenseUrl", "attribution")
@@ -559,6 +569,10 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
                                             and row["metrics"]["readingOrder"].get("anchorAccuracy") is not None]),
                 "headingF1": safe_mean([row["metrics"]["headings"]["f1"] for row in rows
                                         if row["metrics"].get("headings")]),
+                "headingLevelAccuracy": safe_mean([
+                    row["metrics"]["headings"]["levelAccuracy"] for row in rows
+                    if row["metrics"].get("headings")
+                ]),
                 "tableScore": safe_mean([statistics.mean([row["metrics"]["tables"]["cellF1"],
                                                            row["metrics"]["tables"]["shapeAccuracy"]]) for row in rows
                                          if row["metrics"].get("tables")]),
@@ -618,6 +632,19 @@ def decision(summary: dict[str, Any], cases: list[dict[str, Any]], allow_incompl
                              if summary["categories"][category]["OPENDATALOADER"]["headingF1"] is not None])
     checks["heading F1 >= 0.75 or improves >= 0.10"] = heading_odl is not None and (
         heading_odl >= 0.75 or (heading_base is not None and heading_odl - heading_base >= 0.10))
+    heading_level_base = safe_mean([
+        summary["categories"][category]["PDFBOX"]["headingLevelAccuracy"]
+        for category in DIGITAL_CATEGORIES
+        if summary["categories"][category]["PDFBOX"]["headingLevelAccuracy"] is not None
+    ])
+    heading_level_odl = safe_mean([
+        summary["categories"][category]["OPENDATALOADER"]["headingLevelAccuracy"]
+        for category in DIGITAL_CATEGORIES
+        if summary["categories"][category]["OPENDATALOADER"]["headingLevelAccuracy"] is not None
+    ])
+    checks["heading level accuracy >= 0.75 or improves >= 0.10"] = heading_level_odl is not None and (
+        heading_level_odl >= 0.75
+        or (heading_level_base is not None and heading_level_odl - heading_level_base >= 0.10))
     table_base = summary["categories"]["TABLE"]["PDFBOX"]["tableScore"]
     table_odl = summary["categories"]["TABLE"]["OPENDATALOADER"]["tableScore"]
     checks["table structure improves >= 0.10"] = table_odl is not None and table_base is not None and table_odl - table_base >= 0.10
@@ -639,6 +666,8 @@ def decision(summary: dict[str, Any], cases: list[dict[str, Any]], allow_incompl
                 and float(candidate["qualityScore"]) - float(base["qualityScore"]) >= 0.08,
             "text regression <= 0.02": no_regression(candidate["textF1"], base["textF1"]),
             "heading regression <= 0.02": no_regression(candidate["headingF1"], base["headingF1"]),
+            "heading level regression <= 0.02": no_regression(
+                candidate["headingLevelAccuracy"], base["headingLevelAccuracy"]),
         }
         if category == "TWO_COLUMN":
             category_checks["reading order qualifies"] = candidate["readingOrder"] is not None and (
@@ -688,7 +717,7 @@ def fmt(number: Any) -> str:
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     cases = load_jsonl(args.manifest)
     coverage, gate_reasons = validate_corpus(cases, args.allow_incomplete)
-    output = args.output.resolve()
+    output = private_output_dir(args.output)
     raw_dir = output / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     runners = {
@@ -760,6 +789,12 @@ def safe_raw_path(raw_dir: Path, case_id: str) -> Path:
 
 def structured_output_hash(result: dict[str, Any]) -> str:
     projection = {
+        "engine": str(result.get("engine") or ""),
+        "version": str(result.get("version") or ""),
+        "fileHash": str(result.get("fileHash") or ""),
+        "pageCount": int(result.get("pageCount") or 0),
+        "needsOcr": bool(result.get("needsOcr")),
+        "truncated": bool(result.get("truncated")),
         "text": normalize(str(result.get("text") or "")),
         "markdown": normalize(str(result.get("markdown") or "")),
         "elements": canonical_structure(result.get("elements") or []),
@@ -779,6 +814,14 @@ def canonical_structure(value: Any) -> Any:
     if isinstance(value, float):
         return round(value, 6)
     return value
+
+
+def private_output_dir(requested: Path) -> Path:
+    private_root = (Path(__file__).resolve().parents[1] / "output").resolve()
+    target = requested.expanduser().resolve()
+    if not target.is_relative_to(private_root):
+        raise ValueError(f"output must stay inside ignored directory: {private_root}")
+    return target
 
 
 def request_for(case: dict[str, Any], request_id: str) -> dict[str, Any]:
@@ -802,6 +845,10 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args()
+    try:
+        args.output = private_output_dir(args.output)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     for jar in (args.pdfbox_jar, args.odl_jar):
         if not jar.is_file(): raise SystemExit(f"runner JAR not found: {jar}")
     report = run_benchmark(args)

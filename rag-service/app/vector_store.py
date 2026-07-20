@@ -1,4 +1,5 @@
 import re
+import threading
 from typing import Any, TYPE_CHECKING
 
 try:
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
 COLLECTION_RE = re.compile(r"^[A-Za-z0-9_-]{3,120}$")
 
 
+class StaleMutationError(ValueError):
+    pass
+
+
 class VectorStore:
     def __init__(self, settings: Settings, embedding: "EmbeddingService"):
         if chromadb is None:
@@ -25,8 +30,20 @@ class VectorStore:
         self.embedding = embedding
         self.client = chromadb.PersistentClient(path=str(settings.data_dir / "chroma"))
         self.operations = OperationStore(settings.data_dir / "operations.sqlite3")
+        self._mutation_lock = threading.RLock()
 
     def index_source(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._mutation_lock:
+            return self._index_source_locked(payload)
+
+    def _index_source_locked(self, payload: dict[str, Any]) -> dict[str, Any]:
+        mutation_token = self._mutation_token(payload)
+        fence_keys = self._index_fence_keys(payload)
+        highest_fence = self.operations.highest_fence(fence_keys)
+        if highest_fence is not None and mutation_token <= highest_fence:
+            raise StaleMutationError(
+                f"Index mutation {mutation_token} is fenced by delete mutation {highest_fence}"
+            )
         operation_id = str(payload["operationId"])
         batch_no = int(payload["batchNo"])
         completed, previous_count = self.operations.batch_result(operation_id, batch_no)
@@ -103,6 +120,10 @@ class VectorStore:
         return {"indexVersion": payload["indexVersion"], "metric": "cosine", "candidates": candidates}
 
     def delete(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._mutation_lock:
+            return self._delete_locked(payload)
+
+    def _delete_locked(self, payload: dict[str, Any]) -> dict[str, Any]:
         scope = str(payload.get("scope") or "")
         required_fields = {
             "SOURCE": ("userId", "notebookId", "sourceId"),
@@ -117,6 +138,16 @@ class VectorStore:
                    if payload.get(field) is None or payload.get(field) == ""]
         if missing:
             raise ValueError(f"Delete scope {scope} is missing required fields: {', '.join(missing)}")
+        mutation_token = self._mutation_token(payload)
+        fence_keys = self._delete_fence_keys(payload, scope)
+        highest_fence = self.operations.highest_fence(fence_keys)
+        if highest_fence is not None and mutation_token < highest_fence:
+            raise StaleMutationError(
+                f"Delete mutation {mutation_token} is older than fence {highest_fence}"
+            )
+        # Persist the tombstone before touching Chroma. If deletion fails, retries with
+        # the same token remain allowed while all older index requests stay blocked.
+        self.operations.record_fences(fence_keys, mutation_token)
         if scope == "COLLECTION":
             name = str(payload.get("collectionName") or "")
             if not COLLECTION_RE.fullmatch(name):
@@ -147,6 +178,44 @@ class VectorStore:
                 collection.delete(ids=ids)
                 deleted += len(ids)
         return {"deleted": deleted, "scope": scope}
+
+    def _mutation_token(self, payload: dict[str, Any]) -> int:
+        try:
+            token = int(payload["mutationToken"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("mutationToken must be a positive integer") from exc
+        if token <= 0:
+            raise ValueError("mutationToken must be a positive integer")
+        return token
+
+    def _index_fence_keys(self, payload: dict[str, Any]) -> list[str]:
+        collection_name = str(payload.get("collectionName") or "")
+        if not COLLECTION_RE.fullmatch(collection_name):
+            raise ValueError("Invalid collection name")
+        user_id = int(payload["userId"])
+        notebook_id = int(payload["notebookId"])
+        source_id = int(payload["sourceId"])
+        index_version = str(payload["indexVersion"])
+        return [
+            f"COLLECTION:{collection_name}",
+            f"SOURCE:{user_id}:{notebook_id}:{source_id}",
+            f"NOTEBOOK:{user_id}:{notebook_id}",
+            f"USER:{user_id}",
+            f"INDEX_VERSION:{index_version}",
+        ]
+
+    def _delete_fence_keys(self, payload: dict[str, Any], scope: str) -> list[str]:
+        if scope == "COLLECTION":
+            return [f"COLLECTION:{payload['collectionName']}"]
+        if scope == "SOURCE":
+            return [f"SOURCE:{int(payload['userId'])}:{int(payload['notebookId'])}:{int(payload['sourceId'])}"]
+        if scope == "NOTEBOOK":
+            return [f"NOTEBOOK:{int(payload['userId'])}:{int(payload['notebookId'])}"]
+        if scope == "USER":
+            return [f"USER:{int(payload['userId'])}"]
+        if scope == "INDEX_VERSION":
+            return [f"INDEX_VERSION:{payload['indexVersion']}"]
+        raise ValueError("Unsupported delete scope")
 
     def collection_names(self) -> list[str]:
         result = []

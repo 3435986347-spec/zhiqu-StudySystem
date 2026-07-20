@@ -1,8 +1,12 @@
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
+
+import pytest
 
 from app.operation_store import OperationStore
 from app.segmenter import segment_text
-from app.vector_store import VectorStore
+from app.vector_store import StaleMutationError, VectorStore
 
 
 class CharacterTokenizer:
@@ -58,22 +62,37 @@ class FakeCollection:
         metadata = [self.rows[item][1] for item in ids]
         return {"ids": [ids], "metadatas": [metadata], "distances": [[0.1] * len(ids)]}
 
+    def count(self):
+        return len(self.rows)
+
+
+class FakeClient:
+    def __init__(self, collection):
+        self.collection = collection
+        self.deleted = False
+
+    def delete_collection(self, _name):
+        self.collection.rows.clear()
+        self.deleted = True
+
 
 def make_store(tmp_path):
     store = object.__new__(VectorStore)
     store.settings = SimpleNamespace(max_batch_parent_chunks=16, segment_tokens=8, segment_overlap=2, max_candidate_k=32)
     store.embedding = FakeEmbedding()
     store.operations = OperationStore(tmp_path / "operations.sqlite3")
+    store._mutation_lock = threading.RLock()
     store.collection = FakeCollection()
+    store.client = FakeClient(store.collection)
     store._collection = lambda _name, create=True: store.collection
-    store.collection_names = lambda: ["test_collection"]
+    store.collection_names = lambda: [] if store.client.deleted else ["test_collection"]
     return store
 
 
 def test_ingest_is_idempotent_and_keeps_no_document_text(tmp_path):
     store = make_store(tmp_path)
     payload = {
-        "operationId": "op-1", "batchNo": 0, "finalBatch": True,
+        "operationId": "op-1", "mutationToken": 10, "batchNo": 0, "finalBatch": True,
         "userId": 1, "notebookId": 2, "sourceId": 3,
         "contentHash": "abc", "indexVersion": "version-1", "collectionName": "test_collection",
         "chunks": [{"chunkId": 4, "chunkIndex": 0, "content": "一二三四五六七八九十"}],
@@ -88,7 +107,7 @@ def test_ingest_is_idempotent_and_keeps_no_document_text(tmp_path):
 def test_query_contract_forces_user_notebook_version_and_source_scope(tmp_path):
     store = make_store(tmp_path)
     store.index_source({
-        "operationId": "op-2", "batchNo": 0, "finalBatch": True,
+        "operationId": "op-2", "mutationToken": 20, "batchNo": 0, "finalBatch": True,
         "userId": 7, "notebookId": 8, "sourceId": 9,
         "contentHash": "def", "indexVersion": "version-2", "collectionName": "test_collection",
         "chunks": [{"chunkId": 10, "chunkIndex": 0, "content": "测试资料"}],
@@ -108,7 +127,7 @@ def test_query_contract_forces_user_notebook_version_and_source_scope(tmp_path):
 def test_final_empty_batch_removes_stale_vectors(tmp_path):
     store = make_store(tmp_path)
     store.index_source({
-        "operationId": "op-old", "batchNo": 0, "finalBatch": True,
+        "operationId": "op-old", "mutationToken": 30, "batchNo": 0, "finalBatch": True,
         "userId": 1, "notebookId": 2, "sourceId": 3,
         "contentHash": "old", "indexVersion": "version-1", "collectionName": "test_collection",
         "chunks": [{"chunkId": 4, "chunkIndex": 0, "content": "old content"}],
@@ -116,7 +135,7 @@ def test_final_empty_batch_removes_stale_vectors(tmp_path):
     assert store.collection.rows
 
     store.index_source({
-        "operationId": "op-empty", "batchNo": 0, "finalBatch": True,
+        "operationId": "op-empty", "mutationToken": 31, "batchNo": 0, "finalBatch": True,
         "userId": 1, "notebookId": 2, "sourceId": 3,
         "contentHash": "empty", "indexVersion": "version-1", "collectionName": "test_collection",
         "chunks": [],
@@ -128,11 +147,11 @@ def test_final_empty_batch_removes_stale_vectors(tmp_path):
 def test_delete_scope_requires_its_full_identifier_set(tmp_path):
     store = make_store(tmp_path)
     invalid_requests = [
-        {"operationId": "d1", "scope": "SOURCE", "userId": 1, "notebookId": 2},
-        {"operationId": "d2", "scope": "NOTEBOOK", "userId": 1},
-        {"operationId": "d3", "scope": "USER"},
-        {"operationId": "d4", "scope": "INDEX_VERSION"},
-        {"operationId": "d5", "scope": "COLLECTION"},
+        {"operationId": "d1", "mutationToken": 40, "scope": "SOURCE", "userId": 1, "notebookId": 2},
+        {"operationId": "d2", "mutationToken": 41, "scope": "NOTEBOOK", "userId": 1},
+        {"operationId": "d3", "mutationToken": 42, "scope": "USER"},
+        {"operationId": "d4", "mutationToken": 43, "scope": "INDEX_VERSION"},
+        {"operationId": "d5", "mutationToken": 44, "scope": "COLLECTION"},
     ]
     for request in invalid_requests:
         try:
@@ -146,7 +165,8 @@ def test_source_delete_cannot_remove_sibling_source(tmp_path):
     store = make_store(tmp_path)
     for source_id in (3, 4):
         store.index_source({
-            "operationId": f"source-{source_id}", "batchNo": 0, "finalBatch": True,
+            "operationId": f"source-{source_id}", "mutationToken": 50 + source_id,
+            "batchNo": 0, "finalBatch": True,
             "userId": 1, "notebookId": 2, "sourceId": source_id,
             "contentHash": f"hash-{source_id}", "indexVersion": "version-1",
             "collectionName": "test_collection",
@@ -154,9 +174,61 @@ def test_source_delete_cannot_remove_sibling_source(tmp_path):
         })
 
     store.delete({
-        "operationId": "delete-source-3", "scope": "SOURCE",
+        "operationId": "delete-source-3", "mutationToken": 60, "scope": "SOURCE",
         "userId": 1, "notebookId": 2, "sourceId": 3,
     })
 
     remaining_sources = {metadata["sourceId"] for _, metadata in store.collection.rows.values()}
     assert remaining_sources == {4}
+
+
+def test_late_source_index_is_rejected_after_delete_completes(tmp_path):
+    store = make_store(tmp_path)
+    release = threading.Event()
+    started = threading.Event()
+    old_payload = {
+        "operationId": "old-source-index", "mutationToken": 70,
+        "batchNo": 0, "finalBatch": True,
+        "userId": 1, "notebookId": 2, "sourceId": 3,
+        "contentHash": "old", "indexVersion": "version-1", "collectionName": "test_collection",
+        "chunks": [{"chunkId": 4, "chunkIndex": 0, "content": "late private content"}],
+    }
+
+    def delayed_index():
+        started.set()
+        assert release.wait(5)
+        return store.index_source(old_payload)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(delayed_index)
+        assert started.wait(5)
+        store.delete({
+            "operationId": "delete-source", "mutationToken": 80, "scope": "SOURCE",
+            "userId": 1, "notebookId": 2, "sourceId": 3,
+        })
+        release.set()
+        with pytest.raises(StaleMutationError):
+            future.result(timeout=5)
+
+    assert not store.collection.rows
+
+
+def test_late_index_cannot_recreate_deleted_collection(tmp_path):
+    store = make_store(tmp_path)
+    old_payload = {
+        "operationId": "old-collection-index", "mutationToken": 90,
+        "batchNo": 0, "finalBatch": True,
+        "userId": 1, "notebookId": 2, "sourceId": 3,
+        "contentHash": "old", "indexVersion": "version-1", "collectionName": "test_collection",
+        "chunks": [{"chunkId": 4, "chunkIndex": 0, "content": "late private content"}],
+    }
+
+    store.delete({
+        "operationId": "delete-collection", "mutationToken": 100,
+        "scope": "COLLECTION", "collectionName": "test_collection",
+    })
+
+    with pytest.raises(StaleMutationError):
+        store.index_source(old_payload)
+    assert store.client.deleted
+    assert not store.collection.rows

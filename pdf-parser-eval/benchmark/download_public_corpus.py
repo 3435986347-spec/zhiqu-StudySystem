@@ -11,6 +11,9 @@ from pathlib import Path
 
 
 ALLOWED_SCHEMES = {"http", "https"}
+APPROVED_LICENSES = {
+    "APACHE-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "PUBLIC-DOMAIN",
+}
 
 
 def sha256(path: Path) -> str:
@@ -41,12 +44,18 @@ def download(row: dict, output: Path) -> Path:
         raise ValueError(f"sha256 must be pinned before downloading {row.get('id')}")
     if not row.get("license"):
         raise ValueError(f"license is required for {row.get('id')}")
+    review_status = str(row.get("licenseReviewStatus") or "").upper()
+    if review_status not in {"APPROVED", "REVIEW_REQUIRED"}:
+        raise ValueError(f"licenseReviewStatus must be APPROVED or REVIEW_REQUIRED for {row.get('id')}")
+    license_id = str(row.get("license") or "").upper()
+    if review_status == "APPROVED" and license_id not in APPROVED_LICENSES:
+        raise ValueError(f"approved license is not allowlisted for {row.get('id')}: {license_id}")
     if not row.get("attribution"):
         raise ValueError(f"attribution is required for {row.get('id')}")
     source_commit = str(row.get("sourceCommit") or "").lower()
     if len(source_commit) != 40 or any(character not in "0123456789abcdef" for character in source_commit):
         raise ValueError(f"sourceCommit must be a pinned git commit for {row.get('id')}")
-    if str(row.get("license")).upper() not in {"UNKNOWN", "REVIEW_REQUIRED"} and not row.get("licenseUrl"):
+    if review_status == "APPROVED" and not row.get("licenseUrl"):
         raise ValueError(f"licenseUrl is required for {row.get('id')}")
     target = output / safe_target(str(row.get("target") or f"{row['id']}.pdf"))
     if target.exists() and sha256(target) == expected:
@@ -84,6 +93,7 @@ def main() -> None:
             "id": row["id"], "path": str(path.resolve()), "category": row["category"],
             "visibility": "PUBLIC", "sha256": row["sha256"].lower(), "sourceUrl": row["url"],
             "license": row["license"], "licenseUrl": row.get("licenseUrl"),
+            "licenseReviewStatus": row["licenseReviewStatus"],
             "attribution": row["attribution"], "sourceCommit": row["sourceCommit"],
             "gold": row.get("gold") or {},
         })

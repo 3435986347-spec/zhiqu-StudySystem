@@ -14,13 +14,13 @@ Each category must contain at least three representative local documents and thr
 
 ## Public documents
 
-`public-sources.example.jsonl` contains a small, hash-pinned smoke set copied from the OpenDataLoader repository. The repository license does not automatically license third-party PDFs: every row records its own license, attribution, and pinned source commit. Rows marked `REVIEW_REQUIRED` are smoke-only and cannot satisfy the full decision gate. Download it with:
+`public-sources.example.jsonl` contains a small, hash-pinned smoke set copied from the OpenDataLoader repository. The repository license does not automatically license third-party PDFs: every row records its own license, review status, attribution, and pinned source commit. arXiv's non-exclusive distribution terms grant rights to arXiv, not general downstream redistribution rights, so those samples remain `REVIEW_REQUIRED` unless separate evidence is approved. Rows marked `REVIEW_REQUIRED` are smoke-only and cannot satisfy the full decision gate. Download it with:
 
 ```powershell
 python benchmark/download_public_corpus.py
 ```
 
-The downloader requires `http/https`, a license declaration, attribution, a 40-character source commit, a plain `.pdf` target name, and a pinned SHA-256. A confirmed license also requires `licenseUrl`. It writes a runnable manifest to `corpus/downloads/manifest.public.jsonl`.
+The downloader requires `http/https`, `licenseReviewStatus`, a license declaration, attribution, a 40-character source commit, a plain `.pdf` target name, and a pinned SHA-256. `APPROVED` requires both an allowlisted redistributable license and `licenseUrl`; all other material must use `REVIEW_REQUIRED`. It writes a runnable manifest to `corpus/downloads/manifest.public.jsonl`.
 
 The smoke set is not the 24-document acceptance corpus and has no human gold annotations. It can validate protocol, failure isolation, deterministic hashing, and report privacy only.
 

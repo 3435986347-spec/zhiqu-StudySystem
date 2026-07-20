@@ -176,6 +176,68 @@ class RagIndexIntegrationTest {
     }
 
     @Test
+    void leaseLostAfterRenewalCannotMarkSourceIndexed() {
+        RagIndexGeneration generation = createBuildingGeneration();
+        AiNotebookSource source = sourceMapper.selectById(sourceId);
+        jobService.enqueueGenerationSources(generation, List.of(source));
+        RagIndexJob firstLease = claimPendingJob(generation.getId(), "UPSERT_SOURCE", "index-worker-1");
+
+        RagIndexJob secondLease = renewExpireAndReclaim(firstLease, "index-worker-2");
+
+        assertThrows(IllegalStateException.class, () -> jobService.markIndexedWithLease(firstLease, 7));
+        assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM rag_source_index_state " +
+                "WHERE source_id=? AND generation_id=?", String.class, sourceId, generation.getId()));
+        assertEquals("NOT_INDEXED", sourceMapper.selectById(sourceId).getIndexStatus());
+        assertEquals("BUILDING", generationMapper.selectById(generation.getId()).getStatus());
+        assertEquals("RUNNING", jobMapper.selectById(secondLease.getId()).getStatus());
+    }
+
+    @Test
+    void leaseLostAfterRenewalCannotExpandGeneration() {
+        RagIndexGeneration generation = createBuildingGeneration();
+        insertGenerationJob(generation.getId(), "REBUILD_GENERATION");
+        RagIndexJob firstLease = claimPendingJob(generation.getId(), "REBUILD_GENERATION", "expand-worker-1");
+
+        renewExpireAndReclaim(firstLease, "expand-worker-2");
+
+        assertThrows(IllegalStateException.class, () -> jobService.expandGenerationWithLease(firstLease));
+        assertEquals(0, generationMapper.selectById(generation.getId()).getExpectedSourceCount());
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM rag_source_index_state WHERE generation_id=?",
+                Integer.class, generation.getId()));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_job " +
+                "WHERE generation_id=? AND operation='UPSERT_SOURCE'", Integer.class, generation.getId()));
+    }
+
+    @Test
+    void leaseLostAfterRenewalCannotClaimGenerationForPurge() {
+        RagIndexGeneration generation = createBuildingGeneration();
+        jdbc.update("UPDATE rag_index_generation SET status='RETIRED', retired_at=NOW() WHERE id=?",
+                generation.getId());
+        insertGenerationJob(generation.getId(), "DELETE_GENERATION");
+        RagIndexJob firstLease = claimPendingJob(generation.getId(), "DELETE_GENERATION", "purge-claim-worker-1");
+
+        renewExpireAndReclaim(firstLease, "purge-claim-worker-2");
+
+        assertThrows(IllegalStateException.class,
+                () -> jobService.prepareGenerationPurgeWithLease(firstLease));
+        assertEquals("RETIRED", generationMapper.selectById(generation.getId()).getStatus());
+    }
+
+    @Test
+    void leaseLostAfterRenewalCannotMarkGenerationPurged() {
+        RagIndexGeneration generation = createBuildingGeneration();
+        jdbc.update("UPDATE rag_index_generation SET status='PURGING' WHERE id=?", generation.getId());
+        insertGenerationJob(generation.getId(), "DELETE_GENERATION");
+        RagIndexJob firstLease = claimPendingJob(generation.getId(), "DELETE_GENERATION", "purge-worker-1");
+
+        renewExpireAndReclaim(firstLease, "purge-worker-2");
+
+        assertThrows(IllegalStateException.class,
+                () -> jobService.markGenerationPurgedWithLease(firstLease));
+        assertEquals("PURGING", generationMapper.selectById(generation.getId()).getStatus());
+    }
+
+    @Test
     void deletedSourceImmediatelyLeavesRetrievalScope() {
         assertEquals(1, scopeResolver.resolve(userId, notebookId, List.of(sourceId)).size());
         sourceMapper.deleteById(sourceId);
@@ -251,11 +313,12 @@ class RagIndexIntegrationTest {
                         .eq(RagIndexJob::getSourceId, sourceId).last("LIMIT 1"));
         job = claimForFailure(job.getId(), 8, "retry-dead-worker");
         assertTrue(jobService.handleFailure(job, source, generation, new IllegalStateException("forced failure")));
+        Long failedJobId = job.getId();
 
-        BusinessException error = assertThrows(BusinessException.class, () -> adminService.retry(job.getId()));
+        BusinessException error = assertThrows(BusinessException.class, () -> adminService.retry(failedJobId));
 
         assertTrue(error.getMessage().contains("索引代次已失败"));
-        assertEquals("DEAD", jobMapper.selectById(job.getId()).getStatus());
+        assertEquals("DEAD", jobMapper.selectById(failedJobId).getStatus());
         assertEquals("FAILED", generationMapper.selectById(generation.getId()).getStatus());
     }
 
@@ -310,6 +373,28 @@ class RagIndexIntegrationTest {
         jdbc.update("UPDATE rag_index_job SET status='RUNNING', attempts=?, locked_at=NOW(), locked_by=?, " +
                 "lease_version=lease_version+1 WHERE id=?", attempts, workerId, jobId);
         return jobMapper.selectById(jobId);
+    }
+
+    private void insertGenerationJob(Long targetGenerationId, String operation) {
+        jdbc.update("INSERT INTO rag_index_job(dedupe_key,operation,generation_id,status,attempts) " +
+                        "VALUES(?,?,?,'PENDING',0)",
+                operation.toLowerCase() + ":" + UUID.randomUUID(), operation, targetGenerationId);
+    }
+
+    private RagIndexJob claimPendingJob(Long targetGenerationId, String operation, String workerId) {
+        return jobService.claimDueJobs(20, workerId).stream()
+                .filter(job -> targetGenerationId.equals(job.getGenerationId()) && operation.equals(job.getOperation()))
+                .findFirst().orElseThrow();
+    }
+
+    private RagIndexJob renewExpireAndReclaim(RagIndexJob firstLease, String replacementWorker) {
+        assertTrue(jobService.renewLease(firstLease));
+        jdbc.update("UPDATE rag_index_job SET locked_at=? WHERE id=?",
+                LocalDateTime.now().minusMinutes(6), firstLease.getId());
+        RagIndexJob secondLease = jobService.claimDueJobs(20, replacementWorker).stream()
+                .filter(job -> firstLease.getId().equals(job.getId())).findFirst().orElseThrow();
+        assertNotEquals(firstLease.getLeaseVersion(), secondLease.getLeaseVersion());
+        return secondLease;
     }
 
     private RagIndexGeneration createBuildingGeneration() {

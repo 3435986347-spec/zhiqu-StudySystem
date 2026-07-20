@@ -62,11 +62,11 @@ python benchmark/benchmark.py `
   --output output/full
 ```
 
-Malformed manifests are rejected before parsing: IDs must match `[A-Za-z0-9][A-Za-z0-9._-]{0,99}`, files and pinned hashes must match, and raw output paths must stay below the ignored `output/raw` directory.
+Malformed manifests are rejected before parsing: IDs must match `[A-Za-z0-9][A-Za-z0-9._-]{0,99}`, files and pinned hashes must match, and the complete report directory must stay below this project's Git-ignored `output/` root. `--output` cannot redirect raw attempts elsewhere in the repository.
 
-The formal decision gate requires at least 24 unique PDF hashes, six documents per category, and at least three PUBLIC plus three PRIVATE documents in every category. All digital PDFs need three representative pages, human reference text, and ordered anchors; every digital category needs heading gold for at least three documents; TABLE documents need non-empty table gold; SCAN documents must declare `scan=true`. Public files with incomplete provenance or `REVIEW_REQUIRED` licenses remain smoke-only. Any coverage gap forces `NEEDS_MORE_DATA` and is listed in the report.
+The formal decision gate requires at least 24 unique PDF hashes, six documents per category, and at least three PUBLIC plus three PRIVATE documents in every category. All digital PDFs need three representative pages, human reference text, and ordered anchors; every digital category needs heading gold for at least three documents; TABLE documents need non-empty table gold; SCAN documents must declare `scan=true`. A public file must declare `licenseReviewStatus=APPROVED` and use an allowlisted redistributable license; arbitrary license strings, arXiv distribution terms, incomplete provenance, and `REVIEW_REQUIRED` samples remain smoke-only. Any coverage gap forces `NEEDS_MORE_DATA` and is listed in the report.
 
-Each parser runs every document three times. Determinism hashes normalized text, Markdown, and the full ordered element structure, including pages, heading levels, tables, and bounding boxes. All three ignored raw attempts are retained for diagnosis. The public report contains metrics, hashes, timings, diagnostic counts, and safe error codes only; it never includes request IDs, stderr, paths, source text, Markdown, or elements. The final decision is restricted to:
+Each parser runs every document three times. Determinism hashes engine/version/file identity, page count, OCR/truncation flags, normalized text, Markdown, and the full ordered element structure, including pages, heading levels, tables, and bounding boxes. Timing and RSS remain performance measurements rather than deterministic content. All three ignored raw attempts are retained for diagnosis. The public report contains metrics, hashes, timings, diagnostic counts, and safe error codes only; it never includes request IDs, stderr, paths, source text, Markdown, or elements. The final decision is restricted to:
 
 - `KEEP_PDFBOX`
 - `OPENDATALOADER_CANDIDATE`
@@ -75,7 +75,7 @@ Each parser runs every document three times. Determinism hashes normalized text,
 
 Passing this experiment does not switch production parsing. A separate reviewed change is required to introduce a parser abstraction, quality fallback, and old-source reparse/reindex workflow.
 
-`CATEGORY_ROUTING_CANDIDATE` is subject to the same global determinism, memory, latency, scan detection, and success gates as the full candidate. Its selected category must also pass category-level success/performance checks and cannot regress text or heading quality; two-column and table routes must pass their respective structure thresholds.
+`CATEGORY_ROUTING_CANDIDATE` is subject to the same global determinism, memory, latency, scan detection, and success gates as the full candidate. Heading matches require the annotated page, and heading level accuracy participates in document quality, aggregation, minimum thresholds, and regression checks. Its selected category must also pass category-level success/performance checks and cannot regress text or heading quality; two-column and table routes must pass their respective structure thresholds.
 
 ## ParseResult protocol
 

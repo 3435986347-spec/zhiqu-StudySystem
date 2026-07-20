@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .embedding import EmbeddingService
 from .settings import Settings
-from .vector_store import VectorStore
+from .vector_store import StaleMutationError, VectorStore
 
 
 class ParentChunk(BaseModel):
@@ -18,6 +18,7 @@ class ParentChunk(BaseModel):
 
 class IndexRequest(BaseModel):
     operationId: str
+    mutationToken: int = Field(gt=0)
     userId: int
     notebookId: int
     sourceId: int
@@ -42,6 +43,7 @@ class QueryRequest(BaseModel):
 
 class DeleteRequest(BaseModel):
     operationId: str
+    mutationToken: int = Field(gt=0)
     scope: str
     userId: int | None = None
     notebookId: int | None = None
@@ -89,9 +91,14 @@ def store() -> VectorStore:
 
 def require_index_version(index_version: str) -> None:
     if index_version != settings.index_version:
+        # 与 STALE_MUTATION 同为 409，但语义完全不同：这是配置错配，调用方必须按普通错误上报，
+        # 不能当成「已被更新操作取代」而把作业静默转终态。故给出机器可读的 code。
         raise HTTPException(
             status_code=409,
-            detail=f"Index version mismatch: requested={index_version}, sidecar={settings.index_version}",
+            detail={
+                "code": "INDEX_VERSION_MISMATCH",
+                "message": f"Index version mismatch: requested={index_version}, sidecar={settings.index_version}",
+            },
         )
 
 
@@ -122,7 +129,16 @@ def meta(_: None = Depends(authorize)):
 @app.post("/v1/index/sources")
 def index_sources(request: IndexRequest, _: None = Depends(authorize)):
     require_index_version(request.indexVersion)
-    return store().index_source(request.model_dump())
+    try:
+        return store().index_source(request.model_dump())
+    except StaleMutationError as exc:
+        # 墓碑拒绝陈旧写入：调用方应把该作业转终态，而不是重试（重试只会再拿到 409）。
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "STALE_MUTATION", "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/v1/query")
@@ -137,5 +153,11 @@ def delete(request: DeleteRequest, _: None = Depends(authorize)):
         raise HTTPException(status_code=400, detail="Unsupported delete scope")
     try:
         return store().delete(request.model_dump(exclude_none=True))
+    except StaleMutationError as exc:
+        # 墓碑拒绝陈旧写入：调用方应把该作业转终态，而不是重试（重试只会再拿到 409）。
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "STALE_MUTATION", "message": str(exc)},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

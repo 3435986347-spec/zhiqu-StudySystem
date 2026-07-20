@@ -23,6 +23,7 @@ class OperationStore:
             db.execute("CREATE TABLE IF NOT EXISTS operation_batch (operation_id TEXT, batch_no INTEGER, completed INTEGER NOT NULL DEFAULT 0, vector_count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(operation_id,batch_no))")
             db.execute("CREATE TABLE IF NOT EXISTS operation_vector (operation_id TEXT, vector_id TEXT, PRIMARY KEY(operation_id,vector_id))")
             db.execute("CREATE TABLE IF NOT EXISTS operation_status (operation_id TEXT PRIMARY KEY, finalized INTEGER NOT NULL DEFAULT 0)")
+            db.execute("CREATE TABLE IF NOT EXISTS mutation_fence (scope_key TEXT PRIMARY KEY, token INTEGER NOT NULL)")
             columns = {row[1] for row in db.execute("PRAGMA table_info(operation_batch)")}
             if "vector_count" not in columns:
                 db.execute("ALTER TABLE operation_batch ADD COLUMN vector_count INTEGER NOT NULL DEFAULT 0")
@@ -54,3 +55,24 @@ class OperationStore:
         with self._connect() as db:
             row = db.execute("SELECT finalized FROM operation_status WHERE operation_id=?", (operation_id,)).fetchone()
             return bool(row and row[0])
+
+    def highest_fence(self, scope_keys: list[str]) -> int | None:
+        if not scope_keys:
+            return None
+        placeholders = ",".join("?" for _ in scope_keys)
+        with self._connect() as db:
+            row = db.execute(
+                f"SELECT MAX(token) FROM mutation_fence WHERE scope_key IN ({placeholders})",
+                tuple(scope_keys),
+            ).fetchone()
+            return int(row[0]) if row and row[0] is not None else None
+
+    def record_fences(self, scope_keys: list[str], token: int) -> None:
+        if not scope_keys:
+            return
+        with self._connect() as db:
+            db.executemany(
+                "INSERT INTO mutation_fence(scope_key,token) VALUES(?,?) "
+                "ON CONFLICT(scope_key) DO UPDATE SET token=MAX(token,excluded.token)",
+                [(scope_key, token) for scope_key in scope_keys],
+            )

@@ -6,8 +6,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from benchmark import (annotation_coverage, corpus_gate_reasons, decision,
                        edit_similarity, heading_metrics, multiset_prf,
-                       ordered_anchor_score, parse_markdown_table, safe_raw_path,
-                       sanitized_result, structured_output_hash, table_metrics)
+                       ordered_anchor_score, parse_markdown_table, private_output_dir,
+                       quality_score, safe_raw_path, sanitized_result,
+                       structured_output_hash, table_metrics)
 
 
 class MetricsTest(unittest.TestCase):
@@ -23,13 +24,29 @@ class MetricsTest(unittest.TestCase):
             {"type": "heading", "page": 1, "headingLevel": 2, "content": "复习计划"},
             {"type": "table", "page": 1, "content": "| 科目 | 时间 |\n| --- | --- |\n| 数学 | 2h |"},
         ]}
-        heading = heading_metrics([{"text": "复习计划", "level": 2}], result)
+        heading = heading_metrics([{"text": "复习计划", "page": 1, "level": 2}], result)
         self.assertEqual(1.0, heading["f1"])
         self.assertEqual(1.0, heading["levelAccuracy"])
         table = table_metrics([{"page": 1, "rows": [["科目", "时间"], ["数学", "2h"]]}], result)
         self.assertEqual(1.0, table["cellF1"])
         self.assertEqual(1.0, table["shapeAccuracy"])
         self.assertEqual(2, len(parse_markdown_table(result["elements"][1]["content"])))
+
+    def test_heading_page_and_level_affect_quality(self):
+        expected = [{"text": "复习计划", "page": 1, "level": 1}]
+        wrong_page = {"elements": [
+            {"type": "heading", "page": 99, "headingLevel": 1, "content": "复习计划"},
+        ]}
+        wrong_level = {"elements": [
+            {"type": "heading", "page": 1, "headingLevel": 9, "content": "复习计划"},
+        ]}
+
+        page_metrics = heading_metrics(expected, wrong_page)
+        level_metrics = heading_metrics(expected, wrong_level)
+        self.assertEqual(0.0, page_metrics["f1"])
+        self.assertEqual(1.0, level_metrics["f1"])
+        self.assertEqual(0.0, level_metrics["levelAccuracy"])
+        self.assertEqual(0.5, quality_score({"headings": level_metrics}))
 
     def test_incomplete_corpus_cannot_promote_parser(self):
         summary = {
@@ -65,8 +82,31 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual("KEEP_PDFBOX", selected)
         self.assertTrue(any("CATEGORY FAIL LECTURE" in reason for reason in reasons))
 
+    def test_heading_level_regression_blocks_candidate(self):
+        summary = self.decision_summary()
+        for category in ("LECTURE", "TWO_COLUMN", "TABLE"):
+            summary["categories"][category]["OPENDATALOADER"]["headingLevelAccuracy"] = 0.1
+        selected, reasons = decision(summary, self.full_cases(), False, [])
+        self.assertEqual("KEEP_PDFBOX", selected)
+        self.assertTrue(any("heading level accuracy" in reason and "FAIL" in reason for reason in reasons))
+        self.assertTrue(any("heading level regression" in reason for reason in reasons))
+
+    def test_public_license_needs_approval_and_allowlist(self):
+        cases = self.full_cases()
+        public_case = next(case for case in cases if case["visibility"] == "PUBLIC")
+        public_case["license"] = "ARXIV-NONEXCLUSIVE-1.0"
+        reasons = corpus_gate_reasons(cases, annotation_coverage(cases), False)
+        self.assertTrue(any(public_case["id"] in reason and "license" in reason for reason in reasons))
+
+        public_case["license"] = "CC-BY-4.0"
+        public_case["licenseReviewStatus"] = "REVIEW_REQUIRED"
+        reasons = corpus_gate_reasons(cases, annotation_coverage(cases), False)
+        self.assertTrue(any(public_case["id"] in reason and "license" in reason for reason in reasons))
+
     def test_structured_hash_includes_elements_and_coordinates(self):
-        base = {"text": "same", "markdown": "same", "elements": [
+        base = {"engine": "PDFBOX", "version": "3.0.1", "fileHash": "a" * 64,
+                "pageCount": 1, "needsOcr": False, "truncated": False,
+                "text": "same", "markdown": "same", "elements": [
             {"type": "heading", "page": 1, "headingLevel": 1,
              "boundingBox": [1.0, 2.0, 3.0, 4.0], "content": "Title"}
         ]}
@@ -74,6 +114,10 @@ class MetricsTest(unittest.TestCase):
         moved = {**base, "elements": [{**base["elements"][0], "boundingBox": [9.0, 2.0, 3.0, 4.0]}]}
         self.assertNotEqual(structured_output_hash(base), structured_output_hash(changed))
         self.assertNotEqual(structured_output_hash(base), structured_output_hash(moved))
+        for field, changed_value in (("pageCount", 2), ("needsOcr", True), ("truncated", True)):
+            with self.subTest(field=field):
+                self.assertNotEqual(structured_output_hash(base),
+                                    structured_output_hash({**base, field: changed_value}))
 
     def test_raw_output_path_and_report_diagnostics_are_private(self):
         with self.assertRaises(ValueError):
@@ -90,6 +134,11 @@ class MetricsTest(unittest.TestCase):
         self.assertNotIn("requestId", result)
         self.assertEqual("PARSER_ERROR", result["errorCode"])
         self.assertEqual(1, result["warningCount"])
+        project_root = Path(__file__).resolve().parents[2]
+        self.assertEqual((project_root / "output" / "allowed").resolve(),
+                         private_output_dir(project_root / "output" / "allowed"))
+        with self.assertRaises(ValueError):
+            private_output_dir(project_root / "review-results")
 
     def full_cases(self):
         cases = []
@@ -117,6 +166,7 @@ class MetricsTest(unittest.TestCase):
                     case.update({
                         "sourceUrl": f"https://example.test/{index}.pdf",
                         "license": "CC-BY-4.0",
+                        "licenseReviewStatus": "APPROVED",
                         "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
                         "attribution": f"Public fixture {index}",
                         "sourceCommit": f"{index:040x}",
@@ -134,7 +184,8 @@ class MetricsTest(unittest.TestCase):
         category = lambda quality: {
             "successRate": 1.0, "elapsedPerPageP95Ms": 10, "peakRssBytes": 1,
             "deterministic": True, "qualityScore": quality, "textF1": 0.9,
-            "readingOrder": 0.95, "headingF1": 0.9, "tableScore": 0.9,
+            "readingOrder": 0.95, "headingF1": 0.9,
+            "headingLevelAccuracy": 0.9, "tableScore": 0.9,
         }
         return {
             "engines": {"PDFBOX": engine(0.5), "OPENDATALOADER": engine(0.7)},
