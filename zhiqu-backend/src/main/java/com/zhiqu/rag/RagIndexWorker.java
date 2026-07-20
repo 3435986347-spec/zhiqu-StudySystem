@@ -113,6 +113,7 @@ public class RagIndexWorker {
             }
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("operationId", "job-" + job.getId());
+            payload.put("mutationToken", job.getId());
             payload.put("userId", source.getUserId());
             payload.put("notebookId", source.getNotebookId());
             payload.put("sourceId", source.getId());
@@ -125,13 +126,13 @@ public class RagIndexWorker {
             Map<String, Object> response = client.indexSource(payload);
             vectorCount += intValue(response.get("written"));
         }
-        assertLease(job);
-        jobService.markIndexed(source, generation, vectorCount);
+        jobService.markIndexedWithLease(job, vectorCount);
     }
 
     private void delete(RagIndexJob job, String scope) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("operationId", "job-" + job.getId());
+        payload.put("mutationToken", job.getId());
         payload.put("scope", scope);
         if (job.getUserId() != null) payload.put("userId", job.getUserId());
         if (job.getNotebookId() != null) payload.put("notebookId", job.getNotebookId());
@@ -141,23 +142,15 @@ public class RagIndexWorker {
     }
 
     private void deleteGeneration(RagIndexJob job) {
-        RagIndexGeneration generation = generationMapper.selectById(job.getGenerationId());
-        if (generation == null || "PURGED".equals(generation.getStatus())) return;
-        if (List.of("RETIRED", "FAILED").contains(generation.getStatus())) {
-            jobService.claimGenerationForPurge(generation.getId());
-            generation = generationMapper.selectById(generation.getId());
-        }
-        if (generation == null || "PURGED".equals(generation.getStatus())) return;
-        // An administrator may have reactivated the generation before the conditional
-        // RETIRED -> PURGING claim won. In that case this stale cleanup is a no-op.
-        if (!"PURGING".equals(generation.getStatus())) return;
+        RagIndexGeneration generation = jobService.prepareGenerationPurgeWithLease(job);
+        if (generation == null) return;
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("operationId", "job-" + job.getId());
+        payload.put("mutationToken", job.getId());
         payload.put("scope", "COLLECTION");
         payload.put("collectionName", generation.getCollectionName());
         client.deleteIndex(payload);
-        assertLease(job);
-        jobService.markGenerationPurged(generation.getId());
+        jobService.markGenerationPurgedWithLease(job);
     }
 
     @Scheduled(fixedDelayString = "${app.rag.cleanup-delay-ms:3600000}",
@@ -171,13 +164,7 @@ public class RagIndexWorker {
     }
 
     private void expandGeneration(RagIndexJob job) {
-        RagIndexGeneration generation = generationMapper.selectById(job.getGenerationId());
-        if (generation == null || !"BUILDING".equals(generation.getStatus())) return;
-        List<AiNotebookSource> sources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
-                .eq(AiNotebookSource::getStatus, "READY")
-                .orderByAsc(AiNotebookSource::getId));
-        assertLease(job);
-        jobService.enqueueGenerationSources(generation, sources);
+        jobService.expandGenerationWithLease(job);
     }
 
     private void assertLease(RagIndexJob job) {

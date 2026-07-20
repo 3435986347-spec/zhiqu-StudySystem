@@ -175,6 +175,61 @@ public class RagIndexJobService {
         return updated == 1;
     }
 
+    @Transactional
+    public void markIndexedWithLease(RagIndexJob job, int vectorCount) {
+        RagIndexGeneration generation = lockJobGeneration(job);
+        renewLeaseOrThrow(job);
+        if (generation == null || !List.of("ACTIVE", "BUILDING", "READY").contains(generation.getStatus())) {
+            return;
+        }
+        AiNotebookSource source = sourceMapper.selectOne(new LambdaQueryWrapper<AiNotebookSource>()
+                .eq(AiNotebookSource::getId, job.getSourceId())
+                .eq(AiNotebookSource::getUserId, job.getUserId())
+                .eq(AiNotebookSource::getNotebookId, job.getNotebookId())
+                .eq(AiNotebookSource::getStatus, "READY")
+                .last("FOR UPDATE"));
+        if (source == null || source.getContentHash() == null
+                || !source.getContentHash().equals(job.getContentHash())) {
+            return;
+        }
+        markIndexedLocked(source, generation, vectorCount);
+    }
+
+    @Transactional
+    public void expandGenerationWithLease(RagIndexJob job) {
+        RagIndexGeneration generation = lockJobGeneration(job);
+        renewLeaseOrThrow(job);
+        if (generation == null || !"BUILDING".equals(generation.getStatus())) return;
+        List<AiNotebookSource> sources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
+                .eq(AiNotebookSource::getStatus, "READY")
+                .orderByAsc(AiNotebookSource::getId));
+        enqueueGenerationSourcesLocked(generation, sources);
+    }
+
+    @Transactional
+    public RagIndexGeneration prepareGenerationPurgeWithLease(RagIndexJob job) {
+        RagIndexGeneration generation = lockJobGeneration(job);
+        renewLeaseOrThrow(job);
+        if (generation == null || "PURGED".equals(generation.getStatus())) return null;
+        if (List.of("RETIRED", "FAILED").contains(generation.getStatus())) {
+            if (generationMapper.claimForPurge(generation.getId()) != 1) return null;
+            generation.setStatus("PURGING");
+        }
+        return "PURGING".equals(generation.getStatus()) ? generation : null;
+    }
+
+    @Transactional
+    public void markGenerationPurgedWithLease(RagIndexJob job) {
+        RagIndexGeneration generation = lockJobGeneration(job);
+        renewLeaseOrThrow(job);
+        if (generation == null || "PURGED".equals(generation.getStatus())) return;
+        if (!"PURGING".equals(generation.getStatus())) {
+            throw new IllegalStateException("Only claimed RAG generations can be purged");
+        }
+        generation.setStatus("PURGED");
+        generationMapper.updateById(generation);
+    }
+
     private FailureTransition failLease(RagIndexJob job, Exception error) {
         int attempts = job.getAttempts() == null ? 1 : job.getAttempts();
         boolean dead = attempts >= Math.max(1, properties.getMaxAttempts());
@@ -218,6 +273,13 @@ public class RagIndexJobService {
 
     @Transactional
     public void enqueueGenerationSources(RagIndexGeneration generation, List<AiNotebookSource> sources) {
+        if (generation == null) return;
+        RagIndexGeneration lockedGeneration = generationMapper.lockById(generation.getId());
+        if (lockedGeneration == null || !"BUILDING".equals(lockedGeneration.getStatus())) return;
+        enqueueGenerationSourcesLocked(lockedGeneration, sources);
+    }
+
+    private void enqueueGenerationSourcesLocked(RagIndexGeneration generation, List<AiNotebookSource> sources) {
         generation.setExpectedSourceCount(sources.size());
         generation.setIndexedSourceCount(0);
         generationMapper.updateById(generation);
@@ -247,14 +309,21 @@ public class RagIndexJobService {
 
     @Transactional
     public void markIndexed(AiNotebookSource source, RagIndexGeneration generation, int vectorCount) {
+        if (generation == null || source == null) return;
+        RagIndexGeneration lockedGeneration = generationMapper.lockById(generation.getId());
+        if (lockedGeneration == null
+                || !List.of("ACTIVE", "BUILDING", "READY").contains(lockedGeneration.getStatus())) return;
+        markIndexedLocked(source, lockedGeneration, vectorCount);
+    }
+
+    private void markIndexedLocked(AiNotebookSource source, RagIndexGeneration generation, int vectorCount) {
         upsertSourceState(source, generation, "INDEXED", null, vectorCount);
-        if ("ACTIVE".equals(generation.getStatus())) {
-            source.setIndexStatus("INDEXED");
-            source.setIndexVersion(generation.getIndexVersion());
-            source.setIndexError(null);
-            source.setIndexedAt(LocalDateTime.now());
-            sourceMapper.updateById(source);
-        }
+        if (!"ACTIVE".equals(generation.getStatus())) return;
+        source.setIndexStatus("INDEXED");
+        source.setIndexVersion(generation.getIndexVersion());
+        source.setIndexError(null);
+        source.setIndexedAt(LocalDateTime.now());
+        sourceMapper.updateById(source);
     }
 
     @Transactional
@@ -331,6 +400,18 @@ public class RagIndexJobService {
     @Transactional
     public boolean claimGenerationForPurge(Long generationId) {
         return generationMapper.claimForPurge(generationId) == 1;
+    }
+
+    private RagIndexGeneration lockJobGeneration(RagIndexJob job) {
+        if (job == null || job.getGenerationId() == null) return null;
+        return generationMapper.lockById(job.getGenerationId());
+    }
+
+    private void renewLeaseOrThrow(RagIndexJob job) {
+        LocalDateTime now = LocalDateTime.now();
+        int updated = jobMapper.renewLease(job.getId(), job.getLockedBy(), job.getLeaseVersion(), now);
+        if (updated != 1) throw new IllegalStateException("RAG job lease was lost");
+        job.setLockedAt(now);
     }
 
     private void enqueue(String operation, RagIndexGeneration generation, Long userId, Long notebookId,
