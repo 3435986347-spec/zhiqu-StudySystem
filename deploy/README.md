@@ -37,6 +37,20 @@ deploy/
 RAG sidecar 的源码与依赖不在本目录，位于仓库根部的 `rag-service/`（安装步骤见
 `deploy/windows/README.md` 第六节）。
 
+## 关于部署 JAR
+
+**仓库里不保存构建产物**，本目录不含 `zhiqu-backend-0.0.1-SNAPSHOT.jar`。部署时按
+`deploy/windows/README.md` 第三节在本地打包，再把产物上传到服务器：
+
+```powershell
+cd zhiqu-backend
+mvn clean package -DskipTests
+# 产物：zhiqu-backend\target\zhiqu-backend-0.0.1-SNAPSHOT.jar
+```
+
+这样做的原因：JAR 约 75MB，超过 GitHub 单文件 50MB 的建议上限，每更新一次就会在
+Git 历史里多压一份；而且仓库里存一份旧 JAR 很容易被误当成最新版直接上线。
+
 ## 推荐阅读顺序
 
 1. 先阅读 Windows 部署文档：
