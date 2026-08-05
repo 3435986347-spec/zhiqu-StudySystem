@@ -15,13 +15,32 @@ public interface RagIndexJobMapper extends BaseMapper<RagIndexJob> {
     @Select("SELECT * FROM rag_index_job WHERE id = #{id} FOR UPDATE")
     RagIndexJob lockById(@Param("id") Long id);
 
+    /**
+     * 领取到期作业。
+     *
+     * <p>{@code protocolVersion} 是前置条件而非事后过滤：本查询带 FOR UPDATE SKIP LOCKED，
+     * 若先领后筛会把不属于本 worker 的行也锁住。
+     *
+     * <p>{@code rebuildOnly=true} 对应 cutover 的 REBUILD_ONLY 模式：只放行代次重建相关操作。
+     * 允许的操作是一组固定常量，不需要动态 IN。
+     *
+     * <p><b>它不是通用的限流开关。</b>{@code UPSERT_SOURCE} 这个 operation 被两条路共用——
+     * 业务侧的 {@code enqueueSource} 与 rebuild 展开——SQL 层面区分不了，所以本模式会领走
+     * 一条在冻结之前入队的业务 UPSERT_SOURCE。在 cutover runbook 里这是安全的：第 2 步已排空、
+     * 第 3 步已停流量，到第 7 步不可能还有业务作业。**安全性来自流程，不来自这个过滤器**，
+     * 因此不要在故障时拿它当节流阀用，那会得到与预期不符的行为。
+     */
     @Select("SELECT * FROM rag_index_job " +
-            "WHERE (status IN ('PENDING','RETRY') AND (next_retry_at IS NULL OR next_retry_at <= #{dueBefore})) " +
-            "OR (status='RUNNING' AND locked_at < #{staleBefore}) " +
+            "WHERE protocol_version = #{protocolVersion} " +
+            "AND (#{rebuildOnly} = false OR operation IN ('REBUILD_GENERATION','UPSERT_SOURCE','DELETE_GENERATION')) " +
+            "AND ((status IN ('PENDING','RETRY') AND (next_retry_at IS NULL OR next_retry_at <= #{dueBefore})) " +
+            "  OR (status='RUNNING' AND locked_at < #{staleBefore})) " +
             "ORDER BY id LIMIT #{limit} FOR UPDATE SKIP LOCKED")
     List<RagIndexJob> lockDueJobs(@Param("limit") int limit,
                                   @Param("dueBefore") LocalDateTime dueBefore,
-                                  @Param("staleBefore") LocalDateTime staleBefore);
+                                  @Param("staleBefore") LocalDateTime staleBefore,
+                                  @Param("protocolVersion") int protocolVersion,
+                                  @Param("rebuildOnly") boolean rebuildOnly);
 
     @Update("UPDATE rag_index_job SET locked_at=#{lockedAt} " +
             "WHERE id=#{id} AND status='RUNNING' AND locked_by=#{lockedBy} AND lease_version=#{leaseVersion}")

@@ -16,10 +16,18 @@ public class RagIndexJob {
     private Long id;
     private String dedupeKey;
     private String operation;
+    /** 1=旧 source 协议，2=unit 协议。只用于让回滚后的旧 worker 不误领新格式作业。 */
+    private Integer protocolVersion;
     private Long generationId;
     private Long userId;
     private Long notebookId;
     private Long sourceId;
+    private Long unitId;
+    private String namespace;
+    /** LEGACY=旧 SOURCE/NOTEBOOK 作用域，UNIT=新 UNIT/SCOPE 作用域。双删的两条都是 v2，靠本列区分。 */
+    private String deleteDialect;
+    private String scopeKind;
+    private Long scopeId;
     private String contentHash;
     private String targetIndexVersion;
     private String status;

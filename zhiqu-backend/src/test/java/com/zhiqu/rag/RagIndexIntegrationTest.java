@@ -114,6 +114,55 @@ class RagIndexIntegrationTest {
     }
 
     @Test
+    void v28ProtocolAndDialectSchemaWasApplied() {
+        Integer columns = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.columns " +
+                "WHERE table_schema=DATABASE() AND table_name='rag_index_job' " +
+                "AND column_name IN ('protocol_version','unit_id','namespace','delete_dialect','scope_kind','scope_id')",
+                Integer.class);
+        assertEquals(6, columns);
+
+        // protocol_version 必须 NOT NULL DEFAULT 1：存量作业要被当成旧协议，
+        // 否则升级瞬间队列里的老作业会因为 protocol_version 为 NULL 而谁都领不走。
+        assertEquals("NO", jdbc.queryForObject("SELECT is_nullable FROM information_schema.columns " +
+                "WHERE table_schema=DATABASE() AND table_name='rag_index_job' AND column_name='protocol_version'",
+                String.class));
+        assertEquals("1", jdbc.queryForObject("SELECT column_default FROM information_schema.columns " +
+                "WHERE table_schema=DATABASE() AND table_name='rag_index_job' AND column_name='protocol_version'",
+                String.class));
+
+        Integer index = jdbc.queryForObject("SELECT COUNT(DISTINCT index_name) FROM information_schema.statistics " +
+                "WHERE table_schema=DATABASE() AND table_name='rag_index_job' " +
+                "AND index_name='idx_rag_job_protocol_claim'", Integer.class);
+        assertEquals(1, index);
+    }
+
+    /**
+     * 领取查询的两个过滤：协议版本（回滚后旧 worker 不误领新作业）与 REBUILD_ONLY
+     * （cutover 第 8 步只放行代次重建，业务侧增量一律不领）。
+     */
+    @Test
+    void claimFiltersByProtocolVersionAndRebuildOnlyMode() {
+        jdbc.update("INSERT INTO rag_index_job (dedupe_key, operation, protocol_version, status) VALUES " +
+                "(?,'UPSERT_SOURCE',1,'PENDING'),(?,'DELETE_SOURCE',1,'PENDING')," +
+                "(?,'REBUILD_GENERATION',1,'PENDING'),(?,'UPSERT_UNIT',2,'PENDING')",
+                "p-" + UUID.randomUUID(), "p-" + UUID.randomUUID(),
+                "p-" + UUID.randomUUID(), "p-" + UUID.randomUUID());
+
+        LocalDateTime now = LocalDateTime.now();
+        List<String> normal = jobMapper.lockDueJobs(20, now, now.minusMinutes(5), 1, false)
+                .stream().map(RagIndexJob::getOperation).toList();
+        assertTrue(normal.contains("UPSERT_SOURCE"));
+        assertTrue(normal.contains("DELETE_SOURCE"));
+        assertFalse(normal.contains("UPSERT_UNIT"), "v2 作业不能被 v1 worker 领走");
+
+        List<String> rebuildOnly = jobMapper.lockDueJobs(20, now, now.minusMinutes(5), 1, true)
+                .stream().map(RagIndexJob::getOperation).toList();
+        assertTrue(rebuildOnly.contains("REBUILD_GENERATION"));
+        assertTrue(rebuildOnly.contains("UPSERT_SOURCE"));
+        assertFalse(rebuildOnly.contains("DELETE_SOURCE"), "REBUILD_ONLY 下业务侧删除不得被领走");
+    }
+
+    @Test
     void outboxWriteRollsBackWithSourceTransaction() {
         assertThrows(IllegalStateException.class, () -> transactions.executeWithoutResult(status -> {
             jobService.enqueueSource(sourceMapper.selectById(sourceId));

@@ -11,6 +11,9 @@ import com.zhiqu.mapper.AiSourceChunkMapper;
 import com.zhiqu.mapper.RagIndexGenerationMapper;
 import com.zhiqu.mapper.RagIndexJobMapper;
 import com.zhiqu.mapper.RagSourceIndexStateMapper;
+import com.zhiqu.service.RuntimeFlagService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +27,22 @@ import java.util.UUID;
 
 @Service
 public class RagIndexJobService {
+    private static final Logger log = LoggerFactory.getLogger(RagIndexJobService.class);
+
+    /**
+     * 本版本 worker 支持的作业协议版本。
+     *
+     * <p>Phase 1A 仍是 1（unit 投影表尚不存在，所有作业都是 source 形态）。Phase 1B 引入
+     * rag_indexable_unit 时改为 2。列与过滤条件先落地，是为了让那次切换只改这一个常量，
+     * 也为了回滚到旧 JAR 时它不会误领新格式作业。
+     */
+    public static final int SUPPORTED_PROTOCOL_VERSION = 1;
+
+    /** 双删方言：清理旧格式向量。 */
+    public static final String DIALECT_LEGACY = "LEGACY";
+    /** 双删方言：清理 unit 格式向量。 */
+    public static final String DIALECT_UNIT = "UNIT";
+
     private final RagIndexJobMapper jobMapper;
     private final RagIndexGenerationMapper generationMapper;
     private final RagSourceIndexStateMapper stateMapper;
@@ -31,6 +50,7 @@ public class RagIndexJobService {
     private final AiSourceChunkMapper chunkMapper;
     private final RagContentHashService contentHashService;
     private final RagProperties properties;
+    private final RuntimeFlagService runtimeFlags;
 
     public RagIndexJobService(RagIndexJobMapper jobMapper,
                               RagIndexGenerationMapper generationMapper,
@@ -38,7 +58,8 @@ public class RagIndexJobService {
                               AiNotebookSourceMapper sourceMapper,
                               AiSourceChunkMapper chunkMapper,
                               RagContentHashService contentHashService,
-                              RagProperties properties) {
+                              RagProperties properties,
+                              RuntimeFlagService runtimeFlags) {
         this.jobMapper = jobMapper;
         this.generationMapper = generationMapper;
         this.stateMapper = stateMapper;
@@ -46,10 +67,27 @@ public class RagIndexJobService {
         this.chunkMapper = chunkMapper;
         this.contentHashService = contentHashService;
         this.properties = properties;
+        this.runtimeFlags = runtimeFlags;
+    }
+
+    /**
+     * cutover 第 1 步的闸门：冻结**业务侧**生产者，已入队的作业照常被消费直到队列排空。
+     *
+     * <p>只拦业务触发的入队（资料增删、Notebook 删除、手动重索引），**不拦代次生命周期**
+     * （REBUILD_GENERATION / UPSERT_SOURCE-of-rebuild / DELETE_GENERATION）——否则 runbook
+     * 第 8 步在 producer-frozen 仍为 true 时就跑不了 rebuild，整个切换流程会自锁。
+     */
+    private boolean producerFrozen(String operation) {
+        if (!runtimeFlags.producerFrozen()) {
+            return false;
+        }
+        log.info("producer-frozen 生效，跳过业务侧入队 operation={}", operation);
+        return true;
     }
 
     @Transactional
     public void enqueueSource(AiNotebookSource source) {
+        if (producerFrozen("UPSERT_SOURCE")) return;
         ensureContentHash(source);
         List<RagIndexGeneration> generations = generationMapper.selectList(
                 new LambdaQueryWrapper<RagIndexGeneration>()
@@ -88,20 +126,44 @@ public class RagIndexJobService {
         sourceMapper.updateById(source);
     }
 
+    /**
+     * 删除资料的向量。
+     *
+     * <p>{@code dual-delete-window} 打开时会入队**两条**：LEGACY 方言清理旧格式向量、
+     * UNIT 方言清理 unit 格式向量。两条都是 protocol v2，都幂等，dedupe key 因方言不同而不同——
+     * 若 key 相同，第二条会被 DuplicateKeyException 静默吞掉。
+     */
     @Transactional
     public void enqueueDeleteSource(Long userId, Long notebookId, Long sourceId) {
-        enqueue("DELETE_SOURCE", null, userId, notebookId, sourceId, null,
-                "delete-source:" + userId + ":" + notebookId + ":" + sourceId + ":" + UUID.randomUUID());
+        if (producerFrozen("DELETE_SOURCE")) return;
+        String unique = "delete-source:" + userId + ":" + notebookId + ":" + sourceId + ":" + UUID.randomUUID();
+        for (String dialect : deleteDialects()) {
+            enqueue("DELETE_SOURCE", null, userId, notebookId, sourceId, null, unique, dialect);
+        }
     }
 
     @Transactional
     public void enqueueDeleteNotebook(Long userId, Long notebookId) {
-        enqueue("DELETE_NOTEBOOK", null, userId, notebookId, null, null,
-                "delete-notebook:" + userId + ":" + notebookId + ":" + UUID.randomUUID());
+        if (producerFrozen("DELETE_NOTEBOOK")) return;
+        String unique = "delete-notebook:" + userId + ":" + notebookId + ":" + UUID.randomUUID();
+        for (String dialect : deleteDialects()) {
+            enqueue("DELETE_NOTEBOOK", null, userId, notebookId, null, null, unique, dialect);
+        }
+    }
+
+    /**
+     * 升级期同时清理两种格式的向量。窗口关闭后只发 LEGACY——因为那时全部向量都是该格式。
+     * Phase 1B 起 UNIT 方言才真正有对应的向量可清。
+     */
+    private List<String> deleteDialects() {
+        return properties.isDualDeleteWindow()
+                ? List.of(DIALECT_LEGACY, DIALECT_UNIT)
+                : List.of(DIALECT_LEGACY);
     }
 
     @Transactional
     public void enqueueReindexSource(AiNotebookSource source) {
+        if (producerFrozen("REINDEX_SOURCE")) return;
         ensureContentHash(source);
         List<RagIndexGeneration> generations = generationMapper.selectList(
                 new LambdaQueryWrapper<RagIndexGeneration>()
@@ -139,11 +201,17 @@ public class RagIndexJobService {
                 "delete-generation:" + generation.getId());
     }
 
+    /**
+     * 领取到期作业。OFF 模式在 worker 侧就已提前返回，这里只需处理 NORMAL / REBUILD_ONLY。
+     * 模式过滤下推到 SQL：本查询带 FOR UPDATE SKIP LOCKED，先领后筛会锁住不该锁的行。
+     */
     @Transactional
     public List<RagIndexJob> claimDueJobs(int limit, String workerId) {
         LocalDateTime now = LocalDateTime.now();
+        boolean rebuildOnly = runtimeFlags.workerMode() == RuntimeFlagService.WorkerMode.REBUILD_ONLY;
         List<RagIndexJob> jobs = jobMapper.lockDueJobs(
-                Math.max(1, Math.min(20, limit)), now, now.minusMinutes(5));
+                Math.max(1, Math.min(20, limit)), now, now.minusMinutes(5),
+                SUPPORTED_PROTOCOL_VERSION, rebuildOnly);
         for (RagIndexJob job : jobs) {
             job.setStatus("RUNNING");
             job.setAttempts((job.getAttempts() == null ? 0 : job.getAttempts()) + 1);
@@ -436,22 +504,40 @@ public class RagIndexJobService {
 
     private void enqueue(String operation, RagIndexGeneration generation, Long userId, Long notebookId,
                          Long sourceId, String contentHash, String uniquePart) {
+        enqueue(operation, generation, userId, notebookId, sourceId, contentHash, uniquePart, null);
+    }
+
+    /**
+     * 入队一条作业。
+     *
+     * <p><b>dedupeKey 必须包含 deleteDialect</b>：唯一键冲突在下面是被吞掉的（这是刻意的幂等设计），
+     * 若双删的两条方言共用同一个 key，第二条会**无声消失**——而升级期恰好少掉的就是清理旧格式
+     * 向量的那条 LEGACY 删除。没有日志、没有报错，只有几天后发现旧向量还在。
+     */
+    private void enqueue(String operation, RagIndexGeneration generation, Long userId, Long notebookId,
+                         Long sourceId, String contentHash, String uniquePart, String deleteDialect) {
         RagIndexJob job = new RagIndexJob();
         job.setOperation(operation);
+        job.setProtocolVersion(SUPPORTED_PROTOCOL_VERSION);
         job.setGenerationId(generation == null ? null : generation.getId());
         job.setUserId(userId);
         job.setNotebookId(notebookId);
         job.setSourceId(sourceId);
+        job.setDeleteDialect(deleteDialect);
         job.setContentHash(contentHash);
         job.setTargetIndexVersion(generation == null ? null : generation.getIndexVersion());
         String generationPart = generation == null ? "all" : String.valueOf(generation.getId());
-        job.setDedupeKey(limit(operation.toLowerCase(Locale.ROOT) + ":" + generationPart + ":" + uniquePart, 255));
+        String dialectPart = deleteDialect == null ? "-" : deleteDialect;
+        job.setDedupeKey(limit(operation.toLowerCase(Locale.ROOT)
+                + ":" + generationPart + ":" + dialectPart + ":" + uniquePart, 255));
         job.setStatus("PENDING");
         job.setAttempts(0);
         try {
             jobMapper.insert(job);
-        } catch (DuplicateKeyException ignored) {
-            // The same source content and generation already has a durable job.
+        } catch (DuplicateKeyException duplicate) {
+            // 幂等：同一份内容在同一代次已有持久化作业。此前这里是完全静默的，
+            // 于是「被去重」和「压根没入队」在排查时无法区分——降级为 debug 日志，至少可观测。
+            log.debug("RAG 作业已存在，跳过入队 dedupeKey={}", job.getDedupeKey());
         }
     }
 

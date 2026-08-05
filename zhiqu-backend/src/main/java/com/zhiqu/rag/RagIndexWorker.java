@@ -10,6 +10,9 @@ import com.zhiqu.mapper.AiNotebookSourceMapper;
 import com.zhiqu.mapper.AiSourceChunkMapper;
 import com.zhiqu.mapper.RagIndexGenerationMapper;
 import com.zhiqu.mapper.RuntimeIssueMapper;
+import com.zhiqu.service.RuntimeFlagService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +25,7 @@ import java.util.UUID;
 
 @Component
 public class RagIndexWorker {
+    private static final Logger log = LoggerFactory.getLogger(RagIndexWorker.class);
     private static final int PARENT_CHUNKS_PER_BATCH = 8;
     private final String workerId = UUID.randomUUID().toString();
     private final RagProperties properties;
@@ -31,6 +35,7 @@ public class RagIndexWorker {
     private final AiNotebookSourceMapper sourceMapper;
     private final AiSourceChunkMapper chunkMapper;
     private final RuntimeIssueMapper runtimeIssueMapper;
+    private final RuntimeFlagService runtimeFlags;
 
     public RagIndexWorker(RagProperties properties,
                           RagIndexJobService jobService,
@@ -38,7 +43,8 @@ public class RagIndexWorker {
                           RagIndexGenerationMapper generationMapper,
                           AiNotebookSourceMapper sourceMapper,
                           AiSourceChunkMapper chunkMapper,
-                          RuntimeIssueMapper runtimeIssueMapper) {
+                          RuntimeIssueMapper runtimeIssueMapper,
+                          RuntimeFlagService runtimeFlags) {
         this.properties = properties;
         this.jobService = jobService;
         this.client = client;
@@ -46,11 +52,15 @@ public class RagIndexWorker {
         this.sourceMapper = sourceMapper;
         this.chunkMapper = chunkMapper;
         this.runtimeIssueMapper = runtimeIssueMapper;
+        this.runtimeFlags = runtimeFlags;
     }
 
     @Scheduled(fixedDelayString = "${app.rag.worker-delay-ms:1000}")
     public void run() {
         if (!client.configured()) return;
+        // cutover 的 OFF 模式：一条作业都不领。REBUILD_ONLY 的过滤下推到 claimDueJobs 的 SQL，
+        // 因为那条查询带 FOR UPDATE SKIP LOCKED，先领后筛会锁住不该锁的行。
+        if (runtimeFlags.workerMode() == RuntimeFlagService.WorkerMode.OFF) return;
         List<RagIndexJob> jobs = jobService.claimDueJobs(properties.getWorkerBatchSize(), workerId);
         for (RagIndexJob job : jobs) {
             try {
@@ -134,7 +144,19 @@ public class RagIndexWorker {
         jobService.markIndexedWithLease(job, vectorCount);
     }
 
+    /**
+     * 删除向量。
+     *
+     * <p>双删窗口下同一次业务删除会产生两条作业，靠 {@code delete_dialect} 区分：
+     * LEGACY 发旧作用域（SOURCE / NOTEBOOK），UNIT 发新作用域。Phase 1A 还没有 unit 格式的
+     * 向量，UNIT 方言因此是显式 no-op —— 写成 no-op 而不是让它落到旧作用域上，是为了避免
+     * 同一份向量被删两次（第二次会撞 sidecar 的墓碑 fence，白白转成 SUPERSEDED 掩盖真实状态）。
+     */
     private void delete(RagIndexJob job, String scope) {
+        if (RagIndexJobService.DIALECT_UNIT.equals(job.getDeleteDialect())) {
+            log.debug("UNIT 方言删除在 Phase 1A 无对应向量，跳过 jobId={}", job.getId());
+            return;
+        }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("operationId", "job-" + job.getId());
         payload.put("mutationToken", job.getId());

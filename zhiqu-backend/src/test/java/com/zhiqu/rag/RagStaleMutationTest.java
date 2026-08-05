@@ -6,6 +6,7 @@ import com.zhiqu.mapper.AiNotebookSourceMapper;
 import com.zhiqu.mapper.AiSourceChunkMapper;
 import com.zhiqu.mapper.RagIndexGenerationMapper;
 import com.zhiqu.mapper.RuntimeIssueMapper;
+import com.zhiqu.service.RuntimeFlagService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -130,8 +131,14 @@ class RagStaleMutationTest {
         when(jobService.claimDueJobs(anyInt(), anyString())).thenReturn(List.of(job));
         when(jobService.renewLease(any())).thenReturn(true);
 
+        // cutover 开关：本组用例只关心 409 的分流，因此固定为 NORMAL（照常领取全部作业）。
+        // 注意不能用裸 mock —— workerMode() 返回 null 会让 worker 的 OFF 判断变成 null 比较，
+        // 语义上等价于 NORMAL 但会掩盖真实意图。
+        RuntimeFlagService runtimeFlags = mock(RuntimeFlagService.class);
+        when(runtimeFlags.workerMode()).thenReturn(RuntimeFlagService.WorkerMode.NORMAL);
+
         RagIndexWorker worker = new RagIndexWorker(properties, jobService, client,
-                generationMapper, sourceMapper, chunkMapper, runtimeIssueMapper);
+                generationMapper, sourceMapper, chunkMapper, runtimeIssueMapper, runtimeFlags);
         return new Fixture(worker, jobService, client);
     }
 

@@ -536,7 +536,7 @@ C:\zhiqu\zhiqu-backend-0.0.1-SNAPSHOT.jar
 Restart-Service zhiqu-backend
 ```
 
-如果新增了 Flyway 迁移脚本，后端启动时会自动执行。当前基线为 `V26`，其中与升级相关的有：
+如果新增了 Flyway 迁移脚本，后端启动时会自动执行。当前基线为 `V28`，其中与升级相关的有：
 
 ```text
 V22  知识页乐观锁（user_knowledge_page.version、user_knowledge_revision.base_page_version）
@@ -544,6 +544,8 @@ V23  知识历史数据修复
 V24  RAG 语义索引表
 V25  AI 计划草稿持久化（ai_message.suggested_plan_json）
 V26  RAG 索引任务租约防护
+V27  记忆纪元与运行时开关（sys_user.memory_epoch/memory_state、ai_conversation.revision、app_runtime_flag）
+V28  RAG 作业协议字段（rag_index_job.protocol_version/unit_id/namespace/delete_dialect/scope_kind/scope_id）
 ```
 
 升级注意：
@@ -564,6 +566,72 @@ Restart-Service zhiqu-backend
 cd C:\zhiqu\rag-service
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock
 ```
+
+### 十三之二、RAG 索引协议切换（停机操作）
+
+只有在**升级说明明确要求**时才需要走这一节。普通升级按上面的流程即可。
+
+当 sidecar 的请求格式发生不兼容变更（例如引入命名空间投影）时，新旧版本**不能混跑**：旧后端发出的
+请求会被新 sidecar 的参数校验直接拒绝（HTTP 422）。查询路径上这会降级成关键词检索，但**索引路径**
+会一路重试到 DEAD，最终把整个索引代次判为 FAILED。因此必须停机原子切换。
+
+两个开关分别控制「停生产」和「停消费」，**不能用一个开关表达两件事**——那样队列永远排不空：
+
+| 开关 | 取值 | 作用 |
+|---|---|---|
+| `rag.producer-frozen` | `true` / `false` | true = 业务钩子不再入队新作业；**已入队的照常被消费** |
+| `rag.worker-mode` | `NORMAL` / `REBUILD_ONLY` / `OFF` | `REBUILD_ONLY` 只领代次重建作业，业务侧增量一律不领 |
+
+两者都存在数据库（`app_runtime_flag`），通过管理接口在**运行时**翻转 —— 改
+`application-prod.yml` 里的同名配置**必须重启才生效**，那只是表中无行时的种子默认值。
+
+切换步骤：
+
+1. 冻结生产者（**不重启**）：
+
+```powershell
+curl.exe -X PUT "https://你的域名/api/admin/runtime-flags/rag.producer-frozen" -H "Authorization: Bearer <管理员token>" -H "Content-Type: application/json" -d "{\"value\":\"true\"}"
+```
+
+2. **等待至少 10 秒**，再开始判定队列排空。开关有 5 秒本地缓存，且存在丢失更新窗口——不等就查到的
+   `PENDING == 0` 可能是假的，仍有请求在按旧值入队。随后轮询直到三项全为 0：
+
+```powershell
+curl.exe "https://你的域名/api/admin/rag/status" -H "Authorization: Bearer <管理员token>"
+```
+
+   看 `jobLagSeconds`、`jobs.PENDING`、`jobs.RUNNING`。
+
+3. 停业务流量（停 Caddy 或改防火墙），确认没有进行中的 SSE 会话。
+4. 停服务：`Stop-Service zhiqu-backend`、`Stop-Service zhiqu-rag`。
+5. 同时替换新 JAR + 新 sidecar，并把 `RAG_INDEX_VERSION` 在**三处**一起升版：
+   `application-prod.yml` 的 `app.rag.index-version`、`rag-service\.env`、以及升级说明中给出的值。
+6. 起 sidecar：`Start-Service zhiqu-rag`，确认 `GET http://127.0.0.1:8001/v1/meta` 返回 `ready: true`
+   且 `indexVersion` 已是新值。
+7. 起后端，此时保持 `producer-frozen=true`，并把 worker 切到只跑重建：
+
+```powershell
+curl.exe -X PUT "https://你的域名/api/admin/runtime-flags/rag.worker-mode" -H "Authorization: Bearer <管理员token>" -H "Content-Type: application/json" -d "{\"value\":\"REBUILD_ONLY\"}"
+```
+
+8. 触发重建，等代次从 `BUILDING` 变为 `READY`：
+
+```powershell
+curl.exe -X POST "https://你的域名/api/admin/rag/rebuild" -H "Authorization: Bearer <管理员token>"
+```
+
+9. 启用新代次（会先校验覆盖率，未建完会拒绝）：
+
+```powershell
+curl.exe -X POST "https://你的域名/api/admin/rag/generations/<代次id>/activate" -H "Authorization: Bearer <管理员token>"
+```
+
+10. 恢复：`rag.worker-mode` 改回 `NORMAL`、`rag.producer-frozen` 改回 `false`、放开业务流量。
+11. 24 小时后旧代次会自动清理。确认旧代次已 `PURGED` 后，把 `app.rag.dual-delete-window` 关掉并重启。
+
+回滚：按上述步骤倒序执行 —— 先冻结生产者、排空队列、停机，再换回旧 JAR 与旧 sidecar、还原三处
+`RAG_INDEX_VERSION`，最后重新启用上一代次（它在 24 小时内仍是 `RETIRED` 而未被清理）。
+**排空队列这一步不能省**：新格式作业会被旧 worker 领走并失败。
 
 ## 十四、备份
 

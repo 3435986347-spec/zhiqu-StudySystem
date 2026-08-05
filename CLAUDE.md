@@ -14,7 +14,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V26`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V28`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -48,6 +48,15 @@ cd zhiqu-backend
 mvn -o test                      # offline; the first online run must fetch junit-platform-launcher
 mvn -o test -Dtest=WikiToolGuardTest
 ```
+
+**After changing any public constructor or method signature, run `mvn -o clean test` — not
+`mvn -o test` or `test-compile`.** Incremental compilation does not recompile unchanged callers,
+so a test whose source still calls the old signature keeps its stale `.class` and the build reports
+success. The mismatch only surfaces at runtime as `NoSuchMethodError`, which reads like a
+dependency problem rather than what it is.
+
+Integration tests need Docker (Testcontainers). Without it they skip silently — `Tests run: N,
+Skipped: N` is not a pass. Use `-Dzhiqu.skipDockerTests=true` to make the skip explicit.
 
 ## Architecture
 
@@ -146,3 +155,18 @@ backend talks to a local Python sidecar (`rag-service/`, `127.0.0.1:8001`, beare
 - RAG — `app.rag.*`
 
 Never commit real API keys; they are injected via environment variables.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in `3435986347-spec/zhiqu-StudySystem`, driven via the `gh` CLI.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles, used verbatim as label strings. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — one `CONTEXT.md` plus `docs/adr/` at the repo root. See `docs/agents/domain.md`.
