@@ -1,6 +1,7 @@
 package com.zhiqu.service.privacy;
 
 import com.zhiqu.common.BusinessException;
+import com.zhiqu.common.DecryptFailedException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -68,7 +69,9 @@ public class SensitiveCryptoService {
             cipher.init(Cipher.DECRYPT_MODE, keySpec, new GCMParameterSpec(GCM_TAG_BITS, iv));
             return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
         } catch (Exception e) {
-            throw new BusinessException("敏感数据解密失败，请检查加密主密钥配置");
+            // 类型化而非仅靠消息串：批处理路径（RAG 索引 / 记忆迁移 / 摘要压缩）需要按类型
+            // 捕获它，把单行失败隔离成 SKIPPED 并继续，而不是让一行坏数据拖垮整批。
+            throw new DecryptFailedException("敏感数据解密失败，请检查加密主密钥配置");
         }
     }
 

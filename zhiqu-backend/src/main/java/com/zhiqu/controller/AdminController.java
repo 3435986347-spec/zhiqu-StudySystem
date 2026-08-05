@@ -13,6 +13,7 @@ import com.zhiqu.mapper.UserFeedbackMapper;
 import com.zhiqu.rag.RagAdminService;
 import com.zhiqu.security.SecurityUtils;
 import com.zhiqu.service.AdminGuard;
+import com.zhiqu.service.RuntimeFlagService;
 import com.zhiqu.service.SharedPlanEventService;
 import com.zhiqu.service.SharedPlanService;
 import com.zhiqu.service.TrafficMonitorService;
@@ -45,6 +46,7 @@ public class AdminController {
     private final SharedPlanEventService eventService;
     private final PasswordEncoder passwordEncoder;
     private final RagAdminService ragAdminService;
+    private final RuntimeFlagService runtimeFlagService;
 
     public AdminController(AdminGuard adminGuard,
                            TrafficMonitorService trafficMonitorService,
@@ -54,7 +56,8 @@ public class AdminController {
                            SharedPlanService sharedPlanService,
                            SharedPlanEventService eventService,
                            PasswordEncoder passwordEncoder,
-                           RagAdminService ragAdminService) {
+                           RagAdminService ragAdminService,
+                           RuntimeFlagService runtimeFlagService) {
         this.adminGuard = adminGuard;
         this.trafficMonitorService = trafficMonitorService;
         this.userMapper = userMapper;
@@ -64,6 +67,7 @@ public class AdminController {
         this.eventService = eventService;
         this.passwordEncoder = passwordEncoder;
         this.ragAdminService = ragAdminService;
+        this.runtimeFlagService = runtimeFlagService;
     }
 
     @GetMapping("/overview")
@@ -313,6 +317,26 @@ public class AdminController {
     public Result<Map<String, Object>> discardFailedRagGeneration(@PathVariable Long id) {
         requireAdmin();
         return Result.success(ragAdminService.discardFailedGeneration(id));
+    }
+
+    /**
+     * 运行时开关。停机切换 runbook 第 1 步与第 10 步靠它翻转 producer-frozen / worker-mode——
+     * Spring Boot 不热读 application.yml，改 yaml 必须重启才生效。
+     */
+    @GetMapping("/runtime-flags")
+    public Result<List<Map<String, Object>>> runtimeFlags() {
+        requireAdmin();
+        return Result.success(runtimeFlagService.describeAll());
+    }
+
+    @PutMapping("/runtime-flags/{key}")
+    public Result<List<Map<String, Object>>> updateRuntimeFlag(@PathVariable("key") String key,
+                                                               @RequestBody Map<String, Object> body) {
+        requireAdmin();
+        Object value = body == null ? null : body.get("value");
+        runtimeFlagService.set(key, value == null ? null : String.valueOf(value),
+                String.valueOf(SecurityUtils.getCurrentUserId()));
+        return Result.success(runtimeFlagService.describeAll());
     }
 
     @GetMapping("/events")

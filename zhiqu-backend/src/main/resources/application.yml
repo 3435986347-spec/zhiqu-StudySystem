@@ -94,5 +94,13 @@ app:
     worker-delay-ms: 1000
     worker-batch-size: 4
     max-attempts: 8
+    # 以下两项只是 app_runtime_flag 的种子默认值：表里有对应行时以表为准。
+    # 停机切换期间由 PUT /api/admin/runtime-flags/{key} 在运行时翻转——
+    # Spring Boot 不热读本文件，改这里必须重启才生效。
+    producer-frozen: false
+    worker-mode: NORMAL
+    # 升级期双删窗口：打开时每次删除同时清理 LEGACY 与 UNIT 两种格式的向量。
+    # Phase 1B 上线后打开、确认旧代次已 PURGED 再关掉。
+    dual-delete-window: false
   push:
     vapid-public-key: ${ZHIQU_WEB_PUSH_PUBLIC_KEY:}
