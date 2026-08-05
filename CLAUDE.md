@@ -83,7 +83,10 @@ mvn -o test -Dtest=WikiToolGuardTest
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260720-plan-confirm`.
+  old bundle. Current token: `20260720-plan-confirm-rag-lease1`.
+  `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
+  a **browser** HTTP-cache buster (the service worker is network-first and matches with
+  `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
 
 ### AI assistant
 
