@@ -46,6 +46,7 @@ public class AdminController {
     private final SharedPlanEventService eventService;
     private final PasswordEncoder passwordEncoder;
     private final RagAdminService ragAdminService;
+    private final com.zhiqu.rag.RagIndexJobService ragIndexJobService;
     private final RuntimeFlagService runtimeFlagService;
 
     public AdminController(AdminGuard adminGuard,
@@ -57,6 +58,7 @@ public class AdminController {
                            SharedPlanEventService eventService,
                            PasswordEncoder passwordEncoder,
                            RagAdminService ragAdminService,
+                           com.zhiqu.rag.RagIndexJobService ragIndexJobService,
                            RuntimeFlagService runtimeFlagService) {
         this.adminGuard = adminGuard;
         this.trafficMonitorService = trafficMonitorService;
@@ -67,6 +69,7 @@ public class AdminController {
         this.eventService = eventService;
         this.passwordEncoder = passwordEncoder;
         this.ragAdminService = ragAdminService;
+        this.ragIndexJobService = ragIndexJobService;
         this.runtimeFlagService = runtimeFlagService;
     }
 
@@ -305,6 +308,22 @@ public class AdminController {
     public Result<Map<String, Object>> rebuildRagIndex() {
         requireAdmin();
         return Result.success(ragAdminService.rebuild());
+    }
+
+    /**
+     * 触发一次全量投影对账。
+     *
+     * <p><b>只入队，不内联执行。</b>对账要解密全部用户的全部 Wiki 页，放在 HTTP 请求里会占着
+     * 连接跑几分钟，且失败后没有重试语义 —— 走作业队列才拿得到租约、重试与 DEAD 告警。
+     *
+     * <p>回滚之后<b>必须</b>调一次：回滚期间 Wiki 钩子不存在，用户照常编辑，投影表静默变旧，
+     * 没有任何报错（那时根本没有代码在看它）。缺了这一步，索引会安静地停在回滚开始的那一刻。
+     */
+    @PostMapping("/rag/reconcile-units")
+    public Result<String> reconcileRagUnits() {
+        requireAdmin();
+        ragIndexJobService.enqueueReconcileUnits();
+        return Result.success("已入队全量对账作业");
     }
 
     @PostMapping("/rag/generations/{id}/activate")

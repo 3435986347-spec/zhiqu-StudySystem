@@ -133,15 +133,16 @@ class RagJobDialectAndFreezeTest {
     void 领取时按协议版本与worker模式过滤() {
         when(runtimeFlags.workerMode()).thenReturn(RuntimeFlagService.WorkerMode.REBUILD_ONLY);
         when(jobMapper.lockDueJobs(org.mockito.ArgumentMatchers.anyInt(), any(), any(),
-                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean()))
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.anyBoolean()))
                 .thenReturn(List.of());
 
-        jobService.claimDueJobs(4, "worker-1");
+        jobService.claimDueJobs(4, "worker-1", true);
 
         ArgumentCaptor<Integer> protocol = ArgumentCaptor.forClass(Integer.class);
         ArgumentCaptor<Boolean> rebuildOnly = ArgumentCaptor.forClass(Boolean.class);
         verify(jobMapper).lockDueJobs(org.mockito.ArgumentMatchers.anyInt(), any(), any(),
-                protocol.capture(), rebuildOnly.capture());
+                protocol.capture(), rebuildOnly.capture(), org.mockito.ArgumentMatchers.anyBoolean());
         // 这里断言的是「领取用的版本 == 入队用的常量」这条接线，值本身由
         // 协议版本常量必须被刻意修改() 钉住
         assertEquals(RagIndexJobService.SUPPORTED_PROTOCOL_VERSION, protocol.getValue(),

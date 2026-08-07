@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -128,7 +129,7 @@ class RagStaleMutationTest {
         job.setLockedBy("worker-1");
 
         when(client.configured()).thenReturn(true);
-        when(jobService.claimDueJobs(anyInt(), anyString())).thenReturn(List.of(job));
+        when(jobService.claimDueJobs(anyInt(), anyString(), anyBoolean())).thenReturn(List.of(job));
         when(jobService.renewLease(any())).thenReturn(true);
 
         // cutover 开关：本组用例只关心 409 的分流，因此固定为 NORMAL（照常领取全部作业）。

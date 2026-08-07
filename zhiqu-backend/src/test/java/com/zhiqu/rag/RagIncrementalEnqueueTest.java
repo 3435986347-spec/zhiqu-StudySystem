@@ -92,7 +92,7 @@ class RagIncrementalEnqueueTest {
                 "在途期间必须去重——同一页排两次队只会让 worker 白跑一遍");
 
         // 跑完它
-        List<RagIndexJob> claimed = jobService.claimDueJobs(10, "test-worker");
+        List<RagIndexJob> claimed = jobService.claimDueJobs(10, "test-worker", true);
         assertEquals(1, claimed.size());
         assertTrue(jobService.complete(claimed.get(0)));
 
@@ -118,7 +118,7 @@ class RagIncrementalEnqueueTest {
 
         for (int round = 1; round <= 3; round++) {
             jobService.enqueueWikiPageChanged(userId, pageId);
-            List<RagIndexJob> claimed = jobService.claimDueJobs(10, "test-worker");
+            List<RagIndexJob> claimed = jobService.claimDueJobs(10, "test-worker", true);
             assertEquals(1, claimed.size(), "第 " + round + " 轮应当恰好有一条待办");
             assertTrue(jobService.complete(claimed.get(0)));
         }
@@ -131,7 +131,7 @@ class RagIncrementalEnqueueTest {
         Long pageId = createWikiPage("复习计划", "第一版");
         jobService.enqueueWikiPageChanged(userId, pageId);
 
-        RagIndexJob claimed = jobService.claimDueJobs(10, "test-worker").get(0);
+        RagIndexJob claimed = jobService.claimDueJobs(10, "test-worker", true).get(0);
         boolean dead = jobService.handleFailure(claimed, null, null, new IllegalStateException("模拟一次失败"));
         assertFalse(dead, "第一次失败应当转 RETRY 而非 DEAD");
         assertEquals("RETRY", statusOf(claimed.getId()));

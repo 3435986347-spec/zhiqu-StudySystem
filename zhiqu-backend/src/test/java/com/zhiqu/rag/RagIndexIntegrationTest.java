@@ -149,13 +149,13 @@ class RagIndexIntegrationTest {
                 "p-" + UUID.randomUUID(), "p-" + UUID.randomUUID());
 
         LocalDateTime now = LocalDateTime.now();
-        List<String> normal = jobMapper.lockDueJobs(20, now, now.minusMinutes(5), 1, false)
+        List<String> normal = jobMapper.lockDueJobs(20, now, now.minusMinutes(5), 1, false, true)
                 .stream().map(RagIndexJob::getOperation).toList();
         assertTrue(normal.contains("UPSERT_SOURCE"));
         assertTrue(normal.contains("DELETE_SOURCE"));
         assertFalse(normal.contains("UPSERT_UNIT"), "v2 作业不能被 v1 worker 领走");
 
-        List<String> rebuildOnly = jobMapper.lockDueJobs(20, now, now.minusMinutes(5), 1, true)
+        List<String> rebuildOnly = jobMapper.lockDueJobs(20, now, now.minusMinutes(5), 1, true, true)
                 .stream().map(RagIndexJob::getOperation).toList();
         assertTrue(rebuildOnly.contains("REBUILD_GENERATION"));
         assertTrue(rebuildOnly.contains("UPSERT_SOURCE"));
@@ -233,7 +233,7 @@ class RagIndexIntegrationTest {
                 generationId, userId, notebookId, sourceId, LocalDateTime.now().minusMinutes(6), "dead-worker");
         // Earlier test cases intentionally leave durable pending jobs behind. Claim a full
         // worker-sized window so this assertion does not depend on JUnit execution order.
-        List<RagIndexJob> claimed = jobService.claimDueJobs(20, "replacement-worker");
+        List<RagIndexJob> claimed = jobService.claimDueJobs(20, "replacement-worker", true);
         RagIndexJob job = claimed.stream().filter(item -> sourceId.equals(item.getSourceId())).findFirst().orElseThrow();
         assertEquals(3, job.getAttempts());
         assertEquals("replacement-worker", job.getLockedBy());
@@ -247,11 +247,11 @@ class RagIndexIntegrationTest {
                         "VALUES(?,?,?,?,?,'PENDING',0)", dedupe, "DELETE_SOURCE", userId, notebookId, sourceId);
         Long jobId = jdbc.queryForObject("SELECT id FROM rag_index_job WHERE dedupe_key=?", Long.class, dedupe);
 
-        RagIndexJob firstLease = jobService.claimDueJobs(20, "worker-1").stream()
+        RagIndexJob firstLease = jobService.claimDueJobs(20, "worker-1", true).stream()
                 .filter(item -> jobId.equals(item.getId())).findFirst().orElseThrow();
         jdbc.update("UPDATE rag_index_job SET locked_at=? WHERE id=?",
                 LocalDateTime.now().minusMinutes(6), jobId);
-        RagIndexJob secondLease = jobService.claimDueJobs(20, "worker-2").stream()
+        RagIndexJob secondLease = jobService.claimDueJobs(20, "worker-2", true).stream()
                 .filter(item -> jobId.equals(item.getId())).findFirst().orElseThrow();
 
         assertNotEquals(firstLease.getLeaseVersion(), secondLease.getLeaseVersion());
@@ -476,7 +476,7 @@ class RagIndexIntegrationTest {
     }
 
     private RagIndexJob claimPendingJob(Long targetGenerationId, String operation, String workerId) {
-        return jobService.claimDueJobs(20, workerId).stream()
+        return jobService.claimDueJobs(20, workerId, true).stream()
                 .filter(job -> targetGenerationId.equals(job.getGenerationId()) && operation.equals(job.getOperation()))
                 .findFirst().orElseThrow();
     }
@@ -485,7 +485,7 @@ class RagIndexIntegrationTest {
         assertTrue(jobService.renewLease(firstLease));
         jdbc.update("UPDATE rag_index_job SET locked_at=? WHERE id=?",
                 LocalDateTime.now().minusMinutes(6), firstLease.getId());
-        RagIndexJob secondLease = jobService.claimDueJobs(20, replacementWorker).stream()
+        RagIndexJob secondLease = jobService.claimDueJobs(20, replacementWorker, true).stream()
                 .filter(job -> firstLease.getId().equals(job.getId())).findFirst().orElseThrow();
         assertNotEquals(firstLease.getLeaseVersion(), secondLease.getLeaseVersion());
         return secondLease;

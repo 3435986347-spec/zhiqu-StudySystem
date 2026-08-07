@@ -60,11 +60,22 @@ public class RagIndexWorker {
 
     @Scheduled(fixedDelayString = "${app.rag.worker-delay-ms:1000}")
     public void run() {
-        if (!client.configured()) return;
-        // cutover 的 OFF 模式：一条作业都不领。REBUILD_ONLY 的过滤下推到 claimDueJobs 的 SQL，
-        // 因为那条查询带 FOR UPDATE SKIP LOCKED，先领后筛会锁住不该锁的行。
+        // cutover 的 OFF 模式：一条作业都不领。REBUILD_ONLY 与「sidecar 是否可用」的过滤
+        // 都下推到 claimDueJobs 的 SQL，因为那条查询带 FOR UPDATE SKIP LOCKED，
+        // 先领后筛会锁住不该锁的行。
         if (runtimeFlags.workerMode() == RuntimeFlagService.WorkerMode.OFF) return;
-        List<RagIndexJob> jobs = jobService.claimDueJobs(properties.getWorkerBatchSize(), workerId);
+
+        // 这里刻意**没有** `if (!client.configured()) return;`。那行早返回同时做两件事：
+        // ① 正确性闸门（需要 sidecar 的操作不该在它缺席时跑）——已下推到 SQL；
+        // ② 空转成本规避 —— 现在没了：app.rag.enabled=false 是仓库默认，于是每个从不启用
+        //    RAG 的部署都会每秒发一条 SELECT ... FOR UPDATE SKIP LOCKED，永远。
+        // 这是明知的取舍，不是副作用：idx_rag_job_protocol_claim（V28）在、表小、走索引，
+        // 而 RAG 启用时本来就是这个频率。也没有更便宜的办法 —— 要知道有没有待办的
+        // RECONCILE_UNITS，那条查询本身就是检查。
+        // **不要把早返回加回来**：那会把全量对账重新挡在一个它根本不需要的依赖后面，
+        // 后果是 RAG 未启用时投影永远无法对账、回滚后的滚回流程走不通（回滚演练实测发现）。
+        List<RagIndexJob> jobs = jobService.claimDueJobs(
+                properties.getWorkerBatchSize(), workerId, client.configured());
         for (RagIndexJob job : jobs) {
             try {
                 assertLease(job);
@@ -95,6 +106,7 @@ public class RagIndexWorker {
             case "REBUILD_GENERATION" -> expandGeneration(job);
             case "UPSERT_UNIT" -> upsertUnit(job);
             case "DELETE_UNIT" -> retireUnit(job);
+            case "RECONCILE_UNITS" -> reconcileUnits(job);
             default -> throw new IllegalArgumentException("Unsupported RAG job operation: " + job.getOperation());
         }
     }
@@ -211,6 +223,32 @@ public class RagIndexWorker {
      */
     private void upsertUnit(RagIndexJob job) {
         registry.refreshUnitIfLive(job.getNamespace(), job.getSourceId());
+    }
+
+    /**
+     * 全量对账 + <b>跳过率门禁</b>。
+     *
+     * <p>门禁此前只活在注释里：{@code ReconcileReport.skippedRatio()} 有定义、零消费方，
+     * 于是「每 20 个单元最多藏 1 个静默失败」这条论证的前提根本不成立 —— 实际是藏多少个都行。
+     * 这里是它唯一的落地点。
+     *
+     * <p><b>超阈值必须让作业失败，不能记完日志就 COMPLETED。</b>否则第三方观察到的现象
+     * （作业转 COMPLETED、投影里有了行）在「对账成功」与「跳过了语料大半」两种情况下
+     * 完全一样 —— 演练第 3 步就成了一个不可证伪的步骤：声称验「投影追上了」，
+     * 实际只验了「作业跑完了」。
+     *
+     * <p>{@code skippedReasons} 一并抛出，否则超了阈值也不知道超在哪。
+     */
+    private void reconcileUnits(RagIndexJob job) {
+        RagUnitRegistry.ReconcileReport report = registry.reconcileAll(() -> assertLease(job));
+        double ratio = report.skippedRatio();
+        if (ratio > properties.getMaxSkippedRatio()) {
+            String reasons = String.join("；", report.skippedReasons.stream().limit(10).toList());
+            throw new IllegalStateException("全量对账跳过比例 " + String.format("%.3f", ratio)
+                    + " 超过上限 " + properties.getMaxSkippedRatio()
+                    + "（" + report + "）。前若干条原因：" + reasons);
+        }
+        log.info("全量对账完成 {}", report);
     }
 
     private void retireUnit(RagIndexJob job) {

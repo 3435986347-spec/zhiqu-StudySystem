@@ -175,12 +175,24 @@ public class RagUnitRegistry {
      * 这条由 {@code RagUnitRegistryIntegrationTest} 的「非解密异常必须逃逸」钉住。
      */
     public ReconcileReport reconcileAll() {
+        return reconcileAll(() -> { });
+    }
+
+    /**
+     * @param heartbeat 每批开始前调用一次 —— worker 传入续租动作。
+     *
+     * <p><b>续租必须在循环里，不能只在开头。</b>全量对账很可能超过 stale-lease 阈值，
+     * 于是租约过期、另一个 worker 重新领走同一条作业 → 两个 reconcile 并发跑。
+     * {@code ensureRow} 扛得住（撞键后走更新分支），但白做一遍功，
+     * 更要紧的是两份 report 各算各的跳过比例，门禁判据跟着失真。
+     */
+    public ReconcileReport reconcileAll(Runnable heartbeat) {
         ReconcileReport report = new ReconcileReport();
         Set<Long> touched = new LinkedHashSet<>();
 
         // 第一趟：Notebook 资料。只枚举 READY —— 解析中的资料还没有可索引正文，
         // 登记进来只会变成一条 SKIPPED，白白推高跳过率、逼近门禁。
-        forEachPage(lastId -> sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
+        forEachPage(heartbeat, lastId -> sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
                         .eq(AiNotebookSource::getStatus, "READY")
                         .gt(AiNotebookSource::getId, lastId)
                         .orderByAsc(AiNotebookSource::getId)
@@ -194,7 +206,7 @@ public class RagUnitRegistry {
                 });
 
         // 第二趟：Wiki 页。软删的页在这里就不会出现（@TableLogic），留给第三趟处理。
-        forEachPage(lastId -> pageMapper.selectList(new LambdaQueryWrapper<UserKnowledgePage>()
+        forEachPage(heartbeat, lastId -> pageMapper.selectList(new LambdaQueryWrapper<UserKnowledgePage>()
                         .gt(UserKnowledgePage::getId, lastId)
                         .orderByAsc(UserKnowledgePage::getId)
                         .last("LIMIT " + RECONCILE_PAGE_SIZE)),
@@ -224,7 +236,7 @@ public class RagUnitRegistry {
         // 第三趟：投影里还是 READY、但上面两趟没枚举到的行。软删的 Wiki 页正是走到这里 ——
         // provider 按 ref_id + user_id 回读拿到 null → GONE → RETIRED，向量才会被清理。
         // 当成 SKIPPED 的话，用户以为删掉的内容会一直留在向量库里被检索到。
-        forEachPage(lastId -> unitMapper.selectList(new LambdaQueryWrapper<RagIndexableUnit>()
+        forEachPage(heartbeat, lastId -> unitMapper.selectList(new LambdaQueryWrapper<RagIndexableUnit>()
                         .eq(RagIndexableUnit::getStatus, RagNamespace.STATUS_READY)
                         .gt(RagIndexableUnit::getId, lastId)
                         .orderByAsc(RagIndexableUnit::getId)
@@ -454,9 +466,11 @@ public class RagUnitRegistry {
     }
 
     /** 按主键翻页遍历，避免一次性把整张表读进内存。 */
-    private <T> void forEachPage(LongFunction<List<T>> fetchAfter, Function<T, Long> idOf, Consumer<T> action) {
+    private <T> void forEachPage(Runnable heartbeat, LongFunction<List<T>> fetchAfter,
+                                 Function<T, Long> idOf, Consumer<T> action) {
         long lastId = 0L;
         while (true) {
+            heartbeat.run();   // 续租：不做的话长对账会被另一个 worker 重新领走，两份 report 各算各的比例
             List<T> batch = fetchAfter.apply(lastId);
             if (batch.isEmpty()) return;
             for (T row : batch) {

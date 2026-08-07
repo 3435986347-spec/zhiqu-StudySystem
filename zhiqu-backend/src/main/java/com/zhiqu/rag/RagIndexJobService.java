@@ -206,12 +206,12 @@ public class RagIndexJobService {
      * 模式过滤下推到 SQL：本查询带 FOR UPDATE SKIP LOCKED，先领后筛会锁住不该锁的行。
      */
     @Transactional
-    public List<RagIndexJob> claimDueJobs(int limit, String workerId) {
+    public List<RagIndexJob> claimDueJobs(int limit, String workerId, boolean sidecarAvailable) {
         LocalDateTime now = LocalDateTime.now();
         boolean rebuildOnly = runtimeFlags.workerMode() == RuntimeFlagService.WorkerMode.REBUILD_ONLY;
         List<RagIndexJob> jobs = jobMapper.lockDueJobs(
                 Math.max(1, Math.min(20, limit)), now, now.minusMinutes(5),
-                SUPPORTED_PROTOCOL_VERSION, rebuildOnly);
+                SUPPORTED_PROTOCOL_VERSION, rebuildOnly, sidecarAvailable);
         for (RagIndexJob job : jobs) {
             job.setStatus("RUNNING");
             job.setAttempts((job.getAttempts() == null ? 0 : job.getAttempts()) + 1);
@@ -528,6 +528,31 @@ public class RagIndexJobService {
     public void enqueueWikiPageRemoved(Long userId, Long pageId) {
         if (producerFrozen("DELETE_UNIT")) return;
         enqueueUnit("DELETE_UNIT", userId, RagNamespace.WIKI_PAGE, pageId);
+    }
+
+    /**
+     * 入队一次全量对账。
+     *
+     * <p>不内联执行：reconcile 会解密全部用户的全部 Wiki 页，放在 HTTP 请求里会占着连接
+     * 跑几分钟，且失败后没有重试语义。走作业队列才拿得到租约、重试与 DEAD 告警。
+     *
+     * <p>{@code dedupe_key} 让同一时刻只有一次对账在途（终态释放，见 V30），
+     * 所以重复点管理端按钮是幂等的。
+     */
+    @Transactional
+    public void enqueueReconcileUnits() {
+        if (producerFrozen("RECONCILE_UNITS")) return;
+        RagIndexJob job = new RagIndexJob();
+        job.setOperation("RECONCILE_UNITS");
+        job.setProtocolVersion(SUPPORTED_PROTOCOL_VERSION);
+        job.setDedupeKey("reconcile_units:all:-:global");
+        job.setStatus("PENDING");
+        job.setAttempts(0);
+        try {
+            jobMapper.insert(job);
+        } catch (DuplicateKeyException duplicate) {
+            log.debug("已有在途的全量对账作业，跳过入队");
+        }
     }
 
     private void enqueueUnit(String operation, Long userId, String namespace, Long refId) {

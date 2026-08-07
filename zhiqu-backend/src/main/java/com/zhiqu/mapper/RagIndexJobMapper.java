@@ -33,6 +33,11 @@ public interface RagIndexJobMapper extends BaseMapper<RagIndexJob> {
     @Select("SELECT * FROM rag_index_job " +
             "WHERE protocol_version = #{protocolVersion} " +
             "AND (#{rebuildOnly} = false OR operation IN ('REBUILD_GENERATION','UPSERT_SOURCE','DELETE_GENERATION')) " +
+            // sidecar 不可用时只领 RECONCILE_UNITS —— 它只读库、写投影表，不发任何 sidecar 请求。
+            // 闸门的规则因此是「需要 sidecar 的操作才受它约束」，这句话构造性为真：
+            // 1B-2 让 UPSERT_UNIT 开始推向量时不必重新判断，加多少个操作也不必。
+            // 反过来（豁免全部 unit 操作）今天等价、1B-2 起静默变错，而撤销的理由只会活在注释里。
+            "AND (#{sidecarAvailable} = true OR operation = 'RECONCILE_UNITS') " +
             "AND ((status IN ('PENDING','RETRY') AND (next_retry_at IS NULL OR next_retry_at <= #{dueBefore})) " +
             "  OR (status='RUNNING' AND locked_at < #{staleBefore})) " +
             "ORDER BY id LIMIT #{limit} FOR UPDATE SKIP LOCKED")
@@ -40,7 +45,8 @@ public interface RagIndexJobMapper extends BaseMapper<RagIndexJob> {
                                   @Param("dueBefore") LocalDateTime dueBefore,
                                   @Param("staleBefore") LocalDateTime staleBefore,
                                   @Param("protocolVersion") int protocolVersion,
-                                  @Param("rebuildOnly") boolean rebuildOnly);
+                                  @Param("rebuildOnly") boolean rebuildOnly,
+                                  @Param("sidecarAvailable") boolean sidecarAvailable);
 
     @Update("UPDATE rag_index_job SET locked_at=#{lockedAt} " +
             "WHERE id=#{id} AND status='RUNNING' AND locked_by=#{lockedBy} AND lease_version=#{leaseVersion}")
