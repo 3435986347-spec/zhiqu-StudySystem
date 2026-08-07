@@ -18,6 +18,30 @@ if TYPE_CHECKING:
 COLLECTION_RE = re.compile(r"^[A-Za-z0-9_-]{3,120}$")
 
 
+# 删除作用域的**唯一定义**。此前这组知识散在两处：
+#   - main.py 有一份「哪些 scope 合法」的字面量集合；
+#   - 这里的 `_delete_locked` 里有一份「每个 scope 需要哪些字段」的局部 dict。
+# 两份关于同一组 scope 的知识，而带信息的是后者 —— 前者只是它的键集。
+# 分开放的失效形态不对称：加了新 scope 却漏改 main.py，表现是「合法请求被 400 拒掉」，
+# 响亮；漏改这里，表现是「scope 通过白名单、字段校验却放行了空值」，
+# 于是 None 一路走到 `_delete_fence_keys` 的 `int(...)` 才炸成 500 —— 而 500 在
+# Java 侧走的是重试链，一个永远不会成功的请求会被重试到 DEAD。
+#
+# 收敛的方向因此是「把键集派生自 required_fields」，而不是反过来：
+# 新增 scope 只需在下面这张表里加一行，合法性与字段要求同时到位。
+DELETE_SCOPE_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "SOURCE": ("userId", "notebookId", "sourceId"),
+    "NOTEBOOK": ("userId", "notebookId"),
+    "USER": ("userId",),
+    "INDEX_VERSION": ("indexVersion",),
+    "COLLECTION": ("collectionName",),
+}
+
+# main.py import 的就是这一个对象（不是同名副本）—— `test_scope_白名单只有一份定义`
+# 用 `is` 断言身份，把「有人又抄了一份字面量」挡在结构层面而不是靠人记得。
+DELETE_SCOPES: frozenset[str] = frozenset(DELETE_SCOPE_REQUIRED_FIELDS)
+
+
 class StaleMutationError(ValueError):
     pass
 
@@ -125,16 +149,9 @@ class VectorStore:
 
     def _delete_locked(self, payload: dict[str, Any]) -> dict[str, Any]:
         scope = str(payload.get("scope") or "")
-        required_fields = {
-            "SOURCE": ("userId", "notebookId", "sourceId"),
-            "NOTEBOOK": ("userId", "notebookId"),
-            "USER": ("userId",),
-            "INDEX_VERSION": ("indexVersion",),
-            "COLLECTION": ("collectionName",),
-        }
-        if scope not in required_fields:
+        if scope not in DELETE_SCOPE_REQUIRED_FIELDS:
             raise ValueError("Unsupported delete scope")
-        missing = [field for field in required_fields[scope]
+        missing = [field for field in DELETE_SCOPE_REQUIRED_FIELDS[scope]
                    if payload.get(field) is None or payload.get(field) == ""]
         if missing:
             raise ValueError(f"Delete scope {scope} is missing required fields: {', '.join(missing)}")

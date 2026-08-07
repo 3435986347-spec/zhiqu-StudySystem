@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app import vector_store as vector_store_module
 from app.operation_store import OperationStore
 from app.segmenter import segment_text
 from app.vector_store import StaleMutationError, VectorStore
@@ -159,6 +160,39 @@ def test_delete_scope_requires_its_full_identifier_set(tmp_path):
         except ValueError:
             continue
         raise AssertionError(f"Delete request unexpectedly widened its scope: {request}")
+
+
+def test_字段校验真的读那份共享表(tmp_path, monkeypatch):
+    """`DELETE_SCOPE_REQUIRED_FIELDS` 的行为判据 —— 与 main.py 那对判据同形。
+
+    `DELETE_SCOPES`（名字集合）已经配了「身份 + 行为」两条：身份那条挡「另起一个
+    同名副本」，行为那条挡「import 了但不用」。**带信息的那份表当时只有身份侧**，
+    也就是 `test_scope_白名单只有一份定义` 里的派生断言，以及「空必填字段表会被
+    发现」——两条都覆盖不了「字段校验读的是不是这张表」。
+
+    缺口是具体的：若有人把局部 dict 加回 `_delete_locked`（收敛前它就在那里），
+    上面所有断言全绿，而这张共享表对字段校验不再有任何影响。
+
+    两种失效形态不对称，正是本条必须存在的理由：
+    - 漏改名字集合 → 合法请求被 400 拒掉，响亮。
+    - 漏改字段表   → scope 过白名单、空值放行 → `_delete_fence_keys` 的 int(None)
+                     → 500 → Java 侧走重试链 → 一个永不成功的请求被重试到 DEAD。
+
+    做法：给 USER 加一个它本来不需要的必填字段，此前能过的载荷必须开始被拒。
+    """
+    store = make_store(tmp_path)
+    baseline = {"operationId": "d6", "mutationToken": 45, "scope": "USER", "userId": 1}
+    store.delete(dict(baseline))  # 基线：当前 USER 只要求 userId
+
+    monkeypatch.setitem(vector_store_module.DELETE_SCOPE_REQUIRED_FIELDS,
+                        "USER", ("userId", "notebookId"))
+
+    try:
+        store.delete({"operationId": "d7", "mutationToken": 46, "scope": "USER", "userId": 1})
+    except ValueError as error:
+        assert "notebookId" in str(error)
+    else:
+        raise AssertionError("字段校验没有读那份共享表 —— 多半是局部 dict 又被加回来了")
 
 
 def test_source_delete_cannot_remove_sibling_source(tmp_path):

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .embedding import EmbeddingService
 from .settings import Settings
-from .vector_store import StaleMutationError, VectorStore
+from .vector_store import DELETE_SCOPES, StaleMutationError, VectorStore
 
 
 class ParentChunk(BaseModel):
@@ -149,7 +149,10 @@ def query(request: QueryRequest, _: None = Depends(authorize)):
 
 @app.post("/v1/index/delete")
 def delete(request: DeleteRequest, _: None = Depends(authorize)):
-    if request.scope not in {"SOURCE", "NOTEBOOK", "USER", "INDEX_VERSION", "COLLECTION"}:
+    # 取值域来自 vector_store 的单一定义，不再在这里抄一份字面量。
+    # 这一层的存在意义是把非法 scope 映射成 400 而不是让它走到 VectorStore 再抛
+    # ValueError —— 两条路径的状态码相同，但这里能在进入互斥锁之前就返回。
+    if request.scope not in DELETE_SCOPES:
         raise HTTPException(status_code=400, detail="Unsupported delete scope")
     try:
         return store().delete(request.model_dump(exclude_none=True))
