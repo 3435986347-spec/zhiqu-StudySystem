@@ -38,5 +38,13 @@ def segment_text(text: str, tokenizer: OffsetTokenizer, max_tokens: int = 448, o
     return result
 
 
-def vector_id(index_version: str, source_id: int, chunk_id: int, segment_index: int) -> str:
-    return f"{index_version}:{source_id}:{chunk_id}:{segment_index}"
+def vector_id(index_version: str, unit_id: int, chunk_id: int, segment_index: int) -> str:
+    """向量 id。第二段从 sourceId 换成 unitId（1B-2）。
+
+    不带 namespace 是刻意的：`rag_indexable_unit.id` 是 V29 引入的代理主键，
+    跨命名空间全局唯一 —— 这正是它存在的理由（「资料 7 与 Wiki 页 7 在向量库里
+    必须是两个东西」）。多带一段 namespace 只会多一个两侧可能写不一致的地方，
+    而 id 不一致的后果是 `_finalize_source` 的 keep 集合对不上 → 刚写进去的向量
+    被当成 stale 立刻删掉。
+    """
+    return f"{index_version}:{unit_id}:{chunk_id}:{segment_index}"

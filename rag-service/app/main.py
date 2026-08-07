@@ -1,13 +1,28 @@
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 from .embedding import EmbeddingService
 from .settings import Settings
-from .vector_store import DELETE_SCOPES, StaleMutationError, VectorStore
+from .vector_store import DELETE_SCOPES, NAMESPACES, StaleMutationError, VectorStore
+
+
+def _validate_namespace(value: str) -> str:
+    """取值域来自 vector_store 的单一定义，这里不抄一份 Literal。
+
+    拼错一个 namespace 的失效形态很静默：它不会报错，只会在 fence key 与 metadata 里
+    各开一个谁也匹配不到的分区 —— 删除删不到它、检索也检索不到它，而每一层都显示成功。
+    所以校验放在**边界**（唯一入口），而不是等它走到 VectorStore 里去。
+    """
+    if value not in NAMESPACES:
+        raise ValueError(f"Unknown namespace: {value}")
+    return value
+
+
+Namespace = Annotated[str, AfterValidator(_validate_namespace)]
 
 
 class ParentChunk(BaseModel):
@@ -20,8 +35,11 @@ class IndexRequest(BaseModel):
     operationId: str
     mutationToken: int = Field(gt=0)
     userId: int
-    notebookId: int
-    sourceId: int
+    namespace: Namespace
+    unitId: int
+    # 可空：WIKI_TREE 每用户一棵，没有 id。为空时 metadata 与 fence key 都不写这一段
+    # （理由见 vector_store 的两处注释），SCOPE 删除因此要求它非空。
+    scopeId: int | None = None
     contentHash: str
     indexVersion: str
     collectionName: str
@@ -33,10 +51,10 @@ class IndexRequest(BaseModel):
 class QueryRequest(BaseModel):
     requestId: str
     userId: int
-    notebookId: int
+    namespaces: list[Namespace]
+    unitIds: list[int]
     question: str
     candidateK: int = 24
-    sourceIds: list[int]
     indexVersion: str
     collectionName: str
 
@@ -46,6 +64,12 @@ class DeleteRequest(BaseModel):
     mutationToken: int = Field(gt=0)
     scope: str
     userId: int | None = None
+    # UNIT 方言
+    unitId: int | None = None
+    namespace: Namespace | None = None
+    scopeId: int | None = None
+    # LEGACY 方言 —— 保留到 runbook 第 11 步旧代次 PURGED 为止，不能提前删
+    # （旧代次 collection 里的向量只带 sourceId/notebookId，只有这两个字段定位得到）。
     notebookId: int | None = None
     sourceId: int | None = None
     indexVersion: str | None = None

@@ -30,12 +30,29 @@ COLLECTION_RE = re.compile(r"^[A-Za-z0-9_-]{3,120}$")
 # 收敛的方向因此是「把键集派生自 required_fields」，而不是反过来：
 # 新增 scope 只需在下面这张表里加一行，合法性与字段要求同时到位。
 DELETE_SCOPE_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    # ── UNIT 方言（1B-2 起的写入路径） ─────────────────────────────────────
+    "UNIT": ("userId", "unitId"),
+    "SCOPE": ("userId", "namespace", "scopeId"),
+    "NAMESPACE": ("userId", "namespace"),
+    # ── LEGACY 方言 ───────────────────────────────────────────────────────
+    # **不能删。** cutover 会重建到一个新 collection，而旧代次的 collection 要留到
+    # runbook 第 11 步（24h 后 PURGED）；里面的向量带的是 sourceId/notebookId 元数据，
+    # 只有这两个 scope 删得掉。删掉它们的话，双删的 LEGACY 那一半会拿 400 ——
+    # 而 400 在 Java 侧走 handleFailure → 重试 → DEAD，一条永远不会成功的删除
+    # 会把整个代次拖成 FAILED，且用户以为删掉的内容还留在旧代次里。
+    # 关闭时机由 runbook 第 11 步决定，不是由这次改动决定。
     "SOURCE": ("userId", "notebookId", "sourceId"),
     "NOTEBOOK": ("userId", "notebookId"),
+    # ── 与方言无关 ────────────────────────────────────────────────────────
     "USER": ("userId",),
     "INDEX_VERSION": ("indexVersion",),
     "COLLECTION": ("collectionName",),
 }
+
+# 命名空间取值域的**唯一定义**。散成字面量的失效形态很静默：拼错一个 namespace
+# 不会报错，只会在 fence key 与 metadata 里各开一个谁也匹配不到的分区 ——
+# 删除删不到它、检索也检索不到它，而每一层都显示成功。
+NAMESPACES: frozenset[str] = frozenset({"NOTEBOOK_SOURCE", "WIKI_PAGE", "CONVERSATION_TURN"})
 
 # main.py import 的就是这一个对象（不是同名副本）—— `test_scope_白名单只有一份定义`
 # 用 `is` 断言身份，把「有人又抄了一份字面量」挡在结构层面而不是靠人记得。
@@ -85,16 +102,26 @@ class VectorStore:
         for chunk in chunks:
             content = str(chunk.get("content") or "")
             for segment in segment_text(content, self.embedding.tokenizer, self.settings.segment_tokens, self.settings.segment_overlap):
-                item_id = vector_id(str(payload["indexVersion"]), int(payload["sourceId"]), int(chunk["chunkId"]), segment.index)
+                item_id = vector_id(str(payload["indexVersion"]), int(payload["unitId"]), int(chunk["chunkId"]), segment.index)
                 ids.append(item_id)
                 texts.append(segment.text)
-                metadatas.append({
-                    "userId": int(payload["userId"]), "notebookId": int(payload["notebookId"]),
-                    "sourceId": int(payload["sourceId"]), "chunkId": int(chunk["chunkId"]),
+                metadata = {
+                    "userId": int(payload["userId"]), "namespace": str(payload["namespace"]),
+                    "unitId": int(payload["unitId"]), "chunkId": int(chunk["chunkId"]),
                     "chunkIndex": int(chunk["chunkIndex"]), "segmentIndex": segment.index,
                     "charStart": segment.char_start, "charEnd": segment.char_end,
                     "contentHash": str(payload["contentHash"]), "indexVersion": str(payload["indexVersion"]),
-                })
+                }
+                # scopeId 可空（WIKI_TREE 每用户一棵，没有 id），而 **Chroma 的 metadata
+                # 不接受 None** —— 只能是 str/int/float/bool。所以缺省时整个键不写。
+                # 由此推出一条契约：SCOPE 删除必须带非空 scopeId（见
+                # DELETE_SCOPE_REQUIRED_FIELDS）。这不是限制 —— 方案 §5 的删除矩阵里
+                # 没有任何一条需要「scopeId 为空的 SCOPE 删除」：
+                # 删 Notebook 用 SCOPE(u, NOTEBOOK_SOURCE, nbId)、删会话用
+                # SCOPE(u, CONVERSATION_TURN, convId)，Wiki 全域走 NAMESPACE(u, WIKI_PAGE)。
+                if payload.get("scopeId") is not None:
+                    metadata["scopeId"] = int(payload["scopeId"])
+                metadatas.append(metadata)
         if ids:
             collection.upsert(ids=ids, embeddings=self.embedding.encode_passages(texts), metadatas=metadatas)
         self.operations.complete_batch(operation_id, batch_no, ids)
@@ -103,22 +130,52 @@ class VectorStore:
         return {"written": len(ids), "skipped": False, "contentHash": payload["contentHash"], "indexVersion": payload["indexVersion"]}
 
     def _finalize_source(self, operation_id: str, payload: dict[str, Any], collection) -> None:
+        """扫掉本 unit 上一次索引留下、这一次不再产生的向量。
+
+        **扫描条件必须跟着 metadata 改键一起改，忘了的后果是静默的向量泄漏。**
+        Chroma 对不存在的 metadata 键不报错，只是匹配为空 —— 于是链条是：
+        `where={"sourceId": …}` 匹配为空 → stale 为空 → 不删 → `finish_operation`
+        照常执行 → 批次返回成功 → Java 侧看到成功。每一层都显示正常，而残留向量的
+        userId/indexVersion 仍满足 query() 的全部条件，**继续参与检索命中**。
+
+        条件写成四条而不是一条 `unitId`：`unitId` 全局唯一、collection 又按代次分，
+        所以 userId / namespace / indexVersion 今天都是冗余的。保留它们的理由与
+        V29 那条「回滚生命线」唯一索引相同 —— 冗余条件在某条不变量被改动时才承重，
+        而写下来的成本是零。更重要的是它落实了一条结构规则：
+
+            **删除路径的收窄条件不得比读取路径宽。**
+
+        query() 是四条 $and，此前这里只有一条，且不对称的方向落在破坏性那一侧。
+
+        **`namespace` 这一条是对方案的一处偏离，理由要记下来。** 方案 §7 写的是
+        `$and[userId, unitId, indexVersion]`，但它同时点名要有
+        `test_finalize_cannot_delete_other_namespace_vectors` —— 而不含 namespace 的
+        条件在「资料 7 与 Wiki 页 7」那个场景下必然跨命名空间删，两者不能同时成立。
+        按上面那条结构规则取舍：query 有 `namespace $in`，这里就不能没有。
+        """
         keep = self.operations.vector_ids(operation_id)
-        current = collection.get(where={"sourceId": int(payload["sourceId"])}, include=[])
+        where = {"$and": [
+            {"userId": {"$eq": int(payload["userId"])}},
+            {"namespace": {"$eq": str(payload["namespace"])}},
+            {"unitId": {"$eq": int(payload["unitId"])}},
+            {"indexVersion": {"$eq": str(payload["indexVersion"])}},
+        ]}
+        current = collection.get(where=where, include=[])
         stale = [item for item in (current.get("ids") or []) if item not in keep]
         if stale:
             collection.delete(ids=stale)
         self.operations.finish_operation(operation_id)
 
     def query(self, payload: dict[str, Any]) -> dict[str, Any]:
-        source_ids = [int(item) for item in payload.get("sourceIds") or []]
-        if not source_ids:
+        unit_ids = [int(item) for item in payload.get("unitIds") or []]
+        if not unit_ids:
             return {"indexVersion": payload["indexVersion"], "metric": "cosine", "candidates": []}
+        namespaces = [str(item) for item in payload.get("namespaces") or []]
         where = {"$and": [
             {"userId": {"$eq": int(payload["userId"])}},
-            {"notebookId": {"$eq": int(payload["notebookId"])}},
+            {"namespace": {"$in": namespaces or sorted(NAMESPACES)}},
             {"indexVersion": {"$eq": str(payload["indexVersion"])}},
-            {"sourceId": {"$in": source_ids}},
+            {"unitId": {"$in": unit_ids}},
         ]}
         k = max(1, min(self.settings.max_candidate_k, int(payload.get("candidateK") or 24)))
         collection = self._collection(str(payload["collectionName"]), create=False)
@@ -133,7 +190,8 @@ class VectorStore:
         for item_id, metadata, distance in zip(ids, metadata_rows, distances):
             candidates.append({
                 "vectorId": item_id,
-                "sourceId": int(metadata["sourceId"]),
+                "namespace": str(metadata["namespace"]),
+                "unitId": int(metadata["unitId"]),
                 "chunkId": int(metadata["chunkId"]),
                 "chunkIndex": int(metadata["chunkIndex"]),
                 "segmentIndex": int(metadata["segmentIndex"]),
@@ -174,9 +232,20 @@ class VectorStore:
             count = self._collection(name, create=False).count()
             self.client.delete_collection(name)
             return {"deleted": count, "scope": scope, "collectionName": name}
+        # 每个 scope 的 where 条件必须与 DELETE_SCOPE_REQUIRED_FIELDS 里声明的必填字段
+        # 一一对应：声明了却不用 → 删除比宣称的宽（删到别人的数据）；用了却没声明 →
+        # 字段缺失时静默退化成更宽的删除。两个方向都由
+        # test_每个_scope_的删除条件与它声明的必填字段一致 逐个 scope 断言。
         conditions: list[dict[str, Any]] = []
         if payload.get("userId") is not None:
             conditions.append({"userId": {"$eq": int(payload["userId"])}})
+        if scope == "UNIT":
+            conditions.append({"unitId": {"$eq": int(payload["unitId"])}})
+        if scope in {"SCOPE", "NAMESPACE"}:
+            conditions.append({"namespace": {"$eq": str(payload["namespace"])}})
+        if scope == "SCOPE":
+            conditions.append({"scopeId": {"$eq": int(payload["scopeId"])}})
+        # LEGACY 方言：只在旧代次的 collection 里匹配得到（新写入不再带这两个键）。
         if scope in {"SOURCE", "NOTEBOOK"} and payload.get("notebookId") is not None:
             conditions.append({"notebookId": {"$eq": int(payload["notebookId"])}})
         if scope == "SOURCE" and payload.get("sourceId") is not None:
@@ -205,25 +274,54 @@ class VectorStore:
             raise ValueError("mutationToken must be a positive integer")
         return token
 
+    # ── fence key 族 ─────────────────────────────────────────────────────────
+    #
+    # 不变量：**索引请求列出的 key 必须覆盖任何能删掉它的 delete 的 key。**
+    # 少列一个 → 那种删除拦不住随后到达的迟到索引 → 用户以为删掉的向量复活。
+    # 这里没有任何东西会报错，所以由 test_每种删除都能拦住迟到的索引 逐个 scope 断言。
+    #
+    # key 的组成刻意保持最小。这与 WHERE 子句的取舍**方向相反**，值得写下来：
+    #   - WHERE 多一条冗余条件 → 只会更严，最坏是白写；
+    #   - KEY 多一段 → 索引侧与删除侧只要有一处写法不同就整个错开，
+    #     而错开的表现是 fence 静默失效，不是报错。
+    # 所以 SCOPE key 不含 scopeKind（namespace 已经决定了它），也不含 collectionName
+    # （删除可能跨 collection）。
+    #
+    # LEGACY 方言（SOURCE/NOTEBOOK）的 key 保留在删除侧、**不出现在索引侧** ——
+    # 1B-2 之后不再有 LEGACY 索引请求，没有需要被它拦住的对象。真正承重的是与它
+    # 同时入队的 UNIT 半边（方案 §3.2 的双删），那一半的 key 在索引侧列着。
+
     def _index_fence_keys(self, payload: dict[str, Any]) -> list[str]:
         collection_name = str(payload.get("collectionName") or "")
         if not COLLECTION_RE.fullmatch(collection_name):
             raise ValueError("Invalid collection name")
         user_id = int(payload["userId"])
-        notebook_id = int(payload["notebookId"])
-        source_id = int(payload["sourceId"])
+        namespace = str(payload["namespace"])
+        unit_id = int(payload["unitId"])
         index_version = str(payload["indexVersion"])
-        return [
+        keys = [
             f"COLLECTION:{collection_name}",
-            f"SOURCE:{user_id}:{notebook_id}:{source_id}",
-            f"NOTEBOOK:{user_id}:{notebook_id}",
+            f"UNIT:{user_id}:{unit_id}",
+            f"NAMESPACE:{user_id}:{namespace}",
             f"USER:{user_id}",
             f"INDEX_VERSION:{index_version}",
         ]
+        # scopeId 为空的 unit 不属于任何可被 SCOPE 删除定位的作用域（见 metadata 处的
+        # 论证），因此也没有对应的 SCOPE fence 需要它去防 —— 不写空占位，
+        # 免得造出一个 delete 侧永远不会生成的 key。
+        if payload.get("scopeId") is not None:
+            keys.append(f"SCOPE:{user_id}:{namespace}:{int(payload['scopeId'])}")
+        return keys
 
     def _delete_fence_keys(self, payload: dict[str, Any], scope: str) -> list[str]:
         if scope == "COLLECTION":
             return [f"COLLECTION:{payload['collectionName']}"]
+        if scope == "UNIT":
+            return [f"UNIT:{int(payload['userId'])}:{int(payload['unitId'])}"]
+        if scope == "SCOPE":
+            return [f"SCOPE:{int(payload['userId'])}:{str(payload['namespace'])}:{int(payload['scopeId'])}"]
+        if scope == "NAMESPACE":
+            return [f"NAMESPACE:{int(payload['userId'])}:{str(payload['namespace'])}"]
         if scope == "SOURCE":
             return [f"SOURCE:{int(payload['userId'])}:{int(payload['notebookId'])}:{int(payload['sourceId'])}"]
         if scope == "NOTEBOOK":

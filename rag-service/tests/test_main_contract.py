@@ -27,21 +27,40 @@ import pytest
 from app.vector_store import StaleMutationError
 
 
+# ── Stage D 改了这三个载荷（1B-2 的语义变更，不是重构）────────────────────
+# IndexRequest / QueryRequest：notebookId+sourceId → namespace+unitId(+scopeId)。
+# DeleteRequest：**不动** —— LEGACY 方言要留到 runbook 第 11 步旧代次 PURGED，
+# 期间旧 collection 里的向量只带 sourceId/notebookId，只有它定位得到。
+
 INDEX_BODY = {
-    "operationId": "op-1", "mutationToken": 7, "userId": 1, "notebookId": 2, "sourceId": 3,
+    "operationId": "op-1", "mutationToken": 7, "userId": 1,
+    "namespace": "NOTEBOOK_SOURCE", "unitId": 31, "scopeId": 2,
     "contentHash": "hash-1", "indexVersion": "test-index-version-v1",
     "collectionName": "zhiqu_test", "batchNo": 0, "finalBatch": True,
     "chunks": [{"chunkId": 10, "chunkIndex": 0, "content": "正文"}],
 }
 
 QUERY_BODY = {
-    "requestId": "req-1", "userId": 1, "notebookId": 2, "question": "问题",
-    "sourceIds": [3], "indexVersion": "test-index-version-v1", "collectionName": "zhiqu_test",
+    "requestId": "req-1", "userId": 1, "namespaces": ["NOTEBOOK_SOURCE"], "unitIds": [31],
+    "question": "问题", "indexVersion": "test-index-version-v1", "collectionName": "zhiqu_test",
 }
 
 DELETE_BODY = {
     "operationId": "op-2", "mutationToken": 8, "scope": "SOURCE",
     "userId": 1, "notebookId": 2, "sourceId": 3,
+}
+
+# 每个 scope 的最小合法载荷。用它替代此前「一个 DELETE_BODY 塞满所有字段」的写法 ——
+# 那种写法下，某个 scope 少声明一个必填字段也测不出来，因为载荷里恰好什么都有。
+DELETE_BODIES: dict[str, dict] = {
+    "UNIT": {"userId": 1, "unitId": 31},
+    "SCOPE": {"userId": 1, "namespace": "NOTEBOOK_SOURCE", "scopeId": 2},
+    "NAMESPACE": {"userId": 1, "namespace": "WIKI_PAGE"},
+    "SOURCE": {"userId": 1, "notebookId": 2, "sourceId": 3},
+    "NOTEBOOK": {"userId": 1, "notebookId": 2},
+    "USER": {"userId": 1},
+    "INDEX_VERSION": {"indexVersion": "test-index-version-v1"},
+    "COLLECTION": {"collectionName": "zhiqu_test"},
 }
 
 
@@ -169,15 +188,65 @@ def test_未知的_delete_scope_被拒(client, store, auth):
     assert store.calls == [], "非法 scope 不得进入 VectorStore"
 
 
-@pytest.mark.parametrize("scope", ["SOURCE", "NOTEBOOK", "USER", "INDEX_VERSION", "COLLECTION"])
-def test_五个合法_scope_都放行(client, store, auth, scope):
+@pytest.mark.parametrize("scope", sorted(DELETE_BODIES))
+def test_每个合法_scope_带最小载荷都放行(client, store, auth, scope):
     """反面：只测「拒绝未知」会被「全部拒绝」的实现骗过。
-    逐个列出当前的合法集合，1B-2 增加 UNIT/SCOPE 时这里必须同步扩。"""
-    body = dict(DELETE_BODY, scope=scope, indexVersion="v1", collectionName="zhiqu_test")
+
+    Stage D 从 5 个 scope 扩到 8 个（新增 UNIT/SCOPE/NAMESPACE，LEGACY 的
+    SOURCE/NOTEBOOK 保留）。载荷改成**每个 scope 的最小合法集合** —— 此前是
+    一个塞满所有字段的 DELETE_BODY，那种写法下某个 scope 少声明一个必填字段
+    也测不出来，因为载荷里恰好什么都有。
+    """
+    body = dict(DELETE_BODIES[scope], operationId=f"op-{scope}", mutationToken=8, scope=scope)
     response = client.post("/v1/index/delete", headers=auth, json=body)
 
     assert response.status_code == 200
     assert store.last_payload("delete")["scope"] == scope
+
+
+def test_两种方言的_scope_同时存在(client, store, auth):
+    """双删要求 UNIT 与 LEGACY 两族并存，直到 runbook 第 11 步旧代次 PURGED。
+
+    单独钉住是因为「删掉 LEGACY」是一个看起来很自然的清理动作 ——
+    而它的后果是双删的 LEGACY 那一半拿 400 → Java 走 handleFailure → 重试 → DEAD，
+    且用户以为删掉的内容还留在旧代次的 collection 里。
+    """
+    from app import vector_store
+
+    assert {"UNIT", "SCOPE", "NAMESPACE"} <= vector_store.DELETE_SCOPES, "UNIT 方言"
+    assert {"SOURCE", "NOTEBOOK"} <= vector_store.DELETE_SCOPES, \
+        "LEGACY 方言不能提前删 —— 关闭时机由 cutover runbook 第 11 步决定"
+
+
+@pytest.mark.parametrize("bad", ["notebook_source", "WIKI", "", "NOTEBOOKSOURCE"])
+def test_未知的_namespace_在边界就被拒(client, store, auth, bad):
+    """拼错 namespace 的失效形态很静默：不报错，只在 fence key 与 metadata 里
+    各开一个谁也匹配不到的分区 —— 删除删不到、检索也检索不到，每一层都显示成功。
+    所以必须在唯一入口拦住，而不是等它写进向量库。"""
+    response = client.post("/v1/index/sources", headers=auth,
+                           json=dict(INDEX_BODY, namespace=bad))
+
+    assert response.status_code == 422
+    assert store.calls == []
+
+
+def test_namespace_取值域只有一份定义(client, store, auth, monkeypatch):
+    """与 DELETE_SCOPES 同形的「身份 + 行为」配对。
+
+    B2/B4 的教训：只断言「main.py 里那个名字指向同一个对象」覆盖不了
+    「做校验的地方用不用它」—— 一个没人用的 import 就能满足前者。
+    所以这里收窄共享集合，再看边界是否跟着变严。
+    """
+    from app import main as main_module
+    from app import vector_store
+
+    assert main_module.NAMESPACES is vector_store.NAMESPACES
+
+    monkeypatch.setattr(main_module, "NAMESPACES", frozenset({"WIKI_PAGE"}))
+    response = client.post("/v1/index/sources", headers=auth,
+                           json=dict(INDEX_BODY, namespace="NOTEBOOK_SOURCE"))
+
+    assert response.status_code == 422, "校验没有读那份共享定义"
 
 
 def test_scope_白名单只有一份定义():
@@ -275,12 +344,12 @@ def test_缺字段返回_422_且_detail_是逐字段的列表(client, store, aut
     Java 侧靠它区分「请求写错了」与「服务端故障」，形状变了会静默失配。
     """
     response = client.post("/v1/index/sources", headers=auth,
-                           json={k: v for k, v in INDEX_BODY.items() if k != "sourceId"})
+                           json={k: v for k, v in INDEX_BODY.items() if k != "unitId"})
 
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert isinstance(detail, list) and detail, "detail 必须是非空的逐字段列表"
-    assert any("sourceId" in tuple(item["loc"]) for item in detail)
+    assert any("unitId" in tuple(item["loc"]) for item in detail)
     assert all("type" in item for item in detail)
 
 
