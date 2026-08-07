@@ -130,6 +130,30 @@
 
     <build>
         <plugins>
+            <!--
+              陈旧 .class 是本仓库咬过两次的故障类：改了公开构造器/方法签名后，若未被改动的
+              调用方不重编，旧 .class 照样参与打包 —— mvn test 报绿，故障推迟到运行时才以
+              NoSuchMethodError 出现，读起来像依赖问题而不像它真正的样子。两次都是
+              RagIndexWorker 的构造器 + 手工 new 它的测试（那三处手工构造是为了塞桩件，改不掉）。
+
+              这里显式钉住 true，而不是依赖默认值，是为了挡住一次很自然的「修复」：
+              网上（含 MCOMPILER-209 的讨论）流传着「设成 false 才是全量重编」的说法。
+              **实测恰好相反**，方法是改一个公开构造器签名后不带 clean 跑 test-compile：
+                  useIncrementalCompilation=false -> BUILD SUCCESS（陈旧 .class 被复用，假绿）
+                  useIncrementalCompilation=true  -> COMPILATION ERROR（正确）
+              也就是说 true（默认）才是「任一源文件变化就重编整个模块」，
+              false 会退回按时间戳判定的 staleMillis 模式，正是留下陈旧 .class 的那个。
+
+              把它写死并留下这段实测记录，比留一句「记得带 clean」更可靠 ——
+              记忆型修法在本仓库已经失效过两次。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <useIncrementalCompilation>true</useIncrementalCompilation>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

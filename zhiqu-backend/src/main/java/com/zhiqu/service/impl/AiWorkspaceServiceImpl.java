@@ -15,6 +15,7 @@ import com.zhiqu.rag.RagContentHashService;
 import com.zhiqu.rag.RagMetricsService;
 import com.zhiqu.rag.RagProperties;
 import com.zhiqu.rag.RagRetriever;
+import com.zhiqu.rag.ScopeSelection;
 import com.zhiqu.rag.SourceScopeResolver;
 import com.zhiqu.service.AgentBlackboardService;
 import com.zhiqu.service.AgentTaskGraphService;
@@ -80,6 +81,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private final RagIndexJobService ragIndexJobService;
     private final RagContentHashService ragContentHashService;
     private final SourceScopeResolver sourceScopeResolver;
+    private final com.zhiqu.rag.RagUnitRegistry ragUnitRegistry;
     private final RagRetriever ragRetriever;
     private final ContextCandidateHydrator contextCandidateHydrator;
     private final ContextBudgeter contextBudgeter;
@@ -108,6 +110,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                                   RagIndexJobService ragIndexJobService,
                                   RagContentHashService ragContentHashService,
                                   SourceScopeResolver sourceScopeResolver,
+                                  com.zhiqu.rag.RagUnitRegistry ragUnitRegistry,
                                   RagRetriever ragRetriever,
                                   ContextCandidateHydrator contextCandidateHydrator,
                                   ContextBudgeter contextBudgeter,
@@ -139,6 +142,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         this.ragIndexJobService = ragIndexJobService;
         this.ragContentHashService = ragContentHashService;
         this.sourceScopeResolver = sourceScopeResolver;
+        this.ragUnitRegistry = ragUnitRegistry;
         this.ragRetriever = ragRetriever;
         this.contextCandidateHydrator = contextCandidateHydrator;
         this.contextBudgeter = contextBudgeter;
@@ -456,12 +460,13 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             }
             return List.of();
         }
-        List<AiNotebookSource> sources = sourceScopeResolver.resolve(userId, notebookId, selectedIds);
+        ScopeSelection scope = sourceScopeResolver.resolve(userId, notebookId, selectedIds);
+        List<AiNotebookSource> sources = scope.notebookSources();
         String query = text(contextOptions == null ? null : contextOptions.get("query"), "");
         RagRetriever.RetrievalResult retrieval = ragRetriever.retrieve(
-                UUID.randomUUID().toString(), userId, notebookId, sources, query);
+                UUID.randomUUID().toString(), userId, notebookId, scope, query);
         List<Map<String, Object>> vectorRows = contextCandidateHydrator.hydrate(
-                userId, notebookId, sources, retrieval);
+                userId, notebookId, scope, retrieval);
         if (retrieval.available() && vectorRows.isEmpty() && ragProperties.isFallbackEnabled()) {
             ragMetricsService.recordFallback("NO_VALID_VECTOR_CANDIDATE");
         }
@@ -486,7 +491,11 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         if (contextOptions != null && Boolean.TRUE.equals(contextOptions.get("includeWiki"))) {
             supplements.addAll(wikiContext(userId, contextOptions));
         }
-        List<Map<String, Object>> selected = contextBudgeter.select(vectorRows, supplements, sources.size());
+        // 口径写在方法名里：1B-1 这里数的是 NOTEBOOK_SOURCE，不是「范围里的全部单元」。
+        // 放宽会改变每源配额的触发点、进而改变选出来的行，而 ContextBudgeter 的 golden master
+        // 是直接拿固定 list 调 select() 的，看不见这个调用点的口径变化。
+        List<Map<String, Object>> selected =
+                contextBudgeter.select(vectorRows, supplements, scope.notebookSourceCount());
         ragMetricsService.recordCandidateFlow(vectorRows.size(), selected.size());
         return selected;
     }
@@ -1099,7 +1108,17 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         row.put("status", source.getStatus());
         row.put("parseError", source.getParseError());
         row.put("contentHash", source.getContentHash());
-        row.put("indexStatus", source.getIndexStatus());
+        // 读投影，不写回旧列。ai_notebook_source.index_status 是 15 写 / 1 读，
+        // 而那一读就是这里（前端拿它画一个圆点的颜色）。给它再挂第 16 个写入方只为让点变色，
+        // 与投影表「收敛重复状态」的存在意义相反。翻转这一个读取点，新增零个写入方。
+        // 回落是必需的：V29 只建表不填数据，投影行由 RECONCILE_UNITS 作业枚举，
+        // 对账跑完前本表是空的；未被对账到的资料同理。
+        String projectedIndexStatus = ragUnitRegistry.indexStatusOf(
+                com.zhiqu.rag.RagNamespace.NOTEBOOK_SOURCE, source.getId());
+        // 空白与不存在同样回落：空状态不是信息，把它当成「有值」会让界面显示一片空白，
+        // 而那看起来像「没索引」而不是「读错了地方」。
+        row.put("indexStatus", projectedIndexStatus != null && !projectedIndexStatus.isBlank()
+                ? projectedIndexStatus : source.getIndexStatus());
         row.put("indexVersion", source.getIndexVersion());
         row.put("indexError", source.getIndexError());
         row.put("indexedAt", source.getIndexedAt());

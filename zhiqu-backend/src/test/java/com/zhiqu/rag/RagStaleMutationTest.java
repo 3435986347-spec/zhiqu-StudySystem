@@ -137,8 +137,13 @@ class RagStaleMutationTest {
         RuntimeFlagService runtimeFlags = mock(RuntimeFlagService.class);
         when(runtimeFlags.workerMode()).thenReturn(RuntimeFlagService.WorkerMode.NORMAL);
 
+        // 本组用例只走 DELETE_SOURCE / UPSERT_SOURCE，不经过 UPSERT_UNIT / DELETE_UNIT，
+        // 因此 registry 用裸 mock 即可；一旦有用例真的走到单元分支，裸 mock 会返回 false，
+        // 表现为「让位」而不是静默成功，不会掩盖问题。
+        RagUnitRegistry registry = mock(RagUnitRegistry.class);
+
         RagIndexWorker worker = new RagIndexWorker(properties, jobService, client,
-                generationMapper, sourceMapper, chunkMapper, runtimeIssueMapper, runtimeFlags);
+                generationMapper, sourceMapper, chunkMapper, runtimeIssueMapper, runtimeFlags, registry);
         return new Fixture(worker, jobService, client);
     }
 

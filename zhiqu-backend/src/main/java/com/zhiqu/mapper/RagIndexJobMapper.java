@@ -49,8 +49,15 @@ public interface RagIndexJobMapper extends BaseMapper<RagIndexJob> {
                    @Param("leaseVersion") Long leaseVersion,
                    @Param("lockedAt") LocalDateTime lockedAt);
 
+    /**
+     * 终态必须释放 {@code dedupe_key}（置 NULL，见 V30）。
+     *
+     * <p>不释放的话，唯一键会让「同一目标一辈子只能入队一次」：用户第二次编辑同一页时
+     * {@code enqueue} 撞键，而那里刻意把 {@code DuplicateKeyException} 当幂等成功吞掉，
+     * 于是第二次编辑<b>永不入索引</b>——没有报错，只有一行 debug 日志。
+     */
     @Update("UPDATE rag_index_job SET status='COMPLETED', completed_at=#{completedAt}, " +
-            "locked_at=NULL, locked_by=NULL, last_error=NULL, next_retry_at=NULL " +
+            "locked_at=NULL, locked_by=NULL, last_error=NULL, next_retry_at=NULL, dedupe_key=NULL " +
             "WHERE id=#{id} AND status='RUNNING' AND locked_by=#{lockedBy} AND lease_version=#{leaseVersion}")
     int completeLease(@Param("id") Long id,
                       @Param("lockedBy") String lockedBy,
@@ -63,7 +70,7 @@ public interface RagIndexJobMapper extends BaseMapper<RagIndexJob> {
      * 原因写入 last_error 仅供排查，不代表故障。
      */
     @Update("UPDATE rag_index_job SET status='SUPERSEDED', completed_at=#{completedAt}, " +
-            "locked_at=NULL, locked_by=NULL, last_error=#{reason}, next_retry_at=NULL " +
+            "locked_at=NULL, locked_by=NULL, last_error=#{reason}, next_retry_at=NULL, dedupe_key=NULL " +
             "WHERE id=#{id} AND status='RUNNING' AND locked_by=#{lockedBy} AND lease_version=#{leaseVersion}")
     int supersedeLease(@Param("id") Long id,
                        @Param("lockedBy") String lockedBy,
@@ -71,8 +78,13 @@ public interface RagIndexJobMapper extends BaseMapper<RagIndexJob> {
                        @Param("completedAt") LocalDateTime completedAt,
                        @Param("reason") String reason);
 
+    /**
+     * 失败转 RETRY 或 DEAD。<b>只有 DEAD 是终态，因此只在 DEAD 时释放 {@code dedupe_key}。</b>
+     * RETRY 的行还要继续排队，此时释放键会让同一目标被重复入队、并发跑两遍。
+     */
     @Update("UPDATE rag_index_job SET status=#{status}, last_error=#{lastError}, " +
-            "next_retry_at=#{nextRetryAt}, locked_at=NULL, locked_by=NULL " +
+            "next_retry_at=#{nextRetryAt}, locked_at=NULL, locked_by=NULL, " +
+            "dedupe_key = IF(#{status} = 'DEAD', NULL, dedupe_key) " +
             "WHERE id=#{id} AND status='RUNNING' AND locked_by=#{lockedBy} AND lease_version=#{leaseVersion}")
     int failLease(@Param("id") Long id,
                   @Param("lockedBy") String lockedBy,

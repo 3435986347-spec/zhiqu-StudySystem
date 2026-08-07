@@ -502,6 +502,54 @@ public class RagIndexJobService {
         job.setLockedAt(now);
     }
 
+    /**
+     * Wiki 页内容或标题发生变化 —— 入队一条增量索引作业。
+     *
+     * <p><b>本方法只写一行 job，不解密、不分块、不碰投影表。</b>它由 Wiki 的写路径在
+     * <b>同一个事务里</b>调用，这是事务性 outbox：作业行必须与业务变更原子提交，
+     * 否则会出现「页保存了但永远没被索引」。反过来说，事务里能做的也就只有这一条 INSERT ——
+     * 投影表的写入交给 worker，因为 {@code RagUnitRegistry} 的 {@code TransactionTemplate}
+     * 是默认 {@code REQUIRED}，会加入调用方事务：一次投影写失败会把用户的 Wiki 保存整个回滚，
+     * 而且用户看到的是一个与知识页无关的报错。
+     *
+     * <p><b>uniquePart 刻意不含内容哈希。</b>去重语义应当是「同一目标不重复排队」，
+     * 由作业的<b>在途状态</b>决定（终态释放 dedupe_key，见 V30），而不是由内容决定。
+     * 把哈希拼进来能挡住连续编辑，却挡不住 A→B→A：改回 A 时那个 key 在第一次就用掉了，
+     * 回退被去重掉、索引永远停在 B。
+     */
+    @Transactional
+    public void enqueueWikiPageChanged(Long userId, Long pageId) {
+        if (producerFrozen("UPSERT_UNIT")) return;
+        enqueueUnit("UPSERT_UNIT", userId, RagNamespace.WIKI_PAGE, pageId);
+    }
+
+    /** Wiki 页被删除（或变成不入索引的系统页）—— 入队退役作业。同样只写一行 job。 */
+    @Transactional
+    public void enqueueWikiPageRemoved(Long userId, Long pageId) {
+        if (producerFrozen("DELETE_UNIT")) return;
+        enqueueUnit("DELETE_UNIT", userId, RagNamespace.WIKI_PAGE, pageId);
+    }
+
+    private void enqueueUnit(String operation, Long userId, String namespace, Long refId) {
+        RagIndexJob job = new RagIndexJob();
+        job.setOperation(operation);
+        job.setProtocolVersion(SUPPORTED_PROTOCOL_VERSION);
+        job.setUserId(userId);
+        job.setNamespace(namespace);
+        job.setUnitId(null);          // 投影行可能还不存在；worker 按 namespace + ref_id 定位
+        job.setSourceId(refId);       // 复用既有列承载 ref_id，避免为增量再加一列
+        job.setDedupeKey(limit(operation.toLowerCase(Locale.ROOT) + ":all:-:" + namespace + "#" + refId, 255));
+        job.setStatus("PENDING");
+        job.setAttempts(0);
+        try {
+            jobMapper.insert(job);
+        } catch (DuplicateKeyException duplicate) {
+            // 同一目标已在途（PENDING/RUNNING/RETRY）。终态的行已释放 dedupe_key（V30），
+            // 所以这里被去重掉的一定是「还没跑的那次」，用户的这次编辑不会丢。
+            log.debug("同一目标已有在途作业，跳过入队 dedupeKey={}", job.getDedupeKey());
+        }
+    }
+
     private void enqueue(String operation, RagIndexGeneration generation, Long userId, Long notebookId,
                          Long sourceId, String contentHash, String uniquePart) {
         enqueue(operation, generation, userId, notebookId, sourceId, contentHash, uniquePart, null);

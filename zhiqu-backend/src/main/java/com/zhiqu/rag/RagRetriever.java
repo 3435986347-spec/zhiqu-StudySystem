@@ -35,9 +35,16 @@ public class RagRetriever {
         this.metrics = metrics;
     }
 
+    /**
+     * 检索。范围由 {@link ScopeSelection} 给出 —— {@code userId}/{@code notebookId} 仍单独传，
+     * 因为它们是 sidecar 请求体的字段，与「范围里有哪些单元」是两件事。
+     *
+     * <p>1B-1 口径不变：仍只按 {@code sourceIds} 过滤，仍只查 NOTEBOOK_SOURCE 的索引状态。
+     */
     public RetrievalResult retrieve(String requestId, Long userId, Long notebookId,
-                                    List<AiNotebookSource> sources, String question) {
+                                    ScopeSelection scope, String question) {
         if (!client.configured()) return RetrievalResult.unavailable("DISABLED_OR_TOKEN_MISSING");
+        List<AiNotebookSource> sources = scope.notebookSources();
         RagIndexGeneration generation = generationMapper.selectOne(new LambdaQueryWrapper<RagIndexGeneration>()
                 .eq(RagIndexGeneration::getStatus, "ACTIVE").orderByDesc(RagIndexGeneration::getId).last("LIMIT 1"));
         if (generation == null) {

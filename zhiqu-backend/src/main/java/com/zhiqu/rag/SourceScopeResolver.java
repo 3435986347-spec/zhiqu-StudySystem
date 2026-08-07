@@ -20,7 +20,16 @@ public class SourceScopeResolver {
         this.sourceMapper = sourceMapper;
     }
 
-    public List<AiNotebookSource> resolve(Long userId, Long notebookId, List<Long> selectedSourceIds) {
+    /**
+     * 解析一次问答的检索范围。
+     *
+     * <p>返回 {@link ScopeSelection} 而不是裸 {@code List}：范围将来不只有 Notebook 资料一种
+     * 命名空间，而「顺序承重」这件事必须写在类型里（见 ScopeSelection 的类注释）。
+     *
+     * <p><b>1B-1 保持口径等价</b>：这里仍然只查 {@code ai_notebook_source}，排序、权限校验、
+     * 异常文案一字未动。Wiki 单元进入检索范围属于 1B-2。
+     */
+    public ScopeSelection resolve(Long userId, Long notebookId, List<Long> selectedSourceIds) {
         AiNotebook notebook = notebookMapper.selectOne(new LambdaQueryWrapper<AiNotebook>()
                 .eq(AiNotebook::getId, notebookId)
                 .eq(AiNotebook::getUserId, userId));
@@ -41,6 +50,6 @@ public class SourceScopeResolver {
                 != selectedSourceIds.stream().distinct().count()) {
             throw new BusinessException("选择的资料不存在、不可用或无权限访问");
         }
-        return sources;
+        return new ScopeSelection(userId, notebookId, sources);
     }
 }

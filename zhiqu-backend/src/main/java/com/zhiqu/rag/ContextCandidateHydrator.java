@@ -29,11 +29,11 @@ public class ContextCandidateHydrator {
     }
 
     public List<Map<String, Object>> hydrate(Long userId, Long notebookId,
-                                             List<AiNotebookSource> sources,
+                                             ScopeSelection scope,
                                              RagRetriever.RetrievalResult retrieval) {
         if (!retrieval.available() || retrieval.candidates().isEmpty()) return List.of();
         Map<Long, AiNotebookSource> allowedSources = new HashMap<>();
-        for (AiNotebookSource source : sources) {
+        for (AiNotebookSource source : scope.notebookSources()) {
             if (source.getUserId().equals(userId) && source.getNotebookId().equals(notebookId)
                     && "READY".equals(source.getStatus())) allowedSources.put(source.getId(), source);
         }

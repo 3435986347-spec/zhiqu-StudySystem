@@ -1,6 +1,10 @@
 fastapi
 uvicorn[standard]
 pydantic-settings
+# pydantic 是 fastapi/pydantic-settings 的传递依赖，这里显式列出是因为跨语言契约依赖它的行为：
+# Java 侧解析本服务的响应，而 pydantic 2.x 的次版本改过校验错误 detail 的载荷形状
+# （type 字符串、ctx、url 字段）与 None 字段的序列化默认值——两者都直接落在接缝上。
+pydantic
 chromadb
 sentence-transformers
 transformers

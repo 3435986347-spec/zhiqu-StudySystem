@@ -163,6 +163,48 @@ class RagIndexIntegrationTest {
     }
 
     @Test
+    void v29ProjectionSchemaWasApplied() {
+        Integer tables = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables " +
+                "WHERE table_schema=DATABASE() AND table_name IN ('rag_indexable_unit','rag_unit_chunk')",
+                Integer.class);
+        assertEquals(2, tables);
+
+        // source_id 必须已改为可空：Wiki / 会话 unit 的 state 行没有 source_id。
+        assertEquals("YES", jdbc.queryForObject("SELECT is_nullable FROM information_schema.columns " +
+                "WHERE table_schema=DATABASE() AND table_name='rag_source_index_state' AND column_name='source_id'",
+                String.class));
+
+        // 两个唯一键必须并存：旧键是回滚生命线，回退到旧 JAR 时仍靠它保证 Notebook 行唯一。
+        Integer uniqueKeys = jdbc.queryForObject("SELECT COUNT(DISTINCT index_name) FROM information_schema.statistics " +
+                "WHERE table_schema=DATABASE() AND table_name='rag_source_index_state' " +
+                "AND index_name IN ('uk_rag_source_generation','uk_rag_source_state_unit')", Integer.class);
+        assertEquals(2, uniqueKeys);
+    }
+
+    /**
+     * Notebook 行与 Wiki 行必须能在同一张 state 表里共存。
+     *
+     * <p>靠的是 MySQL 唯一键允许多个 NULL：Wiki 行 source_id 为 NULL 不撞旧键，
+     * Notebook 行 unit_id 为 NULL 不撞新键。这条性质一旦失效，投影表改造会在
+     * 第一次给 Wiki 建索引时撞 1062，而不是等到检索阶段才暴露。
+     */
+    @Test
+    void notebookAndWikiStateRowsCoexistUnderBothUniqueKeys() {
+        jdbc.update("INSERT INTO rag_indexable_unit(user_id,namespace,ref_id,scope_kind,title,source_type) " +
+                "VALUES(?,?,?,?,?,?)", userId, "WIKI_PAGE", 4242L, "WIKI_TREE", "共存用例", "WIKI_PAGE");
+        Long unitId = jdbc.queryForObject(
+                "SELECT id FROM rag_indexable_unit WHERE namespace='WIKI_PAGE' AND ref_id=4242", Long.class);
+
+        jdbc.update("INSERT INTO rag_source_index_state(source_id,unit_id,generation_id,index_version,content_hash,status) " +
+                "VALUES(?,NULL,?,?,?,'INDEXED')", sourceId, generationId, "v-coexist", "a".repeat(64));
+        jdbc.update("INSERT INTO rag_source_index_state(source_id,unit_id,generation_id,index_version,content_hash,status) " +
+                "VALUES(NULL,?,?,?,?,'INDEXED')", unitId, generationId, "v-coexist", "b".repeat(64));
+
+        assertEquals(2, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM rag_source_index_state WHERE generation_id=?", Integer.class, generationId));
+    }
+
+    @Test
     void outboxWriteRollsBackWithSourceTransaction() {
         assertThrows(IllegalStateException.class, () -> transactions.executeWithoutResult(status -> {
             jobService.enqueueSource(sourceMapper.selectById(sourceId));
@@ -288,7 +330,10 @@ class RagIndexIntegrationTest {
 
     @Test
     void deletedSourceImmediatelyLeavesRetrievalScope() {
-        assertEquals(1, scopeResolver.resolve(userId, notebookId, List.of(sourceId)).size());
+        // resolve() 的返回类型由 List<AiNotebookSource> 变为 ScopeSelection，故 size() → notebookSourceCount()。
+        // 这是纯机械的访问器改名：期望值 1 未变、断言语义未变。没有把 size() 保留成兼容别名，
+        // 是因为「size 数的是什么」正是口径悄悄漂移的入口——它在调用点上看不出来。
+        assertEquals(1, scopeResolver.resolve(userId, notebookId, List.of(sourceId)).notebookSourceCount());
         sourceMapper.deleteById(sourceId);
         BusinessException error = assertThrows(BusinessException.class,
                 () -> scopeResolver.resolve(userId, notebookId, List.of(sourceId)));

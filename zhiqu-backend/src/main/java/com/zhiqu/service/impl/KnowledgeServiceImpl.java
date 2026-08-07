@@ -2,6 +2,7 @@ package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.zhiqu.common.BusinessException;
+import com.zhiqu.common.MarkdownCanonicalizer;
 import com.zhiqu.entity.KnowledgeOperationLog;
 import com.zhiqu.entity.KnowledgePageLink;
 import com.zhiqu.entity.KnowledgePatchSet;
@@ -52,6 +53,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final KnowledgePageLinkMapper linkMapper;
     private final KnowledgeOperationLogMapper operationLogMapper;
     private final SensitiveCryptoService cryptoService;
+    private final com.zhiqu.rag.RagIndexJobService ragIndexJobService;
 
     public KnowledgeServiceImpl(UserKnowledgePageMapper pageMapper,
                                 SysUserMapper userMapper,
@@ -60,7 +62,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                                 KnowledgePatchSetMapper patchSetMapper,
                                 KnowledgePageLinkMapper linkMapper,
                                 KnowledgeOperationLogMapper operationLogMapper,
-                                SensitiveCryptoService cryptoService) {
+                                SensitiveCryptoService cryptoService,
+                                com.zhiqu.rag.RagIndexJobService ragIndexJobService) {
         this.pageMapper = pageMapper;
         this.userMapper = userMapper;
         this.revisionMapper = revisionMapper;
@@ -69,6 +72,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         this.linkMapper = linkMapper;
         this.operationLogMapper = operationLogMapper;
         this.cryptoService = cryptoService;
+        this.ragIndexJobService = ragIndexJobService;
     }
 
     @Override
@@ -169,7 +173,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             page.setUserId(userId);
         }
         String title = required(body.get("title"), "标题不能为空");
-        String content = cleanMarkdownContent(required(body.get("content"), "内容不能为空"));
+        String content = MarkdownCanonicalizer.clean(required(body.get("content"), "内容不能为空"));
         // 系统页按标题维护（ensureSystemPage 以标题查找），改名会导致重复建页，后端强制拦截
         boolean systemPage = page.getId() != null && isSystemKnowledgePage(page);
         if (systemPage && !title.trim().equals(page.getTitle())) {
@@ -206,7 +210,33 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             writeLog(userId, "page.update", page.getId(), null, null, "更新知识页：" + page.getTitle(), page.getContentSummary());
         }
         syncPageLinks(userId, page.getId(), content);
+        enqueueRagUnitSync(userId, page);
         return pageRow(pageMapper.selectById(page.getId()));
+    }
+
+    /**
+     * 知识页内容变化后同步 RAG 投影 —— <b>只写一行 job，不碰投影表、不解密</b>。
+     *
+     * <p>为什么不在这里直接调 {@code RagUnitRegistry}：它用的 {@code TransactionTemplate} 是
+     * 默认 {@code REQUIRED}，会<b>加入</b>本方法所在的事务（这些写路径全是 {@code @Transactional}，
+     * 其中几条还持着 {@code lockKnowledgeTree(userId)}）。于是一次投影写失败会把用户的知识页保存
+     * 整个回滚 —— RAG 的记账故障变成核心功能故障，而且用户看到的是一个与知识页无关的报错。
+     * 更尖锐的是它与投影层的设计直接冲突：那边刻意让「非解密异常逃出 reconcileAll」，
+     * 对对账作业是对的（转 RETRY/DEAD 并告警），对同步钩子却是有害的。
+     *
+     * <p>但入队<b>必须</b>留在事务里：这是事务性 outbox，job 行与业务变更原子提交。
+     * 挪到事务外就换成了另一种故障——「页保存了但永远没被索引」。
+     *
+     * <p>页变成不入索引的类型（系统页 / GUIDE）或占用了系统保留标题时，发的是退役作业，
+     * 否则那份向量会一直留在库里被检索到。
+     */
+    private void enqueueRagUnitSync(Long userId, UserKnowledgePage page) {
+        if (page == null || page.getId() == null) return;
+        if (com.zhiqu.rag.RagNamespace.isExcludedWikiPage(page.getPageType(), page.getTitle())) {
+            ragIndexJobService.enqueueWikiPageRemoved(userId, page.getId());
+        } else {
+            ragIndexJobService.enqueueWikiPageChanged(userId, page.getId());
+        }
     }
 
     @Override
@@ -359,7 +389,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             revision.setPatchSetId(patchSet.getId());
             revision.setActionType("UPSERT");
             revision.setTitle(limit(value(body.get("pageTitle"), patchSet.getTitle()), 120));
-            revision.setEncryptedContent(cryptoService.encrypt(cleanMarkdownContent(value(body.get("content"), patchSet.getSummary()))));
+            revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.clean(value(body.get("content"), patchSet.getSummary()))));
             revision.setEncryptionVersion("v1");
             revision.setStatus("PENDING");
             revisionMapper.insert(revision);
@@ -387,7 +417,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 }
                 revision.setActionType(limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20));
                 revision.setTitle(limit(value(item.get("title"), patchSet.getTitle()), 120));
-                revision.setEncryptedContent(cryptoService.encrypt(cleanMarkdownContent(value(item.get("content"), ""))));
+                revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.clean(value(item.get("content"), ""))));
                 revision.setEncryptionVersion("v1");
                 revision.setStatus("PENDING");
                 revisionMapper.insert(revision);
@@ -401,7 +431,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public KnowledgePageSnapshot findPageSnapshotByTitle(Long userId, String title) {
         UserKnowledgePage page = findPageByTitle(userId, title);
         if (page == null) return null;
-        String content = cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent()));
+        String content = MarkdownCanonicalizer.clean(cryptoService.decrypt(page.getEncryptedContent()));
         return new KnowledgePageSnapshot(page.getId(), page.getTitle(), page.getPageType(), content,
                 page.getVersion(), pageStateHash(page.getTitle(), content));
     }
@@ -449,7 +479,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         source.setSourceRef(limit(value(body.get("sourceRef"), "manual"), 500));
         source.setEncryptedContent(cryptoService.encrypt(limit(content, 12000)));
         source.setEncryptionVersion("v1");
-        source.setContentSummary(limit(cleanMarkdownContent(content).replaceAll("\\s+", " "), 780));
+        source.setContentSummary(limit(MarkdownCanonicalizer.clean(content).replaceAll("\\s+", " "), 780));
         source.setImmutableHash(cryptoService.sha256Hex(source.getSourceType() + "\n" + source.getTitle() + "\n" + source.getSourceRef() + "\n" + content));
         sourceMapper.insert(source);
         writeLog(userId, "source.ingest", null, null, source.getId(), "新增 Raw Source：" + source.getTitle(), source.getContentSummary());
@@ -480,7 +510,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         source.setSourceRef(limit("file:" + fileName + " | " + contentType + " | " + file.getSize() + " bytes", 500));
         source.setEncryptedContent(cryptoService.encrypt(limit(content, 20000)));
         source.setEncryptionVersion("v1");
-        source.setContentSummary(limit(cleanMarkdownContent(content).replaceAll("\\s+", " "), 780));
+        source.setContentSummary(limit(MarkdownCanonicalizer.clean(content).replaceAll("\\s+", " "), 780));
         source.setImmutableHash(cryptoService.sha256Hex("UPLOAD\n" + source.getSourceType() + "\n" + fileName + "\n" + file.getSize() + "\n" + content));
         sourceMapper.insert(source);
         writeLog(userId, "source.upload", null, null, source.getId(), "上传 Raw Source：" + source.getTitle(),
@@ -492,7 +522,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public Map<String, Object> createPatchSetFromSource(Long userId, Long sourceId) {
         KnowledgeSource source = ownedSource(userId, sourceId);
-        String content = cleanMarkdownContent(cryptoService.decrypt(source.getEncryptedContent()));
+        String content = MarkdownCanonicalizer.clean(cryptoService.decrypt(source.getEncryptedContent()));
         KnowledgePatchSet patchSet = new KnowledgePatchSet();
         patchSet.setUserId(userId);
         patchSet.setTitle(limit("整理来源：" + source.getTitle(), 180));
@@ -1005,7 +1035,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (allowStructure && body.containsKey("parentId")) {
             lockKnowledgeTree(userId);
         }
-        String content = cleanMarkdownContent(value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent())));
+        String content = MarkdownCanonicalizer.clean(value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent())));
         String title = limit(value(body.get("title"), value(revision.getTitle(), "AI Wiki 草稿")), 120);
         // 目标页解析：已绑定目标的草稿，合入时 pageId 不可被 body 改指到其它页——否则可传另一本人页面 ID
         // 绕过基准冲突校验、把草稿整页写到一个本轮未读过的页上。无目标草稿才允许 body 指定合并目标。
@@ -1066,6 +1096,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             updatePageOrThrow(page);
         }
         syncPageLinks(userId, page.getId(), content);
+        enqueueRagUnitSync(userId, page);
         revision.setPageId(page.getId());
         return page;
     }
@@ -1106,6 +1137,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         softDeletePageOrThrow(userId, page);
         clearPageLinks(userId, page.getId());
         detachInboundLinks(userId, page.getId());
+        // 删除必须发退役作业：不发的话向量留在库里，用户以为删掉的内容仍能被检索到。
+        ragIndexJobService.enqueueWikiPageRemoved(userId, page.getId());
         return children.size();
     }
 
@@ -1130,12 +1163,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     /**
-     * 从实体计算页状态哈希，用于合入前比对。正文用 cleanMarkdownContent(解密) —— 与 documentTree/read_wiki_page
+     * 从实体计算页状态哈希，用于合入前比对。正文用 MarkdownCanonicalizer.clean(解密) —— 与 documentTree/read_wiki_page
      * 返回给模型的正文同源，保证“读取时快照”与“合入时当前状态”可逐字比较。
      */
     private String pageStateHash(UserKnowledgePage page) {
         if (page == null) return null;
-        return pageStateHash(page.getTitle(), cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent())));
+        return pageStateHash(page.getTitle(), MarkdownCanonicalizer.clean(cryptoService.decrypt(page.getEncryptedContent())));
     }
 
     /** 内容 SHA-256 十六进制哈希；异常时返回 null，后续按“无可靠基准”拒绝覆盖已有页。 */
@@ -1381,13 +1414,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return isSystemPageTitle(page.getTitle());
     }
 
+    /**
+     * 保留标题判定已提取到 {@link com.zhiqu.common.SystemPageTitles}，行为逐字不变。
+     *
+     * <p>提取的原因是 RAG 侧需要同一份定义：此前它的排除集只看 {@code page_type}，
+     * 于是标题为 {@code index} 而 {@code page_type='NOTE'} 的页会被这里当系统页保护、
+     * 却照常被索引进向量库。复制一份词表过去只会让两份定义再次分叉。
+     */
     private boolean isSystemPageTitle(String title) {
-        String trimmed = title == null ? "" : title.trim();
-        return "index".equalsIgnoreCase(trimmed) || "log".equalsIgnoreCase(trimmed) || "Wiki 维护规则".equals(trimmed);
+        return com.zhiqu.common.SystemPageTitles.matches(title);
     }
 
     private String markdownExportContent(UserKnowledgePage page) {
-        String content = cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent()));
+        String content = MarkdownCanonicalizer.clean(cryptoService.decrypt(page.getEncryptedContent()));
         // 标题必须加引号转义，否则「阶段: 复习」这类含冒号的标题会生成无效 YAML
         String yamlTitle = String.valueOf(page.getTitle()).replace("\\", "\\\\").replace("\"", "\\\"");
         return """
@@ -1468,7 +1507,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         row.put("sortOrder", page.getSortOrder());
         row.put("pinned", page.getPinned() != null && page.getPinned() == 1);
         row.put("title", page.getTitle());
-        row.put("content", cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent())));
+        row.put("content", MarkdownCanonicalizer.clean(cryptoService.decrypt(page.getEncryptedContent())));
         row.put("summary", page.getContentSummary());
         row.put("sourceMessageId", page.getSourceMessageId());
         row.put("sourceConversationId", page.getSourceConversationId());
@@ -1495,7 +1534,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private Map<String, Object> documentNode(UserKnowledgePage page) {
         Map<String, Object> row = treeNode(page);
-        row.put("content", cleanMarkdownContent(cryptoService.decrypt(page.getEncryptedContent())));
+        row.put("content", MarkdownCanonicalizer.clean(cryptoService.decrypt(page.getEncryptedContent())));
         row.put("sourceMessageId", page.getSourceMessageId());
         row.put("sourceConversationId", page.getSourceConversationId());
         row.put("lastUsedAt", page.getLastUsedAt());
@@ -1679,29 +1718,6 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             cursor = ownedPage(userId, parentId);
         }
         return false;
-    }
-
-    private String cleanMarkdownContent(String value) {
-        if (value == null) {
-            return "";
-        }
-        String text = value.replace("\r\n", "\n").replace("\r", "\n").trim();
-        if (text.startsWith("```")) {
-            text = text.replaceFirst("^```[A-Za-z0-9_-]*\\s*", "")
-                    .replaceFirst("\\s*```$", "")
-                    .trim();
-        }
-        List<String> lines = new ArrayList<>();
-        for (String line : text.split("\n")) {
-            String compact = line.replaceAll("\\s+", "");
-            boolean emptyHeading = line.matches("^\\s*#{1,6}\\s*$");
-            boolean wikiConfirmation = (compact.contains("已将") || compact.contains("已经") || compact.contains("已存入") || compact.contains("已写入"))
-                    && (compact.toLowerCase().contains("wiki") || compact.contains("知识库") || compact.contains("知识树"));
-            if (!emptyHeading && !wikiConfirmation) {
-                lines.add(line);
-            }
-        }
-        return String.join("\n", lines).trim();
     }
 
     private Long parseLong(Object value) {

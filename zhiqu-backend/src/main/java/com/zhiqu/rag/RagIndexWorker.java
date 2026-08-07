@@ -36,6 +36,7 @@ public class RagIndexWorker {
     private final AiSourceChunkMapper chunkMapper;
     private final RuntimeIssueMapper runtimeIssueMapper;
     private final RuntimeFlagService runtimeFlags;
+    private final RagUnitRegistry registry;
 
     public RagIndexWorker(RagProperties properties,
                           RagIndexJobService jobService,
@@ -44,7 +45,8 @@ public class RagIndexWorker {
                           AiNotebookSourceMapper sourceMapper,
                           AiSourceChunkMapper chunkMapper,
                           RuntimeIssueMapper runtimeIssueMapper,
-                          RuntimeFlagService runtimeFlags) {
+                          RuntimeFlagService runtimeFlags,
+                          RagUnitRegistry registry) {
         this.properties = properties;
         this.jobService = jobService;
         this.client = client;
@@ -53,6 +55,7 @@ public class RagIndexWorker {
         this.chunkMapper = chunkMapper;
         this.runtimeIssueMapper = runtimeIssueMapper;
         this.runtimeFlags = runtimeFlags;
+        this.registry = registry;
     }
 
     @Scheduled(fixedDelayString = "${app.rag.worker-delay-ms:1000}")
@@ -90,6 +93,8 @@ public class RagIndexWorker {
             case "DELETE_INDEX_VERSION" -> delete(job, "INDEX_VERSION");
             case "DELETE_GENERATION" -> deleteGeneration(job);
             case "REBUILD_GENERATION" -> expandGeneration(job);
+            case "UPSERT_UNIT" -> upsertUnit(job);
+            case "DELETE_UNIT" -> retireUnit(job);
             default -> throw new IllegalArgumentException("Unsupported RAG job operation: " + job.getOperation());
         }
     }
@@ -192,6 +197,24 @@ public class RagIndexWorker {
 
     private void expandGeneration(RagIndexJob job) {
         jobService.expandGenerationWithLease(job);
+    }
+
+    /**
+     * 增量索引一个单元。
+     *
+     * <p>投影表的写入放在 worker 而不是 Wiki 的写路径里：{@code RagUnitRegistry} 的
+     * {@code TransactionTemplate} 是默认 {@code REQUIRED}，在钩子里调用会加入用户事务 ——
+     * 一次投影写失败就把用户的 Wiki 保存整个回滚，RAG 的记账故障变成核心功能故障。
+     *
+     * <p>让位于删除靠 {@code refreshUnitIfLive} 重读投影行，不靠作业排序：
+     * 作业里带的是发起时的快照，投影行才是当前真相。
+     */
+    private void upsertUnit(RagIndexJob job) {
+        registry.refreshUnitIfLive(job.getNamespace(), job.getSourceId());
+    }
+
+    private void retireUnit(RagIndexJob job) {
+        registry.retireUnit(job.getNamespace(), job.getSourceId());
     }
 
     private void assertLease(RagIndexJob job) {
