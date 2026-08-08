@@ -60,6 +60,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 只是这条链重新失去唯一的覆盖 —— 与 {@code ContextBudgeterCharacterizationTest} 里
  * 7 处硬编码键名同一种处境：承重的「与众不同」必须被标注，否则它和疏忽长得一样。
  *
+ * <h2>本类里有一条断言会<b>计划内地</b>死掉</h2>
+ *
+ * <p>{@code 当前发给sidecar的payload按sourceIds过滤} 钉的是 1B-1 的 payload 口径，
+ * 而 1B-2 的 step 2 正是把它换成 {@code unitIds}。所以：
+ *
+ * <table border="1">
+ *   <caption>本类转红时怎么读</caption>
+ *   <tr><th>哪条红</th><th>含义</th><th>动作</th></tr>
+ *   <tr><td>只有 payload 那条</td><td>step 2 落地了，它的替代品是新基准第二条</td>
+ *       <td><b>删掉它</b></td></tr>
+ *   <tr><td>另外两条中的任意一条</td><td>重写弄坏了本该跨 1B-2 不变的东西</td>
+ *       <td><b>回退</b></td></tr>
+ * </table>
+ *
+ * <p>歧义在同一个类内部：三条断言里一条红是<b>进展</b>，另两条红是<b>坏了</b>。
+ * 与 {@code ContextBudgeterCharacterizationTest} 的退休/回退判据同一处境，
+ * 所以同样把判读写在使用现场。
+ *
+ * <p>另外两条刻意<b>不</b>编进任何会变的东西：顺序那条断言的是正文顺序而非候选身份格式
+ * （格式会变，且已由 {@code CandidateKeys} 与新基准第二条钉住）；
+ * 越界那条断言的是「越界的没进来」，与身份格式无关。
+ *
  * <h2>两个机械陷阱（都实测过）</h2>
  *
  * <ol>
@@ -204,9 +226,12 @@ class RagRetrievalPipelineCharacterizationTest {
         List<Map<String, Object>> rows = workspaceService.sourceContext(userId, notebookId,
                 Map.of("query", "象限法怎么分类"));
 
-        assertEquals(List.of("TEXT:" + sourceId + ":1", "TEXT:" + sourceId + ":0", "TEXT:" + sourceId + ":2"),
-                rows.stream().map(row -> row.get(CandidateKeys.SOURCE_TYPE) + ":"
-                        + row.get(CandidateKeys.SOURCE_ID) + ":" + row.get(CandidateKeys.CHUNK_INDEX)).toList(),
+        // 断言的是**正文的顺序**，不是候选身份的格式。
+        // 身份格式（sourceType:sourceId 还是 namespace:unitId）在 1B-2 里会变，
+        // 把它编进这条断言，就会在 step 2/3 逼出一次「合法地重写期望值」——
+        // 而那和「调期望值直到它变绿」在 diff 里一模一样。正文顺序跨重写必须不变。
+        assertEquals(List.of("第1段", "第0段", "第2段"),
+                rows.stream().map(row -> String.valueOf(row.get(CandidateKeys.CONTENT)).substring(0, 3)).toList(),
                 "顺序承重：它决定预算耗尽时谁被截掉，而 sidecar 的距离序必须原样传下来");
         assertTrue(rows.stream().allMatch(row -> "VECTOR".equals(row.get("retrievalMode"))),
                 "三条都该走向量路径；混进关键词回落说明索引状态判定变了");
