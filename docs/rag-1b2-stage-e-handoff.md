@@ -357,3 +357,38 @@ DISABLED 是设计内的正常状态（仓库默认），TOKEN_MISSING 是「开
 （六次红全在脚本自身上的那批坑都修过了，逐条在 `deploy/drill/README.md`）。
 那时重跑一次四步、打一个新 tag，Phase 2 就有了自己的可逆点。
 错过这个窗口，等 Phase 2 动起来再补，就要在一棵已经变动的树上重建基线。
+
+## 回落记账已收成结构性的（检索侧开工前的准备）
+
+`RagRetriever` 的每一条非成功返回现在只能经 `fallback(...)` 出去，`disabled()` 是
+唯一刻意不记指标的出口；`RetrievalResult.unavailable(...)` 静态工厂已删（它是一条
+绕过记账的近路，而且看起来完全无辜）。`RagFallbackAccountingTest` 数绕过的可能性。
+
+**为什么在检索侧之前做**：那批改动会新增返回路径（Wiki 候选回填失败、回填时解密失败……），
+每一条都要记，而此前靠的是「写 return 时记得在旁边加一行」——
+那条纪律已经失效过一次（sidecar 不可用那条压根没记，是拆合并字符串时偶然发现的）。
+
+不变量的形式：**每条非成功返回恰好记一次回落原因，`DISABLED` 是唯一刻意的例外。**
+查过 `retrieve` 的全部返回路径，现在是齐的，没有第二个洞。
+
+## 新 golden master 的预期：**必须是红的**（动手前先声明）
+
+顺序是 新基准先写 → 两份并存 → 退休旧的 → 再动 `sourceCount`。
+放宽在最后，所以新基准在并存窗口里**应该红**，「放宽之后转绿」才是证据。
+按阳性/阴性对照那条规矩，这个预期<b>先写在这里</b>，避免事后解释。
+
+### 有一个现成的机制会让它假绿
+
+```java
+int effectiveSourceCount = Math.max(sourceCount,
+        (int) candidates.stream().map(this::sourceKey).distinct().count());
+```
+
+`ContextBudgeter:36-37` 这条 `max` 兜底早先就让一次扰动变过绿（把 fixture 的
+`sourceCount` 改成 1，`distinct = 2` 照样把配额门撑起来）。同理，一个多命名空间的
+期望候选集完全可能在 `sourceCount` 还没放宽时就已被 `distinct` 满足。
+
+**所以第一次跑新基准时，绿不是好消息**，它只有两种解释：
+① 期望写错了；② `distinct` 已经替 `sourceCount` 干了活，放宽本身是空操作。
+②正是交接单里已经记过的那个风险（放宽要等 `ScopeSelection` 先能装下别的命名空间），
+它会以「测试提前变绿」的形式先露头。
