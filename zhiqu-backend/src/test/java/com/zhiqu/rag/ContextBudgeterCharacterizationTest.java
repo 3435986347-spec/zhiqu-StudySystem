@@ -12,6 +12,32 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * {@link ContextBudgeter} 的特征化测试（golden master）。
  *
+ * <h2>本文件变红时，先读这一段再动手</h2>
+ *
+ * <p><b>本文件里 7 处 {@code "sourceId"} / {@code "sourceType"} 是硬编码的，刻意的。</b>
+ * 生产端已经把这些键名收进 {@code CandidateKeys}，而这里<b>不引用那个常量</b> ——
+ * 引用了就两侧同源，键名一改夹具跟着漂移，从此对键名改动完全不敏感
+ * （本项目记过的「协议版本断言两侧用同一个常量」那个物种）。
+ * 所以它是刻意留在收敛之外的，不是收敛没做完。
+ *
+ * <p>由此推出：<b>检索侧把候选行的 {@code sourceId} 换成 {@code unitId} 的那一刻，
+ * 本文件必然转红，而那是设计内的正确结果。</b>那时最省力、最自然的动作是
+ * 「把期望里的键名改掉让它绿」—— 而那正是整套替换流程从头到尾要防的那一个动作，
+ * 且做的时候会觉得自己在修一个显然的破损。
+ *
+ * <p><b>判读只有两种，取决于三条新基准的状态</b>（见
+ * {@code docs/rag-1b2-stage-e-handoff.md} 的判读表）：
+ *
+ * <table border="1">
+ *   <caption>本文件转红时怎么读</caption>
+ *   <tr><th>三条新基准</th><th>含义</th><th>动作</th></tr>
+ *   <tr><td>已绿</td><td>新形状已被钉住，交接完成</td><td><b>退休本文件</b>（删掉），不是修它</td></tr>
+ *   <tr><td>仍红</td><td>在没有替代品的时候拆掉了旧的度量</td><td><b>回退</b>，改早了</td></tr>
+ * </table>
+ *
+ * <p>把「退休」和「回退」分开是这一行的全部意义：两种情况下本文件都是红的，
+ * 看起来一模一样，而正确动作相反。
+ *
  * <p><b>写在重构之前，用来钉住当前行为。</b>投影表改造会把 {@code SourceScopeResolver} 的返回类型
  * 换成 ScopeSelection，进而影响每一行的 {@code sourceType} / {@code sourceId} / {@code chunkId}
  * 取值口径。这三个字段不经过类型系统，却决定了三件事：
