@@ -87,7 +87,7 @@ public class RagIndexJobService {
 
     @Transactional
     public void enqueueSource(AiNotebookSource source) {
-        if (producerFrozen("UPSERT_SOURCE")) return;
+        if (producerFrozen(RagOperation.UPSERT_SOURCE.name())) return;
         ensureContentHash(source);
         List<RagIndexGeneration> generations = generationMapper.selectList(
                 new LambdaQueryWrapper<RagIndexGeneration>()
@@ -107,7 +107,7 @@ public class RagIndexJobService {
                 continue;
             }
             upsertSourceState(source, generation, "PENDING", null, 0);
-            enqueue("UPSERT_SOURCE", generation, source.getUserId(), source.getNotebookId(), source.getId(),
+            enqueue(RagOperation.UPSERT_SOURCE.name(), generation, source.getUserId(), source.getNotebookId(), source.getId(),
                     source.getContentHash(), source.getContentHash());
             enqueued = true;
         }
@@ -135,19 +135,19 @@ public class RagIndexJobService {
      */
     @Transactional
     public void enqueueDeleteSource(Long userId, Long notebookId, Long sourceId) {
-        if (producerFrozen("DELETE_SOURCE")) return;
+        if (producerFrozen(RagOperation.DELETE_SOURCE.name())) return;
         String unique = "delete-source:" + userId + ":" + notebookId + ":" + sourceId + ":" + UUID.randomUUID();
         for (String dialect : deleteDialects()) {
-            enqueue("DELETE_SOURCE", null, userId, notebookId, sourceId, null, unique, dialect);
+            enqueue(RagOperation.DELETE_SOURCE.name(), null, userId, notebookId, sourceId, null, unique, dialect);
         }
     }
 
     @Transactional
     public void enqueueDeleteNotebook(Long userId, Long notebookId) {
-        if (producerFrozen("DELETE_NOTEBOOK")) return;
+        if (producerFrozen(RagOperation.DELETE_NOTEBOOK.name())) return;
         String unique = "delete-notebook:" + userId + ":" + notebookId + ":" + UUID.randomUUID();
         for (String dialect : deleteDialects()) {
-            enqueue("DELETE_NOTEBOOK", null, userId, notebookId, null, null, unique, dialect);
+            enqueue(RagOperation.DELETE_NOTEBOOK.name(), null, userId, notebookId, null, null, unique, dialect);
         }
     }
 
@@ -163,7 +163,7 @@ public class RagIndexJobService {
 
     @Transactional
     public void enqueueReindexSource(AiNotebookSource source) {
-        if (producerFrozen("REINDEX_SOURCE")) return;
+        if (producerFrozen(RagOperation.REINDEX_SOURCE.name())) return;
         ensureContentHash(source);
         List<RagIndexGeneration> generations = generationMapper.selectList(
                 new LambdaQueryWrapper<RagIndexGeneration>()
@@ -178,7 +178,7 @@ public class RagIndexJobService {
         sourceMapper.updateById(source);
         for (RagIndexGeneration generation : generations) {
             upsertSourceState(source, generation, "PENDING", null, 0);
-            enqueue("REINDEX_SOURCE", generation, source.getUserId(), source.getNotebookId(), source.getId(),
+            enqueue(RagOperation.REINDEX_SOURCE.name(), generation, source.getUserId(), source.getNotebookId(), source.getId(),
                     source.getContentHash(), source.getContentHash() + ":" + UUID.randomUUID());
         }
     }
@@ -186,7 +186,7 @@ public class RagIndexJobService {
     @Transactional
     public void enqueueRetiredGenerationCleanup(RagIndexGeneration generation) {
         if (generation == null || !"RETIRED".equals(generation.getStatus())) return;
-        enqueue("DELETE_GENERATION", generation, null, null, null, null,
+        enqueue(RagOperation.DELETE_GENERATION.name(), generation, null, null, null, null,
                 "delete-generation:" + generation.getId());
     }
 
@@ -197,7 +197,7 @@ public class RagIndexJobService {
             throw new IllegalStateException("Failed RAG generation could not be claimed for purge");
         }
         generation.setStatus("PURGING");
-        enqueue("DELETE_GENERATION", generation, null, null, null, null,
+        enqueue(RagOperation.DELETE_GENERATION.name(), generation, null, null, null, null,
                 "delete-generation:" + generation.getId());
     }
 
@@ -354,7 +354,7 @@ public class RagIndexJobService {
         generationMapper.insert(generation);
         generation.setCollectionName("zhiqu_rag_g_" + generation.getId());
         generationMapper.updateById(generation);
-        enqueue("REBUILD_GENERATION", generation, null, null, null, null,
+        enqueue(RagOperation.REBUILD_GENERATION.name(), generation, null, null, null, null,
                 "rebuild-generation:" + generation.getId());
         return generation;
     }
@@ -380,7 +380,7 @@ public class RagIndexJobService {
                     continue;
                 }
                 upsertSourceState(source, generation, "PENDING", null, 0);
-                enqueue("UPSERT_SOURCE", generation, source.getUserId(), source.getNotebookId(), source.getId(),
+                enqueue(RagOperation.UPSERT_SOURCE.name(), generation, source.getUserId(), source.getNotebookId(), source.getId(),
                         source.getContentHash(), source.getContentHash());
             } catch (RuntimeException error) {
                 source.setIndexStatus("ERROR");
@@ -519,15 +519,56 @@ public class RagIndexJobService {
      */
     @Transactional
     public void enqueueWikiPageChanged(Long userId, Long pageId) {
-        if (producerFrozen("UPSERT_UNIT")) return;
-        enqueueUnit("UPSERT_UNIT", userId, RagNamespace.WIKI_PAGE, pageId);
+        if (producerFrozen(RagOperation.UPSERT_UNIT.name())) return;
+        enqueueUnit(RagOperation.UPSERT_UNIT.name(), userId, RagNamespace.WIKI_PAGE, pageId);
     }
 
     /** Wiki 页被删除（或变成不入索引的系统页）—— 入队退役作业。同样只写一行 job。 */
     @Transactional
     public void enqueueWikiPageRemoved(Long userId, Long pageId) {
-        if (producerFrozen("DELETE_UNIT")) return;
-        enqueueUnit("DELETE_UNIT", userId, RagNamespace.WIKI_PAGE, pageId);
+        if (producerFrozen(RagOperation.DELETE_UNIT.name())) return;
+        enqueueUnit(RagOperation.DELETE_UNIT.name(), userId, RagNamespace.WIKI_PAGE, pageId);
+    }
+
+    /**
+     * 删除一个作用域下的全部单元向量 —— UNIT 方言专用（方案 §5 删除矩阵）。
+     *
+     * <p>三个调用场景：删 Notebook → {@code SCOPE(u, NOTEBOOK_SOURCE, nbId)} 与
+     * {@code SCOPE(u, CONVERSATION_TURN, convId)}；删会话 → 后者；
+     * 清空记忆走的是 NAMESPACE 而不是本方法（那是整个命名空间，没有 scopeId）。
+     *
+     * <p><b>scopeId 必须非空。</b>sidecar 的 SCOPE 删除要求它（Chroma 的 metadata 不接受
+     * None，所以 scopeId 为空的单元根本没写这个键），空值传过去会被 400 拒绝、
+     * 走重试链到 DEAD。在这里就地拒绝，比让它跑到 sidecar 再回来早得多。
+     *
+     * <p>只发 UNIT 方言：LEGACY 没有与「作用域」对应的词，旧代次的向量由
+     * {@code DELETE_NOTEBOOK} 的 LEGACY 半边清理。
+     */
+    @Transactional
+    public void enqueueDeleteScope(Long userId, String namespace, String scopeKind, Long scopeId) {
+        if (producerFrozen(RagOperation.DELETE_SCOPE.name())) return;
+        if (userId == null || namespace == null || scopeId == null) {
+            throw new IllegalArgumentException(
+                    "DELETE_SCOPE 需要 userId/namespace/scopeId 三者齐全，实际为 "
+                            + userId + "/" + namespace + "/" + scopeId);
+        }
+        RagIndexJob job = new RagIndexJob();
+        job.setOperation(RagOperation.DELETE_SCOPE.name());
+        job.setProtocolVersion(SUPPORTED_PROTOCOL_VERSION);
+        job.setUserId(userId);
+        job.setNamespace(namespace);
+        job.setScopeKind(scopeKind);
+        job.setScopeId(scopeId);
+        job.setDeleteDialect(DIALECT_UNIT);
+        job.setDedupeKey(limit("delete_scope:all:" + DIALECT_UNIT + ":"
+                + userId + ":" + namespace + ":" + scopeId + ":" + UUID.randomUUID(), 255));
+        job.setStatus("PENDING");
+        job.setAttempts(0);
+        try {
+            jobMapper.insert(job);
+        } catch (DuplicateKeyException duplicate) {
+            log.debug("DELETE_SCOPE 作业已存在，跳过入队 dedupeKey={}", job.getDedupeKey());
+        }
     }
 
     /**
@@ -541,9 +582,9 @@ public class RagIndexJobService {
      */
     @Transactional
     public void enqueueReconcileUnits() {
-        if (producerFrozen("RECONCILE_UNITS")) return;
+        if (producerFrozen(RagOperation.RECONCILE_UNITS.name())) return;
         RagIndexJob job = new RagIndexJob();
-        job.setOperation("RECONCILE_UNITS");
+        job.setOperation(RagOperation.RECONCILE_UNITS.name());
         job.setProtocolVersion(SUPPORTED_PROTOCOL_VERSION);
         job.setDedupeKey("reconcile_units:all:-:global");
         job.setStatus("PENDING");

@@ -96,19 +96,39 @@ public class RagIndexWorker {
         }
     }
 
+    /**
+     * 分发。<b>刻意对 {@link RagOperation} 做增强 switch 且不写 default</b> ——
+     * 加一个新的作业类型而忘了在这里处理它，编译当场失败。
+     *
+     * <p>此前这里是对字符串 switch + default 抛异常，于是「消费端没实现」这件事
+     * 只能在**运行时**、且只在那条作业真的被入队时才暴露。实际发生过三次，
+     * 三次都是靠人发现的（见 {@link RagOperation} 的类注释）。
+     *
+     * <p>未知字符串（可能来自更新版本写入的作业）单独处理：不能让它炸掉整个批次循环，
+     * 所以照常走 handleFailure 上报，由 protocol_version 的领取谓词负责不领它。
+     */
     private void process(RagIndexJob job) {
-        switch (job.getOperation()) {
-            case "UPSERT_SOURCE", "REINDEX_SOURCE" -> indexSource(job);
-            case "DELETE_SOURCE" -> delete(job, "SOURCE");
-            case "DELETE_NOTEBOOK" -> delete(job, "NOTEBOOK");
-            case "DELETE_INDEX_VERSION" -> delete(job, "INDEX_VERSION");
-            case "DELETE_GENERATION" -> deleteGeneration(job);
-            case "REBUILD_GENERATION" -> expandGeneration(job);
-            case "UPSERT_UNIT" -> upsertUnit(job);
-            case "DELETE_UNIT" -> retireUnit(job);
-            case "RECONCILE_UNITS" -> reconcileUnits(job);
-            default -> throw new IllegalArgumentException("Unsupported RAG job operation: " + job.getOperation());
+        RagOperation operation = RagOperation.from(job.getOperation());
+        if (operation == null) {
+            throw new IllegalArgumentException("Unsupported RAG job operation: " + job.getOperation());
         }
+        // **必须是 switch 表达式，不能是 switch 语句。**
+        // 实测：Java 只对表达式做穷尽性检查；枚举常量的 switch **语句**漏掉一个常量
+        // 照常编译通过。第一版写成语句并在注释里声称「加常量会编译失败」——
+        // 扰动（只加枚举常量、不加分支）实测 COMPILE-OK，那句话是假的。
+        // 表达式形式下同一个扰动会当场编译错误，这才是把消费端交给了编译器。
+        Runnable action = switch (operation) {
+            case UPSERT_SOURCE, REINDEX_SOURCE -> () -> indexSource(job);
+            case DELETE_SOURCE -> () -> delete(job, "SOURCE");
+            case DELETE_NOTEBOOK -> () -> delete(job, "NOTEBOOK");
+            case DELETE_SCOPE -> () -> delete(job, "SCOPE");
+            case DELETE_GENERATION -> () -> deleteGeneration(job);
+            case REBUILD_GENERATION -> () -> expandGeneration(job);
+            case UPSERT_UNIT -> () -> upsertUnit(job);
+            case DELETE_UNIT -> () -> retireUnit(job);
+            case RECONCILE_UNITS -> () -> reconcileUnits(job);
+        };
+        action.run();
     }
 
     private void indexSource(RagIndexJob job) {
@@ -165,24 +185,61 @@ public class RagIndexWorker {
      * 删除向量。
      *
      * <p>双删窗口下同一次业务删除会产生两条作业，靠 {@code delete_dialect} 区分：
-     * LEGACY 发旧作用域（SOURCE / NOTEBOOK），UNIT 发新作用域。Phase 1A 还没有 unit 格式的
-     * 向量，UNIT 方言因此是显式 no-op —— 写成 no-op 而不是让它落到旧作用域上，是为了避免
-     * 同一份向量被删两次（第二次会撞 sidecar 的墓碑 fence，白白转成 SUPERSEDED 掩盖真实状态）。
+     * LEGACY 发旧作用域（SOURCE / NOTEBOOK），UNIT 发新作用域（UNIT / SCOPE / NAMESPACE）。
+     *
+     * <p><b>1B-2 起 UNIT 方言不再是 no-op。</b>Phase 1A 时它是显式跳过的 —— 那时没有
+     * unit 格式的向量，让它落到旧作用域上会导致同一份向量被删两次（第二次撞 sidecar 的
+     * 墓碑 fence，白白转成 SUPERSEDED 掩盖真实状态）。现在两种格式的向量并存：
+     * 新代次的带 {@code namespace/unitId}，旧代次的带 {@code notebookId/sourceId}，
+     * 各由对应方言清理，缺哪一半都会留下删不掉的残留。
+     *
+     * <p>两种方言的 scope 词表不重叠，所以「方言」与「作用域」不是两个自由变量 ——
+     * 由 {@code job.operation} 决定作用域、由 {@code delete_dialect} 决定用哪套字段，
+     * 不一致时宁可让它响亮地失败（sidecar 会因必填字段缺失回 400），也不静默降级成
+     * 更宽的删除。
      */
     private void delete(RagIndexJob job, String scope) {
-        if (RagIndexJobService.DIALECT_UNIT.equals(job.getDeleteDialect())) {
-            log.debug("UNIT 方言删除在 Phase 1A 无对应向量，跳过 jobId={}", job.getId());
-            return;
-        }
+        boolean unitDialect = RagIndexJobService.DIALECT_UNIT.equals(job.getDeleteDialect());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("operationId", "job-" + job.getId());
         payload.put("mutationToken", job.getId());
-        payload.put("scope", scope);
+        payload.put("scope", unitDialect ? unitScopeFor(job, scope) : scope);
         if (job.getUserId() != null) payload.put("userId", job.getUserId());
-        if (job.getNotebookId() != null) payload.put("notebookId", job.getNotebookId());
-        if (job.getSourceId() != null) payload.put("sourceId", job.getSourceId());
+        if (unitDialect) {
+            if (job.getUnitId() != null) payload.put("unitId", job.getUnitId());
+            if (job.getNamespace() != null) payload.put("namespace", job.getNamespace());
+            if (job.getScopeId() != null) payload.put("scopeId", job.getScopeId());
+        } else {
+            if (job.getNotebookId() != null) payload.put("notebookId", job.getNotebookId());
+            if (job.getSourceId() != null) payload.put("sourceId", job.getSourceId());
+        }
         if (job.getTargetIndexVersion() != null) payload.put("indexVersion", job.getTargetIndexVersion());
         client.deleteIndex(payload);
+    }
+
+    /**
+     * LEGACY 的作用域名 → UNIT 方言的作用域名。
+     *
+     * <p>存在的理由是双删两条作业共享同一个 {@code operation}：一次「删除资料」入队的是
+     * 两条 {@code DELETE_SOURCE}，只有 dialect 不同。所以 UNIT 那条要在这里把
+     * SOURCE/NOTEBOOK 翻译成 UNIT/SCOPE，而不是在入队时造出第二套 operation ——
+     * 后者会让 {@code process()} 的分支表和作业类型词表各翻一倍。
+     *
+     * <p>不认识的作用域**抛异常而不是原样透传**：透传的话 sidecar 会因为 scope 合法
+     * （比如 USER）但字段是另一套而删出一个比预期宽的范围，且没有任何一层会报错。
+     */
+    private String unitScopeFor(RagIndexJob job, String legacyScope) {
+        return switch (legacyScope) {
+            case "SOURCE" -> "UNIT";
+            case "NOTEBOOK", "SCOPE" -> "SCOPE";
+            // 这三个的字段集合与方言无关（只用 userId / indexVersion / collectionName），
+            // 所以双删两条发出的 scope 相同、只有 dialect 不同。对 COLLECTION 而言那是把
+            // 同一个 collection 删两次 —— 幂等但多余，第二次会撞墓碑转 SUPERSEDED。
+            // 今天走不到：这三种作用域只由 DELETE_GENERATION 使用，而它不参与双删。
+            case "NAMESPACE", "USER", "COLLECTION" -> legacyScope;
+            default -> throw new IllegalArgumentException(
+                    "UNIT 方言无法表达的删除作用域: " + legacyScope + "（jobId=" + job.getId() + "）");
+        };
     }
 
     private void deleteGeneration(RagIndexJob job) {
