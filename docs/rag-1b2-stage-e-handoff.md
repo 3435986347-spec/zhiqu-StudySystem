@@ -255,20 +255,52 @@ MySQL 接受往 AUTO_INCREMENT 列写明确值，只会把计数器顶上去，�
 - 分支 HEAD 仍是**已知不可工作状态**：检索侧未换方言。回滚锚点 tag `1b-1-rollback-verified`
 - `app.rag.enabled` 翻 true 依然放在最后（理由见上文）
 
-## 未关闭：归属的「非空错值」路径
+## 未关闭：归属写错会**销毁数据**（方向已更正）
 
 `requireOwner` 只挡 null，而 null 本来就撞 `rag_indexable_unit.user_id` 的 NOT NULL
-（V29:19）—— 响亮，不静默。**能走上三步静默链的是非空但写错的 userId**：
-双条件回读命中 0 行 → SKIPPED → 低于跳过率门禁 → 代次照常 READY。
+（V29:19）—— 响亮，不静默。危险输入是**非空但写错**的 userId。
 
-1c 做的是收窄：`ensureRow` 对外只剩 `ensureRow(AiNotebookSource)` /
-`ensureRow(UserKnowledgePage)` 两个重载，收游离 `userId` 的那个签名转 private
-（实测：从类外传游离 userId 编译失败）。已有行的换归属由 `existing.getUserId()`
-那道检查覆盖；**新建行带非空错值今天没有任何东西拦**，靠的是签名让它写不出来。
+**先更正一处记错的前提。**此前这里写的是「双条件回读命中 0 行 → UNUSABLE → SKIPPED →
+低于门禁 → 代次照常 READY」。查过代码，那条链**走不通**：两个 provider 命中 0 行时
+返回的是 `gone(...)`，不是 `unusable(...)`——
 
-**要真正关死，得在回读侧动**：`UnitContentProvider` 现在按 `(ref_id, user_id)`
-双条件查，查不到就是 UNUSABLE → SKIPPED。把「归属不匹配」从 UNUSABLE 里分出来单独报，
-那条链才在它最窄的地方断掉 —— 那是回读侧两个 provider 的改动，不在 1c 范围内。
+```
+WikiPageContentProvider.java:38       UnitContent.gone("PAGE_NOT_FOUND_OR_NOT_OWNED")
+NotebookSourceContentProvider.java:42 UnitContent.gone("SOURCE_NOT_FOUND_OR_NOT_OWNED")
+```
+
+真实形态**比记错的那条更该修**：
+
+```
+非空但写错的 user_id
+  → 双条件回读命中 0 行
+  → GONE → 转 RETIRED
+  → 切分边界被删
+  → 调用方据 retiredUnitIds 入队 DELETE_UNIT
+  → 向量被清理
+```
+
+**不是静默漏索引，是把一份健康数据销毁掉**，而每一步单看都是正确行为。
+
+### 要拆的是 GONE，不是 UNUSABLE
+
+那两个 reason 字符串自己承认了合并：`..._NOT_FOUND_OR_NOT_OWNED`。
+「不存在」与「存在但不属于我」是两件事 —— 前者该退役，后者是注册缺陷的信号，
+实体还在，退役它就是拿删除去响应一个 bug。
+
+**修法：归属不匹配从 GONE 里分出来，成第四种结局 —— 既不退役也不跳过，直接抛，
+让作业转 DEAD 并告警。**`UnitContent.Outcome` 加一个常量，两个 provider 各分一次。
+（枚举加常量后，`RagUnitRegistry.refresh` 的 switch 是**语句**不是表达式，
+编译器不会逼你处理它 —— 见 Stage E-1a 的教训，那里要一并改成表达式。）
+
+按原措辞去做（从 UNUSABLE 里分）改完的不是这个缺陷：判据方向反了，后果也反了。
+
+### 1c 已经做了的那一半
+
+`ensureRow` 对外只剩 `ensureRow(AiNotebookSource)` / `ensureRow(UserKnowledgePage)`
+两个重载，收游离 `userId` 的签名转 private（实测：从类外传游离 userId 编译失败）。
+已有行的换归属由 `existing.getUserId()` 覆盖；**新建行带非空错值今天没有东西拦**，
+靠的是签名让它写不出来 —— 收窄，不是消除。
 
 ## 检索侧开工前要先定的一件事：`ContextBudgeter` golden master 的退休
 

@@ -22,7 +22,20 @@ public record UnitContent(Outcome outcome, String title, String canonicalText,
     public enum Outcome {
         /** 读到了内容。 */
         OK,
-        /** 单元的原始行已不存在、已软删、或不属于该用户 —— 应当退役并删向量。 */
+        /**
+         * 单元的原始行已不存在、已软删、或<b>不属于该用户</b> —— 应当退役并删向量。
+         *
+         * <p><b>最后那一条是一处已知的合并，暂未拆开。</b>「行没了」与「行还在但归属对不上」
+         * 是两件事：前者退役是对的，后者是注册侧写错了 user_id 的信号，
+         * 而实体本身完好 —— 退役它等于拿删除去响应一个注册缺陷，
+         * 一份健康数据就此销毁（切分边界删除 → DELETE_UNIT → 向量清理），
+         * 且每一步单看都是正确行为。
+         *
+         * <p>两个 provider 的 reason 字符串自己承认了这次合并：
+         * {@code PAGE_NOT_FOUND_OR_NOT_OWNED} / {@code SOURCE_NOT_FOUND_OR_NOT_OWNED}。
+         * 拆法记在 {@code docs/rag-1b2-stage-e-handoff.md}：归属不匹配单独成第四种结局，
+         * 既不退役也不跳过，直接抛让作业转 DEAD 并告警。
+         */
         GONE,
         /** 原始行还在，但这次拿不到可索引的正文（解密失败、无父块、正文为空）—— 应当跳过并保留。 */
         UNUSABLE

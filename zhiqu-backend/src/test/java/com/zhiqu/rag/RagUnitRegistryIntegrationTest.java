@@ -519,16 +519,21 @@ class RagUnitRegistryIntegrationTest {
 //
 //   I1  从本类之外传一个游离的 userId 给 ensureRow   COMPILE-FAIL ✓（实测）
 //
-// 原注释声称这道检查关掉了「三步静默链」。**它没有。**
+// 原注释声称这道检查关掉了「三步静默链」。**它没有 —— 而且那条链本身就记错了。**
 // rag_indexable_unit.user_id 是 BIGINT NOT NULL（V29:19），null 走到 INSERT 会直接
-// 撞约束 —— 响亮，不静默。能走上那条链的恰恰是**非空但写错**的 userId：
-// 双条件回读命中 0 行 → SKIPPED → 低于门禁 → 代次照常 READY。
-// 也就是说闸门在，但它和它声称防的性质定义域不同。
+// 撞约束 —— 响亮，不静默。危险输入是**非空但写错**的 userId。
+//
+// 而它走的不是 SKIPPED：两个 provider 双条件命中 0 行时返回 gone(...) 不是 unusable(...)
+// （WikiPageContentProvider:38、NotebookSourceContentProvider:42），
+// 所以形态是 GONE → RETIRED → 删切分边界 → DELETE_UNIT → 向量清理。
+// **不是静默漏索引，是把一份健康数据销毁掉**，而每一步单看都是正确行为。
+// 也就是说闸门在，但它和它声称防的性质定义域不同，且后果比记错的那条更重。
 //
 // 修法选的是消除而不是改注释：ensureRow 对外只剩两个收实体的重载，
 // 游离 userId 那个签名转 private。I1 是对这条**工具链声称**的必需扰动
 // ——「凡是『某件事现在不可能发生』的声称，如果依据是编译器，必须有一次尝试做那件事的扰动」。
 //
 // **但要说准：这是收窄，不是消除。**同一个文件里的人仍能直接调那个 private 方法，
-// Java 在单个类内部没有更强的可见性。真要关死那条链，得在回读侧把「归属不匹配」
-// 从 UNUSABLE 里分出来单独报 —— 记在 docs/rag-1b2-stage-e-handoff.md，不在本轮。
+// Java 在单个类内部没有更强的可见性。真要关死，得把「归属不匹配」从 **GONE** 里
+// 分出来（不是 UNUSABLE）成第四种结局：实体还在，退役它等于拿删除去响应注册缺陷。
+// 记在 docs/rag-1b2-stage-e-handoff.md，不在本轮。

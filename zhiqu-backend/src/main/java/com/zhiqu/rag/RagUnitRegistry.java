@@ -350,15 +350,19 @@ public class RagUnitRegistry {
      * <p><b>{@code requireOwner} 的空值分支挡的到底是什么，要说准。</b>
      * {@code rag_indexable_unit.user_id} 是 {@code BIGINT NOT NULL}（V29:19），
      * 所以 null 走到 INSERT 会直接撞约束 —— 响亮，不静默。
-     * 这道检查的价值是把一条 SQL 约束错误换成一句说得清的消息，<b>不是</b>关掉那条三步静默链。
+     * 这道检查的价值是把一条 SQL 约束错误换成一句说得清的消息。
      *
-     * <p>能走上那条链的恰恰是<b>非空但写错</b>的 userId（别人的 id、过期的 id）：
-     * 双条件回读命中 0 行 → 记 SKIPPED → 低于跳过率门禁 → 代次照常 READY。
-     * null 走不到那里（撞 NOT NULL 就停了），而现在的检查只挡 null。
-     * 已有行的换归属由下面 {@code existing.getUserId()} 那道检查覆盖；
+     * <p>真正危险的输入是<b>非空但写错</b>的 userId（别人的 id、过期的 id）。
+     * <b>它的后果不是漏索引，是销毁数据：</b>双条件回读命中 0 行 →
+     * {@code UnitContent.gone("..._NOT_FOUND_OR_NOT_OWNED")} → 转 RETIRED →
+     * 切分边界被删 → 调用方据 {@code retiredUnitIds} 入队 DELETE_UNIT → 向量被清理。
+     * 一份健康的数据就这么没了，而每一步单看都是正确行为。
+     *
+     * <p>已有行的换归属由下面 {@code existing.getUserId()} 那道检查覆盖；
      * <b>新建行带一个非空错值，今天没有任何东西拦</b> —— 靠的是两个实体重载让它写不出来。
-     * 真要关死，得在回读侧把「归属不匹配」从 UNUSABLE 里分出来单独报，那是另一件事，
-     * 记在 {@code docs/rag-1b2-stage-e-handoff.md}。
+     * 真要关死，得在回读侧把「归属不匹配」从 <b>GONE</b> 里分出来（不是从 UNUSABLE），
+     * 成第四种结局：实体还在，退役它等于拿删除去响应一个注册缺陷。
+     * 详见 {@code docs/rag-1b2-stage-e-handoff.md}。
      */
     private RagIndexableUnit ensureRow(String namespace, Long refId, Long userId,
                                        String scopeKind, Long scopeId, String title, String sourceType) {
@@ -417,14 +421,19 @@ public class RagUnitRegistry {
     /**
      * 归属必须在<b>写入侧</b>断言，不能等回读侧发现空。
      *
-     * <p>回读侧发现的形态是三步静默链：user_id 为空 → {@code ref_id + user_id} 双条件命中 0 行
-     * → 记 SKIPPED → 跳过率低于门禁 → 代次照常 READY。这批内容检索不到，全程没有任何报错。
+     * <p><b>回读侧发现的形态曾被记成「三步静默链」（→ SKIPPED → 低于门禁 → 代次照常 READY），
+     * 那是错的，实测走不通。</b>两个 provider 在双条件命中 0 行时返回的是
+     * {@code gone(...)} 而不是 {@code unusable(...)}
+     * （{@code WikiPageContentProvider:38}、{@code NotebookSourceContentProvider:42}），
+     * 所以归属写错的单元走的是 <b>GONE → RETIRED</b>：切分边界被删、向量随后被 DELETE_UNIT 清理。
      *
-     * <p><b>但注意：走上那条链的是「非空但写错」的 userId，不是 null。</b>
-     * null 会先撞 {@code rag_indexable_unit.user_id} 的 NOT NULL 约束停下来 —— 响亮，不静默。
-     * 本方法挡 null 的价值因此是<b>错误消息更清楚</b>，别让它替一条它没做到的保证背书。
-     * 非空错值那一半由两个收实体的 {@code ensureRow} 重载在源头挡住（写不出来），
-     * 而不是在这里检查出来。
+     * <p>纠正后的后果<b>比原措辞更该修</b>：不是「静默漏索引」，是<b>把一份健康数据销毁掉</b>。
+     * 按原措辞去做（从 UNUSABLE 里分出归属不匹配）改的不是这个缺陷。
+     *
+     * <p>null 那一半则先撞 {@code rag_indexable_unit.user_id} 的 NOT NULL 约束停下来 ——
+     * 响亮，不静默。本方法挡 null 的价值因此是<b>错误消息更清楚</b>，
+     * 别让它替一条它没做到的保证背书。非空错值那一半由两个收实体的
+     * {@code ensureRow} 重载在源头挡住（写不出来），而不是在这里检查出来。
      *
      * <p>最可能写空的路径是从 {@code SecurityContext} 取 userId：注册发生在异步 worker 线程里，
      * 而 SecurityContext 不向异步线程传播（CLAUDE.md 已就 AI 工具执行器记过同一条）。
