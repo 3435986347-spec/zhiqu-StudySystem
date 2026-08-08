@@ -43,7 +43,14 @@ public class RagRetriever {
      */
     public RetrievalResult retrieve(String requestId, Long userId, Long notebookId,
                                     ScopeSelection scope, String question) {
-        if (!client.configured()) return RetrievalResult.unavailable("DISABLED_OR_TOKEN_MISSING");
+        // 两种不可用分开处理，而且**行为不同**，不只是文案不同：
+        // DISABLED 是设计内的正常状态（仓库默认就是 false），记进 fallback 指标只会把它刷满、
+        // 淹掉真正的回落原因；TOKEN_MISSING 是「开着却不工作」的配置错误，必须留下痕迹。
+        String unavailable = client.unavailableReason();
+        if (unavailable != null) {
+            if (!RagClient.REASON_DISABLED.equals(unavailable)) metrics.recordFallback(unavailable);
+            return RetrievalResult.unavailable(unavailable);
+        }
         List<AiNotebookSource> sources = scope.notebookSources();
         RagIndexGeneration generation = generationMapper.selectOne(new LambdaQueryWrapper<RagIndexGeneration>()
                 .eq(RagIndexGeneration::getStatus, "ACTIVE").orderByDesc(RagIndexGeneration::getId).last("LIMIT 1"));

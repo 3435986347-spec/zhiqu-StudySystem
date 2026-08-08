@@ -32,14 +32,40 @@ public class RagClient {
                 .build();
     }
 
+    /** 未启用 —— 设计内的正常状态，回落关键词检索就是对的。 */
+    public static final String REASON_DISABLED = "DISABLED";
+    /** 已启用但没配 {@code app.rag.service-token} —— 配置错误，系统开着却不工作。 */
+    public static final String REASON_TOKEN_MISSING = "TOKEN_MISSING";
+
+    /**
+     * sidecar 为什么不可用；可用时返回 {@code null}。
+     *
+     * <p><b>此前这两种情况共用一个字符串 {@code DISABLED_OR_TOKEN_MISSING}。</b>
+     * 名字里的 {@code OR} 自己承认了合并，而两边是完全不同的事：一个是设计内的正常状态，
+     * 一个是「开着却不工作」的配置错误。
+     *
+     * <p>要紧的是这个字符串经 {@link #meta()} 的 {@code ready/reason} 进了运维可见的健康信息，
+     * 而 cutover runbook 最后一步恰好是把 {@code app.rag.enabled} 翻成 true ——
+     * 那一步是整条链路唯一一次全量检验。翻完开关却忘了配 token 的人，看到的提示是
+     * 「要么没启用要么没 token」，和「你压根没开」长得一样，于是他会回去检查刚翻过的那个开关，
+     * 而问题在另一处。<b>诊断信号在最需要它的那一步是合并的。</b>
+     */
+    public String unavailableReason() {
+        if (!properties.isEnabled()) return REASON_DISABLED;
+        if (properties.getServiceToken() == null || properties.getServiceToken().isBlank()) {
+            return REASON_TOKEN_MISSING;
+        }
+        return null;
+    }
+
     public boolean configured() {
-        return properties.isEnabled() && properties.getServiceToken() != null
-                && !properties.getServiceToken().isBlank();
+        return unavailableReason() == null;
     }
 
     public Map<String, Object> meta() {
-        if (!configured()) {
-            return Map.of("ready", false, "reason", "DISABLED_OR_TOKEN_MISSING");
+        String unavailable = unavailableReason();
+        if (unavailable != null) {
+            return Map.of("ready", false, "reason", unavailable);
         }
         try {
             Map<String, Object> body = get("/v1/meta");

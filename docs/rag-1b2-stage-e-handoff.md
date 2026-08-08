@@ -319,3 +319,41 @@ Wiki 单元的候选回填是本轮唯一的新东西：正文加密、不落库
 `UnitContentResolver` 现取现解密，再按 **code point** 切片
 （`offsetByCodePoints` / `RagUnitChunker.sliceByCodePoints`，**不是 `substring`**）。
 1b 在索引侧已经踩过一次，检索侧是同一个陷阱的第二个入口。
+
+## 「名字里带 OR」的识别点：已扫，仓库里第二个已修
+
+`..._NOT_FOUND_OR_NOT_OWNED` 暴露出一个可复用的识别点 ——
+**标识符里出现 `OR`，而两边本该走不同分支**。扫下来第二个正好在 E-4 会踩的位置：
+
+`DISABLED_OR_TOKEN_MISSING`（旧 `RagClient:42` / `RagRetriever:46`）。
+DISABLED 是设计内的正常状态（仓库默认），TOKEN_MISSING 是「开着却不工作」的配置错误。
+这个字符串经 `RagClient.meta()` 的 `ready/reason` 进运维可见的健康信息，
+而 **E-4 就是把 `app.rag.enabled` 翻成 true** —— 翻完开关却忘配 token 的人，
+看到的提示与「你压根没开」一模一样，于是回头去查刚翻过的那个开关。
+诊断信号在最需要它的那一步是合并的。已拆成 `DISABLED` / `TOKEN_MISSING`，
+且**行为不同**（TOKEN_MISSING 记 fallback 指标，DISABLED 不记）——
+只改文案的话随时能被合回去而没有东西会红。
+
+## 拆 `UnitContent.Outcome` 的工作量上界（已扫，清单完整）
+
+加第四个常量后要跟着改的 switch **只有一处**：
+
+| 位置 | 形态 | 处理 |
+|---|---|---|
+| `RagUnitRegistry.java:460` `switch (content.outcome())` | **语句** | 要改成表达式，否则编译器不拦漏分支 |
+| `RagIndexWorker.java:137` `Runnable action = switch (...)` | 表达式 | 已由 E-1a 改过 |
+| `RagIndexWorker.java:198` `return switch (...)` | 表达式 | ✓ |
+| `AiServiceImpl` 三处 | 一处对 String（穷尽性不适用），两处已是表达式 | ✓ |
+
+## E-4 完成那一刻要做的一件事：建立新契约下的可回滚基线
+
+跑过的那次回滚演练验的是 1B-1 → 1B-2 之间的回滚，而它第 3 步（对账追上）走的代码
+此后已被重写 —— **那份演练结果对当前代码是过期的**。
+
+这不是「要能回到 1B-1」的问题（1B-2 的收敛本身不可逆）。真正的问题是
+**Phase 2 开工时需要一个新契约下的已知可回滚基线，而现在没有**。
+
+建立它的最佳时刻正是 E-4 刚完成那一刻：系统可工作、契约稳定、演练脚本与容器都已调通
+（六次红全在脚本自身上的那批坑都修过了，逐条在 `deploy/drill/README.md`）。
+那时重跑一次四步、打一个新 tag，Phase 2 就有了自己的可逆点。
+错过这个窗口，等 Phase 2 动起来再补，就要在一棵已经变动的树上重建基线。
