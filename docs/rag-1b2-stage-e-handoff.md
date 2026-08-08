@@ -254,3 +254,36 @@ MySQL 接受往 AUTO_INCREMENT 列写明确值，只会把计数器顶上去，�
   直接删入口会连带删掉活代码的覆盖，而作业词表那套测试看不到这种形状
 - 分支 HEAD 仍是**已知不可工作状态**：检索侧未换方言。回滚锚点 tag `1b-1-rollback-verified`
 - `app.rag.enabled` 翻 true 依然放在最后（理由见上文）
+
+## 未关闭：归属的「非空错值」路径
+
+`requireOwner` 只挡 null，而 null 本来就撞 `rag_indexable_unit.user_id` 的 NOT NULL
+（V29:19）—— 响亮，不静默。**能走上三步静默链的是非空但写错的 userId**：
+双条件回读命中 0 行 → SKIPPED → 低于跳过率门禁 → 代次照常 READY。
+
+1c 做的是收窄：`ensureRow` 对外只剩 `ensureRow(AiNotebookSource)` /
+`ensureRow(UserKnowledgePage)` 两个重载，收游离 `userId` 的那个签名转 private
+（实测：从类外传游离 userId 编译失败）。已有行的换归属由 `existing.getUserId()`
+那道检查覆盖；**新建行带非空错值今天没有任何东西拦**，靠的是签名让它写不出来。
+
+**要真正关死，得在回读侧动**：`UnitContentProvider` 现在按 `(ref_id, user_id)`
+双条件查，查不到就是 UNUSABLE → SKIPPED。把「归属不匹配」从 UNUSABLE 里分出来单独报，
+那条链才在它最窄的地方断掉 —— 那是回读侧两个 provider 的改动，不在 1c 范围内。
+
+## 检索侧开工前要先定的一件事：`ContextBudgeter` golden master 的退休
+
+`sourceCount` 放宽会**按设计**改变选取行为（每源配额的触发点从「只数资料」变成
+「数所有命名空间」），而那条 golden master 是 1B-1 的验收标准（一行未改且仍绿）。
+也就是说它在放宽那一刻失效。
+
+**流程定死：先给新行为写一份新的 golden master（多命名空间下的期望候选集），
+两份并存一次，再退休旧的。** 不这么做的话两种错都会发生 ——
+守太久（放宽被自己的验收标准挡住），或者悄悄放弃（某天改断言让它变绿，
+而那正是这条标准当初要防的动作）。替换要是一次有记录的动作，不是一次断言修改。
+
+## 检索侧的已知坑
+
+Wiki 单元的候选回填是本轮唯一的新东西：正文加密、不落库，要经
+`UnitContentResolver` 现取现解密，再按 **code point** 切片
+（`offsetByCodePoints` / `RagUnitChunker.sliceByCodePoints`，**不是 `substring`**）。
+1b 在索引侧已经踩过一次，检索侧是同一个陷阱的第二个入口。

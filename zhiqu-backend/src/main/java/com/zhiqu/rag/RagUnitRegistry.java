@@ -143,16 +143,13 @@ public class RagUnitRegistry {
             // 只登记 READY：解析中的资料没有可索引正文，登记进来只会立刻变成一条 SKIPPED，
             // 白白推高跳过率。解析完成时业务钩子会再入队一次。
             if (source == null || !"READY".equals(source.getStatus())) return null;
-            return ensureRow(RagNamespace.NOTEBOOK_SOURCE, source.getId(), source.getUserId(),
-                    RagNamespace.SCOPE_NOTEBOOK, source.getNotebookId(),
-                    source.getTitle(), source.getSourceType());
+            return ensureRow(source);
         }
         if (RagNamespace.WIKI_PAGE.equals(namespace)) {
             // 软删页在这里就是 null（@TableLogic）——正是「源实体没了」。
             UserKnowledgePage page = pageMapper.selectById(refId);
             if (page == null || isExcludedPage(page)) return null;
-            return ensureRow(RagNamespace.WIKI_PAGE, page.getId(), page.getUserId(),
-                    RagNamespace.SCOPE_WIKI_TREE, null, page.getTitle(), RagNamespace.WIKI_PAGE);
+            return ensureRow(page);
         }
         // CONVERSATION_TURN 留到 Phase 3。**不要在这里加一个兜底分支**：
         // 兜底会让「命名空间拼错了」和「这个命名空间还没接上」表现成同一件事（静默让位）。
@@ -268,8 +265,7 @@ public class RagUnitRegistry {
                         .last("LIMIT " + RECONCILE_PAGE_SIZE)),
                 AiNotebookSource::getId,
                 source -> {
-                    RagIndexableUnit unit = ensureRow(RagNamespace.NOTEBOOK_SOURCE, source.getId(), source.getUserId(),
-                            RagNamespace.SCOPE_NOTEBOOK, source.getNotebookId(), source.getTitle(), source.getSourceType());
+                    RagIndexableUnit unit = ensureRow(source);
                     touched.add(unit.getId());
                     refresh(unit, report);
                 });
@@ -296,8 +292,7 @@ public class RagUnitRegistry {
                         }
                         return;
                     }
-                    RagIndexableUnit unit = ensureRow(RagNamespace.WIKI_PAGE, page.getId(), page.getUserId(),
-                            RagNamespace.SCOPE_WIKI_TREE, null, page.getTitle(), RagNamespace.WIKI_PAGE);
+                    RagIndexableUnit unit = ensureRow(page);
                     touched.add(unit.getId());
                     refresh(unit, report);
                 });
@@ -327,14 +322,45 @@ public class RagUnitRegistry {
     }
 
     /**
+     * 登记一份 Notebook 资料。<b>归属只能是它自己的 {@code user_id}。</b>
+     *
+     * <p>入口收实体而不是一串散参数，是为了让「传一个游离的 userId」写不出来 ——
+     * 见 {@link #ensureRow(String, Long, Long, String, Long, String, String)} 的说明。
+     */
+    RagIndexableUnit ensureRow(AiNotebookSource source) {
+        return ensureRow(RagNamespace.NOTEBOOK_SOURCE, source.getId(), source.getUserId(),
+                RagNamespace.SCOPE_NOTEBOOK, source.getNotebookId(),
+                source.getTitle(), source.getSourceType());
+    }
+
+    /** 登记一份 Wiki 页。归属同上，只能取自页本身。 */
+    RagIndexableUnit ensureRow(UserKnowledgePage page) {
+        return ensureRow(RagNamespace.WIKI_PAGE, page.getId(), page.getUserId(),
+                RagNamespace.SCOPE_WIKI_TREE, null, page.getTitle(), RagNamespace.WIKI_PAGE);
+    }
+
+    /**
      * 建行或更新元数据。<b>归属校验在这里，不在回读侧。</b>
      *
-     * <p>包内可见而不是 private：{@code requireOwner} 的空归属分支今天没有任何 DB 路径能触发
-     * （两张源表的 {@code user_id} 都是 NOT NULL），它防的是将来从 {@code SecurityContext}
-     * 取归属的写法。构造不出真实触发路径的闸门，只能在这一层直接钉住 ——
-     * 见 {@code RagUnitRegistryIntegrationTest.注册时归属为空必须当场抛出}。
+     * <p><b>private，且是本类唯一收游离 {@code userId} 的地方。</b>对外只有上面两个
+     * 收实体的重载 —— 于是「从 {@code SecurityContext} 取归属」这种写法在本类之外
+     * 根本表达不出来。这是收窄，不是消除：同一个文件里的人仍然能直接调它，
+     * Java 在单个类内部没有更强的可见性可用。<b>别把它写成「已经不可能了」。</b>
+     *
+     * <p><b>{@code requireOwner} 的空值分支挡的到底是什么，要说准。</b>
+     * {@code rag_indexable_unit.user_id} 是 {@code BIGINT NOT NULL}（V29:19），
+     * 所以 null 走到 INSERT 会直接撞约束 —— 响亮，不静默。
+     * 这道检查的价值是把一条 SQL 约束错误换成一句说得清的消息，<b>不是</b>关掉那条三步静默链。
+     *
+     * <p>能走上那条链的恰恰是<b>非空但写错</b>的 userId（别人的 id、过期的 id）：
+     * 双条件回读命中 0 行 → 记 SKIPPED → 低于跳过率门禁 → 代次照常 READY。
+     * null 走不到那里（撞 NOT NULL 就停了），而现在的检查只挡 null。
+     * 已有行的换归属由下面 {@code existing.getUserId()} 那道检查覆盖；
+     * <b>新建行带一个非空错值，今天没有任何东西拦</b> —— 靠的是两个实体重载让它写不出来。
+     * 真要关死，得在回读侧把「归属不匹配」从 UNUSABLE 里分出来单独报，那是另一件事，
+     * 记在 {@code docs/rag-1b2-stage-e-handoff.md}。
      */
-    RagIndexableUnit ensureRow(String namespace, Long refId, Long userId,
+    private RagIndexableUnit ensureRow(String namespace, Long refId, Long userId,
                                        String scopeKind, Long scopeId, String title, String sourceType) {
         requireOwner(namespace, refId, userId);
 
@@ -393,6 +419,12 @@ public class RagUnitRegistry {
      *
      * <p>回读侧发现的形态是三步静默链：user_id 为空 → {@code ref_id + user_id} 双条件命中 0 行
      * → 记 SKIPPED → 跳过率低于门禁 → 代次照常 READY。这批内容检索不到，全程没有任何报错。
+     *
+     * <p><b>但注意：走上那条链的是「非空但写错」的 userId，不是 null。</b>
+     * null 会先撞 {@code rag_indexable_unit.user_id} 的 NOT NULL 约束停下来 —— 响亮，不静默。
+     * 本方法挡 null 的价值因此是<b>错误消息更清楚</b>，别让它替一条它没做到的保证背书。
+     * 非空错值那一半由两个收实体的 {@code ensureRow} 重载在源头挡住（写不出来），
+     * 而不是在这里检查出来。
      *
      * <p>最可能写空的路径是从 {@code SecurityContext} 取 userId：注册发生在异步 worker 线程里，
      * 而 SecurityContext 不向异步线程传播（CLAUDE.md 已就 AI 工具执行器记过同一条）。

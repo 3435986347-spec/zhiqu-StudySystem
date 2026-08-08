@@ -237,9 +237,13 @@ class RagUnitRegistryIntegrationTest {
      */
     @Test
     void 注册时归属为空必须当场抛出() {
-        assertThrows(IllegalStateException.class,
-                () -> registry.ensureRow(RagNamespace.WIKI_PAGE, 9999L, null,
-                        RagNamespace.SCOPE_WIKI_TREE, null, "没有归属的页", RagNamespace.WIKI_PAGE),
+        com.zhiqu.entity.UserKnowledgePage detached = new com.zhiqu.entity.UserKnowledgePage();
+        detached.setId(9999L);
+        detached.setUserId(null);
+        detached.setTitle("没有归属的页");
+        detached.setPageType("NOTE");
+
+        assertThrows(IllegalStateException.class, () -> registry.ensureRow(detached),
                 "归属必须在写入侧断言。放行的话会走成三步静默链："
                         + "双条件回读命中 0 行 → 记 SKIPPED → 低于门禁 → 代次照常 READY");
     }
@@ -510,3 +514,21 @@ class RagUnitRegistryIntegrationTest {
 // 迁移后的触达路径：H3 直接调包内可见的 ensureRow（两张源表的 user_id 都是 NOT NULL，
 // 构造不出真实 DB 触发路径，闸门防的是将来从 SecurityContext 取归属的写法）；
 // H4 改库里的行再跑 reconcileAll，比原来构造一个改了 userId 的实体更贴近真实形态。
+//
+// ── 归属闸门的定义域修正（2026-08-08）────────────────────────────────────
+//
+//   I1  从本类之外传一个游离的 userId 给 ensureRow   COMPILE-FAIL ✓（实测）
+//
+// 原注释声称这道检查关掉了「三步静默链」。**它没有。**
+// rag_indexable_unit.user_id 是 BIGINT NOT NULL（V29:19），null 走到 INSERT 会直接
+// 撞约束 —— 响亮，不静默。能走上那条链的恰恰是**非空但写错**的 userId：
+// 双条件回读命中 0 行 → SKIPPED → 低于门禁 → 代次照常 READY。
+// 也就是说闸门在，但它和它声称防的性质定义域不同。
+//
+// 修法选的是消除而不是改注释：ensureRow 对外只剩两个收实体的重载，
+// 游离 userId 那个签名转 private。I1 是对这条**工具链声称**的必需扰动
+// ——「凡是『某件事现在不可能发生』的声称，如果依据是编译器，必须有一次尝试做那件事的扰动」。
+//
+// **但要说准：这是收窄，不是消除。**同一个文件里的人仍能直接调那个 private 方法，
+// Java 在单个类内部没有更强的可见性。真要关死那条链，得在回读侧把「归属不匹配」
+// 从 UNUSABLE 里分出来单独报 —— 记在 docs/rag-1b2-stage-e-handoff.md，不在本轮。
