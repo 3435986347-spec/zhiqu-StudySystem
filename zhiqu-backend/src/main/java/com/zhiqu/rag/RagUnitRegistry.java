@@ -82,31 +82,6 @@ public class RagUnitRegistry {
         this.transactionTemplate = transactionTemplate;
     }
 
-    // ── 单点注册（业务钩子调用）──────────────────────────────────────────
-
-    public RagIndexableUnit upsertNotebookUnit(AiNotebookSource source) {
-        RagIndexableUnit unit = ensureRow(RagNamespace.NOTEBOOK_SOURCE, source.getId(), source.getUserId(),
-                RagNamespace.SCOPE_NOTEBOOK, source.getNotebookId(), source.getTitle(), source.getSourceType());
-        refresh(unit, new ReconcileReport());
-        return unit;
-    }
-
-    /**
-     * 注册或刷新一个 Wiki 页单元。系统页（INDEX/LOG/SCHEMA/GUIDE）不入索引 ——
-     * 若它此前登记过（例如用户把普通页改成了 GUIDE），这里顺手把它退役掉，
-     * 否则那份向量会一直留在库里被检索到。
-     */
-    public RagIndexableUnit upsertWikiUnit(UserKnowledgePage page) {
-        if (isExcludedPage(page)) {
-            retireUnit(RagNamespace.WIKI_PAGE, page.getId());
-            return null;
-        }
-        RagIndexableUnit unit = ensureRow(RagNamespace.WIKI_PAGE, page.getId(), page.getUserId(),
-                RagNamespace.SCOPE_WIKI_TREE, null, page.getTitle(), RagNamespace.WIKI_PAGE);
-        refresh(unit, new ReconcileReport());
-        return unit;
-    }
-
     /**
      * worker 执行 {@code UPSERT_UNIT} 时的入口：<b>以投影行为准，不以作业里的快照为准。</b>
      *
@@ -120,9 +95,9 @@ public class RagUnitRegistry {
      * @return 是否真的刷新了；false 表示单元已退役/已跳过，本次 upsert 让位
      */
     public boolean refreshUnitIfLive(String namespace, Long refId) {
-        RagIndexableUnit unit = findUnit(namespace, refId);
+        RagIndexableUnit unit = ensureRegistered(namespace, refId);
         if (unit == null) {
-            log.debug("投影行已不存在，UPSERT 让位 {}#{}", namespace, refId);
+            log.debug("源实体已不存在或不入索引，UPSERT 让位 {}#{}", namespace, refId);
             return false;
         }
         if (!RagNamespace.STATUS_READY.equals(unit.getStatus())) {
@@ -131,6 +106,58 @@ public class RagUnitRegistry {
         }
         refresh(unit, new ReconcileReport());
         return true;
+    }
+
+    /**
+     * 取投影行；<b>不存在时回源表补登记一次</b>。
+     *
+     * <p>补登记不是便利功能，是修一个缺口。此前这里直接 {@code findUnit(...) == null → 让位}，
+     * 而那个判据的定义域比它声称报告的性质宽：{@code null} 同时覆盖两件事 ——
+     *
+     * <ul>
+     *   <li><b>行被删了</b>（删除赢了这次竞态）—— 让位是对的；</li>
+     *   <li><b>行从没被建过</b> —— 让位是错的，那是「还没登记」，不是「已被删除」。</li>
+     * </ul>
+     *
+     * <p>第二种此前是常态而非边角：投影行只由 {@code RECONCILE_UNITS} 批量枚举出来，
+     * 单点注册的两个公开入口（{@code upsertNotebookUnit} / {@code upsertWikiUnit}）
+     * <b>一个生产调用方都没有</b>。于是新建一个 Wiki 页 → 写路径入队 {@code UPSERT_UNIT} →
+     * worker 查不到投影行 → 静默让位，这页要等到下次有人手动触发全量对账才进得了索引。
+     * 没有报错，作业还转 COMPLETED。
+     *
+     * <p>本方法落地后那两个入口的职能被完全吸收（钩子只入队、worker 走这里），
+     * 于是它们随 1c 一并删除 —— 只剩测试在调的公开方法与
+     * {@code DELETE_INDEX_VERSION} 是同一种形状。
+     *
+     * <p>补登记后 {@code ensureRow} 的 {@link DuplicateKeyException} 分支就从「今天走不到」
+     * 变成真会走到 —— 业务钩子与对账作业同时碰同一页正是它预告的场景。
+     *
+     * <p>回源查不到（或查到的是不入索引的系统页）才是真的让位：那时源实体确实没了。
+     */
+    private RagIndexableUnit ensureRegistered(String namespace, Long refId) {
+        RagIndexableUnit existing = findUnit(namespace, refId);
+        if (existing != null) return existing;
+
+        if (RagNamespace.NOTEBOOK_SOURCE.equals(namespace)) {
+            AiNotebookSource source = sourceMapper.selectById(refId);
+            // 只登记 READY：解析中的资料没有可索引正文，登记进来只会立刻变成一条 SKIPPED，
+            // 白白推高跳过率。解析完成时业务钩子会再入队一次。
+            if (source == null || !"READY".equals(source.getStatus())) return null;
+            return ensureRow(RagNamespace.NOTEBOOK_SOURCE, source.getId(), source.getUserId(),
+                    RagNamespace.SCOPE_NOTEBOOK, source.getNotebookId(),
+                    source.getTitle(), source.getSourceType());
+        }
+        if (RagNamespace.WIKI_PAGE.equals(namespace)) {
+            // 软删页在这里就是 null（@TableLogic）——正是「源实体没了」。
+            UserKnowledgePage page = pageMapper.selectById(refId);
+            if (page == null || isExcludedPage(page)) return null;
+            return ensureRow(RagNamespace.WIKI_PAGE, page.getId(), page.getUserId(),
+                    RagNamespace.SCOPE_WIKI_TREE, null, page.getTitle(), RagNamespace.WIKI_PAGE);
+        }
+        // CONVERSATION_TURN 留到 Phase 3。**不要在这里加一个兜底分支**：
+        // 兜底会让「命名空间拼错了」和「这个命名空间还没接上」表现成同一件事（静默让位）。
+        log.debug("命名空间 {} 尚未接入补登记，UPSERT 让位 {}#{}", namespace, namespace, refId);
+        return null;
     }
 
     /**
@@ -299,8 +326,15 @@ public class RagUnitRegistry {
         return RagNamespace.isExcludedWikiPage(page.getPageType(), page.getTitle());
     }
 
-    /** 建行或更新元数据。<b>归属校验在这里，不在回读侧。</b> */
-    private RagIndexableUnit ensureRow(String namespace, Long refId, Long userId,
+    /**
+     * 建行或更新元数据。<b>归属校验在这里，不在回读侧。</b>
+     *
+     * <p>包内可见而不是 private：{@code requireOwner} 的空归属分支今天没有任何 DB 路径能触发
+     * （两张源表的 {@code user_id} 都是 NOT NULL），它防的是将来从 {@code SecurityContext}
+     * 取归属的写法。构造不出真实触发路径的闸门，只能在这一层直接钉住 ——
+     * 见 {@code RagUnitRegistryIntegrationTest.注册时归属为空必须当场抛出}。
+     */
+    RagIndexableUnit ensureRow(String namespace, Long refId, Long userId,
                                        String scopeKind, Long scopeId, String title, String sourceType) {
         requireOwner(namespace, refId, userId);
 
@@ -325,8 +359,8 @@ public class RagUnitRegistry {
                 return fresh;
             } catch (DuplicateKeyException concurrent) {
                 // 「查不到就插」是 check-then-act，uk_rag_unit_ns_ref 会把并发的第二个写者顶掉。
-                // 今天这条路走不到（upsertWikiUnit 还没有生产调用方），但 Wiki 钩子一接上就活了：
-                // 业务钩子与 RECONCILE_UNITS 作业同时碰同一页时，用户的一次保存会直接 500。
+                // 1c 起这条路是活的：worker 的补登记（ensureRegistered）与 RECONCILE_UNITS
+                // 作业可以同时碰同一页。吞掉撞键改走更新分支，否则其中一方会直接失败。
                 // 沿用 RagIndexJobService.enqueue 的做法——把撞键当成「别人已经建好了」，重查后走更新分支。
                 log.debug("可索引单元已被并发创建，改走更新分支 {}#{}", namespace, refId);
                 existing = findUnit(namespace, refId);
@@ -501,7 +535,8 @@ public class RagUnitRegistry {
         unit.setCanonicalHash(null);
     }
 
-    private RagIndexableUnit findUnit(String namespace, Long refId) {
+    /** 按 {@code (namespace, ref_id)} 定位投影行 —— 跨命名空间寻址的<b>唯一</b>入口。 */
+    public RagIndexableUnit findUnit(String namespace, Long refId) {
         return unitMapper.selectOne(new LambdaQueryWrapper<RagIndexableUnit>()
                 .eq(RagIndexableUnit::getNamespace, namespace)
                 .eq(RagIndexableUnit::getRefId, refId));

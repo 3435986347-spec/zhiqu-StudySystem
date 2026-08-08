@@ -80,7 +80,8 @@ class RagUnitIndexBatchTest {
         when(registry.refreshUnitIfLive(anyString(), any())).thenReturn(true);
         when(registry.loadForIndexing(anyString(), any()))
                 .thenReturn(new RagUnitRegistry.IndexableUnitSnapshot(unit, canonicalText, chunks));
-        when(generationMapper.selectOne(any())).thenReturn(generation);
+        // 作业不带 generationId（增量形态），worker 因此走「所有在建/在用代次」那条分支。
+        when(generationMapper.selectList(any())).thenReturn(List.of(generation));
 
         List<Map<String, Object>> sent = new ArrayList<>();
         when(client.indexSource(any())).thenAnswer(call -> {
@@ -89,7 +90,7 @@ class RagUnitIndexBatchTest {
         });
 
         RagIndexWorker worker = new RagIndexWorker(new RagProperties(), jobService, client,
-                generationMapper, mock(AiNotebookSourceMapper.class), mock(AiSourceChunkMapper.class),
+                generationMapper, mock(AiNotebookSourceMapper.class),
                 mock(RuntimeIssueMapper.class), flags, registry);
         return new Fixture(worker, sent);
     }

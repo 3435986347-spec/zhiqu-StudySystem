@@ -5,6 +5,7 @@ import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.AiNotebookSource;
 import com.zhiqu.entity.RagIndexGeneration;
 import com.zhiqu.entity.RagIndexJob;
+import com.zhiqu.entity.RagIndexableUnit;
 import com.zhiqu.entity.RagSourceIndexState;
 import com.zhiqu.mapper.AiNotebookSourceMapper;
 import com.zhiqu.mapper.RagIndexGenerationMapper;
@@ -164,43 +165,64 @@ public class RagAdminService {
         return generationRow(generationMapper.selectById(generationId));
     }
 
+    /**
+     * 启用门禁。<b>分母来自投影表</b>（V29 点名的三处之一，与代次展开、进度核算同批切换）。
+     *
+     * <p>{@code missing > 0} 之外还有一道<b>空分母闸门</b>，它不是防御性编程：
+     * V29 只建表不填数据，投影行由 {@code RECONCILE_UNITS} 从原始表枚举。
+     * 对账没跑过时投影表是空的，于是 {@code units} 为空 → {@code missing == 0} →
+     * 门禁放行一个一条向量都没有的代次，而每一层都显示成功。
+     * 「分母为 0 时无声放行」是这类覆盖率判据的通用失效形态，方案 §7 已经点过一次。
+     *
+     * <p>闸门刻意<b>只在空分母这条路上</b>回查原始表 —— 那是 V29 要收敛掉的重复查询，
+     * 但放在这里不会重新引入漂移：它不参与覆盖率计算，只回答「投影是真的空，
+     * 还是根本没建过」。主路径仍然只读投影表一张。
+     */
     private void validateCurrentReadyCoverage(RagIndexGeneration generation) {
-        List<AiNotebookSource> sources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
-                .eq(AiNotebookSource::getStatus, "READY")
-                .isNotNull(AiNotebookSource::getContentHash));
-        List<RagSourceIndexState> states = stateMapper.selectList(new LambdaQueryWrapper<RagSourceIndexState>()
-                .eq(RagSourceIndexState::getGenerationId, generation.getId()));
-        Map<Long, RagSourceIndexState> bySource = new HashMap<>();
-        states.forEach(state -> bySource.put(state.getSourceId(), state));
-        long missing = sources.stream().filter(source -> {
-            RagSourceIndexState state = bySource.get(source.getId());
-            return state == null || !"INDEXED".equals(state.getStatus())
-                    || !source.getContentHash().equals(state.getContentHash());
-        }).count();
-        if (missing > 0) {
-            throw new BusinessException("当前仍有 " + missing + " 份 READY 资料未完成该代索引，不能启用");
+        List<RagIndexableUnit> units = jobService.indexableUnits();
+        if (units.isEmpty() && hasIndexableOrigin()) {
+            throw new BusinessException("语料投影表为空但库里存在可索引内容 —— "
+                    + "请先在管理端触发一次「全量对账」，否则启用的会是一个空索引");
         }
-        generation.setExpectedSourceCount(sources.size());
-        generation.setIndexedSourceCount(sources.size());
+        Map<Long, RagSourceIndexState> byUnit = jobService.unitStates(generation.getId());
+        long missing = units.stream()
+                .filter(unit -> !RagIndexJobService.isIndexedIn(byUnit, unit)).count();
+        if (missing > 0) {
+            throw new BusinessException("当前仍有 " + missing + " 个语料单元未完成该代索引，不能启用");
+        }
+        generation.setExpectedSourceCount(units.size());
+        generation.setIndexedSourceCount(units.size());
         generationMapper.updateById(generation);
     }
 
+    /** 空分母闸门的另一半：库里到底有没有该被索引的东西。 */
+    private boolean hasIndexableOrigin() {
+        return sourceMapper.selectCount(new LambdaQueryWrapper<AiNotebookSource>()
+                .eq(AiNotebookSource::getStatus, "READY")) > 0;
+    }
+
+    /**
+     * 启用后把索引状态发布到展示列。
+     *
+     * <p>只处理 {@code NOTEBOOK_SOURCE} 单元：{@code ai_notebook_source.index_status}
+     * 是资料列表那个圆点的回落数据源，Wiki 页没有对应的展示列
+     * （它读投影行的 {@code index_status}，由 worker 记账时写）。
+     */
     private void publishActiveSourceState(RagIndexGeneration generation) {
-        List<RagSourceIndexState> states = stateMapper.selectList(new LambdaQueryWrapper<RagSourceIndexState>()
-                .eq(RagSourceIndexState::getGenerationId, generation.getId())
-                .eq(RagSourceIndexState::getStatus, "INDEXED"));
-        Map<Long, RagSourceIndexState> bySource = new HashMap<>();
-        states.forEach(state -> bySource.put(state.getSourceId(), state));
+        Map<Long, RagSourceIndexState> byUnit = jobService.unitStates(generation.getId());
+        Map<Long, RagSourceIndexState> byRefId = new HashMap<>();
+        for (RagIndexableUnit unit : jobService.indexableUnits()) {
+            if (!RagNamespace.NOTEBOOK_SOURCE.equals(unit.getNamespace())) continue;
+            if (RagIndexJobService.isIndexedIn(byUnit, unit)) byRefId.put(unit.getRefId(), byUnit.get(unit.getId()));
+        }
         List<AiNotebookSource> sources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
                 .eq(AiNotebookSource::getStatus, "READY"));
         for (AiNotebookSource source : sources) {
-            RagSourceIndexState state = bySource.get(source.getId());
-            boolean current = state != null && source.getContentHash() != null
-                    && source.getContentHash().equals(state.getContentHash());
-            source.setIndexStatus(current ? "INDEXED" : "NOT_INDEXED");
-            source.setIndexVersion(current ? generation.getIndexVersion() : null);
+            RagSourceIndexState state = byRefId.get(source.getId());
+            source.setIndexStatus(state != null ? "INDEXED" : "NOT_INDEXED");
+            source.setIndexVersion(state != null ? generation.getIndexVersion() : null);
             source.setIndexError(null);
-            source.setIndexedAt(current ? state.getIndexedAt() : null);
+            source.setIndexedAt(state != null ? state.getIndexedAt() : null);
             sourceMapper.updateById(source);
         }
     }

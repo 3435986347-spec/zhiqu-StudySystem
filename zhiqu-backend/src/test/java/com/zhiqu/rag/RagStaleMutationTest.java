@@ -144,7 +144,7 @@ class RagStaleMutationTest {
         RagUnitRegistry registry = mock(RagUnitRegistry.class);
 
         RagIndexWorker worker = new RagIndexWorker(properties, jobService, client,
-                generationMapper, sourceMapper, chunkMapper, runtimeIssueMapper, runtimeFlags, registry);
+                generationMapper, sourceMapper, runtimeIssueMapper, runtimeFlags, registry);
         return new Fixture(worker, jobService, client);
     }
 

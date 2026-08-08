@@ -171,48 +171,86 @@ HashMap 允许一个 null 键，存量行会全塌成一个条目、互相覆盖
 与「装置坏了当成结论」（容器瞬时故障读成 RED）是镜像的一对：
 这条是「装置打偏了当成结论」。两个方向都要在判定里。
 
-## 1c 的两处前置阻塞（开工前先看，都是实测）
+## 1c 写入侧：已完成（本轮）
 
-### ① `RagSourceIndexState` 实体缺 `unitId` 字段
+六步里的 1–4 全部落地，并且**比原计划大**——原步序漏算了三处，都是实测撞出来的。
 
-V29 已经 `ALTER TABLE rag_source_index_state ADD COLUMN unit_id BIGINT NULL`，
-但 **Java 实体从没加过这个字段**（`entity/RagSourceIndexState.java` 只有 `sourceId`）。
-所以「`bySource` → `byUnit`」不是改两行 `Map` 的键那么简单，链条是：
+| # | 内容 |
+|---|---|
+| 1 | `RagSourceIndexState` 加 `unitId`；mapper 加 `lockByUnitAndGeneration` |
+| 2 | `upsertUnitState` / `currentIndexedUnitState` / `markUnitIndexedWithLease` |
+| 3 | `indexUnit` 累加 sidecar 响应的 `written` 并记账（1b 把响应丢了） |
+| 4 | 代次展开、进度核算、启用门禁**三处**统一读投影表（V29 点名的那三处） |
 
-1. 实体加 `unitId`
-2. `upsertSourceState(...)` 要能填它 —— 它现在的入参是 `AiNotebookSource`，
-   拿不到投影行的 id，签名要改
-3. 才轮到 `RagAdminService:174` 与 `:193` 的两处 `bySource.put(state.getSourceId(), ...)`
+### 原步序漏算的三处
 
-顺序不能反：先改 Map 的键会立刻得到全 null 键（正是要避免的那个塌陷）。
+**① 生产端也得换。**`UPSERT_SOURCE` / `REINDEX_SOURCE` 的载荷会被 Stage D 之后的
+sidecar 以 422 拒绝。留着它们等于留两个「有消费端、生产端已死」的常量 ——
+所以两个枚举常量、`indexSource`、以及整套 LEGACY 索引记账
+（`markIndexed` / `markIndexedLocked` / `markIndexError` / `upsertSourceState` /
+`currentIndexedState` / `lockBySourceAndGeneration`）一并删除。
+`RagOperationCoverageTest` 的下限 9 → 8，改动写在那条用例的注释里。
 
-### ② `indexUnit` 不写 `rag_source_index_state`（1b 留下的缺口）
+**② 「投影行不存在」被当成了「删除赢了竞态」。**`refreshUnitIfLive` 原本
+`findUnit(...) == null → 让位`，而 `null` 同时覆盖「行被删了」与「行从没建过」。
+后者是常态：`upsertNotebookUnit` / `upsertWikiUnit` **零生产调用方**，投影行只由
+`RECONCILE_UNITS` 批量建。于是新建一个 Wiki 页 → 入队 `UPSERT_UNIT` → 查不到投影行 →
+静默让位、作业照转 COMPLETED，要等下次手动对账才进索引。
+现在改为回源表补登记，回源查不到才让位。
 
-`markIndexedWithLease` 只在 legacy 的 `indexSource` 末尾调用
-（`RagIndexWorker:182`）。1b 新加的 `indexUnit` 把向量发出去了，
-**但没有记录任何索引状态**。
+**③ 失败路径把 `job.getSourceId()` 当资料主键。**增量作业复用那一列承载 `ref_id`，
+所以一条 `WIKI_PAGE#7` 的作业失败时会去查「资料 7」并把它标成 ERROR ——
+跨命名空间 id 撞车，正是 V29 引入代理主键要消除的东西。改为按 `(namespace, refId)` 定位。
+已由 `wiki单元的作业失败不会误标同号资料` 钉住。**「id 是自增的所以构造不了」是错的** ——
+MySQL 接受往 AUTO_INCREMENT 列写明确值，只会把计数器顶上去，两条 INSERT 各指定同一个数字即可。
+定位这一步同时提成了 `RagIndexWorker.targetUnitOf`：第一版用例在测试里**复述**了一遍那条判断，
+于是改坏 worker 也不会红 —— 判据测的是自己那行复制品。
 
-后果分两层，第二层才是要紧的：
+### 顺带定死的两条
 
-- 门禁 `validateCurrentReadyCoverage` 数不到它们 → 覆盖率永远够不到 → `activate` 抛异常；
-- 而这**恰好发生在 cutover runbook 第 9 步** —— 方案 §7 早就点过同一个坑
-  （「会在最糟的时刻暴露」），这次是从另一个方向掉进去的：
-  那次担心的是分母暴涨，这次是分子不动。
+- **`indexUnit` 写进哪些代次**：作业带 `generationId` → 只写那一个（重建不得灌进服役中的旧代次）；
+  不带 → 写进当时**所有**在建/在用的代次（否则重建窗口里的一次编辑只落进一个代次）。
+- **`operationId` 必须带 `-g<代次>`**：sidecar 按 `(operationId, batchNo)` 幂等，
+  每代批号都从 0 重来，不带代次时第二个代次的每一批都会被当成重复批跳过**并返回成功**。
 
-修它必须和 ① 一起做：要写的 state 行以 `unit_id` 为键，而那个字段现在还不存在。
-这也正是「1c 与三处收敛必须合并成一步」的具体形态 —— 之前的论证是
-「分开会有 NULL 键窗口」，现在能更具体地说：**分开根本做不出来**，
-因为写入侧与读取侧共用同一个尚不存在的字段。
+### 门禁的空分母闸门
 
-### 1c 的实际步序
+投影表为空但库里有 READY 资料时，`activate` 直接拒绝并提示先做全量对账。
+没有它，`missing == 0` 会放行一个一条向量都没有的代次 ——
+「分母为 0 无声放行」是这类覆盖率判据的通用失效形态（方案 §7 点过一次）。
+闸门**只在空分母这条路上**回查原始表，不参与覆盖率计算，所以不重新引入口径漂移。
 
-1. `RagSourceIndexState` 加 `unitId`
-2. `upsertSourceState` 换签名，能同时填 `sourceId`（LEGACY 兼容）与 `unitId`
-3. `indexUnit` 末尾写 state 行（vectorCount 从 sidecar 响应的 `written` 累加 ——
-   1b 当前把响应丢弃了，一并补上）
-4. `RagAdminService:174 / :193` 两处 `bySource` → `byUnit`，门禁分母改读投影表
-5. `RagRetriever` payload 换 `namespaces` + `unitIds`，候选行读 `unitId`/`namespace`
-6. `sourceCount` 放宽到全部命名空间
+## 1c 检索侧：**未做**（下一轮从这里开始）
 
-第 4 步的门禁分母**必须**与第 3 步同批：投影表在 1B-1 期间是空的（方案 §7 论证过
-分母为 0 会无声放行），而现在它非空了，但只有走过 `indexUnit` 的单元才有 state 行。
+- `RagRetriever` 的 payload 仍发 `sourceIds` / `notebookId` —— sidecar 的 `QueryRequest`
+  要 `namespaces` + `unitIds`，现在发过去是 422
+- `ContextCandidateHydrator` 仍按 `candidate.get("sourceId")` 回填，候选行现在回的是
+  `unitId` / `namespace`
+- `ScopeSelection` 仍只装 `List<AiNotebookSource>`；`sourceCount` 放宽到全部命名空间
+  要等它先能装下别的命名空间，**否则放宽是个空操作**（今天范围里只有 Notebook 资料）
+- Wiki 单元的候选回填是新东西：正文加密、不落库，要经 `UnitContentResolver` + 按 code point 切片
+
+**写入侧与读取侧的耦合已经解开**：当初「1c 不能拆」的理由是两侧共用 `state.unitId`
+这个尚不存在的字段，那个字段现在存在了。剩下的耦合只在 `ScopeSelection` 内部。
+
+## 本轮的扰动实测
+
+写入侧五条 + 门禁三条，逐条记在两个测试文件末尾。一条值得提到这里：
+
+> 分子从「逐条匹配」改成「数状态行」，**实测 GREEN**。
+> 按两级判定那是 UNEXERCISED —— `unitStates` 的 `isNotNull(unit_id)` 把遗留行挡掉了，
+> 扰动没走到被测路径。两处一起改才变红。
+
+它推翻了我在同一个用例注释里刚写下的判断（「那句过滤是防御性的、不承重」）：
+逐条 `get` 时它确实不承重，换成计数分子后它是唯一挡住遗留行的东西。
+**「这行代码有没有用」不能脱离它周围的实现单独判断**，而这类判断读代码纠正不了 ——
+读代码得到的恰好就是那个错结论。
+
+## 状态
+
+- Java 178/0/0/0（新增 9 条：记账 4 + 门禁 3 + 跨命名空间撞车 1 + 遗留行过滤 1）
+- 删掉 `upsertNotebookUnit` / `upsertWikiUnit`（补登记吸收其职能后只剩测试在调）。
+  **删之前先把两条断言迁到 `ensureRow` / `reconcileAll` 上** —— 它们钉的性质仍活着，
+  直接删入口会连带删掉活代码的覆盖，而作业词表那套测试看不到这种形状
+- 分支 HEAD 仍是**已知不可工作状态**：检索侧未换方言。回滚锚点 tag `1b-1-rollback-verified`
+- `app.rag.enabled` 翻 true 依然放在最后（理由见上文）

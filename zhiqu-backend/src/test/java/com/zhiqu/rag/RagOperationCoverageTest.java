@@ -84,10 +84,16 @@ class RagOperationCoverageTest {
                         + "而消费端的代码单看完全正常：" + missing);
     }
 
-    /** 反面：判据本身要能报错。词表为空时上面那条会空转通过，这条挡住它。 */
+    /**
+     * 反面：判据本身要能报错。词表为空时上面那条会空转通过，这条挡住它。
+     *
+     * <p>下限在 1B-2 的 1c 从 9 降到 8：{@code UPSERT_SOURCE} 与 {@code REINDEX_SOURCE}
+     * 被删掉了（sidecar 换 unit 方言后旧载荷会被 422 拒绝，两者失去生产端）。
+     * <b>调这个数字必须是有意的</b> —— 它唯一的作用就是逼人在删常量时来这里解释一句。
+     */
     @Test
     void 作业类型词表非空() {
-        assertTrue(RagOperation.values().length >= 9,
+        assertTrue(RagOperation.values().length >= 8,
                 "词表意外收缩 —— 删作业类型是可以的，但要确认消费端与本测试同步更新");
     }
 

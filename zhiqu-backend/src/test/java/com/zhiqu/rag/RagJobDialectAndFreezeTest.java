@@ -5,6 +5,7 @@ import com.zhiqu.mapper.AiNotebookSourceMapper;
 import com.zhiqu.mapper.AiSourceChunkMapper;
 import com.zhiqu.mapper.RagIndexGenerationMapper;
 import com.zhiqu.mapper.RagIndexJobMapper;
+import com.zhiqu.mapper.RagIndexableUnitMapper;
 import com.zhiqu.mapper.RagSourceIndexStateMapper;
 import com.zhiqu.service.RuntimeFlagService;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,6 +50,7 @@ class RagJobDialectAndFreezeTest {
                 jobMapper,
                 mock(RagIndexGenerationMapper.class),
                 mock(RagSourceIndexStateMapper.class),
+                mock(RagIndexableUnitMapper.class),
                 mock(AiNotebookSourceMapper.class),
                 mock(AiSourceChunkMapper.class),
                 new RagContentHashService(),

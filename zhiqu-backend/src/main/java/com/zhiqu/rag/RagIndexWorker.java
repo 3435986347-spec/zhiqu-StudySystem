@@ -2,13 +2,12 @@ package com.zhiqu.rag;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.zhiqu.entity.AiNotebookSource;
-import com.zhiqu.entity.AiSourceChunk;
 import com.zhiqu.entity.RagIndexGeneration;
 import com.zhiqu.entity.RagIndexJob;
+import com.zhiqu.entity.RagIndexableUnit;
 import com.zhiqu.entity.RagUnitChunk;
 import com.zhiqu.entity.RuntimeIssue;
 import com.zhiqu.mapper.AiNotebookSourceMapper;
-import com.zhiqu.mapper.AiSourceChunkMapper;
 import com.zhiqu.mapper.RagIndexGenerationMapper;
 import com.zhiqu.mapper.RuntimeIssueMapper;
 import com.zhiqu.service.RuntimeFlagService;
@@ -34,7 +33,6 @@ public class RagIndexWorker {
     private final RagClient client;
     private final RagIndexGenerationMapper generationMapper;
     private final AiNotebookSourceMapper sourceMapper;
-    private final AiSourceChunkMapper chunkMapper;
     private final RuntimeIssueMapper runtimeIssueMapper;
     private final RuntimeFlagService runtimeFlags;
     private final RagUnitRegistry registry;
@@ -44,7 +42,6 @@ public class RagIndexWorker {
                           RagClient client,
                           RagIndexGenerationMapper generationMapper,
                           AiNotebookSourceMapper sourceMapper,
-                          AiSourceChunkMapper chunkMapper,
                           RuntimeIssueMapper runtimeIssueMapper,
                           RuntimeFlagService runtimeFlags,
                           RagUnitRegistry registry) {
@@ -53,7 +50,6 @@ public class RagIndexWorker {
         this.client = client;
         this.generationMapper = generationMapper;
         this.sourceMapper = sourceMapper;
-        this.chunkMapper = chunkMapper;
         this.runtimeIssueMapper = runtimeIssueMapper;
         this.runtimeFlags = runtimeFlags;
         this.registry = registry;
@@ -88,13 +84,33 @@ public class RagIndexWorker {
                 // 最终 refreshGenerationProgress 把整个索引代次判为 FAILED。
                 jobService.supersede(job, e);
             } catch (Exception e) {
-                AiNotebookSource source = job.getSourceId() == null ? null : sourceMapper.selectById(job.getSourceId());
                 RagIndexGeneration generation = job.getGenerationId() == null ? null
                         : generationMapper.selectById(job.getGenerationId());
-                boolean dead = jobService.handleFailure(job, source, generation, e);
+                boolean dead = jobService.handleFailure(job, targetUnitOf(job), generation, e);
                 if (dead) reportDeadJob(job, e);
             }
         }
+    }
+
+    /**
+     * 这条作业指向哪个语料单元 —— 失败记账要往哪一行写。
+     *
+     * <p><b>必须带上 namespace，不能只拿 {@code job.getSourceId()} 去查。</b>
+     * 增量作业复用 {@code source_id} 这一列承载 {@code ref_id}（见
+     * {@code RagIndexJobService.enqueueUnit}），所以一条 {@code WIKI_PAGE#7} 的作业失败时，
+     * 按资料主键去查会查到<b>资料 7</b> —— 一个毫不相干的实体，然后把它标成 ERROR。
+     * 跨命名空间的 id 撞车正是 V29 引入代理主键要消除的东西，这里是它漏掉的最后一处。
+     *
+     * <p>回归是静默的：被误标的行只是 {@code index_status='ERROR'}，
+     * 看起来和一次正常的索引失败没有区别。所以它有自己的用例
+     * （{@code RagIndexIntegrationTest.wiki单元的作业失败不会误标同号资料}），
+     * 而定位这一步单独成方法，就是为了让那条用例能直接打到它、不必复述一遍判断。
+     *
+     * <p>没有 namespace 的作业（删除类、代次生命周期）不指向任何单元，返回 null。
+     */
+    RagIndexableUnit targetUnitOf(RagIndexJob job) {
+        return job.getNamespace() == null ? null
+                : registry.findUnit(job.getNamespace(), job.getSourceId());
     }
 
     /**
@@ -119,7 +135,6 @@ public class RagIndexWorker {
         // 扰动（只加枚举常量、不加分支）实测 COMPILE-OK，那句话是假的。
         // 表达式形式下同一个扰动会当场编译错误，这才是把消费端交给了编译器。
         Runnable action = switch (operation) {
-            case UPSERT_SOURCE, REINDEX_SOURCE -> () -> indexSource(job);
             case DELETE_SOURCE -> () -> delete(job, "SOURCE");
             case DELETE_NOTEBOOK -> () -> delete(job, "NOTEBOOK");
             case DELETE_SCOPE -> () -> delete(job, "SCOPE");
@@ -130,56 +145,6 @@ public class RagIndexWorker {
             case RECONCILE_UNITS -> () -> reconcileUnits(job);
         };
         action.run();
-    }
-
-    private void indexSource(RagIndexJob job) {
-        AiNotebookSource source = sourceMapper.selectOne(new LambdaQueryWrapper<AiNotebookSource>()
-                .eq(AiNotebookSource::getId, job.getSourceId())
-                .eq(AiNotebookSource::getUserId, job.getUserId())
-                .eq(AiNotebookSource::getNotebookId, job.getNotebookId())
-                .eq(AiNotebookSource::getStatus, "READY"));
-        if (source == null) return;
-        if (source.getContentHash() == null || !source.getContentHash().equals(job.getContentHash())) {
-            jobService.enqueueSource(source);
-            return;
-        }
-        RagIndexGeneration generation = generationMapper.selectById(job.getGenerationId());
-        // A generation may be READY but not activated yet. Sources parsed in that window
-        // must still be indexed, otherwise activation would be permanently blocked.
-        if (generation == null || !List.of("ACTIVE", "BUILDING", "READY").contains(generation.getStatus())) return;
-        List<AiSourceChunk> chunks = chunkMapper.selectList(new LambdaQueryWrapper<AiSourceChunk>()
-                .eq(AiSourceChunk::getSourceId, source.getId())
-                .orderByAsc(AiSourceChunk::getChunkIndex));
-        if (chunks.isEmpty()) throw new IllegalStateException("READY source has no parent chunks");
-        int vectorCount = 0;
-        int batchNo = 0;
-        for (int start = 0; start < chunks.size(); start += PARENT_CHUNKS_PER_BATCH) {
-            assertLease(job);
-            int end = Math.min(chunks.size(), start + PARENT_CHUNKS_PER_BATCH);
-            List<Map<String, Object>> payloadChunks = new ArrayList<>();
-            for (AiSourceChunk chunk : chunks.subList(start, end)) {
-                payloadChunks.add(Map.of(
-                        "chunkId", chunk.getId(),
-                        "chunkIndex", chunk.getChunkIndex(),
-                        "content", chunk.getContent()
-                ));
-            }
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("operationId", "job-" + job.getId());
-            payload.put("mutationToken", job.getId());
-            payload.put("userId", source.getUserId());
-            payload.put("notebookId", source.getNotebookId());
-            payload.put("sourceId", source.getId());
-            payload.put("contentHash", source.getContentHash());
-            payload.put("indexVersion", generation.getIndexVersion());
-            payload.put("collectionName", generation.getCollectionName());
-            payload.put("batchNo", batchNo++);
-            payload.put("finalBatch", end >= chunks.size());
-            payload.put("chunks", payloadChunks);
-            Map<String, Object> response = client.indexSource(payload);
-            vectorCount += intValue(response.get("written"));
-        }
-        jobService.markIndexedWithLease(job, vectorCount);
     }
 
     /**
@@ -314,11 +279,45 @@ public class RagIndexWorker {
                 registry.loadForIndexing(job.getNamespace(), job.getSourceId());
         if (snapshot == null) return;
 
-        RagIndexGeneration generation = activeIndexTarget();
-        if (generation == null) return;
+        for (RagIndexGeneration generation : targetGenerations(job)) {
+            int written = pushUnitVectors(job, snapshot, generation);
+            // **记账必须发生。**1b 只发向量不记账，后果不在这里，而在 cutover runbook 第 9 步：
+            // 门禁按投影表数分母、按状态行数分子，分子恒为 0 → 覆盖率永远够不到 → activate 抛异常。
+            jobService.markUnitIndexedWithLease(job, snapshot.unit(), generation, written);
+        }
+    }
 
+    /**
+     * 本次要写进哪些代次。
+     *
+     * <p>两种作业形态，刻意不同：
+     * <ul>
+     *   <li><b>代次展开产生的作业带 {@code generationId}</b> —— 只写那一个，
+     *       否则一次重建会顺手把向量灌进正在服役的旧代次。</li>
+     *   <li><b>业务钩子产生的增量作业不带代次</b> —— 写进当时<b>所有</b>在建/在用的代次。
+     *       只挑一个（比如「id 最大的那个」）会在重建窗口里出错：新代次还在 BUILDING，
+     *       用户这次编辑就只进了新代次，而当前服役的 ACTIVE 代次检索不到它 ——
+     *       表现是「刚改完的内容搜不到」，且要等新代次启用后才自愈。</li>
+     * </ul>
+     */
+    private List<RagIndexGeneration> targetGenerations(RagIndexJob job) {
+        if (job.getGenerationId() != null) {
+            RagIndexGeneration generation = generationMapper.selectById(job.getGenerationId());
+            return generation != null
+                    && RagIndexJobService.LIVE_GENERATION_STATUSES.contains(generation.getStatus())
+                    ? List.of(generation) : List.of();
+        }
+        return generationMapper.selectList(new LambdaQueryWrapper<RagIndexGeneration>()
+                .in(RagIndexGeneration::getStatus, RagIndexJobService.LIVE_GENERATION_STATUSES)
+                .orderByAsc(RagIndexGeneration::getId));
+    }
+
+    /** 把一个单元的全部父块分批推给 sidecar，返回写入的向量数。 */
+    private int pushUnitVectors(RagIndexJob job, RagUnitRegistry.IndexableUnitSnapshot snapshot,
+                                RagIndexGeneration generation) {
         List<RagUnitChunk> chunks = snapshot.chunks();
         String text = snapshot.canonicalText();
+        int written = 0;
         int batchNo = 0;
         for (int start = 0; start < chunks.size(); start += PARENT_CHUNKS_PER_BATCH) {
             assertLease(job);
@@ -333,7 +332,10 @@ public class RagIndexWorker {
                 ));
             }
             Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("operationId", "job-" + job.getId());
+            // **operationId 必须带代次。**sidecar 按 (operationId, batchNo) 做幂等键，
+            // 同一条作业写两个代次时批号会从 0 重来一遍 —— 不带代次的话第二个代次的每一批
+            // 都会被当成「这批已经收过了」而跳过，且它返回成功。
+            payload.put("operationId", "job-" + job.getId() + "-g" + generation.getId());
             payload.put("mutationToken", job.getId());
             payload.put("userId", snapshot.unit().getUserId());
             payload.put("namespace", snapshot.unit().getNamespace());
@@ -347,15 +349,10 @@ public class RagIndexWorker {
             payload.put("batchNo", batchNo++);
             payload.put("finalBatch", end >= chunks.size());
             payload.put("chunks", payloadChunks);
-            client.indexSource(payload);
+            Map<String, Object> response = client.indexSource(payload);
+            written += intValue(response.get("written"));
         }
-    }
-
-    /** 当前可写入的代次。与 indexSource 同口径：READY 但未激活的窗口里也要照常索引。 */
-    private RagIndexGeneration activeIndexTarget() {
-        return generationMapper.selectOne(new LambdaQueryWrapper<RagIndexGeneration>()
-                .in(RagIndexGeneration::getStatus, "ACTIVE", "BUILDING", "READY")
-                .orderByDesc(RagIndexGeneration::getId).last("LIMIT 1"));
+        return written;
     }
 
     /**

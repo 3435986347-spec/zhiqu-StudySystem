@@ -1,15 +1,18 @@
 package com.zhiqu.rag;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.zhiqu.entity.AiNotebookSource;
 import com.zhiqu.entity.AiSourceChunk;
 import com.zhiqu.entity.RagIndexGeneration;
 import com.zhiqu.entity.RagIndexJob;
+import com.zhiqu.entity.RagIndexableUnit;
 import com.zhiqu.entity.RagSourceIndexState;
 import com.zhiqu.mapper.AiNotebookSourceMapper;
 import com.zhiqu.mapper.AiSourceChunkMapper;
 import com.zhiqu.mapper.RagIndexGenerationMapper;
 import com.zhiqu.mapper.RagIndexJobMapper;
+import com.zhiqu.mapper.RagIndexableUnitMapper;
 import com.zhiqu.mapper.RagSourceIndexStateMapper;
 import com.zhiqu.service.RuntimeFlagService;
 import org.slf4j.Logger;
@@ -43,9 +46,13 @@ public class RagIndexJobService {
     /** 双删方言：清理 unit 格式向量。 */
     public static final String DIALECT_UNIT = "UNIT";
 
+    /** 可写入的代次。READY 但尚未激活的窗口里也要照常索引，否则激活会被自己卡住。 */
+    static final List<String> LIVE_GENERATION_STATUSES = List.of("ACTIVE", "BUILDING", "READY");
+
     private final RagIndexJobMapper jobMapper;
     private final RagIndexGenerationMapper generationMapper;
     private final RagSourceIndexStateMapper stateMapper;
+    private final RagIndexableUnitMapper unitMapper;
     private final AiNotebookSourceMapper sourceMapper;
     private final AiSourceChunkMapper chunkMapper;
     private final RagContentHashService contentHashService;
@@ -55,6 +62,7 @@ public class RagIndexJobService {
     public RagIndexJobService(RagIndexJobMapper jobMapper,
                               RagIndexGenerationMapper generationMapper,
                               RagSourceIndexStateMapper stateMapper,
+                              RagIndexableUnitMapper unitMapper,
                               AiNotebookSourceMapper sourceMapper,
                               AiSourceChunkMapper chunkMapper,
                               RagContentHashService contentHashService,
@@ -63,11 +71,20 @@ public class RagIndexJobService {
         this.jobMapper = jobMapper;
         this.generationMapper = generationMapper;
         this.stateMapper = stateMapper;
+        this.unitMapper = unitMapper;
         this.sourceMapper = sourceMapper;
         this.chunkMapper = chunkMapper;
         this.contentHashService = contentHashService;
         this.properties = properties;
         this.runtimeFlags = runtimeFlags;
+    }
+
+    /** READY 且有正文哈希的投影行 —— 代次展开、进度核算、启用门禁<b>共用这一条</b>（V29 的目的）。 */
+    List<RagIndexableUnit> indexableUnits() {
+        return unitMapper.selectList(new LambdaQueryWrapper<RagIndexableUnit>()
+                .eq(RagIndexableUnit::getStatus, RagNamespace.STATUS_READY)
+                .isNotNull(RagIndexableUnit::getCanonicalHash)
+                .orderByAsc(RagIndexableUnit::getId));
     }
 
     /**
@@ -85,43 +102,33 @@ public class RagIndexJobService {
         return true;
     }
 
+    /**
+     * Notebook 资料解析完成或内容变更 —— 入队一条增量索引作业。
+     *
+     * <p><b>1B-2 起走 unit 方言</b>，与 Wiki 页用同一条 {@link #enqueueUnit} 路径。
+     * 换掉 {@code UPSERT_SOURCE} 不是整洁性改动：Stage D 之后 sidecar 的 {@code IndexRequest}
+     * 要求 {@code namespace} 与 {@code unitId}，旧载荷会被 422 拒绝、重试到 DEAD。
+     *
+     * <p>随之丢掉的是「按代次逐个入队 + 逐个记 PENDING 状态行」那一套：unit 作业不带代次，
+     * 由 {@code RagIndexWorker.indexUnit} 在执行时把当时所有在建/在用的代次都写一遍
+     * （见那里的 {@code targetGenerations}）。这样重建窗口里的一次编辑不会只落进其中一个代次 ——
+     * 而这正是把入队从「每代次一条」改成「每单元一条」时最容易丢掉的性质。
+     *
+     * <p>{@code source.index_status} 仍然写：它是回落列（投影行还没建时前端读它）。
+     */
     @Transactional
     public void enqueueSource(AiNotebookSource source) {
-        if (producerFrozen(RagOperation.UPSERT_SOURCE.name())) return;
+        if (producerFrozen(RagOperation.UPSERT_UNIT.name())) return;
         ensureContentHash(source);
-        List<RagIndexGeneration> generations = generationMapper.selectList(
-                new LambdaQueryWrapper<RagIndexGeneration>()
-                        .in(RagIndexGeneration::getStatus, "ACTIVE", "BUILDING", "READY"));
-        if (generations.isEmpty()) {
-            source.setIndexStatus("NOT_INDEXED");
-            source.setIndexError(null);
-            sourceMapper.updateById(source);
-            return;
+        boolean hasTarget = generationMapper.selectCount(new LambdaQueryWrapper<RagIndexGeneration>()
+                .in(RagIndexGeneration::getStatus, LIVE_GENERATION_STATUSES)) > 0;
+        if (hasTarget) {
+            enqueueUnit(RagOperation.UPSERT_UNIT.name(), source.getUserId(),
+                    RagNamespace.NOTEBOOK_SOURCE, source.getId());
         }
-        RagSourceIndexState activeCurrentState = null;
-        boolean enqueued = false;
-        for (RagIndexGeneration generation : generations) {
-            RagSourceIndexState current = currentIndexedState(source, generation);
-            if (current != null) {
-                if ("ACTIVE".equals(generation.getStatus())) activeCurrentState = current;
-                continue;
-            }
-            upsertSourceState(source, generation, "PENDING", null, 0);
-            enqueue(RagOperation.UPSERT_SOURCE.name(), generation, source.getUserId(), source.getNotebookId(), source.getId(),
-                    source.getContentHash(), source.getContentHash());
-            enqueued = true;
-        }
-        if (activeCurrentState != null) {
-            RagIndexGeneration active = generations.stream()
-                    .filter(generation -> "ACTIVE".equals(generation.getStatus())).findFirst().orElse(null);
-            source.setIndexStatus("INDEXED");
-            source.setIndexVersion(active == null ? null : active.getIndexVersion());
-            source.setIndexedAt(activeCurrentState.getIndexedAt());
-        } else {
-            source.setIndexStatus(enqueued ? "PENDING" : "NOT_INDEXED");
-            source.setIndexVersion(null);
-            source.setIndexedAt(null);
-        }
+        source.setIndexStatus(hasTarget ? "PENDING" : "NOT_INDEXED");
+        source.setIndexVersion(null);
+        source.setIndexedAt(null);
         source.setIndexError(null);
         sourceMapper.updateById(source);
     }
@@ -161,26 +168,17 @@ public class RagIndexJobService {
                 : List.of(DIALECT_LEGACY);
     }
 
+    /**
+     * 管理端的「重新索引这份资料」。
+     *
+     * <p>1B-2 起与 {@link #enqueueSource} 收敛成同一条作业 —— 两者的差别原本只在 dedupe key
+     * （REINDEX 拼了 UUID，所以内容没变也会再排一次）。unit 路径的 dedupe key 由 V30 在终态
+     * 释放，所以「没有在途作业时点重建按钮」照样入队，强制重建的语义保住了；
+     * 「有在途作业时重复点」被去重，也正是想要的。
+     */
     @Transactional
     public void enqueueReindexSource(AiNotebookSource source) {
-        if (producerFrozen(RagOperation.REINDEX_SOURCE.name())) return;
-        ensureContentHash(source);
-        List<RagIndexGeneration> generations = generationMapper.selectList(
-                new LambdaQueryWrapper<RagIndexGeneration>()
-                        .in(RagIndexGeneration::getStatus, "ACTIVE", "BUILDING", "READY"));
-        if (generations.isEmpty()) {
-            source.setIndexStatus("NOT_INDEXED");
-            sourceMapper.updateById(source);
-            return;
-        }
-        source.setIndexStatus("PENDING");
-        source.setIndexError(null);
-        sourceMapper.updateById(source);
-        for (RagIndexGeneration generation : generations) {
-            upsertSourceState(source, generation, "PENDING", null, 0);
-            enqueue(RagOperation.REINDEX_SOURCE.name(), generation, source.getUserId(), source.getNotebookId(), source.getId(),
-                    source.getContentHash(), source.getContentHash() + ":" + UUID.randomUUID());
-        }
+        enqueueSource(source);
     }
 
     @Transactional
@@ -243,35 +241,56 @@ public class RagIndexJobService {
         return updated == 1;
     }
 
+    /**
+     * 记账：某个单元在某个代次里索引完成了。
+     *
+     * <p>代次由调用方传入而不是从 {@code job.getGenerationId()} 取 —— 增量作业不带代次，
+     * worker 会把它写进当时所有在建/在用的代次，每个代次调一次本方法。
+     *
+     * <p><b>写 {@code rag_indexable_unit.index_status} 的第二个写入方就是这里</b>，
+     * 另一个是 {@code RagUnitRegistry.applyContent}（内容变了写回 NOT_INDEXED）。
+     * 两个写入方安全，靠的是下面那道哈希闸门：内容若在索引期间变过，
+     * 投影行的 {@code canonical_hash} 已经不同，本方法直接返回，不会把过期的 INDEXED 盖上去。
+     * 去掉那道闸门，两个写入方就会按到达顺序互相覆盖，且没有任何东西会报错。
+     */
     @Transactional
-    public void markIndexedWithLease(RagIndexJob job, int vectorCount) {
-        RagIndexGeneration generation = lockJobGeneration(job);
+    public void markUnitIndexedWithLease(RagIndexJob job, RagIndexableUnit unit,
+                                         RagIndexGeneration generation, int vectorCount) {
+        if (unit == null || generation == null) return;
+        RagIndexGeneration locked = generationMapper.lockById(generation.getId());
         renewLeaseOrThrow(job);
-        if (generation == null || !List.of("ACTIVE", "BUILDING", "READY").contains(generation.getStatus())) {
+        if (locked == null || !LIVE_GENERATION_STATUSES.contains(locked.getStatus())) return;
+        RagIndexableUnit current = unitMapper.selectById(unit.getId());
+        if (current == null
+                || !RagNamespace.STATUS_READY.equals(current.getStatus())
+                || current.getCanonicalHash() == null
+                || !current.getCanonicalHash().equals(unit.getCanonicalHash())) {
             return;
         }
-        AiNotebookSource source = sourceMapper.selectOne(new LambdaQueryWrapper<AiNotebookSource>()
-                .eq(AiNotebookSource::getId, job.getSourceId())
-                .eq(AiNotebookSource::getUserId, job.getUserId())
-                .eq(AiNotebookSource::getNotebookId, job.getNotebookId())
-                .eq(AiNotebookSource::getStatus, "READY")
-                .last("FOR UPDATE"));
-        if (source == null || source.getContentHash() == null
-                || !source.getContentHash().equals(job.getContentHash())) {
-            return;
-        }
-        markIndexedLocked(source, generation, vectorCount);
+        upsertUnitState(current, locked, "INDEXED", null, vectorCount);
+        if (!"ACTIVE".equals(locked.getStatus())) return;
+        unitMapper.update(null, new LambdaUpdateWrapper<RagIndexableUnit>()
+                .eq(RagIndexableUnit::getId, current.getId())
+                .set(RagIndexableUnit::getIndexStatus, "INDEXED")
+                .set(RagIndexableUnit::getIndexVersion, locked.getIndexVersion())
+                .set(RagIndexableUnit::getIndexError, null)
+                .set(RagIndexableUnit::getIndexedAt, LocalDateTime.now()));
     }
 
+    /**
+     * 展开一个 BUILDING 代次。<b>枚举投影表，不再枚举 {@code ai_notebook_source}。</b>
+     *
+     * <p>这是 V29 点名的三处之一（另两处是进度核算与启用门禁）。三处必须同时切换：
+     * 只切门禁的话，展开出来的仍是只覆盖 Notebook 资料的 LEGACY 作业，
+     * 而门禁按投影表的分母去数 —— Wiki 单元永远没有状态行，覆盖率永远够不到，
+     * 代次永远启用不了。分子与分母来自两张表是这一族缺陷的通用形状。
+     */
     @Transactional
     public void expandGenerationWithLease(RagIndexJob job) {
         RagIndexGeneration generation = lockJobGeneration(job);
         renewLeaseOrThrow(job);
         if (generation == null || !"BUILDING".equals(generation.getStatus())) return;
-        List<AiNotebookSource> sources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
-                .eq(AiNotebookSource::getStatus, "READY")
-                .orderByAsc(AiNotebookSource::getId));
-        enqueueGenerationSourcesLocked(generation, sources);
+        enqueueGenerationUnitsLocked(generation, indexableUnits());
     }
 
     @Transactional
@@ -333,13 +352,14 @@ public class RagIndexJobService {
     }
 
     @Transactional
-    public boolean handleFailure(RagIndexJob job, AiNotebookSource source,
+    public boolean handleFailure(RagIndexJob job, RagIndexableUnit unit,
                                  RagIndexGeneration generation, Exception error) {
         RagIndexGeneration lockedGeneration = generation == null ? null
                 : generationMapper.lockById(generation.getId());
         FailureTransition transition = failLease(job, error);
         if (!transition.owned()) return false;
-        markIndexError(source, lockedGeneration, error == null ? "Unknown RAG indexing error" : error.getMessage());
+        markUnitIndexError(unit, lockedGeneration,
+                error == null ? "Unknown RAG indexing error" : error.getMessage());
         refreshGenerationProgressLocked(lockedGeneration);
         return transition.dead();
     }
@@ -359,75 +379,95 @@ public class RagIndexJobService {
         return generation;
     }
 
+    /**
+     * 展开一个 BUILDING 代次（不经作业队列的直接入口，测试与管理端补救用）。
+     *
+     * <p><b>不再收 {@code List<AiNotebookSource>}。</b>「要展开哪些目标」由投影表回答，
+     * 不由调用方传 —— 传参版本让调用方各自决定枚举口径，而那正是 V29 要消灭的东西：
+     * 展开一份口径、门禁另一份口径，两边都自洽，合起来就永远差一点。
+     */
     @Transactional
-    public void enqueueGenerationSources(RagIndexGeneration generation, List<AiNotebookSource> sources) {
+    public void enqueueGenerationUnits(RagIndexGeneration generation) {
         if (generation == null) return;
         RagIndexGeneration lockedGeneration = generationMapper.lockById(generation.getId());
         if (lockedGeneration == null || !"BUILDING".equals(lockedGeneration.getStatus())) return;
-        enqueueGenerationSourcesLocked(lockedGeneration, sources);
+        enqueueGenerationUnitsLocked(lockedGeneration, indexableUnits());
     }
 
-    private void enqueueGenerationSourcesLocked(RagIndexGeneration generation, List<AiNotebookSource> sources) {
-        generation.setExpectedSourceCount(sources.size());
+    /**
+     * 为一个代次的每个可索引单元排一条作业。
+     *
+     * <p>与旧的 source 版相比少了 try/catch —— 那里包的是 {@code ensureContentHash}，
+     * 它要现算哈希所以会抛。投影行的 {@code canonical_hash} 是对账时算好的，
+     * 且 {@link #indexableUnits()} 已经把它为空的行滤掉了，这里没有会抛的东西可包。
+     * <b>不要「为了稳妥」把 catch 加回来</b>：那会让 mapper 报错、约束冲突这类真故障
+     * 变成一行 ERROR 状态，而代次照常展开完成。
+     */
+    private void enqueueGenerationUnitsLocked(RagIndexGeneration generation, List<RagIndexableUnit> units) {
+        generation.setExpectedSourceCount(units.size());
         generation.setIndexedSourceCount(0);
         generationMapper.updateById(generation);
         int indexedCount = 0;
-        for (AiNotebookSource source : sources) {
-            try {
-                ensureContentHash(source);
-                if (currentIndexedState(source, generation) != null) {
-                    indexedCount++;
-                    continue;
-                }
-                upsertSourceState(source, generation, "PENDING", null, 0);
-                enqueue(RagOperation.UPSERT_SOURCE.name(), generation, source.getUserId(), source.getNotebookId(), source.getId(),
-                        source.getContentHash(), source.getContentHash());
-            } catch (RuntimeException error) {
-                source.setIndexStatus("ERROR");
-                source.setIndexError(limit(error.getMessage(), 1000));
-                sourceMapper.updateById(source);
-                if (source.getContentHash() != null) {
-                    upsertSourceState(source, generation, "ERROR", limit(error.getMessage(), 1000), 0);
-                }
+        for (RagIndexableUnit unit : units) {
+            if (currentIndexedUnitState(unit, generation) != null) {
+                indexedCount++;
+                continue;
             }
+            upsertUnitState(unit, generation, "PENDING", null, 0);
+            enqueueUnitForGeneration(generation, unit);
         }
         generation.setIndexedSourceCount(indexedCount);
         generationMapper.updateById(generation);
     }
 
-    @Transactional
-    public void markIndexed(AiNotebookSource source, RagIndexGeneration generation, int vectorCount) {
-        if (generation == null || source == null) return;
-        RagIndexGeneration lockedGeneration = generationMapper.lockById(generation.getId());
-        if (lockedGeneration == null
-                || !List.of("ACTIVE", "BUILDING", "READY").contains(lockedGeneration.getStatus())) return;
-        markIndexedLocked(source, lockedGeneration, vectorCount);
+    /**
+     * 代次展开专用的入队：<b>带上代次</b>。
+     *
+     * <p>与业务钩子那条（{@link #enqueueUnit}，不带代次）刻意不同。带代次的作业让
+     * {@code complete()} 能拿到它去刷新 BUILDING 进度；不带代次的增量作业则由 worker
+     * 写进当时所有在建/在用的代次。dedupe key 因此也必须带代次，否则重建期间的一条
+     * 增量作业会把整个代次的那一条顶掉。
+     */
+    private void enqueueUnitForGeneration(RagIndexGeneration generation, RagIndexableUnit unit) {
+        RagIndexJob job = new RagIndexJob();
+        job.setOperation(RagOperation.UPSERT_UNIT.name());
+        job.setProtocolVersion(SUPPORTED_PROTOCOL_VERSION);
+        job.setGenerationId(generation.getId());
+        job.setTargetIndexVersion(generation.getIndexVersion());
+        job.setUserId(unit.getUserId());
+        job.setNamespace(unit.getNamespace());
+        job.setUnitId(unit.getId());
+        job.setSourceId(unit.getRefId());          // 与 enqueueUnit 一致：这一列承载 ref_id
+        job.setScopeKind(unit.getScopeKind());
+        job.setScopeId(unit.getScopeId());
+        job.setContentHash(unit.getCanonicalHash());
+        job.setDedupeKey(limit("upsert_unit:" + generation.getId() + ":-:"
+                + unit.getNamespace() + "#" + unit.getRefId(), 255));
+        job.setStatus("PENDING");
+        job.setAttempts(0);
+        try {
+            jobMapper.insert(job);
+        } catch (DuplicateKeyException duplicate) {
+            log.debug("代次 {} 的单元作业已存在，跳过入队 dedupeKey={}", generation.getId(), job.getDedupeKey());
+        }
     }
 
-    private void markIndexedLocked(AiNotebookSource source, RagIndexGeneration generation, int vectorCount) {
-        upsertSourceState(source, generation, "INDEXED", null, vectorCount);
-        if (!"ACTIVE".equals(generation.getStatus())) return;
-        source.setIndexStatus("INDEXED");
-        source.setIndexVersion(generation.getIndexVersion());
-        source.setIndexError(null);
-        source.setIndexedAt(LocalDateTime.now());
-        sourceMapper.updateById(source);
-    }
-
+    /**
+     * 记账：某个单元在某个代次里索引失败了。
+     *
+     * <p>{@code generation} 为空（删除类作业、代次生命周期作业）时只写投影行的
+     * {@code index_error}：那些作业不属于任何一代，写一条代次状态行无处可挂。
+     */
     @Transactional
-    public void markIndexError(AiNotebookSource source, RagIndexGeneration generation, String error) {
-        if (source != null && generation != null) {
-            upsertSourceState(source, generation, "ERROR", limit(error, 1000), 0);
+    public void markUnitIndexError(RagIndexableUnit unit, RagIndexGeneration generation, String error) {
+        if (unit == null) return;
+        if (generation != null && unit.getCanonicalHash() != null) {
+            upsertUnitState(unit, generation, "ERROR", limit(error, 1000), 0);
         }
-        boolean activeSnapshotStillIndexed = source != null && generation != null
-                && "ACTIVE".equals(generation.getStatus())
-                && currentIndexedState(source, generation) != null;
-        if (source != null && !activeSnapshotStillIndexed
-                && (generation == null || "ACTIVE".equals(generation.getStatus()) || !hasActiveGeneration())) {
-            source.setIndexStatus("ERROR");
-            source.setIndexError(limit(error, 1000));
-            sourceMapper.updateById(source);
-        }
+        unitMapper.update(null, new LambdaUpdateWrapper<RagIndexableUnit>()
+                .eq(RagIndexableUnit::getId, unit.getId())
+                .set(RagIndexableUnit::getIndexStatus, "ERROR")
+                .set(RagIndexableUnit::getIndexError, limit(error, 1000)));
     }
 
     @Transactional
@@ -439,25 +479,17 @@ public class RagIndexJobService {
     private void refreshGenerationProgressLocked(RagIndexGeneration generation) {
         if (generation == null || !"BUILDING".equals(generation.getStatus())) return;
         Long generationId = generation.getId();
-        List<AiNotebookSource> currentSources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
-                .eq(AiNotebookSource::getStatus, "READY"));
-        List<RagSourceIndexState> sourceStates = stateMapper.selectList(new LambdaQueryWrapper<RagSourceIndexState>()
-                .eq(RagSourceIndexState::getGenerationId, generationId));
-        Map<Long, RagSourceIndexState> stateBySource = new HashMap<>();
-        sourceStates.forEach(state -> stateBySource.put(state.getSourceId(), state));
-        long indexed = currentSources.stream().filter(source -> {
-            RagSourceIndexState state = stateBySource.get(source.getId());
-            return state != null && "INDEXED".equals(state.getStatus())
-                    && source.getContentHash() != null && source.getContentHash().equals(state.getContentHash());
-        }).count();
+        List<RagIndexableUnit> currentSources = indexableUnits();
+        Map<Long, RagSourceIndexState> stateBySource = unitStates(generationId);
+        long indexed = currentSources.stream().filter(unit -> isIndexedIn(stateBySource, unit)).count();
         long unfinished = jobMapper.selectCount(new LambdaQueryWrapper<RagIndexJob>()
                 .eq(RagIndexJob::getGenerationId, generationId)
                 .in(RagIndexJob::getStatus, "PENDING", "RUNNING", "RETRY"));
         long dead = jobMapper.selectCount(new LambdaQueryWrapper<RagIndexJob>()
                 .eq(RagIndexJob::getGenerationId, generationId)
                 .eq(RagIndexJob::getStatus, "DEAD"));
-        long errors = currentSources.stream().filter(source -> {
-            RagSourceIndexState state = stateBySource.get(source.getId());
+        long errors = currentSources.stream().filter(unit -> {
+            RagSourceIndexState state = stateBySource.get(unit.getId());
             return state != null && "ERROR".equals(state.getStatus());
         }).count();
         generation.setExpectedSourceCount(currentSources.size());
@@ -655,39 +687,74 @@ public class RagIndexJobService {
         }
     }
 
-    private void upsertSourceState(AiNotebookSource source, RagIndexGeneration generation, String status,
-                                   String error, int vectorCount) {
-        RagSourceIndexState state = stateMapper.lockBySourceAndGeneration(source.getId(), generation.getId());
+    /**
+     * 某个代次的全部 <b>UNIT</b> 状态行，按 {@code unitId} 索引。
+     *
+     * <p><b>{@code unitId} 为空的行必须滤掉，这一句是承重的。</b>同一张表里还躺着 LEGACY 行
+     * （{@code unit_id} 恒为 NULL）。不滤的话 {@code map.put(null, state)} 会把它们全部塌成
+     * 一个条目、后来的覆盖先来的，而 HashMap 允许 null 键，所以既不抛异常也不留痕迹 ——
+     * 表现只是覆盖率莫名其妙地少一点。
+     *
+     * <p>进度核算与启用门禁共用本方法，不是为了省几行：两处分头写同一个过滤条件时，
+     * 漏掉其中一处的后果是「代次转 READY 但启用被拒」，而两条信息各自看都成立。
+     */
+    Map<Long, RagSourceIndexState> unitStates(Long generationId) {
+        Map<Long, RagSourceIndexState> byUnit = new HashMap<>();
+        stateMapper.selectList(new LambdaQueryWrapper<RagSourceIndexState>()
+                        .eq(RagSourceIndexState::getGenerationId, generationId)
+                        .isNotNull(RagSourceIndexState::getUnitId))
+                .forEach(state -> byUnit.put(state.getUnitId(), state));
+        return byUnit;
+    }
+
+    /** 「这个单元在这一代已经索引到当前内容」的<b>唯一</b>判据。 */
+    static boolean isIndexedIn(Map<Long, RagSourceIndexState> stateByUnit, RagIndexableUnit unit) {
+        RagSourceIndexState state = stateByUnit.get(unit.getId());
+        return state != null && "INDEXED".equals(state.getStatus())
+                && unit.getCanonicalHash() != null
+                && unit.getCanonicalHash().equals(state.getContentHash());
+    }
+
+    /**
+     * UNIT 方言的状态行 upsert。与 {@link #upsertSourceState} 是两条不相交的路径，
+     * 不是重载：锁行的 SQL 不同（{@code unit_id} vs {@code source_id}），
+     * 写入的列不同，唯一键也不同。
+     */
+    private void upsertUnitState(RagIndexableUnit unit, RagIndexGeneration generation, String status,
+                                 String error, int vectorCount) {
+        RagSourceIndexState state = stateMapper.lockByUnitAndGeneration(unit.getId(), generation.getId());
         if (state == null) {
             state = new RagSourceIndexState();
-            state.setSourceId(source.getId());
+            state.setUnitId(unit.getId());
+            // sourceId 保持 NULL：LEGACY 唯一键 (source_id, generation_id) 允许多个 NULL。
+            // 填上 refId 会让 Notebook 单元与它的 LEGACY 行撞键，且撞的是一条早就存在的行。
             state.setGenerationId(generation.getId());
             state.setIndexVersion(generation.getIndexVersion());
-            state.setContentHash(source.getContentHash());
+            state.setContentHash(unit.getCanonicalHash());
             state.setStatus(status);
             state.setVectorCount(vectorCount);
             state.setLastError(error);
             if ("INDEXED".equals(status)) state.setIndexedAt(LocalDateTime.now());
             stateMapper.insert(state);
-        } else {
-            boolean sameSnapshot = generation.getIndexVersion().equals(state.getIndexVersion())
-                    && source.getContentHash() != null && source.getContentHash().equals(state.getContentHash());
-            if (sameSnapshot && "INDEXED".equals(state.getStatus()) && !"INDEXED".equals(status)) return;
-            state.setIndexVersion(generation.getIndexVersion());
-            state.setContentHash(source.getContentHash());
-            state.setStatus(status);
-            state.setVectorCount(vectorCount);
-            state.setLastError(error);
-            if ("INDEXED".equals(status)) state.setIndexedAt(LocalDateTime.now());
-            stateMapper.updateById(state);
+            return;
         }
+        boolean sameSnapshot = generation.getIndexVersion().equals(state.getIndexVersion())
+                && unit.getCanonicalHash() != null && unit.getCanonicalHash().equals(state.getContentHash());
+        if (sameSnapshot && "INDEXED".equals(state.getStatus()) && !"INDEXED".equals(status)) return;
+        state.setIndexVersion(generation.getIndexVersion());
+        state.setContentHash(unit.getCanonicalHash());
+        state.setStatus(status);
+        state.setVectorCount(vectorCount);
+        state.setLastError(error);
+        if ("INDEXED".equals(status)) state.setIndexedAt(LocalDateTime.now());
+        stateMapper.updateById(state);
     }
 
-    private RagSourceIndexState currentIndexedState(AiNotebookSource source, RagIndexGeneration generation) {
-        RagSourceIndexState state = stateMapper.lockBySourceAndGeneration(source.getId(), generation.getId());
+    private RagSourceIndexState currentIndexedUnitState(RagIndexableUnit unit, RagIndexGeneration generation) {
+        RagSourceIndexState state = stateMapper.lockByUnitAndGeneration(unit.getId(), generation.getId());
         boolean current = state != null && "INDEXED".equals(state.getStatus())
                 && generation.getIndexVersion().equals(state.getIndexVersion())
-                && source.getContentHash() != null && source.getContentHash().equals(state.getContentHash());
+                && unit.getCanonicalHash() != null && unit.getCanonicalHash().equals(state.getContentHash());
         return current ? state : null;
     }
 
@@ -698,11 +765,6 @@ public class RagIndexJobService {
                 .orderByAsc(AiSourceChunk::getChunkIndex));
         source.setContentHash(contentHashService.hashParentChunks(chunks));
         sourceMapper.updateById(source);
-    }
-
-    private boolean hasActiveGeneration() {
-        return generationMapper.selectCount(new LambdaQueryWrapper<RagIndexGeneration>()
-                .eq(RagIndexGeneration::getStatus, "ACTIVE")) > 0;
     }
 
     private String normalizeVersion(String value) {

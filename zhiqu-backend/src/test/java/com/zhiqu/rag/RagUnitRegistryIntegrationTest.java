@@ -219,15 +219,27 @@ class RagUnitRegistryIntegrationTest {
 
     // ── 归属校验在写入侧（三步静默链的入口）────────────────────────────────
 
+    /**
+     * 归属为空必须在<b>写入侧</b>当场抛出。
+     *
+     * <p><b>这条用例直接调 {@code ensureRow}，而不是经某个公开入口 —— 刻意的。</b>
+     * 1c 删掉了 {@code upsertWikiUnit} / {@code upsertNotebookUnit}（补登记之后它们零生产调用方），
+     * 而这条性质并没有跟着死：{@code ensureRow} 仍被 {@code ensureRegistered} 与
+     * {@code reconcileAll} 走到。若当时顺手把这条断言一起删了，
+     * {@code requireOwner} 会继续活着且从此无人验证 ——
+     * 「删死代码顺带删掉活代码的测试覆盖」，而 {@code RagOperationCoverageTest}
+     * 那套看的是作业词表，看不到这种形状。
+     *
+     * <p>今天两条 DB 路径都喂不出空 userId（{@code user_knowledge_page.user_id} 与
+     * {@code ai_notebook_source.user_id} 都是 NOT NULL），所以这道闸门防的是<b>将来</b>
+     * 从 {@code SecurityContext} 取归属的写法 —— 那在异步 worker 线程里恒为空。
+     * 正因为构造不出真实的 DB 触发路径，才更要在写入侧这一层直接钉住它。
+     */
     @Test
     void 注册时归属为空必须当场抛出() {
-        com.zhiqu.entity.UserKnowledgePage page = new com.zhiqu.entity.UserKnowledgePage();
-        page.setId(9999L);
-        page.setUserId(null);
-        page.setTitle("没有归属的页");
-        page.setPageType("NOTE");
-
-        assertThrows(IllegalStateException.class, () -> registry.upsertWikiUnit(page),
+        assertThrows(IllegalStateException.class,
+                () -> registry.ensureRow(RagNamespace.WIKI_PAGE, 9999L, null,
+                        RagNamespace.SCOPE_WIKI_TREE, null, "没有归属的页", RagNamespace.WIKI_PAGE),
                 "归属必须在写入侧断言。放行的话会走成三步静默链："
                         + "双条件回读命中 0 行 → 记 SKIPPED → 低于门禁 → 代次照常 READY");
     }
@@ -311,18 +323,21 @@ class RagUnitRegistryIntegrationTest {
 
     // ── 刻意选择「抛异常」而不是「降级」的三处 ────────────────────────────
 
+    /**
+     * 同一个 {@code (namespace, ref_id)} 换了归属必须抛出。
+     *
+     * <p>触发路径从「构造一个改了 userId 的实体传给公开入口」换成「改库里的行再跑对账」——
+     * 后者才是真实形态（主键被复用，或某条注册路径写错了 user_id），
+     * 而且它不依赖 1c 删掉的那两个入口。
+     */
     @Test
     void 换归属必须抛出而不是以新值为准() {
         Long pageId = createWikiPage(ownerId, "复习计划", "正文");
         registry.reconcileAll();
 
-        com.zhiqu.entity.UserKnowledgePage hijacked = new com.zhiqu.entity.UserKnowledgePage();
-        hijacked.setId(pageId);
-        hijacked.setUserId(strangerId);      // 同一个 (namespace, ref_id) 换了归属
-        hijacked.setTitle("复习计划");
-        hijacked.setPageType("NOTE");
+        jdbc.update("UPDATE user_knowledge_page SET user_id=? WHERE id=?", strangerId, pageId);
 
-        assertThrows(IllegalStateException.class, () -> registry.upsertWikiUnit(hijacked),
+        assertThrows(IllegalStateException.class, () -> registry.reconcileAll(),
                 "「以新值为准」等于把一份内容的向量交给另一个用户");
         assertEquals(ownerId, ((Number) unitRow(RagNamespace.WIKI_PAGE, pageId).get("user_id")).longValue());
     }
@@ -477,3 +492,21 @@ class RagUnitRegistryIntegrationTest {
         return rows;
     }
 }
+
+// ── 入口删除前的覆盖迁移（2026-08-08 实测）────────────────────────────────
+//
+// 1c 删掉了 upsertNotebookUnit / upsertWikiUnit：补登记（ensureRegistered）落地后
+// 它们的职能被完全吸收，只剩测试在调 —— 与 DELETE_INDEX_VERSION 同一种形状。
+//
+// **删之前先迁移覆盖，顺序不能反。**这两条断言钉的是仍然活着的性质
+// （requireOwner 空归属抛出、(namespace, ref_id) 换归属被拒），
+// 只是此前经一个即将死掉的入口被测到。直接删入口，断言会跟着消失，
+// 而 requireOwner 继续活着且从此无人验证 ——「删死代码顺带删掉活代码的测试覆盖」。
+// RagOperationCoverageTest 看的是作业词表的生产端，看不到「公开方法只有测试在调」这种形状。
+//
+//   H3  requireOwner 不再拒绝空 userId              RED
+//   H4  换归属改成「以新值为准」                     RED
+//
+// 迁移后的触达路径：H3 直接调包内可见的 ensureRow（两张源表的 user_id 都是 NOT NULL，
+// 构造不出真实 DB 触发路径，闸门防的是将来从 SecurityContext 取归属的写法）；
+// H4 改库里的行再跑 reconcileAll，比原来构造一个改了 userId 的实体更贴近真实形态。

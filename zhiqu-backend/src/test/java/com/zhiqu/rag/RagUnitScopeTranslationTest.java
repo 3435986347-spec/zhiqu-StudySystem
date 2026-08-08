@@ -55,7 +55,7 @@ class RagUnitScopeTranslationTest {
 
         RagIndexWorker worker = new RagIndexWorker(new RagProperties(), jobService, client,
                 mock(RagIndexGenerationMapper.class), mock(AiNotebookSourceMapper.class),
-                mock(AiSourceChunkMapper.class), mock(RuntimeIssueMapper.class), flags,
+                mock(RuntimeIssueMapper.class), flags,
                 mock(RagUnitRegistry.class));
         return new Fixture(worker, sent);
     }

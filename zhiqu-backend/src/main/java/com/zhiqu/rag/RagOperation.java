@@ -26,12 +26,19 @@ package com.zhiqu.rag;
  *       一次断言覆盖整个词表，不是每个操作各写一条 —— 后者的问题正是「加了新常量的人
  *       也不会想起来加那一条」。</li>
  * </ul>
+ *
+ * <p><b>1B-2 的 1c 删掉了 {@code UPSERT_SOURCE} 与 {@code REINDEX_SOURCE}。</b>
+ * 不是清理，是被迫的：Stage D 之后 sidecar 的 {@code IndexRequest} 要求
+ * {@code namespace} 与 {@code unitId}，旧载荷会被 422 拒绝。留着它们就等于留下两个
+ * 「有消费端、生产端已死」的常量 —— 正是本枚举要消除的形状。索引侧现在只有
+ * {@code UPSERT_UNIT} 一条路径，Notebook 资料与 Wiki 页共用它。
+ *
+ * <p>删除的代价是明确的：切换期间队列里若还有 {@code UPSERT_SOURCE} 行，
+ * {@link #from} 会返回 null，worker 把它当失败作业上报直至 DEAD 并写 RuntimeIssue。
+ * runbook 第 1 步先冻结生产者、等队列排空，就是为了这个。<b>吵，但看得见</b> ——
+ * 比留一个永不被入队的常量强。
  */
 public enum RagOperation {
-    /** 首次索引一个 Notebook 资料（LEGACY 路径，cutover 后由 UPSERT_UNIT 接管）。 */
-    UPSERT_SOURCE,
-    /** 内容变更后重新索引一个 Notebook 资料。 */
-    REINDEX_SOURCE,
     /** 删除单个资料的向量。双删下 LEGACY 发 SOURCE、UNIT 发 UNIT。 */
     DELETE_SOURCE,
     /** 删除整个 Notebook 的向量。双删下 LEGACY 发 NOTEBOOK、UNIT 发 SCOPE。 */
