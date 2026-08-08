@@ -43,7 +43,7 @@ class RagFallbackAccountingTest {
     @Test
     void 结果构造点没有增加() throws IOException {
         String source = withoutComments(Files.readString(SOURCE, StandardCharsets.UTF_8));
-        assertEquals(3, count(source, "new RetrievalResult("),
+        assertEquals(3, countMatches(source, "new\\s+RetrievalResult\\s*\\("),
                 "三处：fallback(reason, generation) 一处、disabled() 一处、成功返回一处。"
                         + "多出来的每一处都是一条可能不记指标的返回路径");
     }
@@ -85,6 +85,29 @@ class RagFallbackAccountingTest {
         return source.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)//.*$", "");
     }
 
+    /**
+     * 按<b>正则</b>数构造点，不按字面子串 —— 收的是「少数」方向（漏掉一个绕过点）。
+     *
+     * <p>剥注释修掉的是「多数」方向：数多了会红，噪声自己会报。少数方向是静默的 ——
+     * 漏掉的绕过点不会让任何东西变红，而绊线恰好在它该响的那一刻不响。
+     *
+     * <p><b>实测过三种写法，结论与直觉不同：</b>
+     * <ul>
+     *   <li>{@code new RetrievalResult(ok, ...)}（布尔是变量或表达式）—— 旧的字面匹配<b>已经能捕获</b>，
+     *       因为它匹配的是 {@code new RetrievalResult(} 这个前缀，根本不看第一个实参；</li>
+     *   <li>{@code new  RetrievalResult(}（两个空格）—— 旧判据 <b>GREEN，漏了</b>；</li>
+     *   <li>{@code new} 与类型名之间换行 —— 旧判据 <b>GREEN，漏了</b>。</li>
+     * </ul>
+     * 也就是说真正的缺口是<b>空白与折行</b>，而那是 IDE 自动格式化就能产生的形态，不是刁钻构造。
+     * {@code new\s+RetrievalResult\s*\(} 把三种都盖住。
+     */
+    private static int countMatches(String haystack, String regex) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(regex).matcher(haystack);
+        int total = 0;
+        while (matcher.find()) total++;
+        return total;
+    }
+
     private static int count(String haystack, String needle) {
         int total = 0;
         for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) total++;
@@ -106,3 +129,21 @@ class RagFallbackAccountingTest {
 // 同一个物种，这次长在测试自己身上。修法是先剥注释再数。
 // 它是靠一次红报出来的 —— 若那句注释当初没写，这条判据会带着同一个缺陷长期绿着，
 // 而且是在「新增出口」真的发生时才失效。
+//
+// ── 少数方向（静默那一半）的实测 ────────────────────────────────────────
+//
+// 剥注释修的是「多数」方向：数多了会红，噪声自己会报。
+// 「少数」方向是漏掉一个绕过点 —— 不会让任何东西变红，绊线在该响的那一刻不响。
+// 三种写法，字面子串判据下的实测：
+//
+//   L1  new RetrievalResult(ok, ...)   布尔是变量    RED    ← 本来就能捕获
+//   L2  new  RetrievalResult(          两个空格      GREEN  ← 漏
+//   L3  new 与类型名之间换行                          GREEN  ← 漏
+//
+// **L1 与直觉相反**：字面判据匹配的是 "new RetrievalResult(" 这个前缀，根本不看第一个实参，
+// 所以「布尔从字面 false 变成算出来的」这种形态一直在覆盖里。
+// 真正的缺口是**空白与折行** —— 而那是 IDE 自动格式化就能产生的，不是刁钻构造。
+// 换成 new\s+RetrievalResult\s*\( 之后 L1/L2/L3 全红。
+//
+// 真正的消除要把这个 record 挪到别的包、规范构造器降包内可见、只暴露工厂。
+// **不做**：为一个小值类型换包，代价大于收益。绊线加准确的边界说明，在这个位置是对的取舍。
