@@ -390,3 +390,31 @@ def test_scopeId_为空时不写进_metadata(tmp_path):
                                      namespace="WIKI_PAGE", unitId=42, scopeId=9))
     written = [meta for _, meta in store.collection.rows.values() if meta["unitId"] == 42]
     assert written and all(meta["scopeId"] == 9 for meta in written)
+
+
+# ── fence key 的扰动记录（2026-08-08 实测）────────────────────────────────
+#
+# fence key 有两条**互相独立**的性质，此前只验了一条：
+#   ① 键长什么样  —— 索引侧与删除侧的格式必须一致
+#   ② 选哪些键    —— 索引请求必须列出任何能删掉它的 delete 的键
+#
+# ① 曾经靠「把 key 写到最小」来降低风险，但最小化只是**缩小**了能错开的地方，
+# 没有消除它。现在两侧都调同一组构造器（vector_store.py 的 unit_fence_key 等），
+# 格式分叉从「不太可能」变成「不可能」。
+#
+# ② 是三个键族三条性质（UNIT / NAMESPACE / SCOPE），此前只扰动了一次。
+#
+#   扰动                          预期    结果    说明
+#   ────────────────────────────────────────────────────────────────────────
+#   E0  改 unit_fence_key 的格式   GREEN   GREEN  两侧同步跟随 —— 这就是消除的证明
+#   E1  索引侧不列 UNIT 键         RED     RED    [UNIT-extra0]
+#   E2  索引侧不列 NAMESPACE 键    RED     RED    [NAMESPACE-extra2]
+#   E3  索引侧不列 SCOPE 键        RED     RED    [SCOPE-extra1]
+#
+# **E0 与 E1-3 的预期方向相反，这正是要点。** 只跑 E1-3 证明的是「选哪些键」对；
+# 只跑 E0 证明的是「键长什么样」不会分叉。两者验的不是同一件事，都要跑。
+# 一次预期为 GREEN 的扰动是可以的判据 —— 前提是**事先声明它该绿**，
+# 否则「绿了」永远可以被解释成「测试不敏感」。
+#
+# 为什么值得这么较真：fence 失效的后果比 scope 白名单失效重一个量级 ——
+# 后者是 400（响亮），前者是陈旧写入覆盖掉刚写进去的数据（静默）。

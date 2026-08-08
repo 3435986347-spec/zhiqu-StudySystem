@@ -54,6 +54,56 @@ DELETE_SCOPE_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
 # 删除删不到它、检索也检索不到它，而每一层都显示成功。
 NAMESPACES: frozenset[str] = frozenset({"NOTEBOOK_SOURCE", "WIKI_PAGE", "CONVERSATION_TURN"})
 
+
+# ── fence key 的构造器 ───────────────────────────────────────────────────────
+#
+# 每个 key 只有一处实现，索引侧与删除侧都调这里。**不是为了少写几行。**
+#
+# 此前两侧各自拼 f-string，格式相同但表达式不同（一边用局部变量、一边逐个
+# int()/str()）。把 key 写到最小已经缩小了能错开的地方，但没有消除它 ——
+# 而错开的表现是 fence **静默**失效：删除记下的键与索引查找的键对不上，
+# 于是陈旧写入不再被拦住，覆盖掉刚写进去的数据，没有任何报错。
+#
+# 类型强制也放进构造器：调用方传 "1" 还是 1 都得到同一个键。此前这一步散在两侧，
+# 是同一类分叉的另一个入口。
+#
+# LEGACY 的两个今天只有删除侧一个调用者（1B-2 之后不再有 LEGACY 索引请求）。
+# 仍然写成构造器，是为了让「key 格式只存在于一处」成为这个模块的性质，
+# 而不是逐个键去判断「它有没有第二个调用者」。
+
+def unit_fence_key(user_id, unit_id) -> str:
+    return f"UNIT:{int(user_id)}:{int(unit_id)}"
+
+
+def namespace_fence_key(user_id, namespace) -> str:
+    return f"NAMESPACE:{int(user_id)}:{str(namespace)}"
+
+
+def scope_fence_key(user_id, namespace, scope_id) -> str:
+    return f"SCOPE:{int(user_id)}:{str(namespace)}:{int(scope_id)}"
+
+
+def user_fence_key(user_id) -> str:
+    return f"USER:{int(user_id)}"
+
+
+def index_version_fence_key(index_version) -> str:
+    return f"INDEX_VERSION:{str(index_version)}"
+
+
+def collection_fence_key(collection_name) -> str:
+    return f"COLLECTION:{str(collection_name)}"
+
+
+def source_fence_key(user_id, notebook_id, source_id) -> str:
+    """LEGACY 方言。只有删除侧调用 —— 见上方注释。"""
+    return f"SOURCE:{int(user_id)}:{int(notebook_id)}:{int(source_id)}"
+
+
+def notebook_fence_key(user_id, notebook_id) -> str:
+    """LEGACY 方言。只有删除侧调用。"""
+    return f"NOTEBOOK:{int(user_id)}:{int(notebook_id)}"
+
 # main.py import 的就是这一个对象（不是同名副本）—— `test_scope_白名单只有一份定义`
 # 用 `is` 断言身份，把「有人又抄了一份字面量」挡在结构层面而不是靠人记得。
 DELETE_SCOPES: frozenset[str] = frozenset(DELETE_SCOPE_REQUIRED_FIELDS)
@@ -287,6 +337,11 @@ class VectorStore:
     # 所以 SCOPE key 不含 scopeKind（namespace 已经决定了它），也不含 collectionName
     # （删除可能跨 collection）。
     #
+    # 但最小化只**缩小**了能错开的地方，没有消除它 —— 消除靠的是上面那组构造器，
+    # 两侧都调同一个函数，格式分叉从「不太可能」变成「不可能」。
+    # 下面两个方法因此只负责**选哪些键**，不负责键长什么样；
+    # 「选哪些」才是 test_每种删除都能拦住迟到的索引 要逐族验的性质。
+    #
     # LEGACY 方言（SOURCE/NOTEBOOK）的 key 保留在删除侧、**不出现在索引侧** ——
     # 1B-2 之后不再有 LEGACY 索引请求，没有需要被它拦住的对象。真正承重的是与它
     # 同时入队的 UNIT 半边（方案 §3.2 的双删），那一半的 key 在索引侧列着。
@@ -295,41 +350,39 @@ class VectorStore:
         collection_name = str(payload.get("collectionName") or "")
         if not COLLECTION_RE.fullmatch(collection_name):
             raise ValueError("Invalid collection name")
-        user_id = int(payload["userId"])
-        namespace = str(payload["namespace"])
-        unit_id = int(payload["unitId"])
-        index_version = str(payload["indexVersion"])
+        user_id = payload["userId"]
+        namespace = payload["namespace"]
         keys = [
-            f"COLLECTION:{collection_name}",
-            f"UNIT:{user_id}:{unit_id}",
-            f"NAMESPACE:{user_id}:{namespace}",
-            f"USER:{user_id}",
-            f"INDEX_VERSION:{index_version}",
+            collection_fence_key(collection_name),
+            unit_fence_key(user_id, payload["unitId"]),
+            namespace_fence_key(user_id, namespace),
+            user_fence_key(user_id),
+            index_version_fence_key(payload["indexVersion"]),
         ]
         # scopeId 为空的 unit 不属于任何可被 SCOPE 删除定位的作用域（见 metadata 处的
         # 论证），因此也没有对应的 SCOPE fence 需要它去防 —— 不写空占位，
         # 免得造出一个 delete 侧永远不会生成的 key。
         if payload.get("scopeId") is not None:
-            keys.append(f"SCOPE:{user_id}:{namespace}:{int(payload['scopeId'])}")
+            keys.append(scope_fence_key(user_id, namespace, payload["scopeId"]))
         return keys
 
     def _delete_fence_keys(self, payload: dict[str, Any], scope: str) -> list[str]:
         if scope == "COLLECTION":
-            return [f"COLLECTION:{payload['collectionName']}"]
+            return [collection_fence_key(payload["collectionName"])]
         if scope == "UNIT":
-            return [f"UNIT:{int(payload['userId'])}:{int(payload['unitId'])}"]
+            return [unit_fence_key(payload["userId"], payload["unitId"])]
         if scope == "SCOPE":
-            return [f"SCOPE:{int(payload['userId'])}:{str(payload['namespace'])}:{int(payload['scopeId'])}"]
+            return [scope_fence_key(payload["userId"], payload["namespace"], payload["scopeId"])]
         if scope == "NAMESPACE":
-            return [f"NAMESPACE:{int(payload['userId'])}:{str(payload['namespace'])}"]
+            return [namespace_fence_key(payload["userId"], payload["namespace"])]
         if scope == "SOURCE":
-            return [f"SOURCE:{int(payload['userId'])}:{int(payload['notebookId'])}:{int(payload['sourceId'])}"]
+            return [source_fence_key(payload["userId"], payload["notebookId"], payload["sourceId"])]
         if scope == "NOTEBOOK":
-            return [f"NOTEBOOK:{int(payload['userId'])}:{int(payload['notebookId'])}"]
+            return [notebook_fence_key(payload["userId"], payload["notebookId"])]
         if scope == "USER":
-            return [f"USER:{int(payload['userId'])}"]
+            return [user_fence_key(payload["userId"])]
         if scope == "INDEX_VERSION":
-            return [f"INDEX_VERSION:{payload['indexVersion']}"]
+            return [index_version_fence_key(payload["indexVersion"])]
         raise ValueError("Unsupported delete scope")
 
     def collection_names(self) -> list[str]:
