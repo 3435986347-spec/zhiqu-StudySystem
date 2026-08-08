@@ -48,10 +48,24 @@ class RagOperationCoverageTest {
      * 后者是下一层问题，需要的是集成测试（{@code RagIncrementalEnqueueTest} 那种：
      * 调业务 API、查库里有没有作业行），不是这一条。
      *
-     * <p>更彻底的一步留给 1b：让 {@code enqueue(...)} 收 {@link RagOperation} 而不是
-     * {@code String}。那样字符串字面量根本造不出作业，「生产端存在」就从文本匹配变成
-     * 类型约束，本测试可以整个删掉，只留集成测试管「有没有被调用」。
-     * 做那一步时记得**验证编译器真的接住了** —— 见本文件末尾扰动 A 的教训。
+     * <p><b>1b 会把 {@code enqueue(...)} 的参数从 {@code String} 换成 {@link RagOperation}。
+     * 那不能取代本测试 —— 曾经在这里写过「到时本测试可整个删掉」，那句话是错的。</b>
+     * 三条性质摊开看：
+     * <ul>
+     *   <li>每个常量有<b>消费端</b> → switch 表达式无 default，编译器管（1a 已落地）；</li>
+     *   <li>作业不能带词表<b>外</b>的 operation → 类型化后编译器管（1b 要加）；</li>
+     *   <li>每个常量有<b>生产端</b> → 以上两者都不给，只有本测试。</li>
+     * </ul>
+     * 第三条是<b>可达性</b>性质，不是类型性质。类型化之后照样可以加一个
+     * {@code RagOperation.FOO}、被编译器逼着写好消费端分支、然后从不调用
+     * {@code enqueue(FOO, ...)} —— 而那正是 {@code DELETE_SCOPE} 与
+     * {@code DELETE_INDEX_VERSION} 的形状。
+     *
+     * <p>一句话：<b>类型化收窄的是词表的取值范围，不是词表被用到的程度。</b>
+     *
+     * <p>1b 该做的是<b>改进</b>本测试而不是取代它：类型化之后生产端写的就是
+     * {@code RagOperation.XXX}，匹配模式已经在本轮提前收紧到那个形式，1b 之后它反而更强。
+     * 做那一步时同样记得**验证编译器真的接住了** —— 见本文件末尾扰动 A 的教训。
      */
     @Test
     void 每个作业类型都至少有一个生产端() throws IOException {
