@@ -406,8 +406,17 @@ int effectiveSourceCount = Math.max(sourceCount,
 | 断言 | 转绿时机 |
 |---|---|
 | Wiki 单元出现在候选集里 | 回填打通 |
-| 候选按 `unitId` 去重（不再按 `sourceId`） | payload 换 `unitIds` |
+| 候选按 `unitId` 去重（不再按 `sourceId`） | payload 换 `unitIds` **且 `ContextBudgeter` 的键名跟着换** |
 | 每源配额按所有命名空间计数 | `sourceCount` 放宽 |
+
+**第二行里那半句是补进去的，原步骤清单漏了它。**`ContextBudgeter` 按字符串键取值
+且带 `getOrDefault(..., "")` 兜底，候选行换成 `unitId`/`namespace` 而它没跟上时不会报错，
+只会：去重键退化成 `":" + chunkId`（跨命名空间撞 id 即误判重复）、
+`sourceKey` 退化成 `":"`（**所有候选塌进一个桶**，`maxPerSource=3` 于是作用在整个候选集上）。
+
+后者恰好污染第三条基准要测量的那个维度 —— 在一个已经塌成一个桶的分母上验
+「配额按所有命名空间计数」，得到的绿说明不了任何事。
+**已提前做掉**：键名收进 `CandidateKeys`，`sourceKeyOf` 缺桶键即抛（不再回落成空串）。
 
 拆开之后每一步都能读出「该动的动了、不该动的没动」。而且第三条单独存在时，
 `ContextBudgeter:36-37` 的假绿风险最容易被看见：**前两条已绿而第三条仍红**，

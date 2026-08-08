@@ -15,6 +15,7 @@ import com.zhiqu.rag.RagContentHashService;
 import com.zhiqu.rag.RagMetricsService;
 import com.zhiqu.rag.RagProperties;
 import com.zhiqu.rag.RagRetriever;
+import com.zhiqu.rag.CandidateKeys;
 import com.zhiqu.rag.ScopeSelection;
 import com.zhiqu.rag.SourceScopeResolver;
 import com.zhiqu.service.AgentBlackboardService;
@@ -484,7 +485,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         List<Map<String, Object>> legacyRows = legacyContextRows(sources, legacySourceIds, query);
         if (!selectedIds.isEmpty()) {
             legacyRows.forEach(row -> {
-                if (selectedIds.contains(parseLong(row.get("sourceId"), null))) row.put("_explicit", true);
+                if (selectedIds.contains(parseLong(row.get(CandidateKeys.SOURCE_ID), null))) row.put(CandidateKeys.EXPLICIT, true);
             });
         }
         List<Map<String, Object>> supplements = new ArrayList<>(legacyRows);
@@ -513,11 +514,11 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                     .last("LIMIT " + Math.max(2, MAX_CONTEXT_CHUNKS * 3)));
             for (AiSourceChunk chunk : chunks) {
                 Map<String, Object> row = new LinkedHashMap<>();
-                row.put("sourceId", source.getId());
+                row.put(CandidateKeys.SOURCE_ID, source.getId());
                 row.put("title", source.getTitle());
-                row.put("sourceType", source.getSourceType());
-                row.put("chunkIndex", chunk.getChunkIndex());
-                row.put("chunkId", chunk.getId());
+                row.put(CandidateKeys.SOURCE_TYPE, source.getSourceType());
+                row.put(CandidateKeys.CHUNK_INDEX, chunk.getChunkIndex());
+                row.put(CandidateKeys.CHUNK_ID, chunk.getId());
                 row.put("content", chunk.getContent());
                 row.put("retrievalMode", "LEGACY");
                 rows.add(row);
@@ -979,12 +980,12 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (UserKnowledgePage page : pages) {
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("sourceId", "wiki:" + page.getId());
+            row.put(CandidateKeys.SOURCE_ID, "wiki:" + page.getId());
             row.put("title", page.getTitle());
-            row.put("sourceType", "WIKI_PAGE");
-            row.put("chunkIndex", 0);
+            row.put(CandidateKeys.SOURCE_TYPE, "WIKI_PAGE");
+            row.put(CandidateKeys.CHUNK_INDEX, 0);
             row.put("content", limit(text(page.getContentSummary(), page.getTitle()), 1600));
-            row.put("_explicit", true);
+            row.put(CandidateKeys.EXPLICIT, true);
             rows.add(row);
         }
         return rows;
@@ -1102,7 +1103,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         row.put("id", source.getId());
         row.put("notebookId", source.getNotebookId());
         row.put("knowledgeSourceId", source.getKnowledgeSourceId());
-        row.put("sourceType", source.getSourceType());
+        row.put(CandidateKeys.SOURCE_TYPE, source.getSourceType());
         row.put("title", source.getTitle());
         row.put("url", source.getUrl());
         row.put("status", source.getStatus());

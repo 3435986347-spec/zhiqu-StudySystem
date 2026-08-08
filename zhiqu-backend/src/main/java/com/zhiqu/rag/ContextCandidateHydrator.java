@@ -59,18 +59,18 @@ public class ContextCandidateHydrator {
             int end = intValue(candidate.get("charEnd"), start);
             Snippet snippet = snippet(chunk.getContent(), start, end);
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("sourceId", source.getId());
+            row.put(CandidateKeys.SOURCE_ID, source.getId());
             row.put("title", source.getTitle());
-            row.put("sourceType", source.getSourceType());
-            row.put("chunkIndex", chunk.getChunkIndex());
+            row.put(CandidateKeys.SOURCE_TYPE, source.getSourceType());
+            row.put(CandidateKeys.CHUNK_INDEX, chunk.getChunkIndex());
             row.put("content", snippet.content());
-            row.put("_hitStart", snippet.hitStart());
-            row.put("_hitEnd", snippet.hitEnd());
+            row.put(CandidateKeys.HIT_START, snippet.hitStart());
+            row.put(CandidateKeys.HIT_END, snippet.hitEnd());
             row.put("retrievalMode", "VECTOR");
             row.put("distance", doubleValue(candidate.get("distance")));
             row.put("similarity", 1d - doubleValue(candidate.get("distance")));
             row.put("indexVersion", retrieval.generation().getIndexVersion());
-            row.put("chunkId", chunk.getId());
+            row.put(CandidateKeys.CHUNK_ID, chunk.getId());
             row.put("segmentIndex", intValue(candidate.get("segmentIndex"), 0));
             rows.add(row);
         }

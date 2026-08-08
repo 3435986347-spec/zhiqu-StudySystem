@@ -37,22 +37,25 @@ public class ContextBudgeter {
                 (int) candidates.stream().map(this::sourceKey).distinct().count());
         int chars = 0;
         for (Map<String, Object> row : candidates) {
-            String key = String.valueOf(row.getOrDefault("sourceType", "")) + ":"
-                    + row.getOrDefault("sourceId", "") + ":" + row.getOrDefault("chunkId", row.getOrDefault("chunkIndex", ""));
+            // 去重键 = 桶键 + 块标识。桶键那两段缺失即抛（见 CandidateKeys.sourceKeyOf）——
+            // 回落成空串的话，跨命名空间的 chunkId 撞上就会被误判成重复行。
+            String key = CandidateKeys.sourceKeyOf(row) + ":"
+                    + row.getOrDefault(CandidateKeys.CHUNK_ID,
+                            row.getOrDefault(CandidateKeys.CHUNK_INDEX, ""));
             if (!seen.add(key)) continue;
             String sourceKey = sourceKey(row);
             if (effectiveSourceCount > 1 && perSource.getOrDefault(sourceKey, 0) >= properties.getMaxPerSource()) continue;
-            String content = String.valueOf(row.getOrDefault("content", ""));
+            String content = String.valueOf(row.getOrDefault(CandidateKeys.CONTENT, ""));
             int remaining = properties.getMaxContextChars() - chars;
             if (remaining <= 0) break;
             if (content.length() > remaining) content = cropToBudget(row, content, remaining);
             if (content.isBlank()) continue;
             Map<String, Object> clean = new LinkedHashMap<>(row);
-            clean.remove("_score");
-            clean.remove("_explicit");
-            clean.remove("_hitStart");
-            clean.remove("_hitEnd");
-            clean.put("content", content);
+            clean.remove(CandidateKeys.SCORE);
+            clean.remove(CandidateKeys.EXPLICIT);
+            clean.remove(CandidateKeys.HIT_START);
+            clean.remove(CandidateKeys.HIT_END);
+            clean.put(CandidateKeys.CONTENT, content);
             selected.add(clean);
             chars += content.length();
             perSource.merge(sourceKey, 1, Integer::sum);
@@ -62,7 +65,7 @@ public class ContextBudgeter {
     }
 
     private boolean isExplicit(Map<String, Object> row) {
-        return row != null && Boolean.TRUE.equals(row.get("_explicit"));
+        return row != null && Boolean.TRUE.equals(row.get(CandidateKeys.EXPLICIT));
     }
 
     private List<Map<String, Object>> roundRobinExplicit(List<Map<String, Object>> rows) {
@@ -86,14 +89,13 @@ public class ContextBudgeter {
     }
 
     private String sourceKey(Map<String, Object> row) {
-        return String.valueOf(row.getOrDefault("sourceType", "")) + ":"
-                + row.getOrDefault("sourceId", "");
+        return CandidateKeys.sourceKeyOf(row);
     }
 
     private String cropToBudget(Map<String, Object> row, String content, int remaining) {
         if (remaining >= content.length()) return content;
-        int hitStart = intValue(row.get("_hitStart"), -1);
-        int hitEnd = intValue(row.get("_hitEnd"), hitStart);
+        int hitStart = intValue(row.get(CandidateKeys.HIT_START), -1);
+        int hitEnd = intValue(row.get(CandidateKeys.HIT_END), hitStart);
         if (hitStart < 0 || hitStart > content.length()) return content.substring(0, remaining);
         hitEnd = Math.max(hitStart, Math.min(content.length(), hitEnd));
         int center = (hitStart + hitEnd) / 2;
