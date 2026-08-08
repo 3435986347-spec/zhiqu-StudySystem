@@ -152,6 +152,48 @@ public class RagUnitRegistry {
         return unit == null ? null : unit.getIndexStatus();
     }
 
+    /**
+     * 索引一个单元所需的全部输入。
+     *
+     * <p><b>正文不落库</b> —— {@code rag_unit_chunk} 只存 {@code char_start/char_end}
+     * 与哈希，这是「sidecar 永不存明文、解密只在 JVM 内」那条不变量的一部分。
+     * 所以每次索引都要现取现解密，没有更便宜的路。
+     */
+    public record IndexableUnitSnapshot(RagIndexableUnit unit, String canonicalText,
+                                        List<RagUnitChunk> chunks) {}
+
+    /**
+     * 取出可索引快照；不可索引时返回 {@code null}。
+     *
+     * <p><b>刻意不在这里区分三种「不可索引」</b>（投影行没了 / 不是 READY / 正文这次读不出来）：
+     * 状态转换已经由 {@link #refreshUnitIfLive} 与 {@code refresh} 做过一遍，
+     * 这里再判一次并写一次状态，就会出现两个都能改 {@code status} 的入口 ——
+     * 而两个入口对同一件事的判断一旦分歧，谁最后写谁赢，且没有任何东西会报错。
+     * 本方法只回答「现在能不能索引」，状态归属仍然只有一个写入方。
+     *
+     * <p>调用顺序因此是固定的：先 {@code refreshUnitIfLive}（它负责让位与状态转换），
+     * 为真时再调本方法拿正文。代价是一次额外解密 —— 已知且接受，
+     * 因为让 {@code refresh} 顺带把正文吐出来会把它的返回类型和职责一起撑开。
+     */
+    public IndexableUnitSnapshot loadForIndexing(String namespace, Long refId) {
+        RagIndexableUnit unit = findUnit(namespace, refId);
+        if (unit == null || !RagNamespace.STATUS_READY.equals(unit.getStatus())) return null;
+
+        UnitContent content = resolver.load(unit);
+        if (content.outcome() != UnitContent.Outcome.OK) {
+            log.debug("单元 {}#{} 这次取不到正文（{}），跳过索引", namespace, refId, content.reason());
+            return null;
+        }
+        List<RagUnitChunk> chunks = chunkMapper.selectList(new LambdaQueryWrapper<RagUnitChunk>()
+                .eq(RagUnitChunk::getUnitId, unit.getId())
+                .orderByAsc(RagUnitChunk::getChunkIndex));
+        if (chunks.isEmpty()) {
+            log.debug("单元 {}#{} 没有切分边界，跳过索引", namespace, refId);
+            return null;
+        }
+        return new IndexableUnitSnapshot(unit, content.canonicalText(), chunks);
+    }
+
     /** 退役一个单元（幂等）。投影行不存在时是 no-op —— 删除比注册先到是正常的。 */
     public void retireUnit(String namespace, Long refId) {
         RagIndexableUnit unit = findUnit(namespace, refId);

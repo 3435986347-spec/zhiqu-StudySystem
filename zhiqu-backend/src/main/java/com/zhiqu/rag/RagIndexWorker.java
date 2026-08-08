@@ -5,6 +5,7 @@ import com.zhiqu.entity.AiNotebookSource;
 import com.zhiqu.entity.AiSourceChunk;
 import com.zhiqu.entity.RagIndexGeneration;
 import com.zhiqu.entity.RagIndexJob;
+import com.zhiqu.entity.RagUnitChunk;
 import com.zhiqu.entity.RuntimeIssue;
 import com.zhiqu.mapper.AiNotebookSourceMapper;
 import com.zhiqu.mapper.AiSourceChunkMapper;
@@ -279,7 +280,82 @@ public class RagIndexWorker {
      * 作业里带的是发起时的快照，投影行才是当前真相。
      */
     private void upsertUnit(RagIndexJob job) {
-        registry.refreshUnitIfLive(job.getNamespace(), job.getSourceId());
+        if (!registry.refreshUnitIfLive(job.getNamespace(), job.getSourceId())) return;
+        indexUnit(job);
+    }
+
+    /**
+     * 把一个单元的向量写进 sidecar（unit 方言）。
+     *
+     * <p>切片用 {@link RagUnitChunker#sliceByCodePoints} —— {@code rag_unit_chunk} 的
+     * 偏移单位是 <b>Unicode code point</b>，直接 {@code substring} 会在 emoji 与代理对上
+     * 错位，而错位的表现是切出半个字符、哈希对不上、单元被无限重建。
+     *
+     * <p>三个字段的来源是硬约束，不是惯例（见 {@code docs/rag-1b2-stage-e-handoff.md}）：
+     * <ul>
+     *   <li>{@code mutationToken} = {@code job.getId()} —— 必须与删除侧同一个单调序列。
+     *       <b>不要把理由记成「job id 的序等于提交序」</b>：InnoDB 在 INSERT 执行时就分配
+     *       自增值，事务可以在之后乱序提交。真正成立的是「两条路径共用同一序列，且两个序
+     *       分歧时两种乱序都倒向删除获胜」。时间戳满足前半、不满足后半（时钟回拨会倒向索引），
+     *       所以不能换。sidecar 只校验 {@code > 0}，不会替我们发现换源。</li>
+     *   <li>{@code contentHash} = 投影行的 {@code canonical_hash} —— 换别的算法就又多一处
+     *       「同一份内容两个哈希」。</li>
+     *   <li>{@code scopeId} 为空时<b>整个键不写</b> —— Chroma 的 metadata 不接受 None。</li>
+     * </ul>
+     *
+     * <p><b>{@code finalBatch} 只有最后一批为 true。</b>每批都传 false 是合法载荷、
+     * sidecar 照收，而它的 {@code _finalize_source} 只在为真时跑 —— 于是上一次索引留下的
+     * 过期向量永不清理、继续参与检索命中，且 operation 一直挂着不终结。
+     * 这条只有 chunk 数超过 {@link #PARENT_CHUNKS_PER_BATCH} 的多批次夹具验得到，
+     * 单批次用例恒绿。
+     */
+    private void indexUnit(RagIndexJob job) {
+        RagUnitRegistry.IndexableUnitSnapshot snapshot =
+                registry.loadForIndexing(job.getNamespace(), job.getSourceId());
+        if (snapshot == null) return;
+
+        RagIndexGeneration generation = activeIndexTarget();
+        if (generation == null) return;
+
+        List<RagUnitChunk> chunks = snapshot.chunks();
+        String text = snapshot.canonicalText();
+        int batchNo = 0;
+        for (int start = 0; start < chunks.size(); start += PARENT_CHUNKS_PER_BATCH) {
+            assertLease(job);
+            int end = Math.min(chunks.size(), start + PARENT_CHUNKS_PER_BATCH);
+            List<Map<String, Object>> payloadChunks = new ArrayList<>();
+            for (RagUnitChunk chunk : chunks.subList(start, end)) {
+                payloadChunks.add(Map.of(
+                        "chunkId", chunk.getId(),
+                        "chunkIndex", chunk.getChunkIndex(),
+                        "content", RagUnitChunker.sliceByCodePoints(
+                                text, chunk.getCharStart(), chunk.getCharEnd())
+                ));
+            }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("operationId", "job-" + job.getId());
+            payload.put("mutationToken", job.getId());
+            payload.put("userId", snapshot.unit().getUserId());
+            payload.put("namespace", snapshot.unit().getNamespace());
+            payload.put("unitId", snapshot.unit().getId());
+            if (snapshot.unit().getScopeId() != null) {
+                payload.put("scopeId", snapshot.unit().getScopeId());
+            }
+            payload.put("contentHash", snapshot.unit().getCanonicalHash());
+            payload.put("indexVersion", generation.getIndexVersion());
+            payload.put("collectionName", generation.getCollectionName());
+            payload.put("batchNo", batchNo++);
+            payload.put("finalBatch", end >= chunks.size());
+            payload.put("chunks", payloadChunks);
+            client.indexSource(payload);
+        }
+    }
+
+    /** 当前可写入的代次。与 indexSource 同口径：READY 但未激活的窗口里也要照常索引。 */
+    private RagIndexGeneration activeIndexTarget() {
+        return generationMapper.selectOne(new LambdaQueryWrapper<RagIndexGeneration>()
+                .in(RagIndexGeneration::getStatus, "ACTIVE", "BUILDING", "READY")
+                .orderByDesc(RagIndexGeneration::getId).last("LIMIT 1"));
     }
 
     /**
