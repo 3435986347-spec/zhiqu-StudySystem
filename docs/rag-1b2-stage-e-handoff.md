@@ -170,3 +170,49 @@ HashMap 允许一个 null 键，存量行会全塌成一个条目、互相覆盖
 
 与「装置坏了当成结论」（容器瞬时故障读成 RED）是镜像的一对：
 这条是「装置打偏了当成结论」。两个方向都要在判定里。
+
+## 1c 的两处前置阻塞（开工前先看，都是实测）
+
+### ① `RagSourceIndexState` 实体缺 `unitId` 字段
+
+V29 已经 `ALTER TABLE rag_source_index_state ADD COLUMN unit_id BIGINT NULL`，
+但 **Java 实体从没加过这个字段**（`entity/RagSourceIndexState.java` 只有 `sourceId`）。
+所以「`bySource` → `byUnit`」不是改两行 `Map` 的键那么简单，链条是：
+
+1. 实体加 `unitId`
+2. `upsertSourceState(...)` 要能填它 —— 它现在的入参是 `AiNotebookSource`，
+   拿不到投影行的 id，签名要改
+3. 才轮到 `RagAdminService:174` 与 `:193` 的两处 `bySource.put(state.getSourceId(), ...)`
+
+顺序不能反：先改 Map 的键会立刻得到全 null 键（正是要避免的那个塌陷）。
+
+### ② `indexUnit` 不写 `rag_source_index_state`（1b 留下的缺口）
+
+`markIndexedWithLease` 只在 legacy 的 `indexSource` 末尾调用
+（`RagIndexWorker:182`）。1b 新加的 `indexUnit` 把向量发出去了，
+**但没有记录任何索引状态**。
+
+后果分两层，第二层才是要紧的：
+
+- 门禁 `validateCurrentReadyCoverage` 数不到它们 → 覆盖率永远够不到 → `activate` 抛异常；
+- 而这**恰好发生在 cutover runbook 第 9 步** —— 方案 §7 早就点过同一个坑
+  （「会在最糟的时刻暴露」），这次是从另一个方向掉进去的：
+  那次担心的是分母暴涨，这次是分子不动。
+
+修它必须和 ① 一起做：要写的 state 行以 `unit_id` 为键，而那个字段现在还不存在。
+这也正是「1c 与三处收敛必须合并成一步」的具体形态 —— 之前的论证是
+「分开会有 NULL 键窗口」，现在能更具体地说：**分开根本做不出来**，
+因为写入侧与读取侧共用同一个尚不存在的字段。
+
+### 1c 的实际步序
+
+1. `RagSourceIndexState` 加 `unitId`
+2. `upsertSourceState` 换签名，能同时填 `sourceId`（LEGACY 兼容）与 `unitId`
+3. `indexUnit` 末尾写 state 行（vectorCount 从 sidecar 响应的 `written` 累加 ——
+   1b 当前把响应丢弃了，一并补上）
+4. `RagAdminService:174 / :193` 两处 `bySource` → `byUnit`，门禁分母改读投影表
+5. `RagRetriever` payload 换 `namespaces` + `unitIds`，候选行读 `unitId`/`namespace`
+6. `sourceCount` 放宽到全部命名空间
+
+第 4 步的门禁分母**必须**与第 3 步同批：投影表在 1B-1 期间是空的（方案 §7 论证过
+分母为 0 会无声放行），而现在它非空了，但只有走过 `indexUnit` 的单元才有 state 行。
