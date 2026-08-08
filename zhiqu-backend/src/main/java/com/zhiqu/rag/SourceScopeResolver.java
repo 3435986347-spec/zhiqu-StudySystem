@@ -50,6 +50,6 @@ public class SourceScopeResolver {
                 != selectedSourceIds.stream().distinct().count()) {
             throw new BusinessException("选择的资料不存在、不可用或无权限访问");
         }
-        return new ScopeSelection(userId, notebookId, sources);
+        return new ScopeSelection(userId, notebookId, sources, java.util.List.of());
     }
 }

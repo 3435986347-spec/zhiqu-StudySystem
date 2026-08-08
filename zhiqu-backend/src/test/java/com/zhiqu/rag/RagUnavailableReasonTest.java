@@ -74,11 +74,11 @@ class RagUnavailableReasonTest {
     void 只有配置错误计入回落指标() {
         RagMetricsService disabledMetrics = new RagMetricsService();
         retrieverWith(properties(false, "a-real-token"), disabledMetrics)
-                .retrieve("req-1", 1L, 1L, new ScopeSelection(1L, 1L, java.util.List.of()), "问题");
+                .retrieve("req-1", 1L, 1L, new ScopeSelection(1L, 1L, java.util.List.of(), java.util.List.of()), "问题");
 
         RagMetricsService brokenMetrics = new RagMetricsService();
         RagRetriever.RetrievalResult broken = retrieverWith(properties(true, null), brokenMetrics)
-                .retrieve("req-2", 1L, 1L, new ScopeSelection(1L, 1L, java.util.List.of()), "问题");
+                .retrieve("req-2", 1L, 1L, new ScopeSelection(1L, 1L, java.util.List.of(), java.util.List.of()), "问题");
 
         assertEquals(RagClient.REASON_TOKEN_MISSING, broken.fallbackReason());
         assertTrue(fallbackCount(disabledMetrics).isEmpty(),
