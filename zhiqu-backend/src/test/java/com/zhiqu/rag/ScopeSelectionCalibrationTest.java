@@ -58,6 +58,7 @@ class ScopeSelectionCalibrationTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private SourceScopeResolver resolver;
     @Autowired private RagUnitRegistry registry;
+    @Autowired private com.zhiqu.service.RuntimeFlagService runtimeFlags;
 
     private Long userId;
     private Long notebookId;
@@ -188,6 +189,59 @@ class ScopeSelectionCalibrationTest {
                 "NOTEBOOK_SOURCE 单元属于 notebookSources，放进 projectedUnits 会被数两遍");
         assertTrue(error.getMessage().contains("4321"),
                 "报错要带上单元 id，否则拿到这个异常的人还得自己去找是哪一条：" + error.getMessage());
+    }
+
+    /**
+     * Wiki 范围有<b>页数</b>上界，且截断取的是<b>最近更新</b>的那些。
+     *
+     * <p>上界限的是 <b>id 基数</b>（{@code payload.unitIds} / Chroma {@code $in} /
+     * 状态查询的 {@code IN}），不是 token 成本 —— 后者已被 sidecar 的
+     * {@code min(max_candidate_k, candidateK)} 与 {@code finalK/maxContextChars/maxPerSource}
+     * 夹死，且与范围大小无关。所以按<b>页数</b>而不是 chunk 数：
+     * 一个 500 chunk 的巨页在 id 基数上只值 1，按 chunk 预算反而会被它独占。
+     *
+     * <p>断言取<b>具体是哪几页</b>而不只是数量：只比数量的话，
+     * 「取了最近 2 页」与「取了最早 2 页」都是 2，而后者意味着截断稳定地砍掉用户在用的页。
+     */
+    @org.junit.jupiter.api.AfterEach
+    void 还原运行时上界() {
+        // 上界是**进程级**状态，不随每个用例的新用户重置 —— 不还原的话它会泄漏到
+        // 同类里其它用例（比如「计数口径含全部命名空间」那条），表现为与本条无关的红。
+        runtimeFlags.set(com.zhiqu.service.RuntimeFlagService.RAG_WIKI_SCOPE_MAX, "200", "test-reset");
+    }
+
+    @Test
+    void wiki范围按页数截断且保留最近更新的() {
+        Long oldest = createWikiPage("最旧", "2026-01-01 10:00:00");
+        Long middle = createWikiPage("居中", "2026-01-02 10:00:00");
+        Long newest = createWikiPage("最新", "2026-01-03 10:00:00");
+        // 必须走 set(...) 而不是直接改表：RuntimeFlagService 有 5 秒 TTL 缓存，
+        // 直接写库会被同一次运行里更早的一次读取盖住，本条会因为读到旧上界而随机绿。
+        // set(...) 写完立刻失效缓存（RuntimeFlagService.java:130）。
+        runtimeFlags.set(com.zhiqu.service.RuntimeFlagService.RAG_WIKI_SCOPE_MAX, "2", "test");
+
+        ScopeSelection scope = resolver.resolve(userId, notebookId, List.of());
+
+        List<Long> refIds = scope.projectedUnits().stream()
+                .map(com.zhiqu.entity.RagIndexableUnit::getRefId).toList();
+        assertEquals(List.of(newest, middle), refIds,
+                "上界 2 时留下的必须是最近更新的两页；拿到 [" + oldest + " …] 说明排序反了，"
+                        + "截断会稳定地砍掉用户正在用的页");
+    }
+
+    private Long createWikiPage(String title, String updatedAt) {
+        jdbc.update("INSERT INTO user_knowledge_page(user_id,page_type,title,encrypted_content," +
+                        "encryption_version,version,sort_order,pinned,updated_at,deleted) " +
+                        "VALUES(?,'NOTE',?,?,'v0',0,0,0,?,0)",
+                userId, title, "象限法把任务分成四类。" + title, updatedAt);
+        Long pageId = jdbc.queryForObject("SELECT id FROM user_knowledge_page WHERE user_id=? "
+                + "AND title=?", Long.class, userId, title);
+        registry.refreshUnitIfLive(RagNamespace.WIKI_PAGE, pageId);
+        // 投影行的 updated_at 由 MetaObjectHandler 填当前时间，与页面的 updated_at 无关；
+        // 范围排序读的是投影行，所以要把它对齐到夹具想表达的时间。
+        jdbc.update("UPDATE rag_indexable_unit SET updated_at=? WHERE namespace=? AND ref_id=?",
+                updatedAt, RagNamespace.WIKI_PAGE, pageId);
+        return pageId;
     }
 
     private boolean assertThrowsUnsupported(Runnable action) {

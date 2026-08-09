@@ -18,6 +18,28 @@ public class RagProperties {
     private int maxContextChars = 10000;
     private int maxPerSource = 3;
     private int maxSnippetChars = 1600;
+
+    /**
+     * Wiki 检索范围的<b>页数</b>上界（按 updated_at 倒序取最近 N 页）。
+     *
+     * <p><b>它限的是 id 基数，不是 token 成本。</b>后者已被三道闸门夹死且与范围大小无关：
+     * sidecar 最多回 {@code min(max_candidate_k, candidateK)} 条候选（vector_store.py:230），
+     * 之后还有 finalK=8 / maxContextChars=10000 / maxPerSource=3。
+     * 无论 {@code $in} 里塞 5 个还是 5000 个 unitId，进模型的东西都一样多。
+     *
+     * <p>真正随范围线性增长的只有 id 基数：{@code payload.unitIds} 的长度、
+     * Chroma {@code $in} 的元素个数、Java 侧状态查询的 {@code IN (...)}。三者都按
+     * <b>单元个数</b>增长，与每个单元有多少 chunk 无关 —— 所以上界按<b>页数</b>而不是 chunk 数。
+     *
+     * <p><b>按 chunk 数给预算是反的：</b>一个 500 chunk 的巨页在 id 基数上的成本是 1，
+     * 而按 chunk 预算它会独占预算、把其余几百页全挤出范围。
+     * 页数上界是抗巨页的那一个，chunk 预算是怕巨页的那一个。
+     *
+     * <p>200 是<b>暂定值，没有实测依据</b>。能把它变成有依据的量法见
+     * {@code docs/rag-1b2-stage-e-handoff.md}：命中候选在「按 updated_at 倒序」里的排名分布。
+     * 延迟 vs N 的曲线回答不了这个问题（它对 N 单调，读不出门槛）。
+     */
+    private int maxWikiScopeUnits = 200;
     private boolean fallbackEnabled = true;
     private String indexVersion = "bge-small-zh-v1.5@pinned-token448-overlap64-v1-cosine";
     private int workerBatchSize = 4;

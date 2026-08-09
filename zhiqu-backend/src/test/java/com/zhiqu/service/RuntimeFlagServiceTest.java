@@ -49,8 +49,21 @@ class RuntimeFlagServiceTest {
         assertEquals(RuntimeFlagService.WorkerMode.NORMAL, flags.workerMode());
 
         List<Map<String, Object>> described = flags.describeAll();
-        assertEquals(2, described.size());
-        assertEquals("YAML_DEFAULT", described.get(0).get("source"));
+
+        // 期望值里只放本条声称的那件事：**每一行**都回落 YAML_DEFAULT。
+        // 原来写的是 assertEquals(2, described.size()) + 第 0 行的 source —— 那两样都不是
+        // 「回落到 yaml 默认」这条性质的一部分：加一个开关就会让它红，而红的理由与它的名字无关。
+        // （实测：加 rag.wiki-scope-max 后它报 expected <2> but was <3>。
+        //  那时最省力的动作是把 2 改成 3 —— 而那和「调期望值直到变绿」在 diff 里一模一样。）
+        assertEquals(List.of("YAML_DEFAULT", "YAML_DEFAULT", "YAML_DEFAULT"),
+                described.stream().map(row -> row.get("source")).toList(),
+                "表里无行时每一个开关都该标 YAML_DEFAULT");
+
+        // 顺带钉住「管理端看得见全部开关」：describeAll 与 set 的白名单必须同源。
+        // 两者漂开时新开关能被 set 写进去却不出现在管理端 —— 运维看不到它，也就不知道它生效着。
+        assertEquals(RuntimeFlagService.KNOWN_KEY_ORDER,
+                described.stream().map(row -> row.get("key")).toList(),
+                "describeAll 必须逐个列出 KNOWN_KEY_ORDER，且顺序一致");
     }
 
     @Test

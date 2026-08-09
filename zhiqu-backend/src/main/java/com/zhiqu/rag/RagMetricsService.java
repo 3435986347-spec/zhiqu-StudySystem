@@ -21,6 +21,8 @@ public class RagMetricsService {
     private final AtomicLong candidatesHydrated = new AtomicLong();
     private final AtomicLong candidatesFinal = new AtomicLong();
     private final Map<String, AtomicLong> droppedCandidates = new ConcurrentHashMap<>();
+    private final AtomicLong wikiScopeTruncations = new AtomicLong();
+    private final AtomicLong wikiScopeMaxSeenUnits = new AtomicLong();
 
     /** 跨作用域候选被丢弃的原因名，同时是旧快照键 {@code crossScopeDrops} 的来源。 */
     static final String REASON_CROSS_SCOPE = "CROSS_SCOPE";
@@ -78,6 +80,24 @@ public class RagMetricsService {
                 .mapToLong(entry -> entry.getValue().get()).sum();
     }
 
+    /**
+     * Wiki 检索范围被页数上界截断。<b>记超出量，不只记事件。</b>
+     *
+     * <p>「200 截自 205」与「200 截自 5000」是两种完全不同的处境：前者几乎无害，
+     * 后者意味着这个用户的语料<b>大部分在检索里不存在</b>。
+     * 只记事件或布尔值会把两者压成同一个信号，运维看到「有截断」却判断不了要不要立刻调大 ——
+     * 那正是这条链上反复消掉的那种合并（DISABLED/TOKEN_MISSING、
+     * NO_VECTOR_CANDIDATE/ALL_CANDIDATES_DROPPED）。
+     *
+     * <p><b>不按 userId 分键</b>：指标的键集会随用户数无界增长。
+     * 「哪个用户」这一维走日志（{@code SourceScopeResolver} 里 WARN 带 userId），
+     * 指标只保留「发生过几次」与「见过的最大语料量」——后者就是判断严重程度的那个数。
+     */
+    public void recordWikiScopeTruncated(long totalUnits) {
+        wikiScopeTruncations.incrementAndGet();
+        wikiScopeMaxSeenUnits.accumulateAndGet(totalUnits, Math::max);
+    }
+
     public void recordCandidateFlow(int hydrated, int selected) {
         candidatesHydrated.addAndGet(Math.max(0, hydrated));
         candidatesFinal.addAndGet(Math.max(0, selected));
@@ -100,6 +120,9 @@ public class RagMetricsService {
         result.put("queryP95Ms", percentile(sorted, 0.95));
         result.put("fallbacks", fallbackSnapshot);
         result.put("fallbackCount", fallbackSnapshot.values().stream().mapToLong(Long::longValue).sum());
+        result.put("wikiScopeTruncations", wikiScopeTruncations.get());
+        // 严重程度那一维：见过的最大语料量。只有次数的话，「截自 205」与「截自 5000」不可分。
+        result.put("wikiScopeMaxSeenUnits", wikiScopeMaxSeenUnits.get());
         result.put("candidatesReturned", candidatesReturned.get());
         result.put("candidatesHydrated", candidatesHydrated.get());
         result.put("candidatesFinal", candidatesFinal.get());

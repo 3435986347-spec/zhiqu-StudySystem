@@ -37,11 +37,26 @@ public class RuntimeFlagService {
     public static final String RAG_PRODUCER_FROZEN = "rag.producer-frozen";
     /** NORMAL | REBUILD_ONLY | OFF，见 {@link WorkerMode}。 */
     public static final String RAG_WORKER_MODE = "rag.worker-mode";
+    /** Wiki 检索范围的页数上界。E-4 现场要能不重启地调，所以走运行时开关而不是只读 yaml。 */
+    public static final String RAG_WIKI_SCOPE_MAX = "rag.wiki-scope-max";
 
     public static final long CACHE_TTL_MS = 5_000L;
 
     private static final Set<String> BOOLEAN_KEYS = Set.of(RAG_PRODUCER_FROZEN);
-    private static final Set<String> KNOWN_KEYS = Set.of(RAG_PRODUCER_FROZEN, RAG_WORKER_MODE);
+
+    /**
+     * 全部已知开关，<b>唯一定义</b>，且顺序即管理端展示顺序。
+     *
+     * <p>此前「有哪些开关」写了两份：这个集合负责 {@link #set} 的白名单，
+     * {@link #describeAll()} 里另有一份手写的 {@code List.of(...)}。
+     * 两份漂开的失效形态很静默：新开关能被 {@code set} 写进去，却<b>不出现在管理端</b> ——
+     * 运维看不到它、也就不知道它生效着，而每一处单看都是对的。
+     * 这是本仓库第六次「共享词表没有单一定义」，修法同前：收成一处，让调用点派生。
+     */
+    public static final List<String> KNOWN_KEY_ORDER =
+            List.of(RAG_PRODUCER_FROZEN, RAG_WORKER_MODE, RAG_WIKI_SCOPE_MAX);
+
+    private static final Set<String> KNOWN_KEYS = Set.copyOf(KNOWN_KEY_ORDER);
 
     public enum WorkerMode {
         /** 领取全部作业。 */
@@ -82,6 +97,20 @@ public class RuntimeFlagService {
         }
     }
 
+    /**
+     * Wiki 范围页数上界。非法值（负数、非数字）一律回落到 yaml 默认，
+     * 与 {@link #workerMode()} 同一个取舍：宁可按默认继续跑，也不要因为表里被手工写坏
+     * 而让整个 Wiki 检索范围塌成 0 —— 那种失效是静默的（检索不到，不报错）。
+     */
+    public int wikiScopeMax() {
+        try {
+            int value = Integer.parseInt(get(RAG_WIKI_SCOPE_MAX));
+            return value > 0 ? value : ragProperties.getMaxWikiScopeUnits();
+        } catch (NumberFormatException | NullPointerException e) {
+            return ragProperties.getMaxWikiScopeUnits();
+        }
+    }
+
     /** 表里没有该键时回落到 yaml 种子默认值。 */
     public String get(String key) {
         String stored = currentValues().get(key);
@@ -92,7 +121,7 @@ public class RuntimeFlagService {
     public List<Map<String, Object>> describeAll() {
         Map<String, String> values = currentValues();
         List<Map<String, Object>> rows = new java.util.ArrayList<>();
-        for (String key : List.of(RAG_PRODUCER_FROZEN, RAG_WORKER_MODE)) {
+        for (String key : KNOWN_KEY_ORDER) {
             Map<String, Object> row = new LinkedHashMap<>();
             String stored = values.get(key);
             row.put("key", key);
@@ -130,6 +159,19 @@ public class RuntimeFlagService {
                 throw new BusinessException("开关 " + key + " 只接受 NORMAL / REBUILD_ONLY / OFF");
             }
         }
+        if (RAG_WIKI_SCOPE_MAX.equals(key)) {
+            // 在**写入边界**拒绝，而不是等读取时回落到默认值。回落是有的
+            // （wikiScopeMax() 对非法值兜底），但那条兜底只防「表被手工写坏」；
+            // 经 set(...) 写进来的非法值如果也静默回落，运维会看到自己刚设的 5000
+            // 却仍按 200 生效，且没有任何提示 —— 与 sidecar 把 namespace 校验放在唯一入口同理。
+            try {
+                int value = Integer.parseInt(trimmed);
+                if (value <= 0) throw new NumberFormatException();
+                return String.valueOf(value);
+            } catch (NumberFormatException e) {
+                throw new BusinessException("开关 " + key + " 只接受正整数（页数），收到：" + rawValue);
+            }
+        }
         return trimmed;
     }
 
@@ -137,6 +179,7 @@ public class RuntimeFlagService {
         return switch (key) {
             case RAG_PRODUCER_FROZEN -> String.valueOf(ragProperties.isProducerFrozen());
             case RAG_WORKER_MODE -> ragProperties.getWorkerMode();
+            case RAG_WIKI_SCOPE_MAX -> String.valueOf(ragProperties.getMaxWikiScopeUnits());
             default -> null;
         };
     }

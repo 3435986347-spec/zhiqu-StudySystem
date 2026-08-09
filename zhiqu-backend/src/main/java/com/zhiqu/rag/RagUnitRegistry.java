@@ -608,14 +608,28 @@ public class RagUnitRegistry {
      * <p>{@code userId} 是必填的：Wiki 不按 Notebook 划分，少了这个条件就会把<b>所有人</b>的
      * 页放进范围，而下游只按 unitId 过滤，不会再有第二道归属检查。
      */
-    public List<RagIndexableUnit> readyUnitsOf(String namespace, Long userId) {
-        if (namespace == null || userId == null) return List.of();
-        return unitMapper.selectList(new LambdaQueryWrapper<RagIndexableUnit>()
+    public List<RagIndexableUnit> readyUnitsOf(String namespace, Long userId, int limit) {
+        if (namespace == null || userId == null || limit <= 0) return List.of();
+        return unitMapper.selectList(readyUnitsQuery(namespace, userId)
+                // 倒序取最近更新的：截断时被丢掉的是最旧的那些，而不是「id 小的那些」。
+                // 按 id 排的话，截断会稳定地砍掉用户最早建的页 —— 那与「最近在用什么」无关。
+                .orderByDesc(RagIndexableUnit::getUpdatedAt)
+                .orderByDesc(RagIndexableUnit::getId)
+                .last("LIMIT " + limit));
+    }
+
+    /** 截断发生时才调，用来算<b>超出量</b>——「200 截自 205」与「200 截自 5000」是两种处境。 */
+    public long countReadyUnits(String namespace, Long userId) {
+        if (namespace == null || userId == null) return 0L;
+        return unitMapper.selectCount(readyUnitsQuery(namespace, userId));
+    }
+
+    private LambdaQueryWrapper<RagIndexableUnit> readyUnitsQuery(String namespace, Long userId) {
+        return new LambdaQueryWrapper<RagIndexableUnit>()
                 .eq(RagIndexableUnit::getNamespace, namespace)
                 .eq(RagIndexableUnit::getUserId, userId)
                 .eq(RagIndexableUnit::getStatus, RagNamespace.STATUS_READY)
-                .isNotNull(RagIndexableUnit::getCanonicalHash)
-                .orderByAsc(RagIndexableUnit::getId));
+                .isNotNull(RagIndexableUnit::getCanonicalHash);
     }
 
     /**
