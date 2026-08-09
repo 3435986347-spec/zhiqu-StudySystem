@@ -18,6 +18,7 @@ import com.zhiqu.rag.RagRetriever;
 import com.zhiqu.rag.CandidateKeys;
 import com.zhiqu.rag.ScopeSelection;
 import com.zhiqu.rag.SourceScopeResolver;
+import com.zhiqu.service.ContextOptionKeys;
 import com.zhiqu.service.AgentBlackboardService;
 import com.zhiqu.service.AgentTaskGraphService;
 import com.zhiqu.service.AiWorkspaceService;
@@ -450,7 +451,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
 
     @Override
     public List<Map<String, Object>> sourceContext(Long userId, Long notebookId, Map<String, Object> contextOptions) {
-        List<Long> selectedIds = longList(contextOptions == null ? null : contextOptions.get("selectedSourceIds"));
+        List<Long> selectedIds = longList(contextOptions == null ? null : contextOptions.get(ContextOptionKeys.SELECTED_SOURCE_IDS));
         if (notebookId == null) {
             if (!selectedIds.isEmpty()) {
                 throw new BusinessException("Notebook is required when selecting sources.");
@@ -462,7 +463,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         }
         ScopeSelection scope = sourceScopeResolver.resolve(userId, notebookId, selectedIds);
         List<AiNotebookSource> sources = scope.notebookSources();
-        String query = text(contextOptions == null ? null : contextOptions.get("query"), "");
+        String query = text(contextOptions == null ? null : contextOptions.get(ContextOptionKeys.QUERY), "");
         RagRetriever.RetrievalResult retrieval = ragRetriever.retrieve(
                 UUID.randomUUID().toString(), userId, scope, query);
         List<Map<String, Object>> vectorRows = contextCandidateHydrator.hydrate(
@@ -991,12 +992,12 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
      */
     private boolean includeWikiRequested(Map<String, Object> contextOptions) {
         if (contextOptions == null) return false;
-        return Boolean.TRUE.equals(contextOptions.get("includeWiki"))
-                || !longList(contextOptions.get("selectedWikiPageIds")).isEmpty();
+        return Boolean.TRUE.equals(contextOptions.get(ContextOptionKeys.INCLUDE_WIKI))
+                || !longList(contextOptions.get(ContextOptionKeys.SELECTED_WIKI_PAGE_IDS)).isEmpty();
     }
 
     private List<Map<String, Object>> wikiContext(Long userId, Map<String, Object> contextOptions) {
-        List<Long> selectedIds = longList(contextOptions.get("selectedWikiPageIds"));
+        List<Long> selectedIds = longList(contextOptions.get(ContextOptionKeys.SELECTED_WIKI_PAGE_IDS));
         if (selectedIds.isEmpty()) {
             return List.of();
         }

@@ -30,6 +30,7 @@ import com.zhiqu.mapper.UserAiConfigMapper;
 import com.zhiqu.mapper.UserAiMemoryMapper;
 import com.zhiqu.mapper.UserKnowledgePageMapper;
 import com.zhiqu.mapper.UserKnowledgeRevisionMapper;
+import com.zhiqu.service.ContextOptionKeys;
 import com.zhiqu.service.AgentBlackboardService;
 import com.zhiqu.service.AgentTaskGraphService;
 import com.zhiqu.service.AiService;
@@ -525,7 +526,7 @@ public class AiServiceImpl implements AiService {
                 startResearchTasks(emitter, requestId, agentRun, taskGraph);
                 retrieverStep = startAgentStep(emitter, requestId, agentRun, retrieverTask, "RETRIEVER", 2, "正在检索资料来源");
                 Map<String, Object> retrievalOptions = new LinkedHashMap<>(contextOptions == null ? Map.of() : contextOptions);
-                retrievalOptions.put("query", limitedMessage);
+                retrievalOptions.put(ContextOptionKeys.QUERY, limitedMessage);
                 notebookContextRows = aiWorkspaceService.sourceContext(userId, notebookId, retrievalOptions);
                 citations = Boolean.TRUE.equals(enableWebSearch)
                         ? webResearchService.research(limitedMessage, history)
@@ -989,9 +990,9 @@ public class AiServiceImpl implements AiService {
         if (contextOptions == null) {
             return false;
         }
-        return Boolean.TRUE.equals(contextOptions.get("includeWiki"))
-                || hasNonEmptyList(contextOptions.get("selectedSourceIds"))
-                || hasNonEmptyList(contextOptions.get("selectedWikiPageIds"));
+        return Boolean.TRUE.equals(contextOptions.get(ContextOptionKeys.INCLUDE_WIKI))
+                || hasNonEmptyList(contextOptions.get(ContextOptionKeys.SELECTED_SOURCE_IDS))
+                || hasNonEmptyList(contextOptions.get(ContextOptionKeys.SELECTED_WIKI_PAGE_IDS));
     }
 
     private boolean shouldRunPlanner(String agentMode, String message) {

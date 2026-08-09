@@ -2,6 +2,7 @@ package com.zhiqu.service.impl;
 
 import com.zhiqu.entity.AiAgentRun;
 import com.zhiqu.entity.AiAgentTask;
+import com.zhiqu.service.ContextOptionKeys;
 import com.zhiqu.service.AgentTaskGraphService;
 import com.zhiqu.service.MultiAgentOrchestrator;
 import org.springframework.stereotype.Service;
@@ -32,7 +33,7 @@ public class MultiAgentOrchestratorImpl implements MultiAgentOrchestrator {
         boolean needsPlan = shouldPlan(mode, message);
         boolean needsTaskDraft = shouldDraftTasks(message);
         boolean needsWikiDraft = shouldCurateWiki(message);
-        boolean includeWiki = Boolean.TRUE.equals(options.get("includeWiki")) || hasNonEmptyList(options.get("selectedWikiPageIds"));
+        boolean includeWiki = Boolean.TRUE.equals(options.get(ContextOptionKeys.INCLUDE_WIKI)) || hasNonEmptyList(options.get(ContextOptionKeys.SELECTED_WIKI_PAGE_IDS));
         boolean hasNotebook = notebookId != null;
         boolean needsNotebook = !chatOnly && hasNotebook;
         boolean needsWeb = !chatOnly && enableWebSearch;
