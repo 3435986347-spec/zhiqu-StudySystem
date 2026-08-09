@@ -366,10 +366,11 @@ class RagIndexIntegrationTest {
 
     @Test
     void deletedSourceImmediatelyLeavesRetrievalScope() {
-        // resolve() 的返回类型由 List<AiNotebookSource> 变为 ScopeSelection，故 size() → notebookSourceCount()。
-        // 这是纯机械的访问器改名：期望值 1 未变、断言语义未变。没有把 size() 保留成兼容别名，
-        // 是因为「size 数的是什么」正是口径悄悄漂移的入口——它在调用点上看不出来。
-        assertEquals(1, scopeResolver.resolve(userId, notebookId, List.of(sourceId)).notebookSourceCount());
+        // 本条要的是「这份资料在不在检索范围里」，所以断言的是**资料 id 列表**，
+        // 不是任何一个计数。step 4 把计数放宽成「跨命名空间的单元总数」之后，
+        // 拿计数来断言会让这条随该用户有没有 Wiki 页而漂移 —— 而那与本条要测的事无关。
+        assertEquals(List.of(sourceId),
+                scopeResolver.resolve(userId, notebookId, List.of(sourceId)).notebookSourceIds());
         sourceMapper.deleteById(sourceId);
         BusinessException error = assertThrows(BusinessException.class,
                 () -> scopeResolver.resolve(userId, notebookId, List.of(sourceId)));

@@ -57,6 +57,7 @@ class ScopeSelectionCalibrationTest {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private SourceScopeResolver resolver;
+    @Autowired private RagUnitRegistry registry;
 
     private Long userId;
     private Long notebookId;
@@ -96,7 +97,9 @@ class ScopeSelectionCalibrationTest {
                 "范围的顺序承重：它决定 legacyContextRows 的建行顺序，"
                         + "进而决定 ContextBudgeter.roundRobinExplicit 的桶序，"
                         + "最终决定每源配额卡住时哪几条 explicit 行活下来");
-        assertEquals(3, scope.notebookSourceCount());
+        // 本用例的用户没有 Wiki 页，所以放宽后的计数仍是 3 —— 这一条现在多说明一件事：
+        // 计数确实按范围里真实存在的单元来，而不是无条件加上一个命名空间的常数。
+        assertEquals(3, scope.scopedUnitCount());
     }
 
     /**
@@ -114,23 +117,41 @@ class ScopeSelectionCalibrationTest {
     }
 
     /**
-     * {@code notebookSourceCount()} 在 1B-1 只数 NOTEBOOK_SOURCE。
+     * {@code scopedUnitCount()} 数的是范围里的<b>全部单元</b>（step 4 放宽后）。
      *
-     * <p>它是 {@code ContextBudgeter} 每源配额的触发点。放宽到「范围里的全部单元」会立刻
-     * 改变选取结果，而 golden master 看不见 —— 这正是本类存在的理由。
+     * <p><b>本条在 step 4 被反转，不是新写的。</b>它此前叫 {@code 计数口径只含notebook资料}，
+     * 钉的是 1B-1 刻意的口径等价（Wiki 不进计数）。放宽落地的那一刻，
+     * 那条期望的替代品就是它自己的反面 —— 这属于「使它变红的那条性质，替代品已绿」，
+     * 所以在同一个提交里改，而不是留着两条互相矛盾的期望。
+     *
+     * <h3>夹具必须<b>注册投影单元</b>，只插一行 Wiki 页是不够的</h3>
+     *
+     * <p>旧夹具直接 {@code INSERT user_knowledge_page}，而范围读的是<b>投影表</b>
+     * {@code rag_indexable_unit}。放宽之后若照抄旧夹具，那个页根本进不了
+     * {@code projectedUnits}，计数仍是 3，本条会<b>空绿</b> ——
+     * 通过的原因是「Wiki 压根没进来」，而它声称验证的是「Wiki 进来了并被数上」。
+     *
+     * <p>所以最后一条断言是内建的阳性对照：计数必须<b>严格大于</b> id 列表长度。
+     * Wiki 单元没进范围时它立刻红，而不是安静地通过。
      */
     @Test
-    void 计数口径只含notebook资料() {
+    void 计数口径含全部命名空间的单元() {
         jdbc.update("INSERT INTO user_knowledge_page(user_id,page_type,title,encrypted_content," +
-                "encryption_version,version,sort_order,pinned,deleted) VALUES(?,'NOTE','一个Wiki页',NULL,'v1',0,0,0,0)",
-                userId);
+                "encryption_version,version,sort_order,pinned,deleted) VALUES(?,'NOTE','一个Wiki页',?,'v0',0,0,0,0)",
+                userId, "象限法把任务分成四类。");
+        Long pageId = jdbc.queryForObject("SELECT id FROM user_knowledge_page WHERE user_id=? "
+                + "ORDER BY id DESC LIMIT 1", Long.class, userId);
+        registry.refreshUnitIfLive(RagNamespace.WIKI_PAGE, pageId);
 
         ScopeSelection scope = resolver.resolve(userId, notebookId, List.of());
 
-        assertEquals(3, scope.notebookSourceCount(),
-                "1B-1 的口径等价：Wiki 页不进这个计数。放宽属于 1B-2");
-        assertEquals(scope.notebookSourceIds().size(), scope.notebookSourceCount(),
-                "计数必须与 id 列表同源，不能是两个独立维护的数");
+        assertEquals(4, scope.scopedUnitCount(),
+                "step 4 的放宽：3 份资料 + 1 个 Wiki 单元。它是每源配额的触发点");
+        assertEquals(3, scope.notebookSourceIds().size(),
+                "放宽只该改计数，不该把 Wiki 单元混进资料 id 列表");
+        assertTrue(scope.scopedUnitCount() > scope.notebookSourceIds().size(),
+                "阳性对照：Wiki 单元没真的进范围时，上面两条会因为「计数=3」而一起绿，"
+                        + "那种绿的含义是放宽没生效");
     }
 
     /** 范围是不可变的：调用方拿到后改不动它，顺序不会在下游被就地重排。 */

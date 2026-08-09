@@ -500,11 +500,12 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         if (contextOptions != null && Boolean.TRUE.equals(contextOptions.get("includeWiki"))) {
             supplements.addAll(wikiContext(userId, contextOptions));
         }
-        // 口径写在方法名里：1B-1 这里数的是 NOTEBOOK_SOURCE，不是「范围里的全部单元」。
-        // 放宽会改变每源配额的触发点、进而改变选出来的行，而 ContextBudgeter 的 golden master
-        // 是直接拿固定 list 调 select() 的，看不见这个调用点的口径变化。
+        // 口径写在方法名里。step 4 放宽：数的是范围里的全部单元（跨命名空间），不再只数 NOTEBOOK_SOURCE。
+        // 这个数**必须来自 ScopeSelection**，不能从 candidates 反推 —— 后者就是
+        // ContextBudgeter 里 distinct(sourceKey) 已经在做的事，两者取 max 之后等于没放宽，
+        // 而「范围里有一个零候选的单元」正是配额唯一该被撑开的场景。
         List<Map<String, Object>> selected =
-                contextBudgeter.select(vectorRows, supplements, scope.notebookSourceCount());
+                contextBudgeter.select(vectorRows, supplements, scope.scopedUnitCount());
         ragMetricsService.recordCandidateFlow(vectorRows.size(), selected.size());
         return selected;
     }

@@ -25,15 +25,16 @@ import java.util.List;
  * 也就是说改顺序 = 改「上下文里留下哪些资料」，而没有任何异常会提示这件事。
  *
  * <p><b>{@code projectedUnits} 加宽是纯增量（1B-2 / 1c 检索侧）。</b>加它的那一步刻意不改
- * 任何行为：{@link #notebookSourceCount()} 与 {@link #notebookSourceIds()} 语义一个字不变，
+ * 任何行为：当时的 {@code notebookSourceCount()} 与 {@link #notebookSourceIds()} 语义一个字不变，
  * 全部现有构造点传空列表。<b>那一步的预期是全量测试全绿</b>，而这个预期是事先声明的 ——
  * 否则「结构加宽而行为不变」和「改了结构却什么都没验」长得一样。
  * 它同时有诊断价值：加宽后若有东西红了，说明有调用点依赖了 record 的组件个数或顺序
  * （比如某处用了规范构造器的位置参数），那是在动行为之前就该发现的事。
  *
- * <p><b>1B-1 阶段 {@link #notebookSourceCount()} 只数 NOTEBOOK_SOURCE。</b>这是刻意的口径等价：
- * 该值是 {@code ContextBudgeter} 每源配额的触发点，现在放宽到「所有命名空间」会立刻改变
- * 选取结果，而 1B-1 声称自己是纯重构。放宽属于 1B-2。
+ * <p><b>口径放宽已在 1B-2 step 4 完成</b>：{@link #scopedUnitCount()} 现在数的是范围里的
+ * 全部单元（跨命名空间）。1B-1 时它叫 {@code notebookSourceCount()} 且只数 NOTEBOOK_SOURCE，
+ * 那是刻意的口径等价 —— 该值是 {@code ContextBudgeter} 每源配额的触发点，
+ * 放宽会立刻改变选取结果，而 1B-1 声称自己是纯重构。
  */
 public record ScopeSelection(Long userId, Long notebookId,
                              List<AiNotebookSource> notebookSources,
@@ -65,21 +66,39 @@ public record ScopeSelection(Long userId, Long notebookId,
     /**
      * 保序的资料 id 列表。
      *
-     * <p>测试断言应当比对<b>这个列表</b>而不是 {@link #notebookSourceCount()} ——
+     * <p>测试断言应当比对<b>这个列表</b>而不是 {@link #scopedUnitCount()} ——
      * 只比基数的话，「少收一份资料、多收一个 Wiki 单元」这种换而不增的改动照样绿。
+     * step 4 放宽之后这条更要紧了：那个计数现在<b>本来就</b>把两个命名空间加在一起，
+     * 拿它当断言等于主动放弃区分能力。
      */
     public List<Long> notebookSourceIds() {
         return notebookSources.stream().map(AiNotebookSource::getId).toList();
     }
 
     /**
-     * 喂给 {@code ContextBudgeter.select} 的第三个实参。
+     * 喂给 {@code ContextBudgeter.select} 的第三个实参：<b>范围里的单元总数，跨命名空间</b>
+     * （Notebook 资料 + 投影单元）。
      *
      * <p>刻意<b>不</b>叫 {@code size()}：那个名字不说明数的是什么，而这正是口径会悄悄漂移的
      * 入口 —— 调用点写着 {@code sources.size()} 时，没人看得出它数的是「资料」还是「全部单元」。
+     * 1B-2 step 4 之前它叫 {@code notebookSourceCount()} 且只数 NOTEBOOK_SOURCE，
+     * 那个名字当时也是准确的；<b>放宽口径时连名字一起换</b>，就不会留下一个名字说 A、行为是 B 的方法。
+     *
+     * <h3>数的是<b>单元个数</b>，不是命名空间个数</h3>
+     *
+     * <p>两者今天行为完全相同 —— 这个值只进 {@code ContextBudgeter} 的一处
+     * {@code effectiveSourceCount > 1} 比较（ContextBudgeter.java:47），
+     * 而 1 和 2 与 301 和 2 在 {@code > 1} 上没有差别。
+     * 选「单元个数」是因为<b>它才是这个量的定义</b>：每源配额限的是「一个来源吃掉多少预算」，
+     * 而来源就是单元 —— 两份 Notebook 资料是两个来源，不是一个。
+     *
+     * <p><b>目前只用于 {@code > 1}。改用途前先回来看这条。</b>
+     * 一旦有人把它用在别处（比如按它分预算、除它算均摊），
+     * 「单元个数」与「命名空间个数」会立刻分道扬镳：一个用户几百页 Wiki 时前者是 301、后者是 2。
+     * 那时选错的表现是预算分配失衡，不是异常。
      */
-    public int notebookSourceCount() {
-        return notebookSources.size();
+    public int scopedUnitCount() {
+        return notebookSources.size() + projectedUnits.size();
     }
 
     /**
@@ -89,7 +108,7 @@ public record ScopeSelection(Long userId, Long notebookId,
      * 所以这仍是行为不变的纯增量。留成「只看资料」的话，Wiki 单元接进来的那天
      * 「范围非空却报告 isEmpty」会成立，而这个名字读起来完全无辜。
      * 口径漂移正是从一个名字不说明它数什么的方法开始的
-     * （对照 {@link #notebookSourceCount()} 刻意不叫 {@code size()}）。
+     * （对照 {@link #scopedUnitCount()} 刻意不叫 {@code size()}）。
      */
     public boolean isEmpty() {
         return notebookSources.isEmpty() && projectedUnits.isEmpty();
