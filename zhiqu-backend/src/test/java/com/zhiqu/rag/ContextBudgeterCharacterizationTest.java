@@ -25,18 +25,42 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * 「把期望里的键名改掉让它绿」—— 而那正是整套替换流程从头到尾要防的那一个动作，
  * 且做的时候会觉得自己在修一个显然的破损。
  *
- * <p><b>判读只有两种，取决于三条新基准的状态</b>（见
- * {@code docs/rag-1b2-stage-e-handoff.md} 的判读表）：
+ * <h3>正确动作是<b>拆</b>，不是删 —— 因为本类有两个寿命不同的角色</h3>
+ *
+ * <table border="1">
+ *   <caption>本类的两个角色</caption>
+ *   <tr><th>角色</th><th>靠什么</th><th>寿命</th></tr>
+ *   <tr><td>检测键名改动</td><td>上面那 7 处刻意保留的字面量</td>
+ *       <td><b>一次性</b> —— 红一次、任务完成即耗尽</td></tr>
+ *   <tr><td>钉 {@code select()} 隔离级的选取行为<br>（去重、每源配额、{@code cropToBudget}）</td>
+ *       <td>逐位固定的有序三元组断言</td><td><b>应当长期存活</b></td></tr>
+ * </table>
+ *
+ * <p>三条新基准走的是端到端的 {@code sourceContext}，<b>覆盖不到 {@code select()} 的隔离级行为</b> ——
+ * 尤其 {@code cropToBudget} 那段（{@code _hitStart/_hitEnd} 居中裁剪）与配额和 {@code finalK}
+ * 的交互，端到端夹具很难精确构造。整类删掉，这一层就没了，
+ * <b>而没有任何东西会红来告诉你少了它</b>。
  *
  * <table border="1">
  *   <caption>本文件转红时怎么读</caption>
- *   <tr><th>三条新基准</th><th>含义</th><th>动作</th></tr>
- *   <tr><td>已绿</td><td>新形状已被钉住，交接完成</td><td><b>退休本文件</b>（删掉），不是修它</td></tr>
- *   <tr><td>仍红</td><td>在没有替代品的时候拆掉了旧的度量</td><td><b>回退</b>，改早了</td></tr>
+ *   <tr><th>新基准第二条（payload 换 unitIds）</th><th>含义</th><th>动作</th></tr>
+ *   <tr><td><b>已绿</b></td><td>使本类变红的那条性质已有替代品</td>
+ *       <td><b>拆</b>：删掉「检测键名改动」这一角色（已耗尽），
+ *           夹具的<b>输入</b>改用 {@code CandidateKeys} 构造，<b>行为断言一个期望值都不动</b></td></tr>
+ *   <tr><td><b>仍红</b></td><td>在没有替代品的时候拆掉了旧的度量</td><td><b>回退</b>，改早了</td></tr>
  * </table>
  *
- * <p>把「退休」和「回退」分开是这一行的全部意义：两种情况下本文件都是红的，
- * 看起来一模一样，而正确动作相反。
+ * <p><b>触发条件是「使它变红的那条性质，替代品已绿」，不是「三条新基准全绿」。</b>
+ * step 2 时只有第二条转绿、第一三条仍红 —— 按「全绿」那个条件会判成「回退」，
+ * 而它的红明明是计划内的。使本类红的是键形状，替代品就是新基准第二条，别的两条无关。
+ *
+ * <p><b>那时把字面量改成 {@code CandidateKeys} 是合法的，而且理由与当初相反：</b>
+ * 当初它们必须是字面量才检测得到重命名；那次检测已经完成一次，
+ * 且不可能再需要 —— 生产端现在全部经 {@code CandidateKeys}，重命名已是编译期改动。
+ * 一次性的角色耗尽之后，保留它只剩维护成本。
+ *
+ * <p>把「拆」与「回退」分开是这一段的全部意义：两种情况下本文件都是整类红的，
+ * 看起来一模一样，而正确动作相反；而「删」在两种情况下都是错的。
  *
  * <p><b>写在重构之前，用来钉住当前行为。</b>投影表改造会把 {@code SourceScopeResolver} 的返回类型
  * 换成 ScopeSelection，进而影响每一行的 {@code sourceType} / {@code sourceId} / {@code chunkId}
