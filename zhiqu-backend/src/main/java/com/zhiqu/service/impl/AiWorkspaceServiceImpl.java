@@ -455,8 +455,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             if (!selectedIds.isEmpty()) {
                 throw new BusinessException("Notebook is required when selecting sources.");
             }
-            if (contextOptions != null && (Boolean.TRUE.equals(contextOptions.get("includeWiki"))
-                    || !longList(contextOptions.get("selectedWikiPageIds")).isEmpty())) {
+            if (includeWikiRequested(contextOptions)) {
                 return wikiContext(userId, contextOptions);
             }
             return List.of();
@@ -497,7 +496,11 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             });
         }
         List<Map<String, Object>> supplements = new ArrayList<>(legacyRows);
-        if (contextOptions != null && Boolean.TRUE.equals(contextOptions.get("includeWiki"))) {
+        // 触发条件与 :458 以及仓内另外两处（AiServiceImpl:994、MultiAgentOrchestratorImpl:35）
+        // 对齐：**显式选页隐含「包含 Wiki」**。此前这里只看 includeWiki，于是「只给
+        // selectedWikiPageIds、不给 includeWiki」时 :458 那条路会返回 Wiki 行、这条路一行不加 ——
+        // 同一个生产者、两个调用点、两套触发条件。三处里两处用的是 OR，缺的是这一处。
+        if (includeWikiRequested(contextOptions)) {
             supplements.addAll(wikiContext(userId, contextOptions));
         }
         // 口径写在方法名里。step 4 放宽：数的是范围里的全部单元（跨命名空间），不再只数 NOTEBOOK_SOURCE。
@@ -975,6 +978,23 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                 || lower.endsWith(".gif") || lower.endsWith(".webp") || lower.endsWith(".bmp");
     }
 
+    /**
+     * 「这次问答要不要带上 Wiki」——<b>两个调用点共用的唯一判断</b>。
+     *
+     * <p>{@code includeWiki} 单独<b>什么都不做</b>：{@code wikiContext} 在
+     * {@code selectedWikiPageIds} 为空时返回空表。所以真正决定有没有 Wiki 行的是选择本身，
+     * 而 {@code includeWiki} 是它的一个别名开关。三处判断里 {@code AiServiceImpl:994} 与
+     * {@code MultiAgentOrchestratorImpl:35} 都写的是 OR，这里收敛成同一个式子。
+     *
+     * <p>识别点复用：<b>条件里出现 {@code ||} 而另一个同源调用点没有</b>，多半是漏了一边，
+     * 不是两边本该不同 —— 这是该识别点在本仓库的第四个实例。
+     */
+    private boolean includeWikiRequested(Map<String, Object> contextOptions) {
+        if (contextOptions == null) return false;
+        return Boolean.TRUE.equals(contextOptions.get("includeWiki"))
+                || !longList(contextOptions.get("selectedWikiPageIds")).isEmpty();
+    }
+
     private List<Map<String, Object>> wikiContext(Long userId, Map<String, Object> contextOptions) {
         List<Long> selectedIds = longList(contextOptions.get("selectedWikiPageIds"));
         if (selectedIds.isEmpty()) {
@@ -989,7 +1009,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (UserKnowledgePage page : pages) {
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put(CandidateKeys.SOURCE_ID, "wiki:" + page.getId());
+            row.put(CandidateKeys.SOURCE_ID, CandidateKeys.wikiSourceId(page.getId()));
             row.put("title", page.getTitle());
             row.put(CandidateKeys.SOURCE_TYPE, "WIKI_PAGE");
             row.put(CandidateKeys.CHUNK_INDEX, 0);

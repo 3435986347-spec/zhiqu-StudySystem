@@ -59,11 +59,9 @@ public final class CandidateKeys {
      *
      * <h3>不变量：<b>同一个单元，无论由哪个生产者产出，必须发同一个 {@code (sourceType, sourceId)}</b></h3>
      *
-     * <p>承重的是<b>生产者之间的一致</b>，不是取值形状本身。今天 Wiki 行有一个既有生产者：
-     * {@code wikiContext}（{@code AiWorkspaceServiceImpl.java:983}）发
-     * {@code WIKI_PAGE} + {@code "wiki:" + pageId}。step 3 的回填器是<b>第二个</b>，
-     * 两者必须逐字一致 —— 所以 step 3 沿用 {@code "wiki:" + pageId}，
-     * 换形状（比如改发 {@code unitId}）就得连 {@code wikiContext} 一起换。
+     * <p>承重的是<b>生产者之间的一致</b>，不是取值形状本身。Wiki 行有<b>两个永久并存</b>的
+     * 生产者（{@code wikiContext} 直读保底 + 回填器向量命中），取值由
+     * {@link #wikiSourceId(Long)} 单点给出；换形状要在那一处换，两边自动跟随。
      *
      * <p><b>两者不一致时的具体链路（不是推测，可照着读）：</b>
      * <ol>
@@ -94,23 +92,24 @@ public final class CandidateKeys {
      * （分桶用 {@code unitId}，请求侧匹配用资料 id），而不是继续用一个带前缀的字符串
      * 把两件事编码进同一个值里。
      *
-     * <h3>收尾的触发条件（<b>不是 TODO，是因果</b>）</h3>
+     * <h3>原来的触发条件<b>已作废</b>，这里换成压制关系</h3>
      *
-     * <p>前缀形式 {@code "wiki:" + pageId} 的<b>存在条件</b>是：
-     * {@code wikiContext} 与向量回填<b>同时</b>产出 Wiki 候选行。
-     * E-3（{@code selectedWikiPageIds} 换语义 + 删 {@code wikiContext}）之后该条件消失 ——
-     * 生产者只剩一个，「两个生产者对同一页给出不同桶键」这件事<b>不再可能发生</b>，
-     * 于是前缀防的东西没有了，不是「可以删了」而是「它防的事情没有了」。
+     * <p>此前记的是：「前缀的存在条件是两个生产者同时产出 Wiki 行；E-3 删掉
+     * {@code wikiContext} 之后条件消失，届时拆字段」。<b>E-3 的决定是保留直读保底</b>
+     * （显式选页要「勾了就一定用」，而向量路径给的是「匹配到才用」，两者不是同一个产品），
+     * 所以 {@code wikiContext} 长期存活，那个触发条件<b>永远不会发生</b>。
      *
-     * <p>届时：分桶角色改用 {@code unitId}（跨命名空间天然唯一，零前缀），
-     * 请求侧匹配角色拆成独立字段 —— 而 {@code AiWorkspaceServiceImpl.java:488} 那段匹配逻辑
-     * <b>在 E-3 本来就要改</b>（{@code selectedWikiPageIds} 的语义正是它读的东西）。
-     * 拆字段最便宜的时机就是别人已经把手放在那段代码上的时候，不必另起一步。
+     * <p>锚点作废时要重锚，不能留着一条谁都不会碰的注释 —— 那正是本仓库
+     * 「已知缺陷 + 已知修法 + 延期」四次前科的形态（{@code RECONCILE_UNITS}、
+     * {@code DELETE_SCOPE}、{@code DELETE_INDEX_VERSION}、fallback 指标）。
      *
-     * <p><b>为什么要把触发条件写死：</b>本仓库「已知缺陷 + 已知修法 + 延期」已有四次前科
-     * （{@code RECONCILE_UNITS}、{@code DELETE_SCOPE}、{@code DELETE_INDEX_VERSION}、
-     * fallback 指标）。得手的那些都挂在一个有触发条件的步骤上，搁下的那些只有一句注释。
-     * 差别不在决心，在于「什么时候做」是否还依赖谁记得。
+     * <p><b>现在的压制关系：</b>两个生产者对同一页给出不同桶键，是这个单字段安排唯一会崩的方式，
+     * 而 {@link #wikiSourceId(Long)} 让它<b>不可构造</b> —— 前缀字面量全仓只有那一处。
+     * 于是「不拆」是安全的，不是欠着的。
+     *
+     * <p><b>压制被放宽即变紧急：</b>出现第三个 Wiki 行生产者<b>且它自己拼身份、不走
+     * {@link #wikiSourceId(Long)}</b>。那时分桶身份与请求侧匹配身份必须拆成两个字段
+     * （分桶用 {@code unitId}，匹配用资料 id），因为一个值再也担不住两个来源的一致性。
      */
     public static final String SOURCE_ID = "sourceId";
     /** 父块 id；缺失时去重键回落到 {@link #CHUNK_INDEX}。 */
@@ -124,6 +123,28 @@ public final class CandidateKeys {
     public static final String EXPLICIT = "_explicit";
     public static final String HIT_START = "_hitStart";
     public static final String HIT_END = "_hitEnd";
+
+    /**
+     * Wiki 行的 {@link #SOURCE_ID} 取值 —— <b>两个生产者共用的唯一定义</b>。
+     *
+     * <p>Wiki 候选行有<b>两个</b>长期并存的生产者，而且不会收敛成一个（E-3 已决定保留直读保底）：
+     * <ul>
+     *   <li>{@code AiWorkspaceServiceImpl.wikiContext} —— 显式选中的页，整页摘要直读，
+     *       {@code EXPLICIT=true}，靠 {@code roundRobinExplicit} 保底；</li>
+     *   <li>{@code ContextCandidateHydrator.wikiRow} —— 向量命中的块，解密后按 code point 切片。</li>
+     * </ul>
+     *
+     * <p>两者对<b>同一个页</b>必须给出同一个桶键。不一致的后果是一个页占两个桶：
+     * {@code distinct(sourceKey)} 虚高 → {@code effectiveSourceCount} 跟着虚高
+     * （{@code ContextBudgeter.java:36}）→ 每源配额的触发点漂移，而这不抛异常、不记指标。
+     *
+     * <p><b>所以前缀字面量在全仓只有这一处。</b>此前它在两个文件里各写一遍，
+     * 靠「两边记得一致」维持 —— 而这正是本仓库记过五次的「共享词表没有单一定义」。
+     * 收进来之后「两个生产者给出不同桶键」不再是需要注意的事，而是<b>写不出来的事</b>。
+     */
+    public static String wikiSourceId(Long pageId) {
+        return "wiki:" + pageId;
+    }
 
     /**
      * 取桶键的两段，<b>缺失即抛而不是回落成空串</b>。

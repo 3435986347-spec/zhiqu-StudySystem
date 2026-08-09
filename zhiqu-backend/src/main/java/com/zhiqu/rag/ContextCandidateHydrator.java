@@ -159,8 +159,10 @@ public class ContextCandidateHydrator {
      * 一个局部故障放大成全局降级。丢掉的那条记进
      * {@code recordDroppedCandidate(namespace, reason)}，粒度与失败的粒度一致。
      *
-     * <p><b>{@code sourceId} 用 {@code "wiki:" + pageId}</b>，与 {@code wikiContext} 逐字一致 ——
-     * 理由见 {@link CandidateKeys#SOURCE_ID}：承重的是两个生产者之间一致，不是形状。
+     * <p><b>{@code sourceId} 必须经 {@link CandidateKeys#wikiSourceId}</b>，
+     * 与 {@code wikiContext} 同源 —— 承重的是两个生产者之间一致，不是形状本身。
+     * 两者永久并存（E-3 决定保留直读保底），所以这条一致性不是过渡期约定，
+     * 而是靠「前缀字面量全仓只有一处」变成写不出来的错误。
      */
     private Map<String, Object> wikiRow(RagIndexableUnit unit, Map<String, Object> candidate,
                                         Long chunkId, Map<Long, RagUnitChunk> unitChunks,
@@ -184,7 +186,7 @@ public class ContextCandidateHydrator {
         Snippet snippet = snippet(parent,
                 intValue(candidate.get("charStart"), 0), intValue(candidate.get("charEnd"), 0));
         Map<String, Object> row = new LinkedHashMap<>();
-        row.put(CandidateKeys.SOURCE_ID, "wiki:" + unit.getRefId());
+        row.put(CandidateKeys.SOURCE_ID, CandidateKeys.wikiSourceId(unit.getRefId()));
         row.put(CandidateKeys.TITLE, content.title() == null ? unit.getTitle() : content.title());
         row.put(CandidateKeys.SOURCE_TYPE, RagNamespace.WIKI_PAGE);
         row.put(CandidateKeys.CHUNK_INDEX, chunk.getChunkIndex());

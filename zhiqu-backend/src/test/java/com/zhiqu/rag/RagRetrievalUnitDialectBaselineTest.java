@@ -278,6 +278,31 @@ class RagRetrievalUnitDialectBaselineTest {
                         + "拿到 5 条说明口径仍只数 NOTEBOOK_SOURCE，闸门没开");
     }
 
+    /**
+     * E-3：<b>只给 {@code selectedWikiPageIds}、不给 {@code includeWiki} 时，显式选中的页仍要进上下文。</b>
+     *
+     * <p>此前两个调用点的触发条件不一致：{@code :458}（notebookId 为空那条路）写的是
+     * {@code includeWiki || 选择非空}，而 {@code :500}（本用例走的这条）只看 {@code includeWiki}。
+     * 同一个生产者、两套触发条件 —— 于是同一份请求在有没有 notebookId 时得到不同结果，
+     * 而两边都不报错。仓内另外两处（{@code AiServiceImpl:994}、
+     * {@code MultiAgentOrchestratorImpl:35}）用的都是 OR，所以缺的是 {@code :500} 这一处。
+     *
+     * <p><b>断言里带 {@code EXPLICIT} 的后果而不是只断言「有这一行」</b>：显式选择的语义是
+     * 「勾了就一定用」，它靠 {@code roundRobinExplicit} 保底，而保底的输入正是那个标记。
+     * 只断言存在的话，标记丢了这条照样绿，而丢了标记就等于丢了「保证」这半个语义。
+     */
+    @Test
+    void 只给选中页而不给includeWiki时该页仍进上下文() {
+        CANDIDATES.set(List.of());
+
+        List<Map<String, Object>> rows = workspaceService.sourceContext(userId, notebookId,
+                Map.of("query", "象限法", "selectedWikiPageIds", List.of(pageId)));
+
+        assertTrue(rows.stream().anyMatch(row ->
+                        CandidateKeys.wikiSourceId(pageId).equals(row.get(CandidateKeys.SOURCE_ID))),
+                "显式选中的 Wiki 页必须进上下文，与 includeWiki 是否给出无关。实际收到：" + rows);
+    }
+
     // ── 桩 ────────────────────────────────────────────────────────────────
 
     private Map<String, Object> unitCandidate(Long unitId, String namespace, Long chunkId, double distance) {
