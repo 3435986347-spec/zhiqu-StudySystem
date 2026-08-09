@@ -460,22 +460,34 @@ public class RagUnitRegistry {
     private void refresh(RagIndexableUnit unit, ReconcileReport report) {
         report.total++;
         UnitContent content = resolver.load(unit);
-        switch (content.outcome()) {
-            case GONE -> {
-                if (!RagNamespace.STATUS_RETIRED.equals(unit.getStatus())) {
-                    transactionTemplate.executeWithoutResult(s -> markRetired(unit, content.reason()));
-                    report.recordRetired(unit.getId());
-                } else {
-                    report.unchanged++;
-                }
-            }
-            case UNUSABLE -> {
-                transactionTemplate.executeWithoutResult(s -> markSkipped(unit, content.reason()));
-                report.skipped++;
-                report.skippedReasons.add(unit.getNamespace() + "#" + unit.getRefId() + " " + content.reason());
-            }
-            case OK -> transactionTemplate.executeWithoutResult(s -> applyContent(unit, content, report));
+        // 这里是 switch **表达式**而不是语句，刻意的：Java 的穷尽性检查只对表达式生效，
+        // 枚举 switch **语句**不要求穷尽、也不报错。给 Outcome 加第四个常量时，
+        // 语句形式会**静默忽略**它 —— 而这三个分支是三种互斥的状态迁移，
+        // 漏掉一种的表现是「那类单元既不退役也不跳过，就停在原状态」，没有任何一层会报。
+        //
+        // 这张网与「拆不拆归属不匹配」无关：缺网这件事本身今天就是活的。
+        // 实测：给 Outcome 加一个常量 → 本行 COMPILE-FAIL（不是「我以为交给编译器了」）。
+        Runnable transition = switch (content.outcome()) {
+            case GONE -> () -> retireIfNeeded(unit, content, report);
+            case UNUSABLE -> () -> skip(unit, content, report);
+            case OK -> () -> transactionTemplate.executeWithoutResult(s -> applyContent(unit, content, report));
+        };
+        transition.run();
+    }
+
+    private void retireIfNeeded(RagIndexableUnit unit, UnitContent content, ReconcileReport report) {
+        if (RagNamespace.STATUS_RETIRED.equals(unit.getStatus())) {
+            report.unchanged++;
+            return;
         }
+        transactionTemplate.executeWithoutResult(s -> markRetired(unit, content.reason()));
+        report.recordRetired(unit.getId());
+    }
+
+    private void skip(RagIndexableUnit unit, UnitContent content, ReconcileReport report) {
+        transactionTemplate.executeWithoutResult(s -> markSkipped(unit, content.reason()));
+        report.skipped++;
+        report.skippedReasons.add(unit.getNamespace() + "#" + unit.getRefId() + " " + content.reason());
     }
 
     private void applyContent(RagIndexableUnit unit, UnitContent content, ReconcileReport report) {

@@ -33,8 +33,22 @@ public record UnitContent(Outcome outcome, String title, String canonicalText,
          *
          * <p>两个 provider 的 reason 字符串自己承认了这次合并：
          * {@code PAGE_NOT_FOUND_OR_NOT_OWNED} / {@code SOURCE_NOT_FOUND_OR_NOT_OWNED}。
-         * 拆法记在 {@code docs/rag-1b2-stage-e-handoff.md}：归属不匹配单独成第四种结局，
-         * 既不退役也不跳过，直接抛让作业转 DEAD 并告警。
+         *
+         * <h4>为什么<b>今天不拆</b> —— 记的是压制关系，不是一条 TODO</h4>
+         *
+         * <p>这处合并要造成破坏，需要「一个非空但<b>写错</b>的 userId 到达注册」。
+         * 而 {@code RagUnitRegistry.ensureRow} 对外<b>只留两个收实体的重载</b>，
+         * 收游离 {@code userId} 的那个七参版本是 {@code private} —— 归属只能取自实体行，
+         * 于是那个因在类外<b>不可构造</b>。因被压制，果就不必防。
+         *
+         * <p><b>压制一旦被放宽，这条立刻变紧急</b>：新增任何一个收游离 {@code userId} 的
+         * 注册入口，破坏路径就重新可达 —— 那时的后果不是漏索引，是
+         * <b>把一份健康数据销毁掉</b>（切分边界删除 → DELETE_UNIT → 向量清理），
+         * 而每一步单看都是正确行为。
+         *
+         * <p>拆法（真要拆时）：归属不匹配单独成第四种结局，既不退役也不跳过，
+         * 直接抛让作业转 DEAD 并告警。{@code RagUnitRegistry.refresh} 里那个 switch
+         * <b>已经是表达式</b>，加常量时编译器会把所有落点指出来。
          */
         GONE,
         /** 原始行还在，但这次拿不到可索引的正文（解密失败、无父块、正文为空）—— 应当跳过并保留。 */
