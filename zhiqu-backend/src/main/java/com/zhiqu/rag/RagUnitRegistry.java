@@ -17,8 +17,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -581,6 +584,33 @@ public class RagUnitRegistry {
         return unitMapper.selectOne(new LambdaQueryWrapper<RagIndexableUnit>()
                 .eq(RagIndexableUnit::getNamespace, namespace)
                 .eq(RagIndexableUnit::getRefId, refId));
+    }
+
+    /**
+     * {@link #findUnit} 的批量形式，按传入的 {@code refIds} <b>保序</b>返回命中的行。
+     *
+     * <p>写在这里而不是让调用方自己拼 {@code in(namespace, refId)}：上面那句
+     * 「跨命名空间寻址的唯一入口」是一句会被悄悄作废的话 —— 检索侧每次问答都要把
+     * 一个 Notebook 的全部资料翻成投影行，逐个调 {@link #findUnit} 是 N+1，
+     * 于是调用方会就地拼一个批量查询，而那正好在这个类之外<b>再开一个寻址点</b>。
+     * 补上批量形式，那句话才继续成立。
+     *
+     * <p>保序也是有意的：{@code ScopeSelection} 的元素顺序承重（见该类注释），
+     * 从 id 序返回会让「范围的顺序」在翻成单元时被悄悄换掉。
+     */
+    public List<RagIndexableUnit> findUnits(String namespace, Collection<Long> refIds) {
+        if (refIds == null || refIds.isEmpty()) return List.of();
+        List<RagIndexableUnit> rows = unitMapper.selectList(new LambdaQueryWrapper<RagIndexableUnit>()
+                .eq(RagIndexableUnit::getNamespace, namespace)
+                .in(RagIndexableUnit::getRefId, refIds));
+        Map<Long, RagIndexableUnit> byRefId = new LinkedHashMap<>();
+        rows.forEach(row -> byRefId.put(row.getRefId(), row));
+        List<RagIndexableUnit> ordered = new ArrayList<>();
+        for (Long refId : refIds) {
+            RagIndexableUnit unit = byRefId.get(refId);
+            if (unit != null) ordered.add(unit);
+        }
+        return ordered;
     }
 
     /** 按主键翻页遍历，避免一次性把整张表读进内存。 */

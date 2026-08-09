@@ -593,9 +593,26 @@ N=5 时期望是 **5 条 → 3 条**，两个数字都不等于任何一个配�
 | **0.5** | 桩 sidecar 夹具（检索链路首次端到端可跑） | 全绿 ✅ 已实测 |
 | **0.6** | **现有 Notebook-only 行为特征化（改动前的照片）** | **全绿** ✅ 已实测 194/0/0/0 |
 | 1 | 三条新基准 | 分别红 |
-| 2 | payload 换 `unitIds` | 第二条转绿 |
+| **2** | **payload 换 `unitIds`** | **第二条转绿** ✅ 已实测 196/2/0/0 |
 | 3 | 回填打通 | 第一条转绿 |
 | 4 | `sourceCount` 放宽 | 第三条转绿 |
+
+### 剩余的预期失败集合（换手时带走这一段）
+
+step 2 实测：`Tests run: 196, Failures: 2, Errors: 0, Skipped: 0`，失败集合为
+
+1. `RagRetrievalUnitDialectBaselineTest.wiki单元经向量路径进入候选集` → step 3 转绿
+2. `RagRetrievalUnitDialectBaselineTest.每源配额按所有命名空间计数` → step 4 转绿
+
+197 → 196 是照片那条 payload 断言在同一提交里被删掉的收据。
+
+**③ 此刻红得对，但理由还不是它自己写的那条。** 现在的链路是：请求发出去了（②
+已绿），桩返回了候选，**回填把它们全丢了**（回填仍按 `sourceId` 认领，而 unit 方言
+的候选没有这个字段）→ `vectorRows` 空 → 全量落 LEGACY → 5 行。
+也就是说这 5 行是关键词行，不是「配额没生效的向量行」——
+失败信息里 `retrievalMode=LEGACY` 就是证据。
+step 3 之后才变成它声称的那件事：5 条向量行 + B 数不进分母 → 仍是 5 → step 4 转绿。
+**step 3 落地后要确认 ③ 仍红**；若它在 step 3 就绿了，说明夹具里出了别的事，回去查。
 
 ## 预期失败集合的纪律（step 1 起生效）
 
@@ -616,12 +633,132 @@ step 1 之后分支上的健康判据从「零失败」换成「**失败集合�
 3. 中途换手时，剩余集合显式写进本文档；step 4 完成时套件回到 0 失败，
    那个 0 就是序列走完的证据。
 
+### 这条纪律的一个副作用：`[ERROR]` 那几行现在是**判据的载体**，不能有噪声
+
+step 2 的输出里除了两条预期失败，还有第三行 `[ERROR]`：
+
+```
+[ERROR] Surefire is going to kill self fork JVM. The exit has elapsed 30 seconds after System.exit(0).
+```
+
+**它与本分支的任何改动都无关，已实测。** 一开始的判断是「step 0.5 那两个桩 sidecar
+在 `static {}` 里 `start()` 却从不 `stop()`」，本来准备为它单开一个提交。实测推翻了：
+
+| 实验（均在 HEAD=step 1 上跑） | 强杀行 |
+|---|---|
+| `ContextBudgeterCharacterizationTest`（无 Spring / 无容器 / 无桩） | 否 |
+| `RagIndexIntegrationTest`（Spring + 容器，无桩） | 否 |
+| `RagRetrievalPipelineCharacterizationTest`（Spring + 容器 + **桩**） | 否 |
+| **6 个 Spring+容器类同跑，一个桩都没有**（57 用例全绿） | **是** |
+
+第四行是决定性的：**没有任何桩在场也照样出现**。所以它是「多个缓存的 Spring 上下文
+在 JVM 退出时逐个关闭，而它们的 Hikari 池指向早已销毁的容器」这件事的表现 ——
+属于套件规模的既有噪声，不是这条分支引入的。
+
+### 这次诊断本身踩了一个新坑：**判据的尺度**
+
+前三行是「每次只跑一个类」的隔离实验，全部没复现。三个「否」看起来像三个嫌疑人都被排除，
+其实是**实验根本没让现象发生过** —— 这个现象只在几十个上下文累积时存在，
+在单类尺度上不可能观察到。
+
+这是「扰动判定分两级」那条规矩在**诊断**上的同一形态：全绿先问「有没有东西红过」。
+用在测试上，它区分 UNEXERCISED 与「测试不敏感」；用在诊断上，它区分
+「这里没有原因」与「这套装置看不见这个效应」。
+于是判据与它声称的性质可以在**第三个维度**上不等宽：此前记过定义域（宽窄）与寿命，
+这次是**尺度**。尺度低于现象的判据什么都不报，而且报得很安静。
+
+### 结论：不修，改判据的措辞
+
+分支健康判据应当写成「**失败列表**恰好是这些名字」，而不是「`[ERROR]` 列表恰好是这些名字」。
+那行强杀是已知常量，A/B 两侧都在，既不该被当成信号，也不该有人去清它 ——
+清不掉，因为它不来自这里。
+
+
 ## step 3 清单补一行：一条今天不可达的检查等它可达时补用例
 
 `ScopeSelection` 紧凑构造器里「`projectedUnits` 不得含 NOTEBOOK_SOURCE」那条约束，
 今天**没有任何东西能触发它**（`projectedUnits` 恒为空）。按既有规矩：
 不可达路径不写测试，写注释说明为什么今天走不到，**等它可达时补用例** ——
 可达的时刻正是 step 3（回填打通、范围里真的装进 Wiki 单元）。
+
+## step 3 清单再补一行：**候选全部被丢弃时的归属**（先定，不要现场判）
+
+`retrievalMode` 全仓只有两个写入点，而它们属于**两条完整的路径**，不是同一条路的两种质量：
+
+| 写入点 | 值 | 来源 |
+|---|---|---|
+| `ContextCandidateHydrator.java:69` | `VECTOR` | 向量检索 → 回填 |
+| `AiWorkspaceServiceImpl.java:523` | `LEGACY` | 直接读 `ai_source_chunk`，**没经过向量检索** |
+
+所以 step 1 那三条红里「五行全是 LEGACY」的含义是**向量路径整条没走**，
+不是「走了但认不出候选」。（这条我一开始读成后者，方向偏了一格。）
+
+推论：当前架构里**没有「向量检索成功但部分候选被丢弃」的表示**——
+一行要么出自回填器，要么出自遗留构造器，没有中间态。
+对**部分**丢弃这没问题：活下来的行照旧是 `VECTOR`，`recordDroppedCandidate`
+记下掉了几条，粒度对齐。问题在**全部**丢弃。
+
+### 现状比「还没决定」更糟：那个计数器已经存在，而且已经是合并的
+
+`AiWorkspaceServiceImpl.java:471-473` 已经在记 `NO_VALID_VECTOR_CANDIDATE`，
+触发条件是 `retrieval.available() && vectorRows.isEmpty()`。它盖住**两件事**：
+
+1. sidecar 返回零候选 —— 问题就是没匹配上，**正常**；
+2. sidecar 返回了候选，但回填一条都没留下 —— **缺陷信号**（坏密文、归属不匹配、陈旧 chunkId）。
+
+两者随后都走 `:477` 落到 `legacySourceIds` 全量，运维看到的是同一个值。
+这正是 `DISABLED_OR_TOKEN_MISSING` 那一族：一个名字盖住两个需要**不同处置**的状态，
+而 E-4 是唯一一次全链路检验，它的诊断信号偏偏在这里是合并的。
+
+### 决定
+
+**零候选存活时仍发 `VECTOR` 空结果，并记一次专门的原因 `ALL_CANDIDATES_DROPPED`，
+要不要再叠加关键词兜底由上层决定。**
+
+- 「落到关键词路径」本身可以是对的产品决定（有结果比没结果好），
+  但那时 `retrievalMode=LEGACY` 就有了两个来源：「本来就没开向量」与「向量跑了但一条都没活下来」。
+- 取这个方案之后，**向量路径的产出与关键词兜底的产出在数据里始终分得开**，
+  而不是靠一个计数器去反推。
+- 与「方案 1（单独计数）」不冲突：方案 1 排除方案 2 的理由是「一个局部故障放大成全局降级」，
+  而在「最后一条候选也被丢掉」时局部就是全局，那条理由不再区分两个选项 —— 所以边界要单独定。
+
+配套：`NO_VALID_VECTOR_CANDIDATE` 拆成「没返回候选」与「候选全被丢弃」两个原因，
+**两者必须可被机器区分**，理由同 `DISABLED`/`TOKEN_MISSING`：
+只改文案的话两者仍然只是两个名字，随时能被合回去而没有任何东西会红。
+
+### step 3 的硬约束：同一单元的行，各生产者必须发同一个 `(sourceType, sourceId)`
+
+承重的是**生产者之间一致**，不是取值形状。Wiki 行今天已有一个生产者
+`wikiContext`（`AiWorkspaceServiceImpl.java:983`，发 `"wiki:" + pageId`，且不带 chunkId），
+step 3 的回填器是第二个 —— 沿用同一形状，换形状就得连它一起换。
+不一致时一个页出两行两个桶键，`distinct(sourceKey)` 虚高一格，而那正是基准 ③ 测的量。
+
+**「直接改用 `unitId`」今天做不了**：`SOURCE_ID` 还担着第二个角色 ——
+与请求里的 `selectedSourceIds` 比对（`AiWorkspaceServiceImpl.java:488`），
+那个比对要资料 id。换成 unitId 会让它恒不命中、显式行不再标记、轮转优先级悄悄改变，
+不抛异常也不记指标。一个字段承载两条性质，正是判据不等宽在数据模型上的形态。
+**正确收尾是拆成两个字段**，不在 step 3 做。
+完整链路与行号写在 `CandidateKeys.SOURCE_ID` 的 javadoc 里，这里只留指针。
+
+> 记一条方法上的：这条约束我第一版把机制写错了（写成关键词路径与向量路径重叠，
+> 却没写出两者**在同一次 `select()` 里相遇**这一步），读的人照着行号查会查到
+> `legacyContextRows:519` —— 那里确实不产 Wiki 行，于是整条理由看起来是编的。
+> **结论对而理由不可复现的东西，会在下一个人手里被撤掉**，写在字段注释上尤其如此。
+
+### step 3 还要拆掉基准 ① 夹具里的一个兜底
+
+`RagRetrievalUnitDialectBaselineTest` 的 `pageChunkIds.isEmpty() ? 1L : pageChunkIds.get(0)`：
+今天无害（已核过 —— `SensitiveCryptoService.decrypt` 对不带前缀的串原样返回，
+所以夹具里的明文正文能过 `WikiPageContentProvider`，Wiki 单元真的是 READY 且有切分块）。
+但 step 3 一到，它就是「夹具坏了却看不出来」的入口：Wiki 单元若没切出块，
+① 会拿一个 `ai_source_chunk` 的 id 当 `rag_unit_chunk` 的 id 去查，
+而那正好是跨命名空间 id 撞车那一族。**改成 `prepareData` 里显式断言非空**，
+让夹具的破损在 setup 阶段就响，而不是伪装成一次业务失败。
+
+顺带一条同族的小项（step 3 一并处理，不单独排步）：回落原因 `NO_INDEXED_SOURCE`
+（`RagRetriever`）在 step 2 之后数的已经是**单元**而不是资料，step 3 起 Wiki 页
+没索引也会报这个名字。危害远小于上面那条（它只是名字窄，不是把两种状态合并），
+但同属「名字的定义域与它报告的事实不等宽」，改名时机就是 step 3。
 
 
 ## step 0.5 / 0.6 已完成：`RagRetrievalPipelineCharacterizationTest`

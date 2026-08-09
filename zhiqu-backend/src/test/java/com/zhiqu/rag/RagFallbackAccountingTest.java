@@ -61,15 +61,29 @@ class RagFallbackAccountingTest {
                 "回落结果只能经 fallback(...) 出去；再加一个静态工厂等于把出口重新散开");
     }
 
-    /** {@code retrieve} 方法体内不得直接记指标 —— 记账属于出口，不属于调用点。 */
+    /**
+     * 记账属于出口，不属于调用点：整个文件里 {@code recordFallback} <b>只许出现一次</b>，
+     * 且必须落在两参 {@code fallback(...)} 之后。
+     *
+     * <p><b>此前这条是靠「{@code retrieve} 与 {@code fallback} 两个声明之间」这个窗口写的，
+     * 而那是位置耦合。</b>step 2 在两者之间插了两个私有辅助方法，窗口当场悄悄变宽 ——
+     * 断言仍然绿，但它此刻报的已经不是自己声称的那条性质（「retrieve 方法体内」）。
+     * 同一个物种，这次的方向是<b>变宽</b>：它会因为一个并非「调用点自己记账」的原因而红，
+     * 而红的时候给出的解释是错的。
+     *
+     * <p>改成文件级计数之后：不依赖任何声明的先后，覆盖面严格更大
+     * （连 {@code disabled()} 里偷偷记一次也会红 —— 那正是「唯一不记指标的出口」这条
+     * 例外的静态那一半），而且再也不会出现「锚点没找到」这种与被测性质无关的失败。
+     */
     @Test
     void 记账只发生在出口里() throws IOException {
         String source = withoutComments(Files.readString(SOURCE, StandardCharsets.UTF_8));
-        int begin = source.indexOf("public RetrievalResult retrieve(");
-        int end = source.indexOf("private RetrievalResult fallback(String reason)");
-        assertTrue(begin > 0 && end > begin, "锚点没找到，说明结构变了，先来这里对一遍");
-        assertEquals(0, count(source.substring(begin, end), "metrics.recordFallback("),
+        assertEquals(1, count(source, "metrics.recordFallback("),
                 "调用点自己记账，就又回到了「写 return 时记得加一行」那条靠不住的纪律");
+        int exit = source.indexOf("private RetrievalResult fallback(String reason, RagIndexGeneration");
+        assertTrue(exit > 0, "两参 fallback 是唯一的记账出口，它不见了说明出口结构变了");
+        assertTrue(source.indexOf("metrics.recordFallback(") > exit,
+                "唯一那次记账必须落在出口方法里，不能在别处");
     }
 
     /**
@@ -120,6 +134,11 @@ class RagFallbackAccountingTest {
 //   K1  新开一条绕过 fallback(...) 的返回          RED
 //   K2  把 unavailable(...) 静态工厂加回来          RED
 //   K3  在调用点重新自己记一次指标                  RED
+//
+// K3 的**判据在 step 2 换过一次**（窗口计数 → 文件级计数），所以上面那个 RED 是旧判据下的。
+// 新判据严格更宽（多出来的那一次记账在文件任何位置都会让计数变成 2），K3 照旧红；
+// 但记在这里是因为「扰动记录」与「当前判据」漂开正是这份记录会失效的方式 ——
+// 一条实测结果只对它当时那个判据成立。
 //
 // 另有一次**判据自身**的红，值得单独记：第一次跑 结果构造点没有增加 时实测 4 而非 3，
 // 多出来的那一处在 RagRetriever 的 javadoc 里 —— 那句注释写着

@@ -62,6 +62,31 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * <p>把「拆」与「回退」分开是这一段的全部意义：两种情况下本文件都是整类红的，
  * 看起来一模一样，而正确动作相反；而「删」在两种情况下都是错的。
  *
+ * <h3>更正（step 2 实测后）：上面那句「必然转红」是个未经核对的前提</h3>
+ *
+ * <p>它假定了「候选行的 {@code sourceId} 会换成 {@code unitId}」。查过之后，
+ * <b>那次重命名不会发生</b>，因为这些键名不止 {@code ContextBudgeter} 在读：
+ *
+ * <ul>
+ *   <li>候选行被<b>整行持久化</b>成 {@code AiAgentArtifact} 的 content
+ *       （AiServiceImpl.java:544-552），历史行会永远留着旧键名；</li>
+ *   <li>同一行的 {@code sourceType} / {@code sourceId} 还被抽成
+ *       {@code AiAgentEvidence} 的两个列（AiServiceImpl.java:558-559）；</li>
+ *   <li>前端按名字读它们（assets/zhiqu-api.js:2313、:2489）—— 改名要连带
+ *       14 个页面与 service worker 的 {@code ?v=} 令牌一起动。</li>
+ * </ul>
+ *
+ * <p>所以 step 3 的形状是：键名不动，{@code sourceType} 的<b>取值域</b>加进 {@code WIKI_PAGE}。
+ * 于是本类的「检测键名改动」这个一次性角色<b>不会被触发</b>，7 处字面量也就不会耗尽。
+ *
+ * <p><b>这不推翻退休判据，反而是它起作用的样子：</b>判据锚在因果上
+ * （「使它变红的那条性质，替代品已绿」），因不发生则果不发生，什么都不必做。
+ * 若当初把它锚成「step 2 到了就拆」，此刻就会在没有任何原因的情况下执行一次退休，
+ * 把上表第二行那个<b>没有替代品</b>的角色一起丢掉。
+ *
+ * <p>留下的是一个诚实的代价：7 处字面量此刻是<b>为一个可能永远不来的事件</b>留的。
+ * 不删 —— 它们的成本是每次改夹具时多打几个字，而它们挡的是一次没有其他判据能挡的改动。
+ *
  * <p><b>写在重构之前，用来钉住当前行为。</b>投影表改造会把 {@code SourceScopeResolver} 的返回类型
  * 换成 ScopeSelection，进而影响每一行的 {@code sourceType} / {@code sourceId} / {@code chunkId}
  * 取值口径。这三个字段不经过类型系统，却决定了三件事：

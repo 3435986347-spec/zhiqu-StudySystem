@@ -465,7 +465,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         List<AiNotebookSource> sources = scope.notebookSources();
         String query = text(contextOptions == null ? null : contextOptions.get("query"), "");
         RagRetriever.RetrievalResult retrieval = ragRetriever.retrieve(
-                UUID.randomUUID().toString(), userId, notebookId, scope, query);
+                UUID.randomUUID().toString(), userId, scope, query);
         List<Map<String, Object>> vectorRows = contextCandidateHydrator.hydrate(
                 userId, notebookId, scope, retrieval);
         if (retrieval.available() && vectorRows.isEmpty() && ragProperties.isFallbackEnabled()) {

@@ -74,11 +74,11 @@ class RagUnavailableReasonTest {
     void 只有配置错误计入回落指标() {
         RagMetricsService disabledMetrics = new RagMetricsService();
         retrieverWith(properties(false, "a-real-token"), disabledMetrics)
-                .retrieve("req-1", 1L, 1L, new ScopeSelection(1L, 1L, java.util.List.of(), java.util.List.of()), "问题");
+                .retrieve("req-1", 1L, new ScopeSelection(1L, 1L, java.util.List.of(), java.util.List.of()), "问题");
 
         RagMetricsService brokenMetrics = new RagMetricsService();
         RagRetriever.RetrievalResult broken = retrieverWith(properties(true, null), brokenMetrics)
-                .retrieve("req-2", 1L, 1L, new ScopeSelection(1L, 1L, java.util.List.of(), java.util.List.of()), "问题");
+                .retrieve("req-2", 1L, new ScopeSelection(1L, 1L, java.util.List.of(), java.util.List.of()), "问题");
 
         assertEquals(RagClient.REASON_TOKEN_MISSING, broken.fallbackReason());
         assertTrue(fallbackCount(disabledMetrics).isEmpty(),
@@ -87,10 +87,16 @@ class RagUnavailableReasonTest {
                 "开着却没配 token 必须留下痕迹");
     }
 
+    /**
+     * {@code registry} 传 {@code null} 是<b>断言的一部分</b>，不是省事：
+     * 两条不可用分支都必须在碰投影表之前就返回。真走到 {@code freshlyIndexedUnits}
+     * 会是 NPE 而不是静默通过，所以「提前返回」这半由它兜着。
+     */
     private RagRetriever retrieverWith(RagProperties properties, RagMetricsService metrics) {
         return new RagRetriever(properties, new RagClient(properties),
                 org.mockito.Mockito.mock(com.zhiqu.mapper.RagIndexGenerationMapper.class),
                 org.mockito.Mockito.mock(com.zhiqu.mapper.RagSourceIndexStateMapper.class),
+                null,
                 metrics);
     }
 

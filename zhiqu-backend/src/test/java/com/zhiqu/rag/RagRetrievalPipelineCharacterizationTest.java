@@ -60,27 +60,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 只是这条链重新失去唯一的覆盖 —— 与 {@code ContextBudgeterCharacterizationTest} 里
  * 7 处硬编码键名同一种处境：承重的「与众不同」必须被标注，否则它和疏忽长得一样。
  *
- * <h2>本类里有一条断言会<b>计划内地</b>死掉</h2>
+ * <h2>曾经有第三条断言，它已在 step 2 计划内地退休</h2>
  *
  * <p>{@code 当前发给sidecar的payload按sourceIds过滤} 钉的是 1B-1 的 payload 口径，
- * 而 1B-2 的 step 2 正是把它换成 {@code unitIds}。所以：
+ * 而 step 2 正是把它换成 {@code unitIds} —— 它的替代品是
+ * {@code RagRetrievalUnitDialectBaselineTest.payload按unitIds与namespaces过滤}。
+ * 触发条件（「使它变红的那条性质，替代品已绿」）当场成立，所以<b>在同一个提交里删掉</b>。
+ * 留着改期望值的话，「合法地跟随契约」和「调到绿为止」在 diff 里长得一模一样。
  *
- * <table border="1">
- *   <caption>本类转红时怎么读</caption>
- *   <tr><th>哪条红</th><th>含义</th><th>动作</th></tr>
- *   <tr><td>只有 payload 那条</td><td>step 2 落地了，它的替代品是新基准第二条</td>
- *       <td><b>删掉它</b></td></tr>
- *   <tr><td>另外两条中的任意一条</td><td>重写弄坏了本该跨 1B-2 不变的东西</td>
- *       <td><b>回退</b></td></tr>
- * </table>
+ * <p><b>剩下两条一律按「坏了」读。</b>本类现在只承载一个角色：
+ * Notebook 检索的结果跨 1B-2 等价。任何一条红都是回退信号，没有第二种解释 ——
+ * 上面那种「同一个类里一条红是进展、另两条红是坏了」的歧义随第三条一起没了。
  *
- * <p>歧义在同一个类内部：三条断言里一条红是<b>进展</b>，另两条红是<b>坏了</b>。
- * 与 {@code ContextBudgeterCharacterizationTest} 的退休/回退判据同一处境，
- * 所以同样把判读写在使用现场。
- *
- * <p>另外两条刻意<b>不</b>编进任何会变的东西：顺序那条断言的是正文顺序而非候选身份格式
+ * <p>两条刻意<b>不</b>编进任何会变的东西：顺序那条断言的是正文顺序而非候选身份格式
  * （格式会变，且已由 {@code CandidateKeys} 与新基准第二条钉住）；
  * 越界那条断言的是「越界的没进来」，与身份格式无关。
+ *
+ * <p><b>夹具会跟着契约走，期望值不会。</b>step 2 已经改过一次
+ * （状态行从「source_id + 资料哈希」换成 upsertUnitState 真会写的 UNIT 行），
+ * step 3 还会改一次（桩返回的候选从 {@code sourceId} 换成 {@code namespace}+{@code unitId}，
+ * 因为真 sidecar 返回的就是后者 —— vector_store.py:243-244）。
+ * 判断标准只有一条：<b>改的是喂进去的东西，还是比对的东西</b>。
  *
  * <h2>两个机械陷阱（都实测过）</h2>
  *
@@ -194,9 +194,16 @@ class RagRetrievalPipelineCharacterizationTest {
                 Long.class);
         registry.refreshUnitIfLive(RagNamespace.NOTEBOOK_SOURCE, sourceId);
         RagIndexableUnitRow unit = unitRow();
+        // step 2 改的是**夹具**，一个期望值都没动 —— 两者的区别正是这个类要守住的东西。
+        // 从「source_id + 资料哈希」的混合行换成 upsertUnitState 真正会写的那种行：
+        // source_id 恒为 NULL（RagIndexJobService.java:729），content_hash 存的是
+        // 单元的 canonical_hash（同文件 :733/:745）。旧写法当初能过，是因为检索侧
+        // 按 sourceId 查、拿资料哈希比 —— 那条路 1c 之后在生产里已经不存在了。
         jdbc.update("INSERT INTO rag_source_index_state(source_id,unit_id,generation_id,index_version," +
-                        "content_hash,status,vector_count,indexed_at) VALUES(?,?,?,?,?,'INDEXED',3,NOW())",
-                sourceId, unit.id(), generationId, INDEX_VERSION, "hash-pipeline");
+                        "content_hash,status,vector_count,indexed_at) VALUES(NULL,?,?,?,?,'INDEXED',3,NOW())",
+                unit.id(), generationId, INDEX_VERSION,
+                jdbc.queryForObject("SELECT canonical_hash FROM rag_indexable_unit WHERE id=?",
+                        String.class, unit.id()));
         CANDIDATES.set(List.of());
         LAST_QUERY_BODY.set("");
     }
@@ -236,26 +243,6 @@ class RagRetrievalPipelineCharacterizationTest {
         assertTrue(rows.stream().allMatch(row -> "VECTOR".equals(row.get("retrievalMode"))),
                 "三条都该走向量路径；混进关键词回落说明索引状态判定变了");
         assertEquals(INDEX_VERSION, rows.get(0).get("indexVersion"));
-    }
-
-    /**
-     * 当前 payload 的形状 —— <b>1B-2 会改掉它，所以先照下来</b>。
-     *
-     * <p>本条与三条新基准里的第二条是同一件事的两面：这里钉「现在发的是 sourceIds」，
-     * 那里钉「将来发的是 unitIds」。两条并存的那个窗口里，
-     * 一红一绿正好说明改动落在了该落的地方。
-     */
-    @Test
-    void 当前发给sidecar的payload按sourceIds过滤() {
-        CANDIDATES.set(List.of(candidate(chunkIds.get(0), 0, 12, 0.11)));
-
-        workspaceService.sourceContext(userId, notebookId, Map.of("query", "象限法"));
-
-        String body = LAST_QUERY_BODY.get();
-        assertTrue(body.contains("\"sourceIds\":[" + sourceId + "]"),
-                "1B-1 口径：按 sourceIds 过滤。实际收到：" + body);
-        assertTrue(body.contains("\"notebookId\":" + notebookId), "实际收到：" + body);
-        assertTrue(body.contains("\"indexVersion\":\"" + INDEX_VERSION + "\""), "实际收到：" + body);
     }
 
     /**

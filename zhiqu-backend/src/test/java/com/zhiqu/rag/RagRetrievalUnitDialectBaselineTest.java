@@ -216,6 +216,19 @@ class RagRetrievalUnitDialectBaselineTest {
      * <p>与照片里 {@code 当前发给sidecar的payload按sourceIds过滤} 是同一件事的两面：
      * 那条钉「现在发的是什么」，这条钉「将来发的是什么」。step 2 的提交里一绿一红，
      * 正好说明改动落在该落的地方 —— 而那条在同一个提交里被删除（它的角色已被本条接替）。
+     *
+     * <p><b>两半的失效形态不同，所以理由也不同：</b>
+     * <ul>
+     *   <li>缺 {@code unitIds}/{@code namespaces} → <b>422</b>，整个请求被拒
+     *       （两者都是 {@code QueryRequest} 的必填字段，main.py:54-55）。响的、看得见。</li>
+     *   <li>多出 {@code sourceIds} → <b>什么都不会发生</b>。这一条写这条基准时曾被
+     *       标成「会 422」，是错的：请求模型没有设 {@code extra='forbid'}，
+     *       pydantic 2.13.4 默认 {@code extra='ignore'}，未声明字段被<b>静默丢弃</b>（已实测）。
+     *       而这正是它必须被断言的理由 —— 一个看起来像范围限定、实际根本没人执行的字段，
+     *       比一个会被拒的字段危险：调用方以为过滤了两层，生效的只有一层，
+     *       且两层的取值可以互相矛盾而无人知晓。同一种静默分区正是 sidecar 自己那条
+     *       namespace 校验想挡的东西。</li>
+     * </ul>
      */
     @Test
     void payload按unitIds与namespaces过滤() {
@@ -228,7 +241,8 @@ class RagRetrievalUnitDialectBaselineTest {
         assertTrue(body.contains("\"unitIds\""), "sidecar 的 QueryRequest 要 unitIds。实际：" + body);
         assertTrue(body.contains("\"namespaces\""), "sidecar 的 QueryRequest 要 namespaces。实际：" + body);
         assertFalse(body.contains("\"sourceIds\""),
-                "LEGACY 字段不得残留 —— 留着它 sidecar 会以 422 拒绝整个请求。实际：" + body);
+                "LEGACY 字段不得残留。它不会让请求失败 —— sidecar 会静默丢弃它，"
+                        + "于是请求体里带着一个不被执行的范围限定。实际：" + body);
     }
 
     /**
