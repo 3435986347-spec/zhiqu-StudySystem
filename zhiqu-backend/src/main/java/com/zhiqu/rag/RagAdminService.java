@@ -7,7 +7,9 @@ import com.zhiqu.entity.RagIndexGeneration;
 import com.zhiqu.entity.RagIndexJob;
 import com.zhiqu.entity.RagIndexableUnit;
 import com.zhiqu.entity.RagSourceIndexState;
+import com.zhiqu.entity.UserKnowledgePage;
 import com.zhiqu.mapper.AiNotebookSourceMapper;
+import com.zhiqu.mapper.UserKnowledgePageMapper;
 import com.zhiqu.mapper.RagIndexGenerationMapper;
 import com.zhiqu.mapper.RagIndexJobMapper;
 import com.zhiqu.mapper.RagSourceIndexStateMapper;
@@ -31,6 +33,10 @@ public class RagAdminService {
     private final RagIndexJobMapper jobMapper;
     private final RagSourceIndexStateMapper stateMapper;
     private final AiNotebookSourceMapper sourceMapper;
+    private final UserKnowledgePageMapper pageMapper;
+
+    /** 探测「有没有原料」的取样上限，见 {@link #hasIndexableOrigin()}。 */
+    private static final int ORIGIN_PROBE_LIMIT = 200;
 
     public RagAdminService(RagProperties properties,
                            RagClient client,
@@ -39,7 +45,8 @@ public class RagAdminService {
                            RagIndexGenerationMapper generationMapper,
                            RagIndexJobMapper jobMapper,
                            RagSourceIndexStateMapper stateMapper,
-                           AiNotebookSourceMapper sourceMapper) {
+                           AiNotebookSourceMapper sourceMapper,
+                           UserKnowledgePageMapper pageMapper) {
         this.properties = properties;
         this.client = client;
         this.metrics = metrics;
@@ -48,6 +55,7 @@ public class RagAdminService {
         this.jobMapper = jobMapper;
         this.stateMapper = stateMapper;
         this.sourceMapper = sourceMapper;
+        this.pageMapper = pageMapper;
     }
 
     public Map<String, Object> status() {
@@ -196,9 +204,39 @@ public class RagAdminService {
     }
 
     /** 空分母闸门的另一半：库里到底有没有该被索引的东西。 */
+    /**
+     * 库里有没有<b>任何</b>可索引原料 —— 用来区分「投影表是真的空」与「根本没对账过」。
+     *
+     * <p><b>必须把 Wiki 也算上。</b>1B-2 step 3 之后 Wiki 页是可索引原料，
+     * 而这里此前只数 {@code ai_notebook_source} —— 于是一个只有 Wiki 页、没有资料的库，
+     * 投影表没对账过时 {@code units.isEmpty()} 且本方法为 false，守卫不响，
+     * <b>启用的是一个空索引</b>，而覆盖检查以 0/0 空绿通过。分子与分母来自两张表，
+     * 正是 V29 要根除的那一族，这次长在守卫上。
+     *
+     * <p><b>排除规则不在这里抄第二份：</b>类型过滤直接把
+     * {@link RagNamespace#EXCLUDED_PAGE_TYPES} 这个共享集合当参数传给 SQL，
+     * 标题规则（trim + 大小写）只有 {@link RagNamespace#isExcludedWikiPage} 一处实现，
+     * 在 Java 侧对取样结果调用。把它们译成 SQL 会立刻变成一份会漂移的副本。
+     *
+     * <p><b>取样而非全表：</b>类型过滤之后还带保留标题的页极少（保留标题只有三个），
+     * 所以头 {@value #ORIGIN_PROBE_LIMIT} 行里必然出现一个真原料。残余的假阴性需要
+     * 连续 {@value #ORIGIN_PROBE_LIMIT} 页都用保留标题 —— 真发生时退化成本方法的<b>旧行为</b>
+     * （守卫不响），不会引入新的失效形态。
+     *
+     * <p>方向上刻意宁可漏报不可误报：误报会让守卫抛出「请先对账」，而对账之后投影表
+     * 仍然是空的，操作者就<b>卡死</b>了 —— 一个响亮但无解的状态比一次静默更难处理。
+     */
     private boolean hasIndexableOrigin() {
-        return sourceMapper.selectCount(new LambdaQueryWrapper<AiNotebookSource>()
-                .eq(AiNotebookSource::getStatus, "READY")) > 0;
+        if (sourceMapper.selectCount(new LambdaQueryWrapper<AiNotebookSource>()
+                .eq(AiNotebookSource::getStatus, "READY")) > 0) {
+            return true;
+        }
+        List<UserKnowledgePage> pages = pageMapper.selectList(new LambdaQueryWrapper<UserKnowledgePage>()
+                .select(UserKnowledgePage::getPageType, UserKnowledgePage::getTitle)
+                .notIn(UserKnowledgePage::getPageType, RagNamespace.EXCLUDED_PAGE_TYPES)
+                .last("LIMIT " + ORIGIN_PROBE_LIMIT));
+        return pages.stream()
+                .anyMatch(page -> !RagNamespace.isExcludedWikiPage(page.getPageType(), page.getTitle()));
     }
 
     /**

@@ -653,6 +653,60 @@ class RagIndexIntegrationTest {
     }
 
     /**
+     * <b>「有没有原料」必须把 Wiki 也算上</b> —— 只有 Wiki 页、没有资料的库同样不得放行。
+     *
+     * <p>上一条用的库里有 {@code ai_notebook_source}，所以它<b>盖不到</b>这个形态：
+     * {@code hasIndexableOrigin()} 此前只数资料表，于是一个纯 Wiki 的库在对账之前
+     * {@code units.isEmpty()} 且守卫为 false —— 不抛，启用一个空索引，
+     * 覆盖检查再以 0/0 空绿通过。分子与分母来自两张表，V29 要根除的正是这个，
+     * 这次长在守卫上，而且是 step 3 把 Wiki 变成可索引原料之后才出现的。
+     *
+     * <p>夹具刻意<b>删光资料</b>：留着任何一条 READY 资料，守卫会因为资料而抛，
+     * 本条就会因为错误的理由变绿 —— 那正好是它要证伪的那个实现。
+     */
+    @Test
+    void 只有Wiki页时投影表为空也不得启用() {
+        // 不能 DELETE：ai_source_chunk 有外键指过来。守卫数的是 status='READY' 的资料，
+        // 所以把状态改掉就等价于「库里没有资料原料」，且不动其它表。
+        jdbc.update("UPDATE ai_notebook_source SET status='PARSING'");
+        jdbc.update("INSERT INTO user_knowledge_page(user_id,page_type,title,encrypted_content," +
+                "encryption_version,version,sort_order,pinned,deleted) " +
+                "VALUES(?,'NOTE','象限法笔记',?,'v0',0,0,0,0)", userId, "象限法把任务分成四类。");
+        RagIndexGeneration generation = createBuildingGeneration();
+        jdbc.update("UPDATE rag_index_generation SET status='READY' WHERE id=?", generation.getId());
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> adminService.activate(generation.getId()));
+
+        assertTrue(error.getMessage().contains("全量对账"), error.getMessage());
+    }
+
+    /**
+     * 系统页<b>不算</b>原料：一个只有 index/log 的库，投影表空是正常的，守卫不该抛。
+     *
+     * <p>这条是上一条的方向对照，而且挡的是一个<b>比静默更难处理</b>的失效：
+     * 守卫若把系统页也当原料，它会抛「请先对账」，而对账之后投影表<b>仍然是空的</b>
+     * （系统页被排除），操作者就卡死在一个响亮但无解的状态里。
+     * 所以排除规则必须与注册侧同源 —— 这里走的就是 {@code RagNamespace.isExcludedWikiPage}。
+     */
+    @Test
+    void 只有系统页时投影表为空可以启用() {
+        // 不能 DELETE：ai_source_chunk 有外键指过来。守卫数的是 status='READY' 的资料，
+        // 所以把状态改掉就等价于「库里没有资料原料」，且不动其它表。
+        jdbc.update("UPDATE ai_notebook_source SET status='PARSING'");
+        jdbc.update("INSERT INTO user_knowledge_page(user_id,page_type,title,encrypted_content," +
+                "encryption_version,version,sort_order,pinned,deleted) " +
+                "VALUES(?,'NOTE','index',?,'v0',0,0,0,0)", userId, "目录页");
+        RagIndexGeneration generation = createBuildingGeneration();
+        jdbc.update("UPDATE rag_index_generation SET status='READY' WHERE id=?", generation.getId());
+
+        adminService.activate(generation.getId());
+
+        assertEquals("ACTIVE", generationMapper.selectById(generation.getId()).getStatus(),
+                "系统页不是原料，投影表为空是正常状态，守卫不该把它读成「没对账」");
+    }
+
+    /**
      * <b>门禁的分子必须逐个单元匹配，不能数状态行的条数。</b>
      *
      * <p>同一张 {@code rag_source_index_state} 里躺着两套行（LEGACY 的 {@code unit_id} 为 NULL）。
