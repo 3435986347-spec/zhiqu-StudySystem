@@ -595,17 +595,39 @@ class RagIndexIntegrationTest {
      * <p>所以它需要一条属于自己的用例，而不是一句更准的注释：
      * 有了这条，下次谁把匹配换成计数、顺手删掉「看着多余」的过滤，第一级判定就会红。
      */
+    /**
+     * <p><b>夹具里必须同时有一条「该进来的」UNIT 行</b> —— 这是后补的伴随断言。
+     *
+     * <p>原来的夹具只插遗留行、只断言 {@code byUnit.isEmpty()}。那条断言被两种情况满足：
+     * 「过滤生效」与「{@code unitStates} 根本什么都没返回」。实测过：把它的代次条件改成
+     * {@code -1L}，映射恒空，本条<b>照旧全绿</b>。
+     *
+     * <p>这是排除型断言的通病：形如「Y 不出现在结果里」的断言，在「Y 被规则正确排除」与
+     * 「Y 压根不是输入」/「结果本来就是空的」两种情况下都通过，而后者是<b>夹具</b>的性质，
+     * 不是被测规则的性质 —— 于是断言测的是夹具，不是规则。
+     * 每条排除型断言都需要一个建立「结果里本该有东西，而且它确实在」的伴随断言。
+     *
+     * <p>查出它的手法值得记：<b>把断言反转过来，问它还能区分什么</b>。
+     * {@code isEmpty()} 反转成 {@code !isEmpty()} 之后，这个夹具连一条本该在的行都没有，
+     * 反转后的命题无从谈起 —— 那就说明夹具在「结果非空」这个维度上一直不足，
+     * 包括反转之前。反转是思想实验，不必真提交，成本极低。
+     */
     @Test
     void 遗留的source状态行不进入按单元索引的映射() {
         RagIndexableUnit unit = registerUnit(sourceId);
         jdbc.update("INSERT INTO rag_source_index_state(source_id,unit_id,generation_id,index_version," +
                         "content_hash,status,vector_count) VALUES(?,NULL,?,?,?,'INDEXED',3)",
                 sourceId, generationId, "bge-small-zh-v1.5@test", unit.getCanonicalHash());
+        // 伴随行：该进来的那一条。少了它，下面的断言分不清「过滤生效」与「查询什么都没返回」。
+        jdbc.update("INSERT INTO rag_source_index_state(source_id,unit_id,generation_id,index_version," +
+                        "content_hash,status,vector_count) VALUES(NULL,?,?,?,?,'INDEXED',3)",
+                unit.getId(), generationId, "bge-small-zh-v1.5@test", unit.getCanonicalHash());
 
         Map<Long, com.zhiqu.entity.RagSourceIndexState> byUnit = jobService.unitStates(generationId);
 
-        assertTrue(byUnit.isEmpty(),
-                "遗留行没有 unit_id，混进来只会落在一个 null 键上；等分子改成计数时它就成了假覆盖");
+        assertEquals(java.util.Set.of(unit.getId()), byUnit.keySet(),
+                "恰好是那条 UNIT 行：遗留行没有 unit_id，混进来只会落在一个 null 键上，"
+                        + "等分子改成计数时它就成了假覆盖；而映射为空则说明查询本身坏了");
         assertFalse(byUnit.containsKey(null), "null 键是 HashMap 允许的，所以它不会以异常的形式暴露");
     }
 
