@@ -120,6 +120,17 @@ py -3.11 -m venv .venv
 C:\zhiqu\models\bge-small-zh-v1.5
 ```
 
+**还要在模型目录里手工建一个 `ZHIQU_MODEL_REVISION` 文件**，内容是那个 revision 字符串
+（与 `.env` 里的 `RAG_MODEL_REVISION` 逐字相同，两端不留空白）：
+
+```text
+C:\zhiqu\models\bge-small-zh-v1.5\ZHIQU_MODEL_REVISION
+```
+
+它<b>不是</b>从 HuggingFace 下下来的，是本项目自己的固定标记 —— `Settings.prepare()`
+（`rag-service/app/settings.py`）会读它并与 `RAG_MODEL_REVISION` 比对，缺失或不一致直接
+`RuntimeError`。少了这一步，sidecar 起来就是不可用的（表现见下面那条验证）。
+
 生产机首次启动不会联网下载模型。复制 `.env.example` 为 `.env`，填写与 `application-prod.yml` 相同的随机 `service token` 和真实模型 revision。再把 WinSW x64 复制为 `C:\zhiqu\zhiqu-rag.exe`，并执行：
 
 ```powershell
@@ -127,7 +138,24 @@ cd C:\zhiqu
 .\install-rag-service.ps1
 ```
 
-使用 `Authorization: Bearer <service token>` 请求 `http://127.0.0.1:8001/health/live` 确认可访问后，将 `application-prod.yml` 的 `app.rag.enabled` 改为 `true`，重启后端，在监管后台创建第一代索引；代次构建完成后再手动启用。sidecar 只监听回环地址，不要开放公网 `8001`。
+**验证必须用 `/health/ready` 或 `/v1/meta`，不能只用 `/health/live`。**
+`/health/live` 恒返回 `{"live": true}`，它不看模型加载结果；而 `lifespan` 捕获了
+`prepare()` 的异常并只把 `ready=False, error=…` 记进状态（`main.py:84-91`）——
+也就是说**模型没加载成功时进程照样起着、`/health/live` 照样 200**。
+只查 live 会得到「一切正常」，然后在 `app.rag.enabled=true` 之后每次检索都拿 503。
+
+```powershell
+# 三条都要过：live 200、ready 200、meta 的 ready 为 true
+$h = @{ Authorization = "Bearer <service token>" }
+Invoke-RestMethod -Headers $h http://127.0.0.1:8001/health/live
+Invoke-RestMethod -Headers $h http://127.0.0.1:8001/health/ready   # 未就绪时 503，detail 就是原因
+Invoke-RestMethod -Headers $h http://127.0.0.1:8001/v1/meta        # 看 ready / indexVersion
+```
+
+后端侧同时查一次管理端的 RAG 健康信息：`reason` 若是 `TOKEN_MISSING`，是两侧
+`service token` 没对上；若是 `DISABLED`，是 `app.rag.enabled` 还没翻。两者不再共用一个提示。
+
+三条都过之后，再将 `application-prod.yml` 的 `app.rag.enabled` 改为 `true`，重启后端，在监管后台创建第一代索引；代次构建完成后再手动启用。sidecar 只监听回环地址，不要开放公网 `8001`。
 
 当前 Sidecar 一次只服务一个模型/index version。同版本索引可在监管后台蓝绿重建和回滚；升级模型时应先保持 Feature Flag 关闭或接受关键词降级窗口，部署匹配新版本的 Sidecar 后再重建并启用，不能把它表述为跨模型版本无缝切换。
 
