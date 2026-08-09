@@ -95,8 +95,7 @@ public class RagRetriever {
             }
             List<Map<String, Object>> candidates = mapList(response.get("candidates"));
             metrics.recordQuery((System.nanoTime() - started) / 1_000_000, candidates.size(), 0, 0);
-            return new RetrievalResult(true, null, generation, candidates,
-                    indexedNotebookSourceIds(indexedUnits));
+            return new RetrievalResult(true, null, generation, candidates, indexedUnits);
         } catch (Exception e) {
             return fallback(e.getClass().getSimpleName());
         }
@@ -137,22 +136,6 @@ public class RagRetriever {
     }
 
     /**
-     * 调用方据此决定哪些资料还要补关键词行（AiWorkspaceServiceImpl.java:480-482），
-     * 所以这里必须过滤出 <b>NOTEBOOK_SOURCE 的 {@code refId}</b>，而不是单元 id。
-     *
-     * <p>直接把 unit id 交出去的话类型照样是 {@code Set<Long>}、编译照样通过，
-     * 而 {@code contains} 从此恒为 false —— 每一份资料都会再补一遍关键词行，
-     * 表现只是「上下文里重复内容变多」。
-     */
-    private Set<Long> indexedNotebookSourceIds(List<RagIndexableUnit> indexedUnits) {
-        Set<Long> refIds = new LinkedHashSet<>();
-        for (RagIndexableUnit unit : indexedUnits) {
-            if (RagNamespace.NOTEBOOK_SOURCE.equals(unit.getNamespace())) refIds.add(unit.getRefId());
-        }
-        return refIds;
-    }
-
-    /**
      * <b>唯一的回落出口</b>：记一次指标，再构造结果。
      *
      * <p>不变量：{@code retrieve} 的每一条非成功返回<b>恰好记一次</b>回落原因，
@@ -174,7 +157,7 @@ public class RagRetriever {
 
     private RetrievalResult fallback(String reason, RagIndexGeneration generation) {
         metrics.recordFallback(reason);
-        return new RetrievalResult(false, reason, generation, List.of(), Set.of());
+        return new RetrievalResult(false, reason, generation, List.of(), List.of());
     }
 
     /**
@@ -184,7 +167,7 @@ public class RagRetriever {
      * 「哪些原因不记」就散在条件表达式里；给它一个出口，例外就是可数的。
      */
     private RetrievalResult disabled() {
-        return new RetrievalResult(false, RagClient.REASON_DISABLED, null, List.of(), Set.of());
+        return new RetrievalResult(false, RagClient.REASON_DISABLED, null, List.of(), List.of());
     }
 
     private List<Map<String, Object>> mapList(Object value) {
@@ -202,8 +185,30 @@ public class RagRetriever {
     /**
      * <p><b>刻意没有 {@code unavailable(...)} 静态工厂了。</b>它是一条绕过指标记账的近路，
      * 而且看起来完全无辜 —— 留着它，收敛出口这件事就只剩一句约定。
+     *
+     * <p>{@code queriedUnits} 是<b>本次真正发给 sidecar 的那批单元</b>（即 payload 里的
+     * {@code unitIds}），step 3 起由回填器用作归属判据：候选的 {@code unitId} 不在这批里，
+     * 就是越界候选。这比原先「按 {@code AiNotebookSource} 逐个比对 userId/notebookId」更严 ——
+     * 后者只覆盖 Notebook 一个命名空间，Wiki 接进来之后它对 Wiki 候选完全无话可说，
+     * 而认错的后果是<b>把别人的内容喂进模型上下文</b>。
      */
     public record RetrievalResult(boolean available, String fallbackReason, RagIndexGeneration generation,
-                                  List<Map<String, Object>> candidates, Set<Long> indexedSourceIds) {
+                                  List<Map<String, Object>> candidates, List<RagIndexableUnit> queriedUnits) {
+
+        /**
+         * 调用方据此决定哪些资料还要补关键词行（{@code AiWorkspaceServiceImpl.java:480-482}），
+         * 所以这里过滤的是 <b>NOTEBOOK_SOURCE 的 {@code refId}</b>，而不是单元 id。
+         *
+         * <p>直接把 unit id 交出去的话类型照样是 {@code Set<Long>}、编译照样通过，
+         * 而 {@code contains} 从此恒为 false —— 每一份资料都会再补一遍关键词行，
+         * 表现只是「上下文里重复内容变多」。
+         */
+        public Set<Long> indexedSourceIds() {
+            Set<Long> refIds = new LinkedHashSet<>();
+            for (RagIndexableUnit unit : queriedUnits) {
+                if (RagNamespace.NOTEBOOK_SOURCE.equals(unit.getNamespace())) refIds.add(unit.getRefId());
+            }
+            return refIds;
+        }
     }
 }

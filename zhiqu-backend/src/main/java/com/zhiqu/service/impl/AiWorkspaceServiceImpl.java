@@ -468,8 +468,16 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                 UUID.randomUUID().toString(), userId, scope, query);
         List<Map<String, Object>> vectorRows = contextCandidateHydrator.hydrate(
                 userId, notebookId, scope, retrieval);
+        // 两种「向量路径没产出行」必须可被机器区分 —— 此前它们共用 NO_VALID_VECTOR_CANDIDATE，
+        // 而一个是正常状况、一个是缺陷信号，运维看到的却是同一个值（DISABLED_OR_TOKEN_MISSING 那一族）。
+        //   NO_VECTOR_CANDIDATE     sidecar 一条都没返回 —— 就是没匹配上，正常。
+        //   ALL_CANDIDATES_DROPPED  返回了，但回填一条都没留下 —— 坏密文、归属不匹配、陈旧 chunkId。
+        // 检索本身仍算成功（方案 1：局部失败不放大成全局降级），要不要叠加关键词兜底由下面那段决定；
+        // 分成两个原因之后，「向量路径的产出」与「关键词兜底的产出」在数据里始终分得开，
+        // 不必靠一个计数器去反推。
         if (retrieval.available() && vectorRows.isEmpty() && ragProperties.isFallbackEnabled()) {
-            ragMetricsService.recordFallback("NO_VALID_VECTOR_CANDIDATE");
+            ragMetricsService.recordFallback(retrieval.candidates().isEmpty()
+                    ? "NO_VECTOR_CANDIDATE" : "ALL_CANDIDATES_DROPPED");
         }
 
         Set<Long> legacySourceIds = new LinkedHashSet<>();

@@ -92,8 +92,25 @@ public final class CandidateKeys {
      * <p>一个字段同时承载「分桶身份」与「请求侧匹配身份」，正是判据不等宽那件事在数据模型上的形态：
      * 将来任一侧的口径变化都会波及另一侧。<b>正确的收尾是拆成两个字段</b>
      * （分桶用 {@code unitId}，请求侧匹配用资料 id），而不是继续用一个带前缀的字符串
-     * 把两件事编码进同一个值里。不在 step 3 做：它要动 {@code wikiContext}、{@code :488}
-     * 与存量 evidence 的取值形状，属于另一步。
+     * 把两件事编码进同一个值里。
+     *
+     * <h3>收尾的触发条件（<b>不是 TODO，是因果</b>）</h3>
+     *
+     * <p>前缀形式 {@code "wiki:" + pageId} 的<b>存在条件</b>是：
+     * {@code wikiContext} 与向量回填<b>同时</b>产出 Wiki 候选行。
+     * E-3（{@code selectedWikiPageIds} 换语义 + 删 {@code wikiContext}）之后该条件消失 ——
+     * 生产者只剩一个，「两个生产者对同一页给出不同桶键」这件事<b>不再可能发生</b>，
+     * 于是前缀防的东西没有了，不是「可以删了」而是「它防的事情没有了」。
+     *
+     * <p>届时：分桶角色改用 {@code unitId}（跨命名空间天然唯一，零前缀），
+     * 请求侧匹配角色拆成独立字段 —— 而 {@code AiWorkspaceServiceImpl.java:488} 那段匹配逻辑
+     * <b>在 E-3 本来就要改</b>（{@code selectedWikiPageIds} 的语义正是它读的东西）。
+     * 拆字段最便宜的时机就是别人已经把手放在那段代码上的时候，不必另起一步。
+     *
+     * <p><b>为什么要把触发条件写死：</b>本仓库「已知缺陷 + 已知修法 + 延期」已有四次前科
+     * （{@code RECONCILE_UNITS}、{@code DELETE_SCOPE}、{@code DELETE_INDEX_VERSION}、
+     * fallback 指标）。得手的那些都挂在一个有触发条件的步骤上，搁下的那些只有一句注释。
+     * 差别不在决心，在于「什么时候做」是否还依赖谁记得。
      */
     public static final String SOURCE_ID = "sourceId";
     /** 父块 id；缺失时去重键回落到 {@link #CHUNK_INDEX}。 */

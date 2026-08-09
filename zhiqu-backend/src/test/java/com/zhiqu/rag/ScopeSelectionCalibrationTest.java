@@ -141,6 +141,34 @@ class ScopeSelectionCalibrationTest {
                 "必须是不可变列表——可变的话下游一次 sort() 就能改掉承重的顺序，且不留痕迹");
     }
 
+    /**
+     * {@code projectedUnits} 里混进 NOTEBOOK_SOURCE 必须<b>当场</b>被拒。
+     *
+     * <p><b>这条用例是补上来的，不是新写的。</b>那条约束在 1B-1 加宽 {@code ScopeSelection}
+     * 时就写进了紧凑构造器，但当时 {@code projectedUnits} 恒为空 —— <b>没有任何东西能触发它</b>，
+     * 于是按既有规矩只留了注释说明为什么走不到，并把「等它可达时补用例」记进交接单。
+     * step 3 让范围里真的装进 Wiki 单元，这一刻就是它可达的时刻。
+     *
+     * <p>为什么值得一条用例：违反它<b>不抛异常也不报错</b> —— 同一个单元被
+     * {@code notebookSources} 与 {@code projectedUnits} 各数一遍，
+     * {@code effectiveSourceCount} 的分母虚高，表现只是「上下文里的行变少了」。
+     * 而分母正是 step 4 要放宽的那个量，届时两种原因会叠在一起，分不开。
+     */
+    @Test
+    void 投影单元里混进NOTEBOOK_SOURCE当场被拒() {
+        com.zhiqu.entity.RagIndexableUnit notebookUnit = new com.zhiqu.entity.RagIndexableUnit();
+        notebookUnit.setId(4321L);
+        notebookUnit.setNamespace(RagNamespace.NOTEBOOK_SOURCE);
+        notebookUnit.setRefId(7L);
+
+        IllegalArgumentException error = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new ScopeSelection(userId, notebookId, List.of(), List.of(notebookUnit)),
+                "NOTEBOOK_SOURCE 单元属于 notebookSources，放进 projectedUnits 会被数两遍");
+        assertTrue(error.getMessage().contains("4321"),
+                "报错要带上单元 id，否则拿到这个异常的人还得自己去找是哪一条：" + error.getMessage());
+    }
+
     private boolean assertThrowsUnsupported(Runnable action) {
         try {
             action.run();

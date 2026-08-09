@@ -157,6 +157,7 @@ class RagRetrievalPipelineCharacterizationTest {
     private Long userId;
     private Long notebookId;
     private Long sourceId;
+    private Long unitId;
     private Long generationId;
     private final List<Long> chunkIds = new ArrayList<>();
 
@@ -194,6 +195,7 @@ class RagRetrievalPipelineCharacterizationTest {
                 Long.class);
         registry.refreshUnitIfLive(RagNamespace.NOTEBOOK_SOURCE, sourceId);
         RagIndexableUnitRow unit = unitRow();
+        unitId = unit.id();
         // step 2 改的是**夹具**，一个期望值都没动 —— 两者的区别正是这个类要守住的东西。
         // 从「source_id + 资料哈希」的混合行换成 upsertUnitState 真正会写的那种行：
         // source_id 恒为 NULL（RagIndexJobService.java:729），content_hash 存的是
@@ -276,9 +278,18 @@ class RagRetrievalPipelineCharacterizationTest {
         return row;
     }
 
+    /**
+     * step 3 的第二次<b>夹具</b>改动（第一次在 step 2 改状态行）：候选从 {@code sourceId}
+     * 换成 {@code namespace} + {@code unitId}，因为<b>真 sidecar 返回的就是后者</b>
+     * （rag-service/app/vector_store.py:243-244，返回体里根本没有 sourceId 这个字段）。
+     *
+     * <p>本类三条断言的<b>期望值一个都没动</b>。判断标准只有一条：改的是喂进去的东西，
+     * 还是比对的东西。
+     */
     private Map<String, Object> candidate(long chunkId, int charStart, int charEnd, double distance) {
         Map<String, Object> row = candidateOf(chunkId, charStart, charEnd, distance);
-        row.put("sourceId", sourceId);
+        row.put("namespace", "\"" + RagNamespace.NOTEBOOK_SOURCE + "\"");
+        row.put("unitId", unitId);
         row.put("chunkIndex", 0);
         row.put("segmentIndex", 0);
         return row;

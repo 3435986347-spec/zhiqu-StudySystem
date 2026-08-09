@@ -587,6 +587,26 @@ public class RagUnitRegistry {
     }
 
     /**
+     * 某用户在某命名空间下<b>全部 READY 且有正文哈希</b>的单元，按 id 升序。
+     *
+     * <p>检索侧解析 Wiki 范围用它。条件与 {@code RagIndexJobService.indexableUnits()} 一致
+     * （READY + 哈希非空）—— 不一致会造出「检索范围里有、但代次里根本没索引过」的单元，
+     * 表现为分母虚高而候选永远缺席，正是每源配额那一族的静默失效。
+     *
+     * <p>{@code userId} 是必填的：Wiki 不按 Notebook 划分，少了这个条件就会把<b>所有人</b>的
+     * 页放进范围，而下游只按 unitId 过滤，不会再有第二道归属检查。
+     */
+    public List<RagIndexableUnit> readyUnitsOf(String namespace, Long userId) {
+        if (namespace == null || userId == null) return List.of();
+        return unitMapper.selectList(new LambdaQueryWrapper<RagIndexableUnit>()
+                .eq(RagIndexableUnit::getNamespace, namespace)
+                .eq(RagIndexableUnit::getUserId, userId)
+                .eq(RagIndexableUnit::getStatus, RagNamespace.STATUS_READY)
+                .isNotNull(RagIndexableUnit::getCanonicalHash)
+                .orderByAsc(RagIndexableUnit::getId));
+    }
+
+    /**
      * {@link #findUnit} 的批量形式，按传入的 {@code refIds} <b>保序</b>返回命中的行。
      *
      * <p>写在这里而不是让调用方自己拼 {@code in(namespace, refId)}：上面那句
