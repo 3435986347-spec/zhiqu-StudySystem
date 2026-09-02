@@ -147,8 +147,22 @@
     if (want) nav.insertAdjacentHTML('beforeend', navGroup('管理', NAV.admin, ADMIN_MARK));
     else Array.prototype.forEach.call(existing, function (el) { el.remove(); });
   }
+  /**
+   * 这个文件名是不是后台页 —— <b>集合从 NAV.admin 派生，不在别处再抄一份</b>。
+   *
+   * <p>route() 里硬写一个四元数组是最省事的写法，也正是本仓库记过的那类漂移：
+   * 将来加第五个后台页，NAV.admin 加了、门里忘了，它就又静默可直达，
+   * 而没有任何东西会红（与「按位置切片」会在加分组那天静默错位同一族）。
+   * 派生之后两者不可能分家：进不了侧栏的页进不了门，反之亦然。
+   */
+  function isAdminPage(file){
+    var f = file || curFile();
+    for (var i = 0; i < NAV.admin.length; i++) if (NAV.admin[i][0] === f) return true;
+    return false;
+  }
   window.ZQUI = window.ZQUI || {};
   window.ZQUI.setAdminNav = setAdminNav;
+  window.ZQUI.isAdminPage = isAdminPage;
 
   function boot(){ buildSidebar(); setupPanels(); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();

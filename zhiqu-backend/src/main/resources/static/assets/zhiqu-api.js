@@ -3023,16 +3023,68 @@
   }
 
   function revealContent() { try { document.documentElement.classList.remove('zq-booting'); } catch (e) {} }
+  var DENIED_FLAG = 'zq.deniedAdminPage';
+  /**
+   * 落地后补一句「为什么被送回来」。
+   *
+   * <p>不能在跳转前直接 toast：toast 是 2.6 秒后自删的 DOM 节点，而 location.replace 一走
+   * 它就随旧文档消失，用户看到的仍是一次无声跳转 —— 而这一步治的恰恰是观感。
+   * 所以用 sessionStorage 传一次性标记，落地页取走并清掉。
+   *
+   * <p>toast 是 position:fixed 挂 body 的，而 zq-booting 只压 .zq-main
+   * （zhiqu-ui.css:615），所以它在首屏遮罩期间照样可见，不必等 revealContent。
+   */
+  function flushDeniedNotice() {
+    var denied;
+    // catch 只圈住存储访问（隐私模式下 sessionStorage 会抛），**不圈 toast** ——
+    // 圈进去的话，toast 一旦出错就是「标记已被删掉 + 异常被吞 + 用户什么都没看到」，
+    // 而这一步存在的全部意义就是别让用户面对一次无声的跳转。
+    try {
+      denied = sessionStorage.getItem(DENIED_FLAG);
+      if (denied) sessionStorage.removeItem(DENIED_FLAG);
+    } catch (e) { return; }
+    if (denied) toast('无权访问该页面，已返回看板', 'error');
+  }
+  function currentUserIsAdmin() {
+    return String((state.user && state.user.role) || '').toUpperCase() === 'ADMIN';
+  }
   function route() {
     maintainShellCache();
+    flushDeniedNotice();
     safe('初始化', async function () {
+      // 跳转已经发起时不要揭示内容：location.replace 不中断 JS，下面的 finally 照样会跑，
+      // 摘掉 zq-booting 会让后台骨架淡入 180ms（zhiqu-ui.css:616 的过渡）才被导航打断。
+      var leaving = false;
       try {
         if (page === 'index.html' || $('#form-login')) { revealContent(); return bootIndex(); }
         await initAuth();
+
+        // 非管理员直达后台页 → 劝返。**这一步不改变安全边界**：后端 AdminController 的
+        // 29 个端点每个都 requireAdmin()、回库查 sys_user.role，本来就顶得住。
+        // 它治的是观感 —— 此前普通用户敲 URL 或从历史记录进来，会拿到完整的后台外壳
+        // 再吃一串 403 toast，看上去像「坏了」而不是像「在保护」。
+        //
+        // 位置是承重的，两边都挪不得：
+        //   往前挪到 initAuth 之前 → 只剩本地存储里那个可绕过的角色可用；
+        //   往后挪到 boots 之后   → 后台数据请求已经发出去了。
+        // 插在这里时服务端角色已在手，而 zq-booting 要到下面 finally 才摘，
+        // 所以跳转发生时 .zq-main 仍是 opacity:0，没有闪烁可言。
+        //
+        // 页面集合问 ZQUI.isAdminPage()，它从 NAV.admin 派生 —— 不在这里抄第二份文件名。
+        if (window.ZQUI && window.ZQUI.isAdminPage && window.ZQUI.isAdminPage(page) && !currentUserIsAdmin()) {
+          leaving = true;
+          try { sessionStorage.setItem(DENIED_FLAG, '1'); } catch (e) {}
+          // replace 而不是 href：不留历史条目，否则用户按「后退」会再弹回来一次。
+          location.replace('dashboard.html');
+          return;
+        }
+
         var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'routines.html': bootRoutines, 'statistics.html': bootStatistics, 'achievement.html': bootAchievement, 'profile.html': bootProfile, 'admin.html': bootAdmin, 'feedback-admin.html': bootFeedbackAdmin, 'account-admin.html': bootAccountAdmin, 'shared-plans.html': bootSharedPlans, 'shared-plan-admin.html': bootSharedPlanAdmin, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
         if (boots[page]) await boots[page]();
       } finally {
-        revealContent();
+        // 卡死不了：zhiqu-ui.js:31 那个 2.5s 无条件兜底仍会摘遮罩，
+        // 所以万一导航没成行，页面也不会永远停在空白。
+        if (!leaving) revealContent();
       }
     }, { renderError: true });
   }
