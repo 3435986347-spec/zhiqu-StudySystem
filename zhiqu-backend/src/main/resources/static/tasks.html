@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260902-admin-nav-role-gate">
 </head>
 <body>
   <div class="zq-app">
@@ -49,7 +49,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js"></script>
+  <script src="assets/zhiqu-ui.js?v=20260902-admin-nav-role-gate"></script>
   <script>
     var qMeta = { 1:['重要且紧急','q1'], 2:['重要不紧急','q2'], 3:['紧急不重要','q3'], 4:['不重要不紧急','q4'] };
     var pMeta = { 0:['低','var(--zq-text3)'], 1:['中','var(--zq-text2)'], 2:['高','var(--zq-warn)'], 3:['紧急','var(--zq-bad)'] };
@@ -84,6 +84,6 @@
     function cycle(i){ tasks[i].s = (tasks[i].s+1)%3; render(); }
     render();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260720-plan-confirm-rag-lease1"></script>
+  <script src="assets/zhiqu-api.js?v=20260902-admin-nav-role-gate"></script>
 </body>
 </html>

@@ -53,7 +53,7 @@ mvn -o test -Dtest=WikiToolGuardTest
   `static/assets/zhiqu-api.js` (all 14 HTML pages load it). Editing `js/` has no runtime effect.
 - **Bump the asset cache token after any frontend change**, in every HTML file *and*
   `service-worker.js` (`ZHIQU_CACHE`), or users keep the stale bundle.
-  Current token: `20260720-plan-confirm-rag-lease1`.
+  Current token: `20260902-admin-nav-role-gate`.
   `StaticAssetCacheTokenTest` fails if any page drifts from the service worker's `ZHIQU_CACHE`.
 - **Rate limiting is on by default** (`RateLimitFilter`): auth 12/60s, `/api/ai/**` 40/60s, other
   `/api/**` 180/60s → HTTP 429. Scripted E2E runs that register many users will trip it.
