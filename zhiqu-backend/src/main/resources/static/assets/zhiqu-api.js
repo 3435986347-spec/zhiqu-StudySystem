@@ -272,11 +272,29 @@
     updateSidebarUser(state.user);
     return state.user;
   }
+  /**
+   * 把本地存的角色对齐到服务端返回值。只更新**已经存在**的那个键 ——
+   * 未勾选「记住登录状态」时 localStorage 里本来就没有 role，这里不能替它建一个。
+   *
+   * 目的是让下一次页面加载的首屏就画对：侧栏是同步渲染的，读的就是这个值，
+   * 不同步的话，同一浏览器换账号登录后每次跳转都会闪一下「管理」组。
+   */
+  function syncStoredRole(r) {
+    try {
+      if (sessionStorage.getItem('role') !== null) sessionStorage.setItem('role', r);
+      if (localStorage.getItem('role') !== null) localStorage.setItem('role', r);
+    } catch (e) {}
+  }
   function updateSidebarUser(u) {
+    var r = (u && u.role) || role() || 'USER';
+    // 服务端角色是唯一权威。buildSidebar 首屏用的是本地存的角色（客户端可改，也可能是
+    // 上一个账号的残留），这里用 /auth/info 的结果做最终裁决，两个方向都走。
+    // 它只决定**显示**——真正的拦截在后端 AdminGuard，每个 /api/admin/** 都回库查 role。
+    syncStoredRole(r);
+    try { if (window.ZQUI && window.ZQUI.setAdminNav) window.ZQUI.setAdminNav(r); } catch (e) {}
     var box = $('.zq-user');
     if (!box || !u) return;
     var name = u.nickname || u.username || '知趣用户';
-    var r = u.role || role() || 'USER';
     var avatar = u.avatar ? '<img src="' + esc(u.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">' : esc(name.slice(0, 1));
     box.innerHTML = '<div class="zq-avatar">' + avatar + '</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(name) + '</div><div style="font-size:11px;color:var(--zq-text3);">' + esc(r === 'ADMIN' ? '管理员' : '普通用户') + '</div></div>';
   }

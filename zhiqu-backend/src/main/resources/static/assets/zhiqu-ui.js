@@ -13,6 +13,13 @@
   ];
   var DEF_VER = 'v1', DEF_MODE = 'light', K_VER = 'zq.ver', K_MODE = 'zq.mode';
   function ls(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+  // 登录时存下的角色。侧栏在 zhiqu-api.js 之前同步渲染，/auth/info 还没回来，
+  // 只能先用它决定要不要画「管理」组，避免非管理员先看到再被摘掉的闪烁。
+  // **这是显示判断，不是权限判断**：存储是客户端可改的，改了也只是多显示几个入口，
+  // 真正的拦截在后端 AdminGuard（每个 /api/admin/** 都回库查 sys_user.role）。
+  // 服务端角色到手后由 zhiqu-api.js 调 setAdminNav() 校正，那一次才是权威的。
+  function storedRole(){ try { return sessionStorage.getItem('role') || localStorage.getItem('role') || ''; } catch(e){ return ''; } }
+  function isAdminRole(r){ return String(r || '').toUpperCase() === 'ADMIN'; }
   function lss(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
   function readVer(){ var v=ls(K_VER); for(var i=0;i<VERSIONS.length;i++) if(VERSIONS[i].id===v) return v; return DEF_VER; }
   function readMode(){ var m=ls(K_MODE); return (m==='dark'||m==='light')?m:DEF_MODE; }
@@ -33,22 +40,27 @@
     admin: [ ['admin.html','监管后台','◈'], ['account-admin.html','账号管理','⌘'], ['feedback-admin.html','反馈管理','✉'], ['shared-plan-admin.html','共享计划审核','✓'] ]
   };
   function curFile(){ var p=location.pathname.split('/').pop(); return p || 'dashboard.html'; }
-  function navGroup(title, items){
+  // mark：给该组每个元素打一个属性，供 setAdminNav 事后精确摘除/补回。
+  // 不用「按位置切片」是因为分组数量将来会变，位置法会在加组那天静默错位。
+  function navGroup(title, items, mark){
     var cur = curFile();
-    var h = title ? '<div class="zq-nav-group">'+title+'</div>' : '';
+    var attr = mark ? ' ' + mark : '';
+    var h = title ? '<div class="zq-nav-group"'+attr+'>'+title+'</div>' : '';
     items.forEach(function(it){
       var active = it[0]===cur ? ' active' : '';
-      h += '<a class="'+active.trim()+'" href="'+it[0]+'"><span class="zq-ic">'+it[2]+'</span><span>'+it[1]+'</span></a>';
+      h += '<a class="'+active.trim()+'"'+attr+' href="'+it[0]+'"><span class="zq-ic">'+it[2]+'</span><span>'+it[1]+'</span></a>';
     });
     return h;
   }
+  var ADMIN_MARK = 'data-zq-nav-admin';
   function buildSidebar(){
     var host = document.getElementById('zq-side');
     if (!host) return;
     host.className = 'zq-side';
     host.innerHTML =
       '<div class="zq-brand"><div class="zq-brand-badge">知</div><div class="zq-brand-name">知趣<span> · 象限学习</span></div></div>'
-      + '<div class="zq-nav">' + navGroup('', NAV.main) + navGroup('数据', NAV.data) + navGroup('管理', NAV.admin) + '</div>'
+      + '<div class="zq-nav">' + navGroup('', NAV.main) + navGroup('数据', NAV.data)
+      + (isAdminRole(storedRole()) ? navGroup('管理', NAV.admin, ADMIN_MARK) : '') + '</div>'
       + '<div class="zq-switch" style="padding:12px 4px 2px;border-top:1px solid var(--zq-sb-border);margin-top:10px;">'
       +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 4px 7px;">'
       +     '<span style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--zq-text3);">界面风格</span>'
@@ -116,6 +128,27 @@
       makeCollapsible(el,{ key:'zq.c.'+(el.id||el.getAttribute('data-zq-label')||dir), label:el.getAttribute('data-zq-label')||'面板', dir:dir, defaultCollapsed: el.getAttribute('data-zq-open')!=='1' });
     });
   }
+
+  /**
+   * 用**服务端**角色校正「管理」组 —— zhiqu-api.js 拿到 /auth/info 后调一次。
+   *
+   * 为什么不能只靠 buildSidebar 里的 storedRole()：那个值来自 localStorage/sessionStorage，
+   * 客户端可改，也可能是上一个账号留下的陈旧值（同一浏览器换人登录）。
+   * 服务端角色是唯一权威，这里做最终裁决——两个方向都要走：
+   *   存储说不是、服务端说是 → 补回来（否则管理员少了入口）；
+   *   存储说是、服务端说不是 → 摘掉（否则就是这次要修的那个 bug 换了个入口重现）。
+   */
+  function setAdminNav(isAdmin){
+    var nav = document.querySelector('#zq-side .zq-nav');
+    if (!nav) return;
+    var want = isAdminRole(isAdmin === true ? 'ADMIN' : isAdmin);
+    var existing = nav.querySelectorAll('[' + ADMIN_MARK + ']');
+    if (want === (existing.length > 0)) return;
+    if (want) nav.insertAdjacentHTML('beforeend', navGroup('管理', NAV.admin, ADMIN_MARK));
+    else Array.prototype.forEach.call(existing, function (el) { el.remove(); });
+  }
+  window.ZQUI = window.ZQUI || {};
+  window.ZQUI.setAdminNav = setAdminNav;
 
   function boot(){ buildSidebar(); setupPanels(); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
