@@ -34,6 +34,9 @@
     .zq-feat h3{margin:0;font-size:15px;font-weight:700;}
     .zq-feat p{margin:0;font-size:12.5px;line-height:1.6;color:var(--zq-text2);}
     .zq-home-foot{border-top:1px solid var(--zq-border-soft);padding:20px 28px;text-align:center;font-size:12px;color:var(--zq-text3);}
+    .zq-home-foot .zq-beian{margin-top:6px;}
+    .zq-home-foot .zq-beian a{color:inherit;text-decoration:none;}
+    .zq-home-foot .zq-beian a:hover{color:var(--zq-text2);text-decoration:underline;}
     @media (max-width:900px){ .zq-feat{grid-template-columns:repeat(2,minmax(0,1fr));} .zq-hero h1{font-size:30px;} }
     @media (max-width:560px){ .zq-feat{grid-template-columns:1fr;} .zq-slide{height:220px;} }
   </style>
@@ -78,7 +81,10 @@
       </section>
     </main>
 
-    <footer class="zq-home-foot">知趣 · 象限自主学习系统 · 让每一天的安排都清晰可控</footer>
+    <footer class="zq-home-foot">
+      <div>知趣 · 象限自主学习系统 · 让每一天的安排都清晰可控</div>
+      <div class="zq-beian"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026091171号-1</a></div>
+    </footer>
   </div>
 
   <script>
