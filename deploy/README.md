@@ -18,6 +18,7 @@ deploy/
 └─ windows/
    ├─ README.md                         # Windows Server 部署说明
    ├─ BACKUP.md                         # 备份与恢复说明
+   ├─ RUNBOOK-e4-rag-cutover.md         # 首次启用语义检索（E-4）的操作顺序
    ├─ application-prod.example.yml      # 生产配置模板
    ├─ create-database.sql               # 创建数据库和应用账号
    ├─ Caddyfile.example                 # Caddy 反向代理模板
@@ -65,7 +66,14 @@ deploy/windows/README.md
 deploy/windows/BACKUP.md
 ```
 
-3. 根据服务器实际情况修改：
+3. 只有在要**首次启用语义检索**时才读这一份（把 `app.rag.enabled` 翻成 true 的那一次操作，
+   顺序是被机制强制的，不要凭印象操作）：
+
+```text
+deploy/windows/RUNBOOK-e4-rag-cutover.md
+```
+
+4. 根据服务器实际情况修改：
 
 ```text
 deploy/windows/application-prod.example.yml

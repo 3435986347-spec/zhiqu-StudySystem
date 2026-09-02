@@ -1,7 +1,35 @@
-# 1B-2 Stage E 交接单（1b / 1c 未做）
+# 1B-2 Stage E 交接单（1b / 1c 已完成；只剩 E-4，在服务器上做）
 
 写在这里而不是留在对话里：其中至少两条是 Stage E-1a 期间才查出来的，
 重新推一遍的成本不低。
+
+## 当前状态（2026-09-02 实测；读下面任何一节之前先读这一节）
+
+**E-4 之前的本地步骤全部完成**，`mvn -o clean test` 实测 **`205/0/0/0`**（Docker 在，一条不跳；
+`RagRetrievalUnitDialectBaselineTest` 4 条、`RagRetrievalPipelineCharacterizationTest` 2 条
+都在里面）。剩下的只有 E-4，而 E-4 整件事发生在服务器上 ——
+顺序与命令见 `deploy/windows/RUNBOOK-e4-rag-cutover.md`。
+
+下面几节按当时的认识写，**结论已被后续提交推翻；正文一律保留不改** ——
+推翻的过程本身是这份单子的内容，抹掉它就只剩一个没有来历的结论。
+
+| 节 | 当时的说法 | 现在 | 推翻它的东西 |
+|---|---|---|---|
+| 标题「1b / 1c 未做」、§「当前 HEAD 是已知不可工作状态」 | 索引侧仍发 `sourceId`、检索侧仍按 `sourceIds` 查询 | 两侧都已换 unit 方言 | step 1–4（`240d651` → `5920700`） |
+| §「1c 检索侧：**未做**（下一轮从这里开始）」 | 未做 | 做完，预期失败集合归零 | `5920700` |
+| §状态「Java 178/0/0/0」 | 178 | **205/0/0/0** | 本次实测 |
+| §状态「删掉 `upsertNotebookUnit` / `upsertWikiUnit`，删之前先把两条断言迁走」 | 待办 | 已删；仓库里只剩记录它被删掉的注释 | 1c |
+| §「拆 `UnitContent.Outcome` 的工作量上界」表中 `RagUnitRegistry.java:460` 记作**语句** | 要改成表达式，否则编译器不拦漏分支 | 已是表达式（现 `:470`），那张编译网已经在 | `982becf` |
+| §「检索侧开工前要先定的一件事：`ContextBudgeter` golden master 的退休」 | 退休流程要先定死 | **前提不成立**——`sourceId` → `unitId` 那次改名不会发生（键名是已持久化的线格式：存量 artifact/evidence + 前端按名字读），于是那个一次性角色不会被触发，什么都不必做 | step 2；更正写在 `CandidateKeys` 与 `ContextBudgeterCharacterizationTest` 各自的注释里，两处都在 |
+
+**§「未关闭：归属写错会销毁数据」不是待办，是有意不做。**理由记在
+`UnitContent.Outcome.GONE` 的 javadoc 上，是一条压制关系而不是一条 TODO：
+`RagUnitRegistry.ensureRow` 对外只留 `ensureRow(AiNotebookSource)` /
+`ensureRow(UserKnowledgePage)` 两个收实体的重载，收游离 `userId` 的七参版是 `private`，
+于是「非空但写错的 userId 到达注册」在类外不可构造。已核，压制仍在。
+
+> **压制被放宽即变紧急**：新增任何一个收游离 `userId` 的注册入口，破坏路径就重新可达，
+> 那时的后果不是漏索引，是把一份健康数据销毁掉。
 
 ## 已完成
 

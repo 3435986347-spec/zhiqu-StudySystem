@@ -155,7 +155,10 @@ Invoke-RestMethod -Headers $h http://127.0.0.1:8001/v1/meta        # 看 ready /
 后端侧同时查一次管理端的 RAG 健康信息：`reason` 若是 `TOKEN_MISSING`，是两侧
 `service token` 没对上；若是 `DISABLED`，是 `app.rag.enabled` 还没翻。两者不再共用一个提示。
 
-三条都过之后，再将 `application-prod.yml` 的 `app.rag.enabled` 改为 `true`，重启后端，在监管后台创建第一代索引；代次构建完成后再手动启用。sidecar 只监听回环地址，不要开放公网 `8001`。
+三条都过之后才可以翻 `app.rag.enabled`。**翻开关的顺序照 `RUNBOOK-e4-rag-cutover.md` 走，
+不要凭这一段的印象操作** —— 那份 runbook 里「先把 worker 停掉」「排空自 E-1a 起累积的积压」
+「先做一次全量对账再建代次」三步都是承重的，少一步的表现不是报错，是上线一个残缺索引
+或者让一台还在服务用户的机器去跑无节流的嵌入。sidecar 只监听回环地址，不要开放公网 `8001`。
 
 当前 Sidecar 一次只服务一个模型/index version。同版本索引可在监管后台蓝绿重建和回滚；升级模型时应先保持 Feature Flag 关闭或接受关键词降级窗口，部署匹配新版本的 Sidecar 后再重建并启用，不能把它表述为跨模型版本无缝切换。
 
@@ -598,6 +601,10 @@ cd C:\zhiqu\rag-service
 ### 十三之二、RAG 索引协议切换（停机操作）
 
 只有在**升级说明明确要求**时才需要走这一节。普通升级按上面的流程即可。
+
+> **这一节不是「第一次开启语义检索」。**本节处理的是 sidecar 请求格式发生不兼容变更、
+> 新旧版本不能混跑，因而必须停机原子替换。把 `app.rag.enabled` 从 `false` 翻成 `true`
+> 的那一次操作步骤不同，见 `RUNBOOK-e4-rag-cutover.md`。
 
 当 sidecar 的请求格式发生不兼容变更（例如引入命名空间投影）时，新旧版本**不能混跑**：旧后端发出的
 请求会被新 sidecar 的参数校验直接拒绝（HTTP 422）。查询路径上这会降级成关键词检索，但**索引路径**
