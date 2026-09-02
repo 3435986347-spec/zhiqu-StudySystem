@@ -1,4 +1,4 @@
-const ZHIQU_CACHE = 'zhiqu-shell-v20260902-admin-nav-role-gate';
+const ZHIQU_CACHE = 'zhiqu-shell-v20260902-admin-page-guard';
 
 // 核心资源：必须全部缓存成功，否则安装失败、保留旧 Worker（旧缓存不被清理），避免一次网络抖动就丢掉离线能力
 const CORE_ASSETS = [
