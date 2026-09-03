@@ -97,7 +97,11 @@ class AdminPageWiringTest {
     @Test
     void 每个后台页都在SecurityConfig白名单里() throws IOException {
         Set<String> pages = adminPages();
-        String config = Files.readString(SECURITY_CONFIG, StandardCharsets.UTF_8);
+        // 同样要先剥注释：白名单是一串字符串字面量，而「临时注释掉一项、忘了恢复」正是
+        // 这种列表最常见的改法。读原文的话 `// "/shared-plan-admin.html",` 仍能满足 contains，
+        // 判据绿，而那一页实际已落到 anyRequest().authenticated()。
+        // 与上面那条是同一个教训 —— 判据的输入里不能混进被注释掉的东西。
+        String config = stripComments(Files.readString(SECURITY_CONFIG, StandardCharsets.UTF_8));
 
         List<String> missing = new ArrayList<>();
         for (String page : pages) {
@@ -111,7 +115,8 @@ class AdminPageWiringTest {
     }
 
     /**
-     * 剥掉 JS 注释，让判据只看可执行的部分。
+     * 剥掉注释，让判据只看可执行的部分。**两条判据共用**：JS 与 Java 的注释语法一致，
+     * 而它们各自被注释满足的形态也一致（一句解释性注释 / 一行被注释掉的白名单）。
      *
      * <p>{@code //} 的匹配刻意<b>排除前面紧跟冒号</b>的情况，否则 {@code https://…} 会被当成
      * 注释起点、把整行后半截吞掉，判据就可能因为一条 URL 而假阴性。
