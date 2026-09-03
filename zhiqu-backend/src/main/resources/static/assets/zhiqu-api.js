@@ -2041,12 +2041,19 @@
     if (webBtn) webBtn.onclick = function () { aiToggle('web'); };
     if (thinkBtn) thinkBtn.onclick = function () { aiToggle('think'); };
     if (sendBtn) sendBtn.onclick = sendAiMessage;
-    if (draft) draft.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        sendAiMessage();
-      }
-    });
+    if (draft) {
+      draft.addEventListener('input', growDraft);
+      draft.addEventListener('keydown', function (event) {
+        // ⌘/Ctrl + 回车发送，单独回车换行 —— 与多数聊天工具一致。
+        // 旧行为是「回车发送、Shift+回车换行」，而那时 #zq-draft 还是 <input>：
+        // Shift+回车那一半从来就没生效过，input 根本装不下换行符。
+        // 换成 textarea 之后「换行」才第一次真的可用，所以发送键位一并让出去。
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          sendAiMessage();
+        }
+      });
+    }
 
     // 先确定当前 Notebook，聊天记录按 Notebook 隔离加载。
     await Promise.all([loadAiNotebooks(), loadAiModelSelect()]);
@@ -2911,11 +2918,24 @@
     else state.agentSteps.push({ _id: id, title: step.title || step.name || step.stepType || ('步骤 ' + (state.agentSteps.length + 1)), status: done ? 'DONE' : (step.status || 'RUNNING') });
     renderSteps(state.agentSteps);
   }
+  /** 单行时的高度，与同排按钮对齐；也是清空后要回到的高度。 */
+  var DRAFT_BASE_HEIGHT = 32;
+  /**
+   * 输入框自适应高度。先置 auto 再读 scrollHeight —— 不置的话 scrollHeight 会被
+   * 当前高度撑住，内容变少时收不回去。
+   */
+  function growDraft() {
+    var el = $('#zq-draft');
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.max(DRAFT_BASE_HEIGHT, Math.min(el.scrollHeight, 120)) + 'px';
+  }
   async function sendAiMessage() {
     if (state.aiSending) return; // 发送中保护:双击/回车连发只算一次
     var inp = $('#zq-draft'), txt = inp && inp.value.trim();
     if (!txt) return;
     inp.value = '';
+    inp.style.height = DRAFT_BASE_HEIGHT + 'px'; // 收回单行，否则清空后仍撑着上一条的高度
     state.aiSending = true;
     var sendButton = $('#zq-send');
     if (sendButton) { sendButton.disabled = true; sendButton.textContent = '生成中'; }
