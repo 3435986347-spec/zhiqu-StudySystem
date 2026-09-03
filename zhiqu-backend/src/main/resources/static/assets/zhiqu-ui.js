@@ -156,7 +156,12 @@
    * 派生之后两者不可能分家：进不了侧栏的页进不了门，反之亦然。
    */
   function isAdminPage(file){
-    var f = file || curFile();
+    // 折大小写收在函数**里面**，不指望调用方先折：zhiqu-api.js 传进来的 page 已经小写过
+    // （zhiqu-api.js:9），而无参形态走 curFile() 拿的是原样文件名 —— 同一个函数两种行为，
+    // 且门的正确性挂在「下一个人记得传那个已小写的值」上。
+    // 提供了默认参数，就等于邀请他不传。与集合从 NAV.admin 派生同一个动机：
+    // 别让机制的正确性挂在下一个人的记性上。
+    var f = String(file || curFile()).toLowerCase();
     for (var i = 0; i < NAV.admin.length; i++) if (NAV.admin[i][0] === f) return true;
     return false;
   }
