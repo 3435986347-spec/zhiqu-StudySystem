@@ -58,6 +58,20 @@ dependency problem rather than what it is.
 Integration tests need Docker (Testcontainers). Without it they skip silently — `Tests run: N,
 Skipped: N` is not a pass. Use `-Dzhiqu.skipDockerTests=true` to make the skip explicit.
 
+**A new assertion does not count until it has been seen red.** A green can mean *the judgment
+looked and found nothing wrong*, or *the judgment could not see anything at all* — the two are
+indistinguishable in the code. Three of the latter turned up on 2026-09-03 alone: an explanatory
+comment inside `route()` satisfied the `contains("ZQUI.isAdminPage(")` that was meant to detect
+that very call being deleted; a commented-out line in the `SecurityConfig` whitelist satisfied
+the check that the page was whitelisted; and a regex that no longer matched anything left an
+empty set, over which every later assertion passed vacuously. `contains` cannot tell *the code
+does this* from *the text mentions this*, and an empty scan is shaped exactly like a clean one.
+Two habits follow: strip comments before asserting over source (`AdminPageWiringTest.stripComments`,
+shared by both of its judgments), and assert a floor on how much the scan actually saw
+(`StaticAssetCacheTokenTest`, `AdminPageWiringTest.后台页集合解析不能扫空`). Neither is a
+substitute for perturbing the source and watching the new assertion fail — that is the only step
+that tells the two greens apart, and all three cases above were caught by it rather than by review.
+
 ## Architecture
 
 ### Backend (`zhiqu-backend/src/main/java/com/zhiqu/`)
