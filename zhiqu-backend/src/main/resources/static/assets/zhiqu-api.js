@@ -2956,6 +2956,9 @@
     // 本轮问答未入库——不能把已收到的回答当成功结果留在页面上
     var dropped = false;
     var completed = false;
+    // 本轮以 SSE error 收场。注意它与 catch(e) 那条路不同：error 事件是**流正常结束**，
+    // 不抛异常，所以下面的收尾照跑 —— 这正是错误文案被冲掉的原因，见末尾。
+    var failed = false;
     try {
       await safe('AI 发送', async function () {
       try {
@@ -2995,7 +2998,12 @@
               if (sameNb()) renderAiMessages();
             }
           }
-          else if (event === 'error') { assistant.status = ''; assistant.content = assistant.content || ('（出错：' + (data.message || '未知错误') + '）'); if (sameNb()) renderAiMessages(); }
+          else if (event === 'error') {
+            failed = true;
+            assistant.status = '';
+            assistant.content = assistant.content || ('（出错：' + (data.message || '未知错误') + '）');
+            if (sameNb()) renderAiMessages();
+          }
         });
       } catch (e) {
         assistant.status = ''; if (!assistant.content) assistant.content = '（连接中断，可稍后刷新查看）'; renderAiMessages();
@@ -3013,7 +3021,16 @@
       assistant.status = '';
       if (completed && sameNb()) clearUsedPendingSources(selectedSourceIds);
       renderAiMessages();
-      await loadAiMessages();
+      // 出错时**不能**重新拉取。streamChatInternal 的四道前置检查（requireModel / 空消息 /
+      // 深度思考支持 / 联网搜索可用）全部跑在落库之前，任一道抛 BusinessException 就是
+      // 一条也没入库；而 /ai/messages 找不到会话会返回空列表，
+      // state.messages = list || [] 会把本地这两条连同上面那句错误原因一起清空。
+      // 用户看到的就是「闪一下两条，然后什么都没有」—— 而唯一说明"为什么不行"的那句话，
+      // 恰好被这一步删掉了，于是他连去查什么都不知道。
+      // 实测（未修时，全新用户无模型配置）：SSE 返回
+      //   {"message":"请先在个人中心配置可用的 AI 模型","nonRetryable":true}
+      // 随后 /ai/messages 返回 []，页面消息节点归零。
+      if (!failed) await loadAiMessages();
       await renderAgentPanels();
       });
     } finally {
