@@ -1172,10 +1172,28 @@ public class AiServiceImpl implements AiService {
      * Wiki 草稿兜底：工具循环已把写操作落成「待合入变更」草稿时，不再重复生成 WIKI_DRAFT 工件
      * （避免同一请求两套草稿链路）。
      *
-     * <p>{@link #inGraph} 恒为真，因为今天这段代码的触发条件是 {@code looksWikiWriteIntent}，
-     * <b>与建图用的 {@code needsWikiCurator} 词表不同</b>（比如「把这个存入我的笔记」命中前者、
-     * 不命中后者），于是会出现「工件产出了、图里却没有 WIKI_CURATOR 节点」的隐形 agent。
-     * 绑到节点上会改变行为，本阶段不做；反向那一半（有节点但没产出）由 settleUnrunTasks 收成 SKIPPED。
+     * <h2>两个门不是词表不同，是<b>形状</b>不同 —— 所以偏差是系统性的，不是偶发</h2>
+     *
+     * <pre>
+     *   建图侧 AgentPlanDecision:  平表 OR，<b>不要求写动词</b>
+     *       wiki | 知识库 | 知识 wiki | 写进知识
+     *   执行侧 looksWikiWriteIntent: 两张表 AND，<b>必须有写动词</b>
+     *       (wiki|知识库|知识页|知识树|笔记|我记) &amp;&amp; (写进|写入|写到|存入|存到|存进|保存|收录…)
+     * </pre>
+     *
+     * <p>OR 比 AND 松，于是两个方向都会漏，而且频率天差地别：
+     *
+     * <ul>
+     *   <li><b>有节点、跑不了（常见）</b>：「知识库里有什么」——最普通的 wiki 读问题——命中建图侧的
+     *       「知识库」，却没有写动词。<b>每一次这样的提问</b>都会造出一个结构上不可能运行的
+     *       WIKI_CURATOR 节点。这一半由 settleUnrunTasks 收成 SKIPPED，
+     *       并由集成判据把「哪些节点该被扫」钉成写在案上的预期 —— 否则它和一次正当的无事可做完全同形。</li>
+     *   <li><b>没节点、却产出（偶发）</b>：「把这个存入我的笔记」命中执行侧（笔记 + 存入），
+     *       不命中建图侧（无 wiki/知识库）。工件产出了、图里没有节点 —— 隐形 agent，
+     *       与上一个提交修掉的是同一物种。所以这里 {@link #inGraph} 恒为真。</li>
+     * </ul>
+     *
+     * <p>合并这两个门是语义决定（要不要让「读」也算 curator 的活），不在本阶段做。
      */
     private final class WikiCuratorRunner implements AgentStageRunner {
         private final StreamState s;
@@ -1218,11 +1236,17 @@ public class AiServiceImpl implements AiService {
      *
      * <p><b>只扫 PENDING，不扫 RUNNING。</b>RUNNING 意味着某个 runner 起了却没收尾，那是真 bug，
      * 应该让判据红出来，而不是在这里悄悄抹成 SKIPPED。
+     *
+     * <p><b>这张网会吃掉证据，所以扫了什么必须有人看着。</b>被扫成 SKIPPED 的节点，
+     * 和一次正当的「本轮无事可做」在库里完全同形 —— TASK_DRAFTER 那个缺陷正是靠 PENDING 才被逮到的，
+     * 而它的第一个真实客户其实是最常见的 wiki 读问题（见 {@link WikiCuratorRunner}）。
+     * 所以集成判据不只断言「都到了终态」，还逐用例断言<b>被扫掉的节点集合</b>：
+     * 见 {@code AiConversationLifecycleIntegrationTest.每轮造出的节点与被扫掉的节点都必须符合预期}。
      */
     private void settleUnrunTasks(AgentRunContext ctx, StreamState s) {
         for (AiAgentTask task : ctx.tasks()) {
             if (task != null && "PENDING".equals(task.getStatus())) {
-                skipTask(ctx, s, task, "本轮未产出内容");
+                skipTask(ctx, s, task, UNRUN_TASK_SUMMARY);
             }
         }
     }
@@ -1264,6 +1288,9 @@ public class AiServiceImpl implements AiService {
     private boolean hasNonEmptyList(Object value) {
         return value instanceof List<?> list && !list.isEmpty();
     }
+
+    /** {@link #settleUnrunTasks} 给被扫节点写的公开说明；判据靠它把「被扫掉」与「正常跳过」分开。 */
+    static final String UNRUN_TASK_SUMMARY = "本轮未产出内容";
 
     /** 图里的检索节点可能叫这四种类型中的任意一种（三种专职 researcher + 兜底 RETRIEVER）。 */
     private static final String[] RESEARCH_AGENT_TYPES =

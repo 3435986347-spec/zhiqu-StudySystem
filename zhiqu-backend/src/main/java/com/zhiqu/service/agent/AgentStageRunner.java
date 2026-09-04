@@ -46,7 +46,28 @@ public interface AgentStageRunner {
         return runAt();
     }
 
-    /** 本轮图里有没有这个节点。默认按 {@link #agentType()} 查图。 */
+    /**
+     * 本轮图里有没有这个节点。默认按 {@link #agentType()} 查图。
+     *
+     * <h2>覆盖它的地方一共五处，分三类 —— grep 到这里的人不必自己重推</h2>
+     *
+     * <table border="1">
+     *   <caption>AiServiceImpl 里的 inGraph 覆盖</caption>
+     *   <tr><th>runner</th><th>返回</th><th>属于哪一类</th></tr>
+     *   <tr><td>RETRIEVER</td><td>查一组类型</td>
+     *       <td><b>正常</b>：图里的节点可能叫三种专职 researcher 之一，键不止一个</td></tr>
+     *   <tr><td>WIKI_TOOL_AGENT</td><td>恒真</td>
+     *       <td rowspan="3"><b>还没被图管住</b>：图里根本没有它们的节点。
+     *           建节点会让执行轨迹多出用户此前看不到的 agent，是行为变化，本阶段不做</td></tr>
+     *   <tr><td>MEMORY_EXTRACTOR</td><td>恒真</td></tr>
+     *   <tr><td>PLAN_EXTRACTOR</td><td>恒真</td></tr>
+     *   <tr><td>WIKI_CURATOR</td><td>恒真</td>
+     *       <td><b>被图管着却不理图（重一档）</b>：图里<b>有</b>它的节点
+     *           （{@code needsWikiCurator} 会造），但 runner 不问那个节点，
+     *           改用自己的 {@code looksWikiWriteIntent}。两个门形状不同（OR vs AND），
+     *           偏差是系统性的 —— 说明见该 runner 的类注释</td></tr>
+     * </table>
+     */
     default boolean inGraph(AgentRunContext ctx) {
         return ctx.task(agentType()) != null;
     }

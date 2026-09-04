@@ -23,6 +23,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -30,6 +31,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -633,33 +635,75 @@ class AiConversationLifecycleIntegrationTest {
         assertEquals(4, aiService.getRecentChatMessages(userId, notebookId, 50).size());
     }
 
+    /** 一个用例：这句话该造出哪些节点，其中哪些该被 settleUnrunTasks 扫成 SKIPPED。 */
+    private record GraphCase(String message, Set<String> created, Set<String> swept, String why) {
+    }
+
+    /**
+     * 表驱动：每一轮问答<b>造出哪些节点</b>、其中<b>哪些被扫掉</b>，都必须是写在案上的预期。
+     *
+     * <h2>为什么不能只断言「都到了终态」</h2>
+     *
+     * <p>TASK_DRAFTER 那个缺陷（成功结束的 run 里留着永久 PENDING 行）是靠 PENDING 被逮到的。
+     * 收尾的 settleUnrunTasks 是对的网，但它把 PENDING 抹成 SKIPPED 之后，
+     * <b>和一次正当的「本轮无事可做」在库里完全同形</b> —— 那条判据在 PENDING 这一侧的牙就被拔掉了，
+     * 只剩 RUNNING 那半边。所以这里连「被扫掉的集合」一起钉住：它变了，就有东西红。
+     *
+     * <p>第三行不是补充，是这张网的<b>第一个真实客户</b>：「知识库里有什么」是最普通的 wiki 读问题，
+     * 建图侧平表 OR 命中「知识库」造出 WIKI_CURATOR，执行侧两张表 AND 要求写动词 ——
+     * 这个节点结构上不可能运行。<b>每一次这样的提问</b>都会造出它，然后被扫掉。
+     * 把它记在案上，是为了让「常见交互每次都造一个跑不了的节点」这件事有人看着，
+     * 而不是躺在 SKIPPED 里和正常情形混在一起。
+     */
     @Test
-    void 成功结束的run不得留下非终态任务节点() throws Exception {
-        Long notebookId = createNotebook(userId, "任务图终态");
-        // 「生成任务」同时命中 needsTaskDraft 与 needsPlanner → 图里造出 TASK_DRAFTER 节点。
-        // 而假模型返回的是解析不成计划的普通文本 → 计划草稿为空 → 事务里那段 if 整个不进，
-        // 节点既没 start 也没 skip。
-        aiService.streamChat(userId, "帮我生成任务", modelId, false, "OFF", notebookId, "AUTO", Map.of());
-        awaitLatestRunFinished(userId, notebookId);
+    void 每轮造出的节点与被扫掉的节点都必须符合预期() throws Exception {
+        List<GraphCase> cases = List.of(
+                new GraphCase("你好",
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "VERIFIER", "FINAL_WRITER"),
+                        Set.of(),
+                        "对照组：不造条件节点，也就没有东西可扫。少了这一行，下面两行可能是在「什么都被扫」上通过的"),
+                new GraphCase("帮我生成任务",
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "PLANNER", "TASK_DRAFTER", "VERIFIER", "FINAL_WRITER"),
+                        Set.of("TASK_DRAFTER"),
+                        "命中 needsTaskDraft 造出节点，而模型没解析出计划 → 那段 if 整个不进"),
+                new GraphCase("知识库里有什么",
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "WIKI_CURATOR", "VERIFIER", "FINAL_WRITER"),
+                        Set.of("WIKI_CURATOR"),
+                        "建图侧 OR 命中「知识库」，执行侧 AND 还要写动词 → 结构上不可能运行"));
 
-        Map<String, Object> run = jdbcTemplate.queryForMap(
-                "SELECT id, status FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
-                userId, notebookId);
-        assertEquals("DONE", run.get("status"), "本轮应正常结束，否则下面查的是失败路径");
-        Long runId = ((Number) run.get("id")).longValue();
+        for (GraphCase testCase : cases) {
+            Long notebookId = createNotebook(userId, "节点预期 " + testCase.message());
+            aiService.streamChat(userId, testCase.message(), modelId, false, "OFF", notebookId, "AUTO", Map.of());
+            awaitLatestRunFinished(userId, notebookId);
 
-        // 下界：确认这一轮真的把 TASK_DRAFTER 造出来了。
-        // 少了这句，哪天建图不再造这个节点，下面的「无非终态」会在空集上假绿。
-        List<Map<String, Object>> all = jdbcTemplate.queryForList(
-                "SELECT agent_type, status FROM ai_agent_task WHERE run_id = ?", runId);
-        assertTrue(all.stream().anyMatch(row -> "TASK_DRAFTER".equals(row.get("agent_type"))),
-                "本用例要求图里有 TASK_DRAFTER 节点，否则它没在检验任何东西。实际节点：" + all);
+            Map<String, Object> run = jdbcTemplate.queryForMap(
+                    "SELECT id, status FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
+                    userId, notebookId);
+            assertEquals("DONE", run.get("status"),
+                    "「" + testCase.message() + "」应正常结束，否则下面查的是失败路径");
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT agent_type, status, public_summary FROM ai_agent_task WHERE run_id = ?",
+                    ((Number) run.get("id")).longValue());
 
-        List<Map<String, Object>> stranded = all.stream()
-                .filter(row -> !List.of("DONE", "SKIPPED", "ERROR").contains(String.valueOf(row.get("status"))))
-                .toList();
-        assertTrue(stranded.isEmpty(),
-                "run 已结束，这些节点仍停在非终态：" + stranded
-                        + "。造出来的节点必须走到终态，否则执行轨迹里永远挂着一个转圈的 agent");
+            assertEquals(testCase.created(),
+                    rows.stream().map(row -> String.valueOf(row.get("agent_type"))).collect(Collectors.toSet()),
+                    "「" + testCase.message() + "」造出的节点与预期不符（" + testCase.why() + "）");
+
+            Set<String> swept = rows.stream()
+                    .filter(row -> "SKIPPED".equals(row.get("status"))
+                            && AiServiceImpl.UNRUN_TASK_SUMMARY.equals(row.get("public_summary")))
+                    .map(row -> String.valueOf(row.get("agent_type")))
+                    .collect(Collectors.toSet());
+            assertEquals(testCase.swept(), swept,
+                    "「" + testCase.message() + "」被 settleUnrunTasks 扫掉的节点与预期不符（" + testCase.why()
+                            + "）。这一列变了就说明有节点开始（或不再）空跑，值得看一眼再改预期");
+
+            List<Map<String, Object>> stranded = rows.stream()
+                    .filter(row -> !List.of("DONE", "SKIPPED", "ERROR").contains(String.valueOf(row.get("status"))))
+                    .toList();
+            assertTrue(stranded.isEmpty(),
+                    "「" + testCase.message() + "」的 run 已结束，这些节点仍停在非终态：" + stranded
+                            + "。造出来的节点必须走到终态，否则执行轨迹里永远挂着一个转圈的 agent");
+        }
     }
 }
