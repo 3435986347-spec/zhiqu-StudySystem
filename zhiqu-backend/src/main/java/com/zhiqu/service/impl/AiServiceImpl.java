@@ -39,6 +39,7 @@ import com.zhiqu.service.KnowledgeService;
 import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.AiWorkspaceService;
 import com.zhiqu.service.MultiAgentOrchestrator;
+import com.zhiqu.service.agent.AgentPlanDecision;
 import com.zhiqu.service.ReminderPlanService;
 import com.zhiqu.service.VerifierService;
 import com.zhiqu.service.ai.WebResearchService;
@@ -462,7 +463,10 @@ public class AiServiceImpl implements AiService {
         List<AiMessage> history = writeContext.history();
         AiMessage userMessage = writeContext.userMessage();
         AiMessage assistantMessage = writeContext.assistantMessage();
-        String normalizedAgentMode = normalizeAgentMode(agentMode);
+        // 意图判定算一次，建图与执行读同一个对象。此前两侧各算一套且已分叉（见 AgentPlanDecision 类注释）。
+        AgentPlanDecision decision = AgentPlanDecision.of(
+                agentMode, limitedMessage, Boolean.TRUE.equals(enableWebSearch), notebookId, contextOptions);
+        String normalizedAgentMode = decision.mode();
         AiAgentRun agentRun = aiWorkspaceService.beginRun(
                 userId,
                 notebookId,
@@ -485,14 +489,7 @@ public class AiServiceImpl implements AiService {
         start.put("assistantMessageId", assistantMessage.getId());
         emitSse(emitter, "stream.start", start);
 
-        List<AiAgentTask> taskGraph = multiAgentOrchestrator.plan(
-                agentRun,
-                limitedMessage,
-                normalizedAgentMode,
-                Boolean.TRUE.equals(enableWebSearch),
-                notebookId,
-                contextOptions
-        );
+        List<AiAgentTask> taskGraph = multiAgentOrchestrator.plan(agentRun, decision, notebookId);
         for (AiAgentTask task : taskGraph) {
             emitAgentTaskCreated(emitter, requestId, agentRun, task);
         }
@@ -513,8 +510,8 @@ public class AiServiceImpl implements AiService {
         try {
             startTask(emitter, requestId, agentRun, orchestratorTask);
             dispatcherStep = startAgentStep(emitter, requestId, agentRun, orchestratorTask, "DISPATCHER", 1, "正在分析问题");
-            boolean retrieverRequired = shouldRunRetriever(normalizedAgentMode, enableWebSearch, notebookId, contextOptions);
-            boolean plannerRequired = shouldRunPlanner(normalizedAgentMode, limitedMessage);
+            boolean retrieverRequired = decision.needsRetriever();
+            boolean plannerRequired = decision.needsPlanner();
             aiWorkspaceService.completeStep(dispatcherStep, "已完成意图分析", "retriever=" + retrieverRequired + ", planner=" + plannerRequired);
             emitAgentStepDone(emitter, requestId, agentRun, dispatcherStep);
             completeTask(emitter, requestId, agentRun, orchestratorTask, Map.of("retriever", retrieverRequired, "planner", plannerRequired), "Task graph ready");
@@ -970,40 +967,6 @@ public class AiServiceImpl implements AiService {
             assistantMessageId = map.get("assistantMessageId") == null ? "" : map.get("assistantMessageId");
         }
         log.info("AI stream event event={} requestId={} assistantMessageId={}", eventName, requestId, assistantMessageId);
-    }
-
-    private String normalizeAgentMode(String agentMode) {
-        String value = agentMode == null ? "AUTO" : agentMode.trim().toUpperCase(Locale.ROOT);
-        return Set.of("AUTO", "CHAT_ONLY", "RESEARCH", "PLAN").contains(value) ? value : "AUTO";
-    }
-
-    private boolean shouldRunRetriever(String agentMode, Boolean enableWebSearch, Long notebookId, Map<String, Object> contextOptions) {
-        if ("CHAT_ONLY".equals(agentMode)) {
-            return false;
-        }
-        if ("RESEARCH".equals(agentMode)) {
-            return true;
-        }
-        if (Boolean.TRUE.equals(enableWebSearch) || notebookId != null) {
-            return true;
-        }
-        if (contextOptions == null) {
-            return false;
-        }
-        return Boolean.TRUE.equals(contextOptions.get(ContextOptionKeys.INCLUDE_WIKI))
-                || hasNonEmptyList(contextOptions.get(ContextOptionKeys.SELECTED_SOURCE_IDS))
-                || hasNonEmptyList(contextOptions.get(ContextOptionKeys.SELECTED_WIKI_PAGE_IDS));
-    }
-
-    private boolean shouldRunPlanner(String agentMode, String message) {
-        if ("PLAN".equals(agentMode)) {
-            return true;
-        }
-        if ("CHAT_ONLY".equals(agentMode) || "RESEARCH".equals(agentMode)) {
-            return false;
-        }
-        String text = message == null ? "" : message;
-        return text.contains("计划") || text.contains("任务") || text.contains("例行") || text.toLowerCase(Locale.ROOT).contains("plan");
     }
 
     private boolean hasNonEmptyList(Object value) {

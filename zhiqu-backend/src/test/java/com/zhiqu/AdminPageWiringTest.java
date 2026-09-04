@@ -85,7 +85,7 @@ class AdminPageWiringTest {
         //   「页面集合问 ZQUI.isAdminPage()，它从 NAV.admin 派生 —— 不在这里抄第二份文件名。」
         // 满足了：把真正的调用换成硬写数组，判据照样绿。扰动实测逮到的，不是推演出来的。
         // 一条被自己要防的那段文字满足的判据，正是本轮反复记的那个物种。
-        String shell = stripComments(
+        String shell = SourceText.stripComments(
                 Files.readString(STATIC_DIR.resolve("assets/zhiqu-api.js"), StandardCharsets.UTF_8));
         assertTrue(shell.contains("ZQUI.isAdminPage("),
                 "zhiqu-api.js 里找不到 ZQUI.isAdminPage( 的调用。"
@@ -101,7 +101,7 @@ class AdminPageWiringTest {
         // 这种列表最常见的改法。读原文的话 `// "/shared-plan-admin.html",` 仍能满足 contains，
         // 判据绿，而那一页实际已落到 anyRequest().authenticated()。
         // 与上面那条是同一个教训 —— 判据的输入里不能混进被注释掉的东西。
-        String config = stripComments(Files.readString(SECURITY_CONFIG, StandardCharsets.UTF_8));
+        String config = SourceText.stripComments(Files.readString(SECURITY_CONFIG, StandardCharsets.UTF_8));
 
         List<String> missing = new ArrayList<>();
         for (String page : pages) {
@@ -112,19 +112,6 @@ class AdminPageWiringTest {
                 "以下后台页在 NAV.admin 里，却不在 SecurityConfig 的 permitAll 白名单里："
                         + missing + "。它们会落到 anyRequest().authenticated()，"
                         + "而浏览器导航不带 Authorization 头 —— 管理员直达也会吃 403");
-    }
-
-    /**
-     * 剥掉注释，让判据只看可执行的部分。**两条判据共用**：JS 与 Java 的注释语法一致，
-     * 而它们各自被注释满足的形态也一致（一句解释性注释 / 一行被注释掉的白名单）。
-     *
-     * <p>{@code //} 的匹配刻意<b>排除前面紧跟冒号</b>的情况，否则 {@code https://…} 会被当成
-     * 注释起点、把整行后半截吞掉，判据就可能因为一条 URL 而假阴性。
-     * 这是个便宜的启发式，不是 JS 词法分析：字符串字面量里写的 {@code "/*"} 仍会骗到它。
-     * 对本判据够用 —— 它只需要「注释里的那句话不算数」。
-     */
-    private String stripComments(String source) {
-        return source.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("(?<!:)//[^\\n]*", " ");
     }
 
     /** 从 {@code NAV.admin} 解析后台页文件名。空集合本身是一种失败，由独立判据报出。 */
