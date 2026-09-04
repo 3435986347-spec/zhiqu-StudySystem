@@ -632,4 +632,34 @@ class AiConversationLifecycleIntegrationTest {
         assertEquals(1, active);
         assertEquals(4, aiService.getRecentChatMessages(userId, notebookId, 50).size());
     }
+
+    @Test
+    void 成功结束的run不得留下非终态任务节点() throws Exception {
+        Long notebookId = createNotebook(userId, "任务图终态");
+        // 「生成任务」同时命中 needsTaskDraft 与 needsPlanner → 图里造出 TASK_DRAFTER 节点。
+        // 而假模型返回的是解析不成计划的普通文本 → 计划草稿为空 → 事务里那段 if 整个不进，
+        // 节点既没 start 也没 skip。
+        aiService.streamChat(userId, "帮我生成任务", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitLatestRunFinished(userId, notebookId);
+
+        Map<String, Object> run = jdbcTemplate.queryForMap(
+                "SELECT id, status FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
+                userId, notebookId);
+        assertEquals("DONE", run.get("status"), "本轮应正常结束，否则下面查的是失败路径");
+        Long runId = ((Number) run.get("id")).longValue();
+
+        // 下界：确认这一轮真的把 TASK_DRAFTER 造出来了。
+        // 少了这句，哪天建图不再造这个节点，下面的「无非终态」会在空集上假绿。
+        List<Map<String, Object>> all = jdbcTemplate.queryForList(
+                "SELECT agent_type, status FROM ai_agent_task WHERE run_id = ?", runId);
+        assertTrue(all.stream().anyMatch(row -> "TASK_DRAFTER".equals(row.get("agent_type"))),
+                "本用例要求图里有 TASK_DRAFTER 节点，否则它没在检验任何东西。实际节点：" + all);
+
+        List<Map<String, Object>> stranded = all.stream()
+                .filter(row -> !List.of("DONE", "SKIPPED", "ERROR").contains(String.valueOf(row.get("status"))))
+                .toList();
+        assertTrue(stranded.isEmpty(),
+                "run 已结束，这些节点仍停在非终态：" + stranded
+                        + "。造出来的节点必须走到终态，否则执行轨迹里永远挂着一个转圈的 agent");
+    }
 }

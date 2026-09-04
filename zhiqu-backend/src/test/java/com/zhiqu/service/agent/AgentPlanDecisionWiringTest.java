@@ -33,9 +33,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <tr><td>{@link #意图判定只能有一处()}</td>
  *       <td>防「同一事实两份拷贝」重新长出来</td>
  *       <td>把任一旧方法名加回任一实现</td></tr>
- *   <tr><td>{@link #执行侧必须读判定对象而不是自己算()}</td>
+ *   <tr><td>{@link #执行侧不得按判定分项自己决定跑不跑()}</td>
  *       <td>防执行侧重新长出一套独立计算 —— 上一次分叉就是这么来的</td>
- *       <td>把 {@code decision.needsPlanner()} 换成任何独立表达式</td></tr>
+ *       <td>把任何一处执行判断改回 {@code decision.needsPlanner()}</td></tr>
  *   <tr><td>{@link #判定词表_两处历史分叉都必须被合并覆盖()}</td>
  *       <td><b>本轮两个缺陷的唯一防护</b></td>
  *       <td>从词表里删「安排」，或把 selectedSourceIds 从 needsRetriever 拿掉</td></tr>
@@ -81,13 +81,26 @@ class AgentPlanDecisionWiringTest {
                         + "（建图侧含「安排」而执行侧不含；执行侧含 selectedSourceIds 而建图侧不含）");
     }
 
+    /**
+     * 这条判据换过一次方向，值得记一笔：图驱动之前它要求的是<b>相反</b>的东西 ——
+     * 「执行侧必须出现 {@code decision.needsPlanner()}」。那时执行是一条硬编码流水线，
+     * 「两侧读同一个对象」是当时能拿到的最强保证。图驱动之后，执行侧改成读图，
+     * 而图本身就是从 decision 建出来的，于是「读图」比「读同一个对象」更强：
+     * 判定 → 建图 → 执行成了一条链，中间不再有第二条通路。判据跟着换成更强的那一个，
+     * 旧措辞被这次改造合法地红掉，不是回归。
+     */
     @Test
-    void 执行侧必须读判定对象而不是自己算() throws IOException {
+    void 执行侧不得按判定分项自己决定跑不跑() throws IOException {
         String service = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
-        assertTrue(service.contains("decision.needsRetriever()") && service.contains("decision.needsPlanner()"),
-                "AiServiceImpl 必须直接读 AgentPlanDecision 的判定结果。"
-                        + "一旦它自己算，建图与执行就又是两套，而分叉不会当天暴露 —— "
-                        + "上一次是等到有人只说「安排」时才显形");
+
+        assertFalse(service.contains("decision.needs"),
+                "AiServiceImpl 里出现了 decision.needsXxx()：执行侧又在按判定分项决定跑不跑。"
+                        + "跑不跑必须只由图决定（节点在不在图里），否则建图与执行又是两条独立通路，"
+                        + "而分叉不会当天暴露 —— 上一次是等到有人只说「安排」时才显形");
+
+        // 下界：确认 decision 还真的在喂建图。少了这句，把 decision 整个删掉也能让上面那条通过。
+        assertTrue(service.contains("multiAgentOrchestrator.plan(agentRun, decision"),
+                "判定必须仍然是建图的输入，否则上面那条是在「根本没有 decision」上假绿的");
     }
 
     @Test
