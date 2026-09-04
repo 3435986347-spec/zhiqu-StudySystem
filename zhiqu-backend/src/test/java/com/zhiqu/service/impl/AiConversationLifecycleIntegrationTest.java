@@ -34,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -83,6 +84,11 @@ class AiConversationLifecycleIntegrationTest {
     private static volatile int blockAtRequest;
     private static final java.util.concurrent.atomic.AtomicInteger requestCounter =
             new java.util.concurrent.atomic.AtomicInteger();
+    /**
+     * 最后一次<b>流式</b>请求的请求体。摘要判脏与否，唯一诚实的观察点就是「这一轮到底发给模型什么」——
+     * 查库只能看到摘要还在，看不到它有没有被用上。只认流式：摘要器/记忆抽取自己也调模型，那些是非流式。
+     */
+    private static volatile String lastStreamingRequestBody;
 
     @BeforeAll
     static void startFakeModelServer() throws Exception {
@@ -105,6 +111,9 @@ class AiConversationLifecycleIntegrationTest {
                 }
             }
             boolean streaming = requestBody.contains("\"stream\":true") || requestBody.contains("\"stream\": true");
+            if (streaming) {
+                lastStreamingRequestBody = requestBody;
+            }
             byte[] body = (streaming
                     ? "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n"
                     : "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"测试回复\"}}]}")
@@ -144,6 +153,7 @@ class AiConversationLifecycleIntegrationTest {
         enteredGate = null;
         blockAtRequest = 0;
         requestCounter.set(0);
+        lastStreamingRequestBody = null;
         userId = seedUser();
         modelId = createModel(userId);
     }
@@ -330,6 +340,38 @@ class AiConversationLifecycleIntegrationTest {
     }
 
     /** 等待最近一次流式 AgentRun 落到终态（MOCK 环境拿不到 SseEmitter 完成回调，轮询 DB 状态） */
+    private Long latestRunId(Long ownerId, Long notebookId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
+                ownerId, notebookId);
+        return rows.isEmpty() ? null : ((Number) rows.get(0).get("id")).longValue();
+    }
+
+    /**
+     * 等<b>比 previousRunId 更新的</b>那个 run 结束。
+     *
+     * <p>同一个 notebook 连发多轮时不能用 awaitLatestRunFinished：streamChat 是异步的，
+     * 新 run 的行还没插进去时，"最新一条已不是 RUNNING" 会被<b>上一轮的 DONE</b> 满足，
+     * 于是立刻返回，后面断言看到的是上一轮的残留。
+     */
+    private void awaitRunAfter(Long ownerId, Long notebookId, Long previousRunId) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (System.currentTimeMillis() < deadline) {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT id, status FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
+                    ownerId, notebookId);
+            if (!rows.isEmpty()) {
+                long id = ((Number) rows.get(0).get("id")).longValue();
+                boolean isNew = previousRunId == null || id > previousRunId;
+                if (isNew && !"RUNNING".equals(String.valueOf(rows.get(0).get("status")))) {
+                    return;
+                }
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("新的流式 run 未在 30s 内结束");
+    }
+
     private void awaitLatestRunFinished(Long ownerId, Long notebookId) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 30_000;
         while (System.currentTimeMillis() < deadline) {
@@ -705,5 +747,88 @@ class AiConversationLifecycleIntegrationTest {
                     "「" + testCase.message() + "」的 run 已结束，这些节点仍停在非终态：" + stranded
                             + "。造出来的节点必须走到终态，否则执行轨迹里永远挂着一个转圈的 agent");
         }
+    }
+
+    /** 摘要注入块的表头，与 AiServiceImpl.SUMMARY_BLOCK_HEADER 同源；出现在请求体里就说明摘要被用上了。 */
+    private static final String SUMMARY_MARK = "【对话摘要";
+
+    /**
+     * 摘要的读侧指纹：删掉一条被摘要覆盖的消息之后，那份摘要必须立刻判脏 —— 既不能再注入给模型，
+     * 也必须在同一轮重算。
+     *
+     * <h2>为什么观察「发给模型的请求体」而不是查库</h2>
+     *
+     * <p>查库只能确认摘要行还在，确认不了它<b>有没有被用上</b>。而这条判据要防的正是
+     * 「摘要里留着用户已删的内容、还继续喂给模型」—— 那是「清空/删除」这个动作没有真正生效。
+     * 唯一能分辨的观察点是这一轮实际发出去的提示词。
+     *
+     * <h2>三步各自的作用，缺一不可</h2>
+     *
+     * <ol>
+     *   <li><b>删之前必须先看到摘要在场</b>（下界）。少了这一步，最后一步的「不在场」可能是
+     *       从头到尾就没生成过摘要 —— 一条永远绿的判据。</li>
+     *   <li>删一条 {@code id <= summary_upto_message_id} 的消息 —— 必须落在覆盖区间内，
+     *       删窗口内的消息不改变区间指纹，测不到东西。</li>
+     *   <li>删之后摘要既不注入（判脏），指纹又重新对上（当轮重算）。只断言前者的话，
+     *       「摘要功能整个坏掉」也能满足它。</li>
+     * </ol>
+     *
+     * <p>扰动：拿掉 {@code usableSummary} 里的指纹比对 → 第三步的「不注入」变红。
+     */
+    @Test
+    void 删掉被摘要覆盖的消息后摘要必须判脏并重算() throws Exception {
+        Long notebookId = createNotebook(userId, "滚动摘要判脏");
+        // 16 轮 = 32 条消息；流式那轮再加 2 条，窗口(20)之外剩 14 条 ≥ SUMMARY_REFRESH_MIN
+        for (int i = 1; i <= 16; i++) {
+            chat(userId, notebookId, "第 " + i + " 句闲聊");
+        }
+        Long conversationId = ((Number) conversationRow(userId, notebookId).get("id")).longValue();
+
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "再聊一句", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        Map<String, Object> summary = jdbcTemplate.queryForMap(
+                "SELECT encrypted_summary, summary_upto_message_id, summary_live_count"
+                        + " FROM ai_conversation WHERE id = ?", conversationId);
+        assertNotNull(summary.get("encrypted_summary"),
+                "滑出窗口的消息够多时应生成摘要，否则下面测的是「本来就没有摘要」");
+        long upto = ((Number) summary.get("summary_upto_message_id")).longValue();
+
+        // ① 下界：摘要必须先真的被注入过
+        lastStreamingRequestBody = null;
+        before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "接着聊", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        assertNotNull(lastStreamingRequestBody, "这一轮必须真的发出过流式请求，否则下面比的是上一轮的残留");
+        assertTrue(lastStreamingRequestBody.contains(SUMMARY_MARK),
+                "指纹干净时摘要应注入本轮提示词，否则第 ③ 步的「未注入」证明不了任何事");
+
+        // ② 删一条落在覆盖区间内的消息
+        Long covered = jdbcTemplate.queryForObject(
+                "SELECT id FROM ai_message WHERE conversation_id = ? AND id <= ? AND deleted = 0"
+                        + " ORDER BY id LIMIT 1", Long.class, conversationId, upto);
+        assertNotNull(covered, "覆盖区间内应当有存活消息可删");
+        aiService.deleteChatMessage(userId, covered);
+
+        // ③ 判脏：不再注入，且同一轮重算
+        lastStreamingRequestBody = null;
+        before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "删完再聊", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        // 先钉住"这一轮真的发过流式请求"：body 为 null 时 contains 也是 false，
+        // 空扫描和干净扫描在断言里同形 —— 本仓库栽过的那一种
+        assertNotNull(lastStreamingRequestBody, "这一轮必须真的发出过流式请求，否则「未注入」是空扫描");
+        assertFalse(lastStreamingRequestBody.contains(SUMMARY_MARK),
+                "被摘要覆盖的消息已删，这份摘要里留着用户删掉的内容，不得再注入 ——"
+                        + " 否则「删除」只是从列表里消失，模型那边照旧看得见");
+
+        Map<String, Object> rebuilt = jdbcTemplate.queryForMap(
+                "SELECT summary_upto_message_id, summary_live_count FROM ai_conversation WHERE id = ?",
+                conversationId);
+        Integer liveNow = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_message WHERE conversation_id = ? AND id <= ? AND deleted = 0",
+                Integer.class, conversationId, ((Number) rebuilt.get("summary_upto_message_id")).longValue());
+        assertEquals(liveNow, ((Number) rebuilt.get("summary_live_count")).intValue(),
+                "判脏后必须当轮重算，指纹重新对上；只「不注入」不重算的话，这段历史就一直丢着");
     }
 }
