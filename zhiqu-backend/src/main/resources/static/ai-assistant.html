@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 助手 - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260904-composer-textarea">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex;flex-direction:column;gap:16px;animation:zqFadeIn .3s ease both;">
+        <header style="padding:4px 2px 2px;">
+          <p class="zq-eyebrow">智能规划</p>
+          <h1 class="zq-h1">AI 助手</h1>
+          <span style="display:block;margin-top:6px;color:var(--zq-text2);font-size:13px;">继续历史对话、读取 Notebook 资料并创建待确认草稿。</span>
+        </header>
+
+        <section style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);overflow:hidden;display:flex;flex-direction:column;min-height:560px;">
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--zq-border-soft);background:var(--zq-card-soft);">
+            <span style="font-size:13.5px;font-weight:700;">AI 助手</span>
+            <span id="zq-current-notebook" style="font-size:12px;color:var(--zq-text2);">普通聊天（未选择 Notebook）</span>
+            <span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--zq-ok);"><span style="width:7px;height:7px;border-radius:50%;background:var(--zq-ok);animation:zqPulse 2s infinite;"></span><span id="zq-sync-count">正在同步历史消息…</span></span>
+          </div>
+
+          <div style="flex:1;display:flex;gap:0;min-height:0;align-items:stretch;">
+            <aside data-zq-collapse="left" data-zq-label="Notebook · 资料" style="flex:0 0 218px;border-right:1px solid var(--zq-border-soft);background:var(--zq-card-soft);display:flex;flex-direction:column;min-width:0;max-height:560px;overflow-y:auto;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--zq-border-soft);">
+                <div><strong style="display:block;font-size:12.5px;font-weight:700;">Notebook</strong><span style="font-size:11px;color:var(--zq-text3);">资料工作区</span></div>
+                <button id="zq-new-notebook" class="zq-btn-ghost" style="height:26px;padding:0 10px;font-size:11.5px;white-space:nowrap;margin-right:26px;">＋ 新建</button>
+              </div>
+              <div id="zq-notebooks" style="padding:10px 12px;display:flex;flex-direction:column;gap:6px;border-bottom:1px solid var(--zq-border-soft);"></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:10px 12px;">
+                <button id="zq-source-upload" class="zq-btn-ghost" style="height:28px;border-style:dashed;font-size:11.5px;">上传资料</button>
+                <button id="zq-add-url" class="zq-btn-ghost" style="height:28px;border-style:dashed;font-size:11.5px;">添加 URL</button>
+              </div>
+              <div id="zq-sources" style="padding:2px 12px 14px;display:flex;flex-direction:column;gap:6px;"></div>
+            </aside>
+
+            <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+              <div id="zq-chat" style="flex:1;overflow-y:auto;padding:20px 22px;display:flex;flex-direction:column;gap:16px;max-height:430px;"></div>
+              <div style="padding:12px 18px 16px;border-top:1px solid var(--zq-border-soft);display:flex;flex-direction:column;gap:10px;">
+                <div id="zq-drop-zone" class="zq-ai-drop-zone" role="button" tabindex="0" aria-label="拖拽或选择文件上传到当前 Notebook">
+                  <span class="zq-ai-drop-icon">＋</span>
+                  <span id="zq-drop-status">拖拽文件到此处 · 支持图片、PDF、Excel、文本（csv / txt / md / json）</span>
+                </div>
+                <div id="zq-attachments" class="zq-ai-attachments" hidden></div>
+                <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">
+                  <button id="zq-chat-upload" class="zq-btn-ghost" style="height:32px;font-size:12.5px;">上传</button>
+                  <!-- textarea 而不是 input：单独回车要能换行，而 input 装不下换行符。
+                       单行时高度 6+18+6+2=32px，与同排按钮对齐；输入变长由 JS 自适应到 120px 封顶。 -->
+                  <textarea id="zq-draft" rows="1" placeholder="输入消息，⌘/Ctrl + 回车发送，回车换行..." style="flex:1;min-width:200px;height:32px;max-height:120px;padding:6px 12px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-input-bg);color:var(--zq-text);font-size:13px;line-height:18px;font-family:inherit;resize:none;overflow-y:auto;"></textarea>
+                  <button id="zq-web" class="zq-btn-ghost" aria-pressed="false" style="height:32px;padding:0 11px;font-size:12px;">联网</button>
+                  <button id="zq-think" class="zq-btn-ghost" aria-pressed="false" style="height:32px;padding:0 11px;font-size:12px;">深度思考</button>
+                  <select id="zq-model" class="zq-select" style="height:32px;max-width:150px;min-width:0;flex:0 1 150px;font-size:12px;"><option value="">默认模型</option></select>
+                  <button id="zq-send" class="zq-btn" style="height:32px;">发送</button>
+                </div>
+              </div>
+            </div>
+
+            <aside data-zq-collapse="right" data-zq-label="执行轨迹 · 产物" style="flex:0 0 262px;border-left:1px solid var(--zq-border-soft);background:var(--zq-card-soft);display:flex;flex-direction:column;min-width:0;max-height:560px;overflow-y:auto;">
+              <div style="padding:12px 14px;border-bottom:1px solid var(--zq-border-soft);">
+                <strong style="display:block;font-size:12.5px;font-weight:700;">执行轨迹</strong>
+                <span style="font-size:11px;color:var(--zq-text3);">Agent Pipeline</span>
+                <div id="zq-steps" style="display:flex;flex-direction:column;margin-top:10px;"></div>
+              </div>
+              <div style="padding:12px 14px;">
+                <strong style="display:block;font-size:12.5px;font-weight:700;">产物</strong>
+                <span style="font-size:11px;color:var(--zq-text3);">来源、草稿与确认结果</span>
+                <div id="zq-artifacts" style="display:flex;flex-direction:column;gap:7px;margin-top:10px;"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20260904-composer-textarea"></script>
+  <script src="assets/zhiqu-api.js?v=20260904-composer-textarea"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "知趣·象限学习系统",
+  "short_name": "知趣",
+  "description": "可信的个人学习计划、任务、例行计划与早八提醒系统",
+  "start_url": "/dashboard.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F7F6F2",
+  "theme_color": "#2F5F73",
+  "icons": []
+}

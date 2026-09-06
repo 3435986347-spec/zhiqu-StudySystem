@@ -7,4 +7,10 @@ import lombok.Data;
 public class UpdateProfileRequest {
     @NotBlank(message = "昵称不能为空")
     private String nickname;
+
+    private String school;
+
+    private String major;
+
+    private String email;
 }

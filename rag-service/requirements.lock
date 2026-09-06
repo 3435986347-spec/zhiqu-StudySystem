@@ -1,0 +1,14 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic-settings==2.7.1
+# 传递依赖但必须钉：Java 侧解析本服务的响应，而校验错误 detail 的载荷形状与
+# None 字段是否序列化在 pydantic 2.x 的次版本之间改过。不钉的话，换台机器重装
+# 会解出不同次版本，而漂移只会表现为「Java 侧解析出的错误信息变了」，不报错。
+# 本值是 Python 3.11.9 上按本 lock 干净解出的实测结果。
+pydantic==2.13.4
+chromadb==0.6.3
+sentence-transformers==3.3.1
+transformers==4.47.1
+torch==2.5.1
+numpy==1.26.4
+pytest==8.3.4

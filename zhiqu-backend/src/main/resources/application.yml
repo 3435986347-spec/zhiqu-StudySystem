@@ -7,17 +7,35 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/zhiqu_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
     username: root
-    password: root
+    password:
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
   servlet:
     multipart:
       max-file-size: 20MB
       max-request-size: 30MB
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 1
+    baseline-description: existing zhiqu schema
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password:
+      database: 0
+      timeout: 3000ms
 
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     db-config:
       logic-delete-field: deleted
@@ -27,6 +45,62 @@ mybatis-plus:
 jwt:
   secret: zhiqu-quadrant-learning-system-secret-key-2024
   expiration: 86400000
+  remember-expiration: 2592000000
 
 app:
   upload-dir: uploads
+  cookie:
+    secure: true
+  crypto:
+    # 生产环境必须在外部 application-prod.yml 或环境变量中覆盖；更换后旧密文无法解密。
+    master-key: ${ZHIQU_CRYPTO_MASTER_KEY:zhiqu-dev-master-key-change-in-production-2026}
+  ai:
+    anthropic-version: 2023-06-01
+    # 采样温度。留空 = 不发送 temperature 参数。
+    # 新一代模型（如 Claude fable / opus-4 系列）已废弃 temperature，发送会报
+    # 400 "temperature is deprecated for this model"，因此默认不发送。
+    # 需要固定温度的老模型（OpenAI 兼容 / 本地模型等）可填数字，如 0.3。
+    temperature: ""
+    system-default-enabled: false
+    system-display-name: 知趣默认模型
+    system-provider-type: OPENAI_COMPATIBLE
+    system-api-url: https://api.openai.com/v1/chat/completions
+    system-model-name: gpt-4o-mini
+    system-api-key: ${ZHIQU_SYSTEM_AI_API_KEY:}
+    web-search:
+      provider: tavily
+      # 不要把真实 Key 提交进仓库：本地通过环境变量 ZHIQU_WEB_SEARCH_API_KEY 注入
+      api-key: ${ZHIQU_WEB_SEARCH_API_KEY:}
+      endpoint: ${ZHIQU_WEB_SEARCH_ENDPOINT:}
+      max-results: 5
+    web-fetch:
+      timeout-ms: 8000
+      max-pages: 4
+      max-content-chars: 3500
+      block-private-network: true
+  rag:
+    enabled: ${ZHIQU_RAG_ENABLED:true}
+    base-url: ${ZHIQU_RAG_BASE_URL:http://127.0.0.1:8001}
+    service-token: ${RAG_SERVICE_TOKEN:262229428d3e980fbfbc295d1f29a9a32673d8df3178bf7e}
+    connect-timeout-ms: 300
+    read-timeout-ms: 1800
+    candidate-k: 24
+    final-k: 8
+    max-context-chars: 10000
+    max-per-source: 3
+    max-snippet-chars: 1600
+    fallback-enabled: true
+    index-version: ${RAG_INDEX_VERSION:bge-small-zh-v1.5@pinned-token448-overlap64-v1-cosine}
+    worker-delay-ms: 1000
+    worker-batch-size: 4
+    max-attempts: 8
+    # 以下两项只是 app_runtime_flag 的种子默认值：表里有对应行时以表为准。
+    # 停机切换期间由 PUT /api/admin/runtime-flags/{key} 在运行时翻转——
+    # Spring Boot 不热读本文件，改这里必须重启才生效。
+    producer-frozen: false
+    worker-mode: NORMAL
+    # 升级期双删窗口：打开时每次删除同时清理 LEGACY 与 UNIT 两种格式的向量。
+    # Phase 1B 上线后打开、确认旧代次已 PURGED 再关掉。
+    dual-delete-window: false
+  push:
+    vapid-public-key: ${ZHIQU_WEB_PUSH_PUBLIC_KEY:}

@@ -18,9 +18,16 @@ public class JwtUtils {
     @Value("${jwt.expiration}")
     private long expiration;
 
+    @Value("${jwt.remember-expiration:2592000000}")
+    private long rememberExpiration;
+
     public String generateToken(Long userId, String username) {
+        return generateToken(userId, username, expiration);
+    }
+
+    public String generateToken(Long userId, String username, long ttlMillis) {
         Date now = new Date();
-        Date exp = new Date(now.getTime() + expiration);
+        Date exp = new Date(now.getTime() + ttlMillis);
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("username", username)
@@ -36,6 +43,14 @@ public class JwtUtils {
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
+    }
+
+    public long getExpiration() {
+        return expiration;
+    }
+
+    public long getRememberExpiration() {
+        return rememberExpiration;
     }
 
     private SecretKey getSecretKey() {

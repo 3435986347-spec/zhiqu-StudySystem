@@ -1,207 +1,89 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>任务列表 - 知趣·象限学习系统</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/common.css">
-    <link rel="stylesheet" href="/css/tasks.css">
-    <link rel="stylesheet" href="/css/pixel-theme.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>任务列表 - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260904-composer-textarea">
 </head>
 <body>
-    <div id="navbar"></div>
-    <div class="main-content">
-        <div class="page-title-row">
-            <h1>📋 任务列表</h1>
-            <a href="/dashboard.html" style="font-size:14px">← 返回看板</a>
-        </div>
-        <div class="filter-bar">
-            <div class="form-group">
-                <label for="f-quadrant">象限</label>
-                <select id="f-quadrant">
-                    <option value="">全部</option>
-                    <option value="1">🔥 重要且紧急</option>
-                    <option value="2">⭐ 重要不紧急</option>
-                    <option value="3">⚡ 紧急不重要</option>
-                    <option value="4">💤 不重要不紧急</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="f-status">状态</label>
-                <select id="f-status">
-                    <option value="">全部</option>
-                    <option value="0">待办</option>
-                    <option value="1">进行中</option>
-                    <option value="2">已完成</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="f-priority">优先级</label>
-                <select id="f-priority">
-                    <option value="">全部</option>
-                    <option value="0">低</option>
-                    <option value="1">中</option>
-                    <option value="2">高</option>
-                    <option value="3">紧急</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="f-sortBy">排序</label>
-                <select id="f-sortBy">
-                    <option value="updatedAt">更新时间</option>
-                    <option value="deadline">截止时间</option>
-                    <option value="priority">优先级</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="f-sortOrder">方向</label>
-                <select id="f-sortOrder">
-                    <option value="desc">降序</option>
-                    <option value="asc">升序</option>
-                </select>
-            </div>
-            <button type="button" class="btn btn-primary" id="btn-query">查询</button>
-            <button type="button" class="btn btn-success" id="btn-new">＋ 新建任务</button>
-        </div>
-        <div class="table-wrap">
-            <table class="data-table">
-                <thead>
-                    <tr>
-                        <th>标题</th>
-                        <th>象限</th>
-                        <th>优先级</th>
-                        <th>状态</th>
-                        <th>截止时间</th>
-                        <th>提醒时间</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody id="task-tbody"></tbody>
-            </table>
-        </div>
-    </div>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
 
-    <div id="edit-modal" class="modal hidden">
-        <div class="modal-backdrop"></div>
-        <div class="modal-panel">
-            <div class="modal-header">
-                <h2 class="modal-title">编辑任务</h2>
-                <button type="button" class="modal-close" id="edit-modal-close">&times;</button>
-            </div>
-            <form id="form-edit-task">
-                <input type="hidden" id="et-id">
-                <div class="form-group">
-                    <label for="et-title">任务标题</label>
-                    <input id="et-title" required>
-                </div>
-                <div class="form-group">
-                    <label for="et-desc">任务描述</label>
-                    <textarea id="et-desc"></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="et-quadrant">象限</label>
-                        <select id="et-quadrant" required>
-                            <option value="1">🔥 重要且紧急</option>
-                            <option value="2">⭐ 重要不紧急</option>
-                            <option value="3">⚡ 紧急不重要</option>
-                            <option value="4">💤 不重要不紧急</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="et-priority">优先级</label>
-                        <select id="et-priority">
-                            <option value="0">低</option>
-                            <option value="1">中</option>
-                            <option value="2">高</option>
-                            <option value="3">紧急</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="et-status">状态</label>
-                    <select id="et-status">
-                        <option value="0">待办</option>
-                        <option value="1">进行中</option>
-                        <option value="2">已完成</option>
-                    </select>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="et-deadline">截止时间</label>
-                        <input type="datetime-local" id="et-deadline">
-                    </div>
-                    <div class="form-group">
-                        <label for="et-reminder">提醒时间</label>
-                        <input type="datetime-local" id="et-reminder">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-default" id="edit-cancel">取消</button>
-                    <button type="submit" class="btn btn-primary">保存</button>
-                </div>
-            </form>
-        </div>
-    </div>
+        <header style="display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:4px 2px 2px;">
+          <div><p class="zq-eyebrow">任务中心</p><h1 class="zq-h1">任务列表</h1></div>
+          <a href="dashboard.html" style="color:var(--zq-primary); font-size:13px;">← 返回看板</a>
+        </header>
 
-    <div id="create-modal" class="modal hidden">
-        <div class="modal-backdrop"></div>
-        <div class="modal-panel">
-            <div class="modal-header">
-                <h2 class="modal-title">新建任务</h2>
-                <button type="button" class="modal-close" id="create-modal-close">&times;</button>
-            </div>
-            <form id="form-create-task">
-                <div class="form-group">
-                    <label for="ct-title">任务标题</label>
-                    <input id="ct-title" required placeholder="输入任务标题">
-                </div>
-                <div class="form-group">
-                    <label for="ct-desc">任务描述</label>
-                    <textarea id="ct-desc" placeholder="详细描述..."></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="ct-quadrant">象限</label>
-                        <select id="ct-quadrant" required>
-                            <option value="1">🔥 重要且紧急</option>
-                            <option value="2">⭐ 重要不紧急</option>
-                            <option value="3">⚡ 紧急不重要</option>
-                            <option value="4">💤 不重要不紧急</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="ct-priority">优先级</label>
-                        <select id="ct-priority">
-                            <option value="0">低</option>
-                            <option value="1" selected>中</option>
-                            <option value="2">高</option>
-                            <option value="3">紧急</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="ct-deadline">截止时间</label>
-                        <input type="datetime-local" id="ct-deadline">
-                    </div>
-                    <div class="form-group">
-                        <label for="ct-reminder">提醒时间</label>
-                        <input type="datetime-local" id="ct-reminder">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-default" id="create-cancel">取消</button>
-                    <button type="submit" class="btn btn-primary">创建</button>
-                </div>
-            </form>
+        <!-- 筛选条 -->
+        <div class="zq-card" style="display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">
+          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">象限</label><select class="zq-select" style="min-width:128px;"><option>全部</option><option>重要且紧急</option><option>重要不紧急</option><option>紧急不重要</option><option>不重要不紧急</option></select></div>
+          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">状态</label><select class="zq-select" style="min-width:96px;"><option>全部</option><option>待办</option><option>进行中</option><option>已完成</option></select></div>
+          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">优先级</label><select class="zq-select" style="min-width:96px;"><option>全部</option><option>低</option><option>中</option><option>高</option><option>紧急</option></select></div>
+          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">排序</label><select class="zq-select" style="min-width:110px;"><option>更新时间</option><option>截止时间</option><option>优先级</option></select></div>
+          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">方向</label><select class="zq-select" style="min-width:88px;"><option>降序</option><option>升序</option></select></div>
+          <button class="zq-btn">查询</button>
+          <button class="zq-btn" style="border:1px solid var(--zq-ok); background:var(--zq-ok-tint); color:var(--zq-ok);">新建任务</button>
         </div>
-    </div>
 
-    <script src="/js/common.js"></script>
-    <script src="/js/tasks.js"></script>
+        <!-- 表格 -->
+        <div class="zq-table">
+          <div class="zq-scroll-x"><div style="min-width:880px;">
+            <div class="zq-thead" style="display:grid; grid-template-columns:minmax(200px,2.2fr) 104px 64px 78px 118px 118px 108px; gap:8px; align-items:center;">
+              <span>标题</span><span>象限</span><span>优先级</span><span>状态</span><span>截止时间</span><span>提醒时间</span><span style="text-align:right;">操作</span>
+            </div>
+            <div id="zq-rows"></div>
+          </div></div>
+          <div style="padding:10px 16px; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--zq-text3);">
+            <span>共 11 条 · 第 1 / 1 页</span>
+            <span>点击状态徽标可快速流转：待办 → 进行中 → 已完成</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20260904-composer-textarea"></script>
+  <script>
+    var qMeta = { 1:['重要且紧急','q1'], 2:['重要不紧急','q2'], 3:['紧急不重要','q3'], 4:['不重要不紧急','q4'] };
+    var pMeta = { 0:['低','var(--zq-text3)'], 1:['中','var(--zq-text2)'], 2:['高','var(--zq-warn)'], 3:['紧急','var(--zq-bad)'] };
+    var sMeta = { 0:['待办','var(--zq-card-soft)','var(--zq-text2)','var(--zq-border)'], 1:['进行中','var(--zq-tint)','var(--zq-primary)','var(--zq-tint-strong)'], 2:['已完成','var(--zq-ok-tint)','var(--zq-ok)','var(--zq-ok-tint)'] };
+    var tasks = [
+      { title:'高数作业 第 7 章（第 3–8 题）', desc:'重积分应用，注意换元步骤', q:1, p:3, s:1, dl:'07-03 22:00', rm:'07-03 19:00', soon:1 },
+      { title:'操作系统实验报告 · 内存管理', desc:'页面置换算法对比 + 实验截图', q:1, p:2, s:1, dl:'07-04 12:00', rm:'07-03 20:00', soon:1 },
+      { title:'计网实验预习 · Wireshark 抓包', desc:'TCP 三次握手抓包并标注', q:3, p:2, s:0, dl:'07-04 08:00', rm:'07-03 21:00', soon:1 },
+      { title:'毕设开题报告 · 文献综述初稿', desc:'至少 15 篇参考文献，中英各半', q:2, p:2, s:1, dl:'07-06 23:59', rm:'07-05 09:00' },
+      { title:'数据结构二轮复习 · 图论专题', desc:'最短路 / 最小生成树例题各 5 道', q:2, p:1, s:0, dl:'07-09 22:00', rm:'07-08 19:00' },
+      { title:'英语六级真题模考（2024-12 卷）', desc:'严格计时 130 分钟', q:2, p:1, s:0, dl:'07-05 12:00', rm:'07-05 08:30' },
+      { title:'考研政治 · 马原选择题 30 题', desc:'错题归档到知识 Wiki', q:2, p:0, s:0, dl:'07-07 22:00', rm:'—' },
+      { title:'班级评优材料收集', desc:'收齐后打包发学委', q:3, p:1, s:0, dl:'07-04 18:00', rm:'07-04 14:00' },
+      { title:'小组项目答辩 PPT 排版', desc:'统一模板字号，压缩到 12 页', q:1, p:2, s:2, dl:'07-02 20:00', rm:'07-02 14:00' },
+      { title:'实验室值日安排表更新', desc:'', q:3, p:0, s:2, dl:'07-01 18:00', rm:'—' },
+      { title:'整理浏览器书签与文献库', desc:'Zotero 分类同步', q:4, p:0, s:0, dl:'—', rm:'—' }
+    ];
+    function render(){
+      document.getElementById('zq-rows').innerHTML = tasks.map(function(t,i){
+        var q=qMeta[t.q], s=sMeta[t.s], p=pMeta[t.p];
+        return '<div style="display:grid; grid-template-columns:minmax(200px,2.2fr) 104px 64px 78px 118px 118px 108px; gap:8px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--zq-border-soft); opacity:'+(t.s===2?0.55:1)+';">'
+          + '<div style="min-width:0;"><div style="font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-decoration:'+(t.s===2?'line-through':'none')+';">'+t.title+'</div><div style="font-size:11.5px; color:var(--zq-text3); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+(t.desc||'—')+'</div></div>'
+          + '<span><span class="zq-badge" style="background:var(--zq-'+q[1]+'-bg); color:var(--zq-'+q[1]+');">'+q[0]+'</span></span>'
+          + '<span style="font-size:12.5px; font-weight:600; color:'+p[1]+';">'+p[0]+'</span>'
+          + '<span><button onclick="cycle('+i+')" title="点击切换状态" style="display:inline-flex; align-items:center; height:22px; padding:0 9px; border:1px solid '+s[3]+'; border-radius:999px; background:'+s[1]+'; color:'+s[2]+'; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">'+s[0]+'</button></span>'
+          + '<span class="zq-mono" style="font-size:12px; color:'+((t.soon&&t.s!==2)?'var(--zq-bad)':'var(--zq-text2)')+';">'+t.dl+'</span>'
+          + '<span class="zq-mono" style="font-size:12px; color:var(--zq-text2);">'+t.rm+'</span>'
+          + '<span style="display:flex; justify-content:flex-end; gap:6px;"><button class="zq-btn-ghost" style="height:26px; padding:0 10px; font-size:12px;">编辑</button><button class="zq-btn-ghost" style="height:26px; padding:0 10px; font-size:12px;">删除</button></span>'
+          + '</div>';
+      }).join('');
+    }
+    function cycle(i){ tasks[i].s = (tasks[i].s+1)%3; render(); }
+    render();
+  </script>
+  <script src="assets/zhiqu-api.js?v=20260904-composer-textarea"></script>
 </body>
 </html>

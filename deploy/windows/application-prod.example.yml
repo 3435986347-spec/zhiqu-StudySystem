@@ -1,0 +1,126 @@
+server:
+  port: 8080
+  address: 127.0.0.1
+  forward-headers-strategy: native
+
+spring:
+  application:
+    name: zhiqu-backend
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/zhiqu_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: zhiqu_app
+    password: CHANGE_ME_DB_PASSWORD
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 30MB
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 1
+    baseline-description: existing zhiqu schema
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      # Redis 必须设密码；若确实没设，务必确认它只监听 127.0.0.1 且公网 6379 已封禁。
+      password: CHANGE_ME_REDIS_PASSWORD
+      database: 0
+      timeout: 3000ms
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+jwt:
+  secret: CHANGE_ME_TO_A_LONG_RANDOM_SECRET_AT_LEAST_32_CHARS
+  expiration: 86400000
+  remember-expiration: 2592000000
+
+app:
+  upload-dir: C:/zhiqu/uploads
+  cookie:
+    secure: true
+  proxy:
+    # Only trusts X-Forwarded-For / X-Real-IP when the direct peer is localhost or private network.
+    # Keep server.address=127.0.0.1 and expose only Caddy/Nginx to the internet.
+    trust-forwarded-headers: true
+  crypto:
+    master-key: CHANGE_ME_TO_A_LONG_RANDOM_CRYPTO_MASTER_KEY
+  ai:
+    anthropic-version: 2023-06-01
+    # 采样温度。留空 = 不发送 temperature 参数。
+    # 新一代模型（Claude opus-4 / fable 等）已废弃该参数，发送会报 400；老模型可填 0.3 之类。
+    temperature: ""
+    # 系统级默认模型：开启后所有用户可直接使用，API Key 会被加密存库。
+    # 不需要就保持 false，让用户各自在「个人中心」配置自己的模型。
+    system-default-enabled: false
+    system-display-name: 知趣默认模型
+    system-provider-type: OPENAI_COMPATIBLE
+    system-api-url: https://api.openai.com/v1/chat/completions
+    system-model-name: gpt-4o-mini
+    # 真实 Key 不要写进文件，用环境变量注入（系统属性/服务配置里设 ZHIQU_SYSTEM_AI_API_KEY）
+    system-api-key: ${ZHIQU_SYSTEM_AI_API_KEY:}
+    web-search:
+      provider: tavily
+      # 同样用环境变量注入，不要提交真实 Key
+      api-key: ${ZHIQU_WEB_SEARCH_API_KEY:}
+      endpoint: ${ZHIQU_WEB_SEARCH_ENDPOINT:}
+      max-results: 5
+    web-fetch:
+      timeout-ms: 8000
+      max-pages: 4
+      max-content-chars: 3500
+      # 必须保持 true：禁止 AI 抓取内网地址，防 SSRF
+      block-private-network: true
+  push:
+    # Web Push 公钥（VAPID）。不配则浏览器推送不可用，其余功能不受影响。
+    vapid-public-key: ${ZHIQU_WEB_PUSH_PUBLIC_KEY:}
+  rag:
+    enabled: false
+    base-url: http://127.0.0.1:8001
+    service-token: CHANGE_ME_RAG_SERVICE_TOKEN
+    connect-timeout-ms: 300
+    read-timeout-ms: 1800
+    candidate-k: 24
+    final-k: 8
+    max-context-chars: 10000
+    max-per-source: 3
+    max-snippet-chars: 1600
+    fallback-enabled: true
+    index-version: bge-small-zh-v1.5@PINNED_REVISION-token448-overlap64-v1-cosine
+    worker-delay-ms: 1000
+    worker-batch-size: 4
+    max-attempts: 8
+    # 以下两项只是 app_runtime_flag 的种子默认值：表里有对应行时以表为准。
+    # 停机切换期间由 PUT /api/admin/runtime-flags/{key} 在运行时翻转——
+    # Spring Boot 不热读本文件，改这里必须重启才生效。
+    producer-frozen: false
+    worker-mode: NORMAL
+    # 升级期双删窗口：打开时每次删除同时清理 LEGACY 与 UNIT 两种格式的向量。
+    # Phase 1B 上线后打开、确认旧代次已 PURGED 再关掉。
+    dual-delete-window: false
+
+logging:
+  file:
+    name: C:/zhiqu/logs/zhiqu-backend.log
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 7
+  level:
+    root: INFO
+    com.zhiqu: INFO

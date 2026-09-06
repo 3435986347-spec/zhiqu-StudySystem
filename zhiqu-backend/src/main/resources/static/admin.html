@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>监管后台 - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260904-composer-textarea">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
+        <header style="display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:4px 2px 2px;">
+          <div>
+            <p class="zq-eyebrow">管理员</p><h1 class="zq-h1">监管后台</h1>
+            <span style="display:block; margin-top:6px; color:var(--zq-text2); font-size:13px;">平台运行总览 · 数据每 5 分钟刷新 · 不展示用户任务与知识库正文</span>
+          </div>
+          <button class="zq-btn-ghost" style="height:32px;">刷新数据</button>
+        </header>
+
+        <section id="zq-metrics" class="zq-grid" style="grid-template-columns:repeat(6, minmax(0,1fr));"></section>
+
+        <div style="display:grid; grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr); gap:16px; align-items:start;">
+          <section class="zq-card zq-card-lg">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;"><h2 class="zq-h2" style="font-size:16px;">近 15 分钟请求量</h2><span style="font-size:12px; color:var(--zq-text3);">单位：次</span></div>
+            <div id="zq-traffic" style="display:flex; align-items:flex-end; gap:6px; height:170px; padding:0 4px;"></div>
+          </section>
+          <section class="zq-card zq-card-lg">
+            <h2 class="zq-h2" style="font-size:16px; margin-bottom:12px;">运行状态</h2>
+            <div id="zq-health" style="display:flex; flex-direction:column;"></div>
+          </section>
+        </div>
+        <section class="zq-card zq-card-lg">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
+            <div><h2 class="zq-h2" style="font-size:16px;">RAG 语义检索</h2><p style="margin-top:5px;font-size:12px;color:var(--zq-text3);">Sidecar、索引代次、任务积压与自动降级</p></div>
+          </div>
+          <div id="zq-rag-status"><div class="zq-empty">正在读取语义检索状态…</div></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20260904-composer-textarea"></script>
+  <script src="assets/zhiqu-api.js?v=20260904-composer-textarea"></script>
+</body>
+</html>

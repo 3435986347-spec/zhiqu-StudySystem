@@ -12,3 +12,42 @@ uploads/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 运行日志
+zhiqu-backend/logs/
+
+# Claude Code 会话配置
+.claude/
+
+# 压缩包（设计稿/部署包等二进制归档不入库）
+*.zip
+
+# 构建产物不入库：部署 JAR 按 deploy/windows/README.md 第三节本地打包后上传，
+# 仓库里再存一份既会随每次更新多压 ~75MB 历史（GitHub 单文件建议上限 50MB），
+# 也容易让人误拿到过期版本上线。
+deploy/windows/*.jar
+
+# 个人简历相关（私人材料，绝不入公开仓库）
+resume_work/
+resume_review_update/
+Resume_*.docx
+*简历*.docx
+
+# 用户上传原件（私有，运行时生成）
+private-uploads/
+
+# Python RAG sidecar runtime data and local configuration
+rag-service/.env
+rag-service/.venv/
+rag-service/.pytest_cache/
+rag-service/**/__pycache__/
+rag-data/
+
+# PDF parser A/B evaluation: private corpus and generated artifacts
+pdf-parser-eval/corpus/private/
+pdf-parser-eval/corpus/downloads/
+pdf-parser-eval/corpus/annotations.private.jsonl
+pdf-parser-eval/corpus/manifest.private.jsonl
+pdf-parser-eval/output/
+pdf-parser-eval/**/target/
+pdf-parser-eval/**/__pycache__/

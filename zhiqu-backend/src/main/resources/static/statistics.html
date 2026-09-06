@@ -1,38 +1,88 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>学习统计 - 知趣·象限学习系统</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/common.css">
-    <link rel="stylesheet" href="/css/statistics.css">
-    <link rel="stylesheet" href="/css/pixel-theme.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>学习统计 - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260904-composer-textarea">
 </head>
 <body>
-    <div id="navbar"></div>
-    <div class="main-content">
-        <h1 class="statistics-title">📊 学习统计</h1>
-        <div class="stat-cards" id="stat-cards"></div>
-        <div class="charts-row">
-            <div class="chart-box chart-trend">
-                <div class="trend-tabs">
-                    <button type="button" data-type="day" class="active">日</button>
-                    <button type="button" data-type="week">周</button>
-                    <button type="button" data-type="month">月</button>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
+        <header style="padding:4px 2px 2px;"><p class="zq-eyebrow">数据洞察</p><h1 class="zq-h1">学习统计</h1></header>
+
+        <section class="zq-grid" style="grid-template-columns:repeat(4, minmax(0,1fr));">
+          <article class="zq-stat"><strong class="zq-stat-num">23</strong><span class="zq-stat-label" style="margin-top:9px;">连续学习天数</span></article>
+          <article class="zq-stat"><strong class="zq-stat-num">2,860</strong><span class="zq-stat-label" style="margin-top:9px;">总学习时长（分钟）</span></article>
+          <article class="zq-stat"><strong class="zq-stat-num">128</strong><span class="zq-stat-label" style="margin-top:9px;">完成任务数</span></article>
+          <article class="zq-stat"><strong class="zq-stat-num">167</strong><span class="zq-stat-label" style="margin-top:9px;">总任务数</span></article>
+        </section>
+
+        <div style="display:grid; grid-template-columns:minmax(0,1.7fr) minmax(280px,1fr); gap:16px; align-items:start;">
+          <section class="zq-card zq-card-lg">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+              <h2 class="zq-h2" style="font-size:16px;">学习时长趋势</h2>
+              <div id="zq-tabs" style="display:inline-flex; border:1px solid var(--zq-border); border-radius:var(--zq-rs); overflow:hidden;"></div>
+            </div>
+            <div id="zq-bars" style="display:flex; align-items:flex-end; gap:7px; height:210px; padding:0 4px;"></div>
+          </section>
+          <section class="zq-card zq-card-lg">
+            <h2 class="zq-h2" style="font-size:16px; margin-bottom:14px;">象限分布</h2>
+            <div style="display:flex; align-items:center; justify-content:center; padding:6px 0 14px;">
+              <div style="position:relative; width:172px; height:172px;">
+                <svg width="172" height="172" viewBox="0 0 172 172" id="zq-donut"></svg>
+                <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+                  <strong class="zq-mono" style="font-size:26px; line-height:1;">37</strong>
+                  <span style="font-size:11px; color:var(--zq-text2); margin-top:4px;">本月任务</span>
                 </div>
-                <div id="chart-trend" class="chart-inner"></div>
+              </div>
             </div>
-            <div class="chart-box chart-pie">
-                <h3>象限分布</h3>
-                <div id="chart-pie" class="chart-inner"></div>
-            </div>
+            <div id="zq-legend" style="display:flex; flex-direction:column; gap:8px;"></div>
+          </section>
         </div>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-    <script src="/js/common.js"></script>
-    <script src="/js/statistics.js"></script>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20260904-composer-textarea"></script>
+  <script>
+    var sets = {
+      day:{ labels:['6/20','6/21','6/22','6/23','6/24','6/25','6/26','6/27','6/28','6/29','6/30','7/1','7/2','7/3'], vals:[95,140,60,180,150,0,210,165,120,190,145,230,175,110] },
+      week:{ labels:['第11周','第12周','第13周','第14周','第15周','第16周','第17周'], vals:[620,840,710,930,880,1010,640] },
+      month:{ labels:['2月','3月','4月','5月','6月','7月'], vals:[1850,2620,2380,2960,3240,460] }
+    };
+    var cur='day';
+    document.getElementById('zq-tabs').innerHTML = [['day','日'],['week','周'],['month','月']].map(function(t){
+      return '<button onclick="setTab(\''+t[0]+'\')" data-k="'+t[0]+'" style="height:28px; padding:0 14px; border:none; cursor:pointer; font-size:12.5px; font-weight:600; background:'+(cur===t[0]?'var(--zq-primary)':'var(--zq-card)')+'; color:'+(cur===t[0]?'var(--zq-on-primary)':'var(--zq-text2)')+';">'+t[1]+'</button>';
+    }).join('');
+    function setTab(k){ cur=k; document.querySelectorAll('#zq-tabs button').forEach(function(b){ var on=b.dataset.k===k; b.style.background=on?'var(--zq-primary)':'var(--zq-card)'; b.style.color=on?'var(--zq-on-primary)':'var(--zq-text2)'; }); paintBars(); }
+    function paintBars(){
+      var s=sets[cur], max=Math.max.apply(null,s.vals);
+      document.getElementById('zq-bars').innerHTML = s.labels.map(function(lb,i){
+        var h=Math.max(3, Math.round(s.vals[i]/max*168));
+        var last=i===s.labels.length-1;
+        return '<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; min-width:0; height:100%; justify-content:flex-end;"><span class="zq-mono" style="font-size:10px; color:var(--zq-text3);">'+s.vals[i]+'</span><div title="'+lb+' · '+s.vals[i]+' 分钟" style="width:100%; max-width:34px; height:'+h+'px; border-radius:4px 4px 2px 2px; background:'+(last?'var(--zq-primary)':'var(--zq-tint-strong)')+'; transition:height .35s ease;"></div><span style="font-size:10.5px; color:var(--zq-text3); white-space:nowrap;">'+lb+'</span></div>';
+      }).join('');
+    }
+    paintBars();
+
+    // Donut
+    var parts=[10,15,7,5], colors=['q1','q2','q3','q4'], total=37, C=2*Math.PI*66, acc=0;
+    var svg = parts.map(function(n,i){
+      var len=n/total*C, seg='<circle cx="86" cy="86" r="66" fill="none" stroke="var(--zq-'+colors[i]+')" stroke-width="22" stroke-dasharray="'+len.toFixed(1)+' '+(C-len).toFixed(1)+'" stroke-dashoffset="'+(-acc).toFixed(1)+'" transform="rotate(-90 86 86)"></circle>';
+      acc+=len; return seg;
+    }).join('');
+    document.getElementById('zq-donut').innerHTML = svg;
+    var legend=[['重要且紧急','q1','27%'],['重要不紧急','q2','41%'],['紧急不重要','q3','19%'],['不重要不紧急','q4','13%']];
+    document.getElementById('zq-legend').innerHTML = legend.map(function(l){
+      return '<div style="display:flex; align-items:center; gap:8px; font-size:12.5px;"><span style="width:10px; height:10px; flex:none; border-radius:3px; background:var(--zq-'+l[1]+');"></span><span style="flex:1; color:var(--zq-text2);">'+l[0]+'</span><span class="zq-mono" style="font-weight:600;">'+l[2]+'</span></div>';
+    }).join('');
+  </script>
+  <script src="assets/zhiqu-api.js?v=20260904-composer-textarea"></script>
 </body>
 </html>

@@ -1,0 +1,124 @@
+{
+  "_comment": "跨语言 code point 偏移平价 fixture。Java 与 Python 测试共读本文件，断言同一批数字。Java 侧用 codePointCount/offsetByCodePoints，Python 侧用 len()/切片——后者天然是 code point 语义。任一侧改口径，两边会同时红。",
+  "cases": [
+    {
+      "name": "bmp-chinese",
+      "text": "复习计划",
+      "codePointCount": 4,
+      "slices": [
+        {
+          "start": 0,
+          "end": 4,
+          "expected": "复习计划"
+        },
+        {
+          "start": 1,
+          "end": 3,
+          "expected": "习计"
+        }
+      ]
+    },
+    {
+      "name": "astral-emoji",
+      "text": "计划🚀完成",
+      "codePointCount": 5,
+      "slices": [
+        {
+          "start": 0,
+          "end": 5,
+          "expected": "计划🚀完成"
+        },
+        {
+          "start": 1,
+          "end": 4,
+          "expected": "划🚀完"
+        }
+      ]
+    },
+    {
+      "name": "zwj-family",
+      "text": "家庭👨‍👩‍👧结束",
+      "codePointCount": 9,
+      "slices": [
+        {
+          "start": 0,
+          "end": 9,
+          "expected": "家庭👨‍👩‍👧结束"
+        },
+        {
+          "start": 1,
+          "end": 8,
+          "expected": "庭👨‍👩‍👧结"
+        }
+      ]
+    },
+    {
+      "name": "combining-mark",
+      "text": "école",
+      "codePointCount": 6,
+      "slices": [
+        {
+          "start": 0,
+          "end": 6,
+          "expected": "école"
+        },
+        {
+          "start": 1,
+          "end": 5,
+          "expected": "́col"
+        }
+      ]
+    },
+    {
+      "name": "variation-select",
+      "text": "心❤️意",
+      "codePointCount": 4,
+      "slices": [
+        {
+          "start": 0,
+          "end": 4,
+          "expected": "心❤️意"
+        },
+        {
+          "start": 1,
+          "end": 3,
+          "expected": "❤️"
+        }
+      ]
+    },
+    {
+      "name": "astral-cjk",
+      "text": "字𠮷典",
+      "codePointCount": 3,
+      "slices": [
+        {
+          "start": 0,
+          "end": 3,
+          "expected": "字𠮷典"
+        },
+        {
+          "start": 1,
+          "end": 2,
+          "expected": "𠮷"
+        }
+      ]
+    },
+    {
+      "name": "mixed-newlines",
+      "text": "第一段\n\n第二段🚀\n\n第三段",
+      "codePointCount": 14,
+      "slices": [
+        {
+          "start": 0,
+          "end": 14,
+          "expected": "第一段\n\n第二段🚀\n\n第三段"
+        },
+        {
+          "start": 1,
+          "end": 13,
+          "expected": "一段\n\n第二段🚀\n\n第三"
+        }
+      ]
+    }
+  ]
+}
