@@ -1189,6 +1189,12 @@ public class AiServiceImpl implements AiService {
                 return;
             }
             Long newUpto = outside.get(outside.size() - 1).getId();
+            // 指纹基线必须与素材<b>同一时刻</b>取，不能等模型回来再数。
+            // outside 是「本会话所有 id < 窗口最老一条的存活消息」，newUpto 是其中最大的 id，
+            // 所以 outside.size() 恒等于读侧那句 liveMessageCount(newUpto) ——
+            // 用它当基线，素材与基线之间没有任何间隙。唯一能拆掉这个恒等的改动是给
+            // liveMessagesBelow 加过滤条件；真要加，这里必须跟着改成显式计数。
+            int sourceCount = outside.size();
             Long storedUpto = conversation.getSummaryUptoMessageId();
             boolean hasStored = hasText(conversation.getEncryptedSummary());
             // s.summary 是读侧取用的结果：有密文却拿不到明文，说明指纹没对上（判脏）
@@ -1210,7 +1216,7 @@ public class AiServiceImpl implements AiService {
                 return;
             }
             s.summaryUpto = newUpto;
-            s.summarySourceCount = liveMessageCount(s.userId, conversationId, newUpto);
+            s.summarySourceCount = sourceCount;
             s.summaryDraft = draft;
         }
 
@@ -1226,6 +1232,10 @@ public class AiServiceImpl implements AiService {
             }
             Long conversationId = s.liveAssistant.getConversationId();
             int live = liveMessageCount(s.userId, conversationId, s.summaryUpto);
+            // 比的是「读素材那一刻的条数」。模型往返要数秒，是整条链路里最长的一段，
+            // 用户完全可能在这期间删掉一条被覆盖的消息；对不上就整份丢掉，下一轮重算。
+            // 若基线改在往返之后取，这一句会拿删后的数和删后的数相比、永远相等，
+            // 于是带着已删内容的摘要以「干净」的指纹落库，此后每轮都注入且再也判不脏。
             if (live != s.summarySourceCount) {
                 return;
             }

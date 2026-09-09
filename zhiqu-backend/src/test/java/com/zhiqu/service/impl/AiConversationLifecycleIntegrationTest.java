@@ -37,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,6 +83,11 @@ class AiConversationLifecycleIntegrationTest {
     private static volatile CountDownLatch blockGate;
     private static volatile CountDownLatch enteredGate;
     private static volatile int blockAtRequest;
+    /**
+     * 按<b>请求体内容</b>拦一次模型调用，而不是按第几次。
+     * 一轮问答里调几次模型取决于消息命中了哪些意图门，用序号定位等于把判据钉在一个会漂的数上。
+     */
+    private static volatile String blockWhenBodyContains;
     private static final java.util.concurrent.atomic.AtomicInteger requestCounter =
             new java.util.concurrent.atomic.AtomicInteger();
     /**
@@ -96,7 +102,9 @@ class AiConversationLifecycleIntegrationTest {
         fakeModelServer.createContext("/v1/chat/completions", exchange -> {
             String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             int seq = requestCounter.incrementAndGet();
-            if (blockAtRequest > 0 && seq == blockAtRequest) {
+            String bodyMarker = blockWhenBodyContains;
+            if ((blockAtRequest > 0 && seq == blockAtRequest)
+                    || (bodyMarker != null && requestBody.contains(bodyMarker))) {
                 CountDownLatch entered = enteredGate;
                 if (entered != null) {
                     entered.countDown();
@@ -152,6 +160,7 @@ class AiConversationLifecycleIntegrationTest {
         blockGate = null;
         enteredGate = null;
         blockAtRequest = 0;
+        blockWhenBodyContains = null;
         requestCounter.set(0);
         lastStreamingRequestBody = null;
         userId = seedUser();
@@ -830,5 +839,60 @@ class AiConversationLifecycleIntegrationTest {
                 Integer.class, conversationId, ((Number) rebuilt.get("summary_upto_message_id")).longValue());
         assertEquals(liveNow, ((Number) rebuilt.get("summary_live_count")).intValue(),
                 "判脏后必须当轮重算，指纹重新对上；只「不注入」不重算的话，这段历史就一直丢着");
+    }
+
+    /** 摘要器系统提示词的开头，用来在请求体里认出「这次调用是摘要器发的」。 */
+    private static final String SUMMARIZER_PROMPT_MARK = "你是对话摘要器";
+
+    /**
+     * 摘要素材读完之后、模型回来之前删掉一条被覆盖的消息 —— 这份摘要不得落库。
+     *
+     * <h2>这条判据补的是另一半窗口</h2>
+     *
+     * <p>落库前重比一次指纹，防的是「摘要生成期间区间变了」。但基线取在哪一端决定它到底盖住多少：
+     * 素材在读 outside 时确定，模型往返要数秒，落库在其后。基线若取在往返<b>之后</b>，
+     * 重比就退化成「删后的数和删后的数相比」，永远相等 —— 带着已删内容的摘要以<b>干净的指纹</b>落库，
+     * 此后每轮都注入，而且再也判不脏，因为脏基线本身就是它的基准。
+     *
+     * <p>兄弟判据 {@link #删掉被摘要覆盖的消息后摘要必须判脏并重算()} 是在两轮<b>之间</b>删，
+     * 撞不到往返这一段；那条也顺带充当本条的对照组：不在往返期间删时，摘要是<b>会</b>落库的
+     * （它断言了 encrypted_summary 非空），所以这里的「没落库」不是「摘要功能根本没跑」。
+     *
+     * <p>扰动：把基线改回在 computeConversationSummary 之后取 → 摘要落库，本条变红。
+     */
+    @Test
+    void 模型往返期间删掉被覆盖的消息则这份摘要不得落库() throws Exception {
+        Long notebookId = createNotebook(userId, "摘要往返期删除");
+        for (int i = 1; i <= 16; i++) {
+            chat(userId, notebookId, "第 " + i + " 句闲聊");
+        }
+        Long conversationId = ((Number) conversationRow(userId, notebookId).get("id")).longValue();
+
+        enteredGate = new CountDownLatch(1);
+        blockGate = new CountDownLatch(1);
+        blockWhenBodyContains = SUMMARIZER_PROMPT_MARK;
+
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "再聊一句", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+
+        // 下界：摘要器必须真的发起过模型调用，否则后面的「没落库」只是它压根没跑
+        assertTrue(enteredGate.await(30, TimeUnit.SECONDS),
+                "摘要器应当调用模型并停在闸门上，否则这条判据没有测到往返窗口");
+
+        // 往返进行中：删掉最老一条 —— 它一定落在摘要覆盖区间内
+        Long oldest = jdbcTemplate.queryForObject(
+                "SELECT id FROM ai_message WHERE conversation_id = ? AND deleted = 0 ORDER BY id LIMIT 1",
+                Long.class, conversationId);
+        assertNotNull(oldest, "覆盖区间内应当有存活消息可删");
+        aiService.deleteChatMessage(userId, oldest);
+        blockGate.countDown();
+
+        awaitRunAfter(userId, notebookId, before);
+
+        Map<String, Object> row = jdbcTemplate.queryForMap(
+                "SELECT encrypted_summary FROM ai_conversation WHERE id = ?", conversationId);
+        assertNull(row.get("encrypted_summary"),
+                "素材读取与模型返回之间删掉了一条被覆盖的消息，这份摘要已经带着已删内容，不得落库 ——"
+                        + " 落了就再也判不脏：它的指纹是在删除之后建立的，读侧永远比对通过");
     }
 }
