@@ -50,7 +50,8 @@ public record AgentPlanDecision(
         boolean includeWiki,
         boolean needsPlanner,
         boolean needsTaskDraft,
-        boolean needsWikiCurator
+        boolean needsWikiCurator,
+        boolean needsMemoryDraft
 ) {
 
     private static final Set<String> MODES = Set.of("AUTO", "CHAT_ONLY", "RESEARCH", "PLAN");
@@ -63,6 +64,14 @@ public record AgentPlanDecision(
     private static final List<String> PLANNER_WORDS = List.of("计划", "安排", "任务", "例行", "plan");
     private static final List<String> TASK_DRAFT_WORDS = List.of("生成任务", "写入任务", "例行任务", "task");
     private static final List<String> WIKI_CURATOR_WORDS = List.of("wiki", "知识库", "知识 wiki", "写进知识");
+    /**
+     * 长期记忆草稿的触发词，从 {@code AiServiceImpl.looksMemoryWorthy} 搬过来 —— 那是第六个
+     * 散在实现里的意图门，和合并前的 {@code should*} 家族同一个物种：建图侧要用它决定造不造
+     * MEMORY_CURATOR 节点，执行侧要用它决定跑不跑，两边各算一套就会重演幽灵/隐形 agent。
+     */
+    private static final List<String> MEMORY_DRAFT_WORDS = List.of(
+            "记住", "我的目标", "我希望", "我不喜欢", "我准备", "我打算", "我计划",
+            "考研", "薄弱", "偏好", "ddl");
 
     public static String normalizeMode(String agentMode) {
         String value = agentMode == null ? "AUTO" : agentMode.trim().toUpperCase(Locale.ROOT);
@@ -93,7 +102,8 @@ public record AgentPlanDecision(
                 includeWiki,
                 plannerNeeded(mode, message),
                 containsAny(message, TASK_DRAFT_WORDS),
-                containsAny(message, WIKI_CURATOR_WORDS)
+                containsAny(message, WIKI_CURATOR_WORDS),
+                containsAny(message, MEMORY_DRAFT_WORDS)
         );
     }
 

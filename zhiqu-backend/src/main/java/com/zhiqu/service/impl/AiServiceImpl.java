@@ -54,6 +54,7 @@ import com.zhiqu.service.ai.stream.ModelStreamAdapterFactory;
 import com.zhiqu.service.ai.stream.ModelStreamRequest;
 import com.zhiqu.service.ai.stream.ModelStreamResult;
 import com.zhiqu.service.ai.stream.NormalizedStreamEvent;
+import com.zhiqu.service.memory.LongTermMemoryStore;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.service.support.ConversationLockRegistry;
 import org.springframework.beans.factory.annotation.Value;
@@ -125,6 +126,7 @@ public class AiServiceImpl implements AiService {
     private final WebResearchService webResearchService;
     private final ModelStreamAdapterFactory modelStreamAdapterFactory;
     private final SensitiveCryptoService cryptoService;
+    private final LongTermMemoryStore memoryStore;
     private final RestTemplate restTemplate;
     private final RestTemplate toolTurnRestTemplate;
     private final ObjectMapper objectMapper;
@@ -162,6 +164,7 @@ public class AiServiceImpl implements AiService {
                          WebResearchService webResearchService,
                          ModelStreamAdapterFactory modelStreamAdapterFactory,
                          SensitiveCryptoService cryptoService,
+                         LongTermMemoryStore memoryStore,
                          ConversationLockRegistry conversationLocks,
                          PlatformTransactionManager transactionManager,
                          @Value("${app.ai.system-default-enabled:false}") boolean systemDefaultEnabled,
@@ -194,6 +197,7 @@ public class AiServiceImpl implements AiService {
         this.webResearchService = webResearchService;
         this.modelStreamAdapterFactory = modelStreamAdapterFactory;
         this.cryptoService = cryptoService;
+        this.memoryStore = memoryStore;
         this.conversationLocks = conversationLocks;
         this.conversationTx = new TransactionTemplate(transactionManager);
         this.restTemplate = createAiRestTemplate();
@@ -339,17 +343,15 @@ public class AiServiceImpl implements AiService {
         AiCallResult aiCallResult = callAiApiDetailed(config, messages, normalizedReasoningMode);
         String reply = aiCallResult.content();
         boolean wikiWriteRequested = looksWikiWriteIntent(limitedMessage);
-        // 记忆整理与计划提取都可能再次调用模型:锁外只做慢计算;Revision 落库延后到锁内事务、
-        // 归属校验之后——否则第二阶段模型调用期间删除 Notebook,接口失败却留下已提交的副作用,
-        // 或接口"成功"返回已被删除的消息 ID 与计划建议
-        String memoryUpdate = wikiWriteRequested ? null
-                : computeLongTermMemoryUpdate(config, userId, limitedMessage, reply);
+        // 计划提取可能再次调用模型:锁外只做慢计算;落库延后到锁内事务、归属校验之后——
+        // 否则第二阶段模型调用期间删除 Notebook,接口"成功"返回已被删除的消息 ID 与计划建议。
+        // 记忆草稿不在这条路径上产出:它是 MEMORY_CURATOR 节点的产物，而非流式 chat() 没有 agent run，
+        // 草稿工件无处可挂。前端只走流式端点，这里保留一次白花的模型调用没有意义。
         Map<String, Object> suggestedPlan = suggestPlanFromChatIfNeeded(config, limitedMessage, reply);
         // 全部慢计算完成后,单个锁内短事务成对落库:模型调用期间发生清空/删除时,
         // 要么整对写入复活后的会话(清空),要么整对被归属校验拒绝(删除)——不会只留下一半
         NonStreamChatSave saved = conversationLocks.withUserLock(userId, () -> conversationTx.execute(tx -> {
             AiConversation live = getOrCreateConversation(userId, notebookId);
-            saveLongTermMemoryRevision(userId, memoryUpdate);
             AiMessage liveUserMessage = saveChatMessage(userId, live.getId(), "user", limitedMessage);
             Map<String, Object> liveWikiRevision = null;
             String liveFinalReply = reply;
@@ -524,7 +526,7 @@ public class AiServiceImpl implements AiService {
                 new PlannerRunner(state),
                 new WikiToolAgentRunner(state),
                 new FinalWriterRunner(state),
-                new MemoryExtractorRunner(state),
+                new MemoryCuratorRunner(state),
                 new PlanExtractorRunner(state),
                 new SummarizerRunner(state),
                 new TaskDrafterRunner(state),
@@ -593,7 +595,6 @@ public class AiServiceImpl implements AiService {
                     state.liveAssistant = rebuiltAssistant;
                     state.rebuilt = true;
                 }
-                saveLongTermMemoryRevision(userId, state.memoryUpdate);
                 executor.execute(AgentPhase.COMMIT, ctx);
                 settleUnrunTasks(ctx, state);
                 aiWorkspaceService.completeRun(agentRun, state.liveAssistant);
@@ -698,7 +699,7 @@ public class AiServiceImpl implements AiService {
         private WikiAgentResult wikiAgent;
         private String finalReply = "";
         private String finalReasoningSummary = "";
-        private String memoryUpdate;
+        private List<String> memoryItems = List.of();
         private Map<String, Object> suggestedPlan = emptyPlan();
         private Map<String, Object> planArtifactContent = new LinkedHashMap<>();
 
@@ -1097,28 +1098,58 @@ public class AiServiceImpl implements AiService {
     }
 
     /**
-     * 长期记忆整理。<b>要调模型，所以在 POST_STREAM（锁外）</b>；结果由事务里的
-     * {@code saveLongTermMemoryRevision} 落库。
+     * 长期记忆草稿。<b>要调模型，所以工作在 POST_STREAM（锁外）；草稿工件在 COMMIT 落库。</b>
      *
-     * <p>图里没有它的节点，{@link #inGraph} 恒为真 —— 阶段三的 {@code MEMORY_CURATOR} 会给它建节点，
-     * 那时它就变成一个正常的「工作 POST_STREAM、落库 COMMIT」节点。
+     * <h2>它此前把产物送错了地方</h2>
+     *
+     * <p>改道之前，这个 runner 叫 MEMORY_EXTRACTOR，产出<b>整份长期记忆全文</b>，然后写成一条
+     * PENDING 的 {@code UserKnowledgeRevision}（标题「对话提炼记忆」）—— 那条 revision 走的是
+     * Wiki 的「待合入变更」面板，确认后 {@code applyRevisionInternal} 建出来的是一个
+     * <b>Wiki 页面</b>，而不是长期记忆。于是提示词写着「更新一份给学习助手使用的长期记忆」，
+     * 产物却永远到不了 {@code user_ai_memory}（那张表唯一的写入点是用户手动保存）。
+     *
+     * <p>现在产物是 {@code MEMORY_DRAFT} 工件，用户逐条勾选确认后才并进 {@code user_ai_memory}。
+     * <b>依然不自动写库</b> —— 沿用计划草稿那条既有纪律。
      */
-    private final class MemoryExtractorRunner implements AgentStageRunner {
+    private final class MemoryCuratorRunner implements AgentStageRunner {
         private final StreamState s;
 
-        private MemoryExtractorRunner(StreamState s) {
+        private MemoryCuratorRunner(StreamState s) {
             this.s = s;
         }
 
-        @Override public String agentType() { return "MEMORY_EXTRACTOR"; }
+        @Override public String agentType() { return "MEMORY_CURATOR"; }
         @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.POST_STREAM, 10); }
-        @Override public boolean inGraph(AgentRunContext ctx) { return true; }
+        @Override public AgentPosition commitAt() { return AgentPosition.at(AgentPhase.COMMIT, 45); }
 
         @Override
         public void run(AgentRunContext ctx) {
-            s.memoryUpdate = looksWikiWriteIntent(s.limitedMessage)
-                    ? null
-                    : computeLongTermMemoryUpdate(s.config, s.userId, s.limitedMessage, s.finalReply);
+            if (looksWikiWriteIntent(s.limitedMessage)) {
+                return;
+            }
+            s.memoryItems = computeMemoryDraftItems(s.config, s.userId, s.limitedMessage, s.finalReply);
+        }
+
+        @Override
+        public void commit(AgentRunContext ctx) {
+            // 节点在图里但这一轮没挑出条目 → 什么都不做，由 settleUnrunTasks 收成 SKIPPED
+            // （与 TASK_DRAFTER 同一个写法）。
+            if (s.memoryItems.isEmpty()) {
+                return;
+            }
+            AiAgentTask task = ctx.task("MEMORY_CURATOR");
+            startTask(ctx, s, task);
+            AiAgentStep step = startAgentStep(ctx, s, task, "MEMORY_CURATOR", 33, "正在整理记忆草稿");
+            List<Map<String, Object>> rows = new ArrayList<>();
+            for (String item : s.memoryItems) {
+                rows.add(Map.of("text", item, "sourceMessageId", s.liveUser.getId()));
+            }
+            AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
+                    s.agentRun.getId(), step.getId(), "MEMORY_DRAFT", "AI 记忆草稿",
+                    Map.of("items", rows), s.liveUser.getId());
+            ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, step, artifact));
+            finishStep(ctx, s, step, "记忆草稿已整理", "items=" + rows.size());
+            completeTask(ctx, s, task, Map.of("items", rows.size()), "Memory draft ready");
         }
     }
 
@@ -2523,9 +2554,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private UserAiMemory getMemoryEntity(Long userId) {
-        return memoryMapper.selectOne(
-                new LambdaQueryWrapper<UserAiMemory>().eq(UserAiMemory::getUserId, userId)
-        );
+        return memoryStore.find(userId);
     }
 
     private String getMemoryText(Long userId) {
@@ -2562,30 +2591,11 @@ public class AiServiceImpl implements AiService {
     }
 
     private void upsertMemory(Long userId, String memoryText) {
-        UserAiMemory memory = getMemoryEntity(userId);
-        if (memory == null) {
-            memory = new UserAiMemory();
-            memory.setUserId(userId);
-            memory.setMemoryText(null);
-            memory.setEncryptedMemoryText(hasText(memoryText) ? cryptoService.encrypt(memoryText.trim()) : null);
-            memory.setEncryptionVersion("v1");
-            memoryMapper.insert(memory);
-        } else {
-            memory.setMemoryText(null);
-            memory.setEncryptedMemoryText(hasText(memoryText) ? cryptoService.encrypt(memoryText.trim()) : null);
-            memory.setEncryptionVersion("v1");
-            memoryMapper.updateById(memory);
-        }
+        memoryStore.write(userId, memoryText);
     }
 
     private String decryptMemory(UserAiMemory memory) {
-        if (memory == null) {
-            return "";
-        }
-        if (hasText(memory.getEncryptedMemoryText())) {
-            return cryptoService.decrypt(memory.getEncryptedMemoryText());
-        }
-        return memory.getMemoryText() == null ? "" : memory.getMemoryText();
+        return memoryStore.decrypt(memory);
     }
 
     private String limitedQuery(String message) {
@@ -2857,19 +2867,26 @@ public class AiServiceImpl implements AiService {
         return row;
     }
 
-    /** 锁外慢计算：调用模型整理长期记忆，返回待写正文；无新信息/失败返回 null（不落库） */
-    private String computeLongTermMemoryUpdate(AiModelConfig config, Long userId, String userMessage, String assistantReply) {
-        if (!looksMemoryWorthy(userMessage)) {
-            return null;
-        }
+    /**
+     * 锁外慢计算：调用模型挑出<b>值得长期记住的离散条目</b>；无新信息或失败返回空列表。
+     *
+     * <p>产物是条目而不是整份记忆全文，因为草稿要<b>逐条勾选</b>确认。返回全文的话，
+     * 用户只能整份接受或整份拒绝 —— 模型多记了一条不该记的，整份就都进不来。
+     *
+     * <p>是否该跑由 {@link AgentPlanDecision#needsMemoryDraft()} 决定（此前是这里的
+     * {@code looksMemoryWorthy}）—— 建图与执行读同一个判定，不各算一套。
+     */
+    private List<String> computeMemoryDraftItems(AiModelConfig config, Long userId,
+                                                 String userMessage, String assistantReply) {
         try {
             String currentMemory = getMemoryText(userId);
             String prompt = """
-                    你是长期记忆整理器。请根据用户新消息和当前记忆，更新一份给学习助手使用的长期记忆。
+                    你是长期记忆整理器。从用户的新消息里挑出值得长期记住的事实，逐条列出。
                     只记录长期稳定信息，例如目标考试、年份、科目、薄弱科目、学习偏好、提醒偏好、长期项目。
                     不记录一次性问题、闲聊、隐私敏感内容、临时情绪。
-                    使用简洁中文项目符号。总长度不超过 1200 字。
-                    如果没有值得记录的新信息，原样返回当前记忆；如果当前记忆为空且没有新信息，返回空字符串。
+                    已经出现在「当前长期记忆」里的内容不要重复列出。
+                    只输出 JSON 数组，每个元素是一句话，例如 ["目标是 2027 年考研", "不喜欢在早上学习"]。
+                    没有值得记录的新信息就输出 []。
                     """;
             String input = """
                     当前长期记忆：
@@ -2885,49 +2902,37 @@ public class AiServiceImpl implements AiService {
                     userMessage,
                     limitText(assistantReply, 1000)
             );
-            String updatedMemory = limitText(cleanMemoryText(callAiApi(config, prompt, input)), MEMORY_MAX_LENGTH);
-            return hasText(updatedMemory) && !updatedMemory.equals(currentMemory) ? updatedMemory : null;
+            return parseMemoryItems(callAiApi(config, prompt, input));
         } catch (Exception ignored) {
             // 记忆整理失败不影响主聊天。
-            return null;
+            return List.of();
         }
     }
 
-    /** 纯 DB 写入 + 加密，可安全放在锁内事务；正文为空表示无需更新 */
-    private void saveLongTermMemoryRevision(Long userId, String updatedMemory) {
-        if (!hasText(updatedMemory)) {
-            return;
+    /** 解析模型返回的条目数组；解析不出来就当作「本轮没有值得记住的」，不阻断回答。 */
+    private List<String> parseMemoryItems(String raw) {
+        if (!hasText(raw)) {
+            return List.of();
+        }
+        String text = raw.trim();
+        int start = text.indexOf('[');
+        int end = text.lastIndexOf(']');
+        if (start < 0 || end <= start) {
+            return List.of();
         }
         try {
-            UserKnowledgeRevision revision = new UserKnowledgeRevision();
-            revision.setUserId(userId);
-            revision.setActionType("UPSERT");
-            revision.setTitle("对话提炼记忆");
-            revision.setEncryptedContent(cryptoService.encrypt(updatedMemory));
-            revision.setEncryptionVersion("v1");
-            revision.setStatus("PENDING");
-            knowledgeRevisionMapper.insert(revision);
+            List<?> parsed = objectMapper.readValue(text.substring(start, end + 1), List.class);
+            List<String> items = new ArrayList<>();
+            for (Object item : parsed) {
+                String line = item == null ? "" : cleanMemoryText(String.valueOf(item)).trim();
+                if (hasText(line) && items.size() < 12) {
+                    items.add(limitText(line, 200));
+                }
+            }
+            return List.copyOf(items);
         } catch (Exception ignored) {
-            // 记忆整理失败不影响主聊天。
+            return List.of();
         }
-    }
-
-    private boolean looksMemoryWorthy(String message) {
-        if (!hasText(message)) {
-            return false;
-        }
-        String text = message.toLowerCase(Locale.ROOT);
-        return text.contains("记住")
-                || text.contains("我的目标")
-                || text.contains("我希望")
-                || text.contains("我不喜欢")
-                || text.contains("我准备")
-                || text.contains("我打算")
-                || text.contains("我计划")
-                || text.contains("考研")
-                || text.contains("薄弱")
-                || text.contains("偏好")
-                || text.contains("ddl");
     }
 
     private Map<String, Object> suggestPlanFromChatIfNeeded(AiModelConfig config, String userMessage, String assistantReply) {

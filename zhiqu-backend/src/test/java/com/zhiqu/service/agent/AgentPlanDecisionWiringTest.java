@@ -62,7 +62,10 @@ class AgentPlanDecisionWiringTest {
 
     /** 合并前散在两处的判定方法名。任何一个重新出现，都意味着第二份拷贝回来了。 */
     private static final List<String> RETIRED_DECIDERS = List.of(
-            "shouldRunRetriever", "shouldRunPlanner", "shouldPlan", "shouldDraftTasks", "shouldCurateWiki");
+            "shouldRunRetriever", "shouldRunPlanner", "shouldPlan", "shouldDraftTasks", "shouldCurateWiki",
+            // 第六个：MEMORY_CURATOR 有了图节点之后，「这轮值不值得记」建图侧和执行侧都要问，
+            // 留在 AiServiceImpl 里就是下一次分叉的种子
+            "looksMemoryWorthy");
 
     @Test
     void 意图判定只能有一处() throws IOException {

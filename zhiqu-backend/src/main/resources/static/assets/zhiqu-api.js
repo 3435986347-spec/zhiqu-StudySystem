@@ -2278,6 +2278,7 @@
       TASK_DRAFT: '任务草稿',
       ROUTINE_DRAFT: '例行计划草稿',
       WIKI_DRAFT: 'Wiki 草稿',
+      MEMORY_DRAFT: '记忆草稿',
       NOTE_DRAFT: '笔记草稿'
     })[String(type || '').toUpperCase()] || '其他产物';
   }
@@ -2415,6 +2416,68 @@
     return bits.join(' · ');
   }
 
+
+  // 记忆草稿：AI 从对话里挑出的长期事实，逐条勾选，确认后才并进长期记忆。
+  // 和计划草稿同一条纪律——不确认不落库；记忆更需要它，因为它会进后续每一轮的系统提示词。
+  var shownMemoryModals = Object.create(null);
+
+  function isMemoryDraft(artifact) {
+    var status = String(artifact.status || '').toUpperCase();
+    return String(artifact.artifactType || '').toUpperCase() === 'MEMORY_DRAFT'
+      && (status === 'DRAFT' || status === 'PENDING');
+  }
+
+  function memoryDraftItems(artifact) {
+    var content = artifactContent(artifact);
+    var items = Array.isArray(content.items) ? content.items : [];
+    return items.map(function (item) {
+      return typeof item === 'string' ? { text: item } : Object.assign({}, item);
+    }).filter(function (item) { return String(item.text || '').trim(); });
+  }
+
+  function openMemoryConfirmModal(artifact) {
+    var items = memoryDraftItems(artifact);
+    if (!items.length) return null;
+    shownMemoryModals[artifact.id] = true;
+    var picked = items.map(function () { return true; });
+    var handle = openModal({ title: 'AI 想记住这些', width: 520, bodyHtml: '<div class="zq-plan-confirm"></div>' });
+    var root = handle.body.querySelector('.zq-plan-confirm');
+
+    function paint() {
+      var html = '<p class="zq-plan-hint">以下内容会长期影响 AI 对你的了解，'
+        + '<strong>确认后才会写入长期记忆</strong>。</p><div class="zq-plan-group">';
+      items.forEach(function (item, i) {
+        html += '<label class="zq-plan-row">'
+          + '<input type="checkbox" data-pick="' + i + '"' + (picked[i] ? ' checked' : '') + '>'
+          + '<div class="zq-plan-row-body"><div class="zq-plan-name">' + esc(String(item.text)) + '</div></div>'
+          + '</label>';
+      });
+      html += '</div><div class="zq-plan-actions">'
+        + '<button class="zq-btn" data-mem="ignore">忽略</button>'
+        + '<button class="zq-btn zq-btn-primary" data-mem="ok">确认写入</button></div>';
+      root.innerHTML = html;
+      $all('[data-pick]', root).forEach(function (box) {
+        box.onchange = function () { picked[Number(box.dataset.pick)] = box.checked; };
+      });
+      $('[data-mem="ignore"]', root).onclick = function () {
+        safe('忽略记忆草稿', async function () {
+          await api.post('/ai/artifacts/' + artifact.id + '/discard', {});
+          handle.close(); toast('已忽略'); await renderAgentPanels();
+        });
+      };
+      $('[data-mem="ok"]', root).onclick = function () {
+        var chosen = items.filter(function (_, i) { return picked[i]; });
+        if (!chosen.length) { toast('请至少勾选一条，或点「忽略」'); return; }
+        safe('确认记忆', async function () {
+          await api.post('/ai/artifacts/' + artifact.id + '/confirm', { items: chosen });
+          handle.close(); toast('已写入长期记忆'); await renderAgentPanels();
+        });
+      };
+    }
+    paint();
+    return handle;
+  }
+
   function openPlanConfirmModal(artifact) {
     var data = planDraftItems(artifact);
     if (!data.tasks.length && !data.routines.length) return null;
@@ -2506,7 +2569,7 @@
     host.innerHTML = grouped.length ? grouped.map(function (artifact) {
       var type = String(artifact.artifactType || '').toUpperCase();
       var status = String(artifact.status || '').toUpperCase();
-      var draft = ['PLAN_DRAFT', 'TASK_DRAFT', 'ROUTINE_DRAFT', 'WIKI_DRAFT', 'NOTE_DRAFT'].indexOf(type) >= 0
+      var draft = ['PLAN_DRAFT', 'TASK_DRAFT', 'ROUTINE_DRAFT', 'WIKI_DRAFT', 'NOTE_DRAFT', 'MEMORY_DRAFT'].indexOf(type) >= 0
         && (status === 'DRAFT' || status === 'PENDING');
       var content = artifactContent(artifact);
       var parts = artifact._citationParts || [];
@@ -2535,14 +2598,18 @@
         + '<details class="zq-artifact-details"><summary>展开详情</summary>' + artifactDetailsHtml(artifact) + '</details>'
         + (draft ? '<div class="zq-artifact-actions">'
             // 计划类草稿：优先走弹窗（可逐条勾选/修改），点这里可随时切回完整视图重看
-            + (isPlanDraft(artifact) ? '<button data-art-view="' + artifact.id + '">查看并确认</button>' : '<button data-art-ok="' + artifact.id + '">确认</button>')
+            + ((isPlanDraft(artifact) || isMemoryDraft(artifact))
+              ? '<button data-art-view="' + artifact.id + '">查看并确认</button>'
+              : '<button data-art-ok="' + artifact.id + '">确认</button>')
             + '<button data-art-no="' + artifact.id + '" class="zq-btn-ghost">忽略</button></div>' : '')
         + '</article>';
     }).join('') : empty('暂无产物');
     $all('[data-art-view]', host).forEach(function (b) {
       b.onclick = function () {
         var target = grouped.filter(function (a) { return String(a.id) === String(b.dataset.artView); })[0];
-        if (target) openPlanConfirmModal(target);
+        if (target) {
+          if (isMemoryDraft(target)) openMemoryConfirmModal(target); else openPlanConfirmModal(target);
+        }
       };
     });
     $all('[data-art-ok]', host).forEach(function (b) { b.onclick = function () { safe('确认产物', async function () { await api.post('/ai/artifacts/' + b.dataset.artOk + '/confirm', {}); toast('已确认'); await renderAgentPanels(); }); }; });
@@ -2569,6 +2636,10 @@
       return isPlanDraft(a) && !shownPlanModals[a.id];
     })[0];
     if (freshPlan) openPlanConfirmModal(freshPlan);
+    var freshMemory = groupArtifacts(artifacts).filter(function (a) {
+      return isMemoryDraft(a) && !shownMemoryModals[a.id];
+    })[0];
+    if (freshMemory) openMemoryConfirmModal(freshMemory);
   }
   async function loadAiMessages() {
     // 聊天记录按 notebook 隔离:后端会话 key = notebook-{id},切换 notebook 时重新拉取

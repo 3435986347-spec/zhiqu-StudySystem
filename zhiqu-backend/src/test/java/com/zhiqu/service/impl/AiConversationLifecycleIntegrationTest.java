@@ -3,6 +3,7 @@ package com.zhiqu.service.impl;
 import com.sun.net.httpserver.HttpServer;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.AiConversation;
+import com.zhiqu.service.memory.LongTermMemoryStore;
 import com.zhiqu.service.AiService;
 import com.zhiqu.service.AiWorkspaceService;
 import org.junit.jupiter.api.AfterAll;
@@ -88,6 +89,8 @@ class AiConversationLifecycleIntegrationTest {
      * 一轮问答里调几次模型取决于消息命中了哪些意图门，用序号定位等于把判据钉在一个会漂的数上。
      */
     private static volatile String blockWhenBodyContains;
+    /** 记忆整理器系统提示词的开头，用来在请求体里认出这次调用是它发的。 */
+    private static final String MEMORY_PROMPT_MARK = "你是长期记忆整理器";
     private static final java.util.concurrent.atomic.AtomicInteger requestCounter =
             new java.util.concurrent.atomic.AtomicInteger();
     /**
@@ -119,12 +122,17 @@ class AiConversationLifecycleIntegrationTest {
                 }
             }
             boolean streaming = requestBody.contains("\"stream\":true") || requestBody.contains("\"stream\": true");
+            // 记忆整理器要的是 JSON 数组；回「测试回复」的话 parseMemoryItems 永远返回空，
+            // 草稿那条路径就一次也走不到（而判据会以为「本轮没有值得记的」）。
+            String content = requestBody.contains(MEMORY_PROMPT_MARK)
+                    ? "[\\\"不喜欢在早上学习\\\"]"
+                    : "测试回复";
             if (streaming) {
                 lastStreamingRequestBody = requestBody;
             }
             byte[] body = (streaming
                     ? "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n"
-                    : "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"测试回复\"}}]}")
+                    : "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}")
                     .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", streaming ? "text/event-stream" : "application/json");
             exchange.sendResponseHeaders(200, body.length);
@@ -151,6 +159,9 @@ class AiConversationLifecycleIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private LongTermMemoryStore memoryStore;
 
     private Long userId;
     private Long modelId;
@@ -474,48 +485,11 @@ class AiConversationLifecycleIntegrationTest {
                 "SELECT id, status FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
                 userId, notebookId);
         assertEquals("CANCELED", run.get("status"));
-        Integer memoryRevisions = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ? AND title = '对话提炼记忆'",
-                Integer.class, userId);
-        assertEquals(0, memoryRevisions, "丢弃后不得再提炼长期记忆");
         Integer draftArtifacts = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM ai_agent_artifact WHERE run_id = ? "
-                        + "AND artifact_type IN ('PLAN_DRAFT','TASK_DRAFT','ROUTINE_DRAFT','WIKI_DRAFT')",
+                        + "AND artifact_type IN ('PLAN_DRAFT','TASK_DRAFT','ROUTINE_DRAFT','WIKI_DRAFT','MEMORY_DRAFT')",
                 Integer.class, ((Number) run.get("id")).longValue());
-        assertEquals(0, draftArtifacts, "丢弃后不得再产出计划/Wiki 草稿工件");
-    }
-
-    @Test
-    void memoryChatDeleteNotebookDuringSecondModelCallLeavesNoRevision() throws Exception {
-        Long notebookId = createNotebook(userId, "记忆穿透删除");
-        // 非流式:第一次调用产出回答,第二次调用整理记忆;在第二次调用期间删除 notebook。
-        // 最终锁内事务的归属校验会拒绝整对消息——记忆 Revision 必须同事务回滚,不得留下已提交的副作用
-        requestCounter.set(0);
-        blockAtRequest = 2;
-        enteredGate = new CountDownLatch(1);
-        blockGate = new CountDownLatch(1);
-        ExecutorService pool = Executors.newSingleThreadExecutor();
-        try {
-            Future<Map<String, Object>> inFlight = pool.submit(
-                    () -> chat(userId, notebookId, "记住我不喜欢在早上学习"));
-            assertTrue(enteredGate.await(10, TimeUnit.SECONDS), "记忆整理调用应已到达假端点");
-            aiWorkspaceService.deleteNotebook(userId, notebookId);
-            blockGate.countDown();
-            ExecutionException error = assertThrows(ExecutionException.class,
-                    () -> inFlight.get(30, TimeUnit.SECONDS));
-            assertInstanceOf(BusinessException.class, error.getCause());
-        } finally {
-            pool.shutdownNow();
-        }
-        Integer memoryRevisions = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ? AND title = '对话提炼记忆'",
-                Integer.class, userId);
-        assertEquals(0, memoryRevisions, "接口失败时不得留下已提交的记忆 Revision");
-        Integer liveMessages = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM ai_message m JOIN ai_conversation c ON c.id = m.conversation_id "
-                        + "WHERE c.user_id = ? AND c.conversation_key = ? AND m.deleted = 0",
-                Integer.class, userId, AiConversation.notebookKey(notebookId));
-        assertEquals(0, liveMessages);
+        assertEquals(0, draftArtifacts, "丢弃后不得再产出计划/Wiki/记忆草稿工件");
     }
 
     @Test
@@ -537,10 +511,12 @@ class AiConversationLifecycleIntegrationTest {
                 "SELECT id, status FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
                 userId, notebookId);
         assertEquals("CANCELED", run.get("status"), "第二阶段模型调用期间的删除同样必须取消 run");
-        Integer memoryRevisions = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ? AND title = '对话提炼记忆'",
-                Integer.class, userId);
-        assertEquals(0, memoryRevisions, "丢弃后不得提交记忆 Revision");
+        // 见证从「对话提炼记忆」Revision 改成 MEMORY_DRAFT 工件：记忆抽取的产物改道之后，
+        // 原来那条 revision 恒为 0，断言会静默变成空扫描 —— 和真的没有副作用长得一模一样。
+        Integer memoryDrafts = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'MEMORY_DRAFT'",
+                Integer.class, ((Number) run.get("id")).longValue());
+        assertEquals(0, memoryDrafts, "丢弃后不得产出记忆草稿工件");
         Integer liveMessages = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM ai_message m JOIN ai_conversation c ON c.id = m.conversation_id "
                         + "WHERE c.user_id = ? AND c.conversation_key = ? AND m.deleted = 0",
@@ -548,6 +524,16 @@ class AiConversationLifecycleIntegrationTest {
         assertEquals(0, liveMessages);
     }
 
+    /**
+     * 非流式 chat() 第二次模型调用期间删除 Notebook → 整个接口必须失败，不留半提交状态。
+     *
+     * <p>此前还有一条同形的 {@code memoryChatDeleteNotebookDuringSecondModelCallLeavesNoRevision}，
+     * 用记忆整理当第二次调用、用「对话提炼记忆」Revision 当见证。记忆草稿改道到 MEMORY_CURATOR
+     * 节点之后，chat() 这条路径不再抽记忆（它没有 agent run，草稿工件无处可挂），
+     * 那条判据既没有了触发源、见证也恒为 0 —— 留着就是一条永远绿的空判据，所以删掉。
+     * 它钉的性质（第二阶段模型调用期间删除 → 整体拒绝、消息对不落库）由本条在同一路径、
+     * 同一机制上覆盖。
+     */
     @Test
     void planChatDeleteNotebookDuringPlanModelCallRejectsWhole() throws Exception {
         Long notebookId = createNotebook(userId, "计划提取删除");
@@ -627,10 +613,18 @@ class AiConversationLifecycleIntegrationTest {
         assertEquals(0, staleArtifacts, "重建后不得有工件仍指向已软删的旧用户消息");
     }
 
+    /**
+     * 第二次模型调用期间清空记忆 → 消息对必须完整（要么都在、要么都不在，绝不只剩助手）。
+     *
+     * <p>触发第二次调用的从「记忆整理」换成了「计划提取」：记忆草稿改道到 MEMORY_CURATOR 节点后，
+     * 非流式 chat() 不再抽记忆，原来那句「记住…」只会产生一次调用，闸门永远等不到 ——
+     * 判据会挂在 await 上而不是红在它要钉的性质上。
+     * <b>钉的性质没变</b>，换的只是把慢计算撑开的那次调用是谁发的。
+     */
     @Test
-    void memoryWorthyChatClearedDuringSecondModelCallKeepsPairIntact() throws Exception {
-        Long notebookId = createNotebook(userId, "记忆整理竞态");
-        // “记住…”触发记忆整理的第二次模型调用;在第二次调用期间清空记忆
+    void chatClearedDuringSecondModelCallKeepsPairIntact() throws Exception {
+        Long notebookId = createNotebook(userId, "清空竞态");
+        // “生成…计划”触发计划提取的第二次模型调用;在第二次调用期间清空记忆
         requestCounter.set(0);
         blockAtRequest = 2;
         enteredGate = new CountDownLatch(1);
@@ -638,8 +632,8 @@ class AiConversationLifecycleIntegrationTest {
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
             Future<Map<String, Object>> inFlight = pool.submit(
-                    () -> chat(userId, notebookId, "记住我不喜欢在早上学习"));
-            assertTrue(enteredGate.await(10, TimeUnit.SECONDS), "记忆整理调用应已到达假端点");
+                    () -> chat(userId, notebookId, "帮我生成一个学习计划"));
+            assertTrue(enteredGate.await(10, TimeUnit.SECONDS), "计划提取调用应已到达假端点");
             aiService.clearMemory(userId);
             blockGate.countDown();
             inFlight.get(30, TimeUnit.SECONDS);
@@ -650,7 +644,7 @@ class AiConversationLifecycleIntegrationTest {
         List<Map<String, Object>> visible = aiService.getRecentChatMessages(userId, notebookId, 50);
         assertEquals(2, visible.size());
         assertEquals("user", visible.get(0).get("role"));
-        assertEquals("记住我不喜欢在早上学习", visible.get(0).get("content"));
+        assertEquals("帮我生成一个学习计划", visible.get(0).get("content"));
         assertEquals("assistant", visible.get(1).get("role"));
     }
 
@@ -720,7 +714,12 @@ class AiConversationLifecycleIntegrationTest {
                 new GraphCase("知识库里有什么",
                         Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "WIKI_CURATOR", "VERIFIER", "FINAL_WRITER"),
                         Set.of("WIKI_CURATOR"),
-                        "建图侧 OR 命中「知识库」，执行侧 AND 还要写动词 → 结构上不可能运行"));
+                        "建图侧 OR 命中「知识库」，执行侧 AND 还要写动词 → 结构上不可能运行"),
+                new GraphCase("记住我不喜欢在早上学习",
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "MEMORY_CURATOR", "VERIFIER", "FINAL_WRITER"),
+                        Set.of(),
+                        "MEMORY_CURATOR 有了自己的节点；假端点回条目数组，所以它一路跑到 DONE 而不是被扫 ——"
+                                + " 这一行同时钉住「新增了一个用户看得见的 agent」这件事"));
 
         for (GraphCase testCase : cases) {
             Long notebookId = createNotebook(userId, "节点预期 " + testCase.message());
@@ -894,5 +893,54 @@ class AiConversationLifecycleIntegrationTest {
         assertNull(row.get("encrypted_summary"),
                 "素材读取与模型返回之间删掉了一条被覆盖的消息，这份摘要已经带着已删内容，不得落库 ——"
                         + " 落了就再也判不脏：它的指纹是在删除之后建立的，读侧永远比对通过");
+    }
+
+    /**
+     * 记忆草稿：<b>确认之前 {@code user_ai_memory} 一字不得写入</b>。
+     *
+     * <p>沿用计划草稿那条既有纪律 —— AI 整理出来的东西不自动落库，用户确认才写。
+     * 记忆比计划更需要这一条：它会进后续每一轮的系统提示词，写错一条就一直错下去。
+     *
+     * <p>三步各买一样东西：
+     * <ol>
+     *   <li><b>下界</b>：先断言草稿工件真的产出了。少了它，「没写库」可能只是 curator 根本没跑 ——
+     *       一条永远绿的判据。</li>
+     *   <li>确认之前 {@code user_ai_memory} 连行都没有。</li>
+     *   <li>确认之后才有，且内容就是草稿里的那条（不是「确认动作随便写了点什么」）。</li>
+     * </ol>
+     *
+     * <p>扰动：让 curator 在 commit 里直接 {@code memoryStore.appendItems} → 第 2 步变红。
+     */
+    @Test
+    void 记忆草稿确认之前不得写进长期记忆() throws Exception {
+        Long notebookId = createNotebook(userId, "记忆草稿确认");
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "记住我不喜欢在早上学习", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+
+        Map<String, Object> run = jdbcTemplate.queryForMap(
+                "SELECT id, status FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
+                userId, notebookId);
+        assertEquals("DONE", run.get("status"), "这一轮应正常结束，否则下面查的是失败路径");
+
+        List<Map<String, Object>> drafts = jdbcTemplate.queryForList(
+                "SELECT id, status FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'MEMORY_DRAFT'",
+                ((Number) run.get("id")).longValue());
+        assertEquals(1, drafts.size(),
+                "下界：必须真的产出了记忆草稿，否则下面的「没写库」只是 curator 压根没跑");
+        assertEquals("DRAFT", drafts.get(0).get("status"));
+
+        Integer beforeRows = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM user_ai_memory WHERE user_id = ?", Integer.class, userId);
+        assertEquals(0, beforeRows,
+                "确认之前长期记忆一字不得写入 —— 记忆会进后续每一轮的系统提示词，写错一条就一直错下去");
+
+        aiWorkspaceService.confirmArtifact(userId, ((Number) drafts.get(0).get("id")).longValue(), null);
+
+        Integer afterRows = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM user_ai_memory WHERE user_id = ?", Integer.class, userId);
+        assertEquals(1, afterRows, "确认之后才落库");
+        assertTrue(memoryStore.read(userId).contains("不喜欢在早上学习"),
+                "落库的必须是草稿里的那条，实际：" + memoryStore.read(userId));
     }
 }

@@ -26,6 +26,7 @@ import com.zhiqu.service.RoutineService;
 import com.zhiqu.service.StudyTaskService;
 import com.zhiqu.service.ai.WebResearchService;
 import com.zhiqu.service.ai.WebSearchProvider;
+import com.zhiqu.service.memory.LongTermMemoryStore;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.service.support.ConversationLockRegistry;
 import com.zhiqu.util.FileParseUtil;
@@ -59,6 +60,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     @Value("${app.private-upload-dir:private-uploads}")
     private String privateUploadDir;
 
+    private final LongTermMemoryStore memoryStore;
     private final AiNotebookMapper notebookMapper;
     private final AiNotebookSourceMapper sourceMapper;
     private final AiSourceChunkMapper chunkMapper;
@@ -91,7 +93,8 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private final RagMetricsService ragMetricsService;
     private final ObjectMapper objectMapper;
 
-    public AiWorkspaceServiceImpl(AiNotebookMapper notebookMapper,
+    public AiWorkspaceServiceImpl(LongTermMemoryStore memoryStore,
+                                  AiNotebookMapper notebookMapper,
                                   AiNotebookSourceMapper sourceMapper,
                                   AiSourceChunkMapper chunkMapper,
                                   AiAgentRunMapper runMapper,
@@ -121,6 +124,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                                   ConversationLockRegistry conversationLocks,
                                   PlatformTransactionManager transactionManager,
                                   ObjectMapper objectMapper) {
+        this.memoryStore = memoryStore;
         this.notebookMapper = notebookMapper;
         this.sourceMapper = sourceMapper;
         this.chunkMapper = chunkMapper;
@@ -758,6 +762,17 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             artifact.setContentJson(toJson(merge(parseMap(artifact.getContentJson()), Map.of("confirmResult", result))));
             artifact.setTargetType(text(result.get("targetType"), "PLAN_BATCH"));
             artifact.setTargetId(parseLong(result.get("targetId"), artifact.getId()));
+        } else if ("MEMORY_DRAFT".equals(artifact.getArtifactType())) {
+            // 与计划草稿同一条纪律：确认之前 user_ai_memory 一字不动。
+            // 用户在弹窗里逐条勾选，这里以提交的条目为准；没带 body 就整份接受。
+            List<String> items = memoryItemsToWrite(artifact, editedPlan);
+            if (!items.isEmpty()) {
+                memoryStore.appendItems(userId, items);
+            }
+            artifact.setContentJson(toJson(merge(parseMap(artifact.getContentJson()),
+                    Map.of("confirmedItems", items))));
+            artifact.setTargetType("USER_AI_MEMORY");
+            artifact.setTargetId(artifact.getId());
         } else {
             artifact.setTargetType(artifact.getArtifactType());
             artifact.setTargetId(artifact.getId());
@@ -765,6 +780,30 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         artifact.setStatus("CONFIRMED");
         artifactMapper.updateById(artifact);
         return artifactRow(artifactMapper.selectById(id), run);
+    }
+
+    /**
+     * 记忆草稿实际要写进长期记忆的条目。
+     *
+     * <p>请求体带 {@code items} 时以它为准（用户逐条勾选后的结果），否则整份接受 ——
+     * 与计划草稿「省略 body 即按原样应用」的既有约定一致。
+     * 只接受字符串条目，不接受任意结构：写进去的是给模型看的长期记忆，
+     * 让请求体决定它的形状等于开了一个注入口。
+     */
+    private List<String> memoryItemsToWrite(AiAgentArtifact artifact, Map<String, Object> body) {
+        Object source = body == null ? null : body.get("items");
+        if (!(source instanceof List<?>)) {
+            source = parseMap(artifact.getContentJson()).get("items");
+        }
+        List<?> list = source instanceof List<?> rows ? rows : List.of();
+        List<String> items = new ArrayList<>();
+        for (Object row : list) {
+            String value = row instanceof Map<?, ?> map ? text(map.get("text"), "") : text(row, "");
+            if (!value.isBlank()) {
+                items.add(value.trim());
+            }
+        }
+        return items;
     }
 
     /**

@@ -76,6 +76,12 @@ public class MultiAgentOrchestratorImpl implements MultiAgentOrchestrator {
                     Map.of(), "Draft Wiki patch"));
         }
 
+        if (decision.needsMemoryDraft()) {
+            tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "MEMORY_CURATOR",
+                    "MEMORY_DRAFT", 33, null, List.of(orchestrator.getId()),
+                    Map.of(), "Draft long-term memory"));
+        }
+
         tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "VERIFIER",
                 "VERIFY_OUTPUT", 80, null, List.of(orchestrator.getId()), Map.of(), "Verify claims and artifacts"));
         tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "FINAL_WRITER",
