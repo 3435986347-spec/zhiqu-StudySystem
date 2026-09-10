@@ -76,6 +76,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private final KnowledgePatchSetMapper knowledgePatchSetMapper;
     private final UserKnowledgeRevisionMapper knowledgeRevisionMapper;
     private final UserKnowledgePageMapper knowledgePageMapper;
+    private final SysUserMapper userMapper;
     private final WebResearchService webResearchService;
     private final SensitiveCryptoService cryptoService;
     private final StudyTaskService studyTaskService;
@@ -94,6 +95,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private final ObjectMapper objectMapper;
 
     public AiWorkspaceServiceImpl(LongTermMemoryStore memoryStore,
+                                  SysUserMapper userMapper,
                                   AiNotebookMapper notebookMapper,
                                   AiNotebookSourceMapper sourceMapper,
                                   AiSourceChunkMapper chunkMapper,
@@ -125,6 +127,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                                   PlatformTransactionManager transactionManager,
                                   ObjectMapper objectMapper) {
         this.memoryStore = memoryStore;
+        this.userMapper = userMapper;
         this.notebookMapper = notebookMapper;
         this.sourceMapper = sourceMapper;
         this.chunkMapper = chunkMapper;
@@ -556,6 +559,9 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         run.setAssistantMessageId(assistantMessage == null ? null : assistantMessage.getId());
         run.setStatus("RUNNING");
         run.setAgentMode(normalizeAgentMode(agentMode));
+        // 纪元快照：这一轮产出的记忆草稿，确认时要拿它和用户活值比对。
+        // 中间用户清空过记忆的话，草稿就是从已被清掉的对话里提炼的，不能再落库。
+        run.setMemoryEpoch(userMapper.currentMemoryEpoch(userId));
         run.setContextOptionsJson(toJson(contextOptions == null ? Map.of() : contextOptions));
         run.setExecutionMode("SERIAL");
         run.setMaxSteps(20);
@@ -763,6 +769,14 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             artifact.setTargetType(text(result.get("targetType"), "PLAN_BATCH"));
             artifact.setTargetId(parseLong(result.get("targetId"), artifact.getId()));
         } else if ("MEMORY_DRAFT".equals(artifact.getArtifactType())) {
+            // 「清空必须获胜」：草稿活得比 run 长，用户清空记忆之后这条草稿仍躺在面板上，
+            // 点确认就会把「已清空对话里提炼出来的事实」写回长期记忆 —— 那是真正的数据复活。
+            // run 开始时快照的纪元与用户活值不符，说明中间清空过，拒绝。
+            Long snapshot = run.getMemoryEpoch();
+            Long live = userMapper.currentMemoryEpoch(userId);
+            if (snapshot != null && live != null && !snapshot.equals(live)) {
+                throw new BusinessException("这条记忆草稿来自你已经清空的对话，不能再写入长期记忆");
+            }
             // 与计划草稿同一条纪律：确认之前 user_ai_memory 一字不动。
             // 用户在弹窗里逐条勾选，这里以提交的条目为准；没带 body 就整份接受。
             List<String> items = memoryItemsToWrite(artifact, editedPlan);

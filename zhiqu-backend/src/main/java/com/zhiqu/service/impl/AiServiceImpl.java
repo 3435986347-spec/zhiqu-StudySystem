@@ -54,6 +54,7 @@ import com.zhiqu.service.ai.stream.ModelStreamAdapterFactory;
 import com.zhiqu.service.ai.stream.ModelStreamRequest;
 import com.zhiqu.service.ai.stream.ModelStreamResult;
 import com.zhiqu.service.ai.stream.NormalizedStreamEvent;
+import com.zhiqu.mapper.SysUserMapper;
 import com.zhiqu.service.memory.LongTermMemoryStore;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.service.support.ConversationLockRegistry;
@@ -111,6 +112,7 @@ public class AiServiceImpl implements AiService {
     private final AiConversationMapper conversationMapper;
     private final AiMessageMapper messageMapper;
     private final UserAiMemoryMapper memoryMapper;
+    private final SysUserMapper userMapper;
     private final UserKnowledgePageMapper knowledgePageMapper;
     private final UserKnowledgeRevisionMapper knowledgeRevisionMapper;
     private final KnowledgePatchSetMapper knowledgePatchSetMapper;
@@ -163,6 +165,7 @@ public class AiServiceImpl implements AiService {
                          WebSearchProvider webSearchProvider,
                          WebResearchService webResearchService,
                          ModelStreamAdapterFactory modelStreamAdapterFactory,
+                         SysUserMapper userMapper,
                          SensitiveCryptoService cryptoService,
                          LongTermMemoryStore memoryStore,
                          ConversationLockRegistry conversationLocks,
@@ -196,6 +199,7 @@ public class AiServiceImpl implements AiService {
         this.webSearchProvider = webSearchProvider;
         this.webResearchService = webResearchService;
         this.modelStreamAdapterFactory = modelStreamAdapterFactory;
+        this.userMapper = userMapper;
         this.cryptoService = cryptoService;
         this.memoryStore = memoryStore;
         this.conversationLocks = conversationLocks;
@@ -1135,6 +1139,12 @@ public class AiServiceImpl implements AiService {
             // 节点在图里但这一轮没挑出条目 → 什么都不做，由 settleUnrunTasks 收成 SKIPPED
             // （与 TASK_DRAFTER 同一个写法）。
             if (s.memoryItems.isEmpty()) {
+                return;
+            }
+            // 本轮进行中用户清空了记忆（占位对被软删、这一轮是成对重建的）：
+            // 连草稿都不该产出，否则用户刚清空就收到一个「AI 想记住这些」的弹窗，
+            // 内容还是从刚被清掉的那段对话里提炼的。确认那一侧另有纪元栅栏兜住晚到的确认。
+            if (s.rebuilt) {
                 return;
             }
             AiAgentTask task = ctx.task("MEMORY_CURATOR");
@@ -2228,6 +2238,9 @@ public class AiServiceImpl implements AiService {
     public void clearMemory(Long userId) {
         // 用户锁 + 短事务:与「会话解析+落库」临界区串行,清空过程中不会有并发写入穿透到软删会话
         conversationLocks.runWithUserLock(userId, () -> conversationTx.executeWithoutResult(tx -> {
+            // 纪元 +1 与删除同事务：在途的 run 拿的是旧纪元，它们的记忆草稿确认时会被拦下。
+            // V27 建了这一列就没再接线，「清空必须获胜」一直只是迁移注释里的一句话。
+            userMapper.bumpMemoryEpoch(userId);
             UserAiMemory memory = getMemoryEntity(userId);
             if (memory != null) {
                 memoryMapper.deleteById(memory.getId());

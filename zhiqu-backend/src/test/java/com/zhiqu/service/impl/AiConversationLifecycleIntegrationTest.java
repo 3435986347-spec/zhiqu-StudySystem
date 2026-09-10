@@ -943,4 +943,50 @@ class AiConversationLifecycleIntegrationTest {
         assertTrue(memoryStore.read(userId).contains("不喜欢在早上学习"),
                 "落库的必须是草稿里的那条，实际：" + memoryStore.read(userId));
     }
+
+    /**
+     * 清空记忆之后，先前那条记忆草稿不得再写进长期记忆。
+     *
+     * <h2>这是 V27 那道栅栏第一次真的生效</h2>
+     *
+     * <p>V27 建了 memory_epoch 并在注释里声明「最终事务比对本列，不匹配则整体丢弃」，
+     * 但 Java 侧一行都没有 —— 列在，机制没写；同期三条名字带 MemoryEpoch 的绿测试
+     * 只测 schema 形状。本条是行为侧的第一条。
+     *
+     * <p><b>栅栏的位置不是 V27 说的那个。</b>V27 指向「迟到回答重建消息对」那条路径，
+     * 但那条路径写的是用户当轮自己刚打的问答，不复活任何旧数据，而且有三条判据钉着它。
+     * 今天真正会复活旧数据的是<b>草稿活得比 run 长</b>：清空之后那条草稿仍躺在面板上，
+     * 点确认就把「已清空对话里提炼的事实」写回长期记忆。run 内那一半由 s.rebuilt 挡，
+     * run 外这一半只能靠纪元。
+     *
+     * <p>对照组是 {@link #记忆草稿确认之前不得写进长期记忆()} —— 那条里没有清空，
+     * 同一个 confirmArtifact 调用是成功的。所以这里的「被拒」不是「确认功能坏了」。
+     *
+     * <p>扰动：拿掉 confirmArtifact 里的纪元比对 → 确认成功，本条红。
+     */
+    @Test
+    void 清空记忆之后旧的记忆草稿不得再写入长期记忆() throws Exception {
+        Long notebookId = createNotebook(userId, "清空后确认草稿");
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "记住我不喜欢在早上学习", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+
+        Long runId = latestRunId(userId, notebookId);
+        List<Map<String, Object>> drafts = jdbcTemplate.queryForList(
+                "SELECT id FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'MEMORY_DRAFT'", runId);
+        assertEquals(1, drafts.size(),
+                "下界：必须真的产出了记忆草稿，否则下面的「确认被拒」测不到任何东西");
+        Long draftId = ((Number) drafts.get(0).get("id")).longValue();
+
+        aiService.clearMemory(userId);
+
+        BusinessException refused = assertThrows(BusinessException.class,
+                () -> aiWorkspaceService.confirmArtifact(userId, draftId, null));
+        assertTrue(String.valueOf(refused.getMessage()).contains("已经清空"),
+                "拒绝理由应说清是清空导致的，实际：" + refused.getMessage());
+
+        Integer rows = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM user_ai_memory WHERE user_id = ?", Integer.class, userId);
+        assertEquals(0, rows, "清空之后长期记忆必须仍是空的 —— 否则「清空」被一次晚到的确认撤销了");
+    }
 }

@@ -18,6 +18,13 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
             """)
     Long lockKnowledgeTreeOwner(@Param("userId") Long userId);
 
+    /** 清空记忆时纪元 +1 —— 在途 run 的快照就此过期，它们的记忆草稿不再能确认。 */
+    @Update("UPDATE sys_user SET memory_epoch = COALESCE(memory_epoch, 0) + 1 WHERE id = #{userId}")
+    int bumpMemoryEpoch(@Param("userId") Long userId);
+
+    @Select("SELECT COALESCE(memory_epoch, 0) FROM sys_user WHERE id = #{userId}")
+    Long currentMemoryEpoch(@Param("userId") Long userId);
+
     @Update("""
             UPDATE sys_user
             SET total_study_minutes = COALESCE(total_study_minutes, 0) + #{minutes},
