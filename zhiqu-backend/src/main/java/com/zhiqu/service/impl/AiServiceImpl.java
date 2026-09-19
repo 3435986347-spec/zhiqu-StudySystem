@@ -325,6 +325,10 @@ public class AiServiceImpl implements AiService {
         // 首次会话解析也要入锁:与删除 Notebook 串行,避免"删除先完成、旧请求随后建出孤儿活动会话"
         AiConversation conversation = conversationLocks.withUserLock(userId,
                 () -> conversationTx.execute(tx -> getOrCreateConversation(userId, notebookId)));
+        // 「清空必须获胜」也要覆盖这条路径。V27 只想到了流式那条 —— 它把快照放在
+        // ai_agent_run.memory_epoch 上，而非流式 chat() 根本没有 run，没地方挂。
+        // 这里用局部变量快照，最终事务里比对，语义与流式一致。
+        Long startEpoch = userMapper.currentMemoryEpoch(userId);
         List<AiMessage> history = getRecentMessages(userId, conversation.getId(), CHAT_HISTORY_LIMIT);
         String memoryText = getMemoryText(userId, limitedQuery(message));
 
@@ -355,6 +359,12 @@ public class AiServiceImpl implements AiService {
         // 全部慢计算完成后,单个锁内短事务成对落库:模型调用期间发生清空/删除时,
         // 要么整对写入复活后的会话(清空),要么整对被归属校验拒绝(删除)——不会只留下一半
         NonStreamChatSave saved = conversationLocks.withUserLock(userId, () -> conversationTx.execute(tx -> {
+            Long liveEpoch = userMapper.currentMemoryEpoch(userId);
+            if (startEpoch != null && liveEpoch != null && !startEpoch.equals(liveEpoch)) {
+                // 与流式一致：整轮丢弃。这条路径没有 run 可以标 CANCELED，只能让接口失败 ——
+                // 和「Notebook 已删除」走同一个形状（归属校验抛 BusinessException）。
+                throw new BusinessException("记忆已清空，本轮回答未保存");
+            }
             AiConversation live = getOrCreateConversation(userId, notebookId);
             AiMessage liveUserMessage = saveChatMessage(userId, live.getId(), "user", limitedMessage);
             Map<String, Object> liveWikiRevision = null;
@@ -549,6 +559,16 @@ public class AiServiceImpl implements AiService {
             // 前端不会收到指向不存在数据的事件。
             // 语义:占位对仍在 → 正常完成;被清空软删且 notebook 仍在 → 迟到问答成对重建;notebook 已删 → 清空胜出,取消 run。
             StreamCompletionResult completion = conversationLocks.withUserLock(userId, () -> conversationTx.execute(tx -> {
+                // 「清空必须获胜」（V27 的字面语义，裁决见 ADR-0002）：run 开始时快照的纪元
+                // 与用户活值不符，说明这一轮进行中用户清空过记忆 —— 整轮丢弃，不重建消息对。
+                // 比对放在最终事务里、用户锁内：clearMemory 也持这把锁，两者串行，
+                // 不存在「比完才清空」的穿透。
+                Long liveEpoch = userMapper.currentMemoryEpoch(userId);
+                if (agentRun.getMemoryEpoch() != null && liveEpoch != null
+                        && !agentRun.getMemoryEpoch().equals(liveEpoch)) {
+                    aiWorkspaceService.cancelRun(agentRun, "记忆已清空，本轮回答已丢弃");
+                    return new StreamCompletionResult(userMessage, assistantMessage, "记忆已清空");
+                }
                 if (messageMapper.selectById(assistantMessage.getId()) != null) {
                     completeAssistantMessage(
                             assistantMessage,
@@ -568,7 +588,7 @@ public class AiServiceImpl implements AiService {
                         live = getOrCreateConversation(userId, notebookId);
                     } catch (BusinessException e) {
                         aiWorkspaceService.cancelRun(agentRun, "Notebook 已删除，迟到回答已丢弃");
-                        return new StreamCompletionResult(userMessage, assistantMessage, true);
+                        return new StreamCompletionResult(userMessage, assistantMessage, "Notebook 已删除");
                     }
                     // 重建的消息对必须带回完整执行链路元数据(requestId/providerType/modelName/agentRunId),
                     // 并把 run 外键与既有 artifact 来源重绑到新行——否则执行轨迹与 done 事件仍指向已软删的旧消息
@@ -602,25 +622,27 @@ public class AiServiceImpl implements AiService {
                 executor.execute(AgentPhase.COMMIT, ctx);
                 settleUnrunTasks(ctx, state);
                 aiWorkspaceService.completeRun(agentRun, state.liveAssistant);
-                return new StreamCompletionResult(state.liveUser, state.liveAssistant, false);
+                return new StreamCompletionResult(state.liveUser, state.liveAssistant, null);
             }));
             if (completion.dropped()) {
-                // 清空胜出:run 已在事务内标记 CANCELED,这里只收敛残余步骤/任务,不发成功 done。
+                // 整轮丢弃:run 已在事务内标记 CANCELED,这里只收敛残余步骤/任务,不发成功 done。
                 // 已出 COMMIT 遍历,ctx 的相位已还原,下面这些事件直发。
-                finishStep(ctx, state, state.finalWriterStep, "Notebook 已删除，迟到回答已丢弃", "dropped=true");
+                String reason = completion.dropReason();
+                finishStep(ctx, state, state.finalWriterStep, reason + "，迟到回答已丢弃", "dropped=true");
                 completeTask(ctx, state, ctx.task("FINAL_WRITER"), Map.of("dropped", true), "Late answer dropped");
                 if (state.plannerStep != null) {
-                    finishStep(ctx, state, state.plannerStep, "Notebook 已删除，计划草稿已取消", "dropped=true");
+                    finishStep(ctx, state, state.plannerStep, reason + "，计划草稿已取消", "dropped=true");
                 }
-                skipTask(ctx, state, ctx.task("PLANNER"), "Notebook deleted");
-                skipTask(ctx, state, ctx.task("TASK_DRAFTER"), "Notebook deleted");
-                skipTask(ctx, state, ctx.task("WIKI_CURATOR"), "Notebook deleted");
+                skipTask(ctx, state, ctx.task("PLANNER"), reason);
+                skipTask(ctx, state, ctx.task("TASK_DRAFTER"), reason);
+                skipTask(ctx, state, ctx.task("WIKI_CURATOR"), reason);
+                skipTask(ctx, state, ctx.task("MEMORY_CURATOR"), reason);
                 Map<String, Object> canceled = new LinkedHashMap<>();
                 canceled.put("requestId", requestId);
                 canceled.put("agentRunId", agentRun.getId());
                 canceled.put("status", "CANCELED");
                 canceled.put("dropped", true);
-                canceled.put("message", "Notebook 已删除，本轮回答未保存");
+                canceled.put("message", reason + "，本轮回答未保存");
                 ctx.emit("done", canceled);
                 return;
             }
@@ -2324,7 +2346,16 @@ public class AiServiceImpl implements AiService {
                                     String summary) {}
 
     /** 流式收尾锁内事务结果：实际存活的消息对（竞态重建时为新行）；dropped=true 表示 notebook 已删，迟到回答被丢弃 */
-    private record StreamCompletionResult(AiMessage userMessage, AiMessage assistantMessage, boolean dropped) {}
+    /**
+     * 最终锁内事务的结果。{@code dropReason} 非 null 表示整轮丢弃 —— 两种原因：
+     * Notebook 已删除，或本轮进行中用户清空了记忆（「清空必须获胜」，见 ADR-0002）。
+     * 原因要带出来，否则收尾的步骤文案与 done 事件会把「清空」说成「Notebook 已删除」。
+     */
+    private record StreamCompletionResult(AiMessage userMessage, AiMessage assistantMessage, String dropReason) {
+        boolean dropped() {
+            return dropReason != null;
+        }
+    }
 
     /** 最终锁内事务中产生、需在事务提交后按序补发的 SSE 事件（事务回滚时不发，避免前端收到指向不存在数据的事件） */
     /** 锁内短事务产出的成对落库结果（非流式：用户/助手消息 + 可选 wiki 草稿） */

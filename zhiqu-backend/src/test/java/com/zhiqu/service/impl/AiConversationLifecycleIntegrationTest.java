@@ -302,8 +302,19 @@ class AiConversationLifecycleIntegrationTest {
         assertEquals("应保留的问题", retainedHistory.get(0).get("content"));
     }
 
+    /**
+     * 清空记忆必须<b>立即完成</b>，不被在途的慢请求阻塞；而那个在途请求整轮作废。
+     *
+     * <p>原来的名字是 {@code …DoesNotResurrectStaleHistory}，钉的是「复活后只包含清空之后的
+     * 新问答对」。按 ADR-0002 反转之后连新问答对也不留，所以断言改成「对话区彻底为空」——
+     * 比原来更强：原来允许一对新消息存在，现在一条都不许有。
+     *
+     * <p><b>「清空不被阻塞」这一半没变</b>，而且是这条判据真正独有的东西：
+     * 它在模型响应中途（不持锁）调 clearMemory，要求它当场返回，不等那个慢请求。
+     * 别因为断言改了就以为这条判据和上面几条重复了。
+     */
     @Test
-    void clearMemoryDuringInFlightChatDoesNotResurrectStaleHistory() throws Exception {
+    void clearMemoryDuringInFlightChatCompletesImmediatelyAndVoidsTheTurn() throws Exception {
         Long notebookId = createNotebook(userId, "清空竞态");
         chat(userId, notebookId, "你好");
         assertEquals(2, aiService.getRecentChatMessages(userId, notebookId, 50).size());
@@ -317,17 +328,24 @@ class AiConversationLifecycleIntegrationTest {
             Future<Map<String, Object>> inFlight = pool.submit(() -> chat(userId, notebookId, "第二个问题"));
             assertTrue(enteredGate.await(10, TimeUnit.SECONDS), "假模型端点应已收到请求");
             // 模型响应中(不持锁)清空记忆:必须立即完成,不被慢请求阻塞
+            long startedAt = System.currentTimeMillis();
             aiService.clearMemory(userId);
+            long elapsed = System.currentTimeMillis() - startedAt;
+            assertTrue(elapsed < 5_000,
+                    "清空必须立即返回，不等在途的慢请求；实际耗时 " + elapsed + "ms");
             blockGate.countDown();
-            inFlight.get(30, TimeUnit.SECONDS);
+            ExecutionException error = assertThrows(ExecutionException.class,
+                    () -> inFlight.get(30, TimeUnit.SECONDS));
+            assertInstanceOf(BusinessException.class, error.getCause());
         } finally {
             pool.shutdownNow();
         }
-        // 迟到写入在锁内重解析会话:复活后只包含清空之后的新问答对,清空前的历史不得重现
-        List<Map<String, Object>> visible = aiService.getRecentChatMessages(userId, notebookId, 50);
-        assertEquals(2, visible.size());
-        assertEquals("第二个问题", visible.get(0).get("content"));
-        assertEquals(0, ((Number) conversationRow(userId, notebookId).get("deleted")).intValue());
+
+        Integer liveMessages = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_message m JOIN ai_conversation c ON c.id = m.conversation_id "
+                        + "WHERE c.user_id = ? AND c.conversation_key = ? AND m.deleted = 0",
+                Integer.class, userId, AiConversation.notebookKey(notebookId));
+        assertEquals(0, liveMessages, "清空之后对话区必须彻底为空：旧历史不得重现，在途那一轮也不得落库");
     }
 
     @Test
@@ -442,8 +460,20 @@ class AiConversationLifecycleIntegrationTest {
         throw new AssertionError("流式 run 未在 30s 内结束");
     }
 
+    /**
+     * 流式进行中清空记忆 → <b>整轮丢弃</b>，不再重建消息对。
+     *
+     * <h2>这条判据钉的行为与此前相反，是刻意反转</h2>
+     *
+     * <p>此前的语义是「迟到问答成对重建到复活的会话里」（判据名
+     * {@code …RebuildsPairInRevivedConversation}），理由是用户正看着答案流式输出，
+     * 丢掉像是消息被吃了。现在按 V27 的字面语义改成「清空必须获胜」：
+     * 用户点了清空，对话区就该是空的，哪怕刚问的那句也不留。裁决与重开条件见 ADR-0002。
+     *
+     * <p>所以这不是回归。看到它红的人请先读 ADR-0002，再决定是改代码还是改预期。
+     */
     @Test
-    void streamClearMemoryDuringModelRebuildsPairInRevivedConversation() throws Exception {
+    void streamClearMemoryDuringModelDropsWholeTurn() throws Exception {
         Long notebookId = createNotebook(userId, "流式清空竞态");
         chat(userId, notebookId, "你好");
         assertEquals(2, aiService.getRecentChatMessages(userId, notebookId, 50).size());
@@ -454,42 +484,24 @@ class AiConversationLifecycleIntegrationTest {
         blockGate = new CountDownLatch(1);
         aiService.streamChat(userId, "流式竞态问题", modelId, false, "OFF", notebookId, "CHAT_ONLY", Map.of());
         assertTrue(enteredGate.await(10, TimeUnit.SECONDS), "假模型端点应已收到流式请求");
-        // 占位对已入库、模型响应中(不持锁):清空软删它们
+        // 占位对已入库、模型响应中(不持锁):清空软删它们，并把 memory_epoch 递增
         aiService.clearMemory(userId);
         blockGate.countDown();
         awaitLatestRunFinished(userId, notebookId);
 
-        // 收尾发现占位对被软删且 notebook 仍在 → 迟到问答成对重建;清空前历史不得重现
-        List<Map<String, Object>> visible = aiService.getRecentChatMessages(userId, notebookId, 50);
-        assertEquals(2, visible.size());
-        assertEquals("流式竞态问题", visible.get(0).get("content"));
-        assertEquals("流式测试回复", visible.get(1).get("content"));
-        assertEquals(0, ((Number) conversationRow(userId, notebookId).get("deleted")).intValue());
+        Integer liveMessages = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_message m JOIN ai_conversation c ON c.id = m.conversation_id "
+                        + "WHERE c.user_id = ? AND c.conversation_key = ? AND m.deleted = 0",
+                Integer.class, userId, AiConversation.notebookKey(notebookId));
+        assertEquals(0, liveMessages,
+                "清空之后对话区必须是空的：清空前的历史不得重现，本轮的问答对也不得写回");
+        assertEquals(1, ((Number) conversationRow(userId, notebookId).get("deleted")).intValue(),
+                "没有重建就不该复活会话行");
 
-        // 重建不只是内容:执行链路元数据必须一并带回,run 的两个消息外键必须重绑到存活的新行,
-        // 否则执行轨迹/artifact/done 事件全都悬挂在已软删的旧消息 ID 上
-        List<Map<String, Object>> liveRows = jdbcTemplate.queryForList(
-                "SELECT m.id, m.role, m.request_id, m.provider_type, m.model_name, m.agent_run_id "
-                        + "FROM ai_message m JOIN ai_conversation c ON c.id = m.conversation_id "
-                        + "WHERE c.user_id = ? AND c.conversation_key = ? AND m.deleted = 0 ORDER BY m.id",
-                userId, AiConversation.notebookKey(notebookId));
-        assertEquals(2, liveRows.size());
-        Map<String, Object> liveUser = liveRows.get(0);
-        Map<String, Object> liveAssistant = liveRows.get(1);
-        assertEquals("user", liveUser.get("role"));
-        assertEquals("assistant", liveAssistant.get("role"));
-        assertNotNull(liveAssistant.get("request_id"), "重建的助手消息应带回 requestId");
-        assertEquals("OPENAI_COMPATIBLE", liveAssistant.get("provider_type"));
-        assertEquals("fake-model", liveAssistant.get("model_name"));
-        assertNotNull(liveUser.get("agent_run_id"), "重建的用户消息应挂回 agentRun");
-        assertNotNull(liveAssistant.get("agent_run_id"), "重建的助手消息应挂回 agentRun");
         Map<String, Object> run = jdbcTemplate.queryForMap(
-                "SELECT status, user_message_id, assistant_message_id FROM ai_agent_run "
-                        + "WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
+                "SELECT status FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
                 userId, notebookId);
-        assertEquals("DONE", run.get("status"));
-        assertEquals(((Number) liveUser.get("id")).longValue(), ((Number) run.get("user_message_id")).longValue());
-        assertEquals(((Number) liveAssistant.get("id")).longValue(), ((Number) run.get("assistant_message_id")).longValue());
+        assertEquals("CANCELED", run.get("status"), "整轮丢弃时 run 必须是 CANCELED 而不是 DONE");
     }
 
     @Test
@@ -600,8 +612,18 @@ class AiConversationLifecycleIntegrationTest {
         assertEquals(1, ((Number) conversationRow(userId, notebookId).get("deleted")).intValue());
     }
 
+    /**
+     * 已经产出过工件的那一轮，清空之后<b>同样</b>整轮丢弃。
+     *
+     * <p>此前这条判据钉的是「检索阶段的 CITATION 工件要重绑到重建后的新消息」。
+     * 不再重建之后那个性质不存在了，但它留下的场景仍然值钱：
+     * <b>这一轮已经干过活了</b>（检索跑完、工件落库），丢弃不能因此打折。
+     * 否则很容易写成「做过事的就保留」，那等于按工作量决定要不要尊重用户的删除意图。
+     *
+     * <p>行为反转的裁决见 ADR-0002。
+     */
     @Test
-    void streamClearMemoryDuringModelRebindsRetrieverArtifactsToRebuiltMessage() throws Exception {
+    void streamClearMemoryDropsTurnEvenAfterArtifactsProduced() throws Exception {
         Long notebookId = createNotebook(userId, "重绑真实工件");
         // 直接种入 READY 资料 + 分块,让 RESEARCH 模式在模型调用前产出真实 CITATION 工件(来源=旧用户消息)
         jdbcTemplate.update(
@@ -624,41 +646,37 @@ class AiConversationLifecycleIntegrationTest {
         blockGate.countDown();
         awaitLatestRunFinished(userId, notebookId);
 
-        // 重建后:run 外键指向存活新行,检索阶段以旧用户消息为来源的 CITATION 工件必须全部改指新行
         Map<String, Object> run = jdbcTemplate.queryForMap(
-                "SELECT id, status, user_message_id, assistant_message_id FROM ai_agent_run "
-                        + "WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
+                "SELECT id, status FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
                 userId, notebookId);
-        assertEquals("DONE", run.get("status"));
-        Long liveUserId = jdbcTemplate.queryForObject(
-                "SELECT m.id FROM ai_message m JOIN ai_conversation c ON c.id = m.conversation_id "
-                        + "WHERE c.user_id = ? AND c.conversation_key = ? AND m.deleted = 0 AND m.role = 'user' "
-                        + "ORDER BY m.id DESC LIMIT 1",
-                Long.class, userId, AiConversation.notebookKey(notebookId));
-        assertNotNull(liveUserId);
-        assertEquals(liveUserId.longValue(), ((Number) run.get("user_message_id")).longValue());
         Long runId = ((Number) run.get("id")).longValue();
+
+        // 下界：这一轮确实产出过带来源的工件，否则「做过事也照样丢」无从谈起
         Integer citationArtifacts = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM ai_agent_artifact WHERE run_id = ? AND source_message_id IS NOT NULL",
                 Integer.class, runId);
         assertTrue(citationArtifacts != null && citationArtifacts >= 1, "检索阶段应产出至少一个带来源的工件");
-        Integer staleArtifacts = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM ai_agent_artifact WHERE run_id = ? AND source_message_id IS NOT NULL "
-                        + "AND source_message_id <> ?",
-                Integer.class, runId, liveUserId);
-        assertEquals(0, staleArtifacts, "重建后不得有工件仍指向已软删的旧用户消息");
+
+        assertEquals("CANCELED", run.get("status"), "做过活的那一轮同样要整轮丢弃");
+        Integer liveMessages = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_message m JOIN ai_conversation c ON c.id = m.conversation_id "
+                        + "WHERE c.user_id = ? AND c.conversation_key = ? AND m.deleted = 0",
+                Integer.class, userId, AiConversation.notebookKey(notebookId));
+        assertEquals(0, liveMessages, "工件已落库，也不得因此把消息对写回来");
     }
 
     /**
-     * 第二次模型调用期间清空记忆 → 消息对必须完整（要么都在、要么都不在，绝不只剩助手）。
+     * 非流式 chat() 第二次模型调用期间清空记忆 → 整个接口失败，消息对不落库。
      *
-     * <p>触发第二次调用的从「记忆整理」换成了「计划提取」：记忆草稿改道到 MEMORY_CURATOR 节点后，
-     * 非流式 chat() 不再抽记忆，原来那句「记住…」只会产生一次调用，闸门永远等不到 ——
-     * 判据会挂在 await 上而不是红在它要钉的性质上。
-     * <b>钉的性质没变</b>，换的只是把慢计算撑开的那次调用是谁发的。
+     * <p>此前钉的是相反的行为（消息对完整保留）。反转理由见 ADR-0002。
+     *
+     * <p><b>V27 没覆盖这条路径</b>：它把纪元快照放在 {@code ai_agent_run.memory_epoch} 上，
+     * 而非流式 chat() 根本没有 run，没地方挂。这里用方法内的局部快照，语义与流式一致 ——
+     * 只是流式那条能把 run 标成 CANCELED，这条只能让接口失败
+     * （与「Notebook 已删除」同一个形状）。
      */
     @Test
-    void chatClearedDuringSecondModelCallKeepsPairIntact() throws Exception {
+    void chatClearedDuringSecondModelCallRejectsWhole() throws Exception {
         Long notebookId = createNotebook(userId, "清空竞态");
         // “生成…计划”触发计划提取的第二次模型调用;在第二次调用期间清空记忆
         requestCounter.set(0);
@@ -672,16 +690,20 @@ class AiConversationLifecycleIntegrationTest {
             assertTrue(enteredGate.await(10, TimeUnit.SECONDS), "计划提取调用应已到达假端点");
             aiService.clearMemory(userId);
             blockGate.countDown();
-            inFlight.get(30, TimeUnit.SECONDS);
+            ExecutionException error = assertThrows(ExecutionException.class,
+                    () -> inFlight.get(30, TimeUnit.SECONDS));
+            assertInstanceOf(BusinessException.class, error.getCause());
+            assertTrue(String.valueOf(error.getCause().getMessage()).contains("记忆已清空"),
+                    "失败原因应说清是清空导致的，实际：" + error.getCause().getMessage());
         } finally {
             pool.shutdownNow();
         }
-        // 成对落库在全部慢计算之后:清空竞态下用户/助手消息要么都在、要么都不在,绝不只剩助手
-        List<Map<String, Object>> visible = aiService.getRecentChatMessages(userId, notebookId, 50);
-        assertEquals(2, visible.size());
-        assertEquals("user", visible.get(0).get("role"));
-        assertEquals("帮我生成一个学习计划", visible.get(0).get("content"));
-        assertEquals("assistant", visible.get(1).get("role"));
+
+        Integer liveMessages = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_message m JOIN ai_conversation c ON c.id = m.conversation_id "
+                        + "WHERE c.user_id = ? AND c.conversation_key = ? AND m.deleted = 0",
+                Integer.class, userId, AiConversation.notebookKey(notebookId));
+        assertEquals(0, liveMessages, "清空之后本轮问答不得落库");
     }
 
     @Test
