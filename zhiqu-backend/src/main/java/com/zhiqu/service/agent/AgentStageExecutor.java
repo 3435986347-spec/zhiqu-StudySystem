@@ -2,9 +2,15 @@ package com.zhiqu.service.agent;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * 图驱动执行器：把每个 runner 的三个动作摊平成 {@code (位置, 动作)}，<b>排一次序</b>，按相位遍历。
@@ -19,6 +25,11 @@ public final class AgentStageExecutor {
     private enum Moment { ANNOUNCE, RUN, COMMIT }
 
     private record Action(AgentPosition position, Moment moment, AgentStageRunner runner) {
+
+        /** 只有 RUN 参与并发；宣告与落库始终顺序执行（理由见 AgentStageRunner.parallelGroup）。 */
+        String concurrentGroup() {
+            return moment == Moment.RUN ? runner.parallelGroup() : null;
+        }
 
         void invoke(AgentRunContext ctx) {
             boolean inGraph = runner.inGraph(ctx);
@@ -84,15 +95,98 @@ public final class AgentStageExecutor {
      * 退出时把相位还原，所以遍历之外（比如事务提交后的收尾）的 emit 一律直发。
      */
     public void execute(AgentPhase phase, AgentRunContext ctx) {
+        execute(phase, ctx, 1);
+    }
+
+    /**
+     * 跑完这一相位上的全部动作，同组的 {@code run} 并发执行。
+     *
+     * @param maxParallel 并发上限（来自 {@code ai_agent_run.max_parallel_tasks}）；
+     *        ≤1 时退化为顺序执行，行为与并发前完全一致。
+     *
+     * <p><b>一个并发组占据其最早成员的位置。</b>组跑完之后才继续推进 ——
+     * 所以夹在组成员位置之间的非组动作会排到组之后，而不是插在组中间。
+     * 并发本来就没有组内次序，依赖组内次序的东西不该放进同一个组。
+     */
+    public void execute(AgentPhase phase, AgentRunContext ctx, int maxParallel) {
         AgentPhase previous = ctx.enterPhase(phase);
         try {
+            List<Action> due = new ArrayList<>();
             for (Action action : actions) {
                 if (action.position().phase() == phase) {
-                    action.invoke(ctx);
+                    due.add(action);
                 }
+            }
+            // 同组的 RUN 在排序后<b>并不相邻</b>：排序键是 (位置, 时刻)，
+            // 于是 A 的 RUN 与 B 的 RUN 中间隔着 A 的 COMMIT 与 B 的 ANNOUNCE。
+            // 按「连续同组」收批的话每批只有一个，并发等于没有 —— 判据第一次跑就逮到了这个。
+            // 所以按组名收集，整组在<b>最早那个成员的位置</b>上一起跑，其余成员到位时跳过。
+            Set<Action> consumed = new HashSet<>();
+            for (Action action : due) {
+                if (consumed.contains(action)) {
+                    continue;
+                }
+                String group = action.concurrentGroup();
+                if (group == null || maxParallel <= 1) {
+                    action.invoke(ctx);
+                    continue;
+                }
+                List<Action> batch = new ArrayList<>();
+                for (Action candidate : due) {
+                    if (group.equals(candidate.concurrentGroup())) {
+                        batch.add(candidate);
+                    }
+                }
+                consumed.addAll(batch);
+                runConcurrently(batch, ctx, maxParallel);
             }
         } finally {
             ctx.enterPhase(previous);
+        }
+    }
+
+    /**
+     * 并发跑一批动作，等全部结束再返回。
+     *
+     * <p><b>任何一条抛出都要原样抛出去</b>：检索阶段的 BusinessException（比如「选择的资料不存在」）
+     * 是要中断整轮的，被并发包装吞掉或换成 ExecutionException 都会让上层的错误路径认不出它。
+     */
+    private void runConcurrently(List<Action> batch, AgentRunContext ctx, int maxParallel) {
+        if (batch.size() == 1) {
+            batch.get(0).invoke(ctx);
+            return;
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(batch.size(), maxParallel));
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (Action action : batch) {
+                futures.add(pool.submit(() -> {
+                    action.invoke(ctx);
+                    return null;
+                }));
+            }
+            RuntimeException failure = null;
+            for (Future<?> future : futures) {
+                try {
+                    future.get();
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause();
+                    // 只记第一个失败，但仍要等完其余的 —— 否则线程池关掉时还有 runner 在写库
+                    if (failure == null) {
+                        failure = cause instanceof RuntimeException runtime
+                                ? runtime
+                                : new IllegalStateException(cause);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("并发检索被中断", e);
+                }
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        } finally {
+            pool.shutdown();
         }
     }
 }

@@ -547,6 +547,29 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         return sortContextRows(rows, query);
     }
 
+    /**
+     * 建完图之后按真实形态订正 {@code execution_mode}。
+     *
+     * <p>beginRun 时图还没建，那一刻写的 SERIAL 只是占位。此前这个字段恒为 SERIAL 且零处读取 ——
+     * 一个与实际执行无关、却会让读者以为系统从不并发的常量。
+     */
+    @Override
+    @Transactional
+    public void markExecutionMode(AiAgentRun run, boolean parallel) {
+        if (run == null) {
+            return;
+        }
+        String mode = parallel ? "PARALLEL" : "SERIAL";
+        if (mode.equals(run.getExecutionMode())) {
+            return;
+        }
+        run.setExecutionMode(mode);
+        AiAgentRun patch = new AiAgentRun();
+        patch.setId(run.getId());
+        patch.setExecutionMode(mode);
+        runMapper.updateById(patch);
+    }
+
     @Override
     @Transactional
     public AiAgentRun beginRun(Long userId, Long notebookId, String agentMode, Map<String, Object> contextOptions,
@@ -563,6 +586,8 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         // 中间用户清空过记忆的话，草稿就是从已被清掉的对话里提炼的，不能再落库。
         run.setMemoryEpoch(userMapper.currentMemoryEpoch(userId));
         run.setContextOptionsJson(toJson(contextOptions == null ? Map.of() : contextOptions));
+        // 建图在 beginRun 之后，此刻还不知道本轮有没有并发组 —— 先按顺序写，
+        // 建完图由 markExecutionMode 按真实形态订正。不在这里猜。
         run.setExecutionMode("SERIAL");
         run.setMaxSteps(20);
         run.setMaxParallelTasks(3);

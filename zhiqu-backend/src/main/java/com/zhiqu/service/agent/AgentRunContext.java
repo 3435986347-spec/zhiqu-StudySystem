@@ -34,9 +34,16 @@ public final class AgentRunContext {
     private final Map<String, AiAgentTask> byType = new LinkedHashMap<>();
     private final BiConsumer<String, Object> directChannel;
     private final List<AgentSseEvent> deferred = new ArrayList<>();
+    private final Object emitLock = new Object();
 
-    /** 当前遍历所处的相位；不在遍历中时为 null（此时 emit 直发）。只有 executor 能改。 */
-    private AgentPhase phase;
+    /**
+     * 当前遍历所处的相位；不在遍历中时为 null（此时 emit 直发）。只有 executor 能改。
+     *
+     * <p><b>volatile</b>：并发组里的 worker 线程要看得见编排线程写进来的相位。
+     * 不加的话 worker 可能读到过期值，于是本该直发的事件被塞进缓冲队列 —— 而且它不会当场出错，
+     * 只表现为「某些事件晚了一个事务才到前端」。
+     */
+    private volatile AgentPhase phase;
 
     public AgentRunContext(List<AiAgentTask> tasks, BiConsumer<String, Object> directChannel) {
         this.tasks = tasks == null ? List.of() : List.copyOf(tasks);
@@ -53,11 +60,15 @@ public final class AgentRunContext {
      * 不是调用方声明的相位（理由见类注释）。
      */
     public void emit(String name, Object payload) {
-        if (phase == AgentPhase.COMMIT) {
-            deferred.add(new AgentSseEvent(name, payload));
-            return;
+        // 并发组里多个 runner 会同时 emit。SseEmitter.send 不是线程安全的，
+        // deferred 也是普通 ArrayList —— 两条路径都要在同一把锁下走。
+        synchronized (emitLock) {
+            if (phase == AgentPhase.COMMIT) {
+                deferred.add(new AgentSseEvent(name, payload));
+                return;
+            }
+            directChannel.accept(name, payload);
         }
-        directChannel.accept(name, payload);
     }
 
     /** 图里这个类型的节点；没有则 null。 */
@@ -86,7 +97,9 @@ public final class AgentRunContext {
 
     /** 事务提交后由编排层补发的缓冲事件。回滚时不发。 */
     public List<AgentSseEvent> deferredEvents() {
-        return List.copyOf(deferred);
+        synchronized (emitLock) {
+            return List.copyOf(deferred);
+        }
     }
 
     /** 只给同包的 {@link AgentStageExecutor} 用。 */

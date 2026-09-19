@@ -86,6 +86,21 @@ public interface AgentStageRunner {
     default void announceSkipped(AgentRunContext ctx) {
     }
 
+    /**
+     * 并发组。同组的 {@link #run} 会在同一相位里<b>并发</b>执行；返回 null 表示不参与并发。
+     *
+     * <p><b>只有 run 并发，宣告与落库始终顺序执行。</b>宣告的次序是 UX（用户按顺序看到 agent 上场），
+     * 落库要往 {@code AgentRunContext} 的缓冲队列里写，那个队列不是并发容器 ——
+     * 而且 COMMIT 整段在一个事务里，并发写库会把事务边界搅乱。
+     *
+     * <p>组内成员仍各占一个唯一的 {@link AgentPosition}（executor 会拒绝抢同一槽位的配置）。
+     * 位置在组内只决定「谁先被提交到线程池」，不决定谁先完成 —— 并发本来就没有组内次序，
+     * 依赖组内次序的东西不该放进同一个组。
+     */
+    default String parallelGroup() {
+        return null;
+    }
+
     /** 工作。 */
     void run(AgentRunContext ctx);
 

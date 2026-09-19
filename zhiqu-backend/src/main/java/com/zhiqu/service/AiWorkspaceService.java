@@ -32,6 +32,9 @@ public interface AiWorkspaceService {
 
     List<Map<String, Object>> sourceContext(Long userId, Long notebookId, Map<String, Object> contextOptions);
 
+    /** 建完图之后按真实形态订正 execution_mode（beginRun 时图还没建）。 */
+    void markExecutionMode(AiAgentRun run, boolean parallel);
+
     AiAgentRun beginRun(Long userId, Long notebookId, String agentMode, Map<String, Object> contextOptions,
                         AiMessage userMessage, AiMessage assistantMessage);
 

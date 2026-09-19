@@ -522,6 +522,10 @@ public class AiServiceImpl implements AiService {
         emitSse(emitter, "stream.start", start);
 
         List<AiAgentTask> taskGraph = multiAgentOrchestrator.plan(agentRun, decision, notebookId);
+        // 图建完了，此刻才知道本轮是不是真有并发组（两路检索节点都在）
+        aiWorkspaceService.markExecutionMode(agentRun,
+                taskGraph.stream().anyMatch(t -> "CONTEXT_RESEARCHER".equals(t.getAgentType()))
+                        && taskGraph.stream().anyMatch(t -> "WEB_RESEARCHER".equals(t.getAgentType())));
         AgentRunContext ctx = new AgentRunContext(taskGraph, (name, payload) -> emitSse(emitter, name, payload));
         StreamState state = new StreamState(requestId, agentRun, config, userId, notebookId, limitedMessage,
                 contextOptions, Boolean.TRUE.equals(enableWebSearch), normalizedReasoningMode,
@@ -537,6 +541,8 @@ public class AiServiceImpl implements AiService {
         AgentStageExecutor executor = new AgentStageExecutor(List.of(
                 new OrchestratorRunner(state),
                 new RetrieverRunner(state),
+                new ContextResearcherRunner(state),
+                new WebResearcherRunner(state),
                 new VerifierRunner(state),
                 new PlannerRunner(state),
                 new WikiToolAgentRunner(state),
@@ -548,7 +554,9 @@ public class AiServiceImpl implements AiService {
                 new TaskDrafterRunner(state),
                 new WikiCuratorRunner(state)));
         try {
-            executor.execute(AgentPhase.PRE_STREAM, ctx);
+            // 只有 PRE_STREAM 有并发组（两路检索）。其余相位传 1，行为与并发前逐字相同 ——
+            // STREAM 是单次流式调用，COMMIT 整段在一个事务里、且要往非并发的缓冲队列写。
+            executor.execute(AgentPhase.PRE_STREAM, ctx, maxParallelTasks(agentRun));
             executor.execute(AgentPhase.STREAM, ctx);
             // ---- 慢计算阶段(锁外、无 DB 写):记忆整理与计划提取都可能再次调用模型,
             // 必须全部完成后才进入最终锁内事务——否则第二阶段模型调用期间的清空/删除会穿透:
@@ -723,6 +731,9 @@ public class AiServiceImpl implements AiService {
         private List<Map<String, Object>> notebookContextRows = List.of();
         private List<WebSearchProvider.SearchResult> citations = List.of();
         private final List<Long> evidenceIds = new ArrayList<>();
+        /** 两路检索各写各的；合并在 RetrieverRunner#10 —— 不共享可变容器，就不需要并发容器。 */
+        private final List<Long> contextEvidenceIds = new ArrayList<>();
+        private final List<Long> webEvidenceIds = new ArrayList<>();
         private List<Map<String, Object>> webCitationRows = List.of();
         private Map<String, Object> retrievalStatus;
         private final List<Map<String, Object>> allCitationRows = new ArrayList<>();
@@ -821,6 +832,8 @@ public class AiServiceImpl implements AiService {
         }
 
         @Override public String agentType() { return "RETRIEVER"; }
+        // 宣告在两路 IO 之前（它们要往这个 step 上挂工件），工作在两路之后（合并要等两边都完）
+        @Override public AgentPosition announceAt() { return AgentPosition.at(AgentPhase.PRE_STREAM, 5); }
         @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.PRE_STREAM, 10); }
 
         /** 图里的节点类型可能是三种专职 researcher 之一，不一定叫 RETRIEVER。 */
@@ -842,46 +855,21 @@ public class AiServiceImpl implements AiService {
             emitRetrievalStatus(ctx, s);
         }
 
+        /**
+         * 合并点：两路检索都跑完之后才有完整证据集。
+         *
+         * <p>本 runner 的宣告在 {@code PRE_STREAM#5}（两路 IO 之前 —— 它们要往这个 step 上挂工件），
+         * 工作在 {@code #10}（两路之后）。<b>两个位置分处并发段两侧，正是 AgentPosition 的用途。</b>
+         * 合并写在这里而不是另造一个 runner：那会是一个没有图节点的执行单元，
+         * 正是刚消灭掉的东西。
+         */
         @Override
         public void run(AgentRunContext ctx) {
-            Map<String, Object> retrievalOptions =
-                    new LinkedHashMap<>(s.contextOptions == null ? Map.of() : s.contextOptions);
-            retrievalOptions.put(ContextOptionKeys.QUERY, s.limitedMessage);
-            s.notebookContextRows = aiWorkspaceService.sourceContext(s.userId, s.notebookId, retrievalOptions);
-            s.citations = s.webSearchEnabled ? webResearchService.research(s.limitedMessage, s.history) : List.of();
-            s.webCitationRows = citationRows(s.citations);
-            s.retrievalStatus = retrievalStatus(s.citations);
-
+            // 次序固定：先本地上下文、后联网。并发的是两次 IO，不是证据的排列 ——
+            // 证据顺序进 claim 与提示词，不定序会让同一个问题每次得到不同的上下文排列。
+            s.evidenceIds.addAll(s.contextEvidenceIds);
+            s.evidenceIds.addAll(s.webEvidenceIds);
             AiAgentTask researchTask = researchTask(ctx);
-            for (Map<String, Object> item : s.notebookContextRows) {
-                AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
-                        s.agentRun.getId(), s.retrieverStep.getId(), "CITATION",
-                        stringValue(item.get("title")), item, s.userMessage.getId());
-                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, s.retrieverStep, artifact));
-                AiAgentEvidence evidence = agentBlackboardService.createEvidence(
-                        s.agentRun.getId(), researchTask == null ? null : researchTask.getId(),
-                        s.retrieverStep.getId(), stringValue(item.get("sourceType")),
-                        String.valueOf(item.getOrDefault("sourceId", "")), artifact.getId(),
-                        stringValue(item.get("content")), item);
-                s.evidenceIds.add(evidence.getId());
-                ctx.emit("evidence.created", evidenceEvent(s.requestId, s.agentRun, evidence));
-            }
-            for (Map<String, Object> citation : s.webCitationRows) {
-                ctx.emit("citation", withStreamMeta(citation, s.requestId, s.assistantMessage.getId()));
-                String artifactType = isSuccessfulCitation(citation) ? "CITATION" : "FAILED_SOURCE";
-                AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
-                        s.agentRun.getId(), s.retrieverStep.getId(), artifactType,
-                        stringValue(citation.get("title")), citation, s.userMessage.getId());
-                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, s.retrieverStep, artifact));
-                if (isSuccessfulCitation(citation)) {
-                    AiAgentEvidence evidence = agentBlackboardService.createEvidence(
-                            s.agentRun.getId(), researchTask == null ? null : researchTask.getId(),
-                            s.retrieverStep.getId(), "WEB_PAGE", stringValue(citation.get("url")),
-                            artifact.getId(), stringValue(citation.get("snippet")), citation);
-                    s.evidenceIds.add(evidence.getId());
-                    ctx.emit("evidence.created", evidenceEvent(s.requestId, s.agentRun, evidence));
-                }
-            }
             if (!s.evidenceIds.isEmpty()) {
                 AiAgentClaim claim = agentBlackboardService.createClaim(
                         s.agentRun.getId(), s.retrieverStep.getId(),
@@ -921,6 +909,99 @@ public class AiServiceImpl implements AiService {
                 }
             }
             return null;
+        }
+    }
+
+    /** 同组并发的组名；组内成员的 run 会被一起提交到线程池。 */
+    private static final String RESEARCH_GROUP = "research";
+
+    /**
+     * 本地上下文检索：Notebook 资料 + Wiki 页，<b>一次 RAG 调用</b>（Wiki 在 ScopeSelection 里）。
+     *
+     * <p>与 {@link WebResearcherRunner} 同组并发 —— 两者是真正独立的两次 IO，
+     * 各写各的 StreamState 字段，唯一的汇合点是 {@link RetrieverRunner} 在 {@code #10} 的合并。
+     */
+    private final class ContextResearcherRunner implements AgentStageRunner {
+        private final StreamState s;
+
+        private ContextResearcherRunner(StreamState s) {
+            this.s = s;
+        }
+
+        @Override public String agentType() { return "CONTEXT_RESEARCHER"; }
+        @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.PRE_STREAM, 8); }
+        @Override public String parallelGroup() { return RESEARCH_GROUP; }
+
+        /**
+         * 兜底 RETRIEVER 节点也由本 runner 承担：那是「需要检索但三种专职节点都没造出来」的情形
+         * （比如 RESEARCH 模式、无 notebook、无 wiki、不联网），检索动作仍然是 sourceContext。
+         * 这是一处<b>正当</b>的多键覆盖，与 RETRIEVER 此前查一组类型同理。
+         */
+        @Override
+        public boolean inGraph(AgentRunContext ctx) {
+            return ctx.hasAnyTask("CONTEXT_RESEARCHER", "RETRIEVER");
+        }
+
+        @Override
+        public void run(AgentRunContext ctx) {
+            Map<String, Object> retrievalOptions =
+                    new LinkedHashMap<>(s.contextOptions == null ? Map.of() : s.contextOptions);
+            retrievalOptions.put(ContextOptionKeys.QUERY, s.limitedMessage);
+            s.notebookContextRows = aiWorkspaceService.sourceContext(s.userId, s.notebookId, retrievalOptions);
+
+            AiAgentTask researchTask = ctx.task("CONTEXT_RESEARCHER") != null
+                    ? ctx.task("CONTEXT_RESEARCHER") : ctx.task("RETRIEVER");
+            for (Map<String, Object> item : s.notebookContextRows) {
+                AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
+                        s.agentRun.getId(), s.retrieverStep.getId(), "CITATION",
+                        stringValue(item.get("title")), item, s.userMessage.getId());
+                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, s.retrieverStep, artifact));
+                AiAgentEvidence evidence = agentBlackboardService.createEvidence(
+                        s.agentRun.getId(), researchTask == null ? null : researchTask.getId(),
+                        s.retrieverStep.getId(), stringValue(item.get("sourceType")),
+                        String.valueOf(item.getOrDefault("sourceId", "")), artifact.getId(),
+                        stringValue(item.get("content")), item);
+                s.contextEvidenceIds.add(evidence.getId());
+                ctx.emit("evidence.created", evidenceEvent(s.requestId, s.agentRun, evidence));
+            }
+        }
+    }
+
+    /** 联网检索：抓网页。与 {@link ContextResearcherRunner} 同组并发。 */
+    private final class WebResearcherRunner implements AgentStageRunner {
+        private final StreamState s;
+
+        private WebResearcherRunner(StreamState s) {
+            this.s = s;
+        }
+
+        @Override public String agentType() { return "WEB_RESEARCHER"; }
+        @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.PRE_STREAM, 9); }
+        @Override public String parallelGroup() { return RESEARCH_GROUP; }
+
+        @Override
+        public void run(AgentRunContext ctx) {
+            s.citations = s.webSearchEnabled ? webResearchService.research(s.limitedMessage, s.history) : List.of();
+            s.webCitationRows = citationRows(s.citations);
+            s.retrievalStatus = retrievalStatus(s.citations);
+
+            AiAgentTask researchTask = ctx.task("WEB_RESEARCHER");
+            for (Map<String, Object> citation : s.webCitationRows) {
+                ctx.emit("citation", withStreamMeta(citation, s.requestId, s.assistantMessage.getId()));
+                String artifactType = isSuccessfulCitation(citation) ? "CITATION" : "FAILED_SOURCE";
+                AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
+                        s.agentRun.getId(), s.retrieverStep.getId(), artifactType,
+                        stringValue(citation.get("title")), citation, s.userMessage.getId());
+                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, s.retrieverStep, artifact));
+                if (isSuccessfulCitation(citation)) {
+                    AiAgentEvidence evidence = agentBlackboardService.createEvidence(
+                            s.agentRun.getId(), researchTask == null ? null : researchTask.getId(),
+                            s.retrieverStep.getId(), "WEB_PAGE", stringValue(citation.get("url")),
+                            artifact.getId(), stringValue(citation.get("snippet")), citation);
+                    s.webEvidenceIds.add(evidence.getId());
+                    ctx.emit("evidence.created", evidenceEvent(s.requestId, s.agentRun, evidence));
+                }
+            }
         }
     }
 
@@ -1679,6 +1760,12 @@ public class AiServiceImpl implements AiService {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    /** run 上声明的并发上限；缺失或非法时按 1（顺序）走，不猜一个默认值。 */
+    private int maxParallelTasks(AiAgentRun run) {
+        Integer declared = run == null ? null : run.getMaxParallelTasks();
+        return declared == null || declared < 1 ? 1 : declared;
     }
 
     private void emitRetrievalStatus(AgentRunContext ctx, StreamState s) {
