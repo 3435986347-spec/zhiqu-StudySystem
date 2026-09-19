@@ -49,7 +49,7 @@ public interface AgentStageRunner {
     /**
      * 本轮图里有没有这个节点。默认按 {@link #agentType()} 查图。
      *
-     * <h2>覆盖它的地方一共四处，分三类 —— grep 到这里的人不必自己重推</h2>
+     * <h2>覆盖它的地方一共三处，分两类 —— grep 到这里的人不必自己重推</h2>
      *
      * <p><b>这张表没有任何东西会因为它过时而红。</b>加/减一处覆盖时必须手动改这里 ——
      * 图那一侧倒是有保护（{@code GraphCase} 钉住了每个用例造出的节点集合，新增节点会直接红）。
@@ -63,15 +63,12 @@ public interface AgentStageRunner {
      *       <td rowspan="2"><b>还没被图管住</b>：图里根本没有它们的节点。
      *           建节点会让执行轨迹多出用户此前看不到的 agent，是行为变化，各自单独一轮做</td></tr>
      *   <tr><td>PLAN_EXTRACTOR</td><td>恒真</td></tr>
-     *   <tr><td>WIKI_CURATOR</td><td>恒真</td>
-     *       <td><b>被图管着却不理图（重一档）</b>：图里<b>有</b>它的节点
-     *           （{@code needsWikiCurator} 会造），但 runner 不问那个节点，
-     *           改用自己的 {@code looksWikiWriteIntent}。两个门形状不同（OR vs AND），
-     *           偏差是系统性的 —— 说明见该 runner 的类注释</td></tr>
      * </table>
      *
-     * <p>MEMORY_CURATOR 曾在第二类里（那时它叫 MEMORY_EXTRACTOR）。它现在有自己的图节点
-     * （{@link AgentPlanDecision#needsMemoryDraft()} 决定造不造），不再覆盖本方法。
+     * <p>两个 runner 曾经在这张表里、现在不在：MEMORY_CURATOR（那时叫 MEMORY_EXTRACTOR）
+     * 有了自己的图节点；WIKI_CURATOR 曾属于<b>被图管着却不理图</b>那一类 ——
+     * 图里有它的节点，runner 却不问，改用一个与建图侧<b>形状不同</b>的门（AND vs OR），
+     * 两个方向都漏。两个门已统一到 {@link AgentPlanDecision#wikiWriteIntent}，后门随之删除。
      */
     default boolean inGraph(AgentRunContext ctx) {
         return ctx.task(agentType()) != null;

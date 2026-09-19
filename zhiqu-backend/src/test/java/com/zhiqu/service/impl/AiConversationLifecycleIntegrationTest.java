@@ -2,6 +2,7 @@ package com.zhiqu.service.impl;
 
 import com.sun.net.httpserver.HttpServer;
 import com.zhiqu.common.BusinessException;
+import java.util.ArrayList;
 import com.zhiqu.entity.AiConversation;
 import com.zhiqu.service.memory.LongTermMemoryStore;
 import com.zhiqu.service.AiService;
@@ -91,6 +92,22 @@ class AiConversationLifecycleIntegrationTest {
     private static volatile String blockWhenBodyContains;
     /** 记忆整理器系统提示词的开头，用来在请求体里认出这次调用是它发的。 */
     private static final String MEMORY_PROMPT_MARK = "你是长期记忆整理器";
+
+    /**
+     * 从记忆整理请求体里切出「用户新消息」那一段。
+     *
+     * <p>整理器的输入依次是「当前长期记忆 / 用户新消息 / 助手回复摘要」三段。
+     * 假端点必须只看中间那段：前后两段都会回显别处来的文本，在整个请求体上做 contains
+     * 会把它们也算成「用户说了」。
+     */
+    private static String userSaidSection(String requestBody) {
+        int from = requestBody.indexOf("用户新消息：");
+        if (from < 0) {
+            return "";
+        }
+        int to = requestBody.indexOf("助手回复摘要：", from);
+        return to < 0 ? requestBody.substring(from) : requestBody.substring(from, to);
+    }
     private static final java.util.concurrent.atomic.AtomicInteger requestCounter =
             new java.util.concurrent.atomic.AtomicInteger();
     /**
@@ -124,9 +141,28 @@ class AiConversationLifecycleIntegrationTest {
             boolean streaming = requestBody.contains("\"stream\":true") || requestBody.contains("\"stream\": true");
             // 记忆整理器要的是 JSON 数组；回「测试回复」的话 parseMemoryItems 永远返回空，
             // 草稿那条路径就一次也走不到（而判据会以为「本轮没有值得记的」）。
-            String content = requestBody.contains(MEMORY_PROMPT_MARK)
-                    ? "[\\\"不喜欢在早上学习\\\"]"
-                    : "测试回复";
+            String content = "测试回复";
+            if (requestBody.contains(MEMORY_PROMPT_MARK)) {
+                String said = userSaidSection(requestBody);
+                // 按用户消息给不同条目：两条草稿内容不同，并发确认时「丢更新」才看得见。
+                // 都回同一条的话，丢了一条也和成功合并长得一模一样。
+                //
+                // 只在「用户新消息」那一段里匹配，不扫整个请求体 —— 这个坑在本测试里踩了两次：
+                //   ① 用「考研」做判别，而提示词自己举的例子就是 ["目标是 2027 年考研", …]，每次都命中；
+                //   ② 改用「线性代数」，而提示词会回显「当前长期记忆」，第一条确认之后它也每次都命中。
+                // 两次都是同一件事：contains 分不出「用户说了」和「文本里提到」。
+                // 换词治不了（返回的条目最终会进记忆、再被回显），只能限定匹配区域 ——
+                // 和判据里「剥掉注释再查」是同一个动作。
+                content = said.contains("线性代数")
+                        ? "[\\\"薄弱科目是线性代数\\\"]"
+                        : said.contains("十点睡")
+                        ? "[\\\"习惯每天十点睡\\\"]"
+                        : said.contains("高等数学")
+                        ? "[\\\"薄弱科目还有高等数学\\\"]"
+                        : said.contains("六点起")
+                        ? "[\\\"习惯六点起床\\\"]"
+                        : "[\\\"不喜欢在早上学习\\\"]";
+            }
             if (streaming) {
                 lastStreamingRequestBody = requestBody;
             }
@@ -712,9 +748,15 @@ class AiConversationLifecycleIntegrationTest {
                         Set.of("TASK_DRAFTER"),
                         "命中 needsTaskDraft 造出节点，而模型没解析出计划 → 那段 if 整个不进"),
                 new GraphCase("知识库里有什么",
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "VERIFIER", "FINAL_WRITER"),
+                        Set.of(),
+                        "wiki 读问题：两个门统一成 AND 之后不再造 WIKI_CURATOR。"
+                                + "此前建图侧平表 OR 命中「知识库」就造，每一次这样的提问都留下一个跑不了的节点"),
+                new GraphCase("把这个存入我的笔记",
                         Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "WIKI_CURATOR", "VERIFIER", "FINAL_WRITER"),
-                        Set.of("WIKI_CURATOR"),
-                        "建图侧 OR 命中「知识库」，执行侧 AND 还要写动词 → 结构上不可能运行"),
+                        Set.of(),
+                        "反方向：写请求但没提 wiki/知识库。此前建图侧不含「笔记」，"
+                                + "于是工件产出了、图里没有节点（隐形 agent）"),
                 new GraphCase("记住我不喜欢在早上学习",
                         Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "MEMORY_CURATOR", "VERIFIER", "FINAL_WRITER"),
                         Set.of(),
@@ -988,5 +1030,112 @@ class AiConversationLifecycleIntegrationTest {
         Integer rows = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM user_ai_memory WHERE user_id = ?", Integer.class, userId);
         assertEquals(0, rows, "清空之后长期记忆必须仍是空的 —— 否则「清空」被一次晚到的确认撤销了");
+    }
+
+    /** 跑一轮带记忆意图的流式对话，返回这一轮产出的 MEMORY_DRAFT 工件 id。 */
+    private Long produceMemoryDraft(Long notebookId, String message) throws Exception {
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, message, modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        Long runId = latestRunId(userId, notebookId);
+        List<Map<String, Object>> drafts = jdbcTemplate.queryForList(
+                "SELECT id FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'MEMORY_DRAFT'", runId);
+        assertEquals(1, drafts.size(), "「" + message + "」应产出一条记忆草稿");
+        return ((Number) drafts.get(0).get("id")).longValue();
+    }
+
+    /**
+     * 并发确认<b>两条不同的</b>记忆草稿，两条都必须留在长期记忆里。
+     *
+     * <h2>这是读—改—写，不是追加</h2>
+     *
+     * <p>{@code user_ai_memory} 每用户一行自由文本，{@code appendItems} 的动作是
+     * 「读出全文 → 合并新条目 → 整份写回」。两个确认同时进来，双方都读到同一份旧全文，
+     * 后写的那份覆盖先写的 —— 用户勾了两批条目，最后只留下一批，<b>而且两个请求都返回成功</b>。
+     *
+     * <p>用两条<b>内容不同</b>的草稿才测得到：都回同一条的话，丢了一条和成功合并在库里完全同形。
+     *
+     * <p>首次写入还有第二种表现：{@code user_ai_memory.user_id} 是 UNIQUE（V4:30），
+     * 两个 INSERT 撞唯一键，一方直接异常。
+     */
+    /** 同时确认两条草稿。 */
+    private void confirmConcurrently(Long draftA, Long draftB) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch go = new CountDownLatch(1);
+            List<Future<?>> futures = new ArrayList<>();
+            for (Long draftId : List.of(draftA, draftB)) {
+                futures.add(pool.submit(() -> {
+                    ready.countDown();
+                    go.await(10, TimeUnit.SECONDS);
+                    aiWorkspaceService.confirmArtifact(userId, draftId, null);
+                    return null;
+                }));
+            }
+            assertTrue(ready.await(10, TimeUnit.SECONDS), "两个确认线程都应就绪");
+            go.countDown();
+            for (Future<?> future : futures) {
+                future.get(30, TimeUnit.SECONDS);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * 首次写入的并发：记忆行还不存在时同时确认两条草稿。
+     *
+     * <p>这一半是<b>响的</b> —— {@code user_ai_memory.user_id} 是 UNIQUE（V4:30），
+     * 两个 INSERT 直接撞唯一键，一方抛异常。响不代表无害：用户勾了条目、点了确认、收到报错，
+     * 而另一批条目是否写进去全看运气。
+     *
+     * <p>扰动：去掉 {@code appendItems} 里的用户行锁与加锁读 → Duplicate entry for key
+     * 'user_ai_memory.user_id'。
+     */
+    @Test
+    void 并发确认两条记忆草稿_首次写入不得撞唯一键() throws Exception {
+        Long notebookId = createNotebook(userId, "并发首次写入");
+        Long draftA = produceMemoryDraft(notebookId, "记住我的薄弱科目是线性代数");
+        Long draftB = produceMemoryDraft(notebookId, "记住我打算每天晚上十点睡");
+
+        confirmConcurrently(draftA, draftB);
+
+        String memory = memoryStore.read(userId);
+        assertTrue(memory.contains("线性代数") && memory.contains("十点睡"),
+                "两条草稿都确认过，两条都必须在长期记忆里。实际：" + memory);
+    }
+
+    /**
+     * 已有记忆时的并发：这一半是<b>静默的</b>，比上一条危险。
+     *
+     * <p>{@code appendItems} 是「读出全文 → 合并 → 整份写回」，不是追加。记忆行已存在时，
+     * 两个确认各基于同一份旧全文做合并，后写的整份覆盖先写的 —— 用户勾了两批条目，
+     * 最后只留一批，<b>而且两个请求都返回成功</b>。没有异常、没有报错，
+     * 用户唯一能察觉的方式是事后发现 AI 不记得某件事。
+     *
+     * <p>所以它必须有自己的判据：上一条靠唯一键兜底，这一条什么都没有。
+     *
+     * <p>扰动：去掉用户行锁与加锁读 → 四条里丢掉两条，断言点名是哪条不见了。
+     */
+    @Test
+    void 并发确认两条记忆草稿_已有记忆时不得丢更新() throws Exception {
+        Long notebookId = createNotebook(userId, "并发更新记忆");
+        // 先让记忆行存在，把上一条覆盖的「首次写入」那一半排除掉，
+        // 这样本条红起来只可能是因为覆盖写，不是因为撞唯一键
+        aiService.saveMemory(userId, "- 既有记忆条目");
+        assertTrue(memoryStore.read(userId).contains("既有记忆条目"), "前置：记忆行必须已存在");
+
+        Long draftC = produceMemoryDraft(notebookId, "记住我的薄弱科目还有高等数学");
+        Long draftD = produceMemoryDraft(notebookId, "记住我打算六点起床");
+
+        confirmConcurrently(draftC, draftD);
+
+        String memory = memoryStore.read(userId);
+        for (String expected : List.of("既有记忆条目", "高等数学", "六点起床")) {
+            assertTrue(memory.contains(expected),
+                    "「" + expected + "」不见了 —— 读—改—写被整份覆盖，而两个确认都返回了成功。实际："
+                            + memory.replace("\n", " / "));
+        }
     }
 }

@@ -772,6 +772,12 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             // 「清空必须获胜」：草稿活得比 run 长，用户清空记忆之后这条草稿仍躺在面板上，
             // 点确认就会把「已清空对话里提炼出来的事实」写回长期记忆 —— 那是真正的数据复活。
             // run 开始时快照的纪元与用户活值不符，说明中间清空过，拒绝。
+            //
+            // 覆盖边界（写在判断旁边，别让它变成第二句 V27）：本检查<b>不</b>覆盖
+            // 「读活值与写记忆之间恰好插进一次 clearMemory」那个事务内的毫秒级窗口 ——
+            // clearMemory 持 conversationLocks 的用户锁，confirmArtifact 不持（它是 @Transactional，
+            // 仓库既有次序是锁在事务外，在事务里再套锁是反的）。与 upsertMemory 同形状。
+            // 它消掉的是「草稿整个生命周期都能复活记忆」，不是「清空必然获胜」。
             Long snapshot = run.getMemoryEpoch();
             Long live = userMapper.currentMemoryEpoch(userId);
             if (snapshot != null && live != null && !snapshot.equals(live)) {

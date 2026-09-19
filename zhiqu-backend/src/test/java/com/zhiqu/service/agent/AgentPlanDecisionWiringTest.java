@@ -65,7 +65,10 @@ class AgentPlanDecisionWiringTest {
             "shouldRunRetriever", "shouldRunPlanner", "shouldPlan", "shouldDraftTasks", "shouldCurateWiki",
             // 第六个：MEMORY_CURATOR 有了图节点之后，「这轮值不值得记」建图侧和执行侧都要问，
             // 留在 AiServiceImpl 里就是下一次分叉的种子
-            "looksMemoryWorthy");
+            "looksMemoryWorthy",
+            // 第七个：WIKI_CURATOR 的门。它和建图侧形状不同（AND vs OR），两个方向都漏 ——
+            // 有节点跑不了（常见）、没节点却产出（偶发）。统一后不许再在实现里长回来。
+            "looksWikiWriteIntent");
 
     @Test
     void 意图判定只能有一处() throws IOException {
@@ -132,6 +135,31 @@ class AgentPlanDecisionWiringTest {
                 Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L)));
         assertFalse(chatOnly.needsRetriever(), "CHAT_ONLY 不检索");
         assertFalse(chatOnly.needsPlanner(), "CHAT_ONLY 不跑 planner");
+    }
+
+    /**
+     * WIKI_CURATOR 的门：建图与执行此前<b>形状</b>不同（OR vs AND），两个方向都漏。
+     *
+     * <p>两条用例各钉一个方向，且互为对方的反例 —— 把门改回平表 OR，第 ① 条红；
+     * 把提及词表缩回只有 {@code wiki|知识库}，第 ② 条红。单独任何一条都挡不住另一头。
+     */
+    @Test
+    void wiki门_两个方向都不许再漏() {
+        // ① 读问题不得造 curator 节点。平表 OR 命中「知识库」就造，
+        //    于是每一次最普通的 wiki 读问题都留下一个结构上不可能运行的节点。
+        assertFalse(AgentPlanDecision.of("AUTO", "知识库里有什么", false, null, Map.of()).needsWikiCurator(),
+                "「知识库里有什么」没有写动词，不该造 WIKI_CURATOR —— 造了也跑不了，只会被扫掉");
+
+        // ② 写请求必须造节点，即使没提 wiki/知识库。执行侧的提及词表含「笔记」，
+        //    建图侧此前不含 → 工件产出了、图里没有节点（隐形 agent）。
+        assertTrue(AgentPlanDecision.of("AUTO", "把这个存入我的笔记", false, null, Map.of()).needsWikiCurator(),
+                "「存入我的笔记」是写请求，必须造出 WIKI_CURATOR —— 否则草稿产出了而执行轨迹里看不到");
+
+        // 两头都要：提及但不写、写但不提及，都不算
+        assertFalse(AgentPlanDecision.of("AUTO", "帮我保存一下", false, null, Map.of()).needsWikiCurator(),
+                "只有写动词、没提到 Wiki，不是 Wiki 写请求");
+        assertTrue(AgentPlanDecision.wikiWriteIntent("把结论写进知识库"),
+                "同时提到知识库与写动词，必须判为写意图");
     }
 
     @Test

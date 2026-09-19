@@ -2,6 +2,7 @@ package com.zhiqu.service.impl;
 
 import org.junit.jupiter.api.Test;
 
+import com.zhiqu.service.agent.AgentPlanDecision;
 import java.lang.reflect.Method;
 import java.util.HashSet;
 import java.util.Set;
@@ -92,8 +93,14 @@ class WikiToolGuardTest {
         return invokeBoolean("looksWikiToolIntent", new Class<?>[]{String.class}, message);
     }
 
+    /**
+     * 写意图的判定已从 {@code AiServiceImpl} 搬到 {@link AgentPlanDecision#wikiWriteIntent}
+     * —— 它是<b>公开</b>的单点定义，建图、执行、工具下发三处共用，所以这里直接调，不再走反射。
+     *
+     * <p>搬走的原因：建图侧此前是形状不同的另一个门（平表 OR），两个方向都漏。
+     */
     private static boolean looksWikiWriteIntent(String message) {
-        return invokeBoolean("looksWikiWriteIntent", new Class<?>[]{String.class}, message);
+        return AgentPlanDecision.wikiWriteIntent(message);
     }
 
     private static boolean invokeBoolean(String name, Class<?>[] parameterTypes, Object... args) {

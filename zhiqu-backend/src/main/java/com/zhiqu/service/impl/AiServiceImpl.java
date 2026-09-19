@@ -346,7 +346,7 @@ public class AiServiceImpl implements AiService {
 
         AiCallResult aiCallResult = callAiApiDetailed(config, messages, normalizedReasoningMode);
         String reply = aiCallResult.content();
-        boolean wikiWriteRequested = looksWikiWriteIntent(limitedMessage);
+        boolean wikiWriteRequested = AgentPlanDecision.wikiWriteIntent(limitedMessage);
         // 计划提取可能再次调用模型:锁外只做慢计算;落库延后到锁内事务、归属校验之后——
         // 否则第二阶段模型调用期间删除 Notebook,接口"成功"返回已被删除的消息 ID 与计划建议。
         // 记忆草稿不在这条路径上产出:它是 MEMORY_CURATOR 节点的产物，而非流式 chat() 没有 agent run，
@@ -1128,7 +1128,7 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void run(AgentRunContext ctx) {
-            if (looksWikiWriteIntent(s.limitedMessage)) {
+            if (AgentPlanDecision.wikiWriteIntent(s.limitedMessage)) {
                 return;
             }
             s.memoryItems = computeMemoryDraftItems(s.config, s.userId, s.limitedMessage, s.finalReply);
@@ -1337,28 +1337,9 @@ public class AiServiceImpl implements AiService {
      * Wiki 草稿兜底：工具循环已把写操作落成「待合入变更」草稿时，不再重复生成 WIKI_DRAFT 工件
      * （避免同一请求两套草稿链路）。
      *
-     * <h2>两个门不是词表不同，是<b>形状</b>不同 —— 所以偏差是系统性的，不是偶发</h2>
-     *
-     * <pre>
-     *   建图侧 AgentPlanDecision:  平表 OR，<b>不要求写动词</b>
-     *       wiki | 知识库 | 知识 wiki | 写进知识
-     *   执行侧 looksWikiWriteIntent: 两张表 AND，<b>必须有写动词</b>
-     *       (wiki|知识库|知识页|知识树|笔记|我记) &amp;&amp; (写进|写入|写到|存入|存到|存进|保存|收录…)
-     * </pre>
-     *
-     * <p>OR 比 AND 松，于是两个方向都会漏，而且频率天差地别：
-     *
-     * <ul>
-     *   <li><b>有节点、跑不了（常见）</b>：「知识库里有什么」——最普通的 wiki 读问题——命中建图侧的
-     *       「知识库」，却没有写动词。<b>每一次这样的提问</b>都会造出一个结构上不可能运行的
-     *       WIKI_CURATOR 节点。这一半由 settleUnrunTasks 收成 SKIPPED，
-     *       并由集成判据把「哪些节点该被扫」钉成写在案上的预期 —— 否则它和一次正当的无事可做完全同形。</li>
-     *   <li><b>没节点、却产出（偶发）</b>：「把这个存入我的笔记」命中执行侧（笔记 + 存入），
-     *       不命中建图侧（无 wiki/知识库）。工件产出了、图里没有节点 —— 隐形 agent，
-     *       与上一个提交修掉的是同一物种。所以这里 {@link #inGraph} 恒为真。</li>
-     * </ul>
-     *
-     * <p>合并这两个门是语义决定（要不要让「读」也算 curator 的活），不在本阶段做。
+     * <p><b>不再自己判定意图</b>：跑不跑只看图里有没有这个节点（{@code inGraph} 用默认实现）。
+     * 此前这里有一个与建图侧<b>形状不同</b>的门（AND vs OR），两个方向都漏 ——
+     * 分歧清单与裁决见 {@link AgentPlanDecision#wikiWriteIntent}。
      */
     private final class WikiCuratorRunner implements AgentStageRunner {
         private final StreamState s;
@@ -1369,11 +1350,11 @@ public class AiServiceImpl implements AiService {
 
         @Override public String agentType() { return "WIKI_CURATOR"; }
         @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.COMMIT, 40); }
-        @Override public boolean inGraph(AgentRunContext ctx) { return true; }
 
         @Override
         public void run(AgentRunContext ctx) {
-            if (!looksWikiWriteIntent(s.limitedMessage) || (s.wikiAgent != null && s.wikiAgent.wrotePatch)) {
+            // 节点在图里但工具循环已经落了草稿 → 什么都不做，由 settleUnrunTasks 收成 SKIPPED
+            if (s.wikiAgent != null && s.wikiAgent.wrotePatch) {
                 return;
             }
             Map<String, Object> wikiArtifactContent = new LinkedHashMap<>();
@@ -2645,40 +2626,6 @@ public class AiServiceImpl implements AiService {
                 .trim();
     }
 
-    static boolean looksWikiWriteIntent(String message) {
-        if (message == null || message.isBlank()) {
-            return false;
-        }
-        String text = message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
-        // 与 looksWikiToolIntent 的“提及 Wiki”词表保持一致，避免“写进笔记/写入知识页”触发了工具流程却拿不到写工具
-        boolean mentionsWiki = text.contains("wiki")
-                || text.contains("知识库")
-                || text.contains("知识页")
-                || text.contains("知识树")
-                || text.contains("笔记")
-                || text.contains("我记");
-        // 写动词需与 looksWikiToolIntent.readOrWrite 里的“写类”动词等价，保证“写意图 ⟹ 工具意图且下发写工具”
-        boolean asksWrite = text.contains("写进")
-                || text.contains("写入")
-                || text.contains("写到")
-                || text.contains("存入")
-                || text.contains("存到")
-                || text.contains("存进")
-                || text.contains("保存")
-                || text.contains("收录")
-                || text.contains("放进")
-                || text.contains("放到")
-                || text.contains("加入")
-                || text.contains("整理到")
-                || text.contains("同步到")
-                || text.contains("记到")
-                || text.contains("记进")
-                || text.contains("记录")
-                || text.contains("更新")
-                || text.contains("补充")
-                || text.contains("新建");
-        return mentionsWiki && asksWrite;
-    }
 
     private UserKnowledgeRevision createWikiDraftRevision(Long userId,
                                                           Long conversationId,
@@ -3315,7 +3262,7 @@ public class AiServiceImpl implements AiService {
         boolean wrotePatch = false;
         try {
             // 最小权限：只有明确写意图才提供写工具，纯查询请求拿不到 create_wiki_patch，避免误写。
-            boolean canWrite = looksWikiWriteIntent(userMessage);
+            boolean canWrite = AgentPlanDecision.wikiWriteIntent(userMessage);
             WikiLoopState state = new WikiLoopState();
             List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", getWikiToolSystemPrompt()));
@@ -3398,7 +3345,7 @@ public class AiServiceImpl implements AiService {
         StringBuilder context = new StringBuilder();
         boolean wrotePatch = false;
         try {
-            boolean canWrite = looksWikiWriteIntent(userMessage);
+            boolean canWrite = AgentPlanDecision.wikiWriteIntent(userMessage);
             WikiLoopState state = new WikiLoopState();
             List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "user", "content", userMessage));
@@ -3651,7 +3598,7 @@ public class AiServiceImpl implements AiService {
         String t = message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
         boolean mentionsWiki = t.contains("wiki") || t.contains("知识库") || t.contains("知识页")
                 || t.contains("笔记") || t.contains("知识树") || t.contains("我记");
-        // readOrWrite 是 looksWikiWriteIntent.asksWrite 的超集，保证“写意图 ⟹ 工具意图”（否则会启动 Agent 却不给写工具）
+        // readOrWrite 是 AgentPlanDecision.WIKI_WRITE_WORDS 的超集，保证“写意图 ⟹ 工具意图”（否则会启动 Agent 却不给写工具）
         boolean readOrWrite = t.contains("记录") || t.contains("写到") || t.contains("写入") || t.contains("写进")
                 || t.contains("整理到") || t.contains("同步到") || t.contains("更新") || t.contains("补充")
                 || t.contains("新建") || t.contains("存到") || t.contains("存进") || t.contains("存入")

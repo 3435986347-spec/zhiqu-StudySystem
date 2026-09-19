@@ -63,7 +63,33 @@ public record AgentPlanDecision(
      */
     private static final List<String> PLANNER_WORDS = List.of("计划", "安排", "任务", "例行", "plan");
     private static final List<String> TASK_DRAFT_WORDS = List.of("生成任务", "写入任务", "例行任务", "task");
-    private static final List<String> WIKI_CURATOR_WORDS = List.of("wiki", "知识库", "知识 wiki", "写进知识");
+    /**
+     * WIKI_CURATOR 的门 —— <b>两张表 AND，必须同时提到 Wiki 和写动词</b>。
+     *
+     * <h2>此前建图与执行是两个形状不同的门，两个方向都漏</h2>
+     *
+     * <p>建图侧曾是平表 OR（{@code wiki | 知识库 | 知识 wiki | 写进知识}），执行侧是这里的 AND。
+     * OR 比 AND 松，于是：
+     *
+     * <ul>
+     *   <li><b>有节点、跑不了（常见）</b>：「知识库里有什么」—— 最普通的 wiki 读问题 ——
+     *       命中 OR 的「知识库」却没有写动词，<b>每一次这样的提问</b>都造出一个结构上不可能
+     *       运行的节点，然后被 settleUnrunTasks 扫掉，和一次正当的无事可做完全同形。</li>
+     *   <li><b>没节点、却产出（偶发）</b>：「把这个存入我的笔记」命中 AND（笔记 + 存入），
+     *       不命中 OR（无 wiki/知识库）—— 工件产出了、图里没有节点，隐形 agent。</li>
+     * </ul>
+     *
+     * <p>两个方向同源：<b>形状不同</b>，不是词表不同。统一成 AND 之后两边读同一个门，
+     * runner 不再需要 {@code inGraph} 恒真的后门。
+     *
+     * <p>词表与 {@code looksWikiToolIntent} 保持对应：写动词是它 readOrWrite 里「写类」动词的子集，
+     * 保证「写意图 ⟹ 工具意图且下发写工具」—— 否则会启动 Agent 却不给它写工具。
+     */
+    private static final List<String> WIKI_MENTION_WORDS =
+            List.of("wiki", "知识库", "知识页", "知识树", "笔记", "我记");
+    private static final List<String> WIKI_WRITE_WORDS = List.of(
+            "写进", "写入", "写到", "存入", "存到", "存进", "保存", "收录", "放进", "放到",
+            "加入", "整理到", "同步到", "记到", "记进", "记录", "更新", "补充", "新建");
     /**
      * 长期记忆草稿的触发词，从 {@code AiServiceImpl.looksMemoryWorthy} 搬过来 —— 那是第六个
      * 散在实现里的意图门，和合并前的 {@code should*} 家族同一个物种：建图侧要用它决定造不造
@@ -102,7 +128,7 @@ public record AgentPlanDecision(
                 includeWiki,
                 plannerNeeded(mode, message),
                 containsAny(message, TASK_DRAFT_WORDS),
-                containsAny(message, WIKI_CURATOR_WORDS),
+                wikiWriteIntent(message),
                 containsAny(message, MEMORY_DRAFT_WORDS)
         );
     }
@@ -115,6 +141,18 @@ public record AgentPlanDecision(
             return false;
         }
         return containsAny(message, PLANNER_WORDS);
+    }
+
+    /**
+     * 「这句话要求把内容写进 Wiki 吗」—— <b>唯一定义</b>，建图、执行、工具下发三处共用。
+     *
+     * <p>公开是因为非流式 {@code chat()} 与 Wiki 工具循环也要问同一个问题；
+     * 让它们各自留一份就是这一轮反复在消灭的那个物种。
+     */
+    public static boolean wikiWriteIntent(String message) {
+        String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+        return WIKI_MENTION_WORDS.stream().anyMatch(text::contains)
+                && WIKI_WRITE_WORDS.stream().anyMatch(text::contains);
     }
 
     private static boolean containsAny(String message, List<String> words) {

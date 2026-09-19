@@ -2,9 +2,11 @@ package com.zhiqu.service.memory;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.zhiqu.entity.UserAiMemory;
+import com.zhiqu.mapper.SysUserMapper;
 import com.zhiqu.mapper.UserAiMemoryMapper;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -28,10 +30,13 @@ public class LongTermMemoryStore {
     public static final int MAX_LENGTH = 2000;
 
     private final UserAiMemoryMapper memoryMapper;
+    private final SysUserMapper userMapper;
     private final SensitiveCryptoService cryptoService;
 
-    public LongTermMemoryStore(UserAiMemoryMapper memoryMapper, SensitiveCryptoService cryptoService) {
+    public LongTermMemoryStore(UserAiMemoryMapper memoryMapper, SysUserMapper userMapper,
+                               SensitiveCryptoService cryptoService) {
         this.memoryMapper = memoryMapper;
+        this.userMapper = userMapper;
         this.cryptoService = cryptoService;
     }
 
@@ -55,11 +60,11 @@ public class LongTermMemoryStore {
         return memory.getMemoryText() == null ? "" : memory.getMemoryText();
     }
 
-    /** 整份覆盖写入。 */
+    /** 整份覆盖写入。读同样走加锁读：普通 select 在已开启的事务里会读到过期快照。 */
     public void write(Long userId, String memoryText) {
         String trimmed = memoryText == null ? "" : memoryText.trim();
         String cipher = trimmed.isEmpty() ? null : cryptoService.encrypt(limit(trimmed));
-        UserAiMemory memory = find(userId);
+        UserAiMemory memory = memoryMapper.selectForUpdate(userId);
         if (memory == null) {
             memory = new UserAiMemory();
             memory.setUserId(userId);
@@ -80,10 +85,16 @@ public class LongTermMemoryStore {
      *
      * <p>按<b>整行</b>去重：草稿条目常常是「上一轮已经记过的那句」原样再来一遍，
      * 逐条勾选的界面挡不住这种重复（用户看不出哪条是旧的）。去重放在这里而不是界面上。
+     *
+     * <p><b>必须在事务里调用。</b>这是读—改—写，不是追加：先锁住用户行，否则两个并发确认
+     * 各读到同一份旧全文、后写的覆盖先写的（两个请求还都返回成功），首次写入则撞唯一键。
+     * 锁为什么落在 sys_user 行上，见 {@link SysUserMapper#lockMemoryOwner}。
      */
+    @Transactional
     public String appendItems(Long userId, List<String> items) {
+        userMapper.lockMemoryOwner(userId);
         Set<String> lines = new LinkedHashSet<>();
-        for (String line : read(userId).split("\\R")) {
+        for (String line : decrypt(memoryMapper.selectForUpdate(userId)).split("\\R")) {
             if (!line.isBlank()) {
                 lines.add(line.strip());
             }
