@@ -93,6 +93,10 @@ class AiConversationLifecycleIntegrationTest {
     private static volatile String blockWhenBodyContains;
     /** 记忆整理器系统提示词的开头，用来在请求体里认出这次调用是它发的。 */
     private static final String MEMORY_PROMPT_MARK = "你是长期记忆整理器";
+    /** 检索改写器的提示词开头。 */
+    private static final String REWRITE_PROMPT_MARK = "你是检索查询改写器";
+    /** 最后一次改写调用的请求体；null 表示这一轮没有发生重试。 */
+    private static volatile String lastRewriteRequestBody;
 
     /**
      * 从记忆整理请求体里切出「用户新消息」那一段。
@@ -143,7 +147,10 @@ class AiConversationLifecycleIntegrationTest {
             // 记忆整理器要的是 JSON 数组；回「测试回复」的话 parseMemoryItems 永远返回空，
             // 草稿那条路径就一次也走不到（而判据会以为「本轮没有值得记的」）。
             String content = "测试回复";
-            if (requestBody.contains(MEMORY_PROMPT_MARK)) {
+            if (requestBody.contains(REWRITE_PROMPT_MARK)) {
+                lastRewriteRequestBody = requestBody;
+                content = "改写后的查询串";
+            } else if (requestBody.contains(MEMORY_PROMPT_MARK)) {
                 String said = userSaidSection(requestBody);
                 // 按用户消息给不同条目：两条草稿内容不同，并发确认时「丢更新」才看得见。
                 // 都回同一条的话，丢了一条也和成功合并长得一模一样。
@@ -211,6 +218,7 @@ class AiConversationLifecycleIntegrationTest {
         blockWhenBodyContains = null;
         requestCounter.set(0);
         lastStreamingRequestBody = null;
+        lastRewriteRequestBody = null;
         userId = seedUser();
         modelId = createModel(userId);
     }
@@ -1298,5 +1306,83 @@ class AiConversationLifecycleIntegrationTest {
                 "SELECT COUNT(*) FROM ai_verifier_finding WHERE run_id = ? AND severity = 'BLOCKER'",
                 Integer.class, ((Number) run.get("id")).longValue());
         assertEquals(1, blockers, "应当正好产出一条 BLOCKER");
+    }
+
+    /**
+     * 第一次检索没命中就换个说法再试一次；命中了就<b>不得</b>重试。
+     *
+     * <h2>只换查询，不换范围</h2>
+     *
+     * <p>放宽 {@code selectedSourceIds} 与「用户选定的资料必须被尊重」正面冲突 ——
+     * 那条语义有自己的 BLOCKER（{@code SELECTED_SOURCES_UNUSABLE}）。
+     * {@code includeWiki} 活壳恒发 true，放宽是空操作。所以重试只有换查询这一条路。
+     *
+     * <h2>三条互相买不同的东西</h2>
+     *
+     * <ol>
+     *   <li>没命中 → 真的发生了第二次检索（循环存在）</li>
+     *   <li>命中 → <b>不得</b>重试（反例：没有它，「无条件重试」也能让第 1 条绿）</li>
+     *   <li>重试用的是<b>改写后</b>的查询（防改写结果被忽略、第二次仍用原句）</li>
+     * </ol>
+     */
+    @Test
+    void 检索没命中时换个说法再试一次() throws Exception {
+        Long notebookId = createNotebook(userId, "再检索");
+        // 空 notebook：第一次检索必然没命中
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "线性代数的特征值怎么算", modelId, false, "OFF", notebookId, "RESEARCH", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+
+        assertNotNull(lastRewriteRequestBody,
+                "第一次检索没命中，必须请模型改写查询再试一次 —— 没有这次调用就说明循环不存在");
+        assertTrue(lastRewriteRequestBody.contains("线性代数的特征值怎么算"),
+                "改写请求里要带上原问题，否则模型无从改写。实际：" + lastRewriteRequestBody);
+
+        Long runId = latestRunId(userId, notebookId);
+        Map<String, Object> task = jdbcTemplate.queryForMap(
+                "SELECT output_json FROM ai_agent_task WHERE run_id = ? AND agent_type IN "
+                        + "('CONTEXT_RESEARCHER','RETRIEVER') ORDER BY id LIMIT 1", runId);
+        String output = String.valueOf(task.get("output_json"));
+        assertTrue(output.contains("\"attempts\":2"),
+                "重试必须在执行轨迹里看得见，否则用户只会觉得这轮特别慢。实际 output：" + output);
+        assertTrue(output.contains("\"retryQuery\":\"改写后的查询串\""),
+                "第二次检索必须<b>实际用</b>改写后的查询 —— 用原句重检一遍是纯浪费。"
+                        + "注意这里查的是「第二次用了哪个查询」而不是「拿到了什么改写结果」："
+                        + "记后者的话，改写被忽略时轨迹里照样写着改写串，缺陷测不出来。实际 output：" + output);
+    }
+
+    /**
+     * 检索命中时不得重试。
+     *
+     * <p>上一条的反例：没有它，「无条件重试一次」也能让上一条绿，而那会给每一轮
+     * 都加上一次模型往返和一次向量检索。
+     */
+    @Test
+    void 检索命中时不得重试() throws Exception {
+        Long notebookId = createNotebook(userId, "命中不重试");
+        // 种一条 READY 资料 + 分块，让第一次检索就有产出
+        jdbcTemplate.update(
+                "INSERT INTO ai_notebook_source(user_id, notebook_id, source_type, title, status, deleted) "
+                        + "VALUES (?, ?, 'TEXT', '种子资料', 'READY', 0)", userId, notebookId);
+        Long sourceId = jdbcTemplate.queryForObject(
+                "SELECT id FROM ai_notebook_source WHERE user_id = ? AND notebook_id = ?",
+                Long.class, userId, notebookId);
+        jdbcTemplate.update(
+                "INSERT INTO ai_source_chunk(source_id, chunk_index, content) VALUES (?, 0, '象限时间管理法测试资料内容')",
+                sourceId);
+
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "总结一下这份资料", modelId, false, "OFF", notebookId, "RESEARCH", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+
+        Long runId = latestRunId(userId, notebookId);
+        Map<String, Object> task = jdbcTemplate.queryForMap(
+                "SELECT output_json FROM ai_agent_task WHERE run_id = ? AND agent_type IN "
+                        + "('CONTEXT_RESEARCHER','RETRIEVER') ORDER BY id LIMIT 1", runId);
+        String output = String.valueOf(task.get("output_json"));
+        assertTrue(output.contains("\"attempts\":1"),
+                "下界：这一轮必须真的命中了（attempts=1），否则测的是没命中那条路。实际：" + output);
+        assertNull(lastRewriteRequestBody,
+                "命中时不得调用改写 —— 无条件重试会给每一轮都加一次模型往返和一次向量检索");
     }
 }

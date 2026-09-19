@@ -48,17 +48,45 @@
     var h = title ? '<div class="zq-nav-group"'+attr+'>'+title+'</div>' : '';
     items.forEach(function(it){
       var active = it[0]===cur ? ' active' : '';
-      h += '<a class="'+active.trim()+'"'+attr+' href="'+it[0]+'"><span class="zq-ic">'+it[2]+'</span><span>'+it[1]+'</span></a>';
+      // title 是折叠态的名称来源 —— 不自己造 tooltip：原生的在触屏与边界情况上都对
+      h += '<a class="'+active.trim()+'"'+attr+' href="'+it[0]+'" title="'+it[1]+'"><span class="zq-ic">'+it[2]+'</span><span>'+it[1]+'</span></a>';
     });
     return h;
   }
   var ADMIN_MARK = 'data-zq-nav-admin';
+  var SIDE_COLLAPSED_KEY = 'zq-side-collapsed';
+
+  // 折叠是一个偏好，不是一次性动作：14 个页面是各自独立的文档（MPA），
+  // 不存的话每次跳页都弹回展开态。localStorage 读写包 try —— 隐私模式下会抛。
+  function sideCollapsed(){
+    try { return localStorage.getItem(SIDE_COLLAPSED_KEY) === '1'; } catch (e) { return false; }
+  }
+  function storeSideCollapsed(on){
+    try { localStorage.setItem(SIDE_COLLAPSED_KEY, on ? '1' : '0'); } catch (e) {}
+  }
+  function applySideCollapsed(on){
+    var host = document.getElementById('zq-side');
+    if (host) host.classList.toggle('is-collapsed', on);
+    // 正文区跟着让位；用类而不是直接写 style，折叠宽度只在 CSS 里定义一处
+    document.querySelectorAll('.zq-main').forEach(function (main) {
+      main.classList.toggle('is-side-collapsed', on);
+    });
+    var btn = host && host.querySelector('.zq-side-toggle');
+    if (btn) {
+      btn.title = on ? '展开导航栏' : '收起导航栏';
+      btn.setAttribute('aria-expanded', on ? 'false' : 'true');
+      var icon = btn.querySelector('.zq-ic');
+      if (icon) icon.textContent = on ? '»' : '«';
+    }
+  }
   function buildSidebar(){
     var host = document.getElementById('zq-side');
     if (!host) return;
     host.className = 'zq-side';
     host.innerHTML =
       '<div class="zq-brand"><div class="zq-brand-badge">知</div><div class="zq-brand-name">知趣<span> · 象限学习</span></div></div>'
+      + '<button type="button" class="zq-side-toggle" aria-expanded="true" title="收起导航栏">'
+      +   '<span class="zq-ic">«</span><span>收起</span></button>'
       + '<div class="zq-nav">' + navGroup('', NAV.main) + navGroup('数据', NAV.data)
       + (isAdminRole(storedRole()) ? navGroup('管理', NAV.admin, ADMIN_MARK) : '') + '</div>'
       + '<div class="zq-switch" style="padding:12px 4px 2px;border-top:1px solid var(--zq-sb-border);margin-top:10px;">'
@@ -70,6 +98,15 @@
       + '</div>'
       + '<div class="zq-user"><div class="zq-avatar">远</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);">王明远</div><div style="font-size:11px;color:var(--zq-text3);">管理员</div></div></div>';
     wireSwitch(host);
+    var toggle = host.querySelector('.zq-side-toggle');
+    if (toggle) {
+      toggle.onclick = function () {
+        var next = !sideCollapsed();
+        storeSideCollapsed(next);
+        applySideCollapsed(next);
+      };
+    }
+    applySideCollapsed(sideCollapsed());
     // 跨页面保留导航滚动位置：MPA 每次跳转都重建侧栏，不记忆的话 scrollTop 会归零
     var nav = host.querySelector('.zq-nav');
     if (nav) {

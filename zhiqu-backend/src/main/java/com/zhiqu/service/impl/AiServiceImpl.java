@@ -734,6 +734,9 @@ public class AiServiceImpl implements AiService {
         /** 两路检索各写各的；合并在 RetrieverRunner#10 —— 不共享可变容器，就不需要并发容器。 */
         private final List<Long> contextEvidenceIds = new ArrayList<>();
         private final List<Long> webEvidenceIds = new ArrayList<>();
+        /** 本轮检索跑了几次（1 或 2）；进 RETRIEVER 节点的 output，让重试在执行轨迹里看得见。 */
+        private int retrievalAttempts;
+        private String retryQuery;
         private List<Map<String, Object>> webCitationRows = List.of();
         private Map<String, Object> retrievalStatus;
         private final List<Map<String, Object>> allCitationRows = new ArrayList<>();
@@ -897,8 +900,16 @@ public class AiServiceImpl implements AiService {
                     : "资料检索完成：命中 " + notebookSourceIds.size() + " 份 Notebook 资料、"
                     + notebookChunkCount + " 个片段";
             int sources = s.notebookContextRows.size() + s.webCitationRows.size();
-            finishStep(ctx, s, s.retrieverStep, publicSummary, "sources=" + sources);
-            completeResearchTasks(ctx, s, Map.of("sources", sources));
+            String attemptNote = s.retrievalAttempts > 1 ? "（换了一次说法）" : "";
+            finishStep(ctx, s, s.retrieverStep, publicSummary + attemptNote,
+                    "sources=" + sources + ", attempts=" + s.retrievalAttempts);
+            Map<String, Object> output = new LinkedHashMap<>();
+            output.put("sources", sources);
+            output.put("attempts", s.retrievalAttempts);
+            if (s.retryQuery != null) {
+                output.put("retryQuery", s.retryQuery);
+            }
+            completeResearchTasks(ctx, s, output);
         }
 
         private AiAgentTask researchTask(AgentRunContext ctx) {
@@ -948,6 +959,30 @@ public class AiServiceImpl implements AiService {
                     new LinkedHashMap<>(s.contextOptions == null ? Map.of() : s.contextOptions);
             retrievalOptions.put(ContextOptionKeys.QUERY, s.limitedMessage);
             s.notebookContextRows = aiWorkspaceService.sourceContext(s.userId, s.notebookId, retrievalOptions);
+            s.retrievalAttempts = 1;
+
+            // 第一次没命中才换个说法再试一次。<b>只换查询，不换范围</b> ——
+            // 放宽 selectedSourceIds 与「用户选定的资料必须被尊重」冲突（见 ADR 与
+            // VerifierServiceImpl.SELECTED_SOURCES_UNUSABLE 那条 BLOCKER）；
+            // includeWiki 活壳恒发 true，放宽是空操作。
+            if (s.notebookContextRows.isEmpty()) {
+                String rewritten = rewriteRetrievalQuery(s.config, s.limitedMessage);
+                if (hasText(rewritten) && !rewritten.equals(s.limitedMessage)) {
+                    s.retrievalAttempts = 2;
+                    ctx.emit("agent.step.note", Map.of(
+                            "requestId", s.requestId,
+                            "agentRunId", s.agentRun.getId(),
+                            "stepId", s.retrieverStep == null ? null : s.retrieverStep.getId(),
+                            "message", "第一次检索没命中，换个说法再试"));
+                    retrievalOptions.put(ContextOptionKeys.QUERY, rewritten);
+                    s.notebookContextRows =
+                            aiWorkspaceService.sourceContext(s.userId, s.notebookId, retrievalOptions);
+                    // 记「第二次实际用了哪个查询」，而不是「拿到了什么改写结果」。
+                    // 记后者的话，改写结果被忽略、第二次仍用原句时，轨迹里照样写着改写串 ——
+                    // 判据看到的是代理量，那个缺陷测不出来（扰动逮到的）。
+                    s.retryQuery = String.valueOf(retrievalOptions.get(ContextOptionKeys.QUERY));
+                }
+            }
 
             AiAgentTask researchTask = ctx.task("CONTEXT_RESEARCHER") != null
                     ? ctx.task("CONTEXT_RESEARCHER") : ctx.task("RETRIEVER");
@@ -1757,6 +1792,29 @@ public class AiServiceImpl implements AiService {
                 """.formatted(hasText(base) ? base : "（无）", joined);
         try {
             return limitText(callAiApi(config, prompt, input).trim(), SUMMARY_MAX_LENGTH);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 第一次检索没命中时，请模型把问题改写成更适合检索的查询串。
+     *
+     * <p><b>封顶一次重试</b>（共两轮检索）：每轮多一次模型往返加一次向量检索，
+     * 第二次还没命中时，第三次命中的概率不足以抵消延迟。
+     *
+     * <p>失败、超时、返回空或返回原句，一律<b>放弃重试</b>而不是阻断本轮回答 ——
+     * 检索是增强，不是前置条件。
+     */
+    private String rewriteRetrievalQuery(AiModelConfig config, String original) {
+        try {
+            String prompt = """
+                    你是检索查询改写器。用户的问题在资料库里没有命中，请把它改写成更适合关键词/向量检索的查询串。
+                    去掉寒暄与指代，保留专有名词与关键概念，必要时补上同义说法。
+                    只输出改写后的查询串本身，不要解释，不要引号，不超过 60 字。
+                    """;
+            String rewritten = callAiApi(config, prompt, original);
+            return rewritten == null ? null : limitText(rewritten.trim().replaceAll("\\s+", " "), 120);
         } catch (Exception ignored) {
             return null;
         }
