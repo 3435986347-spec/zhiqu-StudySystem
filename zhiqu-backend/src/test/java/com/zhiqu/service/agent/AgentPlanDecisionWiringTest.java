@@ -116,7 +116,7 @@ class AgentPlanDecisionWiringTest {
     @Test
     void 判定词表_两处历史分叉都必须被合并覆盖() {
         // ① 只含「安排」：不含 计划/任务/例行/plan。合并前建图侧为真、执行侧为假 → 幽灵 agent。
-        AgentPlanDecision arrange = AgentPlanDecision.of("AUTO", "帮我安排下周的复习", false, null, Map.of(), true);
+        AgentPlanDecision arrange = AgentPlanDecision.of("AUTO", "帮我安排下周的复习", false, null, Map.of(), true, false);
         assertTrue(arrange.needsPlanner(),
                 "「安排」必须触发 planner：合并前建图侧有它、执行侧没有，造出的节点会立刻被 skip");
 
@@ -124,19 +124,19 @@ class AgentPlanDecisionWiringTest {
         //    合并前执行侧为真、建图侧为假 → 隐形 agent。
         AgentPlanDecision sources = AgentPlanDecision.of(
                 "AUTO", "这份资料讲了什么", false, null,
-                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L, 2L)), true);
+                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L, 2L)), true, false);
         assertTrue(sources.needsRetriever(),
                 "选中资料源必须触发检索：合并前执行侧有它、建图侧没有，检索会跑但图里没有 RETRIEVER 节点");
 
         // 反向：什么都没有时两者都不该为真，否则上面两条会在「恒为真」上假绿。
-        AgentPlanDecision bare = AgentPlanDecision.of("AUTO", "你好", false, null, Map.of(), true);
+        AgentPlanDecision bare = AgentPlanDecision.of("AUTO", "你好", false, null, Map.of(), true, false);
         assertFalse(bare.needsPlanner(), "无触发词时不应跑 planner —— 否则 ① 是在恒真上通过的");
         assertFalse(bare.needsRetriever(), "无任何来源时不应检索 —— 否则 ② 是在恒真上通过的");
 
         // CHAT_ONLY 必须压过一切来源
         AgentPlanDecision chatOnly = AgentPlanDecision.of(
                 "CHAT_ONLY", "帮我安排下周的复习", true, 7L,
-                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L)), true);
+                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L)), true, false);
         assertFalse(chatOnly.needsRetriever(), "CHAT_ONLY 不检索");
         assertFalse(chatOnly.needsPlanner(), "CHAT_ONLY 不跑 planner");
     }
@@ -151,19 +151,37 @@ class AgentPlanDecisionWiringTest {
     void wiki门_两个方向都不许再漏() {
         // ① 读问题不得造 curator 节点。平表 OR 命中「知识库」就造，
         //    于是每一次最普通的 wiki 读问题都留下一个结构上不可能运行的节点。
-        assertFalse(AgentPlanDecision.of("AUTO", "知识库里有什么", false, null, Map.of(), true).needsWikiCurator(),
+        assertFalse(AgentPlanDecision.of("AUTO", "知识库里有什么", false, null, Map.of(), true, false).needsWikiCurator(),
                 "「知识库里有什么」没有写动词，不该造 WIKI_CURATOR —— 造了也跑不了，只会被扫掉");
 
         // ② 写请求必须造节点，即使没提 wiki/知识库。执行侧的提及词表含「笔记」，
         //    建图侧此前不含 → 工件产出了、图里没有节点（隐形 agent）。
-        assertTrue(AgentPlanDecision.of("AUTO", "把这个存入我的笔记", false, null, Map.of(), true).needsWikiCurator(),
+        assertTrue(AgentPlanDecision.of("AUTO", "把这个存入我的笔记", false, null, Map.of(), true, false).needsWikiCurator(),
                 "「存入我的笔记」是写请求，必须造出 WIKI_CURATOR —— 否则草稿产出了而执行轨迹里看不到");
 
         // 两头都要：提及但不写、写但不提及，都不算
-        assertFalse(AgentPlanDecision.of("AUTO", "帮我保存一下", false, null, Map.of(), true).needsWikiCurator(),
+        assertFalse(AgentPlanDecision.of("AUTO", "帮我保存一下", false, null, Map.of(), true, false).needsWikiCurator(),
                 "只有写动词、没提到 Wiki，不是 Wiki 写请求");
         assertTrue(AgentPlanDecision.wikiWriteIntent("把结论写进知识库"),
                 "同时提到知识库与写动词，必须判为写意图");
+    }
+
+    /**
+     * POST_STREAM 的三个 runner 必须都在同一个并发组里。
+     *
+     * <p>{@code AgentStageConcurrencyTest} 钉的是<b>机制</b>（同组会并发），用的是假 runner ——
+     * 它测不到真实的组成员名单。把某个真 runner 从组里拿掉，那条判据全绿，
+     * 而那一路悄悄变回串行：功能上毫无差别，只是慢了一次模型往返。
+     *
+     * <p>所以这里走源码文本钉成员。必须先剥注释 —— 本类与实现里的说明文字都写着组名。
+     */
+    @Test
+    void POST_STREAM的三个runner必须同组() throws IOException {
+        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        int declared = code.split("parallelGroup\\(\\) \\{ return POST_STREAM_GROUP; \\}", -1).length - 1;
+        assertEquals(3, declared,
+                "记忆草稿 / 计划提取 / 滚动摘要三者都要进 POST_STREAM 并发组。"
+                        + "少一个就少并发一路，而功能判据对这种退化毫无反应。实际声明数：" + declared);
     }
 
     @Test
@@ -175,17 +193,17 @@ class AgentPlanDecisionWiringTest {
 
         // 只带 selectedSourceIds —— 合并前这里造不出任何 researcher（隐形 agent）
         orchestrator.plan(run, AgentPlanDecision.of("AUTO", "这份资料讲了什么", false, null,
-                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L)), true), null);
+                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L)), true, false), null);
         assertTrue(graph.types().contains("RETRIEVER"),
                 "只勾资料源时必须造出 RETRIEVER 节点，否则用户在执行轨迹里看不到这次检索。实际：" + graph.types());
 
         graph.reset();
         // 只含「安排」—— 合并前造了 PLANNER 但执行侧不跑（幽灵 agent）
-        orchestrator.plan(run, AgentPlanDecision.of("AUTO", "帮我安排下周的复习", false, null, Map.of(), true), null);
+        orchestrator.plan(run, AgentPlanDecision.of("AUTO", "帮我安排下周的复习", false, null, Map.of(), true, false), null);
         assertTrue(graph.types().contains("PLANNER"), "「安排」必须造出 PLANNER 节点。实际：" + graph.types());
 
         graph.reset();
-        orchestrator.plan(run, AgentPlanDecision.of("CHAT_ONLY", "帮我安排下周的复习", true, 7L, Map.of(), true), 7L);
+        orchestrator.plan(run, AgentPlanDecision.of("CHAT_ONLY", "帮我安排下周的复习", true, 7L, Map.of(), true, false), 7L);
         assertEquals(Set.of("ORCHESTRATOR", "VERIFIER", "FINAL_WRITER"), graph.types(),
                 "CHAT_ONLY 只该留下编排、校验与最终回答三个节点");
     }

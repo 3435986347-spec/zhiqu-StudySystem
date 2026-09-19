@@ -497,7 +497,7 @@ public class AiServiceImpl implements AiService {
         // 意图判定算一次，建图与执行读同一个对象。此前两侧各算一套且已分叉（见 AgentPlanDecision 类注释）。
         AgentPlanDecision decision = AgentPlanDecision.of(
                 agentMode, limitedMessage, Boolean.TRUE.equals(enableWebSearch), notebookId, contextOptions,
-                supportsToolCalling(config));
+                supportsToolCalling(config), history.size() >= CHAT_HISTORY_LIMIT);
         String normalizedAgentMode = decision.mode();
         AiAgentRun agentRun = aiWorkspaceService.beginRun(
                 userId,
@@ -561,7 +561,7 @@ public class AiServiceImpl implements AiService {
             // ---- 慢计算阶段(锁外、无 DB 写):记忆整理与计划提取都可能再次调用模型,
             // 必须全部完成后才进入最终锁内事务——否则第二阶段模型调用期间的清空/删除会穿透:
             // 校验已过、Revision/草稿照常提交、run 标成 DONE、done 事件指向已删消息 ----
-            executor.execute(AgentPhase.POST_STREAM, ctx);
+            executor.execute(AgentPhase.POST_STREAM, ctx, maxParallelTasks(agentRun));
 
             // ---- 最终锁内短事务:归属校验、消息完成/成对重建与重绑、Revision 与草稿工件落库、
             // 步骤任务收尾、run 终态,全部原子完成(只有短 DB 操作,无模型调用)。
@@ -925,6 +925,19 @@ public class AiServiceImpl implements AiService {
 
     /** 同组并发的组名；组内成员的 run 会被一起提交到线程池。 */
     private static final String RESEARCH_GROUP = "research";
+
+    /**
+     * POST_STREAM 的并发组：记忆草稿、计划提取、滚动摘要。
+     *
+     * <p>三者都要调一次模型，而且<b>写的 StreamState 字段两两不相交</b>
+     * （memoryItems / suggestedPlan / summaryDraft 这一组），读的是流式结束后就不再变的
+     * finalReply、config、limitedMessage。run 里都不 emit —— 事件在各自的 commit 里发，
+     * 而 commit 始终顺序。
+     *
+     * <p>串行时它们的耗时是三次模型往返相加，并发之后是取最大值。
+     * 一轮的时间几乎全在模型往返上（JVM 开销在微秒级），所以这一步比任何语言层面的优化都有效。
+     */
+    private static final String POST_STREAM_GROUP = "post-stream";
 
     /**
      * 本地上下文检索：Notebook 资料 + Wiki 页，<b>一次 RAG 调用</b>（Wiki 在 ScopeSelection 里）。
@@ -1292,6 +1305,7 @@ public class AiServiceImpl implements AiService {
 
         @Override public String agentType() { return "MEMORY_CURATOR"; }
         @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.POST_STREAM, 10); }
+        @Override public String parallelGroup() { return POST_STREAM_GROUP; }
         @Override public AgentPosition commitAt() { return AgentPosition.at(AgentPhase.COMMIT, 45); }
 
         @Override
@@ -1348,6 +1362,7 @@ public class AiServiceImpl implements AiService {
 
         @Override public String agentType() { return "PLAN_EXTRACTOR"; }
         @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.POST_STREAM, 20); }
+        @Override public String parallelGroup() { return POST_STREAM_GROUP; }
         @Override public AgentPosition announceAt() { return AgentPosition.at(AgentPhase.PRE_STREAM, 45); }
         @Override public AgentPosition commitAt() { return AgentPosition.at(AgentPhase.COMMIT, 25); }
 
@@ -1445,8 +1460,10 @@ public class AiServiceImpl implements AiService {
      * 滚动摘要：把已经滑出 {@code CHAT_HISTORY_LIMIT} 窗口的轮次压成一段，让第 21 轮之前的事实
      * 不再从模型视野里静默消失。<b>要调模型，所以工作在 POST_STREAM（锁外）；落库在 COMMIT。</b>
      *
-     * <p>图里没有它的节点，{@link #inGraph} 恒为真 —— 与 MEMORY_EXTRACTOR / PLAN_EXTRACTOR 同类
-     * （说明见 {@link AgentStageRunner#inGraph}）。
+     * <p>节点条件是 {@link AgentPlanDecision#needsSummary()}（窗口已满 —— 必要非充分）。
+     * 这一轮还没轮到重算时 run 什么都不做，由 settleUnrunTasks 收成 SKIPPED，与 TASK_DRAFTER 同写法。
+     * <p>它曾是<b>最后一个没被图管住的</b> runner（{@code inGraph} 恒真、每轮都跑、
+     * 执行轨迹里看不见、GraphCase 覆盖不到）。现在与其余节点同形。
      *
      * <h2>落库前要再比一次指纹</h2>
      *
@@ -1465,7 +1482,7 @@ public class AiServiceImpl implements AiService {
         @Override public String agentType() { return "SUMMARIZER"; }
         @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.POST_STREAM, 30); }
         @Override public AgentPosition commitAt() { return AgentPosition.at(AgentPhase.COMMIT, 50); }
-        @Override public boolean inGraph(AgentRunContext ctx) { return true; }
+        @Override public String parallelGroup() { return POST_STREAM_GROUP; }
 
         @Override
         public void run(AgentRunContext ctx) {

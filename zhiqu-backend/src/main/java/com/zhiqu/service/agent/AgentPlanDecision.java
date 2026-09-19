@@ -54,7 +54,8 @@ public record AgentPlanDecision(
         boolean needsMemoryDraft,
         boolean needsPlanExtractor,
         boolean needsWikiTool,
-        boolean needsAnswerVerifier
+        boolean needsAnswerVerifier,
+        boolean needsSummary
 ) {
 
     private static final Set<String> MODES = Set.of("AUTO", "CHAT_ONLY", "RESEARCH", "PLAN");
@@ -144,13 +145,18 @@ public record AgentPlanDecision(
     }
 
     /**
+     * @param historyFull 本轮历史是否已经填满窗口（{@code history.size() >= CHAT_HISTORY_LIMIT}）。
+     *        这是「可能需要压缩」的<b>必要条件</b>：窗口没满就一定没有消息滑出去，压缩无从谈起。
+     *        不是充分条件 —— 真正要不要重算还看「自上次摘要以来新滑出多少条」，
+     *        那要查库，不该放进这个纯函数里。节点造出来而这一轮没轮到压缩时，
+     *        runner 什么都不做、由 settleUnrunTasks 收成 SKIPPED，与 TASK_DRAFTER 同一个写法。
      * @param toolCallingSupported 当前模型是否支持工具调用。WIKI_TOOL_AGENT 的门是
      *        「消息意图 <b>且</b> 模型能力」—— 能力这一半不带进来的话，配了不支持工具的模型时
      *        会造出一个结构上跑不了的节点，正是刚修掉的那个形状。
      */
     public static AgentPlanDecision of(String agentMode, String message, boolean enableWebSearch,
                                        Long notebookId, Map<String, Object> contextOptions,
-                                       boolean toolCallingSupported) {
+                                       boolean toolCallingSupported, boolean historyFull) {
         String mode = normalizeMode(agentMode);
         Map<String, Object> options = contextOptions == null ? Map.of() : contextOptions;
         boolean chatOnly = "CHAT_ONLY".equals(mode);
@@ -178,7 +184,8 @@ public record AgentPlanDecision(
                 taskCreationIntent(message),
                 wikiToolIntent(message) && toolCallingSupported,
                 // 没检索就没有引用可核 —— 与 needsRetriever 同条件，不另起一个会漂的门
-                needsRetriever
+                needsRetriever,
+                historyFull
         );
     }
 

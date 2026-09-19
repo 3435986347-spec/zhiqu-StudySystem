@@ -143,4 +143,41 @@ class AgentStageConcurrencyTest {
                         + "上层按类型分辨错误的地方（比如「是不是校验阻断」）就认不出它了");
         assertEquals(1, ran.get());
     }
+
+    /**
+     * 一个组里少一个成员，并发就少一路 —— 而功能判据全绿。
+     *
+     * <p>POST_STREAM 的三个 runner（记忆草稿 / 计划提取 / 滚动摘要）各自调一次模型，
+     * 串行是三次往返相加、并发是取最大值。少拉一个进组，功能上毫无差别，
+     * 只是那一路又变回串行 —— 没有判据看着的话，这种退化不会有任何迹象。
+     *
+     * <p>所以这里钉的是<b>组的成员</b>，而不是「并发机制存在」：机制由上面几条钉。
+     */
+    @Test
+    void 组的成员少一个就退化为串行() {
+        List<String> log = Collections.synchronizedList(new ArrayList<>());
+        AgentStageExecutor grouped = new AgentStageExecutor(List.of(
+                new SlowRunner("A", 10, "post-stream", 300, log),
+                new SlowRunner("B", 11, "post-stream", 300, log),
+                new SlowRunner("C", 12, "post-stream", 300, log)));
+
+        long startedAt = System.currentTimeMillis();
+        grouped.execute(AgentPhase.PRE_STREAM, context(), 3);
+        long threeInParallel = System.currentTimeMillis() - startedAt;
+
+        AgentStageExecutor oneLeftOut = new AgentStageExecutor(List.of(
+                new SlowRunner("A", 10, "post-stream", 300, log),
+                new SlowRunner("B", 11, "post-stream", 300, log),
+                new SlowRunner("C", 12, null, 300, log)));   // C 没进组
+
+        startedAt = System.currentTimeMillis();
+        oneLeftOut.execute(AgentPhase.PRE_STREAM, context(), 3);
+        long oneSequential = System.currentTimeMillis() - startedAt;
+
+        assertTrue(threeInParallel < 500,
+                "三路同组应当约 300ms；实际 " + threeInParallel + "ms");
+        assertTrue(oneSequential >= 600,
+                "漏掉一个成员，那一路就变回串行（约 600ms）；实际 " + oneSequential + "ms —— "
+                        + "而功能判据对这种退化毫无反应");
+    }
 }

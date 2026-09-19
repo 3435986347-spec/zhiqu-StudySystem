@@ -99,6 +99,11 @@ public class MultiAgentOrchestratorImpl implements MultiAgentOrchestrator {
 
         tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "VERIFIER",
                 "VERIFY_OUTPUT", 80, null, List.of(orchestrator.getId()), Map.of(), "Verify claims and artifacts"));
+        if (decision.needsSummary()) {
+            tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "SUMMARIZER",
+                    "COMPRESS_HISTORY", 35, null, List.of(orchestrator.getId()),
+                    Map.of(), "Compress older conversation turns"));
+        }
         if (decision.needsAnswerVerifier()) {
             tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "ANSWER_VERIFIER",
                     "VERIFY_ANSWER_CITATIONS", 91, null, List.of(orchestrator.getId()),

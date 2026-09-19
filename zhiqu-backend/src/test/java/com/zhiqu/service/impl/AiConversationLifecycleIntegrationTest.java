@@ -891,6 +891,21 @@ class AiConversationLifecycleIntegrationTest {
         Long before = latestRunId(userId, notebookId);
         aiService.streamChat(userId, "再聊一句", modelId, false, "OFF", notebookId, "AUTO", Map.of());
         awaitRunAfter(userId, notebookId, before);
+        // 摘要器现在有自己的图节点（needsSummary = 窗口已满）。这一轮历史够长，
+        // 它必须在图里且走到终态 —— 此前它 inGraph 恒真、没有节点，GraphCase 覆盖不到它。
+        // queryForList 而不是 queryForMap：无行时前者给空列表、由断言说明问题，
+        // 后者直接抛 EmptyResultDataAccessException —— 那是 Errors 而不是 Failures，
+        // 断言根本没执行，红出来只有一句「expected 1, actual 0」。
+        List<Map<String, Object>> summarizerNode = jdbcTemplate.queryForList(
+                "SELECT status FROM ai_agent_task WHERE run_id = "
+                        + "(SELECT MAX(id) FROM ai_agent_run WHERE user_id = ?) AND agent_type = 'SUMMARIZER'",
+                userId);
+        assertEquals(1, summarizerNode.size(),
+                "SUMMARIZER 必须有自己的图节点 —— 它曾是最后一个 inGraph 恒真、每轮都跑却"
+                        + "在执行轨迹里看不见的 runner");
+        assertTrue(List.of("DONE", "SKIPPED").contains(String.valueOf(summarizerNode.get(0).get("status"))),
+                "节点必须走到终态，实际：" + summarizerNode);
+
         Map<String, Object> summary = jdbcTemplate.queryForMap(
                 "SELECT encrypted_summary, summary_upto_message_id, summary_live_count"
                         + " FROM ai_conversation WHERE id = ?", conversationId);
