@@ -753,7 +753,11 @@ class AiConversationLifecycleIntegrationTest {
      * <b>和一次正当的「本轮无事可做」在库里完全同形</b> —— 那条判据在 PENDING 这一侧的牙就被拔掉了，
      * 只剩 RUNNING 那半边。所以这里连「被扫掉的集合」一起钉住：它变了，就有东西红。
      *
-     * <p>第三行不是补充，是这张网的<b>第一个真实客户</b>：「知识库里有什么」是最普通的 wiki 读问题，
+     * <p>ANSWER_VERIFIER 五行都有：它跟着 {@code needsRetriever} 走，而五行都带 notebook。
+ * 它<b>不在被扫集合里</b> —— 引用核对每轮都真的跑，没有对不上的引用也是一个正当结果，
+ * 不是「没跑」。
+ *
+ * <p>第三行不是补充，是这张网的<b>第一个真实客户</b>：「知识库里有什么」是最普通的 wiki 读问题，
      * 建图侧平表 OR 命中「知识库」造出 WIKI_CURATOR，执行侧两张表 AND 要求写动词 ——
      * 这个节点结构上不可能运行。<b>每一次这样的提问</b>都会造出它，然后被扫掉。
      * 把它记在案上，是为了让「常见交互每次都造一个跑不了的节点」这件事有人看着，
@@ -763,31 +767,31 @@ class AiConversationLifecycleIntegrationTest {
     void 每轮造出的节点与被扫掉的节点都必须符合预期() throws Exception {
         List<GraphCase> cases = List.of(
                 new GraphCase("你好",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "VERIFIER", "FINAL_WRITER"),
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of(),
                         "对照组：不造条件节点，也就没有东西可扫。少了这一行，下面两行可能是在「什么都被扫」上通过的"),
                 new GraphCase("帮我生成任务",
                         Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "PLANNER", "TASK_DRAFTER",
-                                "PLAN_EXTRACTOR", "VERIFIER", "FINAL_WRITER"),
+                                "PLAN_EXTRACTOR", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of("TASK_DRAFTER"),
                         "命中 needsTaskDraft 造出节点，而模型没解析出计划 → 那段 if 整个不进。"
                                 + "PLAN_EXTRACTOR 也在：它有了自己的节点，且没提取到计划也照样走到 DONE，"
                                 + "不被 sweeper 扫 —— 「跑了但没产出」是正当结果，不是「没跑」"),
                 new GraphCase("知识库里有什么",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "VERIFIER", "FINAL_WRITER"),
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of(),
                         "wiki 读问题：两个门统一成 AND 之后不再造 WIKI_CURATOR。"
                                 + "此前建图侧平表 OR 命中「知识库」就造，每一次这样的提问都留下一个跑不了的节点"),
                 new GraphCase("把这个存入我的笔记",
                         Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "WIKI_TOOL_AGENT", "WIKI_CURATOR",
-                                "VERIFIER", "FINAL_WRITER"),
+                                "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of(),
                         "反方向：写请求但没提 wiki/知识库。此前建图侧不含「笔记」，"
                                 + "于是工件产出了、图里没有节点（隐形 agent）。"
                                 + "WIKI_TOOL_AGENT 也在：写意图必然是工具意图（动词表是超集），"
                                 + "这条同时钉住那个包含关系 —— 它断了就会「启动 Agent 却不给写工具」"),
                 new GraphCase("记住我不喜欢在早上学习",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "MEMORY_CURATOR", "VERIFIER", "FINAL_WRITER"),
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "MEMORY_CURATOR", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of(),
                         "MEMORY_CURATOR 有了自己的节点；假端点回条目数组，所以它一路跑到 DONE 而不是被扫 ——"
                                 + " 这一行同时钉住「新增了一个用户看得见的 agent」这件事"));
@@ -1231,5 +1235,55 @@ class AiConversationLifecycleIntegrationTest {
                 "至少有一个还没轮到的节点要被收成「" + AiServiceImpl.FAILED_RUN_TASK_SUMMARY + "」；"
                         + "用成功路径那句「" + AiServiceImpl.UNRUN_TASK_SUMMARY + "」会把两种情形混成同一形状。实际："
                         + tasks);
+    }
+
+    /**
+     * 勾了资料源却一条证据都没取到 → <b>整轮阻断</b>，而不是给一个看起来有据的回答。
+     *
+     * <h2>这条路径此前不可达</h2>
+     *
+     * <p>{@code shouldBlockFinalWrite} 要 {@code BLOCKER + BLOCK_FINAL_WRITE}，
+     * 而这两个字面量此前<b>在全仓库只出现在那个判断里，没有任何产生点</b> ——
+     * 恒为假，{@code AiServiceImpl} 里那句 throw 不可达。本判据是它第一次真的触发。
+     *
+     * <p>下界：run 必须是 ERROR 且错误信息点名是校验阻断 —— 只断言「没有回答」的话，
+     * 任何一种失败都能让它绿。
+     *
+     * <p>提示词注入那一侧在 {@code AiServiceImplVerifierBlockTest} 里单元钉：
+     * 能产出 WARNING 的只有「抓取失败」一条路，而 SSRF 防护对私网/无法解析的域名一律
+     * 抛 BusinessException 打挂整轮，绕开它就得关掉那个防护 —— 而防护自己一条判据都没有。
+     *
+     * <p>扰动：把 BLOCKER 改回 WARNING → 回答照常生成，本条红。
+     */
+    @Test
+    void 勾了资料源却零证据必须阻断整轮() throws Exception {
+        Long notebookId = createNotebook(userId, "校验阻断");
+        // 资料必须「存在且属于本人」，否则 sourceContext 会先抛「选择的资料不存在」——
+        // 那是另一种失败，走不到校验器。这里种一条 READY 但<b>没有任何分块</b>的资料：
+        // 归属校验过得去，检索却产不出证据，正是要测的那个局面。
+        jdbcTemplate.update(
+                "INSERT INTO ai_notebook_source(user_id, notebook_id, source_type, title, status, deleted) "
+                        + "VALUES (?, ?, 'TEXT', '空资料', 'READY', 0)", userId, notebookId);
+        Long emptySourceId = jdbcTemplate.queryForObject(
+                "SELECT id FROM ai_notebook_source WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",
+                Long.class, userId, notebookId);
+
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "总结一下这份资料", modelId, false, "OFF", notebookId, "RESEARCH",
+                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(emptySourceId)));
+        awaitRunAfter(userId, notebookId, before);
+
+        Map<String, Object> run = jdbcTemplate.queryForMap(
+                "SELECT id, status, error_message FROM ai_agent_run WHERE user_id = ? AND notebook_id = ?"
+                        + " ORDER BY id DESC LIMIT 1", userId, notebookId);
+        assertEquals("ERROR", run.get("status"),
+                "勾了资料源却一条都没取到时必须阻断 —— 照常回答等于把通用知识冒充成「基于你的资料」");
+        assertTrue(String.valueOf(run.get("error_message")).contains("Verifier blocked"),
+                "下界：必须是校验阻断导致的失败，而不是碰巧别的地方炸了。实际：" + run.get("error_message"));
+
+        Integer blockers = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_verifier_finding WHERE run_id = ? AND severity = 'BLOCKER'",
+                Integer.class, ((Number) run.get("id")).longValue());
+        assertEquals(1, blockers, "应当正好产出一条 BLOCKER");
     }
 }

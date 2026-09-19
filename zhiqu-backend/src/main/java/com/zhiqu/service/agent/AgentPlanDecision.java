@@ -53,7 +53,8 @@ public record AgentPlanDecision(
         boolean needsWikiCurator,
         boolean needsMemoryDraft,
         boolean needsPlanExtractor,
-        boolean needsWikiTool
+        boolean needsWikiTool,
+        boolean needsAnswerVerifier
 ) {
 
     private static final Set<String> MODES = Set.of("AUTO", "CHAT_ONLY", "RESEARCH", "PLAN");
@@ -175,7 +176,9 @@ public record AgentPlanDecision(
                 wikiWriteIntent(message),
                 containsAny(message, MEMORY_DRAFT_WORDS),
                 taskCreationIntent(message),
-                wikiToolIntent(message) && toolCallingSupported
+                wikiToolIntent(message) && toolCallingSupported,
+                // 没检索就没有引用可核 —— 与 needsRetriever 同条件，不另起一个会漂的门
+                needsRetriever
         );
     }
 

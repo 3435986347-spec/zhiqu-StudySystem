@@ -14,7 +14,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V30`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V32`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -26,10 +26,18 @@ When adding a migration, use the next free `V<n>__description.sql` and keep it a
 
 ### Run (development)
 
+**macOS / Linux**
 ```bash
 cd zhiqu-backend
 mvn clean package -DskipTests
 java -jar target/zhiqu-backend-0.0.1-SNAPSHOT.jar
+```
+
+**Windows (PowerShell)**
+```powershell
+cd zhiqu-backend
+mvn clean package "-DskipTests"
+java -jar target\zhiqu-backend-0.0.1-SNAPSHOT.jar
 ```
 
 Access at `http://localhost:8080`.
@@ -38,8 +46,27 @@ Access at `http://localhost:8080`.
 > com.zhiqu.ZhiquApplication`) because the repository path contains CJK characters.
 > Always package first and run the JAR.
 
+> **macOS only, and it bites hard:** this checkout lives under `~/Desktop`, which iCloud syncs.
+> iCloud drops conflict copies named `X 2.class` into `target/`, and Spring's classpath scan then
+> throws `BeanDefinitionStoreException` (or stalls on placeholder files with
+> `IOException: Operation timed out`) — it reads like a code problem but is not. `mvn clean` may
+> even fail to delete `target`. Before any long run: `rm -rf target` (repeat if it says
+> "Directory not empty"). The permanent fix is moving the repo out of `~/Desktop`, which would
+> also retire the CJK-path caveat above.
+
 Useful flags when testing locally: `--server.port=18080`,
-`--app.ai.allow-private-provider-url=true` (lets you point a model config at a local mock).
+`--app.ai.allow-private-provider-url=true` (lets you point a model config at a local mock),
+`--app.rag.enabled=false` (skip the sidecar).
+
+Stop a local instance **by port, never by process name** (`pkill -f java` will take down unrelated
+JVMs — including your IDE's):
+
+```bash
+kill $(lsof -nP -iTCP:8080 -sTCP:LISTEN -t)          # macOS / Linux
+```
+```powershell
+Stop-Process -Id (Get-NetTCPConnection -LocalPort 8080 -State Listen).OwningProcess   # Windows
+```
 
 ### Tests
 
@@ -124,6 +151,20 @@ that tells the two greens apart, and all three cases above were caught by it rat
   `POST /api/ai/artifacts/{id}/confirm` calls `studyTaskService.create/createRepeated`.
   That endpoint takes an **optional** body `{tasks, routines}` — the edited items from the modal —
   which overrides the stored draft; omitting the body applies the draft as-is.
+- **Long-term memory is also draft-first.** `MEMORY_CURATOR` produces a `MEMORY_DRAFT` artifact
+  (discrete items, tickable); only `POST /api/ai/artifacts/{id}/confirm` merges them into
+  `user_ai_memory`. Clearing memory bumps `sys_user.memory_epoch`, and confirming a draft whose run
+  predates the bump is refused — see `docs/adr/0002`.
+- **Verification is a closed loop, not a notification.** `VERIFIER` (PRE_STREAM, before the answer)
+  checks the *evidence*: its findings are injected into the answer prompt as a user-role data block,
+  and the one blocking case — user picked sources but zero evidence was retrieved — aborts the turn
+  rather than answering from general knowledge as if grounded. `ANSWER_VERIFIER` (POST_STREAM)
+  then checks that every citation the model emitted came from evidence we actually fetched;
+  anything else is flagged `CITATION_NOT_IN_EVIDENCE`.
+- **Every agent that runs has a node in the task graph.** `AgentStageRunner.inGraph` has exactly one
+  override left (RETRIEVER, which legitimately answers to three researcher types). "Ran without a
+  node" is now structurally unwritable — before adding a backdoor, ask why that agent should be
+  invisible in the execution trace the user can see.
 
 ### Knowledge Wiki
 
@@ -143,9 +184,15 @@ contains that key — so applying a patch with an empty body never moves a child
 
 ### RAG (optional)
 
-`app.rag.enabled=false` by default; the system falls back to keyword retrieval. When enabled the
-backend talks to a local Python sidecar (`rag-service/`, `127.0.0.1:8001`, bearer
-`app.rag.service-token`). See `deploy/windows/README.md` §6.
+`app.rag.enabled` defaults to **true** (`${ZHIQU_RAG_ENABLED:true}` in `application.yml`). When the
+sidecar is unreachable the backend **degrades to keyword retrieval on its own** — so a missing
+sidecar makes retrieval weaker, not broken. Pass `--app.rag.enabled=false` to skip it explicitly.
+
+The sidecar is a local Python service (`rag-service/`, `127.0.0.1:8001`, bearer
+`app.rag.service-token`). **Start/verify/stop instructions for Windows, macOS and Linux are in
+`rag-service/README.md`** — including the two things that are easy to get wrong: the health
+endpoints are `/health/live` and `/health/ready` (not `/healthz`), and **both require the bearer
+token** like every other endpoint. `GET /v1/meta` is what to read when versions look mismatched.
 
 ### Auth flow
 

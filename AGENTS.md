@@ -16,7 +16,7 @@ JAR — there is **no frontend build step**.
 
 ### Database
 
-Schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, `V1` … `V26`)
+Schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, `V1` … `V32`)
 and migrates automatically on startup. Do **not** run `schema.sql` / `data.sql` by hand — that is
 the old pre-Flyway flow and will not produce a current schema. Only create the database:
 
@@ -28,21 +28,65 @@ New migrations: next free `V<n>__description.sql`, additive only (nullable colum
 
 ### Run and build
 
+**macOS / Linux**
 ```bash
 cd zhiqu-backend
 mvn clean package -DskipTests
 java -jar target/zhiqu-backend-0.0.1-SNAPSHOT.jar
 ```
 
-Access at `http://localhost:8080`.
+**Windows (PowerShell)**
+```powershell
+cd zhiqu-backend
+mvn clean package "-DskipTests"
+java -jar target\zhiqu-backend-0.0.1-SNAPSHOT.jar
+```
+
+Access at `http://localhost:8080`. Stop it **by port, never by name** — `pkill -f java` will take
+down unrelated JVMs including your IDE's:
+
+```bash
+kill $(lsof -nP -iTCP:8080 -sTCP:LISTEN -t)                                            # macOS / Linux
+```
+```powershell
+Stop-Process -Id (Get-NetTCPConnection -LocalPort 8080 -State Listen).OwningProcess    # Windows
+```
+
+### RAG sidecar (optional)
+
+`app.rag.enabled` defaults to **true**; when the sidecar is down the backend degrades to keyword
+retrieval on its own. Start/verify/stop steps for all three platforms are in `rag-service/README.md`.
+Two things that waste time: health is `/health/live` + `/health/ready` (not `/healthz`), and
+**both need the bearer token**.
+
+### macOS: clean `target/` before any long run
+
+This checkout lives under `~/Desktop`, which iCloud syncs. iCloud drops conflict copies named
+`X 2.class` into `target/`; Spring's classpath scan then throws `BeanDefinitionStoreException`,
+or stalls with `IOException: Operation timed out` — runs that should take 20s take 40+ minutes.
+It reads like a code problem and is not. `mvn clean` may itself fail to delete `target`.
+
+```bash
+rm -rf target      # repeat if it says "Directory not empty"
+```
 
 ### Tests
 
 ```bash
 cd zhiqu-backend
-mvn -o test
-mvn -o test -Dtest=WikiToolGuardTest
+mvn -o test                                  # offline
+mvn -o test -Dtest=WikiToolGuardTest         # one class
+mvn -o clean test                            # REQUIRED after any public signature change
 ```
+
+Integration tests need Docker (Testcontainers). Without it they skip silently —
+`Tests run: N, Skipped: N` is **not** a pass. Use `-Dzhiqu.skipDockerTests=true` to make the
+skip explicit.
+
+**A new assertion does not count until it has been seen red**, and a red run is not automatically
+a working judgment: check whether it failed under `Failures` or `Errors`. `Failures` means an
+assertion spoke. `Errors` usually means the context or environment collapsed and the assertion
+never ran — that proves nothing. It is the mirror image of "an empty scan looks like a clean one".
 
 ## Gotchas that cost time
 
