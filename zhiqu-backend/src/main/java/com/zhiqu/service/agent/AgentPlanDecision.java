@@ -51,7 +51,9 @@ public record AgentPlanDecision(
         boolean needsPlanner,
         boolean needsTaskDraft,
         boolean needsWikiCurator,
-        boolean needsMemoryDraft
+        boolean needsMemoryDraft,
+        boolean needsPlanExtractor,
+        boolean needsWikiTool
 ) {
 
     private static final Set<String> MODES = Set.of("AUTO", "CHAT_ONLY", "RESEARCH", "PLAN");
@@ -104,8 +106,50 @@ public record AgentPlanDecision(
         return MODES.contains(value) ? value : "AUTO";
     }
 
+    /**
+     * 计划提取的门 —— 从 {@code AiServiceImpl.looksTaskCreationIntent} 搬来。
+     *
+     * <p>它与 {@link #PLANNER_WORDS} <b>是两件事</b>，别合并：这个决定「是否调 create_study_plan
+     * 工具把计划提取成草稿」，那个决定「造不造 PLANNER 节点」。「帮我安排下周的复习」命中后者、
+     * 不命中前者 —— 要计划节奏，但没让系统建任务。合并需单独论证。
+     */
+    private static final List<String> TASK_CREATE_PLAN_WORDS =
+            List.of("计划", "规划", "安排", "拆", "任务", "ddl", "deadline");
+    private static final List<String> TASK_CREATE_VERB_WORDS =
+            List.of("生成", "写到", "写入", "加入", "添加", "创建", "放到", "导入", "过目");
+
+    /**
+     * Wiki 工具循环的门 —— 从 {@code AiServiceImpl.looksWikiToolIntent} 搬来。
+     *
+     * <p>读或写都算：这个 agent 既做 search/read（结果进回答上下文），也做写（落成待合入草稿）。
+     * 所以它的动词表是 {@link #WIKI_WRITE_WORDS} 的<b>超集</b> —— 这条必须保持，
+     * 否则会出现「写意图成立但工具意图不成立」，启动了 Agent 却不给它写工具。
+     */
+    private static final List<String> WIKI_TOOL_VERB_WORDS = List.of(
+            "记录", "写到", "写入", "写进", "整理到", "同步到", "更新", "补充", "新建",
+            "存到", "存进", "存入", "保存", "收录", "放进", "放到", "加入", "记到", "记进",
+            "查", "看看", "找", "读");
+
+    /** 「这句话要求把计划提取成任务草稿吗」—— 唯一定义。 */
+    public static boolean taskCreationIntent(String message) {
+        return containsAny(message, TASK_CREATE_PLAN_WORDS) && containsAny(message, TASK_CREATE_VERB_WORDS);
+    }
+
+    /** 「这句话要用 Wiki 工具循环吗」（读或写）—— 唯一定义。 */
+    public static boolean wikiToolIntent(String message) {
+        String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+        return WIKI_MENTION_WORDS.stream().anyMatch(text::contains)
+                && WIKI_TOOL_VERB_WORDS.stream().anyMatch(text::contains);
+    }
+
+    /**
+     * @param toolCallingSupported 当前模型是否支持工具调用。WIKI_TOOL_AGENT 的门是
+     *        「消息意图 <b>且</b> 模型能力」—— 能力这一半不带进来的话，配了不支持工具的模型时
+     *        会造出一个结构上跑不了的节点，正是刚修掉的那个形状。
+     */
     public static AgentPlanDecision of(String agentMode, String message, boolean enableWebSearch,
-                                       Long notebookId, Map<String, Object> contextOptions) {
+                                       Long notebookId, Map<String, Object> contextOptions,
+                                       boolean toolCallingSupported) {
         String mode = normalizeMode(agentMode);
         Map<String, Object> options = contextOptions == null ? Map.of() : contextOptions;
         boolean chatOnly = "CHAT_ONLY".equals(mode);
@@ -129,7 +173,9 @@ public record AgentPlanDecision(
                 plannerNeeded(mode, message),
                 containsAny(message, TASK_DRAFT_WORDS),
                 wikiWriteIntent(message),
-                containsAny(message, MEMORY_DRAFT_WORDS)
+                containsAny(message, MEMORY_DRAFT_WORDS),
+                taskCreationIntent(message),
+                wikiToolIntent(message) && toolCallingSupported
         );
     }
 

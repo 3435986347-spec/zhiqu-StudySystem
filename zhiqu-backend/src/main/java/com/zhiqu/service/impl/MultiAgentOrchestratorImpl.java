@@ -60,6 +60,13 @@ public class MultiAgentOrchestratorImpl implements MultiAgentOrchestrator {
                     Map.of(), "Search available context"));
         }
 
+        // Wiki 工具循环在最终回答【之前】跑，所以排在 researcher 之后、草稿类之前
+        if (decision.needsWikiTool()) {
+            tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "WIKI_TOOL_AGENT",
+                    "WIKI_TOOL_LOOP", 20, null, List.of(orchestrator.getId()),
+                    Map.of(), "Read and edit Wiki via tools"));
+        }
+
         if (decision.needsPlanner()) {
             tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "PLANNER",
                     "PLAN_DRAFT", 30, null, List.of(orchestrator.getId()),
@@ -76,6 +83,11 @@ public class MultiAgentOrchestratorImpl implements MultiAgentOrchestrator {
                     Map.of(), "Draft Wiki patch"));
         }
 
+        if (decision.needsPlanExtractor()) {
+            tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "PLAN_EXTRACTOR",
+                    "EXTRACT_PLAN", 34, null, List.of(orchestrator.getId()),
+                    Map.of(), "Extract a structured plan draft"));
+        }
         if (decision.needsMemoryDraft()) {
             tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "MEMORY_CURATOR",
                     "MEMORY_DRAFT", 33, null, List.of(orchestrator.getId()),

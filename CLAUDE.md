@@ -116,7 +116,7 @@ that tells the two greens apart, and all three cases above were caught by it rat
 - Chat streams over SSE (`POST /api/ai/chat/stream`). **`SecurityContext` does not propagate to the
   async thread**, so tool executors take an explicit `userId`.
 - Planning uses OpenAI-style function calling (`create_study_plan`). The gate
-  `looksTaskCreationIntent()` requires **both** a plan word (计划/规划/安排/任务…) **and** a create
+  `AgentPlanDecision.taskCreationIntent()` requires **both** a plan word (计划/规划/安排/任务…) **and** a create
   word (生成/创建/制定/添加…); "帮我安排下周任务" alone will not produce a plan.
 - A generated plan is **never written to the calendar automatically**. It becomes a DRAFT artifact
   (`PLAN_DRAFT` / `TASK_DRAFT` / `ROUTINE_DRAFT`) plus `ai_message.suggested_plan_json`, and the UI

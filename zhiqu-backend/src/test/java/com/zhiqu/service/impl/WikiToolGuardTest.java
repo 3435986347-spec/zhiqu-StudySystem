@@ -89,8 +89,9 @@ class WikiToolGuardTest {
         return invokeBoolean("refuseExistingPageOverwrite", new Class<?>[]{Set.class, String.class}, titles, targetTitle);
     }
 
+    /** 与写意图同样搬到了公开单点，不再走反射。 */
     private static boolean looksWikiToolIntent(String message) {
-        return invokeBoolean("looksWikiToolIntent", new Class<?>[]{String.class}, message);
+        return AgentPlanDecision.wikiToolIntent(message);
     }
 
     /**

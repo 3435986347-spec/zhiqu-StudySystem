@@ -766,19 +766,25 @@ class AiConversationLifecycleIntegrationTest {
                         Set.of(),
                         "对照组：不造条件节点，也就没有东西可扫。少了这一行，下面两行可能是在「什么都被扫」上通过的"),
                 new GraphCase("帮我生成任务",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "PLANNER", "TASK_DRAFTER", "VERIFIER", "FINAL_WRITER"),
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "PLANNER", "TASK_DRAFTER",
+                                "PLAN_EXTRACTOR", "VERIFIER", "FINAL_WRITER"),
                         Set.of("TASK_DRAFTER"),
-                        "命中 needsTaskDraft 造出节点，而模型没解析出计划 → 那段 if 整个不进"),
+                        "命中 needsTaskDraft 造出节点，而模型没解析出计划 → 那段 if 整个不进。"
+                                + "PLAN_EXTRACTOR 也在：它有了自己的节点，且没提取到计划也照样走到 DONE，"
+                                + "不被 sweeper 扫 —— 「跑了但没产出」是正当结果，不是「没跑」"),
                 new GraphCase("知识库里有什么",
                         Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "VERIFIER", "FINAL_WRITER"),
                         Set.of(),
                         "wiki 读问题：两个门统一成 AND 之后不再造 WIKI_CURATOR。"
                                 + "此前建图侧平表 OR 命中「知识库」就造，每一次这样的提问都留下一个跑不了的节点"),
                 new GraphCase("把这个存入我的笔记",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "WIKI_CURATOR", "VERIFIER", "FINAL_WRITER"),
+                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "WIKI_TOOL_AGENT", "WIKI_CURATOR",
+                                "VERIFIER", "FINAL_WRITER"),
                         Set.of(),
                         "反方向：写请求但没提 wiki/知识库。此前建图侧不含「笔记」，"
-                                + "于是工件产出了、图里没有节点（隐形 agent）"),
+                                + "于是工件产出了、图里没有节点（隐形 agent）。"
+                                + "WIKI_TOOL_AGENT 也在：写意图必然是工具意图（动词表是超集），"
+                                + "这条同时钉住那个包含关系 —— 它断了就会「启动 Agent 却不给写工具」"),
                 new GraphCase("记住我不喜欢在早上学习",
                         Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "MEMORY_CURATOR", "VERIFIER", "FINAL_WRITER"),
                         Set.of(),

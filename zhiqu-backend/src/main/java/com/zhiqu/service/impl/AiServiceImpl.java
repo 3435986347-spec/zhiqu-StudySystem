@@ -496,7 +496,8 @@ public class AiServiceImpl implements AiService {
         AiMessage assistantMessage = writeContext.assistantMessage();
         // 意图判定算一次，建图与执行读同一个对象。此前两侧各算一套且已分叉（见 AgentPlanDecision 类注释）。
         AgentPlanDecision decision = AgentPlanDecision.of(
-                agentMode, limitedMessage, Boolean.TRUE.equals(enableWebSearch), notebookId, contextOptions);
+                agentMode, limitedMessage, Boolean.TRUE.equals(enableWebSearch), notebookId, contextOptions,
+                supportsToolCalling(config));
         String normalizedAgentMode = decision.mode();
         AiAgentRun agentRun = aiWorkspaceService.beginRun(
                 userId,
@@ -711,6 +712,8 @@ public class AiServiceImpl implements AiService {
         private AiAgentStep dispatcherStep;
         private AiAgentStep retrieverStep;
         private AiAgentStep verifierStep;
+        private AiAgentStep planExtractorStep;
+        private AiAgentStep wikiToolStep;
         private AiAgentStep plannerStep;
         private AiAgentStep finalWriterStep;
 
@@ -1005,8 +1008,10 @@ public class AiServiceImpl implements AiService {
      * 知识 Wiki 工具循环：在生成最终回答【之前】运行，让 search/read 的结果真正进入回答上下文，
      * 形成 read→answer 闭环；写操作生成「待合入变更」草稿。
      *
-     * <p><b>图里没有它的节点</b>，所以 {@link #inGraph} 恒为真。给它建节点会让执行轨迹里多出一个
-     * 用户此前看不到的 agent —— 那是行为变化，本阶段不做。这里把「它还没被图管住」这件事摆到明处。
+     * <p><b>跑不跑只看图里有没有这个节点</b>（{@code inGraph} 用默认实现）。
+     * 节点的条件是「消息意图 <b>且</b> 模型支持工具调用」——
+     * 能力那一半必须带进建图侧，否则配了不支持工具的模型时会造出一个结构上跑不了的节点。
+     * 门的唯一定义在 {@link AgentPlanDecision#wikiToolIntent}。
      */
     private final class WikiToolAgentRunner implements AgentStageRunner {
         private final StreamState s;
@@ -1017,11 +1022,20 @@ public class AiServiceImpl implements AiService {
 
         @Override public String agentType() { return "WIKI_TOOL_AGENT"; }
         @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.PRE_STREAM, 40); }
-        @Override public boolean inGraph(AgentRunContext ctx) { return true; }
+
+        @Override
+        public void announce(AgentRunContext ctx) {
+            startTask(ctx, s, ctx.task("WIKI_TOOL_AGENT"));
+            s.wikiToolStep = startAgentStep(ctx, s, ctx.task("WIKI_TOOL_AGENT"),
+                    "WIKI_TOOL_AGENT", 15, "正在读写知识 Wiki");
+        }
 
         @Override
         public void run(AgentRunContext ctx) {
             s.wikiAgent = runWikiToolAgent(s.config, s.userId, s.limitedMessage);
+            boolean wrote = s.wikiAgent != null && s.wikiAgent.wrotePatch;
+            finishStep(ctx, s, s.wikiToolStep, wrote ? "已生成待合入变更草稿" : "Wiki 读取完成", "wrotePatch=" + wrote);
+            completeTask(ctx, s, ctx.task("WIKI_TOOL_AGENT"), Map.of("wrotePatch", wrote), "Wiki tool loop done");
         }
     }
 
@@ -1202,11 +1216,28 @@ public class AiServiceImpl implements AiService {
 
         @Override public String agentType() { return "PLAN_EXTRACTOR"; }
         @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.POST_STREAM, 20); }
-        @Override public boolean inGraph(AgentRunContext ctx) { return true; }
+        @Override public AgentPosition announceAt() { return AgentPosition.at(AgentPhase.PRE_STREAM, 45); }
+        @Override public AgentPosition commitAt() { return AgentPosition.at(AgentPhase.COMMIT, 25); }
+
+        @Override
+        public void announce(AgentRunContext ctx) {
+            startTask(ctx, s, ctx.task("PLAN_EXTRACTOR"));
+            s.planExtractorStep = startAgentStep(ctx, s, ctx.task("PLAN_EXTRACTOR"),
+                    "PLAN_EXTRACTOR", 33, "正在从回答里提取计划");
+        }
 
         @Override
         public void run(AgentRunContext ctx) {
             s.suggestedPlan = suggestPlanFromChatIfNeeded(s.config, s.limitedMessage, s.finalReply);
+        }
+
+        @Override
+        public void commit(AgentRunContext ctx) {
+            // 节点有了就要走到终态：没解析出计划也是一个正当结果，不该被 sweeper 当成「没跑」。
+            boolean extracted = hasPlanDraft(s.suggestedPlan);
+            finishStep(ctx, s, s.planExtractorStep,
+                    extracted ? "已提取计划草稿" : "本轮未从回答里提取到计划", "planDraft=" + extracted);
+            completeTask(ctx, s, ctx.task("PLAN_EXTRACTOR"), Map.of("planDraft", extracted), "Plan extraction done");
         }
     }
 
@@ -2930,7 +2961,7 @@ public class AiServiceImpl implements AiService {
         Map<String, Object> empty = new HashMap<>();
         empty.put("tasks", List.of());
         empty.put("routines", List.of());
-        if (!looksTaskCreationIntent(userMessage)) {
+        if (!AgentPlanDecision.taskCreationIntent(userMessage)) {
             return empty;
         }
         String userPrompt = """
@@ -3283,7 +3314,7 @@ public class AiServiceImpl implements AiService {
     // 关键：在生成最终回答【之前】运行，检索/读取结果注入回答上下文，形成真正的 read→answer 闭环；
     //       全程用显式传入的 userId，不依赖 SecurityContext（本方法运行在 SSE 异步线程，上下文不传播）。
     private WikiAgentResult runWikiToolAgent(AiModelConfig config, Long userId, String userMessage) {
-        if (!looksWikiToolIntent(userMessage) || !supportsToolCalling(config)) {
+        if (!AgentPlanDecision.wikiToolIntent(userMessage) || !supportsToolCalling(config)) {
             return WikiAgentResult.EMPTY;
         }
         if (isAnthropicProvider(config)) {
@@ -3622,22 +3653,6 @@ public class AiServiceImpl implements AiService {
         return "index".equalsIgnoreCase(t) || "log".equalsIgnoreCase(t) || "Wiki 维护规则".equals(t);
     }
 
-    static boolean looksWikiToolIntent(String message) {
-        if (message == null || message.isBlank()) {
-            return false;
-        }
-        String t = message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
-        boolean mentionsWiki = t.contains("wiki") || t.contains("知识库") || t.contains("知识页")
-                || t.contains("笔记") || t.contains("知识树") || t.contains("我记");
-        // readOrWrite 是 AgentPlanDecision.WIKI_WRITE_WORDS 的超集，保证“写意图 ⟹ 工具意图”（否则会启动 Agent 却不给写工具）
-        boolean readOrWrite = t.contains("记录") || t.contains("写到") || t.contains("写入") || t.contains("写进")
-                || t.contains("整理到") || t.contains("同步到") || t.contains("更新") || t.contains("补充")
-                || t.contains("新建") || t.contains("存到") || t.contains("存进") || t.contains("存入")
-                || t.contains("保存") || t.contains("收录") || t.contains("放进") || t.contains("放到")
-                || t.contains("加入") || t.contains("记到") || t.contains("记进")
-                || t.contains("查") || t.contains("看看") || t.contains("找") || t.contains("读");
-        return mentionsWiki && readOrWrite;
-    }
 
     private String getWikiToolSystemPrompt() {
         return """
@@ -3656,29 +3671,6 @@ public class AiServiceImpl implements AiService {
                 """;
     }
 
-    private boolean looksTaskCreationIntent(String message) {
-        if (!hasText(message)) {
-            return false;
-        }
-        String text = message.toLowerCase(Locale.ROOT);
-        boolean asksPlan = text.contains("计划")
-                || text.contains("规划")
-                || text.contains("安排")
-                || text.contains("拆")
-                || text.contains("任务")
-                || text.contains("ddl")
-                || text.contains("deadline");
-        boolean asksCreate = text.contains("生成")
-                || text.contains("写到")
-                || text.contains("写入")
-                || text.contains("加入")
-                || text.contains("添加")
-                || text.contains("创建")
-                || text.contains("放到")
-                || text.contains("导入")
-                || text.contains("过目");
-        return asksPlan && asksCreate;
-    }
 
     private String cleanMemoryText(String text) {
         if (!hasText(text)) {
