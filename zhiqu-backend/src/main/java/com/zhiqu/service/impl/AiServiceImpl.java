@@ -672,6 +672,8 @@ public class AiServiceImpl implements AiService {
             errorRunningStep(state.plannerStep, e);
             errorRunningStep(state.finalWriterStep, e);
             errorRunningTasks(ctx, state, e);
+            // RUNNING 的已标 ERROR，还没轮到的仍是 PENDING —— 不收的话它们永远停在那里
+            settleUnrunTasks(ctx, state, FAILED_RUN_TASK_SUMMARY);
             aiWorkspaceService.errorRun(agentRun, e);
             failAssistantMessage(assistantMessage, e);
             Map<String, Object> error = new LinkedHashMap<>();
@@ -1443,9 +1445,25 @@ public class AiServiceImpl implements AiService {
      * 见 {@code AiConversationLifecycleIntegrationTest.每轮造出的节点与被扫掉的节点都必须符合预期}。
      */
     private void settleUnrunTasks(AgentRunContext ctx, StreamState s) {
+        settleUnrunTasks(ctx, s, UNRUN_TASK_SUMMARY);
+    }
+
+    /**
+     * 把还停在 PENDING 的节点收成 SKIPPED。
+     *
+     * <p><b>两条路径都要收，而且理由不能混。</b>此前只有成功路径收（settleUnrunTasks 写在
+     * 最终事务里），出错时只有 {@link #errorRunningTasks} 跑，而它只碰 RUNNING 的节点 ——
+     * 于是一个失败的 run 会把所有还没轮到的节点永久留在 PENDING，执行轨迹里挂着一排转圈的 agent。
+     * 这正是引入 settleUnrunTasks 时要消灭的症状，只是发生在另一条路径上，
+     * 而钉它的判据先断言 run 是 DONE，结构上看不见失败路径。
+     *
+     * <p>两条路径的公开说明必须<b>不同</b>：「跑了但没产出」与「本轮失败，根本没轮到它」
+     * 是两件事，用同一句话会让它们在库里同形 —— 正是判据要分开的那两种。
+     */
+    private void settleUnrunTasks(AgentRunContext ctx, StreamState s, String publicSummary) {
         for (AiAgentTask task : ctx.tasks()) {
             if (task != null && "PENDING".equals(task.getStatus())) {
-                skipTask(ctx, s, task, UNRUN_TASK_SUMMARY);
+                skipTask(ctx, s, task, publicSummary);
             }
         }
     }
@@ -1584,6 +1602,9 @@ public class AiServiceImpl implements AiService {
 
     /** {@link #settleUnrunTasks} 给被扫节点写的公开说明；判据靠它把「被扫掉」与「正常跳过」分开。 */
     static final String UNRUN_TASK_SUMMARY = "本轮未产出内容";
+
+    /** 失败路径上被收尾的节点。与 {@link #UNRUN_TASK_SUMMARY} 刻意不同：它们不是「没产出」，是没轮到。 */
+    static final String FAILED_RUN_TASK_SUMMARY = "本轮失败，未执行";
 
     /** 图里的检索节点可能叫这四种类型中的任意一种（三种专职 researcher + 兜底 RETRIEVER）。 */
     private static final String[] RESEARCH_AGENT_TYPES =

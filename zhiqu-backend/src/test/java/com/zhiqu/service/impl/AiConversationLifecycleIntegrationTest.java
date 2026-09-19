@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer;
 import com.zhiqu.common.BusinessException;
 import java.util.ArrayList;
 import com.zhiqu.entity.AiConversation;
+import com.zhiqu.service.ContextOptionKeys;
 import com.zhiqu.service.memory.LongTermMemoryStore;
 import com.zhiqu.service.AiService;
 import com.zhiqu.service.AiWorkspaceService;
@@ -1165,5 +1166,70 @@ class AiConversationLifecycleIntegrationTest {
                     "「" + expected + "」不见了 —— 读—改—写被整份覆盖，而两个确认都返回了成功。实际："
                             + memory.replace("\n", " / "));
         }
+    }
+
+    /**
+     * 失败的 run 同样不得留下非终态节点。
+     *
+     * <h2>为什么兄弟判据看不见这件事</h2>
+     *
+     * <p>{@link #每轮造出的节点与被扫掉的节点都必须符合预期()} 第一句就断言 {@code run.status == DONE}
+     * —— 它钉的是成功路径。而收尾的 settleUnrunTasks 此前<b>只写在成功路径上</b>（最终事务里），
+     * 出错时只有 errorRunningTasks 跑，那个只碰 RUNNING 的节点。
+     * 于是一个失败的 run 把所有还没轮到的节点永久留在 PENDING，执行轨迹里挂着一排转圈的 agent ——
+     * 正是引入 settleUnrunTasks 时要消灭的症状，只是换了一条路径，而判据结构上覆盖不到。
+     *
+     * <p>这一条是<b>端到端跑真实实例</b>撞出来的，不是判据发现的：
+     * 用「只勾资料源、不带 notebook」的请求直调 API，检索抛 BusinessException，
+     * 库里留下 VERIFIER/FINAL_WRITER 两行 PENDING。
+     *
+     * <h2>两种收尾的公开说明必须不同</h2>
+     *
+     * <p>「跑了但没产出」（{@code UNRUN_TASK_SUMMARY}）与「本轮失败，根本没轮到它」
+     * （{@code FAILED_RUN_TASK_SUMMARY}）是两件事。用同一句话会让它们在库里同形，
+     * 而分开正是兄弟判据靠 public_summary 做的事。
+     *
+     * <p>扰动：删掉错误路径上的 settleUnrunTasks 调用 → PENDING 行重现。
+     */
+    @Test
+    void 失败的run也不得留下非终态节点() throws Exception {
+        // 选了资料源却不带 notebook：检索阶段抛 BusinessException，run 走错误路径
+        aiService.streamChat(userId, "这份资料讲了什么", modelId, false, "OFF", null, "AUTO",
+                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L, 2L)));
+
+        long deadline = System.currentTimeMillis() + 30_000;
+        Map<String, Object> run = null;
+        while (System.currentTimeMillis() < deadline) {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT id, status FROM ai_agent_run WHERE user_id = ? ORDER BY id DESC LIMIT 1", userId);
+            if (!rows.isEmpty() && !"RUNNING".equals(String.valueOf(rows.get(0).get("status")))) {
+                run = rows.get(0);
+                break;
+            }
+            Thread.sleep(200);
+        }
+        assertNotNull(run, "run 未在 30s 内结束");
+        assertEquals("ERROR", run.get("status"),
+                "下界：这一轮必须真的走了错误路径，否则测的是成功路径（兄弟判据已覆盖）");
+
+        List<Map<String, Object>> tasks = jdbcTemplate.queryForList(
+                "SELECT agent_type, status, public_summary FROM ai_agent_task WHERE run_id = ?",
+                ((Number) run.get("id")).longValue());
+        assertFalse(tasks.isEmpty(), "下界：这一轮必须真的造过节点");
+
+        List<Map<String, Object>> stranded = tasks.stream()
+                .filter(row -> !List.of("DONE", "SKIPPED", "ERROR").contains(String.valueOf(row.get("status"))))
+                .toList();
+        assertTrue(stranded.isEmpty(),
+                "run 已失败，这些节点仍停在非终态：" + stranded
+                        + "。失败不是把节点留在 PENDING 的理由 —— 执行轨迹里会永远挂着转圈的 agent");
+
+        long settled = tasks.stream()
+                .filter(row -> AiServiceImpl.FAILED_RUN_TASK_SUMMARY.equals(row.get("public_summary")))
+                .count();
+        assertTrue(settled >= 1,
+                "至少有一个还没轮到的节点要被收成「" + AiServiceImpl.FAILED_RUN_TASK_SUMMARY + "」；"
+                        + "用成功路径那句「" + AiServiceImpl.UNRUN_TASK_SUMMARY + "」会把两种情形混成同一形状。实际："
+                        + tasks);
     }
 }
