@@ -34,7 +34,7 @@ public class StudyTaskController {
     public Result<StudyTask> create(@RequestBody @Valid TaskCreateRequest request,
                                     @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long userId = SecurityUtils.getCurrentUserId();
-        return idempotencyService.execute(userId, idempotencyKey,
+        return idempotencyService.execute(userId, "task.create", idempotencyKey,
                 () -> Result.success(studyTaskService.create(userId, request)));
     }
 
@@ -43,7 +43,7 @@ public class StudyTaskController {
     public Result<Map<String, Object>> createWithRepeat(@RequestBody @Valid TaskCreateRequest request,
                                                         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long userId = SecurityUtils.getCurrentUserId();
-        return idempotencyService.execute(userId, idempotencyKey, () -> {
+        return idempotencyService.execute(userId, "task.createWithRepeat", idempotencyKey, () -> {
             List<StudyTask> tasks = studyTaskService.createRepeated(userId, request);
             return Result.success(Map.of(
                     "created", tasks.size(),

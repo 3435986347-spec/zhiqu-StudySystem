@@ -496,10 +496,22 @@
     $all('[data-del-task]', host).forEach(function (b) { b.onclick = function () { deleteTask(Number(b.dataset.delTask)); }; });
     $all('[data-edit-task]', host).forEach(function (b) { b.onclick = function () { editTaskPrompt(Number(b.dataset.editTask)); }; });
   }
+  // 一次提交一个幂等键：同一次提交被重复投递（网络重发、代理重试）时后端只执行一次。
+  // 它挡的是「同一次提交到了两次」，不是「用户点了两次」—— 后者是两个意图，本来就该建两条。
+  //
+  // 旧写法 'ui-' + Date.now() 是反的：只有同一毫秒内的两次调用才会拿到相同键（那不会发生），
+  // 正常间隔的重复投递反而各拿一个新键，于是幂等在唯一该生效的场合失效。
+  function newIdempotencyKey() {
+    if (window.crypto && window.crypto.randomUUID) return 'ui-' + window.crypto.randomUUID();
+    return 'ui-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+  }
+
   async function createTaskPrompt() {
     var title = await askText({ title: '新建任务', label: '任务标题', placeholder: '例如：数学二轮 · 重积分专题' }); if (!title || !title.trim()) return;
+    // 键在提交之前生成一次，safe 内部若重发用的是同一个
+    var idempotencyKey = newIdempotencyKey();
     await safe('创建任务', async function () {
-      await api.post('/task', { title: title.trim(), description: '', quadrant: 2, priority: 1, status: 0 }, { 'Idempotency-Key': 'ui-' + Date.now() });
+      await api.post('/task', { title: title.trim(), description: '', quadrant: 2, priority: 1, status: 0 }, { 'Idempotency-Key': idempotencyKey });
       toast('任务已创建'); await bootTasks();
     });
   }

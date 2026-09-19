@@ -343,7 +343,7 @@ public class AiController {
     public Result<Map<String, Object>> batchCreateTasks(@RequestBody List<Map<String, Object>> tasks,
                                                         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long userId = SecurityUtils.getCurrentUserId();
-        return idempotencyService.execute(userId, idempotencyKey,
+        return idempotencyService.execute(userId, "ai.batchCreateTasks", idempotencyKey,
                 () -> Result.success(createTasksFromMaps(userId, tasks)));
     }
 
@@ -351,7 +351,7 @@ public class AiController {
     public Result<Map<String, Object>> batchCreatePlan(@RequestBody Map<String, Object> body,
                                                        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long userId = SecurityUtils.getCurrentUserId();
-        return idempotencyService.execute(userId, idempotencyKey, () -> {
+        return idempotencyService.execute(userId, "ai.batchCreatePlan", idempotencyKey, () -> {
             Map<String, Object> taskResult = createTasksFromMaps(userId, castMapList(body.get("tasks")));
             int createdRoutines = routineService.createBatch(userId, castMapList(body.get("routines"))).size();
             Map<String, Object> result = new HashMap<>();
