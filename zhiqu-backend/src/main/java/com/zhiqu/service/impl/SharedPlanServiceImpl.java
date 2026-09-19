@@ -112,9 +112,9 @@ public class SharedPlanServiceImpl implements SharedPlanService {
             task.setDescription(clean(value(item.get("description"), ""), 1000));
             task.setRelativeStartDay(parseInt(item.get("relativeStartDay")));
             task.setRelativeDeadlineDay(parseInt(item.get("relativeDeadlineDay")));
-            task.setPreferredTime(value(item.get("preferredTime"), null));
+            task.setPreferredTime(normalizeTime(item.get("preferredTime"), null));
             task.setDurationMinutes(parseInt(item.get("durationMinutes")));
-            task.setTaskType(value(item.get("taskType"), "other"));
+            task.setTaskType(clean(value(item.get("taskType"), "other"), TASK_TYPE_MAX));
             task.setDifficulty(parseInt(item.get("difficulty")));
             task.setQuadrant(defaultInt(item.get("quadrant"), 2));
             task.setPriority(defaultInt(item.get("priority"), 1));
@@ -128,13 +128,13 @@ public class SharedPlanServiceImpl implements SharedPlanService {
             routine.setTemplateId(template.getId());
             routine.setTitle(clean(required(item.get("title"), "例行计划标题不能为空"), 200));
             routine.setDescription(clean(value(item.get("description"), ""), 1000));
-            routine.setFrequency(value(item.get("frequency"), "DAILY"));
+            routine.setFrequency(normalizeFrequency(item.get("frequency")));
             routine.setDaysOfWeek(joinOffsets(item.get("daysOfWeek")));
             routine.setRelativeStartDay(defaultInt(item.get("relativeStartDay"), 0));
             routine.setRelativeEndDay(defaultInt(item.get("relativeEndDay"), 29));
-            routine.setPreferredTime(value(item.get("preferredTime"), "08:00"));
+            routine.setPreferredTime(normalizeTime(item.get("preferredTime"), "08:00"));
             routine.setDurationMinutes(parseInt(item.get("durationMinutes")));
-            routine.setTaskType(value(item.get("taskType"), "course"));
+            routine.setTaskType(clean(value(item.get("taskType"), "course"), TASK_TYPE_MAX));
             routine.setDifficulty(parseInt(item.get("difficulty")));
             routine.setQuadrant(defaultInt(item.get("quadrant"), 2));
             routine.setPriority(defaultInt(item.get("priority"), 1));
@@ -183,7 +183,7 @@ public class SharedPlanServiceImpl implements SharedPlanService {
             task.setRelativeDeadlineDay(defaultInt(cfg.get("relativeDeadlineDay"), source.getDeadline() == null ? 7 : 0));
             task.setPreferredTime(value(cfg.get("preferredTime"), source.getDeadline() == null ? "23:59" : source.getDeadline().toLocalTime().toString().substring(0, 5)));
             task.setDurationMinutes(source.getDurationMinutes());
-            task.setTaskType(value(source.getTaskType(), "other"));
+            task.setTaskType(clean(value(source.getTaskType(), "other"), TASK_TYPE_MAX));
             task.setDifficulty(source.getDifficulty());
             task.setQuadrant(source.getQuadrant());
             task.setPriority(source.getPriority());
@@ -205,13 +205,13 @@ public class SharedPlanServiceImpl implements SharedPlanService {
             routine.setTemplateId(template.getId());
             routine.setTitle(clean(source.getTitle(), 200));
             routine.setDescription(clean(value(source.getDescription(), ""), 1000));
-            routine.setFrequency(value(source.getFrequency(), "DAILY"));
+            routine.setFrequency(normalizeFrequency(source.getFrequency()));
             routine.setDaysOfWeek(value(source.getDaysOfWeek(), "1,2,3,4,5,6,7"));
             routine.setRelativeStartDay(defaultInt(cfg.get("relativeStartDay"), 0));
             routine.setRelativeEndDay(defaultInt(cfg.get("relativeEndDay"), 29));
             routine.setPreferredTime(value(cfg.get("preferredTime"), source.getPreferredTime() == null ? "08:00" : source.getPreferredTime().toString().substring(0, 5)));
             routine.setDurationMinutes(source.getDurationMinutes());
-            routine.setTaskType(value(source.getTaskType(), "course"));
+            routine.setTaskType(clean(value(source.getTaskType(), "course"), TASK_TYPE_MAX));
             routine.setDifficulty(source.getDifficulty());
             routine.setQuadrant(source.getQuadrant());
             routine.setPriority(source.getPriority());
@@ -773,13 +773,48 @@ public class SharedPlanServiceImpl implements SharedPlanService {
         return row;
     }
 
+    /**
+     * <b>解析不了就用兜底，绝不抛。</b>写侧已经归一（见 {@link #normalizeTime}），
+     * 但<b>库里还躺着归一之前发布的行</b> —— 那些行里的畸形时间会让每一个想应用该计划的
+     * <b>读者</b>拿到 500：LocalTime.parse 抛的是 DateTimeParseException，不是 BusinessException，
+     * 上层兜不住。发布者存一次，所有读者都炸。所以两侧都要修，光修写侧等于只管新数据。
+     */
     private LocalDateTime toDateTime(LocalDate date, String time, LocalTime fallback) {
-        LocalTime localTime = fallback;
-        if (time != null && !time.isBlank()) {
-            localTime = LocalTime.parse(time.length() > 5 ? time.substring(0, 5) : time);
-        }
-        return LocalDateTime.of(date, localTime);
+        return LocalDateTime.of(date, parseTimeOrNull(time) == null ? fallback : parseTimeOrNull(time));
     }
+
+    /** 解析 HH:mm[:ss]，失败返回 null。长度不足时不做 substring —— 那会越界。 */
+    private LocalTime parseTimeOrNull(String time) {
+        if (time == null || time.isBlank()) {
+            return null;
+        }
+        String trimmed = time.trim();
+        try {
+            return LocalTime.parse(trimmed.length() > 5 ? trimmed.substring(0, 5) : trimmed);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 写侧归一：合法就保留原值，不合法归到兜底。
+     *
+     * <p>结构化字段的正确做法是<b>校验</b>而不是脱敏 —— 把垃圾打码后留着，
+     * 读者应用计划时照样解析不了。
+     */
+    private String normalizeTime(Object raw, String fallback) {
+        LocalTime parsed = parseTimeOrNull(value(raw, null));
+        return parsed == null ? fallback : parsed.toString();
+    }
+
+    /** 与 RoutineServiceImpl.normalizeFrequency 同口径：只认 WEEKLY，其余一律 DAILY。 */
+    private String normalizeFrequency(Object raw) {
+        String text = value(raw, "");
+        return "WEEKLY".equalsIgnoreCase(text.trim()) ? "WEEKLY" : "DAILY";
+    }
+
+    /** task_type 列是 VARCHAR(50)（V10:156/178）—— 截断长度跟着列宽，别让写入撞长度上限。 */
+    private static final int TASK_TYPE_MAX = 50;
 
     private String clean(String value, int max) {
         String sanitized = privacySanitizer.sanitize(value == null ? "" : value)
