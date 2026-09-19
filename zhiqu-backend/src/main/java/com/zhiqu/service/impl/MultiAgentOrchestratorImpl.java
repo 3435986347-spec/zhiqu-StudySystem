@@ -36,15 +36,18 @@ public class MultiAgentOrchestratorImpl implements MultiAgentOrchestrator {
                 null, List.of(), Map.of("agentMode", decision.mode()), "Plan task graph");
         tasks.add(orchestrator);
 
-        if (decision.needsNotebook()) {
-            tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "NOTEBOOK_RESEARCHER",
-                    "RESEARCH_NOTEBOOK", 10, "research", List.of(orchestrator.getId()),
-                    Map.of("notebookId", notebookId), "Search current Notebook"));
-        }
-        if (!"CHAT_ONLY".equals(decision.mode()) && decision.includeWiki()) {
-            tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "WIKI_RESEARCHER",
-                    "RESEARCH_WIKI", 11, "research", List.of(orchestrator.getId()),
-                    Map.of(), "Search selected Wiki pages"));
+        // NOTEBOOK 与 WIKI 合成一个节点：它们不是两个可独立调度的单元 ——
+        // AiWorkspaceServiceImpl.sourceContext 一次 RAG 调用同时覆盖 Notebook 资料与 Wiki 页
+        // （Wiki 在 SourceScopeResolver 返回的 ScopeSelection 里，带页数上界）。
+        // 此前建图侧造两个节点，执行侧只有一次调用，于是图声称了一个执行里没有的结构 ——
+        // 与幽灵/隐形 agent 同一个物种，只是方向是「多声称了一个」。
+        //
+        // 另一条路是把 RAG 调用拆成 notebook-only 与 wiki-only 两次以凑够两个单元，
+        // 为了建模美观多花一次向量检索，不做。
+        if (decision.needsNotebook() || (!"CHAT_ONLY".equals(decision.mode()) && decision.includeWiki())) {
+            tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "CONTEXT_RESEARCHER",
+                    "RESEARCH_CONTEXT_SOURCES", 10, "research", List.of(orchestrator.getId()),
+                    Map.of("notebookId", notebookId == null ? "" : notebookId), "Search Notebook and Wiki"));
         }
         if (decision.needsWeb()) {
             tasks.add(taskGraphService.createTask(run.getId(), orchestrator.getId(), "WEB_RESEARCHER",

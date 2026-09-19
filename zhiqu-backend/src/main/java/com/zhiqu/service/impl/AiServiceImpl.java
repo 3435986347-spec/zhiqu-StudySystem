@@ -1725,9 +1725,15 @@ public class AiServiceImpl implements AiService {
     /** 失败路径上被收尾的节点。与 {@link #UNRUN_TASK_SUMMARY} 刻意不同：它们不是「没产出」，是没轮到。 */
     static final String FAILED_RUN_TASK_SUMMARY = "本轮失败，未执行";
 
-    /** 图里的检索节点可能叫这四种类型中的任意一种（三种专职 researcher + 兜底 RETRIEVER）。 */
+    /**
+     * 图里的检索节点可能叫这三种类型中的任意一种。
+     *
+     * <p>CONTEXT_RESEARCHER 覆盖 Notebook + Wiki（同一次 RAG 调用），WEB_RESEARCHER 覆盖联网抓取，
+     * RETRIEVER 是两者都没造出来时的兜底。<b>节点类型与执行单元一一对应</b> ——
+     * 此前 NOTEBOOK 与 WIKI 是两个节点、一次调用。
+     */
     private static final String[] RESEARCH_AGENT_TYPES =
-            {"NOTEBOOK_RESEARCHER", "WIKI_RESEARCHER", "WEB_RESEARCHER", "RETRIEVER"};
+            {"CONTEXT_RESEARCHER", "WEB_RESEARCHER", "RETRIEVER"};
 
     /**
      * 起一个执行步骤并发出 step.start。

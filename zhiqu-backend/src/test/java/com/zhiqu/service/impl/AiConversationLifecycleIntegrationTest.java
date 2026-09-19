@@ -740,7 +740,11 @@ class AiConversationLifecycleIntegrationTest {
     }
 
     /** 一个用例：这句话该造出哪些节点，其中哪些该被 settleUnrunTasks 扫成 SKIPPED。 */
-    private record GraphCase(String message, Set<String> created, Set<String> swept, String why) {
+    private record GraphCase(String message, Map<String, Object> contextOptions,
+                             Set<String> created, Set<String> swept, String why) {
+        GraphCase(String message, Set<String> created, Set<String> swept, String why) {
+            this(message, Map.of(), created, swept, why);
+        }
     }
 
     /**
@@ -767,38 +771,47 @@ class AiConversationLifecycleIntegrationTest {
     void 每轮造出的节点与被扫掉的节点都必须符合预期() throws Exception {
         List<GraphCase> cases = List.of(
                 new GraphCase("你好",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
+                        Set.of("ORCHESTRATOR", "CONTEXT_RESEARCHER", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of(),
                         "对照组：不造条件节点，也就没有东西可扫。少了这一行，下面两行可能是在「什么都被扫」上通过的"),
                 new GraphCase("帮我生成任务",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "PLANNER", "TASK_DRAFTER",
+                        Set.of("ORCHESTRATOR", "CONTEXT_RESEARCHER", "PLANNER", "TASK_DRAFTER",
                                 "PLAN_EXTRACTOR", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of("TASK_DRAFTER"),
                         "命中 needsTaskDraft 造出节点，而模型没解析出计划 → 那段 if 整个不进。"
                                 + "PLAN_EXTRACTOR 也在：它有了自己的节点，且没提取到计划也照样走到 DONE，"
                                 + "不被 sweeper 扫 —— 「跑了但没产出」是正当结果，不是「没跑」"),
                 new GraphCase("知识库里有什么",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
+                        Set.of("ORCHESTRATOR", "CONTEXT_RESEARCHER", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of(),
                         "wiki 读问题：两个门统一成 AND 之后不再造 WIKI_CURATOR。"
                                 + "此前建图侧平表 OR 命中「知识库」就造，每一次这样的提问都留下一个跑不了的节点"),
                 new GraphCase("把这个存入我的笔记",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "WIKI_TOOL_AGENT", "WIKI_CURATOR",
+                        Set.of("ORCHESTRATOR", "CONTEXT_RESEARCHER", "WIKI_TOOL_AGENT", "WIKI_CURATOR",
                                 "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of(),
                         "反方向：写请求但没提 wiki/知识库。此前建图侧不含「笔记」，"
                                 + "于是工件产出了、图里没有节点（隐形 agent）。"
                                 + "WIKI_TOOL_AGENT 也在：写意图必然是工具意图（动词表是超集），"
                                 + "这条同时钉住那个包含关系 —— 它断了就会「启动 Agent 却不给写工具」"),
+                // 活壳恒发 includeWiki: true，所以这一行才是生产上最常见的形状 ——
+                // 其余各行都传 Map.of()，includeWiki 分支从来走不到。
+                // 少了它，「把 WIKI_RESEARCHER 加回建图」这个扰动不会红：合并等于没有判据看着。
+                new GraphCase("看看有什么资料", Map.of(ContextOptionKeys.INCLUDE_WIKI, true),
+                        Set.of("ORCHESTRATOR", "CONTEXT_RESEARCHER", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
+                        Set.of(),
+                        "Notebook 与 Wiki 是同一次 RAG 调用，只该有一个 CONTEXT_RESEARCHER 节点。"
+                                + "出现 WIKI_RESEARCHER 就说明建图侧又声称了一个执行里没有的单元"),
                 new GraphCase("记住我不喜欢在早上学习",
-                        Set.of("ORCHESTRATOR", "NOTEBOOK_RESEARCHER", "MEMORY_CURATOR", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
+                        Set.of("ORCHESTRATOR", "CONTEXT_RESEARCHER", "MEMORY_CURATOR", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of(),
                         "MEMORY_CURATOR 有了自己的节点；假端点回条目数组，所以它一路跑到 DONE 而不是被扫 ——"
                                 + " 这一行同时钉住「新增了一个用户看得见的 agent」这件事"));
 
         for (GraphCase testCase : cases) {
             Long notebookId = createNotebook(userId, "节点预期 " + testCase.message());
-            aiService.streamChat(userId, testCase.message(), modelId, false, "OFF", notebookId, "AUTO", Map.of());
+            aiService.streamChat(userId, testCase.message(), modelId, false, "OFF", notebookId, "AUTO",
+                    testCase.contextOptions());
             awaitLatestRunFinished(userId, notebookId);
 
             Map<String, Object> run = jdbcTemplate.queryForMap(
