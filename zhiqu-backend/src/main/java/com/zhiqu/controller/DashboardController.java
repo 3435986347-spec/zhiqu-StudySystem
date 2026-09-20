@@ -1,6 +1,7 @@
 package com.zhiqu.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.zhiqu.common.BusinessClock;
 import com.zhiqu.common.Result;
 import com.zhiqu.entity.StudyTask;
 import com.zhiqu.entity.TaskReminder;
@@ -27,6 +28,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/dashboard")
 public class DashboardController {
+    private final BusinessClock clock;
     private final StudyTaskMapper studyTaskMapper;
     private final TaskReminderMapper taskReminderMapper;
     private final RoutineService routineService;
@@ -35,7 +37,9 @@ public class DashboardController {
     public DashboardController(StudyTaskMapper studyTaskMapper,
                                TaskReminderMapper taskReminderMapper,
                                RoutineService routineService,
-                               TaskPrivacyService taskPrivacyService) {
+                               TaskPrivacyService taskPrivacyService,
+                                BusinessClock clock) {
+        this.clock = clock;
         this.studyTaskMapper = studyTaskMapper;
         this.taskReminderMapper = taskReminderMapper;
         this.routineService = routineService;
@@ -51,7 +55,7 @@ public class DashboardController {
         if (end.isBefore(start)) {
             end = start;
         }
-        LocalDate today = LocalDate.now();
+        LocalDate today = clock.today();
         LocalDateTime rangeStart = start.atStartOfDay();
         LocalDateTime rangeEnd = end.atTime(LocalTime.MAX);
 

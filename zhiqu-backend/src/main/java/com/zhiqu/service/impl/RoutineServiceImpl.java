@@ -1,6 +1,7 @@
 package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.zhiqu.common.BusinessClock;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.StudyRoutine;
 import com.zhiqu.entity.StudyRoutineCheckin;
@@ -34,13 +35,16 @@ public class RoutineServiceImpl implements RoutineService {
     private static final String FREQ_DAILY = "DAILY";
     private static final String FREQ_WEEKLY = "WEEKLY";
 
+    private final BusinessClock clock;
     private final StudyRoutineMapper routineMapper;
     private final StudyRoutineCheckinMapper checkinMapper;
     private final AchievementService achievementService;
 
     public RoutineServiceImpl(StudyRoutineMapper routineMapper,
                               StudyRoutineCheckinMapper checkinMapper,
-                              AchievementService achievementService) {
+                              AchievementService achievementService,
+                                BusinessClock clock) {
+        this.clock = clock;
         this.routineMapper = routineMapper;
         this.checkinMapper = checkinMapper;
         this.achievementService = achievementService;
@@ -56,7 +60,7 @@ public class RoutineServiceImpl implements RoutineService {
         routine.setDescription(text(body.get("description")));
         routine.setFrequency(normalizeFrequency(text(body.get("frequency"))));
         routine.setDaysOfWeek(normalizeDaysOfWeek(body.get("daysOfWeek"), routine.getFrequency()));
-        routine.setStartDate(parseDate(body.get("startDate"), LocalDate.now()));
+        routine.setStartDate(parseDate(body.get("startDate"), clock.today()));
         routine.setEndDate(parseDate(body.get("endDate"), routine.getStartDate().plusDays(29)));
         routine.setPreferredTime(parseTime(body.get("preferredTime")));
         routine.setDurationMinutes(parseInt(body.get("durationMinutes"), null));
@@ -104,7 +108,7 @@ public class RoutineServiceImpl implements RoutineService {
 
     @Override
     public List<Map<String, Object>> instances(Long userId, LocalDate from, LocalDate to) {
-        LocalDate safeFrom = from == null ? LocalDate.now() : from;
+        LocalDate safeFrom = from == null ? clock.today() : from;
         LocalDate safeTo = to == null ? safeFrom.plusDays(6) : to;
         if (safeTo.isBefore(safeFrom)) {
             safeTo = safeFrom;
@@ -138,7 +142,7 @@ public class RoutineServiceImpl implements RoutineService {
     @DeadlockRetry
     public Map<String, Object> checkin(Long userId, Long routineId, Map<String, Object> body) {
         StudyRoutine routine = ownedRoutine(userId, routineId);
-        LocalDate checkDate = parseDate(body == null ? null : body.get("checkDate"), LocalDate.now());
+        LocalDate checkDate = parseDate(body == null ? null : body.get("checkDate"), clock.today());
         if (!occursOn(routine, checkDate)) {
             throw new BusinessException("该日期不在例行计划范围内");
         }
@@ -189,7 +193,7 @@ public class RoutineServiceImpl implements RoutineService {
 
     @Override
     public List<Map<String, Object>> reminderInstances(LocalDate date) {
-        LocalDate target = date == null ? LocalDate.now() : date;
+        LocalDate target = date == null ? clock.today() : date;
         List<StudyRoutine> routines = routineMapper.selectList(new LambdaQueryWrapper<StudyRoutine>()
                 .eq(StudyRoutine::getReminderEnabled, 1)
                 .le(StudyRoutine::getStartDate, target)
@@ -302,7 +306,7 @@ public class RoutineServiceImpl implements RoutineService {
         }
         Set<Integer> days = parseDays(raw);
         if (days.isEmpty()) {
-            days.add(LocalDate.now().getDayOfWeek().getValue());
+            days.add(clock.today().getDayOfWeek().getValue());
         }
         return joinInts(days);
     }

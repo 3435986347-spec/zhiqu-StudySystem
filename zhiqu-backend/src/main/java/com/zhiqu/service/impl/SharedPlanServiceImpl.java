@@ -1,6 +1,7 @@
 package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.zhiqu.common.BusinessClock;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.dto.TaskCreateRequest;
 import com.zhiqu.entity.SharedPlanReview;
@@ -43,6 +44,7 @@ import java.util.Objects;
 
 @Service
 public class SharedPlanServiceImpl implements SharedPlanService {
+    private final BusinessClock clock;
     private final SharedPlanTemplateMapper templateMapper;
     private final SharedPlanTaskTemplateMapper taskTemplateMapper;
     private final SharedPlanRoutineTemplateMapper routineTemplateMapper;
@@ -69,7 +71,9 @@ public class SharedPlanServiceImpl implements SharedPlanService {
                                  RoutineService routineService,
                                  SharedPlanEventService eventService,
                                  PrivacySanitizer privacySanitizer,
-                                 UploadPathResolver uploadPathResolver) {
+                                 UploadPathResolver uploadPathResolver,
+                                BusinessClock clock) {
+        this.clock = clock;
         this.templateMapper = templateMapper;
         this.taskTemplateMapper = taskTemplateMapper;
         this.routineTemplateMapper = routineTemplateMapper;
@@ -269,7 +273,7 @@ public class SharedPlanServiceImpl implements SharedPlanService {
         if (template == null || !"APPROVED".equals(template.getStatus())) {
             throw new BusinessException("该计划暂不可套用");
         }
-        LocalDate start = LocalDate.parse(value(body.get("startDate"), LocalDate.now().toString()));
+        LocalDate start = LocalDate.parse(value(body.get("startDate"), clock.today().toString()));
         int createdTasks = 0;
         int createdRoutines = 0;
         for (SharedPlanTaskTemplate taskTemplate : taskTemplateMapper.selectList(new LambdaQueryWrapper<SharedPlanTaskTemplate>()

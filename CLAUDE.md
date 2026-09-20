@@ -322,6 +322,20 @@ token** like every other endpoint. `GET /v1/meta` is what to read when versions 
 - Redis — `spring.data.redis.*` (rate limiting, locks)
 - JWT — `jwt.secret`, `jwt.expiration`
 - Uploads — `app.upload-dir`
+- Timezone — `app.timezone` (default `Asia/Shanghai`). **"Which calendar day is it" is decided in
+  exactly one place**, `BusinessClock.today()`. Before 2026-09-21 there were two: the AI prompts
+  used `LocalDate.now(ZoneId.of("Asia/Shanghai"))` ("今天是 %s，时区是 Asia/Shanghai", and the
+  model dates its tasks from that), while the dashboard's "today", routine check-ins and routine
+  scheduling used a naked `LocalDate.now()` — the **JVM default**, which this repo pins nowhere
+  (no `-Duser.timezone`, no `TimeZone.setDefault`, nothing in the deploy docs; the JDBC
+  `serverTimezone` governs the driver, not the JVM). On a UTC host — the Docker default —
+  between 00:00 and 08:00 CST the AI says "today is the 21st" and creates tasks dated the 21st
+  while the dashboard filters for the 20th, check-ins record the 20th, and the streak breaks.
+  `BusinessClockTest` fails the build on any naked `LocalDate.now()` or hardcoded `ZoneId.of`
+  in `src/main/java`, and on the two `@Scheduled(zone = ...)` drifting from `DEFAULT_ZONE`
+  (an annotation cannot read config, so that agreement can only be pinned by a judgment).
+  `LocalDateTime.now()` audit stamps are deliberately left alone — they only need to agree with
+  each other inside one JVM.
 - Encryption — `app.crypto.master-key`. **Changing it makes existing ciphertext (AI keys, Wiki page
   bodies) undecryptable.** `SensitiveCryptoService.maskSecret` is what the UI shows instead of a
   key; it reveals **only the last 4 characters**, and nothing at all below 12. It used to show

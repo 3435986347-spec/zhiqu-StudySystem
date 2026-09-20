@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhiqu.common.BusinessClock;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.AiModelConfig;
 import com.zhiqu.entity.AiConversation;
@@ -89,6 +90,7 @@ import java.util.concurrent.CompletableFuture;
 @Service
 public class AiServiceImpl implements AiService {
 
+    private final BusinessClock clock;
     private static final Logger log = LoggerFactory.getLogger(AiServiceImpl.class);
     private static final String DEFAULT_CONVERSATION_KEY = "default";
     private static final int CHAT_HISTORY_LIMIT = 20;
@@ -189,7 +191,9 @@ public class AiServiceImpl implements AiService {
                          @Value("${app.ai.anthropic-version:2023-06-01}") String anthropicVersion,
                          @Value("${app.ai.temperature:}") String aiTemperature,
                          @Value("${app.ai.stream.debug:false}") boolean streamDebug,
-                         @Value("${app.ai.allow-private-provider-url:false}") boolean allowPrivateProviderUrl) {
+                         @Value("${app.ai.allow-private-provider-url:false}") boolean allowPrivateProviderUrl,
+                         BusinessClock clock) {
+        this.clock = clock;
         this.configMapper = configMapper;
         this.modelConfigMapper = modelConfigMapper;
         this.conversationMapper = conversationMapper;
@@ -2673,7 +2677,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private String buildChatSystemPrompt(String memoryText) {
-        String today = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString();
+        String today = clock.today().toString();
         String memoryBlock = hasText(memoryText) ? memoryText : "暂无长期记忆。";
         return """
                 你是「知趣·象限学习系统」的 AI 助手，帮助大学生做学习规划、DDL 拆解、复习节奏和时间管理。
@@ -3520,7 +3524,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private String getStudyPlanToolSystemPrompt() {
-        String today = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString();
+        String today = clock.today().toString();
         return """
                 你是「知趣·象限学习系统」的计划落库助手。今天是 %s，时区 Asia/Shanghai。
                 你会收到用户的计划创建请求和助手刚给出的学习计划。请判断其中真正适合写入系统的内容，
@@ -4082,7 +4086,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private String getChatTaskExtractionPrompt() {
-        String today = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString();
+        String today = clock.today().toString();
         return """
                 你是「知趣·象限学习系统」的计划转任务助手。
                 今天是 %s，时区是 Asia/Shanghai。
@@ -4226,7 +4230,7 @@ public class AiServiceImpl implements AiService {
         if (array == null || !array.isArray()) {
             return routines;
         }
-        LocalDate today = LocalDate.now(ZoneId.of("Asia/Shanghai"));
+        LocalDate today = clock.today();
         for (JsonNode node : array) {
             Map<String, Object> routine = new HashMap<>();
             routine.put("title", node.has("title") ? node.get("title").asText() : "");
