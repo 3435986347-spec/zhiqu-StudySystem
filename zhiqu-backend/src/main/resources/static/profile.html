@@ -7,7 +7,7 @@
   <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-my-submissions">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-reminder-channel">
 </head>
 <body>
   <div class="zq-app">
@@ -35,7 +35,38 @@
                 <span style="font-size:12.5px; color:var(--zq-text2); line-height:1.5;">每天 08:00 推送今日待办与 DDL 汇总</span>
                 <button id="zq-morning" onclick="tog()" style="flex:none; width:42px; height:24px; border:none; border-radius:999px; background:var(--zq-primary); cursor:pointer; position:relative; transition:background .2s;"><i style="position:absolute; top:3px; left:21px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s;"></i></button>
               </div>
-              <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--zq-border-soft); font-size:12px; color:var(--zq-text3);">渠道：PushPlus · 已绑定</div>
+              <!-- 渠道配置。此前这一整块只存在于 js/profile.js —— 那个文件零页面加载
+                   （见 CLAUDE.md），于是用户没有任何途径填凭据，而开关照样显示「已开启」，
+                   后台把每条提醒标成 FAILED（理由「提醒渠道未启用或未配置」）。
+                   原来这里写死着一行「渠道：PushPlus · 已绑定」，那是第三处不实陈述。 -->
+              <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--zq-border-soft); display:flex; flex-direction:column; gap:9px;">
+                <div style="display:flex; align-items:center; gap:9px;">
+                  <label class="zq-label" style="font-size:11.5px; flex:none;">推送渠道</label>
+                  <select id="zq-rm-channel" class="zq-select" style="height:30px; font-size:12.5px; flex:1;">
+                    <option value="PUSHPLUS">PushPlus</option>
+                    <option value="WECOM">企业微信机器人</option>
+                    <option value="QQ">QQ 机器人</option>
+                  </select>
+                </div>
+                <!-- display 由 JS 控制：写成内联 display:flex 会压掉 hidden 属性（UA 的 display:none 优先级更低），
+                     三个渠道的字段会同时显示出来 -->
+                <div data-rm-group="PUSHPLUS" style="flex-direction:column; gap:6px;">
+                  <input id="zq-rm-pushplus" class="zq-input" type="password" autocomplete="off" placeholder="PushPlus token" style="height:30px; font-size:12.5px;">
+                </div>
+                <div data-rm-group="WECOM" style="display:none; flex-direction:column; gap:6px;">
+                  <input id="zq-rm-webhook" class="zq-input" type="password" autocomplete="off" placeholder="企业微信机器人 Webhook 地址" style="height:30px; font-size:12.5px;">
+                </div>
+                <div data-rm-group="QQ" style="display:none; flex-direction:column; gap:6px;">
+                  <input id="zq-rm-qq-appid" class="zq-input" autocomplete="off" placeholder="QQ 机器人 AppID" style="height:30px; font-size:12.5px;">
+                  <input id="zq-rm-qq-secret" class="zq-input" type="password" autocomplete="off" placeholder="AppSecret" style="height:30px; font-size:12.5px;">
+                  <input id="zq-rm-qq-group" class="zq-input" autocomplete="off" placeholder="群 openid" style="height:30px; font-size:12.5px;">
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <button id="zq-rm-save" class="zq-btn" style="height:30px; padding:0 14px; font-size:12.5px;">保存渠道</button>
+                  <button id="zq-rm-test" class="zq-btn-ghost" style="height:30px; padding:0 12px; font-size:12.5px;">发送测试</button>
+                  <span id="zq-rm-status" style="font-size:11.5px; color:var(--zq-text3);"></span>
+                </div>
+              </div>
             </section>
             <section class="zq-card">
               <h3 style="margin:0 0 12px; font-size:14px; font-weight:700;">修改密码</h3>
@@ -91,7 +122,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260921-my-submissions"></script>
+  <script src="assets/zhiqu-ui.js?v=20260921-reminder-channel"></script>
   <script>
     function tog(){ var b=document.getElementById('zq-morning'), i=b.firstElementChild, on=i.style.left==='21px'; i.style.left=on?'3px':'21px'; b.style.background=on?'var(--zq-border)':'var(--zq-primary)'; }
     var models=[
@@ -110,6 +141,6 @@
     }).join('');
     function tile(k,v,c){ return '<div><span style="display:block; font-size:10.5px; color:var(--zq-text3);">'+k+'</span><strong style="display:block; margin-top:3px; font-size:11.5px; font-weight:600; color:'+c+'; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+v+'</strong></div>'; }
   </script>
-  <script src="assets/zhiqu-api.js?v=20260921-my-submissions"></script>
+  <script src="assets/zhiqu-api.js?v=20260921-reminder-channel"></script>
 </body>
 </html>

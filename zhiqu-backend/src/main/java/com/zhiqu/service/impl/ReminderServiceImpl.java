@@ -1,6 +1,7 @@
 package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.StudyTask;
 import com.zhiqu.entity.TaskReminder;
@@ -41,6 +42,7 @@ public class ReminderServiceImpl implements ReminderService {
     private static final String STATUS_SKIPPED = "SKIPPED";
     private static final DateTimeFormatter DISPLAY_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
+    private final SensitiveCryptoService cryptoService;
     private final UserReminderSettingMapper settingMapper;
     private final TaskReminderMapper taskReminderMapper;
     private final StudyTaskMapper studyTaskMapper;
@@ -53,7 +55,9 @@ public class ReminderServiceImpl implements ReminderService {
                                StudyTaskMapper studyTaskMapper,
                                RoutineService routineService,
                                TaskPrivacyService taskPrivacyService,
-                               List<NotificationChannel> channels) {
+                               List<NotificationChannel> channels,
+                               SensitiveCryptoService cryptoService) {
+        this.cryptoService = cryptoService;
         this.settingMapper = settingMapper;
         this.taskReminderMapper = taskReminderMapper;
         this.studyTaskMapper = studyTaskMapper;
@@ -98,7 +102,7 @@ public class ReminderServiceImpl implements ReminderService {
         }
         if (body.containsKey("webhookUrl")) {
             String webhook = Optional.ofNullable(body.get("webhookUrl")).map(Object::toString).orElse("").trim();
-            if (!webhook.isBlank() && !webhook.endsWith("****")) {
+            if (!webhook.isBlank() && !cryptoService.isMasked(webhook)) {
                 setting.setWebhookUrl(webhook);
             }
         }
@@ -107,7 +111,7 @@ public class ReminderServiceImpl implements ReminderService {
         }
         if (body.containsKey("qqAppSecret")) {
             String secret = Optional.ofNullable(body.get("qqAppSecret")).map(Object::toString).orElse("").trim();
-            if (!secret.isBlank() && !secret.endsWith("****")) {
+            if (!secret.isBlank() && !cryptoService.isMasked(secret)) {
                 setting.setQqAppSecret(secret);
             }
         }
@@ -119,7 +123,7 @@ public class ReminderServiceImpl implements ReminderService {
         }
         if (body.containsKey("pushplusToken")) {
             String token = Optional.ofNullable(body.get("pushplusToken")).map(Object::toString).orElse("").trim();
-            if (!token.isBlank() && !token.endsWith("****")) {
+            if (!token.isBlank() && !cryptoService.isMasked(token)) {
                 setting.setPushplusToken(token);
             }
         }
@@ -323,14 +327,16 @@ public class ReminderServiceImpl implements ReminderService {
         taskReminderMapper.updateById(reminder);
     }
 
-    private String mask(String webhook) {
-        if (webhook == null || webhook.isBlank()) {
-            return "";
-        }
-        if (webhook.length() <= 16) {
-            return webhook.charAt(0) + "****";
-        }
-        return webhook.substring(0, 12) + "****" + webhook.substring(webhook.length() - 6);
+    /**
+     * 脱敏 —— 委托给唯一那套实现。
+     *
+     * <p>这里原本是<b>第二套</b>：{@code substring(0, 12) + "****" + substring(len - 6)}，
+     * 带着和旧 {@code maskSecret} 同一类的重叠 bug —— 长度 17/18 时前后两段相交，
+     * 整个值都会露出来；32 位的 PushPlus token 会露 18 位。
+     * 同一件事写两遍，就会像这样各自坏一次。
+     */
+    private String mask(String secret) {
+        return cryptoService.maskSecret(secret);
     }
 
     private String limit(String text) {

@@ -793,15 +793,24 @@
         });
       };
     }
-    // 早八提醒开关 ↔ /reminder/settings
+    // 早八提醒 ↔ /reminder/settings（开关 + 渠道凭据）
     var morning = $('#zq-morning');
     if (morning) {
       var settings = await safe('提醒设置', function () { return api.get('/reminder/settings'); });
-      setMorningToggle(morning, settings && settings.enabled);
+      settings = settings || {};
+      setMorningToggle(morning, settings.enabled);
+      wireReminderChannel(settings, morning);
       morning.onclick = function () {
         var next = morning.dataset.on !== '1';
+        // 开启之前先确认渠道真的配得起来：后端 isEnabled 要求对应凭据非空，
+        // 否则每天早八都会把提醒标成 FAILED，而用户只看到开关是绿的。
+        if (next && !reminderChannelReady(settings)) {
+          toast('请先填写并保存推送渠道的凭据，否则提醒发不出去', 'error');
+          return;
+        }
         safe('保存提醒', async function () {
-          await api.put('/reminder/settings', { channel: (settings && settings.channel) || 'PUSHPLUS', enabled: next });
+          await api.put('/reminder/settings', { channel: currentReminderChannel(settings), enabled: next });
+          settings.enabled = next;
           setMorningToggle(morning, next);
           toast(next ? '早八提醒已开启' : '早八提醒已关闭');
         });
@@ -3462,6 +3471,110 @@
       // 才会真的开始轮询，把后端继续生成的部分续上。不用用户手动刷新。
       if (disconnected) loadAiMessages().catch(function () {});
     }
+  }
+
+
+  /**
+   * 提醒渠道的配置界面。
+   *
+   * <p>此前这一整块只存在于 js/profile.js —— 而那个文件<b>零页面加载</b>（见 CLAUDE.md），
+   * 于是用户没有任何途径填凭据：开关只发 {channel:'PUSHPLUS', enabled:true}，
+   * 而后端的 hasRequiredChannelConfig 要求 pushplusToken 非空，早八时每条提醒都被标成
+   * FAILED（理由「提醒渠道未启用或未配置」）。用户看到的是绿色的开关和一行写死的
+   * 「渠道：PushPlus · 已绑定」，然后什么都收不到。
+   */
+  var REMINDER_FIELDS = {
+    PUSHPLUS: [['zq-rm-pushplus', 'pushplusToken']],
+    WECOM: [['zq-rm-webhook', 'webhookUrl']],
+    QQ: [['zq-rm-qq-appid', 'qqAppId'], ['zq-rm-qq-secret', 'qqAppSecret'], ['zq-rm-qq-group', 'qqGroupOpenid']]
+  };
+  function currentReminderChannel(settings) {
+    var sel = $('#zq-rm-channel');
+    return (sel && sel.value) || settings.channel || 'PUSHPLUS';
+  }
+  /**
+   * 这个渠道的凭据齐了吗。
+   *
+   * 已保存的值从后端回来是脱敏的（****xxxx），占位符里显示；输入框为空 = 沿用已存的值。
+   * 所以「齐了」= 每个字段要么输入框有值，要么后端已经存着一个非空值。
+   */
+  function reminderChannelReady(settings) {
+    var channel = currentReminderChannel(settings);
+    return (REMINDER_FIELDS[channel] || []).every(function (pair) {
+      var el = $('#' + pair[0]);
+      if (el && el.value.trim()) return true;
+      var stored = settings[pair[1]];
+      return !!(stored && String(stored).trim());
+    });
+  }
+  function paintReminderChannel(settings) {
+    var channel = currentReminderChannel(settings);
+    // 用 style.display 而不是 hidden 属性：这些 div 带着内联样式，
+    // 而内联 display 的优先级高于 [hidden] 的 UA 规则 —— 设 hidden 不会让它们消失
+    $all('[data-rm-group]').forEach(function (group) {
+      group.style.display = group.dataset.rmGroup === channel ? 'flex' : 'none';
+    });
+    Object.keys(REMINDER_FIELDS).forEach(function (key) {
+      REMINDER_FIELDS[key].forEach(function (pair) {
+        var el = $('#' + pair[0]);
+        if (!el) return;
+        var stored = settings[pair[1]];
+        // 脱敏值只作为占位提示，绝不填进 value —— 填进去用户一保存就会把掩码当成新凭据提交
+        el.placeholder = stored && String(stored).trim()
+          ? '已保存（' + stored + '），留空则不修改'
+          : el.dataset.rmPlaceholder || el.placeholder;
+      });
+    });
+    var status = $('#zq-rm-status');
+    if (status) {
+      status.textContent = reminderChannelReady(settings) ? '凭据已配置' : '尚未配置凭据，提醒发不出去';
+      status.style.color = reminderChannelReady(settings) ? 'var(--zq-q2)' : 'var(--zq-q1)';
+    }
+  }
+  function wireReminderChannel(settings, morning) {
+    var sel = $('#zq-rm-channel');
+    if (!sel) return;   // 这一块只在个人中心页存在
+    // 记下原始占位符，后面要在「已保存」与「未保存」之间切换
+    Object.keys(REMINDER_FIELDS).forEach(function (key) {
+      REMINDER_FIELDS[key].forEach(function (pair) {
+        var el = $('#' + pair[0]);
+        if (el) el.dataset.rmPlaceholder = el.placeholder;
+      });
+    });
+    sel.value = settings.channel || 'PUSHPLUS';
+    paintReminderChannel(settings);
+    sel.onchange = function () { paintReminderChannel(settings); };
+
+    var save = $('#zq-rm-save');
+    if (save) save.onclick = function () {
+      var channel = currentReminderChannel(settings);
+      var body = { channel: channel, enabled: !!settings.enabled };
+      var filled = false;
+      (REMINDER_FIELDS[channel] || []).forEach(function (pair) {
+        var el = $('#' + pair[0]);
+        if (el && el.value.trim()) { body[pair[1]] = el.value.trim(); filled = true; }
+      });
+      if (!filled && !reminderChannelReady(settings)) { toast('请先填写凭据', 'error'); return; }
+      safe('保存推送渠道', async function () {
+        await api.put('/reminder/settings', body);
+        var fresh = await api.get('/reminder/settings');
+        Object.keys(fresh || {}).forEach(function (k) { settings[k] = fresh[k]; });
+        (REMINDER_FIELDS[channel] || []).forEach(function (pair) {
+          var el = $('#' + pair[0]); if (el) el.value = '';
+        });
+        paintReminderChannel(settings);
+        if (morning) setMorningToggle(morning, settings.enabled);
+        toast('推送渠道已保存');
+      });
+    };
+
+    var test = $('#zq-rm-test');
+    if (test) test.onclick = function () {
+      safe('发送测试', async function () {
+        await api.post('/reminder/test', {});
+        toast('测试消息已发出，去对应渠道确认');
+      });
+    };
   }
 
   function revealContent() { try { document.documentElement.classList.remove('zq-booting'); } catch (e) {} }
