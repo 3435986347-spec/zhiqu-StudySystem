@@ -140,6 +140,16 @@ and will break the chain you meant to guard.
   (`var(--zq-*)`).
 - **`js/*.js` is legacy and is loaded by zero pages.** Do not "fix" behaviour there expecting it to
   take effect — change `assets/zhiqu-api.js` instead.
+- **12 of the 14 pages still ship design-phase demo data** — inline scripts that write a fabricated
+  study plan into the DOM *before* `zhiqu-api.js` loads (`dashboard.html` labels its own block
+  `// ── 示例数据（后续可由接口替换） ──`). Users never see it, and that rests on exactly one
+  thing: when a page's boot function throws, `renderInitError` replaces **all of `.zq-main`**.
+  Weaken that to a toast and any failed load — a 429 from the 180/60s rate limit is enough —
+  shows the user someone else's goals, weaknesses and pomodoro history as if they were their own.
+  `InitErrorReplacesDemoContentTest` pins the replacement, the `renderError: true` on the boot
+  call, and that no demo container sits outside `.zq-main`. The demo blocks are tangled with real
+  wiring (`paintWd`, `zqPomoRecord`, `openModal` are referenced from inline `onclick`), so
+  removing them is a separate job — not a reason to leave the guard unpinned.
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
