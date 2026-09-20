@@ -12,15 +12,16 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.concurrent.ConcurrentHashMap;
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
 public class RateLimitFilter extends OncePerRequestFilter {
     private final RedisRateLimiter redisRateLimiter;
     private final ClientIpResolver clientIpResolver;
-    private final ConcurrentHashMap<String, Deque<Long>> localWindows = new ConcurrentHashMap<>();
+    /**
+     * Redis 挂掉时的降级限流。清理逻辑收在 {@link LocalRateWindows} 里 ——
+     * 此前这里是个只增不减的 map，每个来过的 IP 永久占一个条目。
+     */
+    private final LocalRateWindows localWindows = new LocalRateWindows();
 
     public RateLimitFilter(RedisRateLimiter redisRateLimiter, ClientIpResolver clientIpResolver) {
         this.redisRateLimiter = redisRateLimiter;
@@ -66,24 +67,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         try {
             return redisRateLimiter.allow(key, maxRequests, windowMs);
         } catch (Exception e) {
-            return allowLocalFallback(key, maxRequests, windowMs);
+            return localWindows.allow(key, maxRequests, windowMs);
         }
     }
 
-    private boolean allowLocalFallback(String key, int maxRequests, long windowMs) {
-        long now = System.currentTimeMillis();
-        Deque<Long> window = localWindows.computeIfAbsent(key, ignored -> new ArrayDeque<>());
-        synchronized (window) {
-            while (!window.isEmpty() && now - window.peekFirst() > windowMs) {
-                window.pollFirst();
-            }
-            if (window.size() >= maxRequests) {
-                return false;
-            }
-            window.addLast(now);
-            return true;
-        }
-    }
 
     private record Limit(String key, int maxRequests, long windowMs) {
     }

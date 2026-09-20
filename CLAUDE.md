@@ -120,6 +120,17 @@ and will break the chain you meant to guard.
   reads `Authorization: Bearer <token>`, `SecurityUtils.getCurrentUserId()` scopes every query.
   `RateLimitFilter` throttles per IP: auth 12/60s, `/api/ai/**` 40/60s, other `/api/**` 180/60s
   (429 `请求过于频繁`). Worth remembering when scripting E2E tests — creating many users trips it.
+  The client IP comes from `ClientIpResolver`, which honours `X-Forwarded-For` **only** when
+  `app.proxy.trust-forwarded-headers=true` *and* the immediate peer is loopback/site-local —
+  so the header cannot be spoofed from outside, and the default (false) is safe behind no proxy.
+  When Redis throws, the filter falls back to `LocalRateWindows` (in-process sliding windows).
+  That fallback used to be a **memory leak**: entries were only ever created, never removed, so
+  every `(ip, limit)` pair ever seen stayed until restart — and with Redis absent that is *every*
+  request. It has no functional symptom (limiting keeps working perfectly), which is why it needs
+  a judgment on `size()` rather than on "was it limited". It now sweeps, but only when the map is
+  over `SWEEP_THRESHOLD` **and** `SWEEP_INTERVAL_MS` has passed, so normal load never pays the
+  O(n) scan. A key only becomes garbage because its IP *stopped coming back*, which its own next
+  call can never discover — hence a sweep that something else triggers.
 - **`config/`** — `SecurityConfig`, `CorsConfig`, `WebMvcConfig`, `MyBatisPlusConfig`
   (registers `OptimisticLockerInnerInterceptor` + pagination; `MetaObjectHandler` fills
   `createdAt`/`updatedAt`).
