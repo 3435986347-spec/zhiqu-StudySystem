@@ -46,14 +46,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisabledIfSystemProperty(named = "zhiqu.skipDockerTests", matches = "true",
         disabledReason = "Docker integration tests were explicitly disabled")
 class IdempotencyServiceIntegrationTest {
-    static {
-        // docker-java 默认用的 API 版本低于守护进程的 MinAPIVersion（实测 1.40），
-        // 不钉住就会在 /info 上拿到 400 + 一个全空的 info 存根，
-        // Testcontainers 把它报成「Could not find a valid Docker environment」——
-        // 读起来像 Docker 没装，实际是版本协商。本仓库每个容器测试类都抄了这一行。
-        System.setProperty("api.version", System.getProperty("api.version", "1.40"));
-    }
-
     @Container
     static final GenericContainer<?> REDIS =
             new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);

@@ -117,7 +117,6 @@ class RagRetrievalPipelineCharacterizationTest {
     private static final AtomicReference<String> LAST_QUERY_BODY = new AtomicReference<>("");
 
     static {
-        System.setProperty("api.version", System.getProperty("api.version", "1.40"));
         try {
             // 端口 0 = 让 OS 分配；下面读回真实端口。写死 0 会通过 validateBaseUrl，
             // 然后在请求时才失败，而那个失败读起来像「sidecar 不可用」。

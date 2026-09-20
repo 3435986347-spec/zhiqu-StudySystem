@@ -65,11 +65,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 })
 class AiConversationLifecycleIntegrationTest {
 
-    static {
-        // Docker 29 rejects the 1.32 API used by older docker-java defaults.
-        System.setProperty("api.version", System.getProperty("api.version", "1.40"));
-    }
-
     @Container
     @ServiceConnection
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0.36")

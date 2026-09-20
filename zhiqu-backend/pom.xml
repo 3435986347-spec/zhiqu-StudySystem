@@ -154,6 +154,27 @@
                     <useIncrementalCompilation>true</useIncrementalCompilation>
                 </configuration>
             </plugin>
+            <!--
+              api.version 钉在这里，而不是每个容器测试类各抄一份静态块。
+
+              为什么需要它：docker-java 默认用的 Docker API 版本低于守护进程的 MinAPIVersion
+              （实测 1.40），于是 /info 返回 400 加一个全空的 info 存根，Testcontainers 把它
+              报成「Could not find a valid Docker environment」—— 读起来像 Docker 没装，
+              实际是版本协商。新加容器测试的人不知道要抄那行，就会去查一个假故障
+              （本仓库已经发生过一次，花了半小时）。
+
+              此前它在 13 个测试类的静态块里各写一遍。同一事实 13 份拷贝：
+              哪天守护进程再抬高最低版本，得改 13 处，漏一处就是一个随机失败的测试类。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <api.version>1.40</api.version>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

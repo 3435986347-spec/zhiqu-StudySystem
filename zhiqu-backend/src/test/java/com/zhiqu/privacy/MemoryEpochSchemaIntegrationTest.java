@@ -37,9 +37,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
         "app.rag.enabled=false"
 })
 class MemoryEpochSchemaIntegrationTest {
-    static {
-        System.setProperty("api.version", System.getProperty("api.version", "1.40"));
-    }
 
     @Container
     @ServiceConnection

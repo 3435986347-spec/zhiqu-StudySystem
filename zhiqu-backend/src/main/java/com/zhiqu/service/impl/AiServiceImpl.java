@@ -96,6 +96,15 @@ public class AiServiceImpl implements AiService {
     private static final int SUMMARY_REFRESH_MIN = 10;
     /** 喂给摘要器的新增对话上限，防止首次摘要把整条长历史一次性塞进提示词。 */
     private static final int SUMMARY_SOURCE_MAX_CHARS = 8000;
+    /**
+     * 发给模型的 {@code max_tokens}。此前这个 4096 在<b>九处</b>各写一遍
+     * （工具调用、视觉、流式、非流式…）—— 改一处以为改了全部，是本仓库反复在消灭的形状。
+     *
+     * <p>不从 {@code ai_agent_run.max_tokens} 取：那一列 setMaxTokens 全仓库零调用、恒为 NULL，
+     * 而且这九处里有一半（视觉、计划工具调用）根本不在 agent run 的上下文里。V33 退掉那一列。
+     */
+    private static final int MODEL_MAX_TOKENS = 4096;
+
     private static final int MEMORY_MAX_LENGTH = 2000;
     private static final int MESSAGE_MAX_LENGTH = 12000;
     private static final long SYSTEM_MODEL_ID = -1L;
@@ -434,7 +443,7 @@ public class AiServiceImpl implements AiService {
                                  Boolean enableWebSearch, String reasoningMode,
                                  Long notebookId, String agentMode, Map<String, Object> contextOptions) {
         // 放宽到 5 分钟：为回答前的 Wiki 工具循环 + 慢模型流式输出留出余量，避免首个 token 前就触发 SSE 总超时
-        SseEmitter emitter = new SseEmitter(300_000L);
+        SseEmitter emitter = new SseEmitter(AiWorkspaceService.STREAM_TIMEOUT_MS);
         CompletableFuture.runAsync(() -> {
             try {
                 streamChatInternal(emitter, userId, message, modelConfigId, enableWebSearch, reasoningMode,
@@ -521,20 +530,9 @@ public class AiServiceImpl implements AiService {
         start.put("assistantMessageId", assistantMessage.getId());
         emitSse(emitter, "stream.start", start);
 
-        List<AiAgentTask> taskGraph = multiAgentOrchestrator.plan(agentRun, decision, notebookId);
-        // 图建完了，此刻才知道本轮是不是真有并发组（两路检索节点都在）
-        aiWorkspaceService.markExecutionMode(agentRun,
-                taskGraph.stream().anyMatch(t -> "CONTEXT_RESEARCHER".equals(t.getAgentType()))
-                        && taskGraph.stream().anyMatch(t -> "WEB_RESEARCHER".equals(t.getAgentType())));
-        AgentRunContext ctx = new AgentRunContext(taskGraph, (name, payload) -> emitSse(emitter, name, payload));
         StreamState state = new StreamState(requestId, agentRun, config, userId, notebookId, limitedMessage,
                 contextOptions, Boolean.TRUE.equals(enableWebSearch), normalizedReasoningMode,
                 memoryText, writeContext.summary(), history, userMessage, assistantMessage);
-        // 检索没跑时也要有个状态对象：这条状态今天在「跑了」和「跳过」两条分支上都会发。
-        state.retrievalStatus = retrievalStatus(List.of());
-        for (AiAgentTask task : taskGraph) {
-            ctx.emit("agent.task.created", taskEvent(requestId, agentRun, task));
-        }
         // 执行次序来自每个 runner 声明的位置，不来自这里的书写顺序：
         // AgentStageExecutor 把「宣告 / 工作 / 落库」摊平成 (位置, 动作) 后统一排序。
         // 这一行的顺序改成随便什么样，行为都不该变。
@@ -553,6 +551,20 @@ public class AiServiceImpl implements AiService {
                 new SummarizerRunner(state),
                 new TaskDrafterRunner(state),
                 new WikiCuratorRunner(state)));
+        // 图在执行器之后建：priority / parallelGroupId / dependsOn 三个字段由 runOrder() 派生，
+        // 手写它们就是让次序有第二个真相 —— 那三个字段此前都已经和执行对不上了。
+        List<AiAgentTask> taskGraph = multiAgentOrchestrator.plan(agentRun, decision, notebookId,
+                executor.runOrder());
+        // 图建完了，此刻才知道本轮是不是真有并发组（两路检索节点都在）
+        aiWorkspaceService.markExecutionMode(agentRun,
+                taskGraph.stream().anyMatch(t -> "CONTEXT_RESEARCHER".equals(t.getAgentType()))
+                        && taskGraph.stream().anyMatch(t -> "WEB_RESEARCHER".equals(t.getAgentType())));
+        AgentRunContext ctx = new AgentRunContext(taskGraph, (name, payload) -> emitSse(emitter, name, payload));
+        // 检索没跑时也要有个状态对象：这条状态今天在「跑了」和「跳过」两条分支上都会发。
+        state.retrievalStatus = retrievalStatus(List.of());
+        for (AiAgentTask task : taskGraph) {
+            ctx.emit("agent.task.created", taskEvent(requestId, agentRun, task));
+        }
         try {
             // 只有 PRE_STREAM 有并发组（两路检索）。其余相位传 1，行为与并发前逐字相同 ——
             // STREAM 是单次流式调用，COMMIT 整段在一个事务里、且要往非并发的缓冲队列写。
@@ -3323,7 +3335,7 @@ public class AiServiceImpl implements AiService {
                 Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", userMessage)));
         applyTemperature(body);
-        body.put("max_tokens", 4096);
+        body.put("max_tokens", MODEL_MAX_TOKENS);
         body.put("tools", buildCreateStudyPlanTools());
         // 已判定为写计划意图，强制模型调用该工具，稳定拿到结构化调用参数
         body.put("tool_choice", Map.of("type", "function", "function", Map.of("name", "create_study_plan")));
@@ -3364,7 +3376,7 @@ public class AiServiceImpl implements AiService {
         HttpHeaders headers = anthropicHeaders(config);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
-        body.put("max_tokens", 4096);
+        body.put("max_tokens", MODEL_MAX_TOKENS);
         applyTemperature(body);
         if (hasText(systemPrompt)) {
             body.put("system", systemPrompt);
@@ -3694,7 +3706,7 @@ public class AiServiceImpl implements AiService {
         body.put("model", config.getModelName());
         body.put("messages", messages);
         applyTemperature(body);
-        body.put("max_tokens", 4096);
+        body.put("max_tokens", MODEL_MAX_TOKENS);
         body.put("tools", tools);
         body.put("tool_choice", "auto"); // 由模型自行决定调用哪个工具或直接作答
         try {
@@ -3776,7 +3788,7 @@ public class AiServiceImpl implements AiService {
         HttpHeaders headers = anthropicHeaders(config);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
-        body.put("max_tokens", 4096);
+        body.put("max_tokens", MODEL_MAX_TOKENS);
         applyTemperature(body);
         if (hasText(system)) {
             body.put("system", system);
@@ -4307,7 +4319,7 @@ public class AiServiceImpl implements AiService {
             body.put("model", config.getModelName());
             body.put("messages", messages);
             applyTemperature(body);
-            body.put("max_tokens", 4096);
+            body.put("max_tokens", MODEL_MAX_TOKENS);
             body.put("stream", true);
             applyOpenAiReasoningOptions(config, body, reasoningMode);
 
@@ -4428,7 +4440,7 @@ public class AiServiceImpl implements AiService {
             body.put("model", config.getModelName());
             body.put("messages", messages);
             applyTemperature(body);
-            body.put("max_tokens", 4096);
+            body.put("max_tokens", MODEL_MAX_TOKENS);
             applyOpenAiReasoningOptions(config, body, reasoningMode);
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
@@ -4520,7 +4532,7 @@ public class AiServiceImpl implements AiService {
                     Map.of("role", "user", "content", userContent)
             ));
             applyTemperature(body);
-            body.put("max_tokens", 4096);
+            body.put("max_tokens", MODEL_MAX_TOKENS);
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
@@ -4658,7 +4670,7 @@ public class AiServiceImpl implements AiService {
             HttpHeaders headers = anthropicHeaders(config);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("model", config.getModelName());
-            body.put("max_tokens", 4096);
+            body.put("max_tokens", MODEL_MAX_TOKENS);
             applyTemperature(body);
             body.put("system", systemPrompt);
             body.put("messages", List.of(Map.of("role", "user", "content", toAnthropicContentBlocks(userContent))));
@@ -4707,7 +4719,7 @@ public class AiServiceImpl implements AiService {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
-        body.put("max_tokens", 4096);
+        body.put("max_tokens", MODEL_MAX_TOKENS);
         applyTemperature(body);
         if (system.length() > 0) {
             body.put("system", system.toString());

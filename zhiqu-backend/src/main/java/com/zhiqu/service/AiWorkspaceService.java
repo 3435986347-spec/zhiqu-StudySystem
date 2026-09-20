@@ -32,6 +32,15 @@ public interface AiWorkspaceService {
 
     List<Map<String, Object>> sourceContext(Long userId, Long notebookId, Map<String, Object> contextOptions);
 
+    /**
+     * 一轮流式对话的总超时 —— <b>SSE emitter 与 {@code ai_agent_run.timeout_seconds} 的唯一来源</b>。
+     *
+     * <p>此前 emitter 写死 300_000L，而 run 上记的是 120 —— 两个独立的数，而且记下来的那个是错的。
+     * 按 120 去做任何护栏都会砍掉合法的慢轮次：一轮可能串起 wiki 工具循环（30s 预算）、
+     * 流式回答（读超时 60s）、以及 POST_STREAM 那组并发调用。
+     */
+    long STREAM_TIMEOUT_MS = 300_000L;
+
     /** 建完图之后按真实形态订正 execution_mode（beginRun 时图还没建）。 */
     void markExecutionMode(AiAgentRun run, boolean parallel);
 

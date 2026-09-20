@@ -589,9 +589,10 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         // 建图在 beginRun 之后，此刻还不知道本轮有没有并发组 —— 先按顺序写，
         // 建完图由 markExecutionMode 按真实形态订正。不在这里猜。
         run.setExecutionMode("SERIAL");
-        run.setMaxSteps(20);
         run.setMaxParallelTasks(3);
-        run.setTimeoutSeconds(120);
+        // 记真值：SSE emitter 用的就是这个常量。此前这里写 120 而 emitter 是 300 秒 ——
+        // 两个独立的数，且记下来的那个从来不对。
+        run.setTimeoutSeconds((int) (AiWorkspaceService.STREAM_TIMEOUT_MS / 1000));
         runMapper.insert(run);
         if (userMessage != null) {
             userMessage.setAgentRunId(run.getId());
@@ -1255,7 +1256,6 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         row.put("agentMode", run.getAgentMode());
         row.put("contextOptions", parseMap(run.getContextOptionsJson()));
         row.put("executionMode", run.getExecutionMode());
-        row.put("maxSteps", run.getMaxSteps());
         row.put("maxParallelTasks", run.getMaxParallelTasks());
         row.put("timeoutSeconds", run.getTimeoutSeconds());
         row.put("createdAt", run.getCreatedAt());

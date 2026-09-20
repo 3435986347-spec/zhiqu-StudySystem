@@ -14,7 +14,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V32`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V33`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -161,10 +161,21 @@ that tells the two greens apart, and all three cases above were caught by it rat
   rather than answering from general knowledge as if grounded. `ANSWER_VERIFIER` (POST_STREAM)
   then checks that every citation the model emitted came from evidence we actually fetched;
   anything else is flagged `CITATION_NOT_IN_EVIDENCE`.
-- **Every agent that runs has a node in the task graph.** `AgentStageRunner.inGraph` has exactly one
-  override left (RETRIEVER, which legitimately answers to three researcher types). "Ran without a
-  node" is now structurally unwritable — before adding a backdoor, ask why that agent should be
-  invisible in the execution trace the user can see.
+- **Every agent that runs has a node in the task graph.** `AgentStageRunner.inGraph` has two
+  overrides, both of the same legitimate kind — one runner answering to several node types:
+  `RetrieverRunner` to `{CONTEXT_RESEARCHER, WEB_RESEARCHER, RETRIEVER}` (it is the merge point),
+  and `ContextResearcherRunner` to `{CONTEXT_RESEARCHER, RETRIEVER}` (it also serves the fallback
+  node). "Ran without a node" is now structurally unwritable — before adding a backdoor, ask why
+  that agent should be invisible in the execution trace the user can see.
+- **Ordering has exactly one authority: `AgentPosition`.** The graph's `priority`,
+  `parallelGroupId` and `dependsOn` are **derived** from `AgentStageExecutor.runOrder()`, which is
+  why `MultiAgentOrchestrator.plan(...)` takes it as a parameter and the executor is constructed
+  *before* the graph is built. Do not hand-write those three — they were hand-written until
+  2026-09-20 and all three had gone stale: 8 of 14 nodes had the wrong `priority` (and `listTasks`
+  is `orderByAsc(priority)`, so that *is* the order the user reads in the execution trace),
+  `RETRIEVER` was labelled into a `"research"` group its runner never joins, and every `dependsOn`
+  was `[orchestrator]` — a star, which says nothing. A graph node whose `agentType` has no runner
+  now throws at plan time instead of sitting PENDING forever.
 
 ### Knowledge Wiki
 

@@ -72,7 +72,6 @@ class RagRetrievalUnitDialectBaselineTest {
     private static final AtomicReference<String> LAST_QUERY_BODY = new AtomicReference<>("");
 
     static {
-        System.setProperty("api.version", System.getProperty("api.version", "1.40"));
         try {
             // 绑 0 号端口再读回真实端口；写死 0 会通过 validateBaseUrl、请求时才失败，
             // 而那个失败读起来像「sidecar 不可用」。理由详见照片那个类的注释。

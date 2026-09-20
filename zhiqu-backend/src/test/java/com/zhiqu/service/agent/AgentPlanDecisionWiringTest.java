@@ -109,7 +109,8 @@ class AgentPlanDecisionWiringTest {
                         + "而分叉不会当天暴露 —— 上一次是等到有人只说「安排」时才显形");
 
         // 下界：确认 decision 还真的在喂建图。少了这句，把 decision 整个删掉也能让上面那条通过。
-        assertTrue(service.contains("multiAgentOrchestrator.plan(agentRun, decision"),
+        assertTrue(service.contains("multiAgentOrchestrator.plan(agentRun, decision, notebookId,")
+                        && service.contains("executor.runOrder())"),
                 "判定必须仍然是建图的输入，否则上面那条是在「根本没有 decision」上假绿的");
     }
 
@@ -193,17 +194,20 @@ class AgentPlanDecisionWiringTest {
 
         // 只带 selectedSourceIds —— 合并前这里造不出任何 researcher（隐形 agent）
         orchestrator.plan(run, AgentPlanDecision.of("AUTO", "这份资料讲了什么", false, null,
-                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L)), true, false), null);
+                Map.of(ContextOptionKeys.SELECTED_SOURCE_IDS, List.of(1L)), true, false), null,
+                RealRunOrder.slots());
         assertTrue(graph.types().contains("RETRIEVER"),
                 "只勾资料源时必须造出 RETRIEVER 节点，否则用户在执行轨迹里看不到这次检索。实际：" + graph.types());
 
         graph.reset();
         // 只含「安排」—— 合并前造了 PLANNER 但执行侧不跑（幽灵 agent）
-        orchestrator.plan(run, AgentPlanDecision.of("AUTO", "帮我安排下周的复习", false, null, Map.of(), true, false), null);
+        orchestrator.plan(run, AgentPlanDecision.of("AUTO", "帮我安排下周的复习", false, null, Map.of(), true, false),
+                null, RealRunOrder.slots());
         assertTrue(graph.types().contains("PLANNER"), "「安排」必须造出 PLANNER 节点。实际：" + graph.types());
 
         graph.reset();
-        orchestrator.plan(run, AgentPlanDecision.of("CHAT_ONLY", "帮我安排下周的复习", true, 7L, Map.of(), true, false), 7L);
+        orchestrator.plan(run, AgentPlanDecision.of("CHAT_ONLY", "帮我安排下周的复习", true, 7L, Map.of(), true, false),
+                7L, RealRunOrder.slots());
         assertEquals(Set.of("ORCHESTRATOR", "VERIFIER", "FINAL_WRITER"), graph.types(),
                 "CHAT_ONLY 只该留下编排、校验与最终回答三个节点");
     }

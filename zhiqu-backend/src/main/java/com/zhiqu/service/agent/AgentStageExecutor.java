@@ -89,6 +89,57 @@ public final class AgentStageExecutor {
     }
 
     /**
+     * 每个 agentType 的<b>真实执行次序</b>（按 run 位置排名，从 0 起）与所属并发组。
+     *
+     * <p>给建图侧派生 {@code priority} / {@code parallel_group_id} / {@code depends_on} 用。
+     * 那三个字段<b>不参与调度</b> —— 次序的唯一权威仍是 {@link AgentPosition}，
+     * 它们是它的投影，只供执行轨迹画图。让它们成为独立来源就是本仓库反复在消灭的
+     * 「同一事实两个真相」，而在派生之前，那三个字段确实都已经和执行对不上了。
+     *
+     * <p>同组的成员排名相同：它们并发，彼此之间没有先后。
+     */
+    public List<RunSlot> runOrder() {
+        List<Action> runs = new ArrayList<>();
+        for (Action action : actions) {
+            if (action.moment() == Moment.RUN) {
+                runs.add(action);
+            }
+        }
+        List<RunSlot> slots = new ArrayList<>();
+        Map<String, Integer> rankByGroup = new LinkedHashMap<>();
+        int rank = -1;
+        String previousGroupKey = null;
+        for (Action action : runs) {
+            String group = action.runner().parallelGroup();
+            String key = group == null ? "\u0000" + action.runner().agentType() : group;
+            if (!key.equals(previousGroupKey)) {
+                Integer seen = rankByGroup.get(key);
+                if (seen != null) {
+                    // 组成员在位置上不连续：中间夹着别的 runner。执行器仍会把它们批在一起跑
+                    // （同组动作是收集来的，不要求相邻），于是夹在中间那个的「先后」就说不清了 ——
+                    // 它既在前一个成员之后，又在后一个成员之前，而那两个是同时的。
+                    // 与抢位置一样，这是配置错误，宁可启动就炸。
+                    throw new IllegalStateException(group == null
+                            ? "同一个 agentType 出现在两个不相邻的位置上：" + action.runner().agentType()
+                                    + "。一个 agentType 只该有一个 run 位置"
+                            : "并发组 " + group + " 的成员在位置上不连续，中间夹着别的 runner："
+                                    + action.runner().agentType() + " 之前已经出现过该组。"
+                                    + "把同组成员排到相邻的位置上");
+                }
+                rank++;
+                rankByGroup.put(key, rank);
+                previousGroupKey = key;
+            }
+            slots.add(new RunSlot(action.runner().agentType(), rank, group));
+        }
+        return List.copyOf(slots);
+    }
+
+    /** 一个 runner 在真实执行序里的位置：rank 相同即并发。 */
+    public record RunSlot(String agentType, int rank, String parallelGroup) {
+    }
+
+    /**
      * 跑完这一相位上的全部动作。
      *
      * <p>遍历期间 {@link AgentRunContext#emit} 按<b>这个相位</b>路由；

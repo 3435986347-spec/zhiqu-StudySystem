@@ -35,9 +35,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "app.rag.enabled=false"
 })
 class RagSupersedeIntegrationTest {
-    static {
-        System.setProperty("api.version", System.getProperty("api.version", "1.40"));
-    }
 
     @Container
     @ServiceConnection

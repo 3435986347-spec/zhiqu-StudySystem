@@ -39,9 +39,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "app.rag.enabled=false"
 })
 class KnowledgeRagHookTest {
-    static {
-        System.setProperty("api.version", System.getProperty("api.version", "1.40"));
-    }
 
     @Container
     @ServiceConnection
