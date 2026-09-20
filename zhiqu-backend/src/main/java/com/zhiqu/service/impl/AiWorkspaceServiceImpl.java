@@ -22,6 +22,7 @@ import com.zhiqu.service.ContextOptionKeys;
 import com.zhiqu.service.AgentBlackboardService;
 import com.zhiqu.service.AgentTaskGraphService;
 import com.zhiqu.service.AiWorkspaceService;
+import com.zhiqu.service.ai.PrivateUploadPathGuard;
 import com.zhiqu.service.RoutineService;
 import com.zhiqu.service.StudyTaskService;
 import com.zhiqu.service.ai.WebResearchService;
@@ -327,7 +328,10 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                 limit(fileName, 180), null, null);
         // 原件落盘（私有目录），供后续下载；落盘失败不影响解析，下载会回退为导出解析文本
         try {
-            Path dir = privateUploadRoot().resolve("ai-sources").resolve(String.valueOf(userId));
+            // 落盘目录与读取校验用同一处定义：两边各写一遍 "ai-sources" 的话，
+            // 改其中一个就会让所有已落盘的原件全部读不出来（校验永远不匹配），
+            // 而下载会静默回落到「导出解析文本」—— 没有任何报错，只是原件消失了
+            Path dir = new PrivateUploadPathGuard(privateUploadRoot()).userRoot(userId);
             Files.createDirectories(dir);
             Path target = dir.resolve(source.getId() + "-" + sanitizeStoredName(fileName));
             Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
@@ -420,20 +424,12 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
      * 校验 DB 里的 filePath 确实位于本用户的私有目录下（防路径穿越/符号链接逃逸），
      * 合法且文件存在时返回规范化路径，否则返回 null（调用方回退导出解析文本）。
      */
+    /**
+     * 校验规则收在 {@link PrivateUploadPathGuard} 里，那三个条件在那里各有判据看着。
+     * 留在这个私有方法里时它零覆盖，而删掉其中任意一条都不会让下载功能坏掉。
+     */
     private Path validatedSourceFile(Long userId, String filePath) {
-        if (filePath == null || filePath.isBlank()) {
-            return null;
-        }
-        try {
-            Path userRoot = privateUploadRoot().resolve("ai-sources").resolve(String.valueOf(userId)).normalize();
-            Path candidate = Paths.get(filePath).toAbsolutePath().normalize();
-            if (!candidate.startsWith(userRoot) || Files.isSymbolicLink(candidate) || !Files.isRegularFile(candidate)) {
-                return null;
-            }
-            return candidate;
-        } catch (Exception e) {
-            return null;
-        }
+        return new PrivateUploadPathGuard(privateUploadRoot()).resolveOwnedFile(userId, filePath);
     }
 
     /** 删除私有原件（仅限本用户目录内的文件），失败静默——DB 清理不因磁盘异常中断 */

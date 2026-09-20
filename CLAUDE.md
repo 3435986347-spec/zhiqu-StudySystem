@@ -218,6 +218,32 @@ and will break the chain you meant to guard.
   was `[orchestrator]` — a star, which says nothing. A graph node whose `agentType` has no runner
   now throws at plan time instead of sitting PENDING forever.
 
+### Authorization
+
+Two guards carry almost all of it, and **both are per-method manual calls, not declarative rules** —
+`SecurityConfig` has no `hasRole(...)` anywhere, only `anyRequest().authenticated()`.
+
+- **Admin APIs** — every method in `AdminController` calls `requireAdmin()` as its first statement
+  (29 of them), which delegates to the single `AdminGuardImpl`. `POST /api/ai/web-fetch/test` is
+  guarded the same way but lives outside `/api/admin` (it makes the server fetch a caller-supplied
+  URL, so it is admin-only; the SSRF guard restricts the *target*, not the *caller*).
+  `AdminAuthorizationTest` pins that every mapping in `AdminController` has the call — before it,
+  adding an endpoint and forgetting the line was a hole nothing would catch.
+  Note `AdminPageWiringTest` does **not** cover this: it pins the admin *pages* (client-side
+  routing and the static whitelist, which is `permitAll`), which is UX, not API authorization.
+- **Per-user data** — `ownedNotebook(userId, id)` is the single implementation (the public
+  `requireOwnedNotebook` just delegates); every notebook-scoped read/write goes through it or
+  through `resolveNotebookId`, which calls it when an id is supplied.
+- **Uploaded originals** — `PrivateUploadPathGuard` decides which file on disk may be read.
+  The row-level checks above cannot help here: `ai_notebook_source.file_path` is a **string in the
+  database**, so one bad write makes it point outside the user's directory while the row still
+  legitimately belongs to that user. The guard requires the normalized path to stay under
+  `<upload-root>/ai-sources/<userId>`, rejects symlinks (a link *inside* the directory passes the
+  prefix check), and requires a regular file. Deleting any one of the three leaves downloads
+  working, which is exactly why each has its own judgment. The same class also owns the
+  `ai-sources/<userId>` layout used when **writing** — defining it twice would make every stored
+  original silently unreadable (downloads fall back to exported text with no error).
+
 ### Knowledge Wiki
 
 Pages → revisions → patch sets ("待合入变更"). AI edits land as drafts and only reach a page through
