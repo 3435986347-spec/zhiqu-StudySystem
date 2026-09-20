@@ -99,6 +99,16 @@ shared by both of its judgments), and assert a floor on how much the scan actual
 substitute for perturbing the source and watching the new assertion fail — that is the only step
 that tells the two greens apart, and all three cases above were caught by it rather than by review.
 
+**And verify the perturbation itself took effect.** On 2026-09-20 a perturbation script reported
+a clean green for the `status = 'STREAMING'` guard in `AiMessageMapper.flushStreamingContent`.
+The guard was fine; the *perturbation* never ran — inside a quoted heredoc the `perl -0pi ... \$F`
+argument stayed literal, perl could not open a file called `$F`, and it **exited 0**, so the
+`|| fallback` never fired and the unmodified source was tested. A perturbation that silently
+does nothing produces a green shaped exactly like a judgment that is too weak to notice.
+So assert on the perturbed source before running it (`grep -c` the removed condition and refuse
+to continue unless it is 0), and never chain `grep -c` with `&&` — it exits 1 on a count of zero
+and will break the chain you meant to guard.
+
 ## Architecture
 
 ### Backend (`zhiqu-backend/src/main/java/com/zhiqu/`)
@@ -133,7 +143,7 @@ that tells the two greens apart, and all three cases above were caught by it rat
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260920-collapsible-sidebar`.
+  old bundle. Current token: `20260920-stream-resume`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -167,6 +177,27 @@ that tells the two greens apart, and all three cases above were caught by it rat
   and `ContextResearcherRunner` to `{CONTEXT_RESEARCHER, RETRIEVER}` (it also serves the fallback
   node). "Ran without a node" is now structurally unwritable — before adding a backdoor, ask why
   that agent should be invisible in the execution trace the user can see.
+- **A refresh mid-stream does not lose the answer.** The assistant row is created empty
+  (`status=STREAMING`) when the stream starts, and `StreamingContentFlusher` writes the
+  partial text back every ~1.5s (and once more at the end) via
+  `AiMessageMapper.flushStreamingContent`. This is a **second write path** for assistant
+  messages, and unlike the final one it runs on the stream thread, outside the user lock and
+  outside the transaction — so it does **not** inherit the epoch fence. Its protections live in
+  its own `WHERE`: `deleted = 0` (a cleared conversation must not be refilled — ADR-0002) and
+  `status = 'STREAMING'` (a late flush must not revert a DONE message to half an answer).
+  Returning 0 means *stop flushing*, not *retry*. The frontend picks the rest up by polling
+  while any message is `STREAMING` (capped at 5 min, matching `STREAM_TIMEOUT_MS`).
+- **The chat does not yank the user to the bottom.** It follows only while they are already at
+  the bottom (48px slack); once they scroll up it stays put and shows a `↓ 新内容` button.
+  Streaming deltas patch **only the streaming bubble** (`patchStreamingMessage`) instead of
+  rebuilding the whole list — the old path re-ran `renderMathIn` over the entire chat on every
+  token, so each token got more expensive the longer the conversation was.
+- **There is no Web Push.** Reminders go through `PUSHPLUS` / `WECOM` / `QQ`
+  (`service/notification/`). `service-worker.js` still has `push` / `notificationclick`
+  handlers, but nothing calls `pushManager.subscribe()` and there is no sender, so they are
+  unreachable — labelled as such in the file. The `app.push.vapid-public-key` key and the
+  `ZHIQU_WEB_PUSH_PUBLIC_KEY` row in `deploy/README.md` were retired on 2026-09-20: nothing read
+  them, and they led operators to generate a VAPID key pair believing push was wired.
 - **Ordering has exactly one authority: `AgentPosition`.** The graph's `priority`,
   `parallelGroupId` and `dependsOn` are **derived** from `AgentStageExecutor.runOrder()`, which is
   why `MultiAgentOrchestrator.plan(...)` takes it as a parameter and the executor is constructed

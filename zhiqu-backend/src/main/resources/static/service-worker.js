@@ -1,4 +1,4 @@
-const ZHIQU_CACHE = 'zhiqu-shell-v20260920-collapsible-sidebar';
+const ZHIQU_CACHE = 'zhiqu-shell-v20260920-stream-resume';
 
 // 核心资源：必须全部缓存成功，否则安装失败、保留旧 Worker（旧缓存不被清理），避免一次网络抖动就丢掉离线能力
 const CORE_ASSETS = [
@@ -96,6 +96,14 @@ self.addEventListener('fetch', (event) => {
     );
 });
 
+// ---- 以下两个处理器目前到不了 ----
+// 系统没有 Web Push：没有任何代码调用 pushManager.subscribe()，后端也没有推送发送方
+// （提醒走 PUSHPLUS / WECOM / QQ 三个渠道，见 service/notification/）。
+// 没有订阅就不会有 push 事件，所以这两段是死代码，留着是为了将来真做推送时不用重写。
+//
+// 之所以要写这句：在此之前，读到这里的人会合理地推断「推送是通的」——
+// 部署文档甚至教运维去配一个 VAPID 公钥（那个配置项已经退掉了，因为没有任何代码读它）。
+// 要真正接通，缺的是三件：前端订阅并上报 endpoint、存订阅的表、以及一个带 VAPID 私钥的发送方。
 self.addEventListener('push', (event) => {
     let payload = {};
     try {

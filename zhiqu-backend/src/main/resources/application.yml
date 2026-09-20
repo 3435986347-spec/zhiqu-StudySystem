@@ -102,5 +102,3 @@ app:
     # 升级期双删窗口：打开时每次删除同时清理 LEGACY 与 UNIT 两种格式的向量。
     # Phase 1B 上线后打开、确认旧代次已 PURGED 再关掉。
     dual-delete-window: false
-  push:
-    vapid-public-key: ${ZHIQU_WEB_PUSH_PUBLIC_KEY:}

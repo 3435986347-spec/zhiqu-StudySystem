@@ -15,7 +15,11 @@
     notebookId: null,
     messages: [],
     pendingSources: [],
-    reasoningExpanded: Object.create(null)
+    reasoningExpanded: Object.create(null),
+    // 聊天区是否「跟随到底部」。只有用户本来就在底部时才跟随 ——
+    // 他往上翻着读的时候把他拽回来，是这次要修的那个毛病。
+    chatFollow: true,
+    streamPollTimer: null
   };
 
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -2661,6 +2665,52 @@
     state.messages = list || [];
     var sync = $('#zq-sync-count'); if (sync) sync.textContent = '已同步 ' + state.messages.length + ' 条历史消息';
     renderAiMessages();
+    watchStreamingMessages();
+  }
+
+  /**
+   * 刷新之后接住「还在生成」的那条消息。
+   *
+   * 后端在流开始时就建好了 assistant 消息行（status=STREAMING），并在生成过程中
+   * 阶段性把已生成的正文写进 content（见 AiMessageMapper.flushStreamingContent）。
+   * 所以刷新后能看到已经生成的部分 —— 但这一页没有 SSE 连接了，剩下的部分不会自己出现。
+   * 这里补一个轻量轮询，直到它进入终态。
+   *
+   * 三个边界：
+   * - 本标签页正在发送时不轮询（SSE 在跑，轮询只会和它抢着改同一批消息）。
+   * - 切换了 notebook 就停：那是另一个会话，拉回来的消息会覆盖当前窗口。
+   * - 有上限。后端进程若在生成中途被杀，这条消息会永远停在 STREAMING，
+   *   没有上限的话这个页面会一直轮询到关闭为止。上限取 5 分钟，与 SSE 的
+   *   STREAM_TIMEOUT_MS 一致 —— 超过它，那条流无论如何都已经不在了。
+   */
+  var STREAM_POLL_INTERVAL_MS = 2000;
+  var STREAM_POLL_MAX_ATTEMPTS = 150;   // 150 × 2s = 5min，与后端 STREAM_TIMEOUT_MS 对齐
+  function stopStreamWatch() {
+    if (state.streamPollTimer) { clearTimeout(state.streamPollTimer); state.streamPollTimer = null; }
+  }
+  function watchStreamingMessages(attempt) {
+    stopStreamWatch();
+    if (state.aiSending) return;   // 本页正在流，SSE 会负责更新
+    var pending = (state.messages || []).some(function (m) {
+      return String(m.status || '').toUpperCase() === 'STREAMING';
+    });
+    if (!pending) return;
+    var tries = attempt || 0;
+    if (tries >= STREAM_POLL_MAX_ATTEMPTS) return;
+    var watchedNb = state.notebookId;
+    state.streamPollTimer = setTimeout(function () {
+      state.streamPollTimer = null;
+      if (state.aiSending || watchedNb !== state.notebookId) return;
+      var nbId = state.notebookId;
+      api.get('/ai/messages?limit=50' + (nbId ? '&notebookId=' + nbId : ''))
+        .then(function (list) {
+          if (watchedNb !== state.notebookId || state.aiSending) return;
+          state.messages = list || [];
+          renderAiMessages({ keepScroll: !state.chatFollow });
+          watchStreamingMessages(tries + 1);
+        })
+        .catch(function () { watchStreamingMessages(tries + 1); });
+    }, STREAM_POLL_INTERVAL_MS);
   }
   // 历史坏数据修复：早期流式链路会丢弃纯换行增量，整条消息被压成一行。
   // 只对"记号多、换行几乎为零"的消息做启发式回填换行，健康消息原样返回。
@@ -2678,8 +2728,114 @@
       .replace(/([^\n\d-])- (?=\S)/g, '$1\n- ')
       .replace(/([。；！？])\s*(\d+)[.、]\s+(?=\S)/g, '$1\n$2. ');
   }
+  /**
+   * 距底多少像素以内算「还在底部」。
+   *
+   * 取 48 而不是 0：行高 1.65 的正文一行约 22px，留两行的余量 ——
+   * 用户手指刚离开、或浏览器因图片/公式渲染微调了一下高度，都不该被判成「他翻上去了」。
+   */
+  var CHAT_BOTTOM_SLACK_PX = 48;
+  function chatAtBottom(host) {
+    return host.scrollHeight - host.scrollTop - host.clientHeight <= CHAT_BOTTOM_SLACK_PX;
+  }
+  /**
+   * 聊天区的滚动策略。
+   *
+   * 此前是无条件 `host.scrollTop = host.scrollHeight` —— 流式期间每个 token 都重渲染一次，
+   * 于是用户只要想往上翻看前面说了什么，就会被立刻拽回底部，一个字也读不完。
+   *
+   * 现在：用户在底部才跟随；他一旦往上翻，就停在原地，并冒出一个「↓ 新内容」按钮，
+   * 点它（或自己滑回底部）恢复跟随。发送新消息时无条件回到底部 —— 那是他自己的动作。
+   */
+  function applyChatScroll(host, prevScroll, keepScroll) {
+    if (keepScroll || !state.chatFollow) {
+      host.scrollTop = prevScroll;
+    } else {
+      host.scrollTop = host.scrollHeight;
+    }
+    var jump = $('#zq-chat-jump');
+    if (jump) jump.hidden = state.chatFollow;
+  }
+  /**
+   * 绑滚动监听与「↓ 新内容」按钮。
+   *
+   * 两者各有各的 guard，而不是共用一个：按钮在首次渲染时万一还不在 DOM 里，
+   * 共用 guard 会让它<b>永远</b>绑不上 —— 监听已经标记成「绑过了」，后面再也不进来。
+   * 这类「一个 guard 罩住两件事」的写法，失效的那件事不会有任何迹象。
+   */
+  function bindChatScroll(host) {
+    if (host.dataset.zqScrollBound !== '1') {
+      host.dataset.zqScrollBound = '1';
+      host.addEventListener('scroll', function () {
+        var atBottom = chatAtBottom(host);
+        if (atBottom === state.chatFollow) return;
+        state.chatFollow = atBottom;
+        var jump = $('#zq-chat-jump');
+        if (jump) jump.hidden = atBottom;
+      }, { passive: true });
+    }
+    var jump = $('#zq-chat-jump');
+    if (jump && jump.dataset.zqBound !== '1') {
+      jump.dataset.zqBound = '1';
+      jump.onclick = function () {
+        state.chatFollow = true;
+        host.scrollTop = host.scrollHeight;
+        jump.hidden = true;
+      };
+    }
+  }
+  /**
+   * 一条消息的气泡内容（思考摘要 + 正文）。
+   *
+   * <p>抽出来是为了让<b>全量渲染</b>与<b>流式增量补丁</b>共用同一份生成逻辑 ——
+   * 两处各写一份的话，Markdown / 数学公式 / 「仍在生成」尾巴的处理迟早会分叉，
+   * 而分叉只在流式时可见，最难被发现。
+   */
+  function messageBodyHtml(m, i) {
+    var me = m.role === 'user';
+    var reasoningMode = String(m.reasoningMode || 'OFF').toUpperCase();
+    var reasoningText = m.reasoningSummary || m.reasoning || '';
+    var reasonKey = String(m._clientKey || m.id || m.requestId || ('assistant-' + i));
+    var reason = (!me && reasoningMode !== 'OFF' && reasoningText)
+      ? '<details class="zq-ai-reasoning" data-reason-key="' + esc(reasonKey) + '"' + (state.reasoningExpanded[reasonKey] ? ' open' : '') + '><summary>思考摘要</summary><span>' + esc(reasoningText) + '</span></details>'
+      : '';
+    // 流式中的内容换行完好且可能只收到半截,跳过压平回填,防止启发式误触
+    var body = m.content ? renderMarkdown((me || m.status === 'STREAMING') ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
+    // 刷新之后那条消息会带着「已经生成的一半」回来（后端阶段性落库）。
+    // 光有半截正文看不出它是写完了还是还在写 —— 补一个尾巴说清楚，
+    // 否则用户会以为回答就到这里为止。
+    if (!me && m.content && String(m.status || '').toUpperCase() === 'STREAMING') {
+      body += '<div style="margin-top:6px;font-size:11.5px;color:var(--zq-text3);">仍在生成…</div>';
+    }
+    return reason + body;
+  }
+
+  /**
+   * 流式增量：只改正在生成的那一条，不重建整个聊天区。
+   *
+   * <h2>为什么值得单独走一条路</h2>
+   *
+   * <p>此前每收到一个 token 都跑一次完整的 renderAiMessages：重建全部消息的 innerHTML、
+   * 重新绑定每条消息的右键菜单、并对<b>整个聊天区</b>重跑一次数学公式渲染。
+   * 代价随对话长度增长 —— 聊得越久，每个 token 越贵，而一轮有几千个 token。
+   *
+   * <p>返回 false 表示 DOM 不是预期的形状（比如这条消息还没被渲染出来），
+   * 调用方退回全量渲染。不假装成功，也不静默什么都不做。
+   */
+  function patchStreamingMessage(index) {
+    var host = $('#zq-chat'); if (!host) return false;
+    var node = host.querySelector('[data-msg-body="' + index + '"]');
+    var m = state.messages[index];
+    if (!node || !m) return false;
+    var prevScroll = host.scrollTop;
+    node.innerHTML = messageBodyHtml(m, index);
+    renderMathIn(node);
+    applyChatScroll(host, prevScroll, false);
+    return true;
+  }
   function renderAiMessages(opts) {
     var host = $('#zq-chat'); if (!host) return;
+    bindChatScroll(host);
     var keepScroll = opts && opts.keepScroll, prevScroll = host.scrollTop;
     $all('details[data-reason-key]', host).forEach(function (details) {
       state.reasoningExpanded[details.dataset.reasonKey] = details.open;
@@ -2687,15 +2843,8 @@
     host.innerHTML = state.messages.map(function (m, i) {
       var me = m.role === 'user';
       var name = me ? '我' : 'AI';
-      var reasoningMode = String(m.reasoningMode || 'OFF').toUpperCase();
-      var reasoningText = m.reasoningSummary || m.reasoning || '';
-      var reasonKey = String(m._clientKey || m.id || m.requestId || ('assistant-' + i));
-      var reason = (!me && reasoningMode !== 'OFF' && reasoningText)
-        ? '<details class="zq-ai-reasoning" data-reason-key="' + esc(reasonKey) + '"' + (state.reasoningExpanded[reasonKey] ? ' open' : '') + '><summary>思考摘要</summary><span>' + esc(reasoningText) + '</span></details>'
-        : '';
-      // 流式中的内容换行完好且可能只收到半截,跳过压平回填,防止启发式误触
-      var body = m.content ? renderMarkdown((me || m.status === 'STREAMING') ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
-      return '<div data-msg-idx="' + i + '" style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div style="max-width:72%;padding:11px 14px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + reason + body + '</div></div>';
+      var body = messageBodyHtml(m, i);
+      return '<div data-msg-idx="' + i + '" style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div data-msg-body="' + i + '" style="max-width:72%;padding:11px 14px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + body + '</div></div>';
     }).join('');
     $all('details[data-reason-key]', host).forEach(function (details) {
       details.ontoggle = function () {
@@ -2723,14 +2872,37 @@
       };
     });
     renderMathIn(host);
-    // 删除消息等场景保持原滚动位置;其余(加载/流式)跟随到底部
-    host.scrollTop = keepScroll ? prevScroll : host.scrollHeight;
+    // 删除消息等场景保持原滚动位置;其余按「用户是否在底部」决定跟不跟随
+    applyChatScroll(host, prevScroll, keepScroll);
+  }
+  /**
+   * 记住当前 notebook，让刷新之后还落在同一个会话上。
+   *
+   * 聊天记录是按 notebook 隔离的（后端会话 key = notebook-{id}）。刷新后 state.notebookId
+   * 是 null，于是 loadAiNotebooks 永远选 notebooks[0] —— 你在第三个 notebook 里聊了半天，
+   * 刷新一下看到的是第一个的记录。内容没丢，只是你被换到了别的房间，看上去和丢了一样。
+   *
+   * localStorage 在隐私窗口/禁用站点数据时会抛，所以读写都兜住；读不到就回落到原来的行为。
+   */
+  var NOTEBOOK_KEY = 'zq-ai-notebook';
+  function rememberNotebook(id) {
+    try {
+      if (id == null) localStorage.removeItem(NOTEBOOK_KEY);
+      else localStorage.setItem(NOTEBOOK_KEY, String(id));
+    } catch (e) {}
+  }
+  function recallNotebook() {
+    try {
+      var raw = localStorage.getItem(NOTEBOOK_KEY);
+      return raw ? Number(raw) : null;
+    } catch (e) { return null; }
   }
   async function loadAiNotebooks() {
     var list = await api.get('/ai/notebooks');
     state.notebooks = list || [];
     if (!state.notebooks.length) {
       state.notebookId = null;
+      rememberNotebook(null);
       clearPendingSources();
       renderNotebooks();
       await loadAiSources();
@@ -2738,8 +2910,12 @@
       renderArtifacts([]);
       return;
     }
+    // 本次会话内已有选择就用它；刚刷新时（还没有选择）用上次记住的那个。
+    // 记住的那个可能已被删除，所以仍要过「还在不在」这一关，最后才回落到第一个。
+    if (state.notebookId == null) state.notebookId = recallNotebook();
     var selectedStillExists = state.notebooks.some(function (item) { return Number(item.id) === Number(state.notebookId); });
     if (!selectedStillExists) state.notebookId = state.notebooks[0].id;
+    rememberNotebook(state.notebookId);
     renderNotebooks();
     await loadAiSources();
   }
@@ -2800,6 +2976,7 @@
         // 已选中的 notebook 再点名字 → 改名；否则点击切换
         if (id === state.notebookId && e.target.closest('[data-nb-name]')) { renameNotebook(nb); return; }
         state.notebookId = id;
+        rememberNotebook(id);   // 这条切换路径不经过 loadAiNotebooks，要自己记
         clearPendingSources();
         state.messages = [];
         renderNotebooks();
@@ -3020,6 +3197,7 @@
     inp.value = '';
     inp.style.height = DRAFT_BASE_HEIGHT + 'px'; // 收回单行，否则清空后仍撑着上一条的高度
     state.aiSending = true;
+    stopStreamWatch();   // SSE 接管，轮询再跑就会和它抢着改同一批消息
     var sendButton = $('#zq-send');
     if (sendButton) { sendButton.disabled = true; sendButton.textContent = '生成中'; }
     var reasoningMode = ($('#zq-think') && $('#zq-think').dataset.on === '1') ? 'DEEP' : 'OFF';
@@ -3036,6 +3214,8 @@
       _clientKey: clientKey
     };
     state.messages.push({ role: 'user', content: txt, _clientKey: clientKey + '-user' }, assistant);
+    // 用户刚按下发送，这是他自己的动作：无条件回到底部，之后再由他的滚动决定跟不跟随
+    state.chatFollow = true;
     renderAiMessages();
     state.agentSteps = []; state.agentArtifacts = [];
     renderSteps([]); renderArtifacts([]);
@@ -3062,11 +3242,19 @@
     // 本轮以 SSE error 收场。注意它与 catch(e) 那条路不同：error 事件是**流正常结束**，
     // 不抛异常，所以下面的收尾照跑 —— 这正是错误文案被冲掉的原因，见末尾。
     var failed = false;
+    // 传输层断开（与 SSE 的 error 事件不同：那是流正常结束）。断了之后要去把
+    // 后端已经落库的部分接回来，见下面的 finally。
+    var disconnected = false;
     try {
       await safe('AI 发送', async function () {
       try {
         await streamAiChat(body, function (event, data) {
-          if (event === 'message.delta') { assistant.content += (data.text || data.delta || data.content || ''); if (sameNb()) renderAiMessages(); }
+          if (event === 'message.delta') {
+            assistant.content += (data.text || data.delta || data.content || '');
+            // 只改这一条气泡。退回全量渲染的两种情形：节点还没渲染出来（第一个增量），
+            // 或 DOM 不是预期形状。不假装成功，也不静默什么都不做。
+            if (sameNb() && !patchStreamingMessage(state.messages.indexOf(assistant))) renderAiMessages();
+          }
           else if (event === 'reasoning.delta' && reasoningMode !== 'OFF') {
             assistant.reasoningSummary += (data.text || data.delta || '');
             if (sameNb()) renderAiMessages();
@@ -3109,7 +3297,14 @@
           }
         });
       } catch (e) {
-        assistant.status = ''; if (!assistant.content) assistant.content = '（连接中断，可稍后刷新查看）'; renderAiMessages();
+        // 连接断了，但后端多半还在生成 —— 而正文已经在阶段性落库（flushStreamingContent）。
+        // 所以这里不再是死路。真正的重新拉取放在 finally 里：那时 state.aiSending 才置回
+        // false，watchStreamingMessages 才会真的开始轮询（它见 aiSending 为真就直接返回）。
+        // 在这里拉的话，轮询会被自己的「本页正在流」判断挡掉，接回悄悄失效。
+        disconnected = true;
+        assistant.status = '';
+        if (!assistant.content) assistant.content = '（连接中断，正在尝试接回…）';
+        renderAiMessages();
         throw e;
       }
       if (dropped) {
@@ -3139,6 +3334,9 @@
     } finally {
       state.aiSending = false;
       if (sendButton) { sendButton.disabled = false; sendButton.textContent = '发送'; }
+      // 断线接回：此刻 aiSending 已经是 false，loadAiMessages 末尾的 watchStreamingMessages
+      // 才会真的开始轮询，把后端继续生成的部分续上。不用用户手动刷新。
+      if (disconnected) loadAiMessages().catch(function () {});
     }
   }
 

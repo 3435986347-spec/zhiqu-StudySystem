@@ -86,9 +86,11 @@ app:
       max-content-chars: 3500
       # 必须保持 true：禁止 AI 抓取内网地址，防 SSRF
       block-private-network: true
-  push:
-    # Web Push 公钥（VAPID）。不配则浏览器推送不可用，其余功能不受影响。
-    vapid-public-key: ${ZHIQU_WEB_PUSH_PUBLIC_KEY:}
+  # 这里曾有一个 app.push.vapid-public-key（Web Push 公钥）。已移除：
+  # 系统没有浏览器推送。提醒只走 PUSHPLUS / WECOM / QQ 三个渠道
+  # （见 service/notification/），没有任何代码订阅推送、也没有任何代码发送推送。
+  # 原来的注释写的是「不配则浏览器推送不可用」，反过来暗示配了就可用 ——
+  # 而配了什么都不会变，运维会白生成一对 VAPID 密钥并以为提醒已接通。
   rag:
     enabled: false
     base-url: http://127.0.0.1:8001

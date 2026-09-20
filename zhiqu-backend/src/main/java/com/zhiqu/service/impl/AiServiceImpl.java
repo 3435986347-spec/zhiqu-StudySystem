@@ -45,6 +45,7 @@ import com.zhiqu.service.agent.AgentPosition;
 import com.zhiqu.service.agent.AgentRunContext;
 import com.zhiqu.service.agent.AgentSseEvent;
 import com.zhiqu.service.agent.AgentStageExecutor;
+import com.zhiqu.service.ai.StreamingContentFlusher;
 import com.zhiqu.service.agent.AgentStageRunner;
 import com.zhiqu.service.ReminderPlanService;
 import com.zhiqu.service.VerifierService;
@@ -1238,11 +1239,18 @@ public class AiServiceImpl implements AiService {
 
             StringBuilder reply = new StringBuilder();
             StringBuilder reasoning = new StringBuilder();
+            // 阶段性把已生成的正文写进库，让「生成途中刷新页面」还能看到已有的部分。
+            // 详见 AiMessageMapper.flushStreamingContent —— 它的三个 WHERE 条件决定了
+            // 这次写入不会复活被清空的消息，也不会把终态消息回退成半截。
+            StreamingContentFlusher flusher = new StreamingContentFlusher(text -> messageMapper
+                    .flushStreamingContent(s.assistantMessage.getId(), s.userId,
+                            limitRawMarkdown(text, MESSAGE_MAX_LENGTH)));
             s.allCitationRows.addAll(s.webCitationRows);
             // 注意：增量判空用非空而不是非空白——纯换行增量（"\n\n"）是段落分隔，丢弃会把正文压成一行
             AiCallResult aiCallResult = callAiApiStream(s.config, messages, s.reasoningMode, event -> {
                 if ("message.delta".equals(event.type()) && event.text() != null && !event.text().isEmpty()) {
                     reply.append(event.text());
+                    flusher.onGrew(reply);
                     ctx.emit("message.delta", Map.of(
                             "requestId", s.requestId,
                             "agentRunId", s.agentRun.getId(),
@@ -1280,6 +1288,9 @@ public class AiServiceImpl implements AiService {
             if (reasoning.isEmpty() && isReasoningRequested(s.reasoningMode) && hasText(aiCallResult.reasoningSummary())) {
                 reasoning.append(aiCallResult.reasoningSummary());
             }
+            // 收尾补一次：最后一段增量距上次 flush 很可能不足节流间隔，
+            // 不补的话它要等到提交事务才落库，而那中间还隔着 POST_STREAM 的三次模型往返。
+            flusher.flushNow(reply);
             s.finalReply = limitRawMarkdown(reply.toString(), MESSAGE_MAX_LENGTH);
             s.finalReasoningSummary = isReasoningRequested(s.reasoningMode)
                     ? limitRawMarkdown(reasoning.toString(), 2000)

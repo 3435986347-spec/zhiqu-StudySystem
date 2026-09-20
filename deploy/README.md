@@ -116,7 +116,6 @@ app.rag.service-token        启用 RAG 时，后端与 sidecar 必须填同一�
 ```text
 ZHIQU_SYSTEM_AI_API_KEY      系统级默认模型的 API Key
 ZHIQU_WEB_SEARCH_API_KEY     联网搜索的 API Key
-ZHIQU_WEB_PUSH_PUBLIC_KEY    Web Push VAPID 公钥
 ```
 
 注意：`app.crypto.master-key` 一旦更换，**历史加密数据（AI Key、知识页正文等）将无法解密**，
