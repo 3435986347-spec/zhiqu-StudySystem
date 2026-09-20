@@ -230,13 +230,30 @@
   function fmtDate(v) { return v ? String(v).replace('T', ' ').slice(0, 16) : '—'; }
   function d10(v) { return v ? String(v).slice(0, 10) : ''; }
   function hm(v) { return v ? String(v).replace('T', ' ').slice(11, 16) : ''; }
-  function today() { return new Date().toISOString().slice(0, 10); }
+  /**
+   * 本地日历日期（YYYY-MM-DD）。
+   *
+   * <b>不能用 toISOString().slice(0,10)</b> —— 那是 UTC。东八区凌晨 0 点到 8 点之间，
+   * 它给出的是<b>昨天</b>，而后端的业务日期是 Asia/Shanghai（BusinessClock）。此前的后果：
+   * 看板标题显示昨天；例行打卡的 checkDate 记成昨天，连续天数因此断掉；
+   * 新建例行的开始日期是昨天；套用共享计划默认从昨天开始；番茄钟的学习时长记到昨天。
+   *
+   * 实测：2026-09-21 01:40（东八区）时，旧写法返回 "2026-09-20"，看板标题就是这么显示的。
+   */
+  function localDate(d) {
+    d = d || new Date();
+    var m = d.getMonth() + 1, day = d.getDate();
+    return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+  }
+  function today() { return localDate(); }
   function weekRange(offset) {
     var now = new Date();
     var day = now.getDay() || 7;
     var mon = new Date(now); mon.setDate(now.getDate() - day + 1 + (offset || 0) * 7);
     var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-    return [mon.toISOString().slice(0, 10), sun.toISOString().slice(0, 10)];
+    // 与 getDay() 保持同一时区：原来这里是 getDay() 取本地、再用 toISOString() 按 UTC 序列化，
+    // 一半本地一半 UTC，凌晨时段整周范围会整体错一天
+    return [localDate(mon), localDate(sun)];
   }
   function qLabel(q) { return ({ 1: '重要且紧急', 2: '重要不紧急', 3: '紧急不重要', 4: '不重要不紧急' })[q] || '未分类'; }
   function qKey(q) { return ({ 1: 'q1', 2: 'q2', 3: 'q3', 4: 'q4' })[q] || 'q4'; }
@@ -1607,7 +1624,7 @@
     } else {
       var md2 = htmlToMarkdown(doc);
       doc.dataset.source = '1'; doc.contentEditable = 'false';
-      doc.innerHTML = '<textarea id="zq-src-ta" style="width:100%;min-height:360px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);padding:12px;font-size:13px;line-height:1.7;font-family:var(--zq-fontM,monospace);background:var(--zq-input-bg);color:var(--zq-text);resize:vertical;box-sizing:border-box;"></textarea>';
+      doc.innerHTML = '<textarea id="zq-src-ta" style="width:100%;min-height:360px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);padding:12px;font-size:13px;line-height:1.7;font-family:var(--zq-fontM);background:var(--zq-input-bg);color:var(--zq-text);resize:vertical;box-sizing:border-box;"></textarea>';
       $('#zq-src-ta').value = md2;
     }
   }
@@ -3644,6 +3661,8 @@
     }, { renderError: true });
   }
 
-  window.zqApi = { api: api, reload: route };
+  // localDate 一并暴露：页面内联脚本（如 dashboard 的番茄钟）也要算「今天」，
+  // 让它们用同一份定义，而不是各写一个 toISOString
+  window.zqApi = { api: api, reload: route, today: today, localDate: localDate };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', route); else route();
 })();

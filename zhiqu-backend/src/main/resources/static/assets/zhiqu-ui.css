@@ -26,17 +26,17 @@
   --zq-bad: #B54545;
   --zq-bad-tint: rgba(181,69,69,0.10);
   --zq-q1: #B54545;
-  --zq-q1bg: #FAF1F1;
-  --zq-q1bd: #E8CCCC;
+  --zq-q1-bg: #FAF1F1;
+  --zq-q1-border: #E8CCCC;
   --zq-q2: #2E538F;
-  --zq-q2bg: #EFF3F9;
-  --zq-q2bd: #C9D5E6;
+  --zq-q2-bg: #EFF3F9;
+  --zq-q2-border: #C9D5E6;
   --zq-q3: #B07A2E;
-  --zq-q3bg: #FAF4EA;
-  --zq-q3bd: #E8D6B8;
+  --zq-q3-bg: #FAF4EA;
+  --zq-q3-border: #E8D6B8;
   --zq-q4: #3F7D5C;
-  --zq-q4bg: #EFF6F2;
-  --zq-q4bd: #C9DED2;
+  --zq-q4-bg: #EFF6F2;
+  --zq-q4-border: #C9DED2;
   --zq-sh1: 0 1px 2px rgba(16,24,40,0.05);
   --zq-sh2: 0 4px 12px rgba(16,24,40,0.06);
   --zq-sb-bg: #FBFCFD;
@@ -48,6 +48,20 @@
   --zq-rs: 5px;
   --zq-rm: 7px;
   --zq-rl: 9px;
+  /* 字体只有这一处定义。主题块（v0..v4 × light/dark）只覆盖颜色，不设字体，所以这两个值对所有主题生效。
+     --zq-fontM 的拉丁部分是等宽字体，中文部分刻意回落到与正文同一族：
+     字体回退是<逐字符>生效的，而 JetBrains Mono / Consolas 都没有中文字形 ——
+     于是中文渲染成 Noto Serif SC（和页面其余部分一样），拉丁字母与符号仍然等宽，
+     Markdown 源码里该对齐的地方照样对齐。
+     此前 --zq-fontM 从未被定义过，而 zhiqu-api.js 的源码编辑器写的是 var(--zq-fontM, monospace)，
+     于是回落到裸 monospace，中文由系统随便挑一个字体顶上 —— 那就是「源码模式字体很怪」的来源。 */
+  /* 象限色的 -bg / -border 曾经定义成 --zq-q1bg / --zq-q1bd（中间没有连字符），
+     而所有消费方写的都是 --zq-q1-bg / --zq-q1-border —— 两边从来没对上。
+     var() 找不到变量又没有回落时，属性会变成无效值并回落到初始值：background 变透明。
+     于是四象限的底色胶囊一直是透明的（实测 rgba(0,0,0,0)），只有文字颜色是对的。
+     这种错配没有任何报错，也不会让页面崩，只是颜色悄悄没了。 */
+  --zq-fontBody: "Noto Serif SC", "Songti SC", "SimSun", "STSong", serif;
+  --zq-fontM: "JetBrains Mono", Consolas, "Noto Serif SC", "Songti SC", "SimSun", monospace;
   color-scheme: light;
 }
 
@@ -73,17 +87,17 @@ html[data-zq-ver="v0"][data-zq-mode="light"]{
   --zq-bad: #A8463F;
   --zq-bad-tint: rgba(168,70,63,0.10);
   --zq-q1: #A8463F;
-  --zq-q1bg: #FBF0EE;
-  --zq-q1bd: #E5C5C0;
+  --zq-q1-bg: #FBF0EE;
+  --zq-q1-border: #E5C5C0;
   --zq-q2: #2F5F73;
-  --zq-q2bg: #EDF5F7;
-  --zq-q2bd: #C6D9DF;
+  --zq-q2-bg: #EDF5F7;
+  --zq-q2-border: #C6D9DF;
   --zq-q3: #A46A2A;
-  --zq-q3bg: #FBF4EA;
-  --zq-q3bd: #E7D2B7;
+  --zq-q3-bg: #FBF4EA;
+  --zq-q3-border: #E7D2B7;
   --zq-q4: #407A5C;
-  --zq-q4bg: #EEF6F1;
-  --zq-q4bd: #C6DBC9;
+  --zq-q4-bg: #EEF6F1;
+  --zq-q4-border: #C6DBC9;
   --zq-sh1: 0 1px 2px rgba(32,37,43,0.04);
   --zq-sh2: 0 10px 28px rgba(32,37,43,0.055);
   --zq-sb-bg: #FAF9F5;
@@ -119,17 +133,17 @@ html[data-zq-ver="v0"][data-zq-mode="dark"]{
   --zq-bad: #CE8A82;
   --zq-bad-tint: rgba(206,138,130,0.13);
   --zq-q1: #CE8A82;
-  --zq-q1bg: rgba(206,138,130,0.10);
-  --zq-q1bd: rgba(206,138,130,0.28);
+  --zq-q1-bg: rgba(206,138,130,0.10);
+  --zq-q1-border: rgba(206,138,130,0.28);
   --zq-q2: #8FB4C4;
-  --zq-q2bg: rgba(143,180,196,0.10);
-  --zq-q2bd: rgba(143,180,196,0.28);
+  --zq-q2-bg: rgba(143,180,196,0.10);
+  --zq-q2-border: rgba(143,180,196,0.28);
   --zq-q3: #CDA05F;
-  --zq-q3bg: rgba(205,160,95,0.10);
-  --zq-q3bd: rgba(205,160,95,0.28);
+  --zq-q3-bg: rgba(205,160,95,0.10);
+  --zq-q3-border: rgba(205,160,95,0.28);
   --zq-q4: #84B49B;
-  --zq-q4bg: rgba(132,180,155,0.10);
-  --zq-q4bd: rgba(132,180,155,0.28);
+  --zq-q4-bg: rgba(132,180,155,0.10);
+  --zq-q4-border: rgba(132,180,155,0.28);
   --zq-sh1: 0 1px 2px rgba(0,0,0,0.3);
   --zq-sh2: 0 12px 30px rgba(0,0,0,0.35);
   --zq-sb-bg: #1E1D19;
@@ -165,17 +179,17 @@ html[data-zq-ver="v1"][data-zq-mode="light"]{
   --zq-bad: #B54545;
   --zq-bad-tint: rgba(181,69,69,0.10);
   --zq-q1: #B54545;
-  --zq-q1bg: #FAF1F1;
-  --zq-q1bd: #E8CCCC;
+  --zq-q1-bg: #FAF1F1;
+  --zq-q1-border: #E8CCCC;
   --zq-q2: #2E538F;
-  --zq-q2bg: #EFF3F9;
-  --zq-q2bd: #C9D5E6;
+  --zq-q2-bg: #EFF3F9;
+  --zq-q2-border: #C9D5E6;
   --zq-q3: #B07A2E;
-  --zq-q3bg: #FAF4EA;
-  --zq-q3bd: #E8D6B8;
+  --zq-q3-bg: #FAF4EA;
+  --zq-q3-border: #E8D6B8;
   --zq-q4: #3F7D5C;
-  --zq-q4bg: #EFF6F2;
-  --zq-q4bd: #C9DED2;
+  --zq-q4-bg: #EFF6F2;
+  --zq-q4-border: #C9DED2;
   --zq-sh1: 0 1px 2px rgba(16,24,40,0.05);
   --zq-sh2: 0 4px 12px rgba(16,24,40,0.06);
   --zq-sb-bg: #FBFCFD;
@@ -211,17 +225,17 @@ html[data-zq-ver="v1"][data-zq-mode="dark"]{
   --zq-bad: #D28585;
   --zq-bad-tint: rgba(210,133,133,0.12);
   --zq-q1: #D28585;
-  --zq-q1bg: rgba(210,133,133,0.10);
-  --zq-q1bd: rgba(210,133,133,0.28);
+  --zq-q1-bg: rgba(210,133,133,0.10);
+  --zq-q1-border: rgba(210,133,133,0.28);
   --zq-q2: #7EA1D6;
-  --zq-q2bg: rgba(126,161,214,0.10);
-  --zq-q2bd: rgba(126,161,214,0.28);
+  --zq-q2-bg: rgba(126,161,214,0.10);
+  --zq-q2-border: rgba(126,161,214,0.28);
   --zq-q3: #D2A768;
-  --zq-q3bg: rgba(210,167,104,0.10);
-  --zq-q3bd: rgba(210,167,104,0.28);
+  --zq-q3-bg: rgba(210,167,104,0.10);
+  --zq-q3-border: rgba(210,167,104,0.28);
   --zq-q4: #7FB99B;
-  --zq-q4bg: rgba(127,185,155,0.10);
-  --zq-q4bd: rgba(127,185,155,0.28);
+  --zq-q4-bg: rgba(127,185,155,0.10);
+  --zq-q4-border: rgba(127,185,155,0.28);
   --zq-sh1: 0 1px 2px rgba(0,0,0,0.32);
   --zq-sh2: 0 6px 18px rgba(0,0,0,0.38);
   --zq-sb-bg: #121820;
@@ -257,17 +271,17 @@ html[data-zq-ver="v2"][data-zq-mode="light"]{
   --zq-bad: #A85246;
   --zq-bad-tint: rgba(168,82,70,0.10);
   --zq-q1: #A85246;
-  --zq-q1bg: #F9EFEC;
-  --zq-q1bd: #E4C9C2;
+  --zq-q1-bg: #F9EFEC;
+  --zq-q1-border: #E4C9C2;
   --zq-q2: #3E6B8A;
-  --zq-q2bg: #EDF3F7;
-  --zq-q2bd: #C7D8E3;
+  --zq-q2-bg: #EDF3F7;
+  --zq-q2-border: #C7D8E3;
   --zq-q3: #A5762D;
-  --zq-q3bg: #F9F3E7;
-  --zq-q3bd: #E5D3B0;
+  --zq-q3-bg: #F9F3E7;
+  --zq-q3-border: #E5D3B0;
   --zq-q4: #34664B;
-  --zq-q4bg: #EDF4EE;
-  --zq-q4bd: #C6DAC8;
+  --zq-q4-bg: #EDF4EE;
+  --zq-q4-border: #C6DAC8;
   --zq-sh1: 0 1px 3px rgba(60,55,40,0.05);
   --zq-sh2: 0 12px 30px rgba(60,55,40,0.07);
   --zq-sb-bg: #F3F0E7;
@@ -303,17 +317,17 @@ html[data-zq-ver="v2"][data-zq-mode="dark"]{
   --zq-bad: #CF8B7E;
   --zq-bad-tint: rgba(207,139,126,0.12);
   --zq-q1: #CF8B7E;
-  --zq-q1bg: rgba(207,139,126,0.10);
-  --zq-q1bd: rgba(207,139,126,0.28);
+  --zq-q1-bg: rgba(207,139,126,0.10);
+  --zq-q1-border: rgba(207,139,126,0.28);
   --zq-q2: #8FAFC6;
-  --zq-q2bg: rgba(143,175,198,0.10);
-  --zq-q2bd: rgba(143,175,198,0.28);
+  --zq-q2-bg: rgba(143,175,198,0.10);
+  --zq-q2-border: rgba(143,175,198,0.28);
   --zq-q3: #CFAC67;
-  --zq-q3bg: rgba(207,172,103,0.10);
-  --zq-q3bd: rgba(207,172,103,0.28);
+  --zq-q3-bg: rgba(207,172,103,0.10);
+  --zq-q3-border: rgba(207,172,103,0.28);
   --zq-q4: #8FBCA1;
-  --zq-q4bg: rgba(143,188,161,0.10);
-  --zq-q4bd: rgba(143,188,161,0.28);
+  --zq-q4-bg: rgba(143,188,161,0.10);
+  --zq-q4-border: rgba(143,188,161,0.28);
   --zq-sh1: 0 1px 2px rgba(0,0,0,0.3);
   --zq-sh2: 0 14px 34px rgba(0,0,0,0.34);
   --zq-sb-bg: #20221B;
@@ -349,17 +363,17 @@ html[data-zq-ver="v3"][data-zq-mode="light"]{
   --zq-bad: #B04A55;
   --zq-bad-tint: rgba(176,74,85,0.10);
   --zq-q1: #B04A55;
-  --zq-q1bg: #FAF0F1;
-  --zq-q1bd: #E9CCD0;
+  --zq-q1-bg: #FAF0F1;
+  --zq-q1-border: #E9CCD0;
   --zq-q2: #564A9E;
-  --zq-q2bg: #F1EFF9;
-  --zq-q2bd: #D3CDEB;
+  --zq-q2-bg: #F1EFF9;
+  --zq-q2-border: #D3CDEB;
   --zq-q3: #A8742F;
-  --zq-q3bg: #F9F3E9;
-  --zq-q3bd: #E7D4B4;
+  --zq-q3-bg: #F9F3E9;
+  --zq-q3-border: #E7D4B4;
   --zq-q4: #45806B;
-  --zq-q4bg: #EEF5F2;
-  --zq-q4bd: #C9DFD6;
+  --zq-q4-bg: #EEF5F2;
+  --zq-q4-border: #C9DFD6;
   --zq-sh1: 0 2px 6px rgba(36,34,60,0.05);
   --zq-sh2: 0 2px 6px rgba(36,34,60,0.04), 0 16px 40px rgba(36,34,60,0.08);
   --zq-sb-bg: #FAFAFD;
@@ -395,17 +409,17 @@ html[data-zq-ver="v3"][data-zq-mode="dark"]{
   --zq-bad: #D2848E;
   --zq-bad-tint: rgba(210,132,142,0.12);
   --zq-q1: #D2848E;
-  --zq-q1bg: rgba(210,132,142,0.10);
-  --zq-q1bd: rgba(210,132,142,0.28);
+  --zq-q1-bg: rgba(210,132,142,0.10);
+  --zq-q1-border: rgba(210,132,142,0.28);
   --zq-q2: #A79BE8;
-  --zq-q2bg: rgba(167,155,232,0.10);
-  --zq-q2bd: rgba(167,155,232,0.28);
+  --zq-q2-bg: rgba(167,155,232,0.10);
+  --zq-q2-border: rgba(167,155,232,0.28);
   --zq-q3: #D0A567;
-  --zq-q3bg: rgba(208,165,103,0.10);
-  --zq-q3bd: rgba(208,165,103,0.28);
+  --zq-q3-bg: rgba(208,165,103,0.10);
+  --zq-q3-border: rgba(208,165,103,0.28);
   --zq-q4: #83BCA5;
-  --zq-q4bg: rgba(131,188,165,0.10);
-  --zq-q4bd: rgba(131,188,165,0.28);
+  --zq-q4-bg: rgba(131,188,165,0.10);
+  --zq-q4-border: rgba(131,188,165,0.28);
   --zq-sh1: 0 2px 6px rgba(0,0,0,0.32);
   --zq-sh2: 0 2px 6px rgba(0,0,0,0.28), 0 18px 44px rgba(0,0,0,0.4);
   --zq-sb-bg: #181724;
@@ -441,17 +455,17 @@ html[data-zq-ver="v4"][data-zq-mode="light"]{
   --zq-bad: #A34A42;
   --zq-bad-tint: rgba(163,74,66,0.10);
   --zq-q1: #A34A42;
-  --zq-q1bg: #F8F0EE;
-  --zq-q1bd: #E4CBC7;
+  --zq-q1-bg: #F8F0EE;
+  --zq-q1-border: #E4CBC7;
   --zq-q2: #3A5F80;
-  --zq-q2bg: #EFF3F7;
-  --zq-q2bd: #C9D6E1;
+  --zq-q2-bg: #EFF3F7;
+  --zq-q2-border: #C9D6E1;
   --zq-q3: #9C7B33;
-  --zq-q3bg: #F7F2E7;
-  --zq-q3bd: #E2D3AF;
+  --zq-q3-bg: #F7F2E7;
+  --zq-q3-border: #E2D3AF;
   --zq-q4: #4A7A5E;
-  --zq-q4bg: #EFF4F0;
-  --zq-q4bd: #CBDCD1;
+  --zq-q4-bg: #EFF4F0;
+  --zq-q4-border: #CBDCD1;
   --zq-sh1: 0 1px 1px rgba(20,21,24,0.05);
   --zq-sh2: 0 2px 8px rgba(20,21,24,0.06);
   --zq-sb-bg: #1E1F22;
@@ -487,17 +501,17 @@ html[data-zq-ver="v4"][data-zq-mode="dark"]{
   --zq-bad: #CB8177;
   --zq-bad-tint: rgba(203,129,119,0.12);
   --zq-q1: #CB8177;
-  --zq-q1bg: rgba(203,129,119,0.10);
-  --zq-q1bd: rgba(203,129,119,0.28);
+  --zq-q1-bg: rgba(203,129,119,0.10);
+  --zq-q1-border: rgba(203,129,119,0.28);
   --zq-q2: #87A7C4;
-  --zq-q2bg: rgba(135,167,196,0.10);
-  --zq-q2bd: rgba(135,167,196,0.28);
+  --zq-q2-bg: rgba(135,167,196,0.10);
+  --zq-q2-border: rgba(135,167,196,0.28);
   --zq-q3: #C4A55E;
-  --zq-q3bg: rgba(196,165,94,0.10);
-  --zq-q3bd: rgba(196,165,94,0.28);
+  --zq-q3-bg: rgba(196,165,94,0.10);
+  --zq-q3-border: rgba(196,165,94,0.28);
   --zq-q4: #82B294;
-  --zq-q4bg: rgba(130,178,148,0.10);
-  --zq-q4bd: rgba(130,178,148,0.28);
+  --zq-q4-bg: rgba(130,178,148,0.10);
+  --zq-q4-border: rgba(130,178,148,0.28);
   --zq-sh1: 0 1px 1px rgba(0,0,0,0.35);
   --zq-sh2: 0 3px 12px rgba(0,0,0,0.4);
   --zq-sb-bg: #0F1012;
@@ -514,7 +528,7 @@ html[data-zq-ver="v4"][data-zq-mode="dark"]{
 
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
-body{background:var(--zq-bg);color:var(--zq-text);font-family:"Noto Serif SC","Songti SC","SimSun","STSong",serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;}
+body{background:var(--zq-bg);color:var(--zq-text);font-family:var(--zq-fontBody);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;}
 h1,h2,h3,h4,p{margin:0;}
 a{color:inherit;text-decoration:none;}
 button,input,select,textarea{font-family:inherit;color:inherit;}
@@ -522,7 +536,7 @@ button,select{white-space:nowrap;}
 input:not([type=checkbox]):not([type=radio]){width:100%;}
 input,textarea{min-width:0;max-width:100%;}
 select{max-width:100%;}
-.zq-mono{font-family:"JetBrains Mono",Consolas,monospace;}
+.zq-mono{font-family:var(--zq-fontM);}
 ::selection{background:var(--zq-tint-strong);}
 ::-webkit-scrollbar{width:10px;height:10px;}
 ::-webkit-scrollbar-thumb{background:rgba(128,134,144,0.35);border-radius:6px;border:2px solid transparent;background-clip:content-box;}
@@ -593,7 +607,7 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-badge{display:inline-flex;align-items:center;height:20px;padding:0 9px;border-radius:999px;font-size:11px;font-weight:600;}
 .zq-stat{padding:16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);}
 .zq-stat-label{display:block;color:var(--zq-text2);font-size:12px;font-weight:600;}
-.zq-stat-num{display:block;margin-top:8px;font-family:"JetBrains Mono",Consolas,monospace;font-size:28px;line-height:1;}
+.zq-stat-num{display:block;margin-top:8px;font-family:var(--zq-fontM);font-size:28px;line-height:1;}
 .zq-grid{display:grid;gap:12px;}
 .zq-row{display:flex;align-items:center;gap:12px;}
 .zq-table{border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);overflow:hidden;}

@@ -149,8 +149,26 @@ and will break the chain you meant to guard.
   shared modal helper `openModal({title, bodyHtml, width, onMount}) → {close, body, mask}`.
   `assets/zhiqu-ui.js` / `assets/zhiqu-ui.css` provide the shell chrome and design tokens
   (`var(--zq-*)`).
-- **`js/*.js` is legacy and is loaded by zero pages.** Do not "fix" behaviour there expecting it to
-  take effect — change `assets/zhiqu-api.js` instead.
+- **`js/*.js` and `css/*.css` are legacy and are loaded by zero pages.** Do not "fix" behaviour or
+  styling there expecting it to take effect — change `assets/zhiqu-api.js` / `assets/zhiqu-ui.css`
+  instead. This is not theoretical: the reminder-channel credential UI lived only in
+  `js/profile.js`, so 早八提醒 never worked for anyone using the real UI (fixed 2026-09-21).
+- **Design tokens have exactly one definition, in `assets/zhiqu-ui.css`'s base `:root`.** A
+  `var(--x)` whose `--x` is undefined does not warn — CSS drops the whole declaration and falls
+  back to the initial value, so backgrounds and borders silently become transparent. Two of these
+  shipped: `--zq-fontM` was never defined at all (the Wiki source editor fell back to bare
+  `monospace`, which picks an arbitrary CJK face), and the quadrant colors were defined as
+  `--zq-q1bg` / `--zq-q1bd` while **every** consumer wrote `--zq-q1-bg` / `--zq-q1-border` — so
+  the four-quadrant tint pills, this product's signature visual, rendered transparent
+  (measured `rgba(0,0,0,0)`). `--zq-fontM` deliberately puts a mono family first and the body's
+  CJK serif after it: font fallback is **per character**, and JetBrains Mono / Consolas have no
+  CJK glyphs, so Latin stays monospaced while Chinese matches the rest of the page.
+  `FrontendTokenAndDateTest` fails the build on any dangling `var(--zq-*)`.
+- **Calendar dates in the frontend come from `localDate()`, never `toISOString()`.** The latter is
+  UTC: between 00:00 and 08:00 CST it yields *yesterday*. That was shipping — the dashboard header
+  showed yesterday, routine check-ins recorded `checkDate` as yesterday (breaking the streak), and
+  pomodoro study time landed on the previous day. `localDate` is exposed on `window.zqApi` so page
+  inline scripts share the one implementation.
 - **12 of the 14 pages still ship design-phase demo data** — inline scripts that write a fabricated
   study plan into the DOM *before* `zhiqu-api.js` loads (`dashboard.html` labels its own block
   `// ── 示例数据（后续可由接口替换） ──`). Users never see it, and that rests on exactly one
@@ -164,7 +182,7 @@ and will break the chain you meant to guard.
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260921-reminder-channel`.
+  old bundle. Current token: `20260921-tokens-and-dates`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

@@ -7,7 +7,7 @@
   <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-reminder-channel">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-tokens-and-dates">
 </head>
 <body>
   <div class="zq-app">
@@ -76,7 +76,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260921-reminder-channel"></script>
+  <script src="assets/zhiqu-ui.js?v=20260921-tokens-and-dates"></script>
   <script>
     var src = [
       ['英语六级真题模考（2024-12 卷）','截止 07-05 12:00 · 重要不紧急',1],
@@ -106,7 +106,7 @@
     function paintRt(){
       document.getElementById('zq-rt').innerHTML = rt.map(function(r,i){
         return '<div style="display:flex; align-items:center; gap:11px; padding:11px 13px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card);">'
-          + '<div style="flex:none; min-width:46px; height:32px; padding:0 8px; border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); display:flex; align-items:center; justify-content:center; font-family:var(--zq-fontM,\'JetBrains Mono\'); font-size:12px; font-weight:600; white-space:nowrap;" class="zq-mono">'+r[0]+'</div>'
+          + '<div style="flex:none; min-width:46px; height:32px; padding:0 8px; border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); display:flex; align-items:center; justify-content:center; font-family:var(--zq-fontM); font-size:12px; font-weight:600; white-space:nowrap;" class="zq-mono">'+r[0]+'</div>'
           + '<div style="flex:1; min-width:0;"><div style="font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">'+r[1]+'</div><div style="font-size:11.5px; color:var(--zq-text2); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">'+r[2]+'</div></div>'
           + '<div style="flex:none; text-align:right; white-space:nowrap;"><div class="zq-mono" style="font-size:13px; font-weight:600; color:var(--zq-primary);">'+r[3]+'</div><div style="font-size:11px; color:var(--zq-text3);">连续</div></div>'
           + '<button onclick="rt['+i+'][4]=rt['+i+'][4]?0:1;paintRt()" style="flex:none; height:28px; padding:0 11px; border:1px solid '+(r[4]?'var(--zq-ok-tint)':'var(--zq-border)')+'; border-radius:var(--zq-rs); background:'+(r[4]?'var(--zq-ok-tint)':'var(--zq-card)')+'; color:'+(r[4]?'var(--zq-ok)':'var(--zq-text2)')+'; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">'+(r[4]?'今日已完成':'标记完成')+'</button></div>';
@@ -114,6 +114,6 @@
     }
     paintRt();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260921-reminder-channel"></script>
+  <script src="assets/zhiqu-api.js?v=20260921-tokens-and-dates"></script>
 </body>
 </html>

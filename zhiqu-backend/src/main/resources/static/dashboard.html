@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-reminder-channel">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-tokens-and-dates">
 </head>
 <body>
   <div class="zq-app">
@@ -103,7 +103,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260921-reminder-channel"></script>
+  <script src="assets/zhiqu-ui.js?v=20260921-tokens-and-dates"></script>
   <script>
     // ── 示例数据（后续可由接口替换） ──
     var qTag = { routine:['var(--zq-tint)','var(--zq-primary)'], 1:['var(--zq-q1-bg)','var(--zq-q1)'], 2:['var(--zq-q2-bg)','var(--zq-q2)'], 3:['var(--zq-q3-bg)','var(--zq-q3)'], 4:['var(--zq-q4-bg)','var(--zq-q4)'] };
@@ -172,7 +172,7 @@
         if(mins<1||!window.zqApi||!window.zqApi.api) return;
         var sel=document.getElementById('zq-pomo-task');
         var tid=sel&&sel.value?Number(sel.value):null;
-        window.zqApi.api.post('/record',{taskId:tid,studyDate:new Date().toISOString().slice(0,10),durationMinutes:mins,note:'番茄钟专注时段'}).then(function(){ if(window.zqApi&&window.zqApi.afterRecord) window.zqApi.afterRecord(); }).catch(function(){});
+        window.zqApi.api.post('/record',{taskId:tid,studyDate:window.zqApi.today(),durationMinutes:mins,note:'番茄钟专注时段'}).then(function(){ if(window.zqApi&&window.zqApi.afterRecord) window.zqApi.afterRecord(); }).catch(function(){});
       }
       elMin.addEventListener('change',function(){ if(running) return; total=parseInt(elMin.value,10)*60; secs=total; draw(); });
       elStart.addEventListener('click',function(){
@@ -184,6 +184,6 @@
       draw();
     })();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260921-reminder-channel"></script>
+  <script src="assets/zhiqu-api.js?v=20260921-tokens-and-dates"></script>
 </body>
 </html>
