@@ -143,7 +143,7 @@ and will break the chain you meant to guard.
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260920-stream-resume`.
+  old bundle. Current token: `20260920-history-paging`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -187,6 +187,16 @@ and will break the chain you meant to guard.
   `status = 'STREAMING'` (a late flush must not revert a DONE message to half an answer).
   Returning 0 means *stop flushing*, not *retry*. The frontend picks the rest up by polling
   while any message is `STREAMING` (capped at 5 min, matching `STREAM_TIMEOUT_MS`).
+- **Chat history is cursor-paginated.** `GET /api/ai/messages` takes an optional `before=<id>`;
+  the UI loads 50 at a time and shows `↑ 加载更早的消息` while a full page came back. Before
+  2026-09-20 there was no cursor at all — the UI asked for 50, the service capped at 100, and
+  anything older was **permanently unreachable** (not deleted; the rolling summary still fed it
+  to the model, but the user could not scroll back to it). The cursor is the message **id**, not
+  a timestamp: two messages written in the same millisecond share `created_at`, so a timestamp
+  cursor would either skip one forever or return it on every page. When prepending older
+  messages the UI anchors on an existing bubble's `getBoundingClientRect().top` rather than a
+  `scrollHeight` delta — the delta silently includes the load-more button, which disappears on
+  the last page.
 - **The chat does not yank the user to the bottom.** It follows only while they are already at
   the bottom (48px slack); once they scroll up it stays put and shows a `↓ 新内容` button.
   Streaming deltas patch **only the streaming bubble** (`patchStreamingMessage`) instead of

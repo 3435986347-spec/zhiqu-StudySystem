@@ -403,7 +403,15 @@ public class RagIndexWorker {
             issue.setApiPath("RagIndexWorker/" + job.getOperation());
             issue.setStatus("OPEN");
             runtimeIssueMapper.insert(issue);
-        } catch (Exception ignored) {
+        } catch (Exception reportFailure) {
+            // 这里是上报路径本身：吞掉异常是对的（不能让上报失败把 worker 打挂），
+            // 但吞得一声不响就意味着这个任务的死亡一点痕迹都不会留 ——
+            // RuntimeIssue 表是它唯一的记录，写不进去就什么都没有了。
+            // 整个 rag 包在此之前只有一条 warn 日志，所以这条不是锦上添花。
+            // 原始错误也一起打出来：排查时真正要看的是任务为什么死，不是上报为什么失败。
+            log.error("RAG 任务 {} 已判定 DEAD，但故障上报写入失败 —— 这次死亡没有留下记录。"
+                            + "任务操作={} 原始错误={}",
+                    job.getId(), job.getOperation(), safeMessage(error), reportFailure);
         }
     }
 

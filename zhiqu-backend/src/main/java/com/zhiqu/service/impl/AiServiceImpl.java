@@ -2557,14 +2557,15 @@ public class AiServiceImpl implements AiService {
     }
 
     @Override
-    public List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit) {
+    public List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit, Long before) {
         requireOwnedNotebookIfPresent(userId, notebookId);
         AiConversation conversation = getConversation(userId, notebookId);
         if (conversation == null) {
             return List.of();
         }
         List<Map<String, Object>> result = new ArrayList<>();
-        for (AiMessage item : getRecentMessages(userId, conversation.getId(), Math.min(Math.max(limit, 1), 100))) {
+        for (AiMessage item : getRecentMessages(userId, conversation.getId(),
+                Math.min(Math.max(limit, 1), 100), before)) {
             if (!isChatRole(item.getRole())) {
                 continue;
             }
@@ -2757,13 +2758,24 @@ public class AiServiceImpl implements AiService {
     }
 
     private List<AiMessage> getRecentMessages(Long userId, Long conversationId, int limit) {
+        return getRecentMessages(userId, conversationId, limit, null);
+    }
+
+    /**
+     * 最近 {@code limit} 条，可选地只取 id 小于 {@code before} 的（往更早翻）。
+     *
+     * <p>游标用 id 不用时间戳：同一毫秒内插入的两条消息时间戳相同，用时间戳当游标会让
+     * 其中一条永远翻不到，或者反复翻到同一条。
+     */
+    private List<AiMessage> getRecentMessages(Long userId, Long conversationId, int limit, Long before) {
+        LambdaQueryWrapper<AiMessage> query = new LambdaQueryWrapper<AiMessage>()
+                .eq(AiMessage::getUserId, userId)
+                .eq(AiMessage::getConversationId, conversationId);
+        if (before != null) {
+            query.lt(AiMessage::getId, before);
+        }
         List<AiMessage> messages = messageMapper.selectList(
-                new LambdaQueryWrapper<AiMessage>()
-                        .eq(AiMessage::getUserId, userId)
-                        .eq(AiMessage::getConversationId, conversationId)
-                        .orderByDesc(AiMessage::getId)
-                        .last("LIMIT " + Math.max(1, limit))
-        );
+                query.orderByDesc(AiMessage::getId).last("LIMIT " + Math.max(1, limit)));
         Collections.reverse(messages);
         return messages;
     }

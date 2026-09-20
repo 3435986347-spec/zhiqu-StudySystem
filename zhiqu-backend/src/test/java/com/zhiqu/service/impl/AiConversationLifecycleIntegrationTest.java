@@ -284,6 +284,79 @@ class AiConversationLifecycleIntegrationTest {
         assertEquals("B 的问题", secondHistory.get(0).get("content"));
     }
 
+    /**
+     * 游标要能翻到<b>更早</b>的消息，而且翻的时候不重不漏。
+     *
+     * <h2>在此之前更早的消息是看不到的</h2>
+     *
+     * <p>前端固定要最近 50 条，服务端封顶 100 条，没有任何游标 —— 比这更早的消息
+     * 在界面上永远翻不到。它们没被删（滚动摘要还在用它们），只是用户够不着，
+     * 而界面写着「已同步 N 条历史消息」，看起来像是只剩这些了。
+     *
+     * <h2>为什么用 id 不用时间戳</h2>
+     *
+     * <p>同一毫秒插入的两条消息 {@code created_at} 相同。用时间戳当游标，
+     * 要么其中一条永远翻不到，要么每次都把它重新翻出来。这里造的 6 条消息就是
+     * 连续写入的 —— 时间戳游标在这个数据上会当场出错。
+     */
+    @Test
+    void 游标必须能翻到更早的消息且不重不漏() {
+        Long notebookId = createNotebook(userId, "翻页 Notebook");
+        for (int i = 1; i <= 3; i++) {
+            chat(userId, notebookId, "第" + i + "轮");
+        }
+        List<Map<String, Object>> all = aiService.getRecentChatMessages(userId, notebookId, 50);
+        assertEquals(6, all.size(), "下界：三轮问答应当是 6 条消息，否则下面翻页翻的是空气");
+
+        // 只要最近 2 条 —— 模拟「一页装不下」
+        List<Map<String, Object>> page1 = aiService.getRecentChatMessages(userId, notebookId, 2, null);
+        assertEquals(2, page1.size());
+        assertEquals(all.get(4).get("id"), page1.get(0).get("id"), "第一页必须是最新的那一页");
+        assertEquals(all.get(5).get("id"), page1.get(1).get("id"));
+
+        // 往更早翻一页
+        Long cursor = ((Number) page1.get(0).get("id")).longValue();
+        List<Map<String, Object>> page2 = aiService.getRecentChatMessages(userId, notebookId, 2, cursor);
+        assertEquals(2, page2.size());
+        assertEquals(all.get(2).get("id"), page2.get(0).get("id"),
+                "第二页必须紧接着第一页往前，不能跳过也不能重复");
+        assertEquals(all.get(3).get("id"), page2.get(1).get("id"));
+
+        // 再翻一页，取到最早的两条
+        cursor = ((Number) page2.get(0).get("id")).longValue();
+        List<Map<String, Object>> page3 = aiService.getRecentChatMessages(userId, notebookId, 2, cursor);
+        assertEquals(2, page3.size());
+        assertEquals(all.get(0).get("id"), page3.get(0).get("id"));
+        assertEquals("第1轮", page3.get(0).get("content"), "翻到头应当是第一轮的提问");
+
+        // 翻到头之后必须是空的 —— 前端据此收起「加载更早」按钮
+        cursor = ((Number) page3.get(0).get("id")).longValue();
+        assertTrue(aiService.getRecentChatMessages(userId, notebookId, 2, cursor).isEmpty(),
+                "翻到头之后必须返回空列表；返回非空的话前端的「加载更早」按钮永远收不起来");
+
+        // 三页合起来必须正好是全部，且顺序一致 —— 这条挡住「不重不漏」的两个方向
+        List<Object> paged = new ArrayList<>();
+        for (Map<String, Object> row : page3) paged.add(row.get("id"));
+        for (Map<String, Object> row : page2) paged.add(row.get("id"));
+        for (Map<String, Object> row : page1) paged.add(row.get("id"));
+        List<Object> expected = new ArrayList<>();
+        for (Map<String, Object> row : all) expected.add(row.get("id"));
+        assertEquals(expected, paged, "逐页翻完必须正好覆盖全部消息，顺序一致");
+    }
+
+    /** 游标不得成为越权的口子：它只是个 id，越不过 notebook 归属检查。 */
+    @Test
+    void 游标不得绕过归属检查() {
+        Long mine = createNotebook(userId, "我的 Notebook");
+        chat(userId, mine, "我的问题");
+        List<Map<String, Object>> mineHistory = aiService.getRecentChatMessages(userId, mine, 50);
+        Long myMessageId = ((Number) mineHistory.get(0).get("id")).longValue();
+
+        assertThrows(BusinessException.class,
+                () -> aiService.getRecentChatMessages(userId, 999_999L, 50, myMessageId),
+                "带上游标也不能读别人的（或不存在的）notebook —— 归属检查在取数之前");
+    }
+
     @Test
     void deletingNotebookClearsOnlyItsChatHistory() {
         Long removed = createNotebook(userId, "待删除 Notebook");

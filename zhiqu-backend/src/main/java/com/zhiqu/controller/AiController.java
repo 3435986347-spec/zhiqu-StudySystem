@@ -310,9 +310,11 @@ public class AiController {
     @GetMapping("/messages")
     public Result<List<Map<String, Object>>> getMessages(
             @RequestParam(defaultValue = "50") Integer limit,
-            @RequestParam(required = false) Long notebookId) {
+            @RequestParam(required = false) Long notebookId,
+            // 往更早翻：只取 id 小于它的消息。不带就是从最新开始。
+            @RequestParam(required = false) Long before) {
         Long userId = SecurityUtils.getCurrentUserId();
-        return Result.success(aiService.getRecentChatMessages(userId, notebookId, limit));
+        return Result.success(aiService.getRecentChatMessages(userId, notebookId, limit, before));
     }
 
     @DeleteMapping("/messages/{id}")

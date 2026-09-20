@@ -53,7 +53,22 @@ public interface AiService {
     Map<String, Object> getMemory(Long userId);
 
     /** 获取最近聊天记录（会话按 notebook 隔离，notebookId 为空时读历史默认会话） */
-    List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit);
+    default List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit) {
+        return getRecentChatMessages(userId, notebookId, limit, null);
+    }
+
+    /**
+     * 同上，但可以往<b>更早</b>翻：只返回 id 小于 {@code before} 的消息。
+     *
+     * <p>在此之前没有游标，前端固定要最近 50 条，服务端封顶 100 条 ——
+     * 比这更早的消息在界面上<b>永远看不到</b>。它们没被删，滚动摘要也仍在用它们，
+     * 但用户翻不回去，而界面还写着「已同步 N 条历史消息」，看起来像是只剩这些了。
+     *
+     * <p>用 id 而不是时间戳作游标：id 严格递增且唯一，同一毫秒内的两条消息不会互相遮住。
+     *
+     * @param before 只取 id 小于它的消息；为空表示从最新开始
+     */
+    List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit, Long before);
 
     /** 删除单条聊天消息 */
     void deleteChatMessage(Long userId, Long messageId);

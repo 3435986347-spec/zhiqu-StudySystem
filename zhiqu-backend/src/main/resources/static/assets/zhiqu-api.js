@@ -19,7 +19,10 @@
     // 聊天区是否「跟随到底部」。只有用户本来就在底部时才跟随 ——
     // 他往上翻着读的时候把他拽回来，是这次要修的那个毛病。
     chatFollow: true,
-    streamPollTimer: null
+    streamPollTimer: null,
+    // 拿满一页就说明可能还有更早的。点「加载更早」若返回空，就翻到头了。
+    chatHasMore: false,
+    chatLoadingMore: false
   };
 
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -2657,12 +2660,17 @@
     })[0];
     if (freshMemory) openMemoryConfirmModal(freshMemory);
   }
+  var CHAT_PAGE_SIZE = 50;
   async function loadAiMessages() {
     // 聊天记录按 notebook 隔离:后端会话 key = notebook-{id},切换 notebook 时重新拉取
     var nbId = state.notebookId;
-    var list = await api.get('/ai/messages?limit=50' + (nbId ? '&notebookId=' + nbId : ''));
+    var list = await api.get('/ai/messages?limit=' + CHAT_PAGE_SIZE + (nbId ? '&notebookId=' + nbId : ''));
     if (nbId !== state.notebookId) return; // 响应期间已切换 notebook,防止慢响应覆盖新窗口
     state.messages = list || [];
+    // 拿满一页 = 可能还有更早的。这是个上界判断，不是精确值：
+    // 正好整页而其实没有更早的时候，用户点一次会拿到空列表，按钮随即消失。
+    // 换成精确值要么多查一次、要么改响应形状（现在是裸数组，前端其它地方都按数组读）。
+    state.chatHasMore = state.messages.length >= CHAT_PAGE_SIZE;
     var sync = $('#zq-sync-count'); if (sync) sync.textContent = '已同步 ' + state.messages.length + ' 条历史消息';
     renderAiMessages();
     watchStreamingMessages();
@@ -2833,6 +2841,65 @@
     applyChatScroll(host, prevScroll, false);
     return true;
   }
+  /**
+   * 往更早翻一页。
+   *
+   * <h2>预挂载前必须记住高度</h2>
+   *
+   * <p>在列表<b>前面</b>插内容会把已有内容整体往下推，浏览器保持 scrollTop 不变，
+   * 于是用户正在读的那一段瞬间跑到屏幕下方 —— 视觉上就是「一点加载就跳走了」。
+   * 所以要在渲染前记下 scrollHeight，渲染后把 scrollTop 加上高度差，
+   * 让用户眼前的那一行留在原处。
+   *
+   * <p>这也是为什么这里不能复用 renderAiMessages 的滚动策略：那套策略管的是
+   * 「新内容加在末尾」，而这里是加在开头，两者要做的补偿方向相反。
+   */
+  async function loadOlderMessages() {
+    if (state.chatLoadingMore || !state.chatHasMore || !state.messages.length) return;
+    var host = $('#zq-chat'); if (!host) return;
+    var oldest = null;
+    for (var i = 0; i < state.messages.length; i++) {
+      if (state.messages[i].id != null) { oldest = state.messages[i].id; break; }
+    }
+    if (oldest == null) return;   // 全是本地临时消息，没有可用游标
+
+    state.chatLoadingMore = true;
+    renderAiMessages({ keepScroll: true });
+    var nbId = state.notebookId;
+    try {
+      var older = await api.get('/ai/messages?limit=' + CHAT_PAGE_SIZE
+        + (nbId ? '&notebookId=' + nbId : '') + '&before=' + oldest);
+      if (nbId !== state.notebookId) return;   // 期间切了 notebook，这页属于别的会话
+      older = older || [];
+      if (!older.length) {
+        state.chatHasMore = false;
+        return;
+      }
+      // 锚点取当前第一条消息的气泡，记它在视口里的位置。
+      // 不用 scrollHeight 之差：那一页若正好把「加载更早」按钮用没了（older 不满一页），
+      // 按钮那约 34px 会算进差值里，视口就会跳一下。锚元素与按钮在不在无关。
+      var anchor = host.querySelector('[data-msg-body="0"]');
+      var topBefore = anchor ? anchor.getBoundingClientRect().top : null;
+
+      state.messages = older.concat(state.messages);
+      state.chatHasMore = older.length >= CHAT_PAGE_SIZE;
+      state.chatLoadingMore = false;   // 先落定，让下面这次渲染就是最终形态
+      renderAiMessages({ keepScroll: true });
+
+      // 原来的第 0 条现在排在 older.length 位；把视口挪回去，让它看起来没动过
+      var moved = host.querySelector('[data-msg-body="' + older.length + '"]');
+      if (moved && topBefore != null) {
+        host.scrollTop += moved.getBoundingClientRect().top - topBefore;
+      }
+    } finally {
+      // 只有上面提前 return 的两条分支还没落定
+      if (state.chatLoadingMore) {
+        state.chatLoadingMore = false;
+        if (nbId === state.notebookId) renderAiMessages({ keepScroll: true });
+      }
+    }
+  }
+
   function renderAiMessages(opts) {
     var host = $('#zq-chat'); if (!host) return;
     bindChatScroll(host);
@@ -2840,12 +2907,21 @@
     $all('details[data-reason-key]', host).forEach(function (details) {
       state.reasoningExpanded[details.dataset.reasonKey] = details.open;
     });
-    host.innerHTML = state.messages.map(function (m, i) {
+    var moreRow = state.chatHasMore
+      ? '<div style="display:flex;justify-content:center;padding:2px 0 6px;">'
+        + '<button type="button" data-load-older="1"' + (state.chatLoadingMore ? ' disabled' : '')
+        + ' style="height:26px;padding:0 12px;border:1px solid var(--zq-border);border-radius:999px;'
+        + 'background:var(--zq-card-soft);color:var(--zq-text2);font-size:11.5px;cursor:pointer;">'
+        + (state.chatLoadingMore ? '加载中…' : '↑ 加载更早的消息') + '</button></div>'
+      : '';
+    host.innerHTML = moreRow + state.messages.map(function (m, i) {
       var me = m.role === 'user';
       var name = me ? '我' : 'AI';
       var body = messageBodyHtml(m, i);
       return '<div data-msg-idx="' + i + '" style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div data-msg-body="' + i + '" style="max-width:72%;padding:11px 14px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + body + '</div></div>';
     }).join('');
+    var olderButton = host.querySelector('[data-load-older]');
+    if (olderButton) olderButton.onclick = function () { loadOlderMessages(); };
     $all('details[data-reason-key]', host).forEach(function (details) {
       details.ontoggle = function () {
         state.reasoningExpanded[details.dataset.reasonKey] = details.open;
