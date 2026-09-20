@@ -18,7 +18,6 @@ public class AiAgentStep {
     private Integer attemptNo;
     private String status;
     private String publicSummary;
-    private String inputSummary;
     private String outputSummary;
     private String errorMessage;
     private LocalDateTime startedAt;

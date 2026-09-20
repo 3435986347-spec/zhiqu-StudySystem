@@ -7,7 +7,7 @@
   <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260920-history-paging">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-my-submissions">
 </head>
 <body>
   <div class="zq-app">
@@ -31,6 +31,13 @@
         </div>
 
         <div id="zq-plans" style="display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px;"></div>
+
+        <!-- 我的投稿：后台驳回弹窗写着「驳回原因将展示给提交者」，这里是它唯一的出口。
+             没有投稿时整块隐藏，由 zhiqu-api.js 控制。 -->
+        <section id="zq-my-submissions" hidden style="margin-top:22px;">
+          <h2 style="margin:0 0 10px; font-size:15px; font-weight:700;">我的投稿</h2>
+          <div id="zq-my-sub-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+        </section>
       </div>
     </main>
   </div>
@@ -55,7 +62,7 @@
     </div>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260920-history-paging"></script>
+  <script src="assets/zhiqu-ui.js?v=20260921-my-submissions"></script>
   <script>
     var cat = { EXAM:['考试备考','q1'], COMPUTER:['计算机学习','q2'], LANGUAGE:['语言学习','q3'], GENERAL:['通用规划','q4'] };
     var plans = [
@@ -85,6 +92,6 @@
     }
     function closeModal(){ document.getElementById('zq-modal').style.display='none'; }
   </script>
-  <script src="assets/zhiqu-api.js?v=20260920-history-paging"></script>
+  <script src="assets/zhiqu-api.js?v=20260921-my-submissions"></script>
 </body>
 </html>

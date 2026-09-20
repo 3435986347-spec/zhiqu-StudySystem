@@ -39,6 +39,12 @@ public class SharedPlanController {
         return Result.success(sharedPlanService.publicList(SecurityUtils.getCurrentUserId(), category, sort, order));
     }
 
+    /** 我投出去的计划（所有状态），驳回的带上理由 —— 后台那句「将展示给提交者」的落地处。 */
+    @GetMapping("/mine")
+    public Result<List<Map<String, Object>>> mySubmissions() {
+        return Result.success(sharedPlanService.mySubmissions(SecurityUtils.getCurrentUserId()));
+    }
+
     @GetMapping("/categories")
     public Result<List<Map<String, Object>>> categories() {
         return Result.success(sharedPlanService.categories());

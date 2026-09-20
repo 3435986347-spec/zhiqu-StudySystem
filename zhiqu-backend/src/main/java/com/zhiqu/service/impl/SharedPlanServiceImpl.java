@@ -489,6 +489,22 @@ public class SharedPlanServiceImpl implements SharedPlanService {
         return row;
     }
 
+    @Override
+    public List<Map<String, Object>> mySubmissions(Long userId) {
+        List<SharedPlanTemplate> mine = templateMapper.selectList(new LambdaQueryWrapper<SharedPlanTemplate>()
+                .eq(SharedPlanTemplate::getUserId, userId)
+                .orderByDesc(SharedPlanTemplate::getCreatedAt));
+        return mine.stream().map(template -> {
+            Map<String, Object> row = templateRow(template, userId);
+            // 只在真的被驳回时给理由。其它状态下这一列本来就被置空（见 review），
+            // 但显式判一次，免得将来某次改动让一条旧的驳回理由挂在一个已通过的计划上。
+            row.put("rejectionReason",
+                    "REJECTED".equals(template.getStatus()) ? template.getRejectionReason() : null);
+            row.put("reviewedAt", template.getReviewedAt());
+            return row;
+        }).toList();
+    }
+
     private Map<String, Object> categoryRow(SharedPlanCategory category) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("key", category.getCategoryKey());

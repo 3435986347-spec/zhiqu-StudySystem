@@ -14,7 +14,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V33`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V34`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -143,7 +143,7 @@ and will break the chain you meant to guard.
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260920-history-paging`.
+  old bundle. Current token: `20260921-my-submissions`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -259,6 +259,20 @@ the single guarded entry point `upsertRevisionPage`. Two independent protections
 
 Structure fields (`parentId`/`sortOrder`/`pinned`) are only modified when the request body actually
 contains that key — so applying a patch with an empty body never moves a child page to the root.
+
+### Shared plans
+
+Submissions go `PENDING` → `APPROVED` / `REJECTED` / `OFFLINE`. The rejection reason is stored
+**twice on purpose** and the two copies are not redundant: `shared_plan_template.rejection_reason`
+is the reason for the *current* status (nulled when the plan is not rejected) and
+`shared_plan_review.note` is the append-only audit trail (every review ever made). Do not
+"clean up" one of them without moving its consumer.
+
+`GET /api/shared-plans/mine` is what makes the admin UI's promise true — the reject dialog says
+"驳回原因（可选，将展示给提交者）", and until 2026-09-21 nothing showed it: `publicList` returns
+only `APPROVED`, `reviews` appears only in `adminDetail`, and `rejection_reason` had **zero
+readers**. Admins wrote careful explanations that went nowhere, and submitters were never told
+their plan had been rejected at all.
 
 ### RAG (optional)
 

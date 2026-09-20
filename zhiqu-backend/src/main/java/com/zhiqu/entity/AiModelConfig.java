@@ -23,9 +23,6 @@ public class AiModelConfig {
     private String visionStatus;
     private String reasoningStatus;
     private LocalDateTime lastProbeAt;
-    private Integer dailyQuota;
-    private Integer usedToday;
-    private LocalDate quotaDate;
     private Integer enabled;
     private Integer isDefault;
     private String encryptionVersion;

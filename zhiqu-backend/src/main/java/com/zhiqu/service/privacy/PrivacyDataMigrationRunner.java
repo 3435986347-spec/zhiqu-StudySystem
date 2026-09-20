@@ -63,7 +63,6 @@ public class PrivacyDataMigrationRunner implements ApplicationRunner {
                 model.setCapabilities("TEXT,VISION");
                 model.setEnabled(1);
                 model.setIsDefault(1);
-                model.setUsedToday(0);
                 model.setEncryptionVersion("v1");
                 modelConfigMapper.insert(model);
             }

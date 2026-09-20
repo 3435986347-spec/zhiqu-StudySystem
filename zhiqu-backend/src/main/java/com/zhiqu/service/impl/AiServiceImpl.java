@@ -2371,7 +2371,6 @@ public class AiServiceImpl implements AiService {
             model.setUserId(userId);
             model.setOwnerType("USER");
             model.setEnabled(1);
-            model.setUsedToday(0);
             model.setIsDefault(0);
         }
         String providerType = normalizeProviderType(valueOr(body.get("providerType"), "OPENAI_COMPATIBLE"));
@@ -2388,9 +2387,6 @@ public class AiServiceImpl implements AiService {
         model.setModelName(hasText(modelName) ? modelName.trim() : defaultModelName(providerType));
         model.setCapabilities(normalizeCapabilities(valueOr(body.get("capabilities"), "TEXT")));
         model.setEnabled(booleanValue(body.get("enabled"), true) ? 1 : 0);
-        if (body.containsKey("dailyQuota")) {
-            model.setDailyQuota(parseInteger(body.get("dailyQuota")));
-        }
         if (hasText(apiKey) && !apiKey.endsWith("****")) {
             model.setEncryptedApiKey(cryptoService.encrypt(apiKey.trim()));
             model.setEncryptionVersion("v1");
@@ -4865,7 +4861,6 @@ public class AiServiceImpl implements AiService {
             model.setCapabilities("TEXT,VISION");
             model.setEnabled(1);
             model.setIsDefault(1);
-            model.setUsedToday(0);
             model.setEncryptionVersion("v1");
             modelConfigMapper.insert(model);
         }

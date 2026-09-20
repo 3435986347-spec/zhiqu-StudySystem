@@ -1110,9 +1110,57 @@
       var order = selects[2] && selects[2].selectedIndex === 1 ? 'asc' : 'desc';
       loadPlans(category, sort, order);
     };
-    if (refreshBtn) refreshBtn.onclick = doLoad;
+    if (refreshBtn) refreshBtn.onclick = function () { doLoad(); loadMySubmissions(); };
     selects.forEach(function (s) { s.onchange = doLoad; });
     await loadPlans('', 'time', 'desc');
+    await loadMySubmissions();
+  }
+
+  var SUBMISSION_STATUS = {
+    PENDING:  { label: '待审核', tone: 'var(--zq-text2)' },
+    APPROVED: { label: '已发布', tone: 'var(--zq-q2)' },
+    REJECTED: { label: '已驳回', tone: 'var(--zq-q1)' },
+    OFFLINE:  { label: '已下架', tone: 'var(--zq-text3)' }
+  };
+  /**
+   * 我的投稿，含驳回理由。
+   *
+   * 后台驳回弹窗的文案是「驳回原因（可选，将展示给提交者）」，而在此之前系统里
+   * 没有任何地方展示它：公开列表只返回 APPROVED，带审核意见的 reviews 只在
+   * adminDetail 里。管理员以为自己写的解释会送达，实际写完就再无出口。
+   * 这一块是那句承诺的落地处。
+   */
+  async function loadMySubmissions() {
+    var section = $('#zq-my-submissions'), host = $('#zq-my-sub-list');
+    if (!section || !host) return;
+    var mine;
+    try {
+      mine = await api.get('/shared-plans/mine');
+    } catch (e) {
+      section.hidden = true;   // 拉不到就整块不显示，不在公开列表下面留一条错误
+      return;
+    }
+    mine = mine || [];
+    if (!mine.length) { section.hidden = true; return; }
+    section.hidden = false;
+    host.innerHTML = mine.map(function (p) {
+      var st = SUBMISSION_STATUS[String(p.status || '').toUpperCase()]
+        || { label: p.status || '未知', tone: 'var(--zq-text3)' };
+      var reason = p.rejectionReason
+        ? '<div style="margin-top:8px;padding:9px 11px;border-radius:var(--zq-rs);background:var(--zq-q1-bg);'
+          + 'color:var(--zq-q1);font-size:12.5px;line-height:1.55;"><b>驳回原因：</b>' + esc(p.rejectionReason) + '</div>'
+        : (String(p.status || '').toUpperCase() === 'REJECTED'
+            ? '<div style="margin-top:8px;font-size:12px;color:var(--zq-text3);">管理员未填写驳回原因。</div>'
+            : '');
+      return '<article style="padding:13px 15px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);'
+        + 'background:var(--zq-card);"><div style="display:flex;align-items:center;gap:10px;">'
+        + '<span style="font-size:14px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;'
+        + 'white-space:nowrap;">' + esc(p.title || '未命名计划') + '</span>'
+        + '<span class="zq-badge" style="color:' + st.tone + ';">' + esc(st.label) + '</span></div>'
+        + '<div style="margin-top:4px;font-size:11.5px;color:var(--zq-text3);">'
+        + esc(fmtDate(p.createdAt) || '') + (p.reviewedAt ? ' · 审核于 ' + esc(fmtDate(p.reviewedAt)) : '')
+        + '</div>' + reason + '</article>';
+    }).join('');
   }
   async function loadPlans(category, sort, order) {
     var host = $('#zq-plans'); if (!host) return;

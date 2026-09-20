@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -108,6 +109,73 @@ class SharedPlanPublishGuardIntegrationTest {
                 "relativeDeadlineDay", 1,
                 "preferredTime", preferredTime,
                 "taskType", taskType);
+    }
+
+    /**
+     * 驳回理由必须真的到达提交者 —— 后台弹窗写的是「驳回原因（可选，<b>将展示给提交者</b>）」。
+     *
+     * <h2>这是一句被许下却没兑现的承诺</h2>
+     *
+     * <p>在此之前，那句话在系统里没有任何落地处：{@code publicList} 只返回 APPROVED；
+     * 带审核意见的 {@code reviews} 只出现在 {@code adminDetail} 里；
+     * {@code template.rejection_reason} 写进去之后<b>零读取</b>。管理员以为自己写的解释
+     * 会送到提交者手上，于是会认真写 —— 而它写完就再无出口。
+     *
+     * <p>判据钉的是「提交者能读到它」，不是「这一列被写了」：后者早就成立，
+     * 而它恰恰是问题本身。
+     */
+    @Test
+    void 驳回理由必须能被提交者读到() {
+        Long id = publish(task("study", "09:00"), null);
+        jdbcTemplate.update("UPDATE shared_plan_template SET status = 'PENDING' WHERE id = ?", id);
+        sharedPlanService.review(reviewerId(), id, "REJECT", "任务粒度太粗，请拆成每天可完成的量");
+
+        List<Map<String, Object>> mine = sharedPlanService.mySubmissions(authorId);
+        assertEquals(1, mine.size(), "下界：提交者必须看得到自己投出去的计划，否则下面查的是空列表");
+        Map<String, Object> row = mine.get(0);
+        assertEquals("REJECTED", String.valueOf(row.get("status")), "状态必须如实告诉提交者");
+        assertEquals("任务粒度太粗，请拆成每天可完成的量", row.get("rejectionReason"),
+                "驳回理由必须原样到达提交者 —— 这正是后台那句承诺的内容");
+    }
+
+    /** 我的投稿只能是我的 —— 游标之外，这是另一处「按 id 取数」的地方。 */
+    @Test
+    void 我的投稿不得包含别人的() {
+        Long mineId = publish(task("study", "09:00"), null);
+
+        assertTrue(sharedPlanService.mySubmissions(readerId).isEmpty(),
+                "别人没投过稿，这里必须是空的 —— 返回了内容就说明查询没有按用户限定");
+        List<Map<String, Object>> mine = sharedPlanService.mySubmissions(authorId);
+        assertEquals(1, mine.size());
+        assertEquals(mineId, ((Number) mine.get(0).get("id")).longValue());
+    }
+
+    /**
+     * 没被驳回的计划不得带着驳回理由。
+     *
+     * <p>这是上面那条的反例：没有它，「把 rejection_reason 无条件塞进响应」也能让它绿，
+     * 而一条早先被驳回、后来改好通过的计划会一直挂着那段旧理由。
+     */
+    @Test
+    void 通过的计划不得带着旧的驳回理由() {
+        Long id = publish(task("study", "09:00"), null);
+        jdbcTemplate.update("UPDATE shared_plan_template SET status = 'PENDING' WHERE id = ?", id);
+        sharedPlanService.review(reviewerId(), id, "REJECT", "先驳回一次");
+        assertEquals("先驳回一次", sharedPlanService.mySubmissions(authorId).get(0).get("rejectionReason"),
+                "前提：这条理由确实写进去了，否则下面的断言是空过的");
+
+        jdbcTemplate.update("UPDATE shared_plan_template SET status = 'PENDING' WHERE id = ?", id);
+        sharedPlanService.review(reviewerId(), id, "APPROVE", "");
+
+        Map<String, Object> row = sharedPlanService.mySubmissions(authorId).get(0);
+        assertEquals("APPROVED", String.valueOf(row.get("status")));
+        assertNull(row.get("rejectionReason"),
+                "通过之后不得再带着上一次的驳回理由 —— 提交者会以为自己仍被驳回");
+    }
+
+    /** 审核要一个管理员 id；用 author 自己即可，本组判据不测审核权限（那在 AdminAuthorizationTest）。 */
+    private Long reviewerId() {
+        return authorId;
     }
 
     /**
