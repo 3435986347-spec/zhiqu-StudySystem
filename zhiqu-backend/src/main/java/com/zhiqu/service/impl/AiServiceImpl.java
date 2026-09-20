@@ -2387,7 +2387,9 @@ public class AiServiceImpl implements AiService {
         model.setModelName(hasText(modelName) ? modelName.trim() : defaultModelName(providerType));
         model.setCapabilities(normalizeCapabilities(valueOr(body.get("capabilities"), "TEXT")));
         model.setEnabled(booleanValue(body.get("enabled"), true) ? 1 : 0);
-        if (hasText(apiKey) && !apiKey.endsWith("****")) {
+        // 判定规则在 SensitiveCryptoService 里，与掩码的生成规则放在一起 ——
+        // 此前这里写的 endsWith("****") 对长密钥判不出来（旧掩码结尾是真实字符）
+        if (hasText(apiKey) && !cryptoService.isMasked(apiKey)) {
             model.setEncryptedApiKey(cryptoService.encrypt(apiKey.trim()));
             model.setEncryptionVersion("v1");
         }

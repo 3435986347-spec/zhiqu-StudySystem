@@ -323,7 +323,14 @@ token** like every other endpoint. `GET /v1/meta` is what to read when versions 
 - JWT — `jwt.secret`, `jwt.expiration`
 - Uploads — `app.upload-dir`
 - Encryption — `app.crypto.master-key`. **Changing it makes existing ciphertext (AI keys, Wiki page
-  bodies) undecryptable.**
+  bodies) undecryptable.** `SensitiveCryptoService.maskSecret` is what the UI shows instead of a
+  key; it reveals **only the last 4 characters**, and nothing at all below 12. It used to show
+  `first-6 + **** + last-4`, whose two halves **overlap** at lengths 9–11 — `"0123456789"` came
+  out as `"012345****6789"`, the whole secret with a `****` wedged into the middle. Whether a
+  value *is* a mask is decided by `isMasked` (prefix check) and nowhere else: the write path used
+  to test `endsWith("****")`, which the old format never satisfied for a real key, so that
+  "client echoed the masked value back" guard did nothing. Masking is display-only — model calls
+  go through `decryptedApiKey`.
 - AI — `app.ai.*`; keys come from env (`ZHIQU_SYSTEM_AI_API_KEY`, `ZHIQU_WEB_SEARCH_API_KEY`).
   Keep `app.ai.web-fetch.block-private-network=true` (SSRF guard).
 - RAG — `app.rag.*`
