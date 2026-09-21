@@ -18,9 +18,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <h2>为什么值得一条判据，而不是「注意一下」</h2>
  *
- * <p>这个仓库在 {@code ~/Desktop} 下，被 iCloud 同步。CLAUDE.md 早就记了它会往 {@code target/}
- * 里丢 {@code X 2.class}。2026-09-21 第一次<b>落进了 {@code src/}</b>：连续快速改同一个文件时，
- * iCloud 把中间状态存成了 {@code AiServiceImpl 2.java} / {@code 3.java} / {@code 4.java}。
+ * <p>这个仓库<b>曾经</b>在 {@code ~/Desktop} 下、被 iCloud 同步。CLAUDE.md 早就记了它会往
+ * {@code target/} 里丢 {@code X 2.class}；2026-09-21 第一次<b>落进了 {@code src/}</b> ——
+ * 连续快速改同一个文件时，iCloud 把中间状态存成了 {@code AiServiceImpl 2.java} /
+ * {@code 3.java} / {@code 4.java}。当天仓库就搬到了
+ * {@code ~/Developer/zhiqu-quadrant/}（iCloud 同步之外，且纯 ASCII）。
+ *
+ * <p><b>搬走之后为什么还留着这条判据</b>：它几乎不要钱（一次目录遍历），而它挡的那半边
+ * 是<b>静默</b>的 —— 别的东西都不会发现。任何人把检出放回 Desktop/Documents、或者在别的
+ * 同步盘（Dropbox、OneDrive）上克隆，同样的东西就会回来。删掉它省下的是零，
+ * 留着它换的是「静态资源副本不会被打进 JAR」。
  *
  * <p>Java 的副本会大声报错（「类重复」），不需要判据。<b>静态资源的副本是静默的</b>：
  * {@code static/assets/zhiqu-api 2.js} 照样会被打进 JAR，然后以

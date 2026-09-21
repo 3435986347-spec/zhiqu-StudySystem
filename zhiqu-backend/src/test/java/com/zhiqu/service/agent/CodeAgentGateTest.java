@@ -198,7 +198,9 @@ class CodeAgentGateTest {
     void 没有写意图时不得下发写工具() throws IOException {
         String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
 
-        assertTrue(code.contains("buildWorkspaceTools(canWrite)"),
+        // 钉的是「canWrite 被传进去」这个性质，不是参数个数 —— 写死整个参数表的话，
+        // 加一个无关的新参数（2026-09-21 加 canExec 时就发生了）会让判据红得莫名其妙。
+        assertTrue(code.contains("buildWorkspaceTools(canWrite"),
                 "工具集必须按写意图分档下发 —— 不下发，模型就不会尝试，也不会承诺自己改了文件");
         assertTrue(code.contains("AgentPlanDecision.codeWriteIntent("),
                 "写意图必须问 AgentPlanDecision 那道唯一的门");
@@ -278,5 +280,36 @@ class CodeAgentGateTest {
             n++;
         }
         return n;
+    }
+
+    /**
+     * 不允许执行时，执行工具<b>连声明都不能有</b>。
+     *
+     * <p>与写工具同一条纪律：不下发，模型就不会尝试，也不会承诺自己跑过了。
+     * 而「允许不允许执行」这件事只有一个判定 —— {@code WorkspaceExecutor.enabled()}，
+     * 它自己把「档位是 EXEC」和「不是生产 profile」两条都算在里面了。
+     * 在这里复述那两个条件就是第二份真相，改一边忘一边的经典形状。
+     *
+     * <p>扰动：把 {@code if (canExec)} 改成 {@code if (true)} → 本条红。
+     */
+    @Test
+    void 不允许执行时不得下发执行工具() throws IOException {
+        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+
+        int at = code.indexOf("boolean canExec =");
+        assertTrue(at > 0, "找不到 canExec 的赋值 —— 判据的锚点没了");
+        String statement = code.substring(at, code.indexOf(';', at) + 1);
+        assertTrue(statement.contains("workspaceExecutor.enabled()"),
+                "canExec 必须直接问 WorkspaceExecutor.enabled()，它已经把档位与生产 profile "
+                        + "两条都算进去了。在这里复述那两个条件就是第二份真相。实际：" + statement);
+        assertFalse(statement.contains("allowsExec()") || statement.contains("profiles"),
+                "不得在这里另算一遍执行条件。实际：" + statement);
+
+        int declaration = code.indexOf("functionTool(\"run_workspace_command\"");
+        assertTrue(declaration > 0, "找不到执行工具的声明 —— 判据的锚点没了");
+        int gate = code.indexOf("if (canExec) {");
+        assertTrue(gate > 0 && gate < declaration,
+                "执行工具的声明必须在 if (canExec) 里面。无条件声明的话，工作区只读、"
+                        + "甚至生产环境下模型也会拿到在服务器上起进程的能力");
     }
 }

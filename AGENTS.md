@@ -59,16 +59,17 @@ retrieval on its own. Start/verify/stop steps for all three platforms are in `ra
 Two things that waste time: health is `/health/live` + `/health/ready` (not `/healthz`), and
 **both need the bearer token**.
 
-### macOS: clean `target/` before any long run
+### macOS: do not move this checkout back into iCloud
 
-This checkout lives under `~/Desktop`, which iCloud syncs. iCloud drops conflict copies named
-`X 2.class` into `target/`; Spring's classpath scan then throws `BeanDefinitionStoreException`,
-or stalls with `IOException: Operation timed out` — runs that should take 20s take 40+ minutes.
-It reads like a code problem and is not. `mvn clean` may itself fail to delete `target`.
+Until 2026-09-21 the checkout lived under `~/Desktop/知趣·象限/`, which iCloud syncs. iCloud
+dropped conflict copies (`X 2.class` into `target/`, `AiServiceImpl 2.java` into `src/`) and
+Spring's classpath scan then threw `BeanDefinitionStoreException` or stalled with
+`IOException: Operation timed out` — a 20-second run spent 5+ minutes in the scan alone.
+It reads like a code problem and is not.
 
-```bash
-rm -rf target      # repeat if it says "Directory not empty"
-```
+It now lives at `~/Developer/zhiqu-quadrant/zhiqu-StudySystem`: outside the Desktop/Documents
+sync, and ASCII-only. Keep it there. `SourceTreeCleanlinessTest` still fails the build on any
+`* <n>.<ext>` under `src/` — cheap insurance, and static-asset copies are silent otherwise.
 
 ### Tests
 
@@ -90,9 +91,9 @@ never ran — that proves nothing. It is the mirror image of "an empty scan look
 
 ## Gotchas that cost time
 
-- **`mvn spring-boot:run` does not work here.** The repo path contains CJK characters and the
-  plugin fails with `Could not find or load main class com.zhiqu.ZhiquApplication`. Package the
-  JAR and run it with `java -jar`.
+- **`mvn spring-boot:run` works again** (re-verified 2026-09-21 from the new path). It used to
+  fail with `Could not find or load main class com.zhiqu.ZhiquApplication` because the repo path
+  contained CJK characters; the move to `~/Developer/zhiqu-quadrant/` retired that.
 - **`static/js/*.js` is dead code — no page loads it.** The live application shell is
   `static/assets/zhiqu-api.js` (all 14 HTML pages load it). Editing `js/` has no runtime effect.
 - **Bump the asset cache token after any frontend change**, in every HTML file *and*

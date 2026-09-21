@@ -48,6 +48,7 @@ import com.zhiqu.service.agent.AgentRunContext;
 import com.zhiqu.service.agent.AgentSseEvent;
 import com.zhiqu.service.agent.AgentStageExecutor;
 import com.zhiqu.service.ai.StreamingContentFlusher;
+import com.zhiqu.service.workspace.WorkspaceExecutor;
 import com.zhiqu.service.workspace.WorkspaceService;
 import com.zhiqu.service.agent.AgentStageRunner;
 import com.zhiqu.service.ReminderPlanService;
@@ -94,6 +95,7 @@ public class AiServiceImpl implements AiService {
 
     private final BusinessClock clock;
     private final WorkspaceService workspaceService;
+    private final WorkspaceExecutor workspaceExecutor;
     private final AdminGuard adminGuard;
     private static final Logger log = LoggerFactory.getLogger(AiServiceImpl.class);
     private static final String DEFAULT_CONVERSATION_KEY = "default";
@@ -198,9 +200,11 @@ public class AiServiceImpl implements AiService {
                          @Value("${app.ai.allow-private-provider-url:false}") boolean allowPrivateProviderUrl,
                          BusinessClock clock,
                          WorkspaceService workspaceService,
+                         WorkspaceExecutor workspaceExecutor,
                          AdminGuard adminGuard) {
         this.clock = clock;
         this.workspaceService = workspaceService;
+        this.workspaceExecutor = workspaceExecutor;
         this.adminGuard = adminGuard;
         this.configMapper = configMapper;
         this.modelConfigMapper = modelConfigMapper;
@@ -3826,7 +3830,10 @@ public class AiServiceImpl implements AiService {
             // 也不会承诺自己改了文件 —— 与 buildWikiTools(includeWrite) 同一个做法。
             boolean canWrite = workspaceService.access().effectiveMode().allowsWrite()
                     && AgentPlanDecision.codeWriteIntent(userMessage);
-            List<Map<String, Object>> tools = buildWorkspaceTools(canWrite);
+            // 执行这一档由 WorkspaceExecutor 自己说了算（档位 + 非生产 profile 两条都在它里面）。
+            // 这里不再复述那两个条件 —— 复述就是第二份真相。
+            boolean canExec = workspaceExecutor.enabled();
+            List<Map<String, Object>> tools = buildWorkspaceTools(canWrite, canExec);
             long loopStart = System.currentTimeMillis();
             for (int round = 0; round < 4; round++) {
                 if (System.currentTimeMillis() - loopStart > 30_000L) {
@@ -3877,15 +3884,20 @@ public class AiServiceImpl implements AiService {
                     一层层列目录会把轮次用光却什么都没读到。
                 2.2 搜索结果说「还有更多」时，你看到的<b>不是全部</b>。这时不要下
                     「只有这几处用到」这类结论，换一个更具体的关键词再搜。
-                3. 这一轮你<b>没有</b>写文件的能力。不要说「我已经改好了」之类的话 ——
-                   要改，就把改动写成代码块给他，并说明改哪个文件的哪一段。
+                3. 你能不能改文件、能不能跑命令，取决于这一轮给了你哪些工具 —— 没给就是没有。
+                   3.1 有 write_workspace_file 时：它<b>只生成草稿</b>，磁盘没有改动。
+                       所以说「改动已生成草稿，你确认后才会写入」，不要说「我已经改好了」。
+                   3.2 没有 write_workspace_file 时：把改动写成代码块给他，说明改哪个文件的哪一段。
+                   3.3 有 run_workspace_command 时：只能跑工作区里<b>已经存在的文件</b>。
+                       想跑一段新代码，先写成草稿让他确认落盘，再跑 —— 这样他知道自己机器上
+                       将要执行的是什么。命令行上塞代码（-c/-e）会被拒绝。
                 4. 工具返回「不在允许清单里」「超出工作区范围」时，那是刻意的保护，
                    如实告诉他，不要换着法子绕过去。
                 """;
     }
 
     /** 只读工具集。写工具连声明都没有 —— 模型看不到，就不会尝试，也不会承诺自己改了文件。 */
-    private List<Map<String, Object>> buildWorkspaceTools(boolean canWrite) {
+    private List<Map<String, Object>> buildWorkspaceTools(boolean canWrite, boolean canExec) {
         List<Map<String, Object>> tools = new ArrayList<>();
 
         Map<String, Object> listProps = new LinkedHashMap<>();
@@ -3920,6 +3932,19 @@ public class AiServiceImpl implements AiService {
                             + "所以不要说「我已经改好了」，要说「改动已生成草稿，确认后生效」。"
                             + "改一个已存在的文件之前必须先 read_workspace_file 读过它 —— 没读过就改是盲写。",
                     writeProps, List.of("path", "content")));
+        }
+        if (canExec) {
+            Map<String, Object> runProps = new LinkedHashMap<>();
+            runProps.put("command", schemaProp("string", "命令名，例如 python3 / node / javac。不接受路径，也不接受 shell 语句"));
+            runProps.put("args", Map.of("type", "array", "items", Map.of("type", "string"),
+                    "description", "参数数组。不接受 -c/-e 这类行内代码开关，也不接受绝对路径或 ../"));
+            runProps.put("path", schemaProp("string", "工作目录，相对工作区根；留空表示根"));
+            tools.add(functionTool("run_workspace_command",
+                    "在工作区里跑一条命令，拿到退出码和输出。"
+                            + "只能执行工作区里<b>已经存在的文件</b>：不接受 -c/-e 这类把代码写在命令行上的用法，"
+                            + "要跑新代码就先用 write_workspace_file 生成草稿、让用户确认落盘，再跑它。"
+                            + "输出可能被截断，结果里会明说；超时会被强制结束。",
+                    runProps, List.of("command")));
         }
         return tools;
     }
@@ -3982,6 +4007,24 @@ public class AiServiceImpl implements AiService {
                 loop.drafts.add(draft);
                 return "已生成草稿（磁盘上的文件没有改动）：" + path
                         + "。请告诉用户到「待确认」面板看过 diff 之后确认才会落盘。";
+            }
+            if ("run_workspace_command".equals(name)) {
+                String command = String.valueOf(args.getOrDefault("command", ""));
+                Object rawArgs = args.get("args");
+                List<String> argv = new ArrayList<>();
+                if (rawArgs instanceof List<?> list) {
+                    for (Object one : list) {
+                        argv.add(String.valueOf(one));
+                    }
+                }
+                String dir = String.valueOf(args.getOrDefault("path", ""));
+                if ("null".equals(dir)) {
+                    dir = "";
+                }
+                WorkspaceExecutor.ExecResult run = workspaceExecutor.exec(command, argv, dir);
+                return "退出码 " + run.exitCode() + (run.timedOut() ? "（超时被强制结束）" : "")
+                        + "，用时 " + run.millis() + "ms\n"
+                        + (run.output().isBlank() ? "（没有输出）" : run.output());
             }
             if ("search_workspace".equals(name)) {
                 String query = String.valueOf(args.getOrDefault("query", ""));

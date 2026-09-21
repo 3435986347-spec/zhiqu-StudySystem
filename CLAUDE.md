@@ -42,25 +42,28 @@ java -jar target\zhiqu-backend-0.0.1-SNAPSHOT.jar
 
 Access at `http://localhost:8080`.
 
-> `mvn spring-boot:run` fails in this checkout (`Could not find or load main class
-> com.zhiqu.ZhiquApplication`) because the repository path contains CJK characters.
-> Always package first and run the JAR.
+`mvn spring-boot:run` also works. It used to fail with `Could not find or load main class
+com.zhiqu.ZhiquApplication` because the path contained CJK characters; the checkout moved on
+2026-09-21 and this was re-verified from the new location, not assumed.
 
-> **macOS only, and it bites hard:** this checkout lives under `~/Desktop`, which iCloud syncs.
-> iCloud drops conflict copies named `X 2.class` into `target/`, and Spring's classpath scan then
-> throws `BeanDefinitionStoreException` (or stalls on placeholder files with
-> `IOException: Operation timed out`) — it reads like a code problem but is not. `mvn clean` may
-> even fail to delete `target`. Before any long run: `rm -rf target` (repeat if it says
-> "Directory not empty"). The permanent fix is moving the repo out of `~/Desktop`, which would
-> also retire the CJK-path caveat above.
+> **History, kept because the symptoms are unforgettable and could come back.** Until 2026-09-21
+> this checkout lived under `~/Desktop/知趣·象限/`, which iCloud syncs. iCloud dropped conflict
+> copies named `X 2.class` into `target/` and — as we found that day — `AiServiceImpl 2.java`
+> into `src/`. Spring's classpath scan then threw `BeanDefinitionStoreException`, or stalled on
+> placeholder files with `IOException: Operation timed out`: a 20-second run took 5+ minutes of
+> pure scan time, and it reads like a code problem. `mvn clean` could itself fail to delete
+> `target`.
 >
-> **2026-09-21: they also land in `src/`.** Editing one file repeatedly in quick succession got
-> iCloud to save the intermediate states as `AiServiceImpl 2.java` / `3.java` / `4.java`, and a
-> whole `target 2/` directory. Java copies fail loudly ("类重复"); **static-asset copies do not** —
+> Java copies fail loudly ("类重复"). **Static-asset copies do not** —
 > `static/assets/zhiqu-api 2.js` is packaged into the JAR and served as a stale copy of the app
-> shell, and an HTML copy brings an old cache token with it. `SourceTreeCleanlinessTest` now fails
-> the build on any `* <n>.<ext>` under `src/`. To clear them:
+> shell, and an HTML copy brings an old cache token with it. That asymmetry is why
+> `SourceTreeCleanlinessTest` still fails the build on any `* <n>.<ext>` under `src/`: it costs
+> nothing, and it is the only one of the two that nothing else would catch. To clear them by hand:
 > `find . -name '* [0-9].*' -not -path './.git/*' -delete`
+>
+> The checkout now lives at `~/Developer/zhiqu-quadrant/zhiqu-StudySystem` — outside iCloud's
+> Desktop/Documents sync and ASCII-only. **Do not move it back under `~/Desktop` or
+> `~/Documents`.**
 
 Useful flags when testing locally: `--server.port=18080`,
 `--app.ai.allow-private-provider-url=true` (lets you point a model config at a local mock),
@@ -144,11 +147,12 @@ and will break the chain you meant to guard.
 挑位置要把这三个都算上。`RealRunOrder` 现在读全三个位置；它原来只读 `runAt`，所以那个真实存在的
 冲突在判据眼里根本不存在 —— 一个自称用「真实声明的位置」的 fixture，只读了三分之一。
 
-**对比「是不是我改坏的」时，要控制住位置这个变量。** 用 `git worktree` 开基线检出很方便，但
-worktree 建在 `/private/tmp` 下、而工作区在 iCloud 同步的 `~/Desktop` 下 —— 两次跑同时变了
-代码和位置。本轮就这样得出过一个「结论正确但推理不成立」的判断（基线 17.7 秒 vs 改动 384 秒，
-其中有 330 秒其实是 iCloud 的类路径扫描卡顿）。正确做法是把改动**复制到同一个非 iCloud 位置**
-再比，一次只动一个变量。
+**对比「是不是我改坏的」时，要控制住位置这个变量。** 用 `git worktree` 开基线检出很方便，
+但 worktree 建在 `/private/tmp` 下、而当时的工作区在 iCloud 同步的 `~/Desktop` 下 ——
+两次跑同时变了代码和位置。2026-09-21 就这样得出过一个「结论正确但推理不成立」的判断
+（基线 17.7 秒 vs 改动 384 秒，其中 330 秒其实是 iCloud 的类路径扫描卡顿）。
+仓库已经搬出 iCloud，这个具体诱因没了，但方法仍然成立：**一次只动一个变量**。
+基线检出和被测检出要在同一个卷、同一类目录下。
 
 ## Architecture
 
@@ -429,6 +433,43 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 `node_modules/.bin`、`docs -> ../shared` 这类软链在真实项目里很常见。现在
 `WorkspaceGuard.containedAfterSymlinks` 用 `toRealPath()` 解开每一段再比，**root 自己也要
 realpath** —— 否则 macOS 上 `/tmp` 实际是 `/private/tmp`，正常读取会全部失效。
+
+**执行沙箱（阶段 3）默认关闭，而且它不是你以为的那种沙箱。**
+白名单里有 `python3` / `node` / `java`，**允许它们就等于允许任意代码** —— 一段 Python 能删掉
+用户的家目录，`WorkspaceExecutor` 拦不住，进程级隔离（容器 / seccomp）不在这一层。
+把它叫「沙箱」而不说这一点，会让人以为代码被关住了。
+
+真正的边界是**只能跑用户已经看过的代码**：
+
+- **禁行内代码开关**（`-c` / `-e` / `--eval` / `-i` …）。有了它们，模型可以把任意程序当成
+  一个参数传进来，那段代码没有经过任何人的眼睛。禁掉之后执行对象只能是工作区里**已经存在
+  的文件** —— 要么用户自己写的，要么走过 `CODE_DRAFT` 的 diff 确认。**这是这一层唯一
+  真正意义上的安全判定**，其余几条都只是「炸了也炸不大」。
+- 参数不接受绝对路径与 `..`；命令只接受命令名 + 参数数组，不接受任意 shell 字符串。
+
+开启前提在档位之上又加了一条：**生产 profile 一律拒绝**（`spring.profiles.active` 含
+`prod`/`production`），与档位一起收在 `WorkspaceExecutor.enabled()` 里 —— 调用方不许复述
+那两个条件，`CodeAgentGateTest.不允许执行时不得下发执行工具` 钉着这一点。
+
+四条资源约束，每条都有行为判据（用真进程跑，不 mock）：
+
+- **超时** → `destroyForcibly`。第一版这里是错的：输出是**同步**读的，而 `read()` 要等进程
+  退出才返回 `-1`，于是 `sleep 30` 把读循环阻塞 30 秒，`waitFor` 的超时根本轮不到执行。
+  源码扫描和 mock 都发现不了，只有真跑一个死循环才会发现。现在读在独立线程上。
+- **输出上限** → 截断并**明确标注**。到上限之后要**继续排空并丢弃**，不能 `break`：
+  停止读取会让管道写满、子进程卡在 write 上再也退不出去，一个「日志很多但确实成功了」的
+  构建会被报成超时。
+- **工作目录**在工作区内。
+- **不继承父进程环境变量** —— 最容易漏的一条。主进程里有 `ZHIQU_SYSTEM_AI_API_KEY`、
+  数据库密码；继承的话用户让 AI「跑一下这个脚本」，一句 `os.environ` 就全拿走，而输出会
+  原样回到模型上下文里。`environment().clear()` 之后子进程没有 `PATH`，所以命令名在**父进程**
+  那一侧解析成绝对路径再交下去（用父进程的 PATH 去*找*，不等于把它*传下去*）。
+  这条判据不维护「良性变量名单」：macOS 的 python3 shim 在 `env -i` 下也会注入
+  `CPATH/LIBRARY_PATH/MANPATH/SDKROOT/__CF_USER_TEXT_ENCODING`，手写名单要么把它们当泄漏
+  （假红），要么放行它们（换平台就漏掉真泄漏）。判据改成**现场量一次解释器自己的地板**
+  再相减，并单独断言子进程的 `PATH` 是我们给的固定值。
+
+执行结果不落库（不建 `code_run` 表）：那是临时诊断信息，不是需要长期保存的资产。
 
 ### RAG (optional)
 
