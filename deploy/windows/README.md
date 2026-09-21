@@ -275,7 +275,7 @@ spring:
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/zhiqu_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: zhiqu_app
-    password: HUANGMINGZHANG@ZHIQUMYSQL
+    password: CHANGE_ME_DB_PASSWORD
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   data:
@@ -286,7 +286,7 @@ spring:
       timeout: 3000ms
 
 jwt:
-  secret: hzFsqFhYbcGcLZHL5iFXpp6a5cB4jwvHKS6g492E
+  secret: CHANGE_ME_TO_A_LONG_RANDOM_SECRET_AT_LEAST_32_CHARS
   expiration: 86400000
   remember-expiration: 2592000000
 
@@ -295,7 +295,7 @@ app:
   cookie:
     secure: false
   crypto:
-    master-key: hzFsqFhYbcGcLZHL5iFXpp6a5cB4jwvHKS6g492E
+    master-key: CHANGE_ME_TO_A_LONG_RANDOM_CRYPTO_MASTER_KEY
 
 logging:
   file:
