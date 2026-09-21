@@ -51,3 +51,6 @@ pdf-parser-eval/corpus/manifest.private.jsonl
 pdf-parser-eval/output/
 pdf-parser-eval/**/target/
 pdf-parser-eval/**/__pycache__/
+
+# 桌面应用打包产物（119MB，不入库）
+/build/
