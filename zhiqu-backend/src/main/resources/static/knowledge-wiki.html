@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260921-home-screenshots" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260921-home-screenshots">
-  <link rel="manifest" href="manifest.json?v=20260921-home-screenshots">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260921-wiki-tabs" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260921-wiki-tabs">
+  <link rel="manifest" href="manifest.json?v=20260921-wiki-tabs">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-home-screenshots">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-wiki-tabs">
 </head>
 <body>
   <div class="zq-app">
@@ -47,8 +47,25 @@
 
           <!-- 文档视图 -->
           <section style="flex:1; min-width:0; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh2); overflow:hidden;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px; border-bottom:1px solid var(--zq-border-soft); flex-wrap:wrap;">
-              <div><p class="zq-eyebrow" style="margin-bottom:3px; font-size:10.5px;">文档视图</p><h2 id="zq-doc-title" class="zq-h2" style="font-size:16px;"></h2></div>
+            <!--
+              标签页栏（Obsidian 式）。由 zhiqu-api.js 的 paintWikiTabs() 填充；
+              这里只留容器，因为标签是随打开的页面变的，写死在 HTML 里没有意义。
+            -->
+            <!--
+              左内边距 14px + 标签自己的 12px = 26px，和下面 #zq-doc 的 padding-left 对齐，
+              标题行同样收到 26px —— 标签文字、返回按钮、正文三条左边缘落在同一条线上。
+              改 #zq-doc 的 26px 时，这两处要跟着改。
+            -->
+            <div id="zq-wiki-tabs" style="display:flex; align-items:stretch; gap:0; padding:0 8px 0 14px; border-bottom:1px solid var(--zq-border-soft); background:var(--zq-card-soft); overflow-x:auto; scrollbar-width:thin;"></div>
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px 14px 26px; border-bottom:1px solid var(--zq-border-soft); flex-wrap:wrap;">
+              <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                <!-- 返回 / 前进：走当前标签页自己的浏览历史，和浏览器那对按钮同义 -->
+                <button type="button" id="zq-wiki-back" class="zq-btn-ghost" title="返回上一页（⌘[）"
+                  style="height:28px; width:28px; padding:0; font-size:15px; line-height:1; flex:0 0 auto;">‹</button>
+                <button type="button" id="zq-wiki-fwd" class="zq-btn-ghost" title="前进（⌘]）"
+                  style="height:28px; width:28px; padding:0; font-size:15px; line-height:1; flex:0 0 auto;">›</button>
+                <div style="min-width:0;"><p class="zq-eyebrow" style="margin-bottom:3px; font-size:10.5px;">文档视图</p><h2 id="zq-doc-title" class="zq-h2" style="font-size:16px;"></h2></div>
+              </div>
               <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span style="font-size:11.5px; color:var(--zq-text3);">点击正文或标题即可编辑</span>
                 <span style="font-size:11.5px; color:var(--zq-text3);">段落</span>
@@ -89,7 +106,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260921-home-screenshots"></script>
+  <script src="assets/zhiqu-ui.js?v=20260921-wiki-tabs"></script>
   <script>
     var wtag={'目标':['q2'],'计划':['primary'],'偏好':['q4'],'薄弱点':['q1'],'资料':['q3'],'对话摘要':['soft'],'index':['soft'],'规则':['soft'],'log':['soft']};
     function tagColors(t){ var k=wtag[t]?wtag[t][0]:'soft'; if(k==='soft') return ['var(--zq-card-soft)','var(--zq-text3)']; if(k==='primary') return ['var(--zq-tint)','var(--zq-primary)']; return ['var(--zq-'+k+'-bg)','var(--zq-'+k+')']; }
@@ -143,6 +160,6 @@
     function sel(i){ cur=i; paintTree(); paintDoc(); }
     paintTree(); paintDoc();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260921-home-screenshots"></script>
+  <script src="assets/zhiqu-api.js?v=20260921-wiki-tabs"></script>
 </body>
 </html>

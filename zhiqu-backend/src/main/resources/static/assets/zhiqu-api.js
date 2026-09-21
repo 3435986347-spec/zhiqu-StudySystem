@@ -22,7 +22,12 @@
     streamPollTimer: null,
     // 拿满一页就说明可能还有更早的。点「加载更早」若返回空，就翻到头了。
     chatHasMore: false,
-    chatLoadingMore: false
+    chatLoadingMore: false,
+    // 知识 Wiki 的标签页。每个标签有自己的浏览历史（和 Obsidian、和浏览器标签一样）——
+    // 共享一份历史的话，在 A 标签里翻了几页再切到 B 点返回，会跳到 A 的历史里去。
+    // 形状：[{ id, title, back: [id...], fwd: [id...] }]，id 为 null 表示空标签。
+    wikiTabs: [],
+    wikiTabIdx: -1
   };
 
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -1412,8 +1417,16 @@
       if (typeSel) typeSel.onchange = function () { state.wikiFilter.type = typeSel.selectedIndex === 0 ? '' : typeSel.options[typeSel.selectedIndex].text; paintWikiTree(); };
     }
     wireWikiEditor();
+    wireWikiTabShortcuts();
     paintWikiTree();
+    // 先尝试恢复上次的标签页；恢复不出来（第一次来、或那些页都删了）才退回默认第一页。
+    if (loadWikiTabs()) {
+      var restored = wikiPageById(activeWikiTab() && activeWikiTab().id);
+      if (restored) { paintWikiDoc(restored, { history: true }); return; }
+      state.wikiTabs = []; state.wikiTabIdx = -1;
+    }
     if (state.wikiCur) paintWikiDoc(state.wikiCur);
+    else paintWikiTabs();
   }
   function paintWikiTree() {
     var tree = $('#zq-tree'); if (!tree) return;
@@ -1439,17 +1452,37 @@
     }).join('') || empty('无匹配页面');
     $all('[data-wiki]', tree).forEach(function (a) {
       var pageOf = function () { return (state.wikiPages || []).find(function (x) { return String(x.id) === a.dataset.wiki; }); };
-      a.onclick = function () { var p = pageOf(); if (p) paintWikiDoc(p); };
+      // ⌘/Ctrl+点击开新标签，和浏览器里点链接同一个手势
+      a.onclick = function (e) { var p = pageOf(); if (p) paintWikiDoc(p, { newTab: e.metaKey || e.ctrlKey }); };
+      a.onauxclick = function (e) {
+        if (e.button !== 1) return;   // 中键
+        e.preventDefault();
+        var p = pageOf(); if (p) paintWikiDoc(p, { newTab: true });
+      };
       a.oncontextmenu = function (e) {
         e.preventDefault();
         var p = pageOf(); if (!p) return;
-        var items = [{ label: '打开', onClick: function () { paintWikiDoc(p); } }];
+        var items = [
+          { label: '打开', onClick: function () { paintWikiDoc(p); } },
+          { label: '在新标签页打开', onClick: function () { paintWikiDoc(p, { newTab: true }); } }
+        ];
         if (!isSystemWikiPage(p)) items.push({ label: '删除该页', danger: true, onClick: function () { deleteWikiPage(p); } });
         popMenu(e.clientX, e.clientY, items);
       };
     });
   }
-  async function paintWikiDoc(p) {
+  /**
+   * 打开一个知识页。
+   *
+   * opts:
+   *   newTab  —— 在新标签页打开（⌘/Ctrl+点击、中键、右键菜单）
+   *   history —— 这次跳转来自前进/返回按钮，不要再往历史栈里压
+   *
+   * 不带 opts 就是「在当前标签里跳过去」，当前页进 back 栈 —— 浏览器的行为。
+   */
+  async function paintWikiDoc(p, opts) {
+    opts = opts || {};
+    trackWikiNavigation(p, opts);
     state.wikiCur = p;
     removeWikiActionBar();
     var doc = $('#zq-doc'), title = $('#zq-doc-title');
@@ -1470,7 +1503,247 @@
     var insp = $('#zq-insp');
     if (insp) insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">点击正文即可编辑 · [[双链]]可跳转</span></div>';
     paintWikiTree();
+    paintWikiTabs();
   }
+  // ── 知识 Wiki 的标签页 ────────────────────────────────────────────────
+  //
+  // 三件事凑在一起：标签栏、每个标签自己的前进/返回、刷新后还在。
+  // 形状故意只存 id 不存整页对象：页面内容会被编辑，存快照会让标签显示旧标题。
+
+  var WIKI_TABS_KEY = 'zq.wiki.tabs';
+
+  function activeWikiTab() {
+    return state.wikiTabs[state.wikiTabIdx] || null;
+  }
+
+  function newWikiTab(id, title) {
+    return { id: id == null ? null : String(id), title: title || '新标签页', back: [], fwd: [] };
+  }
+
+  /** 把这次跳转记进标签与历史。paintWikiDoc 的第一件事。 */
+  function trackWikiNavigation(p, opts) {
+    var id = p && p.id != null ? String(p.id) : null;
+    if (opts.newTab || !state.wikiTabs.length) {
+      state.wikiTabs.push(newWikiTab(id, p && p.title));
+      state.wikiTabIdx = state.wikiTabs.length - 1;
+      saveWikiTabs();
+      return;
+    }
+    var tab = activeWikiTab();
+    if (!tab) {
+      state.wikiTabs.push(newWikiTab(id, p && p.title));
+      state.wikiTabIdx = state.wikiTabs.length - 1;
+      saveWikiTabs();
+      return;
+    }
+    // 两个条件各挡一件事，而承重的是后一个：
+    //   !opts.history —— 调用方明说「这不是跳转」（前进/返回、切标签、保存后重绘）
+    //   tab.id !== id —— 同一页再打开一次不算跳转
+    // 扰动实测：去掉 history:true 那些地方历史栈纹丝不动，因为 id 相等这一条已经拦住了。
+    // 所以 history 参数是把意图写明白，真正防止「返回按钮原地打转」的是 id 比较。
+    if (!opts.history && tab.id && tab.id !== id) {
+      tab.back.push(tab.id);
+      // 走过新路就没有「前进」可言了 —— 和浏览器一致。
+      tab.fwd = [];
+      // 历史不必无限长；50 步远超实际需要，但比「无上限」安全。
+      if (tab.back.length > 50) tab.back.shift();
+    }
+    tab.id = id;
+    tab.title = (p && p.title) || tab.title;
+    saveWikiTabs();
+  }
+
+  function wikiPageById(id) {
+    if (id == null) return null;
+    return (state.wikiPages || []).find(function (x) { return String(x.id) === String(id); }) || null;
+  }
+
+  /** 前进 / 返回。方向：-1 返回，+1 前进。 */
+  function wikiHistoryGo(direction) {
+    var tab = activeWikiTab();
+    if (!tab) return;
+    var from = direction < 0 ? tab.back : tab.fwd;
+    var to = direction < 0 ? tab.fwd : tab.back;
+    if (!from.length) return;
+    var targetId = from.pop();
+    var target = wikiPageById(targetId);
+    if (!target) {
+      // 那一页被删了。丢掉这一步继续往回找，而不是卡住 ——
+      // 「点了没反应」比「跳过一步」更让人以为按钮坏了。
+      saveWikiTabs();
+      return wikiHistoryGo(direction);
+    }
+    if (tab.id) to.push(tab.id);
+    tab.id = targetId;
+    saveWikiTabs();
+    paintWikiDoc(target, { history: true });
+  }
+
+  function closeWikiTab(index) {
+    if (index < 0 || index >= state.wikiTabs.length) return;
+    state.wikiTabs.splice(index, 1);
+    if (!state.wikiTabs.length) {
+      state.wikiTabIdx = -1;
+      state.wikiCur = null;
+      saveWikiTabs();
+      var doc = $('#zq-doc'), title = $('#zq-doc-title');
+      if (doc) doc.innerHTML = empty('没有打开的页面 · 从左侧目录选一页，或点 + 新建标签');
+      if (title) title.textContent = '';
+      paintWikiTabs();
+      paintWikiTree();
+      return;
+    }
+    // 关掉的是当前标签或它左边的标签时，索引要跟着往左收 —— 否则会指到别人身上。
+    if (state.wikiTabIdx >= state.wikiTabs.length) state.wikiTabIdx = state.wikiTabs.length - 1;
+    else if (index < state.wikiTabIdx) state.wikiTabIdx -= 1;
+    saveWikiTabs();
+    var next = wikiPageById(activeWikiTab().id);
+    if (next) paintWikiDoc(next, { history: true });
+    else { paintWikiTabs(); paintWikiTree(); }
+  }
+
+  function activateWikiTab(index) {
+    if (index === state.wikiTabIdx || index < 0 || index >= state.wikiTabs.length) return;
+    state.wikiTabIdx = index;
+    saveWikiTabs();
+    var target = wikiPageById(state.wikiTabs[index].id);
+    // history:true —— 切换标签不是一次「跳转」，不该进任何一个标签的历史栈。
+    if (target) paintWikiDoc(target, { history: true });
+    else { paintWikiTabs(); paintWikiTree(); }
+  }
+
+  function paintWikiTabs() {
+    var bar = $('#zq-wiki-tabs');
+    if (!bar) return;
+    var tabs = state.wikiTabs || [];
+    bar.innerHTML = tabs.map(function (t, i) {
+      var on = i === state.wikiTabIdx;
+      return '<div data-wiki-tab="' + i + '" title="' + esc(t.title || '') + '" style="' +
+        'display:flex;align-items:center;gap:6px;max-width:190px;padding:7px 8px 7px 12px;cursor:pointer;' +
+        'border-right:1px solid var(--zq-border-soft);font-size:12.5px;white-space:nowrap;' +
+        'background:' + (on ? 'var(--zq-card)' : 'transparent') + ';' +
+        'color:' + (on ? 'var(--zq-text)' : 'var(--zq-text2)') + ';' +
+        'font-weight:' + (on ? 600 : 500) + ';' +
+        'box-shadow:' + (on ? 'inset 0 2px 0 var(--zq-primary)' : 'none') + ';">' +
+        '<span style="overflow:hidden;text-overflow:ellipsis;">' + esc(t.title || '新标签页') + '</span>' +
+        '<span data-wiki-tab-close="' + i + '" title="关闭" style="flex:0 0 auto;width:16px;height:16px;' +
+        'display:flex;align-items:center;justify-content:center;border-radius:4px;' +
+        'color:var(--zq-text3);font-size:13px;line-height:1;">×</span></div>';
+    }).join('') +
+      '<div data-wiki-tab-new="1" title="新标签页" style="display:flex;align-items:center;justify-content:center;' +
+      'width:30px;flex:0 0 auto;cursor:pointer;color:var(--zq-text3);font-size:15px;">+</div>';
+
+    $all('[data-wiki-tab]', bar).forEach(function (el) {
+      el.onclick = function (e) {
+        if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-wiki-tab-close')) return;
+        activateWikiTab(Number(el.dataset.wikiTab));
+      };
+      // 中键关闭 —— 浏览器标签页的通用手势
+      el.onauxclick = function (e) {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        closeWikiTab(Number(el.dataset.wikiTab));
+      };
+    });
+    $all('[data-wiki-tab-close]', bar).forEach(function (el) {
+      el.onclick = function (e) { e.stopPropagation(); closeWikiTab(Number(el.dataset.wikiTabClose)); };
+    });
+    var plus = $('[data-wiki-tab-new]', bar);
+    if (plus) plus.onclick = openWikiQuickSwitch;
+
+    var back = $('#zq-wiki-back'), fwd = $('#zq-wiki-fwd'), tab = activeWikiTab();
+    // 没有历史时置灰而不是隐藏：按钮位置固定，标题才不会左右跳。
+    if (back) { back.disabled = !(tab && tab.back.length); back.style.opacity = back.disabled ? '.35' : '1'; }
+    if (fwd) { fwd.disabled = !(tab && tab.fwd.length); fwd.style.opacity = fwd.disabled ? '.35' : '1'; }
+  }
+
+  /** + 按钮：列出所有页面让用户挑一个，选中后在新标签打开。 */
+  function openWikiQuickSwitch() {
+    var pages = state.wikiPages || [];
+    var h = openModal({
+      title: '在新标签页打开',
+      width: 460,
+      bodyHtml: '<input id="zq-qs-input" class="zq-input" placeholder="输入标题筛选…" style="width:100%;margin-bottom:10px;">' +
+        '<div id="zq-qs-list" style="max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:2px;"></div>',
+      onMount: function (body) {
+        var input = $('#zq-qs-input', body), list = $('#zq-qs-list', body);
+        function paint() {
+          var q = (input.value || '').trim().toLowerCase();
+          var hit = pages.filter(function (p) { return !q || (p.title || '').toLowerCase().indexOf(q) >= 0; });
+          list.innerHTML = hit.map(function (p) {
+            return '<a data-qs="' + p.id + '" style="display:block;padding:8px 10px;border-radius:var(--zq-rs);' +
+              'cursor:pointer;font-size:13px;color:var(--zq-text2);">' + esc(p.title) + '</a>';
+          }).join('') || empty('没有匹配的页面');
+          $all('[data-qs]', list).forEach(function (a) {
+            a.onclick = function () {
+              var target = wikiPageById(a.dataset.qs);
+              if (target) { h.close(); paintWikiDoc(target, { newTab: true }); }
+            };
+          });
+        }
+        input.oninput = paint;
+        paint();
+        input.focus();
+      }
+    });
+  }
+
+  /**
+   * 标签页存进 localStorage，刷新后还在。
+   *
+   * 两处防御：写失败要吞掉（隐私模式下 localStorage 会抛），读回来的东西要当成
+   * 不可信数据校验 —— 它可能是上一个版本写的，形状对不上就整份丢掉，而不是让
+   * 后面每一次 tab.back.push 都炸。
+   */
+  function saveWikiTabs() {
+    try {
+      localStorage.setItem(WIKI_TABS_KEY, JSON.stringify({ tabs: state.wikiTabs, idx: state.wikiTabIdx }));
+    } catch (e) { /* 存不下就算了，标签页只是便利 */ }
+  }
+
+  function loadWikiTabs() {
+    var raw = null;
+    try { raw = localStorage.getItem(WIKI_TABS_KEY); } catch (e) { return false; }
+    if (!raw) return false;
+    var data;
+    try { data = JSON.parse(raw); } catch (e) { return false; }
+    if (!data || !Array.isArray(data.tabs) || !data.tabs.length) return false;
+    var tabs = [];
+    data.tabs.forEach(function (t) {
+      if (!t || typeof t !== 'object') return;
+      // 页可能已经被删掉了 —— 那条标签不该复活
+      if (t.id != null && !wikiPageById(t.id)) return;
+      tabs.push({
+        id: t.id == null ? null : String(t.id),
+        title: typeof t.title === 'string' ? t.title : '新标签页',
+        back: Array.isArray(t.back) ? t.back.filter(function (x) { return wikiPageById(x); }).map(String) : [],
+        fwd: Array.isArray(t.fwd) ? t.fwd.filter(function (x) { return wikiPageById(x); }).map(String) : []
+      });
+    });
+    if (!tabs.length) return false;
+    state.wikiTabs = tabs;
+    state.wikiTabIdx = Number.isInteger(data.idx) && data.idx >= 0 && data.idx < tabs.length ? data.idx : 0;
+    return true;
+  }
+
+  function wireWikiTabShortcuts() {
+    if (wireWikiTabShortcuts._done) return;
+    wireWikiTabShortcuts._done = true;
+    var back = $('#zq-wiki-back'), fwd = $('#zq-wiki-fwd');
+    if (back) back.onclick = function () { wikiHistoryGo(-1); };
+    if (fwd) fwd.onclick = function () { wikiHistoryGo(1); };
+    document.addEventListener('keydown', function (e) {
+      if (!$('#zq-wiki-tabs')) return;
+      var doc = $('#zq-doc');
+      // 编辑正文时 ⌘[ 是缩进之类的编辑操作，不抢
+      if (doc && doc.dataset.editing === '1') return;
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      if (e.key === '[') { e.preventDefault(); wikiHistoryGo(-1); }
+      else if (e.key === ']') { e.preventDefault(); wikiHistoryGo(1); }
+      else if (e.key === 'w' && state.wikiTabs.length) { e.preventDefault(); closeWikiTab(state.wikiTabIdx); }
+    });
+  }
+
   function wireWikiLinks(doc) {
     $all('[data-wikilink]', doc).forEach(function (a) {
       a.onclick = function (e) {
@@ -1479,7 +1752,14 @@
         e.stopPropagation(); // 阻止冒泡到正文容器，否则跳转后的目标页会立刻进入编辑态
         var t = a.getAttribute('data-wikilink');
         var target = (state.wikiPages || []).find(function (x) { return (x.title || '') === t; });
-        if (target) paintWikiDoc(target); else toast('页面不存在：' + t, 'error');
+        if (target) paintWikiDoc(target, { newTab: e.metaKey || e.ctrlKey }); else toast('页面不存在：' + t, 'error');
+      };
+      a.onauxclick = function (e) {
+        if (e.button !== 1 || doc.dataset.editing === '1') return;
+        e.preventDefault(); e.stopPropagation();
+        var t = a.getAttribute('data-wikilink');
+        var target = (state.wikiPages || []).find(function (x) { return (x.title || '') === t; });
+        if (target) paintWikiDoc(target, { newTab: true });
       };
     });
   }
@@ -1639,7 +1919,8 @@
     bar.innerHTML = '<button class="zq-btn" id="zq-wiki-save" style="height:30px;">保存</button><button class="zq-btn-ghost" id="zq-wiki-cancel" style="height:30px;">取消</button>' + (isSysPage ? '' : '<button class="zq-btn-ghost" id="zq-wiki-del" style="height:30px;margin-left:auto;color:var(--zq-bad);">删除本页</button>');
     doc.parentNode.appendChild(bar);
     $('#zq-wiki-save').onclick = saveWikiEdit;
-    $('#zq-wiki-cancel').onclick = function () { paintWikiDoc(state.wikiCur); };
+    // history:true —— 取消编辑是重绘当前页，不是一次跳转，不该压进返回栈
+    $('#zq-wiki-cancel').onclick = function () { paintWikiDoc(state.wikiCur, { history: true }); };
     if ($('#zq-wiki-del')) $('#zq-wiki-del').onclick = function () { deleteWikiPage(state.wikiCur); };
   }
   function isSystemWikiPage(p) { return !!p && ['INDEX', 'LOG', 'SCHEMA'].indexOf(String(p.pageType || '').toUpperCase()) >= 0; }
@@ -1659,7 +1940,8 @@
       p.content = updated && updated.content != null ? updated.content : md;
       if (updated && updated.version != null) p.version = updated.version;
       if (updated && updated.updatedAt) p.updatedAt = updated.updatedAt;
-      paintWikiDoc(p);
+      // history:true —— 保存后重绘的还是这一页，压进返回栈会让「返回」原地打转
+      paintWikiDoc(p, { history: true });
       toast('已保存');
     });
   }
