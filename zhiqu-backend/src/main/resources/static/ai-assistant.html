@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-tokens-and-dates">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260921-workspace-and-highlight">
 </head>
 <body>
   <div class="zq-app">
@@ -40,6 +40,26 @@
                 <button id="zq-add-url" class="zq-btn-ghost" style="height:28px;border-style:dashed;font-size:11.5px;">添加 URL</button>
               </div>
               <div id="zq-sources" style="padding:2px 12px 14px;display:flex;flex-direction:column;gap:6px;"></div>
+
+              <!-- 代码工作区。整块默认 hidden：工作区没开时（绝大多数部署）连标题都不出现，
+                   由 zhiqu-api.js 根据 /api/workspace/status 决定显不显示。
+                   非管理员拿不到那个接口，这一块同样不显示。 -->
+              <section id="zq-ws" hidden style="border-top:1px solid var(--zq-border-soft);">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;">
+                  <div>
+                    <strong style="display:block;font-size:12.5px;font-weight:700;">代码工作区</strong>
+                    <span id="zq-ws-sub" style="font-size:11px;color:var(--zq-text3);"></span>
+                  </div>
+                  <button id="zq-ws-up" class="zq-btn-ghost" hidden style="height:24px;padding:0 8px;font-size:11px;white-space:nowrap;">上一层</button>
+                </div>
+                <div id="zq-ws-search-row" hidden style="display:flex;gap:6px;padding:0 14px 8px;">
+                  <input id="zq-ws-q" type="search" placeholder="搜索工作区（回车）" autocomplete="off"
+                         style="flex:1;min-width:0;height:26px;padding:0 8px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);color:var(--zq-text2);font-size:11.5px;" />
+                  <button id="zq-ws-back" class="zq-btn-ghost" hidden style="height:26px;padding:0 8px;font-size:11px;white-space:nowrap;">返回目录</button>
+                </div>
+                <div id="zq-ws-path" class="zq-mono" style="padding:0 14px 6px;font-size:11px;color:var(--zq-text3);word-break:break-all;"></div>
+                <div id="zq-ws-tree" style="padding:0 12px 14px;display:flex;flex-direction:column;gap:3px;"></div>
+              </section>
             </aside>
 
             <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
@@ -89,7 +109,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260921-tokens-and-dates"></script>
-  <script src="assets/zhiqu-api.js?v=20260921-tokens-and-dates"></script>
+  <script src="assets/zhiqu-ui.js?v=20260921-workspace-and-highlight"></script>
+  <script src="assets/zhiqu-api.js?v=20260921-workspace-and-highlight"></script>
 </body>
 </html>

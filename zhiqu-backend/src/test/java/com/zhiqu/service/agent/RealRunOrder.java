@@ -50,13 +50,37 @@ public final class RealRunOrder {
             Pattern.compile("agentType\\(\\)\\s*\\{\\s*return\\s*\"([^\"]+)\";");
     private static final Pattern RUN_AT = Pattern.compile(
             "runAt\\(\\)\\s*\\{\\s*return AgentPosition\\.at\\(AgentPhase\\.(\\w+),\\s*(-?\\d+)\\);");
+    /**
+     * {@code announceAt} / {@code commitAt} 也要读。
+     *
+     * <p>本类原来只读 {@code runAt}，于是造出来的空壳 runner 的宣告与落库位置一律等于
+     * 它的 run 位置（接口默认）。真实代码里有三个 runner 并非如此 ——
+     * {@code PLAN_EXTRACTOR} 的 run 在 POST_STREAM#20，宣告却在 PRE_STREAM#45。
+     *
+     * <p>后果不是「差一点」，而是这份名单里根本不存在真实存在的槽位冲突：
+     * 2026-09-21 新加的 {@code CODE_AGENT} 把 run 放在 PRE_STREAM#45，
+     * 和 {@code PLAN_EXTRACTOR} 的宣告抢同一个 (PRE_STREAM#45, ANNOUNCE) 槽。
+     * 生产代码里 {@code rejectAmbiguousSlots} 会抛，但那是在流式的异步线程上抛的，
+     * 被 CompletableFuture 静默吞掉 —— 症状是整轮挂起，不是报错。
+     * 15 条集成判据一起红，跑一次 384 秒，而日志里一行异常都没有。
+     */
+    private static final Pattern ANNOUNCE_AT = Pattern.compile(
+            "announceAt\\(\\)\\s*\\{\\s*return AgentPosition\\.at\\(AgentPhase\\.(\\w+),\\s*(-?\\d+)\\);");
+    private static final Pattern COMMIT_AT = Pattern.compile(
+            "commitAt\\(\\)\\s*\\{\\s*return AgentPosition\\.at\\(AgentPhase\\.(\\w+),\\s*(-?\\d+)\\);");
     private static final Pattern PARALLEL_GROUP =
             Pattern.compile("parallelGroup\\(\\)\\s*\\{\\s*return\\s*(\\w+);");
     private static final Pattern GROUP_CONST =
             Pattern.compile("private static final String (\\w+) = \"([^\"]+)\";");
 
-    /** 一个 runner 声明的位置，直接从源码读出来。 */
-    public record Declared(String agentType, AgentPhase phase, int order, String parallelGroup) {
+    /**
+     * 一个 runner 声明的位置，直接从源码读出来。
+     *
+     * <p>{@code announce} / {@code commit} 为 null 表示源码里没有覆写，
+     * 按接口默认等于 run 的位置 —— 空壳 runner 也照这个默认走，两边才是同一个事实。
+     */
+    public record Declared(String agentType, AgentPhase phase, int order, String parallelGroup,
+                           AgentPosition announce, AgentPosition commit) {
     }
 
     public static List<Declared> declarations() {
@@ -93,12 +117,20 @@ public final class RealRunOrder {
                 groupName = constants.getOrDefault(token, token);
             }
             declared.add(new Declared(type.group(1), AgentPhase.valueOf(runAt.group(1)),
-                    Integer.parseInt(runAt.group(2)), groupName));
+                    Integer.parseInt(runAt.group(2)), groupName,
+                    positionOf(ANNOUNCE_AT.matcher(chunk)), positionOf(COMMIT_AT.matcher(chunk))));
         }
         assertTrue(declared.size() >= MIN_RUNNERS,
                 "只解析出 " + declared.size() + " 个 runner —— 空扫和干净的扫在形状上一模一样，"
                         + "这个下界就是用来区分它们的。多半是 AiServiceImpl 的写法变了，正则要跟着改");
         return declared;
+    }
+
+    /** 源码里覆写了就用覆写的位置；没覆写返回 null，由调用方回落到 run 的位置。 */
+    private static AgentPosition positionOf(Matcher matcher) {
+        return matcher.find()
+                ? AgentPosition.at(AgentPhase.valueOf(matcher.group(1)), Integer.parseInt(matcher.group(2)))
+                : null;
     }
 
     /** 用真实位置喂真的执行器，让<b>排名规则来自生产代码</b>。 */
@@ -108,6 +140,12 @@ public final class RealRunOrder {
             shells.add(new AgentStageRunner() {
                 @Override public String agentType() { return item.agentType(); }
                 @Override public AgentPosition runAt() { return AgentPosition.at(item.phase(), item.order()); }
+                @Override public AgentPosition announceAt() {
+                    return item.announce() != null ? item.announce() : runAt();
+                }
+                @Override public AgentPosition commitAt() {
+                    return item.commit() != null ? item.commit() : runAt();
+                }
                 @Override public String parallelGroup() { return item.parallelGroup(); }
                 @Override public boolean inGraph(AgentRunContext ctx) { return true; }
                 @Override public void run(AgentRunContext ctx) { }

@@ -54,6 +54,7 @@ public record AgentPlanDecision(
         boolean needsMemoryDraft,
         boolean needsPlanExtractor,
         boolean needsWikiTool,
+        boolean needsCodeAgent,
         boolean needsAnswerVerifier,
         boolean needsSummary
 ) {
@@ -137,6 +138,48 @@ public record AgentPlanDecision(
         return containsAny(message, TASK_CREATE_PLAN_WORDS) && containsAny(message, TASK_CREATE_VERB_WORDS);
     }
 
+    /**
+     * 提到「代码」这件事的词。
+     *
+     * <p>刻意包含常见语言与文件后缀：用户说「看看我这个 Main.java」时不会再说一遍「代码」。
+     */
+    private static final List<String> CODE_MENTION_WORDS = List.of(
+            "代码", "源码", "工程", "项目", "函数", "方法", "类", "接口", "报错", "编译", "调试",
+            "bug", "code", "java", "python", "javascript", "typescript", "golang", "sql",
+            ".java", ".py", ".js", ".ts", ".go", ".c", ".cpp", ".rs", ".sql",
+            "仓库", "工作区", "文件夹", "目录结构");
+
+    /** 对代码做事情的动词。与 Wiki 那套同构：提到 + 动作，两个都要。 */
+    private static final List<String> CODE_ACTION_WORDS = List.of(
+            "看看", "读", "查", "找", "解释", "讲讲", "说明", "审阅", "review", "检查",
+            "改", "修", "重构", "优化", "补", "写", "实现", "生成", "跑", "运行", "测试",
+            "为什么", "怎么", "哪里", "是不是");
+
+    /**
+     * 「这句话要用工作区的代码工具吗」—— <b>唯一定义</b>。
+     *
+     * <p>与 {@link #wikiToolIntent} 同构：提到代码 + 有动作，两个都要。只提「代码」不给动作
+     * （「我最近在写代码」）不该把一整套文件工具塞给模型 —— 那既慢又容易让它去翻不相干的文件。
+     *
+     * <p><b>不要在 {@code AiServiceImpl} 里另起一个判定。</b>本仓库已经因为「同一个门两处各判一次」
+     * 分叉过：建图侧与执行侧的意图判定曾经方向相反，造出跑不了的幽灵节点。
+     *
+     * <h2>一个已知的过触发，以及为什么留着它</h2>
+     *
+     * <p>词袋分不开「帮我<b>写</b>一个排序函数」（该触发）与「今天<b>写</b>了三小时代码，有点累」
+     * （不该触发）—— 两句用的词是一样的。要区分得做意图分类，那是另一次模型往返，
+     * 为一个门付这个代价不值。
+     *
+     * <p>所以刻意选了过触发这一边。两种错的代价不对称：
+     * 过触发只是多跑一轮<b>有界的</b>工具循环（4 轮、30 秒预算、失败不影响主回答），
+     * 而漏触发意味着用户问他的代码、模型却凭空编 —— 后者在一个学习系统里要糟得多。
+     */
+    public static boolean codeIntent(String message) {
+        String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+        return CODE_MENTION_WORDS.stream().anyMatch(text::contains)
+                && CODE_ACTION_WORDS.stream().anyMatch(text::contains);
+    }
+
     /** 「这句话要用 Wiki 工具循环吗」（读或写）—— 唯一定义。 */
     public static boolean wikiToolIntent(String message) {
         String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
@@ -156,7 +199,8 @@ public record AgentPlanDecision(
      */
     public static AgentPlanDecision of(String agentMode, String message, boolean enableWebSearch,
                                        Long notebookId, Map<String, Object> contextOptions,
-                                       boolean toolCallingSupported, boolean historyFull) {
+                                       boolean toolCallingSupported, boolean historyFull,
+                                       boolean workspaceReadable) {
         String mode = normalizeMode(agentMode);
         Map<String, Object> options = contextOptions == null ? Map.of() : contextOptions;
         boolean chatOnly = "CHAT_ONLY".equals(mode);
@@ -183,6 +227,10 @@ public record AgentPlanDecision(
                 containsAny(message, MEMORY_DRAFT_WORDS),
                 taskCreationIntent(message),
                 wikiToolIntent(message) && toolCallingSupported,
+                // 三个条件缺一不可。workspaceReadable 来自执行侧（WorkspaceAccess 的生效档位）——
+                // 工作区没开时造出这个节点，就是一个结构上跑不了的幽灵节点，
+                // 而那正是 AgentGraphOrderDerivationTest 在防的形状。
+                codeIntent(message) && toolCallingSupported && workspaceReadable,
                 // 没检索就没有引用可核 —— 与 needsRetriever 同条件，不另起一个会漂的门
                 needsRetriever,
                 historyFull

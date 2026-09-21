@@ -1938,6 +1938,87 @@
     });
   }
   // 完整块类型渲染，对齐 claude design 静态模板：标题/正文/列表/任务勾选/引用/代码块/分隔线/相关页面双链
+
+  // ── 代码块着色 ────────────────────────────────────────────────────────────
+  //
+  // 自己写的小分词器，不引 highlight.js：它 100KB 起步，会拖慢每个页面的首屏，
+  // 而在聊天里读一段代码，需要分开的只有「注释 / 字符串 / 关键字 / 数字」四类。
+  //
+  // 安全上真正load-bearing 的只有一条不变量：
+  //   **每段 token 文本恰好走一次 esc()，分词器自己从不产出标记。**
+  // 满足它，输出对任意输入都安全；破坏它（少转义、多转义、吞字符）都会被
+  // 「剥掉着色 span 后必须与直接 esc 整段逐字相同」这条判据抓到。
+  //
+  // 顺序（先分词、后转义）另有原因，但**不是**安全：分词器要看到原始的
+  // " 和 < 才能认出字符串；先整段转义的话 " 变成 &quot;，字符串就再也识别不出来，
+  // 结果只是不着色 —— 实测过，不会长出标签。别把它当成安全边界来记。
+
+  var CODE_KEYWORDS = ('abstract,assert,async,await,bool,boolean,break,byte,case,catch,char,class,const,'
+    + 'continue,def,default,del,delete,do,double,elif,else,enum,except,export,extends,final,finally,float,'
+    + 'for,from,func,function,go,goto,if,impl,implements,import,in,instanceof,int,interface,is,lambda,let,'
+    + 'long,match,new,not,or,package,pass,print,private,protected,public,raise,return,select,self,short,'
+    + 'static,struct,super,switch,synchronized,this,throw,throws,trait,try,type,typeof,use,var,void,'
+    + 'volatile,while,with,yield,true,false,null,None,True,False,nil,undefined,'
+    + 'SELECT,FROM,WHERE,INSERT,UPDATE,DELETE,JOIN,GROUP,ORDER,BY,HAVING,LIMIT').split(',');
+  var CODE_KEYWORD_SET = Object.create(null);
+  CODE_KEYWORDS.forEach(function (k) { CODE_KEYWORD_SET[k] = 1; });
+
+  // 只有这些语言里 # 才是行注释。不分语言的话，JS 的私有字段 this.#x
+  // 会让整行被涂成注释色 —— 语言未知时宁可不着色，也不要涂错。
+  var HASH_COMMENT_LANGS = { python: 1, py: 1, sh: 1, bash: 1, shell: 1, zsh: 1, ruby: 1, rb: 1,
+    yaml: 1, yml: 1, r: 1, perl: 1, makefile: 1, make: 1, toml: 1, ini: 1, conf: 1, dockerfile: 1 };
+
+  /** 把源码切成 [类型, 文本] 段；类型只有 c/s/k/n 四种，其余是普通文本。 */
+  function tokenizeCode(src, lang) {
+    var hashIsComment = !!HASH_COMMENT_LANGS[String(lang || '').toLowerCase()];
+    var out = [], i = 0, plain = '';
+    function flush() { if (plain) { out.push(['', plain]); plain = ''; } }
+    while (i < src.length) {
+      var two = src.substr(i, 2);
+      if (two === '/*') {                                       // 块注释
+        var be = src.indexOf('*/', i + 2);
+        be = be < 0 ? src.length : be + 2;
+        flush(); out.push(['c', src.slice(i, be)]); i = be; continue;
+      }
+      if (two === '//' || (hashIsComment && src[i] === '#')) {   // 行注释
+        var nl = src.indexOf('\n', i);
+        if (nl < 0) nl = src.length;
+        flush(); out.push(['c', src.slice(i, nl)]); i = nl; continue;
+      }
+      if (src[i] === '"' || src[i] === "'" || src[i] === '`') {  // 字符串（含 \ 转义）
+        var q = src[i], j = i + 1;
+        while (j < src.length && src[j] !== q) { j += (src[j] === '\\' ? 2 : 1); }
+        j = Math.min(j + 1, src.length);
+        flush(); out.push(['s', src.slice(i, j)]); i = j; continue;
+      }
+      if (src[i] >= '0' && src[i] <= '9' && !/[\w.]/.test(src[i - 1] || '')) {   // 数字
+        var k = i;
+        while (k < src.length && /[0-9a-fA-FxXbo._]/.test(src[k])) k++;
+        flush(); out.push(['n', src.slice(i, k)]); i = k; continue;
+      }
+      if (/[A-Za-z_$]/.test(src[i])) {                          // 标识符 → 可能是关键字
+        var w = i;
+        while (w < src.length && /[\w$]/.test(src[w])) w++;
+        var word = src.slice(i, w);
+        flush(); out.push([CODE_KEYWORD_SET[word] ? 'k' : '', word]); i = w; continue;
+      }
+      plain += src[i++];
+    }
+    flush();
+    return out;
+  }
+
+  var CODE_COLORS = { c: 'var(--zq-text3)', s: 'var(--zq-q4)', k: 'var(--zq-q2)', n: 'var(--zq-q3)' };
+
+  /** 着色后的 HTML。每段单独 esc()，见上面关于顺序的说明。 */
+  function highlightCode(src, lang) {
+    return tokenizeCode(String(src == null ? '' : src), lang).map(function (t) {
+      var safe = esc(t[1]);
+      var color = CODE_COLORS[t[0]];
+      return color ? '<span style="color:' + color + ';">' + safe + '</span>' : safe;
+    }).join('');
+  }
+
   function renderMarkdown(md) {
     // 归一化 LaTeX 定界符：模型输出常用 \(...\) / \[...\]，统一转成 $ / $$ 再走块解析。
     // 必须绕开 ``` 围栏代码段，否则代码里的字面 \[..\] 会被改写，编辑保存后造成永久破坏
@@ -1962,7 +2043,7 @@
     segs.push({ code: fenced, text: segBuf.join('\n') });
     var src = segs.map(function (s) { return s.code ? s.text : normalizeMathDelims(s.text); }).join('\n');
     var lines = src.split('\n');
-    var html = '', inUl = false, inOl = false, inCode = false, inMath = false, codeBuf = [], mathBuf = [], quoteBuf = [], tableBuf = [];
+    var html = '', inUl = false, inOl = false, inCode = false, inMath = false, codeBuf = [], codeLang = '', mathBuf = [], quoteBuf = [], tableBuf = [];
     var sizes = { 1: '20px;font-weight:800', 2: '17px;font-weight:700', 3: '15.5px;font-weight:700;border-bottom:1px solid var(--zq-border-soft);padding-bottom:6px', 4: '14px;font-weight:700' };
     function closeUl() { if (inUl) { html += '</ul>'; inUl = false; } }
     function closeOl() { if (inOl) { html += '</ol>'; inOl = false; } }
@@ -1991,9 +2072,9 @@
     lines.forEach(function (line) {
       if (/^```/.test(line.trim())) {
         if (inCode) {
-          html += '<pre style="margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;"><code class="zq-mono" style="font-size:12.5px;line-height:1.65;white-space:pre;">' + esc(codeBuf.join('\n')) + '</code></pre>';
+          html += '<pre style="margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;"><code class="zq-mono" style="font-size:12.5px;line-height:1.65;white-space:pre;">' + highlightCode(codeBuf.join('\n'), codeLang) + '</code></pre>';
           codeBuf = []; inCode = false;
-        } else { closeBlocks(); inCode = true; }
+        } else { closeBlocks(); inCode = true; codeLang = line.trim().slice(3).trim(); }
         return;
       }
       if (inCode) { codeBuf.push(line); return; }
@@ -2030,7 +2111,7 @@
       else if (line.trim() === '') { closeBlocks(); }
       else { closeBlocks(); html += '<p style="margin:8px 0;">' + mdInline(line) + '</p>'; }
     });
-    if (inCode) { html += '<pre style="margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;"><code class="zq-mono" style="font-size:12.5px;line-height:1.65;white-space:pre;">' + esc(codeBuf.join('\n')) + '</code></pre>'; }
+    if (inCode) { html += '<pre style="margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;"><code class="zq-mono" style="font-size:12.5px;line-height:1.65;white-space:pre;">' + highlightCode(codeBuf.join('\n'), codeLang) + '</code></pre>'; }
     if (inMath && mathBuf.length) { html += mathBlockHtml(mathBuf.join('\n')); }
     closeBlocks();
     return '<div style="font-size:13.5px;line-height:1.75;">' + (html || '<p></p>') + '</div>';
@@ -2149,7 +2230,8 @@
     }
 
     // 先确定当前 Notebook，聊天记录按 Notebook 隔离加载。
-    await Promise.all([loadAiNotebooks(), loadAiModelSelect()]);
+    // 工作区与 notebook / 模型并行拉：它是独立的一块，不该让首屏多等一轮
+    await Promise.all([loadAiNotebooks(), loadAiModelSelect(), loadWorkspace()]);
     await loadAiMessages();
     await renderAgentPanels();
 
@@ -3592,6 +3674,175 @@
         toast('测试消息已发出，去对应渠道确认');
       });
     };
+  }
+
+
+  // ───────────────────────── 代码工作区（只读） ─────────────────────────
+  /**
+   * 工作区面板。
+   *
+   * <p>整块默认不显示。三种情况都不显示，而且<b>只有第三种要说话</b>：
+   * 非管理员（接口 403）、压根没配（正常状态，不该打扰用户）、
+   * 配了但前置没满足（必须说清是哪一条 —— 否则用户以为功能坏了）。
+   */
+  var wsState = { path: '', enabled: false };
+
+  async function loadWorkspace() {
+    var section = $('#zq-ws');
+    if (!section) return;            // 只有 AI 助手页有这一块
+    var status;
+    try {
+      status = await api.get('/workspace/status');
+    } catch (e) {
+      section.hidden = true;         // 非管理员：静默不显示，这不是错误
+      return;
+    }
+    wsState.enabled = !!(status && status.enabled);
+    if (!wsState.enabled) {
+      // 配了却没生效才值得说；压根没配（reason 为空）就安静地不显示
+      if (status && status.reason) {
+        section.hidden = false;
+        $('#zq-ws-sub').textContent = '未启用';
+        $('#zq-ws-path').textContent = status.reason;
+        $('#zq-ws-tree').innerHTML = '';
+        $('#zq-ws-up').hidden = true;
+      } else {
+        section.hidden = true;
+      }
+      return;
+    }
+    section.hidden = false;
+    $('#zq-ws-sub').textContent = status.mode === 'READ' ? '只读' : status.mode;
+    wsState.root = status.root || '';
+    $('#zq-ws-up').onclick = function () {
+      var at = wsState.path.lastIndexOf('/');
+      paintWorkspace(at > 0 ? wsState.path.slice(0, at) : '');
+    };
+    var searchRow = $('#zq-ws-search-row');
+    if (searchRow) { searchRow.hidden = false; }
+    var q = $('#zq-ws-q');
+    if (q) {
+      q.onkeydown = function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        var text = q.value.trim();
+        // 空关键词不发请求：后端会拒，但那是一次没必要的往返和一条没必要的报错
+        if (!text) { paintWorkspace(wsState.path); return; }
+        searchWorkspace(text);
+      };
+    }
+    var back = $('#zq-ws-back');
+    if (back) {
+      back.onclick = function () { if (q) { q.value = ''; } paintWorkspace(wsState.path); };
+    }
+    await paintWorkspace('');
+  }
+
+  async function paintWorkspace(path) {
+    var tree = $('#zq-ws-tree'); if (!tree) return;
+    var entries;
+    try {
+      entries = await api.get('/workspace/files' + (path ? '?path=' + encodeURIComponent(path) : ''));
+    } catch (e) {
+      tree.innerHTML = '<div style="font-size:11.5px;color:var(--zq-bad);">' + esc(e.message || '读取失败') + '</div>';
+      return;
+    }
+    wsState.path = path || '';
+    $('#zq-ws-path').textContent = wsState.path ? wsState.path : (wsState.root || '(根目录)');
+    $('#zq-ws-up').hidden = !wsState.path;
+    var backBtn = $('#zq-ws-back');
+    if (backBtn) { backBtn.hidden = true; }
+    tree.innerHTML = (entries || []).map(function (e) {
+      var name = e.path.indexOf('/') >= 0 ? e.path.slice(e.path.lastIndexOf('/') + 1) : e.path;
+      // 不可读的文件也列出来但置灰 —— 让用户知道它在那儿、而且知道系统刻意没读它，
+      // 比干脆不显示诚实
+      var dim = !e.directory && !e.readable;
+      return '<button type="button" data-ws-entry="' + esc(e.path) + '" data-ws-dir="' + (e.directory ? '1' : '0')
+        + '" data-ws-readable="' + (e.readable ? '1' : '0')
+        + '" style="display:flex;align-items:center;gap:6px;width:100%;padding:4px 6px;border:none;border-radius:var(--zq-rs);'
+        + 'background:transparent;color:' + (dim ? 'var(--zq-text3)' : 'var(--zq-text2)') + ';font-size:11.5px;'
+        + 'text-align:left;cursor:' + (dim ? 'not-allowed' : 'pointer') + ';">'
+        + '<span style="flex:none;">' + (e.directory ? '📁' : '📄') + '</span>'
+        + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(name) + '</span>'
+        + (dim ? '<span style="flex:none;font-size:10px;">不可读</span>' : '')
+        + '</button>';
+    }).join('') || '<div style="font-size:11.5px;color:var(--zq-text3);padding:4px 6px;">这个目录是空的</div>';
+
+    $all('[data-ws-entry]', tree).forEach(function (b) {
+      b.onclick = function () {
+        if (b.dataset.wsDir === '1') { paintWorkspace(b.dataset.wsEntry); return; }
+        if (b.dataset.wsReadable !== '1') { toast('这个文件不在允许读取的清单里', 'error'); return; }
+        openWorkspaceFile(b.dataset.wsEntry);
+      };
+    });
+  }
+
+  /**
+   * 工作区搜索。结果复用文件树那块区域 —— 侧栏窄，再开一块只会两边都挤。
+   *
+   * <p>截断状态<b>必须显示出来</b>：用户看到 80 条会以为一共 80 条，
+   * 而「至少 80 条，没找完」是完全不同的结论。后端已经把 truncated 传上来了，
+   * 传上来却不显示，等于没传。
+   */
+  function searchWorkspace(query) {
+    var tree = $('#zq-ws-tree'); if (!tree) return;
+    tree.innerHTML = '<div style="font-size:11.5px;color:var(--zq-text3);padding:4px 6px;">搜索中…</div>';
+    var back = $('#zq-ws-back');
+    if (back) { back.hidden = false; }
+    $('#zq-ws-up').hidden = true;
+    $('#zq-ws-path').textContent = '搜索「' + query + '」'
+      + (wsState.path ? ' · 范围 ' + wsState.path : '');
+
+    safe('搜索工作区', async function () {
+      var res = await api.get('/workspace/search?query=' + encodeURIComponent(query)
+        + (wsState.path ? '&path=' + encodeURIComponent(wsState.path) : ''));
+      var hits = (res && res.hits) || [];
+      if (!hits.length) {
+        tree.innerHTML = '<div style="font-size:11.5px;color:var(--zq-text3);padding:4px 6px;">'
+          + '没找到。扫了 ' + ((res && res.filesScanned) || 0) + ' 个文件。</div>';
+        return;
+      }
+      tree.innerHTML = hits.map(function (h) {
+        return '<button type="button" data-ws-hit="' + esc(h.path) + '"'
+          + ' style="display:block;width:100%;padding:5px 6px;border:none;border-radius:var(--zq-rs);'
+          + 'background:transparent;text-align:left;cursor:pointer;">'
+          + '<span class="zq-mono" style="display:block;font-size:10.5px;color:var(--zq-text3);'
+          + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+          + esc(h.path) + ':' + esc(String(h.line)) + '</span>'
+          + '<span class="zq-mono" style="display:block;font-size:11px;color:var(--zq-text2);'
+          + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(h.text) + '</span>'
+          + '</button>';
+      }).join('')
+        + '<div style="font-size:10.5px;color:' + (res.truncated ? 'var(--zq-warn)' : 'var(--zq-text3)')
+        + ';padding:6px;">'
+        + (res.truncated
+          ? '还有更多 —— 只显示了前 ' + hits.length + ' 条，换个更具体的关键词'
+          : '共 ' + hits.length + ' 条，扫了 ' + (res.filesScanned || 0) + ' 个文件')
+        + '</div>';
+
+      $all('[data-ws-hit]', tree).forEach(function (b) {
+        b.onclick = function () { openWorkspaceFile(b.dataset.wsHit); };
+      });
+    });
+  }
+
+  /** 从文件名取语言标记，喂给着色器。取不到就不着色，不瞎猜。 */
+  function langOfPath(path) {
+    var at = String(path || '').lastIndexOf('.');
+    return at < 0 ? '' : path.slice(at + 1).toLowerCase();
+  }
+
+  function openWorkspaceFile(path) {
+    safe('读取文件', async function () {
+      var file = await api.get('/workspace/file?path=' + encodeURIComponent(path));
+      openModal({
+        title: path,
+        width: 860,
+        bodyHtml: '<pre style="margin:0;max-height:62vh;overflow:auto;padding:12px 14px;border:1px solid var(--zq-border-soft);'
+          + 'border-radius:var(--zq-rs);background:var(--zq-card-soft);"><code class="zq-mono" style="font-size:12.5px;'
+          + 'line-height:1.6;white-space:pre;">' + highlightCode(file.content || '', langOfPath(path)) + '</code></pre>'
+      });
+    });
   }
 
   function revealContent() { try { document.documentElement.classList.remove('zq-booting'); } catch (e) {} }

@@ -53,6 +53,14 @@ Access at `http://localhost:8080`.
 > even fail to delete `target`. Before any long run: `rm -rf target` (repeat if it says
 > "Directory not empty"). The permanent fix is moving the repo out of `~/Desktop`, which would
 > also retire the CJK-path caveat above.
+>
+> **2026-09-21: they also land in `src/`.** Editing one file repeatedly in quick succession got
+> iCloud to save the intermediate states as `AiServiceImpl 2.java` / `3.java` / `4.java`, and a
+> whole `target 2/` directory. Java copies fail loudly ("类重复"); **static-asset copies do not** —
+> `static/assets/zhiqu-api 2.js` is packaged into the JAR and served as a stale copy of the app
+> shell, and an HTML copy brings an old cache token with it. `SourceTreeCleanlinessTest` now fails
+> the build on any `* <n>.<ext>` under `src/`. To clear them:
+> `find . -name '* [0-9].*' -not -path './.git/*' -delete`
 
 Useful flags when testing locally: `--server.port=18080`,
 `--app.ai.allow-private-provider-url=true` (lets you point a model config at a local mock),
@@ -108,6 +116,39 @@ does nothing produces a green shaped exactly like a judgment that is too weak to
 So assert on the perturbed source before running it (`grep -c` the removed condition and refuse
 to continue unless it is 0), and never chain `grep -c` with `&&` — it exits 1 on a count of zero
 and will break the chain you meant to guard.
+
+**前端行为判据跑在 node 上，而不是在 Java 里重写一份。** `CodeHighlightEscapeTest` 调用
+`src/test/resources/js/highlight-check.js`，后者直接加载 `assets/zhiqu-api.js` 里发布的那份
+实现来喂对抗性输入。重写一份 Java 版就成了「测试一个副本」—— 副本绿了不代表线上那份对，
+而且两边迟早分叉。没有 node 的机器上它**显式失败并说明原因**，node 装在非标准位置用 `-Dzhiqu.nodePath=<绝对路径>` 指过去；确实没有 node 又要构建，
+要跳过得写明 `-Dzhiqu.skipNodeTests=true`，和 Docker 那批的 `-Dzhiqu.skipDockerTests=true`
+同一个约定。
+
+**扰动还会推翻你写判据时的那个理由。** 2026-09-21：着色器的注释原本写着「先转义再分词会
+漏出标签，那是 XSS 的经典写法」。扰动一跑，那个改动只让「字符串不再被识别」红了，标签
+一个没漏 —— 因为分词器只切分、从不反转义。真正的洞是完全不转义，由另一条判据抓住。
+理由写错了会误导下一个改这段代码的人，所以理由本身也要以扰动结果为准。
+
+**「宁可启动就炸」的守卫，实际上炸在每一次请求里，而且没人接。** `AgentStageExecutor` 是
+`streamChatInternal` 里**每次流式请求现造的**，不是启动期造的。它的 `rejectAmbiguousSlots`
+（两个 runner 抢同一个 `(位置, 动作)` 槽）和 `MultiAgentOrchestratorImpl.materialize` 的幽灵节点
+检查都住在 `beginRun` 之后、跑各相位那个大 `try` 之前的**装配窗口**里。那段窗口原来不设防：
+异常逃到 `streamChat` 最外层的 catch，发一条 SSE error 就完事 —— run 永远停在 RUNNING、
+日志一行没有、前端那条消息永远停在 STREAMING。2026-09-21 撞了一次（`CODE_AGENT` 的 `runAt`
+撞上 `PLAN_EXTRACTOR` 的 `announceAt`），表现是 15 条集成判据一起红、单跑 384 秒、
+整份日志里没有一个字的异常。现在装配窗口单独圈了 try（记日志 + `errorRun` + `failAssistantMessage`），
+由 `StreamAssemblyFailureGuardTest` 盯着结构，`AgentGraphOrderDerivationTest.真实runner之间不得抢同一个槽位`
+把槽位冲突提到编译期这一侧 —— 后者 1 秒给答案，并点名是哪两个 runner。
+
+**加 runner 时记住：不覆写 `announceAt`/`commitAt` 就等于 `runAt`，一个 runner 默认占三个槽。**
+挑位置要把这三个都算上。`RealRunOrder` 现在读全三个位置；它原来只读 `runAt`，所以那个真实存在的
+冲突在判据眼里根本不存在 —— 一个自称用「真实声明的位置」的 fixture，只读了三分之一。
+
+**对比「是不是我改坏的」时，要控制住位置这个变量。** 用 `git worktree` 开基线检出很方便，但
+worktree 建在 `/private/tmp` 下、而工作区在 iCloud 同步的 `~/Desktop` 下 —— 两次跑同时变了
+代码和位置。本轮就这样得出过一个「结论正确但推理不成立」的判断（基线 17.7 秒 vs 改动 384 秒，
+其中有 330 秒其实是 iCloud 的类路径扫描卡顿）。正确做法是把改动**复制到同一个非 iCloud 位置**
+再比，一次只动一个变量。
 
 ## Architecture
 
@@ -182,7 +223,7 @@ and will break the chain you meant to guard.
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260921-tokens-and-dates`.
+  old bundle. Current token: `20260921-workspace-and-highlight`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -312,6 +353,51 @@ is the reason for the *current* status (nulled when the plan is not rejected) an
 only `APPROVED`, `reviews` appears only in `adminDetail`, and `rejection_reason` had **zero
 readers**. Admins wrote careful explanations that went nowhere, and submitters were never told
 their plan had been rejected at all.
+
+### 代码工作区（coding agent 的磁盘面，默认关闭）
+
+AI 助手原本只是个「work agent」（排计划、写 Wiki、做检索）。工作区是给它加的读代码能力
+——「工程即文件夹」：**不建 `code_project` 表**，没有归属检查、没有乐观锁、没有迁移，
+版本由用户自己的 git 管。
+
+**默认是关闭的，而这个默认值本身就是安全边界**（`WorkspaceModeTest.默认必须是关闭的` 钉着它）。
+四个档位 `OFF / READ / WRITE / EXEC`（`WorkspaceMode`），`parse()` 对任何认不出来的配置值
+**回落到 OFF 而不是就近取一档** —— 把 `mode: ON` 写错成一个不存在的值时，该得到「没开」，
+不是「开了个小的」。目前只有 READ 真正实现。
+
+生效还要三个前提**同时**成立，缺一就整体降级到 OFF（`WorkspaceAccess`）：
+
+1. `app.workspace.mode` 不是 OFF
+2. `app.workspace.root` 指向一个存在的目录
+3. `server.address` 是回环地址
+
+第三条是硬前置：`application.yml` 里只有 `server.port`，服务默认监听所有网卡
+（实测 `TCP *:18080 (LISTEN)`）。一个能读你硬盘的服务不能是这个状态。注意
+`isLoopback(null)` 与 `isLoopback("")` 都返回 **false** —— 「没配」是最常见的配置，
+它必须落在拒绝的一侧，否则默认部署就是敞开的。`configuredMode()` 与 `effectiveMode()`
+分开报告，前端才能说清「你配了 EXEC，但因为没绑回环所以实际是 OFF」。
+
+`WorkspaceGuard` 在路径上有六道判定，每道都有各自不同的拒绝理由（`Reason`）：
+normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文件、扩展名白名单、
+单文件大小上限、目录条目数上限。**扩展名白名单不是为了安全**（`startsWith` 才是），
+是为了别把 `.env` / `.pem` / `id_rsa` 喂进模型上下文；所以列目录时就把不可读的文件
+标成不可读，而不是等用户点开才拒绝。
+
+四个 HTTP 端点 `/api/workspace/{status,files,file,search}` **全部要管理员**（`WorkspaceControllerGuardTest` 扫的是「每个 `@*Mapping` 都要调 `requireAdmin()`」，所以新加端点会被自动纳入，不用改判据）。理由不是权限模型，
+是这个功能读的是**服务器**的磁盘 —— 多用户部署里，普通用户能读的应该是他自己的东西，
+而工作区里没有一个字节属于他。
+
+搜索是**字面量匹配、不接受正则**：这个入口的调用方是模型，而 `(a+)+b` 这类正则在不匹配时
+会灾难性回溯，把我们自己的 JVM 跑满几分钟 —— 模型没有恶意也会写出来。三道上限各挡一件事：
+`maxSearchFiles` 挡「根目录指错了」、`maxSearchHits` 挡搜 `the` 把模型上下文塞满、
+`maxSearchLineChars` 挡压缩过的 .js 单行几十万字符。命中截断时**必须说出来**——
+模型把「80 条」当成「一共 80 条」就会给出错误结论。
+
+`CODE_AGENT` 节点的门收在 `AgentPlanDecision.codeIntent(message)`，与既有的
+`wikiToolIntent` 并列 —— 不要在实现里另起一个判定，那正是 `RETIRED_DECIDERS` 在防的事。
+这个门**会过触发**（「今天写了三小时代码，有点累」同时命中「写」和「代码」），这是
+故意的：过触发的代价是白读几个文件，漏触发的代价是用户问代码问题却得到一个没看过代码的
+回答。`CodeAgentGateTest.已知会过触发的那一类` 把它钉成了明示的取舍，不是待修的 bug。
 
 ### RAG (optional)
 

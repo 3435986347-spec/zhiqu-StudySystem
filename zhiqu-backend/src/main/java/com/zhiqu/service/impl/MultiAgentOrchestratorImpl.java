@@ -89,6 +89,12 @@ public class MultiAgentOrchestratorImpl implements MultiAgentOrchestrator {
         if (decision.needsWikiTool()) {
             specs.add(new NodeSpec("WIKI_TOOL_AGENT", "WIKI_TOOL_LOOP", Map.of(), "Read and edit Wiki via tools"));
         }
+        // 代码工作区。门在 AgentPlanDecision.needsCodeAgent 里，它已经把「工作区是否真的可读」
+        // 算进去了 —— 工作区没开时这个节点根本不会被造出来，而不是造出来再跳过。
+        if (decision.needsCodeAgent()) {
+            specs.add(new NodeSpec("CODE_AGENT", "CODE_WORKSPACE_LOOP", Map.of(),
+                    "Read and reason about code in the workspace"));
+        }
         if (decision.needsPlanner()) {
             specs.add(new NodeSpec("PLANNER", "PLAN_DRAFT", Map.of(), "Draft plan"));
         }

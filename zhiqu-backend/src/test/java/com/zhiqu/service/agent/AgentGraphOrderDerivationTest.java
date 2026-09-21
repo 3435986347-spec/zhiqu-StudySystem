@@ -62,6 +62,7 @@ class AgentGraphOrderDerivationTest {
                 true,   // needsMemoryDraft
                 true,   // needsPlanExtractor
                 true,   // needsWikiTool
+                true,   // needsCodeAgent
                 true,   // needsAnswerVerifier
                 true);  // needsSummary
     }
@@ -197,7 +198,10 @@ class AgentGraphOrderDerivationTest {
         // 兜底 RETRIEVER：只勾资料源时才出现，所以要单独造一份判定
         RecordingGraph fallback = new RecordingGraph();
         List<AiAgentTask> only = plan(new AgentPlanDecision("AUTO",
-                true, false, false, false, false, false, false, false, false, false, true, false), fallback);
+                true, false, false, false, false, false, false, false, false,
+                false,   // needsWikiTool
+                false,   // needsCodeAgent
+                true, false), fallback);
         assertNull(fallback.group(idOf(only, "RETRIEVER")),
                 "RetrieverRunner 没有并发组 —— 它是合并点。手写的 \"research\" 声称了一个不存在的并发");
     }
@@ -270,5 +274,72 @@ class AgentGraphOrderDerivationTest {
         @Override public void errorTask(AiAgentTask task, Exception error) { }
         @Override public List<AiAgentTask> listTasks(Long runId) { return List.of(); }
         @Override public List<Map<String, Object>> listTaskRows(Long runId) { return List.of(); }
+    }
+
+    /**
+     * 真实那批 runner 必须能构造出一个执行器 —— 不许有两个抢同一个槽位。
+     *
+     * <h2>这条判据是被一次 384 秒的挂起逼出来的</h2>
+     *
+     * <p>{@code AgentStageExecutor} 的构造函数里有 {@code rejectAmbiguousSlots}，
+     * 注释写着「宁可启动就炸」。它确实会抛 —— 但执行器是<b>每次流式请求</b>在异步线程上
+     * 构造的，抛出去被 {@code CompletableFuture} 静默吞掉。于是：
+     *
+     * <ul>
+     *   <li>run 停在 RUNNING，永远不结束</li>
+     *   <li>模型一次都没被调用</li>
+     *   <li>日志里一行异常都没有</li>
+     * </ul>
+     *
+     * <p>2026-09-21 新加 {@code CODE_AGENT} 时把 {@code runAt} 放在 PRE_STREAM#45，
+     * 而 {@code PLAN_EXTRACTOR} 的 {@code announceAt} 已经在那儿（{@code announceAt} 与
+     * {@code commitAt} 不覆写就等于 {@code runAt}，所以一个 runner 默认占三个动作槽）。
+     * 表现是 15 条集成判据一起红、跑一次 384 秒、没有任何错误信息 ——
+     * 一个「启动期硬失败」的守卫，实际上只会让人看到挂起。
+     *
+     * <p>把它提到编译期这一侧：这条判据 1 秒就给出答案，并且直接点名是哪两个 runner。
+     *
+     * <p>注意它依赖 {@link RealRunOrder} 读全 {@code runAt}/{@code announceAt}/{@code commitAt}
+     * 三个位置。原来只读 {@code runAt}，所以这个冲突在判据眼里根本不存在。
+     *
+     * <p>扰动：把任意一个 runner 的 {@code runAt} 改到另一个已被占用的位置 → 本条红。
+     */
+    @Test
+    void 真实runner之间不得抢同一个槽位() {
+        List<RealRunOrder.Declared> declared = RealRunOrder.declarations();
+
+        // 下限：解析空了的话，「没有冲突」和「什么都没看到」形状一样。
+        assertTrue(declared.size() >= 14,
+                "只解析出 " + declared.size() + " 个 runner —— 解析坏了，这条判据什么都没看到");
+
+        // 先自己摊开「谁占了哪三个槽」再去构造执行器 —— 顺序是有意的。
+        // 反过来的话，执行器的守卫会先抛，红出来是一条 ERROR（异常），
+        // 而不是一条带着「哪两个 runner、哪个槽」的 FAILURE。同样是红，可读性差一截。
+        Map<String, String> claimed = new LinkedHashMap<>();
+        List<String> collisions = new ArrayList<>();
+        for (RealRunOrder.Declared item : declared) {
+            AgentPosition run = AgentPosition.at(item.phase(), item.order());
+            record Slot(String moment, AgentPosition at) { }
+            for (Slot slot : List.of(
+                    new Slot("ANNOUNCE", item.announce() != null ? item.announce() : run),
+                    new Slot("RUN", run),
+                    new Slot("COMMIT", item.commit() != null ? item.commit() : run))) {
+                String key = slot.at() + "/" + slot.moment();
+                String previous = claimed.putIfAbsent(key, item.agentType());
+                if (previous != null && !previous.equals(item.agentType())) {
+                    collisions.add(key + " 被 " + previous + " 和 " + item.agentType() + " 同时占用");
+                }
+            }
+        }
+        assertEquals(List.of(), collisions,
+                "两个 runner 抢同一个 (位置, 动作) 槽。注意 announceAt/commitAt 不覆写时等于 runAt —— "
+                        + "一个 runner 默认占三个槽，挑新位置时要把这三个都算上。"
+                        + "线上的后果是整轮静默挂起：异常在流式的异步线程上抛，没人接");
+
+        // 兜底：真执行器的 rejectAmbiguousSlots 是生产代码里的那一份判定。
+        // 上面那段是它的复述，复述可能和它分叉 —— 所以最后还是要让真的那份跑一遍。
+        List<AgentStageExecutor.RunSlot> slots = RealRunOrder.slots();
+        assertEquals(declared.size(), slots.size(),
+                "每个 runner 都该在 runOrder() 里出现一次");
     }
 }

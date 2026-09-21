@@ -70,6 +70,11 @@ class FrontendTokenAndDateTest {
                 if (name.contains("/js/") || name.contains("/css/")) {
                     continue;
                 }
+                // assets/vendor/ 是原样引入的第三方（katex 等）。它里面写死的字体栈不归我们改，
+                // 拿「我们的代码必须如何」的判据去扫它只会得到永远修不掉的红。
+                if (name.contains("/vendor/")) {
+                    continue;
+                }
                 if (name.endsWith(".html") || name.endsWith(".js") || name.endsWith(".css")) {
                     files.add(f);
                 }
@@ -170,5 +175,120 @@ class FrontendTokenAndDateTest {
         assertTrue(api.contains("window.zqApi = { api: api, reload: route, today: today, localDate: localDate };"),
                 "localDate/today 必须挂在 window.zqApi 上 —— dashboard 的番茄钟等内联脚本要算「今天」，"
                         + "不暴露的话它们只能各写一个 toISOString，而那正是刚修掉的那个 bug");
+    }
+
+    /**
+     * 等宽字体栈只允许出现在 {@code --zq-fontM} 的那一处定义里。
+     *
+     * <p>这一条钉的是<b>同一事实的多份拷贝</b>，而不是某一个具体的坏显示。
+     * 2026-09-21 修「Wiki 源码模式字体很怪」时，同一个字体栈在活文件里有三份：
+     *
+     * <ul>
+     *   <li>{@code .zq-mono} —— 仓库当时真正的等宽约定</li>
+     *   <li>{@code routines.html} 的内联样式</li>
+     *   <li>{@code .zq-artifact-json} —— 这一处是收尾时才扫出来的，前两处都修完了它还在</li>
+     * </ul>
+     *
+     * <p>三份都只有拉丁字形、没有中文字形，于是中文一律回落到系统默认字体，与页面正文
+     * （{@code Noto Serif SC}）两样。改一份不改另外两份，症状就只消失一部分 —— 这正是
+     * 「源码模式字体很怪」拖了那么久的原因：每次都像修好了。
+     *
+     * <p>现在唯一的定义在 {@code --zq-fontM}，它在等宽字体后面接了中文衬线字体。
+     * 字体回退是<b>逐字符</b>的，所以拉丁字母仍是等宽（Markdown 该对齐的地方照样对齐），
+     * 中文则落到与正文同一族。
+     *
+     * <p>扰动：把 {@code .zq-artifact-json} 的 {@code var(--zq-fontM)} 改回写死的字体栈 → 本条红。
+     */
+    @Test
+    void 等宽字体栈只许定义一次() throws IOException {
+        List<String> hardcoded = new ArrayList<>();
+        int scanned = 0;
+        for (Path file : frontendFiles()) {
+            scanned++;
+            String src = SourceText.stripComments(Files.readString(file, StandardCharsets.UTF_8))
+                    .replaceAll("(?s)<!--.*?-->", " ");
+            Matcher m = Pattern.compile("JetBrains Mono|Consolas|monospace").matcher(src);
+            while (m.find()) {
+                // 唯一允许的那一处：--zq-fontM 自己的定义。
+                int lineStart = src.lastIndexOf('\n', m.start()) + 1;
+                if (src.startsWith("  --zq-fontM:", lineStart) || src.regionMatches(lineStart, "--zq-fontM:", 0, 11)) {
+                    continue;
+                }
+                int line = (int) src.substring(0, m.start()).chars().filter(c -> c == '\n').count() + 1;
+                hardcoded.add(STATIC_DIR.relativize(file) + ":" + line + " " + m.group());
+            }
+        }
+        // 下限：扫空和扫干净长得一样。14 个页面 + assets 至少这么多个文件。
+        assertTrue(scanned >= 14, "只扫了 " + scanned + " 个前端文件 —— 枚举多半坏了");
+
+        assertEquals(List.of(), hardcoded,
+                "等宽字体栈只允许在 --zq-fontM 里定义一次，这些地方又写死了一份。"
+                        + "写死的那几份都没有中文字形，中文会回落到系统默认字体，与页面正文不一致；"
+                        + "而且改一处不改其余处，症状只会消失一部分 —— 用 var(--zq-fontM)");
+    }
+
+    /**
+     * {@code hidden} 属性必须真的能藏住东西。
+     *
+     * <h2>为什么这需要一条 CSS 规则来兜底</h2>
+     *
+     * <p>{@code hidden} 本身只是 UA 样式表里的 {@code [hidden]{display:none}}，优先级 (0,1,0)。
+     * 作者样式表里<b>任何一个设了 display 的类选择器</b>都能压过它 —— 本仓库的
+     * {@code .zq-btn-ghost{display:inline-flex}} 就是其中之一。于是
+     * {@code <button class="zq-btn-ghost" hidden>} 完全可见，而 JS 里读 {@code el.hidden}
+     * 得到 {@code true}：代码、日志、断点全都说藏起来了，只有屏幕上还显示着。
+     *
+     * <p>2026-09-21 实地撞到两次，一次是内联样式压掉（提醒渠道的三个分组），
+     * 一次是类选择器压掉（代码工作区的「上一层」「返回目录」两个按钮，
+     * 浏览器里实测 {@code hidden=true} 而 {@code getComputedStyle().display='flex'}）。
+     * <b>两次都是截图发现的，代码审查一次都没发现。</b>
+     *
+     * <p>根治办法是在 {@code zhiqu-ui.css} 里写一条
+     * {@code [hidden]{display:none !important}}。它一旦被删掉，全站每个带 {@code hidden}
+     * 的 {@code .zq-btn-ghost} / {@code .zq-ai-attachments} 会一起复发，而且没有任何报错 ——
+     * 所以这条规则的存在本身就是判据要钉的东西。
+     *
+     * <p>扰动：删掉那条 CSS 规则 → 本条红；
+     * 给任意 {@code hidden} 元素加上 {@code style="display:flex !important"} → 本条也红。
+     */
+    @Test
+    void hidden必须真的能藏住() throws IOException {
+        String css = Files.readString(CSS, StandardCharsets.UTF_8);
+
+        // 一、兜底规则必须在。这是全站所有 hidden 用法的地基。
+        assertTrue(Pattern.compile("\\[hidden\\]\\s*\\{[^}]*display\\s*:\\s*none\\s*!important")
+                        .matcher(css).find(),
+                "zhiqu-ui.css 里必须有 [hidden]{display:none !important}。没有它，"
+                        + "任何设了 display 的类（.zq-btn-ghost 就是）都会让 hidden 失效 —— "
+                        + "元素在屏幕上，而 JS 读 el.hidden 是 true，查起来极难");
+
+        // 二、唯一还能打赢 !important 的，是同样带 !important 的内联 display。
+        List<String> defeats = new ArrayList<>();
+        int tagsScanned = 0;
+        for (Path file : frontendFiles()) {
+            if (!file.toString().endsWith(".html")) {
+                continue;
+            }
+            String src = Files.readString(file, StandardCharsets.UTF_8).replaceAll("(?s)<!--.*?-->", " ");
+            Matcher tag = Pattern.compile("<[a-zA-Z][^>]*>").matcher(src);
+            while (tag.find()) {
+                tagsScanned++;
+                String open = tag.group();
+                if (!Pattern.compile("[\\s\"']hidden[\\s>=]").matcher(open).find()) {
+                    continue;
+                }
+                Matcher style = Pattern.compile("style\\s*=\\s*\"([^\"]*)\"").matcher(open);
+                if (style.find() && Pattern.compile("display\\s*:[^;]*!important").matcher(style.group(1)).find()) {
+                    int line = (int) src.substring(0, tag.start()).chars().filter(c -> c == '\n').count() + 1;
+                    defeats.add(STATIC_DIR.relativize(file) + ":" + line);
+                }
+            }
+        }
+        // 下限：扫空和扫干净长得一样。
+        assertTrue(tagsScanned > 300, "只扫到 " + tagsScanned + " 个标签 —— 解析多半坏了");
+
+        assertEquals(List.of(), defeats,
+                "这些 hidden 元素的内联 display 带了 !important，会打赢兜底规则 —— "
+                        + "结果又是「JS 说藏了、屏幕上还在」。内联样式里不要给 display 加 !important");
     }
 }
