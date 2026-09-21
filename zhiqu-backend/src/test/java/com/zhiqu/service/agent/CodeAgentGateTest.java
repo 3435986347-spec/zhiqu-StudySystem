@@ -171,4 +171,112 @@ class CodeAgentGateTest {
                         + "拿到「未知的工作区工具」，然后多半不会如实转述而是自己编一个结果。"
                         + "声明：" + declared + "，实现：" + handled);
     }
+
+    /**
+     * 写这道门比读那道窄，而且是刻意的。
+     *
+     * <p>读过触发的代价是白读几个文件；写过触发的代价是弹出一个用户没要的确认框，
+     * 而确认框本身就会诱导人去点。所以「看看这段代码」只给读，「帮我改一下」才给写。
+     */
+    @Test
+    void 写意图要同时命中代码与写动作() {
+        assertTrue(AgentPlanDecision.codeWriteIntent("帮我改一下 Main.java 里那个方法"));
+        assertTrue(AgentPlanDecision.codeWriteIntent("这段代码重构一下"));
+        assertTrue(AgentPlanDecision.codeWriteIntent("修复 Calculator.java 的除零问题"));
+
+        assertFalse(AgentPlanDecision.codeWriteIntent("帮我看看这段代码为什么报错"),
+                "只是问原因 —— 给写工具就会诱导它产出一份用户没要的草稿");
+        assertFalse(AgentPlanDecision.codeWriteIntent("审阅一下我的项目结构"));
+        assertFalse(AgentPlanDecision.codeWriteIntent("帮我改一下复习计划"),
+                "「改」命中了写动作，但整句与代码无关，不该开写工具");
+        assertFalse(AgentPlanDecision.codeWriteIntent(""));
+        assertFalse(AgentPlanDecision.codeWriteIntent(null));
+    }
+
+    /** 读意图成立、写意图不成立时，写工具<b>连声明都不能有</b>。 */
+    @Test
+    void 没有写意图时不得下发写工具() throws IOException {
+        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+
+        assertTrue(code.contains("buildWorkspaceTools(canWrite)"),
+                "工具集必须按写意图分档下发 —— 不下发，模型就不会尝试，也不会承诺自己改了文件");
+        assertTrue(code.contains("AgentPlanDecision.codeWriteIntent("),
+                "写意图必须问 AgentPlanDecision 那道唯一的门");
+        assertFalse(code.contains("private boolean codeWriteIntent") || code.contains("looksCodeWriteIntent"),
+                "不得在实现侧另写一套写意图判定 —— 两处各判一次迟早分叉");
+
+        // write_workspace_file 的声明必须在 canWrite 分支里，不能无条件加进工具集
+        int declaration = code.indexOf("functionTool(\"write_workspace_file\"");
+        assertTrue(declaration > 0, "找不到写工具的声明 —— 判据的锚点没了");
+        int gate = code.indexOf("if (canWrite) {");
+        assertTrue(gate > 0 && gate < declaration,
+                "写工具的声明必须在 if (canWrite) 里面。无条件声明的话，"
+                        + "用户只是问「这段代码为什么报错」，模型也会拿到改文件的能力");
+    }
+
+    /** 磁盘那一侧也要问档位：写意图成立但工作区是只读的，同样不能下发写工具。 */
+    @Test
+    void 只读档下即使有写意图也不下发写工具() throws IOException {
+        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        // 只看 canWrite 那一条语句本身。用 code.contains("allowsWrite()") 这种全文匹配的话，
+        // 这两个字符串在文件里到处都是，判据永远绿 —— 那是一条不可能红的判据。
+        int at = code.indexOf("boolean canWrite =");
+        assertTrue(at > 0, "找不到 canWrite 的赋值 —— 判据的锚点没了，它现在什么都没看到");
+        int end = code.indexOf(';', at);
+        String statement = code.substring(at, end + 1);
+
+        assertTrue(statement.contains("allowsWrite()"),
+                "canWrite 必须要求工作区本身允许写。少了这一条，只读工作区里模型照样会产出草稿，"
+                        + "用户点确认才发现写不了。实际语句：" + statement);
+        assertTrue(statement.contains("codeWriteIntent("),
+                "canWrite 必须要求这句话确实是写意图。实际语句：" + statement);
+    }
+
+    /**
+     * 读工作区也要管理员 —— 否则 {@code /api/workspace/**} 上那道管理员限制是装饰。
+     *
+     * <h2>两条路通向同一批文件</h2>
+     *
+     * <p>工作区的内容有两个出口：管理员限定的 HTTP 端点，和 AI 助手的 code agent。
+     * 后者一度只检查「工作区生效档位允许读」，不检查用户是谁。于是在多用户部署上，
+     * 任何登录用户只要对助手说一句「看看 src/main/resources/application.yml」，
+     * 就能拿到服务器磁盘上的内容 —— 而 {@code WorkspaceController} 上那道
+     * {@code requireAdmin()} 一点作用都没起。
+     *
+     * <p>工作区读的是<b>服务器</b>的磁盘，不像 Notebook 那样按 userId 分账，
+     * 所以「登录了」远远不够。
+     *
+     * <p>判定必须由 {@code AdminGuard} 给出，不许另写 —— {@code AdminGuard.isAdmin}
+     * 本身就是从 {@code requireAdmin} 派生的，为的是两者不可能分叉。
+     *
+     * <p>扰动：把 {@code workspaceReadableBy} 里的 {@code adminGuard.isAdmin} 去掉 → 本条红。
+     */
+    @Test
+    void 读工作区必须同时要求管理员() throws IOException {
+        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+
+        int at = code.indexOf("private boolean workspaceReadableBy(");
+        assertTrue(at > 0, "找不到 workspaceReadableBy —— 判据的锚点没了，它现在什么都没看到");
+        int end = code.indexOf('}', code.indexOf('{', at));
+        String body = code.substring(at, end);
+
+        assertTrue(body.contains("adminGuard.isAdmin("),
+                "读工作区必须要求管理员。少了这一条，普通用户对助手说一句「看看 xxx」"
+                        + "就绕过了 /api/workspace/** 上的管理员限制。实际：" + body);
+        assertTrue(body.contains("allowsRead()"),
+                "也必须要求生效档位允许读。实际：" + body);
+
+        // 两个入口都要走这一个判定，不许其中一个直接问档位
+        assertEquals(1, countOccurrences(code, "effectiveMode().allowsRead()"),
+                "「工作区能不能读」只允许有一处判定（workspaceReadableBy）。"
+                        + "多出来的那一处迟早只改一边 —— 本仓库反复在消灭的就是这个物种");
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int n = 0;
+        for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length())) {
+            n++;
+        }
+        return n;
+    }
 }

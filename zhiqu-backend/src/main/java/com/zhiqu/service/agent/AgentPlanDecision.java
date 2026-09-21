@@ -259,6 +259,32 @@ public record AgentPlanDecision(
                 && WIKI_WRITE_WORDS.stream().anyMatch(text::contains);
     }
 
+/**
+     * 写代码这一侧的动作词。比 {@link #CODE_ACTION_WORDS} 窄得多，而且是刻意的。
+     *
+     * <p>读那道门宁可过触发（多读几个文件的代价很小），写这道门不行：
+     * 写工具一旦下发给模型，它就可能产出一份「我帮你改好了」的草稿，
+     * 而用户问的其实只是「这段代码为什么报错」。草稿虽然不落盘，
+     * 但弹出来的确认框本身就是干扰，而且会诱导用户点确认。
+     */
+    private static final List<String> CODE_WRITE_WORDS = List.of(
+            "改一下", "改改", "帮我改", "修改", "修一下", "修复", "重构", "改写", "补全",
+            "写入", "落盘", "保存到", "创建文件", "新建文件", "加一个方法", "加个方法", "实现一下",
+            "fix", "refactor", "rewrite", "implement");
+
+    /**
+     * 「这句话要求<b>改</b>工作区里的代码吗」—— 唯一定义，工具下发与判据共用。
+     *
+     * <p>要求同时命中代码提及词与写动作词，和 {@link #wikiWriteIntent} 同一个形状。
+     * 「最小权限」：只有明确的写意图才把 {@code write_workspace_file} 下发给模型 ——
+     * 不下发，它就不会尝试，也不会承诺自己改了文件。
+     */
+    public static boolean codeWriteIntent(String message) {
+        String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+        return CODE_MENTION_WORDS.stream().anyMatch(text::contains)
+                && CODE_WRITE_WORDS.stream().anyMatch(text::contains);
+    }
+
     private static boolean containsAny(String message, List<String> words) {
         String text = message == null ? "" : message.toLowerCase(Locale.ROOT);
         return words.stream().anyMatch(text::contains);

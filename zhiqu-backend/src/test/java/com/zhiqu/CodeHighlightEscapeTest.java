@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -46,7 +45,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class CodeHighlightEscapeTest {
 
-    private static final Path API_JS = Path.of("src/main/resources/static/assets/zhiqu-api.js");
     private static final Path HARNESS = Path.of("src/test/resources/js/highlight-check.js");
 
     /**
@@ -76,95 +74,35 @@ class CodeHighlightEscapeTest {
                         + "现在的函数体：" + body);
     }
 
-    /** 行为判据：用对抗性输入实跑发布的那份实现。 */
+    /** 行为判据：用对抗性输入实跑发布的那份实现。跑 node 的细节见 {@link NodeRunner}。 */
     @Test
     void 着色器的行为判据必须全绿() throws Exception {
-        assertTrue(Files.exists(HARNESS), "行为判据脚本不见了：" + HARNESS.toAbsolutePath());
-
-        String node = findNode();
-        if (node == null) {
-            assertTrue(Boolean.getBoolean("zhiqu.skipNodeTests"),
-                    "找不到 node，代码块着色器的行为判据没有跑 —— 这不是通过。"
-                            + "装了 node 再跑；装在非标准位置就用 -Dzhiqu.nodePath=/绝对/路径 指过来；"
-                            + "确实没有 node 又要构建，用 -Dzhiqu.skipNodeTests=true 把跳过写明白。"
-                            + "手动跑：node " + HARNESS + " " + API_JS);
-            return;
-        }
-
-        Process p = new ProcessBuilder(node, HARNESS.toString(), API_JS.toString())
-                .redirectErrorStream(true)
-                .start();
-        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(p.waitFor(60, TimeUnit.SECONDS), "行为判据跑超时了，输出：" + out);
-
-        // 下限：脚本必须真的跑完并自报全绿。退出码 0 单独看是不够的 ——
-        // 脚本要是在加载阶段就挂了、或者一条判据都没跑，也可能拿到 0。
-        assertTrue(out.contains("ALL-GREEN"),
-                "代码块着色器的行为判据没有全绿。完整输出：\n" + out);
-        assertEquals(0, p.exitValue(), "行为判据退出码非 0。完整输出：\n" + out);
+        NodeRunner.run(HARNESS, NodeRunner.API_JS);
     }
 
     /** 从 zhiqu-api.js 里抠出 highlightCode 的函数体。 */
     private static String highlightCodeBody() throws Exception {
-        String src = Files.readString(API_JS, StandardCharsets.UTF_8);
+        String src = Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8);
         int start = src.indexOf("function highlightCode(");
         assertTrue(start >= 0, "zhiqu-api.js 里找不到 highlightCode —— 着色器被删了或改名了");
         int open = src.indexOf('{', start);
         int depth = 0;
         for (int i = open; i < src.length(); i++) {
             char c = src.charAt(i);
-            if (c == '{') depth++;
-            else if (c == '}' && --depth == 0) return src.substring(open, i + 1);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}' && --depth == 0) {
+                return src.substring(open, i + 1);
+            }
         }
         throw new AssertionError("highlightCode 的花括号没有配平，抠不出函数体");
     }
 
     private static int countOccurrences(String haystack, String needle) {
         int n = 0;
-        for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length())) n++;
+        for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length())) {
+            n++;
+        }
         return n;
-    }
-
-    /**
-     * 找到 node。
-     *
-     * <p>先走 PATH（{@code ProcessBuilder} 自己会查），这对绝大多数命令行构建就够了。
-     * 再试几个常见安装位置，是给 PATH 被裁剪过的场景兜底 —— IDE 里跑测试时
-     * 拿到的往往是一份很小的 PATH，跟终端里的不是一回事。
-     *
-     * <p><b>不写死某一台机器上的路径。</b>第一版列的是 homebrew 的
-     * {@code /opt/homebrew/bin/node}，而本机的 node 在 {@code ~/.local/node/bin} ——
-     * 三个候选全落空，实际只有 PATH 那一条在起作用，清单纯属摆设。
-     * 装在别处的话用 {@code -Dzhiqu.nodePath=/绝对/路径} 指过来。
-     */
-    private static String findNode() {
-        String configured = System.getProperty("zhiqu.nodePath");
-        if (configured != null && !configured.isBlank()) {
-            return runs(configured) ? configured : null;
-        }
-        if (runs("node")) {
-            return "node";
-        }
-        String home = System.getProperty("user.home", "");
-        for (String candidate : new String[]{
-                home + "/.local/node/bin/node",
-                home + "/.nvm/versions/node/current/bin/node",
-                "/opt/homebrew/bin/node",
-                "/usr/local/bin/node",
-                "/usr/bin/node"}) {
-            if (runs(candidate)) {
-                return candidate;
-            }
-        }
-        return null;
-    }
-
-    private static boolean runs(String command) {
-        try {
-            Process p = new ProcessBuilder(command, "--version").redirectErrorStream(true).start();
-            return p.waitFor(10, TimeUnit.SECONDS) && p.exitValue() == 0;
-        } catch (Exception e) {
-            return false;   // 这个位置上没有 node，试下一个
-        }
     }
 }

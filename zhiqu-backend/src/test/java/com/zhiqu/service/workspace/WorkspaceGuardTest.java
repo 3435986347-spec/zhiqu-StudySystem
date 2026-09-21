@@ -168,4 +168,56 @@ class WorkspaceGuardTest {
                 guard.resolveDirectory(root.getParent().resolve("outside-dir").toString()).reason());
         assertFalse(guard.resolveDirectory("src/nope").ok());
     }
+
+    /**
+     * 工作区里的<b>目录</b>软链指向外面时，必须挡住。
+     *
+     * <h2>为什么「最后一段不是软链」不够</h2>
+     *
+     * <p>{@code normalize()} 是纯字符串运算，<b>不解析符号链接</b>。所以
+     * {@code root/docs -> /别处} 存在时，{@code root.resolve("docs/secret.md").normalize()}
+     * 得到的仍是 {@code root/docs/secret.md} —— {@code startsWith(root)} 当然通过，
+     * 而 {@code Files.isSymbolicLink} 看的是最后那一段（{@code secret.md}，一个真文件），
+     * 也通过。于是整条守卫被一个中间目录绕过去了。
+     *
+     * <p>这不是个假想场景：{@code node_modules/.bin}、{@code docs -> ../shared-docs}
+     * 这类目录软链在真实项目里很常见，用户根本不会意识到自己指定的「一个工作目录」
+     * 因此漏了出去。用户选文件范围时明确选的是「指定一个工作目录」。
+     *
+     * <p>正确做法是 {@code toRealPath()}：它解析掉路径上<b>每一段</b>的软链，
+     * 再拿结果和同样 realpath 过的 root 比。root 自己也要 realpath ——
+     * 否则 macOS 上 {@code /tmp} 实际是 {@code /private/tmp}，比较必然失败。
+     */
+    @Test
+    void 目录软链不得把工作区漏出去(@TempDir Path tmp) throws IOException {
+        Path root = Files.createDirectory(tmp.resolve("ws"));
+        Path outside = Files.createDirectory(tmp.resolve("outside"));
+        Files.writeString(outside.resolve("secret.md"), "工作区外的内容");
+        Files.createSymbolicLink(root.resolve("docs"), outside);
+
+        WorkspaceGuard guard = guardAt(root);
+        WorkspaceGuard.Resolution r = guard.resolveReadable("docs/secret.md");
+
+        assertFalse(r.ok(),
+                "经由目录软链读到了工作区外的文件。normalize() 不解析软链，"
+                        + "而 isSymbolicLink 只看最后一段 —— 中间目录是软链时整条守卫被绕过去了");
+        assertEquals(WorkspaceGuard.Reason.OUTSIDE_ROOT, r.reason(),
+                "理由要说清是「超出工作区」，而不是含混的读不到");
+    }
+
+    /** 软链形式的 root 本身要能正常工作（macOS 的 /tmp 就是 /private/tmp 的软链）。 */
+    @Test
+    void root本身是软链时正常文件仍要能读(@TempDir Path tmp) throws IOException {
+        Path real = Files.createDirectory(tmp.resolve("real"));
+        Files.writeString(real.resolve("Main.java"), "class Main {}");
+        Path linkedRoot = Files.createSymbolicLink(tmp.resolve("linked"), real);
+
+        WorkspaceGuard guard = guardAt(linkedRoot);
+        WorkspaceGuard.Resolution r = guard.resolveReadable("Main.java");
+
+        assertTrue(r.ok(),
+                "root 本身是软链是常态（macOS 的 /tmp -> /private/tmp）。"
+                        + "修目录软链那个洞时如果只 realpath 候选路径、不 realpath root，"
+                        + "正常读取会全部失败 —— 那是把洞换成了另一个 bug。实际理由：" + r.reason());
+    }
 }

@@ -2454,6 +2454,7 @@
       ROUTINE_DRAFT: '例行计划草稿',
       WIKI_DRAFT: 'Wiki 草稿',
       MEMORY_DRAFT: '记忆草稿',
+      CODE_DRAFT: '代码改动草稿',
       NOTE_DRAFT: '笔记草稿'
     })[String(type || '').toUpperCase()] || '其他产物';
   }
@@ -2653,6 +2654,157 @@
     return handle;
   }
 
+// ── 代码草稿：AI 改代码的产物，确认之前磁盘一个字节都没动 ─────────────────
+  //
+  // 与计划 / 记忆草稿同一条纪律，但确认的后果更重：写的是用户自己电脑上的源码。
+  // 所以弹窗展示的是 **diff**，不是整份新内容 —— 用户要能一眼看出改了哪几行。
+  var shownCodeModals = Object.create(null);
+
+  function isCodeDraft(artifact) {
+    var status = String(artifact.status || '').toUpperCase();
+    return String(artifact.artifactType || '').toUpperCase() === 'CODE_DRAFT'
+      && (status === 'DRAFT' || status === 'PENDING');
+  }
+
+  function codeDraftFiles(artifact) {
+    var content = artifactContent(artifact);
+    var files = Array.isArray(content.files) ? content.files : [];
+    return files.filter(function (f) { return f && f.path; }).map(function (f) {
+      return { path: String(f.path), content: String(f.content == null ? '' : f.content),
+               baseline: f.baseline, creating: !!f.creating };
+    });
+  }
+
+  /**
+   * 逐行 diff（最长公共子序列）。
+   *
+   * <p>行数乘积超过 LCS_BUDGET 就不算了 —— O(n·m) 的表在大文件上会把浏览器卡死，
+   * 而「卡死」比「没有 diff」糟糕得多。这时退回整份替换视图，并明说退回了。
+   */
+  var LCS_BUDGET = 2000 * 2000;
+
+  function diffLines(oldText, newText) {
+    var a = String(oldText == null ? '' : oldText).split('\n');
+    var b = String(newText == null ? '' : newText).split('\n');
+    if (a.length * b.length > LCS_BUDGET) return null;
+    var m = a.length, n = b.length;
+    var table = [];
+    for (var i = 0; i <= m; i++) table.push(new Int32Array(n + 1));
+    for (var i2 = m - 1; i2 >= 0; i2--) {
+      for (var j2 = n - 1; j2 >= 0; j2--) {
+        table[i2][j2] = a[i2] === b[j2] ? table[i2 + 1][j2 + 1] + 1
+          : Math.max(table[i2 + 1][j2], table[i2][j2 + 1]);
+      }
+    }
+    var out = [], i3 = 0, j3 = 0;
+    while (i3 < m && j3 < n) {
+      if (a[i3] === b[j3]) { out.push([' ', a[i3]]); i3++; j3++; }
+      else if (table[i3 + 1][j3] >= table[i3][j3 + 1]) { out.push(['-', a[i3]]); i3++; }
+      else { out.push(['+', b[j3]]); j3++; }
+    }
+    while (i3 < m) { out.push(['-', a[i3++]]); }
+    while (j3 < n) { out.push(['+', b[j3++]]); }
+    return out;
+  }
+
+  /** 只显示改动附近的行，中间大段未改动的折起来 —— 否则一个长文件里几行改动根本找不到。 */
+  function diffHtml(rows) {
+    if (!rows) {
+      return '<div style="padding:8px;font-size:11.5px;color:var(--zq-text3);">'
+        + '文件太大，没有逐行比对（那会把浏览器卡住）。请确认后自行用 git 查看改动。</div>';
+    }
+    var CONTEXT = 3;
+    var keep = rows.map(function () { return false; });
+    rows.forEach(function (r, i) {
+      if (r[0] === ' ') return;
+      for (var k = Math.max(0, i - CONTEXT); k <= Math.min(rows.length - 1, i + CONTEXT); k++) keep[k] = true;
+    });
+    var html = '', skipped = 0;
+    var color = { '+': 'var(--zq-q2)', '-': 'var(--zq-bad)', ' ': 'var(--zq-text3)' };
+    var bg = { '+': 'color-mix(in srgb, var(--zq-q2) 12%, transparent)',
+               '-': 'color-mix(in srgb, var(--zq-bad) 12%, transparent)', ' ': 'transparent' };
+    rows.forEach(function (r, i) {
+      if (!keep[i]) { skipped++; return; }
+      if (skipped) {
+        html += '<div style="padding:2px 8px;font-size:10.5px;color:var(--zq-text3);">⋯ 省略 '
+          + skipped + ' 行未改动 ⋯</div>';
+        skipped = 0;
+      }
+      html += '<div style="display:flex;background:' + bg[r[0]] + ';">'
+        + '<span style="flex:none;width:16px;text-align:center;color:' + color[r[0]] + ';">' + r[0] + '</span>'
+        + '<span style="flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;color:'
+        + (r[0] === ' ' ? 'var(--zq-text2)' : color[r[0]]) + ';">' + esc(r[1]) + '</span></div>';
+    });
+    if (skipped) {
+      html += '<div style="padding:2px 8px;font-size:10.5px;color:var(--zq-text3);">⋯ 省略 '
+        + skipped + ' 行未改动 ⋯</div>';
+    }
+    return '<div class="zq-mono" style="font-size:11.5px;line-height:1.55;max-height:46vh;overflow:auto;'
+      + 'border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);">'
+      + (html || '<div style="padding:8px;color:var(--zq-text3);">没有差异</div>') + '</div>';
+  }
+
+  function openCodeConfirmModal(artifact) {
+    var files = codeDraftFiles(artifact);
+    if (!files.length) return null;
+    shownCodeModals[artifact.id] = true;
+    var picked = files.map(function () { return true; });
+    var handle = openModal({ title: 'AI 想改这些文件', width: 760, bodyHtml: '<div class="zq-plan-confirm"></div>' });
+    var root = handle.body.querySelector('.zq-plan-confirm');
+    root.innerHTML = '<p class="zq-plan-hint">正在读取文件当前内容…</p>';
+
+    // 先把每个文件<b>现在</b>的内容取回来再比 —— diff 要比的是「磁盘上现在是什么」，
+    // 不是模型当时读到的那份。中间用户可能已经自己改过了，那种情况确认时会被基线挡住，
+    // 但在弹窗里就该让他看见。
+    Promise.all(files.map(function (f) {
+      if (f.creating) return Promise.resolve('');
+      return api.get('/workspace/file?path=' + encodeURIComponent(f.path))
+        .then(function (r) { return r && r.content != null ? r.content : ''; })
+        .catch(function () { return null; });   // 读不到就标出来，而不是当成空文件
+    })).then(function (currents) {
+      function paint() {
+        var html = '<p class="zq-plan-hint">这些改动<strong>还没有写进磁盘</strong>。'
+          + '看过 diff、点「确认写入」之后才会落盘。</p>';
+        files.forEach(function (f, i) {
+          var current = currents[i];
+          var unreadable = current === null;
+          html += '<div class="zq-plan-group" style="margin-bottom:10px;">'
+            + '<label class="zq-plan-row" style="align-items:center;">'
+            + '<input type="checkbox" data-pick="' + i + '"' + (picked[i] ? ' checked' : '') + '>'
+            + '<div class="zq-plan-row-body"><div class="zq-plan-name zq-mono">' + esc(f.path)
+            + (f.creating ? '<span style="margin-left:6px;font-size:10.5px;color:var(--zq-q2);">新建</span>' : '')
+            + (unreadable ? '<span style="margin-left:6px;font-size:10.5px;color:var(--zq-bad);">读不到当前内容</span>' : '')
+            + '</div></div></label>'
+            + (unreadable ? '' : diffHtml(diffLines(current, f.content)))
+            + '</div>';
+        });
+        html += '<div class="zq-plan-actions">'
+          + '<button class="zq-btn" data-code="ignore">忽略</button>'
+          + '<button class="zq-btn zq-btn-primary" data-code="ok">确认写入</button></div>';
+        root.innerHTML = html;
+        $all('[data-pick]', root).forEach(function (box) {
+          box.onchange = function () { picked[Number(box.dataset.pick)] = box.checked; };
+        });
+        $('[data-code="ignore"]', root).onclick = function () {
+          safe('忽略代码草稿', async function () {
+            await api.post('/ai/artifacts/' + artifact.id + '/discard', {});
+            handle.close(); toast('已忽略'); await renderAgentPanels();
+          });
+        };
+        $('[data-code="ok"]', root).onclick = function () {
+          var chosen = files.filter(function (_, i) { return picked[i]; }).map(function (f) { return { path: f.path }; });
+          if (!chosen.length) { toast('请至少勾选一个文件，或点「忽略」'); return; }
+          safe('写入代码改动', async function () {
+            await api.post('/ai/artifacts/' + artifact.id + '/confirm', { files: chosen });
+            handle.close(); toast('已写入 ' + chosen.length + ' 个文件'); await renderAgentPanels();
+          });
+        };
+      }
+      paint();
+    });
+    return handle;
+  }
+
   function openPlanConfirmModal(artifact) {
     var data = planDraftItems(artifact);
     if (!data.tasks.length && !data.routines.length) return null;
@@ -2773,7 +2925,7 @@
         + '<details class="zq-artifact-details"><summary>展开详情</summary>' + artifactDetailsHtml(artifact) + '</details>'
         + (draft ? '<div class="zq-artifact-actions">'
             // 计划类草稿：优先走弹窗（可逐条勾选/修改），点这里可随时切回完整视图重看
-            + ((isPlanDraft(artifact) || isMemoryDraft(artifact))
+            + ((isPlanDraft(artifact) || isMemoryDraft(artifact) || isCodeDraft(artifact))
               ? '<button data-art-view="' + artifact.id + '">查看并确认</button>'
               : '<button data-art-ok="' + artifact.id + '">确认</button>')
             + '<button data-art-no="' + artifact.id + '" class="zq-btn-ghost">忽略</button></div>' : '')
@@ -2783,7 +2935,9 @@
       b.onclick = function () {
         var target = grouped.filter(function (a) { return String(a.id) === String(b.dataset.artView); })[0];
         if (target) {
-          if (isMemoryDraft(target)) openMemoryConfirmModal(target); else openPlanConfirmModal(target);
+          if (isCodeDraft(target)) openCodeConfirmModal(target);
+          else if (isMemoryDraft(target)) openMemoryConfirmModal(target);
+          else openPlanConfirmModal(target);
         }
       };
     });
@@ -2815,6 +2969,10 @@
       return isMemoryDraft(a) && !shownMemoryModals[a.id];
     })[0];
     if (freshMemory) openMemoryConfirmModal(freshMemory);
+    var freshCode = groupArtifacts(artifacts).filter(function (a) {
+      return isCodeDraft(a) && !shownCodeModals[a.id];
+    })[0];
+    if (freshCode) openCodeConfirmModal(freshCode);
   }
   var CHAT_PAGE_SIZE = 50;
   async function loadAiMessages() {

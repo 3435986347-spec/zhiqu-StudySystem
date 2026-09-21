@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
+import com.zhiqu.service.workspace.WorkspaceService;
 import com.zhiqu.dto.TaskCreateRequest;
 import com.zhiqu.entity.*;
 import com.zhiqu.mapper.*;
@@ -87,6 +88,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private final RagIndexJobService ragIndexJobService;
     private final RagContentHashService ragContentHashService;
     private final SourceScopeResolver sourceScopeResolver;
+    private final WorkspaceService workspaceService;
     private final com.zhiqu.rag.RagUnitRegistry ragUnitRegistry;
     private final RagRetriever ragRetriever;
     private final ContextCandidateHydrator contextCandidateHydrator;
@@ -117,6 +119,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                                   AgentBlackboardService blackboardService,
                                   RagIndexJobService ragIndexJobService,
                                   RagContentHashService ragContentHashService,
+                                  WorkspaceService workspaceService,
                                   SourceScopeResolver sourceScopeResolver,
                                   com.zhiqu.rag.RagUnitRegistry ragUnitRegistry,
                                   RagRetriever ragRetriever,
@@ -152,6 +155,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         this.ragIndexJobService = ragIndexJobService;
         this.ragContentHashService = ragContentHashService;
         this.sourceScopeResolver = sourceScopeResolver;
+        this.workspaceService = workspaceService;
         this.ragUnitRegistry = ragUnitRegistry;
         this.ragRetriever = ragRetriever;
         this.contextCandidateHydrator = contextCandidateHydrator;
@@ -790,6 +794,15 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             artifact.setContentJson(toJson(merge(parseMap(artifact.getContentJson()), Map.of("confirmResult", result))));
             artifact.setTargetType(text(result.get("targetType"), "PLAN_BATCH"));
             artifact.setTargetId(parseLong(result.get("targetId"), artifact.getId()));
+        } else if ("CODE_DRAFT".equals(artifact.getArtifactType())) {
+            // 落盘。基线校验在 WorkspaceService.write 里：草稿记的是「agent 读到这个文件时」
+            // 的内容指纹，从那一刻到用户点确认可能隔着几分钟，这段时间里用户完全可能
+            // 在自己的编辑器里改了同一个文件。不校验就是用旧内容把新内容整份吃掉。
+            List<Map<String, Object>> written = confirmCodeArtifact(artifact, editedPlan);
+            artifact.setContentJson(toJson(merge(parseMap(artifact.getContentJson()),
+                    Map.of("writtenFiles", written.stream().map(f -> f.get("path")).toList()))));
+            artifact.setTargetType("WORKSPACE_FILES");
+            artifact.setTargetId(artifact.getId());
         } else if ("MEMORY_DRAFT".equals(artifact.getArtifactType())) {
             // 「清空必须获胜」：草稿活得比 run 长，用户清空记忆之后这条草稿仍躺在面板上，
             // 点确认就会把「已清空对话里提炼出来的事实」写回长期记忆 —— 那是真正的数据复活。
@@ -832,7 +845,65 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
      * 只接受字符串条目，不接受任意结构：写进去的是给模型看的长期记忆，
      * 让请求体决定它的形状等于开了一个注入口。
      */
+/**
+     * 把代码草稿落到磁盘上。
+     *
+     * <h2>一个文件写失败时，整批都不写</h2>
+     *
+     * <p>先把每个文件都校验一遍（路径合法、基线相符），全部通过了再逐个写。
+     * 逐个「校验并写」的话，第三个文件基线不符时前两个已经落盘了 ——
+     * 用户看到一条报错，却不知道自己的工作目录已经被改了一半，
+     * 而那一半改动属于一个他并没有完整确认的方案。
+     *
+     * <p>这不是事务：写到第二个文件时磁盘满了仍然会留下半批。
+     * 但它消掉了唯一一种<b>可预见</b>的半批（基线不符），而那正是最常发生的一种。
+     *
+     * <p>请求体带 {@code files} 时以它为准（用户在弹窗里取消勾选了某些文件），
+     * 与计划草稿「省略 body 即按原样应用」的既有约定一致。
+     */
+    private List<Map<String, Object>> confirmCodeArtifact(AiAgentArtifact artifact, Map<String, Object> body) {
+        Map<String, Object> content = parseMap(artifact.getContentJson());
+        Object stored = content.get("files");
+        List<Map<String, Object>> files = new ArrayList<>();
+        if (stored instanceof List<?> list) {
+            for (Object row : list) {
+                if (row instanceof Map<?, ?> map) {
+                    files.add(castRow(map));
+                }
+            }
+        }
+        Object chosen = body == null ? null : body.get("files");
+        if (chosen instanceof List<?> picked && !picked.isEmpty()) {
+            Set<String> keep = new LinkedHashSet<>();
+            for (Object row : picked) {
+                if (row instanceof Map<?, ?> map && map.get("path") != null) {
+                    keep.add(String.valueOf(map.get("path")));
+                }
+            }
+            // 只用请求体挑<b>哪些</b>文件，内容仍以草稿为准 ——
+            // 让请求体决定写进磁盘的内容，等于开了一条绕过整个 agent 的任意写入口。
+            files = files.stream().filter(f -> keep.contains(String.valueOf(f.get("path")))).toList();
+        }
+        if (files.isEmpty()) {
+            throw new BusinessException("这份草稿没有要写入的文件");
+        }
+        // 「先全部校验、再逐个写」的规则住在 WorkspaceService.writeAll 里，不在这里重写一遍。
+        workspaceService.writeAll(files.stream()
+                .map(f -> new WorkspaceService.PendingWrite(
+                        String.valueOf(f.get("path")),
+                        f.get("content") == null ? "" : String.valueOf(f.get("content")),
+                        f.get("baseline") == null ? null : String.valueOf(f.get("baseline"))))
+                .toList());
+        return files;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castRow(Map<?, ?> map) {
+        return (Map<String, Object>) map;
+    }
+
     private List<String> memoryItemsToWrite(AiAgentArtifact artifact, Map<String, Object> body) {
+
         Object source = body == null ? null : body.get("items");
         if (!(source instanceof List<?>)) {
             source = parseMap(artifact.getContentJson()).get("items");

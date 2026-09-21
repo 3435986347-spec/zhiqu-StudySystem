@@ -317,4 +317,240 @@ class WorkspaceServiceTest {
                 "截断发生在最后一个文件上时同样要报告 —— 漏报会让模型把 10 条当成全部，"
                         + "然后写下「只有这 10 处用到」这种错误结论");
     }
+
+    // ── 写入（阶段 2）────────────────────────────────────────────────────────
+
+    private static WorkspaceService writableAt(Path root) {
+        return new WorkspaceService(props(root, "WRITE"), "127.0.0.1");
+    }
+
+    /**
+     * READ 档不许写。
+     *
+     * <p>这是档位这个设计存在的全部理由：用户把工作区开成只读，就该是一个字节都不会变。
+     * 「能读就能写」在别处也许无害，在这里是直接改用户硬盘上的源码。
+     */
+    @Test
+    void 只读档不许写(@TempDir Path root) throws IOException {
+        seed(root, "Main.java", "class Main {}");
+        WorkspaceService readOnly = serviceAt(root, "READ");
+        String baseline = readOnly.baselineOf("Main.java");
+
+        assertThrows(BusinessException.class, () -> readOnly.write("Main.java", "改过了", baseline),
+                "READ 档下写入必须被拒");
+        assertEquals("class Main {}", Files.readString(root.resolve("Main.java")),
+                "被拒之后文件必须一个字节都没动");
+    }
+
+    /**
+     * 基线不符就拒绝 —— 这一条挡的是「用旧内容覆盖掉用户刚改的东西」。
+     *
+     * <p>agent 读文件到用户点确认之间可能隔着几分钟。这段时间里用户完全可能在自己的
+     * 编辑器里改了同一个文件。不校验的话，一个基于旧内容生成的改动会把新内容整份吃掉，
+     * 而用户以为自己确认的只是「应用刚才那个建议」。与知识 Wiki 的 base_content_hash 同一条纪律。
+     */
+    @Test
+    void 草稿生成之后文件被改过就不许写(@TempDir Path root) throws IOException {
+        seed(root, "Main.java", "原始内容");
+        WorkspaceService service = writableAt(root);
+        String baseline = service.baselineOf("Main.java");     // agent 读到的那一刻
+
+        Files.writeString(root.resolve("Main.java"), "用户自己改的内容");   // 中途被改
+
+        BusinessException e = assertThrows(BusinessException.class,
+                () -> service.write("Main.java", "基于旧内容生成的改动", baseline));
+        assertTrue(e.getMessage().contains("Main.java") && e.getMessage().contains("改过"),
+                "理由要点名是哪个文件、为什么拒 —— 用户得知道自己该重新生成。实际：" + e.getMessage());
+        assertEquals("用户自己改的内容", Files.readString(root.resolve("Main.java")),
+                "用户自己的改动必须原样还在");
+    }
+
+    /** 没记基线的草稿一律不许写 —— 「没有基线」不等于「基线通过」。 */
+    @Test
+    void 没有基线的草稿不许写(@TempDir Path root) throws IOException {
+        seed(root, "Main.java", "原始内容");
+        WorkspaceService service = writableAt(root);
+
+        for (String noBaseline : new String[]{null, "", "   "}) {
+            assertThrows(BusinessException.class, () -> service.write("Main.java", "x", noBaseline),
+                    "基线为「" + noBaseline + "」时必须拒绝，不能当成校验通过");
+        }
+        assertEquals("原始内容", Files.readString(root.resolve("Main.java")));
+    }
+
+    /** 新建文件：基线是 ABSENT，写完内容要逐字一致。 */
+    @Test
+    void 新建文件要能写且内容逐字一致(@TempDir Path root) throws IOException {
+        WorkspaceService service = writableAt(root);
+        assertEquals(WorkspaceService.ABSENT, service.baselineOf("New.java"),
+                "还不存在的文件基线必须是 ABSENT，而不是 null 或空串");
+
+        String body = "class New {\n    // 中文注释\n}\n";
+        service.write("New.java", body, WorkspaceService.ABSENT);
+        assertEquals(body, Files.readString(root.resolve("New.java")));
+    }
+
+    /** 「新建」和「覆盖」是两件事：草稿说要新建，而文件已经被别人建出来了，要拒。 */
+    @Test
+    void 说好新建却已经存在要拒(@TempDir Path root) throws IOException {
+        WorkspaceService service = writableAt(root);
+        String baseline = service.baselineOf("New.java");      // ABSENT
+
+        seed(root, "New.java", "别人先建的内容");
+
+        BusinessException e = assertThrows(BusinessException.class,
+                () -> service.write("New.java", "草稿内容", baseline));
+        assertTrue(e.getMessage().contains("还不存在"),
+                "理由要说清「生成草稿时它还不存在」。实际：" + e.getMessage());
+        assertEquals("别人先建的内容", Files.readString(root.resolve("New.java")));
+    }
+
+    /** 文件在确认之前被删掉了，也要拒 —— 不能把它悄悄复活。 */
+    @Test
+    void 文件已被删除则草稿不能再应用(@TempDir Path root) throws IOException {
+        seed(root, "Main.java", "原始内容");
+        WorkspaceService service = writableAt(root);
+        String baseline = service.baselineOf("Main.java");
+
+        Files.delete(root.resolve("Main.java"));
+
+        BusinessException e = assertThrows(BusinessException.class,
+                () -> service.write("Main.java", "草稿内容", baseline));
+        assertTrue(e.getMessage().contains("已经被删除"), "实际：" + e.getMessage());
+        assertFalse(Files.exists(root.resolve("Main.java")), "被拒之后不该把文件复活");
+    }
+
+    /** 写入也要守白名单 —— 否则它就是一条覆盖 .env / id_rsa 的路径。 */
+    @Test
+    void 写入不得碰白名单外的文件(@TempDir Path root) throws IOException {
+        seed(root, ".env", "DB_PASSWORD=hunter2");
+        WorkspaceService service = writableAt(root);
+
+        assertThrows(BusinessException.class, () -> service.baselineOf(".env"));
+        assertThrows(BusinessException.class, () -> service.write(".env", "被改写", "任意基线"));
+        assertEquals("DB_PASSWORD=hunter2", Files.readString(root.resolve(".env")));
+    }
+
+    /** 写入不得跳出工作区。 */
+    @Test
+    void 写入不得跳出工作区(@TempDir Path tmp) throws IOException {
+        Path root = Files.createDirectory(tmp.resolve("ws"));
+        Path outside = Files.createDirectory(tmp.resolve("outside"));
+        Files.writeString(outside.resolve("target.java"), "工作区外");
+        WorkspaceService service = writableAt(root);
+
+        assertThrows(BusinessException.class,
+                () -> service.write("../outside/target.java", "被改写", "任意基线"));
+        assertEquals("工作区外", Files.readString(outside.resolve("target.java")));
+    }
+
+    /**
+     * 上级目录不存在时报错，<b>不</b>替用户建目录。
+     *
+     * <p>模型把路径写成 {@code src/mian/java/Foo.java} 时，自动建目录会静默造出一棵
+     * 没人要的目录树，而用户以为自己确认的是「改一个文件」。
+     */
+    @Test
+    void 上级目录不存在时不自动创建(@TempDir Path root) {
+        WorkspaceService service = writableAt(root);
+
+        BusinessException e = assertThrows(BusinessException.class,
+                () -> service.write("src/mian/java/Foo.java", "内容", WorkspaceService.ABSENT));
+        assertTrue(e.getMessage().contains("上级目录"), "实际：" + e.getMessage());
+        assertFalse(Files.exists(root.resolve("src")), "不该顺手造出目录树");
+    }
+
+    /** 超过上限的内容要拒，而且拒之前不许先把文件截断。 */
+    @Test
+    void 内容超上限要拒且不留半截文件(@TempDir Path root) throws IOException {
+        seed(root, "Main.java", "原始内容");
+        WorkspaceProperties p = props(root, "WRITE");
+        p.setMaxFileBytes(64);
+        WorkspaceService service = new WorkspaceService(p, "127.0.0.1");
+        String baseline = service.baselineOf("Main.java");
+
+        assertThrows(BusinessException.class, () -> service.write("Main.java", "x".repeat(500), baseline));
+        assertEquals("原始内容", Files.readString(root.resolve("Main.java")),
+                "被拒时原文件必须完好 —— 先截断再校验等于毁掉用户的源码");
+    }
+
+    /**
+     * 写成功之后目录里只该有目标文件。
+     *
+     * <h2>这条绿证明了什么，没证明什么</h2>
+     *
+     * <p><b>证明了</b>：成功路径不漏临时文件 —— 如果有人把「写临时文件 + 原子改名」
+     * 改成「复制 + 删原件」之类的写法，漏一步就会在用户的源码目录里留下 {@code .zhiqu-tmp}。
+     *
+     * <p><b>没证明</b>：{@code finally} 里那句清理。成功路径上 {@code Files.move} 已经把
+     * 临时文件消耗掉了，{@code deleteIfExists} 本来就是空操作 —— 把它整句去掉，这条判据
+     * 照样绿（2026-09-21 扰动实测）。它真正兜的是「写成功、改名失败」那条路径，
+     * 而那条路径要靠让 {@code move} 失败才能触发，在不 mock 文件系统的前提下造不出来。
+     *
+     * <p>写在这里而不是假装覆盖到了：一条绿要说得清自己的边界，否则下一个人会以为
+     * 清理逻辑有判据守着。
+     */
+    @Test
+    void 写入不留临时文件(@TempDir Path root) throws IOException {
+        WorkspaceService service = writableAt(root);
+        service.write("New.java", "内容", WorkspaceService.ABSENT);
+
+        try (java.util.stream.Stream<Path> files = Files.list(root)) {
+            List<String> names = files.map(f -> f.getFileName().toString()).sorted().toList();
+            assertEquals(List.of("New.java"), names,
+                    "写完之后目录里只该有目标文件。实际：" + names);
+        }
+    }
+
+    /**
+     * 成批写入：一个文件过不了校验，<b>一个字节都不许落盘</b>。
+     *
+     * <p>逐个「校验并写」的话，第三个文件基线不符时前两个已经写进去了 ——
+     * 用户看到一条报错，却不知道工作目录已经被改了一半，而那一半属于一个
+     * 他并没有完整确认的方案。旧内容已经被覆盖，回滚也无从谈起。
+     */
+    @Test
+    void 成批写入有一个过不了校验就全都不写(@TempDir Path root) throws IOException {
+        seed(root, "A.java", "A 原始");
+        seed(root, "B.java", "B 原始");
+        seed(root, "C.java", "C 原始");
+        WorkspaceService service = writableAt(root);
+        String a = service.baselineOf("A.java");
+        String b = service.baselineOf("B.java");
+        String c = service.baselineOf("C.java");
+
+        Files.writeString(root.resolve("C.java"), "C 被用户改过");    // 第三个的基线失效
+
+        assertThrows(BusinessException.class, () -> service.writeAll(List.of(
+                new WorkspaceService.PendingWrite("A.java", "A 新内容", a),
+                new WorkspaceService.PendingWrite("B.java", "B 新内容", b),
+                new WorkspaceService.PendingWrite("C.java", "C 新内容", c))));
+
+        assertEquals("A 原始", Files.readString(root.resolve("A.java")),
+                "第一个文件在校验阶段就该被拦住，不能已经落盘 —— 半批落盘是这条判据要挡的全部");
+        assertEquals("B 原始", Files.readString(root.resolve("B.java")));
+        assertEquals("C 被用户改过", Files.readString(root.resolve("C.java")));
+    }
+
+    /** 全部通过时成批写入要真的都写进去。 */
+    @Test
+    void 成批写入全部通过时逐字落盘(@TempDir Path root) throws IOException {
+        seed(root, "A.java", "A 原始");
+        WorkspaceService service = writableAt(root);
+
+        service.writeAll(List.of(
+                new WorkspaceService.PendingWrite("A.java", "A 新内容", service.baselineOf("A.java")),
+                new WorkspaceService.PendingWrite("New.java", "新建的内容", WorkspaceService.ABSENT)));
+
+        assertEquals("A 新内容", Files.readString(root.resolve("A.java")));
+        assertEquals("新建的内容", Files.readString(root.resolve("New.java")));
+    }
+
+    /** 空批次要明确拒绝，而不是悄悄成功 —— 「确认了但什么都没发生」是最难查的那种。 */
+    @Test
+    void 空批次要被拒(@TempDir Path root) {
+        WorkspaceService service = writableAt(root);
+        assertThrows(BusinessException.class, () -> service.writeAll(List.of()));
+        assertThrows(BusinessException.class, () -> service.writeAll(null));
+    }
 }

@@ -22,7 +22,19 @@ public final class SourceText {
      * 对这类「某个调用还在不在」的判据够用。
      */
     public static String stripComments(String source) {
-        return source.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("(?<!:)//[^\\n]*", " ");
+        // 顺序是有讲究的：<b>先行注释，再块注释</b>。
+        //
+        // 反过来（先块后行）时，一条 // 注释里出现 /** 就会被当成块注释的起点，
+        // 一路吞到后面某段 javadoc 的 */ 为止 —— 中间的<b>真代码</b>跟着消失。
+        // 2026-09-21 真的发生了：AiServiceImpl 里一句
+        // 「// /api/workspace/** 早就限了管理员」把后面几十行代码一起吃掉，
+        // 于是 StreamAssemblyFailureGuardTest 报「找不到执行器的构造」。
+        // 判据看不到代码时给出的是红，这次运气好；换一条 assertFalse 形式的判据，
+        // 同样的吞噬会变成一条假绿。
+        //
+        // 这个顺序的对称风险是「块注释内部某行有 //，而 */ 就在那个 // 后面的同一行」，
+        // 那时行注释会把 */ 一起吃掉。写得出来，但没人那么写。
+        return source.replaceAll("(?<!:)//[^\\n]*", " ").replaceAll("(?s)/\\*.*?\\*/", " ");
     }
 
     private SourceText() {

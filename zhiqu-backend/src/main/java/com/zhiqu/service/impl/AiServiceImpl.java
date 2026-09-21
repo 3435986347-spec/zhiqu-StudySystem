@@ -40,6 +40,7 @@ import com.zhiqu.service.KnowledgeService;
 import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.AiWorkspaceService;
 import com.zhiqu.service.MultiAgentOrchestrator;
+import com.zhiqu.service.AdminGuard;
 import com.zhiqu.service.agent.AgentPhase;
 import com.zhiqu.service.agent.AgentPlanDecision;
 import com.zhiqu.service.agent.AgentPosition;
@@ -93,6 +94,7 @@ public class AiServiceImpl implements AiService {
 
     private final BusinessClock clock;
     private final WorkspaceService workspaceService;
+    private final AdminGuard adminGuard;
     private static final Logger log = LoggerFactory.getLogger(AiServiceImpl.class);
     private static final String DEFAULT_CONVERSATION_KEY = "default";
     private static final int CHAT_HISTORY_LIMIT = 20;
@@ -195,9 +197,11 @@ public class AiServiceImpl implements AiService {
                          @Value("${app.ai.stream.debug:false}") boolean streamDebug,
                          @Value("${app.ai.allow-private-provider-url:false}") boolean allowPrivateProviderUrl,
                          BusinessClock clock,
-                         WorkspaceService workspaceService) {
+                         WorkspaceService workspaceService,
+                         AdminGuard adminGuard) {
         this.clock = clock;
         this.workspaceService = workspaceService;
+        this.adminGuard = adminGuard;
         this.configMapper = configMapper;
         this.modelConfigMapper = modelConfigMapper;
         this.conversationMapper = conversationMapper;
@@ -519,9 +523,14 @@ public class AiServiceImpl implements AiService {
         AgentPlanDecision decision = AgentPlanDecision.of(
                 agentMode, limitedMessage, Boolean.TRUE.equals(enableWebSearch), notebookId, contextOptions,
                 supportsToolCalling(config), history.size() >= CHAT_HISTORY_LIMIT,
-                // 工作区是否真的可读，问的是生效档位而不是配置 —— 三个前置有一条不满足时，
-                // 配置写 EXEC 也只能是 OFF，那时不该造出一个跑不了的 CODE_AGENT 节点
-                workspaceService.access().effectiveMode().allowsRead());
+                // 工作区是否真的可读。两个条件缺一不可：
+                //   1. 生效档位允许读（问的是 effectiveMode 而不是配置 —— 三个前置有一条
+                //      不满足时，配置写 EXEC 也只能是 OFF）；
+                //   2. 这个用户是管理员。工作区读的是<b>服务器</b>的磁盘，不属于任何用户。
+                //      /api/workspace/** 早就限了管理员，而 agent 这条路一度没限 ——
+                //      那样的话普通用户只要对助手说一句「看看 xxx.java」就绕过了那道门，
+                //      HTTP 那一侧的限制等于装饰。
+                workspaceReadableBy(userId));
         String normalizedAgentMode = decision.mode();
         AiAgentRun agentRun = aiWorkspaceService.beginRun(
                 userId,
@@ -776,6 +785,7 @@ public class AiServiceImpl implements AiService {
         private AiAgentStep wikiToolStep;
         private AiAgentStep codeAgentStep;
         private String codeContext = "";
+        private List<Map<String, Object>> codeDrafts = List.of();
         private AiAgentStep plannerStep;
         private AiAgentStep finalWriterStep;
 
@@ -1262,13 +1272,27 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void run(AgentRunContext ctx) {
-            s.codeContext = runCodeWorkspaceAgent(s.config, s.userId, s.limitedMessage);
+            CodeAgentResult codeResult = runCodeWorkspaceAgent(s.config, s.userId, s.limitedMessage);
+            s.codeContext = codeResult.context();
+            s.codeDrafts = codeResult.drafts();
             boolean read = hasText(s.codeContext);
+            if (!s.codeDrafts.isEmpty()) {
+                // 与 Wiki / 计划 / 记忆同一条纪律：模型的写操作落成草稿，磁盘一个字节都没动。
+                // 只有 POST /api/ai/artifacts/{id}/confirm 才会真正写盘。
+                AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
+                        s.agentRun.getId(), s.codeAgentStep == null ? null : s.codeAgentStep.getId(),
+                        "CODE_DRAFT", "代码改动草稿",
+                        Map.of("files", s.codeDrafts), s.liveUser == null ? null : s.liveUser.getId());
+                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, s.codeAgentStep, artifact));
+            }
             finishStep(ctx, s, s.codeAgentStep,
-                    read ? "已读取工作区代码" : "工作区没有可用内容",
-                    "chars=" + s.codeContext.length());
+                    s.codeDrafts.isEmpty()
+                            ? (read ? "已读取工作区代码" : "工作区没有可用内容")
+                            : "已生成 " + s.codeDrafts.size() + " 个文件的改动草稿（未落盘）",
+                    "chars=" + s.codeContext.length() + " drafts=" + s.codeDrafts.size());
             completeTask(ctx, s, ctx.task("CODE_AGENT"),
-                    Map.of("contextChars", s.codeContext.length()), "Code workspace loop done");
+                    Map.of("contextChars", s.codeContext.length(), "drafts", s.codeDrafts.size()),
+                    "Code workspace loop done");
         }
     }
 
@@ -3757,19 +3781,52 @@ public class AiServiceImpl implements AiService {
      * 就不会尝试去写，也不会在回答里承诺自己改了文件</b>。等写能力做好（草稿 → 确认 → 落盘），
      * 再按最小权限的做法只在明确写意图时加进来。
      */
-    private String runCodeWorkspaceAgent(AiModelConfig config, Long userId, String userMessage) {
+    /**
+     * 代码工作区循环的状态。
+     *
+     * <p>{@code baselines} 记的是<b>模型读到某个文件的那一刻</b>它内容的指纹。
+     * 写草稿要带着它走完「草稿 → 用户确认 → 落盘」整条路，确认时拿它和磁盘现状比 ——
+     * 中间隔的这几分钟里用户完全可能在自己的编辑器里改了同一个文件。
+     */
+    private static final class CodeLoopState {
+        private final Map<String, String> baselines = new LinkedHashMap<>();
+        private final List<Map<String, Object>> drafts = new ArrayList<>();
+    }
+
+    /** 代码工作区循环的产物：给回答用的上下文，以及待确认的写草稿。 */
+    private record CodeAgentResult(String context, List<Map<String, Object>> drafts) {
+        static final CodeAgentResult EMPTY = new CodeAgentResult("", List.of());
+    }
+
+/**
+     * 这个用户能不能读工作区。
+     *
+     * <p>两个条件缺一不可：工作区本身生效，且用户是管理员。后者容易漏 ——
+     * 工作区读的是服务器磁盘，不是用户自己的数据，所以它和 Notebook 那种按 userId
+     * 分账的资源不是一回事，不能只靠「登录了」就给。
+     */
+    private boolean workspaceReadableBy(Long userId) {
+        return workspaceService.access().effectiveMode().allowsRead() && adminGuard.isAdmin(userId);
+    }
+
+    private CodeAgentResult runCodeWorkspaceAgent(AiModelConfig config, Long userId, String userMessage) {
         if (!AgentPlanDecision.codeIntent(userMessage) || !supportsToolCalling(config)) {
-            return "";
+            return CodeAgentResult.EMPTY;
         }
-        if (!workspaceService.access().effectiveMode().allowsRead()) {
-            return "";
+        if (!workspaceReadableBy(userId)) {
+            return CodeAgentResult.EMPTY;
         }
+        CodeLoopState loop = new CodeLoopState();
         StringBuilder context = new StringBuilder();
         try {
             List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", codeWorkspaceSystemPrompt()));
             messages.add(Map.of("role", "user", "content", userMessage));
-            List<Map<String, Object>> tools = buildWorkspaceReadTools();
+            // 最小权限：只有明确的写意图才把写工具下发给模型。不下发，它就不会尝试，
+            // 也不会承诺自己改了文件 —— 与 buildWikiTools(includeWrite) 同一个做法。
+            boolean canWrite = workspaceService.access().effectiveMode().allowsWrite()
+                    && AgentPlanDecision.codeWriteIntent(userMessage);
+            List<Map<String, Object>> tools = buildWorkspaceTools(canWrite);
             long loopStart = System.currentTimeMillis();
             for (int round = 0; round < 4; round++) {
                 if (System.currentTimeMillis() - loopStart > 30_000L) {
@@ -3790,7 +3847,7 @@ public class AiServiceImpl implements AiService {
                     JsonNode argsNode = call.at("/function/arguments");
                     String argsRaw = argsNode.isTextual() ? argsNode.asText("")
                             : (argsNode.isMissingNode() ? "{}" : argsNode.toString());
-                    String result = executeWorkspaceTool(name, argsRaw);
+                    String result = executeWorkspaceTool(name, argsRaw, loop);
                     if (hasText(result)) {
                         context.append("【工作区 ").append(name).append("】\n").append(result).append("\n\n");
                     }
@@ -3805,7 +3862,8 @@ public class AiServiceImpl implements AiService {
         } catch (Exception e) {
             log.warn("代码工作区工具循环失败（不影响主回答） userId={} err={}", userId, e.getMessage());
         }
-        return limitRawMarkdown(context.toString(), CODE_CONTEXT_LIMIT);
+        return new CodeAgentResult(limitRawMarkdown(context.toString(), CODE_CONTEXT_LIMIT),
+                List.copyOf(loop.drafts));
     }
 
     private String codeWorkspaceSystemPrompt() {
@@ -3827,7 +3885,7 @@ public class AiServiceImpl implements AiService {
     }
 
     /** 只读工具集。写工具连声明都没有 —— 模型看不到，就不会尝试，也不会承诺自己改了文件。 */
-    private List<Map<String, Object>> buildWorkspaceReadTools() {
+    private List<Map<String, Object>> buildWorkspaceTools(boolean canWrite) {
         List<Map<String, Object>> tools = new ArrayList<>();
 
         Map<String, Object> listProps = new LinkedHashMap<>();
@@ -3852,11 +3910,22 @@ public class AiServiceImpl implements AiService {
                         + "结果里若标注「还有更多」，说明命中被截断了，应当换一个更具体的关键词再搜。",
                 searchProps, List.of("query")));
 
+        if (canWrite) {
+            Map<String, Object> writeProps = new LinkedHashMap<>();
+            writeProps.put("path", schemaProp("string", "相对工作区根的文件路径"));
+            writeProps.put("content", schemaProp("string", "这个文件修改后的<b>完整</b>内容，不是差异片段"));
+            tools.add(functionTool("write_workspace_file",
+                    "把一个文件修改后的完整内容写成<b>草稿</b>。注意：这不会改动磁盘上的文件，"
+                            + "只是生成一份待用户确认的草稿，用户在界面上看过 diff、点了确认才会落盘。"
+                            + "所以不要说「我已经改好了」，要说「改动已生成草稿，确认后生效」。"
+                            + "改一个已存在的文件之前必须先 read_workspace_file 读过它 —— 没读过就改是盲写。",
+                    writeProps, List.of("path", "content")));
+        }
         return tools;
     }
 
     /** 执行一个工作区工具，返回给模型的文本。拒绝时把<b>原因</b>给模型，让它能如实转述。 */
-    private String executeWorkspaceTool(String name, String argsJson) {
+    private String executeWorkspaceTool(String name, String argsJson, CodeLoopState loop) {
         Map<String, Object> args = parseJsonObjectMap(argsJson);
         try {
             if ("list_workspace_files".equals(name)) {
@@ -3883,7 +3952,36 @@ public class AiServiceImpl implements AiService {
             }
             if ("read_workspace_file".equals(name)) {
                 String path = String.valueOf(args.getOrDefault("path", ""));
-                return workspaceService.read(path);
+                String content = workspaceService.read(path);
+                // 记下读到这一刻的指纹：写草稿要靠它，确认时拿它和磁盘现状比
+                loop.baselines.put(path, workspaceService.baselineOf(path));
+                return content;
+            }
+            if ("write_workspace_file".equals(name)) {
+                String path = String.valueOf(args.getOrDefault("path", ""));
+                String content = String.valueOf(args.getOrDefault("content", ""));
+                String baseline = loop.baselines.get(path);
+                if (baseline == null) {
+                    // 没读过就要改：对已存在的文件这是盲写，必须挡住。
+                    // 文件本来就不存在（新建）则不需要先读 —— 基线就是 ABSENT。
+                    String current = workspaceService.baselineOf(path);
+                    if (!WorkspaceService.ABSENT.equals(current)) {
+                        return "操作被拒绝：改动一个已存在的文件之前必须先 read_workspace_file 读过它。"
+                                + "没读过就改是拿想象中的内容覆盖真实内容。";
+                    }
+                    baseline = WorkspaceService.ABSENT;
+                }
+                // 先按写入规则校验一遍路径，让不合法的路径当场告诉模型，而不是等到用户点确认
+                workspaceService.checkWritable(path);
+                Map<String, Object> draft = new LinkedHashMap<>();
+                draft.put("path", path);
+                draft.put("content", content);
+                draft.put("baseline", baseline);
+                draft.put("creating", WorkspaceService.ABSENT.equals(baseline));
+                loop.drafts.removeIf(d -> path.equals(d.get("path")));   // 同一文件以最后一次为准
+                loop.drafts.add(draft);
+                return "已生成草稿（磁盘上的文件没有改动）：" + path
+                        + "。请告诉用户到「待确认」面板看过 diff 之后确认才会落盘。";
             }
             if ("search_workspace".equals(name)) {
                 String query = String.valueOf(args.getOrDefault("query", ""));

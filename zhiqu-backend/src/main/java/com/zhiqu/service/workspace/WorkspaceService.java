@@ -8,9 +8,13 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -98,7 +102,7 @@ public class WorkspaceService {
                 boolean directory = Files.isDirectory(child);
                 long size = directory ? 0L : sizeOf(child);
                 entries.add(new Entry(
-                        access.root().relativize(child).toString(),
+                        relative(child),
                         directory,
                         size,
                         // 目录不谈「可读」；文件的可读性由守卫说了算，列表里先告诉用户，
@@ -229,19 +233,189 @@ public class WorkspaceService {
             if (text.length() > cap) {
                 text = text.substring(0, cap) + "…（本行过长，已截断）";
             }
-            hits.add(new Hit(access.root().relativize(file).toString(), i + 1, text));
+            hits.add(new Hit(relative(file), i + 1, text));
         }
     }
 
     /** 这个文件所在的路径上有没有噪声目录 —— Files.walk 是递归的，得逐级看。 */
     private boolean underSkippedDir(Path file) {
-        Path relative = access.root().relativize(file);
-        for (Path part : relative) {
+        for (Path part : guard.root().relativize(file)) {
             if (SKIPPED_DIRS.contains(part.toString().toLowerCase(Locale.ROOT))) {
                 return true;
             }
         }
         return false;
+    }
+
+/**
+     * 把绝对路径换算成相对工作区根的路径。
+     *
+     * <p>基准必须是<b>守卫那份 realpath 过的 root</b>，不是配置里写的那个：
+     * 守卫解析出来的候选路径已经解开了软链，拿没解开的 root 去 relativize，
+     * 结果会是一串 {@code ../../..}。macOS 上这不是边角情况 ——
+     * {@code /tmp} 与 {@code /var} 本身就是软链，测试用的临时目录一律中招。
+     */
+    private String relative(Path absolute) {
+        return guard.root().relativize(absolute).toString();
+    }
+
+    /**
+     * 只校验「这个路径能不能写」，不碰内容、不碰磁盘。
+     *
+     * <p>给工具调用当场用：路径不合法时立刻把理由回给模型，它才能如实转述并改用别的路径；
+     * 攒到用户点确认时才报错，用户面对的是一个莫名其妙失败的确认框。
+     */
+    public void checkWritable(String relativePath) {
+        if (!access.effectiveMode().allowsWrite()) {
+            throw new BusinessException(access.refusalReason() != null
+                    ? access.refusalReason()
+                    : "工作区当前是只读的（app.workspace.mode 需要 WRITE 或更高）");
+        }
+        WorkspaceGuard.Resolution file = guard.resolveWritable(relativePath);
+        if (!file.ok()) {
+            throw new BusinessException(describe(file.reason(), relativePath));
+        }
+    }
+
+/** 文件还不存在时的基线取值 —— 用一个明确的标记，而不是 null。 */
+    public static final String ABSENT = "ABSENT";
+
+    /**
+     * 一个文件当前内容的基线指纹。不存在返回 {@link #ABSENT}。
+     *
+     * <p>用 SHA-256 而不是 {@code String.hashCode()}：后者是 32 位、可轻易构造碰撞，
+     * 而这个值要用来判断「这个文件从 agent 读过之后有没有被改」。
+     */
+    public String baselineOf(String relativePath) {
+        requireRead();
+        WorkspaceGuard.Resolution file = guard.resolveWritable(relativePath);
+        if (!file.ok()) {
+            throw new BusinessException(describe(file.reason(), relativePath));
+        }
+        return hashOf(file.path());
+    }
+
+    private static String hashOf(Path path) {
+        if (!Files.isRegularFile(path)) {
+            return ABSENT;
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] sum = digest.digest(Files.readAllBytes(path));
+            StringBuilder hex = new StringBuilder(sum.length * 2);
+            for (byte b : sum) {
+                hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+            }
+            return hex.toString();
+        } catch (IOException | NoSuchAlgorithmException e) {
+            throw new BusinessException("读不到文件用于校验：" + path.getFileName());
+        }
+    }
+
+    /**
+     * 写一个文件 —— <b>只有用户确认草稿时才会走到这里</b>，模型的工具调用不会。
+     *
+     * <h2>基线校验：为什么不能省</h2>
+     *
+     * <p>{@code expectedBaseline} 是 agent <b>读到这个文件时</b>它内容的指纹，由草稿记下来。
+     * 从那一刻到用户点确认，中间可能隔着几分钟 —— 这段时间里用户完全可能在自己的编辑器里
+     * 改了同一个文件。不校验的话，一个基于旧内容生成的改动会把新内容整份覆盖掉，
+     * 而用户以为自己确认的只是「应用刚才那个建议」。这和知识 Wiki 的
+     * {@code base_content_hash} 是同一条纪律，理由也一样。
+     *
+     * <p>文件在 agent 读的时候还不存在，基线就是 {@link #ABSENT}；确认时它已经被别人建出来了，
+     * 同样要拒绝 —— 「新建」和「覆盖」是两件事。
+     *
+     * <h2>先写临时文件再原子改名</h2>
+     *
+     * <p>直接往目标文件写，中途失败（磁盘满、进程被杀）会留下一个被截断的文件 ——
+     * 那是把用户的源码毁掉，比不写严重得多。
+     */
+/** 一个待写入的文件。{@code baseline} 是 agent 读到它时的内容指纹。 */
+    public record PendingWrite(String path, String content, String baseline) {
+    }
+
+    /**
+     * 成批写入：<b>先把每个文件都校验一遍，全部通过了再逐个写</b>。
+     *
+     * <h2>为什么不能边校验边写</h2>
+     *
+     * <p>逐个「校验并写」的话，第三个文件基线不符时前两个已经落盘了。用户看到一条报错，
+     * 却不知道自己的工作目录已经被改了一半 —— 而那一半属于一个他并没有完整确认的方案。
+     * 回滚也无从谈起：旧内容已经被覆盖掉了。
+     *
+     * <h2>这不是事务，说清楚边界</h2>
+     *
+     * <p>写到第二个文件时磁盘满、进程被杀，仍然会留下半批。这里消掉的是唯一一种
+     * <b>可预见</b>的半批 —— 基线不符与路径非法，而那正是实际最常发生的两种。
+     * 真事务要写日志和回滚，代价远超它能挡住的风险。
+     */
+    public void writeAll(List<PendingWrite> files) {
+        if (files == null || files.isEmpty()) {
+            throw new BusinessException("没有要写入的文件");
+        }
+        for (PendingWrite file : files) {
+            checkWritable(file.path());
+            checkBaseline(file.path(), file.baseline());
+        }
+        for (PendingWrite file : files) {
+            write(file.path(), file.content(), file.baseline());
+        }
+    }
+
+    /** 基线校验单独一份，成批写入要在动手之前先问一遍，单个写入要在写之前问一遍。 */
+    private void checkBaseline(String relativePath, String expectedBaseline) {
+        if (expectedBaseline == null || expectedBaseline.isBlank()) {
+            throw new BusinessException("这份草稿没有记下基线，不能确认写入：" + relativePath);
+        }
+        WorkspaceGuard.Resolution file = guard.resolveWritable(relativePath);
+        if (!file.ok()) {
+            throw new BusinessException(describe(file.reason(), relativePath));
+        }
+        String actual = hashOf(file.path());
+        if (!expectedBaseline.equals(actual)) {
+            throw new BusinessException(ABSENT.equals(expectedBaseline)
+                    ? "生成这份草稿时 " + relativePath + " 还不存在，现在它已经存在了 —— 请重新生成"
+                    : ABSENT.equals(actual)
+                            ? relativePath + " 已经被删除，这份草稿不能再应用"
+                            : relativePath + " 在生成草稿之后被改过了，不能用旧内容覆盖 —— 请重新生成");
+        }
+    }
+
+    public void write(String relativePath, String content, String expectedBaseline) {
+        if (!access.effectiveMode().allowsWrite()) {
+            throw new BusinessException(access.refusalReason() != null
+                    ? access.refusalReason()
+                    : "工作区当前是只读的（app.workspace.mode 需要 WRITE 或更高）");
+        }
+        String body = content == null ? "" : content;
+        WorkspaceGuard.Resolution file = guard.resolveWritable(relativePath);
+        if (!file.ok()) {
+            throw new BusinessException(describe(file.reason(), relativePath));
+        }
+        if (body.getBytes(StandardCharsets.UTF_8).length > properties.getMaxFileBytes()) {
+            throw new BusinessException("要写入的内容超过了 " + properties.getMaxFileBytes() + " 字节的上限");
+        }
+        checkBaseline(relativePath, expectedBaseline);
+        Path tmp = file.path().resolveSibling(file.path().getFileName() + ".zhiqu-tmp");
+        try {
+            Files.writeString(tmp, body, StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, file.path(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                // 少数文件系统不支持原子改名。退回普通改名：仍然比就地写安全
+                Files.move(tmp, file.path(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            log.info("工作区写入：{}（{} 字节）", relativePath, body.length());
+        } catch (IOException e) {
+            throw new BusinessException("写入失败：" + e.getMessage());
+        } finally {
+            try {
+                Files.deleteIfExists(tmp);
+            } catch (IOException ignored) {
+                // 临时文件残留不影响正确性，不值得把一次成功的写入变成失败
+            }
+        }
     }
 
     private boolean skipped(Path path) {
@@ -266,6 +440,7 @@ public class WorkspaceService {
             case NOT_REGULAR_FILE -> "不是一个可读的普通文件（可能不存在，或者是目录）：" + path;
             case EXTENSION_NOT_ALLOWED -> "这个类型的文件不在允许清单里（避免把密钥、证书这类内容读进上下文）：" + path;
             case TOO_LARGE -> "文件超过了 " + properties.getMaxFileBytes() + " 字节的上限：" + path;
+            case PARENT_NOT_FOUND -> "上级目录不存在，而工作区不会替你创建目录（路径可能写错了）：" + path;
             case OK -> "";
         };
     }

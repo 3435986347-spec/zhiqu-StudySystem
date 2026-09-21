@@ -49,7 +49,9 @@ public final class WorkspaceGuard {
         /** 扩展名不在白名单里。 */
         EXTENSION_NOT_ALLOWED,
         /** 超过单文件大小上限。 */
-        TOO_LARGE
+        TOO_LARGE,
+        /** 写入专用：目标的上级目录不存在。写入<b>不</b>替用户造目录，见 resolveWritable。 */
+        PARENT_NOT_FOUND
     }
 
     /** 解析结果：要么给出可读的绝对路径，要么给出拒绝理由。 */
@@ -68,7 +70,10 @@ public final class WorkspaceGuard {
     private final long maxFileBytes;
 
     public WorkspaceGuard(Path root, Iterable<String> allowedExtensions, long maxFileBytes) {
-        this.root = root.toAbsolutePath().normalize();
+        // root 存 realpath：包含性检查要在「软链都解开之后」的世界里做，两边必须同一个世界。
+        // 只 realpath 候选路径而不 realpath root，在 macOS 上会全面失效 ——
+        // /tmp 实际是 /private/tmp 的软链，正常文件会被判成「超出工作区」。
+        this.root = realPathOf(root.toAbsolutePath().normalize());
         this.allowedExtensions = toLowerSet(allowedExtensions);
         this.maxFileBytes = maxFileBytes;
     }
@@ -101,11 +106,13 @@ public final class WorkspaceGuard {
         } catch (Exception e) {
             return Resolution.denied(Reason.OUTSIDE_ROOT);
         }
-        if (!candidate.startsWith(root)) {
-            return Resolution.denied(Reason.OUTSIDE_ROOT);
-        }
+        // 软链判定要排在包含性之前：最后一段本身是软链时，理由该说「这是软链」，
+        // 而不是含混的「超出工作区」—— 两种情况用户要做的事不一样。
         if (Files.isSymbolicLink(candidate)) {
             return Resolution.denied(Reason.SYMLINK);
+        }
+        if (!containedAfterSymlinks(candidate)) {
+            return Resolution.denied(Reason.OUTSIDE_ROOT);
         }
         if (!Files.isRegularFile(candidate)) {
             return Resolution.denied(Reason.NOT_REGULAR_FILE);
@@ -143,7 +150,7 @@ public final class WorkspaceGuard {
         } catch (Exception e) {
             return Resolution.denied(Reason.OUTSIDE_ROOT);
         }
-        if (!candidate.startsWith(root)) {
+        if (!containedAfterSymlinks(candidate)) {
             return Resolution.denied(Reason.OUTSIDE_ROOT);
         }
         if (Files.isSymbolicLink(candidate)) {
@@ -156,6 +163,108 @@ public final class WorkspaceGuard {
     }
 
     /** 扩展名是否在白名单里。无扩展名的文件按文件名整体比（Makefile / Dockerfile）。 */
+
+    /**
+     * 解开路径上<b>每一段</b>的软链之后，它还在工作区里吗。
+     *
+     * <h2>为什么不能只 normalize 再 startsWith</h2>
+     *
+     * <p>{@code normalize()} 是纯字符串运算，不碰文件系统。工作区里有
+     * {@code docs -> /别处} 这样一个<b>目录</b>软链时，{@code root/docs/secret.md}
+     * 在字符串上完全合法，{@code startsWith(root)} 通过；而只检查最后一段是不是软链
+     * 的话，{@code secret.md} 是个真文件，也通过。整条守卫就被一个中间目录绕过去了。
+     * {@code node_modules/.bin}、{@code docs -> ../shared} 这类软链在真实项目里很常见。
+     *
+     * <h2>文件还不存在时怎么办（写入要用）</h2>
+     *
+     * <p>{@code toRealPath()} 要求路径存在。新建文件时它不存在，所以这里往上找到
+     * <b>最近一个存在的祖先</b>去 realpath，再把剩下的名字接回去 —— 软链只可能出现在
+     * 已经存在的那些段上，还不存在的段不可能是软链。
+     */
+    private boolean containedAfterSymlinks(Path candidate) {
+        Path existing = candidate;
+        int climbed = 0;
+        while (existing != null && !Files.exists(existing, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            existing = existing.getParent();
+            climbed++;
+        }
+        if (existing == null) {
+            return false;       // 一路到根都不存在：不可能在工作区里
+        }
+        Path real = realPathOf(existing);
+        if (climbed == 0) {
+            return real.startsWith(root);
+        }
+        // 把爬上去的那几段接回来（它们还不存在，所以不可能是软链）。
+        // subpath(n, n) 会抛 IllegalArgumentException，所以这一步必须在 climbed>0 之后算 ——
+        // 放在三元判断前面求值的话，每一次正常读取都会炸。
+        Path tail = candidate.subpath(candidate.getNameCount() - climbed, candidate.getNameCount());
+        return real.resolve(tail).normalize().startsWith(root);
+    }
+
+    /** realpath，取不到就退回 normalize 后的绝对路径 —— 取不到时后面的检查照常挡。 */
+    private static Path realPathOf(Path path) {
+        try {
+            return path.toRealPath();
+        } catch (IOException e) {
+            return path.toAbsolutePath().normalize();
+        }
+    }
+
+/**
+     * 写入目标的解析。与 {@link #resolveReadable} 的差别只在「存在性」这一条上。
+     *
+     * <h2>目标可以还不存在，但上级目录必须存在</h2>
+     *
+     * <p>新建文件是正当需求，所以不要求目标已存在。但<b>不替用户建目录</b>：
+     * 模型写错一个路径（{@code src/mian/java/Foo.java}）时，自动建目录会静默造出
+     * 一棵没人要的目录树，而用户以为自己确认的是「改一个文件」。
+     * 宁可报错说上级目录不存在，让他自己看一眼。
+     *
+     * <h2>目标存在时的三条要求和读一样</h2>
+     *
+     * <p>不能是软链（跟随写入会改到工作区外的文件）、不能是目录、扩展名要在白名单里。
+     * 白名单在写这一侧尤其要紧：它挡住的是「把内容覆盖进 .env / id_rsa」。
+     *
+     * <p>大小上限不在这里查 —— 这里没有内容。由 {@code WorkspaceService.write} 查。
+     */
+    public Resolution resolveWritable(String relativePath) {
+        if (relativePath == null || relativePath.isBlank()) {
+            return Resolution.denied(Reason.EMPTY);
+        }
+        Path candidate;
+        try {
+            Path given = Paths.get(relativePath.trim());
+            if (given.isAbsolute()) {
+                return Resolution.denied(Reason.OUTSIDE_ROOT);
+            }
+            candidate = root.resolve(given).normalize();
+        } catch (Exception e) {
+            return Resolution.denied(Reason.OUTSIDE_ROOT);
+        }
+        if (Files.isSymbolicLink(candidate)) {
+            return Resolution.denied(Reason.SYMLINK);
+        }
+        if (!containedAfterSymlinks(candidate)) {
+            return Resolution.denied(Reason.OUTSIDE_ROOT);
+        }
+        // 写到工作区根自己身上没有意义，而且 root 是目录 —— 单独挡掉，理由才说得清
+        if (candidate.equals(root)) {
+            return Resolution.denied(Reason.NOT_REGULAR_FILE);
+        }
+        if (Files.exists(candidate) && !Files.isRegularFile(candidate)) {
+            return Resolution.denied(Reason.NOT_REGULAR_FILE);
+        }
+        if (!extensionAllowed(candidate)) {
+            return Resolution.denied(Reason.EXTENSION_NOT_ALLOWED);
+        }
+        Path parent = candidate.getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            return Resolution.denied(Reason.PARENT_NOT_FOUND);
+        }
+        return new Resolution(candidate, Reason.OK);
+    }
+
     public boolean extensionAllowed(Path file) {
         String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         int dot = name.lastIndexOf('.');

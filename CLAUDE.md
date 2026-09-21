@@ -223,7 +223,7 @@ worktree 建在 `/private/tmp` 下、而工作区在 iCloud 同步的 `~/Desktop
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260921-workspace-and-highlight`.
+  old bundle. Current token: `20260921-workspace-write`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -398,6 +398,37 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 这个门**会过触发**（「今天写了三小时代码，有点累」同时命中「写」和「代码」），这是
 故意的：过触发的代价是白读几个文件，漏触发的代价是用户问代码问题却得到一个没看过代码的
 回答。`CodeAgentGateTest.已知会过触发的那一类` 把它钉成了明示的取舍，不是待修的 bug。
+
+**工作区写入（阶段 2）走的是 Wiki 那条已经验证过的路：草稿 → 用户确认 → 落盘。**
+模型调 `write_workspace_file` 只产出 `CODE_DRAFT` 工件，磁盘一个字节都不动；
+只有 `POST /api/ai/artifacts/{id}/confirm` 才会写。四条纪律各挡一件事：
+
+- **最小权限** —— 写工具只在 `canWrite`（工作区档位允许写 **且** `codeWriteIntent` 成立）
+  时才下发。不下发，模型就不会尝试，也不会承诺自己改了文件。写这道门比读那道窄得多
+  是刻意的：读过触发只是白读几个文件，写过触发会弹出一个用户没要的确认框，而确认框本身
+  就诱导人去点。
+- **基线** —— 草稿记下 agent 读到该文件那一刻的内容指纹（SHA-256；`String.hashCode()`
+  是 32 位、可构造碰撞，不够）。确认时比对磁盘现状，不符就拒。文件当时不存在则基线是
+  `WorkspaceService.ABSENT`，确认时它已存在同样要拒 ——「新建」和「覆盖」是两件事。
+- **没读过不许改** —— 对已存在的文件，模型必须先 `read_workspace_file`。没读过就改是
+  拿想象中的内容覆盖真实内容。
+- **成批要么全写要么全不写** —— `writeAll` 先把每个文件都校验一遍再动手。边校验边写的话，
+  第三个文件基线不符时前两个已经落盘，用户看到一条报错却不知道工作目录被改了一半，
+  而那一半属于一个他没有完整确认的方案。这**不是事务**（写到一半磁盘满仍会留半批），
+  它消掉的是唯一一种可预见的半批。
+
+写盘用「临时文件 + 原子改名」：直接就地写，中途失败会留下一个被截断的源码文件。
+
+**读工作区也要管理员。** `/api/workspace/**` 限了管理员，而 code agent 一度只检查档位 ——
+那样普通用户对助手说一句「看看 xxx.java」就绕过了那道门，HTTP 那一侧的限制等于装饰。
+判定收在 `AiServiceImpl.workspaceReadableBy(userId)` 一处，`CodeAgentGateTest` 断言
+`effectiveMode().allowsRead()` 在全文件只出现一次。
+
+**目录软链曾经能把工作区漏出去。** `normalize()` 是纯字符串运算，不解析软链；而守卫只检查
+路径最后一段是不是软链。于是 `root/docs -> /别处` 存在时，`docs/secret.md` 两道检查都通过。
+`node_modules/.bin`、`docs -> ../shared` 这类软链在真实项目里很常见。现在
+`WorkspaceGuard.containedAfterSymlinks` 用 `toRealPath()` 解开每一段再比，**root 自己也要
+realpath** —— 否则 macOS 上 `/tmp` 实际是 `/private/tmp`，正常读取会全部失效。
 
 ### RAG (optional)
 
