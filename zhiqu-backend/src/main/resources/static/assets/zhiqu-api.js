@@ -3898,9 +3898,13 @@
 
   async function paintWorkspace(path) {
     var tree = $('#zq-ws-tree'); if (!tree) return;
-    var entries;
+    var entries, listTruncated = false;
     try {
-      entries = await api.get('/workspace/files' + (path ? '?path=' + encodeURIComponent(path) : ''));
+      // 响应是 {truncated, entries}：条目太多时后端只给前 N 条，而「N 条」和「至少 N 条」
+      // 是两回事 —— 不显示的话用户会以为这个目录就这么大。
+      var res = await api.get('/workspace/files' + (path ? '?path=' + encodeURIComponent(path) : ''));
+      entries = (res && res.entries) || [];
+      listTruncated = !!(res && res.truncated);
     } catch (e) {
       tree.innerHTML = '<div style="font-size:11.5px;color:var(--zq-bad);">' + esc(e.message || '读取失败') + '</div>';
       return;
@@ -3925,6 +3929,10 @@
         + (dim ? '<span style="flex:none;font-size:10px;">不可读</span>' : '')
         + '</button>';
     }).join('') || '<div style="font-size:11.5px;color:var(--zq-text3);padding:4px 6px;">这个目录是空的</div>';
+    if (listTruncated) {
+      tree.innerHTML += '<div style="font-size:10.5px;color:var(--zq-warn);padding:6px;">'
+        + '条目过多，只列出了前 ' + (entries || []).length + ' 条 —— 这不是全部</div>';
+    }
 
     $all('[data-ws-entry]', tree).forEach(function (b) {
       b.onclick = function () {

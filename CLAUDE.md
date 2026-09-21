@@ -227,7 +227,7 @@ and will break the chain you meant to guard.
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260921-workspace-write`.
+  old bundle. Current token: `20260921-project-guidance`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -504,6 +504,44 @@ Wiki 调用原样交给 `executeWikiTool`，**不在 code 循环里另拼一份*
 「复盘一下刚才那道题」。它们缺的不是词而是**上下文** —— 只有在「刚才出过一道题」之后
 才说得通，而本仓库所有的门都只看当前这一条消息。`CodeAgentGateTest.已知接不住的那一类`
 把它钉住了，免得下一个人当成漏洞往词表里随手塞词。
+
+**项目式引导（阶段 5）同样没有新实体。** 里程碑走的是 PLANNER 那条已有的路：
+code agent 在项目语境下拿到 `create_study_plan`（**同一个 schema，不另写**），
+产出的 `{tasks, routines}` 放进 `suggestedPlan`，由既有的 `TaskDrafterRunner` 变成
+`TASK_DRAFT` / `ROUTINE_DRAFT` 工件，再走既有的确认分支进日历。自己另猜一套字段名的话，
+确认落库时会静默丢掉象限、时长、截止日期，而任务照样建出来 —— 没人会发现。
+
+**这条链路原本有两处断点，都不报错：**
+
+1. `needsTaskDraft` 只看 `TASK_DRAFT_WORDS`，项目语境下为假 → 图里没有 TASK_DRAFTER 节点
+   → `inGraph` 为假 → runner 不跑。里程碑放进了 `suggestedPlan`，却没人把它变成工件。
+2. `PlanExtractorRunner` 在 POST_STREAM **无条件**赋值 `suggestedPlan`，而
+   `suggestPlanFromChatIfNeeded` 在非 `taskCreationIntent` 时**必然**返回空计划 ——
+   PRE_STREAM 放进去的里程碑在这里被悄悄抹掉。现在的规则是：**空的不许盖掉非空的**。
+
+两处都是「看起来接通、实际永远产不出东西」。
+
+**四道意图门的关系**：`codeIntent`（读/审阅）、`practiceIntent`（刷题）、`projectIntent`
+（项目式引导）三者 OR 成 **`codeAgentIntent`**，建图与执行共用这一个表达式。
+后两道各自分两档：足够具体的词单独成立，通用词要配一个代码名词或学科词 ——
+`带我做` / `分几步` 第一版放在单独成立那档，实测把「带我做一道红烧肉」「分几步走完这个学期」
+也拉了进来。**每加一道门都要拿十来条真实说法探一遍**，正例反例一起探。
+
+### 限额边界
+
+`WorkspaceBoundaryTest` 专门钉各处上限的「正好 / 差一 / 多一」。限额处的 off-by-one
+是最容易静默出错的一类：功能照常工作，只在某个刚好的尺寸上多拒一个、少拒一个。
+写这一批时抓到两个真的：
+
+- **执行输出正好等于上限时被标成「已截断」**（`read >= room` 应为 `>`）。后果不是崩，
+  是模型对用户说「还有更多」，然后建议他换个更窄的命令白跑一次。
+- **列目录到 `maxEntries` 静默截断**，一个字都不说。600 个文件的目录返回 500 条，
+  模型据此说「这个目录有 500 个文件」或者下「这里没有 X」的结论。搜索那边早就报截断了，
+  列目录这边漏了 —— 同一条纪律只落实了一半。现在 `listing()` 返回 `{entries, truncated}`，
+  控制器、工具层、前端三处都要把它说出来（做出信号却不用，等于没做）。
+
+另外钉住：**上限算的是字节不是字符**。中文一个字三字节，按字符算的话 256KB 的上限
+实际变成 768KB，防 OOM 的意义打三折。
 
 ### RAG (optional)
 

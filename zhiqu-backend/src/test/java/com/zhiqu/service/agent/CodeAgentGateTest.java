@@ -471,4 +471,107 @@ class CodeAgentGateTest {
         assertFalse(code.contains("practiceIntent") && code.contains("PRACTICE_"),
                 "不得在实现侧另写一套刷题判定 —— 词表只能有一份，在 AgentPlanDecision 里");
     }
+
+    // ── 项目式引导（阶段 5）──────────────────────────────────────────────
+
+    /** 项目式说法要能把 code agent 拉起来 —— 同样是先实测再补门。 */
+    @Test
+    void 项目式说法要能触发() {
+        for (String said : new String[]{
+                "带我做一个小项目",
+                "我想做一个待办清单的小项目",
+                "帮我规划一下这个项目怎么一步步做",
+                "这个项目分几个里程碑",
+                "带我从零写一个爬虫",
+                "我想边做边学 Python，带我做个东西",
+                "这个项目接下来做什么",
+                "把里程碑排成任务",
+                "帮我把这个项目拆成几步"}) {
+            assertTrue(AgentPlanDecision.projectIntent(said), "应当命中项目门：" + said);
+        }
+    }
+
+    /**
+     * 「带着做」「分几步」不带学科时不算项目式引导。
+     *
+     * <p>第一版把 {@code 带我做} / {@code 分几步} 放在<b>单独成立</b>那一档，实测把
+     * 「带我做一道红烧肉」「分几步走完这个学期」也拉了进来 —— 它们只说了「带着做」
+     * 和「拆步骤」，没说在做什么。降到需要配学科的那一档之后才对。
+     */
+    @Test
+    void 与编程无关的带着做不算项目式引导() {
+        for (String said : new String[]{
+                "带我做一道红烧肉",
+                "分几步走完这个学期",
+                "下一步复习什么",
+                "接下来吃什么",
+                "",
+                null}) {
+            assertFalse(AgentPlanDecision.projectIntent(said), "不该命中项目门：" + said);
+        }
+    }
+
+    /** 与刷题门同一个已知限制：单条消息的门看不到「在谈哪个项目」。 */
+    @Test
+    void 项目门已知接不住的那一类() {
+        assertFalse(AgentPlanDecision.projectIntent("下一步我该写什么"),
+                "缺的是上下文不是词 —— 与 practiceIntent 同一个限制，改之前先读那条注释");
+        assertTrue(AgentPlanDecision.projectIntent("这个项目下一步我该写什么"),
+                "把项目说出来就该命中；不命中说明挡住它的不是「缺上下文」而是词表本身有问题");
+    }
+
+    /**
+     * 里程碑要能变成任务草稿 —— 这条链路有<b>两处</b>断点，都不会报错。
+     *
+     * <ol>
+     *   <li>{@code needsTaskDraft} 不含 {@code projectIntent} 时，图里没有 TASK_DRAFTER 节点，
+     *       {@code TaskDrafterRunner.inGraph} 为假，它根本不跑 —— CODE_AGENT 把里程碑放进
+     *       {@code suggestedPlan} 了，却没有人把它变成工件。</li>
+     *   <li>{@code PlanExtractorRunner} 在 POST_STREAM <b>无条件</b>赋值 {@code suggestedPlan}，
+     *       而 {@code suggestPlanFromChatIfNeeded} 在非 taskCreationIntent 时必然返回空计划 ——
+     *       里程碑在这里被悄悄抹掉。</li>
+     * </ol>
+     *
+     * <p>两处都是「看起来接通、实际永远产不出东西」，日志和执行轨迹上都看不出来。
+     */
+    @Test
+    void 里程碑必须能落成任务草稿() throws IOException {
+        assertTrue(decide("带我做一个小项目", true, true).needsTaskDraft(),
+                "项目式引导必须造出 TASK_DRAFTER 节点，否则里程碑变不成草稿");
+        assertTrue(decide("这个项目分几个里程碑", true, true).needsTaskDraft());
+
+        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        assertFalse(code.contains("s.suggestedPlan = suggestPlanFromChatIfNeeded("),
+                "PLAN_EXTRACTOR 不得无条件覆盖 suggestedPlan —— 非 taskCreationIntent 的那一轮"
+                        + "它拿到的必然是空计划，会把 CODE_AGENT 放进去的里程碑抹掉");
+        assertTrue(code.contains("if (hasPlanDraft(extracted) || !hasPlanDraft(s.suggestedPlan))"),
+                "覆盖前必须判一次：空的不许盖掉非空的");
+
+        // 里程碑必须走既有的那条路，不许另建工件类型或直接落库
+        assertTrue(code.contains("s.suggestedPlan = codeResult.milestonePlan();"),
+                "里程碑要交给既有的 TASK_DRAFT / ROUTINE_DRAFT 路径");
+        assertFalse(code.contains("\"MILESTONE_DRAFT\""),
+                "不得新建里程碑专用的工件类型 —— 确认分支、前端弹窗、落库全都要跟着改一遍");
+        assertTrue(code.contains("buildCreateStudyPlanTools()"),
+                "里程碑的 schema 必须复用 create_study_plan，另猜字段名会在落库时静默丢掉"
+                        + "象限、时长、截止日期");
+    }
+
+    /** 只有项目式引导才给「排任务」的能力 —— 别的语境下模型不该往用户日历里塞东西。 */
+    @Test
+    void 非项目语境不得下发排任务的工具() throws IOException {
+        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        int at = code.indexOf("boolean canPlanMilestones =");
+        assertTrue(at > 0, "找不到 canPlanMilestones 的赋值 —— 判据的锚点没了");
+        String statement = code.substring(at, code.indexOf(';', at) + 1);
+        assertTrue(statement.contains("projectIntent("),
+                "canPlanMilestones 必须由 projectIntent 决定。实际：" + statement);
+
+        int declaration = code.indexOf("buildCreateStudyPlanTools()");
+        int gate = code.indexOf("if (canPlanMilestones) {");
+        assertTrue(gate > 0, "排任务的工具必须收在 if (canPlanMilestones) 里");
+        assertTrue(code.indexOf("buildCreateStudyPlanTools()", gate) > gate,
+                "工具声明要在门里面；无条件下发的话，用户问「这段代码为什么报错」"
+                        + "模型也会顺手往他日历里排一串任务。首个声明位置：" + declaration);
+    }
 }

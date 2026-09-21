@@ -63,17 +63,22 @@ public class WorkspaceController {
         return Result.success(row);
     }
 
+    /** 列目录。{@code truncated} 要透传 —— 500 条和「至少 500 条」是两回事。 */
     @GetMapping("/files")
-    public Result<List<Map<String, Object>>> files(@RequestParam(required = false) String path) {
+    public Result<Map<String, Object>> files(@RequestParam(required = false) String path) {
         requireAdmin();
-        return Result.success(workspaceService.list(path == null ? "" : path).stream().map(e -> {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("path", e.path());
-            row.put("directory", e.directory());
-            row.put("size", e.size());
-            row.put("readable", e.readable());
-            return row;
+        WorkspaceService.Listing listing = workspaceService.listing(path == null ? "" : path);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("truncated", listing.truncated());
+        row.put("entries", listing.entries().stream().map(e -> {
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("path", e.path());
+            one.put("directory", e.directory());
+            one.put("size", e.size());
+            one.put("readable", e.readable());
+            return one;
         }).toList());
+        return Result.success(row);
     }
 
     @GetMapping("/file")

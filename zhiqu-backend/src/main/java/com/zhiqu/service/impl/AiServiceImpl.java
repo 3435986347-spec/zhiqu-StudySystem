@@ -1279,6 +1279,11 @@ public class AiServiceImpl implements AiService {
             CodeAgentResult codeResult = runCodeWorkspaceAgent(s.config, s.userId, s.limitedMessage);
             s.codeContext = codeResult.context();
             s.codeDrafts = codeResult.drafts();
+            if (codeResult.milestonePlan() != null) {
+                // 走 PLANNER 那条已有的路：TASK_DRAFT / ROUTINE_DRAFT 工件 + 既有的确认分支。
+                // 这里不新建工件类型，也不直接调 studyTaskService。
+                s.suggestedPlan = codeResult.milestonePlan();
+            }
             boolean read = hasText(s.codeContext);
             if (!s.codeDrafts.isEmpty()) {
                 // 与 Wiki / 计划 / 记忆同一条纪律：模型的写操作落成草稿，磁盘一个字节都没动。
@@ -1511,7 +1516,14 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void run(AgentRunContext ctx) {
-            s.suggestedPlan = suggestPlanFromChatIfNeeded(s.config, s.limitedMessage, s.finalReply);
+            Map<String, Object> extracted = suggestPlanFromChatIfNeeded(s.config, s.limitedMessage, s.finalReply);
+            // 不要用空计划盖掉已有的。CODE_AGENT 在 PRE_STREAM 可能已经把里程碑放进来了，
+            // 而 suggestPlanFromChatIfNeeded 在非 taskCreationIntent 时<b>必然</b>返回空计划 ——
+            // 无条件赋值的话，里程碑在这里被悄悄抹掉，等 TASK_DRAFTER 在 COMMIT 跑时
+            // 已经什么都没有了，而日志和执行轨迹上都看不出发生过什么。
+            if (hasPlanDraft(extracted) || !hasPlanDraft(s.suggestedPlan)) {
+                s.suggestedPlan = extracted;
+            }
         }
 
         @Override
@@ -3805,11 +3817,20 @@ public class AiServiceImpl implements AiService {
         private boolean ranCommand;
         /** Wiki 工具自己的循环状态（读过哪些页、快照、本轮已提过哪些草稿）—— 复用同一套防护。 */
         private final WikiLoopState wiki = new WikiLoopState();
+        /**
+         * 模型给出的里程碑计划（{@code {tasks, routines}}）。
+         *
+         * <p>形状与 PLANNER 那条路完全一致 —— 用的是同一个 {@code create_study_plan} schema
+         * 和同一个 {@code parsePlanFromResponse}。自己另猜一套字段名的话，确认落库时会
+         * 静默丢字段（象限、时长、截止日期），而任务照样建出来，没人会发现。
+         */
+        private Map<String, Object> milestonePlan;
     }
 
     /** 代码工作区循环的产物：给回答用的上下文，以及待确认的写草稿。 */
-    private record CodeAgentResult(String context, List<Map<String, Object>> drafts) {
-        static final CodeAgentResult EMPTY = new CodeAgentResult("", List.of());
+    private record CodeAgentResult(String context, List<Map<String, Object>> drafts,
+                                   Map<String, Object> milestonePlan) {
+        static final CodeAgentResult EMPTY = new CodeAgentResult("", List.of(), null);
     }
 
 /**
@@ -3843,6 +3864,8 @@ public class AiServiceImpl implements AiService {
             // 执行这一档由 WorkspaceExecutor 自己说了算（档位 + 非生产 profile 两条都在它里面）。
             // 这里不再复述那两个条件 —— 复述就是第二份真相。
             boolean canExec = workspaceExecutor.enabled();
+            // 项目式引导才给「把里程碑排成任务」的能力：别的语境下模型不该往用户日历里塞东西。
+            boolean canPlanMilestones = AgentPlanDecision.projectIntent(userMessage);
             long loopStart = System.currentTimeMillis();
             for (int round = 0; round < 4; round++) {
                 if (System.currentTimeMillis() - loopStart > 30_000L) {
@@ -3855,6 +3878,11 @@ public class AiServiceImpl implements AiService {
                 // Wiki 的读工具一直给：出题之前先看看这个人以前错在哪，题才出得准。
                 // 写工具（create_wiki_patch）只在 ranCommand 之后给 —— 见 CodeLoopState.ranCommand。
                 tools.addAll(buildWikiTools(loop.ranCommand));
+                if (canPlanMilestones) {
+                    // 复用 PLANNER 那条路的 schema，不另写一份 —— 字段形状必须逐字一致，
+                    // 否则确认落库时会静默丢掉象限、时长、截止日期。
+                    tools.addAll(buildCreateStudyPlanTools());
+                }
                 JsonNode message = callOpenAiToolTurn(config, messages, tools);
                 if (message == null) {
                     break;
@@ -3869,7 +3897,9 @@ public class AiServiceImpl implements AiService {
                     JsonNode argsNode = call.at("/function/arguments");
                     String argsRaw = argsNode.isTextual() ? argsNode.asText("")
                             : (argsNode.isMissingNode() ? "{}" : argsNode.toString());
-                    String result = isWikiToolName(name)
+                    String result = "create_study_plan".equals(name)
+                            ? recordMilestonePlan(argsRaw, loop)
+                            : isWikiToolName(name)
                             // 原样交给 Wiki 那条已经加固过的路：保留页、未完整读取不许整页覆盖、
                             // 本轮幂等、条带锁、可信快照基线。这里<b>不</b>另写一份。
                             ? executeWikiTool(userId, name, argsRaw, loop.wiki).result
@@ -3889,7 +3919,7 @@ public class AiServiceImpl implements AiService {
             log.warn("代码工作区工具循环失败（不影响主回答） userId={} err={}", userId, e.getMessage());
         }
         return new CodeAgentResult(limitRawMarkdown(context.toString(), CODE_CONTEXT_LIMIT),
-                List.copyOf(loop.drafts));
+                List.copyOf(loop.drafts), loop.milestonePlan);
     }
 
     private String codeWorkspaceSystemPrompt() {
@@ -3923,11 +3953,39 @@ public class AiServiceImpl implements AiService {
                     把新的一条<b>追加</b>在原有内容后面再提交草稿 —— 直接提交只有新内容的整页
                     会把他以前积累的笔记全冲掉。没读整页的话工具会拒绝你，那是刻意的。
                 5.5 判题通过就别记薄弱点。那一页是给他复习用的，掺进通过的题会稀释它。
+
+                如果他是在做一个项目，按这条环路走：
+                6.1 先看工作区里已经有什么，再说下一步 —— 不要给一份脱离现状的通用路线图。
+                6.2 一次只推进<b>一个</b>里程碑：说清这一步要做出什么、怎么算做完。
+                    一口气把十步都写出来，他哪一步都不会开始。
+                6.3 这一步的脚手架和验收测试写成文件草稿，让他确认落盘；他写完之后跑测试验收。
+                6.4 有 create_study_plan 时，把里程碑排成任务草稿 —— 一个里程碑一条，
+                    标题要具体（「实现登录接口并通过 3 个测试」而不是「第二阶段」）。
+                    它同样是草稿，他在确认面板勾选之后才进日历，所以不要说「已经加到你日历了」。
                 """;
     }
 
     /** 只读工具集。写工具连声明都没有 —— 模型看不到，就不会尝试，也不会承诺自己改了文件。 */
 /** 这个工具名属不属于 Wiki 那一套。与 {@code buildWikiTools} 的声明保持一致。 */
+    /**
+     * 把模型给出的里程碑计划收下来 —— <b>只收下，不落库</b>。
+     *
+     * <p>与计划草稿同一条纪律：它会变成 {@code TASK_DRAFT} 工件，用户在确认弹窗里
+     * 逐条勾选之后才进日历。项目式引导一次会给出好几个里程碑，直接写进去的话
+     * 用户第二天打开看板会发现多了一堆自己没安排过的任务。
+     */
+    private String recordMilestonePlan(String argsJson, CodeLoopState loop) {
+        Map<String, Object> plan = parsePlanFromResponse(argsJson);
+        if (!hasPlanDraft(plan)) {
+            return "没有解析出可用的里程碑。请给出 tasks 数组，每项至少有 title。";
+        }
+        loop.milestonePlan = plan;
+        int tasks = plan.get("tasks") instanceof List<?> list ? list.size() : 0;
+        int routines = plan.get("routines") instanceof List<?> list ? list.size() : 0;
+        return "已生成 " + tasks + " 个里程碑任务" + (routines > 0 ? "、" + routines + " 项例行计划" : "")
+                + "的草稿（还没有写进日历）。请告诉用户到确认面板勾选后才会生效。";
+    }
+
     private static boolean isWikiToolName(String name) {
         return "search_wiki".equals(name) || "read_wiki_page".equals(name) || "create_wiki_patch".equals(name);
     }
@@ -3993,7 +4051,8 @@ public class AiServiceImpl implements AiService {
                 if ("null".equals(path)) {
                     path = "";
                 }
-                List<WorkspaceService.Entry> entries = workspaceService.list(path);
+                WorkspaceService.Listing listing = workspaceService.listing(path);
+                List<WorkspaceService.Entry> entries = listing.entries();
                 if (entries.isEmpty()) {
                     return "这个目录是空的：" + (path.isBlank() ? "(工作区根)" : path);
                 }
@@ -4007,6 +4066,12 @@ public class AiServiceImpl implements AiService {
                         }
                     }
                     out.append('\n');
+                }
+                if (listing.truncated()) {
+                    // 说不出来的话，模型会把「500 个」当成「一共 500 个」，
+                    // 然后据此下「这个目录里没有 X」这种错误结论
+                    out.append("（条目过多，只列出了前 ").append(entries.size())
+                            .append(" 条 —— 这不是全部，请进到子目录再看）\n");
                 }
                 return out.toString();
             }

@@ -265,15 +265,20 @@ public class WorkspaceExecutor {
         int read;
         boolean truncated = false;
         while ((read = stream.read(buffer)) != -1) {
-            if (truncated) {
-                continue;   // 已经到上限：继续排空但丢弃，见下面为什么不能直接 break
+            if (out.size() >= limit) {
+                // 已经写满，而这里还读到了东西 —— 这才是真的丢了内容
+                truncated = true;
+                continue;   // 继续排空但丢弃，见下面为什么不能直接 break
             }
             int room = limit - out.size();
-            if (read >= room) {
-                out.write(buffer, 0, Math.max(room, 0));
+            if (read > room) {
+                out.write(buffer, 0, room);
                 truncated = true;
                 continue;
             }
+            // 注意是 read > room 而不是 >=：输出<b>正好</b>等于上限时一个字节都没丢，
+            // 不该报截断。报了的话模型会说「还有更多」，而其实没有 —— 它会据此
+            // 建议用户换个更窄的命令重跑，白跑一次。
             out.write(buffer, 0, read);
         }
         // 到上限就 break 的话，管道很快写满，子进程阻塞在 write 上再也退不出去 ——

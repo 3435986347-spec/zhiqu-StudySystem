@@ -222,7 +222,10 @@ public record AgentPlanDecision(
                 needsWeb,
                 includeWiki,
                 plannerNeeded(mode, message),
-                containsAny(message, TASK_DRAFT_WORDS),
+                // 项目式引导也要造 TASK_DRAFTER 节点：里程碑要靠它变成 TASK_DRAFT 工件。
+                // 不加这一条的话，CODE_AGENT 把里程碑放进 suggestedPlan 了，而没有节点的
+                // TaskDrafterRunner 根本不会跑 —— 整条路看起来接通，实际永远产不出草稿。
+                containsAny(message, TASK_DRAFT_WORDS) || projectIntent(message),
                 wikiWriteIntent(message),
                 containsAny(message, MEMORY_DRAFT_WORDS),
                 taskCreationIntent(message),
@@ -310,6 +313,48 @@ public record AgentPlanDecision(
     }
 
     /**
+     * 项目式引导的动作词 —— 足够具体、单独就能成立的那一档。
+     *
+     * <p>「里程碑」「小项目」「带我做」「边做边学」这些词几乎只出现在「带着我从零做一个东西」
+     * 这个语境里。与刷题门同一个理由：漏触发的代价是这个功能对用户而言等于不存在。
+     */
+    private static final List<String> PROJECT_STRONG_WORDS = List.of(
+            "小项目", "里程碑", "带我从零", "从零写", "从零做",
+            "项目计划", "练手项目", "实战项目");
+
+    /**
+     * 通用的那一档 —— 单独不算，要配一个代码或学科信号。
+     *
+     * <p>「下一步」「接下来」出现在任何话题里：下一步复习什么、接下来吃什么。
+     * 单独成立就会把 code agent 拉起来读一遍文件。
+     */
+    private static final List<String> PROJECT_WEAK_WORDS = List.of(
+            "下一步", "接下来", "一步步", "该写什么", "怎么开始", "从哪开始", "从哪里开始",
+            // 这几个第一版放在 STRONG 里，实测把「带我做一道红烧肉」「分几步走完这个学期」
+            // 也拉了进来 —— 它们只说了「带着做」和「拆步骤」，没说是在做什么。
+            "带我做", "从头做", "边做边学", "拆成几步", "分几步");
+
+    /**
+     * 「这句话是在要项目式引导吗」—— 第四道门，与 {@link #codeIntent}、{@link #practiceIntent}
+     * 并列汇入 {@link #codeAgentIntent}。
+     *
+     * <h2>已知接不住的那一类</h2>
+     *
+     * <p>「下一步我该写什么」不会命中：它缺的是<b>上下文</b>（在谈哪个项目），
+     * 而本仓库所有的门都只看当前这一条消息。与刷题门同一个已知限制，
+     * 理由与代价见 {@link #practiceIntent}。用户带上项目或语言名就能命中。
+     */
+    public static boolean projectIntent(String message) {
+        String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+        if (PROJECT_STRONG_WORDS.stream().anyMatch(text::contains)) {
+            return true;
+        }
+        return PROJECT_WEAK_WORDS.stream().anyMatch(text::contains)
+                && (CODE_MENTION_WORDS.stream().anyMatch(text::contains)
+                    || PRACTICE_SUBJECT_WORDS.stream().anyMatch(text::contains));
+    }
+
+    /**
      * 「这一轮的<b>意图</b>需要 code agent 吗」—— 建图侧与执行侧共用的<b>唯一</b>表达式。
      *
      * <p>存在的理由只有一个：这个 OR 不能写两遍。2026-09-21 加 {@code practiceIntent} 时
@@ -321,7 +366,7 @@ public record AgentPlanDecision(
      * 它们一个依赖模型配置、一个依赖用户身份，不属于「这句话想干什么」。
      */
     public static boolean codeAgentIntent(String message) {
-        return codeIntent(message) || practiceIntent(message);
+        return codeIntent(message) || practiceIntent(message) || projectIntent(message);
     }
 
 
@@ -351,9 +396,10 @@ public record AgentPlanDecision(
                 && CODE_WRITE_WORDS.stream().anyMatch(text::contains)) {
             return true;
         }
-        // 刷题本身就要写文件：题目和测试用例得落到工作区里他才跑得了。
-        // 仍然是草稿优先 —— 写工具产出的是 CODE_DRAFT，他看过 diff 才落盘。
-        return practiceIntent(message);
+        // 刷题与项目式引导本身就要写文件：题目、测试用例、里程碑的脚手架
+        // 都得落到工作区里他才跑得了。仍然是草稿优先 —— 写工具产出的是 CODE_DRAFT，
+        // 他看过 diff 才落盘。
+        return practiceIntent(message) || projectIntent(message);
     }
 
     private static boolean containsAny(String message, List<String> words) {

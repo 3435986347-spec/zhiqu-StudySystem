@@ -84,20 +84,41 @@ public class WorkspaceService {
      *
      * @param relativeDir 相对工作区根的目录；空表示根本身
      */
+    /**
+     * 一次列目录的结果。{@code truncated} 为真表示<b>还有条目没列出来</b>。
+     *
+     * <p>与搜索那边同一条纪律：截断必须说出来。列目录原来只是 {@code .limit(maxEntries)}
+     * 静默截断 —— 一个有 600 个文件的目录返回 500 条，模型据此说「这个目录有 500 个文件」，
+     * 而那是错的。
+     */
+    public record Listing(List<Entry> entries, boolean truncated) {
+    }
+
+    /** 兼容旧调用：只要条目。需要知道有没有截断就用 {@link #listing}。 */
     public List<Entry> list(String relativeDir) {
+        return listing(relativeDir).entries();
+    }
+
+    public Listing listing(String relativeDir) {
         requireRead();
         WorkspaceGuard.Resolution dir = guard.resolveDirectory(relativeDir);
         if (!dir.ok()) {
             throw new BusinessException(describe(dir.reason(), relativeDir));
         }
         List<Entry> entries = new ArrayList<>();
+        boolean truncated = false;
         try (Stream<Path> children = Files.list(dir.path())) {
+            // 多取一条：拿到 max+1 说明还有没列出来的。正好 max 条时不该报截断。
             List<Path> sorted = children
                     .filter(p -> !skipped(p))
                     .sorted(Comparator.comparing((Path p) -> !Files.isDirectory(p))
                             .thenComparing(p -> p.getFileName().toString().toLowerCase(Locale.ROOT)))
-                    .limit(properties.getMaxEntries())
+                    .limit(properties.getMaxEntries() + 1L)
                     .toList();
+            if (sorted.size() > properties.getMaxEntries()) {
+                sorted = sorted.subList(0, properties.getMaxEntries());
+                truncated = true;
+            }
             for (Path child : sorted) {
                 boolean directory = Files.isDirectory(child);
                 long size = directory ? 0L : sizeOf(child);
@@ -112,7 +133,7 @@ public class WorkspaceService {
         } catch (IOException | UncheckedIOException e) {
             throw new BusinessException("读取目录失败：" + e.getMessage());
         }
-        return entries;
+        return new Listing(entries, truncated);
     }
 
     /** 读一个文件的全文。 */
