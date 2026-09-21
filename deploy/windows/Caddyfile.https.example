@@ -1,0 +1,40 @@
+# HTTPS 版。把下面这一行的域名换成你自己的，其余不用动。
+# Caddy 会自动向 Let's Encrypt 申请并续期证书 —— 前提是：
+#   1. 域名的 A 记录已经指向这台服务器的公网 IP（134.175.110.207）
+#   2. 防火墙/安全组放行了 80 和 443（80 用于签发校验，不能只开 443）
+#
+# 放置位置与服务安装见同目录 install-caddy-service.ps1。
+
+你的域名.com {
+    encode zstd gzip
+
+    # 反代到本机的 Spring Boot。注意是 127.0.0.1 —— 应用本身不该监听公网，
+    # 让 Caddy 做唯一的入口。
+    reverse_proxy 127.0.0.1:8080
+
+    header {
+        # 告诉浏览器以后一律走 HTTPS。先别急着加 preload：
+        # 一旦进了 preload 列表，回退到 HTTP 会非常麻烦。
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # 服务端版本号没必要告诉全世界
+        -Server
+    }
+
+    # SSE（AI 助手的流式回答）不能被缓冲，否则用户会看到「一直没反应，然后一次性全出来」。
+    # Caddy 对 text/event-stream 有自动探测，这里<b>显式写出来</b>是为了不依赖那个探测 ——
+    # 万一响应头因为某次改动不带那个 content-type，自动探测就失效了，而症状只是
+    # 「流式变成了一次性」，没人会立刻联想到反向代理。
+    @sse path /api/ai/chat/stream
+    reverse_proxy @sse 127.0.0.1:8080 {
+        flush_interval -1
+    }
+}
+
+# 裸 IP 访问时给一个明确的跳转，而不是把明文页面直接送出去。
+# 没有域名的那台机器上证书签不了，所以这里只做重定向。
+http://134.175.110.207 {
+    redir https://你的域名.com{uri} permanent
+}

@@ -369,6 +369,38 @@ your-domain.com {
 
 但正式产品上线建议使用域名和 HTTPS。
 
+### 有域名时用这一份
+
+完整的 HTTPS 配置见同目录 **`Caddyfile.https.example`**，含安全响应头、
+裸 IP 跳转和 SSE 的缓冲设置。三件容易踩的事：
+
+- **80 端口不能只为了跳转而关掉**。Let's Encrypt 的 HTTP-01 校验走 80，
+  关了就签不出证书，也续不了期。第八节里 80/443 都要开，原因就在这里。
+- **域名的 A 记录要先指向这台服务器**，再启动 Caddy。指向没生效时 Caddy 会反复
+  申请失败，日志里是一串看不懂的 ACME 错误。
+- **`Strict-Transport-Security` 先不要加 `preload`**。进了浏览器的 preload 列表之后，
+  想退回 HTTP 会非常麻烦（要等浏览器厂商下一次更新列表）。
+
+配好之后，除了第八节的端口验证，再确认一次跳转：
+
+```powershell
+curl.exe -I http://服务器IP/index.html        # 期望 301，Location 指向 https://你的域名
+curl.exe -I https://你的域名/index.html       # 期望 200
+```
+
+### HTTPS 之后的一个附带好处
+
+前端有 `manifest.json` 和 service worker，而**浏览器只在 HTTPS 下允许「安装应用」**。
+配好证书之后，用 Chrome 打开站点就能把它装成一个独立窗口的应用（有图标、无地址栏），
+手机上同理。这条路不需要任何打包，和 `deploy/desktop/` 那个桌面安装包是两回事：
+
+| | 装法 | coding agent |
+|---|---|---|
+| **网页安装（PWA）** | 浏览器里点「安装」 | ✗（后端在服务器上） |
+| **桌面安装包** | 双击 .dmg / .msi | ✓（后端在本机） |
+
+两者读写同一个库，见 `deploy/desktop/remote-database.md`。
+
 ## 八、防火墙和安全组
 
 公网只建议开放：
