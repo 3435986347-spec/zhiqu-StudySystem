@@ -187,6 +187,40 @@ and will break the chain you meant to guard.
   `KnowledgePatchSet`, `KnowledgeSource`, `KnowledgePageLink`. RAG: `RagIndexJob`,
   `RagIndexGeneration`, `RagSourceIndexState`. Soft delete via `deleted` (0/1).
 
+### 桌面应用（原生 macOS 外壳）
+
+`deploy/desktop/package-macos-native.sh` 产出一个真正的 Cocoa 应用：Swift + WKWebView 外壳，
+JVM 作为子进程，页面无边框铺满窗口。另有 `package-macos.sh`（jpackage 版）会弹系统浏览器。
+
+三个只在**打包产物**里出现、且报错指不到原因的坑，都已修并有判据：
+
+- **`ApplicationRunner` 比 `ApplicationReadyEvent` 先跑。** Spring Boot 先 `callRunners()`
+  再发 ready 事件，所以 runner 里读不到实际端口。`DesktopLauncher` 现在只用一个
+  `@EventListener(ApplicationReadyEvent.class)`。
+- **Spring Boot 默认 `java.awt.headless=true`**，`Desktop.isDesktopSupported()` 必然 false。
+  开浏览器改走 `/usr/bin/open` / `rundll32` / `xdg-open`（`BrowserOpener`）。
+  而 headless 的 JVM 不连 CoreGraphics 窗口服务器，macOS 会**无限弹跳 Dock 图标**
+  （`lsappinfo` 报 `!cgsConnection`）。jpackage 版必须传
+  `--java-options "-Djava.awt.headless=false"` —— `spring.main.headless` 绑定在
+  `configureHeadlessProperty()` 之后，**写了也不生效**。原生外壳版相反：JVM 保持 headless，
+  外壳自己才是 GUI 进程。
+- **jlink 漏了 `jdk.charsets`**，MySQL 驱动把连接字符集协商成 `eucjpms`，
+  所有中文明文写入报 `Incorrect string value`。表、列、JDBC URL 三处都写着 utf8mb4。
+  任务标题是加密存储的（明文进 `encrypted_title`），所以只有 Wiki 受影响。
+  `jdk.crypto.ec` 同理：缺了 HTTPS 握手失败，报错像是对端的问题。
+
+原生外壳与后端靠 `-Dzhiqu.desktop.port-file` 交接端口（临时文件 + 原子改名 —— 外壳是
+轮询这个文件的，直接写可能读到半个端口号）。设了这个属性后端就**不再弹浏览器**。
+
+### 启动期密钥守卫
+
+生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
+所以 JAR 里的 `application.yml` 线上根本不读 —— 唯一现实的失手是照模板抄一份、
+`CHANGE_ME_` 忘了填。而两个占位符都长到能通过 `SensitiveCryptoService` 的 `length() < 24`，
+服务会干净地起来并用一个公开在仓库里的字符串签发登录令牌。`StartupSecretGuard` 三条判定：
+空（一律拒）、`CHANGE_ME` 前缀（一律拒，开发机也拒）、仓库里的开发默认值（仅生产 profile 拒）。
+覆盖哪些键不靠记性 —— `StartupSecretGuardTest` 扫模板里每个 `CHANGE_ME` 行反查。
+
 ### Frontend (`zhiqu-backend/src/main/resources/static/`)
 
 - **`assets/zhiqu-api.js` is the live application shell** — all 14 HTML pages load it. It owns the

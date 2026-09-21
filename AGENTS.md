@@ -111,6 +111,14 @@ never ran — that proves nothing. It is the mirror image of "an empty scan look
   the user's edits from the confirmation modal).
 - **Never commit real API keys.** They are injected via environment variables
   (`ZHIQU_SYSTEM_AI_API_KEY`, `ZHIQU_WEB_SEARCH_API_KEY`, …).
+- **Maven 可能跑在和 `java` 不同的 JDK 上。** 2026-09-21：Homebrew 把 `mvn` 的 JVM 换成了
+  openjdk 26（命令行 `java -version` 仍是 Temurin 17，所以看不出来）。JDK 23+ 默认关闭
+  隐式注解处理，Lombok 被静默跳过 —— 一次代码改动都没有，`mvn compile` 却 200 个
+  「找不到符号 getXxx()」。`pom.xml` 现在把 Lombok 写进 `annotationProcessorPaths`，
+  但构建仍应在 17 上跑：`export JAVA_HOME=$(/usr/libexec/java_home -v 17)`。
+  先看 `mvn -version` 的 Java version，再怀疑代码。
+- **`-Dtest=A+B` 不是多类语法，用逗号。** 写成 `+` 时 surefire 一条都不跑，
+  却报 BUILD SUCCESS —— 典型的空扫假绿。
 - **Never change `app.crypto.master-key` casually** — existing ciphertext (AI keys, Wiki page
   bodies) becomes undecryptable.
 
