@@ -120,6 +120,23 @@
   box-shadow: 0 0 0 3px rgba(91,141,239,0.15);
 }
 
+.remember-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 6px;
+  color: #4B5563;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.remember-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: #3F6FD9;
+}
+
 /* ── Submit button ── */
 .login-actions { margin-top: 24px; }
 .login-actions .btn {

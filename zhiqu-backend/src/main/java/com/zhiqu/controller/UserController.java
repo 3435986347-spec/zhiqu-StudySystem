@@ -9,6 +9,7 @@ import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -34,5 +35,10 @@ public class UserController {
     @PostMapping("/avatar")
     public Result<Map<String, Object>> uploadAvatar(@RequestPart("file") MultipartFile file) {
         return Result.success(userService.uploadAvatar(SecurityUtils.getCurrentUserId(), file));
+    }
+
+    @GetMapping("/login-history")
+    public Result<List<Map<String, Object>>> loginHistory(@RequestParam(defaultValue = "10") int limit) {
+        return Result.success(userService.loginHistory(SecurityUtils.getCurrentUserId(), limit));
     }
 }

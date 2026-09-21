@@ -12,7 +12,10 @@ public class StudyTask {
     private Long id;
     private Long userId;
     private String title;
+    private String encryptedTitle;
     private String description;
+    private String encryptedDescription;
+    private String encryptionVersion;
     private Integer quadrant;
     private Integer priority;
     private Integer status;
@@ -21,6 +24,9 @@ public class StudyTask {
     private Integer repeatWeeks;
     private String repeatGroupId;
     private Integer repeatWeekNumber;
+    private String taskType;
+    private Integer difficulty;
+    private String aiReminderReason;
     private LocalDateTime deadline;
     private LocalDateTime reminderTime;
     private LocalDateTime completedAt;
@@ -30,6 +36,9 @@ public class StudyTask {
 
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;
+
+    @Version
+    private Integer version;
 
     @TableLogic
     private Integer deleted;

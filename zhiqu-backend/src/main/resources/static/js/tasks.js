@@ -8,6 +8,124 @@ function toIsoLocalDateTime(val) {
     return s.length === 16 ? s + ':00' : s;
 }
 
+function parseReminderOffsets(val) {
+    if (!val || !val.trim()) return null;
+    const list = val.split(',')
+        .map((x) => parseInt(x.trim(), 10))
+        .filter((x, idx, arr) => Number.isFinite(x) && x >= 0 && x <= 365 && arr.indexOf(x) === idx);
+    return list.length ? list : null;
+}
+
+const TASK_DRAFT_PREFIX = 'zhiqu:task-draft:';
+const CREATE_DRAFT_FIELDS = [
+    'ct-title', 'ct-desc', 'ct-quadrant', 'ct-priority', 'ct-task-type',
+    'ct-difficulty', 'ct-deadline', 'ct-reminder', 'ct-reminder-offsets'
+];
+const EDIT_DRAFT_FIELDS = [
+    'et-version', 'et-title', 'et-desc', 'et-quadrant', 'et-priority', 'et-status',
+    'et-task-type', 'et-difficulty', 'et-deadline', 'et-reminder', 'et-reminder-offsets'
+];
+let activeCreateDraftKey = '';
+let activeEditDraftKey = '';
+let createDraftTouched = false;
+let editDraftTouched = false;
+
+function draftScope() {
+    const token = getAuthToken();
+    return token ? token.slice(-18) : 'anonymous';
+}
+
+function createDraftKey() {
+    return TASK_DRAFT_PREFIX + draftScope() + ':create';
+}
+
+function editDraftKey(id) {
+    return TASK_DRAFT_PREFIX + draftScope() + ':edit:' + id;
+}
+
+function createIdempotencyKey() {
+    if (!activeCreateDraftKey) {
+        activeCreateDraftKey = createDraftKey();
+    }
+    const key = activeCreateDraftKey + ':idempotency';
+    let value = localStorage.getItem(key);
+    if (!value) {
+        value = 'task-create-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+        localStorage.setItem(key, value);
+    }
+    return value;
+}
+
+function clearCreateIdempotencyKey() {
+    if (activeCreateDraftKey) {
+        localStorage.removeItem(activeCreateDraftKey + ':idempotency');
+    }
+}
+
+function collectDraftValues(fieldIds) {
+    const data = {};
+    fieldIds.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) data[id] = el.value;
+    });
+    return data;
+}
+
+function applyDraftValues(fieldIds, data) {
+    fieldIds.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el && Object.prototype.hasOwnProperty.call(data, id)) {
+            el.value = data[id] == null ? '' : data[id];
+        }
+    });
+}
+
+function hasMeaningfulDraft(data) {
+    return Object.values(data).some((value) => String(value || '').trim() !== '');
+}
+
+function saveDraft(key, fieldIds) {
+    if (!key) return;
+    const data = collectDraftValues(fieldIds);
+    if (!hasMeaningfulDraft(data)) {
+        localStorage.removeItem(key);
+        return;
+    }
+    localStorage.setItem(key, JSON.stringify({
+        savedAt: new Date().toISOString(),
+        data
+    }));
+}
+
+function restoreDraft(key, fieldIds, bannerId) {
+    const banner = document.getElementById(bannerId);
+    if (banner) banner.classList.add('hidden');
+    if (!key) return false;
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return false;
+        const draft = JSON.parse(raw);
+        if (!draft || !draft.data) return false;
+        applyDraftValues(fieldIds, draft.data);
+        if (banner) banner.classList.remove('hidden');
+        return true;
+    } catch (e) {
+        localStorage.removeItem(key);
+        return false;
+    }
+}
+
+function bindDraftAutosave(formId, keyGetter, fieldIds, markTouched) {
+    const form = document.getElementById(formId);
+    if (!form) return;
+    const handler = () => {
+        markTouched();
+        saveDraft(keyGetter(), fieldIds);
+    };
+    form.addEventListener('input', handler);
+    form.addEventListener('change', handler);
+}
+
 function buildQuery() {
     const params = new URLSearchParams();
     const q = document.getElementById('f-quadrant').value;
@@ -102,13 +220,20 @@ async function loadTasks() {
 
 function openEdit(task) {
     document.getElementById('et-id').value = String(task.id);
+    document.getElementById('et-version').value = String(task.version == null ? 0 : task.version);
     document.getElementById('et-title').value = task.title || '';
     document.getElementById('et-desc').value = task.description || '';
     document.getElementById('et-quadrant').value = String(task.quadrant || 1);
     document.getElementById('et-priority').value = String(task.priority != null ? task.priority : 0);
     document.getElementById('et-status').value = String(task.status != null ? task.status : 0);
+    document.getElementById('et-task-type').value = task.taskType || 'assignment';
+    document.getElementById('et-difficulty').value = String(task.difficulty || 3);
+    document.getElementById('et-reminder-offsets').value = '';
     document.getElementById('et-deadline').value = toDatetimeLocalValue(task.deadline);
     document.getElementById('et-reminder').value = toDatetimeLocalValue(task.reminderTime);
+    activeEditDraftKey = editDraftKey(task.id);
+    restoreDraft(activeEditDraftKey, EDIT_DRAFT_FIELDS, 'edit-draft-banner');
+    editDraftTouched = false;
     document.getElementById('edit-modal').classList.remove('hidden');
 }
 
@@ -118,6 +243,9 @@ function closeEdit() {
 
 function openCreate() {
     document.getElementById('form-create-task').reset();
+    activeCreateDraftKey = createDraftKey();
+    restoreDraft(activeCreateDraftKey, CREATE_DRAFT_FIELDS, 'create-draft-banner');
+    createDraftTouched = false;
     document.getElementById('create-modal').classList.remove('hidden');
 }
 
@@ -131,6 +259,19 @@ document.getElementById('edit-modal-close').addEventListener('click', closeEdit)
 document.getElementById('edit-cancel').addEventListener('click', closeEdit);
 document.getElementById('create-modal-close').addEventListener('click', closeCreate);
 document.getElementById('create-cancel').addEventListener('click', closeCreate);
+document.getElementById('create-draft-clear').addEventListener('click', () => {
+    if (activeCreateDraftKey) localStorage.removeItem(activeCreateDraftKey);
+    clearCreateIdempotencyKey();
+    createDraftTouched = false;
+    document.getElementById('create-draft-banner').classList.add('hidden');
+    showToast('已清除新建草稿', 'success');
+});
+document.getElementById('edit-draft-clear').addEventListener('click', () => {
+    if (activeEditDraftKey) localStorage.removeItem(activeEditDraftKey);
+    editDraftTouched = false;
+    document.getElementById('edit-draft-banner').classList.add('hidden');
+    showToast('已清除编辑草稿', 'success');
+});
 document.getElementById('edit-modal').addEventListener('click', (e) => {
     if (e.target.classList.contains('modal-backdrop')) closeEdit();
 });
@@ -147,11 +288,17 @@ document.getElementById('form-edit-task').addEventListener('submit', async (e) =
         quadrant: parseInt(document.getElementById('et-quadrant').value, 10),
         priority: parseInt(document.getElementById('et-priority').value, 10),
         status: parseInt(document.getElementById('et-status').value, 10),
+        taskType: document.getElementById('et-task-type').value,
+        difficulty: parseInt(document.getElementById('et-difficulty').value, 10),
+        reminderOffsets: parseReminderOffsets(document.getElementById('et-reminder-offsets').value),
         deadline: toIsoLocalDateTime(document.getElementById('et-deadline').value),
-        reminderTime: toIsoLocalDateTime(document.getElementById('et-reminder').value)
+        reminderTime: toIsoLocalDateTime(document.getElementById('et-reminder').value),
+        version: parseInt(document.getElementById('et-version').value || '0', 10)
     };
     try {
         await api.put('/task/' + id, body);
+        if (activeEditDraftKey) localStorage.removeItem(activeEditDraftKey);
+        editDraftTouched = false;
         showToast('已保存', 'success');
         closeEdit();
         await loadTasks();
@@ -167,12 +314,20 @@ document.getElementById('form-create-task').addEventListener('submit', async (e)
         description: document.getElementById('ct-desc').value.trim() || null,
         quadrant: parseInt(document.getElementById('ct-quadrant').value, 10),
         priority: parseInt(document.getElementById('ct-priority').value, 10),
+        taskType: document.getElementById('ct-task-type').value,
+        difficulty: parseInt(document.getElementById('ct-difficulty').value, 10),
+        reminderOffsets: parseReminderOffsets(document.getElementById('ct-reminder-offsets').value),
         status: 0,
         deadline: toIsoLocalDateTime(document.getElementById('ct-deadline').value),
         reminderTime: toIsoLocalDateTime(document.getElementById('ct-reminder').value)
     };
     try {
-        await api.post('/task', body);
+        await api.post('/task', body, {
+            headers: { 'Idempotency-Key': createIdempotencyKey() }
+        });
+        if (activeCreateDraftKey) localStorage.removeItem(activeCreateDraftKey);
+        clearCreateIdempotencyKey();
+        createDraftTouched = false;
         showToast('已创建', 'success');
         closeCreate();
         await loadTasks();
@@ -182,5 +337,16 @@ document.getElementById('form-create-task').addEventListener('submit', async (e)
 });
 
 document.addEventListener('DOMContentLoaded', () => {
+    bindDraftAutosave('form-create-task', () => activeCreateDraftKey, CREATE_DRAFT_FIELDS, () => {
+        createDraftTouched = true;
+    });
+    bindDraftAutosave('form-edit-task', () => activeEditDraftKey, EDIT_DRAFT_FIELDS, () => {
+        editDraftTouched = true;
+    });
     loadTasks().catch((e) => showToast(e.message, 'error'));
+});
+
+window.addEventListener('beforeunload', () => {
+    if (createDraftTouched) saveDraft(activeCreateDraftKey, CREATE_DRAFT_FIELDS);
+    if (editDraftTouched) saveDraft(activeEditDraftKey, EDIT_DRAFT_FIELDS);
 });

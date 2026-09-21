@@ -68,8 +68,9 @@
 │       └── resources/
 │           ├── application.yml  # 应用配置
 │           ├── db/
-│           │   ├── schema.sql   # 建表脚本
-│           │   └── data.sql     # 初始数据（成就定义等）
+│           │   ├── migration/   # Flyway 迁移脚本 V1…V26（启动时自动执行）
+│           │   ├── schema.sql   # 旧版建表脚本（历史参考，已不再使用）
+│           │   └── data.sql     # 旧版初始数据（历史参考，已不再使用）
 │           └── static/          # 前端页面
 │               ├── index.html   # 登录页
 │               ├── dashboard.html
@@ -107,17 +108,17 @@
 CREATE DATABASE zhiqu DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-依次执行以下两个脚本（顺序不可颠倒）：
+建表与初始数据现在由 **Flyway** 自动完成：后端首次启动时会按顺序执行
+`zhiqu-backend/src/main/resources/db/migration/` 下的 `V1` … `V26` 迁移脚本。
 
-```bash
-# 1. 建表
-mysql -u root -p zhiqu < zhiqu-backend/src/main/resources/db/schema.sql
+因此**不需要**再手动执行旧版的 `schema.sql` / `data.sql`（它们只保留作历史参考，
+内容已落后于当前版本，手动执行会得到不完整的表结构）。
 
-# 2. 写入初始数据（成就定义等）
-mysql -u root -p zhiqu < zhiqu-backend/src/main/resources/db/data.sql
+你只需要保证数据库已创建：
+
+```sql
+CREATE DATABASE zhiqu_db DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
-
-或在 MySQL 客户端中手动执行文件内容。
 
 ---
 
@@ -128,10 +129,13 @@ mysql -u root -p zhiqu < zhiqu-backend/src/main/resources/db/data.sql
 ```yaml
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/zhiqu?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3306/zhiqu_db?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai
     username: root        # ← 改为实际用户名
     password: yourpasswd  # ← 改为实际密码
 ```
+
+> 默认库名是 `zhiqu_db`。此外本项目还依赖 **Redis**（限流、幂等、锁），
+> 请一并配置 `spring.data.redis.*`。
 
 > 如需修改服务端口，在同文件中设置 `server.port`，默认为 `8080`。
 
@@ -143,6 +147,11 @@ spring:
 cd zhiqu-backend
 mvn spring-boot:run
 ```
+
+> 若仓库路径含中文导致 `mvn spring-boot:run` 报
+> `Could not find or load main class com.zhiqu.ZhiquApplication`，
+> 改为先打包再运行：`mvn clean package -DskipTests` 然后
+> `java -jar target/zhiqu-backend-0.0.1-SNAPSHOT.jar`。
 
 看到以下日志表示启动成功：
 
@@ -279,7 +288,8 @@ Authorization: Bearer <token>
 
 - 确认 MySQL 服务已启动
 - 检查 `application.yml` 中的用户名、密码、数据库名是否正确
-- 确认已执行 `schema.sql` 建表脚本
+- 确认数据库 `zhiqu_db` 已创建（建表由 Flyway 在启动时自动完成，无需手动执行 `schema.sql`）
+- 若启动日志报 Flyway 校验失败，多为数据库被手工改过；参见 `deploy/windows/README.md` 常见问题
 
 **Q：头像上传后无法显示**
 

@@ -1,0 +1,29 @@
+# 桌面应用形态的默认值。用 --spring.profiles.active=desktop 启用（打包时已写进启动参数）。
+#
+# 这里只放「桌面版和服务器版必须不同」的项；其余仍然来自 application.yml。
+server:
+  # 0 = 让系统分配空闲端口。固定端口在别的服务占着 8080 时会直接启动失败，
+  # 而那对双击启动的人来说是一句看不懂的报错。实际端口由 DesktopLauncher 取回。
+  port: 0
+  # 硬前置：只有绑回环，代码工作区才会生效（见 WorkspaceAccess）。
+  # 桌面版把它写死在这里，而不是交给用户配 —— 配错的后果是把你的磁盘开到局域网。
+  address: 127.0.0.1
+
+spring:
+  # 注意：java.awt.headless 不能在这里配。
+  # SpringApplication.run() 里 configureHeadlessProperty() 跑在 bindToSpringApplication()
+  # 之前，所以 spring.main.headless 绑上来的时候系统属性早就被设成 true 了
+  # （2026-09-21 实测：写了这一行，jcmd VM.system_properties 里仍是 java.awt.headless=true）。
+  # 真正的开关是 jpackage 的 --java-options "-Djava.awt.headless=false"，
+  # 见 deploy/desktop/package-macos.sh；为什么需要它见 DockPresence。
+  #
+  # 用户自己的配置放在 ~/.zhiqu/ 下，优先级高于打包进去的这份。
+  # 数据库地址、AI 密钥、工作区根目录都在那里填，不必重新打包。
+  config:
+    import: "optional:file:${user.home}/.zhiqu/application.yml"
+
+app:
+  workspace:
+    # 仍然默认关闭 —— 默认值本身就是安全边界。用户在 ~/.zhiqu/application.yml 里
+    # 填 mode 和 root 才会打开。
+    mode: OFF

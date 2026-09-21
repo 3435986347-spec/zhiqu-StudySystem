@@ -25,6 +25,17 @@ function formatUnlockedAt(v) {
     return formatDateTime(v);
 }
 
+function achievementIcon(icon) {
+    const map = {
+        'icon-login': '↪',
+        'icon-task': '✓',
+        'icon-streak': '↗',
+        'icon-study': '◷'
+    };
+    if (!icon) return '◇';
+    return map[icon] || icon;
+}
+
 function renderGrid() {
     const grid = document.getElementById('ach-grid');
     grid.innerHTML = '';
@@ -46,6 +57,7 @@ function renderGrid() {
             : '<span class="tag tag-priority-0">未解锁</span>';
         const when = a.unlocked && a.unlockedAt ? '<div style="margin-top:8px;font-size:12px;color:#909399">解锁时间：' + formatUnlockedAt(a.unlockedAt) + '</div>' : '';
         card.innerHTML =
+            '<div class="ach-icon"></div>' +
             '<div class="ach-name"></div>' +
             '<div class="ach-desc"></div>' +
             '<div class="ach-foot"><span>积分：' +
@@ -53,6 +65,7 @@ function renderGrid() {
             '</span>' +
             tag +
             '</div>';
+        card.querySelector('.ach-icon').textContent = achievementIcon(a.icon);
         card.querySelector('.ach-name').textContent = a.name || '';
         card.querySelector('.ach-desc').textContent = a.description || '';
         card.insertAdjacentHTML('beforeend', when);

@@ -1,0 +1,15 @@
+<service>
+  <id>caddy</id>
+  <name>Caddy Reverse Proxy</name>
+  <description>Caddy reverse proxy for Zhiqu HTTPS traffic.</description>
+  <executable>%BASE%\caddy.exe</executable>
+  <arguments>run --config "%BASE%\Caddyfile" --adapter caddyfile</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <startmode>Automatic</startmode>
+  <logpath>%BASE%\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10485760</sizeThreshold>
+    <keepFiles>10</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

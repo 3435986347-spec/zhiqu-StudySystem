@@ -1,0 +1,18 @@
+.katex {
+  font-family: "Cambria Math", "Times New Roman", serif;
+  font-size: 1.03em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.katex-display {
+  display: block;
+  margin: 12px 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: rgba(47, 95, 115, 0.055);
+  text-align: center;
+}
+.katex-error {
+  color: #A8463F;
+}

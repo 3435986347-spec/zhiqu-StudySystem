@@ -1,0 +1,61 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  这些是**公开的演练固定值**，任何情况下都不得用于真实部署。               ║
+# ║  jwt.secret 与 app.crypto.master-key 是一次性容器的夹具，不是凭据 ——      ║
+# ║  它们进了版本库，也就永远是公开的。                                       ║
+# ║                                                                          ║
+# ║  真实部署请用 deploy/windows/application-prod.example.yml 起步，密钥      ║
+# ║  自行生成并从环境变量注入。特别是 app.crypto.master-key：一旦某个环境用   ║
+# ║  过真实密钥再被这份文件的值覆盖，**该环境的既有密文（AI 密钥、Wiki 页正   ║
+# ║  文）全部不可解密，且不可恢复**——代价与其它配置错误不在一个量级。        ║
+# ║                                                                          ║
+# ║  写这段是因为本文件与 application-prod.example.yml 挨着、形态也像个可用   ║
+# ║  的起点，而没有任何东西守着这条边界。「在一个上下文里正确、在另一个上下   ║
+# ║  文里有害」正是本次演练反复撞见的那一类。                                 ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# 回滚演练的外部配置 —— 新旧两个 JAR **共用同一份**。
+#
+# 演练是对照实验：两次启动之间只有 JAR 该变。其余任何一项漂了，得到的红都不能归因于回滚。
+# 把这些钉在一个文件里而不是临场敲命令行，是为了让「同一份配置」这件事结构上成立，
+# 而不是靠每次记得把参数抄对。
+#
+# 逐项理由：
+#   app.crypto.master-key  演练第 1 步要在回滚期间造数据，而 Wiki 正文是加密写入的。
+#                          密钥换了，解密失败会被读成「回滚导致数据不可用」——
+#                          而它和回滚毫无关系。这是「判据定义域比所报告的性质宽」
+#                          搬进演练里的版本。
+#   jwt.secret             不同则回滚后登录态失效，看起来像会话被破坏。
+#   redis                  RateLimitFilter 与会话锁都依赖它；演练环境是
+#                          JAR + MySQL + Redis 三件，不是两件。
+#   server.port            同一端口，否则「起没起来」的判据本身会被端口占用污染。
+#
+# 数据库是专用的一次性容器（mysql:8.0.36，与 Testcontainers 里同版本，
+# 免得演练顺带引入一个没人打算引入的变量）。**不要指向开发库 zhiqu_db**：
+# 演练会把 flyway_schema_history 推到 V30，而 V29 里的
+# `ALTER TABLE ... ADD COLUMN` 与 `CREATE UNIQUE INDEX` 在 MySQL 里都没有
+# IF NOT EXISTS，删掉历史行后重跑必然撞重复列/重复索引 —— 开发库会进入
+# 「schema 与 history 互相矛盾且删行修不回来」的状态。
+
+server:
+  port: 18080
+
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:13306/zhiqu_drill?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: drill
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 16379
+
+jwt:
+  secret: drill-fixed-secret-do-not-change-between-runs-0123456789
+
+app:
+  cookie:
+    secure: false
+  crypto:
+    master-key: drill-fixed-master-key-do-not-change-between-runs
+  rag:
+    enabled: false

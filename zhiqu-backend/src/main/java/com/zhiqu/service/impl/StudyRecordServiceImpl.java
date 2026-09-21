@@ -1,6 +1,7 @@
 package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.zhiqu.common.BusinessException;
 import com.zhiqu.dto.StudyRecordCreateRequest;
 import com.zhiqu.dto.StudyStatisticsVO;
 import com.zhiqu.entity.StudyRecord;
@@ -11,7 +12,9 @@ import com.zhiqu.mapper.StudyTaskMapper;
 import com.zhiqu.mapper.SysUserMapper;
 import com.zhiqu.service.AchievementService;
 import com.zhiqu.service.StudyRecordService;
+import com.zhiqu.service.concurrency.DeadlockRetry;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.temporal.WeekFields;
@@ -34,38 +37,26 @@ public class StudyRecordServiceImpl implements StudyRecordService {
     }
 
     @Override
+    @Transactional
+    @DeadlockRetry
     public StudyRecord create(Long userId, StudyRecordCreateRequest request) {
         StudyRecord record = new StudyRecord();
         record.setUserId(userId);
-        record.setTaskId(request.getTaskId());
+        if (request.getTaskId() != null) {
+            StudyTask task = studyTaskMapper.selectOne(new LambdaQueryWrapper<StudyTask>()
+                    .eq(StudyTask::getId, request.getTaskId())
+                    .eq(StudyTask::getUserId, userId));
+            if (task == null) {
+                throw new BusinessException("任务不存在或无权限关联学习记录");
+            }
+            record.setTaskId(request.getTaskId());
+        }
         record.setStudyDate(request.getStudyDate());
         record.setDurationMinutes(request.getDurationMinutes());
         record.setNote(request.getNote());
         studyRecordMapper.insert(record);
 
-        SysUser user = sysUserMapper.selectById(userId);
-        if (user != null) {
-            int oldTotal = user.getTotalStudyMinutes() == null ? 0 : user.getTotalStudyMinutes();
-            user.setTotalStudyMinutes(oldTotal + request.getDurationMinutes());
-
-            LocalDate last = user.getLastStudyDate();
-            LocalDate current = request.getStudyDate();
-            int days = user.getConsecutiveDays() == null ? 0 : user.getConsecutiveDays();
-            if (last == null) {
-                days = 1;
-            } else if (current.equals(last)) {
-                days = Math.max(days, 1);
-            } else if (current.equals(last.plusDays(1))) {
-                days = days + 1;
-            } else if (current.isAfter(last.plusDays(1))) {
-                days = 1;
-            }
-            if (last == null || current.isAfter(last)) {
-                user.setLastStudyDate(current);
-                user.setConsecutiveDays(days);
-            }
-            sysUserMapper.updateById(user);
-        }
+        sysUserMapper.addStudyMinutesAndRefreshStreak(userId, request.getDurationMinutes(), request.getStudyDate());
         achievementService.checkAndUnlock(userId, "study_record_added");
         return record;
     }

@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 public class TaskCreateRequest {
@@ -31,6 +32,12 @@ public class TaskCreateRequest {
     private Integer durationMinutes;
     /** 持续周数：> 1 时走展开创建（每周一条） */
     private Integer repeatWeeks;
+    private String taskType;
+    @Min(value = 1, message = "难度范围是1到5")
+    @Max(value = 5, message = "难度范围是1到5")
+    private Integer difficulty;
+    private String aiReminderReason;
+    private List<Integer> reminderOffsets;
     private LocalDateTime deadline;
     private LocalDateTime reminderTime;
 }
