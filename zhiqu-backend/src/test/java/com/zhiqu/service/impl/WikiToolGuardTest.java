@@ -106,7 +106,10 @@ class WikiToolGuardTest {
 
     private static boolean invokeBoolean(String name, Class<?>[] parameterTypes, Object... args) {
         try {
-            Class<?> type = Class.forName("com.zhiqu.service.impl.AiServiceImpl");
+            // 2026-09-21 从 AiServiceImpl 搬到 WikiToolAgent（拆大类第二刀）。
+            // 用反射是为了不把这个内部判定变成 public API —— 代价是搬家时编译器帮不上忙，
+            // 只能靠这条判据在运行时红。它确实红了，消息也说清了是「调不到」。
+            Class<?> type = Class.forName("com.zhiqu.service.ai.WikiToolAgent");
             Method method = type.getDeclaredMethod(name, parameterTypes);
             method.setAccessible(true);
             return (Boolean) method.invoke(null, args);

@@ -375,10 +375,19 @@ class CodeAgentGateTest {
         assertTrue(code.contains("executeWikiTool(userId, name, argsRaw, loop.wiki)"),
                 "code agent 的 Wiki 调用必须原样交给 executeWikiTool。另写一份就会绕开"
                         + "「未完整读取不许整页覆盖」，而薄弱点页是累积的，覆盖一次就全没了");
-        assertFalse(code.contains("knowledgeService.createPatchSet(userId, patchBody, trustedSnapshots)")
-                        && countOccurrences(code, "createPatchSet(") > 1,
+        // createPatchSet 只允许有一处调用 —— 它现在住在 WikiToolAgent 里。
+        //
+        // 这条判据 2026-09-21 差点变成摆设：Wiki 循环搬走之后，它还在扫 AiServiceImpl，
+        // 而那里的计数已经是 0，assertFalse(contains(...) && ...) 于是<b>真空通过</b>。
+        // 搬家会让判据扫错文件，而扫错文件的判据看起来和通过一模一样。
+        String wikiAgent = SourceText.stripComments(Files.readString(
+                Path.of("src/main/java/com/zhiqu/service/ai/WikiToolAgent.java"), StandardCharsets.UTF_8));
+        assertEquals(1, countOccurrences(wikiAgent, "createPatchSet("),
                 "createPatchSet 只允许有一处调用（executeWikiTool 里那处）。"
-                        + "第二处就是绕开防护的那条路");
+                        + "第二处就是绕开「未完整读取不许整页覆盖」的那条路。"
+                        + "数到 0 通常意味着判据扫错了文件");
+        assertEquals(0, countOccurrences(code, "createPatchSet("),
+                "AiServiceImpl 里不该再有 createPatchSet —— Wiki 的写入只走 WikiToolAgent 一条路");
     }
 
     // ── 刷题这道门（阶段 4）───────────────────────────────────────────────

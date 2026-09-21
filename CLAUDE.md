@@ -565,9 +565,23 @@ code agent 在项目语境下拿到 `create_study_plan`（**同一个 schema，�
 也不会被业务改动波及，所以先走；走了之后别的 agent 可以只依赖它，不必再依赖那个大类。
 搬了 18 个成员、改了 60 多个调用点，行为判据 439 条全绿。
 
-`limitText` 被那个类用了 33 次，拆的时候成了两边都要的东西，提到
-`common/TextLimits` —— 与其在新类里写一个同义的，不如让两边指向同一份；
-`AiServiceImpl` 里留一行委托，33 个调用点因此不必改。
+**第二刀**是知识 Wiki 的工具循环 → `service/ai/WikiToolAgent`：自己的工具声明、执行器、
+循环状态，以及一整套只对它有意义的防护（未完整读取不许整页覆盖、保留页、本轮幂等、
+按「用户+标题」分桶的进程内条带锁、可信快照）。它现在只依赖 `ModelProviderClient`、
+`KnowledgeService` 和 `ObjectMapper`，不再依赖那个大类。
+
+三个被反复用到的文本处理提到 `common/Texts`（`limitCollapsed` / `limitRaw` / `orDefault`），
+函数调用的 schema 形状提到 `service/ai/ToolSchemas`。两处都在 `AiServiceImpl` 里留了
+一行委托，所以它那 60 多个调用点一个都不用改。
+
+**搬家会让判据扫错文件，而扫错文件的判据看起来和通过一模一样。** 第二刀之后
+`CodeAgentGateTest` 那条「`createPatchSet` 只许有一处调用」还在扫 `AiServiceImpl`，
+而方法已经搬走、计数变成 0，`assertFalse(contains(...) && count > 1)` 于是**真空通过**。
+它是绿的，但它什么也没看。现在改成扫 `WikiToolAgent` 并断言 `== 1`（而不是「不超过 1」）——
+**给计数类判据一个正数下限**，是这一类真空绿唯一的解药。
+
+`WikiToolGuardTest` 用反射调那个内部判定，搬家后直接红（「无法调用生产判定方法」）。
+反射的代价就是编译器帮不上忙，只能靠判据在运行时红 —— 这次它尽到了职责。
 
 **这次搬家照出了一个既有的 SSRF 洞。** 写 `ModelProviderSsrfGuardTest` 时它第一次跑就红了，
 查下来<b>五个真正发出站请求的方法没有校验</b>：视觉路径（`analyzeImage` 是

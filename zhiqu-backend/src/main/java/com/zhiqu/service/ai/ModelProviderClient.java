@@ -345,7 +345,7 @@ public class ModelProviderClient {
             JsonNode error = root.get("error");
             if (error != null) {
                 if (error.isTextual()) {
-                    return com.zhiqu.common.TextLimits.limit(error.asText(), 500);
+                    return com.zhiqu.common.Texts.limitCollapsed(error.asText(), 500);
                 }
                 JsonNode message = error.get("message");
                 JsonNode code = error.get("code");
@@ -355,12 +355,12 @@ public class ModelProviderClient {
                 if (code != null && !code.isNull()) parts.add("code=" + code.asText());
                 if (type != null && !type.isNull()) parts.add("type=" + type.asText());
                 if (!parts.isEmpty()) {
-                    return com.zhiqu.common.TextLimits.limit(String.join("；", parts), 500);
+                    return com.zhiqu.common.Texts.limitCollapsed(String.join("；", parts), 500);
                 }
             }
         } catch (Exception ignored) {
             // Fall back to raw body below.
         }
-        return com.zhiqu.common.TextLimits.limit(responseBody, 500);
+        return com.zhiqu.common.Texts.limitCollapsed(responseBody, 500);
     }
 }
