@@ -109,30 +109,60 @@ class WikiTabsTest {
     }
 
     /**
-     * 标签文字、返回按钮、正文三条左边缘要落在同一条线上。
+     * 文档标题要和正文左边缘落在同一条竖线上。
      *
-     * <p>这条对齐由<b>三个分散的数字相加</b>而成：标签栏的 padding-left（HTML）
-     * + 单个标签的 padding-left（JS 里拼的行内样式）== 正文的 padding-left（HTML）
-     * == 标题行的 padding-left（HTML）。改其中任何一个都会错位，而错位 6px
-     * 这种程度不会有人在代码评审里看出来 —— 只有量一下才知道。
+     * <p>第一版把前进/返回按钮放进了标题行，两个按钮把「文档视图 / 标题」整体往右推了
+     * <b>76px</b>（实测 373 vs 正文 297）—— 标题比它自己的正文缩进得明显更多，
+     * 一眼就能看出来别扭。现在按钮移到了上面那条工具条里（和浏览器一样），
+     * 标题回到 26px 这条线上。
+     *
+     * <p>这条对齐由两个分散的数字维持：标题行的 {@code padding-left} 和
+     * {@code #zq-doc} 的 {@code padding-left}。改一个不改另一个不会报错，
+     * 只会又错开 —— 而错开几像素这种事没人在代码评审里看得出来。
      */
     @Test
-    @DisplayName("标签文字 / 返回按钮 / 正文 三条左边缘要对齐")
-    void 三条左边缘要对齐() throws Exception {
+    @DisplayName("文档标题与正文的左边缘要对齐")
+    void 标题与正文左边缘要对齐() throws Exception {
         String html = Files.readString(WIKI_HTML, StandardCharsets.UTF_8);
-        String js = Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8);
 
-        int barLeft = pxAfter(html, "id=\"zq-wiki-tabs\"", "padding:0 8px 0 ");
-        int tabLeft = pxAfter(js, "data-wiki-tab=\"' + i + '\"", "padding:7px 8px 7px ");
+        int headerLeft = pxAfter(html, "id=\"zq-wiki-tabs\"", "padding:14px 20px 14px ");
         int docLeft = pxAfter(html, "id=\"zq-doc\"", "padding:22px ");
-        int headerLeft = pxAfter(html, "padding:14px 20px 14px ", "padding:14px 20px 14px ");
 
-        assertEquals(docLeft, barLeft + tabLeft,
-                "标签文字的左边缘（标签栏 " + barLeft + "px + 标签自身 " + tabLeft
-                        + "px = " + (barLeft + tabLeft) + "px）和正文的 " + docLeft + "px 对不齐");
         assertEquals(docLeft, headerLeft,
-                "标题行的左内边距 " + headerLeft + "px 和正文的 " + docLeft + "px 对不齐，"
-                        + "返回按钮会比正文缩进得少");
+                "标题行的左内边距是 " + headerLeft + "px，正文是 " + docLeft
+                        + "px —— 标题会比它自己的正文缩进得多或少。");
+
+        // 标签文字也要落在这条线上：标签栏的 padding-left + 单个标签自己的 padding-left
+        int barLeft = pxAfter(html, "id=\"zq-wiki-tabs\"", "padding-left:");
+        String js = Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8);
+        int tabLeft = pxAfter(js, "data-wiki-tab=\"' + i + '\"", "padding:7px 8px 7px ");
+        assertEquals(docLeft, barLeft + tabLeft,
+                "标签文字在 " + (barLeft + tabLeft) + "px（标签栏 " + barLeft + " + 标签自身 "
+                        + tabLeft + "），正文在 " + docLeft + "px —— 对不齐。");
+    }
+
+    /**
+     * 前进/返回按钮必须留在工具条里，不能回到标题行。
+     *
+     * <p>放回标题行会把标题整体右推 76px（实测 373 vs 正文 297）—— 上一条判据只量内边距，
+     * 量不到「有没有别的元素挤在标题前面」，所以这条单独看结构。
+     *
+     * <p>按钮在工具条内部是在标签左边还是右边，这条不管 —— 那是排版偏好；
+     * 「在不在标题行里」才是会破坏对齐的那件事。
+     */
+    @Test
+    @DisplayName("前进/返回按钮要留在工具条里，不能挤进标题行")
+    void 导航按钮不得挤在标题前() throws Exception {
+        String html = Files.readString(WIKI_HTML, StandardCharsets.UTF_8);
+        int titleRow = html.indexOf("padding:14px 20px 14px ");
+        int title = html.indexOf("id=\"zq-doc-title\"");
+        assertTrue(titleRow >= 0 && title > titleRow, "定位不到标题行 —— 判据扫空了");
+        assertTrue(html.contains("id=\"zq-wiki-back\"") && html.contains("id=\"zq-wiki-fwd\""),
+                "两个导航按钮要都在");
+
+        String headerRow = html.substring(titleRow, title);
+        assertFalse(headerRow.contains("id=\"zq-wiki-back\"") || headerRow.contains("id=\"zq-wiki-fwd\""),
+                "导航按钮出现在标题行里，标题会被整体右推：" + headerRow);
     }
 
     @Test
