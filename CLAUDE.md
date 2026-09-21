@@ -557,6 +557,28 @@ code agent 在项目语境下拿到 `create_study_plan`（**同一个 schema，�
 地方：「薄弱点草稿存在」<b>证明了命令确实跑过</b> —— `create_wiki_patch` 只在 `ranCommand`
 置位之后才下发，拿不到工具就调不出来。
 
+### 拆 AiServiceImpl（进行中）
+
+它曾经 5770 行，混着两类完全不同的东西：**要问模型什么**（业务）和**怎么把请求发出去**
+（协议）。第一刀拆的是后者 —— `service/ai/ModelProviderClient`：URL 解析、鉴权头、温度、
+超时、OpenAI 与 Anthropic 的差异、错误格式化、SSRF 校验。它不依赖任何业务概念，
+也不会被业务改动波及，所以先走；走了之后别的 agent 可以只依赖它，不必再依赖那个大类。
+搬了 18 个成员、改了 60 多个调用点，行为判据 439 条全绿。
+
+`limitText` 被那个类用了 33 次，拆的时候成了两边都要的东西，提到
+`common/TextLimits` —— 与其在新类里写一个同义的，不如让两边指向同一份；
+`AiServiceImpl` 里留一行委托，33 个调用点因此不必改。
+
+**这次搬家照出了一个既有的 SSRF 洞。** 写 `ModelProviderSsrfGuardTest` 时它第一次跑就红了，
+查下来<b>五个真正发出站请求的方法没有校验</b>：视觉路径（`analyzeImage` 是
+`AiController` 暴露的真实端点）、两条流式路径、Anthropic 的计划工具调用。
+模型 API URL 是用户自己填的 —— 他填 `http://169.254.169.254/latest/meta-data/`，
+服务器就替他去读云元数据，而返回内容会显示在「测试连接」的结果里。
+
+修法是把校验放在<b>真正发请求的那一层</b>，不是放在调用方：放调用方就总会有人忘，
+而且新增一个调用方就多一个口子。判据现在钉的是这条不变量本身 ——
+凡是出现 `postForEntity` / `.exchange(` 的方法，同一个方法体里必须先出现校验。
+
 ### RAG (optional)
 
 `app.rag.enabled` defaults to **true** (`${ZHIQU_RAG_ENABLED:true}` in `application.yml`). When the

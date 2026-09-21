@@ -41,6 +41,7 @@ import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.AiWorkspaceService;
 import com.zhiqu.service.MultiAgentOrchestrator;
 import com.zhiqu.service.AdminGuard;
+import com.zhiqu.service.ai.ModelProviderClient;
 import com.zhiqu.service.agent.AgentPhase;
 import com.zhiqu.service.agent.AgentPlanDecision;
 import com.zhiqu.service.agent.AgentPosition;
@@ -112,7 +113,6 @@ public class AiServiceImpl implements AiService {
      * <p>不从 {@code ai_agent_run.max_tokens} 取：那一列 setMaxTokens 全仓库零调用、恒为 NULL，
      * 而且这九处里有一半（视觉、计划工具调用）根本不在 agent run 的上下文里。V33 退掉那一列。
      */
-    private static final int MODEL_MAX_TOKENS = 4096;
 
     private static final int MEMORY_MAX_LENGTH = 2000;
     private static final int MESSAGE_MAX_LENGTH = 12000;
@@ -145,10 +145,11 @@ public class AiServiceImpl implements AiService {
     private final WebSearchProvider webSearchProvider;
     private final WebResearchService webResearchService;
     private final ModelStreamAdapterFactory modelStreamAdapterFactory;
+    /** 「怎么跟模型供应商说话」那一层。协议细节不再混在业务里，见 ModelProviderClient 的类注释。 */
+    private final ModelProviderClient provider;
     private final SensitiveCryptoService cryptoService;
     private final LongTermMemoryStore memoryStore;
     private final RestTemplate restTemplate;
-    private final RestTemplate toolTurnRestTemplate;
     private final ObjectMapper objectMapper;
     private final boolean systemDefaultEnabled;
     private final String systemDisplayName;
@@ -184,6 +185,7 @@ public class AiServiceImpl implements AiService {
                          WebResearchService webResearchService,
                          ModelStreamAdapterFactory modelStreamAdapterFactory,
                          SysUserMapper userMapper,
+                         ModelProviderClient provider,
                          SensitiveCryptoService cryptoService,
                          LongTermMemoryStore memoryStore,
                          ConversationLockRegistry conversationLocks,
@@ -226,12 +228,12 @@ public class AiServiceImpl implements AiService {
         this.webResearchService = webResearchService;
         this.modelStreamAdapterFactory = modelStreamAdapterFactory;
         this.userMapper = userMapper;
+        this.provider = provider;
         this.cryptoService = cryptoService;
         this.memoryStore = memoryStore;
         this.conversationLocks = conversationLocks;
         this.conversationTx = new TransactionTemplate(transactionManager);
         this.restTemplate = createAiRestTemplate();
-        this.toolTurnRestTemplate = createToolTurnRestTemplate();
         this.objectMapper = new ObjectMapper();
         this.systemDefaultEnabled = systemDefaultEnabled;
         this.systemDisplayName = systemDisplayName;
@@ -252,13 +254,6 @@ public class AiServiceImpl implements AiService {
         return new RestTemplate(factory);
     }
 
-    /** 工具循环专用：读取超时更短(25s)，配合每轮墙钟预算把回答前的阻塞时间收敛在可控范围。 */
-    private RestTemplate createToolTurnRestTemplate() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(10_000);
-        factory.setReadTimeout(25_000);
-        return new RestTemplate(factory);
-    }
 
     @Override
     public UserAiConfig getConfig(Long userId) {
@@ -526,7 +521,7 @@ public class AiServiceImpl implements AiService {
         // 意图判定算一次，建图与执行读同一个对象。此前两侧各算一套且已分叉（见 AgentPlanDecision 类注释）。
         AgentPlanDecision decision = AgentPlanDecision.of(
                 agentMode, limitedMessage, Boolean.TRUE.equals(enableWebSearch), notebookId, contextOptions,
-                supportsToolCalling(config), history.size() >= CHAT_HISTORY_LIMIT,
+                provider.supportsToolCalling(config), history.size() >= CHAT_HISTORY_LIMIT,
                 // 工作区是否真的可读。两个条件缺一不可：
                 //   1. 生效档位允许读（问的是 effectiveMode 而不是配置 —— 三个前置有一条
                 //      不满足时，配置写 EXEC 也只能是 OFF）；
@@ -2426,7 +2421,7 @@ public class AiServiceImpl implements AiService {
     private boolean supportsDeepReasoning(AiModelConfig config) {
         String caps = config == null || config.getCapabilities() == null ? "" : config.getCapabilities().toUpperCase(Locale.ROOT);
         String name = config == null || config.getModelName() == null ? "" : config.getModelName().toLowerCase(Locale.ROOT);
-        String provider = config == null ? "" : normalizeProviderType(config.getProviderType());
+        String providerType = config == null ? "" : provider.normalizeProviderType(config.getProviderType());
         return caps.contains("REASONING")
                 || caps.contains("THINKING")
                 || name.contains("deepseek-reasoner")
@@ -2443,8 +2438,8 @@ public class AiServiceImpl implements AiService {
             return true;
         }
         String name = config == null || config.getModelName() == null ? "" : config.getModelName().toLowerCase(Locale.ROOT);
-        String provider = config == null ? "" : normalizeProviderType(config.getProviderType());
-        return "ANTHROPIC".equals(provider)
+        String providerType = config == null ? "" : provider.normalizeProviderType(config.getProviderType());
+        return "ANTHROPIC".equals(providerType)
                 || name.contains("think")
                 || name.contains("reason")
                 || name.contains("deepseek")
@@ -2498,14 +2493,14 @@ public class AiServiceImpl implements AiService {
             model.setEnabled(1);
             model.setIsDefault(0);
         }
-        String providerType = normalizeProviderType(valueOr(body.get("providerType"), "OPENAI_COMPATIBLE"));
+        String providerType = provider.normalizeProviderType(valueOr(body.get("providerType"), "OPENAI_COMPATIBLE"));
         String modelName = valueOr(body.get("modelName"), creating ? "" : model.getModelName());
         String apiKey = stringValue(body.get("apiKey"));
         if (creating && !hasText(apiKey) && !"OLLAMA".equals(providerType)) {
             throw new BusinessException("请填写 API Key");
         }
         String normalizedApiUrl = normalizeProviderApiUrl(valueOr(body.get("apiUrl"), defaultApiUrl(providerType)), providerType);
-        validateProviderRequestUrl(normalizedApiUrl);
+        provider.validateProviderRequestUrl(normalizedApiUrl);
         model.setProviderType(providerType);
         model.setDisplayName(cleanModelDisplayName(valueOr(body.get("displayName"), modelName)));
         model.setApiUrl(normalizedApiUrl);
@@ -2790,8 +2785,8 @@ public class AiServiceImpl implements AiService {
         if (model == null || model.getEnabled() == null || model.getEnabled() != 1) {
             throw new BusinessException("请先在个人中心配置可用的 AI 模型");
         }
-        if (!"OLLAMA".equals(normalizeProviderType(model.getProviderType()))
-                && !hasText(decryptedApiKey(model))) {
+        if (!"OLLAMA".equals(provider.normalizeProviderType(model.getProviderType()))
+                && !hasText(provider.decryptedApiKey(model))) {
             throw new BusinessException("当前模型缺少 API Key，请在个人中心补充");
         }
         return model;
@@ -3440,7 +3435,7 @@ public class AiServiceImpl implements AiService {
         // 优先走真正的工具调用（Function Calling）：把 create_study_plan 的 tools schema 发给模型，
         // 由模型自己决定并返回 tool_call，后端解析其 arguments 落成计划草稿（保留用户确认后落库）。
         // OpenAI 协议兼容；不支持工具的提供方或调用失败时，回退到下面的结构化输出方案。
-        if (supportsToolCalling(config)) {
+        if (provider.supportsToolCalling(config)) {
             try {
                 String toolArgs = callStudyPlanToolCall(config, getStudyPlanToolSystemPrompt(), userPrompt);
                 if (hasText(toolArgs)) {
@@ -3465,13 +3460,13 @@ public class AiServiceImpl implements AiService {
      * 无 tool_call 时返回空串，交由上层回退。
      */
     private String callStudyPlanToolCall(AiModelConfig config, String systemPrompt, String userMessage) {
-        validateProviderRequestUrl(config.getApiUrl());
-        if (isAnthropicProvider(config)) {
+        provider.validateProviderRequestUrl(config.getApiUrl());
+        if (provider.isAnthropicProvider(config)) {
             return callStudyPlanToolCallAnthropic(config, systemPrompt, userMessage);
         }
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        String apiKey = decryptedApiKey(config);
+        String apiKey = provider.decryptedApiKey(config);
         if (hasText(apiKey)) {
             headers.setBearerAuth(apiKey);
         }
@@ -3480,15 +3475,15 @@ public class AiServiceImpl implements AiService {
         body.put("messages", List.of(
                 Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", userMessage)));
-        applyTemperature(body);
-        body.put("max_tokens", MODEL_MAX_TOKENS);
+        provider.applyTemperature(body);
+        body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
         body.put("tools", buildCreateStudyPlanTools());
         // 已判定为写计划意图，强制模型调用该工具，稳定拿到结构化调用参数
         body.put("tool_choice", Map.of("type", "function", "function", Map.of("name", "create_study_plan")));
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
-                    resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
+                    provider.resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
             JsonNode toolCalls = objectMapper.readTree(response.getBody()).at("/choices/0/message/tool_calls");
             if (!toolCalls.isArray() || toolCalls.isEmpty()) {
                 return "";
@@ -3510,7 +3505,7 @@ public class AiServiceImpl implements AiService {
             }
             return args.isMissingNode() ? "" : args.toString();
         } catch (RestClientResponseException e) {
-            throw new BusinessException(formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e));
         } catch (Exception e) {
             // 解析失败等一律上抛，由调用方回退到结构化输出
             throw new BusinessException("工具调用失败：" + e.getMessage());
@@ -3519,21 +3514,24 @@ public class AiServiceImpl implements AiService {
 
     /** Anthropic 原生工具调用版：强制 create_study_plan，从 tool_use 块取 input（返回与 OpenAI 版同形的 JSON 字符串）。 */
     private String callStudyPlanToolCallAnthropic(AiModelConfig config, String systemPrompt, String userMessage) {
-        HttpHeaders headers = anthropicHeaders(config);
+        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
+        provider.validateProviderRequestUrl(config.getApiUrl());
+        HttpHeaders headers = provider.anthropicHeaders(config);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
-        body.put("max_tokens", MODEL_MAX_TOKENS);
-        applyTemperature(body);
+        body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
+        provider.applyTemperature(body);
         if (hasText(systemPrompt)) {
             body.put("system", systemPrompt);
         }
         body.put("messages", List.of(Map.of("role", "user", "content", userMessage)));
-        body.put("tools", toAnthropicTools(buildCreateStudyPlanTools()));
+        body.put("tools", provider.toAnthropicTools(buildCreateStudyPlanTools()));
         body.put("tool_choice", Map.of("type", "tool", "name", "create_study_plan"));
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
-                    resolveAnthropicMessagesUrl(config.getApiUrl()), request, String.class);
+                    provider.resolveAnthropicMessagesUrl(config.getApiUrl()), request, String.class);
             JsonNode content = objectMapper.readTree(response.getBody()).path("content");
             if (content.isArray()) {
                 for (JsonNode block : content) {
@@ -3546,7 +3544,7 @@ public class AiServiceImpl implements AiService {
             }
             return "";
         } catch (RestClientResponseException e) {
-            throw new BusinessException(formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e));
         } catch (Exception e) {
             throw new BusinessException("工具调用失败：" + e.getMessage());
         }
@@ -3705,47 +3703,9 @@ public class AiServiceImpl implements AiService {
         return t == null ? "" : t.trim().toLowerCase(Locale.ROOT);
     }
 
-    /** 仅 OpenAI /chat/completions 协议且支持 tools 的提供方才启用工具调用（排除 Anthropic / Gemini / Responses 等异构协议）。 */
-    private boolean supportsOpenAiToolCalling(AiModelConfig config) {
-        String type = normalizeProviderType(config.getProviderType());
-        return "OPENAI_COMPATIBLE".equals(type) || "VLLM_OPENAI_COMPATIBLE".equals(type);
-    }
 
-    /** 是否支持工具调用（OpenAI 兼容 + Anthropic 原生 tools）。 */
-    private boolean supportsToolCalling(AiModelConfig config) {
-        return supportsOpenAiToolCalling(config) || isAnthropicProvider(config);
-    }
 
-    private boolean isAnthropicProvider(AiModelConfig config) {
-        return "ANTHROPIC".equals(normalizeProviderType(config.getProviderType()));
-    }
 
-    /**
-     * 把 OpenAI 工具定义 {type:function, function:{name,description,parameters}}
-     * 转成 Anthropic 的 {name, description, input_schema}。
-     */
-    private List<Map<String, Object>> toAnthropicTools(List<Map<String, Object>> openAiTools) {
-        List<Map<String, Object>> out = new ArrayList<>();
-        if (openAiTools == null) {
-            return out;
-        }
-        for (Map<String, Object> tool : openAiTools) {
-            Object fn = tool.get("function");
-            if (!(fn instanceof Map<?, ?> function)) {
-                continue;
-            }
-            Map<String, Object> at = new LinkedHashMap<>();
-            at.put("name", function.get("name"));
-            Object desc = function.get("description");
-            if (desc != null) {
-                at.put("description", desc);
-            }
-            Object params = function.get("parameters");
-            at.put("input_schema", params != null ? params : Map.of("type", "object", "properties", Map.of()));
-            out.add(at);
-        }
-        return out;
-    }
 
     /** 工具循环的产出：注入最终回答的上下文 + 是否已生成待合入草稿（用于对 WIKI_DRAFT 工件去重）。 */
     private static final class WikiAgentResult {
@@ -3845,7 +3805,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private CodeAgentResult runCodeWorkspaceAgent(AiModelConfig config, Long userId, String userMessage) {
-        if (!AgentPlanDecision.codeAgentIntent(userMessage) || !supportsToolCalling(config)) {
+        if (!AgentPlanDecision.codeAgentIntent(userMessage) || !provider.supportsToolCalling(config)) {
             return CodeAgentResult.EMPTY;
         }
         if (!workspaceReadableBy(userId)) {
@@ -3888,7 +3848,7 @@ public class AiServiceImpl implements AiService {
                 // 不阻止<b>执行</b>什么：模型随便报一个名字就能调到没下发的工具，门形同虚设。
                 // 2026-09-21 端到端扰动发现的：把写工具改成永不下发，草稿照样产了出来。
                 Set<String> offered = offeredToolNames(tools);
-                JsonNode message = callOpenAiToolTurn(config, messages, tools);
+                JsonNode message = provider.callOpenAiToolTurn(config, messages, tools);
                 if (message == null) {
                     break;
                 }
@@ -4185,10 +4145,10 @@ public class AiServiceImpl implements AiService {
     }
 
     private WikiAgentResult runWikiToolAgent(AiModelConfig config, Long userId, String userMessage) {
-        if (!AgentPlanDecision.wikiToolIntent(userMessage) || !supportsToolCalling(config)) {
+        if (!AgentPlanDecision.wikiToolIntent(userMessage) || !provider.supportsToolCalling(config)) {
             return WikiAgentResult.EMPTY;
         }
-        if (isAnthropicProvider(config)) {
+        if (provider.isAnthropicProvider(config)) {
             return runWikiToolAgentAnthropic(config, userId, userMessage);
         }
         StringBuilder context = new StringBuilder();
@@ -4209,7 +4169,7 @@ public class AiServiceImpl implements AiService {
                     log.warn("Wiki 工具循环超时预算，提前结束 userId={} round={}", userId, round);
                     break;
                 }
-                JsonNode message = callOpenAiToolTurn(config, messages, tools);
+                JsonNode message = provider.callOpenAiToolTurn(config, messages, tools);
                 if (message == null) {
                     break;
                 }
@@ -4244,34 +4204,6 @@ public class AiServiceImpl implements AiService {
         return new WikiAgentResult(limitRawMarkdown(context.toString(), WIKI_CONTEXT_LIMIT), wrotePatch);
     }
 
-    /** 非流式发起一轮带工具的对话（tool_choice=auto），返回 choices[0].message 节点（含可能的 tool_calls）；无则 null。 */
-    private JsonNode callOpenAiToolTurn(AiModelConfig config, List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
-        validateProviderRequestUrl(config.getApiUrl());
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        String apiKey = decryptedApiKey(config);
-        if (hasText(apiKey)) {
-            headers.setBearerAuth(apiKey);
-        }
-        Map<String, Object> body = new HashMap<>();
-        body.put("model", config.getModelName());
-        body.put("messages", messages);
-        applyTemperature(body);
-        body.put("max_tokens", MODEL_MAX_TOKENS);
-        body.put("tools", tools);
-        body.put("tool_choice", "auto"); // 由模型自行决定调用哪个工具或直接作答
-        try {
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<String> response = toolTurnRestTemplate.postForEntity(
-                    resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
-            JsonNode message = objectMapper.readTree(response.getBody()).at("/choices/0/message");
-            return message.isMissingNode() ? null : message;
-        } catch (RestClientResponseException e) {
-            throw new BusinessException(formatAiHttpError(e));
-        } catch (Exception e) {
-            throw new BusinessException("Wiki 工具调用失败：" + e.getMessage());
-        }
-    }
 
     /** Anthropic 原生工具循环版：读工具→tool_result 回填→最终答复，与 OpenAI 版等价但用 Anthropic 协议。 */
     private WikiAgentResult runWikiToolAgentAnthropic(AiModelConfig config, Long userId, String userMessage) {
@@ -4282,7 +4214,7 @@ public class AiServiceImpl implements AiService {
             WikiLoopState state = new WikiLoopState();
             List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "user", "content", userMessage));
-            List<Map<String, Object>> tools = toAnthropicTools(buildWikiTools(canWrite));
+            List<Map<String, Object>> tools = provider.toAnthropicTools(buildWikiTools(canWrite));
             String system = getWikiToolSystemPrompt();
             long loopStart = System.currentTimeMillis();
             for (int round = 0; round < 4; round++) {
@@ -4290,7 +4222,7 @@ public class AiServiceImpl implements AiService {
                     log.warn("Wiki 工具循环(Anthropic)超时预算，提前结束 userId={} round={}", userId, round);
                     break;
                 }
-                JsonNode content = callAnthropicToolTurn(config, system, messages, tools);
+                JsonNode content = provider.callAnthropicToolTurn(config, system, messages, tools);
                 if (content == null || !content.isArray()) {
                     break;
                 }
@@ -4332,33 +4264,6 @@ public class AiServiceImpl implements AiService {
         return new WikiAgentResult(limitRawMarkdown(context.toString(), WIKI_CONTEXT_LIMIT), wrotePatch);
     }
 
-    /** 非流式发起一轮带工具的 Anthropic 对话（tool_choice=auto），返回 content 数组节点（含可能的 tool_use）；无则 null。 */
-    private JsonNode callAnthropicToolTurn(AiModelConfig config, String system,
-                                           List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
-        validateProviderRequestUrl(config.getApiUrl());
-        HttpHeaders headers = anthropicHeaders(config);
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", config.getModelName());
-        body.put("max_tokens", MODEL_MAX_TOKENS);
-        applyTemperature(body);
-        if (hasText(system)) {
-            body.put("system", system);
-        }
-        body.put("messages", messages);
-        body.put("tools", tools);
-        body.put("tool_choice", Map.of("type", "auto"));
-        try {
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<String> response = toolTurnRestTemplate.postForEntity(
-                    resolveAnthropicMessagesUrl(config.getApiUrl()), request, String.class);
-            JsonNode content = objectMapper.readTree(response.getBody()).path("content");
-            return content.isMissingNode() ? null : content;
-        } catch (RestClientResponseException e) {
-            throw new BusinessException(formatAiHttpError(e));
-        } catch (Exception e) {
-            throw new BusinessException("Wiki 工具调用失败：" + e.getMessage());
-        }
-    }
 
     private List<Map<String, Object>> buildWikiTools(boolean includeWrite) {
         List<Map<String, Object>> tools = new ArrayList<>();
@@ -4838,8 +4743,8 @@ public class AiServiceImpl implements AiService {
     }
 
     private AiCallResult callAiApiDetailed(AiModelConfig config, List<Map<String, Object>> messages, String reasoningMode) {
-        validateProviderRequestUrl(config.getApiUrl());
-        if ("ANTHROPIC".equals(normalizeProviderType(config.getProviderType()))) {
+        provider.validateProviderRequestUrl(config.getApiUrl());
+        if ("ANTHROPIC".equals(provider.normalizeProviderType(config.getProviderType()))) {
             return callAnthropicApi(config, messages, reasoningMode);
         }
         return callOpenAiCompatibleApi(config, messages, reasoningMode);
@@ -4860,10 +4765,10 @@ public class AiServiceImpl implements AiService {
 
     private AiCallResult callAiApiStream(AiModelConfig config, List<Map<String, Object>> messages,
                                          String reasoningMode, StreamSink sink) {
-        validateProviderRequestUrl(config.getApiUrl());
+        provider.validateProviderRequestUrl(config.getApiUrl());
         ModelStreamResult result = modelStreamAdapterFactory
-                .getAdapter(normalizeProviderType(config.getProviderType()))
-                .stream(new ModelStreamRequest(config, decryptedApiKey(config), messages, reasoningMode, anthropicVersion), sink::accept);
+                .getAdapter(provider.normalizeProviderType(config.getProviderType()))
+                .stream(new ModelStreamRequest(config, provider.decryptedApiKey(config), messages, reasoningMode, anthropicVersion), sink::accept);
         return new AiCallResult(result.content(), result.reasoningSummary());
     }
 
@@ -4875,14 +4780,14 @@ public class AiServiceImpl implements AiService {
             Map<String, Object> body = new HashMap<>();
             body.put("model", config.getModelName());
             body.put("messages", messages);
-            applyTemperature(body);
-            body.put("max_tokens", MODEL_MAX_TOKENS);
+            provider.applyTemperature(body);
+            body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
             body.put("stream", true);
             applyOpenAiReasoningOptions(config, body, reasoningMode);
 
-            restTemplate.execute(resolveChatCompletionsUrl(config.getApiUrl()), HttpMethod.POST, request -> {
+            restTemplate.execute(provider.resolveChatCompletionsUrl(config.getApiUrl()), HttpMethod.POST, request -> {
                 request.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-                String apiKey = decryptedApiKey(config);
+                String apiKey = provider.decryptedApiKey(config);
                 if (hasText(apiKey)) {
                     request.getHeaders().setBearerAuth(apiKey);
                 }
@@ -4900,7 +4805,7 @@ public class AiServiceImpl implements AiService {
                         }
                         JsonNode root = objectMapper.readTree(data);
                         if (root.has("error")) {
-                            throw new BusinessException(extractAiErrorDetail(root.toString()));
+                            throw new BusinessException(provider.extractAiErrorDetail(root.toString()));
                         }
                         String delta = firstTextAt(root,
                                 "/choices/0/delta/content",
@@ -4939,8 +4844,8 @@ public class AiServiceImpl implements AiService {
             Map<String, Object> body = anthropicBody(config, messages);
             body.put("stream", true);
             applyAnthropicThinkingOptions(body, reasoningMode, config);
-            restTemplate.execute(resolveAnthropicMessagesUrl(config.getApiUrl()), HttpMethod.POST, request -> {
-                request.getHeaders().putAll(anthropicHeaders(config));
+            restTemplate.execute(provider.resolveAnthropicMessagesUrl(config.getApiUrl()), HttpMethod.POST, request -> {
+                request.getHeaders().putAll(provider.anthropicHeaders(config));
                 objectMapper.writeValue(request.getBody(), body);
             }, response -> {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
@@ -4956,7 +4861,7 @@ public class AiServiceImpl implements AiService {
                         JsonNode root = objectMapper.readTree(data);
                         String type = root.path("type").asText("");
                         if ("error".equals(type)) {
-                            throw new BusinessException(extractAiErrorDetail(root.toString()));
+                            throw new BusinessException(provider.extractAiErrorDetail(root.toString()));
                         }
                         JsonNode delta = root.path("delta");
                         String text = firstText(delta.path("text"), root.path("content_block").path("text"));
@@ -4985,10 +4890,13 @@ public class AiServiceImpl implements AiService {
     }
 
     private AiCallResult callOpenAiCompatibleApi(AiModelConfig config, List<Map<String, Object>> messages, String reasoningMode) {
+        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
+        provider.validateProviderRequestUrl(config.getApiUrl());
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
-            String apiKey = decryptedApiKey(config);
+            String apiKey = provider.decryptedApiKey(config);
             if (hasText(apiKey)) {
                 headers.setBearerAuth(apiKey);
             }
@@ -4996,13 +4904,13 @@ public class AiServiceImpl implements AiService {
             Map<String, Object> body = new HashMap<>();
             body.put("model", config.getModelName());
             body.put("messages", messages);
-            applyTemperature(body);
-            body.put("max_tokens", MODEL_MAX_TOKENS);
+            provider.applyTemperature(body);
+            body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
             applyOpenAiReasoningOptions(config, body, reasoningMode);
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
-                    resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
+                    provider.resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
 
             JsonNode root = objectMapper.readTree(response.getBody());
             return new AiCallResult(extractOpenAiMessageContent(root),
@@ -5010,7 +4918,7 @@ public class AiServiceImpl implements AiService {
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw new BusinessException(formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e));
         } catch (Exception e) {
             throw new BusinessException("AI 接口调用失败：" + e.getMessage());
         }
@@ -5037,21 +4945,6 @@ public class AiServiceImpl implements AiService {
         }
     }
 
-    /**
-     * 按 app.ai.temperature 决定是否写入 temperature。
-     * 留空 = 不发送——新一代模型（如 Claude fable / opus-4 系列）已废弃该参数，
-     * 发送会报 400 "temperature is deprecated for this model"。
-     */
-    private void applyTemperature(Map<String, Object> body) {
-        if (!hasText(aiTemperature)) {
-            return;
-        }
-        try {
-            body.put("temperature", Double.parseDouble(aiTemperature.trim()));
-        } catch (NumberFormatException ignored) {
-            // 配置非数字则视为不发送
-        }
-    }
 
     private void applyAnthropicThinkingOptions(Map<String, Object> body, String reasoningMode, AiModelConfig config) {
         if (!isReasoningRequested(reasoningMode)) {
@@ -5071,13 +4964,16 @@ public class AiServiceImpl implements AiService {
 
     private String callAiApiWithVision(AiModelConfig config, String systemPrompt,
                                        List<Map<String, Object>> userContent) {
-        if ("ANTHROPIC".equals(normalizeProviderType(config.getProviderType()))) {
+        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
+        provider.validateProviderRequestUrl(config.getApiUrl());
+        if ("ANTHROPIC".equals(provider.normalizeProviderType(config.getProviderType()))) {
             return callAnthropicVisionApi(config, systemPrompt, userContent);
         }
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
-            String apiKey = decryptedApiKey(config);
+            String apiKey = provider.decryptedApiKey(config);
             if (hasText(apiKey)) {
                 headers.setBearerAuth(apiKey);
             }
@@ -5088,26 +4984,26 @@ public class AiServiceImpl implements AiService {
                     Map.of("role", "system", "content", systemPrompt),
                     Map.of("role", "user", "content", userContent)
             ));
-            applyTemperature(body);
-            body.put("max_tokens", MODEL_MAX_TOKENS);
+            provider.applyTemperature(body);
+            body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
-                    resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
+                    provider.resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
 
             JsonNode root = objectMapper.readTree(response.getBody());
             return extractOpenAiMessageContent(root);
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            String detail = extractAiErrorDetail(e.getResponseBodyAsString());
+            String detail = provider.extractAiErrorDetail(e.getResponseBodyAsString());
             String lowerDetail = detail.toLowerCase(Locale.ROOT);
             if (e.getStatusCode().value() == 400 &&
                     (lowerDetail.contains("image_url") || lowerDetail.contains("vision") || lowerDetail.contains("unsupported"))) {
                 throw new BusinessException(
                         "当前模型不支持图片识别，请在个人中心切换为支持视觉的模型（如 gpt-4o、qwen-vl-plus）");
             }
-            throw new BusinessException(formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e));
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "";
             if (msg.contains("400") || msg.contains("unsupported") || msg.contains("vision")) {
@@ -5120,36 +5016,10 @@ public class AiServiceImpl implements AiService {
 
     private String normalizeAiApiUrl(String apiUrl) {
         String url = hasText(apiUrl) ? apiUrl.trim() : "https://api.openai.com/v1/chat/completions";
-        return resolveChatCompletionsUrl(url);
+        return provider.resolveChatCompletionsUrl(url);
     }
 
-    private String resolveChatCompletionsUrl(String apiUrl) {
-        String url = hasText(apiUrl) ? apiUrl.trim() : "https://api.openai.com/v1/chat/completions";
-        while (url.endsWith("/")) {
-            url = url.substring(0, url.length() - 1);
-        }
-        if (url.endsWith("/chat/completions")) {
-            return url;
-        }
-        if (url.contains("api.openai.com") && !url.endsWith("/v1")) {
-            return url + "/v1/chat/completions";
-        }
-        return url + "/chat/completions";
-    }
 
-    private String resolveAnthropicMessagesUrl(String apiUrl) {
-        String url = hasText(apiUrl) ? apiUrl.trim() : "https://api.anthropic.com/v1/messages";
-        while (url.endsWith("/")) {
-            url = url.substring(0, url.length() - 1);
-        }
-        if (url.endsWith("/v1/messages")) {
-            return url;
-        }
-        if (url.endsWith("/v1")) {
-            return url + "/messages";
-        }
-        return url + "/v1/messages";
-    }
 
     private String extractOpenAiMessageContent(JsonNode root) {
         JsonNode content = root.at("/choices/0/message/content");
@@ -5202,12 +5072,15 @@ public class AiServiceImpl implements AiService {
     }
 
     private AiCallResult callAnthropicApi(AiModelConfig config, List<Map<String, Object>> messages, String reasoningMode) {
+        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
+        provider.validateProviderRequestUrl(config.getApiUrl());
         try {
-            HttpHeaders headers = anthropicHeaders(config);
+            HttpHeaders headers = provider.anthropicHeaders(config);
             Map<String, Object> body = anthropicBody(config, messages);
             applyAnthropicThinkingOptions(body, reasoningMode, config);
             ResponseEntity<String> response = restTemplate.postForEntity(
-                    resolveAnthropicMessagesUrl(config.getApiUrl()),
+                    provider.resolveAnthropicMessagesUrl(config.getApiUrl()),
                     new HttpEntity<>(body, headers),
                     String.class);
             AiCallResult result = extractAnthropicResult(objectMapper.readTree(response.getBody()));
@@ -5215,7 +5088,7 @@ public class AiServiceImpl implements AiService {
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw new BusinessException(formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e));
         } catch (Exception e) {
             throw new BusinessException("Anthropic 接口调用失败：" + e.getMessage());
         }
@@ -5223,39 +5096,31 @@ public class AiServiceImpl implements AiService {
 
     private String callAnthropicVisionApi(AiModelConfig config, String systemPrompt,
                                           List<Map<String, Object>> userContent) {
+        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
+        provider.validateProviderRequestUrl(config.getApiUrl());
         try {
-            HttpHeaders headers = anthropicHeaders(config);
+            HttpHeaders headers = provider.anthropicHeaders(config);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("model", config.getModelName());
-            body.put("max_tokens", MODEL_MAX_TOKENS);
-            applyTemperature(body);
+            body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
+            provider.applyTemperature(body);
             body.put("system", systemPrompt);
             body.put("messages", List.of(Map.of("role", "user", "content", toAnthropicContentBlocks(userContent))));
             ResponseEntity<String> response = restTemplate.postForEntity(
-                    resolveAnthropicMessagesUrl(config.getApiUrl()),
+                    provider.resolveAnthropicMessagesUrl(config.getApiUrl()),
                     new HttpEntity<>(body, headers),
                     String.class);
             return extractAnthropicContent(objectMapper.readTree(response.getBody()));
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw new BusinessException(formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e));
         } catch (Exception e) {
             throw new BusinessException("Anthropic 视觉接口调用失败：" + e.getMessage());
         }
     }
 
-    private HttpHeaders anthropicHeaders(AiModelConfig config) {
-        String apiKey = decryptedApiKey(config);
-        if (!hasText(apiKey)) {
-            throw new BusinessException("Anthropic 模型缺少 API Key");
-        }
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("x-api-key", apiKey);
-        headers.set("anthropic-version", anthropicVersion);
-        return headers;
-    }
 
     private Map<String, Object> anthropicBody(AiModelConfig config, List<Map<String, Object>> messages) {
         StringBuilder system = new StringBuilder();
@@ -5276,8 +5141,8 @@ public class AiServiceImpl implements AiService {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
-        body.put("max_tokens", MODEL_MAX_TOKENS);
-        applyTemperature(body);
+        body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
+        provider.applyTemperature(body);
         if (system.length() > 0) {
             body.put("system", system.toString());
         }
@@ -5346,38 +5211,7 @@ public class AiServiceImpl implements AiService {
         throw new BusinessException("Anthropic 接口返回内容为空：" + limitText(root.toString(), 500));
     }
 
-    private String formatAiHttpError(RestClientResponseException e) {
-        String detail = extractAiErrorDetail(e.getResponseBodyAsString());
-        return "AI 接口调用失败（HTTP " + e.getStatusCode().value() + "）：" + detail;
-    }
 
-    private String extractAiErrorDetail(String responseBody) {
-        if (!hasText(responseBody)) {
-            return "接口没有返回错误详情";
-        }
-        try {
-            JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode error = root.get("error");
-            if (error != null) {
-                if (error.isTextual()) {
-                    return limitText(error.asText(), 500);
-                }
-                JsonNode message = error.get("message");
-                JsonNode code = error.get("code");
-                JsonNode type = error.get("type");
-                List<String> parts = new ArrayList<>();
-                if (message != null && !message.isNull()) parts.add(message.asText());
-                if (code != null && !code.isNull()) parts.add("code=" + code.asText());
-                if (type != null && !type.isNull()) parts.add("type=" + type.asText());
-                if (!parts.isEmpty()) {
-                    return limitText(String.join("；", parts), 500);
-                }
-            }
-        } catch (Exception ignored) {
-            // Fall back to raw body below.
-        }
-        return limitText(responseBody, 500);
-    }
 
     private void ensureLegacyConfigMigrated(Long userId) {
         UserAiConfig legacy = configMapper.selectOne(
@@ -5442,7 +5276,7 @@ public class AiServiceImpl implements AiService {
         AiModelConfig model = new AiModelConfig();
         model.setId(SYSTEM_MODEL_ID);
         model.setOwnerType("SYSTEM");
-        model.setProviderType(normalizeProviderType(systemProviderType));
+        model.setProviderType(provider.normalizeProviderType(systemProviderType));
         model.setDisplayName(systemDisplayName);
         model.setApiUrl(normalizeProviderApiUrl(systemApiUrl, model.getProviderType()));
         model.setEncryptedApiKey(cryptoService.encrypt(systemApiKey));
@@ -5476,12 +5310,6 @@ public class AiServiceImpl implements AiService {
         return row;
     }
 
-    private String decryptedApiKey(AiModelConfig model) {
-        if (model == null || !hasText(model.getEncryptedApiKey())) {
-            return "";
-        }
-        return cryptoService.decrypt(model.getEncryptedApiKey());
-    }
 
     private boolean hasCapability(AiModelConfig model, String capability) {
         String caps = model == null || model.getCapabilities() == null ? "" : model.getCapabilities().toUpperCase(Locale.ROOT);
@@ -5493,20 +5321,6 @@ public class AiServiceImpl implements AiService {
                 && (name.contains("vision") || name.contains("vl") || name.contains("4o") || name.contains("claude-3"));
     }
 
-    private String normalizeProviderType(String value) {
-        String type = hasText(value) ? value.trim().toUpperCase(Locale.ROOT) : "OPENAI_COMPATIBLE";
-        if ("OPENAI".equals(type) || "DEEPSEEK".equals(type) || "QWEN".equals(type)) {
-            return "OPENAI_COMPATIBLE";
-        }
-        if ("VLLM".equals(type)) {
-            return "VLLM_OPENAI_COMPATIBLE";
-        }
-        if (!Set.of("OPENAI_COMPATIBLE", "ANTHROPIC", "OLLAMA", "VLLM_OPENAI_COMPATIBLE",
-                "GEMINI", "SENSENOVA", "OPENAI_RESPONSES").contains(type)) {
-            return "OPENAI_COMPATIBLE";
-        }
-        return type;
-    }
 
     private String cleanModelDisplayName(String value) {
         String text = hasText(value) ? value.trim() : "我的模型";
@@ -5542,10 +5356,10 @@ public class AiServiceImpl implements AiService {
     }
 
     private String normalizeProviderApiUrl(String apiUrl, String providerType) {
-        String type = normalizeProviderType(providerType);
+        String type = provider.normalizeProviderType(providerType);
         String url = hasText(apiUrl) ? apiUrl.trim() : defaultApiUrl(type);
         if ("ANTHROPIC".equals(type)) {
-            return resolveAnthropicMessagesUrl(url);
+            return provider.resolveAnthropicMessagesUrl(url);
         }
         if ("GEMINI".equals(type)) {
             return url;
@@ -5571,79 +5385,14 @@ public class AiServiceImpl implements AiService {
             }
             return url + "/v1/chat/completions";
         }
-        return resolveChatCompletionsUrl(url);
+        return provider.resolveChatCompletionsUrl(url);
     }
 
-    private void validateProviderRequestUrl(String apiUrl) {
-        if (!hasText(apiUrl)) {
-            throw new BusinessException("AI API URL 不能为空");
-        }
-        URI uri;
-        try {
-            uri = URI.create(apiUrl.trim());
-        } catch (Exception e) {
-            throw new BusinessException("AI API URL 格式不正确");
-        }
-        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
-        if (!Set.of("http", "https").contains(scheme)) {
-            throw new BusinessException("AI API URL 只允许 http/https");
-        }
-        String host = uri.getHost();
-        if (!hasText(host)) {
-            throw new BusinessException("AI API URL 缺少主机名");
-        }
-        if (allowPrivateProviderUrl) {
-            return;
-        }
-        if (isLocalHostName(host)) {
-            throw new BusinessException("生产环境禁止把 AI API URL 指向本机或内网地址");
-        }
-        try {
-            for (InetAddress address : InetAddress.getAllByName(host)) {
-                if (isPrivateAddress(address)) {
-                    throw new BusinessException("生产环境禁止把 AI API URL 指向本机或内网地址");
-                }
-            }
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BusinessException("AI API URL 主机无法解析");
-        }
-    }
 
-    private boolean isLocalHostName(String host) {
-        String value = host == null ? "" : host.trim().toLowerCase(Locale.ROOT);
-        return "localhost".equals(value) || value.endsWith(".localhost")
-                || "0.0.0.0".equals(value) || "::1".equals(value);
-    }
 
-    private boolean isPrivateAddress(InetAddress address) {
-        if (address.isAnyLocalAddress()
-                || address.isLoopbackAddress()
-                || address.isLinkLocalAddress()
-                || address.isSiteLocalAddress()
-                || address.isMulticastAddress()) {
-            return true;
-        }
-        byte[] bytes = address.getAddress();
-        if (bytes.length == 4) {
-            int first = bytes[0] & 0xff;
-            int second = bytes[1] & 0xff;
-            return first == 10
-                    || (first == 172 && second >= 16 && second <= 31)
-                    || (first == 192 && second == 168)
-                    || (first == 100 && second >= 64 && second <= 127)
-                    || (first == 169 && second == 254);
-        }
-        if (bytes.length == 16) {
-            int first = bytes[0] & 0xff;
-            return (first & 0xfe) == 0xfc;
-        }
-        return false;
-    }
 
     private String defaultApiUrl(String providerType) {
-        return switch (normalizeProviderType(providerType)) {
+        return switch (provider.normalizeProviderType(providerType)) {
             case "ANTHROPIC" -> "https://api.anthropic.com/v1/messages";
             case "OLLAMA" -> "http://localhost:11434/v1/chat/completions";
             case "GEMINI" -> "https://generativelanguage.googleapis.com/v1beta";
@@ -5654,7 +5403,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private String defaultModelName(String providerType) {
-        return switch (normalizeProviderType(providerType)) {
+        return switch (provider.normalizeProviderType(providerType)) {
             case "ANTHROPIC" -> "claude-3-5-sonnet-latest";
             case "OLLAMA" -> "llama3.1";
             case "GEMINI" -> "gemini-1.5-pro";
@@ -5727,15 +5476,9 @@ public class AiServiceImpl implements AiService {
         return value != null && !value.trim().isEmpty();
     }
 
+    /** 委托给唯一定义 {@link com.zhiqu.common.TextLimits} —— 33 个调用点因此不必改。 */
     private String limitText(String value, int maxLength) {
-        if (value == null) {
-            return "";
-        }
-        String text = value.replaceAll("\\s+", " ").trim();
-        if (text.length() <= maxLength) {
-            return text;
-        }
-        return text.substring(0, maxLength) + "...";
+        return com.zhiqu.common.TextLimits.limit(value, maxLength);
     }
 
     /** 仅按长度截断，保留换行/空白（用于会被前端渲染的 Markdown 正文，避免表格/标题/列表被压平）。 */
