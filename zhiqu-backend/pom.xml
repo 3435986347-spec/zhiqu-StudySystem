@@ -152,6 +152,33 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
                     <useIncrementalCompilation>true</useIncrementalCompilation>
+                    <!--
+                      Lombok 必须显式写在这里，不能只靠它挂在 classpath 上。
+
+                      JDK 23 起「隐式注解处理」默认关闭（-proc:none 成为默认，除非显式给了
+                      -processor 或 -processorpath）。Lombok 是通过 META-INF/services 被
+                      自动发现的，所以在 JDK 23+ 上它会被**静默跳过** —— 不报错、不告警，
+                      只是所有 @Data / @AllArgsConstructor 什么都不生成。
+
+                      故障现出来的样子跟原因毫无关系：2026-09-21 本机 Homebrew 把 Maven 的
+                      JVM 换成了 openjdk 26（命令行 `java` 仍是 Temurin 17，所以 `java -version`
+                      看不出问题），`mvn compile` 当场 200 个错误，清一色是
+                      「找不到符号 getXxx()」和「无法推断 Result<> 的类型参数」。读起来像
+                      实体类被人删干净了，或者像依赖损坏 —— 一次代码改动都没有。
+                      查的时候还绕了两圈：先怀疑是我新加的文件（git stash 后同样 200 个错，
+                      排除），再怀疑 lombok 1.18.34 太老配不上新 JDK（换 1.18.38 一样错，
+                      排除），最后 `mvn -version` 才露馅。
+
+                      写成 annotationProcessorPaths 之后，处理器路径是显式的，
+                      JDK 23+ 的那条默认值就管不着了 —— 在 17 和 26 上都正常。
+                    -->
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
             <!--

@@ -1,6 +1,7 @@
 package com.zhiqu.service.workspace;
 
 import com.zhiqu.common.BusinessException;
+import com.zhiqu.common.DeploymentProfiles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,7 +16,6 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -72,9 +72,6 @@ public class WorkspaceExecutor {
             "-c", "-e", "--eval", "--command", "--exec", "-command", "--execute",
             "-E", "--expression", "-i", "--interactive");
 
-    /** 生产 profile 的名字。命中任何一个就一律拒绝开启执行。 */
-    private static final Set<String> PRODUCTION_PROFILES = Set.of("prod", "production");
-
     private final WorkspaceProperties properties;
     private final WorkspaceAccess access;
     private final WorkspaceGuard guard;
@@ -94,17 +91,14 @@ public class WorkspaceExecutor {
         }
     }
 
-    /** 逗号分隔的 profile 列表里有没有生产。 */
+    /**
+     * 逗号分隔的 profile 列表里有没有生产。
+     *
+     * <p>判定本身住在 {@link DeploymentProfiles} —— 这里保留一个委托，
+     * 是因为 {@code WorkspaceExecutorTest} 的一批判据直接调它。
+     */
     static boolean isProduction(String activeProfiles) {
-        if (activeProfiles == null || activeProfiles.isBlank()) {
-            return false;
-        }
-        for (String profile : activeProfiles.split(",")) {
-            if (PRODUCTION_PROFILES.contains(profile.trim().toLowerCase(Locale.ROOT))) {
-                return true;
-            }
-        }
-        return false;
+        return DeploymentProfiles.isProduction(activeProfiles);
     }
 
     /** 执行能不能用 —— 档位允许执行，且不是生产 profile。 */

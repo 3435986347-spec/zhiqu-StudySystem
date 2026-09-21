@@ -2,16 +2,18 @@ package com.zhiqu.desktop;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.web.context.WebServerApplicationContext;
 import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-import java.awt.Desktop;
-import java.net.URI;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 /**
  * 桌面应用形态：双击启动之后把界面打开。<b>只在 {@code desktop} profile 下生效。</b>
@@ -40,52 +42,112 @@ import java.net.URI;
  */
 @Component
 @Profile("desktop")
-public class DesktopLauncher implements ApplicationRunner {
+public class DesktopLauncher {
     private static final Logger log = LoggerFactory.getLogger(DesktopLauncher.class);
 
-    private volatile int port = -1;
+    /** 就绪后要打开的页面。 */
+    static final String LANDING_PAGE = "/dashboard.html";
 
     /**
-     * 端口从<b>实际启动的 Web 服务器</b>上取，不从配置里读。
+     * 原生外壳通过这个系统属性把「端口写到哪」告诉后端。
      *
-     * <p>桌面版默认让系统分配端口（{@code server.port=0}）：固定端口在「用户已经跑了一个
-     * 别的服务占着 8080」时会直接启动失败，而那对双击启动的人来说是一句看不懂的报错。
-     * 配置里写死多少，和实际监听在哪，是两件事。
+     * <p>设了它就说明<b>有人替我们负责显示界面</b>（macOS 上那个 WKWebView 外壳），
+     * 于是后端不再去弹系统浏览器 —— 否则用户会同时得到一个应用窗口和一个浏览器标签页。
      */
-    @EventListener(ApplicationReadyEvent.class)
-    public void captureActualPort(ApplicationReadyEvent event) {
-        if (event.getApplicationContext() instanceof WebServerApplicationContext web
-                && web.getWebServer() != null) {
-            port = web.getWebServer().getPort();
-        }
+    static final String PORT_FILE_PROPERTY = "zhiqu.desktop.port-file";
+
+    private final BrowserOpener browserOpener;
+
+    private volatile String openedUrl;
+
+    public DesktopLauncher(BrowserOpener browserOpener) {
+        this.browserOpener = browserOpener;
     }
 
-    @Override
-    public void run(ApplicationArguments args) {
+    /**
+     * 取端口、开界面 —— <b>同一个回调里做完</b>。
+     *
+     * <p>这里原本是两段：一个 {@code @EventListener(ApplicationReadyEvent.class)} 负责把
+     * 端口记下来，一个 {@code ApplicationRunner.run()} 负责打开浏览器。
+     * 而 Spring Boot 的顺序是 <b>先 {@code callRunners()}，再发 {@code ApplicationReadyEvent}</b> ——
+     * 也就是说 {@code run()} 执行时端口还是 {@code -1}，每一次都走「拿不到实际端口，
+     * 跳过自动打开界面」那条 return。浏览器一次都没有被尝试打开过。
+     *
+     * <p>这个 bug 躲过了一次「完整验证」：那次验证查的是 HTTP 通不通、绑的是不是回环、
+     * 迁移跑没跑完 —— 全都通过了，因为后端确实是好的。没被查的恰恰是这个类唯一的职责。
+     * 所以现在打开动作走 {@link BrowserOpener}，{@link #openedUrl()} 把结果暴露出来，
+     * 让判据能直接断言它。
+     *
+     * <p>端口从<b>实际启动的 Web 服务器</b>上取，不从配置里读：桌面版默认让系统分配端口
+     * （{@code server.port=0}），配置里写死多少和实际监听在哪是两件事。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void openWhenReady(ApplicationReadyEvent event) {
+        int port = actualPort(event);
         if (port <= 0) {
             log.warn("拿不到实际端口，跳过自动打开界面");
             return;
         }
-        String url = "http://127.0.0.1:" + port + "/dashboard.html";
+        String url = "http://127.0.0.1:" + port + LANDING_PAGE;
         log.info("桌面版已就绪：{}", url);
-        openBrowser(url);
+        openedUrl = url;
+
+        String portFile = System.getProperty(PORT_FILE_PROPERTY);
+        if (portFile != null && !portFile.isBlank()) {
+            handOffToShell(portFile, port);
+            return;
+        }
+
+        // 没有外壳接手，退回「开系统浏览器」。这条路仍然要留着：
+        // 直接 `java -jar --spring.profiles.active=desktop` 跑的时候没有外壳。
+        // Dock 图标无限弹跳的修法，理由见 DockPresence。放在开浏览器之前，
+        // 因为弹跳是用户在等页面的那几秒里唯一看得见的东西。
+        DockPresence.settle(System.getProperty("os.name", ""));
+        if (!browserOpener.open(url)) {
+            log.info("请手动在浏览器里打开：{}", url);
+        }
     }
 
     /**
-     * 打不开浏览器<b>不能让启动失败</b>。
+     * 把端口写给原生外壳，<b>不开浏览器</b>。
      *
-     * <p>无头环境、沙箱、没有默认浏览器都会走到这里。这时后端其实是好的 ——
-     * 把地址打进日志让用户自己复制，比抛异常把整个应用带崩强得多。
+     * <p>先写临时文件再原子改名：外壳是轮询这个文件的，直接写的话它可能读到一个
+     * 只写了一半的数字（"63" 而不是 "63187"），然后连到别人的端口上去。
+     *
+     * <p>写失败不能让启动崩掉 —— 后端本身是好的，用户至少还能从日志里拿到地址。
      */
-    private void openBrowser(String url) {
+    private void handOffToShell(String portFile, int port) {
+        Path target = Path.of(portFile);
         try {
-            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-                Desktop.getDesktop().browse(URI.create(url));
-                return;
+            Path parent = target.toAbsolutePath().getParent();
+            Path tmp = Files.createTempFile(parent, "zhiqu-port", ".tmp");
+            Files.writeString(tmp, Integer.toString(port), StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
             }
-            log.info("这台机器不支持自动打开浏览器，请手动访问：{}", url);
-        } catch (Exception e) {
-            log.info("自动打开浏览器失败（不影响使用），请手动访问 {} —— {}", url, e.getMessage());
+            log.info("端口已交给原生外壳：{} → {}", port, target);
+        } catch (IOException e) {
+            log.warn("写端口文件失败，原生外壳可能起不来界面：{} —— {}", target, e.toString());
         }
+    }
+
+    /** 实际监听的端口；取不到返回 -1。 */
+    private static int actualPort(ApplicationReadyEvent event) {
+        if (event.getApplicationContext() instanceof WebServerApplicationContext web
+                && web.getWebServer() != null) {
+            return web.getWebServer().getPort();
+        }
+        return -1;
+    }
+
+    /**
+     * 这一次启动实际打开（或试图打开）的地址；没走到那一步则为 {@code null}。
+     *
+     * <p>存在的唯一理由是让判据能看见这件事发生过 —— 见 {@link BrowserOpener} 的类注释。
+     */
+    public String openedUrl() {
+        return openedUrl;
     }
 }

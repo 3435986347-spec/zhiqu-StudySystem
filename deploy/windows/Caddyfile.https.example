@@ -1,11 +1,11 @@
-# HTTPS 版。把下面这一行的域名换成你自己的，其余不用动。
+# HTTPS 版。域名已填好（zhiqustudy.com），其余不用动。
 # Caddy 会自动向 Let's Encrypt 申请并续期证书 —— 前提是：
 #   1. 域名的 A 记录已经指向这台服务器的公网 IP（134.175.110.207）
 #   2. 防火墙/安全组放行了 80 和 443（80 用于签发校验，不能只开 443）
 #
 # 放置位置与服务安装见同目录 install-caddy-service.ps1。
 
-你的域名.com {
+zhiqustudy.com, www.zhiqustudy.com {
     encode zstd gzip
 
     # 反代到本机的 Spring Boot。注意是 127.0.0.1 —— 应用本身不该监听公网，
@@ -36,5 +36,5 @@
 # 裸 IP 访问时给一个明确的跳转，而不是把明文页面直接送出去。
 # 没有域名的那台机器上证书签不了，所以这里只做重定向。
 http://134.175.110.207 {
-    redir https://你的域名.com{uri} permanent
+    redir https://zhiqustudy.com{uri} permanent
 }

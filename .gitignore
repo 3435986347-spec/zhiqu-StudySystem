@@ -54,3 +54,12 @@ pdf-parser-eval/**/__pycache__/
 
 # 桌面应用打包产物（119MB，不入库）
 /build/
+
+# 真实密钥只应存在于服务器上那份未跟踪的配置里，永远不进仓库。
+# 模板是 deploy/windows/application-prod.example.yml（里面全是 CHANGE_ME_ 占位符，
+# StartupSecretGuard 会在启动期拒绝没填的占位符）。
+application-prod.yml
+application-local.yml
+**/application-prod.yml
+**/application-local.yml
+.zhiqu/
