@@ -3883,6 +3883,11 @@ public class AiServiceImpl implements AiService {
                     // 否则确认落库时会静默丢掉象限、时长、截止日期。
                     tools.addAll(buildCreateStudyPlanTools());
                 }
+                // 这一轮到底给了哪些工具 —— 执行侧要照着它拒绝没给过的调用。
+                // 不这么做的话，上面那几道「最小权限」的门只决定<b>声明</b>什么，
+                // 不阻止<b>执行</b>什么：模型随便报一个名字就能调到没下发的工具，门形同虚设。
+                // 2026-09-21 端到端扰动发现的：把写工具改成永不下发，草稿照样产了出来。
+                Set<String> offered = offeredToolNames(tools);
                 JsonNode message = callOpenAiToolTurn(config, messages, tools);
                 if (message == null) {
                     break;
@@ -3897,7 +3902,10 @@ public class AiServiceImpl implements AiService {
                     JsonNode argsNode = call.at("/function/arguments");
                     String argsRaw = argsNode.isTextual() ? argsNode.asText("")
                             : (argsNode.isMissingNode() ? "{}" : argsNode.toString());
-                    String result = "create_study_plan".equals(name)
+                    String result = !offered.contains(name)
+                            ? "操作被拒绝：这一轮没有给你「" + name + "」这个工具。"
+                                    + "如实告诉用户你没有这个能力，不要换个名字再试。"
+                            : "create_study_plan".equals(name)
                             ? recordMilestonePlan(argsRaw, loop)
                             : isWikiToolName(name)
                             // 原样交给 Wiki 那条已经加固过的路：保留页、未完整读取不许整页覆盖、
@@ -3984,6 +3992,23 @@ public class AiServiceImpl implements AiService {
         int routines = plan.get("routines") instanceof List<?> list ? list.size() : 0;
         return "已生成 " + tasks + " 个里程碑任务" + (routines > 0 ? "、" + routines + " 项例行计划" : "")
                 + "的草稿（还没有写进日历）。请告诉用户到确认面板勾选后才会生效。";
+    }
+
+    /**
+     * 从工具表里取出函数名 —— 执行侧据此拒绝没下发过的调用。
+     *
+     * <p>「下发了什么」和「能执行什么」必须是同一份清单。分开的话，
+     * {@code canWrite} / {@code canExec} / {@code ranCommand} 这几道门就只是在
+     * 「建议」模型别用，而不是在阻止它用。
+     */
+    private static Set<String> offeredToolNames(List<Map<String, Object>> tools) {
+        Set<String> names = new java.util.HashSet<>();
+        for (Map<String, Object> tool : tools) {
+            if (tool.get("function") instanceof Map<?, ?> function && function.get("name") != null) {
+                names.add(String.valueOf(function.get("name")));
+            }
+        }
+        return names;
     }
 
     private static boolean isWikiToolName(String name) {

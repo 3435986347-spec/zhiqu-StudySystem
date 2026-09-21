@@ -543,6 +543,20 @@ code agent 在项目语境下拿到 `create_study_plan`（**同一个 schema，�
 另外钉住：**上限算的是字节不是字符**。中文一个字三字节，按字符算的话 256KB 的上限
 实际变成 768KB，防 OOM 的意义打三折。
 
+**「最小权限」的那几道门原来只管声明、不管执行。** `canWrite` / `canExec` / `ranCommand`
+决定把哪些工具<b>声明</b>给模型，而执行侧是<b>按名字分派</b>的 —— 模型（或者一个被注入了
+指令的工具返回值）报一个没下发过的名字，照样会被执行。门是建议性的，不是强制的。
+
+这一点单元判据看不到：它们验的是「该不该下发」，而不是「没下发的能不能调到」。
+是端到端扰动撞出来的 —— 把写工具改成永不下发，`CODE_DRAFT` 草稿照样产了出来。
+现在每一轮先 `offeredToolNames(tools)` 收一份清单，分派前比对，不在清单里就拒绝并
+告诉模型「这一轮没有给你这个工具」。**「下发了什么」和「能执行什么」必须是同一份清单。**
+
+`CodeAgentLoopIntegrationTest` 用脚本化的假模型把整条刷题环路真跑一遍
+（读文件 → 跑判题 → 记薄弱点 → 生成改动草稿）。其中一条断言是间接的，而这正是它最硬的
+地方：「薄弱点草稿存在」<b>证明了命令确实跑过</b> —— `create_wiki_patch` 只在 `ranCommand`
+置位之后才下发，拿不到工具就调不出来。
+
 ### RAG (optional)
 
 `app.rag.enabled` defaults to **true** (`${ZHIQU_RAG_ENABLED:true}` in `application.yml`). When the
