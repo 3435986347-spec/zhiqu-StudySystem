@@ -59,6 +59,21 @@ public final class Texts {
         return s.isEmpty() ? def : s;
     }
 
+    /**
+     * 去空白后返回；<b>null 与全空白都返回 null</b>（不是空串）。
+     *
+     * <p>调用方拿它读 JSON 里的可选字段，随后普遍用 {@code != null} 判断有没有值。
+     * 返回空串的话那个判断就永远成立 —— 这是它和 {@link #orDefault} 的分工：
+     * 一个把「没有」表达成 null，一个表达成调用方给的默认值。
+     */
+    public static String trimmedOrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.toString().trim();
+        return text.isBlank() ? null : text;
+    }
+
     private Texts() {
     }
 }
