@@ -3795,6 +3795,16 @@ public class AiServiceImpl implements AiService {
     private static final class CodeLoopState {
         private final Map<String, String> baselines = new LinkedHashMap<>();
         private final List<Map<String, Object>> drafts = new ArrayList<>();
+        /**
+         * 本轮有没有真的跑过一次判题。
+         *
+         * <p>「把错题记进薄弱点页」这件事的前提不是用户说了什么关键词，而是<b>确实判过题</b>。
+         * 关键词门会过触发也会漏触发（{@code codeIntent} 那条就明示了自己会过触发），
+         * 而「跑过没跑过」是事实，不是猜测。所以 {@code create_wiki_patch} 只在这之后才下发。
+         */
+        private boolean ranCommand;
+        /** Wiki 工具自己的循环状态（读过哪些页、快照、本轮已提过哪些草稿）—— 复用同一套防护。 */
+        private final WikiLoopState wiki = new WikiLoopState();
     }
 
     /** 代码工作区循环的产物：给回答用的上下文，以及待确认的写草稿。 */
@@ -3814,7 +3824,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private CodeAgentResult runCodeWorkspaceAgent(AiModelConfig config, Long userId, String userMessage) {
-        if (!AgentPlanDecision.codeIntent(userMessage) || !supportsToolCalling(config)) {
+        if (!AgentPlanDecision.codeAgentIntent(userMessage) || !supportsToolCalling(config)) {
             return CodeAgentResult.EMPTY;
         }
         if (!workspaceReadableBy(userId)) {
@@ -3833,13 +3843,18 @@ public class AiServiceImpl implements AiService {
             // 执行这一档由 WorkspaceExecutor 自己说了算（档位 + 非生产 profile 两条都在它里面）。
             // 这里不再复述那两个条件 —— 复述就是第二份真相。
             boolean canExec = workspaceExecutor.enabled();
-            List<Map<String, Object>> tools = buildWorkspaceTools(canWrite, canExec);
             long loopStart = System.currentTimeMillis();
             for (int round = 0; round < 4; round++) {
                 if (System.currentTimeMillis() - loopStart > 30_000L) {
                     log.warn("代码工作区工具循环超时预算，提前结束 userId={} round={}", userId, round);
                     break;
                 }
+                // 工具表<b>每轮重建</b>：写薄弱点页的工具要等到真的判过题之后才出现。
+                // 一次性算好的话，这个条件只能用「用户说了什么」来近似，而那是猜。
+                List<Map<String, Object>> tools = new ArrayList<>(buildWorkspaceTools(canWrite, canExec));
+                // Wiki 的读工具一直给：出题之前先看看这个人以前错在哪，题才出得准。
+                // 写工具（create_wiki_patch）只在 ranCommand 之后给 —— 见 CodeLoopState.ranCommand。
+                tools.addAll(buildWikiTools(loop.ranCommand));
                 JsonNode message = callOpenAiToolTurn(config, messages, tools);
                 if (message == null) {
                     break;
@@ -3854,7 +3869,11 @@ public class AiServiceImpl implements AiService {
                     JsonNode argsNode = call.at("/function/arguments");
                     String argsRaw = argsNode.isTextual() ? argsNode.asText("")
                             : (argsNode.isMissingNode() ? "{}" : argsNode.toString());
-                    String result = executeWorkspaceTool(name, argsRaw, loop);
+                    String result = isWikiToolName(name)
+                            // 原样交给 Wiki 那条已经加固过的路：保留页、未完整读取不许整页覆盖、
+                            // 本轮幂等、条带锁、可信快照基线。这里<b>不</b>另写一份。
+                            ? executeWikiTool(userId, name, argsRaw, loop.wiki).result
+                            : executeWorkspaceTool(name, argsRaw, loop);
                     if (hasText(result)) {
                         context.append("【工作区 ").append(name).append("】\n").append(result).append("\n\n");
                     }
@@ -3893,10 +3912,26 @@ public class AiServiceImpl implements AiService {
                        将要执行的是什么。命令行上塞代码（-c/-e）会被拒绝。
                 4. 工具返回「不在允许清单里」「超出工作区范围」时，那是刻意的保护，
                    如实告诉他，不要换着法子绕过去。
+
+                如果他是在刷题 / 练习，按这条环路走：
+                5.1 出题之前先 search_wiki 看看「薄弱点」类的页，题要照着他真正错过的地方出，
+                    而不是照着通用大纲出。
+                5.2 题目和测试用例写成文件草稿（write_workspace_file），让他确认落盘。
+                    测试要能单独跑，而且失败信息要说清期望什么、实际什么。
+                5.3 他写完解法之后用 run_workspace_command 跑测试。
+                5.4 <b>判题失败之后</b>才记薄弱点，而且要先 read_wiki_page 完整读出那一页，
+                    把新的一条<b>追加</b>在原有内容后面再提交草稿 —— 直接提交只有新内容的整页
+                    会把他以前积累的笔记全冲掉。没读整页的话工具会拒绝你，那是刻意的。
+                5.5 判题通过就别记薄弱点。那一页是给他复习用的，掺进通过的题会稀释它。
                 """;
     }
 
     /** 只读工具集。写工具连声明都没有 —— 模型看不到，就不会尝试，也不会承诺自己改了文件。 */
+/** 这个工具名属不属于 Wiki 那一套。与 {@code buildWikiTools} 的声明保持一致。 */
+    private static boolean isWikiToolName(String name) {
+        return "search_wiki".equals(name) || "read_wiki_page".equals(name) || "create_wiki_patch".equals(name);
+    }
+
     private List<Map<String, Object>> buildWorkspaceTools(boolean canWrite, boolean canExec) {
         List<Map<String, Object>> tools = new ArrayList<>();
 
@@ -4022,6 +4057,8 @@ public class AiServiceImpl implements AiService {
                     dir = "";
                 }
                 WorkspaceExecutor.ExecResult run = workspaceExecutor.exec(command, argv, dir);
+                // 判过题了 —— 下一轮起才允许把错题记进薄弱点页
+                loop.ranCommand = true;
                 return "退出码 " + run.exitCode() + (run.timedOut() ? "（超时被强制结束）" : "")
                         + "，用时 " + run.millis() + "ms\n"
                         + (run.output().isBlank() ? "（没有输出）" : run.output());

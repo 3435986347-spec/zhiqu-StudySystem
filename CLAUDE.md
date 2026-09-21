@@ -471,6 +471,40 @@ realpath** —— 否则 macOS 上 `/tmp` 实际是 `/private/tmp`，正常读�
 
 执行结果不落库（不建 `code_run` 表）：那是临时诊断信息，不是需要长期保存的资产。
 
+**刷题与判题（阶段 4）没有新实体 —— 它是已有零件的一条环路。**
+出题 = `write_workspace_file`（草稿 → 确认落盘）；判题 = `run_workspace_command`；
+错题归档 = `create_wiki_patch` 写 `pageType=WEAKNESS`。四步全部复用已验证过的路径，
+**不建「错题本」表**。
+
+为此 code agent 拿到了 Wiki 的三个工具，但分两档：
+
+- **读工具（`search_wiki` / `read_wiki_page`）一直给** —— 出题之前先看这个人以前错在哪，
+  题才出得准。
+- **写工具（`create_wiki_patch`）只在本轮真的跑过一次判题之后才给**（`CodeLoopState.ranCommand`）。
+  门开在「跑过没跑过」这个**事实**上，而不是关键词上：关键词会过触发也会漏触发，
+  而「这一轮有没有执行过命令」是确定的。为此工具表**每轮重建** —— 一次性算好的话，
+  这个条件只能用「用户说了什么」来近似。
+
+Wiki 调用原样交给 `executeWikiTool`，**不在 code 循环里另拼一份**。那条路上有一整套防护，
+其中「**未完整读取不许整页覆盖**」对错题归档尤其要紧：薄弱点页是累积的，一次整页覆盖
+就把用户以前记的全冲掉了。提示词因此要求先 `read_wiki_page` 读全，再把新的一条追加上去。
+
+**这一阶段最重要的发现是靠实测拿到的，不是靠读代码。** 沙箱、判题、归档全建好之后，
+拿十一种真实说法探了一遍 `codeIntent` / `codeWriteIntent` —— **一条都不命中**。
+也就是说整条环路建好了而用户永远走不到。于是有了第三道门 `practiceIntent`，两档：
+「我的解法」「练习题」「刷题」这类足够具体的词单独成立；「考考我」「出一道」这类通用词
+要配一个学科词（算法/递归/二叉树…）或代码名词，否则背单词也会把 code agent 拉起来。
+
+`practiceIntent` 与 `codeIntent` 的 OR 收在 **`codeAgentIntent` 一处**，建图与执行共用。
+第一版只改了建图侧，执行侧 `runCodeWorkspaceAgent` 判的还是 `codeIntent` —— 刷题那一轮
+图里造出 CODE_AGENT 节点、runner 直接返回空，用户在执行轨迹里看到一个什么也没做的方块。
+`CodeAgentGateTest.实现侧只能调用这道门不能另起一套` 现在盯着这一点。
+
+**已知接不住的那一类（明示的取舍）**：「给我出一道题」「跑一下测试看我写对没有」
+「复盘一下刚才那道题」。它们缺的不是词而是**上下文** —— 只有在「刚才出过一道题」之后
+才说得通，而本仓库所有的门都只看当前这一条消息。`CodeAgentGateTest.已知接不住的那一类`
+把它钉住了，免得下一个人当成漏洞往词表里随手塞词。
+
 ### RAG (optional)
 
 `app.rag.enabled` defaults to **true** (`${ZHIQU_RAG_ENABLED:true}` in `application.yml`). When the

@@ -230,7 +230,7 @@ public record AgentPlanDecision(
                 // 三个条件缺一不可。workspaceReadable 来自执行侧（WorkspaceAccess 的生效档位）——
                 // 工作区没开时造出这个节点，就是一个结构上跑不了的幽灵节点，
                 // 而那正是 AgentGraphOrderDerivationTest 在防的形状。
-                codeIntent(message) && toolCallingSupported && workspaceReadable,
+                codeAgentIntent(message) && toolCallingSupported && workspaceReadable,
                 // 没检索就没有引用可核 —— 与 needsRetriever 同条件，不另起一个会漂的门
                 needsRetriever,
                 historyFull
@@ -259,6 +259,72 @@ public record AgentPlanDecision(
                 && WIKI_WRITE_WORDS.stream().anyMatch(text::contains);
     }
 
+    /**
+     * 刷题动作词 —— <b>足够具体、单独就能成立</b>的那一档。
+     *
+     * <p>「我的解法」「练习题」「判题」这些词出现在非编程语境里很少见，
+     * 所以不再要求第二个信号。漏触发的代价比过触发大得多：用户说「判一下我的解法」
+     * 却得到一段泛泛而谈，他<b>看不出</b>本来可以真的跑一遍测试 —— 这个功能对他而言
+     * 等于不存在。
+     */
+    private static final List<String> PRACTICE_STRONG_WORDS = List.of(
+            "刷题", "刷几道", "刷一道", "练习题", "习题", "判题", "算法题", "代码题",
+            "我的解法", "我的答案", "我的实现", "测试用例", "leetcode", "力扣", "acm");
+
+    /**
+     * 通用的那一档 —— 单独不算，要配一个学科或代码信号。
+     *
+     * <p>「考考我」「出一道题」本身不带学科：用户可能在背单词、在背历史。
+     * 单独成立的话，每次都会把 code agent 拉起来读一遍文件，白花轮次。
+     */
+    private static final List<String> PRACTICE_WEAK_WORDS = List.of(
+            "出题", "出一道", "出一题", "出几道", "出道", "考考我", "考我", "判一下",
+            "做几道", "写对没有");
+
+    /** 编程练习的学科词。{@link #CODE_MENTION_WORDS} 之外的那一半 —— 它只有代码名词，没有算法名词。 */
+    private static final List<String> PRACTICE_SUBJECT_WORDS = List.of(
+            "算法", "数据结构", "递归", "动态规划", "回溯", "贪心", "链表", "二叉树", "哈希",
+            "图论", "排序", "查找", "复杂度", "指针", "并发", "编程", "字符串处理");
+
+    /**
+     * 「这句话是在刷题 / 练习吗」—— 第三道门，与 {@link #codeIntent} 并列汇入 needsCodeAgent。
+     *
+     * <h2>已知会漏触发的那一类，以及为什么不修</h2>
+     *
+     * <p>这些说法<b>不会</b>命中：「给我出一道题」「跑一下测试看我写对没有」「复盘一下刚才那道题」。
+     * 它们缺的不是词，是<b>上下文</b> —— 只有在「刚才出过一道题」之后才说得通，
+     * 而本仓库所有的门都只看<b>当前这一条消息</b>。想接住它们就得让门读历史，
+     * 那是另一种东西（而且会带来「上一轮的话题黏住这一轮」的新问题）。
+     *
+     * <p>所以这里明说：单条消息的关键词门接不住对话中的后续追问。用户把学科再说一遍
+     * （「判一下我这个递归的解法」）就能命中。
+     */
+    public static boolean practiceIntent(String message) {
+        String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+        if (PRACTICE_STRONG_WORDS.stream().anyMatch(text::contains)) {
+            return true;
+        }
+        return PRACTICE_WEAK_WORDS.stream().anyMatch(text::contains)
+                && (PRACTICE_SUBJECT_WORDS.stream().anyMatch(text::contains)
+                    || CODE_MENTION_WORDS.stream().anyMatch(text::contains));
+    }
+
+    /**
+     * 「这一轮的<b>意图</b>需要 code agent 吗」—— 建图侧与执行侧共用的<b>唯一</b>表达式。
+     *
+     * <p>存在的理由只有一个：这个 OR 不能写两遍。2026-09-21 加 {@code practiceIntent} 时
+     * 只改了建图侧（{@code of(...)}），执行侧 {@code runCodeWorkspaceAgent} 开头判的还是
+     * {@code codeIntent} —— 于是刷题那一轮图里造出了 CODE_AGENT 节点，而 runner 直接返回空：
+     * 用户在执行轨迹里看到一个「代码工作区」的方块，它什么也没做。
+     *
+     * <p>注意这里<b>只</b>管意图。工具调用支持与工作区可读性由调用方各自补上 ——
+     * 它们一个依赖模型配置、一个依赖用户身份，不属于「这句话想干什么」。
+     */
+    public static boolean codeAgentIntent(String message) {
+        return codeIntent(message) || practiceIntent(message);
+    }
+
+
 /**
      * 写代码这一侧的动作词。比 {@link #CODE_ACTION_WORDS} 窄得多，而且是刻意的。
      *
@@ -281,8 +347,13 @@ public record AgentPlanDecision(
      */
     public static boolean codeWriteIntent(String message) {
         String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
-        return CODE_MENTION_WORDS.stream().anyMatch(text::contains)
-                && CODE_WRITE_WORDS.stream().anyMatch(text::contains);
+        if (CODE_MENTION_WORDS.stream().anyMatch(text::contains)
+                && CODE_WRITE_WORDS.stream().anyMatch(text::contains)) {
+            return true;
+        }
+        // 刷题本身就要写文件：题目和测试用例得落到工作区里他才跑得了。
+        // 仍然是草稿优先 —— 写工具产出的是 CODE_DRAFT，他看过 diff 才落盘。
+        return practiceIntent(message);
     }
 
     private static boolean containsAny(String message, List<String> words) {

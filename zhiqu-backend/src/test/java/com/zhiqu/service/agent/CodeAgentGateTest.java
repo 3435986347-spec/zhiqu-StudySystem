@@ -113,10 +113,15 @@ class CodeAgentGateTest {
     @Test
     void 实现侧只能调用这道门不能另起一套() throws IOException {
         String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
-        assertTrue(code.contains("AgentPlanDecision.codeIntent("),
-                "AiServiceImpl 必须调用唯一那道门");
+        assertTrue(code.contains("AgentPlanDecision.codeAgentIntent("),
+                "AiServiceImpl 必须调用 codeAgentIntent —— 建图侧用的就是它。"
+                        + "执行侧改调别的（比如只判 codeIntent）就会分叉：图里造出 CODE_AGENT 节点，"
+                        + "runner 却直接返回空，用户看到一个什么也没做的方块。2026-09-21 真发生过");
         assertFalse(code.contains("looksCodeIntent") || code.contains("private boolean codeIntent"),
                 "不得在实现侧另写一个代码意图判定 —— 两处各判一次迟早分叉");
+        assertFalse(code.contains("practiceIntent"),
+                "「刷题算不算需要 code agent」这个 OR 只能写在 AgentPlanDecision.codeAgentIntent 里。"
+                        + "实现侧再拼一次就是第二份真相");
     }
 
     /** 执行侧问的必须是<b>生效档位</b>，不是配置里写的那一档。 */
@@ -311,5 +316,159 @@ class CodeAgentGateTest {
         assertTrue(gate > 0 && gate < declaration,
                 "执行工具的声明必须在 if (canExec) 里面。无条件声明的话，工作区只读、"
                         + "甚至生产环境下模型也会拿到在服务器上起进程的能力");
+    }
+
+    /**
+     * 错题归档这条路：code agent 能到达 Wiki，但要先真的判过题。
+     *
+     * <h2>为什么门开在「跑过没跑过」上，而不是关键词上</h2>
+     *
+     * <p>「把错题记进薄弱点页」的前提是<b>确实判过题</b>。用关键词判（「刷题」「考考我」）
+     * 会过触发也会漏触发 —— {@code codeIntent} 那条判据自己就明示了它会过触发。
+     * 而 {@code CodeLoopState.ranCommand} 是事实：这一轮到底有没有跑过一次
+     * {@code run_workspace_command}。
+     *
+     * <p>所以工具表要<b>每轮重建</b>。一次性算好的话，这个条件只能用「用户说了什么」来近似。
+     *
+     * <h2>Wiki 那一侧不许另写一份</h2>
+     *
+     * <p>{@code executeWikiTool} 里有一整套防护：保留页、<b>未完整读取不许整页覆盖</b>、
+     * 本轮幂等、条带锁、可信快照基线。其中「未完整读取不许整页覆盖」对错题归档尤其要紧 ——
+     * 薄弱点页是累积的，一次整页覆盖就把用户以前记的全冲掉了。
+     * code agent 必须原样走这条路，不能自己拼一个 createPatchSet。
+     *
+     * <p>扰动：把 {@code buildWikiTools(loop.ranCommand)} 改成 {@code buildWikiTools(true)} → 本条红。
+     */
+    @Test
+    void 判过题之前不得下发写薄弱点的工具() throws IOException {
+        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+
+        assertTrue(code.contains("buildWikiTools(loop.ranCommand)"),
+                "Wiki 写工具必须由「本轮跑过判题没有」决定。用关键词近似这个条件，"
+                        + "就会在没判过题的时候也给出写薄弱点的能力");
+
+        // 工具表必须在 round 循环<b>里面</b>重建，否则 ranCommand 变了也没人看见
+        int loopAt = code.indexOf("for (int round = 0; round < 4; round++)");
+        assertTrue(loopAt > 0, "找不到代码循环 —— 判据的锚点没了");
+        int buildAt = code.indexOf("buildWikiTools(loop.ranCommand)");
+        assertTrue(buildAt > loopAt,
+                "工具表在 round 循环之外算好了 —— ranCommand 在循环中途才置位，"
+                        + "算在外面就等于永远是 false，写薄弱点的工具永远不会出现");
+
+        // ranCommand 只能由真的执行<b>无条件</b>置位。
+        //
+        // 第一版这里只断言了「这段文字离 exec 够近」，于是把它包成
+        // `if (false) { loop.ranCommand = true; }` 照样绿 —— 文字还在原地，语句却永远不执行。
+        // 这和「注释满足了判据」是同一个物种：contains 分不出「代码这么做」和「文本这么写」。
+        int execAt = code.indexOf("workspaceExecutor.exec(");
+        int flagAt = code.indexOf("loop.ranCommand = true;");
+        assertTrue(execAt > 0 && flagAt > execAt && flagAt - execAt < 300,
+                "loop.ranCommand 必须紧跟在真正的 exec 调用之后置位 —— "
+                        + "在别处置位就等于这个门可以被绕过");
+        String between = code.substring(execAt, flagAt);
+        assertFalse(between.contains("if ") || between.contains("if("),
+                "exec 与置位之间夹了条件判断，置位不是无条件的。中间这段：" + between.trim());
+        assertTrue(Pattern.compile("(?m)^\\s*loop\\.ranCommand = true;\\s*$").matcher(code).find(),
+                "置位必须是独立一条语句，而不是被包在别的语句里 —— 包起来就可能永远不执行");
+
+        // Wiki 工具必须走加固过的那条路，不能在 code 循环里另拼一份
+        assertTrue(code.contains("executeWikiTool(userId, name, argsRaw, loop.wiki)"),
+                "code agent 的 Wiki 调用必须原样交给 executeWikiTool。另写一份就会绕开"
+                        + "「未完整读取不许整页覆盖」，而薄弱点页是累积的，覆盖一次就全没了");
+        assertFalse(code.contains("knowledgeService.createPatchSet(userId, patchBody, trustedSnapshots)")
+                        && countOccurrences(code, "createPatchSet(") > 1,
+                "createPatchSet 只允许有一处调用（executeWikiTool 里那处）。"
+                        + "第二处就是绕开防护的那条路");
+    }
+
+    // ── 刷题这道门（阶段 4）───────────────────────────────────────────────
+
+    /**
+     * 刷题说法要能把 code agent 拉起来。
+     *
+     * <p>这一条是实测逼出来的：加 {@code practiceIntent} 之前，十一种真实说法
+     * （「出道算法题考考我」「判一下我的解法」「我想刷几道题」…）
+     * <b>一条都不命中</b> {@code codeIntent} 或 {@code codeWriteIntent}。
+     * 也就是说整条刷题环路根本走不起来 —— 沙箱、判题、错题归档全都建好了，
+     * 而用户永远走不到那里。写完一条链路要拿真实说法探一遍，不能看着代码觉得通了就算通了。
+     */
+    @Test
+    void 刷题说法要能触发() {
+        for (String said : new String[]{
+                "出道算法题考考我",
+                "考考我二叉树",
+                "我想刷几道题",
+                "帮我出一道 Python 练习题",
+                "出题吧，我练一下递归",
+                "判一下我的解法",
+                "我的解法对吗",
+                "给我出几道 leetcode"}) {
+            assertTrue(AgentPlanDecision.practiceIntent(said), "应当命中刷题门：" + said);
+        }
+    }
+
+    /** 与编程无关的考问不算刷题 —— 否则每次背单词都会把 code agent 拉起来读一遍文件。 */
+    @Test
+    void 与编程无关的考问不算刷题() {
+        for (String said : new String[]{
+                "考考我唐诗",
+                "背一下英语单词考考我",
+                "出一道题考考我历史",
+                "帮我安排下周的复习计划",
+                "",
+                null}) {
+            assertFalse(AgentPlanDecision.practiceIntent(said), "不该命中刷题门：" + said);
+        }
+    }
+
+    /**
+     * 已知接不住的那一类 —— 明示的取舍，不是待修的 bug。
+     *
+     * <p>这些说法只有在「刚才出过一道题」之后才说得通，它们缺的不是词而是<b>上下文</b>。
+     * 本仓库所有的门都只看当前这一条消息；想接住它们就得让门读历史，那是另一种东西，
+     * 而且会带来「上一轮的话题黏住这一轮」的新问题。
+     *
+     * <p>钉住它，是为了下一个人看到「判一下我写对没有」不触发时，知道这是<b>已知的</b>，
+     * 并且知道代价是什么 —— 而不是当成漏洞随手往词表里塞两个词。
+     * 用户把学科再说一遍（「判一下我这个递归的解法」）就能命中。
+     */
+    @Test
+    void 已知接不住的那一类() {
+        for (String said : new String[]{
+                "给我出一道题",
+                "跑一下测试看我写对没有",
+                "复盘一下刚才那道题"}) {
+            assertFalse(AgentPlanDecision.practiceIntent(said),
+                    "这一条目前<b>刻意</b>不命中（缺的是上下文不是词）。"
+                            + "如果你让它命中了，请连同这条判据一起改，并想清楚"
+                            + "「出一道题」在背单词语境下被误触的代价：" + said);
+        }
+        // 补一个学科词就该命中 —— 证明上面那些不是被别的东西挡住了
+        assertTrue(AgentPlanDecision.practiceIntent("判一下我这个递归的写法对不对"),
+                "把学科说出来就该命中。不命中说明挡住它们的不是「缺上下文」，"
+                        + "而是词表本身有问题，上面那条注释就是错的");
+    }
+
+    /** 刷题要能写题目文件 —— 题目和测试用例得落到工作区里他才跑得了。 */
+    @Test
+    void 刷题要能写题目文件() {
+        assertTrue(AgentPlanDecision.codeWriteIntent("出道算法题考考我"),
+                "出题要写文件。写工具不下发的话，AI 只能把题目贴在聊天里，用户没法跑");
+        assertTrue(AgentPlanDecision.codeWriteIntent("我想刷几道题"));
+        assertFalse(AgentPlanDecision.codeWriteIntent("考考我唐诗"),
+                "与编程无关的考问不该打开写工具");
+    }
+
+    /** 建图与执行都要认这道门，而且不许另写一套。 */
+    @Test
+    void 刷题门必须汇入needsCodeAgent() throws IOException {
+        assertTrue(decide("出道算法题考考我", true, true).needsCodeAgent(),
+                "刷题说法必须能造出 CODE_AGENT 节点 —— 造不出的话整条环路走不起来");
+        assertFalse(decide("出道算法题考考我", true, false).needsCodeAgent(),
+                "工作区不可读时仍然不得启用");
+
+        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        assertFalse(code.contains("practiceIntent") && code.contains("PRACTICE_"),
+                "不得在实现侧另写一套刷题判定 —— 词表只能有一份，在 AgentPlanDecision 里");
     }
 }
