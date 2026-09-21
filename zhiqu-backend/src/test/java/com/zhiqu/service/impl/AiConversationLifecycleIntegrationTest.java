@@ -11,6 +11,7 @@ import com.zhiqu.service.AiWorkspaceService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import com.zhiqu.service.agent.AgentTraceRecorder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -905,7 +906,7 @@ class AiConversationLifecycleIntegrationTest {
 
             Set<String> swept = rows.stream()
                     .filter(row -> "SKIPPED".equals(row.get("status"))
-                            && AiServiceImpl.UNRUN_TASK_SUMMARY.equals(row.get("public_summary")))
+                            && AgentTraceRecorder.UNRUN_TASK_SUMMARY.equals(row.get("public_summary")))
                     .map(row -> String.valueOf(row.get("agent_type")))
                     .collect(Collectors.toSet());
             assertEquals(testCase.swept(), swept,
@@ -1333,11 +1334,11 @@ class AiConversationLifecycleIntegrationTest {
                         + "。失败不是把节点留在 PENDING 的理由 —— 执行轨迹里会永远挂着转圈的 agent");
 
         long settled = tasks.stream()
-                .filter(row -> AiServiceImpl.FAILED_RUN_TASK_SUMMARY.equals(row.get("public_summary")))
+                .filter(row -> AgentTraceRecorder.FAILED_RUN_TASK_SUMMARY.equals(row.get("public_summary")))
                 .count();
         assertTrue(settled >= 1,
-                "至少有一个还没轮到的节点要被收成「" + AiServiceImpl.FAILED_RUN_TASK_SUMMARY + "」；"
-                        + "用成功路径那句「" + AiServiceImpl.UNRUN_TASK_SUMMARY + "」会把两种情形混成同一形状。实际："
+                "至少有一个还没轮到的节点要被收成「" + AgentTraceRecorder.FAILED_RUN_TASK_SUMMARY + "」；"
+                        + "用成功路径那句「" + AgentTraceRecorder.UNRUN_TASK_SUMMARY + "」会把两种情形混成同一形状。实际："
                         + tasks);
     }
 

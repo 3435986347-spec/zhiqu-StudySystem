@@ -574,6 +574,27 @@ code agent 在项目语境下拿到 `create_study_plan`（**同一个 schema，�
 函数调用的 schema 形状提到 `service/ai/ToolSchemas`。两处都在 `AiServiceImpl` 里留了
 一行委托，所以它那 60 多个调用点一个都不用改。
 
+**第三刀**是执行轨迹的写入者 → `service/agent/AgentTraceRecorder`：`startTask` /
+`startStep` / `finishStep` / `completeTask` / `skipTask` / `errorStep` 与那几个事件构造器。
+这四个方法在 15 个 runner 里被调了 44 次，而它们真正用到 `StreamState` 的只有
+`requestId` 和 `agentRun` 两个字段 —— 所以记录器**按一轮构造**、绑定这两样，
+调用点不必再把整个 StreamState 递进去。
+
+`artifactStreamSummary`（产物预览长什么样）**没有**跟着搬，而是改由调用方传进来。
+轨迹写入者只管「什么时候发生了什么」；一个产物怎么摘要给用户看是展示层的事，
+而且它牵着一串只有 `AiServiceImpl` 才有的文本工具。让它反过来依赖那些，这一刀就白拆了。
+
+`AgentTraceCompletenessTest` 钉住这一刀真正保护的东西：**一轮结束时不许留下停在
+「进行中」的方块**。`settleUnrunTasks` 必须在成功与失败<b>两条</b>路径上都调一次。
+写这条判据时它第一次跑就红了 —— 锚点选错了：`errorRun(` 的第一次出现是「装配窗口」
+那个 catch，那里图还没建好、没有节点可收。判据的锚点错了，不是代码缺了收尾。
+
+**下一刀不该是「把 15 个 runner 搬出去」。** 它们剩下的耦合是各自的<b>领域工作</b>
+（检索、校验、摘要、计划解析），而那些方法就是 `AiServiceImpl` 的其余部分。
+只搬 runner 外壳会得到 15 个小文件、每个都反过来伸手进大类 —— 比现在更糟。
+该搬的是<b>纵切</b>：把「检索这件事」（retriever + context researcher + web researcher
+及其助手）整块搬走，runner 跟着走。
+
 **搬家会让判据扫错文件，而扫错文件的判据看起来和通过一模一样。** 第二刀之后
 `CodeAgentGateTest` 那条「`createPatchSet` 只许有一处调用」还在扫 `AiServiceImpl`，
 而方法已经搬走、计数变成 0，`assertFalse(contains(...) && count > 1)` 于是**真空通过**。

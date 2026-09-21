@@ -45,6 +45,7 @@ import com.zhiqu.service.ai.ModelProviderClient;
 import com.zhiqu.service.ai.ToolSchemas;
 import com.zhiqu.service.ai.WikiToolAgent;
 import com.zhiqu.service.agent.AgentPhase;
+import com.zhiqu.service.agent.AgentTraceRecorder;
 import com.zhiqu.service.agent.AgentPlanDecision;
 import com.zhiqu.service.agent.AgentPosition;
 import com.zhiqu.service.agent.AgentRunContext;
@@ -148,6 +149,59 @@ public class AiServiceImpl implements AiService {
     private final WebResearchService webResearchService;
     private final ModelStreamAdapterFactory modelStreamAdapterFactory;
     /** 「怎么跟模型供应商说话」那一层。协议细节不再混在业务里，见 ModelProviderClient 的类注释。 */
+    private Map<String, Object> artifactStreamSummary(AiAgentArtifact artifact) {
+        Map<String, Object> content = parseJsonObjectMap(artifact.getContentJson());
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("id", artifact.getId());
+        summary.put("artifactId", artifact.getId());
+        summary.put("artifactType", artifact.getArtifactType());
+        summary.put("title", artifact.getTitle());
+        summary.put("status", artifact.getStatus());
+        copyArtifactPreviewField(content, summary, "sourceId");
+        copyArtifactPreviewField(content, summary, "sourceType");
+        copyArtifactPreviewField(content, summary, "url");
+        copyArtifactPreviewField(content, summary, "chunkIndex");
+
+        String preview = firstNonBlank(
+                stringValue(content.get("snippet")),
+                stringValue(content.get("content")),
+                stringValue(content.get("description")),
+                stringValue(content.get("reason")),
+                stringValue(content.get("error"))
+        );
+        if (hasText(preview)) {
+            summary.put("preview", limitRawMarkdown(preview, 360));
+        }
+
+        List<String> itemTitles = new ArrayList<>();
+        int itemCount = 0;
+        for (String key : List.of("tasks", "routines", "items", "pages")) {
+            Object value = content.get(key);
+            if (!(value instanceof List<?> list)) {
+                continue;
+            }
+            itemCount += list.size();
+            for (Object item : list) {
+                if (!(item instanceof Map<?, ?> row) || itemTitles.size() >= 8) {
+                    continue;
+                }
+                String title = firstNonBlank(
+                        stringValue(row.get("title")),
+                        stringValue(row.get("name")),
+                        stringValue(row.get("content"))
+                );
+                if (hasText(title)) {
+                    itemTitles.add(limitText(title, 100));
+                }
+            }
+        }
+        if (itemCount > 0) {
+            summary.put("itemCount", itemCount);
+            summary.put("itemTitles", itemTitles);
+        }
+        return summary;
+    }
+
     private final ModelProviderClient provider;
     /** 知识 Wiki 的工具循环 —— 自己的工具、执行器、状态和防护，见 WikiToolAgent 的类注释。 */
     private final WikiToolAgent wikiToolAgent;
@@ -559,7 +613,9 @@ public class AiServiceImpl implements AiService {
         start.put("assistantMessageId", assistantMessage.getId());
         emitSse(emitter, "stream.start", start);
 
-        StreamState state = new StreamState(requestId, agentRun, config, userId, notebookId, limitedMessage,
+        AgentTraceRecorder trace = new AgentTraceRecorder(objectMapper, aiWorkspaceService,
+                agentTaskGraphService, requestId, agentRun);
+        StreamState state = new StreamState(trace, requestId, agentRun, config, userId, notebookId, limitedMessage,
                 contextOptions, Boolean.TRUE.equals(enableWebSearch), normalizedReasoningMode,
                 memoryText, writeContext.summary(), history, userMessage, assistantMessage);
         // 装配（造执行器 + 建图）单独圈一个 try。
@@ -614,7 +670,7 @@ public class AiServiceImpl implements AiService {
         // 检索没跑时也要有个状态对象：这条状态今天在「跑了」和「跳过」两条分支上都会发。
         state.retrievalStatus = retrievalStatus(List.of());
         for (AiAgentTask task : taskGraph) {
-            ctx.emit("agent.task.created", taskEvent(requestId, agentRun, task));
+            ctx.emit("agent.task.created", trace.taskEvent(task));
         }
         try {
             // 只有 PRE_STREAM 有并发组（两路检索）。其余相位传 1，行为与并发前逐字相同 ——
@@ -693,7 +749,7 @@ public class AiServiceImpl implements AiService {
                     state.rebuilt = true;
                 }
                 executor.execute(AgentPhase.COMMIT, ctx);
-                settleUnrunTasks(ctx, state);
+                state.trace.settleUnrunTasks(ctx);
                 aiWorkspaceService.completeRun(agentRun, state.liveAssistant);
                 return new StreamCompletionResult(state.liveUser, state.liveAssistant, null);
             }));
@@ -701,15 +757,15 @@ public class AiServiceImpl implements AiService {
                 // 整轮丢弃:run 已在事务内标记 CANCELED,这里只收敛残余步骤/任务,不发成功 done。
                 // 已出 COMMIT 遍历,ctx 的相位已还原,下面这些事件直发。
                 String reason = completion.dropReason();
-                finishStep(ctx, state, state.finalWriterStep, reason + "，迟到回答已丢弃", "dropped=true");
-                completeTask(ctx, state, ctx.task("FINAL_WRITER"), Map.of("dropped", true), "Late answer dropped");
+                state.trace.finishStep(ctx, state.finalWriterStep, reason + "，迟到回答已丢弃", "dropped=true");
+                state.trace.completeTask(ctx, ctx.task("FINAL_WRITER"), Map.of("dropped", true), "Late answer dropped");
                 if (state.plannerStep != null) {
-                    finishStep(ctx, state, state.plannerStep, reason + "，计划草稿已取消", "dropped=true");
+                    state.trace.finishStep(ctx, state.plannerStep, reason + "，计划草稿已取消", "dropped=true");
                 }
-                skipTask(ctx, state, ctx.task("PLANNER"), reason);
-                skipTask(ctx, state, ctx.task("TASK_DRAFTER"), reason);
-                skipTask(ctx, state, ctx.task("WIKI_CURATOR"), reason);
-                skipTask(ctx, state, ctx.task("MEMORY_CURATOR"), reason);
+                state.trace.skipTask(ctx, ctx.task("PLANNER"), reason);
+                state.trace.skipTask(ctx, ctx.task("TASK_DRAFTER"), reason);
+                state.trace.skipTask(ctx, ctx.task("WIKI_CURATOR"), reason);
+                state.trace.skipTask(ctx, ctx.task("MEMORY_CURATOR"), reason);
                 Map<String, Object> canceled = new LinkedHashMap<>();
                 canceled.put("requestId", requestId);
                 canceled.put("agentRunId", agentRun.getId());
@@ -739,13 +795,13 @@ public class AiServiceImpl implements AiService {
             persistSuggestedPlan(completion.assistantMessage(), state.suggestedPlan);
             ctx.emit("done", done);
         } catch (Exception e) {
-            errorRunningStep(state.dispatcherStep, e);
-            errorRunningStep(state.retrieverStep, e);
-            errorRunningStep(state.plannerStep, e);
-            errorRunningStep(state.finalWriterStep, e);
-            errorRunningTasks(ctx, state, e);
+            state.trace.errorStep(state.dispatcherStep, e);
+            state.trace.errorStep(state.retrieverStep, e);
+            state.trace.errorStep(state.plannerStep, e);
+            state.trace.errorStep(state.finalWriterStep, e);
+            state.trace.errorRunningTasks(ctx, e);
             // RUNNING 的已标 ERROR，还没轮到的仍是 PENDING —— 不收的话它们永远停在那里
-            settleUnrunTasks(ctx, state, FAILED_RUN_TASK_SUMMARY);
+            state.trace.settleUnrunTasks(ctx, AgentTraceRecorder.FAILED_RUN_TASK_SUMMARY);
             aiWorkspaceService.errorRun(agentRun, e);
             failAssistantMessage(assistantMessage, e);
             Map<String, Object> error = new LinkedHashMap<>();
@@ -767,6 +823,8 @@ public class AiServiceImpl implements AiService {
      * 只是把原本靠「同一个方法体内的局部变量」维持的耦合摆到明处。
      */
     private static final class StreamState {
+        /** 这一轮的执行轨迹写入者。绑定 requestId 与 run，见 AgentTraceRecorder 的类注释。 */
+        private final AgentTraceRecorder trace;
         private final String requestId;
         private final AiAgentRun agentRun;
         private final AiModelConfig config;
@@ -828,11 +886,12 @@ public class AiServiceImpl implements AiService {
         private int summarySourceCount;
         private String summaryDraft;
 
-        private StreamState(String requestId, AiAgentRun agentRun, AiModelConfig config, Long userId,
+        private StreamState(AgentTraceRecorder trace, String requestId, AiAgentRun agentRun, AiModelConfig config, Long userId,
                             Long notebookId, String limitedMessage, Map<String, Object> contextOptions,
                             boolean webSearchEnabled, String reasoningMode, String memoryText,
                             String summary, List<AiMessage> history, AiMessage userMessage,
                             AiMessage assistantMessage) {
+            this.trace = trace;
             this.requestId = requestId;
             this.agentRun = agentRun;
             this.config = config;
@@ -872,8 +931,8 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void announce(AgentRunContext ctx) {
-            startTask(ctx, s, ctx.task("ORCHESTRATOR"));
-            s.dispatcherStep = startAgentStep(ctx, s, ctx.task("ORCHESTRATOR"), "DISPATCHER", 1, "正在分析问题");
+            s.trace.startTask(ctx, ctx.task("ORCHESTRATOR"));
+            s.dispatcherStep = s.trace.startStep(ctx, ctx.task("ORCHESTRATOR"), "DISPATCHER", 1, "正在分析问题");
         }
 
         @Override
@@ -885,9 +944,9 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void commit(AgentRunContext ctx) {
-            finishStep(ctx, s, s.dispatcherStep, "已完成意图分析",
+            s.trace.finishStep(ctx, s.dispatcherStep, "已完成意图分析",
                     "retriever=" + retrieverInGraph + ", planner=" + plannerInGraph);
-            completeTask(ctx, s, ctx.task("ORCHESTRATOR"),
+            s.trace.completeTask(ctx, ctx.task("ORCHESTRATOR"),
                     Map.of("retriever", retrieverInGraph, "planner", plannerInGraph), "Task graph ready");
         }
     }
@@ -914,12 +973,12 @@ public class AiServiceImpl implements AiService {
         @Override
         public void announce(AgentRunContext ctx) {
             startResearchTasks(ctx, s);
-            s.retrieverStep = startAgentStep(ctx, s, researchTask(ctx), "RETRIEVER", 2, "正在检索资料来源");
+            s.retrieverStep = s.trace.startStep(ctx, researchTask(ctx), "RETRIEVER", 2, "正在检索资料来源");
         }
 
         @Override
         public void announceSkipped(AgentRunContext ctx) {
-            skipStep(ctx, s, "RETRIEVER", 2, "本轮不需要资料检索");
+            s.trace.skipStep(ctx, "RETRIEVER", 2, "本轮不需要资料检索");
             // 检索没跑，但联网开关仍可能是开的（CHAT_ONLY + 联网）：这条状态事件今天在两条分支上都发。
             emitRetrievalStatus(ctx, s);
         }
@@ -945,7 +1004,7 @@ public class AiServiceImpl implements AiService {
                         researchTask == null ? null : researchTask.getId(), "RETRIEVAL_CONTEXT",
                         "Retrieved usable context for the final answer.", BigDecimal.valueOf(0.8),
                         s.evidenceIds, Map.of("evidenceCount", s.evidenceIds.size()));
-                ctx.emit("claim.created", claimEvent(s.requestId, s.agentRun, claim));
+                ctx.emit("claim.created", s.trace.claimEvent(claim));
             }
             emitRetrievalStatus(ctx, s);
         }
@@ -967,7 +1026,7 @@ public class AiServiceImpl implements AiService {
                     + notebookChunkCount + " 个片段";
             int sources = s.notebookContextRows.size() + s.webCitationRows.size();
             String attemptNote = s.retrievalAttempts > 1 ? "（换了一次说法）" : "";
-            finishStep(ctx, s, s.retrieverStep, publicSummary + attemptNote,
+            s.trace.finishStep(ctx, s.retrieverStep, publicSummary + attemptNote,
                     "sources=" + sources + ", attempts=" + s.retrievalAttempts);
             Map<String, Object> output = new LinkedHashMap<>();
             output.put("sources", sources);
@@ -1069,14 +1128,14 @@ public class AiServiceImpl implements AiService {
                 AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
                         s.agentRun.getId(), s.retrieverStep.getId(), "CITATION",
                         stringValue(item.get("title")), item, s.userMessage.getId());
-                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, s.retrieverStep, artifact));
+                ctx.emit("artifact.created", s.trace.artifactEvent(s.retrieverStep, artifact, artifactStreamSummary(artifact)));
                 AiAgentEvidence evidence = agentBlackboardService.createEvidence(
                         s.agentRun.getId(), researchTask == null ? null : researchTask.getId(),
                         s.retrieverStep.getId(), stringValue(item.get("sourceType")),
                         String.valueOf(item.getOrDefault("sourceId", "")), artifact.getId(),
                         stringValue(item.get("content")), item);
                 s.contextEvidenceIds.add(evidence.getId());
-                ctx.emit("evidence.created", evidenceEvent(s.requestId, s.agentRun, evidence));
+                ctx.emit("evidence.created", s.trace.evidenceEvent(evidence));
             }
         }
     }
@@ -1106,14 +1165,14 @@ public class AiServiceImpl implements AiService {
                 AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
                         s.agentRun.getId(), s.retrieverStep.getId(), artifactType,
                         stringValue(citation.get("title")), citation, s.userMessage.getId());
-                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, s.retrieverStep, artifact));
+                ctx.emit("artifact.created", s.trace.artifactEvent(s.retrieverStep, artifact, artifactStreamSummary(artifact)));
                 if (isSuccessfulCitation(citation)) {
                     AiAgentEvidence evidence = agentBlackboardService.createEvidence(
                             s.agentRun.getId(), researchTask == null ? null : researchTask.getId(),
                             s.retrieverStep.getId(), "WEB_PAGE", stringValue(citation.get("url")),
                             artifact.getId(), stringValue(citation.get("snippet")), citation);
                     s.webEvidenceIds.add(evidence.getId());
-                    ctx.emit("evidence.created", evidenceEvent(s.requestId, s.agentRun, evidence));
+                    ctx.emit("evidence.created", s.trace.evidenceEvent(evidence));
                 }
             }
         }
@@ -1132,9 +1191,9 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void announce(AgentRunContext ctx) {
-            startTask(ctx, s, ctx.task("VERIFIER"));
+            s.trace.startTask(ctx, ctx.task("VERIFIER"));
             // 「校验证据」而不是「校验结果」：本节点跑在 PRE_STREAM，答案还不存在。
-            s.verifierStep = startAgentStep(ctx, s, ctx.task("VERIFIER"), "VERIFIER", 35, "正在校验证据");
+            s.verifierStep = s.trace.startStep(ctx, ctx.task("VERIFIER"), "VERIFIER", 35, "正在校验证据");
         }
 
         @Override
@@ -1148,12 +1207,12 @@ public class AiServiceImpl implements AiService {
                     verifierService.verifyRun(s.agentRun.getId(), selectedSourcesWithoutEvidence);
             s.verifierFindings = List.copyOf(findings);
             for (AiVerifierFinding finding : findings) {
-                ctx.emit("verifier.finding", findingEvent(s.requestId, s.agentRun, finding));
+                ctx.emit("verifier.finding", s.trace.findingEvent(finding));
             }
             // 收尾写在阻断之前:阻断抛出后本节点应当已是 DONE(校验确实做完了),
             // 若挪进 commit(),抛出时节点还停在 RUNNING,会被错误路径标成 ERROR。
-            finishStep(ctx, s, s.verifierStep, "校验已完成", "findings=" + findings.size());
-            completeTask(ctx, s, ctx.task("VERIFIER"), Map.of("findings", findings.size()), "Verification complete");
+            s.trace.finishStep(ctx, s.verifierStep, "校验已完成", "findings=" + findings.size());
+            s.trace.completeTask(ctx, ctx.task("VERIFIER"), Map.of("findings", findings.size()), "Verification complete");
             if (verifierService.shouldBlockFinalWrite(findings)) {
                 throw new BusinessException("Verifier blocked final answer.");
             }
@@ -1178,13 +1237,13 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void announce(AgentRunContext ctx) {
-            startTask(ctx, s, ctx.task("PLANNER"));
-            s.plannerStep = startAgentStep(ctx, s, ctx.task("PLANNER"), "PLANNER", 3, "正在准备计划草稿");
+            s.trace.startTask(ctx, ctx.task("PLANNER"));
+            s.plannerStep = s.trace.startStep(ctx, ctx.task("PLANNER"), "PLANNER", 3, "正在准备计划草稿");
         }
 
         @Override
         public void announceSkipped(AgentRunContext ctx) {
-            skipStep(ctx, s, "PLANNER", 3, "本轮不需要计划草稿");
+            s.trace.skipStep(ctx, "PLANNER", 3, "本轮不需要计划草稿");
         }
 
         @Override
@@ -1198,18 +1257,18 @@ public class AiServiceImpl implements AiService {
             AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
                     s.agentRun.getId(), s.plannerStep.getId(), "PLAN_DRAFT", "AI 计划草稿",
                     s.planArtifactContent, s.liveUser.getId());
-            ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, s.plannerStep, artifact));
+            ctx.emit("artifact.created", s.trace.artifactEvent(s.plannerStep, artifact, artifactStreamSummary(artifact)));
             AiAgentClaim claim = agentBlackboardService.createClaim(
                     s.agentRun.getId(), s.plannerStep.getId(), ctx.task("PLANNER").getId(), "PLAN_DRAFT",
                     "A structured plan draft was generated for user confirmation.", BigDecimal.valueOf(0.7),
                     s.evidenceIds, Map.of("artifactId", artifact.getId()));
-            ctx.emit("claim.created", claimEvent(s.requestId, s.agentRun, claim));
+            ctx.emit("claim.created", s.trace.claimEvent(claim));
         }
 
         @Override
         public void commit(AgentRunContext ctx) {
-            finishStep(ctx, s, s.plannerStep, "计划草稿已整理", "planDraft=" + hasPlanDraft(s.planArtifactContent));
-            completeTask(ctx, s, ctx.task("PLANNER"),
+            s.trace.finishStep(ctx, s.plannerStep, "计划草稿已整理", "planDraft=" + hasPlanDraft(s.planArtifactContent));
+            s.trace.completeTask(ctx, ctx.task("PLANNER"),
                     Map.of("planDraft", hasPlanDraft(s.planArtifactContent)), "Plan draft ready");
         }
     }
@@ -1235,8 +1294,8 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void announce(AgentRunContext ctx) {
-            startTask(ctx, s, ctx.task("WIKI_TOOL_AGENT"));
-            s.wikiToolStep = startAgentStep(ctx, s, ctx.task("WIKI_TOOL_AGENT"),
+            s.trace.startTask(ctx, ctx.task("WIKI_TOOL_AGENT"));
+            s.wikiToolStep = s.trace.startStep(ctx, ctx.task("WIKI_TOOL_AGENT"),
                     "WIKI_TOOL_AGENT", 15, "正在读写知识 Wiki");
         }
 
@@ -1244,8 +1303,8 @@ public class AiServiceImpl implements AiService {
         public void run(AgentRunContext ctx) {
             s.wikiAgent = wikiToolAgent.runWikiToolAgent(s.config, s.userId, s.limitedMessage);
             boolean wrote = s.wikiAgent != null && s.wikiAgent.wrotePatch;
-            finishStep(ctx, s, s.wikiToolStep, wrote ? "已生成待合入变更草稿" : "Wiki 读取完成", "wrotePatch=" + wrote);
-            completeTask(ctx, s, ctx.task("WIKI_TOOL_AGENT"), Map.of("wrotePatch", wrote), "Wiki tool loop done");
+            s.trace.finishStep(ctx, s.wikiToolStep, wrote ? "已生成待合入变更草稿" : "Wiki 读取完成", "wrotePatch=" + wrote);
+            s.trace.completeTask(ctx, ctx.task("WIKI_TOOL_AGENT"), Map.of("wrotePatch", wrote), "Wiki tool loop done");
         }
     }
 
@@ -1270,8 +1329,8 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void announce(AgentRunContext ctx) {
-            startTask(ctx, s, ctx.task("CODE_AGENT"));
-            s.codeAgentStep = startAgentStep(ctx, s, ctx.task("CODE_AGENT"),
+            s.trace.startTask(ctx, ctx.task("CODE_AGENT"));
+            s.codeAgentStep = s.trace.startStep(ctx, ctx.task("CODE_AGENT"),
                     "CODE_AGENT", 16, "正在查看工作区里的代码");
         }
 
@@ -1293,14 +1352,14 @@ public class AiServiceImpl implements AiService {
                         s.agentRun.getId(), s.codeAgentStep == null ? null : s.codeAgentStep.getId(),
                         "CODE_DRAFT", "代码改动草稿",
                         Map.of("files", s.codeDrafts), s.liveUser == null ? null : s.liveUser.getId());
-                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, s.codeAgentStep, artifact));
+                ctx.emit("artifact.created", s.trace.artifactEvent(s.codeAgentStep, artifact, artifactStreamSummary(artifact)));
             }
-            finishStep(ctx, s, s.codeAgentStep,
+            s.trace.finishStep(ctx, s.codeAgentStep,
                     s.codeDrafts.isEmpty()
                             ? (read ? "已读取工作区代码" : "工作区没有可用内容")
                             : "已生成 " + s.codeDrafts.size() + " 个文件的改动草稿（未落盘）",
                     "chars=" + s.codeContext.length() + " drafts=" + s.codeDrafts.size());
-            completeTask(ctx, s, ctx.task("CODE_AGENT"),
+            s.trace.completeTask(ctx, ctx.task("CODE_AGENT"),
                     Map.of("contextChars", s.codeContext.length(), "drafts", s.codeDrafts.size()),
                     "Code workspace loop done");
         }
@@ -1320,8 +1379,8 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void announce(AgentRunContext ctx) {
-            startTask(ctx, s, ctx.task("FINAL_WRITER"));
-            s.finalWriterStep = startAgentStep(ctx, s, ctx.task("FINAL_WRITER"), "FINAL_WRITER", 4, "正在生成最终回答");
+            s.trace.startTask(ctx, ctx.task("FINAL_WRITER"));
+            s.finalWriterStep = s.trace.startStep(ctx, ctx.task("FINAL_WRITER"), "FINAL_WRITER", 4, "正在生成最终回答");
         }
 
         @Override
@@ -1418,8 +1477,8 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void commit(AgentRunContext ctx) {
-            finishStep(ctx, s, s.finalWriterStep, "最终回答已生成", "contentLength=" + s.finalReply.length());
-            completeTask(ctx, s, ctx.task("FINAL_WRITER"),
+            s.trace.finishStep(ctx, s.finalWriterStep, "最终回答已生成", "contentLength=" + s.finalReply.length());
+            s.trace.completeTask(ctx, ctx.task("FINAL_WRITER"),
                     Map.of("contentLength", s.finalReply.length()), "Final answer generated");
         }
     }
@@ -1472,8 +1531,8 @@ public class AiServiceImpl implements AiService {
                 return;
             }
             AiAgentTask task = ctx.task("MEMORY_CURATOR");
-            startTask(ctx, s, task);
-            AiAgentStep step = startAgentStep(ctx, s, task, "MEMORY_CURATOR", 33, "正在整理记忆草稿");
+            s.trace.startTask(ctx, task);
+            AiAgentStep step = s.trace.startStep(ctx, task, "MEMORY_CURATOR", 33, "正在整理记忆草稿");
             List<Map<String, Object>> rows = new ArrayList<>();
             for (String item : s.memoryItems) {
                 rows.add(Map.of("text", item, "sourceMessageId", s.liveUser.getId()));
@@ -1481,9 +1540,9 @@ public class AiServiceImpl implements AiService {
             AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
                     s.agentRun.getId(), step.getId(), "MEMORY_DRAFT", "AI 记忆草稿",
                     Map.of("items", rows), s.liveUser.getId());
-            ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, step, artifact));
-            finishStep(ctx, s, step, "记忆草稿已整理", "items=" + rows.size());
-            completeTask(ctx, s, task, Map.of("items", rows.size()), "Memory draft ready");
+            ctx.emit("artifact.created", s.trace.artifactEvent(step, artifact, artifactStreamSummary(artifact)));
+            s.trace.finishStep(ctx, step, "记忆草稿已整理", "items=" + rows.size());
+            s.trace.completeTask(ctx, task, Map.of("items", rows.size()), "Memory draft ready");
         }
     }
 
@@ -1510,8 +1569,8 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void announce(AgentRunContext ctx) {
-            startTask(ctx, s, ctx.task("PLAN_EXTRACTOR"));
-            s.planExtractorStep = startAgentStep(ctx, s, ctx.task("PLAN_EXTRACTOR"),
+            s.trace.startTask(ctx, ctx.task("PLAN_EXTRACTOR"));
+            s.planExtractorStep = s.trace.startStep(ctx, ctx.task("PLAN_EXTRACTOR"),
                     "PLAN_EXTRACTOR", 33, "正在从回答里提取计划");
         }
 
@@ -1531,9 +1590,9 @@ public class AiServiceImpl implements AiService {
         public void commit(AgentRunContext ctx) {
             // 节点有了就要走到终态：没解析出计划也是一个正当结果，不该被 sweeper 当成「没跑」。
             boolean extracted = hasPlanDraft(s.suggestedPlan);
-            finishStep(ctx, s, s.planExtractorStep,
+            s.trace.finishStep(ctx, s.planExtractorStep,
                     extracted ? "已提取计划草稿" : "本轮未从回答里提取到计划", "planDraft=" + extracted);
-            completeTask(ctx, s, ctx.task("PLAN_EXTRACTOR"), Map.of("planDraft", extracted), "Plan extraction done");
+            s.trace.completeTask(ctx, ctx.task("PLAN_EXTRACTOR"), Map.of("planDraft", extracted), "Plan extraction done");
         }
     }
 
@@ -1594,14 +1653,14 @@ public class AiServiceImpl implements AiService {
         @Override
         public void commit(AgentRunContext ctx) {
             AiAgentTask task = ctx.task("ANSWER_VERIFIER");
-            startTask(ctx, s, task);
-            AiAgentStep step = startAgentStep(ctx, s, task, "ANSWER_VERIFIER", 36, "正在核对回答里的引用");
+            s.trace.startTask(ctx, task);
+            AiAgentStep step = s.trace.startStep(ctx, task, "ANSWER_VERIFIER", 36, "正在核对回答里的引用");
             for (AiVerifierFinding finding : s.answerFindings) {
-                ctx.emit("verifier.finding", findingEvent(s.requestId, s.agentRun, finding));
+                ctx.emit("verifier.finding", s.trace.findingEvent(finding));
             }
             int bad = s.answerFindings.size();
-            finishStep(ctx, s, step, bad == 0 ? "引用核对通过" : "发现 " + bad + " 条来源对不上证据", "findings=" + bad);
-            completeTask(ctx, s, task, Map.of("findings", bad), "Answer citations verified");
+            s.trace.finishStep(ctx, step, bad == 0 ? "引用核对通过" : "发现 " + bad + " 条来源对不上证据", "findings=" + bad);
+            s.trace.completeTask(ctx, task, Map.of("findings", bad), "Answer citations verified");
         }
     }
 
@@ -1727,25 +1786,25 @@ public class AiServiceImpl implements AiService {
                 return;
             }
             AiAgentTask task = ctx.task("TASK_DRAFTER");
-            startTask(ctx, s, task);
-            AiAgentStep step = startAgentStep(ctx, s, task, "TASK_DRAFTER", 31, "正在拆分任务草稿");
+            s.trace.startTask(ctx, task);
+            AiAgentStep step = s.trace.startStep(ctx, task, "TASK_DRAFTER", 31, "正在拆分任务草稿");
             if (hasNonEmptyList(s.suggestedPlan.get("tasks"))) {
                 AiAgentArtifact taskArtifact = aiWorkspaceService.createArtifact(
                         s.agentRun.getId(), step.getId(), "TASK_DRAFT", "AI 任务草稿",
                         Map.of("tasks", s.suggestedPlan.get("tasks")), s.liveUser.getId());
-                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, step, taskArtifact));
+                ctx.emit("artifact.created", s.trace.artifactEvent(step, taskArtifact, artifactStreamSummary(taskArtifact)));
             }
             if (hasNonEmptyList(s.suggestedPlan.get("routines"))) {
                 AiAgentArtifact routineArtifact = aiWorkspaceService.createArtifact(
                         s.agentRun.getId(), step.getId(), "ROUTINE_DRAFT", "AI 例行计划草稿",
                         Map.of("routines", s.suggestedPlan.get("routines")), s.liveUser.getId());
-                ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, step, routineArtifact));
+                ctx.emit("artifact.created", s.trace.artifactEvent(step, routineArtifact, artifactStreamSummary(routineArtifact)));
             }
-            finishStep(ctx, s, step, "任务草稿已拆分", "tasks="
+            s.trace.finishStep(ctx, step, "任务草稿已拆分", "tasks="
                     + (s.suggestedPlan.get("tasks") instanceof List<?> tasks ? tasks.size() : 0)
                     + ", routines="
                     + (s.suggestedPlan.get("routines") instanceof List<?> routines ? routines.size() : 0));
-            completeTask(ctx, s, task, Map.of(
+            s.trace.completeTask(ctx, task, Map.of(
                     "tasks", s.suggestedPlan.get("tasks"),
                     "routines", s.suggestedPlan.get("routines")
             ), "Task drafts ready");
@@ -1782,55 +1841,17 @@ public class AiServiceImpl implements AiService {
             AiAgentStep wikiStep = s.plannerStep != null ? s.plannerStep : s.finalWriterStep;
             AiAgentTask wikiTask = ctx.task("WIKI_CURATOR");
             if (wikiTask != null && !"DONE".equals(wikiTask.getStatus())) {
-                startTask(ctx, s, wikiTask);
+                s.trace.startTask(ctx, wikiTask);
             }
             AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
                     s.agentRun.getId(), wikiStep == null ? null : wikiStep.getId(), "WIKI_DRAFT",
                     stringValue(wikiArtifactContent.get("title")), wikiArtifactContent, s.liveUser.getId());
-            ctx.emit("artifact.created", artifactEvent(s.requestId, s.agentRun, wikiStep, artifact));
-            completeTask(ctx, s, wikiTask, Map.of("artifactId", artifact.getId()), "Wiki draft ready");
+            ctx.emit("artifact.created", s.trace.artifactEvent(wikiStep, artifact, artifactStreamSummary(artifact)));
+            s.trace.completeTask(ctx, wikiTask, Map.of("artifactId", artifact.getId()), "Wiki draft ready");
         }
     }
 
-    /**
-     * 收尾：把本轮没有任何 runner 碰过、仍停在 PENDING 的节点标成 SKIPPED。
-     *
-     * <p>此前没有这一步，于是「造了节点但运行期条件没满足」会在成功结束的 run 里留下永久 PENDING 行 ——
-     * 实测可复现：消息命中 {@code needsTaskDraft} 造出 TASK_DRAFTER，而模型没解析出计划，
-     * 那一行就一直停在 PENDING，执行轨迹里挂着一个永远转圈的 agent。
-     *
-     * <p><b>只扫 PENDING，不扫 RUNNING。</b>RUNNING 意味着某个 runner 起了却没收尾，那是真 bug，
-     * 应该让判据红出来，而不是在这里悄悄抹成 SKIPPED。
-     *
-     * <p><b>这张网会吃掉证据，所以扫了什么必须有人看着。</b>被扫成 SKIPPED 的节点，
-     * 和一次正当的「本轮无事可做」在库里完全同形 —— TASK_DRAFTER 那个缺陷正是靠 PENDING 才被逮到的，
-     * 而它的第一个真实客户其实是最常见的 wiki 读问题（见 {@link WikiCuratorRunner}）。
-     * 所以集成判据不只断言「都到了终态」，还逐用例断言<b>被扫掉的节点集合</b>：
-     * 见 {@code AiConversationLifecycleIntegrationTest.每轮造出的节点与被扫掉的节点都必须符合预期}。
-     */
-    private void settleUnrunTasks(AgentRunContext ctx, StreamState s) {
-        settleUnrunTasks(ctx, s, UNRUN_TASK_SUMMARY);
-    }
 
-    /**
-     * 把还停在 PENDING 的节点收成 SKIPPED。
-     *
-     * <p><b>两条路径都要收，而且理由不能混。</b>此前只有成功路径收（settleUnrunTasks 写在
-     * 最终事务里），出错时只有 {@link #errorRunningTasks} 跑，而它只碰 RUNNING 的节点 ——
-     * 于是一个失败的 run 会把所有还没轮到的节点永久留在 PENDING，执行轨迹里挂着一排转圈的 agent。
-     * 这正是引入 settleUnrunTasks 时要消灭的症状，只是发生在另一条路径上，
-     * 而钉它的判据先断言 run 是 DONE，结构上看不见失败路径。
-     *
-     * <p>两条路径的公开说明必须<b>不同</b>：「跑了但没产出」与「本轮失败，根本没轮到它」
-     * 是两件事，用同一句话会让它们在库里同形 —— 正是判据要分开的那两种。
-     */
-    private void settleUnrunTasks(AgentRunContext ctx, StreamState s, String publicSummary) {
-        for (AiAgentTask task : ctx.tasks()) {
-            if (task != null && "PENDING".equals(task.getStatus())) {
-                skipTask(ctx, s, task, publicSummary);
-            }
-        }
-    }
 
 
     /** 证据校验提示块的表头；判据靠它确认「校验结论真的进了提示词」。 */
@@ -1998,11 +2019,6 @@ public class AiServiceImpl implements AiService {
         }
     }
 
-    private void errorRunningStep(AiAgentStep step, Exception error) {
-        if (step != null && "RUNNING".equals(step.getStatus())) {
-            aiWorkspaceService.errorStep(step, error);
-        }
-    }
 
     private void emitSse(SseEmitter emitter, String eventName, Object data) {
         try {
@@ -2030,11 +2046,7 @@ public class AiServiceImpl implements AiService {
         return value instanceof List<?> list && !list.isEmpty();
     }
 
-    /** {@link #settleUnrunTasks} 给被扫节点写的公开说明；判据靠它把「被扫掉」与「正常跳过」分开。 */
-    static final String UNRUN_TASK_SUMMARY = "本轮未产出内容";
 
-    /** 失败路径上被收尾的节点。与 {@link #UNRUN_TASK_SUMMARY} 刻意不同：它们不是「没产出」，是没轮到。 */
-    static final String FAILED_RUN_TASK_SUMMARY = "本轮失败，未执行";
 
     /**
      * 图里的检索节点可能叫这三种类型中的任意一种。
@@ -2046,110 +2058,22 @@ public class AiServiceImpl implements AiService {
     private static final String[] RESEARCH_AGENT_TYPES =
             {"CONTEXT_RESEARCHER", "WEB_RESEARCHER", "RETRIEVER"};
 
-    /**
-     * 起一个执行步骤并发出 step.start。
-     *
-     * <p>此前这一族辅助方法有<b>两份平行实现</b>（{@code startAgentStep} / {@code startAgentStepTx}、
-     * {@code completeTask} / {@code completeTaskTx}、{@code completeStep} / {@code completeStepTx}…），
-     * 差别只在事件往直发通道还是缓冲队列走 —— 也就是「同一事实两份拷贝」的又一例，
-     * 而这一例的分叉后果特别隐蔽：在事务里错用直发那一支，只有回滚时才会暴露成
-     * 「前端收到指向不存在数据的事件」。收成一份之后通道由 {@link AgentRunContext#emit}
-     * 按当前遍历相位决定，调用方不再有选错的机会。
-     */
-    private AiAgentStep startAgentStep(AgentRunContext ctx, StreamState s, AiAgentTask task,
-                                       String agentType, int order, String publicSummary) {
-        AiAgentStep step = aiWorkspaceService.startStep(
-                s.agentRun.getId(), task == null ? null : task.getId(), agentType, order, publicSummary);
-        Map<String, Object> event = new LinkedHashMap<>();
-        event.put("requestId", s.requestId);
-        event.put("runId", s.agentRun.getId());
-        event.put("agentRunId", s.agentRun.getId());
-        event.put("taskId", task == null ? null : task.getId());
-        event.put("stepId", step.getId());
-        event.put("agentType", agentType);
-        event.put("stepOrder", order);
-        event.put("status", step.getStatus());
-        event.put("publicSummary", publicSummary);
-        ctx.emit("agent.step.start", event);
-        return step;
-    }
 
-    /** 收尾一个执行步骤并发出 step.done。 */
-    private void finishStep(AgentRunContext ctx, StreamState s, AiAgentStep step,
-                            String publicSummary, String outputSummary) {
-        if (step == null) {
-            return;
-        }
-        aiWorkspaceService.completeStep(step, publicSummary, outputSummary);
-        Map<String, Object> event = new LinkedHashMap<>();
-        event.put("requestId", s.requestId);
-        event.put("runId", s.agentRun.getId());
-        event.put("agentRunId", s.agentRun.getId());
-        event.put("stepId", step.getId());
-        event.put("agentType", step.getAgentType());
-        event.put("stepOrder", step.getStepOrder());
-        event.put("status", step.getStatus());
-        event.put("publicSummary", step.getPublicSummary() == null ? "" : step.getPublicSummary());
-        ctx.emit("agent.step.done", event);
-    }
 
-    /** 本轮不需要某个步骤：落一条 SKIPPED 记录并当场告诉用户「本轮不需要…」。 */
-    private void skipStep(AgentRunContext ctx, StreamState s, String agentType, int order, String publicSummary) {
-        aiWorkspaceService.skipStep(s.agentRun.getId(), agentType, order, publicSummary);
-        Map<String, Object> event = new LinkedHashMap<>();
-        event.put("requestId", s.requestId);
-        event.put("runId", s.agentRun.getId());
-        event.put("agentRunId", s.agentRun.getId());
-        event.put("agentType", agentType);
-        event.put("stepOrder", order);
-        event.put("status", "SKIPPED");
-        event.put("publicSummary", publicSummary);
-        ctx.emit("agent.step.done", event);
-    }
 
-    private void startTask(AgentRunContext ctx, StreamState s, AiAgentTask task) {
-        if (task == null || "RUNNING".equals(task.getStatus()) || "DONE".equals(task.getStatus())) {
-            return;
-        }
-        agentTaskGraphService.startTask(task);
-        ctx.emit("agent.task.start", taskEvent(s.requestId, s.agentRun, task));
-    }
 
-    private void completeTask(AgentRunContext ctx, StreamState s, AiAgentTask task,
-                              Map<String, Object> output, String publicSummary) {
-        if (task == null || "DONE".equals(task.getStatus()) || "SKIPPED".equals(task.getStatus())) {
-            return;
-        }
-        agentTaskGraphService.completeTask(task, output, publicSummary);
-        ctx.emit("agent.task.done", taskEvent(s.requestId, s.agentRun, task));
-    }
 
-    private void skipTask(AgentRunContext ctx, StreamState s, AiAgentTask task, String publicSummary) {
-        if (task == null || "DONE".equals(task.getStatus()) || "SKIPPED".equals(task.getStatus())) {
-            return;
-        }
-        agentTaskGraphService.skipTask(task, publicSummary);
-        ctx.emit("agent.task.done", taskEvent(s.requestId, s.agentRun, task));
-    }
 
-    private void errorRunningTasks(AgentRunContext ctx, StreamState s, Exception error) {
-        for (AiAgentTask task : ctx.tasks()) {
-            if (task != null && "RUNNING".equals(task.getStatus())) {
-                agentTaskGraphService.errorTask(task, error);
-                ctx.emit("agent.task.error", taskEvent(s.requestId, s.agentRun, task));
-            }
-        }
-    }
 
     private void startResearchTasks(AgentRunContext ctx, StreamState s) {
         for (AiAgentTask task : researchTasks(ctx)) {
-            startTask(ctx, s, task);
+            s.trace.startTask(ctx, task);
         }
     }
 
     private void completeResearchTasks(AgentRunContext ctx, StreamState s, Map<String, Object> output) {
         for (AiAgentTask task : researchTasks(ctx)) {
-            completeTask(ctx, s, task, output, "Research complete");
+            s.trace.completeTask(ctx, task, output, "Research complete");
         }
     }
 
@@ -2160,87 +2084,8 @@ public class AiServiceImpl implements AiService {
                 .toList();
     }
 
-    private Map<String, Object> taskEvent(String requestId, AiAgentRun run, AiAgentTask task) {
-        Map<String, Object> event = new LinkedHashMap<>();
-        event.put("requestId", requestId);
-        event.put("runId", run.getId());
-        event.put("agentRunId", run.getId());
-        event.put("taskId", task.getId());
-        event.put("agentType", task.getAgentType());
-        event.put("taskType", task.getTaskType());
-        event.put("status", task.getStatus());
-        event.put("dependsOn", parseJsonList(task.getDependsOnJson()));
-        event.put("parallelGroupId", task.getParallelGroupId());
-        event.put("publicSummary", task.getPublicSummary() == null ? "" : task.getPublicSummary());
-        return event;
-    }
 
-    private Map<String, Object> artifactEvent(String requestId, AiAgentRun run, AiAgentStep step, AiAgentArtifact artifact) {
-        Map<String, Object> event = new LinkedHashMap<>();
-        event.put("requestId", requestId);
-        event.put("runId", run.getId());
-        event.put("agentRunId", run.getId());
-        event.put("stepId", step == null ? null : step.getId());
-        event.put("artifactId", artifact.getId());
-        event.put("artifactType", artifact.getArtifactType());
-        event.put("title", artifact.getTitle());
-        event.put("status", artifact.getStatus());
-        event.put("artifact", artifactStreamSummary(artifact));
-        return event;
-    }
 
-    private Map<String, Object> artifactStreamSummary(AiAgentArtifact artifact) {
-        Map<String, Object> content = parseJsonObjectMap(artifact.getContentJson());
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("id", artifact.getId());
-        summary.put("artifactId", artifact.getId());
-        summary.put("artifactType", artifact.getArtifactType());
-        summary.put("title", artifact.getTitle());
-        summary.put("status", artifact.getStatus());
-        copyArtifactPreviewField(content, summary, "sourceId");
-        copyArtifactPreviewField(content, summary, "sourceType");
-        copyArtifactPreviewField(content, summary, "url");
-        copyArtifactPreviewField(content, summary, "chunkIndex");
-
-        String preview = firstNonBlank(
-                stringValue(content.get("snippet")),
-                stringValue(content.get("content")),
-                stringValue(content.get("description")),
-                stringValue(content.get("reason")),
-                stringValue(content.get("error"))
-        );
-        if (hasText(preview)) {
-            summary.put("preview", limitRawMarkdown(preview, 360));
-        }
-
-        List<String> itemTitles = new ArrayList<>();
-        int itemCount = 0;
-        for (String key : List.of("tasks", "routines", "items", "pages")) {
-            Object value = content.get(key);
-            if (!(value instanceof List<?> list)) {
-                continue;
-            }
-            itemCount += list.size();
-            for (Object item : list) {
-                if (!(item instanceof Map<?, ?> row) || itemTitles.size() >= 8) {
-                    continue;
-                }
-                String title = firstNonBlank(
-                        stringValue(row.get("title")),
-                        stringValue(row.get("name")),
-                        stringValue(row.get("content"))
-                );
-                if (hasText(title)) {
-                    itemTitles.add(limitText(title, 100));
-                }
-            }
-        }
-        if (itemCount > 0) {
-            summary.put("itemCount", itemCount);
-            summary.put("itemTitles", itemTitles);
-        }
-        return summary;
-    }
 
     private void copyArtifactPreviewField(Map<String, Object> content, Map<String, Object> target, String key) {
         Object value = content.get(key);
@@ -2249,62 +2094,9 @@ public class AiServiceImpl implements AiService {
         }
     }
 
-    private Map<String, Object> evidenceEvent(String requestId, AiAgentRun run, AiAgentEvidence evidence) {
-        Map<String, Object> event = new LinkedHashMap<>();
-        event.put("requestId", requestId);
-        event.put("runId", run.getId());
-        event.put("agentRunId", run.getId());
-        event.put("evidenceId", evidence.getId());
-        event.put("taskId", evidence.getTaskId());
-        event.put("stepId", evidence.getStepId());
-        event.put("sourceType", evidence.getSourceType());
-        event.put("sourceId", evidence.getSourceId());
-        event.put("artifactId", evidence.getArtifactId());
-        event.put("snippet", evidence.getSnippet() == null ? "" : evidence.getSnippet());
-        return event;
-    }
 
-    private Map<String, Object> claimEvent(String requestId, AiAgentRun run, AiAgentClaim claim) {
-        Map<String, Object> event = new LinkedHashMap<>();
-        event.put("requestId", requestId);
-        event.put("runId", run.getId());
-        event.put("agentRunId", run.getId());
-        event.put("claimId", claim.getId());
-        event.put("taskId", claim.getTaskId());
-        event.put("stepId", claim.getStepId());
-        event.put("claimType", claim.getClaimType());
-        event.put("content", claim.getContent());
-        event.put("confidence", claim.getConfidence());
-        event.put("evidenceIds", parseJsonList(claim.getEvidenceIdsJson()));
-        return event;
-    }
 
-    private Map<String, Object> findingEvent(String requestId, AiAgentRun run, AiVerifierFinding finding) {
-        Map<String, Object> event = new LinkedHashMap<>();
-        event.put("requestId", requestId);
-        event.put("runId", run.getId());
-        event.put("agentRunId", run.getId());
-        event.put("findingId", finding.getId());
-        event.put("taskId", finding.getTaskId());
-        event.put("severity", finding.getSeverity());
-        event.put("code", finding.getCode());
-        event.put("message", finding.getMessage());
-        event.put("targetType", finding.getTargetType());
-        event.put("targetId", finding.getTargetId());
-        event.put("action", finding.getAction());
-        return event;
-    }
 
-    private List<Object> parseJsonList(String json) {
-        if (json == null || json.isBlank()) {
-            return List.of();
-        }
-        try {
-            return objectMapper.readValue(json, List.class);
-        } catch (Exception e) {
-            return List.of();
-        }
-    }
 
     private boolean isSuccessfulCitation(Map<String, Object> citation) {
         String status = String.valueOf(citation == null ? "" : citation.getOrDefault("status", ""));
