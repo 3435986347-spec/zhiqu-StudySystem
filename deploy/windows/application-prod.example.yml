@@ -60,6 +60,7 @@ app:
     trust-forwarded-headers: true
   crypto:
     master-key: CHANGE_ME_TO_A_LONG_RANDOM_CRYPTO_MASTER_KEY
+    # 轮换主密钥见 deploy/rotate-crypto-key.md —— 直接改上面这行会让现有密文全部解不开。
   ai:
     anthropic-version: 2023-06-01
     # 采样温度。留空 = 不发送 temperature 参数。
