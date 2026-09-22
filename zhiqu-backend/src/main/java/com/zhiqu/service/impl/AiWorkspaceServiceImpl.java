@@ -23,6 +23,7 @@ import com.zhiqu.service.ContextOptionKeys;
 import com.zhiqu.service.AgentBlackboardService;
 import com.zhiqu.service.AgentTaskGraphService;
 import com.zhiqu.service.AiWorkspaceService;
+import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.PrivateUploadPathGuard;
 import com.zhiqu.service.RoutineService;
 import com.zhiqu.service.StudyTaskService;
@@ -40,6 +41,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -281,6 +284,40 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                         .orderByDesc(AiNotebookSource::getUpdatedAt)
                         .orderByDesc(AiNotebookSource::getId))
                 .stream().map(this::sourceRow).toList();
+    }
+
+    @Override
+    public List<ChatImageAttachments.LoadedImage> loadAttachedImages(
+            Long userId, Long notebookId, java.util.Collection<Long> sourceIds) {
+        if (sourceIds == null || sourceIds.isEmpty()) {
+            return List.of();
+        }
+        Long resolvedNotebookId = resolveNotebookId(userId, notebookId);
+        List<AiNotebookSource> sources = sourceMapper.selectList(new LambdaQueryWrapper<AiNotebookSource>()
+                .eq(AiNotebookSource::getUserId, userId)
+                .eq(AiNotebookSource::getNotebookId, resolvedNotebookId)
+                .eq(AiNotebookSource::getSourceType, "IMAGE")
+                .in(AiNotebookSource::getId, sourceIds));
+
+        List<ChatImageAttachments.LoadedImage> loaded = new ArrayList<>();
+        for (AiNotebookSource source : sources) {
+            // 一律经守卫解析：file_path 是库里的字符串，一次坏写入就能让它指向别人的目录，
+            // 而那一行在归属上仍然合法 —— 行级校验拦不住它，只有路径守卫能。
+            Path file = validatedSourceFile(userId, source.getFilePath());
+            if (file == null) {
+                continue;
+            }
+            try {
+                byte[] bytes = Files.readAllBytes(file);
+                if (bytes.length > 0) {
+                    loaded.add(new ChatImageAttachments.LoadedImage(source.getId(),
+                            source.getTitle() == null ? "image" : source.getTitle(), bytes));
+                }
+            } catch (IOException ignored) {
+                // 单张读不出来不该让整轮对话失败；ChatImageAttachments 会把「少了几张」说给模型。
+            }
+        }
+        return loaded;
     }
 
     @Override

@@ -24,6 +24,18 @@ public interface AiWorkspaceService {
 
     AiNotebook ensureDefaultNotebook(Long userId);
 
+    /**
+     * 读出这一轮挂在消息上的<b>图片</b>原件，供视觉模型直接看。
+     *
+     * <p>图片上传时只存原件、不做文本解析，所以它在检索里什么都不是；要被理解只能原样
+     * 送进模型。读文件一律经 {@code PrivateUploadPathGuard} —— {@code file_path} 是库里的
+     * 一个字符串，一次坏写入就能让它指向别人的目录，而那一行在归属上仍然合法。
+     *
+     * @param sourceIds 用户这一轮选中的资料 id；其中非图片、不属于本用户、文件已不在的一律跳过
+     */
+    List<com.zhiqu.service.ai.ChatImageAttachments.LoadedImage> loadAttachedImages(
+            Long userId, Long notebookId, java.util.Collection<Long> sourceIds);
+
     List<Map<String, Object>> listSources(Long userId, Long notebookId);
 
     Map<String, Object> createSource(Long userId, Long notebookId, Map<String, Object> body);

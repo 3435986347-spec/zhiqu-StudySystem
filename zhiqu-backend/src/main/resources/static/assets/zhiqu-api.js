@@ -2683,7 +2683,7 @@
     var list = Array.prototype.slice.call(files || []).filter(Boolean);
     if (!list.length) return;
     setAiDropState('正在上传 0 / ' + list.length + '…', 'uploading');
-    var readyCount = 0, archiveCount = 0, errorCount = 0;
+    var readyCount = 0, archiveCount = 0, errorCount = 0, imageCount = 0;
     for (var i = 0; i < list.length; i++) {
       setAiDropState('正在上传 ' + (i + 1) + ' / ' + list.length + '：' + list[i].name, 'uploading');
       try {
@@ -2694,6 +2694,14 @@
           if (attachToNextMessage && notebookId === state.notebookId) addPendingSource(source);
         } else if (status === 'UPLOADED') {
           archiveCount++;
+          // 图片是 UPLOADED（只存原件、不做文本解析），但它照样要能挂到消息上 ——
+          // 后端会把它作为视觉内容块直接交给模型。只认 READY 的话，拖进来的图片
+          // 永远到不了模型面前，而界面只显示「0 份可用于问答」，看起来像没用。
+          if (attachToNextMessage && notebookId === state.notebookId
+              && String(source.sourceType || '').toUpperCase() === 'IMAGE') {
+            addPendingSource(source);
+            imageCount++;
+          }
         } else {
           errorCount++;
         }
@@ -2705,7 +2713,8 @@
       await loadAiNotebooks();
     }
     var summary = readyCount + ' 份可用于问答';
-    if (archiveCount) summary += '，' + archiveCount + ' 份仅存档';
+    if (imageCount) summary += '，' + imageCount + ' 张图片已附到下一条消息';
+    if (archiveCount - imageCount > 0) summary += '，' + (archiveCount - imageCount) + ' 份仅存档';
     if (errorCount) summary += '，' + errorCount + ' 份失败';
     setAiDropState(summary, errorCount && !readyCount ? 'error' : 'done');
     toast('上传完成：' + summary, errorCount && !readyCount ? 'error' : undefined);
@@ -3877,8 +3886,13 @@
     var sendButton = $('#zq-send');
     if (sendButton) { sendButton.disabled = true; sendButton.textContent = '生成中'; }
     var reasoningMode = ($('#zq-think') && $('#zq-think').dataset.on === '1') ? 'DEEP' : 'OFF';
+    // READY（有分块，走检索）和 IMAGE（无分块，走视觉内容块）都要发给后端。
+    // 只发 READY 的话图片就被挡在这一层，后端永远收不到它。
     var selectedSourceIds = state.pendingSources
-      .filter(function (source) { return String(source.status || '').toUpperCase() === 'READY'; })
+      .filter(function (source) {
+        var st = String(source.status || '').toUpperCase();
+        return st === 'READY' || String(source.sourceType || '').toUpperCase() === 'IMAGE';
+      })
       .map(function (source) { return Number(source.id); });
     var clientKey = 'stream-' + Date.now();
     var assistant = {

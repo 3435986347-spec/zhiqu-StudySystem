@@ -38,6 +38,7 @@ import com.zhiqu.service.AiService;
 import com.zhiqu.service.KnowledgePageSnapshot;
 import com.zhiqu.service.KnowledgeService;
 import org.springframework.context.annotation.Lazy;
+import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.AiWorkspaceService;
 import com.zhiqu.service.MultiAgentOrchestrator;
 import com.zhiqu.service.AdminGuard;
@@ -619,6 +620,18 @@ public class AiServiceImpl implements AiService {
         StreamState state = new StreamState(trace, requestId, agentRun, config, userId, notebookId, limitedMessage,
                 contextOptions, Boolean.TRUE.equals(enableWebSearch), normalizedReasoningMode,
                 memoryText, writeContext.summary(), history, userMessage, assistantMessage);
+
+        // 这一轮挂的图片：现在就读进来，因为 VERIFIER（PRE_STREAM#20）要靠它把图片从
+        // 「选了资料却零证据」那条规则里排除 —— 晚于它装入的话，只挂一张图就会中止整轮。
+        // 读失败一律不影响对话：loadAttachedImages 自己吞掉单张异常，最坏是没有图片。
+        try {
+            state.attachedImages = aiWorkspaceService.loadAttachedImages(
+                    userId, notebookId, longIdList(contextOptions == null ? null
+                            : contextOptions.get(ContextOptionKeys.SELECTED_SOURCE_IDS)));
+        } catch (RuntimeException e) {
+            log.warn("读取本轮图片附件失败，本轮按无图片处理：{}", e.toString());
+        }
+
         // 装配（造执行器 + 建图）单独圈一个 try。
         //
         // 这段窗口在 beginRun 之后、下面那个大 try 之前，原来<b>不设防</b>。而装配里恰好住着
@@ -841,6 +854,13 @@ public class AiServiceImpl implements AiService {
         private final List<AiMessage> history;
         private final AiMessage userMessage;
         private final AiMessage assistantMessage;
+
+        /**
+         * 这一轮挂在消息上的图片。由 PRE_STREAM 早期装入，回答阶段拼进多模态内容块。
+         *
+         * <p>可变字段而不是构造器参数：读文件要走工作区服务，而 StreamState 是在那之前造的。
+         */
+        private List<ChatImageAttachments.LoadedImage> attachedImages = List.of();
 
         private AiAgentStep dispatcherStep;
         private AiAgentStep retrieverStep;
@@ -1201,8 +1221,14 @@ public class AiServiceImpl implements AiService {
         public void run(AgentRunContext ctx) {
             // 用户显式勾了资料源、本轮却一条证据都没取到 —— 这是唯一会产出 BLOCKER 的情形。
             // RETRIEVER 在 PRE_STREAM#10，本节点 #20，所以此刻 evidenceIds 已经定了。
+            // 图片要从这条规则里排除：它没有分块，天然产生不了检索证据。
+            // 不排除的话，只挂一张图片就会被判成「选了资料却什么都没检索到」而中止整轮。
+            Set<Long> imageIds = s.attachedImages.stream()
+                    .map(ChatImageAttachments.LoadedImage::sourceId)
+                    .filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
             boolean selectedSourcesWithoutEvidence =
-                    hasNonEmptyList(s.contextOptions.get(ContextOptionKeys.SELECTED_SOURCE_IDS))
+                    hasNonEmptyListExcluding(s.contextOptions.get(ContextOptionKeys.SELECTED_SOURCE_IDS), imageIds)
                             && s.evidenceIds.isEmpty();
             List<AiVerifierFinding> findings =
                     verifierService.verifyRun(s.agentRun.getId(), selectedSourcesWithoutEvidence);
@@ -1413,8 +1439,27 @@ public class AiServiceImpl implements AiService {
                                 + "\n【工作区代码结束】引用代码时请给出文件路径。"
                                 + "你这一轮没有写文件的能力，需要改动就把改法写出来给用户。"));
             }
-            messages.add(Map.of("role", "user", "content",
-                    RetrievalPresentation.withNotebookContext(RetrievalPresentation.withWebSearchContext(s.limitedMessage, s.citations), s.notebookContextRows)));
+            String userText = RetrievalPresentation.withNotebookContext(
+                    RetrievalPresentation.withWebSearchContext(s.limitedMessage, s.citations), s.notebookContextRows);
+            if (s.attachedImages.isEmpty()) {
+                messages.add(Map.of("role", "user", "content", userText));
+            } else if (hasCapability(s.config, "VISION")) {
+                // 多模态内容块：图片原样交给视觉模型。图片上传时只存原件、不做文本解析，
+                // 所以它在检索里什么都不是 —— 要被理解只能走这条路。
+                ChatImageAttachments.Built built = ChatImageAttachments.build(userText, s.attachedImages);
+                // Anthropic 的图片块格式和 OpenAI 不一样（image / source.base64 vs image_url）。
+                // 复用既有的转换器，不另写一份 —— 两份迟早分叉，而分叉的表现是某一家
+                // 突然只收到文字、对着没有图的问题编造答案。
+                Object content = "ANTHROPIC".equals(provider.normalizeProviderType(s.config.getProviderType()))
+                        ? toAnthropicContentBlocks(built.content())
+                        : built.content();
+                messages.add(Map.of("role", "user", "content", content));
+            } else {
+                // 模型不支持视觉：据实告诉它「有图片但你看不到」，而不是把图片悄悄丢掉。
+                // 丢掉的话模型会对着一句没有图的话编造图片内容。
+                messages.add(Map.of("role", "user", "content",
+                        userText + ChatImageAttachments.noVisionNotice(s.attachedImages.size())));
+            }
 
             StringBuilder reply = new StringBuilder();
             StringBuilder reasoning = new StringBuilder();
@@ -2043,8 +2088,48 @@ public class AiServiceImpl implements AiService {
         log.info("AI stream event event={} requestId={} assistantMessageId={}", eventName, requestId, assistantMessageId);
     }
 
+    /** 把 contextOptions 里那个松散的 id 列表转成 Long 列表；认不出来的条目直接丢。 */
+    private List<Long> longIdList(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Long> ids = new ArrayList<>();
+        for (Object item : list) {
+            try {
+                if (item instanceof Number n) {
+                    ids.add(n.longValue());
+                } else if (item != null) {
+                    ids.add(Long.valueOf(String.valueOf(item).trim()));
+                }
+            } catch (NumberFormatException ignored) {
+                // 前端传来的脏数据不该让整轮对话失败
+            }
+        }
+        return ids;
+    }
+
     private boolean hasNonEmptyList(Object value) {
         return value instanceof List<?> list && !list.isEmpty();
+    }
+
+    /**
+     * 列表里除去 {@code excluded} 之后还剩东西吗。
+     *
+     * <p>给「用户选了资料却零证据」那条判定用：图片要排除掉 —— 它没有分块，
+     * 本来就不会产生检索证据，算进去会让「只挂一张图片」被误判成检索失败而中止整轮。
+     */
+    private boolean hasNonEmptyListExcluding(Object value, Set<Long> excluded) {
+        if (!(value instanceof List<?> list)) {
+            return false;
+        }
+        for (Object item : list) {
+            Long id = item instanceof Number n ? n.longValue()
+                    : item == null ? null : Long.valueOf(String.valueOf(item).trim());
+            if (id != null && !excluded.contains(id)) {
+                return true;
+            }
+        }
+        return false;
     }
 
 
