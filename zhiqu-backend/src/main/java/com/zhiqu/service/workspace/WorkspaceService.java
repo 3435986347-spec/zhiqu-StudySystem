@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -45,16 +46,54 @@ public class WorkspaceService {
             "dist", "out", "__pycache__", ".venv", "venv", ".gradle", ".mvn");
 
     private final WorkspaceProperties properties;
-    private final WorkspaceAccess access;
-    private final WorkspaceGuard guard;
+    private final WorkspaceSettingsStore settingsStore;
+    private final String serverAddress;
 
+    // volatile 而非 final：档位 / 根目录现在能在运行时被管理员从界面切换（applySettings）。
+    // access 与 guard 成对重建、成对替换，读的一方各自读一次 volatile 即可。切换是偶发的
+    // 单管理员操作，不用把这两个读打包成一个快照 —— 最坏的竞态是一次在途请求用了旧 root，
+    // 而它下一道守卫检查会把不属于旧 root 的路径拒掉，不会漏。
+    private volatile WorkspaceAccess access;
+    private volatile WorkspaceGuard guard;
+
+    /**
+     * 测试便利构造器：不接持久化 store，用一个指向临时目录、<b>不会命中 ~/.zhiqu 里已有文件</b>
+     * 的一次性 store。既让既有的 25 处测试原样编译，又保证它们读到的不是你真实的持久化设置。
+     * 生产走下面那个三参构造器（Spring 注入 store）。
+     */
+    WorkspaceService(WorkspaceProperties properties,
+                     @Value("${server.address:}") String serverAddress) {
+        this(properties,
+                new WorkspaceSettingsStore(
+                        System.getProperty("java.io.tmpdir", ".") + "/zhiqu-ws-ephemeral-"
+                                + java.util.UUID.randomUUID() + ".json",
+                        new com.fasterxml.jackson.databind.ObjectMapper()),
+                serverAddress);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
     public WorkspaceService(WorkspaceProperties properties,
+                            WorkspaceSettingsStore settingsStore,
                             @Value("${server.address:}") String serverAddress) {
         this.properties = properties;
-        this.access = new WorkspaceAccess(properties, serverAddress);
-        this.guard = access.enabled()
-                ? new WorkspaceGuard(access.root(), properties.getAllowedExtensions(), properties.getMaxFileBytes())
-                : null;
+        this.settingsStore = settingsStore;
+        this.serverAddress = serverAddress;
+
+        // 用户在界面上选过的档位 / 根目录，盖过配置里的默认值 —— 否则桌面每次重启都回到 OFF。
+        // 但这只是「想要什么」；「实际允许什么」仍由 rebuild 里的三条前提裁决。
+        WorkspaceMode mode = properties.resolvedMode();
+        String root = properties.getRoot();
+        var saved = settingsStore.load();
+        if (saved.isPresent()) {
+            if (saved.get().mode() != null && !saved.get().mode().isBlank()) {
+                mode = WorkspaceMode.parse(saved.get().mode());
+            }
+            if (saved.get().root() != null) {
+                root = saved.get().root();
+            }
+        }
+        rebuild(mode, root);
+
         if (access.refusalReason() != null) {
             // 降级必须说出来。静默关掉才是最糟的那种：用户会一直以为它开着。
             log.warn("工作区未启用：{}", access.refusalReason());
@@ -63,8 +102,96 @@ public class WorkspaceService {
         }
     }
 
+    /**
+     * 按给定档位 + 根目录重建 access 与 guard。<b>三条前提（回环 / 目录存在 / 档位≠OFF）
+     * 在这里原样重跑</b> —— 所以运行时把档位切到 EXEC，在公网（非回环）上重建出来仍是 OFF。
+     * 这条不变量由 {@code WorkspaceRuntimeToggleTest} 钉住。
+     */
+    private synchronized void rebuild(WorkspaceMode mode, String root) {
+        WorkspaceAccess next = new WorkspaceAccess(mode, root, serverAddress);
+        this.access = next;
+        this.guard = next.enabled()
+                ? new WorkspaceGuard(next.root(), properties.getAllowedExtensions(), properties.getMaxFileBytes())
+                : null;
+    }
+
+    /**
+     * 管理员从界面切换档位 / 根目录。持久化用户的选择，并立即生效（或按前提降级）。
+     *
+     * @return 切换后<b>实际</b>的访问状态（可能因为前提不满足而仍是 OFF，此时 refusalReason 说明原因）
+     */
+    public synchronized WorkspaceAccess applySettings(String modeRaw, String root) throws java.io.IOException {
+        WorkspaceMode mode = WorkspaceMode.parse(modeRaw);   // 认不出的档位一律回落 OFF
+        String trimmedRoot = root == null ? "" : root.trim();
+        rebuild(mode, trimmedRoot);
+        // 存的是「想要什么」（用户选的原始档位），不是降级后的结果 —— 换台机器 / 补上回环后，
+        // 用户原本想要的档位应当自动恢复，而不是被这次的降级结果永久固化成 OFF。
+        settingsStore.save(new WorkspaceSettingsStore.Settings(mode.name(), trimmedRoot));
+        return access;
+    }
+
+    /** 用户当前选定的档位 / 根目录（持久化的那一份，不是降级结果）。 */
+    public WorkspaceSettingsStore.Settings currentSelection() {
+        return settingsStore.load().orElseGet(
+                () -> new WorkspaceSettingsStore.Settings(properties.resolvedMode().name(), properties.getRoot()));
+    }
+
+    /** 服务是否绑在回环地址 —— 文件夹浏览器与档位切换都要看它（公网上一律不给）。 */
+    public boolean loopbackBound() {
+        return WorkspaceAccess.isLoopback(serverAddress);
+    }
+
     public WorkspaceAccess access() {
         return access;
+    }
+
+    /** 文件夹浏览器里的一个子目录。 */
+    public record DirEntry(String name, String path) {
+    }
+
+    /** 一次浏览的结果：当前目录、它的上一级、以及子目录列表。 */
+    public record Browse(String path, String parent, java.util.List<DirEntry> dirs, boolean truncated) {
+    }
+
+    /** 浏览器最多列多少个子目录 —— 家目录下偶尔有极多条目，不封会把响应撑爆。 */
+    private static final int MAX_BROWSE_ENTRIES = 500;
+
+    /**
+     * 列一个目录下的<b>子目录</b>，供界面上的文件夹选择器用。
+     *
+     * <p>它<b>独立于工作区根</b>：用户正是要用它去挑选那个根，所以必须能浏览工作区之外。
+     * 因此它只列<b>目录名</b>，不列文件、更不读任何文件内容 —— 能力仅限「看见文件夹结构」。
+     * 调用它的控制器端点另加两道闸：管理员 + 回环（公网上一律不给）。
+     *
+     * <p>不传路径时从用户主目录开始。读不动某个目录（权限）就返回空列表而不是抛异常 ——
+     * 选择器点进一个没权限的目录，该是「这里是空的」，不是整个功能报错。
+     */
+    public Browse browseDirectories(String rawPath) {
+        Path base = (rawPath == null || rawPath.isBlank())
+                ? Paths.get(System.getProperty("user.home", "/"))
+                : Paths.get(rawPath.trim());
+        base = base.toAbsolutePath().normalize();
+
+        java.util.List<DirEntry> dirs = new ArrayList<>();
+        boolean truncated = false;
+        try (java.nio.file.DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(base, Files::isDirectory)) {
+            for (Path child : stream) {
+                if (dirs.size() >= MAX_BROWSE_ENTRIES) {
+                    truncated = true;   // 说出来 —— 「500 个」和「至少 500 个」是两回事
+                    break;
+                }
+                Path name = child.getFileName();
+                if (name != null) {
+                    dirs.add(new DirEntry(name.toString(), child.toString()));
+                }
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // 权限不足 / 目录不存在：返回空，不抛 —— 选择器里表现为「这个目录是空的」
+        }
+        dirs.sort(java.util.Comparator.comparing(d -> d.name().toLowerCase(java.util.Locale.ROOT)));
+        Path parent = base.getParent();
+        return new Browse(base.toString(), parent == null ? null : parent.toString(), dirs, truncated);
     }
 
     /** 一个文件在列表里的样子。{@code path} 永远是相对工作区根的。 */

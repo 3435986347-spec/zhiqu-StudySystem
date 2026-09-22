@@ -262,7 +262,7 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260922-chat-vision`.
+  old bundle. Current token: `20260923-workspace-toggle`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -403,6 +403,15 @@ AI 助手原本只是个「work agent」（排计划、写 Wiki、做检索）�
 四个档位 `OFF / READ / WRITE / EXEC`（`WorkspaceMode`），`parse()` 对任何认不出来的配置值
 **回落到 OFF 而不是就近取一档** —— 把 `mode: ON` 写错成一个不存在的值时，该得到「没开」，
 不是「开了个小的」。目前只有 READ 真正实现。
+
+**档位与根目录现在能从界面切换**（AI 助手页工作区面板的 ⚙，`PUT /api/workspace/settings`），
+不必再改 `application.yml`；用户的选择持久化在 `~/.zhiqu/workspace-state.json`
+（桌面每次重启新 JVM，不持久化就每次回到 OFF）。文件夹选择器走 `GET /api/workspace/browse`
+（只列目录、管理员 + 回环）。**切换绕不过下面三条前提** —— `WorkspaceService.applySettings`
+只改「想要什么」，`rebuild` 每次重跑那三条裁决「实际允许什么」，所以公网（非回环）上无论
+点到哪、持久化里存的是什么，`effectiveMode` 都还是 OFF。持久化存的是<b>用户选的档位</b>
+而非降级结果 —— 把同一份 state 拿到回环机器上，原本想要的档位自动恢复。
+`WorkspaceRuntimeToggleTest` 钉住这整条不变量（尤其「非回环上切 EXEC 仍是 OFF」）。
 
 生效还要三个前提**同时**成立，缺一就整体降级到 OFF（`WorkspaceAccess`）：
 

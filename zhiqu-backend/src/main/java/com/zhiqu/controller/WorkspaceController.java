@@ -1,10 +1,14 @@
 package com.zhiqu.controller;
 
+import com.zhiqu.common.BusinessException;
 import com.zhiqu.common.Result;
 import com.zhiqu.security.SecurityUtils;
 import com.zhiqu.service.AdminGuard;
 import com.zhiqu.service.workspace.WorkspaceService;
+import com.zhiqu.service.workspace.WorkspaceSettingsStore;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -60,6 +64,72 @@ public class WorkspaceController {
         row.put("configuredMode", workspaceService.access().configuredMode().name());
         row.put("root", workspaceService.access().root() == null ? "" : workspaceService.access().root().toString());
         row.put("reason", workspaceService.access().refusalReason());
+        return Result.success(row);
+    }
+
+    /**
+     * 当前的选择与实际状态 —— 界面的工作区设置面板据此渲染。
+     *
+     * <p>{@code selectedMode/selectedRoot} 是用户<b>选的</b>（持久化的那份），
+     * {@code effectiveMode} 是<b>实际生效的</b>。二者可能不同：选了 EXEC 但没绑回环时，
+     * effective 是 OFF，{@code reason} 说明为什么。前端把这个差异显示出来，用户才不会
+     * 以为「我明明开了却没用」。
+     */
+    @GetMapping("/settings")
+    public Result<Map<String, Object>> settings() {
+        requireAdmin();
+        WorkspaceSettingsStore.Settings sel = workspaceService.currentSelection();
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("selectedMode", sel.mode());
+        row.put("selectedRoot", sel.root() == null ? "" : sel.root());
+        row.put("effectiveMode", workspaceService.access().effectiveMode().name());
+        row.put("enabled", workspaceService.access().enabled());
+        row.put("root", workspaceService.access().root() == null ? "" : workspaceService.access().root().toString());
+        row.put("reason", workspaceService.access().refusalReason());
+        row.put("loopback", workspaceService.loopbackBound());
+        row.put("modes", List.of("OFF", "READ", "WRITE", "EXEC"));
+        return Result.success(row);
+    }
+
+    /**
+     * 切换档位 / 根目录，并持久化。切换本身限管理员 + 回环 —— 公网上一律拒绝，
+     * 免得有人以为在服务器上点一下就把本机文件读取接口打开了（实际打不开，但不该给这个入口）。
+     */
+    @PutMapping("/settings")
+    public Result<Map<String, Object>> updateSettings(@RequestBody Map<String, Object> body) throws java.io.IOException {
+        requireAdmin();
+        if (!workspaceService.loopbackBound()) {
+            throw new BusinessException("工作区只能在绑定回环地址的本机实例上开启（当前不是回环）");
+        }
+        String mode = body.get("mode") == null ? "OFF" : String.valueOf(body.get("mode"));
+        String root = body.get("root") == null ? "" : String.valueOf(body.get("root"));
+        workspaceService.applySettings(mode, root);
+        return settings();
+    }
+
+    /**
+     * 文件夹浏览器：列一个目录下的子目录，供选择根目录用。管理员 + 回环。
+     *
+     * <p>只列目录名、不碰文件内容。它独立于工作区根（你正是要用它挑那个根），
+     * 所以能浏览工作区之外 —— 正因如此才把它锁在回环 + 管理员后面。
+     */
+    @GetMapping("/browse")
+    public Result<Map<String, Object>> browse(@RequestParam(required = false) String path) {
+        requireAdmin();
+        if (!workspaceService.loopbackBound()) {
+            throw new BusinessException("文件夹浏览只在绑定回环地址的本机实例上可用");
+        }
+        WorkspaceService.Browse browse = workspaceService.browseDirectories(path);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("path", browse.path());
+        row.put("parent", browse.parent());
+        row.put("truncated", browse.truncated());
+        row.put("dirs", browse.dirs().stream().map(d -> {
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("name", d.name());
+            one.put("path", d.path());
+            return one;
+        }).toList());
         return Result.success(row);
     }
 

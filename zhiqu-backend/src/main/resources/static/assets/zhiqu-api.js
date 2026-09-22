@@ -4167,32 +4167,176 @@
    */
   var wsState = { path: '', enabled: false };
 
+  // ── 工作区设置：像 Cursor 那样选工作文件夹 + 切档位 ─────────────────────
+  //
+  // 三条前提（回环 / 目录存在 / 管理员）由后端裁决，前端不复述判断 —— 只把后端返回的
+  // effectiveMode / reason / loopback 如实显示。切换按钮在非回环上也点得动，但后端会拒，
+  // 并把原因显示出来，而不是前端偷偷禁用（那样用户不知道为什么不行）。
+
+  function openWorkspaceSettings(settings) {
+    var modes = (settings && settings.modes) || ['OFF', 'READ', 'WRITE', 'EXEC'];
+    var chosen = (settings && settings.selectedMode) || 'OFF';
+    var chosenRoot = (settings && settings.selectedRoot) || '';
+    var loopback = !(settings && settings.loopback === false);
+
+    var desc = {
+      OFF: '关闭。AI 助手看不到任何本机文件。',
+      READ: '只读：AI 能读工作文件夹里的文件，一个字节都不改。',
+      WRITE: '读 + 写：能改文件，但每次改动都要你在草稿里确认后才落盘。',
+      EXEC: '读 + 写 + 运行：能改、还能跑白名单命令（python3 / node / java…）。仅本机自用。'
+    };
+
+    var h = openModal({
+      title: '工作区设置',
+      width: 520,
+      bodyHtml:
+        (loopback ? '' :
+          '<div style="margin-bottom:12px;padding:9px 11px;border-radius:var(--zq-rs);background:var(--zq-tint);' +
+          'font-size:12px;color:var(--zq-text2);line-height:1.6;">当前不是本机回环地址（多半是服务器 / 网页版）。' +
+          '出于安全，工作区只能在<b>本机桌面应用</b>里开启，这里改了也不会生效。</div>') +
+        '<div style="font-size:12px;font-weight:700;margin-bottom:6px;">工作文件夹</div>' +
+        '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">' +
+          '<input id="zq-wss-root" class="zq-input" readonly placeholder="（未选择）" style="flex:1;height:32px;font-size:12px;" />' +
+          '<button id="zq-wss-browse" class="zq-btn-ghost" style="height:32px;font-size:12px;white-space:nowrap;">浏览…</button>' +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--zq-text3);margin-bottom:16px;">AI 只能读/改/运行这一个文件夹里的东西，范围越小越安全。</div>' +
+        '<div style="font-size:12px;font-weight:700;margin-bottom:6px;">访问档位</div>' +
+        '<div id="zq-wss-modes" style="display:flex;gap:6px;margin-bottom:8px;">' +
+          modes.map(function (m) {
+            return '<button type="button" data-mode="' + m + '" class="zq-btn-ghost" style="flex:1;height:32px;font-size:12px;">' +
+              (WS_MODE_LABEL[m] || m) + '</button>';
+          }).join('') +
+        '</div>' +
+        '<div id="zq-wss-desc" style="font-size:11.5px;color:var(--zq-text2);line-height:1.6;min-height:34px;"></div>' +
+        '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">' +
+          '<button id="zq-wss-cancel" class="zq-btn-ghost" style="height:34px;font-size:12.5px;">取消</button>' +
+          '<button id="zq-wss-save" class="zq-btn" style="height:34px;font-size:12.5px;">保存并生效</button>' +
+        '</div>',
+      onMount: function (body) {
+        var rootInput = $('#zq-wss-root', body);
+        rootInput.value = chosenRoot;
+        var descEl = $('#zq-wss-desc', body);
+
+        function paintModes() {
+          $all('[data-mode]', body).forEach(function (btn) {
+            var on = btn.getAttribute('data-mode') === chosen;
+            btn.style.background = on ? 'var(--zq-primary)' : '';
+            btn.style.color = on ? 'var(--zq-on-primary)' : '';
+            btn.style.borderColor = on ? 'var(--zq-primary)' : '';
+          });
+          descEl.textContent = desc[chosen] || '';
+        }
+        $all('[data-mode]', body).forEach(function (btn) {
+          btn.onclick = function () { chosen = btn.getAttribute('data-mode'); paintModes(); };
+        });
+        paintModes();
+
+        $('#zq-wss-browse', body).onclick = function () {
+          openWorkspaceFolderPicker(chosenRoot, function (picked) {
+            chosenRoot = picked;
+            rootInput.value = picked;
+          });
+        };
+        $('#zq-wss-cancel', body).onclick = function () { h.close(); };
+        $('#zq-wss-save', body).onclick = function () {
+          if (chosen !== 'OFF' && !chosenRoot) {
+            toast('先选一个工作文件夹', 'error');
+            return;
+          }
+          safe('保存工作区设置', async function () {
+            await api.put('/workspace/settings', { mode: chosen, root: chosenRoot });
+            h.close();
+            await loadWorkspace();
+            toast('工作区设置已保存');
+          });
+        };
+      }
+    });
+  }
+
+  // 文件夹选择器：走后端 /workspace/browse 一层层点进去。onPick(绝对路径) 选定当前文件夹。
+  function openWorkspaceFolderPicker(startPath, onPick) {
+    var cur = { path: startPath || '', parent: null };
+    var h = openModal({
+      title: '选择工作文件夹',
+      width: 480,
+      bodyHtml:
+        '<div id="zq-fp-cur" class="zq-mono" style="font-size:11.5px;color:var(--zq-text2);word-break:break-all;margin-bottom:8px;">读取中…</div>' +
+        '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
+          '<button id="zq-fp-up" class="zq-btn-ghost" style="height:28px;font-size:12px;">↑ 上一层</button>' +
+          '<button id="zq-fp-pick" class="zq-btn" style="height:28px;font-size:12px;margin-left:auto;">选定当前文件夹</button>' +
+        '</div>' +
+        '<div id="zq-fp-list" style="max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:1px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);padding:6px;"></div>',
+      onMount: function (body) {
+        async function go(path) {
+          var res;
+          try {
+            res = await api.get('/workspace/browse' + (path ? '?path=' + encodeURIComponent(path) : ''));
+          } catch (e) { toast('读不了这个目录', 'error'); return; }
+          cur.path = res.path; cur.parent = res.parent;
+          $('#zq-fp-cur', body).textContent = res.path;
+          $('#zq-fp-up', body).disabled = !res.parent;
+          $('#zq-fp-up', body).style.opacity = res.parent ? '1' : '.4';
+          var list = $('#zq-fp-list', body);
+          var dirs = res.dirs || [];
+          list.innerHTML = dirs.length ? '' : '<div style="padding:10px;font-size:12px;color:var(--zq-text3);">（没有子文件夹）</div>';
+          dirs.forEach(function (d) {
+            var a = document.createElement('a');
+            a.style.cssText = 'display:flex;align-items:center;gap:7px;padding:7px 9px;border-radius:var(--zq-rs);cursor:pointer;font-size:12.5px;color:var(--zq-text2);';
+            a.innerHTML = '<span>📁</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.name) + '</span>';
+            a.onmouseenter = function () { a.style.background = 'var(--zq-card-soft)'; };
+            a.onmouseleave = function () { a.style.background = ''; };
+            a.onclick = function () { go(d.path); };
+            list.appendChild(a);
+          });
+          if (res.truncated) {
+            var more = document.createElement('div');
+            more.style.cssText = 'padding:8px 9px;font-size:11px;color:var(--zq-text3);';
+            more.textContent = '子文件夹太多，只显示了前 500 个';
+            list.appendChild(more);
+          }
+        }
+        $('#zq-fp-up', body).onclick = function () { if (cur.parent) go(cur.parent); };
+        $('#zq-fp-pick', body).onclick = function () {
+          if (!cur.path) return;
+          onPick(cur.path);
+          h.close();
+        };
+        go(cur.path);
+      }
+    });
+  }
+
+  var WS_MODE_LABEL = { OFF: '未启用', READ: '只读', WRITE: '读+写', EXEC: '读+写+运行' };
+
   async function loadWorkspace() {
     var section = $('#zq-ws');
     if (!section) return;            // 只有 AI 助手页有这一块
     var status;
     try {
-      status = await api.get('/workspace/status');
+      // /settings 是管理员限定的：拿得到 = 是管理员，这一块就该显示（哪怕当前 OFF，
+      // 也要给出齿轮让他去开）。拿不到（403）= 非管理员，静默不显示。
+      status = await api.get('/workspace/settings');
     } catch (e) {
-      section.hidden = true;         // 非管理员：静默不显示，这不是错误
-      return;
-    }
-    wsState.enabled = !!(status && status.enabled);
-    if (!wsState.enabled) {
-      // 配了却没生效才值得说；压根没配（reason 为空）就安静地不显示
-      if (status && status.reason) {
-        section.hidden = false;
-        $('#zq-ws-sub').textContent = '未启用';
-        $('#zq-ws-path').textContent = status.reason;
-        $('#zq-ws-tree').innerHTML = '';
-        $('#zq-ws-up').hidden = true;
-      } else {
-        section.hidden = true;
-      }
+      section.hidden = true;
       return;
     }
     section.hidden = false;
-    $('#zq-ws-sub').textContent = status.mode === 'READ' ? '只读' : status.mode;
+    var gear = $('#zq-ws-settings');
+    if (gear) gear.onclick = function () { openWorkspaceSettings(status); };
+
+    wsState.enabled = !!(status && status.enabled);
+    if (!wsState.enabled) {
+      // 没开：显示原因（配了没生效）或一句「点⚙开启」，并把文件树/搜索收起来
+      $('#zq-ws-sub').textContent = '未启用';
+      $('#zq-ws-path').textContent = (status && status.reason)
+        ? status.reason : '点右上角 ⚙ 选择工作文件夹并开启';
+      $('#zq-ws-tree').innerHTML = '';
+      $('#zq-ws-up').hidden = true;
+      var sr0 = $('#zq-ws-search-row'); if (sr0) sr0.hidden = true;
+      return;
+    }
+    $('#zq-ws-sub').textContent = WS_MODE_LABEL[status.effectiveMode] || status.effectiveMode;
     wsState.root = status.root || '';
     $('#zq-ws-up').onclick = function () {
       var at = wsState.path.lastIndexOf('/');

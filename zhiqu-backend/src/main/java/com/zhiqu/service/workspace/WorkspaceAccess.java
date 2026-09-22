@@ -40,17 +40,27 @@ public final class WorkspaceAccess {
     private final Path root;
     private final String refusalReason;
 
+    /** 按配置构造 —— 薄适配层，真正的判定在下面那个显式构造器里。 */
     public WorkspaceAccess(WorkspaceProperties properties, String serverAddress) {
-        this.configuredMode = properties.resolvedMode();
+        this(properties.resolvedMode(), properties.getRoot(), serverAddress);
+    }
+
+    /**
+     * 按「档位 + 根目录 + 绑定地址」构造。运行时切换档位就重建这个对象 ——
+     * 三条前提（回环 / 目录存在 / 档位≠OFF）每次重建都<b>原样重跑</b>，
+     * 所以「按钮切到 EXEC」在公网（非回环）上重建出来照样是 OFF。这条不能被切换绕过。
+     */
+    public WorkspaceAccess(WorkspaceMode configuredMode, String rootPath, String serverAddress) {
+        this.configuredMode = configuredMode;
         Path resolvedRoot = null;
         String refusal = null;
 
         if (configuredMode == WorkspaceMode.OFF) {
             refusal = null;   // 本来就没开，不算「被拒绝」
-        } else if (properties.getRoot() == null || properties.getRoot().isBlank()) {
+        } else if (rootPath == null || rootPath.isBlank()) {
             refusal = "app.workspace.mode=" + configuredMode + " 但没有配 app.workspace.root，工作区未启用";
         } else {
-            Path candidate = Paths.get(properties.getRoot().trim()).toAbsolutePath().normalize();
+            Path candidate = Paths.get(rootPath.trim()).toAbsolutePath().normalize();
             if (!Files.isDirectory(candidate)) {
                 refusal = "app.workspace.root 指向的不是一个存在的目录：" + candidate + "，工作区未启用";
             } else if (!isLoopback(serverAddress)) {

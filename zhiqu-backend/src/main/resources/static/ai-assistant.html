@@ -9,11 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260922-chat-vision" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260922-chat-vision">
-  <link rel="manifest" href="manifest.json?v=20260922-chat-vision">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260923-workspace-toggle" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260923-workspace-toggle">
+  <link rel="manifest" href="manifest.json?v=20260923-workspace-toggle">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260922-chat-vision">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260923-workspace-toggle">
 </head>
 <body>
   <div class="zq-app">
@@ -59,7 +59,11 @@
                     <strong style="display:block;font-size:12.5px;font-weight:700;">代码工作区</strong>
                     <span id="zq-ws-sub" style="font-size:11px;color:var(--zq-text3);"></span>
                   </div>
-                  <button id="zq-ws-up" class="zq-btn-ghost" hidden style="height:24px;padding:0 8px;font-size:11px;white-space:nowrap;">上一层</button>
+                  <div style="display:flex;align-items:center;gap:6px;flex:0 0 auto;">
+                    <button id="zq-ws-up" class="zq-btn-ghost" hidden style="height:24px;padding:0 8px;font-size:11px;white-space:nowrap;">上一层</button>
+                    <!-- 齿轮：打开工作区设置（选文件夹 + 切档位）。管理员总能看到，哪怕工作区当前是 OFF。 -->
+                    <button id="zq-ws-settings" class="zq-btn-ghost" title="工作区设置：选文件夹、切档位" style="height:24px;width:24px;padding:0;font-size:13px;line-height:1;white-space:nowrap;">⚙</button>
+                  </div>
                 </div>
                 <div id="zq-ws-search-row" hidden style="display:flex;gap:6px;padding:0 14px 8px;">
                   <input id="zq-ws-q" type="search" placeholder="搜索工作区（回车）" autocomplete="off"
@@ -118,7 +122,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260922-chat-vision"></script>
-  <script src="assets/zhiqu-api.js?v=20260922-chat-vision"></script>
+  <script src="assets/zhiqu-ui.js?v=20260923-workspace-toggle"></script>
+  <script src="assets/zhiqu-api.js?v=20260923-workspace-toggle"></script>
 </body>
 </html>
