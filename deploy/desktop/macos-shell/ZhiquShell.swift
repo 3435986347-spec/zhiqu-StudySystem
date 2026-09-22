@@ -20,8 +20,19 @@ import WebKit
 
 /// 拉起 JVM，并在退出时确保它跟着一起走。
 final class Backend {
+    /// 桌面版用<b>固定端口</b>，不是随机端口。
+    ///
+    /// 原因是「记住登录」：WKWebView 的 localStorage 按 origin（scheme+host+**port**）隔离，
+    /// 端口每次随机的话，上次记住的 token 这次就在另一个 origin 里、读不到 —— 于是每次都要
+    /// 重新登录。固定端口让 origin 稳定，localStorage 才跨启动持久。
+    ///
+    /// 选一个不常用的高位端口，尽量避开冲突；真撞上了会走「单实例」那条：另一个我们自己的
+    /// 实例已经在跑，就直接连过去，不再起第二个后端。
+    static let port = 47615
     private let process = Process()
     private let portFile: URL
+    /// 已经有我们的实例在跑，这次只是连过去，没有自己拉 JVM。
+    private var attached = false
 
     /// 端口文件放在临时目录，每次启动一个新的 —— 不能复用固定路径：
     /// 上一次遗留的文件会让外壳立刻连到一个已经不存在的端口上。
@@ -31,7 +42,28 @@ final class Backend {
         try? FileManager.default.removeItem(at: portFile)
     }
 
+    /// 固定端口上是不是已经有我们的后端在响应。用于单实例：再次双击不该起第二个 JVM。
+    private func alreadyRunning() -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(Backend.port)/index.html") else { return false }
+        var request = URLRequest(url: url, timeoutInterval: 1.5)
+        request.httpMethod = "HEAD"
+        var reachable = false
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            if let http = response as? HTTPURLResponse, http.statusCode == 200 { reachable = true }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 2)
+        return reachable
+    }
+
     func start() throws {
+        if alreadyRunning() {
+            // 已有实例：这次不拉 JVM，界面直接连过去。localStorage 因为 origin 相同而共享，
+            // 上次记住的登录态在。
+            attached = true
+            return
+        }
         let resources = Bundle.main.resourceURL!
         let java = resources.appendingPathComponent("runtime/Contents/Home/bin/java")
         let jar = try FileManager.default
@@ -42,6 +74,7 @@ final class Backend {
         process.executableURL = java
         process.arguments = [
             "-Dspring.profiles.active=desktop",
+            "-Dserver.port=\(Backend.port)",   // 固定端口 —— 见类头，为了「记住登录」
             "-Dfile.encoding=UTF-8",
             // 外壳自己就是 GUI 应用，JVM 保持 headless —— 让它去连窗口服务器
             // 只会在 Dock 里多出一个图标。
@@ -58,6 +91,9 @@ final class Backend {
     /// 后端写文件用的是「临时文件 + 原子改名」，所以读到的要么是完整的端口、要么什么都没有 ——
     /// 不会读到半个数字。
     func waitForPort(timeout: TimeInterval) -> Int? {
+        if attached {
+            return Backend.port   // 连的是已有实例，端口就是固定那个
+        }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if !process.isRunning {
@@ -75,6 +111,8 @@ final class Backend {
 
     func stop() {
         try? FileManager.default.removeItem(at: portFile)
+        // attached 时那个后端不是我们拉起的（另一个实例的），不能替它收尸。
+        if attached { return }
         guard process.isRunning else { return }
         process.terminate()
         // 给 Spring 一点时间收尾（关连接池、flush 掉还在流式输出的消息）。

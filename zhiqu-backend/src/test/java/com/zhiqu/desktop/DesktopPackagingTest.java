@@ -84,6 +84,28 @@ class DesktopPackagingTest {
      * <p>Shell 的 {@code #} 只剥整行注释（行尾 {@code #} 可能在字符串里，剥了会改变语义）；
      * Swift 的 {@code //} 同理。这两个脚本里没有行尾注释，所以够用。
      */
+    @Test
+    @DisplayName("桌面 profile 必须用固定端口 —— 随机端口会让「记住登录」每次失效")
+    void 桌面必须固定端口() throws IOException {
+        String yml = Files.readString(
+                Path.of("..", "zhiqu-backend", "src", "main", "resources", "application-desktop.yml"),
+                java.nio.charset.StandardCharsets.UTF_8);
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("(?m)^\\s*port:\\s*(\\d+)").matcher(yml);
+        assertTrue(m.find(), "application-desktop.yml 里找不到 server.port —— 判据扫空了");
+        int port = Integer.parseInt(m.group(1));
+        assertTrue(port > 0,
+                "桌面 profile 的 server.port 是 " + port + "（0 = 随机端口）。localStorage 按 origin"
+                        + "（含端口）隔离，端口每次随机的话，上次记住的登录 token 这次读不到 —— "
+                        + "「记住登录」永远失效。必须固定。");
+
+        // 原生外壳必须连同一个固定端口，否则外壳与后端各说各的端口
+        String shell = read(Path.of("..", "deploy", "desktop", "macos-shell", "ZhiquShell.swift"));
+        assertTrue(shell.contains("static let port = " + port),
+                "外壳里的固定端口和 application-desktop.yml 的 " + port + " 对不上 —— "
+                        + "两处各写一个端口，界面会连到后端没监听的那个。");
+    }
+
     private static String read(Path path) throws IOException {
         String text = Files.readString(path, StandardCharsets.UTF_8);
         StringBuilder out = new StringBuilder();

@@ -78,8 +78,9 @@ public class DesktopLauncher {
      * 所以现在打开动作走 {@link BrowserOpener}，{@link #openedUrl()} 把结果暴露出来，
      * 让判据能直接断言它。
      *
-     * <p>端口从<b>实际启动的 Web 服务器</b>上取，不从配置里读：桌面版默认让系统分配端口
-     * （{@code server.port=0}），配置里写死多少和实际监听在哪是两件事。
+     * <p>端口从<b>实际启动的 Web 服务器</b>上取，不从配置里读：配置写的和实际绑定的可能
+     * 不一致（比如以后又改回随机端口，或者被命令行覆盖）。桌面版现在用固定端口 47615
+     * （为了「记住登录」的稳定 origin，见 application-desktop.yml），但取值仍以实际为准。
      */
     @EventListener(ApplicationReadyEvent.class)
     public void openWhenReady(ApplicationReadyEvent event) {

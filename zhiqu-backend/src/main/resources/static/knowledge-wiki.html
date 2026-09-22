@@ -8,22 +8,23 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260922-wiki-tab-align" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260922-wiki-tab-align">
-  <link rel="manifest" href="manifest.json?v=20260922-wiki-tab-align">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260922-taller-panels" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260922-taller-panels">
+  <link rel="manifest" href="manifest.json?v=20260922-taller-panels">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260922-wiki-tab-align">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260922-taller-panels">
 </head>
 <body>
   <div class="zq-app">
     <nav id="zq-side"></nav>
     <main class="zq-main">
-      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
-        <header style="display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:4px 2px 2px; flex-wrap:wrap;">
-          <div>
-            <p class="zq-eyebrow">知识库</p><h1 class="zq-h1">知识 Wiki</h1>
-            <span style="display:block; margin-top:6px; color:var(--zq-text2); font-size:13px;">像文档一样浏览和编辑长期目标、学习计划、偏好与 AI 提炼出的记忆。</span>
-          </div>
+      <!--
+        min-height 让内层撑满视口（.zq-main 上下 padding 共 110px），下面那行文档区
+        flex:1 吃掉标题之外的全部高度 —— 精简顶部文字后，知识页就随之变长。
+      -->
+      <div style="display:flex; flex-direction:column; gap:12px; min-height:calc(100vh - 110px); animation:zqFadeIn .3s ease both;">
+        <header style="display:flex; align-items:center; justify-content:space-between; gap:18px; padding:2px 2px 0; flex-wrap:wrap;">
+          <h1 class="zq-h1">知识 Wiki</h1>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">导入来源</button>
             <button style="height:30px; padding:0 12px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12.5px; font-weight:600; cursor:pointer;">待合入变更</button>
@@ -34,7 +35,7 @@
           </div>
         </header>
 
-        <div style="display:flex; gap:12px; align-items:stretch; margin:0 -8px;">
+        <div style="display:flex; gap:12px; align-items:stretch; margin:0 -8px; flex:1; min-height:0;">
           <!-- 目录（默认收起） -->
           <aside id="zq-wiki-toc" data-zq-collapse="left" data-zq-label="目录" style="flex:0 0 210px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh1); overflow:hidden; align-self:stretch;">
             <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft);"><h2 style="margin:0; font-size:14px; font-weight:700;">目录</h2><span id="zq-tree-count" style="font-size:11.5px; color:var(--zq-text3);"></span></div>
@@ -45,8 +46,8 @@
             <nav id="zq-tree" style="padding:8px; display:flex; flex-direction:column; gap:2px;"></nav>
           </aside>
 
-          <!-- 文档视图 -->
-          <section style="flex:1; min-width:0; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh2); overflow:hidden;">
+          <!-- 文档视图。flex 列 + min-height:0 让 #zq-doc 能在内部滚动而不是把整页撑长。 -->
+          <section style="flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh2); overflow:hidden;">
             <!--
               标签页栏（Obsidian 式）。由 zhiqu-api.js 的 paintWikiTabs() 填充；
               这里只留容器，因为标签是随打开的页面变的，写死在 HTML 里没有意义。
@@ -104,7 +105,7 @@
                 </div>
               </div>
             </div>
-            <div id="zq-doc" style="padding:22px 26px 30px; min-height:420px;"></div>
+            <div id="zq-doc" style="padding:22px 26px 30px; flex:1; min-height:0; overflow-y:auto;"></div>
           </section>
 
           <!-- 页面检查（默认收起） -->
@@ -117,7 +118,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260922-wiki-tab-align"></script>
+  <script src="assets/zhiqu-ui.js?v=20260922-taller-panels"></script>
   <script>
     var wtag={'目标':['q2'],'计划':['primary'],'偏好':['q4'],'薄弱点':['q1'],'资料':['q3'],'对话摘要':['soft'],'index':['soft'],'规则':['soft'],'log':['soft']};
     function tagColors(t){ var k=wtag[t]?wtag[t][0]:'soft'; if(k==='soft') return ['var(--zq-card-soft)','var(--zq-text3)']; if(k==='primary') return ['var(--zq-tint)','var(--zq-primary)']; return ['var(--zq-'+k+'-bg)','var(--zq-'+k+')']; }
@@ -171,6 +172,6 @@
     function sel(i){ cur=i; paintTree(); paintDoc(); }
     paintTree(); paintDoc();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260922-wiki-tab-align"></script>
+  <script src="assets/zhiqu-api.js?v=20260922-taller-panels"></script>
 </body>
 </html>
