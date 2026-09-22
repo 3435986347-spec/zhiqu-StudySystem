@@ -36,7 +36,12 @@
           </section>
           <section class="zq-card zq-card-lg">
             <h2 class="zq-h2" style="font-size:16px; margin-bottom:12px;">运行状态</h2>
-            <div id="zq-health" style="display:flex; flex-direction:column;"></div>
+            <!--
+              封顶 + 内部滚动。不封的话错误多时这一列会无限变长，而它和左边那栏同属一个
+              grid —— grid 高度取最高的那列，于是下面的「RAG 语义检索」被推到很远的地方，
+              错误越多推得越远。左栏的流量图是 170px 加表头，340px 让两栏大致齐平。
+            -->
+            <div id="zq-health" style="display:flex; flex-direction:column; max-height:340px; overflow-y:auto;"></div>
           </section>
         </div>
         <section class="zq-card zq-card-lg">

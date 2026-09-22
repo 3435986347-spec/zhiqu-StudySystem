@@ -2635,6 +2635,28 @@
         chooseAiFiles(function (files) { uploadAiFiles(files, true); });
       }
     });
+
+    // 直接在输入框里粘贴图片 / 文件（⌘V）。走拖拽同一条上传路径，
+    // 所以上传完同样会出现在左侧资料区、并自动挂到下一条消息上。
+    //
+    // 只在剪贴板里真的有文件时才拦截：粘贴纯文本必须照常插进输入框，
+    // 一律拦掉的话用户连复制一段话进来都做不到。
+    var draftInput = $('#zq-draft');
+    if (draftInput) {
+      draftInput.addEventListener('paste', function (event) {
+        var items = (event.clipboardData && event.clipboardData.items) || [];
+        var files = [];
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].kind === 'file') {
+            var file = items[i].getAsFile();
+            if (file) files.push(file);
+          }
+        }
+        if (!files.length) return;   // 纯文本粘贴：不拦
+        event.preventDefault();
+        uploadAiFiles(files, true);
+      });
+    }
   }
 
   function clearPendingSources() {
