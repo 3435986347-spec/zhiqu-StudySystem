@@ -190,7 +190,8 @@ and will break the chain you meant to guard.
 ### 桌面应用（原生 macOS 外壳）
 
 `deploy/desktop/package-macos-native.sh` 产出一个真正的 Cocoa 应用：Swift + WKWebView 外壳，
-JVM 作为子进程，页面无边框铺满窗口。另有 `package-macos.sh`（jpackage 版）会弹系统浏览器。
+JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.dmg`。Windows 版见 `package-windows.ps1`
+（只能在 Windows 上打，jpackage 不做跨平台）。
 
 三个只在**打包产物**里出现、且报错指不到原因的坑，都已修并有判据：
 
@@ -261,7 +262,7 @@ JVM 作为子进程，页面无边框铺满窗口。另有 `package-macos.sh`（
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260922-taller-panels`.
+  old bundle. Current token: `20260922-desktop-ua-drag`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

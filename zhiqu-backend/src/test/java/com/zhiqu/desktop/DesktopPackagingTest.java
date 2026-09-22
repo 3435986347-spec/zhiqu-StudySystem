@@ -14,13 +14,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 钉住打包脚本里那几个「看起来可有可无、删了要到运行时才炸」的开关。
  *
+ * <p>2026-09-22 退掉了 macOS 的 jpackage 版打包脚本（它双击后弹系统浏览器，已被原生外壳
+ * 取代），随之退掉那条「jpackage 版必须关 headless」—— 同一条知识由
+ * {@link #Windows脚本要关headless()} 继续钉着，{@code package-windows.ps1} 也走 jpackage。
+ *
  * <p>这一类东西不在 Java 代码里，所以平时的判据一条都覆盖不到它们；而它们出问题的方式
  * 有个共同点：<b>报错完全指不到真正的原因</b>，且只在打包后的产物里复现，开发机上永远正常。
  */
 class DesktopPackagingTest {
 
     private static final Path NATIVE_SCRIPT = Path.of("..", "deploy", "desktop", "package-macos-native.sh");
-    private static final Path JPACKAGE_SCRIPT = Path.of("..", "deploy", "desktop", "package-macos.sh");
 
     @Test
     @DisplayName("jlink 必须带 jdk.charsets —— 否则 MySQL 连接会协商成 eucjpms，中文全写不进去")
@@ -40,17 +43,6 @@ class DesktopPackagingTest {
     void jlink必须带椭圆曲线模块() throws IOException {
         assertTrue(read(NATIVE_SCRIPT).contains("jdk.crypto.ec"),
                 "缺了它，连远程数据库和 AI 服务商的 TLS 会报「找不到合适的套件」");
-    }
-
-    @Test
-    @DisplayName("jpackage 版必须关 headless —— 否则 Dock 图标无限弹跳")
-    void jpackage版必须关headless() throws IOException {
-        String script = read(JPACKAGE_SCRIPT);
-        assertTrue(script.contains("jpackage"), "扫到的不是 jpackage 脚本 —— 空扫会假绿");
-        assertTrue(script.contains("-Djava.awt.headless=false"),
-                "jpackage 产出的是 Foreground 类型应用，macOS 会一直弹跳图标直到进程连上"
-                        + "窗口服务器；headless 的 JVM 永远不会连（lsappinfo 报 !cgsConnection）。"
-                        + "这个开关只能走 JVM 参数 —— spring.main.headless 绑定得太晚。");
     }
 
     @Test

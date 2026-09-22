@@ -28,9 +28,6 @@ deploy/desktop/package-macos-native.sh          # → build/desktop-native/{知�
 deploy/desktop/package-macos-native.sh 1.2.0
 ```
 
-> `deploy/desktop/package-macos.sh` 是旧的 jpackage 版，双击后**弹系统浏览器**。留着做对照，
-> 新分发用上面那个原生版。
-
 **Windows —— `.exe`**：只能在 Windows 上打（jpackage 不做跨平台，macOS 上打不出 .exe）。
 在那台 Windows 机器上，装好 JDK 17（Temurin）并设好 `JAVA_HOME`，然后：
 

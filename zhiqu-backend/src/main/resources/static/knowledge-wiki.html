@@ -8,21 +8,22 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260922-taller-panels" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260922-taller-panels">
-  <link rel="manifest" href="manifest.json?v=20260922-taller-panels">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260922-desktop-ua-drag" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260922-desktop-ua-drag">
+  <link rel="manifest" href="manifest.json?v=20260922-desktop-ua-drag">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260922-taller-panels">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260922-desktop-ua-drag">
 </head>
 <body>
   <div class="zq-app">
     <nav id="zq-side"></nav>
     <main class="zq-main">
       <!--
-        min-height 让内层撑满视口（.zq-main 上下 padding 共 110px），下面那行文档区
-        flex:1 吃掉标题之外的全部高度 —— 精简顶部文字后，知识页就随之变长。
+        height（不是 min-height）—— 内层正好等于视口减去 .zq-main 的上下 padding（110px），
+        整页不产生外层滚动，正文在 #zq-doc 内部滚。目录收起后那个展开箭头在竖条顶端，
+        外层一滚就够不到，所以这里必须是定高。
       -->
-      <div style="display:flex; flex-direction:column; gap:12px; min-height:calc(100vh - 110px); animation:zqFadeIn .3s ease both;">
+      <div style="display:flex; flex-direction:column; gap:12px; height:calc(100vh - 110px); animation:zqFadeIn .3s ease both;">
         <header style="display:flex; align-items:center; justify-content:space-between; gap:18px; padding:2px 2px 0; flex-wrap:wrap;">
           <h1 class="zq-h1">知识 Wiki</h1>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -59,11 +60,16 @@
             -->
             <div style="display:flex; align-items:stretch; border-bottom:1px solid var(--zq-border-soft); background:var(--zq-card-soft);">
               <!--
-                标签在最左：14px + 标签自身的 12px = 26px，和标题行、#zq-doc 的
-                padding-left 一致，三处文字落在同一条竖线上。
-                导航按钮放右端 —— 放左端会把标签挤到 339px（实测），标签左侧就对不上了。
+                标签栏左内边距 = 26px，和标题行、#zq-doc 的 padding-left 一致 ——
+                对齐的是**标签方框的左边缘**，不是标签里的文字。
+                这里返工过一次：先按「文字对齐」设成 14px（14 + 标签自身 12 = 26），
+                三处文字确实在同一条竖线上，但激活标签那个白底方框的左边缘落在 14px，
+                比正文左边缘靠左 12px —— 而方框边缘是条比文字更显眼的线，看上去就是没对齐。
+                方框和文字只能对齐其中一个（除非标签不留内边距，那样文字会贴着方框边）；
+                选方框，因为它是眼睛先看到的那条线。
+                导航按钮放右端 —— 放左端会把标签挤到 339px（实测），左侧就无从对齐了。
               -->
-              <div id="zq-wiki-tabs" style="display:flex; align-items:stretch; gap:0; flex:1; min-width:0; padding-left:14px; overflow-x:auto; scrollbar-width:thin;"></div>
+              <div id="zq-wiki-tabs" style="display:flex; align-items:stretch; gap:0; flex:1; min-width:0; padding-left:26px; overflow-x:auto; scrollbar-width:thin;"></div>
               <div style="display:flex; align-items:center; gap:2px; padding:0 12px 0 6px; flex:0 0 auto;">
                 <!-- 走当前标签页自己的浏览历史，和浏览器那对按钮同义 -->
                 <button type="button" id="zq-wiki-back" class="zq-btn-ghost" title="返回上一页（⌘[）"
@@ -118,7 +124,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260922-taller-panels"></script>
+  <script src="assets/zhiqu-ui.js?v=20260922-desktop-ua-drag"></script>
   <script>
     var wtag={'目标':['q2'],'计划':['primary'],'偏好':['q4'],'薄弱点':['q1'],'资料':['q3'],'对话摘要':['soft'],'index':['soft'],'规则':['soft'],'log':['soft']};
     function tagColors(t){ var k=wtag[t]?wtag[t][0]:'soft'; if(k==='soft') return ['var(--zq-card-soft)','var(--zq-text3)']; if(k==='primary') return ['var(--zq-tint)','var(--zq-primary)']; return ['var(--zq-'+k+'-bg)','var(--zq-'+k+')']; }
@@ -172,6 +178,6 @@
     function sel(i){ cur=i; paintTree(); paintDoc(); }
     paintTree(); paintDoc();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260922-taller-panels"></script>
+  <script src="assets/zhiqu-api.js?v=20260922-desktop-ua-drag"></script>
 </body>
 </html>

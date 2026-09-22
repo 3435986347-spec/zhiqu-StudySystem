@@ -128,6 +128,23 @@ final class Backend {
 
 // MARK: - 窗口
 
+/// 顶部透明拖拽条 —— 让用户能按住窗口顶部拖动整个窗口。
+///
+/// 为什么需要它：窗口用了 `fullSizeContentView`（内容铺到标题栏底下，这是"无边框"的做法），
+/// 于是 WKWebView 盖住了整个窗口，**把鼠标事件全吃掉**。`isMovableByWindowBackground` 对
+/// WKWebView 覆盖的区域不起作用，结果就是单指按住窗口拖不动。
+///
+/// 高度取 28px：正好是标题栏高度，且落在页面 `.zq-main` 的 30px 上内边距里 ——
+/// 盖住的是空白padding，不会挡住任何可点的东西。红绿灯按钮在窗口标题栏视图里、
+/// 层级高于 contentView，所以它们照常可点。
+final class DragStrip: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+    /// 不拦截自己区域之外的事件；区域之内要"可拖"，所以不能返回 nil。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return bounds.contains(convert(point, from: superview)) ? self : nil
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
     private let backend = Backend()
     private var window: NSWindow!
@@ -178,6 +195,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()   // localStorage 要持久化 —— 登录态存在那里
+        // 给 User-Agent 追加应用标识。不加的话 WKWebView 发的是 Safari 式 UA，
+        // 「个人中心 → 登录设备」只能把它认成浏览器：用户明明从应用登录，却显示
+        // 「Safari · macOS」。前端 shortUA() 认这个标记。
+        config.applicationNameForUserAgent = "ZhiquDesktop/1.0"
         webView = WKWebView(frame: frame, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -194,6 +215,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let content = NSView(frame: frame)
         content.addSubview(webView)
         content.addSubview(loadingLabel)
+        // 拖拽条压在最上层：它必须在 webView 之后添加，否则 webView 会盖住它。
+        let drag = DragStrip(frame: NSRect(x: 0, y: frame.height - 28, width: frame.width, height: 28))
+        drag.autoresizingMask = [.width, .minYMargin]
+        content.addSubview(drag)
         window.contentView = content
         window.makeKeyAndOrderFront(nil)
     }

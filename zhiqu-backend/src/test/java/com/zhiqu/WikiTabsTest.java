@@ -132,13 +132,16 @@ class WikiTabsTest {
                 "标题行的左内边距是 " + headerLeft + "px，正文是 " + docLeft
                         + "px —— 标题会比它自己的正文缩进得多或少。");
 
-        // 标签文字也要落在这条线上：标签栏的 padding-left + 单个标签自己的 padding-left
+        // 对齐的是**标签方框的左边缘**，也就是标签栏的 padding-left 本身 ——
+        // 不是「标签栏 padding + 标签自身 padding」那条文字线。
+        //
+        // 返工记录：第一版按文字对齐（标签栏 14 + 标签自身 12 = 正文 26），三处文字确实同线，
+        // 但激活标签那个白底方框的左边缘停在 14px，比正文靠左 12px。方框边缘比文字更显眼，
+        // 看上去就是没对齐 —— 用户连着指出两次。两者只能对齐其一，选方框。
         int barLeft = pxAfter(html, "id=\"zq-wiki-tabs\"", "padding-left:");
-        String js = Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8);
-        int tabLeft = pxAfter(js, "data-wiki-tab=\"' + i + '\"", "padding:7px 8px 7px ");
-        assertEquals(docLeft, barLeft + tabLeft,
-                "标签文字在 " + (barLeft + tabLeft) + "px（标签栏 " + barLeft + " + 标签自身 "
-                        + tabLeft + "），正文在 " + docLeft + "px —— 对不齐。");
+        assertEquals(docLeft, barLeft,
+                "标签方框左边缘在 " + barLeft + "px，正文在 " + docLeft + "px —— 对不齐。"
+                        + "要对齐的是方框边缘（标签栏的 padding-left），不是标签里的文字。");
     }
 
     /**

@@ -872,6 +872,10 @@
   function shortUA(ua) {
     ua = String(ua || '');
     var os = /Windows/.test(ua) ? 'Windows' : /Mac OS|Macintosh/.test(ua) ? 'macOS' : /Android/.test(ua) ? 'Android' : /iPhone|iPad|iOS/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : '';
+      // 桌面应用要先判：它内嵌的是系统 WebView，UA 和 Safari 长得一模一样，
+      // 先走下面的浏览器分支就会把「从应用登录」显示成「Safari · macOS」。
+      // 标记由原生外壳用 applicationNameForUserAgent 追加（ZhiquShell.swift）。
+      if (/ZhiquDesktop/.test(ua)) return '桌面应用' + (os ? ' · ' + os : '');
     var br = /Edg\//.test(ua) ? 'Edge' : /Chrome/.test(ua) ? 'Chrome' : /Firefox/.test(ua) ? 'Firefox' : /Safari/.test(ua) ? 'Safari' : '浏览器';
     return (br + (os ? ' · ' + os : '')) || ua.slice(0, 40);
   }

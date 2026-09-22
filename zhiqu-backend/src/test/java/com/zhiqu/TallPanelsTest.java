@@ -28,14 +28,25 @@ class TallPanelsTest {
 
     private static final Path STATIC = Path.of("src", "main", "resources", "static");
 
+    /**
+     * 内容包裹要<b>定高</b>等于视口，而不是 {@code min-height}。
+     *
+     * <p>先用的是 {@code min-height:calc(100vh - 110px)}，面板确实撑满了，但内容略高于视口时
+     * <b>整页会产生外层滚动</b> —— 而侧栏收起后，展开箭头在竖条顶端，是收起状态下唯一的
+     * 展开入口。外层一滚它就跑出视野，人得先滚回顶部才能展开。改成 {@code height} 之后
+     * 整页不滚，长内容在对话区 / 正文区内部滚，箭头永远在。
+     */
     @Test
-    @DisplayName("AI 助手与知识页的内容包裹要按视口填满（min-height:calc(100vh…)）")
+    @DisplayName("AI 助手与知识页的内容包裹要定高等于视口（height:calc(100vh…)）")
     void 两页都按视口填满高度() throws IOException {
         for (String page : new String[]{"ai-assistant.html", "knowledge-wiki.html"}) {
             String html = Files.readString(STATIC.resolve(page), StandardCharsets.UTF_8);
-            assertTrue(html.contains("min-height:calc(100vh"),
-                    page + " 的内容包裹没有按视口填满高度（缺 min-height:calc(100vh…）—— "
+            assertTrue(html.contains("height:calc(100vh"),
+                    page + " 的内容包裹没有按视口定高（缺 height:calc(100vh…）—— "
                             + "面板会退回随内容收缩，大屏上大片留白。");
+            assertFalse(html.contains("min-height:calc(100vh"),
+                    page + " 用的是 min-height:calc(100vh…。内容略高于视口时整页会外层滚动，"
+                            + "而侧栏收起后的展开箭头在竖条顶端，一滚就够不到 —— 必须是 height。");
         }
     }
 
