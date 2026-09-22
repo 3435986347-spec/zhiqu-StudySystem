@@ -85,6 +85,16 @@ class DesktopPackagingTest {
      * Swift 的 {@code //} 同理。这两个脚本里没有行尾注释，所以够用。
      */
     @Test
+    @DisplayName("Windows 打包脚本也要关 headless —— 否则任务栏图标 / 窗口出不来")
+    void Windows脚本要关headless() throws IOException {
+        String ps1 = read(Path.of("..", "deploy", "desktop", "package-windows.ps1"));
+        assertTrue(ps1.contains("jpackage"), "扫到的不是 Windows 打包脚本 —— 空扫会假绿");
+        assertTrue(ps1.contains("-Djava.awt.headless=false"),
+                "package-windows.ps1 没关 headless。和 macOS jpackage 版同一个坑：headless 的 "
+                        + "JVM 不连桌面环境，Windows 上任务栏图标 / 窗口行为会不对。");
+    }
+
+    @Test
     @DisplayName("桌面 profile 必须用固定端口 —— 随机端口会让「记住登录」每次失效")
     void 桌面必须固定端口() throws IOException {
         String yml = Files.readString(

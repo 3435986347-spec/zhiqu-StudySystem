@@ -20,12 +20,29 @@
 
 ## 打包
 
+**macOS —— 原生应用（推荐）**：Swift + WKWebView 外壳，无边框窗口铺满，不弹浏览器、不弹跳
+Dock 图标、带「知」字图标。产出 `.app` 和拖拽安装的 `.dmg`（约 126MB / 103MB）。
+
 ```bash
-deploy/desktop/package-macos.sh          # 产出 build/desktop/知趣象限-1.0.0.dmg
-deploy/desktop/package-macos.sh 1.2.0    # 指定版本号
+deploy/desktop/package-macos-native.sh          # → build/desktop-native/{知趣象限.app, 知趣象限-1.0.0.dmg}
+deploy/desktop/package-macos-native.sh 1.2.0
 ```
 
-产物约 119MB（含一份 JRE）。Windows 版把 `--type dmg` 换成 `--type msi`，在 Windows 上跑同一套参数。
+> `deploy/desktop/package-macos.sh` 是旧的 jpackage 版，双击后**弹系统浏览器**。留着做对照，
+> 新分发用上面那个原生版。
+
+**Windows —— `.exe`**：只能在 Windows 上打（jpackage 不做跨平台，macOS 上打不出 .exe）。
+在那台 Windows 机器上，装好 JDK 17（Temurin）并设好 `JAVA_HOME`，然后：
+
+```powershell
+cd deploy\desktop
+.\package-windows.ps1            # 版本默认 1.0.0
+```
+
+装了 WiX Toolset 就出单文件安装程序 `知趣象限-1.0.0.exe`；没装则出一个免安装目录，
+里面的 `知趣象限.exe` 双击即运行。Windows 版双击后在**默认浏览器**里打开界面 —— 要做成
+和 macOS 一样的无边框原生窗口需要 WebView2 外壳（C#），单独做。固定端口（记住登录）、
+headless、图标这些修复 Windows 版都有。
 
 ## 用户配置：`~/.zhiqu/application.yml`
 

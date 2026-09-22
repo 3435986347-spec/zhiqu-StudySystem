@@ -103,13 +103,26 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> 6/6 签名（ad-hoc）"
+echo "==> 6/7 签名（ad-hoc）"
 # ad-hoc 签名够本机和「右键→打开」用。要给别人分发得用 Developer ID 并公证，
 # 否则对方会看到「已损坏，无法打开」—— 那句话和损坏没关系，是 Gatekeeper 的措辞。
 codesign --force --deep --sign - "$APP" 2>&1 | grep -v "replacing existing signature" || true
 
+echo "==> 7/7 打包成 .dmg（拖拽安装）"
+# 标准的拖拽安装 dmg：一个 .app + 一个指向 /Applications 的软链，用户拖过去即安装。
+DMG="$OUT/$NAME-$VERSION.dmg"
+STAGE="$OUT/dmg-stage"
+rm -rf "$STAGE"; mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+rm -f "$DMG"
+hdiutil create -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+rm -rf "$STAGE"
+echo "    $(basename "$DMG")  $(du -h "$DMG" | cut -f1)"
+
 echo
-echo "完成：$APP"
-echo "体积：$(du -sh "$APP" | cut -f1)"
+echo "完成："
+echo "  应用：$APP  （$(du -sh "$APP" | cut -f1)）"
+echo "  安装包：$DMG"
 echo
 echo "试跑：  open '$APP'"
