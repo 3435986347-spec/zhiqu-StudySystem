@@ -11,6 +11,13 @@ Windows Server + Spring Boot JAR + MySQL 8 + Redis + Caddy + WinSW
 语义检索（RAG）为**可选**组件：额外多一个本地 Python sidecar（`rag-service`，监听 `127.0.0.1:8001`）。
 不安装时系统自动回退到关键词检索，其余功能不受影响。
 
+## 安全：密钥泄漏与轮换
+
+**如果这个仓库曾经公开过**（本项目 2026-07 至 2026-09 期间有真实密钥进过公开仓库），
+按 **[security-rotate-secrets.md](security-rotate-secrets.md)** 轮换 `jwt.secret`、
+数据库口令、Tavily key，以及（用专门工具）`app.crypto.master-key`。
+`NoCommittedSecretsTest` 会拦住真密钥再次进仓库。
+
 ## 目录结构
 
 ```text
