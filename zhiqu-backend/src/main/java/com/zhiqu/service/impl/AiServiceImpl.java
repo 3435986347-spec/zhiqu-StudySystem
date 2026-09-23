@@ -4066,6 +4066,10 @@ public class AiServiceImpl implements AiService {
         row.put("lastProbeAt", model.getLastProbeAt());
         row.put("enabled", model.getEnabled() != null && model.getEnabled() == 1);
         row.put("isDefault", model.getIsDefault() != null && model.getIsDefault() == 1);
+        // coding agent、Wiki 工具、计划落库都要工具调用。不支持的模型（Ollama / Gemini）选上之后
+        // 这些能力会<b>静默</b>不运行 —— 客户端据此提前说出来。判定只在 supportsToolCalling 一处，
+        // 客户端不许按 providerType 自己再猜一遍（那是第二份真相）。
+        row.put("toolCalling", provider.supportsToolCalling(model));
         row.put("label", displayName + (system ? "（系统）" : "（我的）"));
         row.put("createdAt", model.getCreatedAt());
         row.put("updatedAt", model.getUpdatedAt());

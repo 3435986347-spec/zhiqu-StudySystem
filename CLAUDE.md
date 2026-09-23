@@ -256,6 +256,11 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
   按端口或进程名去杀会误伤图形界面起的那个。
 - 密码用 `Console.readPassword` 读，不是交互终端就拒绝（从管道读密码的脚本迟早把它写进日志）；
   落盘的只有令牌，`~/.zhiqu/cli-token`，600 权限。
+- **模型不单独配置**：不指定时后端用用户的默认模型（再退到系统模型），`--model` / `/model <id>` 只对本次会话生效。
+  `GET /api/ai/models` 返回的是对象 `{systemModels, userModels, defaultModelId}` —— 第一版 `/model`
+  把它当数组遍历，列出来是空白（`CliModels` 照网页的 `normalizeModelList` 拍平）。模型信息带
+  `toolCalling`（由 `supportsToolCalling` 一处给出）：选了 Ollama / Gemini 这类不支持工具调用的模型，
+  coding agent **静默**不运行，所以启动和切换时都要明说；CLI 不许按 providerType 自己再猜一遍。
 - User-Agent 是 `ZhiquCLI/…`（`CliUserAgent`），登录设备列表显示「命令行」。
   `LoginDeviceLabelTest` 把 CLI 的**真实** UA 喂给前端的 `shortUA` —— 判的是一对，
   不是两边各写死一份样本各自为绿（`NodeRunner.run` 为此多了可变参数）。

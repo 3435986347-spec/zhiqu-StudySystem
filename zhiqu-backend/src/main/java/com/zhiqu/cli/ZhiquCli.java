@@ -126,6 +126,9 @@ public final class ZhiquCli {
                 return 2;
             }
             notebookId = ensureNotebook();
+            if (!announceModel()) {
+                return 2;
+            }
             if (o.prompt != null) {
                 turn(o.prompt);
                 return 0;
@@ -258,21 +261,77 @@ public final class ZhiquCli {
                 }
             }
             case "/model" -> {
+                List<CliModels.Model> models = CliModels.parse(call("GET", "/api/ai/models", null));
                 if (arg.isEmpty()) {
-                    for (JsonNode m : call("GET", "/api/ai/models", null)) {
-                        out.println("  " + m.path("id").asText() + "  " + firstNonEmpty(m.path("label").asText(""),
-                                m.path("displayName").asText(""), m.path("modelName").asText("")));
+                    CliModels.Model now = CliModels.effective(models, modelId);
+                    for (CliModels.Model m : models) {
+                        out.println((now != null && m.id() == now.id() ? paint.green("* ") : "  ") + m.id() + "  "
+                                + describe(m) + (m.toolCalling() ? "" : paint.yellow("  （不支持工具调用）")));
                     }
-                    out.println(paint.dim("当前：" + (modelId == null ? "默认模型" : modelId) + "。/model <id> 切换，/model default 回默认"));
+                    if (models.isEmpty()) {
+                        out.println(paint.yellow("  还没有可用的模型 —— 先在个人中心配置一个"));
+                    }
+                    out.println(paint.dim("/model <id> 切换（只对这次会话有效），/model default 回到默认"));
                 } else {
-                    modelId = "default".equals(arg) ? null : Long.valueOf(arg);
-                    out.println(paint.dim("已切换到 " + (modelId == null ? "默认模型" : "模型 " + modelId)));
+                    Long wanted;
+                    try {
+                        wanted = "default".equals(arg) ? null : Long.valueOf(arg);
+                    } catch (NumberFormatException e) {
+                        out.println(paint.yellow("用法：/model <id> 或 /model default"));
+                        return true;
+                    }
+                    CliModels.Model m = CliModels.effective(models, wanted);
+                    if (m == null) {
+                        // 不校验的话，下一句话发出去才被后端拒 —— 那时用户已经在等回答了
+                        out.println(paint.red("没有 id 为 " + arg + " 的可用模型（/model 查看列表）"));
+                    } else {
+                        modelId = wanted;
+                        out.println(paint.dim("已切换到 ") + describe(m));
+                        warnIfNoToolCalling(m);
+                    }
                 }
             }
             case "/drafts" -> reviewDrafts(null);
             default -> out.println(paint.yellow("不认识的命令：" + parts[0] + "（/help 查看）"));
         }
         return true;
+    }
+
+    /**
+     * 启动时说清这一轮用的是哪个模型，并在它不支持工具调用时明说。
+     *
+     * <p>coding agent 需要工具调用（读文件、写草稿、跑命令都是工具）。Ollama / Gemini 不支持时，
+     * 后端连 CODE_AGENT 节点都不会造 —— 用户看到的是一个只会聊天、说「我没法读你的文件」的助手，
+     * 而没有任何一处告诉他为什么。{@code toolCalling} 由后端给出，这里只负责说出来。
+     *
+     * @return false 表示 {@code --model} 指定的 id 不存在，应当退出
+     */
+    private boolean announceModel() throws IOException, InterruptedException {
+        List<CliModels.Model> models = CliModels.parse(call("GET", "/api/ai/models", null));
+        CliModels.Model m = CliModels.effective(models, modelId);
+        if (m == null && modelId != null) {
+            out.println(paint.red("✗ 没有 id 为 " + modelId + " 的可用模型。去掉 --model 用默认模型，或进会话后 /model 查看列表。"));
+            return false;
+        }
+        if (m == null) {
+            out.println(paint.yellow("还没有可用的模型：先在个人中心（网页或桌面应用）配置一个，再回来用 zhiqu。"));
+            return true;
+        }
+        out.println(paint.dim("模型：") + describe(m) + paint.dim(modelId == null ? "（默认）" : ""));
+        warnIfNoToolCalling(m);
+        return true;
+    }
+
+    private static String describe(CliModels.Model m) {
+        return m.label() + (m.modelName().isEmpty() || m.modelName().equals(m.label()) ? "" : "（" + m.modelName() + "）")
+                + (m.system() ? " · 系统" : "");
+    }
+
+    private void warnIfNoToolCalling(CliModels.Model m) {
+        if (!m.toolCalling()) {
+            out.println(paint.yellow("⚠ 这个模型不支持工具调用：coding agent 不会读写你的代码、也不会跑命令，只能聊天。"
+                    + "换一个 OpenAI 兼容或 Anthropic 的模型（/model）。"));
+        }
     }
 
     private void turn(String message) throws IOException, InterruptedException {
