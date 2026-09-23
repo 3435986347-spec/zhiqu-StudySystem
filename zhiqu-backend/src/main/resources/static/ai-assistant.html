@@ -9,11 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260923-workspace-toggle" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260923-workspace-toggle">
-  <link rel="manifest" href="manifest.json?v=20260923-workspace-toggle">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260923-code-toggle" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260923-code-toggle">
+  <link rel="manifest" href="manifest.json?v=20260923-code-toggle">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260923-workspace-toggle">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260923-code-toggle">
 </head>
 <body>
   <div class="zq-app">
@@ -96,6 +96,9 @@
                   <!-- textarea 而不是 input：单独回车要能换行，而 input 装不下换行符。
                        单行时高度 6+18+6+2=32px，与同排按钮对齐；输入变长由 JS 自适应到 120px 封顶。 -->
                   <textarea id="zq-draft" rows="1" placeholder="输入消息，⌘/Ctrl + 回车发送，回车换行..." style="flex:1;min-width:200px;height:32px;max-height:120px;padding:6px 12px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-input-bg);color:var(--zq-text);font-size:13px;line-height:18px;font-family:inherit;resize:none;overflow-y:auto;"></textarea>
+                  <!-- 「代码」：显式让 coding agent 在工作区里干活（读、写草稿、运行）。只在工作区生效时出现，
+                       由 zhiqu-api.js 的 loadWorkspace 决定。按下后这一轮不再靠关键词猜 —— 见 ContextOptionKeys.CODE_MODE。 -->
+                  <button id="zq-code" class="zq-btn-ghost" aria-pressed="false" hidden title="让 AI 直接在代码工作区里读、写（草稿确认后落盘）、运行" style="height:32px;padding:0 11px;font-size:12px;">代码</button>
                   <button id="zq-web" class="zq-btn-ghost" aria-pressed="false" style="height:32px;padding:0 11px;font-size:12px;">联网</button>
                   <button id="zq-think" class="zq-btn-ghost" aria-pressed="false" style="height:32px;padding:0 11px;font-size:12px;">深度思考</button>
                   <select id="zq-model" class="zq-select" style="height:32px;max-width:150px;min-width:0;flex:0 1 150px;font-size:12px;"><option value="">默认模型</option></select>
@@ -122,7 +125,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260923-workspace-toggle"></script>
-  <script src="assets/zhiqu-api.js?v=20260923-workspace-toggle"></script>
+  <script src="assets/zhiqu-ui.js?v=20260923-code-toggle"></script>
+  <script src="assets/zhiqu-api.js?v=20260923-code-toggle"></script>
 </body>
 </html>

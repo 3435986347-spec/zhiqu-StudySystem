@@ -233,7 +233,7 @@ public record AgentPlanDecision(
                 // 三个条件缺一不可。workspaceReadable 来自执行侧（WorkspaceAccess 的生效档位）——
                 // 工作区没开时造出这个节点，就是一个结构上跑不了的幽灵节点，
                 // 而那正是 AgentGraphOrderDerivationTest 在防的形状。
-                codeAgentIntent(message) && toolCallingSupported && workspaceReadable,
+                codeAgentIntent(message, options) && toolCallingSupported && workspaceReadable,
                 // 没检索就没有引用可核 —— 与 needsRetriever 同条件，不另起一个会漂的门
                 needsRetriever,
                 historyFull
@@ -366,7 +366,110 @@ public record AgentPlanDecision(
      * 它们一个依赖模型配置、一个依赖用户身份，不属于「这句话想干什么」。
      */
     public static boolean codeAgentIntent(String message) {
-        return codeIntent(message) || practiceIntent(message) || projectIntent(message);
+        return codeIntent(message) || practiceIntent(message) || projectIntent(message) || buildIntent(message);
+    }
+
+    /**
+     * 同上，再加上用户<b>显式</b>按下的「代码」开关。建图侧与执行侧都调这一个。
+     *
+     * <p>开关与关键词是 OR，不是替代：没按按钮时关键词门照常工作。
+     */
+    public static boolean codeAgentIntent(String message, Map<String, Object> contextOptions) {
+        return codeModeRequested(contextOptions) || codeAgentIntent(message);
+    }
+
+    /**
+     * 用户按下了「代码」按钮 —— 只认字面 {@code true}。
+     *
+     * <p>{@code "true"} 字符串、{@code 1} 都不算：这个键决定要不要把改文件的工具交给模型，
+     * 认错一个值的代价是用户没要的写权限。
+     */
+    public static boolean codeModeRequested(Map<String, Object> contextOptions) {
+        return contextOptions != null && Boolean.TRUE.equals(contextOptions.get(ContextOptionKeys.CODE_MODE));
+    }
+
+    /**
+     * 「造一个东西」的动词 —— 做 / 写 / 生成 + 一个。
+     *
+     * <p>2026-09-23 实测漏掉的原话是「帮我做一个小游戏，放在test文件夹里」：
+     * 「做」不在 {@link #CODE_ACTION_WORDS} 里，「游戏」不在 {@link #CODE_MENTION_WORDS} 里。
+     * 单独的「做」太泛（「做题」「做计划」），所以要求带量词「一个 / 个」，再配一个成品名词。
+     */
+    private static final List<String> BUILD_VERB_WORDS = List.of(
+            "做一个", "做个", "写一个", "写个", "生成一个", "创建一个", "新建一个",
+            "搭一个", "开发一个", "整一个", "弄一个", "实现一个");
+
+    /**
+     * 成品名词：说出来就是一个要写成代码的东西。
+     *
+     * <p>刻意<b>不收</b>：「页面」（「写一个知识页面」是 Wiki）、「应用」（「做一个应用题」是解题）、
+     * 「表格」（多半是学习计划表）。每一个都实测过会把非代码的话拉进来。
+     */
+    private static final List<String> BUILD_OBJECT_WORDS = List.of(
+            "游戏", "网页", "网站", "程序", "脚本", "小工具", "命令行工具", "计算器", "爬虫", "插件",
+            "贪吃蛇", "俄罗斯方块", "扫雷", "五子棋", "番茄钟", "demo", "html", "app", "readme", "helloworld");
+
+    /**
+     * 语言名：「用 JS 做一个时钟」没有成品名词，但说了用什么语言写 —— 那就是代码。
+     *
+     * <p>不直接复用 {@link #CODE_MENTION_WORDS}：那里有「项目」「方法」「类」「接口」，
+     * 「做一个项目计划」「写一个学习方法」会被拉进来。这里只收语言本身。
+     * 「go」「ts」「c」太短，会命中 google / tests / 任何英文，所以只收带后缀的写法。
+     */
+    private static final List<String> BUILD_LANGUAGE_WORDS = List.of(
+            "python", "java", "javascript", "js", "typescript", "html", "css", "c++", "c语言",
+            "golang", "go语言", "rust", "sql", "shell", "bash");
+
+    /** 「放进文件夹」那一支用的动词 —— 比 {@link #BUILD_VERB_WORDS} 宽，因为落点已经说明是文件。 */
+    private static final List<String> PLACE_VERB_WORDS = List.of("做", "写", "生成", "创建", "新建");
+
+    /**
+     * 「放进某个文件夹」—— 说明要落到磁盘上，只可能是工作区。
+     *
+     * <p>不收「存在」：它更常见的意思是「有」（「目录里存在的问题」）。
+     * 文件夹词不收裸的「目录」：「写到复习目录里」说的是笔记的目录。两条都是实测误伤过的。
+     */
+    private static final List<String> PLACE_WORDS = List.of(
+            "放在", "放到", "放进", "存到", "保存到", "写到", "写进");
+    private static final List<String> FOLDER_WORDS = List.of("文件夹", "工作区", "根目录", "子目录", "目录下");
+
+    /**
+     * 学习产物词：出现它们时，「造 + 语言 / 算法」说的是学习安排，不是代码。
+     *
+     * <p>「帮我做一个 python 学习计划」「写一个 java 学习路线」实测会被拉进来 ——
+     * 语言名在这里是学习的<b>对象</b>，不是写代码用的<b>工具</b>。成品名词那一支不受它影响：
+     * 「写个 python 脚本管理学习计划」照样是代码。
+     */
+    private static final List<String> STUDY_ARTIFACT_WORDS = List.of(
+            "计划", "安排", "大纲", "路线", "笔记", "总结", "提纲", "复习");
+
+    /**
+     * 「这句话是在让它造一个东西吗」—— 第五道门，汇入 {@link #codeAgentIntent} 与 {@link #codeWriteIntent}。
+     *
+     * <p>两种说法任一成立：造 + 成品名词（「写个贪吃蛇」），或者造 + 放进文件夹
+     * （「生成一个 xx 放到工作区」）。后者没有成品名词也够了 —— 要落进文件夹的东西就是文件。
+     *
+     * <p>「游戏化」先剔掉再匹配：「做一个游戏化的复习方案」说的是学习方法，不是游戏。
+     */
+    public static boolean buildIntent(String message) {
+        String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "").replace("游戏化", "");
+        // 「生成一段代码放到工作区」：落点说了是文件夹，动词放宽 —— 要落进文件夹的东西就是文件。
+        // 仍然要有一个「造」的动词：「把这份笔记放在复习文件夹里」只是在整理，不是在造。
+        if (PLACE_WORDS.stream().anyMatch(text::contains) && FOLDER_WORDS.stream().anyMatch(text::contains)
+                && PLACE_VERB_WORDS.stream().anyMatch(text::contains)) {
+            return true;
+        }
+        if (BUILD_VERB_WORDS.stream().noneMatch(text::contains)) {
+            return false;
+        }
+        // 造 + 成品（「写个贪吃蛇」）/ 造 + 语言（「用 JS 做一个时钟」）/ 造 + 算法（「实现一个二分查找」）
+        if (BUILD_OBJECT_WORDS.stream().anyMatch(text::contains)) {
+            return true;
+        }
+        boolean aboutStudyArtifact = STUDY_ARTIFACT_WORDS.stream().anyMatch(text::contains);
+        return !aboutStudyArtifact
+                && (BUILD_LANGUAGE_WORDS.stream().anyMatch(text::contains)
+                    || PRACTICE_SUBJECT_WORDS.stream().anyMatch(text::contains));
     }
 
 
@@ -397,9 +500,17 @@ public record AgentPlanDecision(
             return true;
         }
         // 刷题与项目式引导本身就要写文件：题目、测试用例、里程碑的脚手架
-        // 都得落到工作区里他才跑得了。仍然是草稿优先 —— 写工具产出的是 CODE_DRAFT，
-        // 他看过 diff 才落盘。
-        return practiceIntent(message) || projectIntent(message);
+        // 都得落到工作区里他才跑得了。「造一个东西」同理 —— 造出来的就是文件。
+        // 仍然是草稿优先：写工具产出的是 CODE_DRAFT，他看过 diff 才落盘。
+        return practiceIntent(message) || projectIntent(message) || buildIntent(message);
+    }
+
+    /**
+     * 同上，再加上「代码」开关。按下开关就是明说「这一轮让你动手」——
+     * 写工具照样只产出草稿，要他看过 diff 点确认才落盘，所以这里不再二次猜他想不想写。
+     */
+    public static boolean codeWriteIntent(String message, Map<String, Object> contextOptions) {
+        return codeModeRequested(contextOptions) || codeWriteIntent(message);
     }
 
     private static boolean containsAny(String message, List<String> words) {

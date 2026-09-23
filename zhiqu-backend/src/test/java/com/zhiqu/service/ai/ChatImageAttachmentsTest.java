@@ -103,7 +103,7 @@ class ChatImageAttachmentsTest {
     }
 
     @Test
-    @DisplayName("空字节 / null 条目被安静跳过，不算进 included")
+    @DisplayName("null 条目跳过；读不到原件的图不算进 included，但必须说给模型")
     void 脏数据不炸() {
         List<LoadedImage> list = new ArrayList<>();
         list.add(null);
@@ -111,6 +111,26 @@ class ChatImageAttachmentsTest {
         list.add(new LoadedImage(2L, "ok.png", new byte[5]));
         Built built = ChatImageAttachments.build("x", list);
         assertEquals(1, built.included());
+    }
+
+    /**
+     * 这条判据以前的名字是「空字节被<b>安静</b>跳过」—— 它把 bug 钉成了期望行为。
+     *
+     * <p>2026-09-23：图片原件没保存下来，读取处 {@code continue} 掉了它，这里又安静跳过，
+     * 于是模型对它一无所知，只回一句「我看不到图片」。用户那边界面明明写着「已附到下一条消息」。
+     * 用户挂了的图，就算读不到，也要让模型知道<b>有这么一张、为什么没给你</b>。
+     */
+    @Test
+    @DisplayName("读不到原件的图要告诉模型「有这张图但读不到」，而不是安静跳过")
+    void 读不到的图必须说给模型() {
+        Built built = ChatImageAttachments.build("这张图里写了什么？",
+                List.of(ChatImageAttachments.unreadable(6L, "粘贴的图片.png")));
+        assertEquals(0, built.included());
+        assertEquals(1, built.skipped().size(), "读不到的图没进 skipped —— 模型不会知道它存在");
+        String text = String.valueOf(built.content().get(0).get("text"));
+        assertTrue(text.contains("粘贴的图片.png") && text.contains("原件读不到"),
+                "给模型的文本里没说这张图读不到：" + text);
+        assertTrue(text.contains("重新上传"), "没告诉模型该让用户怎么办：" + text);
     }
 
     @Test

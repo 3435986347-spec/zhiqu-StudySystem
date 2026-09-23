@@ -56,6 +56,9 @@ import java.util.*;
 
 @Service
 public class AiWorkspaceServiceImpl implements AiWorkspaceService {
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(AiWorkspaceServiceImpl.class);
+
     private static final int CHUNK_SIZE = 2200;
     private static final int CHUNK_OVERLAP = 180;
     private static final int MAX_CONTEXT_CHUNKS = 8;
@@ -303,19 +306,22 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         for (AiNotebookSource source : sources) {
             // 一律经守卫解析：file_path 是库里的字符串，一次坏写入就能让它指向别人的目录，
             // 而那一行在归属上仍然合法 —— 行级校验拦不住它，只有路径守卫能。
+            String name = source.getTitle() == null ? "image" : source.getTitle();
             Path file = validatedSourceFile(userId, source.getFilePath());
-            if (file == null) {
-                continue;
-            }
-            try {
-                byte[] bytes = Files.readAllBytes(file);
-                if (bytes.length > 0) {
-                    loaded.add(new ChatImageAttachments.LoadedImage(source.getId(),
-                            source.getTitle() == null ? "image" : source.getTitle(), bytes));
+            byte[] bytes = null;
+            if (file != null) {
+                try {
+                    bytes = Files.readAllBytes(file);
+                } catch (IOException e) {
+                    log.warn("读取图片原件失败 source={}：{}", source.getId(), e.toString());
                 }
-            } catch (IOException ignored) {
-                // 单张读不出来不该让整轮对话失败；ChatImageAttachments 会把「少了几张」说给模型。
             }
+            // 读不到的也要进列表（bytes 为空），不能 continue 掉 —— ChatImageAttachments.build
+            // 只能说出它<b>收到了</b>的东西。这里原来的注释写着「build 会把少了几张说给模型」，
+            // 但读不到的图在这一步就被丢了，build 根本不知道它存在；模型于是只会说「看不到图」。
+            loaded.add(bytes == null || bytes.length == 0
+                    ? ChatImageAttachments.unreadable(source.getId(), name)
+                    : new ChatImageAttachments.LoadedImage(source.getId(), name, bytes));
         }
         return loaded;
     }
@@ -367,7 +373,18 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         String fileName = file.getOriginalFilename() == null ? "未命名文件" : file.getOriginalFilename();
         AiNotebookSource source = createSourceShell(userId, resolvedNotebookId, inferSourceType(file.getContentType(), fileName),
                 limit(fileName, 180), null, null);
-        // 原件落盘（私有目录），供后续下载；落盘失败不影响解析，下载会回退为导出解析文本
+        // 原件落盘（私有目录），供下载与视觉读取。
+        //
+        // 落盘失败时两类资料的后果不一样，不能一视同仁：
+        //   - 文本类（PDF / 文档）：文本已经从上传流里抽出来了，问答照常可用，
+        //     只是下载原件会回落为「导出解析文本」—— 降级，不是坏掉。
+        //   - 图片：没有任何文本可回退，原件就是它的全部内容。落盘失败 = 这份资料不可用。
+        //
+        // 这里原来是 `catch (Exception ignored) {}`，而下面对图片照样标 UPLOADED ——
+        // 2026-09-23 桌面版就这样出过事：应用从 Finder 启动时工作目录是 /，相对路径
+        // private-uploads 解析成只读的 /private-uploads，每一次写都失败、每一次都被吞掉。界面显示
+        // 「图片已附到下一条消息」，库里 file_path 是 NULL，模型读不到、下载也没有。
+        String storeError = null;
         try {
             // 落盘目录与读取校验用同一处定义：两边各写一遍 "ai-sources" 的话，
             // 改其中一个就会让所有已落盘的原件全部读不出来（校验永远不匹配），
@@ -378,10 +395,22 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
             source.setFilePath(target.toString());
             sourceMapper.updateById(source);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            storeError = e.getClass().getSimpleName() + ": " + e.getMessage();
+            // 至少要说出来 —— 这一行日志当时要是在，这个 bug 第一次就能定位
+            log.warn("资料原件落盘失败 source={} uploadRoot={}：{}", source.getId(), privateUploadRoot(), storeError);
         }
         if ("IMAGE".equals(source.getSourceType())) {
-            // 图片只存档原件，不做内容解析（无分块 → 不进问答上下文），状态停留在"已上传"
+            if (storeError != null) {
+                // 图片落盘失败就是不可用 —— 标 ERROR 并说清原因，前端据此计入「失败」，
+                // 不会再把它当成已附上的图片挂到消息上（那就是用户看到的「幽灵附件」）。
+                source.setStatus("ERROR");
+                source.setParseError(limit("图片原件保存失败，无法交给模型识别：" + storeError, 1000));
+                source.setIndexStatus("NOT_INDEXED");
+                sourceMapper.updateById(source);
+                return sourceRow(sourceMapper.selectById(source.getId()));
+            }
+            // 图片只存档原件，不做内容解析（无分块 → 不进检索），问答时作为视觉内容块直接交给模型
             source.setStatus("UPLOADED");
             source.setParseError(null);
             source.setIndexStatus("NOT_INDEXED");

@@ -31,8 +31,17 @@ public final class ChatImageAttachments {
      * <p>{@code sourceId} 不是给模型用的，是给<b>校验器</b>用的：VERIFIER 有一条
      * 「用户选了资料却零证据 → 中止本轮」的规则，而图片天然产生不了检索证据（它没有分块）。
      * 不把图片的 id 从那条判定里排除，只挂一张图就会把整轮对话掐掉。
+     *
+     * <p>{@code bytes == null} 表示<b>用户挂了这张图、但原件读不到</b>。它照样要进列表，
+     * 不能在读取处 {@code continue} 掉：那样模型对它一无所知，只会说「我没看到图片」，
+     * 而用户明明看见界面写着「已附到下一条消息」。见 {@link #unreadable}。
      */
     public record LoadedImage(Long sourceId, String fileName, byte[] bytes) {
+    }
+
+    /** 用户挂了、但原件读不到的一张图。{@link #build} 会把它说给模型。 */
+    public static LoadedImage unreadable(Long sourceId, String fileName) {
+        return new LoadedImage(sourceId, fileName, null);
     }
 
     /** 拼装结果：内容块，以及要不要告诉用户有东西被跳过。 */
@@ -77,7 +86,13 @@ public final class ChatImageAttachments {
         long total = 0;
 
         for (LoadedImage image : images == null ? List.<LoadedImage>of() : images) {
-            if (image == null || image.bytes() == null || image.bytes().length == 0) {
+            if (image == null) {
+                continue;
+            }
+            if (image.bytes() == null || image.bytes().length == 0) {
+                // 原件读不到（落盘失败、被删、路径守卫拒绝）。说出来，而且说清该怎么办 ——
+                // 2026-09-23 之前这里静默跳过，模型只会回一句「我看不到图片」，没人知道为什么。
+                skipped.add(image.fileName() + "（原件读不到，需要重新上传）");
                 continue;
             }
             if (included >= MAX_IMAGES) {

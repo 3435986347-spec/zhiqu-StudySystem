@@ -2497,7 +2497,12 @@
   async function bootAiAssistant() {
     setAiToggleState('web', false);
     setAiToggleState('think', false);
+    var codeRemembered = false;
+    try { codeRemembered = localStorage.getItem('zq.codeMode') === '1'; } catch (e) { /* 隐私模式 */ }
+    setAiToggleState('code', codeRemembered);
     var webBtn = $('#zq-web'), thinkBtn = $('#zq-think'), sendBtn = $('#zq-send'), draft = $('#zq-draft');
+    var codeBtn = $('#zq-code');
+    if (codeBtn) codeBtn.onclick = function () { aiToggle('code'); };
     if (webBtn) webBtn.onclick = function () { aiToggle('web'); };
     if (thinkBtn) thinkBtn.onclick = function () { aiToggle('think'); };
     if (sendBtn) sendBtn.onclick = sendAiMessage;
@@ -2580,8 +2585,9 @@
     input.click();
   }
 
+  var AI_TOGGLE_IDS = { web: 'zq-web', think: 'zq-think', code: 'zq-code' };
   function setAiToggleState(kind, on) {
-    var button = document.getElementById(kind === 'web' ? 'zq-web' : 'zq-think');
+    var button = document.getElementById(AI_TOGGLE_IDS[kind]);
     if (!button) return;
     button.dataset.on = on ? '1' : '0';
     button.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -2592,9 +2598,19 @@
   }
 
   function aiToggle(k) {
-    var button = document.getElementById(k === 'web' ? 'zq-web' : 'zq-think');
+    var button = document.getElementById(AI_TOGGLE_IDS[k]);
     if (!button) return;
     setAiToggleState(k, button.dataset.on !== '1');
+    // 「代码」开关要记住：进了写代码的状态，一般会连着说好几轮，每次都重按是折磨。
+    // 联网 / 深度思考不记 —— 它们按轮计费或变慢，默认关着更稳妥。
+    if (k === 'code') {
+      try { localStorage.setItem('zq.codeMode', button.dataset.on === '1' ? '1' : '0'); } catch (e) { /* 隐私模式 */ }
+    }
+  }
+  /** 「代码」开关此刻是否生效：按钮可见（工作区生效）且按下。隐藏时即使按下过也不算。 */
+  function codeModeOn() {
+    var b = $('#zq-code');
+    return !!(b && !b.hidden && b.dataset.on === '1');
   }
 
   function setAiDropState(text, mode) {
@@ -2705,7 +2721,7 @@
     var list = Array.prototype.slice.call(files || []).filter(Boolean);
     if (!list.length) return;
     setAiDropState('正在上传 0 / ' + list.length + '…', 'uploading');
-    var readyCount = 0, archiveCount = 0, errorCount = 0, imageCount = 0;
+    var readyCount = 0, archiveCount = 0, errorCount = 0, imageCount = 0, firstError = '';
     for (var i = 0; i < list.length; i++) {
       setAiDropState('正在上传 ' + (i + 1) + ' / ' + list.length + '：' + list[i].name, 'uploading');
       try {
@@ -2726,9 +2742,13 @@
           }
         } else {
           errorCount++;
+          // 失败要说出原因。只报「1 份失败」的话，图片原件没保存下来这种事
+          // 看起来跟「文件格式不对」一模一样，用户没法判断该重试还是该换文件。
+          if (!firstError && source && source.parseError) firstError = String(source.parseError);
         }
       } catch (error) {
         errorCount++;
+        if (!firstError && error && error.message) firstError = String(error.message);
       }
     }
     if (notebookId === state.notebookId) {
@@ -2739,7 +2759,8 @@
     if (archiveCount - imageCount > 0) summary += '，' + (archiveCount - imageCount) + ' 份仅存档';
     if (errorCount) summary += '，' + errorCount + ' 份失败';
     setAiDropState(summary, errorCount && !readyCount ? 'error' : 'done');
-    toast('上传完成：' + summary, errorCount && !readyCount ? 'error' : undefined);
+    toast('上传完成：' + summary + (firstError ? '（' + firstError + '）' : ''),
+      errorCount && !(readyCount || imageCount) ? 'error' : undefined);
   }
   async function loadAiModelSelect() {
     var sel = $('#zq-model'); if (!sel) return;
@@ -3738,7 +3759,14 @@
     };
     return map[t] || [t || '资料', '#6b7280'];
   }
-  function srcStatusLabel(s) {
+  function srcStatusLabel(s, sourceType) {
+    // 图片不做文本解析，UPLOADED 就是它的正常终态 —— 而它是作为视觉内容交给模型的，
+    // 写「仅存档，暂未进入问答」会让人以为图片没用、模型看不到。
+    if (String(sourceType || '').toUpperCase() === 'IMAGE') {
+      var st = String(s || '').toUpperCase();
+      if (st === 'UPLOADED') return '图片，勾选后随消息交给模型';
+      if (st === 'ERROR') return '图片不可用';
+    }
     return ({
       READY: '已解析，可用于问答',
       PARSING: '正在解析，暂不可用',
@@ -3809,14 +3837,14 @@
       var title = s.title || s.url || '资料';
       var status = String(s.status || '').toUpperCase();
       var indexText = srcIndexStatusLabel(s);
-      var statusText = srcStatusLabel(status) + (status === 'ERROR' && s.parseError ? '：' + s.parseError : '')
+      var statusText = srcStatusLabel(status, s.sourceType) + (status === 'ERROR' && s.parseError ? '：' + s.parseError : '')
         + (indexText ? ' · ' + indexText : '');
       return '<div class="zq-src-tile" data-source="' + s.id + '" data-source-title="' + esc(title) + '" data-source-url="' + esc(s.url || '') + '" style="--srcc:' + info[1] + ';" title="' + esc(statusText) + '">'
         + '<span class="zq-src-type">' + esc(info[0]) + '</span>'
         + '<span class="zq-src-dl">↓</span>'
         + '<div class="zq-src-glass">'
         + '<div class="zq-src-title">' + esc(title) + '</div>'
-        + '<div class="zq-src-meta"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (status === 'READY' ? 'var(--zq-ok)' : status === 'ERROR' ? 'var(--zq-bad)' : 'var(--zq-text3)') + ';"></span><span>' + esc(srcStatusLabel(status)) + '</span></div>'
+        + '<div class="zq-src-meta"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (status === 'READY' ? 'var(--zq-ok)' : status === 'ERROR' ? 'var(--zq-bad)' : 'var(--zq-text3)') + ';"></span><span>' + esc(srcStatusLabel(status, s.sourceType)) + '</span></div>'
         + (indexText ? '<div class="zq-src-meta" style="margin-top:4px;"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (String(s.indexStatus || '').toUpperCase() === 'INDEXED' ? 'var(--zq-primary)' : String(s.indexStatus || '').toUpperCase() === 'ERROR' ? 'var(--zq-warn)' : 'var(--zq-text3)') + ';"></span><span>' + esc(indexText) + '</span></div>' : '')
         + '</div></div>';
     }).join('') + '</div>' : empty('暂无资料');
@@ -3941,7 +3969,8 @@
       agentMode: 'AUTO',
       contextOptions: {
         includeWiki: true,
-        selectedSourceIds: selectedSourceIds
+        selectedSourceIds: selectedSourceIds,
+        codeMode: codeModeOn()
       }
     };
     // SSE 回调期间用户可能切换 notebook:快照发送时的 id,不再渲染/改写新窗口的全局流式状态
@@ -4326,6 +4355,10 @@
     if (gear) gear.onclick = function () { openWorkspaceSettings(status); };
 
     wsState.enabled = !!(status && status.enabled);
+    // 「代码」按钮只在工作区真的生效时出现。没生效时按了也没用 —— 后端会因为工作区不可读
+    // 而不造 CODE_AGENT 节点，按钮却亮着，那是在骗人。
+    var codeToggle = $('#zq-code');
+    if (codeToggle) codeToggle.hidden = !wsState.enabled;
     if (!wsState.enabled) {
       // 没开：显示原因（配了没生效）或一句「点⚙开启」，并把文件树/搜索收起来
       $('#zq-ws-sub').textContent = '未启用';
@@ -4362,6 +4395,25 @@
     await paintWorkspace('');
   }
 
+  /**
+   * 工作区路径那一行：明确画成<b>文件夹</b>。
+   *
+   * <p>原来只印一行 {@code /Users/.../test}，没有图标、结尾没有斜杠，下面紧跟「这个目录是空的」——
+   * 用户看成了「工作区是一个具体的文件」。现在：📁 + 文件夹名 + 「/」，完整路径放在第二行、字小一号。
+   */
+  function paintWorkspacePath() {
+    var el = $('#zq-ws-path'); if (!el) return;
+    // 两种分隔符都认：Windows 上根目录是 C:\code\test，只按「/」切会把整条路径当成文件夹名。
+    var root = String(wsState.root || '').replace(/[\\/]+$/, '');
+    var sep = root.indexOf('\\') >= 0 && root.indexOf('/') < 0 ? '\\' : '/';
+    var rootName = root ? root.slice(Math.max(root.lastIndexOf('/'), root.lastIndexOf('\\')) + 1) : '工作区';
+    var shown = rootName + '/' + (wsState.path ? wsState.path.replace(/\/+$/, '') + '/' : '');
+    el.innerHTML = '<div style="display:flex;align-items:center;gap:5px;color:var(--zq-text2);font-size:12px;font-weight:600;">'
+      + '<span style="flex:none;">📁</span><span style="min-width:0;word-break:break-all;">' + esc(shown) + '</span></div>'
+      + (root ? '<div style="margin-top:2px;font-size:10.5px;color:var(--zq-text3);word-break:break-all;" title="工作文件夹的完整路径">'
+        + esc(root + sep + (wsState.path ? wsState.path.split('/').join(sep) + sep : '')) + '</div>' : '');
+  }
+
   async function paintWorkspace(path) {
     var tree = $('#zq-ws-tree'); if (!tree) return;
     var entries, listTruncated = false;
@@ -4376,7 +4428,7 @@
       return;
     }
     wsState.path = path || '';
-    $('#zq-ws-path').textContent = wsState.path ? wsState.path : (wsState.root || '(根目录)');
+    paintWorkspacePath();
     $('#zq-ws-up').hidden = !wsState.path;
     var backBtn = $('#zq-ws-back');
     if (backBtn) { backBtn.hidden = true; }
@@ -4394,7 +4446,8 @@
         + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(name) + '</span>'
         + (dim ? '<span style="flex:none;font-size:10px;">不可读</span>' : '')
         + '</button>';
-    }).join('') || '<div style="font-size:11.5px;color:var(--zq-text3);padding:4px 6px;">这个目录是空的</div>';
+    }).join('') || '<div style="font-size:11.5px;color:var(--zq-text3);padding:4px 6px;">这个文件夹还是空的'
+      + (wsState.path ? '' : ' —— 按下输入框旁的「代码」，让 AI 在这里新建文件') + '</div>';
     if (listTruncated) {
       tree.innerHTML += '<div style="font-size:10.5px;color:var(--zq-warn);padding:6px;">'
         + '条目过多，只列出了前 ' + (entries || []).length + ' 条 —— 这不是全部</div>';

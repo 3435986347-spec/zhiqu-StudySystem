@@ -27,6 +27,17 @@ spring:
     import: "optional:file:${user.home}/.zhiqu/application.yml"
 
 app:
+  # 必须是绝对路径。application.yml 里是相对的 uploads，服务器上靠启动目录兜底没问题；
+  # 但桌面应用从 Finder / Dock 启动时工作目录是 /（实测 user.dir=/），相对路径解析成
+  # 只读的 /uploads —— 头像、分享计划的附件、AI 资料原件全部写不进去。
+  # 2026-09-23 撞上的样子：⌘V 贴的图显示「已附到下一条消息」，模型却说看不到，
+  # 资料区下载是空的，重进页面就没了。DesktopUploadDirTest 钉着这一条。
+  #
+  # 两个键都要写：upload-dir 管头像 / 分享计划（UploadPathResolver），
+  # private-upload-dir 管 AI 资料原件（AiWorkspaceServiceImpl）—— 贴图走的是后者。
+  # 第一版只改了 upload-dir，头像修好了，贴图照样写不进去。
+  upload-dir: ${user.home}/.zhiqu/uploads
+  private-upload-dir: ${user.home}/.zhiqu/private-uploads
   workspace:
     # 仍然默认关闭 —— 默认值本身就是安全边界。用户在 ~/.zhiqu/application.yml 里
     # 填 mode 和 root 才会打开。

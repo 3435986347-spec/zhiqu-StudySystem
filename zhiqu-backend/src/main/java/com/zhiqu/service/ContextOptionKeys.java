@@ -54,9 +54,19 @@ public final class ContextOptionKeys {
      */
     public static final String QUERY = "query";
 
+    /**
+     * 客户端发：用户按下了输入框旁的「代码」按钮 —— <b>显式</b>要 coding agent 干活。
+     *
+     * <p>由来（2026-09-23）：工作区已经在界面上切到「读+写+运行」，用户说
+     * 「帮我做一个小游戏，放在test文件夹里」，却得到「我无法直接操作你的电脑」。
+     * 关键词门漏了（动作词表里没有「做」，写词表里没有「放在」），图里根本没有 CODE_AGENT。
+     * 词表永远补不全；用户亲手按下的开关不需要猜。只认字面 {@code true}。
+     */
+    public static final String CODE_MODE = "codeMode";
+
     /** 由客户端提供的键 —— 覆盖测试要求活壳里至少有一处在发。 */
     public static final Set<String> CLIENT_SUPPLIED =
-            Set.of(SELECTED_SOURCE_IDS, INCLUDE_WIKI, SELECTED_WIKI_PAGE_IDS);
+            Set.of(SELECTED_SOURCE_IDS, INCLUDE_WIKI, SELECTED_WIKI_PAGE_IDS, CODE_MODE);
 
     /** 由服务端在调用前注入的键 —— 不参与前端覆盖检查。 */
     public static final Set<String> SERVER_INJECTED = Set.of(QUERY);
