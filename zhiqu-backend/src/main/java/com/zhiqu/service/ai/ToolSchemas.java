@@ -37,6 +37,27 @@ public final class ToolSchemas {
         return tool;
     }
 
+    /**
+     * 把模型给的工具参数（一段 JSON）解析成键值表。解析不了返回空表，<b>不抛</b> ——
+     * 参数坏了是模型的事，执行器会按「缺参数」如实回给它，而不是让整个工具循环中断。
+     */
+    public static Map<String, Object> argsOf(com.fasterxml.jackson.databind.ObjectMapper objectMapper, String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Object value = objectMapper.readValue(json, Map.class);
+            if (value instanceof Map<?, ?> map) {
+                Map<String, Object> result = new LinkedHashMap<>();
+                map.forEach((key, v) -> result.put(String.valueOf(key), v));
+                return result;
+            }
+        } catch (Exception ignored) {
+            // 落到下面的空表
+        }
+        return Map.of();
+    }
+
     private ToolSchemas() {
     }
 }

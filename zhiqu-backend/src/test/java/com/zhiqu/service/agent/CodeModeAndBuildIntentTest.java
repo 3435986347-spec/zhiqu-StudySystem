@@ -31,6 +31,9 @@ class CodeModeAndBuildIntentTest {
 
     private static final Path AI_SERVICE =
             Path.of("src", "main", "java", "com", "zhiqu", "service", "impl", "AiServiceImpl.java");
+    /** 拆第五刀之后执行侧的门住在这里 —— 见 CodeAgentGateTest.CODE_AGENT 的说明。 */
+    private static final Path CODE_AGENT =
+            Path.of("src", "main", "java", "com", "zhiqu", "service", "ai", "CodeWorkspaceAgent.java");
 
     private static AgentPlanDecision decide(String message, Map<String, Object> options,
                                             boolean toolCalling, boolean workspaceReadable) {
@@ -129,7 +132,9 @@ class CodeModeAndBuildIntentTest {
     @Test
     @DisplayName("执行侧的读门与写门都要带上 contextOptions，与建图侧同一个表达式")
     void 执行侧必须带上开关() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = SourceText.stripComments(Files.readString(CODE_AGENT, StandardCharsets.UTF_8));
+        String service = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8))
+                .replaceAll("\\s+", " ");
         assertTrue(code.contains("AgentPlanDecision.codeAgentIntent(userMessage, contextOptions)"),
                 "runCodeWorkspaceAgent 的入口门没带 contextOptions —— 按了开关，图里有节点，runner 却返回空");
         int at = code.indexOf("boolean canWrite =");
@@ -137,7 +142,8 @@ class CodeModeAndBuildIntentTest {
         String statement = code.substring(at, code.indexOf(';', at) + 1);
         assertTrue(statement.contains("codeWriteIntent(userMessage, contextOptions)"),
                 "canWrite 没带 contextOptions —— 按了开关却拿不到写工具，模型只会说「复制过去」。实际：" + statement);
-        assertTrue(code.contains("runCodeWorkspaceAgent(s.config, s.userId, s.limitedMessage, s.contextOptions,"),
-                "调用 runCodeWorkspaceAgent 时没把本轮的 contextOptions 传进去");
+        // 调用跨了行，按空白归一化后再找
+        assertTrue(service.contains("codeWorkspaceAgent.run(s.config, s.userId, s.limitedMessage, s.contextOptions,"),
+                "调用 CodeWorkspaceAgent.run 时没把本轮的 contextOptions 传进去");
     }
 }

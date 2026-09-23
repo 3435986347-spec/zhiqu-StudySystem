@@ -34,6 +34,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CodeAgentGateTest {
     private static final Path AI_SERVICE =
             Path.of("src/main/java/com/zhiqu/service/impl/AiServiceImpl.java");
+    /**
+     * 拆第五刀之后 code agent 的循环、工具、执行器都住在这里。
+     *
+     * <p>搬家会让判据扫错文件，而扫错文件的判据看起来和通过一模一样（第二刀踩过）。
+     * 所以每条判据都按「这条性质现在住在哪」读对应的文件；{@code assertFalse} 类的两个文件都查 ——
+     * 只查旧文件的话，代码一搬走它就自动变绿。
+     */
+    private static final Path CODE_AGENT =
+            Path.of("src/main/java/com/zhiqu/service/ai/CodeWorkspaceAgent.java");
+
+    private static String src(Path p) throws IOException {
+        return SourceText.stripComments(Files.readString(p, StandardCharsets.UTF_8));
+    }
 
     private static AgentPlanDecision decide(String message, boolean toolCalling, boolean workspaceReadable) {
         return AgentPlanDecision.of("AUTO", message, false, null, Map.of(),
@@ -112,14 +125,16 @@ class CodeAgentGateTest {
      */
     @Test
     void 实现侧只能调用这道门不能另起一套() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = src(CODE_AGENT);
+        String service = src(AI_SERVICE);
         assertTrue(code.contains("AgentPlanDecision.codeAgentIntent("),
                 "AiServiceImpl 必须调用 codeAgentIntent —— 建图侧用的就是它。"
                         + "执行侧改调别的（比如只判 codeIntent）就会分叉：图里造出 CODE_AGENT 节点，"
                         + "runner 却直接返回空，用户看到一个什么也没做的方块。2026-09-21 真发生过");
-        assertFalse(code.contains("looksCodeIntent") || code.contains("private boolean codeIntent"),
+        assertFalse(code.contains("looksCodeIntent") || code.contains("private boolean codeIntent")
+                        || service.contains("looksCodeIntent") || service.contains("private boolean codeIntent"),
                 "不得在实现侧另写一个代码意图判定 —— 两处各判一次迟早分叉");
-        assertFalse(code.contains("practiceIntent"),
+        assertFalse(code.contains("practiceIntent") || service.contains("practiceIntent"),
                 "「刷题算不算需要 code agent」这个 OR 只能写在 AgentPlanDecision.codeAgentIntent 里。"
                         + "实现侧再拼一次就是第二份真相");
     }
@@ -127,11 +142,12 @@ class CodeAgentGateTest {
     /** 执行侧问的必须是<b>生效档位</b>，不是配置里写的那一档。 */
     @Test
     void 执行侧必须问生效档位() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = src(CODE_AGENT);
+        String service = src(AI_SERVICE);
         assertTrue(code.contains("workspaceService.access().effectiveMode().allowsRead()"),
                 "三个前置有一条不满足时配置写 EXEC 也只能是 OFF —— 必须问 effectiveMode，"
                         + "问 configuredMode 会让工作区在没绑回环时也造出节点");
-        assertFalse(code.contains("workspaceService.access().configuredMode()"),
+        assertFalse(code.contains("configuredMode()") || service.contains("configuredMode()"),
                 "不得用配置档位做权限判断");
     }
 
@@ -152,7 +168,7 @@ class CodeAgentGateTest {
      */
     @Test
     void 声明的工作区工具必须都能执行() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = src(CODE_AGENT);
 
         Set<String> declared = new TreeSet<>();
         Matcher dm = Pattern.compile("functionTool\\(\"(\\w*workspace\\w*)\"").matcher(code);
@@ -201,15 +217,17 @@ class CodeAgentGateTest {
     /** 读意图成立、写意图不成立时，写工具<b>连声明都不能有</b>。 */
     @Test
     void 没有写意图时不得下发写工具() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = src(CODE_AGENT);
+        String service = src(AI_SERVICE);
 
         // 钉的是「canWrite 被传进去」这个性质，不是参数个数 —— 写死整个参数表的话，
         // 加一个无关的新参数（2026-09-21 加 canExec 时就发生了）会让判据红得莫名其妙。
-        assertTrue(code.contains("buildWorkspaceTools(canWrite"),
+        assertTrue(code.contains("buildTools(canWrite"),
                 "工具集必须按写意图分档下发 —— 不下发，模型就不会尝试，也不会承诺自己改了文件");
         assertTrue(code.contains("AgentPlanDecision.codeWriteIntent("),
                 "写意图必须问 AgentPlanDecision 那道唯一的门");
-        assertFalse(code.contains("private boolean codeWriteIntent") || code.contains("looksCodeWriteIntent"),
+        assertFalse(code.contains("private boolean codeWriteIntent") || code.contains("looksCodeWriteIntent")
+                        || service.contains("private boolean codeWriteIntent") || service.contains("looksCodeWriteIntent"),
                 "不得在实现侧另写一套写意图判定 —— 两处各判一次迟早分叉");
 
         // write_workspace_file 的声明必须在 canWrite 分支里，不能无条件加进工具集
@@ -224,7 +242,7 @@ class CodeAgentGateTest {
     /** 磁盘那一侧也要问档位：写意图成立但工作区是只读的，同样不能下发写工具。 */
     @Test
     void 只读档下即使有写意图也不下发写工具() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = src(CODE_AGENT);
         // 只看 canWrite 那一条语句本身。用 code.contains("allowsWrite()") 这种全文匹配的话，
         // 这两个字符串在文件里到处都是，判据永远绿 —— 那是一条不可能红的判据。
         int at = code.indexOf("boolean canWrite =");
@@ -260,10 +278,11 @@ class CodeAgentGateTest {
      */
     @Test
     void 读工作区必须同时要求管理员() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = src(CODE_AGENT);
+        String service = src(AI_SERVICE);
 
-        int at = code.indexOf("private boolean workspaceReadableBy(");
-        assertTrue(at > 0, "找不到 workspaceReadableBy —— 判据的锚点没了，它现在什么都没看到");
+        int at = code.indexOf("public boolean readableBy(");
+        assertTrue(at > 0, "找不到 CodeWorkspaceAgent.readableBy —— 判据的锚点没了，它现在什么都没看到");
         int end = code.indexOf('}', code.indexOf('{', at));
         String body = code.substring(at, end);
 
@@ -274,6 +293,10 @@ class CodeAgentGateTest {
                 "也必须要求生效档位允许读。实际：" + body);
 
         // 两个入口都要走这一个判定，不许其中一个直接问档位
+        assertEquals(0, countOccurrences(service, "effectiveMode().allowsRead()"),
+                "AiServiceImpl 里又出现了一处「工作区能不能读」的判定 —— 它应当只问 codeWorkspaceAgent.readableBy");
+        assertTrue(service.contains("codeWorkspaceAgent.readableBy(userId)"),
+                "建图侧必须问 CodeWorkspaceAgent.readableBy —— 不问的话节点的造与不造和执行侧会分叉");
         assertEquals(1, countOccurrences(code, "effectiveMode().allowsRead()"),
                 "「工作区能不能读」只允许有一处判定（workspaceReadableBy）。"
                         + "多出来的那一处迟早只改一边 —— 本仓库反复在消灭的就是这个物种");
@@ -299,7 +322,7 @@ class CodeAgentGateTest {
      */
     @Test
     void 不允许执行时不得下发执行工具() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = src(CODE_AGENT);
 
         int at = code.indexOf("boolean canExec =");
         assertTrue(at > 0, "找不到 canExec 的赋值 —— 判据的锚点没了");
@@ -341,7 +364,8 @@ class CodeAgentGateTest {
      */
     @Test
     void 判过题之前不得下发写薄弱点的工具() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = src(CODE_AGENT);
+        String service = src(AI_SERVICE);
 
         assertTrue(code.contains("buildWikiTools(loop.ranCommand)"),
                 "Wiki 写工具必须由「本轮跑过判题没有」决定。用关键词近似这个条件，"
@@ -386,7 +410,7 @@ class CodeAgentGateTest {
                 "createPatchSet 只允许有一处调用（executeWikiTool 里那处）。"
                         + "第二处就是绕开「未完整读取不许整页覆盖」的那条路。"
                         + "数到 0 通常意味着判据扫错了文件");
-        assertEquals(0, countOccurrences(code, "createPatchSet("),
+        assertEquals(0, countOccurrences(service, "createPatchSet(") + countOccurrences(code, "createPatchSet("),
                 "AiServiceImpl 里不该再有 createPatchSet —— Wiki 的写入只走 WikiToolAgent 一条路");
     }
 
@@ -476,8 +500,10 @@ class CodeAgentGateTest {
         assertFalse(decide("出道算法题考考我", true, false).needsCodeAgent(),
                 "工作区不可读时仍然不得启用");
 
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
-        assertFalse(code.contains("practiceIntent") && code.contains("PRACTICE_"),
+        String code = src(CODE_AGENT);
+        String service = src(AI_SERVICE);
+        assertFalse((code.contains("practiceIntent") && code.contains("PRACTICE_"))
+                        || (service.contains("practiceIntent") && service.contains("PRACTICE_")),
                 "不得在实现侧另写一套刷题判定 —— 词表只能有一份，在 AgentPlanDecision 里");
     }
 
@@ -559,8 +585,13 @@ class CodeAgentGateTest {
         // 里程碑必须走既有的那条路，不许另建工件类型或直接落库
         assertTrue(code.contains("s.suggestedPlan = codeResult.milestonePlan();"),
                 "里程碑要交给既有的 TASK_DRAFT / ROUTINE_DRAFT 路径");
-        assertFalse(code.contains("\"MILESTONE_DRAFT\""),
+        String agent = src(CODE_AGENT);
+        assertFalse(code.contains("\"MILESTONE_DRAFT\"") || agent.contains("\"MILESTONE_DRAFT\""),
                 "不得新建里程碑专用的工件类型 —— 确认分支、前端弹窗、落库全都要跟着改一遍");
+        // schema 只有一份：code agent 用的是借来的 planning.tools()，自己不许再声明一个 create_study_plan
+        assertTrue(agent.contains("planning.tools()"), "code agent 没用 PLANNER 借给它的 schema");
+        assertFalse(agent.contains("functionTool(\"create_study_plan\""),
+                "CodeWorkspaceAgent 里另写了一份 create_study_plan 声明 —— 两份迟早分叉，落库时静默丢字段");
         assertTrue(code.contains("buildCreateStudyPlanTools()"),
                 "里程碑的 schema 必须复用 create_study_plan，另猜字段名会在落库时静默丢掉"
                         + "象限、时长、截止日期");
@@ -569,17 +600,17 @@ class CodeAgentGateTest {
     /** 只有项目式引导才给「排任务」的能力 —— 别的语境下模型不该往用户日历里塞东西。 */
     @Test
     void 非项目语境不得下发排任务的工具() throws IOException {
-        String code = SourceText.stripComments(Files.readString(AI_SERVICE, StandardCharsets.UTF_8));
+        String code = src(CODE_AGENT);
         int at = code.indexOf("boolean canPlanMilestones =");
         assertTrue(at > 0, "找不到 canPlanMilestones 的赋值 —— 判据的锚点没了");
         String statement = code.substring(at, code.indexOf(';', at) + 1);
         assertTrue(statement.contains("projectIntent("),
                 "canPlanMilestones 必须由 projectIntent 决定。实际：" + statement);
 
-        int declaration = code.indexOf("buildCreateStudyPlanTools()");
+        int declaration = code.indexOf("planning.tools()");
         int gate = code.indexOf("if (canPlanMilestones) {");
         assertTrue(gate > 0, "排任务的工具必须收在 if (canPlanMilestones) 里");
-        assertTrue(code.indexOf("buildCreateStudyPlanTools()", gate) > gate,
+        assertTrue(code.indexOf("planning.tools()", gate) > gate,
                 "工具声明要在门里面；无条件下发的话，用户问「这段代码为什么报错」"
                         + "模型也会顺手往他日历里排一串任务。首个声明位置：" + declaration);
     }

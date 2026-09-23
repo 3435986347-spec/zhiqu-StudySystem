@@ -97,7 +97,11 @@ class CodeToolNarrationTest {
     @Test
     @DisplayName("工具循环：每次调用执行前发 call 叙述，执行后发 result；预算由 CodeLoopBudget 决定")
     void 工具循环接线() throws IOException {
+        // 循环在 CodeWorkspaceAgent（拆第五刀），把叙述发成 SSE 事件的那一行留在 AiServiceImpl 的 runner 里
         String code = SourceText.stripComments(Files.readString(
+                Path.of("src", "main", "java", "com", "zhiqu", "service", "ai", "CodeWorkspaceAgent.java"),
+                StandardCharsets.UTF_8));
+        String service = SourceText.stripComments(Files.readString(
                 Path.of("src", "main", "java", "com", "zhiqu", "service", "impl", "AiServiceImpl.java"),
                 StandardCharsets.UTF_8));
         int loop = code.indexOf("for (JsonNode call : toolCalls)");
@@ -112,7 +116,7 @@ class CodeToolNarrationTest {
                 "循环预算没有按「是否显式按了代码」分档");
         assertTrue(code.contains("round < budget.rounds()") && code.contains("> budget.millis()"),
                 "循环没有用预算的轮数与时长");
-        assertTrue(code.contains("ctx.emit(\"agent.step.note\", payload)"),
+        assertTrue(service.contains("ctx.emit(\"agent.step.note\", payload)"),
                 "叙述没有作为 agent.step.note 发出去 —— 网页和 CLI 都收不到");
     }
 }

@@ -28,6 +28,11 @@ public final class Texts {
         return text.substring(0, maxLength) + "...";
     }
 
+    /** 有没有实际内容：null、空串、全是空白都算「没有」。 */
+    public static boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
     /**
      * 只截断，<b>不动空白</b>。
      *

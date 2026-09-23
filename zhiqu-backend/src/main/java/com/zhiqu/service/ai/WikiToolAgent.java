@@ -244,6 +244,19 @@ public class WikiToolAgent {
         return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), WIKI_CONTEXT_LIMIT), wrotePatch);
     }
 
+    /**
+     * Wiki 这一套工具的名字 —— <b>唯一定义</b>。
+     *
+     * <p>code agent 要把这几个名字的调用原样转交给 {@link #executeWikiTool}。它原来自己手写了一份
+     * 名单，旁边注释「与 buildWikiTools 的声明保持一致」—— 靠注释维持的一致就是第二份真相。
+     * {@code WikiToolAgentNamesTest} 拿 {@link #buildWikiTools} 真实声明出来的名字和它比。
+     */
+    public static final java.util.Set<String> TOOL_NAMES = java.util.Set.of("search_wiki", "read_wiki_page", "create_wiki_patch");
+
+    public static boolean isWikiTool(String name) {
+        return TOOL_NAMES.contains(name);
+    }
+
     public List<Map<String, Object>> buildWikiTools(boolean includeWrite) {
         List<Map<String, Object>> tools = new ArrayList<>();
         Map<String, Object> searchProps = new LinkedHashMap<>();
