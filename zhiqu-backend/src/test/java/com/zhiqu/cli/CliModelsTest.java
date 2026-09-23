@@ -47,7 +47,20 @@ class CliModelsTest {
                 "拍平结果不对 —— 当成数组遍历的话这里会是几个 0（第一版就是这样）");
         assertTrue(models.get(0).system());
         assertEquals("qwen2.5:7b", models.get(2).label(), "没有显示名时应当用模型名，而不是空白");
-        assertFalse(models.get(2).toolCalling());
+        assertTrue(models.get(2).knownNoToolCalling());
+    }
+
+    /**
+     * 版本对不上时不许误报。2026-09-23 真遇到了这个场景：用户的后端是更早由 zhiqu 拉起的旧版，
+     * 装上新 CLI 之后，模型信息里还没有 toolCalling 字段 —— 当成「不支持」就会对 DeepSeek 报警。
+     */
+    @Test
+    @DisplayName("后端没给 toolCalling（旧版本）时算「不知道」，不报「不支持」")
+    void 旧后端不误报() throws Exception {
+        JsonNode old = JSON.readTree("{\"userModels\":[{\"id\":1,\"displayName\":\"DeepseekV4pro\",\"enabled\":true}],\"defaultModelId\":1}");
+        CliModels.Model m = CliModels.effective(CliModels.parse(old), null);
+        assertNull(m.toolCalling(), "没给的字段应当是 null（不知道），而不是 false");
+        assertFalse(m.knownNoToolCalling(), "旧后端没说，却被当成了「不支持」—— 会对一个能用的模型报警");
     }
 
     @Test

@@ -266,7 +266,7 @@ public final class ZhiquCli {
                     CliModels.Model now = CliModels.effective(models, modelId);
                     for (CliModels.Model m : models) {
                         out.println((now != null && m.id() == now.id() ? paint.green("* ") : "  ") + m.id() + "  "
-                                + describe(m) + (m.toolCalling() ? "" : paint.yellow("  （不支持工具调用）")));
+                                + describe(m) + (m.knownNoToolCalling() ? paint.yellow("  （不支持工具调用）") : ""));
                     }
                     if (models.isEmpty()) {
                         out.println(paint.yellow("  还没有可用的模型 —— 先在个人中心配置一个"));
@@ -328,7 +328,7 @@ public final class ZhiquCli {
     }
 
     private void warnIfNoToolCalling(CliModels.Model m) {
-        if (!m.toolCalling()) {
+        if (m.knownNoToolCalling()) {
             out.println(paint.yellow("⚠ 这个模型不支持工具调用：coding agent 不会读写你的代码、也不会跑命令，只能聊天。"
                     + "换一个 OpenAI 兼容或 Anthropic 的模型（/model）。"));
         }

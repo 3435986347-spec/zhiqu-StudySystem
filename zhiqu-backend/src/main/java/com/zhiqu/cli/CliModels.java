@@ -15,9 +15,19 @@ import java.util.List;
  */
 public final class CliModels {
 
-    /** 一个可选的模型。{@code toolCalling} 由后端的 {@code supportsToolCalling} 给出，这里不另猜。 */
+    /**
+     * 一个可选的模型。{@code toolCalling} 由后端的 {@code supportsToolCalling} 给出，这里不另猜。
+     *
+     * <p>它是三态的：{@code true} / {@code false} / {@code null}（后端没说）。CLI 和后端的版本可能对不上 ——
+     * 新 CLI 连着一个还没升级的后端（应用没重启、或 {@code --server} 指向旧服务器）时这个字段不存在。
+     * 把「没说」当成「不支持」的话，会对一个完全能用的模型报警。
+     */
     public record Model(long id, String label, String modelName, boolean system, boolean isDefault,
-                        boolean toolCalling) {
+                        Boolean toolCalling) {
+        /** 只有后端<b>明确</b>说不支持时才算。 */
+        public boolean knownNoToolCalling() {
+            return Boolean.FALSE.equals(toolCalling);
+        }
     }
 
     private CliModels() {
@@ -38,7 +48,7 @@ public final class CliModels {
                 long id = m.path("id").asLong();
                 String label = firstNonEmpty(m.path("displayName").asText(""), m.path("modelName").asText(""), "模型 " + id);
                 out.add(new Model(id, label, m.path("modelName").asText(""), "systemModels".equals(group),
-                        id == defaultId, m.path("toolCalling").asBoolean(false)));
+                        id == defaultId, m.path("toolCalling").isBoolean() ? m.path("toolCalling").asBoolean() : null));
             }
         }
         return out;
