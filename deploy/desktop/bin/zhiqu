@@ -1,0 +1,39 @@
+#!/bin/bash
+# zhiqu —— 命令行里的 coding agent。
+#
+# 连的是桌面应用里那一个后端（127.0.0.1:47615）：同一个库、同一个账号、同一条 agent 流水线。
+# 本脚本随应用打进 知趣象限.app/Contents/Resources/bin/，用应用自带的 JRE 拉起
+# com.zhiqu.cli.ZhiquCli —— 不启动 Spring，所以一秒内就能起来。
+#
+# 放进 PATH：
+#   ln -s "/Applications/知趣象限.app/Contents/Resources/bin/zhiqu" /opt/homebrew/bin/zhiqu
+# （Intel Mac 用 /usr/local/bin）。之后在任意项目文件夹里敲 zhiqu。
+set -e
+
+# 解开软链：PATH 里放的通常是指向应用包的软链，JRE 和 JAR 要相对真正的位置找
+SELF="$0"
+while [ -L "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in
+    /*) SELF="$LINK" ;;
+    *)  SELF="$(dirname "$SELF")/$LINK" ;;
+  esac
+done
+RES="$(cd "$(dirname "$SELF")/.." && pwd)"
+
+JAVA="$RES/runtime/Contents/Home/bin/java"
+JAR="$(ls "$RES"/app/*.jar 2>/dev/null | head -1)"
+if [ ! -x "$JAVA" ] || [ -z "$JAR" ]; then
+  echo "找不到知趣象限应用的运行时（在 $RES 下）。是不是应用被移动或删除了？" >&2
+  exit 1
+fi
+
+# PropertiesLauncher + loader.main：从 Spring Boot 的胖 JAR 里跑一个非 Spring 的入口，
+# BOOT-INF/lib 里的依赖（Jackson）照样在类路径上。
+# TieredStopAtLevel=1：命令行是短进程，C1 足够，启动更快。
+exec "$JAVA" \
+  -XX:TieredStopAtLevel=1 \
+  -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 \
+  -Dloader.main=com.zhiqu.cli.ZhiquCli \
+  -Dzhiqu.cli.java="$JAVA" -Dzhiqu.cli.jar="$JAR" \
+  -cp "$JAR" org.springframework.boot.loader.launch.PropertiesLauncher "$@"

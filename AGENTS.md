@@ -98,7 +98,7 @@ never ran — that proves nothing. It is the mirror image of "an empty scan look
   `static/assets/zhiqu-api.js` (all 14 HTML pages load it). Editing `js/` has no runtime effect.
 - **Bump the asset cache token after any frontend change**, in every HTML file *and*
   `service-worker.js` (`ZHIQU_CACHE`), or users keep the stale bundle.
-  Current token: `20260923-code-toggle`.
+  Current token: `20260923-cli`.
   `StaticAssetCacheTokenTest` fails if any page drifts from the service worker's `ZHIQU_CACHE`.
 - **Rate limiting is on by default** (`RateLimitFilter`): auth 12/60s, `/api/ai/**` 40/60s, other
   `/api/**` 180/60s → HTTP 429. Scripted E2E runs that register many users will trip it.
@@ -129,6 +129,7 @@ never ran — that proves nothing. It is the mirror image of "an empty scan look
 - Frontend: `zhiqu-backend/src/main/resources/static/` (`assets/` = live, `js/` = legacy)
 - Migrations: `zhiqu-backend/src/main/resources/db/migration/`
 - Optional RAG sidecar: `rag-service/` (Python, `127.0.0.1:8001`)
+- `zhiqu` command-line coding agent: `zhiqu-backend/src/main/java/com/zhiqu/cli/` + `deploy/desktop/bin/zhiqu` — a client of the same backend; all safety rules stay server-side (CLAUDE.md, 命令行 `zhiqu`)
 - Deployment: `deploy/README.md` → `deploy/windows/README.md`
 
 ## Configuration

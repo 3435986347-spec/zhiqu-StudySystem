@@ -108,6 +108,48 @@ class DesktopPackagingTest {
                         + "两处各写一个端口，界面会连到后端没监听的那个。");
     }
 
+    // ── 命令行入口 zhiqu ────────────────────────────────────────────────
+
+    private static final Path CLI_SCRIPT = Path.of("..", "deploy", "desktop", "bin", "zhiqu");
+
+    /**
+     * 包里要有 zhiqu，而且能执行。
+     *
+     * <p>少了拷贝那一行，打出来的应用照样能用 —— 只是命令行入口不存在，用户照着文档
+     * 建软链会指向一个空位置，报的是「No such file or directory」，读起来像他自己敲错了。
+     */
+    @Test
+    @DisplayName("打包脚本把 zhiqu 拷进 Contents/Resources/bin 并加可执行权限")
+    void 包里要有命令行入口() throws IOException {
+        String script = read(NATIVE_SCRIPT);
+        assertTrue(script.contains("cp \"$ROOT/deploy/desktop/bin/zhiqu\" \"$APP/Contents/Resources/bin/zhiqu\""),
+                "打包脚本没有把 zhiqu 拷进应用包");
+        assertTrue(script.contains("chmod +x \"$APP/Contents/Resources/bin/zhiqu\""),
+                "拷进去的 zhiqu 没有可执行权限 —— 敲 zhiqu 会报 Permission denied");
+        assertTrue(Files.isExecutable(CLI_SCRIPT),
+                "仓库里的 deploy/desktop/bin/zhiqu 没有可执行位（git 会记住这一位，丢了要 chmod +x 再提交）");
+    }
+
+    /**
+     * 启动脚本用 PropertiesLauncher + loader.main 从胖 JAR 里跑一个非 Spring 入口。
+     * 入口类改名或挪包时，脚本里那个字符串不会报编译错误 —— 只会在用户敲 zhiqu 时
+     * 报 ClassNotFoundException。所以这里拿脚本里写的类名去真的加载一次。
+     */
+    @Test
+    @DisplayName("zhiqu 脚本指向的入口类真实存在且有 main；走的是 PropertiesLauncher 与应用自带的 JRE")
+    void 命令行入口类要存在() throws Exception {
+        String script = read(CLI_SCRIPT);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("-Dloader\\.main=([\\w.]+)").matcher(script);
+        assertTrue(m.find(), "zhiqu 脚本里找不到 -Dloader.main=… —— 判据的锚点没了");
+        Class<?> entry = Class.forName(m.group(1));
+        assertTrue(java.lang.reflect.Modifier.isStatic(entry.getMethod("main", String[].class).getModifiers()),
+                m.group(1) + " 没有 public static void main(String[])");
+        assertTrue(script.contains("org.springframework.boot.loader.launch.PropertiesLauncher"),
+                "zhiqu 没走 PropertiesLauncher —— 直接 -cp 胖 JAR 找不到 BOOT-INF/ 下的类");
+        assertTrue(script.contains("runtime/Contents/Home/bin/java"),
+                "zhiqu 没用应用自带的 JRE —— 用户机器上不一定装了 Java 17");
+    }
+
     private static String read(Path path) throws IOException {
         String text = Files.readString(path, StandardCharsets.UTF_8);
         StringBuilder out = new StringBuilder();

@@ -40,6 +40,8 @@ import com.zhiqu.service.KnowledgeService;
 import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.CodeContextPrompt;
+import com.zhiqu.service.ai.CodeToolNarration;
+import com.zhiqu.service.ai.CodeLoopBudget;
 import com.zhiqu.service.AiWorkspaceService;
 import com.zhiqu.service.MultiAgentOrchestrator;
 import com.zhiqu.service.AdminGuard;
@@ -1364,7 +1366,18 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void run(AgentRunContext ctx) {
-            CodeAgentResult codeResult = runCodeWorkspaceAgent(s.config, s.userId, s.limitedMessage, s.contextOptions);
+            // 每一次工具调用都发一条 note：执行轨迹和 CLI 靠它显示「读了什么、跑了什么」。
+            // PRE_STREAM 的 emit 是直发的（见 AgentRunContext.emit），所以是实时的，不是攒到最后。
+            CodeAgentResult codeResult = runCodeWorkspaceAgent(s.config, s.userId, s.limitedMessage, s.contextOptions,
+                    note -> {
+                        Map<String, Object> payload = new LinkedHashMap<>();
+                        payload.put("requestId", s.requestId);
+                        payload.put("agentRunId", s.agentRun.getId());
+                        payload.put("stepId", s.codeAgentStep == null ? null : s.codeAgentStep.getId());
+                        payload.put("agentType", "CODE_AGENT");
+                        payload.putAll(note);
+                        ctx.emit("agent.step.note", payload);
+                    });
             s.codeContext = codeResult.context();
             s.codeDrafts = codeResult.drafts();
             if (codeResult.milestonePlan() != null) {
@@ -3533,7 +3546,8 @@ public class AiServiceImpl implements AiService {
     }
 
     private CodeAgentResult runCodeWorkspaceAgent(AiModelConfig config, Long userId, String userMessage,
-                                                  Map<String, Object> contextOptions) {
+                                                  Map<String, Object> contextOptions,
+                                                  java.util.function.Consumer<Map<String, Object>> onStep) {
         if (!AgentPlanDecision.codeAgentIntent(userMessage, contextOptions) || !provider.supportsToolCalling(config)) {
             return CodeAgentResult.EMPTY;
         }
@@ -3558,10 +3572,14 @@ public class AiServiceImpl implements AiService {
             boolean canExec = workspaceExecutor.enabled();
             // 项目式引导才给「把里程碑排成任务」的能力：别的语境下模型不该往用户日历里塞东西。
             boolean canPlanMilestones = AgentPlanDecision.projectIntent(userMessage);
+            // 显式按了「代码」给大预算，关键词触发给小预算 —— 理由见 CodeLoopBudget
+            CodeLoopBudget budget = CodeLoopBudget.forRequest(AgentPlanDecision.codeModeRequested(contextOptions));
             long loopStart = System.currentTimeMillis();
-            for (int round = 0; round < 4; round++) {
-                if (System.currentTimeMillis() - loopStart > 30_000L) {
-                    log.warn("代码工作区工具循环超时预算，提前结束 userId={} round={}", userId, round);
+            for (int round = 0; round < budget.rounds(); round++) {
+                if (System.currentTimeMillis() - loopStart > budget.millis()) {
+                    log.warn("代码工作区工具循环超出预算，提前结束 userId={} round={} budget={}", userId, round, budget);
+                    narrate(onStep, Map.of("phase", "budget",
+                            "message", "已用完这一轮的时间预算，先把目前的结果交给你"));
                     break;
                 }
                 // 工具表<b>每轮重建</b>：写薄弱点页的工具要等到真的判过题之后才出现。
@@ -3594,6 +3612,8 @@ public class AiServiceImpl implements AiService {
                     JsonNode argsNode = call.at("/function/arguments");
                     String argsRaw = argsNode.isTextual() ? argsNode.asText("")
                             : (argsNode.isMissingNode() ? "{}" : argsNode.toString());
+                    narrate(onStep, Map.of("phase", "call", "tool", name,
+                            "message", CodeToolNarration.describeCall(name, argsRaw)));
                     String result = !offered.contains(name)
                             ? "操作被拒绝：这一轮没有给你「" + name + "」这个工具。"
                                     + "如实告诉用户你没有这个能力，不要换个名字再试。"
@@ -3604,6 +3624,10 @@ public class AiServiceImpl implements AiService {
                             // 本轮幂等、条带锁、可信快照基线。这里<b>不</b>另写一份。
                             ? wikiToolAgent.executeWikiTool(userId, name, argsRaw, loop.wiki).result
                             : executeWorkspaceTool(name, argsRaw, loop);
+                    String shown = CodeToolNarration.describeResult(name, result);
+                    if (shown != null) {
+                        narrate(onStep, Map.of("phase", "result", "tool", name, "message", shown));
+                    }
                     if (hasText(result)) {
                         context.append("【工作区 ").append(name).append("】\n").append(result).append("\n\n");
                     }
@@ -3620,6 +3644,21 @@ public class AiServiceImpl implements AiService {
         }
         return new CodeAgentResult(limitRawMarkdown(context.toString(), CODE_CONTEXT_LIMIT),
                 List.copyOf(loop.drafts), loop.milestonePlan);
+    }
+
+    /**
+     * 发一条步骤叙述。叙述是给人看的旁白，<b>它出错不能拖垮工具循环</b> ——
+     * 连接断了、序列化失败，都只丢这一行旁白，模型那边的活照干。
+     */
+    private static void narrate(java.util.function.Consumer<Map<String, Object>> onStep, Map<String, Object> note) {
+        if (onStep == null) {
+            return;
+        }
+        try {
+            onStep.accept(note);
+        } catch (RuntimeException e) {
+            log.debug("步骤叙述发送失败（不影响工具循环）：{}", e.toString());
+        }
     }
 
     private String codeWorkspaceSystemPrompt() {

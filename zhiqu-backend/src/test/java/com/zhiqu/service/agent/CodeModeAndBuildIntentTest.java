@@ -137,7 +137,7 @@ class CodeModeAndBuildIntentTest {
         String statement = code.substring(at, code.indexOf(';', at) + 1);
         assertTrue(statement.contains("codeWriteIntent(userMessage, contextOptions)"),
                 "canWrite 没带 contextOptions —— 按了开关却拿不到写工具，模型只会说「复制过去」。实际：" + statement);
-        assertTrue(code.contains("runCodeWorkspaceAgent(s.config, s.userId, s.limitedMessage, s.contextOptions)"),
+        assertTrue(code.contains("runCodeWorkspaceAgent(s.config, s.userId, s.limitedMessage, s.contextOptions,"),
                 "调用 runCodeWorkspaceAgent 时没把本轮的 contextOptions 传进去");
     }
 }

@@ -348,7 +348,7 @@ class CodeAgentGateTest {
                         + "就会在没判过题的时候也给出写薄弱点的能力");
 
         // 工具表必须在 round 循环<b>里面</b>重建，否则 ranCommand 变了也没人看见
-        int loopAt = code.indexOf("for (int round = 0; round < 4; round++)");
+        int loopAt = code.indexOf("for (int round = 0; round < budget.rounds(); round++)");
         assertTrue(loopAt > 0, "找不到代码循环 —— 判据的锚点没了");
         int buildAt = code.indexOf("buildWikiTools(loop.ranCommand)");
         assertTrue(buildAt > loopAt,

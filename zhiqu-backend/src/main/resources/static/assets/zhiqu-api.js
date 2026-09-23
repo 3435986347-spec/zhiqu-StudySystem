@@ -876,6 +876,8 @@
       // 先走下面的浏览器分支就会把「从应用登录」显示成「Safari · macOS」。
       // 标记由原生外壳用 applicationNameForUserAgent 追加（ZhiquShell.swift）。
       if (/ZhiquDesktop/.test(ua)) return '桌面应用' + (os ? ' · ' + os : '');
+      // zhiqu 命令行（ZhiquCli.userAgent）：UA 里没有任何浏览器标记，不认的话落到「浏览器」
+      if (/ZhiquCLI\//.test(ua)) return '命令行' + (os ? ' · ' + os : '');
     var br = /Edg\//.test(ua) ? 'Edge' : /Chrome/.test(ua) ? 'Chrome' : /Firefox/.test(ua) ? 'Firefox' : /Safari/.test(ua) ? 'Safari' : '浏览器';
     return (br + (os ? ' · ' + os : '')) || ua.slice(0, 40);
   }
@@ -2779,7 +2781,7 @@
       var last = i === steps.length - 1;
       var stepName = s.publicSummary || s.title || s.name || s.agentType || ('步骤 ' + (i + 1));
       var metaLine = (s.agentType && s.publicSummary ? s.agentType + ' · ' : '') + status;
-      return '<div style="display:flex;gap:9px;padding:5px 0;"><div style="display:flex;flex-direction:column;align-items:center;flex:none;width:10px;"><span style="width:8px;height:8px;border-radius:50%;background:' + color + ';margin-top:4px;"></span>' + (last ? '' : '<span style="flex:1;width:1px;background:var(--zq-border-soft);margin-top:2px;"></span>') + '</div><div style="min-width:0;padding-bottom:6px;"><div style="font-size:11.5px;font-weight:600;line-height:1.45;">' + esc(stepName) + '</div><div class="zq-mono" style="font-size:10px;color:' + color + ';margin-top:1px;">' + esc(metaLine) + '</div></div></div>';
+      return '<div style="display:flex;gap:9px;padding:5px 0;"><div style="display:flex;flex-direction:column;align-items:center;flex:none;width:10px;"><span style="width:8px;height:8px;border-radius:50%;background:' + color + ';margin-top:4px;"></span>' + (last ? '' : '<span style="flex:1;width:1px;background:var(--zq-border-soft);margin-top:2px;"></span>') + '</div><div style="min-width:0;padding-bottom:6px;"><div style="font-size:11.5px;font-weight:600;line-height:1.45;">' + esc(stepName) + '</div><div class="zq-mono" style="font-size:10px;color:' + color + ';margin-top:1px;">' + esc(metaLine) + '</div>' + (s.notes || []).map(stepNoteHtml).join('') + '</div></div>';
     }).join('') : empty('暂无执行记录');
   }
 
@@ -3909,9 +3911,43 @@
     var step = raw.step || raw;
     var id = step.id || step.stepId || step.title || (state.agentSteps.length + 1);
     var existing = state.agentSteps.find(function (s) { return s._id === id; });
-    if (existing) { existing.status = done ? 'DONE' : (step.status || existing.status); if (step.title) existing.title = step.title; }
-    else state.agentSteps.push({ _id: id, title: step.title || step.name || step.stepType || ('步骤 ' + (state.agentSteps.length + 1)), status: done ? 'DONE' : (step.status || 'RUNNING') });
+    // 流式事件带的是 publicSummary / agentType，不是 title —— 原来只取 title，
+    // 于是实时显示的轨迹是「步骤 1、步骤 2」，要等刷新重载才有名字。
+    if (existing) {
+      existing.status = done ? 'DONE' : (step.status || existing.status);
+      if (step.title) existing.title = step.title;
+      if (step.publicSummary) existing.publicSummary = step.publicSummary;
+    } else {
+      state.agentSteps.push({ _id: id, title: step.title || step.name || step.stepType || ('步骤 ' + (state.agentSteps.length + 1)),
+        publicSummary: step.publicSummary || '', agentType: step.agentType || '',
+        status: done ? 'DONE' : (step.status || 'RUNNING'), notes: [] });
+    }
     renderSteps(state.agentSteps);
+  }
+  /**
+   * coding agent 的逐步叙述（agent.step.note）：读了哪个文件、跑了什么命令、输出是什么。
+   * 挂在对应步骤下面。命令行 zhiqu 读的是同一份事件 —— 两边说同样的话。
+   * 每步最多留 NOTE_CAP 条：一个 10 轮的循环可能有几十次调用，全留会把轨迹栏撑爆。
+   */
+  var NOTE_CAP = 40;
+  function addAgentStepNote(data) {
+    if (!data || !data.message) return;
+    var step = state.agentSteps.find(function (s) { return s._id === data.stepId; });
+    if (!step) return;
+    step.notes = step.notes || [];
+    step.notes.push({ phase: data.phase || '', message: String(data.message) });
+    if (step.notes.length > NOTE_CAP) step.notes.splice(0, step.notes.length - NOTE_CAP);
+    renderSteps(state.agentSteps);
+  }
+  /** 一条叙述的 HTML。命令输出可能含任意字符（包括 HTML），一律 esc —— 它来自用户机器上跑出来的东西。 */
+  function stepNoteHtml(n) {
+    if (n.phase === 'result') {
+      var lines = n.message.split('\n');
+      var shown = lines.slice(0, 6).join('\n') + (lines.length > 6 ? '\n…' : '');
+      return '<pre class="zq-mono" style="margin:2px 0 3px 12px;padding:4px 6px;font-size:10px;line-height:1.4;white-space:pre-wrap;word-break:break-all;background:var(--zq-card-soft);border-radius:4px;color:var(--zq-text2);">' + esc(shown) + '</pre>';
+    }
+    return '<div class="zq-mono" style="font-size:10.5px;color:' + (n.phase === 'budget' ? 'var(--zq-warn)' : 'var(--zq-text2)')
+      + ';margin-top:2px;word-break:break-all;">⎿ ' + esc(n.message) + '</div>';
   }
   /** 单行时的高度，与同排按钮对齐；也是清空后要回到的高度。 */
   var DRAFT_BASE_HEIGHT = 32;
@@ -4002,6 +4038,7 @@
           }
           else if (event === 'agent.step.start') { if (sameNb()) upsertAgentStep(data, false); }
           else if (event === 'agent.step.done') { if (sameNb()) upsertAgentStep(data, true); }
+          else if (event === 'agent.step.note') { if (sameNb()) addAgentStepNote(data); }
           else if (event === 'artifact.created') {
             if (sameNb()) {
               var incoming = normalizeArtifact(data);

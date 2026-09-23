@@ -213,6 +213,42 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 原生外壳与后端靠 `-Dzhiqu.desktop.port-file` 交接端口（临时文件 + 原子改名 —— 外壳是
 轮询这个文件的，直接写可能读到半个端口号）。设了这个属性后端就**不再弹浏览器**。
 
+**桌面应用的工作目录是 `/`**（从 Finder / Dock 启动，实测 `user.dir=/`）。所以凡是按
+`user.dir` 解析的相对路径，在桌面版里都指向只读的根目录 —— `app.upload-dir`（头像、分享计划）
+和 `app.private-upload-dir`（AI 资料原件）两个都中招。2026-09-23 的样子：⌘V 贴一张图，
+界面写「已附到下一条消息」，模型却说看不到、资料区下载为空 —— 原件写不进 `/private-uploads`，
+而那段代码是 `catch (Exception ignored)`，之后照样标 `UPLOADED`。`application-desktop.yml`
+现在把两个键都设成 `~/.zhiqu/` 下的绝对路径；`DesktopUploadDirTest` **从代码里扫出**所有相对的
+`*-dir` 键再核对（不手写名单 —— 第一版就只改了 `upload-dir`，贴图照样坏）。落盘失败时图片标
+`ERROR` 并写明原因（文本资料只是降级：文本已从上传流抽出），读不到原件的图也会告诉模型。
+
+### 命令行 `zhiqu`（同一个后端上的 coding agent）
+
+`deploy/desktop/bin/zhiqu` 随应用打进 `Contents/Resources/bin/`，用应用自带的 JRE 跑
+**同一个 JAR** 里的 `com.zhiqu.cli.ZhiquCli`（`PropertiesLauncher` + `-Dloader.main`，不启动 Spring，
+0.8 秒起来）。它**只是客户端**：登录、把当前目录设成工作区、按「代码」模式发消息、画出每一步、
+草稿在终端看 diff 按 y 落盘 —— 落盘走的是网页确认框同一个 `/api/ai/artifacts/{id}/confirm`。
+不自己读写磁盘、不自己跑命令：第二份安全规则迟早比第一份松。对话进名为「命令行」的 Notebook。
+
+几件不看代码想不到的事：
+
+- **根目录护栏在客户端**：在 `/` 或家目录下运行直接拒绝（`--allow-broad-root` 才放行），
+  而且在登录**之前**判 —— 不该让人输完密码才被告知这里不能用。
+- **后端没开时它自己拉起来**，用 `sh -c 'nohup "$@" … & echo $!'`：非交互 shell 的后台命令
+  SIGINT 被置为忽略，JVM 启动时发现已忽略就不装自己的处理器；nohup 再管 SIGHUP。
+  直接 `ProcessBuilder` 起的话后端和 CLI 同一个前台进程组，终端里一个 Ctrl+C 两个一起死。
+  **这条是实测的，而且实验本身骗了我三次**：执行环境继承下来的信号处置、然后是怀疑掩码，
+  最后发现是检测方法 —— `kill(pid, 0)` 对**僵尸进程**也返回「存在」，直接起的那个 JVM 早死了，
+  只是没被 `wait()` 回收。对照组一直「活着」，实验就分不出两种启动方式。改成看 `ps` 的状态
+  （排除 `Z`）后：直接起的退出码 130，`nohup … &` 起的照常运行。**对照组不死的实验不作数。**
+- `zhiqu stop` 只停 pid 文件里记的、且命令行带 `zhiqu.desktop.port-file` 的那个进程 ——
+  按端口或进程名去杀会误伤图形界面起的那个。
+- 密码用 `Console.readPassword` 读，不是交互终端就拒绝（从管道读密码的脚本迟早把它写进日志）；
+  落盘的只有令牌，`~/.zhiqu/cli-token`，600 权限。
+- User-Agent 是 `ZhiquCLI/…`（`CliUserAgent`），登录设备列表显示「命令行」。
+  `LoginDeviceLabelTest` 把 CLI 的**真实** UA 喂给前端的 `shortUA` —— 判的是一对，
+  不是两边各写死一份样本各自为绿（`NodeRunner.run` 为此多了可变参数）。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -262,7 +298,7 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260923-code-toggle`.
+  old bundle. Current token: `20260923-cli`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -402,7 +438,7 @@ AI 助手原本只是个「work agent」（排计划、写 Wiki、做检索）�
 **默认是关闭的，而这个默认值本身就是安全边界**（`WorkspaceModeTest.默认必须是关闭的` 钉着它）。
 四个档位 `OFF / READ / WRITE / EXEC`（`WorkspaceMode`），`parse()` 对任何认不出来的配置值
 **回落到 OFF 而不是就近取一档** —— 把 `mode: ON` 写错成一个不存在的值时，该得到「没开」，
-不是「开了个小的」。目前只有 READ 真正实现。
+不是「开了个小的」。三档都已实现：READ 读、WRITE 写草稿（确认后落盘）、EXEC 再加执行沙箱。
 
 **档位与根目录现在能从界面切换**（AI 助手页工作区面板的 ⚙，`PUT /api/workspace/settings`），
 不必再改 `application.yml`；用户的选择持久化在 `~/.zhiqu/workspace-state.json`
@@ -570,6 +606,27 @@ code agent 在项目语境下拿到 `create_study_plan`（**同一个 schema，�
 后两道各自分两档：足够具体的词单独成立，通用词要配一个代码名词或学科词 ——
 `带我做` / `分几步` 第一版放在单独成立那档，实测把「带我做一道红烧肉」「分几步走完这个学期」
 也拉了进来。**每加一道门都要拿十来条真实说法探一遍**，正例反例一起探。
+
+**第五道门 `buildIntent` 与「代码」开关（2026-09-23）。** 工作区已经在界面切到「读+写+运行」，
+用户说「帮我做一个小游戏，放在test文件夹里」，得到「我无法直接操作你的电脑」—— 图里根本没有
+CODE_AGENT：读门动作词没有「做」，写门没有「放在」。两层都漏了。修法两半：
+
+- 输入框旁的**「代码」按钮**（`contextOptions.codeMode`，只认字面 `true`，只在工作区生效时出现）。
+  按下就不再猜意图、并给写工具；但**绕不过**工作区的回环 / 管理员 / 可读前提。
+  `AgentPlanDecision.codeAgentIntent(message, options)` / `codeWriteIntent(message, options)`
+  是这个 OR 的唯一出处，建图与执行共用。
+- `buildIntent`：造（做一个/写个/生成一个…）+ 成品名词 / 语言名 / 算法词，或造 + 放进文件夹。
+  四批四十余条实测说法定的词表，其中三处是**放宽之后实测出来的误伤**再收窄的：裸「目录」
+  （「写到复习目录里」）、「存在」（「目录里存在的问题」）、「python 学习计划」一类
+  （学习产物词出现时，语言名是学习对象而不是工具）。「那你直接写进去吧」这类追问接不住，
+  由按钮兜底 —— 别往词表里塞「写进去」。
+
+同一次还修了三件「看起来接通、实际没用」的事：最终回答原来**无条件**被告知「你这一轮没有写文件的能力」
+（草稿弹出来了，回答却说改不了 —— 现在由 `CodeContextPrompt` 按本轮是否有草稿分支）；
+显式请求沿用关键词的 4 轮 30 秒预算（写一个完整小游戏做不完 —— `CodeLoopBudget` 分两档，
+显式 10 轮 180 秒，且要给最终回答留出一分钟）；工具循环对外只有开头结尾两条事件
+（现在每次调用前后各发一条 `agent.step.note`，`CodeToolNarration` 负责说成人话，
+网页轨迹与 CLI 读同一份；命令输出进 innerHTML 前必须转义，`step-note-check.js` 用对抗性输出判）。
 
 ### 限额边界
 

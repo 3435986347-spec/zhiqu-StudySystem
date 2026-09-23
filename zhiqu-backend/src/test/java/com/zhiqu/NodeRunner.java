@@ -31,9 +31,11 @@ public final class NodeRunner {
     /**
      * 跑一个判据脚本。脚本自报全绿（打印 {@code ALL-GREEN}）且退出码 0 才算过。
      *
+     * @param extra 追加给脚本的参数 —— 用来把 Java 侧的真实值（比如 CLI 发出的 User-Agent）
+     *              交给前端实现去判，而不是在脚本里再写死一份样本
      * @return true = 真的跑了；false = 没有 node 且已显式声明跳过
      */
-    public static boolean run(Path harness, Path target) throws Exception {
+    public static boolean run(Path harness, Path target, String... extra) throws Exception {
         assertTrue(Files.exists(harness), "判据脚本不见了：" + harness.toAbsolutePath());
 
         String node = findNode();
@@ -46,7 +48,9 @@ public final class NodeRunner {
             return false;
         }
 
-        Process p = new ProcessBuilder(node, harness.toString(), target.toString())
+        java.util.List<String> cmd = new java.util.ArrayList<>(java.util.List.of(node, harness.toString(), target.toString()));
+        cmd.addAll(java.util.List.of(extra));
+        Process p = new ProcessBuilder(cmd)
                 .redirectErrorStream(true)
                 .start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);

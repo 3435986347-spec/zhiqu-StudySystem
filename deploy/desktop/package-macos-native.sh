@@ -38,8 +38,12 @@ echo "    $(basename "$JAR")  $(du -h "$JAR" | cut -f1)"
 APP="$OUT/$NAME.app"
 echo "==> 2/6 搭 bundle 骨架"
 rm -rf "$OUT"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app" "$APP/Contents/Resources/bin"
 cp "$JAR" "$APP/Contents/Resources/app/"
+# 命令行入口 zhiqu：用应用自带的 JRE 跑同一个 JAR 里的 com.zhiqu.cli.ZhiquCli。
+# 放在 Resources/bin 而不是 MacOS/：MacOS/ 里的可执行文件会被当成应用的主程序候选。
+cp "$ROOT/deploy/desktop/bin/zhiqu" "$APP/Contents/Resources/bin/zhiqu"
+chmod +x "$APP/Contents/Resources/bin/zhiqu"
 
 echo "==> 3/6 裁一份 JRE（jlink）"
 # 只带用得到的模块。全量 JDK 约 300MB，裁完约 50MB。
