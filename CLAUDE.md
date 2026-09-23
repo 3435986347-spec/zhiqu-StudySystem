@@ -120,6 +120,17 @@ So assert on the perturbed source before running it (`grep -c` the removed condi
 to continue unless it is 0), and never chain `grep -c` with `&&` — it exits 1 on a count of zero
 and will break the chain you meant to guard.
 
+**And restore with a fresh mtime.** On 2026-09-23 a perturbation batch restored files with
+`cp -p` (to keep an executable bit) — which also restores the file's *old modification time*.
+Maven's incremental compile then judges the source older than its `.class` and keeps the
+**previous perturbation's class**. Runs that only perturbed JS or shell never triggered a Java
+recompile, so one perturbation's residue showed up as an extra red in seven later runs, and the
+last one's residue was still sitting in `target/` afterwards. Restore with plain `cp` (it keeps
+the destination's mode) followed by `touch`, and `clean` before the full run. Two more from the
+same day: the shell here is **zsh**, where `for f in $FILES` and `set -- $pair` do **not**
+word-split — use arrays or explicit arguments; and an experiment whose control group does not
+fail tells you nothing (`kill(pid, 0)` reports zombies as alive — see 命令行 `zhiqu`).
+
 **前端行为判据跑在 node 上，而不是在 Java 里重写一份。** `CodeHighlightEscapeTest` 调用
 `src/test/resources/js/highlight-check.js`，后者直接加载 `assets/zhiqu-api.js` 里发布的那份
 实现来喂对抗性输入。重写一份 Java 版就成了「测试一个副本」—— 副本绿了不代表线上那份对，
