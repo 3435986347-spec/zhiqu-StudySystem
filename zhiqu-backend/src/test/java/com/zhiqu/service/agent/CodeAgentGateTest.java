@@ -589,10 +589,10 @@ class CodeAgentGateTest {
         assertFalse(code.contains("\"MILESTONE_DRAFT\"") || agent.contains("\"MILESTONE_DRAFT\""),
                 "不得新建里程碑专用的工件类型 —— 确认分支、前端弹窗、落库全都要跟着改一遍");
         // schema 只有一份：code agent 用的是借来的 planning.tools()，自己不许再声明一个 create_study_plan
-        assertTrue(agent.contains("planning.tools()"), "code agent 没用 PLANNER 借给它的 schema");
+        assertTrue(agent.contains("studyPlanTool.tools()"), "code agent 没用 StudyPlanTool 那一份 schema");
         assertFalse(agent.contains("functionTool(\"create_study_plan\""),
                 "CodeWorkspaceAgent 里另写了一份 create_study_plan 声明 —— 两份迟早分叉，落库时静默丢字段");
-        assertTrue(code.contains("buildCreateStudyPlanTools()"),
+        assertTrue(code.contains("studyPlanTool.tools()"),
                 "里程碑的 schema 必须复用 create_study_plan，另猜字段名会在落库时静默丢掉"
                         + "象限、时长、截止日期");
     }
@@ -607,10 +607,10 @@ class CodeAgentGateTest {
         assertTrue(statement.contains("projectIntent("),
                 "canPlanMilestones 必须由 projectIntent 决定。实际：" + statement);
 
-        int declaration = code.indexOf("planning.tools()");
+        int declaration = code.indexOf("studyPlanTool.tools()");
         int gate = code.indexOf("if (canPlanMilestones) {");
         assertTrue(gate > 0, "排任务的工具必须收在 if (canPlanMilestones) 里");
-        assertTrue(code.indexOf("planning.tools()", gate) > gate,
+        assertTrue(code.indexOf("studyPlanTool.tools()", gate) > gate,
                 "工具声明要在门里面；无条件下发的话，用户问「这段代码为什么报错」"
                         + "模型也会顺手往他日历里排一串任务。首个声明位置：" + declaration);
     }

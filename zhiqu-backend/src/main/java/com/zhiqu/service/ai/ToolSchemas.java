@@ -22,6 +22,30 @@ public final class ToolSchemas {
         return m;
     }
 
+    public static Map<String, Object> schemaArray(String itemType, String description) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", "array");
+        m.put("items", Map.of("type", itemType));
+        m.put("description", description);
+        return m;
+    }
+
+    public static Map<String, Object> schemaArrayOf(Map<String, Object> item, String description) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", "array");
+        m.put("items", item);
+        m.put("description", description);
+        return m;
+    }
+
+    public static Map<String, Object> schemaEnum(String description, String... values) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", "string");
+        m.put("enum", List.of(values));
+        m.put("description", description);
+        return m;
+    }
+
     public static Map<String, Object> functionTool(String name, String description, Map<String, Object> props, List<String> required) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("type", "object");

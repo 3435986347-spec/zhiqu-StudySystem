@@ -1,7 +1,9 @@
 package com.zhiqu.service.ai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhiqu.common.BusinessClock;
 import com.zhiqu.entity.AiModelConfig;
+import com.zhiqu.service.ReminderPlanService;
 import com.zhiqu.service.AdminGuard;
 import com.zhiqu.service.ContextOptionKeys;
 import com.zhiqu.service.KnowledgeService;
@@ -14,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -58,7 +61,10 @@ class CodeWorkspaceAgentTest {
             when(adminGuard.isAdmin(1L)).thenReturn(admin);
             when(provider.supportsToolCalling(any())).thenReturn(true);
             WikiToolAgent wiki = new WikiToolAgent(mock(KnowledgeService.class), provider, JSON);
-            agent = new CodeWorkspaceAgent(provider, workspace, executor, wiki, adminGuard, JSON);
+            BusinessClock clock = mock(BusinessClock.class);
+            when(clock.today()).thenReturn(LocalDate.of(2026, 9, 23));
+            StudyPlanTool plans = new StudyPlanTool(clock, mock(ReminderPlanService.class), JSON);
+            agent = new CodeWorkspaceAgent(provider, workspace, executor, wiki, adminGuard, JSON, plans);
         }
 
         /** 模型依次给出这些回复；给完之后回一条不调工具的消息，循环自然结束。 */
@@ -70,9 +76,8 @@ class CodeWorkspaceAgentTest {
             stub.thenReturn(JSON.readTree("{\"role\":\"assistant\",\"content\":\"好了\"}"));
         }
 
-        CodeWorkspaceAgent.Result run(String message, Map<String, Object> options,
-                                      CodeWorkspaceAgent.MilestonePlanning planning) {
-            return agent.run(new AiModelConfig(), 1L, message, options, planning, notes::add);
+        CodeWorkspaceAgent.Result run(String message, Map<String, Object> options) {
+            return agent.run(new AiModelConfig(), 1L, message, options, notes::add);
         }
 
         /** 本轮所有 result 叙述拼起来 —— 被拒绝的原因会出现在这里。 */
@@ -97,7 +102,7 @@ class CodeWorkspaceAgentTest {
     @DisplayName("非管理员：直接返回空，一次模型调用都不发")
     void 非管理员不碰模型() {
         Rig rig = new Rig(WorkspaceMode.EXEC, false);
-        CodeWorkspaceAgent.Result r = rig.run("帮我看看 Main.java 这段代码", CODE_MODE, null);
+        CodeWorkspaceAgent.Result r = rig.run("帮我看看 Main.java 这段代码", CODE_MODE);
         assertSame(CodeWorkspaceAgent.Result.EMPTY, r);
         verify(rig.provider, never()).callOpenAiToolTurn(any(), any(), any());
     }
@@ -106,7 +111,7 @@ class CodeWorkspaceAgentTest {
     @DisplayName("工作区是 OFF：同样直接返回空")
     void 工作区关着不碰模型() {
         Rig rig = new Rig(WorkspaceMode.OFF, true);
-        assertSame(CodeWorkspaceAgent.Result.EMPTY, rig.run("帮我看看 Main.java 这段代码", CODE_MODE, null));
+        assertSame(CodeWorkspaceAgent.Result.EMPTY, rig.run("帮我看看 Main.java 这段代码", CODE_MODE));
         verify(rig.provider, never()).callOpenAiToolTurn(any(), any(), any());
     }
 
@@ -122,7 +127,7 @@ class CodeWorkspaceAgentTest {
         // 就一定会产出草稿 —— 否则「不产草稿」这半条断言会被另一道门顶替，单独看是弱的（扰动 S2 照出来的）。
         when(rig.workspace.baselineOf("game.html")).thenReturn(WorkspaceService.ABSENT);
         rig.modelSays(toolCall("write_workspace_file", "{\"path\":\"game.html\",\"content\":\"<html></html>\"}"));
-        CodeWorkspaceAgent.Result r = rig.run("帮我做一个小游戏", CODE_MODE, null);
+        CodeWorkspaceAgent.Result r = rig.run("帮我做一个小游戏", CODE_MODE);
         assertTrue(r.drafts().isEmpty(), "只读档下产出了草稿：" + r.drafts());
         assertTrue(rig.results().contains("这一轮没有给你「write_workspace_file」这个工具"), rig.results());
     }
@@ -137,7 +142,7 @@ class CodeWorkspaceAgentTest {
         rig.modelSays(
                 toolCall("write_workspace_file", "{\"path\":\"Main.java\",\"content\":\"覆盖\"}"),
                 toolCall("write_workspace_file", "{\"path\":\"game.html\",\"content\":\"<html></html>\"}"));
-        CodeWorkspaceAgent.Result r = rig.run("帮我做一个小游戏", CODE_MODE, null);
+        CodeWorkspaceAgent.Result r = rig.run("帮我做一个小游戏", CODE_MODE);
         assertTrue(rig.results().contains("必须先 read_workspace_file 读过它"), "没读过就改已存在的文件，却没被拒：" + rig.results());
         assertEquals(1, r.drafts().size(), "应当只有新建的那一份草稿：" + r.drafts());
         assertEquals("game.html", r.drafts().get(0).get("path"));
@@ -147,24 +152,16 @@ class CodeWorkspaceAgentTest {
     /**
      * 里程碑参数坏了要回模型一句话，循环接着跑。
      *
-     * <p>搬家之前这里直接调 PLANNER 的解析器，它对坏 JSON 抛异常 —— 整个循环当场结束，
-     * 模型连重试的机会都没有。这条判据是随搬家一起改掉那个行为时写的。
+     * <p>第五刀之前这里直接调 PLANNER 的解析器，它对坏 JSON 抛异常 —— 整个循环当场结束，
+     * 模型连重试的机会都没有。这里用的是真实的 {@link StudyPlanTool}（第六刀），不是桩：
+     * 判的是「坏 JSON 真的走到了 parseOrNull 那条不抛的路」。
      */
     @Test
     @DisplayName("里程碑解析不出来：回模型一句说明，循环继续（模型被再调一次）")
     void 里程碑坏参数不中断循环() throws Exception {
         Rig rig = new Rig(WorkspaceMode.READ, true);
-        CodeWorkspaceAgent.MilestonePlanning planning = new CodeWorkspaceAgent.MilestonePlanning() {
-            public List<Map<String, Object>> tools() {
-                return List.of(ToolSchemas.functionTool("create_study_plan", "排任务", Map.of(), List.of()));
-            }
-
-            public Map<String, Object> parse(String argsJson) {
-                return null;
-            }
-        };
         rig.modelSays(toolCall("create_study_plan", "{不是json"));
-        CodeWorkspaceAgent.Result r = rig.run("带我做一个小项目", Map.of(), planning);
+        CodeWorkspaceAgent.Result r = rig.run("带我做一个小项目", Map.of());
         verify(rig.provider, times(2)).callOpenAiToolTurn(any(), any(), any());
         assertEquals(null, r.milestonePlan());
         assertTrue(r.context().contains("没有解析出可用的里程碑"), r.context());
@@ -176,7 +173,7 @@ class CodeWorkspaceAgentTest {
         Rig rig = new Rig(WorkspaceMode.READ, true);
         when(rig.workspace.read("src/Main.java")).thenReturn("class Main {}");
         rig.modelSays(toolCall("read_workspace_file", "{\"path\":\"src/Main.java\"}"));
-        rig.run("帮我看看 src/Main.java 的代码", CODE_MODE, null);
+        rig.run("帮我看看 src/Main.java 的代码", CODE_MODE);
         assertTrue(rig.notes.stream().anyMatch(n -> "call".equals(n.get("phase"))
                 && "读取 src/Main.java".equals(n.get("message"))), "没有「读取 src/Main.java」这一步：" + rig.notes);
     }
@@ -192,20 +189,4 @@ class CodeWorkspaceAgentTest {
                 "TOOL_NAMES 和实际声明对不上 —— code agent 会把某个 Wiki 调用当成工作区工具去执行（得到「未知的工作区工具」）");
     }
 
-    /** PLANNER 的解析器对坏 JSON 是抛异常的；接缝必须把它变成「解析不出来」，而不是让异常冲出循环。 */
-    @Test
-    @DisplayName("MilestonePlanning.of：解析器抛异常或计划为空都算「解析不出来」，有内容才交出去")
-    void 里程碑接缝吞掉解析异常() {
-        Map<String, Object> good = Map.of("tasks", List.of(Map.of("title", "实现登录")));
-        CodeWorkspaceAgent.MilestonePlanning p = CodeWorkspaceAgent.MilestonePlanning.of(
-                List::of,
-                json -> {
-                    if (json.startsWith("{不是")) throw new com.zhiqu.common.BusinessException("AI 计划格式解析失败，请重试");
-                    return json.equals("{}") ? Map.of("tasks", List.of()) : good;
-                },
-                plan -> plan.get("tasks") instanceof List<?> l && !l.isEmpty());
-        assertEquals(null, p.parse("{不是json"), "解析器的异常冲了出来 / 没被当成「解析不出来」");
-        assertEquals(null, p.parse("{}"), "空计划被交了出去 —— 会产出一个没有任务的草稿");
-        assertSame(good, p.parse("{\"tasks\":[...]}"));
-    }
 }

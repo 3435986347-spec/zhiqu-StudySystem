@@ -746,6 +746,23 @@ Wiki 的工具名也收成了一份（`WikiToolAgent.TOOL_NAMES`）—— code a
 假工作区对那个文件返回 null，被「没读过不许改」**另一道门**顶替了。改成真正的新文件（`ABSENT`）之后
 两半断言各自能红。**一个断言绿着，可能是因为别的防护替它挡了。**
 
+**第六刀**是 `create_study_plan` 这个工具 → `service/ai/StudyPlanTool`（schema、解析器、`hasContent`；
+大类 4486 → 4256 行，不再依赖 `ReminderPlanService`）。同样先量：8 个方法只用到时钟、提醒服务、
+ObjectMapper，0 个轮次状态字段。第五刀那个 `MilestonePlanning` 接缝只因为解析器住在大类里才需要；
+它有了自己的家，code agent 直接依赖它，接缝和大类里的适配器一起删了 —— **接缝是为了当时的约束而存在的，
+约束没了它就该走**。
+
+这一刀多做了一步：**先拍金样再搬家**。搬之前用反射调大类里原来的私有方法（时钟固定、提醒服务打桩），
+把 schema 和一组边界输入的解析结果写进 `src/test/resources/golden/study-plan-tool.json`；
+`StudyPlanToolTest` 拿新类的输出按 JSON 树逐项比。于是「搬家不改行为」是验证过的，不是口头保证的 ——
+扰动时它连「提醒偏移排序反了」「默认结束日期差一天」都抓到了。
+
+新判据第一次跑就报了一个「第二份 schema 声明」在 `AiServiceImpl` 里 —— 查下来是**误报**
+（命中了 tool_choice 的 `Map.of("name", "create_study_plan")`），但它照出了真问题：工具名的字面量散在
+四个文件共 7 处。改了声明漏了别处，tool_choice 强制一个不存在的工具、按名字匹配的地方永远匹配不上，
+计划静默地产不出来。现在是 `StudyPlanTool.NAME` 一份，判据改成最朴素的「去掉注释后字面量全仓只出现一次」。
+**误报也要查到底**：这一次误报的原因本身就是个真 bug。
+
 **再下一刀不该是「把 15 个 runner 搬出去」。** 它们剩下的耦合是各自的<b>领域工作</b>
 （检索、校验、摘要、计划解析），而那些方法就是 `AiServiceImpl` 的其余部分。
 只搬 runner 外壳会得到 15 个小文件、每个都反过来伸手进大类 —— 比现在更糟。

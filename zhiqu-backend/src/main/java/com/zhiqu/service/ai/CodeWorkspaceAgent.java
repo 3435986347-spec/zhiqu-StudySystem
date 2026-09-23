@@ -36,12 +36,12 @@ import java.util.function.Consumer;
  * <b>不碰任何一个轮次状态（StreamState）字段</b>。第四刀量检索 runner 时是 22 个字段，
  * 搬出去等于把整个轮次状态一起暴露，所以没搬。量了再决定，是那一刀留下的规矩。
  *
- * <h2>和 PLANNER 的接缝</h2>
+ * <h2>和 PLANNER 共用一份计划工具</h2>
  *
  * <p>项目式引导要把里程碑排成任务草稿，用的必须是 PLANNER 那条路<b>同一个</b>
  * {@code create_study_plan} schema 和<b>同一个</b>解析器 —— 另猜字段名，确认落库时会静默丢掉
- * 象限、时长、截止日期。那两样仍住在 PLANNER 所在的地方，这里只依赖一个很窄的
- * {@link MilestonePlanning}：给我工具声明、帮我解析参数。计划长什么样，这个类不知道。
+ * 象限、时长、截止日期。那一份是 {@link StudyPlanTool}（第六刀）。第五刀时它还住在大类里，
+ * 这里只能经一个 {@code MilestonePlanning} 接缝借用；它搬出来之后接缝就是多余的一层，已删。
  */
 @Component
 public class CodeWorkspaceAgent {
@@ -56,56 +56,18 @@ public class CodeWorkspaceAgent {
     private final WikiToolAgent wikiToolAgent;
     private final AdminGuard adminGuard;
     private final ObjectMapper objectMapper;
+    private final StudyPlanTool studyPlanTool;
 
     public CodeWorkspaceAgent(ModelProviderClient provider, WorkspaceService workspaceService,
                               WorkspaceExecutor workspaceExecutor, WikiToolAgent wikiToolAgent,
-                              AdminGuard adminGuard, ObjectMapper objectMapper) {
+                              AdminGuard adminGuard, ObjectMapper objectMapper, StudyPlanTool studyPlanTool) {
         this.provider = provider;
         this.workspaceService = workspaceService;
         this.workspaceExecutor = workspaceExecutor;
         this.wikiToolAgent = wikiToolAgent;
         this.adminGuard = adminGuard;
         this.objectMapper = objectMapper;
-    }
-
-    /**
-     * 把里程碑交给 PLANNER 那条已有的路。
-     *
-     * @see CodeWorkspaceAgent 类注释「和 PLANNER 的接缝」
-     */
-    public interface MilestonePlanning {
-        /** {@code create_study_plan} 的工具声明 —— 与 PLANNER 同一份。 */
-        List<Map<String, Object>> tools();
-
-        /** 把模型给的参数解析成 {@code {tasks, routines}}；解析不出可用的计划返回 {@code null}。 */
-        Map<String, Object> parse(String argsJson);
-
-        /**
-         * 用 PLANNER 的三样东西拼一个：schema、解析器、「这个计划有没有内容」的判定。
-         *
-         * <p>解析器抛异常（PLANNER 那份对坏 JSON 就是抛的）一律当成「解析不出来」。
-         * 放任它抛出去的话，整个工具循环会当场结束 —— 模型连改参数重试的机会都没有。
-         */
-        static MilestonePlanning of(java.util.function.Supplier<List<Map<String, Object>>> schema,
-                                    java.util.function.Function<String, Map<String, Object>> parser,
-                                    java.util.function.Predicate<Map<String, Object>> usable) {
-            return new MilestonePlanning() {
-                @Override
-                public List<Map<String, Object>> tools() {
-                    return schema.get();
-                }
-
-                @Override
-                public Map<String, Object> parse(String argsJson) {
-                    try {
-                        Map<String, Object> plan = parser.apply(argsJson);
-                        return plan != null && usable.test(plan) ? plan : null;
-                    } catch (RuntimeException e) {
-                        return null;
-                    }
-                }
-            };
-        }
+        this.studyPlanTool = studyPlanTool;
     }
 
     /** 这一轮的产物：给最终回答用的上下文、待确认的写草稿、里程碑计划（可为 null）。 */
@@ -133,7 +95,7 @@ public class CodeWorkspaceAgent {
         boolean ranCommand;
         /** Wiki 工具自己的循环状态（读过哪些页、快照、本轮已提过哪些草稿）—— 复用同一套防护。 */
         final WikiToolAgent.WikiLoopState wiki = new WikiToolAgent.WikiLoopState();
-        /** 模型给出的里程碑计划（{@code {tasks, routines}}），形状由 {@link MilestonePlanning} 决定。 */
+        /** 模型给出的里程碑计划（{@code {tasks, routines}}），形状由 {@link StudyPlanTool} 决定。 */
         Map<String, Object> milestonePlan;
     }
 
@@ -155,7 +117,7 @@ public class CodeWorkspaceAgent {
      * @param onStep 每次工具调用前后的叙述（{@code agent.step.note}），网页轨迹与命令行都读它；可为 null
      */
     public Result run(AiModelConfig config, Long userId, String userMessage, Map<String, Object> contextOptions,
-                      MilestonePlanning planning, Consumer<Map<String, Object>> onStep) {
+                      Consumer<Map<String, Object>> onStep) {
         if (!AgentPlanDecision.codeAgentIntent(userMessage, contextOptions) || !provider.supportsToolCalling(config)) {
             return Result.EMPTY;
         }
@@ -179,7 +141,7 @@ public class CodeWorkspaceAgent {
             // 这里不再复述那两个条件 —— 复述就是第二份真相。
             boolean canExec = workspaceExecutor.enabled();
             // 项目式引导才给「把里程碑排成任务」的能力：别的语境下模型不该往用户日历里塞东西。
-            boolean canPlanMilestones = AgentPlanDecision.projectIntent(userMessage) && planning != null;
+            boolean canPlanMilestones = AgentPlanDecision.projectIntent(userMessage);
             // 显式按了「代码」给大预算，关键词触发给小预算 —— 理由见 CodeLoopBudget
             CodeLoopBudget budget = CodeLoopBudget.forRequest(AgentPlanDecision.codeModeRequested(contextOptions));
             long loopStart = System.currentTimeMillis();
@@ -197,8 +159,8 @@ public class CodeWorkspaceAgent {
                 // 写工具（create_wiki_patch）只在 ranCommand 之后给 —— 见 LoopState.ranCommand。
                 tools.addAll(wikiToolAgent.buildWikiTools(loop.ranCommand));
                 if (canPlanMilestones) {
-                    // 复用 PLANNER 那条路的 schema，不另写一份 —— 见 MilestonePlanning
-                    tools.addAll(planning.tools());
+                    // 复用 PLANNER 那条路的 schema，不另写一份 —— 见 StudyPlanTool
+                    tools.addAll(studyPlanTool.tools());
                 }
                 // 这一轮到底给了哪些工具 —— 执行侧要照着它拒绝没给过的调用。
                 // 不这么做的话，上面那几道「最小权限」的门只决定<b>声明</b>什么，
@@ -224,8 +186,8 @@ public class CodeWorkspaceAgent {
                     String result = !offered.contains(name)
                             ? "操作被拒绝：这一轮没有给你「" + name + "」这个工具。"
                                     + "如实告诉用户你没有这个能力，不要换个名字再试。"
-                            : "create_study_plan".equals(name)
-                            ? recordMilestonePlan(argsRaw, planning, loop)
+                            : StudyPlanTool.NAME.equals(name)
+                            ? recordMilestonePlan(argsRaw, loop)
                             : WikiToolAgent.isWikiTool(name)
                             // 原样交给 Wiki 那条已经加固过的路：保留页、未完整读取不许整页覆盖、
                             // 本轮幂等、条带锁、可信快照基线。这里<b>不</b>另写一份。
@@ -279,8 +241,8 @@ public class CodeWorkspaceAgent {
      * 而它对坏 JSON 是<b>抛异常</b>的 —— 在工具循环里，那会让整个循环提前结束，
      * 模型连重试的机会都没有。
      */
-    private static String recordMilestonePlan(String argsJson, MilestonePlanning planning, LoopState loop) {
-        Map<String, Object> plan = planning == null ? null : planning.parse(argsJson);
+    private String recordMilestonePlan(String argsJson, LoopState loop) {
+        Map<String, Object> plan = studyPlanTool.parseOrNull(argsJson);
         if (plan == null) {
             return "没有解析出可用的里程碑。请给出 tasks 数组，每项至少有 title。";
         }

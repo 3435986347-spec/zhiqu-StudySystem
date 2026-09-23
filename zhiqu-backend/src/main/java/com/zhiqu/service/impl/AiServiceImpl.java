@@ -39,6 +39,7 @@ import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.CodeContextPrompt;
 import com.zhiqu.service.ai.CodeWorkspaceAgent;
+import com.zhiqu.service.ai.StudyPlanTool;
 import com.zhiqu.service.AiWorkspaceService;
 import com.zhiqu.service.MultiAgentOrchestrator;
 import com.zhiqu.service.ai.ModelProviderClient;
@@ -54,7 +55,6 @@ import com.zhiqu.service.agent.AgentSseEvent;
 import com.zhiqu.service.agent.AgentStageExecutor;
 import com.zhiqu.service.ai.StreamingContentFlusher;
 import com.zhiqu.service.agent.AgentStageRunner;
-import com.zhiqu.service.ReminderPlanService;
 import com.zhiqu.service.VerifierService;
 import com.zhiqu.service.ai.WebResearchService;
 import com.zhiqu.service.ai.WebSearchProvider;
@@ -82,7 +82,6 @@ import org.slf4j.LoggerFactory;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -96,6 +95,8 @@ public class AiServiceImpl implements AiService {
     private final BusinessClock clock;
     /** 代码工作区的工具循环（拆第五刀）。工作区、执行器、管理员守卫都在它里面，这里不再直接依赖。 */
     private final CodeWorkspaceAgent codeWorkspaceAgent;
+    /** create_study_plan 的 schema 与解析器（拆第六刀）。PLANNER 与 code agent 共用这一份。 */
+    private final StudyPlanTool studyPlanTool;
     private static final Logger log = LoggerFactory.getLogger(AiServiceImpl.class);
     private static final String DEFAULT_CONVERSATION_KEY = "default";
     private static final int CHAT_HISTORY_LIMIT = 20;
@@ -133,7 +134,6 @@ public class AiServiceImpl implements AiService {
     private final UserKnowledgeRevisionMapper knowledgeRevisionMapper;
     private final KnowledgePatchSetMapper knowledgePatchSetMapper;
     private final KnowledgeSourceMapper knowledgeSourceMapper;
-    private final ReminderPlanService reminderPlanService;
     private final KnowledgeService knowledgeService;
     private final AiWorkspaceService aiWorkspaceService;
     private final AgentTaskGraphService agentTaskGraphService;
@@ -227,7 +227,6 @@ public class AiServiceImpl implements AiService {
                          UserKnowledgeRevisionMapper knowledgeRevisionMapper,
                          KnowledgePatchSetMapper knowledgePatchSetMapper,
                          KnowledgeSourceMapper knowledgeSourceMapper,
-                         ReminderPlanService reminderPlanService,
                          @Lazy KnowledgeService knowledgeService,
                          AiWorkspaceService aiWorkspaceService,
                          AgentTaskGraphService agentTaskGraphService,
@@ -255,9 +254,11 @@ public class AiServiceImpl implements AiService {
                          @Value("${app.ai.stream.debug:false}") boolean streamDebug,
                          @Value("${app.ai.allow-private-provider-url:false}") boolean allowPrivateProviderUrl,
                          BusinessClock clock,
-                         CodeWorkspaceAgent codeWorkspaceAgent) {
+                         CodeWorkspaceAgent codeWorkspaceAgent,
+                         StudyPlanTool studyPlanTool) {
         this.clock = clock;
         this.codeWorkspaceAgent = codeWorkspaceAgent;
+        this.studyPlanTool = studyPlanTool;
         this.configMapper = configMapper;
         this.modelConfigMapper = modelConfigMapper;
         this.conversationMapper = conversationMapper;
@@ -267,7 +268,6 @@ public class AiServiceImpl implements AiService {
         this.knowledgeRevisionMapper = knowledgeRevisionMapper;
         this.knowledgePatchSetMapper = knowledgePatchSetMapper;
         this.knowledgeSourceMapper = knowledgeSourceMapper;
-        this.reminderPlanService = reminderPlanService;
         this.knowledgeService = knowledgeService;
         this.aiWorkspaceService = aiWorkspaceService;
         this.agentTaskGraphService = agentTaskGraphService;
@@ -1355,7 +1355,7 @@ public class AiServiceImpl implements AiService {
             // 每一次工具调用都发一条 note：执行轨迹和 CLI 靠它显示「读了什么、跑了什么」。
             // PRE_STREAM 的 emit 是直发的（见 AgentRunContext.emit），所以是实时的，不是攒到最后。
             CodeWorkspaceAgent.Result codeResult = codeWorkspaceAgent.run(s.config, s.userId, s.limitedMessage,
-                    s.contextOptions, milestonePlanning(),
+                    s.contextOptions,
                     note -> {
                         Map<String, Object> payload = new LinkedHashMap<>();
                         payload.put("requestId", s.requestId);
@@ -2162,14 +2162,9 @@ public class AiServiceImpl implements AiService {
         }
     }
 
+    /** 委托给唯一定义 {@link StudyPlanTool#hasContent} —— 7 个调用点因此不必改。 */
     private boolean hasPlanDraft(Map<String, Object> planArtifactContent) {
-        if (planArtifactContent == null) {
-            return false;
-        }
-        Object tasks = planArtifactContent.get("tasks");
-        Object routines = planArtifactContent.get("routines");
-        return (tasks instanceof List<?> taskList && !taskList.isEmpty())
-                || (routines instanceof List<?> routineList && !routineList.isEmpty());
+        return StudyPlanTool.hasContent(planArtifactContent);
     }
 
     private String normalizeReasoningMode(String mode) {
@@ -3202,7 +3197,7 @@ public class AiServiceImpl implements AiService {
             try {
                 String toolArgs = callStudyPlanToolCall(config, getStudyPlanToolSystemPrompt(), userPrompt);
                 if (hasText(toolArgs)) {
-                    return parsePlanFromResponse(toolArgs);
+                    return studyPlanTool.parse(toolArgs);
                 }
             } catch (Exception ignored) {
                 // 该模型/网关不支持 tools 或调用失败，回退到结构化输出
@@ -3210,7 +3205,7 @@ public class AiServiceImpl implements AiService {
         }
         try {
             String aiResponse = callAiApi(config, getChatTaskExtractionPrompt(), userPrompt);
-            return parsePlanFromResponse(aiResponse);
+            return studyPlanTool.parse(aiResponse);
         } catch (Exception ignored) {
             // 对话本身已经成功，任务抽取失败时不影响聊天回复。
             return empty;
@@ -3240,9 +3235,9 @@ public class AiServiceImpl implements AiService {
                 Map.of("role", "user", "content", userMessage)));
         provider.applyTemperature(body);
         body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
-        body.put("tools", buildCreateStudyPlanTools());
+        body.put("tools", studyPlanTool.tools());
         // 已判定为写计划意图，强制模型调用该工具，稳定拿到结构化调用参数
-        body.put("tool_choice", Map.of("type", "function", "function", Map.of("name", "create_study_plan")));
+        body.put("tool_choice", Map.of("type", "function", "function", Map.of("name", StudyPlanTool.NAME)));
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
@@ -3253,7 +3248,7 @@ public class AiServiceImpl implements AiService {
             }
             JsonNode chosen = null;
             for (JsonNode call : toolCalls) {
-                if ("create_study_plan".equals(call.at("/function/name").asText(""))) {
+                if (StudyPlanTool.NAME.equals(call.at("/function/name").asText(""))) {
                     chosen = call;
                     break;
                 }
@@ -3289,8 +3284,8 @@ public class AiServiceImpl implements AiService {
             body.put("system", systemPrompt);
         }
         body.put("messages", List.of(Map.of("role", "user", "content", userMessage)));
-        body.put("tools", provider.toAnthropicTools(buildCreateStudyPlanTools()));
-        body.put("tool_choice", Map.of("type", "tool", "name", "create_study_plan"));
+        body.put("tools", provider.toAnthropicTools(studyPlanTool.tools()));
+        body.put("tool_choice", Map.of("type", "tool", "name", StudyPlanTool.NAME));
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
@@ -3299,7 +3294,7 @@ public class AiServiceImpl implements AiService {
             if (content.isArray()) {
                 for (JsonNode block : content) {
                     if ("tool_use".equals(block.path("type").asText(""))
-                            && "create_study_plan".equals(block.path("name").asText(""))) {
+                            && StudyPlanTool.NAME.equals(block.path("name").asText(""))) {
                         JsonNode input = block.path("input");
                         return input.isMissingNode() ? "" : input.toString();
                     }
@@ -3314,108 +3309,9 @@ public class AiServiceImpl implements AiService {
     }
 
     /** create_study_plan 工具的 OpenAI schema：模型据此决定并填充一次性任务与例行计划 */
-    /**
-     * 把 PLANNER 的 schema 和解析器借给 code agent —— <b>同一份</b>，不另写。
-     *
-     * <p>项目式引导的里程碑要走既有的 TASK_DRAFT / ROUTINE_DRAFT 路径，字段形状必须与 PLANNER 逐字一致，
-     * 另猜一套的话确认落库时会静默丢掉象限、时长、截止日期。所以 schema 和解析器都留在这里，
-     * 只通过这个窄接口借出去（见 {@link CodeWorkspaceAgent.MilestonePlanning}）。
-     *
-     * <p>{@code parsePlanFromResponse} 对坏 JSON 抛异常；{@code MilestonePlanning.of} 把它接住、转成
-     * 「解析不出来」—— 让 code agent 回给模型一句「参数不对」，而不是让整个工具循环中断。
-     */
-    private CodeWorkspaceAgent.MilestonePlanning milestonePlanning() {
-        return CodeWorkspaceAgent.MilestonePlanning.of(
-                this::buildCreateStudyPlanTools, this::parsePlanFromResponse, this::hasPlanDraft);
-    }
-
-    private List<Map<String, Object>> buildCreateStudyPlanTools() {
-        Map<String, Object> taskProps = new LinkedHashMap<>();
-        taskProps.put("title", schemaProp("string", "任务标题，简洁明确"));
-        taskProps.put("description", schemaProp("string", "任务说明，含背景/范围/验收标准"));
-        taskProps.put("startTime", schemaProp("string", "YYYY-MM-DD HH:mm:ss 开始时间，无法确定则省略"));
-        taskProps.put("deadline", schemaProp("string", "YYYY-MM-DD HH:mm:ss 截止时间，无法确定则省略"));
-        taskProps.put("durationMinutes", schemaProp("integer", "预计时长（分钟）"));
-        taskProps.put("taskType", schemaProp("string", "assignment/exam/report/presentation/course/activity/other 中最接近的一类"));
-        taskProps.put("difficulty", schemaProp("integer", "1..5，1很简单 5很复杂"));
-        taskProps.put("suggestedReminderOffsets", schemaArray("integer", "提前提醒天数，如 [7,4,2]；无 deadline 则为空数组"));
-        taskProps.put("reminderReason", schemaProp("string", "提醒节奏的一句话理由"));
-        taskProps.put("priority", schemaProp("integer", "0低 1中 2高"));
-        taskProps.put("suggestedQuadrant", schemaProp("integer", "1重要且紧急 2重要不紧急 3紧急不重要 4不重要不紧急"));
-        taskProps.put("reason", schemaProp("string", "象限建议的一句话理由"));
-        Map<String, Object> taskItem = new LinkedHashMap<>();
-        taskItem.put("type", "object");
-        taskItem.put("properties", taskProps);
-        taskItem.put("required", List.of("title"));
-
-        Map<String, Object> routineProps = new LinkedHashMap<>();
-        routineProps.put("title", schemaProp("string", "例行计划标题，如 每天背单词"));
-        routineProps.put("description", schemaProp("string", "例行计划说明"));
-        routineProps.put("frequency", schemaEnum("重复频率", "DAILY", "WEEKLY"));
-        routineProps.put("daysOfWeek", schemaArray("integer", "周一=1..周日=7；DAILY 可为空数组"));
-        routineProps.put("startDate", schemaProp("string", "YYYY-MM-DD"));
-        routineProps.put("endDate", schemaProp("string", "YYYY-MM-DD，无法确定则用今天起 30 天后"));
-        routineProps.put("preferredTime", schemaProp("string", "HH:mm，无法确定则省略"));
-        routineProps.put("durationMinutes", schemaProp("integer", "预计时长（分钟）"));
-        routineProps.put("taskType", schemaProp("string", "assignment/exam/report/presentation/course/activity/other"));
-        routineProps.put("difficulty", schemaProp("integer", "1..5"));
-        routineProps.put("priority", schemaProp("integer", "0低 1中 2高"));
-        routineProps.put("suggestedQuadrant", schemaProp("integer", "1..4"));
-        routineProps.put("reminderEnabled", schemaProp("boolean", "是否开启提醒"));
-        routineProps.put("reminderOffsets", schemaArray("integer", "提醒偏移，通常 [0]"));
-        routineProps.put("reminderReason", schemaProp("string", "为何适合做成例行计划"));
-        Map<String, Object> routineItem = new LinkedHashMap<>();
-        routineItem.put("type", "object");
-        routineItem.put("properties", routineProps);
-        routineItem.put("required", List.of("title", "frequency"));
-
-        Map<String, Object> props = new LinkedHashMap<>();
-        props.put("tasks", schemaArrayOf(taskItem, "一次性任务/里程碑：有明确 DDL 或阶段交付物的项目"));
-        props.put("routines", schemaArrayOf(routineItem, "每天/每周重复执行的例行计划，不要展开成大量 tasks"));
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("type", "object");
-        params.put("properties", props);
-        params.put("required", List.of("tasks", "routines"));
-
-        Map<String, Object> function = new LinkedHashMap<>();
-        function.put("name", "create_study_plan");
-        function.put("description", "把用户认可的学习计划拆解为可写入知趣系统的一次性任务(tasks)和例行计划(routines)，"
-                + "生成草稿供用户确认后落库。当用户希望把计划写进系统时调用；没有可落地项时两个数组都传空。");
-        function.put("parameters", params);
-
-        Map<String, Object> tool = new LinkedHashMap<>();
-        tool.put("type", "function");
-        tool.put("function", function);
-        return List.of(tool);
-    }
-
     /** 委托给唯一定义 {@link ToolSchemas} —— 调用点因此不必改。 */
     private Map<String, Object> schemaProp(String type, String description) {
         return ToolSchemas.schemaProp(type, description);
-    }
-
-    private Map<String, Object> schemaArray(String itemType, String description) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("type", "array");
-        m.put("items", Map.of("type", itemType));
-        m.put("description", description);
-        return m;
-    }
-
-    private Map<String, Object> schemaArrayOf(Map<String, Object> item, String description) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("type", "array");
-        m.put("items", item);
-        m.put("description", description);
-        return m;
-    }
-
-    private Map<String, Object> schemaEnum(String description, String... values) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("type", "string");
-        m.put("enum", List.of(values));
-        m.put("description", description);
-        return m;
     }
 
     private String getStudyPlanToolSystemPrompt() {
@@ -3593,131 +3489,10 @@ public class AiServiceImpl implements AiService {
         try {
             String jsonStr = extractJsonArray(aiResponse);
             JsonNode array = objectMapper.readTree(jsonStr);
-            return parseTasksFromNode(array);
+            return studyPlanTool.parseTasks(array);
         } catch (Exception e) {
             throw new BusinessException("AI 返回格式解析失败，请重试");
         }
-    }
-
-    private Map<String, Object> parsePlanFromResponse(String aiResponse) {
-        try {
-            JsonNode root = objectMapper.readTree(extractJsonObject(aiResponse));
-            Map<String, Object> plan = new HashMap<>();
-            plan.put("tasks", parseTasksFromNode(root.get("tasks")));
-            plan.put("routines", parseRoutinesFromNode(root.get("routines")));
-            return plan;
-        } catch (Exception e) {
-            throw new BusinessException("AI 计划格式解析失败，请重试");
-        }
-    }
-
-    private List<Map<String, Object>> parseTasksFromNode(JsonNode array) {
-        try {
-            List<Map<String, Object>> tasks = new ArrayList<>();
-            if (array == null || !array.isArray()) {
-                return tasks;
-            }
-            for (JsonNode node : array) {
-                Map<String, Object> task = new HashMap<>();
-                task.put("title", node.has("title") ? node.get("title").asText() : "");
-                task.put("description", node.has("description") ? node.get("description").asText() : "");
-                task.put("startTime", node.has("startTime") && !node.get("startTime").isNull()
-                        ? node.get("startTime").asText() : null);
-                task.put("deadline", node.has("deadline") && !node.get("deadline").isNull()
-                        ? node.get("deadline").asText() : null);
-                task.put("durationMinutes", node.has("durationMinutes") && !node.get("durationMinutes").isNull()
-                        ? node.get("durationMinutes").asInt() : null);
-                task.put("repeatWeeks", node.has("repeatWeeks") && !node.get("repeatWeeks").isNull()
-                        ? node.get("repeatWeeks").asInt() : null);
-                String taskType = node.has("taskType") && !node.get("taskType").isNull()
-                        ? node.get("taskType").asText() : "other";
-                Integer difficulty = node.has("difficulty") && !node.get("difficulty").isNull()
-                        ? node.get("difficulty").asInt(3) : 3;
-                task.put("taskType", taskType);
-                task.put("difficulty", Math.max(1, Math.min(5, difficulty)));
-                List<Integer> offsets = parseOffsets(node.get("suggestedReminderOffsets"));
-                if (offsets.isEmpty() && task.get("deadline") != null) {
-                    offsets = reminderPlanService.suggestOffsets(taskType, difficulty);
-                }
-                task.put("suggestedReminderOffsets", offsets);
-                task.put("reminderReason", node.has("reminderReason") ? node.get("reminderReason").asText() : "");
-                task.put("priority", node.has("priority") ? node.get("priority").asInt(0) : 0);
-                task.put("suggestedQuadrant", node.has("suggestedQuadrant")
-                        ? node.get("suggestedQuadrant").asInt(2) : 2);
-                task.put("reason", node.has("reason") ? node.get("reason").asText() : "");
-                tasks.add(task);
-            }
-            return tasks;
-        } catch (Exception e) {
-            throw new BusinessException("AI 返回格式解析失败，请重试");
-        }
-    }
-
-    private List<Map<String, Object>> parseRoutinesFromNode(JsonNode array) {
-        List<Map<String, Object>> routines = new ArrayList<>();
-        if (array == null || !array.isArray()) {
-            return routines;
-        }
-        LocalDate today = clock.today();
-        for (JsonNode node : array) {
-            Map<String, Object> routine = new HashMap<>();
-            routine.put("title", node.has("title") ? node.get("title").asText() : "");
-            routine.put("description", node.has("description") ? node.get("description").asText() : "");
-            routine.put("frequency", node.has("frequency") ? node.get("frequency").asText("DAILY") : "DAILY");
-            routine.put("daysOfWeek", parseIntArray(node.get("daysOfWeek")));
-            routine.put("startDate", node.has("startDate") && !node.get("startDate").isNull()
-                    ? node.get("startDate").asText() : today.toString());
-            routine.put("endDate", node.has("endDate") && !node.get("endDate").isNull()
-                    ? node.get("endDate").asText() : today.plusDays(29).toString());
-            routine.put("preferredTime", node.has("preferredTime") && !node.get("preferredTime").isNull()
-                    ? node.get("preferredTime").asText() : null);
-            routine.put("durationMinutes", node.has("durationMinutes") && !node.get("durationMinutes").isNull()
-                    ? node.get("durationMinutes").asInt() : null);
-            routine.put("taskType", node.has("taskType") ? node.get("taskType").asText("other") : "other");
-            int difficulty = node.has("difficulty") ? node.get("difficulty").asInt(3) : 3;
-            routine.put("difficulty", Math.max(1, Math.min(5, difficulty)));
-            routine.put("priority", node.has("priority") ? node.get("priority").asInt(1) : 1);
-            routine.put("suggestedQuadrant", node.has("suggestedQuadrant")
-                    ? node.get("suggestedQuadrant").asInt(2) : 2);
-            routine.put("quadrant", routine.get("suggestedQuadrant"));
-            routine.put("reminderEnabled", !node.has("reminderEnabled") || node.get("reminderEnabled").asBoolean(true));
-            List<Integer> offsets = parseOffsets(node.get("reminderOffsets"));
-            routine.put("reminderOffsets", offsets.isEmpty() ? List.of(0) : offsets);
-            routine.put("reminderReason", node.has("reminderReason") ? node.get("reminderReason").asText() : "");
-            routines.add(routine);
-        }
-        return routines;
-    }
-
-    private List<Integer> parseIntArray(JsonNode node) {
-        List<Integer> result = new ArrayList<>();
-        if (node == null || !node.isArray()) {
-            return result;
-        }
-        for (JsonNode item : node) {
-            if (item.isNumber()) {
-                result.add(item.asInt());
-            }
-        }
-        return result;
-    }
-
-    private List<Integer> parseOffsets(JsonNode node) {
-        List<Integer> offsets = new ArrayList<>();
-        if (node == null || !node.isArray()) {
-            return offsets;
-        }
-        for (JsonNode item : node) {
-            if (!item.isNumber()) {
-                continue;
-            }
-            int offset = item.asInt();
-            if (offset >= 0 && offset <= 365 && !offsets.contains(offset)) {
-                offsets.add(offset);
-            }
-        }
-        offsets.sort(Comparator.reverseOrder());
-        return offsets;
     }
 
     /** 调用 AI 文本接口（兼容 OpenAI / DeepSeek / 通义千问等） */
@@ -4478,12 +4253,4 @@ public class AiServiceImpl implements AiService {
         throw new RuntimeException("未找到 JSON 数组");
     }
 
-    private String extractJsonObject(String text) {
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-            return text.substring(start, end + 1);
-        }
-        throw new RuntimeException("未找到 JSON 对象");
-    }
 }

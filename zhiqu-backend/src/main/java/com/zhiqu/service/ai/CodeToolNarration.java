@@ -39,7 +39,7 @@ public final class CodeToolNarration {
             case "search_wiki" -> "查知识库「" + text(a, "query") + "」";
             case "read_wiki_page" -> "读知识页 " + orUnknown(text(a, "title"));
             case "create_wiki_patch" -> "起草知识页改动 " + orUnknown(text(a, "title"));
-            case "create_study_plan" -> "把里程碑排成任务草稿";
+            case StudyPlanTool.NAME -> "把里程碑排成任务草稿";
             default -> "调用 " + (tool == null || tool.isEmpty() ? "（未知工具）" : tool);
         };
     }
