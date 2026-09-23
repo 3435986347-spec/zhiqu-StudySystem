@@ -39,6 +39,7 @@ import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.CodeContextPrompt;
 import com.zhiqu.service.ai.CodeWorkspaceAgent;
+import com.zhiqu.service.ai.ContextBudget;
 import com.zhiqu.service.ai.StudyPlanTool;
 import com.zhiqu.service.AiWorkspaceService;
 import com.zhiqu.service.MultiAgentOrchestrator;
@@ -99,7 +100,6 @@ public class AiServiceImpl implements AiService {
     private final StudyPlanTool studyPlanTool;
     private static final Logger log = LoggerFactory.getLogger(AiServiceImpl.class);
     private static final String DEFAULT_CONVERSATION_KEY = "default";
-    private static final int CHAT_HISTORY_LIMIT = 20;
     private static final int SUMMARY_MAX_LENGTH = 1500;
     /** 自上次摘要以来新滑出窗口的消息达到这个数才重算 —— 否则每一轮都要多花一次模型调用。 */
     private static final int SUMMARY_REFRESH_MIN = 10;
@@ -401,7 +401,9 @@ public class AiServiceImpl implements AiService {
         // ai_agent_run.memory_epoch 上，而非流式 chat() 根本没有 run，没地方挂。
         // 这里用局部变量快照，最终事务里比对，语义与流式一致。
         Long startEpoch = userMapper.currentMemoryEpoch(userId);
-        List<AiMessage> history = getRecentMessages(userId, conversation.getId(), CHAT_HISTORY_LIMIT);
+        ContextBudget contextBudget = ContextBudget.forWindow(config.getContextWindowTokens());
+        List<AiMessage> history = historyWithin(
+                getRecentMessages(userId, conversation.getId(), contextBudget.historyMessages()), contextBudget.historyChars());
         String memoryText = getMemoryText(userId, limitedQuery(message));
 
         List<Map<String, Object>> messages = new ArrayList<>();
@@ -549,9 +551,12 @@ public class AiServiceImpl implements AiService {
         String memoryText = getMemoryText(userId, limitedQuery(limitedMessage));
         String requestId = UUID.randomUUID().toString();
         // 锁内短事务:归属校验、会话解析与首批落库原子完成,与清空记忆/删除 Notebook 串行;模型流式在锁外
+        // 各处能塞多少由模型的上下文窗口决定；没填窗口时就是原来那组常量（ContextBudget.DEFAULT）
+        ContextBudget contextBudget = ContextBudget.forWindow(config.getContextWindowTokens());
         ChatWriteContext writeContext = conversationLocks.withUserLock(userId, () -> conversationTx.execute(tx -> {
             AiConversation liveConversation = getOrCreateConversation(userId, notebookId);
-            List<AiMessage> liveHistory = getRecentMessages(userId, liveConversation.getId(), CHAT_HISTORY_LIMIT);
+            List<AiMessage> fetchedHistory = getRecentMessages(userId, liveConversation.getId(), contextBudget.historyMessages());
+            List<AiMessage> liveHistory = historyWithin(fetchedHistory, contextBudget.historyChars());
             AiMessage liveUserMessage = saveChatMessage(userId, liveConversation.getId(), "user", limitedMessage);
             AiMessage liveAssistantMessage = createStreamingAssistantMessage(
                     userId,
@@ -563,7 +568,8 @@ public class AiServiceImpl implements AiService {
             );
             // 摘要与历史在同一把锁、同一个事务里读，指纹校验看到的才是同一个快照
             return new ChatWriteContext(liveConversation, liveHistory, liveUserMessage, liveAssistantMessage,
-                    usableSummary(userId, liveConversation));
+                    usableSummary(userId, liveConversation),
+                    fetchedHistory.size() >= contextBudget.historyMessages() || liveHistory.size() < fetchedHistory.size());
         }));
         AiConversation conversation = writeContext.conversation();
         List<AiMessage> history = writeContext.history();
@@ -572,7 +578,7 @@ public class AiServiceImpl implements AiService {
         // 意图判定算一次，建图与执行读同一个对象。此前两侧各算一套且已分叉（见 AgentPlanDecision 类注释）。
         AgentPlanDecision decision = AgentPlanDecision.of(
                 agentMode, limitedMessage, Boolean.TRUE.equals(enableWebSearch), notebookId, contextOptions,
-                provider.supportsToolCalling(config), history.size() >= CHAT_HISTORY_LIMIT,
+                provider.supportsToolCalling(config), writeContext.historyFull(),
                 // 工作区是否真的可读。两个条件缺一不可：
                 //   1. 生效档位允许读（问的是 effectiveMode 而不是配置 —— 三个前置有一条
                 //      不满足时，配置写 EXEC 也只能是 OFF）；
@@ -1319,7 +1325,8 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void run(AgentRunContext ctx) {
-            s.wikiAgent = wikiToolAgent.runWikiToolAgent(s.config, s.userId, s.limitedMessage);
+            s.wikiAgent = wikiToolAgent.runWikiToolAgent(s.config, s.userId, s.limitedMessage,
+                    ContextBudget.forWindow(s.config.getContextWindowTokens()).wikiContextChars());
             boolean wrote = s.wikiAgent != null && s.wikiAgent.wrotePatch;
             s.trace.finishStep(ctx, s.wikiToolStep, wrote ? "已生成待合入变更草稿" : "Wiki 读取完成", "wrotePatch=" + wrote);
             s.trace.completeTask(ctx, ctx.task("WIKI_TOOL_AGENT"), Map.of("wrotePatch", wrote), "Wiki tool loop done");
@@ -1364,7 +1371,7 @@ public class AiServiceImpl implements AiService {
                 }
             }
             CodeWorkspaceAgent.Result codeResult = codeWorkspaceAgent.run(s.config, s.userId, s.limitedMessage,
-                    chatHistory, s.contextOptions,
+                    chatHistory, s.contextOptions, ContextBudget.forWindow(s.config.getContextWindowTokens()),
                     note -> {
                         Map<String, Object> payload = new LinkedHashMap<>();
                         payload.put("requestId", s.requestId);
@@ -1720,7 +1727,7 @@ public class AiServiceImpl implements AiService {
     }
 
     /**
-     * 滚动摘要：把已经滑出 {@code CHAT_HISTORY_LIMIT} 窗口的轮次压成一段，让第 21 轮之前的事实
+     * 滚动摘要：把已经滑出历史窗口（条数与字数由 ContextBudget 按模型窗口决定）的轮次压成一段，让窗口之前的事实
      * 不再从模型视野里静默消失。<b>要调模型，所以工作在 POST_STREAM（锁外）；落库在 COMMIT。</b>
      *
      * <p>节点条件是 {@link AgentPlanDecision#needsSummary()}（窗口已满 —— 必要非充分）。
@@ -2276,6 +2283,18 @@ public class AiServiceImpl implements AiService {
         model.setApiUrl(normalizedApiUrl);
         model.setModelName(hasText(modelName) ? modelName.trim() : defaultModelName(providerType));
         model.setCapabilities(normalizeCapabilities(valueOr(body.get("capabilities"), "TEXT")));
+        // 只在请求体里<b>有</b>这个键时才改：旧客户端不发它，不该把已填的窗口清掉。空串 / null = 清掉（回到默认）
+        if (body.containsKey("contextWindowTokens")) {
+            Object raw = body.get("contextWindowTokens");
+            String text = raw == null ? "" : String.valueOf(raw).trim();
+            Integer window;
+            try {
+                window = text.isEmpty() ? null : Integer.valueOf(text);
+            } catch (NumberFormatException e) {
+                throw new BusinessException("上下文窗口要填整数（token 数），例如 128000");
+            }
+            model.setContextWindowTokens(ContextBudget.validate(window));
+        }
         model.setEnabled(booleanValue(body.get("enabled"), true) ? 1 : 0);
         // 判定规则在 SensitiveCryptoService 里，与掩码的生成规则放在一起 ——
         // 此前这里写的 endsWith("****") 对长密钥判不出来（旧掩码结尾是真实字符）
@@ -2594,7 +2613,19 @@ public class AiServiceImpl implements AiService {
     /** 锁内短事务产出的写入上下文（流式首批落库） */
     private record ChatWriteContext(AiConversation conversation, List<AiMessage> history,
                                     AiMessage userMessage, AiMessage assistantMessage,
-                                    String summary) {}
+                                    String summary, boolean historyFull) {}
+
+    /**
+     * 按上下文窗口取这一轮的历史：先按条数粗筛，再按字数从新往旧裁。
+     *
+     * <p>被裁掉的消息落在窗口之外 —— 摘要的边界是「这一轮历史里最老那一条」（SummarizerRunner），
+     * 所以它们会像原来滑出 20 条窗口那样被滚动摘要接住。为此「窗口满了」要把「被字数裁过」也算上，
+     * 否则摘要节点不会被造出来，那些消息就真的从模型视野里消失了。
+     */
+    private List<AiMessage> historyWithin(List<AiMessage> fetched, int charBudget) {
+        int from = ContextBudget.keepFrom(fetched, m -> m.getContent() == null ? 0 : m.getContent().length(), charBudget);
+        return from == 0 ? fetched : fetched.subList(from, fetched.size());
+    }
 
     /** 流式收尾锁内事务结果：实际存活的消息对（竞态重建时为新行）；dropped=true 表示 notebook 已删，迟到回答被丢弃 */
     /**
@@ -4082,6 +4113,8 @@ public class AiServiceImpl implements AiService {
         // 这些能力会<b>静默</b>不运行 —— 客户端据此提前说出来。判定只在 supportsToolCalling 一处，
         // 客户端不许按 providerType 自己再猜一遍（那是第二份真相）。
         row.put("toolCalling", provider.supportsToolCalling(model));
+        // 上下文窗口：空 = 按保守默认上限。harness 据此决定什么时候压缩长对话
+        row.put("contextWindowTokens", model.getContextWindowTokens());
         row.put("label", displayName + (system ? "（系统）" : "（我的）"));
         row.put("createdAt", model.getCreatedAt());
         row.put("updatedAt", model.getUpdatedAt());

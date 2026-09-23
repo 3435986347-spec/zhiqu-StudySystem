@@ -82,7 +82,7 @@ class CodeWorkspaceAgentTest {
         }
 
         CodeWorkspaceAgent.Result run(String message, List<Map<String, Object>> history, Map<String, Object> options) {
-            return agent.run(new AiModelConfig(), 1L, message, history, options, notes::add);
+            return agent.run(new AiModelConfig(), 1L, message, history, options, null, notes::add);
         }
 
         /** 本轮所有 result 叙述拼起来 —— 被拒绝的原因会出现在这里。 */

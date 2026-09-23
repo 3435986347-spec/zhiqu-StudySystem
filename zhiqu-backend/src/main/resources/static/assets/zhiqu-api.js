@@ -919,11 +919,12 @@
     var section = $all('section').find(function (s) { return /AI 模型配置/.test(s.textContent); });
     if (!section) return null;
     var ins = $all('input', section);
-    return { section: section, display: ins[0], modelName: ins[1], apiUrl: ins[2], apiKey: ins[3], provider: $('select', section) };
+    return { section: section, display: ins[0], modelName: ins[1], apiUrl: ins[2], apiKey: ins[3], provider: $('select', section),
+      contextWindow: $('#zq-model-context') };
   }
   function clearModelForm(els) {
     els = els || modelFormEls(); if (!els) return;
-    ['display', 'modelName', 'apiUrl', 'apiKey'].forEach(function (k) { if (els[k]) els[k].value = ''; });
+    ['display', 'modelName', 'apiUrl', 'apiKey', 'contextWindow'].forEach(function (k) { if (els[k]) els[k].value = ''; });
     if (els.provider) els.provider.selectedIndex = 0;
   }
   function wireModelForm() {
@@ -939,6 +940,8 @@
         apiUrl: els.apiUrl ? els.apiUrl.value.trim() : ''
       };
       if (els.apiKey && els.apiKey.value.trim()) body.apiKey = els.apiKey.value.trim();
+      // 总是带上这个键：空串 = 清掉（回到保守默认）。后端只在请求体里有这个键时才改它
+      if (els.contextWindow) body.contextWindowTokens = els.contextWindow.value.trim();
       if (!body.modelName) return toast('请填写模型名称', 'error');
       safe('保存模型', async function () {
         if (state.editingModelId) await api.put('/ai/models/' + state.editingModelId, body);
@@ -955,6 +958,7 @@
     if (els.modelName) els.modelName.value = m.modelName || '';
     if (els.apiUrl) els.apiUrl.value = m.apiUrl || m.baseUrl || '';
     if (els.apiKey) els.apiKey.value = '';
+    if (els.contextWindow) els.contextWindow.value = m.contextWindowTokens || '';
     var idx = MODEL_PROVIDERS.indexOf(m.providerType);
     if (els.provider) els.provider.selectedIndex = idx >= 0 ? idx : 0;
     els.section.scrollIntoView({ behavior: 'smooth', block: 'center' });

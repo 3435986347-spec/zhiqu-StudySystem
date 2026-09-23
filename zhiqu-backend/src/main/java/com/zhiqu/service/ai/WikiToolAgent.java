@@ -126,11 +126,16 @@ public class WikiToolAgent {
     }
 
     public WikiAgentResult runWikiToolAgent(AiModelConfig config, Long userId, String userMessage) {
+        return runWikiToolAgent(config, userId, userMessage, WIKI_CONTEXT_LIMIT);
+    }
+
+    /** 同上；{@code contextLimit} 由模型的上下文窗口决定（见 ContextBudget）。 */
+    public WikiAgentResult runWikiToolAgent(AiModelConfig config, Long userId, String userMessage, int contextLimit) {
         if (!AgentPlanDecision.wikiToolIntent(userMessage) || !provider.supportsToolCalling(config)) {
             return WikiAgentResult.EMPTY;
         }
         if (provider.isAnthropicProvider(config)) {
-            return runWikiToolAgentAnthropic(config, userId, userMessage);
+            return runWikiToolAgentAnthropic(config, userId, userMessage, contextLimit);
         }
         StringBuilder context = new StringBuilder();
         boolean wrotePatch = false;
@@ -182,11 +187,11 @@ public class WikiToolAgent {
         } catch (Exception e) {
             log.warn("Wiki 工具循环失败（不影响主回答） userId={} err={}", userId, e.getMessage());
         }
-        return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), WIKI_CONTEXT_LIMIT), wrotePatch);
+        return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), contextLimit), wrotePatch);
     }
 
     /** Anthropic 原生工具循环版：读工具→tool_result 回填→最终答复，与 OpenAI 版等价但用 Anthropic 协议。 */
-    private WikiAgentResult runWikiToolAgentAnthropic(AiModelConfig config, Long userId, String userMessage) {
+    private WikiAgentResult runWikiToolAgentAnthropic(AiModelConfig config, Long userId, String userMessage, int contextLimit) {
         StringBuilder context = new StringBuilder();
         boolean wrotePatch = false;
         try {
@@ -241,7 +246,7 @@ public class WikiToolAgent {
         } catch (Exception e) {
             log.warn("Wiki 工具循环(Anthropic)失败（不影响主回答） userId={} err={}", userId, e.getMessage());
         }
-        return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), WIKI_CONTEXT_LIMIT), wrotePatch);
+        return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), contextLimit), wrotePatch);
     }
 
     /**

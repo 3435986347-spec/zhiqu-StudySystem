@@ -47,18 +47,16 @@ import java.util.function.Consumer;
 public class CodeWorkspaceAgent {
     private static final Logger log = LoggerFactory.getLogger(CodeWorkspaceAgent.class);
 
-    /** 代码工作区上下文的长度上限 —— 与 Wiki 那条同量级，别让文件内容挤掉对话历史。 */
+    /** 代码工作区上下文的长度上限（没配窗口时）—— 与 Wiki 那条同量级。配了窗口见 ContextBudget。 */
     static final int CODE_CONTEXT_LIMIT = 12000;
 
-    /**
-     * 交给工具循环的对话历史，总长度上限（字符）。
+    /*
+     * 交给工具循环的对话历史，上限由 ContextBudget.codeHistoryChars 给（没配窗口时 24000 字）。
      *
-     * <p>2026-09-23 之前这个循环<b>完全看不到历史</b>：发给模型的只有系统提示词和这一句话。
+     * 2026-09-23 之前这个循环完全看不到历史：发给模型的只有系统提示词和这一句话。
      * 用户在命令行里说「直接生成完整代码」「确认创建」，循环只看到这几个字，列一下目录就停了；
-     * 真正写出代码的是后面那次<b>没有工具</b>的最终回答，于是它贴了一遍代码，
-     * 然后说「没有可用的文件写入工具」。有历史的没工具，有工具的没历史。
+     * 真正写出代码的是后面那次没有工具的最终回答 —— 有历史的没工具，有工具的没历史。
      */
-    static final int HISTORY_CHAR_BUDGET = 24_000;
 
     /**
      * 从新往旧取历史，总长不超过预算；最新那一条单独就超预算时只留它的<b>结尾</b>
@@ -160,7 +158,9 @@ public class CodeWorkspaceAgent {
      * @param onStep 每次工具调用前后的叙述（{@code agent.step.note}），网页轨迹与命令行都读它；可为 null
      */
     public Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
-                      Map<String, Object> contextOptions, Consumer<Map<String, Object>> onStep) {
+                      Map<String, Object> contextOptions, ContextBudget contextBudget,
+                      Consumer<Map<String, Object>> onStep) {
+        ContextBudget limits = contextBudget == null ? ContextBudget.DEFAULT : contextBudget;
         if (!AgentPlanDecision.codeAgentIntent(userMessage, contextOptions) || !provider.supportsToolCalling(config)) {
             return Result.EMPTY;
         }
@@ -177,7 +177,7 @@ public class CodeWorkspaceAgent {
                     + "\n工作区根目录的文件夹名：" + (wsRoot == null || wsRoot.getFileName() == null
                             ? "(未知)" : wsRoot.getFileName())));
             // 最近的对话 —— 追问（「确认创建」「直接写进去」）要靠它才知道指的是什么
-            messages.addAll(recentHistory(history, HISTORY_CHAR_BUDGET));
+            messages.addAll(recentHistory(history, limits.codeHistoryChars()));
             messages.add(Map.of("role", "user", "content", userMessage));
             // 最小权限：只有明确的写意图才把写工具下发给模型。不下发，它就不会尝试，
             // 也不会承诺自己改了文件 —— 与 buildWikiTools(includeWrite) 同一个做法。
@@ -262,7 +262,7 @@ public class CodeWorkspaceAgent {
             // 说出来：这一行原来只进日志，用户看到的是「卡住了」，然后一段没头没尾的回答
             narrate(onStep, Map.of("phase", "error", "message", "工具循环中断：" + e.getMessage()));
         }
-        return new Result(Texts.limitRaw(context.toString(), CODE_CONTEXT_LIMIT),
+        return new Result(Texts.limitRaw(context.toString(), limits.codeContextChars()),
                 List.copyOf(loop.drafts), loop.milestonePlan, writeOffered);
     }
 

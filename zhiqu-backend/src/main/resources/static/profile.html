@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260924-bubble" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260924-bubble">
-  <link rel="manifest" href="manifest.json?v=20260924-bubble">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260924-context-window" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260924-context-window">
+  <link rel="manifest" href="manifest.json?v=20260924-context-window">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260924-bubble">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260924-context-window">
 </head>
 <body>
   <div class="zq-app">
@@ -117,6 +117,8 @@
                 </div>
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">API 接口地址</label><input class="zq-input" placeholder="https://api.openai.com/v1/chat/completions"><span style="font-size:11.5px; color:var(--zq-text3);">Anthropic 用 /v1/messages；Ollama 默认 http://localhost:11434/v1/chat/completions。</span></div>
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">API Key</label><input class="zq-input" type="password" placeholder="留空则不修改已保存 Key"></div>
+                <!-- 上下文窗口：放在最后、用 id 取 —— 上面四个输入框是按位置取的（modelFormEls），插在中间会让它们整体错位 -->
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">上下文窗口（token，可选）</label><input id="zq-model-context" class="zq-input" type="number" min="8000" max="1000000" step="1000" placeholder="按模型实际能力填，例如 128000；最多 1000000。留空用保守默认值"><span style="font-size:11.5px; color:var(--zq-text3); line-height:1.5;">填了之后，对话历史、代码和 Wiki 资料都按它放大。填得越大，长对话每一轮带给模型的内容越多 —— 也越耗 token、越慢；超过模型真实上限，请求会被服务商拒绝。</span></div>
                 <div style="padding:10px 12px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card-soft);"><strong style="display:block; font-size:12px;">模型能力由系统测试确认</strong><span style="display:block; margin-top:3px; font-size:11.5px; color:var(--zq-text2); line-height:1.55;">保存后可进行连通性、图像识别（多模态）、深度思考探测，会消耗少量 token。</span></div>
                 <div style="display:flex; gap:8px;"><button class="zq-btn">保存模型</button><button class="zq-btn-ghost">新建模型</button></div>
               </div>
@@ -127,7 +129,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260924-bubble"></script>
+  <script src="assets/zhiqu-ui.js?v=20260924-context-window"></script>
   <script>
     function tog(){ var b=document.getElementById('zq-morning'), i=b.firstElementChild, on=i.style.left==='21px'; i.style.left=on?'3px':'21px'; b.style.background=on?'var(--zq-border)':'var(--zq-primary)'; }
     var models=[
@@ -146,6 +148,6 @@
     }).join('');
     function tile(k,v,c){ return '<div><span style="display:block; font-size:10.5px; color:var(--zq-text3);">'+k+'</span><strong style="display:block; margin-top:3px; font-size:11.5px; font-weight:600; color:'+c+'; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+v+'</strong></div>'; }
   </script>
-  <script src="assets/zhiqu-api.js?v=20260924-bubble"></script>
+  <script src="assets/zhiqu-api.js?v=20260924-context-window"></script>
 </body>
 </html>

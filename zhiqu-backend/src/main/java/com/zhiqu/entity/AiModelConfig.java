@@ -26,6 +26,8 @@ public class AiModelConfig {
     private Integer enabled;
     private Integer isDefault;
     private String encryptionVersion;
+    /** 上下文窗口（token）。空 = 按保守默认上限；各处怎么用见 ContextBudget。 */
+    private Integer contextWindowTokens;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

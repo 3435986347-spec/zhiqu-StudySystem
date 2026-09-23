@@ -188,7 +188,7 @@ public record AgentPlanDecision(
     }
 
     /**
-     * @param historyFull 本轮历史是否已经填满窗口（{@code history.size() >= CHAT_HISTORY_LIMIT}）。
+     * @param historyFull 本轮历史是否已经填满窗口（{@code ChatWriteContext.historyFull}：条数取满，或被字数裁掉过）。
      *        这是「可能需要压缩」的<b>必要条件</b>：窗口没满就一定没有消息滑出去，压缩无从谈起。
      *        不是充分条件 —— 真正要不要重算还看「自上次摘要以来新滑出多少条」，
      *        那要查库，不该放进这个纯函数里。节点造出来而这一轮没轮到压缩时，

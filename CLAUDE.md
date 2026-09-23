@@ -165,6 +165,11 @@ fail tells you nothing (`kill(pid, 0)` reports zombies as alive — see 命令�
 仓库已经搬出 iCloud，这个具体诱因没了，但方法仍然成立：**一次只动一个变量**。
 基线检出和被测检出要在同一个卷、同一类目录下。
 
+## 进行中的计划
+
+**zhiqu harness（P0–P7）见 [`docs/zhiqu-harness-plan.md`](docs/zhiqu-harness-plan.md)**。用户要求全部都做、严格按表执行、
+不擅自增删；每完成一项更新那份文件的「进度」列。npm 发布（P7）前必须单独问用户。
+
 ## Architecture
 
 ### Backend (`zhiqu-backend/src/main/java/com/zhiqu/`)
@@ -314,7 +319,7 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260924-bubble`.
+  old bundle. Current token: `20260924-context-window`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -843,6 +848,12 @@ token** like every other endpoint. `GET /v1/meta` is what to read when versions 
   to test `endsWith("****")`, which the old format never satisfied for a real key, so that
   "client echoed the masked value back" guard did nothing. Masking is display-only — model calls
   go through `decryptedApiKey`.
+- Context window — per model, `ai_model_config.context_window_tokens` (V35, nullable, 8000–1000000).
+  `ContextBudget.forWindow` turns it into every size limit that decides what reaches the model
+  (history messages + chars, workspace code, coding-agent history, Wiki context). **Unset means the old
+  constants exactly** (`ContextBudget.DEFAULT`) — that is the only reason existing chats are unaffected.
+  History is trimmed by chars after the count; "trimmed" also counts as window-full, otherwise the
+  trimmed messages never reach the rolling summary and silently vanish.
 - AI — `app.ai.*`; keys come from env (`ZHIQU_SYSTEM_AI_API_KEY`, `ZHIQU_WEB_SEARCH_API_KEY`).
   Keep `app.ai.web-fetch.block-private-network=true` (SSRF guard).
 - RAG — `app.rag.*`
