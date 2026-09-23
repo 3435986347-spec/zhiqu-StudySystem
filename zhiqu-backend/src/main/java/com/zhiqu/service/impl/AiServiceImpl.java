@@ -859,6 +859,8 @@ public class AiServiceImpl implements AiService {
         private AiAgentStep codeAgentStep;
         private String codeContext = "";
         private List<Map<String, Object>> codeDrafts = List.of();
+        /** 这一轮工具循环有没有拿到写工具 —— 最终回答据此决定能不能贴代码（见 CodeContextPrompt）。 */
+        private boolean codeWriteOffered;
         private AiAgentStep plannerStep;
         private AiAgentStep finalWriterStep;
 
@@ -1354,8 +1356,15 @@ public class AiServiceImpl implements AiService {
         public void run(AgentRunContext ctx) {
             // 每一次工具调用都发一条 note：执行轨迹和 CLI 靠它显示「读了什么、跑了什么」。
             // PRE_STREAM 的 emit 是直发的（见 AgentRunContext.emit），所以是实时的，不是攒到最后。
+            // 与最终回答看到的是同一份历史（同样的角色过滤）—— 追问才接得上
+            List<Map<String, Object>> chatHistory = new ArrayList<>();
+            for (AiMessage item : s.history) {
+                if (isChatRole(item.getRole()) && hasText(item.getContent())) {
+                    chatHistory.add(Map.of("role", normalizeChatRole(item.getRole()), "content", item.getContent()));
+                }
+            }
             CodeWorkspaceAgent.Result codeResult = codeWorkspaceAgent.run(s.config, s.userId, s.limitedMessage,
-                    s.contextOptions,
+                    chatHistory, s.contextOptions,
                     note -> {
                         Map<String, Object> payload = new LinkedHashMap<>();
                         payload.put("requestId", s.requestId);
@@ -1367,6 +1376,7 @@ public class AiServiceImpl implements AiService {
                     });
             s.codeContext = codeResult.context();
             s.codeDrafts = codeResult.drafts();
+            s.codeWriteOffered = codeResult.writeOffered();
             if (codeResult.milestonePlan() != null) {
                 // 走 PLANNER 那条已有的路：TASK_DRAFT / ROUTINE_DRAFT 工件 + 既有的确认分支。
                 // 这里不新建工件类型，也不直接调 studyTaskService。
@@ -1430,11 +1440,13 @@ public class AiServiceImpl implements AiService {
                                 + s.wikiAgent.context
                                 + "\n【检索资料结束】若其中显示已生成待合入草稿，请据实提示我到「待合入变更」面板确认后落库。"));
             }
-            if (hasText(s.codeContext) || !s.codeDrafts.isEmpty()) {
+            // 写工具下发过也要加：循环很快就中断时上下文和草稿都是空的，不加的话最终回答收不到
+            // 「别贴整份文件」这条约束，又会自己把代码整份写出来
+            if (hasText(s.codeContext) || !s.codeDrafts.isEmpty() || s.codeWriteOffered) {
                 // 与 Wiki 检索资料同样处理：工作区读到的是<b>数据</b>，以 user 数据块注入（提示注入防护）。
                 // 结尾那句「有没有草稿」必须跟着本轮实际结果走 —— 见 CodeContextPrompt。
                 messages.add(Map.of("role", "user", "content",
-                        CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts)));
+                        CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered)));
             }
             String userText = RetrievalPresentation.withNotebookContext(
                     RetrievalPresentation.withWebSearchContext(s.limitedMessage, s.citations), s.notebookContextRows);

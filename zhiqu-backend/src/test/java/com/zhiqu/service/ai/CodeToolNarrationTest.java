@@ -75,7 +75,7 @@ class CodeToolNarrationTest {
     void 预算两档() {
         CodeLoopBudget kw = CodeLoopBudget.forRequest(false);
         CodeLoopBudget ex = CodeLoopBudget.forRequest(true);
-        assertEquals(new CodeLoopBudget(4, 30_000L), kw, "关键词门是刻意过触发的，它的预算必须小");
+        assertEquals(new CodeLoopBudget(4, 30_000L, 4096, 25_000), kw, "关键词门是刻意过触发的，它的预算必须小");
         assertTrue(ex.rounds() > kw.rounds() && ex.millis() > kw.millis(),
                 "显式请求的预算没有比关键词触发大 —— 写一个完整的小游戏在 4 轮 30 秒里做不完");
     }

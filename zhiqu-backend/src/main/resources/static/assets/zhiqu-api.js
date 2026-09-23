@@ -3946,7 +3946,7 @@
       var shown = lines.slice(0, 6).join('\n') + (lines.length > 6 ? '\n…' : '');
       return '<pre class="zq-mono" style="margin:2px 0 3px 12px;padding:4px 6px;font-size:10px;line-height:1.4;white-space:pre-wrap;word-break:break-all;background:var(--zq-card-soft);border-radius:4px;color:var(--zq-text2);">' + esc(shown) + '</pre>';
     }
-    return '<div class="zq-mono" style="font-size:10.5px;color:' + (n.phase === 'budget' ? 'var(--zq-warn)' : 'var(--zq-text2)')
+    return '<div class="zq-mono" style="font-size:10.5px;color:' + (n.phase === 'error' ? 'var(--zq-bad)' : n.phase === 'budget' ? 'var(--zq-warn)' : 'var(--zq-text2)')
       + ';margin-top:2px;word-break:break-all;">⎿ ' + esc(n.message) + '</div>';
   }
   /** 单行时的高度，与同排按钮对齐；也是清空后要回到的高度。 */

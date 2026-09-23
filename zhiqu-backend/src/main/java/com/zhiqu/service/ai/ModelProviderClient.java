@@ -43,8 +43,8 @@ import java.util.Set;
  * 它挡的是「用户把 API URL 填成 http://169.254.169.254/ 让服务器替他去读云元数据」。
  * 每一条出站请求都要先过它 —— 搬家时这一点没有变，调用点仍然在每个发请求的方法开头。
  *
- * <p>{@code toolTurnRestTemplate} 的超时（连接 10s / 读取 25s）比普通调用长：
- * 工具循环一轮要等模型想完再回，短超时会把正常的思考截断。
+ * <p>工具调用的限额（输出上限、读超时）由调用方按场景给出，见 {@link ToolTurnLimits}：
+ * Wiki 与关键词触发的循环要快（4096 token / 25 秒），显式「代码」模式要能一次写出一整个文件。
  */
 @Component
 public class ModelProviderClient {
@@ -57,8 +57,21 @@ public class ModelProviderClient {
     private final String anthropicVersion;
     private final String aiTemperature;
     private final boolean allowPrivateProviderUrl;
-    /** 工具循环专用：超时比普通调用长，只有这里用得到。 */
-    private final RestTemplate toolTurnRestTemplate;
+    /** 按读超时缓存的 RestTemplate —— 工具调用的超时随场景变，工厂本身很便宜，但没必要每次造。 */
+    private final java.util.concurrent.ConcurrentHashMap<Integer, RestTemplate> toolTurnTemplates =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 一次工具调用的限额：输出上限与读超时。
+     *
+     * <p>{@link #QUICK} 是原来唯一的一档（4096 token / 25 秒），给「查一下、读一页」这种快速轮次。
+     * 2026-09-23 用户在命令行里让 coding agent 写一个马里奥小游戏：模型要在<b>一次</b>工具调用里写出
+     * 整个 HTML，25 秒读超时把它掐断（日志里是 69 秒后的 I/O error），就算不超时，4096 token 也写不完
+     * 一整个文件 —— 参数会被截成半截 JSON。显式「代码」模式因此要另一档，见 {@code CodeLoopBudget}。
+     */
+    public record ToolTurnLimits(int maxTokens, int readTimeoutMillis) {
+        public static final ToolTurnLimits QUICK = new ToolTurnLimits(MODEL_MAX_TOKENS, 25_000);
+    }
 
     public ModelProviderClient(ObjectMapper objectMapper,
                                SensitiveCryptoService cryptoService,
@@ -70,7 +83,6 @@ public class ModelProviderClient {
         this.anthropicVersion = anthropicVersion;
         this.aiTemperature = aiTemperature;
         this.allowPrivateProviderUrl = allowPrivateProviderUrl;
-        this.toolTurnRestTemplate = createToolTurnRestTemplate();
     }
 
     /** 与 {@code AiServiceImpl.hasText} 同义；这里用框架的那一份，不新造第二个定义。 */
@@ -240,6 +252,12 @@ public class ModelProviderClient {
 
     /** 非流式发起一轮带工具的对话（tool_choice=auto），返回 choices[0].message 节点（含可能的 tool_calls）；无则 null。 */
     public JsonNode callOpenAiToolTurn(AiModelConfig config, List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
+        return callOpenAiToolTurn(config, messages, tools, ToolTurnLimits.QUICK);
+    }
+
+    /** 同上，按给定限额。 */
+    public JsonNode callOpenAiToolTurn(AiModelConfig config, List<Map<String, Object>> messages,
+                                       List<Map<String, Object>> tools, ToolTurnLimits limits) {
         validateProviderRequestUrl(config.getApiUrl());
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -251,30 +269,37 @@ public class ModelProviderClient {
         body.put("model", config.getModelName());
         body.put("messages", messages);
         applyTemperature(body);
-        body.put("max_tokens", MODEL_MAX_TOKENS);
+        body.put("max_tokens", limits.maxTokens());
         body.put("tools", tools);
         body.put("tool_choice", "auto"); // 由模型自行决定调用哪个工具或直接作答
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<String> response = toolTurnRestTemplate.postForEntity(
+            ResponseEntity<String> response = toolTurnTemplate(limits).postForEntity(
                     resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
             JsonNode message = objectMapper.readTree(response.getBody()).at("/choices/0/message");
             return message.isMissingNode() ? null : message;
         } catch (RestClientResponseException e) {
             throw new BusinessException(formatAiHttpError(e));
         } catch (Exception e) {
-            throw new BusinessException("Wiki 工具调用失败：" + e.getMessage());
+            // 原来写的是「Wiki 工具调用失败」—— code agent 也走这里，那条日志把人往 Wiki 那边引
+            throw new BusinessException("工具调用失败：" + e.getMessage());
         }
     }
 
     /** 非流式发起一轮带工具的 Anthropic 对话（tool_choice=auto），返回 content 数组节点（含可能的 tool_use）；无则 null。 */
     public JsonNode callAnthropicToolTurn(AiModelConfig config, String system,
                                            List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
+        return callAnthropicToolTurn(config, system, messages, tools, ToolTurnLimits.QUICK);
+    }
+
+    /** 同上，按给定限额。 */
+    public JsonNode callAnthropicToolTurn(AiModelConfig config, String system, List<Map<String, Object>> messages,
+                                          List<Map<String, Object>> tools, ToolTurnLimits limits) {
         validateProviderRequestUrl(config.getApiUrl());
         HttpHeaders headers = anthropicHeaders(config);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
-        body.put("max_tokens", MODEL_MAX_TOKENS);
+        body.put("max_tokens", limits.maxTokens());
         applyTemperature(body);
         if (hasText(system)) {
             body.put("system", system);
@@ -284,14 +309,14 @@ public class ModelProviderClient {
         body.put("tool_choice", Map.of("type", "auto"));
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<String> response = toolTurnRestTemplate.postForEntity(
+            ResponseEntity<String> response = toolTurnTemplate(limits).postForEntity(
                     resolveAnthropicMessagesUrl(config.getApiUrl()), request, String.class);
             JsonNode content = objectMapper.readTree(response.getBody()).path("content");
             return content.isMissingNode() ? null : content;
         } catch (RestClientResponseException e) {
             throw new BusinessException(formatAiHttpError(e));
         } catch (Exception e) {
-            throw new BusinessException("Wiki 工具调用失败：" + e.getMessage());
+            throw new BusinessException("工具调用失败：" + e.getMessage());
         }
     }
 
@@ -328,12 +353,17 @@ public class ModelProviderClient {
         return "AI 接口调用失败（HTTP " + e.getStatusCode().value() + "）：" + detail;
     }
 
-    /** 工具循环专用：读取超时更短(25s)，配合每轮墙钟预算把回答前的阻塞时间收敛在可控范围。 */
-    public RestTemplate createToolTurnRestTemplate() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(10_000);
-        factory.setReadTimeout(25_000);
-        return new RestTemplate(factory);
+    /** 工具调用用的 RestTemplate：连接 10 秒，读超时按限额。 */
+    private RestTemplate toolTurnTemplate(ToolTurnLimits limits) {
+        // 按 5 秒取整再当缓存键：调用方的超时是「剩余预算」算出来的，精确到毫秒、每次都不一样，
+        // 直接当键的话这张表会无限长。取整后最多几十个，多等的不超过 5 秒。
+        int key = (int) Math.max(5_000, ((limits.readTimeoutMillis() + 4_999L) / 5_000L) * 5_000L);
+        return toolTurnTemplates.computeIfAbsent(key, timeout -> {
+            SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(10_000);
+            factory.setReadTimeout(timeout);
+            return new RestTemplate(factory);
+        });
     }
 
     public String extractAiErrorDetail(String responseBody) {

@@ -143,7 +143,7 @@ class CodeModeAndBuildIntentTest {
         assertTrue(statement.contains("codeWriteIntent(userMessage, contextOptions)"),
                 "canWrite 没带 contextOptions —— 按了开关却拿不到写工具，模型只会说「复制过去」。实际：" + statement);
         // 调用跨了行，按空白归一化后再找
-        assertTrue(service.contains("codeWorkspaceAgent.run(s.config, s.userId, s.limitedMessage, s.contextOptions,"),
+        assertTrue(service.contains("codeWorkspaceAgent.run(s.config, s.userId, s.limitedMessage, chatHistory, s.contextOptions,"),
                 "调用 CodeWorkspaceAgent.run 时没把本轮的 contextOptions 传进去");
     }
 }

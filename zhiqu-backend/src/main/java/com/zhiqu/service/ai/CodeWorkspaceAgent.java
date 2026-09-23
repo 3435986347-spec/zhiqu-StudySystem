@@ -50,6 +50,48 @@ public class CodeWorkspaceAgent {
     /** 代码工作区上下文的长度上限 —— 与 Wiki 那条同量级，别让文件内容挤掉对话历史。 */
     static final int CODE_CONTEXT_LIMIT = 12000;
 
+    /**
+     * 交给工具循环的对话历史，总长度上限（字符）。
+     *
+     * <p>2026-09-23 之前这个循环<b>完全看不到历史</b>：发给模型的只有系统提示词和这一句话。
+     * 用户在命令行里说「直接生成完整代码」「确认创建」，循环只看到这几个字，列一下目录就停了；
+     * 真正写出代码的是后面那次<b>没有工具</b>的最终回答，于是它贴了一遍代码，
+     * 然后说「没有可用的文件写入工具」。有历史的没工具，有工具的没历史。
+     */
+    static final int HISTORY_CHAR_BUDGET = 24_000;
+
+    /**
+     * 从新往旧取历史，总长不超过预算；最新那一条单独就超预算时只留它的<b>结尾</b>
+     * （对话里最近说的事在结尾）。返回时恢复成时间顺序。
+     */
+    static List<Map<String, Object>> recentHistory(List<Map<String, Object>> history, int charBudget) {
+        List<Map<String, Object>> picked = new ArrayList<>();
+        if (history == null) {
+            return picked;
+        }
+        int used = 0;
+        for (int i = history.size() - 1; i >= 0; i--) {
+            Map<String, Object> m = history.get(i);
+            String content = String.valueOf(m.getOrDefault("content", ""));
+            if (content.isBlank()) {
+                continue;
+            }
+            int room = charBudget - used;
+            if (room <= 0) {
+                break;
+            }
+            if (content.length() > room) {
+                if (!picked.isEmpty()) {
+                    break;   // 旧的放不下就不放：半截的旧消息比没有更容易误导
+                }
+                content = "…（前面省略）" + content.substring(content.length() - room);
+            }
+            picked.add(0, Map.of("role", String.valueOf(m.get("role")), "content", content));
+            used += content.length();
+        }
+        return picked;
+    }
+
     private final ModelProviderClient provider;
     private final WorkspaceService workspaceService;
     private final WorkspaceExecutor workspaceExecutor;
@@ -71,8 +113,9 @@ public class CodeWorkspaceAgent {
     }
 
     /** 这一轮的产物：给最终回答用的上下文、待确认的写草稿、里程碑计划（可为 null）。 */
-    public record Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan) {
-        public static final Result EMPTY = new Result("", List.of(), null);
+    public record Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
+                         boolean writeOffered) {
+        public static final Result EMPTY = new Result("", List.of(), null, false);
     }
 
     /**
@@ -116,8 +159,8 @@ public class CodeWorkspaceAgent {
      *
      * @param onStep 每次工具调用前后的叙述（{@code agent.step.note}），网页轨迹与命令行都读它；可为 null
      */
-    public Result run(AiModelConfig config, Long userId, String userMessage, Map<String, Object> contextOptions,
-                      Consumer<Map<String, Object>> onStep) {
+    public Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
+                      Map<String, Object> contextOptions, Consumer<Map<String, Object>> onStep) {
         if (!AgentPlanDecision.codeAgentIntent(userMessage, contextOptions) || !provider.supportsToolCalling(config)) {
             return Result.EMPTY;
         }
@@ -126,17 +169,21 @@ public class CodeWorkspaceAgent {
         }
         LoopState loop = new LoopState();
         StringBuilder context = new StringBuilder();
+        boolean writeOffered = false;
         try {
             List<Map<String, Object>> messages = new ArrayList<>();
             Path wsRoot = workspaceService.access().root();
             messages.add(Map.of("role", "system", "content", systemPrompt()
                     + "\n工作区根目录的文件夹名：" + (wsRoot == null || wsRoot.getFileName() == null
                             ? "(未知)" : wsRoot.getFileName())));
+            // 最近的对话 —— 追问（「确认创建」「直接写进去」）要靠它才知道指的是什么
+            messages.addAll(recentHistory(history, HISTORY_CHAR_BUDGET));
             messages.add(Map.of("role", "user", "content", userMessage));
             // 最小权限：只有明确的写意图才把写工具下发给模型。不下发，它就不会尝试，
             // 也不会承诺自己改了文件 —— 与 buildWikiTools(includeWrite) 同一个做法。
             boolean canWrite = workspaceService.access().effectiveMode().allowsWrite()
                     && AgentPlanDecision.codeWriteIntent(userMessage, contextOptions);
+            writeOffered = canWrite;
             // 执行这一档由 WorkspaceExecutor 自己说了算（档位 + 非生产 profile 两条都在它里面）。
             // 这里不再复述那两个条件 —— 复述就是第二份真相。
             boolean canExec = workspaceExecutor.enabled();
@@ -167,7 +214,9 @@ public class CodeWorkspaceAgent {
                 // 不阻止<b>执行</b>什么：模型随便报一个名字就能调到没下发的工具，门形同虚设。
                 // 2026-09-21 端到端扰动发现的：把写工具改成永不下发，草稿照样产了出来。
                 Set<String> offered = offeredToolNames(tools);
-                JsonNode message = provider.callOpenAiToolTurn(config, messages, tools);
+                // 每次调用的限额随预算走：显式「代码」模式要能一次写出一整个文件（见 CodeLoopBudget）
+                JsonNode message = provider.callOpenAiToolTurn(config, messages, tools,
+                        budget.turnLimits(System.currentTimeMillis() - loopStart));
                 if (message == null) {
                     break;
                 }
@@ -210,9 +259,11 @@ public class CodeWorkspaceAgent {
             }
         } catch (Exception e) {
             log.warn("代码工作区工具循环失败（不影响主回答） userId={} err={}", userId, e.getMessage());
+            // 说出来：这一行原来只进日志，用户看到的是「卡住了」，然后一段没头没尾的回答
+            narrate(onStep, Map.of("phase", "error", "message", "工具循环中断：" + e.getMessage()));
         }
         return new Result(Texts.limitRaw(context.toString(), CODE_CONTEXT_LIMIT),
-                List.copyOf(loop.drafts), loop.milestonePlan);
+                List.copyOf(loop.drafts), loop.milestonePlan, writeOffered);
     }
 
     /**
@@ -464,6 +515,8 @@ public class CodeWorkspaceAgent {
                    3.5 路径一律相对工作区根目录。根目录本身就是他选的那个文件夹（名字见最后一行）——
                        他说「放在 X 文件夹里」而 X 正是根目录的名字时，直接写在根目录下，
                        不要再套一层同名子文件夹。
+                   3.6 对话历史里你已经写出了代码、而他说「确认创建」「直接写进去」「新建文件」时，
+                       就用 write_workspace_file 把那份代码写成草稿 —— 不要再贴一遍，也不要再问一遍。
                 4. 工具返回「不在允许清单里」「超出工作区范围」时，那是刻意的保护，
                    如实告诉他，不要换着法子绕过去。
 

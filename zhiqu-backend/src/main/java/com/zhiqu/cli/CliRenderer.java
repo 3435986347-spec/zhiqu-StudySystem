@@ -88,7 +88,7 @@ public final class CliRenderer {
     }
 
     /**
-     * coding agent 的一步。{@code phase}：call（要做什么）、result（命令输出或拒绝）、budget（预算用完）。
+     * coding agent 的一步。{@code phase}：call（要做什么）、result（命令输出或拒绝）、budget（预算用完）、error（循环中断）。
      * 没有 phase 的是其它 agent 的旁白（比如「第一次检索没命中，换个说法再试」），同样灰字显示。
      */
     private void note(JsonNode data) {
@@ -103,6 +103,7 @@ public final class CliRenderer {
                 }
             }
             case "budget" -> line(yellow("  ⎿ " + message));
+            case "error" -> line(red("  ⎿ " + message));
             default -> line(dim("  ⎿ " + message));
         }
     }
