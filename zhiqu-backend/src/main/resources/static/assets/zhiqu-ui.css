@@ -719,6 +719,15 @@ body.zq-modal-open{overflow:hidden;}
 .zq-ai-attachment button:hover{color:var(--zq-bad);}
 .zq-ai-empty-notebook,.zq-ai-source-empty{padding:8px 4px;display:flex;flex-direction:column;gap:3px;color:var(--zq-text3);font-size:11px;line-height:1.5;}
 .zq-ai-empty-notebook strong,.zq-ai-source-empty strong{color:var(--zq-text2);font-size:12px;}
+/*
+ * 聊天气泡：首尾块的外边距不再和气泡内边距叠加。
+ * renderMarkdown 给每段 <p> 都带 margin:8px 0（标题上边距 14px），在气泡里第一段的上边距、最后一段的
+ * 下边距会和气泡自己的内边距叠起来 —— 一行字的气泡实测 64px 高、文字上方空 20px，标题开头的回复空 26px。
+ * 只去掉最外侧那一层；块与块之间的间距不动，长回答照样分得开段。
+ * 要 !important：renderMarkdown 的外边距写在内联 style 里。ChatBubbleSpacingTest 钉着这几条。
+ */
+.zq-msg-body>:first-child,.zq-msg-body>:first-child>:first-child{margin-top:0!important;}
+.zq-msg-body>:last-child,.zq-msg-body>:last-child>:last-child,.zq-msg-body>:last-child>:last-child>:last-child{margin-bottom:0!important;}
 .zq-ai-reasoning{margin-bottom:9px;padding:8px 11px;border-left:2px solid var(--zq-tint-strong);background:var(--zq-card-soft);border-radius:0 var(--zq-rs) var(--zq-rs) 0;}
 .zq-ai-reasoning summary{cursor:pointer;font-size:10.5px;font-weight:700;color:var(--zq-text3);letter-spacing:.05em;user-select:none;}
 .zq-ai-reasoning>span{display:block;margin-top:6px;font-size:11.5px;color:var(--zq-text3);line-height:1.65;white-space:pre-wrap;}
