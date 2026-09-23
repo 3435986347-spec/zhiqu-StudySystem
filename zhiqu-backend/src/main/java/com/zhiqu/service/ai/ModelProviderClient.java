@@ -73,6 +73,48 @@ public class ModelProviderClient {
         public static final ToolTurnLimits QUICK = new ToolTurnLimits(MODEL_MAX_TOKENS, 25_000);
     }
 
+    /**
+     * 模型这一轮的输出撞上了单次上限、被截断了。
+     *
+     * <p>2026-09-24 用户在命令行里做马里奥：模型想在一次工具调用里写完整个文件，输出超过上限被截断，
+     * 截断的回复里没有完整的工具调用 —— 循环把它当成「模型说完了」<b>静默结束</b>，一个字的提示都没有。
+     * 用户说「确认写入」，它再试、再被截断、再静默结束，最终回答每次把代码整份贴出来：看起来就是卡住了。
+     * 抛这个异常而不是返回半截：调用方要把「被截断」告诉用户和模型，而不是当成正常结束。
+     */
+    public static final class ToolTurnTruncatedException extends RuntimeException {
+        private final int maxTokens;
+
+        public ToolTurnTruncatedException(int maxTokens) {
+            super("模型输出超出单次上限（" + maxTokens + " token）被截断");
+            this.maxTokens = maxTokens;
+        }
+
+        public int maxTokens() {
+            return maxTokens;
+        }
+    }
+
+    /**
+     * 从 OpenAI 格式的响应里取出 {@code choices[0].message}；{@code finish_reason} 是 {@code length} 时抛
+     * {@link ToolTurnTruncatedException}。纯函数 —— 判据直接喂响应 JSON。
+     */
+    static JsonNode openAiMessageOrTruncated(JsonNode root, int maxTokens) {
+        if ("length".equals(root.at("/choices/0/finish_reason").asText(""))) {
+            throw new ToolTurnTruncatedException(maxTokens);
+        }
+        JsonNode message = root.at("/choices/0/message");
+        return message.isMissingNode() ? null : message;
+    }
+
+    /** Anthropic 版：{@code stop_reason} 是 {@code max_tokens} 时同样算截断。 */
+    static JsonNode anthropicContentOrTruncated(JsonNode root, int maxTokens) {
+        if ("max_tokens".equals(root.path("stop_reason").asText(""))) {
+            throw new ToolTurnTruncatedException(maxTokens);
+        }
+        JsonNode content = root.path("content");
+        return content.isMissingNode() ? null : content;
+    }
+
     public ModelProviderClient(ObjectMapper objectMapper,
                                SensitiveCryptoService cryptoService,
                                @Value("${app.ai.anthropic-version:2023-06-01}") String anthropicVersion,
@@ -276,8 +318,9 @@ public class ModelProviderClient {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = toolTurnTemplate(limits).postForEntity(
                     resolveChatCompletionsUrl(config.getApiUrl()), request, String.class);
-            JsonNode message = objectMapper.readTree(response.getBody()).at("/choices/0/message");
-            return message.isMissingNode() ? null : message;
+            return openAiMessageOrTruncated(objectMapper.readTree(response.getBody()), limits.maxTokens());
+        } catch (ToolTurnTruncatedException e) {
+            throw e;   // 原样抛给调用方 —— 它要区分「被截断」和「调用失败」
         } catch (RestClientResponseException e) {
             throw new BusinessException(formatAiHttpError(e));
         } catch (Exception e) {
@@ -311,8 +354,9 @@ public class ModelProviderClient {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = toolTurnTemplate(limits).postForEntity(
                     resolveAnthropicMessagesUrl(config.getApiUrl()), request, String.class);
-            JsonNode content = objectMapper.readTree(response.getBody()).path("content");
-            return content.isMissingNode() ? null : content;
+            return anthropicContentOrTruncated(objectMapper.readTree(response.getBody()), limits.maxTokens());
+        } catch (ToolTurnTruncatedException e) {
+            throw e;
         } catch (RestClientResponseException e) {
             throw new BusinessException(formatAiHttpError(e));
         } catch (Exception e) {

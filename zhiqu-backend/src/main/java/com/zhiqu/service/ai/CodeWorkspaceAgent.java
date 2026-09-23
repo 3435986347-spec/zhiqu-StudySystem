@@ -215,8 +215,20 @@ public class CodeWorkspaceAgent {
                 // 2026-09-21 端到端扰动发现的：把写工具改成永不下发，草稿照样产了出来。
                 Set<String> offered = offeredToolNames(tools);
                 // 每次调用的限额随预算走：显式「代码」模式要能一次写出一整个文件（见 CodeLoopBudget）
-                JsonNode message = provider.callOpenAiToolTurn(config, messages, tools,
-                        budget.turnLimits(System.currentTimeMillis() - loopStart));
+                JsonNode message;
+                try {
+                    message = provider.callOpenAiToolTurn(config, messages, tools,
+                            budget.turnLimits(System.currentTimeMillis() - loopStart));
+                } catch (ModelProviderClient.ToolTurnTruncatedException truncated) {
+                    // 被截断不是「说完了」：说出来，并让模型换个写法再来一轮，而不是静默结束
+                    narrate(onStep, Map.of("phase", "budget", "message",
+                            "模型这一轮的输出超出单次上限被截断了 —— 已让它把文件拆小再写"));
+                    messages.add(Map.of("role", "user", "content",
+                            "你上一次的回复超出了单次输出上限（" + truncated.maxTokens() + " token），被截断了，"
+                                    + "工具调用没有完成。如果要写的文件很长，请把它拆成几个较小的文件分别用 "
+                                    + "write_workspace_file 写，或者先写一个精简但能运行的版本。"));
+                    continue;
+                }
                 if (message == null) {
                     break;
                 }

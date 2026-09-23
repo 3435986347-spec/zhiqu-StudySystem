@@ -289,4 +289,31 @@ class CodeWorkspaceAgentTest {
         assertTrue(rig.notes.stream().anyMatch(n -> "error".equals(n.get("phase"))
                 && String.valueOf(n.get("message")).contains("Read timed out")), "中断没有说出来：" + rig.notes);
     }
+
+    /**
+     * 2026-09-24 用户做马里奥：一次工具调用想写完整个文件，输出被截断，截断的回复里没有完整的工具调用，
+     * 循环当成「说完了」静默结束 —— 用户看到的就是一直卡在同一步。被截断要说出来、并让模型拆小了再写一轮。
+     */
+    @Test
+    @DisplayName("输出被截断：发一条 budget 叙述，告诉模型拆小文件，循环继续并能写成")
+    void 截断不是说完了() throws Exception {
+        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        when(rig.workspace.baselineOf("game/index.html")).thenReturn(WorkspaceService.ABSENT);
+        when(rig.provider.callOpenAiToolTurn(any(), any(), any(), any()))
+                .thenThrow(new ModelProviderClient.ToolTurnTruncatedException(16384))
+                .thenReturn(JSON.readTree(toolCall("write_workspace_file",
+                        "{\"path\":\"game/index.html\",\"content\":\"<canvas></canvas>\"}")))
+                .thenReturn(JSON.readTree("{\"role\":\"assistant\",\"content\":\"好了\"}"));
+        CodeWorkspaceAgent.Result r = rig.run("帮我做一个小游戏，放在 game 文件夹里", CODE_MODE);
+
+        assertTrue(rig.notes.stream().anyMatch(n -> "budget".equals(n.get("phase"))
+                && String.valueOf(n.get("message")).contains("截断")), "被截断没有说出来：" + rig.notes);
+        assertEquals(1, r.drafts().size(), "截断之后循环没有继续 —— 第二轮本来能写成：" + rig.notes);
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.mockito.ArgumentCaptor<List<Map<String, Object>>> msgs = org.mockito.ArgumentCaptor.forClass((Class) List.class);
+        verify(rig.provider, times(3)).callOpenAiToolTurn(any(), msgs.capture(), any(), any());
+        String second = String.valueOf(msgs.getAllValues().get(1));
+        assertTrue(second.contains("被截断") && second.contains("拆成"),
+                "模型没被告知它被截断了、该怎么改 —— 下一轮它会原样再写一遍、再被截断：" + second);
+    }
 }
