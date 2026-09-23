@@ -60,16 +60,18 @@
             -->
             <div style="display:flex; align-items:stretch; border-bottom:1px solid var(--zq-border-soft); background:var(--zq-card-soft);">
               <!--
-                标签栏左内边距 = 26px，和标题行、#zq-doc 的 padding-left 一致 ——
-                对齐的是**标签方框的左边缘**，不是标签里的文字。
-                这里返工过一次：先按「文字对齐」设成 14px（14 + 标签自身 12 = 26），
-                三处文字确实在同一条竖线上，但激活标签那个白底方框的左边缘落在 14px，
-                比正文左边缘靠左 12px —— 而方框边缘是条比文字更显眼的线，看上去就是没对齐。
-                方框和文字只能对齐其中一个（除非标签不留内边距，那样文字会贴着方框边）；
-                选方框，因为它是眼睛先看到的那条线。
-                导航按钮放右端 —— 放左端会把标签挤到 339px（实测），左侧就无从对齐了。
+                标签栏左内边距 = 0：第一个标签的方框直接从知识页卡片的左边缘开始，
+                和浏览器标签坐在页面上一样。正文与标题仍各自内缩 26px。
+
+                这里返工了两次，每次都对齐错了对象 ——
+                  1. 14px：让标签里的「文字」和正文文字同线；
+                  2. 26px：让标签「方框」和正文文字同线。
+                两次对齐的都是卡片<b>里面</b>的正文，而用户说的「下面的知识页」是那张卡片本身。
+                26px 时实测卡片边缘 436、第一个标签 463，中间 27px 灰带就是那条「没对齐」。
+                这次是先拿浏览器实拍前后对照（436 → 437 = 卡片内边缘）才改的，不是改完才看。
+                导航按钮放右端 —— 放左端就把第一个标签从卡片边缘挤开了。
               -->
-              <div id="zq-wiki-tabs" style="display:flex; align-items:stretch; gap:0; flex:1; min-width:0; padding-left:26px; overflow-x:auto; scrollbar-width:thin;"></div>
+              <div id="zq-wiki-tabs" style="display:flex; align-items:stretch; gap:0; flex:1; min-width:0; padding-left:0; overflow-x:auto; scrollbar-width:thin;"></div>
               <div style="display:flex; align-items:center; gap:2px; padding:0 12px 0 6px; flex:0 0 auto;">
                 <!-- 走当前标签页自己的浏览历史，和浏览器那对按钮同义 -->
                 <button type="button" id="zq-wiki-back" class="zq-btn-ghost" title="返回上一页（⌘[）"
