@@ -30,6 +30,8 @@ public final class CliRenderer {
     private Long agentRunId;
     private boolean answering;
     private boolean atLineStart = true;
+    /** 回答正文的渲染器：第一次收到正文时建，见 CliMarkdown。 */
+    private CliMarkdown md;
 
     public CliRenderer(PrintStream out, boolean color) {
         this.out = out;
@@ -61,15 +63,13 @@ public final class CliRenderer {
                     if (!atLineStart) out.println();
                     out.println();
                     atLineStart = true;
+                    md = new CliMarkdown(out, color);
                 }
-                String t = text(data, "text");
-                if (!t.isEmpty()) {
-                    out.print(t);
-                    out.flush();
-                    atLineStart = t.endsWith("\n");
-                }
+                // 不再原样打印：表格对齐、标题加粗、代码块加框；不是终端时输出纯文本
+                md.feed(text(data, "text"));
             }
             case "done" -> {
+                finishAnswer();
                 if (!atLineStart) out.println();
                 atLineStart = true;
                 if ("CANCELED".equals(text(data, "status"))) {
@@ -77,6 +77,7 @@ public final class CliRenderer {
                 }
             }
             case "error" -> {
+                finishAnswer();
                 String msg = firstNonEmpty(text(data, "message"), "出错了");
                 errors.add(msg);
                 line(red("✗ " + msg));
@@ -120,7 +121,16 @@ public final class CliRenderer {
         return errors;
     }
 
+    /** 回答正文收尾：没收完的行、没闭合的表格 / 代码块都吐出来。可重复调用。 */
+    private void finishAnswer() {
+        if (md != null) {
+            md.finish();
+            md = null;
+        }
+    }
+
     private void line(String s) {
+        finishAnswer();
         if (!atLineStart) {
             out.println();
         }
