@@ -1,0 +1,468 @@
+{
+  "_说明": [
+    "工作区安全规则的一致性用例：Java（服务器端工作区，WorkspaceGuard / WorkspaceExecutor）与 JS（npm 版 zhiqu 的本地工具）都跑这一份。",
+    "同样的输入必须得出同样的结论（OK 或同一个拒绝理由）—— 两份实现迟早会分叉，这份用例就是让分叉当场变红。",
+    "layout 描述测试前要在临时目录里搭出的结构：<tmp>/root 是工作区根，<tmp>/outside 是工作区外面的兄弟目录。",
+    "symlinks 的值是相对于链接所在目录的目标；不支持创建软链的平台（Windows 无权限）跳过 needsSymlink 的用例。",
+    "exec 用例只判参数与命令名的规则（不真的执行）。"
+  ],
+  "limits": {
+    "maxFileBytes": 262144
+  },
+  "extensions": [
+    "java",
+    "kt",
+    "py",
+    "js",
+    "ts",
+    "jsx",
+    "tsx",
+    "go",
+    "rs",
+    "rb",
+    "php",
+    "c",
+    "h",
+    "cpp",
+    "hpp",
+    "cc",
+    "cs",
+    "swift",
+    "m",
+    "scala",
+    "sql",
+    "sh",
+    "bat",
+    "ps1",
+    "html",
+    "css",
+    "scss",
+    "less",
+    "vue",
+    "svelte",
+    "json",
+    "yml",
+    "yaml",
+    "toml",
+    "xml",
+    "properties",
+    "md",
+    "txt",
+    "csv",
+    "gradle",
+    "makefile",
+    "dockerfile"
+  ],
+  "commands": [
+    "java",
+    "javac",
+    "python3",
+    "python",
+    "node",
+    "npm",
+    "go",
+    "gcc",
+    "g++",
+    "cargo",
+    "mvn"
+  ],
+  "layout": {
+    "files": {
+      "root/src/app.js": "console.log(1)",
+      "root/notes.md": "# 笔记",
+      "root/.env": "SECRET=1",
+      "root/id_rsa": "-----BEGIN KEY-----",
+      "root/keys/server.pem": "-----BEGIN CERT-----",
+      "root/Makefile": "all:",
+      "root/data/big.txt": {
+        "bytes": 262145
+      },
+      "root/data/exact.txt": {
+        "bytes": 262144
+      },
+      "root/blocker.txt": "我是文件",
+      "outside/secret.md": "工作区外",
+      "outside/secret.js": "工作区外"
+    },
+    "dirs": [
+      "root/empty"
+    ],
+    "symlinks": {
+      "root/link.js": "../outside/secret.js",
+      "root/docs": "../outside",
+      "root/inner.md": "notes.md"
+    }
+  },
+  "read": [
+    {
+      "path": "src/app.js",
+      "expect": "OK"
+    },
+    {
+      "path": "./src/../src/app.js",
+      "expect": "OK"
+    },
+    {
+      "path": "notes.md",
+      "expect": "OK"
+    },
+    {
+      "path": "Makefile",
+      "expect": "OK",
+      "why": "没有扩展名时按文件名本身比对白名单"
+    },
+    {
+      "path": "data/exact.txt",
+      "expect": "OK",
+      "why": "正好等于上限不算超"
+    },
+    {
+      "path": "data/big.txt",
+      "expect": "TOO_LARGE"
+    },
+    {
+      "path": "",
+      "expect": "EMPTY"
+    },
+    {
+      "path": "   ",
+      "expect": "EMPTY"
+    },
+    {
+      "path": "../outside/secret.md",
+      "expect": "OUTSIDE_ROOT"
+    },
+    {
+      "path": "src/../../outside/secret.md",
+      "expect": "OUTSIDE_ROOT"
+    },
+    {
+      "path": "/etc/passwd",
+      "expect": "OUTSIDE_ROOT"
+    },
+    {
+      "path": ".env",
+      "expect": "EXTENSION_NOT_ALLOWED"
+    },
+    {
+      "path": "id_rsa",
+      "expect": "EXTENSION_NOT_ALLOWED"
+    },
+    {
+      "path": "keys/server.pem",
+      "expect": "EXTENSION_NOT_ALLOWED"
+    },
+    {
+      "path": "src",
+      "expect": "NOT_REGULAR_FILE"
+    },
+    {
+      "path": "missing.js",
+      "expect": "NOT_REGULAR_FILE"
+    },
+    {
+      "path": "link.js",
+      "expect": "SYMLINK",
+      "needsSymlink": true
+    },
+    {
+      "path": "inner.md",
+      "expect": "SYMLINK",
+      "needsSymlink": true,
+      "why": "指向工作区里面的软链也不跟随"
+    },
+    {
+      "path": "docs/secret.md",
+      "expect": "OUTSIDE_ROOT",
+      "needsSymlink": true,
+      "why": "中间一段是软链：normalize 是纯字符串运算，看不出来"
+    }
+  ],
+  "write": [
+    {
+      "path": "src/new.js",
+      "expect": "OK"
+    },
+    {
+      "path": "src/app.js",
+      "expect": "OK"
+    },
+    {
+      "path": "game/index.html",
+      "expect": "OK",
+      "newDirectories": [
+        "game"
+      ]
+    },
+    {
+      "path": "game/assets/sprite.js",
+      "expect": "OK",
+      "newDirectories": [
+        "game",
+        "game/assets"
+      ]
+    },
+    {
+      "path": "blocker.txt/child.md",
+      "expect": "PARENT_NOT_FOUND",
+      "why": "上级路径被文件占着，目录建不出来"
+    },
+    {
+      "path": "../outside/x.js",
+      "expect": "OUTSIDE_ROOT"
+    },
+    {
+      "path": "/tmp/x.js",
+      "expect": "OUTSIDE_ROOT"
+    },
+    {
+      "path": ".env",
+      "expect": "EXTENSION_NOT_ALLOWED"
+    },
+    {
+      "path": "deploy.pem",
+      "expect": "EXTENSION_NOT_ALLOWED"
+    },
+    {
+      "path": "src",
+      "expect": "NOT_REGULAR_FILE"
+    },
+    {
+      "path": "",
+      "expect": "EMPTY"
+    },
+    {
+      "path": "link.js",
+      "expect": "SYMLINK",
+      "needsSymlink": true
+    },
+    {
+      "path": "docs/new.md",
+      "expect": "OUTSIDE_ROOT",
+      "needsSymlink": true
+    }
+  ],
+  "exec": [
+    {
+      "command": "node",
+      "args": [
+        "src/app.js"
+      ],
+      "expect": "OK"
+    },
+    {
+      "command": "python3",
+      "args": [
+        "main.py",
+        "--verbose"
+      ],
+      "expect": "OK"
+    },
+    {
+      "command": "npm",
+      "args": [
+        "test"
+      ],
+      "expect": "OK"
+    },
+    {
+      "command": "node",
+      "args": [
+        "-e",
+        "require('fs').rmSync('/', {recursive:true})"
+      ],
+      "expect": "INLINE_CODE"
+    },
+    {
+      "command": "python3",
+      "args": [
+        "-c",
+        "print(1)"
+      ],
+      "expect": "INLINE_CODE"
+    },
+    {
+      "command": "node",
+      "args": [
+        "--eval",
+        "1"
+      ],
+      "expect": "INLINE_CODE"
+    },
+    {
+      "command": "python3",
+      "args": [
+        "-i"
+      ],
+      "expect": "INLINE_CODE"
+    },
+    {
+      "command": "bash",
+      "args": [
+        "x.sh"
+      ],
+      "expect": "COMMAND_NOT_ALLOWED"
+    },
+    {
+      "command": "rm",
+      "args": [
+        "-rf",
+        "src"
+      ],
+      "expect": "COMMAND_NOT_ALLOWED"
+    },
+    {
+      "command": "/usr/bin/node",
+      "args": [],
+      "expect": "COMMAND_NOT_ALLOWED",
+      "why": "只接受命令名，不接受路径"
+    },
+    {
+      "command": "",
+      "args": [],
+      "expect": "EMPTY"
+    },
+    {
+      "command": "node",
+      "args": [
+        "/etc/passwd"
+      ],
+      "expect": "ABSOLUTE_PATH"
+    },
+    {
+      "command": "node",
+      "args": [
+        "~/secret.js"
+      ],
+      "expect": "ABSOLUTE_PATH"
+    },
+    {
+      "command": "python3",
+      "args": [
+        "../outside/x.py"
+      ],
+      "expect": "PARENT_ESCAPE"
+    },
+    {
+      "command": "python3",
+      "args": [
+        "src/../../x.py"
+      ],
+      "expect": "PARENT_ESCAPE"
+    },
+    {
+      "command": "node",
+      "args": [
+        "src/../src/app.js"
+      ],
+      "expect": "OK"
+    },
+    {
+      "command": "node",
+      "args": [
+        "--eval=require('fs')"
+      ],
+      "expect": "INLINE_CODE",
+      "why": "带等号的长参数：精确匹配认不出来"
+    },
+    {
+      "command": "node",
+      "args": [
+        "-p",
+        "process.env"
+      ],
+      "expect": "INLINE_CODE",
+      "why": "node 的 print 也是执行"
+    },
+    {
+      "command": "node",
+      "args": [
+        "-pe",
+        "1+1"
+      ],
+      "expect": "INLINE_CODE",
+      "why": "短参数合写"
+    },
+    {
+      "command": "node",
+      "args": [
+        "--print",
+        "1"
+      ],
+      "expect": "INLINE_CODE"
+    },
+    {
+      "command": "python3",
+      "args": [
+        "-Bc",
+        "print(1)"
+      ],
+      "expect": "INLINE_CODE",
+      "why": "python 的短参数可以合写，-c 藏在里面"
+    },
+    {
+      "command": "python3",
+      "args": [
+        "-u",
+        "main.py"
+      ],
+      "expect": "OK",
+      "why": "不含 c / i 的短参数照常放行"
+    },
+    {
+      "command": "go",
+      "args": [
+        "build",
+        "-p",
+        "4",
+        "./..."
+      ],
+      "expect": "OK",
+      "why": "-p 只对 node 是执行；go 的 -p 是并行度"
+    },
+    {
+      "command": "java",
+      "args": [
+        "-cp",
+        "out",
+        "Main"
+      ],
+      "expect": "OK",
+      "why": "java 的 -cp 是类路径，不是行内代码"
+    },
+    {
+      "command": "npm",
+      "args": [
+        "exec",
+        "some-package"
+      ],
+      "expect": "REMOTE_CODE",
+      "why": "npm exec 会下载并运行别人的包 —— 用户没看过的代码"
+    },
+    {
+      "command": "npm",
+      "args": [
+        "x",
+        "cowsay"
+      ],
+      "expect": "REMOTE_CODE"
+    },
+    {
+      "command": "npm",
+      "args": [
+        "run",
+        "build"
+      ],
+      "expect": "OK",
+      "why": "跑的是 package.json 里用户自己写的脚本"
+    },
+    {
+      "command": "npm",
+      "args": [
+        "exec",
+        "--call=rm -rf /"
+      ],
+      "expect": "REMOTE_CODE"
+    }
+  ]
+}

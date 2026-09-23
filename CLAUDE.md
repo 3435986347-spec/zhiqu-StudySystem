@@ -238,7 +238,34 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 `*-dir` 键再核对（不手写名单 —— 第一版就只改了 `upload-dir`，贴图照样坏）。落盘失败时图片标
 `ERROR` 并写明原因（文本资料只是降级：文本已从上传流抽出），读不到原件的图也会告诉模型。
 
-### 命令行 `zhiqu`（同一个后端上的 coding agent）
+### npm 版 `zhiqu`（`zhiqu-cli/`，harness：循环与工具在用户电脑上）
+
+零依赖的 ESM 包，`cd zhiqu-cli && npm link` 装到本机（发布到 npm 之前单独问用户；`package.json` 留着
+`"private": true` 挡误发）。服务器那一侧见上面「命令行 harness 的服务端网关」。它接替了下面那个 Java 版的
+`zhiqu` 命令（本机 `/opt/homebrew/bin/zhiqu` 旧软链已移走；桌面包里仍带着 Java 版）。不看代码想不到的几件事：
+
+- **三档权限 plan / ask / auto**（用户定的）：plan 只下发读工具 + `exit_plan_mode`，批准计划才切档；
+  ask 写 / 跑前给 diff、问 y/n；auto 不问、做完再汇报。**「下发了什么」和「能执行什么」是同一份清单**，每轮重算。
+  MCP 工具第一次用三档都问（第三方写的）。
+- **本地安全规则与服务器端是同一套**，共用 `conformance/workspace-rules.json`：Java 的
+  `WorkspaceRulesConformanceTest` 与 JS 的 `zhiqu-cli/test/conformance.test.js` 跑同一份，
+  `HarnessCliNodeSuiteTest` 把 JS 那一侧接进 Maven 全量 —— 两边各自绿不算数，结论一致才算。
+  写这份用例时查出「禁行内代码」只做精确匹配：`--eval=…`、`node -pe`、`python3 -Bc` 都能绕过，`npm exec` 会跑没看过的包；
+  两边一起收紧。
+- **没读过不许改、只读一部分不许整份重写、确认期间被改过不写**（`local.js` 的 prepare / commit 两步）。
+  `write_file` 一个工具三种用法（整份 / append / old_string 替换）—— 长文件分几次写，就是为了不撞单次输出上限。
+- **截断不是说完了**：`finish_reason=length` 时截断的调用不执行，历史里的参数换成小而合法的 JSON（带 path），
+  回模型「分几次写」。单条工具输出按模型窗口截断（窗口 × 0.35 字）—— 否则小窗口模型一轮就超，两边的压缩都救不了。
+- **子进程与 MCP 服务器都不继承命令行的环境**（那里有 `ZHIQU_TOKEN`）。超时杀整个进程组（`detached` + `kill(-pid)`）：
+  只杀父进程的话孙子进程攥着管道，close 永远等不到 —— 这条判据因此自带 15 秒时限。
+- **配置在 `.zhiqu/`**：`~/.zhiqu/config.json`（600）、`system.md`（第一次写一份内置系统提示，没改过的跟着内置更新，
+  改过的不动）；项目 `.zhiqu/settings.json` **不收令牌**。项目说明文件是 `ZHIQU.md`（同目录没有才读 `CLAUDE.md`，
+  **不读 `AGENTS.md`** —— 用户定的，和 Codex 的重复）。Skills 三层渐进式披露。会话在 `.zhiqu/sessions/*.jsonl`，
+  `/resume` 重放，没有结果的工具调用补「被中断」。
+- **测试**：`cd zhiqu-cli && npm test`；端到端用 `test/fixtures/mock-model.cjs`（脚本化的 OpenAI 兼容假模型）与
+  `mock-mcp.cjs`。`package.json` 是 `"type": "module"`，所以 CommonJS 的夹具必须是 `.cjs`。
+
+### 命令行 `zhiqu`（Java 版，同一个后端上的 coding agent；已由 npm 版接替）
 
 `deploy/desktop/bin/zhiqu` 随应用打进 `Contents/Resources/bin/`，用应用自带的 JRE 跑
 **同一个 JAR** 里的 `com.zhiqu.cli.ZhiquCli`（`PropertiesLauncher` + `-Dloader.main`，不启动 Spring，

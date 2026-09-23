@@ -16,7 +16,7 @@ JAR — there is **no frontend build step**.
 
 ### Database
 
-Schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, `V1` … `V32`)
+Schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, `V1` … `V36`)
 and migrates automatically on startup. Do **not** run `schema.sql` / `data.sql` by hand — that is
 the old pre-Flyway flow and will not produce a current schema. Only create the database:
 
@@ -129,7 +129,7 @@ never ran — that proves nothing. It is the mirror image of "an empty scan look
 - Frontend: `zhiqu-backend/src/main/resources/static/` (`assets/` = live, `js/` = legacy)
 - Migrations: `zhiqu-backend/src/main/resources/db/migration/`
 - Optional RAG sidecar: `rag-service/` (Python, `127.0.0.1:8001`)
-- `zhiqu` command-line coding agent: `zhiqu-backend/src/main/java/com/zhiqu/cli/` + `deploy/desktop/bin/zhiqu` — a client of the same backend; all safety rules stay server-side (CLAUDE.md, 命令行 `zhiqu`)
+- `zhiqu` command-line coding agent (npm harness): `zhiqu-cli/` — loop and local tools run on the user's machine, the backend serves `/api/harness/**` (login, model gateway, archive, remote tools). Local safety rules share `conformance/workspace-rules.json` with the server-side workspace (CLAUDE.md, npm 版 `zhiqu`). The older Java client (`zhiqu-backend/src/main/java/com/zhiqu/cli/`, `deploy/desktop/bin/zhiqu`) is superseded.
 - Deployment: `deploy/README.md` → `deploy/windows/README.md`
 
 ## Configuration

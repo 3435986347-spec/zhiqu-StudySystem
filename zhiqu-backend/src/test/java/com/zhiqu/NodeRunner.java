@@ -64,6 +64,36 @@ public final class NodeRunner {
     }
 
     /**
+     * 跑一组 {@code node --test} 测试（npm 版 zhiqu 的判据）。退出码 0、TAP 报告里 {@code fail 0}、
+     * 而且通过数不少于 {@code minPass} 才算过 —— 通过数有下限，是因为「一条都没跑」的 TAP 报告
+     * 也是 {@code fail 0}，和全绿长得一样。
+     *
+     * @return true = 真的跑了；false = 没有 node 且已显式声明跳过
+     */
+    public static boolean runTestSuite(Path workDir, java.util.List<String> files, int minPass) throws Exception {
+        String node = findNode();
+        if (node == null) {
+            assertTrue(Boolean.getBoolean("zhiqu.skipNodeTests"),
+                    "找不到 node，" + workDir + " 下的 node 测试没有跑 —— 这不是通过。"
+                            + "用 -Dzhiqu.nodePath=/绝对/路径 指过来，或者 -Dzhiqu.skipNodeTests=true 把跳过写明白。");
+            return false;
+        }
+        java.util.List<String> cmd = new java.util.ArrayList<>(java.util.List.of(node, "--test"));
+        cmd.addAll(files);
+        Process p = new ProcessBuilder(cmd).directory(workDir.toFile()).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(p.waitFor(300, TimeUnit.SECONDS), "node 测试跑超时了，输出：\n" + out);
+        java.util.regex.Matcher pass = java.util.regex.Pattern.compile("(?m)^# pass (\\d+)$").matcher(out);
+        java.util.regex.Matcher fail = java.util.regex.Pattern.compile("(?m)^# fail (\\d+)$").matcher(out);
+        assertTrue(pass.find() && fail.find(), "没有拿到 TAP 汇总，输出：\n" + out);
+        assertEquals("0", fail.group(1), "node 测试有失败。完整输出：\n" + out);
+        assertTrue(Integer.parseInt(pass.group(1)) >= minPass,
+                "node 测试只通过了 " + pass.group(1) + " 条，下限是 " + minPass + " —— 可能有文件没被跑到。输出：\n" + out);
+        assertEquals(0, p.exitValue(), "node 测试退出码非 0。完整输出：\n" + out);
+        return true;
+    }
+
+    /**
      * 找到 node：先走 PATH（{@code ProcessBuilder} 自己会查），再试几个常见安装位置。
      *
      * <p><b>不写死某一台机器上的路径。</b>第一版只列了 homebrew 的

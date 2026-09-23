@@ -1,0 +1,425 @@
+// 循环本身：一轮用户消息 → 模型 → 工具 → 模型 → … → 回答。循环与本地工具都在这台电脑上；模型经服务器网关。
+//
+// 三档权限（用户 2026-09-24 定的）：
+//   plan  只读：只下发读 / 搜 / 查的工具，外加 exit_plan_mode —— 计划交上来，用户批准了才切到能写的档位；
+//   ask   逐个确认：写文件先给 diff、跑命令先给命令行，问 y/n（a = 本会话都允许这一类）；
+//   auto  全自动：写、跑都不问，做完再汇报（每一步照样显示，diff 照样打印）。
+// 三档的安全规则一样（guard.js / execrules.js）—— auto 免的是「问」，不是「规则」。
+//
+// 「下发了什么」和「能执行什么」是同一份清单：每一轮先按档位算出工具表，分派前比对名字，
+// 不在表里就拒 —— 模型（或者一段被注入了指令的工具输出）报一个没下发的名字，不会被执行。
+import os from 'node:os';
+import path from 'node:path';
+import { hunks } from './render/diff.js';
+import { formatBytes } from './render/term.js';
+import { localSchemas, READ_TOOLS } from './tools/local.js';
+import { loadSkill, loadSkillSchema } from './skills.js';
+import { buildSystemMessage, environmentBlock, today } from './prompt.js';
+import { compactMessages, needsCompaction, SUMMARY_INSTRUCTIONS } from './compact.js';
+import { dropDanglingToolCalls } from './session.js';
+
+export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory']);
+
+/**
+ * 单条工具输出进上下文前的上限，随模型的窗口走（按字算；中文一字约一个 token）。
+ * 由来：窗口 8000 的模型读一个 3 万字的文件，一轮就超了 —— 客户端压缩只能压「更早的轮」，
+ * 服务器兜底裁剪又原样留着最近的工具输出，结果整个请求被供应商拒绝。
+ */
+export function toolOutputCap(window) {
+  return Math.max(2_000, Math.min(100_000, Math.floor((window || 64_000) * 0.35)));
+}
+
+export function capToolOutput(text, window) {
+  const cap = toolOutputCap(window);
+  const s = String(text);
+  if (s.length <= cap) return s;
+  return `${s.slice(0, cap)}\n…（这段输出有 ${s.length} 字，超过了这个模型一次能看的量，只给了前 ${cap} 字。`
+    + '需要后面的内容就分段取：read_file 用 offset / limit，搜索缩小范围，命令输出重定向不了就换个更窄的命令）';
+}
+export const DEFAULT_MAX_TOKENS = 16_384;
+const MAX_CONTINUATIONS = 2;
+
+export function exitPlanSchema() {
+  return {
+    type: 'function',
+    function: {
+      name: 'exit_plan_mode',
+      description: '把想好的计划交给用户（只在 plan 档可用）。用户批准后命令行会切到能写的档位，你接着按计划做。',
+      parameters: { type: 'object', properties: { plan: { type: 'string', description: '计划，Markdown：要改哪些文件、每一步做什么、怎么验证' } }, required: ['plan'] },
+    },
+  };
+}
+
+/** 这一轮给模型哪些工具。 */
+export function toolset(ctx) {
+  const plan = ctx.mode === 'plan';
+  const out = [];
+  for (const t of localSchemas()) {
+    if (!plan || READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'local' });
+  }
+  for (const t of ctx.remoteTools || []) {
+    if (!plan || REMOTE_READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'remote' });
+  }
+  if (ctx.skills && ctx.skills.length) out.push({ schema: loadSkillSchema(), kind: 'skill' });
+  if (ctx.mcp) for (const t of ctx.mcp.schemas({ readOnlyOnly: plan })) out.push({ schema: t, kind: 'mcp' });
+  if (plan) out.push({ schema: exitPlanSchema(), kind: 'plan' });
+  // 同名只留第一个：本地工具优先于远程 / MCP（MCP 名字有前缀，本不会撞）
+  const seen = new Set();
+  return out.filter((t) => (seen.has(t.schema.function.name) ? false : seen.add(t.schema.function.name)));
+}
+
+export function systemText(ctx) {
+  const env = environmentBlock({
+    root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.mode, commands: ctx.local.commands,
+    today: today(),
+  });
+  return buildSystemMessage({ systemText: ctx.system.text, env, instructions: ctx.instructionsText, skills: ctx.skillsText });
+}
+
+function record(ctx, message) {
+  ctx.messages.push(message);
+  if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'message', message });
+}
+
+function parseArgs(raw) {
+  if (raw == null || raw === '') return { ok: true, value: {} };
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === 'object' && !Array.isArray(v) ? { ok: true, value: v } : { ok: false, error: '参数必须是一个 JSON 对象' };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** 截断了的参数：从残片里认出 path（给用户和模型一个线索），换成一个小而合法的 JSON。 */
+function truncatedArgs(raw) {
+  const m = /"path"\s*:\s*"([^"]{1,300})"/.exec(raw || '');
+  return JSON.stringify({ _truncated: true, ...(m ? { path: m[1] } : {}) });
+}
+
+// ── 模型调用 ─────────────────────────────────────────────────────────────
+
+async function callModel(ctx, tools, signal, { render = true, maxTokens = DEFAULT_MAX_TOKENS, messages } = {}) {
+  const ui = ctx.ui;
+  const md = render ? ui.markdown() : null;
+  let done = null;
+  let text = '';
+  const toolNames = new Map();
+  const body = {
+    modelId: ctx.model ? ctx.model.id : null,
+    messages: messages || [{ role: 'system', content: systemText(ctx) }, ...ctx.messages],
+    tools: tools.map((t) => t.schema),
+    maxTokens,
+  };
+  await ctx.api.stream('/api/harness/model/stream', body, (name, data) => {
+    if (name === 'start') {
+      if (data.droppedMessages > 0 || data.elidedToolOutputs > 0) {
+        ui.note(`· 服务器按上下文窗口（${data.contextWindow} token）裁掉了最早的 ${data.droppedMessages} 条消息`
+          + `${data.elidedToolOutputs ? `、省略了 ${data.elidedToolOutputs} 段旧的工具输出` : ''}`);
+      }
+    } else if (name === 'delta') {
+      text += data.text;
+      if (md) md.feed(data.text);
+    } else if (name === 'tool_call') {
+      toolNames.set(data.index, data.name);
+      if (md && md.wroteAnything) md.finish();     // 正文说完了才轮到工具：先把这段收尾换行
+      if (render) ui.status.set(ui.paint.dim(`✎ 正在准备 ${data.name} …`));
+    } else if (name === 'tool_progress') {
+      const tool = toolNames.get(data.index) || '工具';
+      if (render) ui.status.set(ui.paint.dim(`✎ 正在生成 ${tool} 的内容 … ${formatBytes(data.chars)}`));
+    } else if (name === 'done') {
+      done = data;
+    }
+  }, { signal });
+  ui.status.clear();
+  if (md) md.finish();
+  if (!done) throw new Error('模型的回复没有正常结束（连接中途断开了）');
+  if (ctx.usage) {
+    ctx.usage.prompt += done.usage ? done.usage.promptTokens || 0 : 0;
+    ctx.usage.completion += done.usage ? done.usage.completionTokens || 0 : 0;
+  }
+  return { ...done, text, maxTokens: done.maxTokens || maxTokens };
+}
+
+// ── 工具 ────────────────────────────────────────────────────────────────
+
+async function confirmWrite(ctx, prep) {
+  const ui = ctx.ui;
+  const lines = hunks(prep.oldText, prep.newText, 3);
+  if (ctx.mode === 'auto' || ctx.allow.write) {
+    ui.diff(lines, 16);
+    return true;
+  }
+  ui.diff(lines, 400);
+  const pick = await ui.choose(`写入 ${prep.rel}？`, [
+    { key: 'y', label: '写入' }, { key: 'n', label: '不写' }, { key: 'a', label: '本会话都允许写文件' },
+  ], 'n');
+  if (pick === 'a') ctx.allow.write = true;
+  return pick === 'y' || pick === 'a';
+}
+
+async function confirmRun(ctx, prep) {
+  if (ctx.mode === 'auto' || ctx.allow.run) return true;
+  const pick = await ctx.ui.choose(`运行 ${[prep.command, ...prep.args].join(' ')}${prep.cwdRel === '.' ? '' : `（在 ${prep.cwdRel}）`}？`, [
+    { key: 'y', label: '运行' }, { key: 'n', label: '不运行' }, { key: 'a', label: '本会话都允许运行命令' },
+  ], 'n');
+  if (pick === 'a') ctx.allow.run = true;
+  return pick === 'y' || pick === 'a';
+}
+
+async function confirmMcp(ctx, name) {
+  // 每个 MCP 工具第一次用都问 —— 三档都问：MCP 服务器是第三方写的，auto 免不了这一问
+  if (ctx.allow.mcp.has(name)) return true;
+  const pick = await ctx.ui.choose(`第一次调用 MCP 工具 ${name}，允许吗？`, [
+    { key: 'y', label: '允许这一次' }, { key: 'a', label: '本会话都允许它' }, { key: 'n', label: '不允许' },
+  ], 'n');
+  if (pick === 'a') ctx.allow.mcp.add(name);
+  return pick === 'y' || pick === 'a';
+}
+
+async function approvePlan(ctx, plan) {
+  const ui = ctx.ui;
+  ui.line(ui.paint.bold('── 计划'));
+  const md = ui.markdown();
+  md.feed(`${plan}\n`);
+  md.finish();
+  const pick = await ui.choose('按这个计划开始做吗？', [
+    { key: 'a', label: '开始，全自动（auto）' }, { key: 'y', label: '开始，每步确认（ask）' }, { key: 'n', label: '先不，接着改计划' },
+  ], 'n');
+  if (pick === 'a' || pick === 'y') {
+    setMode(ctx, pick === 'a' ? 'auto' : 'ask');
+    return `用户批准了计划，现在是 ${ctx.mode} 档（${ctx.mode === 'auto' ? '写文件、跑命令不再逐个问' : '写文件、跑命令会逐个确认'}）。请按计划开始做，做完再汇报。`;
+  }
+  return '用户暂时不执行这个计划，还在 plan 档。请根据用户接下来的意见继续完善计划，或者回答用户的问题。';
+}
+
+export function setMode(ctx, mode) {
+  ctx.mode = mode;
+  if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'mode', mode });
+}
+
+function describeCall(name, args) {
+  switch (name) {
+    case 'list_files': return `列出 ${args.path || '工作区根'}`;
+    case 'read_file': return `读取 ${args.path}${args.offset ? `（从第 ${args.offset} 行）` : ''}`;
+    case 'search': return `搜索「${args.query}」${args.path ? `（在 ${args.path}）` : ''}`;
+    case 'write_file': return `${args.old_string != null ? '修改' : args.append ? '追加到' : '写入'} ${args.path}`;
+    case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
+    case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
+    case 'exit_plan_mode': return '提交计划';
+    case 'search_wiki': return `查知识库「${args.query}」`;
+    case 'read_wiki_page': return `读知识库「${args.title}」`;
+    case 'create_wiki_patch': return `生成知识库草稿「${args.title}」`;
+    case 'create_study_plan': return '生成学习计划草稿';
+    case 'read_memory': return '读长期记忆';
+    case 'propose_memory': return '生成长期记忆草稿';
+    default: return name.startsWith('mcp__') ? `MCP ${name.slice(5).replace('__', '/')}` : name;
+  }
+}
+
+async function executeTool(ctx, call, offered, signal) {
+  const ui = ctx.ui;
+  const name = call.function && call.function.name;
+  const kind = offered.get(name);
+  if (!kind) {
+    ui.step(`${name}（这一轮没有这个工具）`);
+    ui.result('已拒绝', false);
+    return `这一轮没有给你 ${name} 这个工具（当前档位：${ctx.mode}），没有执行。${ctx.mode === 'plan' ? '现在是只读的 plan 档：想好之后用 exit_plan_mode 提交计划。' : ''}`;
+  }
+  const parsed = parseArgs(call.function.arguments);
+  if (!parsed.ok) {
+    ui.step(`${name}（参数不对）`);
+    ui.result(parsed.error, false);
+    return `参数不是合法的 JSON（${parsed.error}），没有执行。请重新调用。`;
+  }
+  const args = parsed.value;
+  ui.step(describeCall(name, args));
+  ctx.steps.push(describeCall(name, args));
+
+  if (kind === 'local') {
+    const local = ctx.local;
+    if (name === 'list_files' || name === 'read_file' || name === 'search') {
+      const r = name === 'list_files' ? local.listFiles(args) : name === 'read_file' ? local.readFile(args) : local.search(args);
+      if (r.error) { ui.result(r.error, false); return r.error; }
+      ui.result(r.summary);
+      return r.content;
+    }
+    if (name === 'write_file') {
+      const prep = local.prepareWrite(args);
+      if (prep.error) { ui.result(prep.error, false); return prep.error; }
+      if (prep.newDirectories.length) ui.note(`    （会连同新建目录 ${prep.newDirectories.join('、')}）`);
+      if (!(await confirmWrite(ctx, prep))) {
+        ui.result('用户没有同意，没写', false);
+        return `用户没有同意写入 ${prep.rel}，文件没有改动。不要原样重试；问问用户想怎么改，或者换个做法。`;
+      }
+      const r = local.commitWrite(prep);
+      if (r.error) { ui.result(r.error, false); return r.error; }
+      ctx.changedFiles.add(prep.rel);
+      ui.result(ui.paint.green(`✓ ${r.content.split('（')[0]}  +${r.added} -${r.removed}`));
+      return r.content;
+    }
+    if (name === 'run_command') {
+      const prep = local.prepareRun(args);
+      if (prep.error) { ui.result(prep.error, false); return prep.error; }
+      if (!(await confirmRun(ctx, prep))) {
+        ui.result('用户没有同意，没运行', false);
+        return `用户没有同意运行 ${[prep.command, ...prep.args].join(' ')}。不要原样重试；问问用户，或者换个做法。`;
+      }
+      let tail = '';
+      const r = await local.commitRun(prep, { signal, onOutput: (s) => { tail = (tail + s).slice(-4000); } });
+      const lastLines = r.output.split('\n').filter((l) => l.trim()).slice(-8);
+      for (const l of lastLines) ui.line(`    ${ui.paint.dim(l.length > 200 ? `${l.slice(0, 200)}…` : l)}`);
+      ui.result(r.summary, r.exitCode === 0);
+      return r.content;
+    }
+  }
+  if (kind === 'remote') {
+    try {
+      const r = await ctx.api.post('/api/harness/tools/call', { sessionId: ctx.session.id, name, arguments: args }, { signal, timeoutMs: 60_000 });
+      const drafts = r.drafts || [];
+      ui.result(drafts.length ? `草稿：${drafts.map((d) => d.title).join('、')} → 到网页里确认` : '完成');
+      return r.content;
+    } catch (e) {
+      ui.result(e.message, false);
+      return `远程工具调用失败：${e.message}`;
+    }
+  }
+  if (kind === 'skill') {
+    const r = loadSkill(ctx.skills, args);
+    if (r.error) { ui.result(r.error, false); return r.error; }
+    ui.result(r.summary);
+    return r.content;
+  }
+  if (kind === 'mcp') {
+    if (!(await confirmMcp(ctx, name))) {
+      ui.result('用户没有允许', false);
+      return `用户没有允许调用 ${name}。`;
+    }
+    const r = await ctx.mcp.call(name, args, { signal });
+    if (r.error) { ui.result(r.error, false); return r.error; }
+    ui.result(r.summary);
+    return r.content;
+  }
+  if (kind === 'plan') {
+    return approvePlan(ctx, String(args.plan || ''));
+  }
+  return `不认识的工具：${name}`;
+}
+
+// ── 压缩 ────────────────────────────────────────────────────────────────
+
+export async function compactNow(ctx, signal, { manual = false } = {}) {
+  const ui = ctx.ui;
+  const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
+  if (manual) ui.step('压缩对话');
+  const result = await compactMessages(ctx.messages, window, async (transcriptText) => {
+    // 真要调模型压摘要时才说：自动触发、又只有最近一轮可留的时候，这里一句话都不该打
+    if (!manual) ui.step(`对话快到上下文上限（窗口 ${window} token 的 80%），把较早的部分压成摘要`);
+    const r = await callModel(ctx, [], signal, {
+      render: false, maxTokens: 4096,
+      messages: [{ role: 'system', content: SUMMARY_INSTRUCTIONS }, { role: 'user', content: transcriptText }],
+    });
+    return r.text.trim() || '（摘要为空）';
+  });
+  if (!result.summarized && !result.elided) {
+    if (manual) ui.result('没什么可压缩的（只有最近的一两轮）');
+    return result;
+  }
+  if (!result.summarized && !manual) ui.step('对话快到上下文上限，省略较早的大段工具输出');
+  ctx.messages = result.messages;
+  if (ctx.store && ctx.session) {
+    ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages, before: result.before, after: result.after });
+  }
+  ui.result(`压掉 ${result.summarized} 条${result.elided ? `、省略 ${result.elided} 段旧的工具输出` : ''}，约 ${result.before} → ${result.after} token`);
+  return result;
+}
+
+// ── 一轮 ────────────────────────────────────────────────────────────────
+
+export async function runTurn(ctx, userText, { signal } = {}) {
+  ctx.steps = [];
+  ctx.changedFiles = ctx.changedFiles || new Set();
+  record(ctx, { role: 'user', content: userText });
+  if (ctx.session && ctx.store && !ctx.session.title) {
+    ctx.session.title = userText.replace(/\s+/g, ' ').slice(0, 40);
+    ctx.store.touch(ctx.session.id, { title: ctx.session.title });
+  }
+  let finalText = '';
+  let continuations = 0;
+  const maxRounds = ctx.maxRounds || 60;
+  for (let round = 0; round < maxRounds; round++) {
+    if (signal && signal.aborted) break;
+    const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
+    if (needsCompaction(systemText(ctx), ctx.messages, window)) await compactNow(ctx, signal);
+    const tools = toolset(ctx);
+    const offered = new Map(tools.map((t) => [t.schema.function.name, t.kind]));
+    const res = await callModel(ctx, tools, signal);
+    const message = res.message || { role: 'assistant', content: res.text };
+    const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+
+    if (res.finishReason === 'length') {
+      // 被截断不是「说完了」：截断的工具调用不执行，告诉模型为什么、该怎么改
+      const broken = calls.filter((c) => !parseArgs(c.function.arguments).ok);
+      for (const c of broken) c.function.arguments = truncatedArgs(c.function.arguments);
+      record(ctx, message);
+      if (calls.length) {
+        ctx.ui.warn(`模型这一次的输出超过了单次上限（${res.maxTokens} token），被截断了 —— 已让它把文件拆小、分几次写`);
+        for (const c of calls) {
+          const content = broken.includes(c)
+            ? `你这次调用的参数被截断了（超过单次输出上限 ${res.maxTokens} token），没有执行。`
+              + '文件很长就分几次写：先用 write_file 写开头，再用 append=true 一段一段追加；或者拆成几个小文件。'
+            : '同一次回复里有别的调用被截断了，这个调用也没有执行，请重新发起。';
+          record(ctx, { role: 'tool', tool_call_id: c.id, content });
+        }
+        continue;
+      }
+      if (continuations++ < MAX_CONTINUATIONS) {
+        record(ctx, { role: 'user', content: '（你的回答被输出上限截断了，请从断开的地方接着说，不要重复前面的内容）' });
+        continue;
+      }
+      finalText = message.content || '';
+      break;
+    }
+
+    record(ctx, message);
+    if (!calls.length) {
+      finalText = message.content || '';
+      break;
+    }
+    for (const call of calls) {
+      if (signal && signal.aborted) break;
+      const content = await executeTool(ctx, call, offered, signal);
+      record(ctx, { role: 'tool', tool_call_id: call.id, content: capToolOutput(content, window) });
+    }
+    if (round === maxRounds - 1) {
+      ctx.ui.warn(`已经连续调用了 ${maxRounds} 轮工具，先停在这里。说「继续」可以接着做。`);
+    }
+  }
+  if (signal && signal.aborted) ctx.messages = dropDanglingToolCalls(ctx.messages);
+  if (ctx.store && ctx.session) ctx.store.touch(ctx.session.id, { messages: ctx.messages.length, model: ctx.model ? ctx.model.label : null });
+  return { finalText, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles] };
+}
+
+/** 网页里看的那份存档：人说的、助手最后回的，加一行过程。失败不影响本地。 */
+export async function archiveTurn(ctx, userText, result) {
+  if (!ctx.api || !ctx.session || ctx.archiveDisabled) return;
+  try {
+    if (!ctx.archiveOpened) {
+      await ctx.api.post('/api/harness/sessions', { sessionId: ctx.session.id, title: ctx.session.title || userText.slice(0, 40), workspace: path.basename(ctx.local.root) }, { timeoutMs: 10_000 });
+      ctx.archiveOpened = true;
+    }
+    const steps = result.steps.length ? `\n\n> 过程：${result.steps.slice(0, 30).join(' · ')}${result.steps.length > 30 ? ` …共 ${result.steps.length} 步` : ''}` : '';
+    await ctx.api.post(`/api/harness/sessions/${ctx.session.id}/messages`, {
+      messages: [{ role: 'user', content: userText }, { role: 'assistant', content: (result.finalText || '（没有文字回答）') + steps }],
+    }, { timeoutMs: 10_000 });
+  } catch (e) {
+    if (!ctx.archiveWarned) {
+      ctx.ui.note(`（网页存档没成功：${e.message}；本地记录不受影响）`);
+      ctx.archiveWarned = true;
+    }
+  }
+}
+
+export function hostName() {
+  return os.hostname().replace(/\.local$/, '');
+}

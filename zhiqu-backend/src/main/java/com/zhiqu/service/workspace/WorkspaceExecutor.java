@@ -70,7 +70,19 @@ public class WorkspaceExecutor {
      */
     private static final Set<String> INLINE_CODE_FLAGS = Set.of(
             "-c", "-e", "--eval", "--command", "--exec", "-command", "--execute",
-            "-E", "--expression", "-i", "--interactive");
+            "-E", "--expression", "-i", "--interactive", "--print", "--call");
+
+    /**
+     * 各解释器自己的「行内代码」短参数（会被合写，如 {@code node -pe}、{@code python3 -Bc}）。
+     * 不能对所有命令一刀切：{@code go build -p 4} 的 -p 是并行度，{@code java -cp} 是类路径。
+     */
+    private static final Map<String, String> INLINE_SHORT_LETTERS = Map.of(
+            "node", "epi",
+            "python", "ci",
+            "python3", "ci");
+
+    /** npm 这几个子命令会下载并运行别人的包 —— 用户没看过的代码。 */
+    private static final Set<String> NPM_REMOTE_SUBCOMMANDS = Set.of("exec", "x", "create", "init", "dlx");
 
     private final WorkspaceProperties properties;
     private final WorkspaceAccess access;
@@ -141,15 +153,21 @@ public class WorkspaceExecutor {
             throw new BusinessException(refusal);
         }
         String name = command == null ? "" : command.trim();
-        if (name.isEmpty()) {
-            throw new BusinessException("没有给出要执行的命令");
-        }
-        if (!properties.getAllowedCommands().contains(name)) {
-            throw new BusinessException("命令不在允许清单里：" + name
-                    + "（允许的是 " + String.join("、", properties.getAllowedCommands()) + "）");
-        }
         List<String> safeArgs = args == null ? List.of() : args;
-        checkArgs(safeArgs);
+        Check check = check(properties.getAllowedCommands(), name, safeArgs);
+        switch (check.refusal()) {
+            case OK -> { }
+            case EMPTY -> throw new BusinessException("没有给出要执行的命令");
+            case COMMAND_NOT_ALLOWED -> throw new BusinessException("命令不在允许清单里：" + name
+                    + "（允许的是 " + String.join("、", properties.getAllowedCommands()) + "）");
+            case NULL_ARG -> throw new BusinessException("参数里有空值");
+            case INLINE_CODE -> throw new BusinessException("不接受行内代码参数 " + check.arg()
+                    + " —— 只能执行工作区里已经存在的文件，那样用户才看得到要跑的是什么");
+            case REMOTE_CODE -> throw new BusinessException("不接受 npm " + check.arg()
+                    + " —— 它会下载并运行别人的包，那段代码用户没看过");
+            case ABSOLUTE_PATH -> throw new BusinessException("参数不接受绝对路径：" + check.arg());
+            case PARENT_ESCAPE -> throw new BusinessException("参数不接受跳出工作区的路径：" + check.arg());
+        }
 
         WorkspaceGuard.Resolution dir = guard.resolveDirectory(relativeDir);
         if (!dir.ok()) {
@@ -231,28 +249,53 @@ public class WorkspaceExecutor {
     /**
      * 参数校验。三条，每条挡的是不同的东西。
      */
-    private void checkArgs(List<String> args) {
-        for (String arg : args) {
+    /** 执行前的拒绝理由。与 npm 版 zhiqu 的本地执行共用一致性用例（conformance/workspace-rules.json）。 */
+    public enum Refusal { OK, EMPTY, COMMAND_NOT_ALLOWED, NULL_ARG, INLINE_CODE, REMOTE_CODE, ABSOLUTE_PATH, PARENT_ESCAPE }
+
+    public record Check(Refusal refusal, String arg) {
+    }
+
+    /** 纯函数：命令名在不在清单里、参数合不合规矩。不碰磁盘、不起进程。 */
+    public static Check check(List<String> allowedCommands, String command, List<String> args) {
+        String name = command == null ? "" : command.trim();
+        if (name.isEmpty()) {
+            return new Check(Refusal.EMPTY, null);
+        }
+        if (!allowedCommands.contains(name)) {
+            return new Check(Refusal.COMMAND_NOT_ALLOWED, name);
+        }
+        List<String> list = args == null ? List.of() : args;
+        if ("npm".equals(name) && !list.isEmpty() && list.get(0) != null && NPM_REMOTE_SUBCOMMANDS.contains(list.get(0))) {
+            return new Check(Refusal.REMOTE_CODE, list.get(0));
+        }
+        String shortLetters = INLINE_SHORT_LETTERS.getOrDefault(name, "");
+        for (String arg : list) {
             if (arg == null) {
-                throw new BusinessException("参数里有空值");
+                return new Check(Refusal.NULL_ARG, null);
             }
-            // 一、行内代码：这是唯一真正的安全判定，见类注释
-            if (INLINE_CODE_FLAGS.contains(arg)) {
-                throw new BusinessException("不接受行内代码参数 " + arg
-                        + " —— 只能执行工作区里已经存在的文件，那样用户才看得到要跑的是什么");
+            // 一、行内代码：这是唯一真正的安全判定，见类注释。
+            // 精确匹配之外还要认 --eval=… 这种带等号的写法，以及解释器合写的短参数（node -pe、python3 -Bc）——
+            // 2026-09-24 写一致性用例时发现，只做精确匹配的话这三种都能把任意代码当参数传进来。
+            String flag = arg.startsWith("--") && arg.contains("=") ? arg.substring(0, arg.indexOf('=')) : arg;
+            if (INLINE_CODE_FLAGS.contains(flag)) {
+                return new Check(Refusal.INLINE_CODE, arg);
+            }
+            if (!shortLetters.isEmpty() && arg.matches("-[A-Za-z]+")
+                    && arg.substring(1).chars().anyMatch(ch -> shortLetters.indexOf(ch) >= 0)) {
+                return new Check(Refusal.INLINE_CODE, arg);
             }
             // 二、绝对路径：命令的作用范围要跟着工作区走
             if (arg.startsWith("/") || arg.startsWith("~")) {
-                throw new BusinessException("参数不接受绝对路径：" + arg);
+                return new Check(Refusal.ABSOLUTE_PATH, arg);
             }
             // 三、往上跳：同上，而且 .. 混在中间时一眼看不出来
             if (Paths.get(arg).normalize().startsWith("..")) {
-                throw new BusinessException("参数不接受跳出工作区的路径：" + arg);
+                return new Check(Refusal.PARENT_ESCAPE, arg);
             }
         }
+        return new Check(Refusal.OK, null);
     }
 
-    /** 读输出，最多读 limit 字节；到顶就停下并标记，而不是继续读到内存炸掉。 */
     private static Capture readCapped(InputStream stream, int limit) throws IOException {
         byte[] buffer = new byte[8192];
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
