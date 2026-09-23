@@ -764,6 +764,84 @@
     }).join('') || empty('暂无成就');
   }
 
+  /**
+   * 命令行登录（设备码）与个人访问令牌。
+   *
+   * 允许之前先把「哪台设备、从哪个地址、什么时候」摆出来 —— 设备码登录的已知风险是别人发起、骗你点允许，
+   * 让人看出「这不是我的机器」是唯一的防线。令牌在列表里只显示末 4 位，撤销立即生效。
+   * 终端里打印的链接是 profile.html#harness=XXXX-XXXX：带着它打开时直接填好码并查看。
+   */
+  function wireCliLogin() {
+    var host = $('#zq-cli-login');
+    if (!host) return;
+    var input = $('#zq-cli-code'), device = $('#zq-cli-device'), list = $('#zq-cli-tokens');
+    async function paintTokens() {
+      var rows = await safe('命令行令牌', function () { return api.get('/access-tokens'); });
+      rows = Array.isArray(rows) ? rows : [];
+      list.innerHTML = rows.length
+        ? rows.map(function (t) {
+            return '<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px;'
+              + ' padding:6px 8px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs);">'
+              + '<div style="min-width:0;"><div style="font-weight:600;">' + esc(t.name) + ' <span class="zq-mono" style="color:var(--zq-text3); font-weight:400;">' + esc(t.hint) + '</span></div>'
+              + '<div style="color:var(--zq-text3); font-size:11px;">' + (t.lastUsedAt ? '最近使用 ' + esc(String(t.lastUsedAt).replace('T', ' ').slice(0, 16)) : '还没用过')
+              + '</div></div><button class="zq-btn-ghost" data-revoke="' + esc(t.id) + '" style="height:24px; padding:0 10px; font-size:11.5px;">撤销</button></div>';
+          }).join('')
+        : '<div style="font-size:11.5px; color:var(--zq-text3);">还没有命令行登录过。</div>';
+      $all('[data-revoke]', list).forEach(function (b) {
+        b.onclick = function () {
+          safe('撤销令牌', async function () {
+            await api.del('/access-tokens/' + encodeURIComponent(b.dataset.revoke));
+            toast('已撤销，那台机器上的命令行需要重新登录');
+            await paintTokens();
+          });
+        };
+      });
+    }
+    async function check() {
+      var code = (input.value || '').trim();
+      if (!code) { device.innerHTML = ''; return; }
+      var info = await safe('查看设备码', function () { return api.get('/access-tokens/device/' + encodeURIComponent(code)); });
+      if (!info) { device.innerHTML = ''; return; }
+      device.innerHTML = '<div style="padding:10px 12px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card-soft); font-size:12px; line-height:1.6;">'
+        + '<div><strong>' + esc(info.clientName || '命令行') + '</strong> 请求登录你的账号</div>'
+        + '<div style="color:var(--zq-text3);">来自 ' + esc(info.clientIp || '未知地址') + ' · ' + esc(String(info.createdAt || '').replace('T', ' ').slice(0, 16)) + ' · 设备码 ' + esc(info.userCode) + '</div>'
+        + '<div style="color:var(--zq-text2); margin-top:4px;">只在这是你自己刚刚在终端里发起的时候才允许。</div>'
+        + '<div style="display:flex; gap:8px; margin-top:8px;"><button class="zq-btn" id="zq-cli-approve" style="height:28px; padding:0 14px; font-size:12px;">允许</button>'
+        + '<button class="zq-btn-ghost" id="zq-cli-deny" style="height:28px; padding:0 12px; font-size:12px;">拒绝</button></div></div>';
+      $('#zq-cli-approve').onclick = function () {
+        safe('允许命令行登录', async function () {
+          await api.post('/access-tokens/device/' + encodeURIComponent(info.userCode) + '/approve', {});
+          device.innerHTML = '<div style="font-size:12px; color:var(--zq-q2);">已允许。回到终端，命令行会自动完成登录。</div>';
+          input.value = '';
+          // 令牌在命令行来取（轮询）的那一刻才签出，时间点不固定 —— 刷几次，直到列表里多出一张
+          var before = list.querySelectorAll('[data-revoke]').length, tries = 0;
+          (function again() {
+            setTimeout(async function () {
+              await paintTokens();
+              if (list.querySelectorAll('[data-revoke]').length <= before && ++tries < 10) again();
+            }, 3000);
+          })();
+        });
+      };
+      $('#zq-cli-deny').onclick = function () {
+        safe('拒绝命令行登录', async function () {
+          await api.post('/access-tokens/device/' + encodeURIComponent(info.userCode) + '/deny', {});
+          device.innerHTML = '<div style="font-size:12px; color:var(--zq-text3);">已拒绝。</div>';
+          input.value = '';
+        });
+      };
+    }
+    $('#zq-cli-check').onclick = check;
+    input.onkeydown = function (e) { if (e.key === 'Enter') check(); };
+    var m = /[#&]harness=([A-Za-z0-9-]{8,9})/.exec(location.hash || '');
+    if (m) {
+      input.value = m[1].toUpperCase();
+      check();
+      if (host.scrollIntoView) host.scrollIntoView({ block: 'center' });
+    }
+    paintTokens();
+  }
+
   async function bootProfile() {
     var u = state.user || {};
     var card = $('.zq-card-lg');
@@ -815,6 +893,7 @@
         });
       };
     }
+    wireCliLogin();
     // 早八提醒 ↔ /reminder/settings（开关 + 渠道凭据）
     var morning = $('#zq-morning');
     if (morning) {
@@ -3015,7 +3094,8 @@
     var files = Array.isArray(content.files) ? content.files : [];
     return files.filter(function (f) { return f && f.path; }).map(function (f) {
       return { path: String(f.path), content: String(f.content == null ? '' : f.content),
-               baseline: f.baseline, creating: !!f.creating };
+               baseline: f.baseline, creating: !!f.creating,
+               newDirectories: Array.isArray(f.newDirectories) ? f.newDirectories.map(String) : [] };
     });
   }
 
@@ -3117,6 +3197,8 @@
             + '<input type="checkbox" data-pick="' + i + '"' + (picked[i] ? ' checked' : '') + '>'
             + '<div class="zq-plan-row-body"><div class="zq-plan-name zq-mono">' + esc(f.path)
             + (f.creating ? '<span style="margin-left:6px;font-size:10.5px;color:var(--zq-q2);">新建</span>' : '')
+            + (f.newDirectories.length ? '<span style="margin-left:6px;font-size:10.5px;color:var(--zq-q2);">连同新建目录 '
+                + esc(f.newDirectories.join('、')) + '</span>' : '')
             + (unreadable ? '<span style="margin-left:6px;font-size:10.5px;color:var(--zq-bad);">读不到当前内容</span>' : '')
             + '</div></div></label>'
             + (unreadable ? '' : diffHtml(diffLines(current, f.content)))

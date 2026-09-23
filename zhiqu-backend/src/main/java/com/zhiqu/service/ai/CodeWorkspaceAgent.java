@@ -217,7 +217,7 @@ public class CodeWorkspaceAgent {
                 // 每次调用的限额随预算走：显式「代码」模式要能一次写出一整个文件（见 CodeLoopBudget）
                 JsonNode message;
                 try {
-                    message = provider.callOpenAiToolTurn(config, messages, tools,
+                    message = provider.callToolTurn(config, messages, tools,
                             budget.turnLimits(System.currentTimeMillis() - loopStart));
                 } catch (ModelProviderClient.ToolTurnTruncatedException truncated) {
                     // 被截断不是「说完了」：说出来，并让模型换个写法再来一轮，而不是静默结束
@@ -447,6 +447,10 @@ public class CodeWorkspaceAgent {
                 draft.put("content", content);
                 draft.put("baseline", baseline);
                 draft.put("creating", WorkspaceService.ABSENT.equals(baseline));
+                List<String> newDirs = workspaceService.newDirectoriesFor(path);
+                if (!newDirs.isEmpty()) {
+                    draft.put("newDirectories", newDirs);   // 确认框里要说出来：会连同这些目录一起建
+                }
                 loop.drafts.removeIf(d -> path.equals(d.get("path")));   // 同一文件以最后一次为准
                 loop.drafts.add(draft);
                 return "已生成草稿（磁盘上的文件没有改动）：" + path

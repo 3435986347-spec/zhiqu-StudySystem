@@ -445,19 +445,32 @@ class WorkspaceServiceTest {
     }
 
     /**
-     * 上级目录不存在时报错，<b>不</b>替用户建目录。
+     * 上级目录不存在时建出来 —— 但不是静默的：{@code newDirectoriesFor} 先报出要建哪些，草稿里带着它，
+     * 确认框里写出来。
      *
-     * <p>模型把路径写成 {@code src/mian/java/Foo.java} 时，自动建目录会静默造出一棵
-     * 没人要的目录树，而用户以为自己确认的是「改一个文件」。
+     * <p>由来（2026-09-24）：这里原来是「上级目录不存在就拒」，理由是模型把路径写成 {@code src/mian/java/Foo.java}
+     * 时会静默造出一棵没人要的目录树。可用户说「做个小游戏放在 test 文件夹里」时，那条规则让写入直接失败 ——
+     * 用户看到的就是「一直写不进去」。顾虑是「静默」，所以修的是静默，不是能力。
      */
     @Test
-    void 上级目录不存在时不自动创建(@TempDir Path root) {
+    void 上级目录不存在时建出来并且事先说清楚(@TempDir Path root) throws IOException {
         WorkspaceService service = writableAt(root);
+        assertEquals(List.of("game", "game/assets"), service.newDirectoriesFor("game/assets/index.html"),
+                "要新建的目录没报出来 —— 那样建目录就又是静默的");
+        service.write("game/assets/index.html", "内容", WorkspaceService.ABSENT);
+        assertEquals("内容", Files.readString(root.resolve("game/assets/index.html")));
+        assertEquals(List.of(), service.newDirectoriesFor("game/assets/other.html"), "已经存在的目录不该再报");
+    }
 
+    /** 上级路径被一个文件占着：那个目录建不出来，要说清楚是这个原因。 */
+    @Test
+    void 上级路径是文件时拒绝(@TempDir Path root) throws IOException {
+        seed(root, "notes.txt", "我是文件");
+        WorkspaceService service = writableAt(root);
         BusinessException e = assertThrows(BusinessException.class,
-                () -> service.write("src/mian/java/Foo.java", "内容", WorkspaceService.ABSENT));
-        assertTrue(e.getMessage().contains("上级目录"), "实际：" + e.getMessage());
-        assertFalse(Files.exists(root.resolve("src")), "不该顺手造出目录树");
+                () -> service.write("notes.txt/child.md", "内容", WorkspaceService.ABSENT));
+        assertTrue(e.getMessage().contains("上级路径"), "实际：" + e.getMessage());
+        assertEquals("我是文件", Files.readString(root.resolve("notes.txt")));
     }
 
     /** 超过上限的内容要拒，而且拒之前不许先把文件截断。 */

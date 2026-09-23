@@ -14,7 +14,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V34`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V36`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -270,6 +270,31 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
   `LoginDeviceLabelTest` 把 CLI 的**真实** UA 喂给前端的 `shortUA` —— 判的是一对，
   不是两边各写死一份样本各自为绿（`NodeRunner.run` 为此多了可变参数）。
 
+### 命令行 harness 的服务端网关（P1，`/api/harness/**`）
+
+npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管登录、模型网关、对话存档、远程工具（计划见
+`docs/zhiqu-harness-plan.md`）。不看代码想不到的几件事：
+
+- **个人访问令牌（`zqp_…`）只在 `/api/harness/` 下被认**，判定只在 `HarnessPaths.acceptsAccessToken` 一处。
+  管理令牌的接口故意放在 `/api/access-tokens`（只认网页登录态）—— 泄露的令牌不能给自己续命、不能批准别的设备。
+  库里只存 SHA-256（令牌有 256 位熵，不需要慢哈希）。`AccessTokenScopeTest` 连「控制器挂在哪个路径」「放行名单里没有
+  `/api/harness/**` 通配」都钉着。
+- **设备码登录**：命令行拿 deviceCode（库里存哈希），用户在个人中心「命令行登录」里输入 8 位码、看过设备名和来源 IP
+  之后点允许；命令行轮询换令牌，`WHERE status='APPROVED'` 的条件更新保证并发轮询只签出一张。
+- **模型网关**进出都是 OpenAI 格式；Anthropic 的翻译只在 `AnthropicFormat` 一处（服务器端 code agent 的
+  `ModelProviderClient.callToolTurn` 也用它 —— 此前 Anthropic 配置被标成支持工具调用，请求却是 OpenAI 格式）。
+  流式里工具名一到就发 `tool_call`、参数每长 2KB 发一次 `tool_progress`：模型写大文件时不是一段沉默。
+  供应商嫌 `max_tokens` 大（400）就按 8192 → 4096 重试；按模型窗口最后兜底裁剪（按「一轮」丢，工具调用与结果永远成对）；
+  SSRF 校验在发请求那一层；用量记进 `harness_usage`，供应商不报就估算并标 `estimated`。
+- **远程工具**（Wiki / 计划 / 记忆）写类一律是草稿：计划、记忆挂在这段会话自己的那一轮 `ai_agent_run` 上，
+  网页打开这段会话的 Notebook 就能确认。Wiki 的「这一轮读过什么」按「用户 + 会话」存在进程里（服务重启丢失 =
+  要求重读，是安全的方向）。
+- **一段命令行会话 = 网页里一个 Notebook**，存档只收 user / assistant。完整记录在工作区 `.zhiqu/sessions/`，那是 `/resume` 用的。
+- **模型输出被截断（`finish_reason=length`）不是「说完了」**：原来工具循环把截断的回复当成正常结束，静默收尾 ——
+  用户看到的是「一直卡在同一步」。现在抛 `ToolTurnTruncatedException`，code agent 叙述出来并让模型拆小文件重写。
+- **工作区可以新建上级目录了，但不静默**：`newDirectoriesFor` 先报出要建哪些，草稿带着 `newDirectories`，确认框里写出来。
+  原先「不替用户建目录」让「放在 test 文件夹里」这种请求直接写失败。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -319,7 +344,7 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260924-context-window`.
+  old bundle. Current token: `20260924-harness-gateway`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

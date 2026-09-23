@@ -14,7 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 
-final class AiStreamAdapterSupport {
+public final class AiStreamAdapterSupport {
     private AiStreamAdapterSupport() {
     }
 
@@ -145,7 +145,7 @@ final class AiStreamAdapterSupport {
         return headers;
     }
 
-    static void applyOpenAiReasoningOptions(AiModelConfig config, Map<String, Object> body, String reasoningMode) {
+    public static void applyOpenAiReasoningOptions(AiModelConfig config, Map<String, Object> body, String reasoningMode) {
         String name = config.getModelName() == null ? "" : config.getModelName().toLowerCase(Locale.ROOT);
         if (!isReasoningRequested(reasoningMode)) {
             if (name.contains("deepseek") && !name.contains("reasoner")) {

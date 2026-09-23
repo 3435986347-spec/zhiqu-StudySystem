@@ -54,6 +54,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (path.equals("/api/runtime-issue/client")) {
             return new Limit("runtime-issue", 10, 60_000);
         }
+        // 设备码登录：start 与 poll 不需要登录，按 IP 单独一个桶。轮询间隔 3 秒，一分钟 20 次；
+        // 留一点余量，但远小于 180 —— deviceCode 有 256 位熵，挡的不是猜码，是被当成免费的探活接口
+        if (path.startsWith("/api/harness/device/")) {
+            return new Limit("harness-device", 30, 60_000);
+        }
+        // 命令行的循环一轮一次模型调用，工具跑得快的时候一分钟二三十轮是正常的 —— 不和网页的 ai 桶挤
+        if (path.equals("/api/harness/model/stream")) {
+            return new Limit("harness-model", 60, 60_000);
+        }
         if (path.startsWith("/api/ai/")) {
             return new Limit("ai", 40, 60_000);
         }

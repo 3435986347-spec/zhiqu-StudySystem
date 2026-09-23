@@ -70,7 +70,7 @@ class CodeWorkspaceAgentTest {
 
         /** 模型依次给出这些回复；给完之后回一条不调工具的消息，循环自然结束。 */
         void modelSays(String... replies) throws Exception {
-            var stub = when(provider.callOpenAiToolTurn(any(), any(), any(), any()));
+            var stub = when(provider.callToolTurn(any(), any(), any(), any()));
             for (String r : replies) {
                 stub = stub.thenReturn(JSON.readTree(r));
             }
@@ -109,7 +109,7 @@ class CodeWorkspaceAgentTest {
         Rig rig = new Rig(WorkspaceMode.EXEC, false);
         CodeWorkspaceAgent.Result r = rig.run("帮我看看 Main.java 这段代码", CODE_MODE);
         assertSame(CodeWorkspaceAgent.Result.EMPTY, r);
-        verify(rig.provider, never()).callOpenAiToolTurn(any(), any(), any(), any());
+        verify(rig.provider, never()).callToolTurn(any(), any(), any(), any());
     }
 
     @Test
@@ -117,7 +117,7 @@ class CodeWorkspaceAgentTest {
     void 工作区关着不碰模型() {
         Rig rig = new Rig(WorkspaceMode.OFF, true);
         assertSame(CodeWorkspaceAgent.Result.EMPTY, rig.run("帮我看看 Main.java 这段代码", CODE_MODE));
-        verify(rig.provider, never()).callOpenAiToolTurn(any(), any(), any(), any());
+        verify(rig.provider, never()).callToolTurn(any(), any(), any(), any());
     }
 
     /**
@@ -168,7 +168,7 @@ class CodeWorkspaceAgentTest {
         Rig rig = new Rig(WorkspaceMode.READ, true);
         rig.modelSays(toolCall("create_study_plan", "{不是json"));
         CodeWorkspaceAgent.Result r = rig.run("带我做一个小项目", Map.of());
-        verify(rig.provider, times(2)).callOpenAiToolTurn(any(), any(), any(), any());
+        verify(rig.provider, times(2)).callToolTurn(any(), any(), any(), any());
         assertEquals(null, r.milestonePlan());
         assertTrue(r.context().contains("没有解析出可用的里程碑"), r.context());
     }
@@ -213,7 +213,7 @@ class CodeWorkspaceAgentTest {
         assertTrue(r.writeOffered(), "写工具下发了，结果里却说没下发 —— 最终回答会以为它不能写，把整份代码贴出来");
         org.mockito.ArgumentCaptor<List<Map<String, Object>>> msgs = org.mockito.ArgumentCaptor.forClass(List.class);
         org.mockito.ArgumentCaptor<List<Map<String, Object>>> tools = org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(rig.provider).callOpenAiToolTurn(any(), msgs.capture(), tools.capture(), any());
+        verify(rig.provider).callToolTurn(any(), msgs.capture(), tools.capture(), any());
         List<Map<String, Object>> sent = msgs.getValue();
         int codeAt = -1, askAt = -1;
         for (int i = 0; i < sent.size(); i++) {
@@ -253,14 +253,14 @@ class CodeWorkspaceAgentTest {
         rig.run("帮我看看 Main.java 的代码", CODE_MODE);
         org.mockito.ArgumentCaptor<ModelProviderClient.ToolTurnLimits> lim =
                 org.mockito.ArgumentCaptor.forClass(ModelProviderClient.ToolTurnLimits.class);
-        verify(rig.provider).callOpenAiToolTurn(any(), any(), any(), lim.capture());
+        verify(rig.provider).callToolTurn(any(), any(), any(), lim.capture());
         assertEquals(16384, lim.getValue().maxTokens(), "显式代码模式的输出上限没放大 —— 一整个文件会被截成半截 JSON");
         assertTrue(lim.getValue().readTimeoutMillis() > 60_000, "读超时还是短的：" + lim.getValue());
 
         Rig kw = new Rig(WorkspaceMode.READ, true);
         kw.modelSays();
         kw.run("帮我看看 Main.java 的代码", Map.of());
-        verify(kw.provider).callOpenAiToolTurn(any(), any(), any(), lim.capture());
+        verify(kw.provider).callToolTurn(any(), any(), any(), lim.capture());
         assertEquals(4096, lim.getValue().maxTokens());
         assertTrue(lim.getValue().readTimeoutMillis() <= 25_000, "关键词触发的读超时被放长了：" + lim.getValue());
     }
@@ -283,7 +283,7 @@ class CodeWorkspaceAgentTest {
     @DisplayName("工具循环中断要发一条 error 叙述，说出原因")
     void 中断要说出来() throws Exception {
         Rig rig = new Rig(WorkspaceMode.READ, true);
-        when(rig.provider.callOpenAiToolTurn(any(), any(), any(), any()))
+        when(rig.provider.callToolTurn(any(), any(), any(), any()))
                 .thenThrow(new com.zhiqu.common.BusinessException("工具调用失败：Read timed out"));
         rig.run("帮我看看 Main.java 的代码", CODE_MODE);
         assertTrue(rig.notes.stream().anyMatch(n -> "error".equals(n.get("phase"))
@@ -299,7 +299,7 @@ class CodeWorkspaceAgentTest {
     void 截断不是说完了() throws Exception {
         Rig rig = new Rig(WorkspaceMode.WRITE, true);
         when(rig.workspace.baselineOf("game/index.html")).thenReturn(WorkspaceService.ABSENT);
-        when(rig.provider.callOpenAiToolTurn(any(), any(), any(), any()))
+        when(rig.provider.callToolTurn(any(), any(), any(), any()))
                 .thenThrow(new ModelProviderClient.ToolTurnTruncatedException(16384))
                 .thenReturn(JSON.readTree(toolCall("write_workspace_file",
                         "{\"path\":\"game/index.html\",\"content\":\"<canvas></canvas>\"}")))
@@ -311,7 +311,7 @@ class CodeWorkspaceAgentTest {
         assertEquals(1, r.drafts().size(), "截断之后循环没有继续 —— 第二轮本来能写成：" + rig.notes);
         @SuppressWarnings({"unchecked", "rawtypes"})
         org.mockito.ArgumentCaptor<List<Map<String, Object>>> msgs = org.mockito.ArgumentCaptor.forClass((Class) List.class);
-        verify(rig.provider, times(3)).callOpenAiToolTurn(any(), msgs.capture(), any(), any());
+        verify(rig.provider, times(3)).callToolTurn(any(), msgs.capture(), any(), any());
         String second = String.valueOf(msgs.getAllValues().get(1));
         assertTrue(second.contains("被截断") && second.contains("拆成"),
                 "模型没被告知它被截断了、该怎么改 —— 下一轮它会原样再写一遍、再被截断：" + second);

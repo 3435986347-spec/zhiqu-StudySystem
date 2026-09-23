@@ -511,6 +511,11 @@ public class WorkspaceService {
         }
     }
 
+    /** 写这个文件要新建的目录（相对工作区根）。草稿记下它，确认框里说出来 —— 建目录不能是静默的。 */
+    public List<String> newDirectoriesFor(String relativePath) {
+        return guard == null ? List.of() : guard.missingParents(relativePath);
+    }
+
     /** 基线校验单独一份，成批写入要在动手之前先问一遍，单个写入要在写之前问一遍。 */
     private void checkBaseline(String relativePath, String expectedBaseline) {
         if (expectedBaseline == null || expectedBaseline.isBlank()) {
@@ -547,6 +552,8 @@ public class WorkspaceService {
         checkBaseline(relativePath, expectedBaseline);
         Path tmp = file.path().resolveSibling(file.path().getFileName() + ".zhiqu-tmp");
         try {
+            // 上级目录不存在就建出来（草稿里已经列出了会建哪些，用户确认的就是这个）
+            Files.createDirectories(file.path().getParent());
             Files.writeString(tmp, body, StandardCharsets.UTF_8);
             try {
                 Files.move(tmp, file.path(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -588,7 +595,7 @@ public class WorkspaceService {
             case NOT_REGULAR_FILE -> "不是一个可读的普通文件（可能不存在，或者是目录）：" + path;
             case EXTENSION_NOT_ALLOWED -> "这个类型的文件不在允许清单里（避免把密钥、证书这类内容读进上下文）：" + path;
             case TOO_LARGE -> "文件超过了 " + properties.getMaxFileBytes() + " 字节的上限：" + path;
-            case PARENT_NOT_FOUND -> "上级目录不存在，而工作区不会替你创建目录（路径可能写错了）：" + path;
+            case PARENT_NOT_FOUND -> "上级路径被一个文件占着，没法在它下面建文件：" + path;
             case OK -> "";
         };
     }

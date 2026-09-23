@@ -38,6 +38,20 @@ public interface AiService {
     /** 模型列表，包含系统模型和个人模型 */
     Map<String, Object> listModels(Long userId);
 
+    /**
+     * 按用户解析一个可用的模型（id 为空 = 用户的默认模型，再退到系统模型）。
+     * 与聊天用的是同一个判定：没启用、没 API Key 都会抛出同样的提示。命令行的模型网关用它。
+     */
+    com.zhiqu.entity.AiModelConfig resolveModel(Long userId, Long modelConfigId);
+
+    /**
+     * 把一段对话追加到某个 Notebook 的会话里（命令行会话的存档）。只收 user / assistant 两种角色，
+     * 与网页聊天走同一把用户锁、同一个写入路径 —— 清空记忆、删 Notebook 与它串行。
+     *
+     * @return 新写入的消息 id
+     */
+    List<Long> appendArchivedMessages(Long userId, Long notebookId, List<Map<String, Object>> messages);
+
     /** 新增或更新个人模型 */
     Map<String, Object> saveModel(Long userId, Long id, Map<String, Object> body);
 

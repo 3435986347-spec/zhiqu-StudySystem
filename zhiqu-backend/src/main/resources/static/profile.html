@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260924-context-window" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260924-context-window">
-  <link rel="manifest" href="manifest.json?v=20260924-context-window">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260924-harness-gateway" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260924-harness-gateway">
+  <link rel="manifest" href="manifest.json?v=20260924-harness-gateway">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260924-context-window">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260924-harness-gateway">
 </head>
 <body>
   <div class="zq-app">
@@ -80,6 +80,16 @@
                 <button class="zq-btn">更新密码</button>
               </div>
             </section>
+            <section class="zq-card" id="zq-cli-login">
+              <h3 style="margin:0 0 6px; font-size:14px; font-weight:700;">命令行登录</h3>
+              <p style="margin:0 0 10px; font-size:11.5px; color:var(--zq-text3); line-height:1.55;">在终端运行 <span class="zq-mono">zhiqu login</span>，把它显示的 8 位设备码填在这里。命令行不会拿到你的密码，只拿到一张可随时撤销的令牌。</p>
+              <div style="display:flex; gap:8px;">
+                <input id="zq-cli-code" class="zq-input" autocomplete="off" placeholder="设备码，如 ABCD-EFGH" style="height:30px; font-size:12.5px; flex:1; text-transform:uppercase;">
+                <button id="zq-cli-check" class="zq-btn-ghost" style="height:30px; padding:0 12px; font-size:12.5px;">查看</button>
+              </div>
+              <div id="zq-cli-device" style="margin-top:8px;"></div>
+              <div id="zq-cli-tokens" style="margin-top:10px; display:flex; flex-direction:column; gap:6px;"></div>
+            </section>
             <section class="zq-card">
               <h3 style="margin:0 0 12px; font-size:14px; font-weight:700;">账号与安全</h3>
               <div style="display:flex; flex-direction:column;">
@@ -129,7 +139,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260924-context-window"></script>
+  <script src="assets/zhiqu-ui.js?v=20260924-harness-gateway"></script>
   <script>
     function tog(){ var b=document.getElementById('zq-morning'), i=b.firstElementChild, on=i.style.left==='21px'; i.style.left=on?'3px':'21px'; b.style.background=on?'var(--zq-border)':'var(--zq-primary)'; }
     var models=[
@@ -148,6 +158,6 @@
     }).join('');
     function tile(k,v,c){ return '<div><span style="display:block; font-size:10.5px; color:var(--zq-text3);">'+k+'</span><strong style="display:block; margin-top:3px; font-size:11.5px; font-weight:600; color:'+c+'; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+v+'</strong></div>'; }
   </script>
-  <script src="assets/zhiqu-api.js?v=20260924-context-window"></script>
+  <script src="assets/zhiqu-api.js?v=20260924-harness-gateway"></script>
 </body>
 </html>

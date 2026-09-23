@@ -329,6 +329,23 @@ public class ModelProviderClient {
         }
     }
 
+    /**
+     * 不分供应商的一轮工具调用：进出都是 OpenAI 格式（{@code role=assistant + tool_calls}）。
+     *
+     * <p>Anthropic 配置原来被 {@link #supportsToolCalling} 标成支持工具调用，code agent 却把 OpenAI 格式的
+     * 请求原样发给它 —— 那是 400。这里按供应商分派，翻译在 {@link AnthropicFormat} 一处（网关也用它）。
+     */
+    public JsonNode callToolTurn(AiModelConfig config, List<Map<String, Object>> messages,
+                                 List<Map<String, Object>> tools, ToolTurnLimits limits) {
+        if (isAnthropicProvider(config)) {
+            AnthropicFormat.Request request = AnthropicFormat.fromOpenAi(messages, objectMapper);
+            JsonNode content = callAnthropicToolTurn(config, request.system(), request.messages(),
+                    toAnthropicTools(tools), limits);
+            return content == null ? null : objectMapper.valueToTree(AnthropicFormat.toOpenAiMessage(content, objectMapper));
+        }
+        return callOpenAiToolTurn(config, messages, tools, limits);
+    }
+
     /** 非流式发起一轮带工具的 Anthropic 对话（tool_choice=auto），返回 content 数组节点（含可能的 tool_use）；无则 null。 */
     public JsonNode callAnthropicToolTurn(AiModelConfig config, String system,
                                            List<Map<String, Object>> messages, List<Map<String, Object>> tools) {

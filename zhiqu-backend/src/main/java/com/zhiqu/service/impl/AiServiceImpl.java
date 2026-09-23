@@ -2250,6 +2250,38 @@ public class AiServiceImpl implements AiService {
     }
 
     @Override
+    public AiModelConfig resolveModel(Long userId, Long modelConfigId) {
+        return requireModel(userId, modelConfigId);
+    }
+
+    /** 单条存档消息的上限：命令行的回答偶尔很长，但一条消息几十万字只会拖慢网页。 */
+    private static final int ARCHIVE_MESSAGE_MAX_CHARS = 60_000;
+
+    @Override
+    public List<Long> appendArchivedMessages(Long userId, Long notebookId, List<Map<String, Object>> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        return conversationLocks.withUserLock(userId, () -> conversationTx.execute(tx -> {
+            AiConversation conversation = getOrCreateConversation(userId, notebookId);
+            List<Long> ids = new ArrayList<>();
+            for (Map<String, Object> item : messages) {
+                String role = stringValue(item.get("role"));
+                if (!"user".equals(role) && !"assistant".equals(role)) {
+                    continue;   // system / tool 不进存档：网页只展示人和助手说的话
+                }
+                String content = stringValue(item.get("content"));
+                if (!hasText(content)) {
+                    continue;
+                }
+                ids.add(saveChatMessage(userId, conversation.getId(), role,
+                        limitRawMarkdown(content, ARCHIVE_MESSAGE_MAX_CHARS)).getId());
+            }
+            return ids;
+        }));
+    }
+
+    @Override
     @Transactional
     public Map<String, Object> saveModel(Long userId, Long id, Map<String, Object> body) {
         AiModelConfig model = null;

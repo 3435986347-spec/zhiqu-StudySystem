@@ -405,7 +405,10 @@ public final class ZhiquCli {
             String path = f.path("path").asText();
             boolean creating = f.path("creating").asBoolean(false);
             String now = creating ? "" : readWorkspaceFile(path);
-            out.println(paint.cyan("── " + path + (creating ? "（新建）" : "（修改）")));
+            List<String> newDirs = new java.util.ArrayList<>();
+            f.path("newDirectories").forEach(d -> newDirs.add(d.asText()));
+            out.println(paint.cyan("── " + path + (creating ? "（新建）" : "（修改）")
+                    + (newDirs.isEmpty() ? "" : "，连同新建目录 " + String.join("、", newDirs))));
             List<String> lines = LineDiff.hunks(now, f.path("content").asText(""), 3);
             if (lines.isEmpty()) out.println(paint.dim("   （内容没有变化）"));
             for (String l : lines) {

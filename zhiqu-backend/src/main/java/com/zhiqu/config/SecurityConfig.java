@@ -33,6 +33,11 @@ public class SecurityConfig {
                         .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         .requestMatchers(
                                 "/api/auth/**",
+                                // 设备码登录：命令行此时还没有任何凭据；deviceCode 本身就是凭据
+                                "/api/harness/device/start",
+                                "/api/harness/device/poll",
+                                // 服务器版本 / 命令行最低版本 —— 新版本提示在登录前也要能读
+                                "/api/harness/meta",
                                 "/api/runtime-issue/client",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",

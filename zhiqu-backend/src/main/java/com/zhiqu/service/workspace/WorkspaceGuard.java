@@ -258,11 +258,32 @@ public final class WorkspaceGuard {
         if (!extensionAllowed(candidate)) {
             return Resolution.denied(Reason.EXTENSION_NOT_ALLOWED);
         }
-        Path parent = candidate.getParent();
-        if (parent == null || !Files.isDirectory(parent)) {
+        // 上级目录不存在时可以建（2026-09-24 起）：用户说「放在 test 文件夹里」，模型写 test/index.html，
+        // 原来这里直接拒 —— 那正是「一直写不进去」的原因之一。原先的顾虑是「路径写错时静默造出一棵没人要的
+        // 目录树」；现在不静默：草稿里列出要新建的目录（WorkspaceService.newDirectoriesFor），确认框里写出来。
+        // 仍然要拒的是「上级路径被一个<b>文件</b>占着」—— 那样的目录根本建不出来。
+        Path existing = candidate.getParent();
+        while (existing != null && !Files.exists(existing, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            existing = existing.getParent();
+        }
+        if (existing == null || !Files.isDirectory(existing)) {
             return Resolution.denied(Reason.PARENT_NOT_FOUND);
         }
         return new Resolution(candidate, Reason.OK);
+    }
+
+    /** 写这个文件需要新建的目录（相对工作区根，从外到里）。路径不合法时返回空列表。 */
+    public java.util.List<String> missingParents(String relativePath) {
+        Resolution file = resolveWritable(relativePath);
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (!file.ok()) {
+            return out;
+        }
+        for (Path dir = file.path().getParent(); dir != null && !dir.equals(root)
+                && !Files.exists(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS); dir = dir.getParent()) {
+            out.add(0, root.relativize(dir).toString().replace('\\', '/'));
+        }
+        return out;
     }
 
     public boolean extensionAllowed(Path file) {
