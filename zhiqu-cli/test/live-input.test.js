@@ -60,6 +60,29 @@ test('权限确认：输入框换成问题；排队的消息不是答案；答�
   ui.close();
 });
 
+test('答完确认：问题连同回答留在屏幕上；折成几行的长问题擦得干净，也不吃掉上面的输出', async () => {
+  const { ui, vt, input } = tty(30);
+  ui.beginLive();
+  ui.write('计划的最后一行\n');
+  ui.write('还没说完的半行');
+  const question = '按这个计划开始做吗？[a] 全自动 [y] 每步确认 [n] 先不 › ';
+  const answer = ui.ask(question, { fresh: true });
+  await tick();
+  await type(input, 'a\r');
+  assert.equal(await answer, 'a');
+  ui.write('开始写代码\n');
+  const lines = vt.lines();
+  assert.equal(lines[0], '计划的最后一行', `上面的输出被擦掉了：\n${lines.join('\n')}`);
+  assert.equal(lines[1], '还没说完的半行', `回答粘在了半行后面：\n${lines.join('\n')}`);
+  const text = lines.join('');
+  assert.ok(text.replace(/ /g, '').includes(`${question}a`.replace(/ /g, '')), `问题和回答没留下来：\n${lines.join('\n')}`);
+  assert.equal((text.match(/按这个计划开始做吗/g) || []).length, 1, `问题留下了碎片或重复：\n${lines.join('\n')}`);
+  assert.equal((text.match(/还没说完的半行/g) || []).length, 1, `擦少了：半行被重复打了一遍：\n${lines.join('\n')}`);
+  assert.ok(text.indexOf('开始写代码') > text.indexOf('先不'), '之后的输出要在记录下面');
+  assert.equal(lines.at(-1), '›');
+  ui.close();
+});
+
 test('很长的一行（折行）在活动区里反复重画，不留碎片', async () => {
   const { ui, vt } = tty(20);
   ui.beginLive();

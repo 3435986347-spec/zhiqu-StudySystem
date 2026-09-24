@@ -44,7 +44,7 @@ export function localSchemas() {
         path: { type: 'string', description: '只在这个目录里找，默认整个工作区' },
         ignore_case: { type: 'boolean', description: '忽略大小写，默认否' } }, ['query']),
     fn('write_file', [
-      '写文件。三种用法选一种：',
+      '写文件（新建、追加、替换一段都用它 —— 没有单独的 replace / edit 工具）。三种用法选一种：',
       '1）整份写入：给 content —— 新建文件，或者整份重写一个读过全文的文件；',
       '2）追加：给 content 并且 append=true —— 长文件分几次写，就先写开头再一段段追加；',
       '3）替换一段：给 old_string 和 new_string —— old_string 必须和文件里的原文一字不差、且只出现一次。改一小段就用它，不要整份重写。',

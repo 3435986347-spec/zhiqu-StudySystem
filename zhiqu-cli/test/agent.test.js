@@ -68,7 +68,38 @@ test('没下发的工具调不到：plan 档里模型硬调 write_file / run_com
   assert.ok(!fs.existsSync(path.join(ctx.root, 'x.js')));
   const msgs = toolMessages(ctx);
   assert.equal(msgs.length, 2, '每个调用都要有结果（成对），否则下一次请求会被拒');
-  for (const m of msgs) assert.match(m, /这一轮没有给你 .* 这个工具（当前档位：plan）/);
+  for (const m of msgs) assert.match(m, /在当前的 plan 档没有下发.*exit_plan_mode 提交计划/);
+  assert.ok(!msgs.some((m) => m.includes('不是暂时不可用')), '存在、只是这一档不给的工具，不能说成「没有这个工具」');
+});
+
+test('模型编了一个不存在的工具名（replace）：说清「不是暂时的」、该用哪个、怎么用 —— 模型换对了就能改成', async () => {
+  const root = tmpdir();
+  write(root, 'a.js', 'const x = 1;\n');
+  const ctx = makeCtx({ root, replies: [
+    { calls: [{ name: 'read_file', args: { path: 'a.js' } }] },
+    { calls: [{ name: 'replace', args: { path: 'a.js', old_string: '1', new_string: '2' } }] },
+    { calls: [{ name: 'write_file', args: { path: 'a.js', old_string: 'x = 1', new_string: 'x = 2' } }] },
+    { text: '改好了' }] });
+  await runTurn(ctx, '把 1 改成 2');
+  const refusal = toolMessages(ctx)[1];
+  assert.match(refusal, /没有叫 replace 的工具 —— 不是暂时不可用/);
+  assert.match(refusal, /write_file 的替换用法.*old_string.*new_string/);
+  assert.match(refusal, /能用的工具：.*write_file/);
+  assert.ok(!/这一轮/.test(refusal), '「这一轮」听起来像暂时的，模型会一遍遍重试');
+  assert.match(ctx.ui.text(), /replace（没有这个工具，应当用 write_file）/, '用户看到的那一行也要说清');
+  assert.equal(fs.readFileSync(path.join(root, 'a.js'), 'utf8'), 'const x = 2;\n');
+});
+
+test('别家的工具名各自指到这里的对应工具；删除文件明说没有，让模型告诉用户', async () => {
+  const ctx = makeCtx({ replies: [
+    { calls: [{ name: 'str_replace', args: {} }, { name: 'bash', args: {} }, { name: 'delete_file', args: {} }, { name: 'frobnicate', args: {} }] },
+    { text: '好' }] });
+  await runTurn(ctx, '做');
+  const [strReplace, bash, del, unknown] = toolMessages(ctx);
+  assert.match(strReplace, /write_file 的替换用法/);
+  assert.match(bash, /run_command/);
+  assert.match(del, /没有删除文件的工具.*告诉用户/);
+  assert.match(unknown, /没有叫 frobnicate 的工具.*能用的工具：/);
 });
 
 test('截断：参数不完整的调用不执行，历史里换成小而合法的 JSON，告诉模型分几次写，循环继续', async () => {

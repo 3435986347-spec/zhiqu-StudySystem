@@ -18,7 +18,7 @@ import java.util.Map;
 public class PushPlusNotificationChannel implements NotificationChannel {
     private static final String SEND_URL = "https://www.pushplus.plus/send/";
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = ChannelEndpoints.HTTP;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override

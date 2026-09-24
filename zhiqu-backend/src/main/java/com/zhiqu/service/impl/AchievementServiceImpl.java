@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -75,6 +76,14 @@ public class AchievementServiceImpl implements AchievementService {
         return result;
     }
 
+    /**
+     * 查一遍还没解锁的成就，达到条件的解锁。
+     *
+     * <p>登录、建任务、完成任务、记学习、建例行计划、打卡 —— 每一次都会走到这里，而且大多在那次写入的事务里。
+     * 原来它把这个人<b>全部</b>任务和学习记录整行取回来（加密的标题、描述、备注一起），只为了数个数：
+     * 几千条记录的用户每点一下都要搬几千行，全部成就都解锁了也照搬不误。
+     * 现在是 COUNT，而且<b>按需</b>：只查还没解锁的成就用得到的那几种计数，每种最多一次；全解锁了一条都不查。
+     */
     @Override
     @Transactional
     @DeadlockRetry
@@ -84,32 +93,19 @@ public class AchievementServiceImpl implements AchievementService {
                 new LambdaQueryWrapper<UserAchievement>().eq(UserAchievement::getUserId, userId)
         );
         Set<Long> unlockedIds = unlocked.stream().map(UserAchievement::getAchievementId).collect(Collectors.toSet());
+        List<AchievementDef> locked = defs.stream().filter(def -> !unlockedIds.contains(def.getId())).toList();
+        if (locked.isEmpty()) {
+            return List.of();
+        }
 
         SysUser user = sysUserMapper.selectById(userId);
-        List<StudyTask> tasks = studyTaskMapper.selectList(new LambdaQueryWrapper<StudyTask>().eq(StudyTask::getUserId, userId));
-        List<StudyRecord> records = studyRecordMapper.selectList(new LambdaQueryWrapper<StudyRecord>().eq(StudyRecord::getUserId, userId));
-        long doneTaskCount = tasks.stream().filter(t -> t.getStatus() != null && t.getStatus() == 2).count();
-        long createdTaskCount = tasks.size();
-        long studyRecordCount = records.size();
-        long studyDayCount = records.stream()
-                .map(StudyRecord::getStudyDate)
-                .filter(Objects::nonNull)
-                .distinct()
-                .count();
-        long routineCount = studyRoutineMapper.selectCount(new LambdaQueryWrapper<StudyRoutine>()
-                .eq(StudyRoutine::getUserId, userId));
-        long routineCheckinCount = studyRoutineCheckinMapper.selectCount(new LambdaQueryWrapper<StudyRoutineCheckin>()
-                .eq(StudyRoutineCheckin::getUserId, userId)
-                .eq(StudyRoutineCheckin::getStatus, 1));
+        Map<String, Long> counts = new HashMap<>();
+        Function<String, Long> count = type -> counts.computeIfAbsent(type, t -> count(userId, t));
 
         List<Map<String, Object>> newUnlocked = new ArrayList<>();
         int addedPoints = 0;
-        for (AchievementDef def : defs) {
-            if (unlockedIds.contains(def.getId())) {
-                continue;
-            }
-            boolean reached = reached(def, user, doneTaskCount, createdTaskCount, studyRecordCount, studyDayCount, routineCount, routineCheckinCount);
-            if (!reached) {
+        for (AchievementDef def : locked) {
+            if (!reached(def, user, count)) {
                 continue;
             }
             LocalDateTime unlockedAt = LocalDateTime.now();
@@ -133,25 +129,34 @@ public class AchievementServiceImpl implements AchievementService {
         return newUnlocked;
     }
 
-    private boolean reached(AchievementDef def,
-                            SysUser user,
-                            long doneTaskCount,
-                            long createdTaskCount,
-                            long studyRecordCount,
-                            long studyDayCount,
-                            long routineCount,
-                            long routineCheckinCount) {
+    /** 一种计数一条 COUNT。软删除由 {@code @TableLogic} 照旧排除（学习记录没有软删除，原来也是全算）。 */
+    private long count(Long userId, String type) {
+        return switch (type) {
+            case "TASK_CREATED_COUNT" -> studyTaskMapper.selectCount(new LambdaQueryWrapper<StudyTask>()
+                    .eq(StudyTask::getUserId, userId));
+            case "TASK_DONE_COUNT" -> studyTaskMapper.selectCount(new LambdaQueryWrapper<StudyTask>()
+                    .eq(StudyTask::getUserId, userId)
+                    .eq(StudyTask::getStatus, 2));
+            case "STUDY_RECORD_COUNT" -> studyRecordMapper.selectCount(new LambdaQueryWrapper<StudyRecord>()
+                    .eq(StudyRecord::getUserId, userId));
+            case "STUDY_DAY_COUNT" -> studyRecordMapper.countStudyDays(userId);
+            case "ROUTINE_COUNT" -> studyRoutineMapper.selectCount(new LambdaQueryWrapper<StudyRoutine>()
+                    .eq(StudyRoutine::getUserId, userId));
+            case "ROUTINE_CHECKIN_COUNT" -> studyRoutineCheckinMapper.selectCount(new LambdaQueryWrapper<StudyRoutineCheckin>()
+                    .eq(StudyRoutineCheckin::getUserId, userId)
+                    .eq(StudyRoutineCheckin::getStatus, 1));
+            default -> 0L;
+        };
+    }
+
+    private boolean reached(AchievementDef def, SysUser user, Function<String, Long> count) {
         if (def.getConditionType() == null || def.getConditionValue() == null) {
             return false;
         }
         return switch (def.getConditionType()) {
             case "LOGIN_COUNT" -> def.getConditionValue() <= 1;
-            case "TASK_CREATED_COUNT" -> createdTaskCount >= def.getConditionValue();
-            case "TASK_DONE_COUNT" -> doneTaskCount >= def.getConditionValue();
-            case "STUDY_RECORD_COUNT" -> studyRecordCount >= def.getConditionValue();
-            case "STUDY_DAY_COUNT" -> studyDayCount >= def.getConditionValue();
-            case "ROUTINE_COUNT" -> routineCount >= def.getConditionValue();
-            case "ROUTINE_CHECKIN_COUNT" -> routineCheckinCount >= def.getConditionValue();
+            case "TASK_CREATED_COUNT", "TASK_DONE_COUNT", "STUDY_RECORD_COUNT", "STUDY_DAY_COUNT",
+                 "ROUTINE_COUNT", "ROUTINE_CHECKIN_COUNT" -> count.apply(def.getConditionType()) >= def.getConditionValue();
             case "CONSECUTIVE_DAYS" -> (user != null ? Optional.ofNullable(user.getConsecutiveDays()).orElse(0) : 0) >= def.getConditionValue();
             case "TOTAL_STUDY_MINUTES" -> (user != null ? Optional.ofNullable(user.getTotalStudyMinutes()).orElse(0) : 0) >= def.getConditionValue();
             default -> false;

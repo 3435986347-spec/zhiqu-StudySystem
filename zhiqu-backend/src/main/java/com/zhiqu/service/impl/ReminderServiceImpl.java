@@ -12,8 +12,11 @@ import com.zhiqu.mapper.UserReminderSettingMapper;
 import com.zhiqu.service.ReminderService;
 import com.zhiqu.service.RoutineService;
 import com.zhiqu.service.concurrency.DeadlockRetry;
+import com.zhiqu.service.notification.ChannelEndpoints;
 import com.zhiqu.service.notification.NotificationChannel;
 import com.zhiqu.service.privacy.TaskPrivacyService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +34,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class ReminderServiceImpl implements ReminderService {
+    private static final Logger log = LoggerFactory.getLogger(ReminderServiceImpl.class);
+
     private static final String CHANNEL_WECOM = "WECOM";
     private static final String CHANNEL_QQ = "QQ";
     private static final String CHANNEL_PUSHPLUS = "PUSHPLUS";
@@ -103,7 +108,7 @@ public class ReminderServiceImpl implements ReminderService {
         if (body.containsKey("webhookUrl")) {
             String webhook = Optional.ofNullable(body.get("webhookUrl")).map(Object::toString).orElse("").trim();
             if (!webhook.isBlank() && !cryptoService.isMasked(webhook)) {
-                setting.setWebhookUrl(webhook);
+                setting.setWebhookUrl(ChannelEndpoints.requireWeComWebhook(webhook));
             }
         }
         if (body.containsKey("qqAppId")) {
@@ -151,7 +156,34 @@ public class ReminderServiceImpl implements ReminderService {
         return processDueReminders(now, false);
     }
 
+    /**
+     * 认领之后多久还没结果，就当作发送途中断了（进程被杀、重启）。发一批的正常耗时是秒级 ——
+     * 每个渠道请求最多 15 秒（{@code ChannelEndpoints} 的超时），留足余量。
+     */
+    static final int STALE_PROCESSING_MINUTES = 60;
+    static final String REQUEUED_MARKER = "上次发送中断，已重新排队";
+    static final String GAVE_UP_REASON = "两次发送都中断了（服务重启或异常），不再重试；没法确认是否送达";
+
+    /**
+     * 把中断在 {@code PROCESSING} 的提醒收回来：第一次放回队列再发（早八提醒晚一点到，好过永远不到），
+     * 第二次就标失败 —— 同一条反复中断说明问题不在运气，每小时重发一遍只会刷屏。
+     *
+     * <p>原来没有这一步：{@code PROCESSING} 是只进不出的状态，一次中断就让那几条提醒永远停在「处理中」。
+     */
+    public int recoverInterrupted() {
+        int gaveUp = taskReminderMapper.failStaleRequeued(STALE_PROCESSING_MINUTES, REQUEUED_MARKER, GAVE_UP_REASON);
+        int requeued = taskReminderMapper.requeueStale(STALE_PROCESSING_MINUTES, REQUEUED_MARKER);
+        if (gaveUp + requeued > 0) {
+            log.warn("收回中断的提醒：重新排队 {} 条，放弃 {} 条", requeued, gaveUp);
+        }
+        return gaveUp + requeued;
+    }
+
     private int processDueReminders(LocalDateTime now, boolean includeRoutines) {
+        recoverInterrupted();
+        // 例行计划在认领之前取：它出错不能连累已经认领的任务提醒（认领之后抛出去，那一批就停在 PROCESSING）
+        Map<Long, List<Map<String, Object>>> routinesByUser = includeRoutines ? routinesByUser(now) : Map.of();
+
         List<TaskReminder> due = taskReminderMapper.selectList(new LambdaQueryWrapper<TaskReminder>()
                 .eq(TaskReminder::getStatus, STATUS_PENDING)
                 .le(TaskReminder::getScheduledAt, now)
@@ -165,62 +197,99 @@ public class ReminderServiceImpl implements ReminderService {
         }
         Map<Long, List<TaskReminder>> byUser = claimed.stream()
                 .collect(Collectors.groupingBy(TaskReminder::getUserId, LinkedHashMap::new, Collectors.toList()));
-        Map<Long, List<Map<String, Object>>> routinesByUser = includeRoutines
-                ? routineService.reminderInstances(LocalDate.from(now))
-                        .stream()
-                        .collect(Collectors.groupingBy(row -> Long.parseLong(String.valueOf(row.get("userId"))),
-                                LinkedHashMap::new,
-                                Collectors.toList()))
-                : Map.of();
         for (Long userId : routinesByUser.keySet()) {
             byUser.putIfAbsent(userId, List.of());
         }
 
+        // 每个用户各自兜底：一个人的坏数据、一次查询失败，不能让排在他后面的人都收不到，
+        // 也不能让他自己那几条停在 PROCESSING —— 原来这里没有兜底，一个异常就让整批停在「处理中」
         int sentCount = 0;
         for (Map.Entry<Long, List<TaskReminder>> entry : byUser.entrySet()) {
-            Long userId = entry.getKey();
-            UserReminderSetting setting = findSetting(userId);
-            if (!isEnabled(setting)) {
-                markAll(entry.getValue(), STATUS_FAILED, "提醒渠道未启用或未配置");
-                continue;
-            }
-
-            List<ReminderLine> lines = new ArrayList<>();
-            List<Map<String, Object>> routineLines = routinesByUser.getOrDefault(userId, List.of());
-            for (TaskReminder reminder : entry.getValue()) {
-                StudyTask task = studyTaskMapper.selectById(reminder.getTaskId());
-                taskPrivacyService.reveal(task);
-                if (task == null) {
-                    mark(reminder, STATUS_SKIPPED, "任务不存在");
-                } else if (task.getStatus() != null && task.getStatus() == 2) {
-                    mark(reminder, STATUS_SKIPPED, "任务已完成");
-                } else {
-                    lines.add(new ReminderLine(reminder, task));
-                }
-            }
-
-            if (lines.isEmpty() && routineLines.isEmpty()) {
-                continue;
-            }
-            lines.sort(Comparator.comparing(line -> line.task().getDeadline(), Comparator.nullsLast(Comparator.naturalOrder())));
             try {
-                getChannel(setting).send(setting, buildMessage(lines, routineLines));
-                for (ReminderLine line : lines) {
-                    TaskReminder reminder = line.reminder();
-                    reminder.setStatus(STATUS_SENT);
-                    reminder.setSentAt(now);
-                    reminder.setFailureReason(null);
-                    taskReminderMapper.updateById(reminder);
-                    sentCount++;
-                }
-                sentCount += routineLines.size();
+                sentCount += dispatch(entry.getKey(), entry.getValue(),
+                        routinesByUser.getOrDefault(entry.getKey(), List.of()), now);
             } catch (Exception e) {
-                for (ReminderLine line : lines) {
-                    mark(line.reminder(), STATUS_FAILED, e.getMessage());
-                }
+                log.error("用户 {} 的提醒处理出错，这一批标为失败", entry.getKey(), e);
+                failUnfinished(entry.getValue(), "处理出错：" + e.getMessage());
             }
         }
         return sentCount;
+    }
+
+    private Map<Long, List<Map<String, Object>>> routinesByUser(LocalDateTime now) {
+        try {
+            return routineService.reminderInstances(LocalDate.from(now))
+                    .stream()
+                    .collect(Collectors.groupingBy(row -> Long.parseLong(String.valueOf(row.get("userId"))),
+                            LinkedHashMap::new,
+                            Collectors.toList()));
+        } catch (Exception e) {
+            log.error("例行计划提醒取不出来，这一轮只发任务提醒", e);
+            return Map.of();
+        }
+    }
+
+    private int dispatch(Long userId, List<TaskReminder> reminders, List<Map<String, Object>> routineLines,
+                         LocalDateTime now) {
+        UserReminderSetting setting = findSetting(userId);
+        if (!isEnabled(setting)) {
+            markAll(reminders, STATUS_FAILED, "提醒渠道未启用或未配置");
+            return 0;
+        }
+
+        List<ReminderLine> lines = new ArrayList<>();
+        for (TaskReminder reminder : reminders) {
+            StudyTask task;
+            try {
+                task = taskPrivacyService.reveal(studyTaskMapper.selectById(reminder.getTaskId()));
+            } catch (Exception e) {
+                // 一条任务读不出来（比如密文坏了）只影响这一条，同一个人的其他提醒照发
+                mark(reminder, STATUS_FAILED, "任务内容读不出来：" + e.getMessage());
+                continue;
+            }
+            if (task == null) {
+                mark(reminder, STATUS_SKIPPED, "任务不存在");
+            } else if (task.getStatus() != null && task.getStatus() == 2) {
+                mark(reminder, STATUS_SKIPPED, "任务已完成");
+            } else {
+                lines.add(new ReminderLine(reminder, task));
+            }
+        }
+
+        if (lines.isEmpty() && routineLines.isEmpty()) {
+            return 0;
+        }
+        lines.sort(Comparator.comparing(line -> line.task().getDeadline(), Comparator.nullsLast(Comparator.naturalOrder())));
+        try {
+            getChannel(setting).send(setting, buildMessage(lines, routineLines));
+            for (ReminderLine line : lines) {
+                TaskReminder reminder = line.reminder();
+                reminder.setStatus(STATUS_SENT);
+                reminder.setSentAt(now);
+                reminder.setFailureReason(null);
+                taskReminderMapper.updateById(reminder);
+            }
+            return lines.size() + routineLines.size();
+        } catch (Exception e) {
+            for (ReminderLine line : lines) {
+                mark(line.reminder(), STATUS_FAILED, e.getMessage());
+            }
+            return 0;
+        }
+    }
+
+    /** 兜底：还停在 PROCESSING 的标失败。这里再出错（数据库断了）就只记日志 —— 那几条交给 {@link #recoverInterrupted}。 */
+    private void failUnfinished(List<TaskReminder> reminders, String reason) {
+        for (TaskReminder reminder : reminders) {
+            if (!STATUS_PROCESSING.equals(reminder.getStatus())) {
+                continue;
+            }
+            try {
+                mark(reminder, STATUS_FAILED, reason);
+            } catch (Exception e) {
+                log.error("提醒 {} 标记失败也没成功，等下一轮收回", reminder.getId(), e);
+            }
+        }
     }
 
     private String buildMessage(List<ReminderLine> lines, List<Map<String, Object>> routineLines) {

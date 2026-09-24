@@ -15,7 +15,7 @@ import java.util.Map;
 
 @Component
 public class WeComWebhookNotificationChannel implements NotificationChannel {
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = ChannelEndpoints.HTTP;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
@@ -36,7 +36,7 @@ public class WeComWebhookNotificationChannel implements NotificationChannel {
                     "text", Map.of("content", content)
             );
             ResponseEntity<String> response = restTemplate.postForEntity(
-                    setting.getWebhookUrl(),
+                    ChannelEndpoints.requireWeComWebhook(setting.getWebhookUrl()),
                     new HttpEntity<>(body, headers),
                     String.class
             );

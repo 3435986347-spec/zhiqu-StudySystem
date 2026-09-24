@@ -245,8 +245,7 @@ public class CodeWorkspaceAgent {
                     narrate(onStep, Map.of("phase", "call", "tool", name,
                             "message", CodeToolNarration.describeCall(name, argsRaw)));
                     String result = !offered.contains(name)
-                            ? "操作被拒绝：这一轮没有给你「" + name + "」这个工具。"
-                                    + "如实告诉用户你没有这个能力，不要换个名字再试。"
+                            ? refusal(name, offered)
                             : StudyPlanTool.NAME.equals(name)
                             ? recordMilestonePlan(argsRaw, loop)
                             : WikiToolAgent.isWikiTool(name)
@@ -331,6 +330,29 @@ public class CodeWorkspaceAgent {
             }
         }
         return names;
+    }
+
+    /**
+     * 没下发的调用怎么回。分两种，不能混成一句：
+     * <ul>
+     *   <li>这个工具<b>存在</b>、只是这一轮的门关着（没有写意图、档位不许执行、还没判过题）——
+     *       如实告诉用户没有这个能力，不许换个名字绕过去；</li>
+     *   <li><b>根本没有</b>这个名字 —— 模型把别家 agent 的 {@code replace} / {@code edit_file} 带了过来。
+     *       原来也回上一句，于是写工具明明下发了，模型却去告诉用户「我改不了文件」。
+     *       现在说清「不是暂时的」、这一轮能用的是哪几个。能执行的仍然只有 {@code offered} 里的，所以这不会绕过任何门。</li>
+     * </ul>
+     */
+    String refusal(String name, Set<String> offered) {
+        Set<String> existing = new HashSet<>(offeredToolNames(buildTools(true, true)));
+        existing.addAll(WikiToolAgent.TOOL_NAMES);
+        existing.add(StudyPlanTool.NAME);
+        if (existing.contains(name)) {
+            return "操作被拒绝：这一轮没有给你「" + name + "」这个工具。"
+                    + "如实告诉用户你没有这个能力，不要换个名字再试。";
+        }
+        // 以「操作被拒绝」开头：CodeToolNarration 靠这个前缀把拒绝显示在用户看得到的执行轨迹里
+        return "操作被拒绝：没有叫「" + name + "」的工具 —— 不是暂时不可用，重试也不会有。这一轮能用的是："
+                + String.join("、", new java.util.TreeSet<>(offered)) + "。";
     }
 
     /** 工作区工具集。写与执行按档位分档声明 —— 模型看不到的工具，它就不会尝试，也不会承诺自己用过。 */

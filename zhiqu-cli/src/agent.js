@@ -254,15 +254,58 @@ function describeCall(name, args) {
   }
 }
 
+/*
+ * 模型常把别家 agent 的工具名带过来（replace、str_replace、edit_file、bash、delete_file…）。
+ * 原来一律回「这一轮没有给你这个工具」—— 听起来像「暂时不可用」，模型就一遍遍重试，还会自己编一句
+ * 「现在可用了」再试，最后放弃替换、整份重写文件。所以要分清两件事：
+ *   根本没有这个工具（说「不是暂时的」、说该用哪个、怎么用） vs. 有、但这一档不给（说档位）。
+ */
+const TOOL_ALIASES = [
+  [/^(replace|str_replace|str_replace_editor|str_replace_based_edit_tool|search_replace|edit|edit_file|multi_edit|multiedit|apply_patch|apply_diff|patch|modify_file|update_file)$/i,
+    'write_file', '改文件里的一段用 write_file 的替换用法：传 path、old_string（原文，一字不差、只出现一次）、new_string。'],
+  [/^(create_file|write|write_to_file|save_file|new_file|create)$/i,
+    'write_file', '新建或整份写文件用 write_file（path + content），追加用 append: true。'],
+  [/^(delete_file|delete|remove|remove_file|rm|unlink)$/i,
+    null, '没有删除文件的工具，run_command 也不许跑 rm。要删的话，在回答里告诉用户删哪个文件、为什么。'],
+  [/^(bash|shell|sh|exec|execute|execute_command|run|run_shell|run_terminal_cmd|terminal)$/i,
+    'run_command', '跑命令用 run_command：command 是命令名，args 是参数数组（不接受整行 shell 字符串）。'],
+  [/^(ls|list_dir|list_directory|glob|find_files)$/i, 'list_files', '列目录用 list_files。'],
+  [/^(cat|view|view_file|open_file|read|read_text_file)$/i, 'read_file', '读文件用 read_file。'],
+  [/^(grep|find|search_files|search_code|ripgrep|codebase_search)$/i, 'search', '搜内容用 search。'],
+];
+
+function aliasFor(name) {
+  const hit = TOOL_ALIASES.find(([re]) => re.test(String(name || '')));
+  return hit ? { tool: hit[1], hint: hit[2] } : null;
+}
+
+/** 任何档位下存在的工具名 —— 用来区分「这一档不给」和「根本没有」。 */
+function existingToolNames(ctx) {
+  const all = toolset({ ...ctx, mode: 'auto', goal: { status: 'active' } }).map((t) => t.schema.function.name);
+  return new Set([...all, 'exit_plan_mode']);
+}
+
+function refuseUnoffered(ctx, name, offered) {
+  const ui = ctx.ui;
+  const available = [...offered.keys()].join('、');
+  if (existingToolNames(ctx).has(name)) {
+    ui.step(`${name}（${ctx.mode} 档不给这个工具）`);
+    ui.result('已拒绝', false);
+    return `${name} 在当前的 ${ctx.mode} 档没有下发，没有执行。`
+      + (ctx.mode === 'plan' ? '现在是只读的 plan 档：想好之后用 exit_plan_mode 提交计划，用户批准后才能写、才能跑。' : '')
+      + `这一档能用的：${available}。`;
+  }
+  const alias = aliasFor(name);
+  ui.step(`${name}（没有这个工具${alias && alias.tool ? `，应当用 ${alias.tool}` : ''}）`);
+  ui.result('已拒绝', false);
+  return `没有叫 ${name} 的工具 —— 不是暂时不可用，重试也不会有。${alias ? alias.hint : ''}能用的工具：${available}。`;
+}
+
 async function executeTool(ctx, call, offered, signal) {
   const ui = ctx.ui;
   const name = call.function && call.function.name;
   const kind = offered.get(name);
-  if (!kind) {
-    ui.step(`${name}（这一轮没有这个工具）`);
-    ui.result('已拒绝', false);
-    return `这一轮没有给你 ${name} 这个工具（当前档位：${ctx.mode}），没有执行。${ctx.mode === 'plan' ? '现在是只读的 plan 档：想好之后用 exit_plan_mode 提交计划。' : ''}`;
-  }
+  if (!kind) return refuseUnoffered(ctx, name, offered);
   const parsed = parseArgs(call.function.arguments);
   if (!parsed.ok) {
     ui.step(`${name}（参数不对）`);

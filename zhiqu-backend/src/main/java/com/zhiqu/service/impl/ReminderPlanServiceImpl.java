@@ -1,6 +1,7 @@
 package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.zhiqu.common.BusinessClock;
 import com.zhiqu.entity.StudyTask;
 import com.zhiqu.entity.TaskReminder;
 import com.zhiqu.mapper.TaskReminderMapper;
@@ -26,9 +27,11 @@ public class ReminderPlanServiceImpl implements ReminderPlanService {
     private static final String TYPE_CUSTOM = "CUSTOM";
 
     private final TaskReminderMapper taskReminderMapper;
+    private final BusinessClock clock;
 
-    public ReminderPlanServiceImpl(TaskReminderMapper taskReminderMapper) {
+    public ReminderPlanServiceImpl(TaskReminderMapper taskReminderMapper, BusinessClock clock) {
         this.taskReminderMapper = taskReminderMapper;
+        this.clock = clock;
     }
 
     @Override
@@ -43,7 +46,8 @@ public class ReminderPlanServiceImpl implements ReminderPlanService {
             return;
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        // 截止时间、提醒时间都是用户的墙上时间，「已经过去了没有」要拿业务时区的此刻比 —— 见 ReminderScheduler
+        LocalDateTime now = clock.now();
         if (task.getDeadline() != null) {
             for (Integer offset : resolveOffsets(task, reminderOffsets)) {
                 LocalDateTime scheduledAt = task.getDeadline()

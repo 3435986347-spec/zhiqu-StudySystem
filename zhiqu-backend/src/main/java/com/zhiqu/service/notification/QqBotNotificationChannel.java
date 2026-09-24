@@ -21,7 +21,7 @@ public class QqBotNotificationChannel implements NotificationChannel {
     private static final String PROD_API_BASE = "https://api.sgroup.qq.com";
     private static final String SANDBOX_API_BASE = "https://sandbox.api.sgroup.qq.com";
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = ChannelEndpoints.HTTP;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Map<String, TokenCache> tokenCacheMap = new ConcurrentHashMap<>();
 

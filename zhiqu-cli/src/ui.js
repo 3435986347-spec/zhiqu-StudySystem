@@ -57,14 +57,22 @@ export class Ui {
 
   onLine(line) {
     if (this.live) {
-      // readline 在回车时已经写了 \r\n、把输入行留在了原处：先把「活动区 + 那一行」擦掉再重画
-      const submittedRows = this.rowsOf(this.prompt + line);
-      this.eraseLive(submittedRows);
+      // readline 在回车时已经写了 \r\n、把输入行留在了原处：先把「活动区 + 那一行」擦掉再重画。
+      // 那一行的前缀是<b>当时显示的</b>那个 —— 正在问问题时是问题本身，长问题会折成几行，按「› 」算就擦少了
+      const shown = this.live.question || this.prompt;
+      this.eraseLive(this.rowsOf(shown + line));
       const w = this.waiters.find((x) => x.fresh) || (this.live.question ? null : this.waiters[0]);
       if (w) {
         this.waiters.splice(this.waiters.indexOf(w), 1);
+        const question = this.live.question;
         this.live.question = null;
-        this.drawLive();
+        if (question) {
+          // 问题连同回答留在屏幕上：批准了什么计划、同意写了哪个文件，事后翻得到。
+          // 原来整行跟着活动区一起擦掉，一个字不留。流式输出停在半行时先换行，免得回答粘在那半行后面
+          this.write(`${this.live.partial ? '\n' : ''}${question}${line}\n`);
+        } else {
+          this.drawLive();
+        }
         w.resolve(line);
         return;
       }

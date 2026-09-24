@@ -138,6 +138,22 @@ class CodeWorkspaceAgentTest {
         assertTrue(rig.results().contains("这一轮没有给你「write_workspace_file」这个工具"), rig.results());
     }
 
+    /**
+     * 模型把别家 agent 的工具名带了过来（replace），而写工具其实下发了：不能回「你没有这个能力」——
+     * 那样它会去告诉用户「我改不了文件」。要说清没有这个名字、能用的是哪几个。
+     */
+    @Test
+    @DisplayName("编了一个不存在的工具名（replace）：说「没有这个名字」并列出能用的，而不是「你没有这个能力」")
+    void 不存在的工具名要说能用哪个() throws Exception {
+        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        rig.modelSays(toolCall("replace", "{\"path\":\"a.js\",\"old_string\":\"1\",\"new_string\":\"2\"}"));
+        rig.run("帮我做一个小游戏", CODE_MODE);
+        String results = rig.results();
+        assertTrue(results.contains("没有叫「replace」的工具 —— 不是暂时不可用"), results);
+        assertTrue(results.contains("write_workspace_file"), "要告诉它这一轮能用的写工具：" + results);
+        assertFalse(results.contains("没有这个能力"), "写工具下发了，却让模型告诉用户没有这个能力：" + results);
+    }
+
     /** 对已存在的文件，没读过就改是拿想象中的内容覆盖真实内容。 */
     @Test
     @DisplayName("没读过不许改已存在的文件；新建文件不必先读，草稿标成 creating")
