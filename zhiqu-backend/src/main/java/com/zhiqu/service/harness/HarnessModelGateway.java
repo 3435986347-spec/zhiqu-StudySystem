@@ -69,6 +69,27 @@ public class HarnessModelGateway {
         void event(String name, Map<String, Object> data) throws IOException;
     }
 
+    /**
+     * 模型调用失败，带着「值不值得重试」。供应商限流（429）、服务端错误（5xx）、网络超时 / 断开是临时的，
+     * 命令行在还没有输出的时候会自己重来；参数错误、Key 不对这类重试也没用。
+     */
+    public static final class ModelCallException extends BusinessException {
+        private final boolean retryable;
+
+        public ModelCallException(String message, boolean retryable) {
+            super(message);
+            this.retryable = retryable;
+        }
+
+        public boolean retryable() {
+            return retryable;
+        }
+    }
+
+    static boolean retryableStatus(int status) {
+        return status == 429 || status >= 500;
+    }
+
     /** 客户端断开：不再往回发，也不再读上游。 */
     public static final class ClientGone extends RuntimeException {
         ClientGone(Throwable cause) {
@@ -220,7 +241,11 @@ public class HarnessModelGateway {
                     last = new BusinessException("模型拒绝了输出上限：" + detail);
                     continue;
                 }
-                throw new BusinessException("AI 接口调用失败（HTTP " + e.getStatusCode().value() + "）：" + detail);
+                throw new ModelCallException("AI 接口调用失败（HTTP " + e.getStatusCode().value() + "）：" + detail,
+                        retryableStatus(e.getStatusCode().value()));
+            } catch (org.springframework.web.client.ResourceAccessException e) {
+                // 连不上、读超时、连接被重置 —— 都是临时的
+                throw new ModelCallException("连不上模型服务：" + e.getMessage(), true);
             }
         }
         if (last != null) {

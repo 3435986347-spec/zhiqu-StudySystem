@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_BYTES } from './guard.js';
 import { checkCommand, describeRefusal, DEFAULT_COMMANDS, ExecRefusal } from './execrules.js';
-import { resolveOnPath, runProcess } from './exec.js';
+import { planLaunch, resolveOnPath, runProcess } from './exec.js';
 import { stat as diffStat } from '../render/diff.js';
 import { formatBytes } from '../render/term.js';
 
@@ -275,11 +275,13 @@ export class LocalTools {
     const command = String(args.command).trim();
     const binary = resolveOnPath(command);
     if (!binary) return { error: `这台机器上找不到命令：${command}` };
-    return { command, args: argv, binary, cwd: dir.path, cwdRel: this.guard.display(dir.path) };
+    const launch = planLaunch({ command, binary, args: argv });
+    if (launch.error) return { error: launch.error };
+    return { command, args: argv, binary: launch.binary, launchArgs: launch.args, cwd: dir.path, cwdRel: this.guard.display(dir.path) };
   }
 
   async commitRun(prep, { signal, onOutput } = {}) {
-    const r = await runProcess({ binary: prep.binary, args: prep.args, cwd: prep.cwd, timeoutMs: this.execTimeoutMs, signal, onOutput });
+    const r = await runProcess({ binary: prep.binary, args: prep.launchArgs || prep.args, cwd: prep.cwd, timeoutMs: this.execTimeoutMs, signal, onOutput });
     const line = [prep.command, ...prep.args].join(' ');
     const secs = (r.millis / 1000).toFixed(1);
     return {

@@ -33,7 +33,8 @@ function readJson(file, fallback) {
 /** 原子写：先写临时文件再改名 —— 写到一半被打断不会留下半个 JSON。 */
 export function writeFileAtomic(file, text, mode) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
+  // 临时文件名带上进程号和一个随机数：同一个进程里两次写同一个文件也不会撞在同一个临时文件上
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   fs.writeFileSync(tmp, text, mode ? { mode } : undefined);
   fs.renameSync(tmp, file);
   if (mode) { try { fs.chmodSync(file, mode); } catch { /* Windows */ } }

@@ -116,7 +116,13 @@ public class HarnessSessionService {
     }
 
     public Map<String, Object> append(Long userId, String clientSessionId, List<Map<String, Object>> messages) {
-        HarnessSession session = open(userId, clientSessionId, null, null);
+        return append(userId, clientSessionId, null, null, messages);
+    }
+
+    /** 同上；会话还不存在时用给的标题和工作区名建。 */
+    public Map<String, Object> append(Long userId, String clientSessionId, String title, String workspaceName,
+                                      List<Map<String, Object>> messages) {
+        HarnessSession session = open(userId, clientSessionId, title, workspaceName);
         List<Long> ids = aiService.appendArchivedMessages(userId, session.getNotebookId(), messages);
         session.setUpdatedAt(LocalDateTime.now());
         mapper.updateById(session);

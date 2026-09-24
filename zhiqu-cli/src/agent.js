@@ -17,6 +17,9 @@ import { loadSkill, loadSkillSchema } from './skills.js';
 import { buildSystemMessage, environmentBlock, today } from './prompt.js';
 import { compactMessages, needsCompaction, SUMMARY_INSTRUCTIONS } from './compact.js';
 import { dropDanglingToolCalls } from './session.js';
+import { ApiError } from './api.js';
+import { sleep } from './http.js';
+import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 
 export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory']);
 
@@ -63,6 +66,7 @@ export function toolset(ctx) {
   if (ctx.skills && ctx.skills.length) out.push({ schema: loadSkillSchema(), kind: 'skill' });
   if (ctx.mcp) for (const t of ctx.mcp.schemas({ readOnlyOnly: plan })) out.push({ schema: t, kind: 'mcp' });
   if (plan) out.push({ schema: exitPlanSchema(), kind: 'plan' });
+  if (ctx.goal && ctx.goal.status === 'active') out.push({ schema: goalSchema(), kind: 'goal' });
   // 同名只留第一个：本地工具优先于远程 / MCP（MCP 名字有前缀，本不会撞）
   const seen = new Set();
   return out.filter((t) => (seen.has(t.schema.function.name) ? false : seen.add(t.schema.function.name)));
@@ -73,7 +77,9 @@ export function systemText(ctx) {
     root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.mode, commands: ctx.local.commands,
     today: today(),
   });
-  return buildSystemMessage({ systemText: ctx.system.text, env, instructions: ctx.instructionsText, skills: ctx.skillsText });
+  // 目标置顶：在系统内容之后、其它一切之前
+  const goal = goalBlock(ctx.goal);
+  return buildSystemMessage({ systemText: goal ? `${ctx.system.text.trim()}\n\n${goal}` : ctx.system.text, env, instructions: ctx.instructionsText, skills: ctx.skillsText });
 }
 
 function record(ctx, message) {
@@ -99,19 +105,46 @@ function truncatedArgs(raw) {
 
 // ── 模型调用 ─────────────────────────────────────────────────────────────
 
-async function callModel(ctx, tools, signal, { render = true, maxTokens = DEFAULT_MAX_TOKENS, messages } = {}) {
+export const MODEL_RETRY_WAITS = [1000, 3000];
+
+/**
+ * 调模型，失败了在安全的时候重来：只有「还没收到任何实质输出」且错误是临时性的（连接断开、服务器 5xx / 429、
+ * 空闲超时）才重试 —— 已经输出了一半再重来，用户会看到重复的内容，工具调用也可能重复。
+ */
+async function callModel(ctx, tools, signal, opts = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await callModelOnce(ctx, tools, signal, opts);
+    } catch (e) {
+      if ((e && e.name === 'AbortError') || (signal && signal.aborted)) throw e;
+      const retry = e instanceof ApiError && e.retryable && e.beforeOutput !== false && attempt < MODEL_RETRY_WAITS.length;
+      if (!retry) throw e;
+      const wait = e.retryAfter ?? MODEL_RETRY_WAITS[attempt];
+      ctx.ui.note(`· ${e.message} —— ${(wait / 1000).toFixed(0)} 秒后重试（第 ${attempt + 2} 次）`);
+      await sleep(wait, signal);
+    }
+  }
+}
+
+async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DEFAULT_MAX_TOKENS, messages } = {}) {
   const ui = ctx.ui;
   const md = render ? ui.markdown() : null;
   let done = null;
   let text = '';
   const toolNames = new Map();
+  // 第一个字到来之前显示在等多久（只在终端里）：用户分得清「在等模型」和「卡死了」
+  const started = Date.now();
+  let waiting = render ? setInterval(() => ui.status.set(ui.paint.dim(`… 等待模型回复 ${Math.round((Date.now() - started) / 1000)}s`)), 1000) : null;
+  const stopWaiting = () => { if (waiting) { clearInterval(waiting); waiting = null; ui.status.clear(); } };
   const body = {
     modelId: ctx.model ? ctx.model.id : null,
     messages: messages || [{ role: 'system', content: systemText(ctx) }, ...ctx.messages],
     tools: tools.map((t) => t.schema),
     maxTokens,
   };
+  try {
   await ctx.api.stream('/api/harness/model/stream', body, (name, data) => {
+    if (name !== 'start') stopWaiting();
     if (name === 'start') {
       if (data.droppedMessages > 0 || data.elidedToolOutputs > 0) {
         ui.note(`· 服务器按上下文窗口（${data.contextWindow} token）裁掉了最早的 ${data.droppedMessages} 条消息`
@@ -131,6 +164,9 @@ async function callModel(ctx, tools, signal, { render = true, maxTokens = DEFAUL
       done = data;
     }
   }, { signal });
+  } finally {
+    stopWaiting();
+  }
   ui.status.clear();
   if (md) md.finish();
   if (!done) throw new Error('模型的回复没有正常结束（连接中途断开了）');
@@ -207,6 +243,7 @@ function describeCall(name, args) {
     case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
     case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
     case 'exit_plan_mode': return '提交计划';
+    case GOAL_TOOL: return `目标状态：${args.status}`;
     case 'search_wiki': return `查知识库「${args.query}」`;
     case 'read_wiki_page': return `读知识库「${args.title}」`;
     case 'create_wiki_patch': return `生成知识库草稿「${args.title}」`;
@@ -275,7 +312,9 @@ async function executeTool(ctx, call, offered, signal) {
   }
   if (kind === 'remote') {
     try {
-      const r = await ctx.api.post('/api/harness/tools/call', { sessionId: ctx.session.id, name, arguments: args }, { signal, timeoutMs: 60_000 });
+      const pre = ctx.prefetched && ctx.prefetched.get(call.id);
+      const r = pre ? await pre.then((v) => { if (v.error) throw v.error; return v.value; })
+        : await ctx.api.post('/api/harness/tools/call', { sessionId: ctx.session.id, name, arguments: args }, { signal, timeoutMs: 60_000 });
       const drafts = r.drafts || [];
       ui.result(drafts.length ? `草稿：${drafts.map((d) => d.title).join('、')} → 到网页里确认` : '完成');
       return r.content;
@@ -303,7 +342,30 @@ async function executeTool(ctx, call, offered, signal) {
   if (kind === 'plan') {
     return approvePlan(ctx, String(args.plan || ''));
   }
+  if (kind === 'goal') {
+    const reply = applyGoalUpdate(ctx.goal, args);
+    recordGoal(ctx);
+    const label = { achieved: '宣告达成', blocked: '宣告卡住', active: '进展' }[ctx.goal.status];
+    ui.result(`${label}：${ctx.goal.status === 'blocked' ? ctx.goal.blocker : args.summary || ''}`.slice(0, 200));
+    return reply;
+  }
   return `不认识的工具：${name}`;
+}
+
+/**
+ * 同一次回复里的几个远程只读查询（查 Wiki、读记忆）先一起发出去，显示仍按顺序。
+ * 只读的才这么做：写类的远程工具会建草稿，顺序和次数都不能乱。
+ */
+export function prefetchRemoteReads(ctx, calls, offered, signal) {
+  ctx.prefetched = new Map();
+  for (const call of calls) {
+    const name = call.function && call.function.name;
+    if (offered.get(name) !== 'remote' || !REMOTE_READ_TOOLS.has(name)) continue;
+    const parsed = parseArgs(call.function.arguments);
+    if (!parsed.ok) continue;
+    ctx.prefetched.set(call.id, ctx.api.post('/api/harness/tools/call', { sessionId: ctx.session.id, name, arguments: parsed.value }, { signal, timeoutMs: 60_000 })
+      .then((value) => ({ value }), (error) => ({ error })));
+  }
 }
 
 // ── 压缩 ────────────────────────────────────────────────────────────────
@@ -386,6 +448,7 @@ export async function runTurn(ctx, userText, { signal } = {}) {
       finalText = message.content || '';
       break;
     }
+    prefetchRemoteReads(ctx, calls, offered, signal);
     for (const call of calls) {
       if (signal && signal.aborted) break;
       const content = await executeTool(ctx, call, offered, signal);
@@ -400,24 +463,110 @@ export async function runTurn(ctx, userText, { signal } = {}) {
   return { finalText, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles] };
 }
 
-/** 网页里看的那份存档：人说的、助手最后回的，加一行过程。失败不影响本地。 */
-export async function archiveTurn(ctx, userText, result) {
-  if (!ctx.api || !ctx.session || ctx.archiveDisabled) return;
-  try {
-    if (!ctx.archiveOpened) {
-      await ctx.api.post('/api/harness/sessions', { sessionId: ctx.session.id, title: ctx.session.title || userText.slice(0, 40), workspace: path.basename(ctx.local.root) }, { timeoutMs: 10_000 });
-      ctx.archiveOpened = true;
-    }
-    const steps = result.steps.length ? `\n\n> 过程：${result.steps.slice(0, 30).join(' · ')}${result.steps.length > 30 ? ` …共 ${result.steps.length} 步` : ''}` : '';
-    await ctx.api.post(`/api/harness/sessions/${ctx.session.id}/messages`, {
-      messages: [{ role: 'user', content: userText }, { role: 'assistant', content: (result.finalText || '（没有文字回答）') + steps }],
-    }, { timeoutMs: 10_000 });
-  } catch (e) {
-    if (!ctx.archiveWarned) {
-      ctx.ui.note(`（网页存档没成功：${e.message}；本地记录不受影响）`);
-      ctx.archiveWarned = true;
+/**
+ * 网页里看的那份存档：人说的、助手最后回的，加一行过程。
+ *
+ * 可靠性这一轮改成了「后台、按顺序、失败的下次再补」：原来每一轮结束都要等两个请求（最多 20 秒）才回到提示符，
+ * 失败了那一轮就永远缺在网页上。现在 archiveTurn 只入队，真正的发送串在 ctx.archiveChain 上；发不出去的留在队列里，
+ * 下一轮连同新的一起补；退出前 flushArchive 再等一会儿。
+ */
+export function archiveTurn(ctx, userText, result) {
+  if (!ctx.api || !ctx.session || ctx.archiveDisabled) return Promise.resolve();
+  const steps = result.steps.length ? `\n\n> 过程：${result.steps.slice(0, 30).join(' · ')}${result.steps.length > 30 ? ` …共 ${result.steps.length} 步` : ''}` : '';
+  ctx.archivePending = ctx.archivePending || [];
+  ctx.archivePending.push({
+    sessionId: ctx.session.id, title: ctx.session.title || userText.slice(0, 40),
+    messages: [{ role: 'user', content: userText }, { role: 'assistant', content: (result.finalText || '（没有文字回答）') + steps }],
+  });
+  ctx.archiveChain = (ctx.archiveChain || Promise.resolve()).then(() => sendPending(ctx));
+  return ctx.archiveChain;
+}
+
+async function sendPending(ctx) {
+  while (ctx.archivePending.length) {
+    const item = ctx.archivePending[0];
+    try {
+      // 一个请求：会话不存在时服务器用 title / workspace 建（原来先开会话再写消息，两个请求）
+      await ctx.api.post(`/api/harness/sessions/${item.sessionId}/messages`, {
+        title: item.title, workspace: path.basename(ctx.local.root), messages: item.messages,
+      }, { timeoutMs: 10_000 });
+      ctx.archivePending.shift();
+    } catch (e) {
+      if (!ctx.archiveWarned) {
+        ctx.ui.note(`（网页存档暂时没发出去：${e.message}；本地记录不受影响，下一轮会补上）`);
+        ctx.archiveWarned = true;
+      }
+      return;
     }
   }
+}
+
+/** 退出前把没发出去的存档再发一次，最多等 timeoutMs。 */
+export async function flushArchive(ctx, timeoutMs = 5000) {
+  if (!ctx.archiveChain) return;
+  const all = ctx.archiveChain.then(() => (ctx.archivePending && ctx.archivePending.length ? sendPending(ctx) : null));
+  await Promise.race([all, new Promise((r) => setTimeout(r, timeoutMs).unref())]);
+}
+
+// ── goal 模式 ──────────────────────────────────────────────────────────
+
+export function recordGoal(ctx) {
+  if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'goal', goal: ctx.goal });
+}
+
+/** 独立核对：不带工具，只看目标、证据与真实的工具结果。 */
+export async function verifyGoal(ctx, signal) {
+  const r = await callModel(ctx, [], signal, {
+    render: false, maxTokens: 1024,
+    messages: [{ role: 'system', content: VERIFY_INSTRUCTIONS },
+      { role: 'user', content: verificationMaterial(ctx.goal, ctx.messages, [...(ctx.goalChangedFiles || [])]) }],
+  });
+  return parseVerdict(r.text);
+}
+
+/**
+ * 追一个目标：一轮接一轮，直到宣告达成且核对通过、宣告卡住、轮数用完或者被打断。
+ * 返回 'achieved' | 'blocked' | 'exhausted' | 'aborted'。
+ */
+export async function runGoal(ctx, { signal, maxTurns = DEFAULT_MAX_GOAL_TURNS, onTurn } = {}) {
+  const ui = ctx.ui;
+  const goal = ctx.goal;
+  ctx.goalChangedFiles = ctx.goalChangedFiles || new Set();
+  let text = goal.turns === 0 ? `目标：${goal.text}\n开始做。` : `继续朝目标推进：${goal.text}`;
+  for (let i = 0; i < maxTurns; i++) {
+    if (signal && signal.aborted) return 'aborted';
+    goal.turns += 1;
+    ui.note(`· 🎯 目标第 ${goal.turns} 轮`);
+    const result = await runTurn(ctx, text, { signal });
+    for (const f of result.changedFiles) ctx.goalChangedFiles.add(f);
+    if (onTurn) onTurn(text, result);
+    if (signal && signal.aborted) return 'aborted';
+    if (goal.status === 'blocked') {
+      ui.line(ui.paint.yellow(`🎯 卡住了：${goal.blocker}`));
+      return 'blocked';
+    }
+    if (goal.status === 'achieved') {
+      ui.step('核对目标是否真的达成');
+      const verdict = await verifyGoal(ctx, signal);
+      if (verdict.achieved || goal.verifyFailures >= MAX_VERIFY_FAILURES) {
+        ui.result(verdict.achieved ? '核对通过' : `核对 ${MAX_VERIFY_FAILURES} 次都没通过，按执行者的证据收尾（请你自己再看一眼）`, verdict.achieved);
+        recordGoal(ctx);
+        ui.line(ui.paint.green(`🎯 目标达成：${goal.text}`));
+        return 'achieved';
+      }
+      goal.verifyFailures += 1;
+      goal.status = 'active';
+      recordGoal(ctx);
+      ui.result(`核对没通过：${verdict.missing}`, false);
+      text = `核对没通过：${verdict.missing}\n把缺的补上，验证过之后再宣告达成。`;
+      continue;
+    }
+    // 模型收尾了，但没宣告达成、也没宣告卡住 —— 不许停
+    text = '目标还没有宣告完成。接着做；真做完了就调用 goal_update（status=achieved，附上验证证据），真卡住了就调用 goal_update（status=blocked，写清楚需要用户做什么）。';
+  }
+  ui.warn(`已经朝目标连续推进了 ${maxTurns} 轮，先停在这里。/goal continue 接着追。`);
+  recordGoal(ctx);
+  return 'exhausted';
 }
 
 export function hostName() {

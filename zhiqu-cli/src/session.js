@@ -43,14 +43,49 @@ export class SessionStore {
     writeFileAtomic(this.index, `${JSON.stringify(index, null, 2)}\n`);
   }
 
+  /**
+   * 改索引的「读 → 改 → 写」包在一把锁里：同一个工作区开了两个 zhiqu 时，两边同时改 setup.json
+   * 会互相覆盖，一边的会话就从索引里消失了（记录还在 sessions/ 里，但 /resume 找不到）。
+   * 锁是一个用 wx 创建的文件；超过 10 秒没动的锁当成崩溃留下的，清掉再拿。拿不到（3 秒）就照写 ——
+   * 宁可偶尔丢一条索引，也不能让命令行卡住。
+   */
+  withIndexLock(fn) {
+    this.ensure();
+    const lock = `${this.index}.lock`;
+    const deadline = Date.now() + 3000;
+    let fd = null;
+    while (fd == null) {
+      try {
+        fd = fs.openSync(lock, 'wx');
+      } catch (e) {
+        if (e.code !== 'EEXIST') break;
+        try {
+          if (Date.now() - fs.statSync(lock).mtimeMs > 10_000) { fs.rmSync(lock, { force: true }); continue; }
+        } catch { continue; }
+        if (Date.now() > deadline) break;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
+      }
+    }
+    try {
+      return fn();
+    } finally {
+      if (fd != null) {
+        fs.closeSync(fd);
+        fs.rmSync(lock, { force: true });
+      }
+    }
+  }
+
   create({ title = '', model = null } = {}) {
     this.ensure();
     const now = new Date().toISOString();
     const meta = { id: newSessionId(), title, createdAt: now, updatedAt: now, messages: 0, model };
-    const index = this.readIndex();
-    index.sessions.push(meta);
-    index.lastSessionId = meta.id;
-    this.writeIndex(index);
+    this.withIndexLock(() => {
+      const index = this.readIndex();
+      index.sessions.push(meta);
+      index.lastSessionId = meta.id;
+      this.writeIndex(index);
+    });
     return meta;
   }
 
@@ -65,12 +100,14 @@ export class SessionStore {
   }
 
   touch(id, patch = {}) {
-    const index = this.readIndex();
-    const row = index.sessions.find((s) => s.id === id);
-    if (!row) return;
-    Object.assign(row, patch, { updatedAt: new Date().toISOString() });
-    index.lastSessionId = id;
-    this.writeIndex(index);
+    this.withIndexLock(() => {
+      const index = this.readIndex();
+      const row = index.sessions.find((s) => s.id === id);
+      if (!row) return;
+      Object.assign(row, patch, { updatedAt: new Date().toISOString() });
+      index.lastSessionId = id;
+      this.writeIndex(index);
+    });
   }
 
   list() {
@@ -88,6 +125,7 @@ export class SessionStore {
     if (!meta) throw new Error(`没有这段会话：${id}`);
     let messages = [];
     let mode = null;
+    let goal = null;
     let broken = 0;
     const text = fs.existsSync(this.file(id)) ? fs.readFileSync(this.file(id), 'utf8') : '';
     for (const line of text.split('\n')) {
@@ -97,8 +135,9 @@ export class SessionStore {
       if (e.type === 'message' && e.message) messages.push(e.message);
       else if (e.type === 'compact' && Array.isArray(e.messages)) messages = e.messages;
       else if (e.type === 'mode' && e.mode) mode = e.mode;
+      else if (e.type === 'goal') goal = e.goal || null;
     }
-    return { meta, messages: dropDanglingToolCalls(messages), mode, broken };
+    return { meta, messages: dropDanglingToolCalls(messages), mode, goal, broken };
   }
 }
 

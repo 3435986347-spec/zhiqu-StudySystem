@@ -182,13 +182,32 @@ class HarnessModelGatewayTest {
     }
 
     @Test
-    @DisplayName("别的 400 不重试，原样说出供应商的原因")
+    @DisplayName("别的 400 不重试，原样说出供应商的原因，并标成「重试也没用」")
     void 别的错误不重试() throws Exception {
         String url = fakeModel(b -> new Object[]{400, "{\"error\":{\"message\":\"invalid api key\"}}"});
         model("OPENAI_COMPATIBLE", url, null);
-        BusinessException e = assertThrows(BusinessException.class, () -> gateway(true).stream(1L, body(ASK), sink()));
+        HarnessModelGateway.ModelCallException e = assertThrows(HarnessModelGateway.ModelCallException.class,
+                () -> gateway(true).stream(1L, body(ASK), sink()));
         assertTrue(e.getMessage().contains("invalid api key"), e.getMessage());
+        assertFalse(e.retryable());
         assertEquals(1, requests.size());
+    }
+
+    @Test
+    @DisplayName("供应商 503 / 429、连不上：标成可重试（命令行在还没输出时会自己重来）")
+    void 临时错误可重试() throws Exception {
+        String url = fakeModel(b -> new Object[]{503, "{\"error\":{\"message\":\"overloaded\"}}"});
+        model("OPENAI_COMPATIBLE", url, null);
+        assertTrue(assertThrows(HarnessModelGateway.ModelCallException.class,
+                () -> gateway(true).stream(1L, body(ASK), sink())).retryable());
+        server.stop(0);
+        server = null;
+        model("OPENAI_COMPATIBLE", "http://127.0.0.1:1", null);
+        HarnessModelGateway.ModelCallException down = assertThrows(HarnessModelGateway.ModelCallException.class,
+                () -> gateway(true).stream(1L, body(ASK), sink()));
+        assertTrue(down.retryable(), down.getMessage());
+        assertTrue(HarnessModelGateway.retryableStatus(429));
+        assertFalse(HarnessModelGateway.retryableStatus(401));
     }
 
     @Test

@@ -37,6 +37,22 @@ export function resolveOnPath(name, env = process.env, platform = process.platfo
   return null;
 }
 
+/**
+ * Windows 上 npm、npx 这类命令是 .cmd 包装脚本：Node 18.20 / 20.12 起不经过 shell 就拒绝执行它们（CVE-2024-27980），
+ * 而经过 cmd.exe 又等于把参数交给 shell 解析 —— 一个带 & 的参数就能多跑一条命令。
+ * npm 有路可走：它的 .cmd 只是去调 node_modules/npm/bin/npm-cli.js，直接用 node 跑那个文件，不经过 shell。
+ * 其它 .cmd / .bat 明确拒绝并说清楚为什么，而不是报一个看不懂的 EINVAL。
+ */
+export function planLaunch({ command, binary, args, platform = process.platform, exists = fs.existsSync, nodePath = process.execPath }) {
+  if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(binary)) return { binary, args };
+  const p = platform === 'win32' ? path.win32 : path;
+  if (command === 'npm') {
+    const cli = p.join(p.dirname(binary), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    if (exists(cli)) return { binary: nodePath, args: [cli, ...args] };
+  }
+  return { error: `${command} 在 Windows 上是一个 .cmd / .bat 包装脚本，要经过 cmd.exe 才能跑 —— 那会把参数交给 shell 解析，这里不支持。` };
+}
+
 /** 子进程的最小环境：PATH 是固定的几段 + 命令自己所在的目录（npm 要能找到同目录下的 node）。 */
 export function childEnv(binary, cwd, platform = process.platform) {
   const sys = platform === 'win32'

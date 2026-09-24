@@ -263,7 +263,23 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
   **不读 `AGENTS.md`** —— 用户定的，和 Codex 的重复）。Skills 三层渐进式披露。会话在 `.zhiqu/sessions/*.jsonl`，
   `/resume` 重放，没有结果的工具调用补「被中断」。
 - **测试**：`cd zhiqu-cli && npm test`；端到端用 `test/fixtures/mock-model.cjs`（脚本化的 OpenAI 兼容假模型）与
-  `mock-mcp.cjs`。`package.json` 是 `"type": "module"`，所以 CommonJS 的夹具必须是 `.cjs`。
+  `mock-mcp.cjs`；`fake-harness.js` 是进程内的假 `/api/harness/**`（延迟与故障可脚本化：闪断、502、卡死、心跳、
+  输出一半断开）。`package.json` 是 `"type": "module"`，所以 CommonJS 的夹具必须是 `.cjs`。
+- **goal 模式**（`/goal <目标>`、`--goal`，用户要的「圣目标」）：目标置顶进系统提示；模型只有调 `goal_update`
+  宣告 achieved（必须附证据）或 blocked（必须写 blocker）才能停，没宣告就收尾会被自动推着接着做；宣告达成后
+  **再过一道不带工具的独立核对**（只看目标、证据与真实的工具结果），不过就带着缺口继续；轮数有上限；目标记进会话。
+  无人值守（`--goal` 且输入不是终端）的退出码：0 达成 / 2 卡住 / 3 轮数用完。
+- **速度：不要用全局 `fetch`，也不要 ESM `import 'node:http'`**（2026-09-24 实测）。调用过一次 fetch，进程退出就多等
+  约 2.4 秒；根子是 TLS：环境里设了 `NODE_USE_SYSTEM_CA=1` 时加载 TLS 要把钥匙串里的系统证书全读一遍（1.1～1.5 秒），
+  而 **ESM 的 `import 'node:http'` 会顺带把 tls 拉进来**（CommonJS 的 require 不会）。`src/http.js` 因此用
+  `createRequire` 加载 http、只在 https 服务器时才加载 https。`whoami` 2.6 秒 → 0.2 秒；`reliability.test.js` 第一条
+  钉着「加载 zhiqu 的全部模块不许加载 tls」。
+- **重试只在安全的时候**：GET 对闪断与 502/503/504/429 重试两次；POST 只在「连接被拒」（肯定没到服务器）时重试 ——
+  中途断开的 POST 可能已经建了草稿；模型流式调用只在**还没有任何实质输出**时重试（服务器在 error 事件里带
+  `retryable`：429 / 5xx / 连不上才是 true）。流式有 240 秒空闲超时，服务器每 15 秒发一行 SSE 注释当心跳 ——
+  推理模型想一两分钟时，代理和空闲计时都不会误判。存档改成后台队列，失败的下一轮补，一轮只一个请求。
+  同一工作区两个 zhiqu 同时改 `setup.json` 会互相覆盖 → 用 `wx` 锁文件（10 秒没动的旧锁清掉）。
+  Windows 上 `npm.cmd` 改成 node 直接跑 `npm-cli.js`（不经过 shell），其它 `.cmd` 明确拒绝。
 
 ### 命令行 `zhiqu`（Java 版，同一个后端上的 coding agent；已由 npm 版接替）
 

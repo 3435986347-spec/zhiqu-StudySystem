@@ -123,9 +123,11 @@ test('远程工具带上这段会话的 id；网页存档先开会话再写消�
   const call = ctx.api.posts.find((p) => p.pathname === '/api/harness/tools/call');
   assert.equal(call.body.sessionId, ctx.session.id);
   await archiveTurn(ctx, '排个计划', r);
-  const paths = ctx.api.posts.map((p) => p.pathname);
-  assert.deepEqual(paths.slice(-2), ['/api/harness/sessions', `/api/harness/sessions/${ctx.session.id}/messages`]);
-  assert.match(ctx.api.posts.at(-1).body.messages[1].content, /> 过程：生成学习计划草稿/);
+  const last = ctx.api.posts.at(-1);
+  assert.equal(last.pathname, `/api/harness/sessions/${ctx.session.id}/messages`, '一轮只发一个存档请求');
+  assert.equal(last.body.title, '排个计划');
+  assert.equal(last.body.workspace, path.basename(ctx.root));
+  assert.match(last.body.messages[1].content, /> 过程：生成学习计划草稿/);
 });
 
 test('会话记录：一轮下来 user / assistant / tool 都落进 jsonl，续接能原样读回', async () => {

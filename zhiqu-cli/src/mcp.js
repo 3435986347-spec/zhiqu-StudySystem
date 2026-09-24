@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { openStream } from './http.js';
 import { SseParser } from './sse.js';
 import { VERSION } from './version.js';
 
@@ -174,34 +175,30 @@ class HttpClient {
   }
 
   async post(body, { signal } = {}) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    if (signal) signal.addEventListener('abort', () => controller.abort(), { once: true });
-    try {
-      const res = await fetch(this.cfg.url, { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal: controller.signal });
-      const sid = res.headers.get('mcp-session-id');
-      if (sid) this.sessionId = sid;
-      if (res.status === 202) return null;
-      if (!res.ok) throw new Error(`HTTP ${res.status}：${(await res.text()).slice(0, 200)}`);
-      const type = res.headers.get('content-type') || '';
-      if (type.includes('text/event-stream')) {
-        let found = null;
-        const parser = new SseParser((_, data) => {
-          try { const m = JSON.parse(data); if (m.id === body.id && (m.result !== undefined || m.error)) found = m; } catch { /* 跳过 */ }
-        });
-        const decoder = new TextDecoder();
-        for await (const chunk of res.body) {
-          parser.feed(decoder.decode(chunk, { stream: true }));
-          if (found) break;
-        }
-        parser.end();
-        return found;
+    // 用 node:http 而不是 fetch：fetch 会让进程退出多等两秒多（见 http.js）
+    const res = await openStream(this.cfg.url, {
+      method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal,
+      idleTimeoutMs: REQUEST_TIMEOUT_MS, connectTimeoutMs: REQUEST_TIMEOUT_MS,
+    });
+    const sid = res.headers['mcp-session-id'];
+    if (sid) this.sessionId = sid;
+    if (res.status === 202) { await res.readAll(); return null; }
+    if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}：${(await res.readAll()).slice(0, 200)}`);
+    const type = String(res.headers['content-type'] || '');
+    if (type.includes('text/event-stream')) {
+      let found = null;
+      const parser = new SseParser((_, data) => {
+        try { const m = JSON.parse(data); if (m.id === body.id && (m.result !== undefined || m.error)) found = m; } catch { /* 跳过 */ }
+      });
+      for await (const chunk of res.body) {
+        parser.feed(chunk);
+        if (found) break;
       }
-      const text = await res.text();
-      return text ? JSON.parse(text) : null;
-    } finally {
-      clearTimeout(timer);
+      parser.end();
+      return found;
     }
+    const text = await res.readAll();
+    return text ? JSON.parse(text) : null;
   }
 
   async request(method, params, opts) {

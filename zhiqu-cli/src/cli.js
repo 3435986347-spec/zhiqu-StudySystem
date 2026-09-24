@@ -11,7 +11,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Api, ApiError } from './api.js';
-import { archiveTurn, compactNow, hostName, runTurn, setMode } from './agent.js';
+import { archiveTurn, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode } from './agent.js';
+import { newGoal } from './goal.js';
 import { loadUserConfig, normalizeMode, resetSystemContent, resolveSettings, saveUserConfig, stripSlash, systemContent, userDir, MODES } from './config.js';
 import { displayPath, initPrompt, instructionsBlock, loadInstructions } from './instructions.js';
 import { McpManager } from './mcp.js';
@@ -45,6 +46,7 @@ export function parseArgs(argv) {
     else if (a === '--no-browser') flags.noBrowser = true;
     else if (a === '--allow-broad-root') flags.allowBroadRoot = true;
     else if (a === '--no-mcp') flags.noMcp = true;
+    else if (a === '--goal') flags.goal = next();
     else if (a === '-v' || a === '--version') flags.version = true;
     else if (a === '-h' || a === '--help') flags.help = true;
     else if (a.startsWith('-')) throw new Error(`不认识的参数：${a}（zhiqu help 查看用法）`);
@@ -60,6 +62,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
   zhiqu -p "帮我写个贪吃蛇"    只跑这一句，打印回答后退出
   zhiqu -c                    接着上一段会话
   zhiqu --resume [id]         挑一段会话接着做
+  zhiqu --goal "目标"          goal 模式：一直做到目标达成并核对通过（配 -p 可以无人值守；退出码 0 达成 / 2 卡住 / 3 轮数用完）
   zhiqu login [--server URL]  登录（浏览器里确认，命令行不接触密码）
   zhiqu login --token zqp_…   用个人中心签的令牌登录
   zhiqu logout | whoami | models | help | --version
@@ -75,7 +78,9 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
   ~/.zhiqu/config.json        服务器、令牌、默认模型、默认档位
   <工作区>/.zhiqu/            settings.json、system.md、skills/、mcp.json、会话记录`;
 
-const SLASH_HELP = `/mode [plan|ask|auto]   切换档位（只读出计划 / 逐个确认 / 全自动）
+const SLASH_HELP = `/goal <目标>            goal 模式：把它当圣目标，一直做到达成并核对通过（Ctrl+C 随时停）
+/goal                   看当前目标；/goal continue 接着追；/goal clear 放下
+/mode [plan|ask|auto]   切换档位（只读出计划 / 逐个确认 / 全自动）
 /model [id|default]     查看 / 切换模型
 /resume                 列出这个工作区的会话，挑一段接着做
 /new                    开一段新会话
@@ -205,8 +210,9 @@ function resumeInto(ctx, id) {
   const loaded = ctx.store.load(id);
   ctx.session = loaded.meta;
   ctx.messages = loaded.messages;
-  ctx.archiveOpened = false;
   if (loaded.mode && MODES.includes(loaded.mode)) ctx.mode = loaded.mode;
+  ctx.goal = loaded.goal || null;
+  if (ctx.goal && ctx.goal.status === 'active') ctx.ui.note(`· 这段会话有一个还没完成的目标：${ctx.goal.text}（/goal continue 接着追）`);
   ctx.store.touch(id);
   ctx.ui.note(`· 接着「${loaded.meta.title || '（无标题）'}」这段会话（${loaded.messages.length} 条记录${loaded.broken ? `，${loaded.broken} 行坏了已跳过` : ''}）`);
 }
@@ -215,6 +221,7 @@ function banner(ctx) {
   const { ui } = ctx;
   ui.line(`${ui.paint.bold(`zhiqu ${VERSION}`)} · ${ctx.settings.server}`);
   ui.line(`📁 ${path.basename(ctx.root)}/  ${ui.paint.dim(ctx.root)}`);
+  if (ctx.goal && ctx.goal.status === 'active') ui.line(ui.paint.bold(`🎯 目标：${ctx.goal.text}`));
   const bits = [`档位：${MODE_LABEL[ctx.mode]}`, `模型：${ctx.model.label}`];
   const n = ctx.instructions.files.length;
   if (n) bits.push(`已加载 ${n} 份说明（${ctx.instructions.files.map((f) => displayPath(f.file, ctx.root, userDir())).join('、')}）`);
@@ -263,9 +270,13 @@ async function runAgent(cwd, flags) {
     usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
   };
   try {
-    await api.get('/api/harness/me');
-    await pickModel(ctx, flags.model ?? settings.model);
-    ctx.remoteTools = await api.get('/api/harness/tools').catch((e) => { ui.warn(`远程工具（Wiki / 计划 / 记忆）拿不到：${e.message}`); return []; });
+    // 三个请求互不依赖，一起发（原来一个等一个，服务器远的时候启动慢一倍多）
+    const [, , remote] = await Promise.all([
+      api.get('/api/harness/me'),
+      pickModel(ctx, flags.model ?? settings.model),
+      api.get('/api/harness/tools').catch((e) => { ui.warn(`远程工具（Wiki / 计划 / 记忆）拿不到：${e.message}`); return []; }),
+    ]);
+    ctx.remoteTools = remote;
   } catch (e) {
     if (e instanceof ApiError && e.auth) { ui.error(e.message); return 1; }
     throw e;
@@ -273,24 +284,48 @@ async function runAgent(cwd, flags) {
   loadContext(ctx);
   openSession(ctx, flags);
   if (modeFlag) ctx.mode = modeFlag;
+  if (flags.goal) {
+    ctx.goal = newGoal(flags.goal);
+    recordGoal(ctx);
+  }
   const updateCheck = checkForUpdate(api).then((v) => updateMessage(v)).catch(() => null);
 
-  if (flags.print != null) {
+  if (flags.print != null || (flags.goal && !process.stdin.isTTY)) {
     await startMcp(ctx, flags);
-    const code = await oneShot(ctx, flags.print);
+    const code = flags.goal ? await goalShot(ctx) : await oneShot(ctx, flags.print);
+    await flushArchive(ctx);
     ctx.mcp && ctx.mcp.close();
     ui.close();
     return code;
   }
 
   banner(ctx);
-  const updateNote = await Promise.race([updateCheck, new Promise((r) => setTimeout(() => r(null), 1500))]);
+  // MCP 在后台连：用户打第一句话的这段时间里它就连好了；第一轮开始前再等它（见 turn）
+  ctx.mcpReady = startMcp(ctx, flags).catch((e) => ui.warn(`MCP 启动失败：${e.message}`));
+  const updateNote = await Promise.race([updateCheck, new Promise((r) => setTimeout(() => r(null), 1500).unref())]);
   if (updateNote) ui.warn(updateNote);
-  await startMcp(ctx, flags);
-  const code = await repl(ctx);
+  const onUnhandled = (e) => ui.error(`内部错误（会话没有受影响）：${e && e.message ? e.message : e}`);
+  process.on('unhandledRejection', onUnhandled);
+  const code = await repl(ctx, flags);
+  process.off('unhandledRejection', onUnhandled);
+  await flushArchive(ctx);
   ctx.mcp && ctx.mcp.close();
   ui.close();
   return code;
+}
+
+/** 无人值守地追一个目标（--goal 配 -p，或者输入不是终端）。退出码：0 达成、2 卡住、3 轮数用完、1 出错 / 被打断。 */
+async function goalShot(ctx) {
+  const controller = new AbortController();
+  ctx.ui.onInterrupt = () => controller.abort();
+  process.once('SIGINT', () => controller.abort());
+  try {
+    const outcome = await runGoal(ctx, { signal: controller.signal, onTurn: (text, result) => archiveTurn(ctx, text, result) });
+    return { achieved: 0, blocked: 2, exhausted: 3 }[outcome] ?? 1;
+  } catch (e) {
+    ctx.ui.error(e.message);
+    return 1;
+  }
 }
 
 async function oneShot(ctx, prompt) {
@@ -299,7 +334,7 @@ async function oneShot(ctx, prompt) {
   process.once('SIGINT', () => controller.abort());
   try {
     const result = await runTurn(ctx, prompt, { signal: controller.signal });
-    await archiveTurn(ctx, prompt, result);
+    archiveTurn(ctx, prompt, result);
     return 0;
   } catch (e) {
     ctx.ui.error(e.message);
@@ -320,7 +355,7 @@ async function readInput(ui) {
   return text;
 }
 
-async function repl(ctx) {
+async function repl(ctx, flags = {}) {
   const { ui } = ctx;
   let running = null;
   let lastInterrupt = 0;
@@ -334,6 +369,10 @@ async function repl(ctx) {
     lastInterrupt = Date.now();
     ui.line(ui.paint.dim('\n（再按一次 Ctrl+C 退出，或者输入 /exit）'));
   };
+  if (flags.goal) {
+    await pursue(ctx, (c) => { running = c; });
+    running = null;
+  }
   for (;;) {
     ui.line();
     const input = await readInput(ui);
@@ -347,6 +386,10 @@ async function repl(ctx) {
         await turn(ctx, r.turn, (c) => { running = c; });
         running = null;
       }
+      if (r === 'goal') {
+        await pursue(ctx, (c) => { running = c; });
+        running = null;
+      }
       continue;
     }
     await turn(ctx, text, (c) => { running = c; });
@@ -355,15 +398,37 @@ async function repl(ctx) {
   return 0;
 }
 
+async function pursue(ctx, setRunning) {
+  const controller = new AbortController();
+  setRunning(controller);
+  if (ctx.mcpReady) {
+    await ctx.mcpReady;
+    ctx.mcpReady = null;
+  }
+  try {
+    await runGoal(ctx, { signal: controller.signal, onTurn: (text, result) => archiveTurn(ctx, text, result) });
+  } catch (e) {
+    if (controller.signal.aborted || (e && e.name === 'AbortError')) {
+      ctx.ui.note('（已停下；/goal continue 接着追）');
+      return;
+    }
+    ctx.ui.error(e.message);
+  }
+}
+
 async function turn(ctx, text, setRunning) {
   const controller = new AbortController();
   setRunning(controller);
+  if (ctx.mcpReady) {
+    await ctx.mcpReady;
+    ctx.mcpReady = null;
+  }
   try {
     const result = await runTurn(ctx, text, { signal: controller.signal });
     if (controller.signal.aborted) return;
     if (result.changedFiles.length) ctx.ui.note(`· 这一轮改动的文件：${result.changedFiles.join('、')}`);
     ctx.changedFiles = new Set();
-    await archiveTurn(ctx, text, result);
+    archiveTurn(ctx, text, result);   // 后台发，不挡下一句话
   } catch (e) {
     if (controller.signal.aborted || (e && e.name === 'AbortError')) return;
     ctx.ui.error(e.message);
@@ -378,6 +443,26 @@ async function slash(ctx, text) {
   switch (cmd) {
     case '/exit': case '/quit': return 'exit';
     case '/help': ui.line(SLASH_HELP); return null;
+    case '/goal': {
+      if (!arg) {
+        if (!ctx.goal) { ui.line('没有目标。/goal <目标> 设一个：它会一直做到目标达成并核对通过'); return null; }
+        const st = { active: '进行中', achieved: '已达成', blocked: '卡住了' }[ctx.goal.status];
+        ui.line(`🎯 ${ctx.goal.text}\n状态：${st} · 已推进 ${ctx.goal.turns} 轮${ctx.goal.blocker ? `\n卡在：${ctx.goal.blocker}` : ''}${ctx.goal.evidence ? `\n证据：${ctx.goal.evidence}` : ''}`);
+        return null;
+      }
+      if (arg === 'clear') { ctx.goal = null; recordGoal(ctx); ui.line('已放下目标'); return null; }
+      if (arg === 'continue') {
+        if (!ctx.goal) { ui.error('没有目标可以接着追'); return null; }
+        ctx.goal.status = 'active';
+        recordGoal(ctx);
+        return 'goal';
+      }
+      ctx.goal = newGoal(arg);
+      recordGoal(ctx);
+      ui.line(ui.paint.bold(`🎯 目标：${ctx.goal.text}`));
+      if (ctx.mode !== 'auto') ui.note(`（现在是 ${ctx.mode} 档：写文件、跑命令还会逐个问你。想让它自己一路做完，/mode auto）`);
+      return 'goal';
+    }
     case '/mode': {
       if (!arg) { ui.line(`当前档位：${MODE_LABEL[ctx.mode]}\n可选：${MODES.map((m) => `${m} = ${MODE_LABEL[m]}`).join('；')}`); return null; }
       const m = normalizeMode(arg);
@@ -401,7 +486,6 @@ async function slash(ctx, text) {
     case '/new':
       ctx.session = ctx.store.create({ model: ctx.model.label });
       ctx.messages = [];
-      ctx.archiveOpened = false;
       ui.line('已开一段新会话');
       return null;
     case '/resume': case '/sessions': {
