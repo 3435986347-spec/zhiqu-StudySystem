@@ -90,15 +90,15 @@ test('模型编了一个不存在的工具名（replace）：说清「不是暂�
   assert.equal(fs.readFileSync(path.join(root, 'a.js'), 'utf8'), 'const x = 2;\n');
 });
 
-test('别家的工具名各自指到这里的对应工具；删除文件明说没有，让模型告诉用户', async () => {
+test('别家的工具名各自指到这里的对应工具（rm → delete_file）', async () => {
   const ctx = makeCtx({ replies: [
-    { calls: [{ name: 'str_replace', args: {} }, { name: 'bash', args: {} }, { name: 'delete_file', args: {} }, { name: 'frobnicate', args: {} }] },
+    { calls: [{ name: 'str_replace', args: {} }, { name: 'bash', args: {} }, { name: 'rm', args: {} }, { name: 'frobnicate', args: {} }] },
     { text: '好' }] });
   await runTurn(ctx, '做');
   const [strReplace, bash, del, unknown] = toolMessages(ctx);
   assert.match(strReplace, /write_file 的替换用法/);
   assert.match(bash, /run_command/);
-  assert.match(del, /没有删除文件的工具.*告诉用户/);
+  assert.match(del, /没有叫 rm 的工具.*删除文件用 delete_file/);
   assert.match(unknown, /没有叫 frobnicate 的工具.*能用的工具：/);
 });
 
@@ -186,4 +186,40 @@ test('MCP 工具第一次用要问 —— auto 档也问；说 n 就不调', asy
   await runTurn(ok, '用两次');
   assert.equal(called.length, 2);
   assert.equal((ok.ui.text().match(/第一次调用 MCP 工具/g) || []).length, 1, '选了「本会话都允许」之后不该再问');
+});
+
+test('delete_file：plan 档不给；ask 档逐个问、说 n 就不删；auto 删完再汇报，这一轮改动里写着「已删除」', async () => {
+  assert.ok(!names(makeCtx({ mode: 'plan' })).includes('delete_file'));
+
+  const askRoot = tmpdir();
+  write(askRoot, 'check.js', 'x\n');
+  const ask = makeCtx({ mode: 'ask', root: askRoot, answers: ['n'], replies: [
+    { calls: [{ name: 'read_file', args: { path: 'check.js' } }] },
+    { calls: [{ name: 'delete_file', args: { path: 'check.js' } }] },
+    { text: '好' }] });
+  await runTurn(ask, '删掉临时文件');
+  assert.ok(fs.existsSync(path.join(askRoot, 'check.js')), '说了 n 还是删了');
+  assert.match(ask.ui.text(), /删除 check\.js（1 行，挪进 \.zhiqu\/trash\/，能恢复）？/);
+  assert.match(toolMessages(ask)[1], /用户没有同意删除 check\.js/);
+
+  const autoRoot = tmpdir();
+  const auto = makeCtx({ root: autoRoot, replies: [
+    { calls: [{ name: 'write_file', args: { path: 'check.js', content: 'x\n' } }] },
+    { calls: [{ name: 'delete_file', args: { path: 'check.js' } }] },
+    { text: '做完了' }] });
+  const r = await runTurn(auto, '写个校验脚本跑完删掉');
+  assert.ok(!fs.existsSync(path.join(autoRoot, 'check.js')));
+  assert.ok(!auto.ui.text().includes('删除 check.js（'), 'auto 不该问');
+  assert.ok(r.changedFiles.includes('check.js（已删除）'), JSON.stringify(r.changedFiles));
+});
+
+test('ask 档里「本会话都允许写」不等于允许删', async () => {
+  const root = tmpdir();
+  const ctx = makeCtx({ mode: 'ask', root, answers: ['a', 'n'], replies: [
+    { calls: [{ name: 'write_file', args: { path: 'a.js', content: 'x\n' } }] },
+    { calls: [{ name: 'delete_file', args: { path: 'a.js' } }] },
+    { text: '好' }] });
+  await runTurn(ctx, '写完再删');
+  assert.ok(fs.existsSync(path.join(root, 'a.js')), '允许写之后，删除没问就删了');
+  assert.match(ctx.ui.text(), /删除 a\.js（/);
 });

@@ -49,7 +49,9 @@ zhiqu login [--server URL]  登录；--token zqp_… 用个人中心签的令牌
 zhiqu logout | whoami | models
 ```
 
-会话里：`/goal`、`/mode`、`/model`、`/resume`、`/new`、`/compact`、`/init`、`/skills`、`/mcp`、`/system`、`/usage`、`/exit`。
+会话里：`/goal`、`/mode`、`/model`、`/resume`、`/new`、`/compact`、`/init`、`/skills`、`/mcp`、`/system`、`/usage`、`/exit`。输入 `/` 会在输入行上方弹出命令菜单：↑↓ 选、回车执行、Tab 补全后接着打参数、Esc 关掉。`/resume` 接上一段会话时会先把那段的聊天记录显示出来。
+
+本地工具：`list_files`、`read_file`、`search`、`write_file`（新建 / 追加 / 替换一段）、`delete_file`（挪进 `.zhiqu/trash/`，能恢复）、`run_command`。模型不能改、不能删 `.zhiqu/` 与 `.git/` 里的文件。
 行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事。它干活的时候输入框一直在底下：可以接着打下一句，按回车就排队，
 这一轮做完自动发出。
 

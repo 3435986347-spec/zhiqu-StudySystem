@@ -82,12 +82,16 @@ export function systemText(ctx) {
   return buildSystemMessage({ systemText: goal ? `${ctx.system.text.trim()}\n\n${goal}` : ctx.system.text, env, instructions: ctx.instructionsText, skills: ctx.skillsText });
 }
 
-function record(ctx, message) {
+/**
+ * origin：这条 user 消息不是用户打的（goal 模式推的下一轮 'goal'、命令行自己补的说明 'system'）。
+ * /resume 回放记录时靠它区分 —— 否则它们会显示成「› …」，像是用户说的。
+ */
+function record(ctx, message, origin = null) {
   ctx.messages.push(message);
-  if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'message', message });
+  if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, origin ? { type: 'message', message, origin } : { type: 'message', message });
 }
 
-function parseArgs(raw) {
+export function parseArgs(raw) {
   if (raw == null || raw === '') return { ok: true, value: {} };
   try {
     const v = JSON.parse(raw);
@@ -194,6 +198,16 @@ async function confirmWrite(ctx, prep) {
   return pick === 'y' || pick === 'a';
 }
 
+/** 删除单独一道确认、单独一个「本会话都允许」：允许了随便写，不等于允许了随便删。 */
+async function confirmDelete(ctx, prep) {
+  if (ctx.mode === 'auto' || (ctx.allow && ctx.allow.delete)) return true;
+  const pick = await ctx.ui.choose(`删除 ${prep.rel}（${prep.lines} 行，挪进 .zhiqu/trash/，能恢复）？`, [
+    { key: 'y', label: '删除' }, { key: 'n', label: '不删' }, { key: 'a', label: '本会话都允许删除' },
+  ], 'n');
+  if (pick === 'a') ctx.allow.delete = true;
+  return pick === 'y' || pick === 'a';
+}
+
 async function confirmRun(ctx, prep) {
   if (ctx.mode === 'auto' || ctx.allow.run) return true;
   const pick = await ctx.ui.choose(`运行 ${[prep.command, ...prep.args].join(' ')}${prep.cwdRel === '.' ? '' : `（在 ${prep.cwdRel}）`}？`, [
@@ -234,12 +248,13 @@ export function setMode(ctx, mode) {
   if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'mode', mode });
 }
 
-function describeCall(name, args) {
+export function describeCall(name, args) {
   switch (name) {
     case 'list_files': return `列出 ${args.path || '工作区根'}`;
     case 'read_file': return `读取 ${args.path}${args.offset ? `（从第 ${args.offset} 行）` : ''}`;
     case 'search': return `搜索「${args.query}」${args.path ? `（在 ${args.path}）` : ''}`;
     case 'write_file': return `${args.old_string != null ? '修改' : args.append ? '追加到' : '写入'} ${args.path}`;
+    case 'delete_file': return `删除 ${args.path}`;
     case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
     case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
     case 'exit_plan_mode': return '提交计划';
@@ -265,8 +280,8 @@ const TOOL_ALIASES = [
     'write_file', '改文件里的一段用 write_file 的替换用法：传 path、old_string（原文，一字不差、只出现一次）、new_string。'],
   [/^(create_file|write|write_to_file|save_file|new_file|create)$/i,
     'write_file', '新建或整份写文件用 write_file（path + content），追加用 append: true。'],
-  [/^(delete_file|delete|remove|remove_file|rm|unlink)$/i,
-    null, '没有删除文件的工具，run_command 也不许跑 rm。要删的话，在回答里告诉用户删哪个文件、为什么。'],
+  [/^(delete|remove|remove_file|rm|unlink|delete_path|trash)$/i,
+    'delete_file', '删除文件用 delete_file（传 path；读过或写过的才能删，删掉的挪进 .zhiqu/trash/，能恢复）。'],
   [/^(bash|shell|sh|exec|execute|execute_command|run|run_shell|run_terminal_cmd|terminal)$/i,
     'run_command', '跑命令用 run_command：command 是命令名，args 是参数数组（不接受整行 shell 字符串）。'],
   [/^(ls|list_dir|list_directory|glob|find_files)$/i, 'list_files', '列目录用 list_files。'],
@@ -336,6 +351,19 @@ async function executeTool(ctx, call, offered, signal) {
       if (r.error) { ui.result(r.error, false); return r.error; }
       ctx.changedFiles.add(prep.rel);
       ui.result(ui.paint.green(`✓ ${r.content.split('（')[0]}  +${r.added} -${r.removed}`));
+      return r.content;
+    }
+    if (name === 'delete_file') {
+      const prep = local.prepareDelete(args);
+      if (prep.error) { ui.result(prep.error, false); return prep.error; }
+      if (!(await confirmDelete(ctx, prep))) {
+        ui.result('用户没有同意，没删', false);
+        return `用户没有同意删除 ${prep.rel}，文件还在。不要原样重试；问问用户想怎么处理。`;
+      }
+      const r = local.commitDelete(prep);
+      if (r.error) { ui.result(r.error, false); return r.error; }
+      ctx.changedFiles.add(`${prep.rel}（已删除）`);
+      ui.result(ui.paint.green(`✓ 已删除 ${prep.rel}`) + ui.paint.dim(`  → ${r.trashed}`));
       return r.content;
     }
     if (name === 'run_command') {
@@ -441,10 +469,10 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
 
 // ── 一轮 ────────────────────────────────────────────────────────────────
 
-export async function runTurn(ctx, userText, { signal } = {}) {
+export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   ctx.steps = [];
   ctx.changedFiles = ctx.changedFiles || new Set();
-  record(ctx, { role: 'user', content: userText });
+  record(ctx, { role: 'user', content: userText }, origin);
   if (ctx.session && ctx.store && !ctx.session.title) {
     ctx.session.title = userText.replace(/\s+/g, ' ').slice(0, 40);
     ctx.store.touch(ctx.session.id, { title: ctx.session.title });
@@ -479,7 +507,7 @@ export async function runTurn(ctx, userText, { signal } = {}) {
         continue;
       }
       if (continuations++ < MAX_CONTINUATIONS) {
-        record(ctx, { role: 'user', content: '（你的回答被输出上限截断了，请从断开的地方接着说，不要重复前面的内容）' });
+        record(ctx, { role: 'user', content: '（你的回答被输出上限截断了，请从断开的地方接着说，不要重复前面的内容）' }, 'system');
         continue;
       }
       finalText = message.content || '';
@@ -580,7 +608,7 @@ export async function runGoal(ctx, { signal, maxTurns = DEFAULT_MAX_GOAL_TURNS, 
     if (signal && signal.aborted) return 'aborted';
     goal.turns += 1;
     ui.note(`· 🎯 目标第 ${goal.turns} 轮`);
-    const result = await runTurn(ctx, text, { signal });
+    const result = await runTurn(ctx, text, { signal, origin: 'goal' });
     for (const f of result.changedFiles) ctx.goalChangedFiles.add(f);
     if (onTurn) onTurn(text, result);
     if (signal && signal.aborted) return 'aborted';

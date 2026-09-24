@@ -139,6 +139,24 @@ export class SessionStore {
     }
     return { meta, messages: dropDanglingToolCalls(messages), mode, goal, broken };
   }
+
+  /**
+   * 给人看的完整记录：每一条原话按顺序。和 load() 不一样的地方 —— 压缩<b>不</b>替换前面的消息
+   * （压缩只影响发给模型的那一份；用户翻回去要看的是原话），只在压缩发生的位置留一个标记。
+   */
+  transcript(id) {
+    const text = fs.existsSync(this.file(id)) ? fs.readFileSync(this.file(id), 'utf8') : '';
+    const out = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let e;
+      try { e = JSON.parse(line); } catch { continue; }
+      if (e.type === 'message' && e.message) out.push({ kind: 'message', message: e.message, origin: e.origin || null, at: e.at });
+      else if (e.type === 'compact') out.push({ kind: 'compact', at: e.at });
+      else if (e.type === 'mode' && e.mode) out.push({ kind: 'mode', mode: e.mode, at: e.at });
+    }
+    return out;
+  }
 }
 
 /**

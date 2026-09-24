@@ -1,4 +1,4 @@
-// 本地五个工具：list_files / read_file / search / write_file / run_command。全部在用户电脑上执行。
+// 本地六个工具：list_files / read_file / search / write_file / delete_file / run_command。全部在用户电脑上执行。
 //
 // 写入分两步（prepare → commit）：中间是权限这一关（ask 档要给用户看 diff、问 y/n）。commit 时再比一次磁盘，
 // 确认期间文件被改过就不写 —— 用户在编辑器里的改动不能被一个旧草稿覆盖。
@@ -56,6 +56,11 @@ export function localSchemas() {
       old_string: { type: 'string', description: '替换用法：要被替换的原文' },
       new_string: { type: 'string', description: '替换用法：替换成的新文字' },
     }, ['path']),
+    fn('delete_file', [
+      '删除工作区里的一个文件（只能是文件，不能是目录）。',
+      '和改文件一样：这段会话里读过或写过、之后没被改过的文件才能删。',
+      '不是直接抹掉：挪进 .zhiqu/trash/ 里，要恢复挪回来就行。自己建的临时文件（校验脚本之类）用完就删掉它。',
+    ].join('\n'), { path: { type: 'string', description: '相对工作区根的路径' } }, ['path']),
     fn('run_command', '在工作区里运行一条命令（命令名 + 参数数组，不经过 shell）。用来跑测试、构建、运行刚写好的程序。',
       { command: { type: 'string', description: '命令名，如 node、python3、npm' },
         args: { type: 'array', items: { type: 'string' }, description: '参数，一项一个' },
@@ -64,6 +69,29 @@ export function localSchemas() {
 }
 
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+
+/*
+ * 模型不许改、不许删的目录。.zhiqu 是命令行自己的配置：settings.json 里有允许跑的命令、mcp.json 里的服务器
+ * 下次启动就会被拉起来、system.md 和 skills 是模型自己的指令 —— 让模型写它们，等于让它给自己加权限、
+ * 改自己的规矩（auto 档连问都不问）。.git 是版本库本身。读不拦：那里没有令牌（令牌只在 ~/.zhiqu/config.json）。
+ * 这是命令行自己的规矩，所以放在这里，不放进与服务器共用一致性用例的 WorkspaceGuard。
+ */
+const PROTECTED_DIRS = new Set(['.zhiqu', '.git']);
+
+/** 按「软链都解开之后」的真实位置算相对路径：cfg -> .zhiqu 这种目录软链不能成为绕过去的路。 */
+function realRelative(root, abs) {
+  let existing = abs;
+  const tail = [];
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    tail.unshift(path.basename(existing));
+    existing = parent;
+  }
+  let real = existing;
+  try { real = fs.realpathSync.native(existing); } catch { /* 用原样 */ }
+  return path.relative(root, path.join(real, ...tail)).split(path.sep).join('/');
+}
 const lineCount = (s) => (s === '' ? 0 : s.split('\n').length - (s.endsWith('\n') ? 1 : 0));
 
 export class LocalTools {
@@ -192,10 +220,24 @@ export class LocalTools {
 
   // ── 写 ────────────────────────────────────────────────────────────────
 
+  /** 落在 .zhiqu / .git 里就返回那个目录名。大小写不敏感：macOS 默认的文件系统上 .ZHIQU 就是 .zhiqu。 */
+  protectedDir(abs) {
+    const top = realRelative(this.root, abs).split('/')[0].toLowerCase();
+    return PROTECTED_DIRS.has(top) ? top : null;
+  }
+
+  protectedError(dir, rel, verb) {
+    return dir === '.zhiqu'
+      ? `${rel} 在 .zhiqu 里 —— 那是命令行自己的配置（允许的命令、MCP 服务器、系统内容），不能由你来${verb}。要改的话，把要改成什么告诉用户，让用户自己改。`
+      : `${rel} 在 .git 里 —— 那是版本库本身，不能由你来${verb}。`;
+  }
+
   prepareWrite(args = {}) {
     const w = this.guard.resolveWritable(args.path);
     if (w.reason !== Reason.OK) return { error: describe(w.reason, args.path, this.guard.maxFileBytes) };
     const rel = this.guard.display(w.path);
+    const guarded = this.protectedDir(w.path);
+    if (guarded) return { error: this.protectedError(guarded, rel, '改') };
     const exists = fs.existsSync(w.path);
     const current = exists ? fs.readFileSync(w.path) : null;
     const currentText = current ? current.toString('utf8') : '';
@@ -261,6 +303,40 @@ export class LocalTools {
     return { content: `${what} ${prep.rel}${dirs}（+${added} -${removed}，现在共 ${lines} 行）`, summary: `+${added} -${removed}`, added, removed };
   }
 
+  // ── 删除 ──────────────────────────────────────────────────────────────
+
+  /**
+   * 删除也分两步（中间是权限这一关）。规矩和改文件一样：这段会话里读过或写过、之后没被别人改过才能删 ——
+   * 没看过就删，和没读过就改一样，是拿想象中的文件做决定。
+   * 路径的判定就是写入那一套（工作区内、不跟软链、只许普通文件、扩展名白名单），外加 .git / .zhiqu 里的不许删。
+   */
+  prepareDelete(args = {}) {
+    const w = this.guard.resolveWritable(args.path);
+    if (w.reason !== Reason.OK) return { error: describe(w.reason, args.path, this.guard.maxFileBytes) };
+    const rel = this.guard.display(w.path);
+    const guarded = this.protectedDir(w.path);
+    if (guarded) return { error: this.protectedError(guarded, rel, '删') };
+    if (!fs.existsSync(w.path)) return { error: `${rel} 不存在，没什么可删的。` };
+    const current = fs.readFileSync(w.path);
+    const known = this.known.get(rel);
+    if (!known) return { error: `删除一个文件之前必须先 read_file 看过它：${rel}。没看过就删，是拿想象中的文件做决定。` };
+    if (known.hash !== sha(current)) return { error: `${rel} 在你读过之后被改过了（可能是用户在编辑器里改的），请重新 read_file 看过再决定删不删。` };
+    const text = current.toString('utf8');
+    return { rel, abs: w.path, baseline: known.hash, lines: lineCount(text), bytes: current.length };
+  }
+
+  commitDelete(prep) {
+    const now = fs.existsSync(prep.abs) ? sha(fs.readFileSync(prep.abs)) : null;
+    if (now !== prep.baseline) return { error: `${prep.rel} 在确认期间被改过了，没有删除。请重新读一遍再决定。` };
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const trashed = path.join(this.root, '.zhiqu', 'trash', stamp, ...prep.rel.split('/'));
+    fs.mkdirSync(path.dirname(trashed), { recursive: true });
+    fs.renameSync(prep.abs, trashed);   // 同一个卷里改名：不是抹掉，挪回来就恢复
+    this.known.delete(prep.rel);
+    const where = this.guard.display(trashed);
+    return { content: `已删除 ${prep.rel}（挪进了 ${where}，要恢复就挪回原处）`, trashed: where };
+  }
+
   // ── 运行 ──────────────────────────────────────────────────────────────
 
   prepareRun(args = {}) {
@@ -269,7 +345,10 @@ export class LocalTools {
       return { error: 'args 必须是数组，一项一个参数（不接受一整条 shell 命令）' };
     }
     const check = checkCommand(this.commands, args.command, argv);
-    if (check.refusal !== ExecRefusal.OK) return { error: describeRefusal(check, this.commands) };
+    if (check.refusal !== ExecRefusal.OK) {
+      const deleting = /^(rm|del|erase|rmdir|unlink)$/i.test(String(args.command || '').trim());
+      return { error: describeRefusal(check, this.commands) + (deleting ? '删除文件用 delete_file（一次一个，删掉的挪进 .zhiqu/trash/，能恢复）。' : '') };
+    }
     const dir = this.guard.resolveDirectory(args.cwd);
     if (dir.reason !== Reason.OK) return { error: `工作目录不可用：${describe(dir.reason, args.cwd || '.')}` };
     const command = String(args.command).trim();

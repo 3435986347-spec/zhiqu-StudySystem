@@ -84,3 +84,17 @@ test('核对员的回答解析：夹在文字里的 JSON 也认；解析不了�
   assert.equal(parseVerdict('我觉得可以').achieved, false);
   assert.equal(parseVerdict('{"achieved": "yes"}').achieved, false, '只认布尔 true');
 });
+
+test('goal 推的每一轮（开头、没宣告就想停、核对没过）在会话记录里都标成 goal —— /resume 回放时不冒充用户说的话', async () => {
+  const ctx = ctxWith([{ text: '先这样。' }, ACHIEVED, { text: '好了' }, { text: '{"achieved": false, "missing": "没跑测试"}' },
+    ACHIEVED, { text: '跑过了' }, VERIFIED]);
+  await runGoal(ctx);
+  const fs = await import('node:fs');
+  const entries = fs.readFileSync(ctx.store.file(ctx.session.id), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    .filter((e) => e.type === 'message' && e.message.role === 'user');
+  assert.ok(entries.length >= 3, `goal 至少推了三轮：${entries.length}`);
+  for (const e of entries) assert.equal(e.origin, 'goal', `没标成 goal：${e.message.content.slice(0, 30)}`);
+  const { replayTranscript } = await import('../src/replay.js');
+  const ui = fakeUi();
+  assert.equal(replayTranscript(ui, ctx.store.transcript(ctx.session.id)), 0, ui.text());
+});

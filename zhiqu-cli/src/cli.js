@@ -13,6 +13,8 @@ import path from 'node:path';
 import { Api, ApiError } from './api.js';
 import { archiveTurn, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode } from './agent.js';
 import { newGoal } from './goal.js';
+import { SLASH_COMMANDS, slashHelp } from './commands.js';
+import { replayTranscript } from './replay.js';
 import { DEFAULT_SERVER, loadUserConfig, normalizeMode, resetSystemContent, resolveSettings, saveUserConfig, stripSlash, systemContent, userDir, MODES } from './config.js';
 import { isLoopbackUrl } from './defaults.js';
 import { displayPath, initPrompt, instructionsBlock, loadInstructions } from './instructions.js';
@@ -79,20 +81,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
   ~/.zhiqu/config.json        服务器、令牌、默认模型、默认档位
   <工作区>/.zhiqu/            settings.json、system.md、skills/、mcp.json、会话记录`;
 
-const SLASH_HELP = `/goal <目标>            goal 模式：把它当圣目标，一直做到达成并核对通过（Ctrl+C 随时停）
-/goal                   看当前目标；/goal continue 接着追；/goal clear 放下
-/mode [plan|ask|auto]   切换档位（只读出计划 / 逐个确认 / 全自动）
-/model [id|default]     查看 / 切换模型
-/resume                 列出这个工作区的会话，挑一段接着做
-/new                    开一段新会话
-/compact                现在就把较早的对话压成摘要
-/init                   读项目，写一份 ZHIQU.md 初稿
-/skills                 列出可用的 skills
-/mcp                    MCP 服务器与工具
-/system [path|diff|reset]  系统内容（~/.zhiqu/system.md）
-/usage                  这次会话与今天的用量
-/exit                   退出（也可以 Ctrl+D）
-行尾加 \\ 可以换行接着输入。Ctrl+C 打断正在做的事。`;
+const SLASH_HELP = slashHelp();
 
 export async function main(argv) {
   const flags = parseArgs(argv);
@@ -207,7 +196,7 @@ function openSession(ctx, flags) {
   ctx.messages = [];
 }
 
-function resumeInto(ctx, id) {
+export function resumeInto(ctx, id) {
   const loaded = ctx.store.load(id);
   ctx.session = loaded.meta;
   ctx.messages = loaded.messages;
@@ -215,6 +204,7 @@ function resumeInto(ctx, id) {
   ctx.goal = loaded.goal || null;
   if (ctx.goal && ctx.goal.status === 'active') ctx.ui.note(`· 这段会话有一个还没完成的目标：${ctx.goal.text}（/goal continue 接着追）`);
   ctx.store.touch(id);
+  replayTranscript(ctx.ui, ctx.store.transcript(id));
   ctx.ui.note(`· 接着「${loaded.meta.title || '（无标题）'}」这段会话（${loaded.messages.length} 条记录${loaded.broken ? `，${loaded.broken} 行坏了已跳过` : ''}）`);
 }
 
@@ -245,7 +235,7 @@ async function startMcp(ctx, flags) {
 }
 
 async function runAgent(cwd, flags) {
-  const ui = new Ui();
+  const ui = new Ui({ commands: SLASH_COMMANDS });
   const root = path.resolve(cwd);
   if (broadRoot(root) && !flags.allowBroadRoot) {
     ui.error(`不在 ${root} 下运行：这里是家目录或根目录，工作区会大到把不相干的东西都卷进来。请 cd 到项目目录（确实要的话加 --allow-broad-root）`);
@@ -267,7 +257,7 @@ async function runAgent(cwd, flags) {
   const ctx = {
     ui, api, root, settings, mode: modeFlag || settings.mode, maxRounds: settings.maxRounds,
     local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs }),
-    store: new SessionStore(root), allow: { write: false, run: false, mcp: new Set() },
+    store: new SessionStore(root), allow: { write: false, run: false, delete: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
   };
   try {
