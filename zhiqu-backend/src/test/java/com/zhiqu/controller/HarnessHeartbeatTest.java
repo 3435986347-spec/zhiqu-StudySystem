@@ -38,7 +38,7 @@ class HarnessHeartbeatTest {
         HarnessModelGateway gateway = mock(HarnessModelGateway.class);
         doAnswer(gatewayBehavior).when(gateway).stream(anyLong(), any(), any());
         HarnessController controller = new HarnessController(gateway, null, null, null, null, null, null, null, null,
-                "0.1.0", "0.1.0", 50);
+                "0.1.0", "0.1.0", new com.zhiqu.service.support.SseHeartbeats(50));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(1L, null, List.of()));
         MvcResult started = mvc.perform(post("/api/harness/model/stream").contentType(MediaType.APPLICATION_JSON)

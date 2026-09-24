@@ -138,6 +138,14 @@ fail tells you nothing (`kill(pid, 0)` reports zombies as alive — see 命令�
 要跳过得写明 `-Dzhiqu.skipNodeTests=true`，和 Docker 那批的 `-Dzhiqu.skipDockerTests=true`
 同一个约定。
 
+**node 把超过自己 `{ timeout }` 的测试记成 `cancelled`，不是 `fail`**（TAP 汇总 `fail 0 / cancelled 1`，
+退出码 1）。2026-09-24 一次全量里 `HarnessCliNodeSuiteTest` 挂了 999 秒、只留下「cancelled 1」，
+日志在临时目录里、已经被清掉，是哪一条再也查不到。所以 `NodeRunner` 现在把没过的（失败 + 被取消）
+连同 `error:` / `location:` 点名放在报错**最前面**；输出写临时文件、`waitFor` 等进程本身 ——
+原来先 `readAllBytes()` 读到 EOF，而测试漏掉的孙子进程会攥着管道写端（实测 20 秒定时器让管道晚关 21 秒），
+那个 300 秒的超时根本轮不到。`node --test` 自己也会等孙子进程，这段等待消不掉，只能保证有上限。
+`NodeRunnerTest` 钉这三件事（外加 stdin 当场给 EOF）。
+
 **扰动还会推翻你写判据时的那个理由。** 2026-09-21：着色器的注释原本写着「先转义再分词会
 漏出标签，那是 XSS 的经典写法」。扰动一跑，那个改动只让「字符串不再被识别」红了，标签
 一个没漏 —— 因为分词器只切分、从不反转义。真正的洞是完全不转义，由另一条判据抓住。
@@ -280,6 +288,13 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
   推理模型想一两分钟时，代理和空闲计时都不会误判。存档改成后台队列，失败的下一轮补，一轮只一个请求。
   同一工作区两个 zhiqu 同时改 `setup.json` 会互相覆盖 → 用 `wx` 锁文件（10 秒没动的旧锁清掉）。
   Windows 上 `npm.cmd` 改成 node 直接跑 `npm-cli.js`（不经过 shell），其它 `.cmd` 明确拒绝。
+- **输入框一直在**（用户要的）：交互终端里一轮开始后，底部固定一块活动区（流式的半行、排队的消息、状态行、readline 的
+  输入行）；输出先擦掉活动区、成行的永久打印、再画回来，输入行交给 readline 自己重画（画之前把它的 `prevRows` 归零）。
+  干活时按回车 = 排队，这一轮结束后自动发出并留下「› 消息」。**权限确认只认问出来之后新打的那一行**（原来会先从队列里
+  拿，一句排着的「再加个功能」会被当成对「写入？」的回答）。判据用 `test/vt.js`（迷你终端模拟器，`\n` 按 ONLCR
+  当 `\r\n` —— libuv 的 raw 模式保留了它）逐字节回放输出再看屏幕。
+- **默认服务器**来自 `package.json` 的 `zhiqu.defaultServer`：仓库里是本机桌面应用（测试用），发布版要指向用户的服务器
+  （`npm run set-server -- https://…`）；`prepublishOnly` 挡住本机地址、非 https、还挂着 `private` 的版本。
 
 ### 命令行 `zhiqu`（Java 版，同一个后端上的 coding agent；已由 npm 版接替）
 
@@ -338,6 +353,23 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
 - **工作区可以新建上级目录了，但不静默**：`newDirectoriesFor` 先报出要建哪些，草稿带着 `newDirectories`，确认框里写出来。
   原先「不替用户建目录」让「放在 test 文件夹里」这种请求直接写失败。
 
+### 稳定性 / 可靠性 / 速度（2026-09-24 第二轮，网页端）
+
+- **网页请求**（`zhiqu-api.js` 的 `request`）：30 秒超时（上传 3 分钟）；GET 对断网、超时、429、502/503/504 重试两次，
+  写操作只在 429 时重试（限流过滤器在业务之前拒的，肯定没处理；断网 / 502 的写操作可能已经生效了）；
+  代理回 HTML 时说「服务器暂时不可用」而不是 `Unexpected token <`。判据 `request-check.js` 直接跑发布的实现。
+- **聊天流**：服务器每 15 秒发一行 SSE 注释当心跳（`SseHeartbeats`，网页聊天与命令行网关共用），前端 75 秒一个字节都
+  没收到就主动断开 —— 原来连接悄悄死掉时读取会永远等下去，界面停在「发送中」，「断线后从库里接回」没有机会启动。
+  前端 `parseSseFrame` 把纯注释帧当成「不是事件」，而不是一个空的 message。
+- **知识 Wiki 打开变快**：`documentTree` 不再解密、返回每一页的正文（前端从不用它，打开某页时还会再取一遍）；
+  系统页（index / log / 维护规则）内容没变就不写库 —— 原来每次打开都重新加密、UPDATE、重建链接，一次读变三次写，
+  系统页版本号跟着每次读一起涨。改名前先确保正文已取回（整页保存要带正文，否则后端拒「内容不能为空」）。
+- **清空记忆**一条语句软删全部消息（原来逐条 `deleteById`，几千条消息就几千条 UPDATE，全程占着用户锁）。
+- **坏密文只有一种失败方式**：`AesGcmCipher.decrypt` 原来把运行时异常原样放行，而这个 JDK 上比 GCM 标签还短的密文
+  抛的是 `ProviderException` —— 一页坏数据能让 RAG 整批索引中断。这是 `RagUnitRegistryIntegrationTest` 在
+  **第一次真正开着 Docker 跑全量**时红出来的：本会话之前 147 条集成测试一直在「跳过」。开 Docker：`open -a Docker`，
+  然后 `mvn -o clean test` 不加 `-Dzhiqu.skipDockerTests`。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -387,7 +419,7 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260924-harness-gateway`.
+  old bundle. Current token: `20260924-resilience`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

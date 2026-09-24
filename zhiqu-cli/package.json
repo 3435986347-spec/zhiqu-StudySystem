@@ -15,8 +15,13 @@
     "node": ">=18.17"
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "set-server": "node scripts/set-default-server.mjs",
+    "prepublishOnly": "node scripts/check-release.mjs"
   },
   "license": "UNLICENSED",
-  "private": true
+  "private": true,
+  "zhiqu": {
+    "defaultServer": "http://127.0.0.1:47615"
+  }
 }

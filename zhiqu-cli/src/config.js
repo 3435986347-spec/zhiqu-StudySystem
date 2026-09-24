@@ -12,7 +12,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { BUILTIN_SYSTEM_PROMPT } from './prompt.js';
 
-export const DEFAULT_SERVER = 'http://127.0.0.1:47615';   // 桌面应用固定监听的端口
+import { packageDefaultServer } from './defaults.js';
+
+// 默认服务器来自 package.json 的 zhiqu.defaultServer：仓库里是本机桌面应用（测试用），发布版是服务器地址。见 defaults.js
+export const DEFAULT_SERVER = packageDefaultServer();
 export const MODES = ['plan', 'ask', 'auto'];
 const MODE_ALIASES = { read: 'plan', readonly: 'plan', write: 'ask', exec: 'auto', confirm: 'ask', default: 'ask' };
 

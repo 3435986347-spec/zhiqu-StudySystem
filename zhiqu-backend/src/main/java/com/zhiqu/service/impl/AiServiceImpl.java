@@ -216,6 +216,8 @@ public class AiServiceImpl implements AiService {
     private final boolean allowPrivateProviderUrl;
     /** 会话临界区互斥:同一用户的「会话解析+首批落库 / 清空记忆」串行执行,持锁期间绝不等模型 */
     private final ConversationLockRegistry conversationLocks;
+    /** 网页聊天流的心跳（与命令行网关同一份）：前置阶段、推理模型长时间没有事件时，连接不被代理当成死的。 */
+    private final com.zhiqu.service.support.SseHeartbeats heartbeats;
     private final TransactionTemplate conversationTx;
 
     public AiServiceImpl(UserAiConfigMapper configMapper,
@@ -255,7 +257,8 @@ public class AiServiceImpl implements AiService {
                          @Value("${app.ai.allow-private-provider-url:false}") boolean allowPrivateProviderUrl,
                          BusinessClock clock,
                          CodeWorkspaceAgent codeWorkspaceAgent,
-                         StudyPlanTool studyPlanTool) {
+                         StudyPlanTool studyPlanTool,
+                         com.zhiqu.service.support.SseHeartbeats heartbeats) {
         this.clock = clock;
         this.codeWorkspaceAgent = codeWorkspaceAgent;
         this.studyPlanTool = studyPlanTool;
@@ -283,6 +286,7 @@ public class AiServiceImpl implements AiService {
         this.cryptoService = cryptoService;
         this.memoryStore = memoryStore;
         this.conversationLocks = conversationLocks;
+        this.heartbeats = heartbeats;
         this.conversationTx = new TransactionTemplate(transactionManager);
         this.restTemplate = createAiRestTemplate();
         this.objectMapper = new ObjectMapper();
@@ -509,12 +513,15 @@ public class AiServiceImpl implements AiService {
                                  Long notebookId, String agentMode, Map<String, Object> contextOptions) {
         // 放宽到 5 分钟：为回答前的 Wiki 工具循环 + 慢模型流式输出留出余量，避免首个 token 前就触发 SSE 总超时
         SseEmitter emitter = new SseEmitter(AiWorkspaceService.STREAM_TIMEOUT_MS);
+        com.zhiqu.service.support.SseHeartbeats.Beat beat = heartbeats.start(emitter);
         CompletableFuture.runAsync(() -> {
             try {
                 streamChatInternal(emitter, userId, message, modelConfigId, enableWebSearch, reasoningMode,
                         notebookId, agentMode, contextOptions == null ? Map.of() : contextOptions);
+                beat.close();
                 emitter.complete();
             } catch (Exception e) {
+                beat.close();
                 if (e instanceof BusinessException) {
                     Map<String, Object> error = new LinkedHashMap<>();
                     error.put("message", e.getMessage() == null ? "AI 流式调用失败" : e.getMessage());
@@ -2554,15 +2561,11 @@ public class AiServiceImpl implements AiService {
             List<AiConversation> conversations = conversationMapper.selectList(
                     new LambdaQueryWrapper<AiConversation>().eq(AiConversation::getUserId, userId)
             );
+            // 一条语句软删掉这个用户的全部消息。原来是「每个会话查出全部消息，再一条一条 deleteById」——
+            // 几千条消息就是几千条 UPDATE，全程占着用户锁和这个事务，同一用户的聊天全被挡住。
+            // @TableLogic 让 delete(wrapper) 变成 UPDATE … SET deleted = 1 WHERE user_id = ? AND deleted = 0。
+            messageMapper.delete(new LambdaQueryWrapper<AiMessage>().eq(AiMessage::getUserId, userId));
             for (AiConversation conversation : conversations) {
-                List<AiMessage> messages = messageMapper.selectList(
-                        new LambdaQueryWrapper<AiMessage>()
-                                .eq(AiMessage::getUserId, userId)
-                                .eq(AiMessage::getConversationId, conversation.getId())
-                );
-                for (AiMessage message : messages) {
-                    messageMapper.deleteById(message.getId());
-                }
                 conversationMapper.deleteById(conversation.getId());
             }
         }));

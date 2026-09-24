@@ -74,6 +74,11 @@ harness 反过来：
   （去掉 fetch 与 TLS 的加载）、启动三个请求并发、MCP 后台连；安全时才重试（GET / 连接被拒的 POST / 还没输出的模型调用）、
   流式空闲超时 + 服务器心跳、错误带 `retryable`、存档后台队列、会话索引跨进程锁、Windows 上安全地跑 npm。
 
+- **发布版默认连用户的服务器，测试时连本地**（2026-09-24）：桌面应用没开命令行也得能用。默认地址放在
+  `zhiqu-cli/package.json` 的 `zhiqu.defaultServer`（仓库里是 `http://127.0.0.1:47615`）；发布前
+  `npm run set-server -- https://…` 改成服务器地址。`prepublishOnly`（`scripts/check-release.mjs`）挡住默认地址还是本机、
+  不是 https、还挂着 `private` 的版本。归入 P7。
+
 ## 名词说明
 
 - **P1 的「Wiki / 计划 / 记忆远程工具」**：zhiqu 作为学习系统自己的能力 —— 查知识 Wiki、

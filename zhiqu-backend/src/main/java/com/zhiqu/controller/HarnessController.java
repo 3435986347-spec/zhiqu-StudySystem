@@ -68,19 +68,14 @@ public class HarnessController {
     private final String cliLatest;
     private final String cliMinimum;
     private final ThreadPoolExecutor streams;
-    private final java.util.concurrent.ScheduledExecutorService heartbeats =
-            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "harness-heartbeat");
-                t.setDaemon(true);
-                return t;
-            });
+    private final com.zhiqu.service.support.SseHeartbeats heartbeats;
 
     public HarnessController(HarnessModelGateway gateway, HarnessRemoteTools remoteTools, HarnessSessionService sessions,
                              DeviceLoginService deviceLogin, AiService aiService, SysUserMapper userMapper,
                              HarnessUsageMapper usageMapper, ClientIpResolver ipResolver, BusinessClock clock,
                              @Value("${app.harness.cli-latest:0.1.0}") String cliLatest,
                              @Value("${app.harness.cli-minimum:0.1.0}") String cliMinimum,
-                             @Value("${app.harness.heartbeat-ms:15000}") long heartbeatMs) {
+                             com.zhiqu.service.support.SseHeartbeats heartbeats) {
         this.gateway = gateway;
         this.remoteTools = remoteTools;
         this.sessions = sessions;
@@ -92,7 +87,7 @@ public class HarnessController {
         this.clock = clock;
         this.cliLatest = cliLatest;
         this.cliMinimum = cliMinimum;
-        this.heartbeatMs = Math.max(10, heartbeatMs);
+        this.heartbeats = heartbeats;
         AtomicInteger n = new AtomicInteger();
         // 有界：同时最多 64 路模型调用，满了直接拒（而不是排队排到超时）
         this.streams = new ThreadPoolExecutor(0, 64, 60, TimeUnit.SECONDS, new SynchronousQueue<>(), r -> {
@@ -176,45 +171,37 @@ public class HarnessController {
         return Result.success(out);
     }
 
-    /** 心跳间隔（app.harness.heartbeat-ms，默认 15 秒）：比常见反向代理的空闲超时（nginx 默认 60 秒）短得多。 */
-    private final long heartbeatMs;
 
     @PostMapping(value = "/model/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter modelStream(@RequestBody Map<String, Object> body) {
         Long userId = SecurityUtils.getCurrentUserId();
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
         // 心跳：推理模型在第一个字之前可能要想一两分钟，这段时间连接上一个字节都没有 ——
-        // 反向代理会当它死了掐掉，命令行的空闲计时也会误判。每 15 秒发一行 SSE 注释，两边都知道它还活着。
-        java.util.concurrent.ScheduledFuture<?> beat = heartbeats.scheduleAtFixedRate(() -> {
-            try {
-                emitter.send(SseEmitter.event().comment("ping"));
-            } catch (Exception ignored) {
-                // 对方断开了；主线程发下一个事件时会发现
-            }
-        }, heartbeatMs, heartbeatMs, TimeUnit.MILLISECONDS);
+        // 反向代理会当它死了掐掉，命令行的空闲计时也会误判。见 SseHeartbeats。
+        com.zhiqu.service.support.SseHeartbeats.Beat beat = heartbeats.start(emitter);
         try {
             streams.execute(() -> {
                 try {
                     gateway.stream(userId, body, (name, data) -> emitter.send(SseEmitter.event().name(name).data(data)));
-                    beat.cancel(false);
+                    beat.close();
                     emitter.complete();
                 } catch (HarnessModelGateway.ClientGone e) {
-                    beat.cancel(false);
+                    beat.close();
                     emitter.complete();   // 命令行那边断开了（Ctrl+C），不用再说什么，上游也随之停读
                 } catch (HarnessModelGateway.ModelCallException e) {
-                    beat.cancel(false);
+                    beat.close();
                     sendError(emitter, e.getMessage(), e.retryable());
                 } catch (BusinessException e) {
-                    beat.cancel(false);
+                    beat.close();
                     sendError(emitter, e.getMessage(), false);
                 } catch (RuntimeException e) {
-                    beat.cancel(false);
+                    beat.close();
                     log.error("命令行模型调用异常终止 userId={}：{}", userId, e.getMessage(), e);
                     sendError(emitter, e.getMessage() == null ? "模型调用失败" : e.getMessage(), false);
                 }
             });
         } catch (java.util.concurrent.RejectedExecutionException e) {
-            beat.cancel(false);
+            beat.close();
             sendError(emitter, "服务器上同时进行的模型调用太多了，请稍后再试", true);
         }
         return emitter;

@@ -50,17 +50,73 @@ public final class NodeRunner {
 
         java.util.List<String> cmd = new java.util.ArrayList<>(java.util.List.of(node, harness.toString(), target.toString()));
         cmd.addAll(java.util.List.of(extra));
-        Process p = new ProcessBuilder(cmd)
-                .redirectErrorStream(true)
-                .start();
-        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(p.waitFor(60, TimeUnit.SECONDS), "判据跑超时了，输出：\n" + out);
+        Finished r = execute(cmd, null, 60);
+        assertTrue(r.exited(), "判据跑超时了（60 秒），已杀掉。输出：\n" + r.out());
 
         // 下限：脚本必须真的跑完并自报全绿。只看退出码不够 —— 脚本在加载阶段就挂了、
         // 或者一条判据都没跑，也可能拿到 0。
-        assertTrue(out.contains("ALL-GREEN"), "行为判据没有全绿。完整输出：\n" + out);
-        assertEquals(0, p.exitValue(), "行为判据退出码非 0。完整输出：\n" + out);
+        assertTrue(r.out().contains("ALL-GREEN"), "行为判据没有全绿。完整输出：\n" + r.out());
+        assertEquals(0, r.exitCode(), "行为判据退出码非 0。完整输出：\n" + r.out());
         return true;
+    }
+
+    record Finished(boolean exited, int exitCode, String out) {
+    }
+
+    /**
+     * 起 node、等它、拿输出。<b>输出写进临时文件，等的是进程本身，不是管道读到头。</b>
+     *
+     * <p>原来是 {@code readAllBytes()} 读到 EOF 之后才 {@code waitFor(超时)}。而管道的 EOF 要等
+     * <b>所有</b>拿着写端的进程都退出 —— 测试里起的孙子进程会继承它（实测：一个留下 20 秒定时器的
+     * 孙子进程让管道晚关 21 秒）。于是一个漏掉的子进程能让 Maven 一直挂着，那个超时根本轮不到。
+     * 注意 {@code node --test} <b>自己</b>也会等测试文件的 stdio 关掉才退出，所以孙子进程照样拖住它 ——
+     * 这里消不掉那段等待，能保证的是它<b>有上限</b>：到点杀掉、点名没过的，而不是无限挂着。
+     * 标准输入也当场关掉：Maven 这边的管道永远不会给 EOF，读 stdin 的测试会一直等。
+     */
+    static Finished execute(java.util.List<String> cmd, Path workDir, long timeoutSeconds) throws Exception {
+        Path log = Files.createTempFile("zhiqu-node-", ".log");
+        try {
+            ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true).redirectOutput(log.toFile());
+            if (workDir != null) {
+                pb.directory(workDir.toFile());
+            }
+            Process p = pb.start();
+            p.getOutputStream().close();
+            boolean exited = p.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            if (!exited) {
+                p.descendants().forEach(ProcessHandle::destroyForcibly);
+                p.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
+            }
+            String out = Files.readString(log, StandardCharsets.UTF_8);
+            return new Finished(exited, exited ? p.exitValue() : -1, out);
+        } finally {
+            Files.deleteIfExists(log);
+        }
+    }
+
+    /**
+     * 从 TAP 报告里挑出没过的那几条（失败的，和被取消的 —— node 把<b>超过自己时限</b>的测试记成
+     * cancelled 而不是 fail），连同原因一行。放在报错的最前面：原来要在几百行输出里自己找，
+     * 而那份日志在临时目录里，机器一重启就没了 —— 2026-09-24 就这样丢了一次，只剩「cancelled 1」。
+     */
+    static String notOk(String tap) {
+        StringBuilder sb = new StringBuilder();
+        String[] lines = tap.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("^\\s*not ok \\d+ - (.+)$").matcher(lines[i]);
+            if (!m.find()) {
+                continue;
+            }
+            String why = "";
+            for (int j = i + 1; j < lines.length && !lines[j].trim().equals("..."); j++) {
+                String t = lines[j].trim();
+                if (t.startsWith("error:") || t.startsWith("location:")) {
+                    why += "\n      " + t;
+                }
+            }
+            sb.append("  ✗ ").append(m.group(1)).append(why).append('\n');
+        }
+        return sb.toString();
     }
 
     /**
@@ -71,6 +127,10 @@ public final class NodeRunner {
      * @return true = 真的跑了；false = 没有 node 且已显式声明跳过
      */
     public static boolean runTestSuite(Path workDir, java.util.List<String> files, int minPass) throws Exception {
+        return runTestSuite(workDir, files, minPass, 300);
+    }
+
+    static boolean runTestSuite(Path workDir, java.util.List<String> files, int minPass, long timeoutSeconds) throws Exception {
         String node = findNode();
         if (node == null) {
             assertTrue(Boolean.getBoolean("zhiqu.skipNodeTests"),
@@ -80,16 +140,19 @@ public final class NodeRunner {
         }
         java.util.List<String> cmd = new java.util.ArrayList<>(java.util.List.of(node, "--test"));
         cmd.addAll(files);
-        Process p = new ProcessBuilder(cmd).directory(workDir.toFile()).redirectErrorStream(true).start();
-        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(p.waitFor(300, TimeUnit.SECONDS), "node 测试跑超时了，输出：\n" + out);
+        Finished r = execute(cmd, workDir, timeoutSeconds);
+        String out = r.out();
+        assertTrue(r.exited(), "node 测试跑超时了（" + timeoutSeconds + " 秒），已杀掉。没过的：\n" + notOk(out) + "输出：\n" + out);
         java.util.regex.Matcher pass = java.util.regex.Pattern.compile("(?m)^# pass (\\d+)$").matcher(out);
         java.util.regex.Matcher fail = java.util.regex.Pattern.compile("(?m)^# fail (\\d+)$").matcher(out);
-        assertTrue(pass.find() && fail.find(), "没有拿到 TAP 汇总，输出：\n" + out);
-        assertEquals("0", fail.group(1), "node 测试有失败。完整输出：\n" + out);
+        java.util.regex.Matcher cancelled = java.util.regex.Pattern.compile("(?m)^# cancelled (\\d+)$").matcher(out);
+        assertTrue(pass.find() && fail.find() && cancelled.find(), "没有拿到 TAP 汇总，输出：\n" + out);
+        assertTrue("0".equals(fail.group(1)) && "0".equals(cancelled.group(1)),
+                "node 测试有 " + fail.group(1) + " 条失败、" + cancelled.group(1) + " 条被取消（超过自己的时限）：\n"
+                        + notOk(out) + "完整输出：\n" + out);
         assertTrue(Integer.parseInt(pass.group(1)) >= minPass,
                 "node 测试只通过了 " + pass.group(1) + " 条，下限是 " + minPass + " —— 可能有文件没被跑到。输出：\n" + out);
-        assertEquals(0, p.exitValue(), "node 测试退出码非 0。完整输出：\n" + out);
+        assertEquals(0, r.exitCode(), "node 测试退出码非 0。完整输出：\n" + out);
         return true;
     }
 
@@ -100,7 +163,7 @@ public final class NodeRunner {
      * {@code /opt/homebrew/bin/node}，而本机的 node 在 {@code ~/.local/node/bin} ——
      * 候选全落空，实际只有 PATH 那一条在起作用，清单纯属摆设。
      */
-    private static String findNode() {
+    static String findNode() {
         String configured = System.getProperty("zhiqu.nodePath");
         if (configured != null && !configured.isBlank()) {
             return runs(configured) ? configured : null;

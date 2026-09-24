@@ -1230,6 +1230,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             pageMapper.insert(page);
             syncPageLinks(userId, page.getId(), content);
         } else if ("INDEX".equals(type) || "LOG".equals(type) || "SCHEMA".equals(type)) {
+            // 没变就一个字都不写。这段在每次打开 Wiki（documentTree / workspace / graph / lint）时都会跑：
+            // 原来无条件地重新加密、UPDATE、重建链接 —— 一次「读」变成三次写，系统页的乐观锁版本号也跟着
+            // 每次读一起涨。内容、类型、挂载点、排序、置顶都已经是规范值时，直接跳过。
+            if (systemPageUpToDate(existing, type, content, order)) {
+                return;
+            }
             existing.setEncryptedContent(cryptoService.encrypt(content));
             existing.setContentSummary(limit(content.replaceAll("\\s+", " "), 500));
             existing.setPinned(1);
@@ -1241,6 +1247,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             // keep that winner and let the next read rebuild instead of failing the whole page load.
             if (pageMapper.updateById(existing) != 1) return;
             syncPageLinks(userId, existing.getId(), content);
+        }
+    }
+
+    private boolean systemPageUpToDate(UserKnowledgePage existing, String type, String content, int order) {
+        if (!type.equals(existing.getPageType()) || existing.getParentId() != null
+                || existing.getSortOrder() == null || existing.getSortOrder() != order
+                || existing.getPinned() == null || existing.getPinned() != 1) {
+            return false;
+        }
+        try {
+            return content.equals(cryptoService.decrypt(existing.getEncryptedContent()));
+        } catch (RuntimeException e) {
+            return false;   // 解不开就当作要重建
         }
     }
 
@@ -1532,9 +1551,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return row;
     }
 
+    /**
+     * 目录树上的一个节点：<b>不带正文</b>，只有摘要。
+     *
+     * <p>原来这里把每一页的正文都解密了塞进来 —— 打开知识 Wiki 一次，就解密、传输全部页面的全文；
+     * 而前端从来不用它（注释写的就是「document-tree 只给了 summary，正文要按需拉」），打开某一页时
+     * 还会再 GET /knowledge/pages/{id} 取一遍。页数一多，打开 Wiki 的时间和流量随全部正文线性增长。
+     * {@code KnowledgeDocumentTreeTest} 钉着「建目录树不解密任何一页的正文」。
+     */
     private Map<String, Object> documentNode(UserKnowledgePage page) {
         Map<String, Object> row = treeNode(page);
-        row.put("content", MarkdownCanonicalizer.clean(cryptoService.decrypt(page.getEncryptedContent())));
         row.put("sourceMessageId", page.getSourceMessageId());
         row.put("sourceConversationId", page.getSourceConversationId());
         row.put("lastUsedAt", page.getLastUsedAt());

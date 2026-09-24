@@ -78,16 +78,18 @@ public final class AesGcmCipher {
             return cipherText;
         }
         try {
-            String[] parts = cipherText.split(":", 3);
+            String[] parts = cipherText.split(":", 3);   // 段数不对时下一行越界，由下面统一收成 AesDecryptException
             byte[] iv = Base64.getDecoder().decode(parts[1]);
             byte[] encrypted = Base64.getDecoder().decode(parts[2]);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, keySpec, new GCMParameterSpec(GCM_TAG_BITS, iv));
             return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
-        } catch (RuntimeException e) {
-            throw e;
         } catch (Exception e) {
-            // GCM 认证失败（key 不符）抛的是 AEADBadTagException，收敛成一个类型。
+            // 「这个值解不开」只有一种说法。key 不符是 AEADBadTagException；密文被截断 / 损坏时各个 JDK 抛的不一样 ——
+            // 17.0.20 上短于 GCM 标签的密文抛 ProviderException（ShortBufferException），Base64 坏了是
+            // IllegalArgumentException。原来这里把运行时异常原样放行，于是一页坏数据能让 RAG 整批索引中断
+            // （RagUnitRegistryIntegrationTest.坏密文只跳过该页而不拖垮整批 —— 这条判据在 2026-09-24 第一次
+            // 真正开着 Docker 跑时才红出来）。AesGcmCipherCorruptionTest 在不要 Docker 的地方钉着这件事。
             throw new AesDecryptException("敏感数据解密失败");
         }
     }

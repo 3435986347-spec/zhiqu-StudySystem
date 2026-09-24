@@ -49,8 +49,9 @@ zhiqu login [--server URL]  登录；--token zqp_… 用个人中心签的令牌
 zhiqu logout | whoami | models
 ```
 
-会话里：`/mode`、`/model`、`/resume`、`/new`、`/compact`、`/init`、`/skills`、`/mcp`、`/system`、`/usage`、`/exit`。
-行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事。
+会话里：`/goal`、`/mode`、`/model`、`/resume`、`/new`、`/compact`、`/init`、`/skills`、`/mcp`、`/system`、`/usage`、`/exit`。
+行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事。它干活的时候输入框一直在底下：可以接着打下一句，按回车就排队，
+这一轮做完自动发出。
 
 ## 文件放在哪
 

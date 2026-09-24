@@ -13,7 +13,8 @@ import path from 'node:path';
 import { Api, ApiError } from './api.js';
 import { archiveTurn, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode } from './agent.js';
 import { newGoal } from './goal.js';
-import { loadUserConfig, normalizeMode, resetSystemContent, resolveSettings, saveUserConfig, stripSlash, systemContent, userDir, MODES } from './config.js';
+import { DEFAULT_SERVER, loadUserConfig, normalizeMode, resetSystemContent, resolveSettings, saveUserConfig, stripSlash, systemContent, userDir, MODES } from './config.js';
+import { isLoopbackUrl } from './defaults.js';
 import { displayPath, initPrompt, instructionsBlock, loadInstructions } from './instructions.js';
 import { McpManager } from './mcp.js';
 import { BUILTIN_SYSTEM_PROMPT } from './prompt.js';
@@ -70,7 +71,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
 选项
   --mode plan|ask|auto        档位：只读出计划 / 逐个确认 / 全自动（默认 ask，或 ~/.zhiqu/config.json 里的 mode）
   --model <id>                这次用哪个模型（zhiqu models 列出可用的）
-  --server <url>              服务器地址（默认 ${'http://127.0.0.1:47615'}，即本机的桌面应用）
+  --server <url>              服务器地址（默认 ${DEFAULT_SERVER}${isLoopbackUrl(DEFAULT_SERVER) ? '，即本机的桌面应用' : ''}；也可以设 ZHIQU_SERVER）
   --no-mcp                    这次不连 MCP 服务器
   --allow-broad-root          允许在家目录或根目录下运行
 
@@ -345,6 +346,12 @@ async function oneShot(ctx, prompt) {
 // ── 交互循环 ────────────────────────────────────────────────────────────
 
 async function readInput(ui) {
+  // 干活时排队的消息：这一轮结束后按顺序发出，并把它作为「› 消息」留在记录里 —— 回头看得出这是用户说的
+  const queued = ui.interactive ? ui.takeQueued() : undefined;
+  if (queued !== undefined) {
+    ui.line(`${ui.paint.bold('›')} ${queued}`);
+    return queued;
+  }
   let text = await ui.ask(`${ui.paint.bold('›')} `);
   if (text == null) return null;
   while (text.endsWith('\\')) {
@@ -405,6 +412,7 @@ async function pursue(ctx, setRunning) {
     await ctx.mcpReady;
     ctx.mcpReady = null;
   }
+  ctx.ui.beginLive();      // 干活时输入框一直在（见 ui.js）
   try {
     await runGoal(ctx, { signal: controller.signal, onTurn: (text, result) => archiveTurn(ctx, text, result) });
   } catch (e) {
@@ -413,6 +421,8 @@ async function pursue(ctx, setRunning) {
       return;
     }
     ctx.ui.error(e.message);
+  } finally {
+    ctx.ui.endLive();
   }
 }
 
@@ -423,6 +433,7 @@ async function turn(ctx, text, setRunning) {
     await ctx.mcpReady;
     ctx.mcpReady = null;
   }
+  ctx.ui.beginLive();      // 干活时输入框一直在（见 ui.js）
   try {
     const result = await runTurn(ctx, text, { signal: controller.signal });
     if (controller.signal.aborted) return;
@@ -433,6 +444,8 @@ async function turn(ctx, text, setRunning) {
     if (controller.signal.aborted || (e && e.name === 'AbortError')) return;
     ctx.ui.error(e.message);
     if (e instanceof ApiError && e.auth) ctx.ui.note('（令牌失效了：退出后运行 zhiqu login）');
+  } finally {
+    ctx.ui.endLive();
   }
 }
 

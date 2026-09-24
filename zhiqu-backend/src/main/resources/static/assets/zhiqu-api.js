@@ -77,24 +77,77 @@
     if (json.code === 401 || json.code === 403) return true;
     return /未登录|登录状态|登录已过期|请先登录|无权限/.test(json.message || '');
   }
-  async function request(path, options) {
+  // ── 请求：超时、只在安全时重试、看不懂的响应要说人话 ────────────────────
+  //
+  // 原来 fetch 没有超时：服务器挂住时页面永远转圈。没有重试：一个 429（限流 180/60s，开几个标签页就可能撞上）
+  // 落在页面启动时，renderInitError 会把整块主区域换成错误页。代理回的是 HTML 错误页（502）时，
+  // JSON.parse 抛出「Unexpected token <」—— 用户看到的是一句看不懂的话。
+  //
+  // 重试只在安全的时候：GET 遇到断网 / 超时 / 502 / 503 / 504 / 429 重来两次；写操作只在 429 时重来 ——
+  // 429 是限流过滤器在进业务之前拒的，肯定没处理；而断网、超时、502 的写操作可能已经生效了，重来会写两遍。
+  // 行为判据：src/test/resources/js/request-check.js（直接跑这里发布的实现）。
+  var REQUEST_TIMEOUT_MS = 30000;
+  var UPLOAD_TIMEOUT_MS = 180000;
+  var RETRY_WAITS_MS = [700, 2000];
+  var RETRYABLE_STATUS = [429, 502, 503, 504];
+  function requestError(message, extra) {
+    var e = new Error(message);
+    Object.keys(extra || {}).forEach(function (k) { e[k] = extra[k]; });
+    return e;
+  }
+  function waitMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  async function requestOnce(path, options, timeoutMs) {
     var headers = Object.assign({}, options && options.headers || {});
     if (token()) headers.Authorization = 'Bearer ' + token();
     if (options && options.body != null && !(options.body instanceof FormData) && !headers['Content-Type']) {
       headers['Content-Type'] = 'application/json';
     }
-    var res = await fetch(API + path, Object.assign({ credentials: 'same-origin' }, options || {}, { headers: headers }));
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs) : null;
+    var res, text;
+    try {
+      res = await fetch(API + path, Object.assign({ credentials: 'same-origin' }, options || {}, { headers: headers, signal: ctrl ? ctrl.signal : undefined }));
+      text = await res.text();
+    } catch (e) {
+      throw requestError(ctrl && ctrl.signal.aborted
+        ? '服务器 ' + Math.round(timeoutMs / 1000) + ' 秒没有回应，请稍后再试'
+        : '网络连接失败，请检查网络后重试', { retryable: true, network: true });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     if (res.status === 401 || res.status === 403) {
       redirectToLogin();
       throw new Error('未登录或无权限');
     }
-    var text = await res.text();
-    var json = text ? JSON.parse(text) : {};
+    if (RETRYABLE_STATUS.indexOf(res.status) >= 0) {
+      throw requestError(res.status === 429 ? '请求过于频繁，请稍后再试' : '服务器暂时不可用（HTTP ' + res.status + '），请稍后再试',
+        { retryable: true, status: res.status });
+    }
+    var json;
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch (e) {
+      throw requestError('服务器返回了看不懂的内容（HTTP ' + res.status + '），请稍后再试', { status: res.status });
+    }
     if (json.code !== 200) {
       if (isAuthFailure(json)) redirectToLogin();
       throw new Error(json.message || '请求失败');
     }
     return json.data;
+  }
+  async function request(path, options) {
+    var method = String((options && options.method) || 'GET').toUpperCase();
+    var upload = !!(options && typeof FormData !== 'undefined' && options.body instanceof FormData);
+    var timeoutMs = upload ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await requestOnce(path, options, timeoutMs);
+      } catch (e) {
+        var safe = e.retryable && (method === 'GET' || e.status === 429);
+        if (!safe || attempt >= RETRY_WAITS_MS.length) throw e;
+        await waitMs(RETRY_WAITS_MS[attempt]);
+      }
+    }
   }
   var api = {
     get: function (p) { return request(p, { method: 'GET' }); },
@@ -1909,6 +1962,12 @@
         p._pendingTitle = name.trim();
         titleEl.textContent = p._pendingTitle;
         safe('修改名称', async function () {
+          // 改名走的是整页保存，要带着正文 —— 目录树不给正文（只给摘要），正文还没取回来（刚打开、或者取失败了）
+          // 就先取一遍。不取的话后端会拒（「内容不能为空」），用户看到的是改名莫名失败。
+          if (!p._full) {
+            var detail = await api.get('/knowledge/pages/' + p.id);
+            p.content = detail.content; p.version = detail.version; p._full = true;
+          }
           var updated = await api.put('/knowledge/pages/' + p.id, { title: p._pendingTitle, content: p.content, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned, version: p.version });
           p.title = updated && updated.title ? updated.title : p._pendingTitle;
           p._pendingTitle = null;
@@ -3955,12 +4014,53 @@
       };
     });
   }
+  /**
+   * 一个 SSE 帧 → { event, data }。纯注释的帧（服务器心跳 `:ping`，见 SseHeartbeats）返回 null —— 它不是事件，
+   * 不许被当成一个空的 message 交给处理函数。
+   * SSE 规范：多条 data: 行以 \n 连接还原；只剥一个可选前导空格，不 trim（防止破坏换行 / 空白）。
+   */
+  function parseSseFrame(frame) {
+    var event = null, dataLines = [];
+    frame.split(/\r\n|\n|\r/).forEach(function (l) {
+      if (l.indexOf('event:') === 0) event = l.slice(6).trim();
+      else if (l.indexOf('data:') === 0) dataLines.push(l.slice(5).replace(/^ /, ''));
+    });
+    if (event == null && !dataLines.length) return null;
+    var dataStr = dataLines.join('\n');
+    var data = {};
+    if (dataStr) { try { data = JSON.parse(dataStr); } catch (e) { data = { text: dataStr }; } }
+    return { event: event || 'message', data: data };
+  }
+  /**
+   * 读一块，但最多等 ms 毫秒。服务器每 15 秒发一次心跳，所以 75 秒一个字节都没有，就是连接悄悄死了 ——
+   * 原来这里会永远等下去，界面停在「发送中」，下面那套「断线后从库里接回」根本没有机会启动。
+   */
+  var STREAM_IDLE_MS = 75000;
+  function readWithIdleTimeout(reader, ms) {
+    var timer;
+    return Promise.race([
+      reader.read(),
+      new Promise(function (_, reject) {
+        timer = setTimeout(function () {
+          reject(requestError('连接 ' + Math.round(ms / 1000) + ' 秒没有任何数据', { idle: true }));
+        }, ms);
+      })
+    ]).then(function (v) { clearTimeout(timer); return v; }, function (e) { clearTimeout(timer); throw e; });
+  }
   async function streamAiChat(body, handlers) {
     var headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' };
     if (token()) headers.Authorization = 'Bearer ' + token();
-    var res = await fetch(API + '/ai/chat/stream', { method: 'POST', credentials: 'same-origin', headers: headers, body: JSON.stringify(body) });
+    // 响应头 30 秒不到也算连不上（服务器挂住时 fetch 会一直等）
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    var headTimer = ctrl ? setTimeout(function () { ctrl.abort(); }, REQUEST_TIMEOUT_MS) : null;
+    var res;
+    try {
+      res = await fetch(API + '/ai/chat/stream', { method: 'POST', credentials: 'same-origin', headers: headers, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined });
+    } finally {
+      if (headTimer) clearTimeout(headTimer);
+    }
     if (res.status === 401 || res.status === 403) { redirectToLogin(); throw new Error('未登录或无权限'); }
-    if (!res.ok || !res.body) throw new Error('流式连接失败(' + res.status + ')');
+    if (!res.ok || !res.body) throw new Error(res.status === 429 ? '请求过于频繁，请稍后再试' : '流式连接失败(' + res.status + ')');
     var reader = res.body.getReader(), decoder = new TextDecoder('utf-8'), buf = '';
     // 业务终止事件(done/error)送达后,个别容器/代理收尾时不发终止 chunk,读取器会报 network error;
     // 此时流在语义上已完整,按正常结束处理,不让收尾噪声打断发送方后续流程
@@ -3968,8 +4068,9 @@
     while (true) {
       var chunk;
       try {
-        chunk = await reader.read();
+        chunk = await readWithIdleTimeout(reader, STREAM_IDLE_MS);
       } catch (e) {
+        if (e && e.idle) { try { reader.cancel(); } catch (x) { /* 已经断了 */ } }
         if (terminalSeen) break;
         throw e;
       }
@@ -3979,17 +4080,10 @@
       var m;
       while ((m = /\r\n\r\n|\n\n|\r\r/.exec(buf))) {
         var frame = buf.slice(0, m.index); buf = buf.slice(m.index + m[0].length);
-        var event = 'message', dataLines = [];
-        frame.split(/\r\n|\n|\r/).forEach(function (l) {
-          if (l.indexOf('event:') === 0) event = l.slice(6).trim();
-          // SSE 规范:多条 data: 行以 \n 连接还原;只剥一个可选前导空格,不 trim(防止破坏换行/空白)
-          else if (l.indexOf('data:') === 0) dataLines.push(l.slice(5).replace(/^ /, ''));
-        });
-        var dataStr = dataLines.join('\n');
-        var data = {};
-        if (dataStr) { try { data = JSON.parse(dataStr); } catch (e) { data = { text: dataStr }; } }
-        handlers(event, data);
-        if (event === 'done' || event === 'error') terminalSeen = true;
+        var parsed = parseSseFrame(frame);
+        if (!parsed) continue;
+        handlers(parsed.event, parsed.data);
+        if (parsed.event === 'done' || parsed.event === 'error') terminalSeen = true;
       }
     }
   }
