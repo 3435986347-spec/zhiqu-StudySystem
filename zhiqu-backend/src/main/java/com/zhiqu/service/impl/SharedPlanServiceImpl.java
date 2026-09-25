@@ -35,6 +35,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.HashMap;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -237,7 +240,7 @@ public class SharedPlanServiceImpl implements SharedPlanService {
             query.eq(SharedPlanTemplate::getCategory, category.trim().toUpperCase());
         }
         applyPublicSort(query, sort, order);
-        return templateMapper.selectList(query).stream().map(template -> templateRow(template, userId)).toList();
+        return templateRows(templateMapper.selectList(query), userId);
     }
 
     @Override
@@ -317,8 +320,7 @@ public class SharedPlanServiceImpl implements SharedPlanService {
             routineService.create(userId, routine);
             createdRoutines++;
         }
-        template.setApplyCount((template.getApplyCount() == null ? 0 : template.getApplyCount()) + 1);
-        templateMapper.updateById(template);
+        templateMapper.incrementApplyCount(id);
         return Map.of("createdTasks", createdTasks, "createdRoutines", createdRoutines);
     }
 
@@ -329,9 +331,12 @@ public class SharedPlanServiceImpl implements SharedPlanService {
         if (status != null && !status.isBlank()) {
             query.eq(SharedPlanTemplate::getStatus, status.trim().toUpperCase());
         }
-        List<Map<String, Object>> rows = templateMapper.selectList(query).stream()
-                .map(template -> {
-                    Map<String, Object> row = templateRow(template, null);
+        List<SharedPlanTemplate> templates = templateMapper.selectList(query);
+        List<Map<String, Object>> base = templateRows(templates, null);
+        List<Map<String, Object>> rows = java.util.stream.IntStream.range(0, templates.size())
+                .mapToObj(i -> {
+                    SharedPlanTemplate template = templates.get(i);
+                    Map<String, Object> row = base.get(i);
                     row.put("creator", creatorAdminRow(template.getUserId()));
                     row.put("searchScore", searchScore(row, q));
                     return row;
@@ -478,17 +483,52 @@ public class SharedPlanServiceImpl implements SharedPlanService {
     }
 
     private Map<String, Object> templateRow(SharedPlanTemplate template, Long userId) {
+        return templateRow(template, categoryName(template.getCategory()),
+                userId != null && isLikedBy(userId, template.getId()));
+    }
+
+    /**
+     * 一批模板的行：分类名一次取全、这个人点过赞的一次查完。原来每一行各查两次
+     * （分类名一次、「我点过没有」一次），公开列表有两百个计划就是四百次查询。
+     */
+    private List<Map<String, Object>> templateRows(List<SharedPlanTemplate> templates, Long userId) {
+        if (templates.isEmpty()) {
+            return new ArrayList<>();
+        }
+        Map<String, String> names = new HashMap<>();
+        for (SharedPlanCategory category : categoryMapper.selectList(new LambdaQueryWrapper<SharedPlanCategory>())) {
+            names.put(category.getCategoryKey(), category.getName());
+        }
+        Set<Long> liked = new HashSet<>();
+        if (userId != null) {
+            List<Long> ids = templates.stream().map(SharedPlanTemplate::getId).toList();
+            for (SharedPlanLike like : likeMapper.selectList(new LambdaQueryWrapper<SharedPlanLike>()
+                    .eq(SharedPlanLike::getUserId, userId)
+                    .in(SharedPlanLike::getTemplateId, ids))) {
+                liked.add(like.getTemplateId());
+            }
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (SharedPlanTemplate template : templates) {
+            String key = template.getCategory();
+            String name = !hasText(key) ? "通用规划" : names.getOrDefault(key, key);
+            rows.add(templateRow(template, name, liked.contains(template.getId())));
+        }
+        return rows;
+    }
+
+    private Map<String, Object> templateRow(SharedPlanTemplate template, String categoryName, boolean liked) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", template.getId());
         row.put("title", template.getTitle());
         row.put("description", template.getDescription());
         row.put("category", template.getCategory());
-        row.put("categoryName", categoryName(template.getCategory()));
+        row.put("categoryName", categoryName);
         row.put("targetAudience", template.getTargetAudience());
         row.put("status", template.getStatus());
         row.put("applyCount", template.getApplyCount());
         row.put("likeCount", template.getLikeCount() == null ? 0 : template.getLikeCount());
-        row.put("liked", userId != null && isLikedBy(userId, template.getId()));
+        row.put("liked", liked);
         row.put("createdAt", template.getCreatedAt());
         return row;
     }
@@ -498,8 +538,10 @@ public class SharedPlanServiceImpl implements SharedPlanService {
         List<SharedPlanTemplate> mine = templateMapper.selectList(new LambdaQueryWrapper<SharedPlanTemplate>()
                 .eq(SharedPlanTemplate::getUserId, userId)
                 .orderByDesc(SharedPlanTemplate::getCreatedAt));
-        return mine.stream().map(template -> {
-            Map<String, Object> row = templateRow(template, userId);
+        List<Map<String, Object>> base = templateRows(mine, userId);
+        return java.util.stream.IntStream.range(0, mine.size()).mapToObj(i -> {
+            SharedPlanTemplate template = mine.get(i);
+            Map<String, Object> row = base.get(i);
             // 只在真的被驳回时给理由。其它状态下这一列本来就被置空（见 review），
             // 但显式判一次，免得将来某次改动让一条旧的驳回理由挂在一个已通过的计划上。
             row.put("rejectionReason",
@@ -535,14 +577,7 @@ public class SharedPlanServiceImpl implements SharedPlanService {
     }
 
     private void refreshLikeCount(Long templateId) {
-        SharedPlanTemplate template = templateMapper.selectById(templateId);
-        if (template == null) {
-            return;
-        }
-        long count = likeMapper.selectCount(new LambdaQueryWrapper<SharedPlanLike>()
-                .eq(SharedPlanLike::getTemplateId, templateId));
-        template.setLikeCount((int) count);
-        templateMapper.updateById(template);
+        templateMapper.refreshLikeCount(templateId);
     }
 
     private void applyPublicSort(LambdaQueryWrapper<SharedPlanTemplate> query, String sort, String order) {

@@ -2,6 +2,7 @@ package com.zhiqu.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.zhiqu.common.BusinessClock;
+import com.zhiqu.common.DateRange;
 import com.zhiqu.common.Result;
 import com.zhiqu.entity.StudyTask;
 import com.zhiqu.entity.TaskReminder;
@@ -55,16 +56,39 @@ public class DashboardController {
         if (end.isBefore(start)) {
             end = start;
         }
+        DateRange.requireWithin(start, end);
         LocalDate today = clock.today();
-        LocalDateTime rangeStart = start.atStartOfDay();
-        LocalDateTime rangeEnd = end.atTime(LocalTime.MAX);
+        return Result.success(build(userId, start, end, today, relevantTasks(userId, start, end, today)));
+    }
 
-        List<StudyTask> allTasks = studyTaskMapper.selectList(new LambdaQueryWrapper<StudyTask>()
+    /**
+     * 首页用得到的任务：没完成的（象限、临近截止、逾期）、日期落在所看的这几天里的、日期是今天的（今日计数）。
+     *
+     * <p>原来每次打开首页都把这个人<b>全部</b>任务整行取回来、逐条解密标题，再在内存里筛 —— 用得久的人，
+     * 绝大多数是早就完成的旧任务，每次都白搬一遍。这里的条件就是 {@link #build} 里每一处筛选的并集，
+     * 「日期」照 {@link #taskDate} 的定义：有开始时间看开始时间，没有才看截止时间。
+     * 两者输出一致由 {@code DashboardOverviewEquivalenceIntegrationTest} 用真库对照。
+     */
+    List<StudyTask> relevantTasks(Long userId, LocalDate start, LocalDate end, LocalDate today) {
+        LocalDateTime rangeFrom = start.atStartOfDay();
+        LocalDateTime rangeUntil = end.plusDays(1).atStartOfDay();
+        LocalDateTime todayFrom = today.atStartOfDay();
+        LocalDateTime todayUntil = today.plusDays(1).atStartOfDay();
+        List<StudyTask> tasks = studyTaskMapper.selectList(new LambdaQueryWrapper<StudyTask>()
                 .eq(StudyTask::getUserId, userId)
+                .and(w -> w.isNull(StudyTask::getStatus).or().ne(StudyTask::getStatus, 2)
+                        .or(x -> x.ge(StudyTask::getStartTime, rangeFrom).lt(StudyTask::getStartTime, rangeUntil))
+                        .or(x -> x.isNull(StudyTask::getStartTime).ge(StudyTask::getDeadline, rangeFrom).lt(StudyTask::getDeadline, rangeUntil))
+                        .or(x -> x.ge(StudyTask::getStartTime, todayFrom).lt(StudyTask::getStartTime, todayUntil))
+                        .or(x -> x.isNull(StudyTask::getStartTime).ge(StudyTask::getDeadline, todayFrom).lt(StudyTask::getDeadline, todayUntil)))
                 .orderByAsc(StudyTask::getDeadline)
                 .orderByDesc(StudyTask::getPriority)
                 .orderByDesc(StudyTask::getUpdatedAt));
-        taskPrivacyService.revealAll(allTasks);
+        return taskPrivacyService.revealAll(tasks);
+    }
+
+    /** 由一批任务拼出首页。任务多给几条（已完成、日期在别处）不改变结果 —— 每一处都会再筛。 */
+    Map<String, Object> build(Long userId, LocalDate start, LocalDate end, LocalDate today, List<StudyTask> allTasks) {
         List<Map<String, Object>> routines = routineService.instances(userId, start, end);
 
         Map<String, List<Map<String, Object>>> dayItems = initDayMap(start, end);
@@ -96,7 +120,7 @@ public class DashboardController {
         result.put("upcomingDeadlines", upcomingDeadlines(allTasks, today));
         result.put("rangeTasks", rangeTasks);
         result.put("routineInstances", routines);
-        return Result.success(result);
+        return result;
     }
 
     private Map<String, Object> summary(Long userId, List<StudyTask> tasks, List<Map<String, Object>> routines, LocalDate today) {

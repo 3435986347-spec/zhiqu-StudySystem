@@ -3,6 +3,7 @@ package com.zhiqu.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.zhiqu.common.BusinessClock;
 import com.zhiqu.common.BusinessException;
+import com.zhiqu.common.DateRange;
 import com.zhiqu.entity.StudyRoutine;
 import com.zhiqu.entity.StudyRoutineCheckin;
 import com.zhiqu.mapper.StudyRoutineCheckinMapper;
@@ -113,6 +114,7 @@ public class RoutineServiceImpl implements RoutineService {
         if (safeTo.isBefore(safeFrom)) {
             safeTo = safeFrom;
         }
+        DateRange.requireWithin(safeFrom, safeTo);
         List<StudyRoutine> routines = routineMapper.selectList(new LambdaQueryWrapper<StudyRoutine>()
                 .eq(StudyRoutine::getUserId, userId)
                 .le(StudyRoutine::getStartDate, safeTo)
@@ -200,13 +202,40 @@ public class RoutineServiceImpl implements RoutineService {
                 .and(w -> w.isNull(StudyRoutine::getEndDate).or().ge(StudyRoutine::getEndDate, target))
                 .orderByAsc(StudyRoutine::getPreferredTime)
                 .orderByAsc(StudyRoutine::getId));
+        List<StudyRoutine> occurring = routines.stream().filter(routine -> occursOn(routine, target)).toList();
+        Set<String> done = completedOn(occurring, target);
         List<Map<String, Object>> result = new ArrayList<>();
-        for (StudyRoutine routine : routines) {
-            if (occursOn(routine, target) && !isCompleted(routine.getUserId(), routine.getId(), target)) {
+        for (StudyRoutine routine : occurring) {
+            if (!done.contains(doneKey(routine.getUserId(), routine.getId()))) {
                 result.add(instanceRow(routine, target, null));
             }
         }
         return result;
+    }
+
+    /** 一次 IN 查询要带的例行计划 id 上限。 */
+    static final int COMPLETED_LOOKUP_BATCH = 500;
+
+    /**
+     * 这些例行计划里当天已经打过卡的，按「用户:计划」给出来。
+     *
+     * <p>早八那一次要看<b>所有人</b>的例行计划。原来每条计划单独查一次打卡（N+1）；而只按日期查
+     * 又用不上索引（打卡表的两个索引都不以 check_date 开头），会整表扫描。所以按 routine_id 分批 IN ——
+     * 走唯一键 (routine_id, check_date)。仍然核对 user_id：和原来的逐条查询同一个判定。
+     */
+    private Set<String> completedOn(List<StudyRoutine> routines, LocalDate date) {
+        Set<String> done = new java.util.HashSet<>();
+        for (int i = 0; i < routines.size(); i += COMPLETED_LOOKUP_BATCH) {
+            List<Long> ids = routines.subList(i, Math.min(routines.size(), i + COMPLETED_LOOKUP_BATCH))
+                    .stream().map(StudyRoutine::getId).toList();
+            for (StudyRoutineCheckin checkin : checkinMapper.selectList(new LambdaQueryWrapper<StudyRoutineCheckin>()
+                    .in(StudyRoutineCheckin::getRoutineId, ids)
+                    .eq(StudyRoutineCheckin::getCheckDate, date)
+                    .eq(StudyRoutineCheckin::getStatus, 1))) {
+                done.add(doneKey(checkin.getUserId(), checkin.getRoutineId()));
+            }
+        }
+        return done;
     }
 
     private StudyRoutine ownedRoutine(Long userId, Long routineId) {
@@ -247,14 +276,6 @@ public class RoutineServiceImpl implements RoutineService {
         return result;
     }
 
-    private boolean isCompleted(Long userId, Long routineId, LocalDate date) {
-        StudyRoutineCheckin checkin = checkinMapper.selectOne(new LambdaQueryWrapper<StudyRoutineCheckin>()
-                .eq(StudyRoutineCheckin::getUserId, userId)
-                .eq(StudyRoutineCheckin::getRoutineId, routineId)
-                .eq(StudyRoutineCheckin::getCheckDate, date));
-        return checkin != null && checkin.getStatus() != null && checkin.getStatus() == 1;
-    }
-
     private Map<String, Object> routineRow(StudyRoutine routine) {
         Map<String, Object> row = new HashMap<>();
         row.put("id", routine.getId());
@@ -290,6 +311,10 @@ public class RoutineServiceImpl implements RoutineService {
 
     private String checkKey(Long routineId, LocalDate date) {
         return routineId + "#" + date;
+    }
+
+    private static String doneKey(Long userId, Long routineId) {
+        return userId + ":" + routineId;
     }
 
     private String normalizeFrequency(String frequency) {
