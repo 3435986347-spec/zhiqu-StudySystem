@@ -34,6 +34,9 @@ public class SysUser {
      */
     private Long memoryEpoch;
 
+    /** 改密码时 +1；登录令牌里带着签发时的值，不一样就失效（见 V37、JwtAuthenticationFilter）。 */
+    private Integer tokenEpoch;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

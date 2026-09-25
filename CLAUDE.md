@@ -14,7 +14,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V36`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V37`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -437,6 +437,23 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
   原来「读出整个模板 → 改计数 → `updateById` 整个写回去」：并发套用丢计数；更糟的是写回的是读的时候的状态 ——
   管理员恰好在这中间驳回或下架，点一下赞、套用一次，它就又变回「已通过」。这张表没有 `@Version`，没有东西拦。
 
+### 稳定性 / 可靠性 / 速度（2026-09-25 第五轮：登录与会话）
+
+- **改密码吊销旧令牌**（V37 `sys_user.token_epoch`）。JWT 无状态，原来改了密码旧令牌照样能用到过期（记住我 30 天）——
+  而改密码正是账号被盗后用户能做的那件事。令牌带着签发时的纪元（`JwtUtils.EPOCH_CLAIM`），过滤器本来每次请求就要读
+  这一行（查禁用），顺带比纪元，不多一次查询。用计数不用「改密码的时间」：不牵扯时钟、时区。旧令牌没有这个声明按 0 算，
+  上线时谁都不会被踢下线。`generateToken` 没有不带纪元的重载 —— 那样签的令牌对改过密码的人永远无效，签发处看不出错。
+  改密码接口给当前会话回一张新令牌（到期时间照旧，带着记住我 Cookie 的也换 Cookie），前端 `setAuth` 存上，
+  否则改完密码下一个请求就被踢回登录页（`PasswordChangeKeepsSessionTest`）。管理员重置密码同样吊销。
+  个人访问令牌（`zqp_`）是另一套，不受影响。
+- **改密码是一条只动几列的语句**（`SysUserMapper.changePassword`，并把 `version` +1）。原来读整行、改密码、`updateById`
+  写回：`sys_user` 有 `@Version`，中间谁改过这一行那次写入就是 0 行，接口照样回「密码已更新」；反过来一个并发的整行写入
+  会把旧密码哈希写回去。
+- **用户名存不存在，不能从响应时间看出来**：不存在时也拿一个占位哈希比一次（原来直接返回，存在才做约 100 毫秒的 BCrypt）。
+- **客户端 IP 只有 `ClientIpResolver` 一种算法**。登录记录、反馈、后台流量监控原来各自直接读 `X-Forwarded-For` ——
+  登录记录是给用户看「是不是我登的」的，谁都能给自己填一个假 IP。`LoginSafetyTest` 钉「src/main 里只有它读这个头」。
+- 顺带：登录回包里 `Map.of` 遇到空昵称直接抛（库里昵称为空的账号每次登录都是 500）。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -486,7 +503,7 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260924-resilience`.
+  old bundle. Current token: `20260925-sessions`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

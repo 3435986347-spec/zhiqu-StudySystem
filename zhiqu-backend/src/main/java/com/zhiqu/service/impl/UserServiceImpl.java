@@ -8,6 +8,7 @@ import com.zhiqu.entity.LoginLog;
 import com.zhiqu.entity.SysUser;
 import com.zhiqu.mapper.LoginLogMapper;
 import com.zhiqu.mapper.SysUserMapper;
+import com.zhiqu.security.JwtUtils;
 import com.zhiqu.service.UserService;
 import com.zhiqu.util.UploadPathResolver;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -38,15 +39,18 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     private final UploadPathResolver uploadPathResolver;
     private final LoginLogMapper loginLogMapper;
+    private final JwtUtils jwtUtils;
 
     public UserServiceImpl(SysUserMapper sysUserMapper,
                            PasswordEncoder passwordEncoder,
                            UploadPathResolver uploadPathResolver,
-                           LoginLogMapper loginLogMapper) {
+                           LoginLogMapper loginLogMapper,
+                           JwtUtils jwtUtils) {
         this.sysUserMapper = sysUserMapper;
         this.passwordEncoder = passwordEncoder;
         this.uploadPathResolver = uploadPathResolver;
         this.loginLogMapper = loginLogMapper;
+        this.jwtUtils = jwtUtils;
     }
 
     @Override
@@ -91,14 +95,26 @@ public class UserServiceImpl implements UserService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    /**
+     * 改密码：之前签发的登录令牌（别的设备、被偷走的那张）一并失效，当前这个会话换一张新的、到期时间不变。
+     * 见 {@link SysUserMapper#changePassword} 与 V37。
+     */
     @Override
-    public void updatePassword(Long userId, UpdatePasswordRequest request) {
+    public Map<String, Object> updatePassword(Long userId, UpdatePasswordRequest request, java.util.Date keepExpiresAt) {
         SysUser user = mustGetUser(userId);
         if (!passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
             throw new BusinessException("旧密码不正确");
         }
-        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
-        sysUserMapper.updateById(user);
+        if (sysUserMapper.changePassword(userId, passwordEncoder.encode(request.getNewPassword())) != 1) {
+            throw new BusinessException("密码没有改成，请刷新后重试");
+        }
+        int epoch = (user.getTokenEpoch() == null ? 0 : user.getTokenEpoch()) + 1;
+        java.util.Date expiresAt = keepExpiresAt != null ? keepExpiresAt
+                : new java.util.Date(System.currentTimeMillis() + jwtUtils.getExpiration());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("token", jwtUtils.generateToken(userId, user.getUsername(), epoch, expiresAt));
+        result.put("expiresAt", expiresAt.getTime());
+        return result;
     }
 
     @Override

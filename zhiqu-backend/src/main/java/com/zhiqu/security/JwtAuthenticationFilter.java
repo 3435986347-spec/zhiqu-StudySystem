@@ -25,6 +25,8 @@ import java.util.List;
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     public static final String AUTH_COOKIE_NAME = "zhiqu_token";
+    /** 请求属性：这次请求所用登录令牌的到期时间（{@link java.util.Date}），只在用 JWT 登录时有。 */
+    public static final String TOKEN_EXPIRES_AT = "zhiqu.jwt.expiresAt";
 
     /** 用个人访问令牌认证的请求带这个权限 —— 控制器据此区分「网页登录」和「命令行令牌」。 */
     public static final String ACCESS_TOKEN_AUTHORITY = "HARNESS_TOKEN";
@@ -68,6 +70,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     filterChain.doFilter(request, response);
                     return;
                 }
+                if (JwtUtils.epochOf(claims) != (user.getTokenEpoch() == null ? 0 : user.getTokenEpoch())) {
+                    // 这张令牌签发之后改过密码（自己改、或管理员重置）：作废。见 V37
+                    SecurityContextHolder.clearContext();
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+                // 改密码时要给当前会话换一张同样到期时间的新令牌 —— 到期时间只有这里知道
+                request.setAttribute(TOKEN_EXPIRES_AT, claims.getExpiration());
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                         userId, null, Collections.emptyList()
                 );

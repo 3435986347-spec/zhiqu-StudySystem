@@ -36,6 +36,17 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
     @Update("UPDATE sys_user SET memory_epoch = COALESCE(memory_epoch, 0) + 1 WHERE id = #{userId}")
     int bumpMemoryEpoch(@Param("userId") Long userId);
 
+    /**
+     * 换密码，并让之前签发的登录令牌全部失效 —— 一条语句，只动这几列。
+     *
+     * <p>原来是读出整行、改密码、{@code updateById} 写回：这张表有 {@code @Version}，中间谁改过这一行，
+     * 那次写入就是 0 行，而接口照样回「密码已更新」。反过来，一个并发的整行写入（比如改资料）会把
+     * <b>旧的</b>密码哈希写回去。这里同时把 version +1：拿着旧版本号的整行写入会失败，而不是把密码改回去。
+     */
+    @Update("UPDATE sys_user SET password = #{hash}, token_epoch = token_epoch + 1, version = COALESCE(version, 0) + 1 "
+            + "WHERE id = #{userId} AND deleted = 0")
+    int changePassword(@Param("userId") Long userId, @Param("hash") String hash);
+
     @Select("SELECT COALESCE(memory_epoch, 0) FROM sys_user WHERE id = #{userId}")
     Long currentMemoryEpoch(@Param("userId") Long userId);
 

@@ -1,5 +1,6 @@
 package com.zhiqu.controller;
 
+import com.zhiqu.security.ClientIpResolver;
 import com.zhiqu.common.Result;
 import com.zhiqu.dto.FeedbackRequest;
 import com.zhiqu.entity.UserFeedback;
@@ -16,9 +17,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/feedback")
 public class FeedbackController {
     private final FeedbackService feedbackService;
+    private final ClientIpResolver clientIpResolver;
 
-    public FeedbackController(FeedbackService feedbackService) {
+    public FeedbackController(FeedbackService feedbackService, ClientIpResolver clientIpResolver) {
         this.feedbackService = feedbackService;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @PostMapping
@@ -32,15 +35,8 @@ public class FeedbackController {
         ));
     }
 
+    /** 客户端 IP 只有一种算法（ClientIpResolver）：只在可信代理后面才认转发头，否则谁都能自己填一个。 */
     private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        String realIp = request.getHeader("X-Real-IP");
-        if (realIp != null && !realIp.isBlank()) {
-            return realIp.trim();
-        }
-        return request.getRemoteAddr();
+        return clientIpResolver.resolve(request);
     }
 }

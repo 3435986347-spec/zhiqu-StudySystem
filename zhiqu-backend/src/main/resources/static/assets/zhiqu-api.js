@@ -989,7 +989,13 @@
       var pis = $all('input', pw), b = $('.zq-btn', pw);
       if (b) b.onclick = function () {
         if (pis[1].value !== pis[2].value) return toast('两次新密码不一致', 'error');
-        safe('修改密码', async function () { await api.put('/user/password', { oldPassword: pis[0].value, newPassword: pis[1].value }); toast('密码已更新'); pis.forEach(function (i) { i.value = ''; }); });
+        safe('修改密码', async function () {
+          // 改完密码，之前签发的令牌（别的设备上的、被偷走的）全部作废；这个会话拿新令牌接着用，「记住我」照旧
+          var fresh = await api.put('/user/password', { oldPassword: pis[0].value, newPassword: pis[1].value });
+          if (fresh && fresh.token) setAuth({ token: fresh.token, role: role() || 'USER' }, Boolean(localStorage.getItem('token')));
+          toast('密码已更新，其他设备上的登录已失效');
+          pis.forEach(function (i) { i.value = ''; });
+        });
       };
     }
     wireModelForm();

@@ -1,5 +1,6 @@
 package com.zhiqu.service.impl;
 
+import com.zhiqu.security.ClientIpResolver;
 import com.zhiqu.service.TrafficMonitorService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,11 @@ public class InMemoryTrafficMonitorService implements TrafficMonitorService {
     private static final DateTimeFormatter MINUTE_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
     private final Object lock = new Object();
     private final ArrayDeque<TrafficEvent> events = new ArrayDeque<>();
+    private final ClientIpResolver clientIpResolver;
+
+    public InMemoryTrafficMonitorService(ClientIpResolver clientIpResolver) {
+        this.clientIpResolver = clientIpResolver;
+    }
 
     @Override
     public void record(HttpServletRequest request, int status, long durationMs) {
@@ -138,16 +144,9 @@ public class InMemoryTrafficMonitorService implements TrafficMonitorService {
         return LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(timestamp), ZoneId.systemDefault()).format(MINUTE_FORMAT);
     }
 
+    /** 客户端 IP 只有一种算法（ClientIpResolver）：只在可信代理后面才认转发头，否则谁都能自己填一个。 */
     private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        String realIp = request.getHeader("X-Real-IP");
-        if (realIp != null && !realIp.isBlank()) {
-            return realIp.trim();
-        }
-        return request.getRemoteAddr();
+        return clientIpResolver.resolve(request);
     }
 
     private String limit(String value, int maxLength) {

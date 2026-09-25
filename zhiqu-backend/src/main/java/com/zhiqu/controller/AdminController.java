@@ -154,8 +154,8 @@ public class AdminController {
             throw new BusinessException("账号不存在或已删除");
         }
         String tempPassword = randomPassword();
-        user.setPassword(passwordEncoder.encode(tempPassword));
-        userMapper.updateById(user);
+        // 重置 = 这个人之前签发的登录令牌全部作废（V37）；一条语句只动密码相关的几列
+        userMapper.changePassword(user.getId(), passwordEncoder.encode(tempPassword));
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("tempPassword", tempPassword);
         return Result.success(data);

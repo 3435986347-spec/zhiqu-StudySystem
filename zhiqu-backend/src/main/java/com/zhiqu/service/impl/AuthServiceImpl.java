@@ -8,6 +8,7 @@ import com.zhiqu.entity.LoginLog;
 import com.zhiqu.entity.SysUser;
 import com.zhiqu.mapper.LoginLogMapper;
 import com.zhiqu.mapper.SysUserMapper;
+import com.zhiqu.security.ClientIpResolver;
 import com.zhiqu.security.JwtUtils;
 import com.zhiqu.service.AchievementService;
 import com.zhiqu.service.AuthService;
@@ -33,17 +34,26 @@ public class AuthServiceImpl implements AuthService {
     private final AchievementService achievementService;
     private final UploadPathResolver uploadPathResolver;
     private final LoginLogMapper loginLogMapper;
+    private final ClientIpResolver clientIpResolver;
+    /**
+     * 用户名不存在时拿来空比一次的哈希。原来用户名不存在就直接返回，存在才做一次 BCrypt（约 100 毫秒）——
+     * 报错文字一样，响应时间却不一样，量一量就知道哪些用户名是真的。
+     */
+    private final String dummyHash;
 
     public AuthServiceImpl(SysUserMapper sysUserMapper, PasswordEncoder passwordEncoder, JwtUtils jwtUtils,
                            AchievementService achievementService,
                            UploadPathResolver uploadPathResolver,
-                           LoginLogMapper loginLogMapper) {
+                           LoginLogMapper loginLogMapper,
+                           ClientIpResolver clientIpResolver) {
         this.sysUserMapper = sysUserMapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtils = jwtUtils;
         this.achievementService = achievementService;
         this.uploadPathResolver = uploadPathResolver;
         this.loginLogMapper = loginLogMapper;
+        this.clientIpResolver = clientIpResolver;
+        this.dummyHash = passwordEncoder.encode(java.util.UUID.randomUUID().toString());
     }
 
     @Override
@@ -73,7 +83,7 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException("用户名已存在");
         }
 
-        String token = jwtUtils.generateToken(user.getId(), user.getUsername());
+        String token = jwtUtils.generateToken(user.getId(), user.getUsername(), 0, jwtUtils.getExpiration());
         return Map.of("id", user.getId(), "username", user.getUsername(), "token", token);
     }
 
@@ -81,7 +91,11 @@ public class AuthServiceImpl implements AuthService {
     public Map<String, Object> login(LoginRequest request) {
         SysUser user = sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getUsername, request.getUsername()));
-        if (user == null || !passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+        if (user == null) {
+            passwordEncoder.matches(request.getPassword(), dummyHash);   // 和用户名存在时花一样的时间
+            throw new BusinessException("用户名或密码错误");
+        }
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             throw new BusinessException("用户名或密码错误");
         }
         if (user.getStatus() != null && user.getStatus() == 0) {
@@ -91,11 +105,13 @@ public class AuthServiceImpl implements AuthService {
         achievementService.checkAndUnlock(user.getId(), "login");
         boolean rememberMe = Boolean.TRUE.equals(request.getRememberMe());
         long expiresIn = rememberMe ? jwtUtils.getRememberExpiration() : jwtUtils.getExpiration();
-        String token = jwtUtils.generateToken(user.getId(), user.getUsername(), expiresIn);
+        String token = jwtUtils.generateToken(user.getId(), user.getUsername(),
+                user.getTokenEpoch() == null ? 0 : user.getTokenEpoch(), expiresIn);
         return Map.of(
                 "id", user.getId(),
                 "username", user.getUsername(),
-                "nickname", user.getNickname(),
+                // Map.of 不收 null：库里昵称为空的账号（直接改过库、旧数据）原来每次登录都是一个 500，再也登不上
+                "nickname", user.getNickname() == null ? user.getUsername() : user.getNickname(),
                 "role", user.getRole() == null ? "USER" : user.getRole(),
                 "token", token,
                 "rememberMe", rememberMe,
@@ -135,8 +151,8 @@ public class AuthServiceImpl implements AuthService {
             ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attrs != null) {
                 HttpServletRequest req = attrs.getRequest();
-                String xff = req.getHeader("X-Forwarded-For");
-                log.setIp(xff != null && !xff.isBlank() ? xff.split(",")[0].trim() : req.getRemoteAddr());
+                // 登录记录里的 IP 是给用户看「是不是我登的」的，不能由请求方自己填 —— 只在可信代理后面才认转发头
+                log.setIp(clientIpResolver.resolve(req));
                 String ua = req.getHeader("User-Agent");
                 if (ua != null && ua.length() > 300) {
                     ua = ua.substring(0, 300);
