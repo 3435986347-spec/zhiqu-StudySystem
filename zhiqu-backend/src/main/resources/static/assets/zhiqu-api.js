@@ -1423,12 +1423,21 @@
       ].join('');
       var buttons = $all('#zq-modal .zq-btn, #zq-modal .zq-btn-ghost');
       var applyBtn = buttons.find(function (b) { return /套用/.test(b.textContent); });
+      // 这一次打开这个计划就是「一次套用」：键在这里生成，连点、等得不耐烦又点一次，带的都是同一个键 ——
+      // 服务器只执行一次（原来连点两下就建两整份任务）。换个开始日期是另一次，所以键里带上日期。
+      var applyKey = newIdempotencyKey();
       if (applyBtn) applyBtn.onclick = async function () {
+        if (applyBtn.disabled) return;
         var startDate = await askText({ title: '套用参考计划', label: '开始日期', value: today(), hint: '格式 YYYY-MM-DD，计划内任务将从该日期起排入你的日历。', okText: '套用' });
         if (!startDate || !startDate.trim()) return;
-        await api.post('/shared-plans/' + id + '/apply', { startDate: startDate.trim() });
-        toast('已套用到你的日历');
-        modal.style.display = 'none';
+        applyBtn.disabled = true;
+        try {
+          await api.post('/shared-plans/' + id + '/apply', { startDate: startDate.trim() }, { 'Idempotency-Key': applyKey + ':' + startDate.trim() });
+          toast('已套用到你的日历');
+          modal.style.display = 'none';
+        } finally {
+          applyBtn.disabled = false;
+        }
       };
       $('#zm-likes').onclick = async function () {
         var res = await api.post('/shared-plans/' + id + '/like', {});

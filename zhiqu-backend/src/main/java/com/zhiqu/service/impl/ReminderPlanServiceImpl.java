@@ -2,6 +2,7 @@ package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.zhiqu.common.BusinessClock;
+import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.StudyTask;
 import com.zhiqu.entity.TaskReminder;
 import com.zhiqu.mapper.TaskReminderMapper;
@@ -121,6 +122,9 @@ public class ReminderPlanServiceImpl implements ReminderPlanService {
                 .orderByAsc(TaskReminder::getScheduledAt));
     }
 
+    /** 一个任务最多几个「提前 N 天」提醒。原来 0–365 去重之后最多 366 个，再乘上最多 52 周的重复。 */
+    static final int MAX_OFFSETS = 10;
+
     private List<Integer> resolveOffsets(StudyTask task, List<Integer> requested) {
         List<Integer> source = requested == null ? suggestOffsets(task.getTaskType(), task.getDifficulty()) : requested;
         Set<Integer> clean = new LinkedHashSet<>();
@@ -130,6 +134,10 @@ public class ReminderPlanServiceImpl implements ReminderPlanService {
             }
             int normalized = Math.max(0, Math.min(365, offset));
             clean.add(normalized);
+        }
+        if (clean.size() > MAX_OFFSETS) {
+            // 每个偏移就是一条提醒；周期任务每一周都要乘一遍。宁可说清楚，也不悄悄只留前几个
+            throw new BusinessException("提醒节点最多 " + MAX_OFFSETS + " 个（这次是 " + clean.size() + " 个）");
         }
         List<Integer> result = new ArrayList<>(clean);
         result.sort(Comparator.reverseOrder());

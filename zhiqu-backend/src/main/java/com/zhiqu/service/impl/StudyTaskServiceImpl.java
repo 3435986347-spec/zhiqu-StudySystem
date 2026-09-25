@@ -23,6 +23,12 @@ import java.util.stream.Collectors;
 
 @Service
 public class StudyTaskServiceImpl implements StudyTaskService {
+    /**
+     * 周期任务最多重复多少周。原来没有上限：每一周一条任务、外加它的几条提醒，全在一个事务里 ——
+     * 一个 repeatWeeks = 1000000 的请求（或者 AI 草稿里模型随口写的 520）就是几百万行写入。
+     * 判定在这里（而不是只在请求 DTO 上）：AI 草稿确认、参考计划套用都不经过 @Valid。
+     */
+    static final int MAX_REPEAT_WEEKS = 52;
     private final StudyTaskMapper studyTaskMapper;
     private final AchievementService achievementService;
     private final ReminderPlanService reminderPlanService;
@@ -73,6 +79,9 @@ public class StudyTaskServiceImpl implements StudyTaskService {
         Integer weeks = request.getRepeatWeeks();
         if (weeks == null || weeks < 1) {
             throw new BusinessException("持续周数必须大于 0");
+        }
+        if (weeks > MAX_REPEAT_WEEKS) {
+            throw new BusinessException("持续周数最多 " + MAX_REPEAT_WEEKS + " 周（一年）");
         }
         if (request.getStartTime() == null) {
             throw new BusinessException("设置周期重复需要填写开始时间");

@@ -481,6 +481,16 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
   进程内的锁只放自己那一把（过期后被别人拿走的不能误放）。
 - **任务的密文不进接口回包**（`StudyTask` 上 `@JsonIgnore`）：页面从不读，每条任务却带着明文 + 密文两份标题和描述。
 
+### 稳定性 / 可靠性 / 速度（2026-09-25 第八轮：套用只执行一次、一次请求写多少行）
+
+- **参考计划「套用」只执行一次**：沿用任务快速添加那套 `Idempotency-Key`（第七轮起没有 Redis 也能用），scope 带计划 id。
+  **键在打开计划时生成，不在点击里生成** —— 每次点击新生成一个键就等于没去重；键里带上开始日期，换个日期是另一次。
+  另加「请求没回来之前按钮不响应」。真浏览器里走过一遍：套用一次建出两条任务，同一个键再发两次都回第一次的结果，任务还是两条。
+  （顺带看到：这个界面里「双击」开不出两个日期框 —— 第二下点在弹框的遮罩上把它关了；真正的风险是等得不耐烦又点、和重试。）
+- **一次请求写多少行有上限**：周期任务最多 52 周（`StudyTaskServiceImpl.MAX_REPEAT_WEEKS`），每个任务最多 10 个提前提醒
+  （`ReminderPlanServiceImpl.MAX_OFFSETS`）。原来都没有：`repeatWeeks = 1000000`（或 AI 草稿里模型随口写的 520）就是一个事务里
+  几百万行写入。判定放在服务里而不是请求 DTO 上 —— AI 草稿确认、参考计划套用都不经过 `@Valid`。超了就拒绝并说清上限，不悄悄截断。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -530,7 +540,7 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260925-uploads`.
+  old bundle. Current token: `20260925-apply-once`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

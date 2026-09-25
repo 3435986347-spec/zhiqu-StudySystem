@@ -1,5 +1,6 @@
 package com.zhiqu.controller;
 
+import com.zhiqu.service.concurrency.IdempotencyService;
 import com.zhiqu.common.Result;
 import com.zhiqu.security.SecurityUtils;
 import com.zhiqu.service.SharedPlanEventService;
@@ -15,11 +16,14 @@ import java.util.Map;
 public class SharedPlanController {
     private final SharedPlanService sharedPlanService;
     private final SharedPlanEventService eventService;
+    private final IdempotencyService idempotencyService;
 
     public SharedPlanController(SharedPlanService sharedPlanService,
-                                SharedPlanEventService eventService) {
+                                SharedPlanEventService eventService,
+                                IdempotencyService idempotencyService) {
         this.sharedPlanService = sharedPlanService;
         this.eventService = eventService;
+        this.idempotencyService = idempotencyService;
     }
 
     @PostMapping
@@ -66,9 +70,17 @@ public class SharedPlanController {
         return Result.success(sharedPlanService.detail(SecurityUtils.getCurrentUserId(), id));
     }
 
+    /**
+     * 套用一个参考计划 = 把它的任务、例行计划一条条建进这个人的日历。原来没有任何去重：连点两下（或者等得不耐烦又点一次）
+     * 就是两整份任务。页面在打开这个计划时生成一个 Idempotency-Key（带上开始日期），同一次的重复提交只执行一次、
+     * 回第一次的结果；换个日期、重新打开再套用，是另一次。scope 带上计划 id：同一个键不会串到别的计划上。
+     */
     @PostMapping("/{id}/apply")
     public Result<Map<String, Object>> apply(@PathVariable Long id,
-                                             @RequestBody Map<String, Object> body) {
-        return Result.success(sharedPlanService.apply(SecurityUtils.getCurrentUserId(), id, body));
+                                             @RequestBody Map<String, Object> body,
+                                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        return idempotencyService.execute(userId, "sharedPlan.apply:" + id, idempotencyKey,
+                () -> Result.success(sharedPlanService.apply(userId, id, body)));
     }
 }
