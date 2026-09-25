@@ -60,7 +60,11 @@ public class UserServiceImpl implements UserService {
         user.setSchool(trimToNull(request.getSchool()));
         user.setMajor(trimToNull(request.getMajor()));
         user.setEmail(trimToNull(request.getEmail()));
-        sysUserMapper.updateById(user);
+        // 只动这几列（见 SysUserMapper.updateProfile）。原来 updateById 跳过 null 字段 ——
+        // 把学校、专业、邮箱清空（空串 → null）根本写不进去，旧值一直留着；有版本冲突时还静默 0 行
+        if (sysUserMapper.updateProfile(userId, user.getNickname(), user.getSchool(), user.getMajor(), user.getEmail()) != 1) {
+            throw new BusinessException("资料没有保存成功，请刷新后重试");
+        }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("id", user.getId());
         data.put("username", user.getUsername());
@@ -142,11 +146,40 @@ public class UserServiceImpl implements UserService {
             }
             Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
             String avatarUrl = "/uploads/avatars/" + filename;
-            user.setAvatar(avatarUrl);
-            sysUserMapper.updateById(user);
+            if (sysUserMapper.updateAvatar(userId, avatarUrl) != 1) {
+                Files.deleteIfExists(target);
+                throw new BusinessException("头像没有保存成功，请刷新后重试");
+            }
+            deletePreviousAvatar(dir, userId, user.getAvatar(), filename);
             return Map.of("avatar", avatarUrl);
         } catch (IOException e) {
             throw new BusinessException("头像上传失败");
+        }
+    }
+
+    /**
+     * 换了头像，旧的那张删掉。原来每次上传都留下一个文件、永远不删：一个人反复传 5MB 的头像，
+     * 按普通接口的限流一分钟能写进将近 1GB。只删「自己的、在头像目录里的」那一张 ——
+     * 库里的 avatar 是一个字符串，不能它说删哪个就删哪个。删不掉只记日志：头像已经换好了。
+     */
+    private void deletePreviousAvatar(Path dir, Long userId, String previousUrl, String currentName) {
+        String prefix = "/uploads/avatars/";
+        if (previousUrl == null || !previousUrl.startsWith(prefix)) {
+            return;
+        }
+        String name = previousUrl.substring(prefix.length());
+        if (name.equals(currentName) || !name.startsWith(userId + "-")) {
+            return;
+        }
+        // 解析、规范化之后必须正好在头像目录里（不是它的子目录、更不是外面）：「7-x/../../别处」这种名字在这里拦住
+        Path old = dir.resolve(name).normalize();
+        if (!dir.equals(old.getParent())) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(old);
+        } catch (IOException e) {
+            org.slf4j.LoggerFactory.getLogger(UserServiceImpl.class).warn("旧头像没删掉：{}（{}）", old, e.getMessage());
         }
     }
 

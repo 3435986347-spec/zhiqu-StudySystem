@@ -141,8 +141,9 @@ public class AdminController {
         if (user == null) {
             throw new BusinessException("账号不存在或已删除");
         }
-        user.setStatus(status != null && status == 0 ? 0 : 1);
-        userMapper.updateById(user);
+        if (userMapper.updateStatus(user.getId(), status != null && status == 0 ? 0 : 1) != 1) {
+            throw new BusinessException("账号状态没有改成，请刷新后重试");
+        }
         return Result.success();
     }
 

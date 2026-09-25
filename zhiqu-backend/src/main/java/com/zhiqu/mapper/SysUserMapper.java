@@ -47,6 +47,23 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
             + "WHERE id = #{userId} AND deleted = 0")
     int changePassword(@Param("userId") Long userId, @Param("hash") String hash);
 
+    /*
+     * 下面三条和 changePassword 同一个理由：这张表有 @Version，「读整行 → 改一列 → updateById 写回」
+     * 在中间有人动过这一行时就是 0 行（而原来的调用方都不看返回值）—— 资料没存上照样回「已保存」，
+     * 管理员点了「禁用」而账号其实没禁用。只动自己那几列，就没有版本冲突这回事。
+     */
+
+    @Update("UPDATE sys_user SET nickname = #{nickname}, school = #{school}, major = #{major}, email = #{email} "
+            + "WHERE id = #{userId} AND deleted = 0")
+    int updateProfile(@Param("userId") Long userId, @Param("nickname") String nickname, @Param("school") String school,
+                      @Param("major") String major, @Param("email") String email);
+
+    @Update("UPDATE sys_user SET avatar = #{avatar} WHERE id = #{userId} AND deleted = 0")
+    int updateAvatar(@Param("userId") Long userId, @Param("avatar") String avatar);
+
+    @Update("UPDATE sys_user SET status = #{status} WHERE id = #{userId} AND deleted = 0")
+    int updateStatus(@Param("userId") Long userId, @Param("status") int status);
+
     @Select("SELECT COALESCE(memory_epoch, 0) FROM sys_user WHERE id = #{userId}")
     Long currentMemoryEpoch(@Param("userId") Long userId);
 

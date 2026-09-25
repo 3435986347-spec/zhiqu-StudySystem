@@ -44,6 +44,11 @@ import java.util.zip.ZipOutputStream;
 public class KnowledgeServiceImpl implements KnowledgeService {
     private static final Pattern WIKI_LINK_PATTERN = Pattern.compile("\\[\\[([^\\]\\n]{1,120})]]");
     private static final long MAX_SOURCE_UPLOAD_BYTES = 20L * 1024L * 1024L;
+    /**
+     * Raw Source 原文最多存多少字。原来粘贴 12000、上传 20000 —— 两个数字，而且截了一个字都不说：
+     * 两百页的 PDF 导进来只剩前几页，用户以为整份都在自己的 Wiki 里。现在一个上限，截了就在回包里说出来。
+     */
+    static final int MAX_SOURCE_CHARS = 20000;
 
     private final UserKnowledgePageMapper pageMapper;
     private final SysUserMapper userMapper;
@@ -477,13 +482,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         source.setSourceType(limit(value(body.get("sourceType"), "NOTE").toUpperCase(), 40));
         source.setTitle(limit(title, 180));
         source.setSourceRef(limit(value(body.get("sourceRef"), "manual"), 500));
-        source.setEncryptedContent(cryptoService.encrypt(limit(content, 12000)));
+        source.setEncryptedContent(cryptoService.encrypt(limit(content, MAX_SOURCE_CHARS)));
         source.setEncryptionVersion("v1");
         source.setContentSummary(limit(MarkdownCanonicalizer.clean(content).replaceAll("\\s+", " "), 780));
         source.setImmutableHash(cryptoService.sha256Hex(source.getSourceType() + "\n" + source.getTitle() + "\n" + source.getSourceRef() + "\n" + content));
         sourceMapper.insert(source);
-        writeLog(userId, "source.ingest", null, null, source.getId(), "新增 Raw Source：" + source.getTitle(), source.getContentSummary());
-        return sourceRow(sourceMapper.selectById(source.getId()));
+        writeLog(userId, "source.ingest", null, null, source.getId(), "新增 Raw Source：" + source.getTitle(),
+                truncationNote(content) + source.getContentSummary());
+        return withTruncation(sourceRow(sourceMapper.selectById(source.getId())), content);
     }
 
     @Override
@@ -508,14 +514,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         source.setSourceType(sourceTypeFromUpload(contentType, fileName));
         source.setTitle(limit(displayTitle, 180));
         source.setSourceRef(limit("file:" + fileName + " | " + contentType + " | " + file.getSize() + " bytes", 500));
-        source.setEncryptedContent(cryptoService.encrypt(limit(content, 20000)));
+        source.setEncryptedContent(cryptoService.encrypt(limit(content, MAX_SOURCE_CHARS)));
         source.setEncryptionVersion("v1");
         source.setContentSummary(limit(MarkdownCanonicalizer.clean(content).replaceAll("\\s+", " "), 780));
         source.setImmutableHash(cryptoService.sha256Hex("UPLOAD\n" + source.getSourceType() + "\n" + fileName + "\n" + file.getSize() + "\n" + content));
         sourceMapper.insert(source);
         writeLog(userId, "source.upload", null, null, source.getId(), "上传 Raw Source：" + source.getTitle(),
-                "文件已作为 Raw Source 导入，内容摘要已生成，原文加密保存。");
-        return sourceRow(sourceMapper.selectById(source.getId()));
+                truncationNote(content) + "文件已作为 Raw Source 导入，内容摘要已生成，原文加密保存。");
+        return withTruncation(sourceRow(sourceMapper.selectById(source.getId())), content);
     }
 
     @Override
@@ -959,6 +965,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         row.put("anchorText", link.getAnchorText());
         row.put("createdAt", link.getCreatedAt());
         return row;
+    }
+
+    /** 截了就说：回包里带 {@code truncated: {kept, total}}，页面据此提示。 */
+    private static Map<String, Object> withTruncation(Map<String, Object> row, String content) {
+        if (content != null && content.length() > MAX_SOURCE_CHARS) {
+            row.put("truncated", Map.of("kept", MAX_SOURCE_CHARS, "total", content.length()));
+        }
+        return row;
+    }
+
+    private static String truncationNote(String content) {
+        return content != null && content.length() > MAX_SOURCE_CHARS
+                ? "原文 " + content.length() + " 字，只保存了前 " + MAX_SOURCE_CHARS + " 字。" : "";
     }
 
     private Map<String, Object> sourceRow(KnowledgeSource source) {

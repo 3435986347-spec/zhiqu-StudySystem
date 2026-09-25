@@ -454,6 +454,22 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
   登录记录是给用户看「是不是我登的」的，谁都能给自己填一个假 IP。`LoginSafetyTest` 钉「src/main 里只有它读这个头」。
 - 顺带：登录回包里 `Map.of` 遇到空昵称直接抛（库里昵称为空的账号每次登录都是 500）。
 
+### 稳定性 / 可靠性 / 速度（2026-09-25 第六轮：用户这一行的写入、上传、配置）
+
+- **`sys_user` 不再有「读整行 → 改 → `updateById` 写回」**：资料、头像、管理员改状态都换成只动自己那几列的语句
+  （`SysUserMapper.updateProfile / updateAvatar / updateStatus`，加上第五轮的 `changePassword`），并检查行数。
+  这张表有 `@Version`，原来中间谁动过这一行，写入就是 0 行而接口照样回成功 —— 管理员点了「禁用」，账号其实没禁用。
+  另一个藏着的：`updateById` 跳过 null 字段，个人资料把学校 / 专业 / 邮箱**清空根本写不进去**，旧值一直在。
+  **竞态在一次请求的中间，集成测试摆不进去**：第一版在请求之前用 JDBC 改版本号来「模拟冲突」，扰动 U8（把禁用改回整行写回）
+  照样绿 —— 请求里读到的已经是新版本号，整行写回照样成功。机制改由 `AdminUserStatusTest` 钉（只调 `updateStatus`、0 行要报错）。
+- **换头像删旧文件**（只删自己的、解析后正好在头像目录里的那一张 —— 库里的 avatar 是个字符串，不能它说删哪个就删哪个）。
+  原来每次上传都留一个文件、永不删，一个人反复传 5MB 头像一分钟能写进将近 1GB。写库失败时刚存的文件也删。
+  第一版同时有「名字里不许有 /」和「规范化后必须在目录里」两道，扰动发现它们互相替对方挡着，删掉了字符串那道。
+- **Raw Source 截断要说出来**：粘贴原来只存 12000 字、上传 20000 字，截了一个字都不说（两百页的 PDF 只剩前几页，
+  用户以为整份都在 Wiki 里）。现在一个上限 `MAX_SOURCE_CHARS`，回包带 `truncated: {kept, total}`，页面照说。
+- **`ProdConfigParityTest`**：`application.yml` 的每个键生产模板里都要有 —— 生产配置是替换不是追加，漏一个就静默回到
+  Spring 默认值（比如上传上限 1MB，线上传不了、开发机上好好的）。此刻两边一致，这条让它们一直一致。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -503,7 +519,7 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260925-sessions`.
+  old bundle. Current token: `20260925-uploads`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

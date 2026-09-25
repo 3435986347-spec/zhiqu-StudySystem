@@ -2208,8 +2208,8 @@
             h.close();
             safe('上传来源', async function () {
               try {
-                await api.upload('/knowledge/sources/upload', file, title ? { title: title } : {});
-                n.update('来源解析完成', { done: true });
+                var saved = await api.upload('/knowledge/sources/upload', file, title ? { title: title } : {});
+                n.update('来源解析完成' + truncatedNote(saved), { done: true });
               } catch (e) { n.update('解析失败：' + (e.message || '未知错误'), { error: true }); throw e; }
             });
             return;
@@ -2218,12 +2218,17 @@
           var type = $('#zq-imp-type', b).value;
           if (!title) return toast('请填写来源标题', 'error');
           safe('导入来源', async function () {
-            await api.post('/knowledge/sources', { title: title, content: content, sourceType: type });
-            h.close(); toast('来源已导入');
+            var saved = await api.post('/knowledge/sources', { title: title, content: content, sourceType: type });
+            h.close(); toast('来源已导入' + truncatedNote(saved));
           });
         };
       }
     });
+  }
+  /** 来源原文超过上限时后端只存前面一段，并在回包里说 {kept, total} —— 这里把它说给用户，不让截断悄悄发生 */
+  function truncatedNote(saved) {
+    var t = saved && saved.truncated;
+    return t ? '（原文 ' + t.total + ' 字，只保存了前 ' + t.kept + ' 字）' : '';
   }
   async function runWikiLint() {
     await safe('健康检查', async function () {

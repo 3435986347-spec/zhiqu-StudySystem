@@ -189,4 +189,36 @@ class TokenRevocationIntegrationTest {
         assertNotEquals(stale.getPassword(), hash, "旧密码被写回去了");
         assertTrue(login("stale-write", "new-pass-456", false) != null);
     }
+
+    @Test
+    @DisplayName("管理员禁用：库里真的禁用了（走只改状态列的那条 SQL），他手里的令牌随即失效")
+    void 禁用真的生效() throws Exception {
+        register("disable-me", "old-pass-123");
+        String victim = login("disable-me", "old-pass-123", false);
+        register("admin-2", "admin-pass-123");
+        jdbc.update("UPDATE sys_user SET role='ADMIN' WHERE username='admin-2'");
+        String admin = login("admin-2", "admin-pass-123", false);
+        long id = jdbc.queryForObject("SELECT id FROM sys_user WHERE username='disable-me'", Long.class);
+        // 「读整行之后、写回之前有人改过」那个竞态在一次请求的中间，这里摆不进去 —— 由 AdminUserStatusTest 钉机制
+
+        JsonNode r = call(put("/api/admin/users/" + id + "/status").param("status", "0").header("Authorization", "Bearer " + admin));
+        assertEquals(200, r.path("code").asInt(), r.toString());
+        assertEquals(0, jdbc.queryForObject("SELECT status FROM sys_user WHERE id=?", Integer.class, id), "界面说禁用了，库里没禁用");
+        assertTrue(!works(victim), "禁用之后他的令牌还能用");
+    }
+
+    @Test
+    @DisplayName("个人资料清空学校 / 专业 / 邮箱：库里真的清空（原来 updateById 跳过 null，旧值一直在）")
+    void 清空资料() throws Exception {
+        String token = register("clear-profile", "old-pass-123");
+        JsonNode set = call(put("/api/user/profile").header("Authorization", "Bearer " + token).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nickname\":\"阿清\",\"school\":\"某大学\",\"major\":\"计算机\",\"email\":\"a@b.c\"}"));
+        assertEquals(200, set.path("code").asInt(), set.toString());
+        JsonNode cleared = call(put("/api/user/profile").header("Authorization", "Bearer " + token).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nickname\":\"阿清\",\"school\":\"\",\"major\":\"\",\"email\":\"\"}"));
+        assertEquals(200, cleared.path("code").asInt(), cleared.toString());
+        java.util.Map<String, Object> row = jdbc.queryForMap("SELECT school, major, email FROM sys_user WHERE username='clear-profile'");
+        assertEquals(java.util.Arrays.asList(null, null, null), java.util.Arrays.asList(row.get("school"), row.get("major"), row.get("email")),
+                "清空没有写进去：" + row);
+    }
 }
