@@ -17,6 +17,12 @@ public class IdempotencyService {
     private final StringRedisTemplate redisTemplate;
     private final RedisDistributedLockService lockService;
     private final ObjectMapper objectMapper;
+    /**
+     * Redis 不可用时，结果缓存退回进程内。原来 Redis 一抛异常就原样冒出去 —— 任务页的「快速添加」每次都带着
+     * Idempotency-Key，于是在没装 Redis 的机器上，添加任务回的是「Unable to connect to Redis」（2026-09-25 实测）；
+     * 同一个请求不带这个头却能成功。锁那一半由 {@link RedisDistributedLockService} 自己退回进程内。
+     */
+    private final LocalExpiringStore local = new LocalExpiringStore();
 
     public IdempotencyService(StringRedisTemplate redisTemplate,
                               RedisDistributedLockService lockService,
@@ -50,12 +56,12 @@ public class IdempotencyService {
         String base = "zhiqu:idem:" + userId + ":" + scope.trim() + ":" + cleanKey;
         String resultKey = base + ":result";
         String lockKey = base + ":lock";
-        String cached = redisTemplate.opsForValue().get(resultKey);
+        String cached = cachedResult(resultKey);
         if (cached != null) {
             try {
                 return (Result<T>) objectMapper.readValue(cached, Result.class);
             } catch (Exception e) {
-                redisTemplate.delete(resultKey);
+                dropResult(resultKey);
             }
         }
 
@@ -64,13 +70,13 @@ public class IdempotencyService {
             throw new BusinessException("请求正在处理中，请稍后重试");
         }
         try {
-            cached = redisTemplate.opsForValue().get(resultKey);
+            cached = cachedResult(resultKey);
             if (cached != null) {
                 return (Result<T>) objectMapper.readValue(cached, Result.class);
             }
             Result<T> result = supplier.get();
             if (result != null && result.getCode() == 200) {
-                redisTemplate.opsForValue().set(resultKey, objectMapper.writeValueAsString(result), RESULT_TTL);
+                storeResult(resultKey, objectMapper.writeValueAsString(result));
             }
             return result;
         } catch (BusinessException e) {
@@ -79,6 +85,30 @@ public class IdempotencyService {
             throw new BusinessException(e.getMessage() == null ? "幂等处理失败" : e.getMessage());
         } finally {
             lockService.unlock(lock);
+        }
+    }
+
+    private String cachedResult(String key) {
+        try {
+            return redisTemplate.opsForValue().get(key);
+        } catch (RuntimeException e) {
+            return local.get(key);
+        }
+    }
+
+    private void storeResult(String key, String value) {
+        try {
+            redisTemplate.opsForValue().set(key, value, RESULT_TTL);
+        } catch (RuntimeException e) {
+            local.put(key, value, RESULT_TTL.toMillis());
+        }
+    }
+
+    private void dropResult(String key) {
+        try {
+            redisTemplate.delete(key);
+        } catch (RuntimeException e) {
+            local.remove(key);
         }
     }
 }

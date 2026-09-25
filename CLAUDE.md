@@ -470,6 +470,17 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
 - **`ProdConfigParityTest`**：`application.yml` 的每个键生产模板里都要有 —— 生产配置是替换不是追加，漏一个就静默回到
   Spring 默认值（比如上传上限 1MB，线上传不了、开发机上好好的）。此刻两边一致，这条让它们一直一致。
 
+### 稳定性 / 可靠性 / 速度（2026-09-25 第七轮：没有 Redis 的时候）
+
+- **锁与幂等在 Redis 连不上时退回进程内**（`RedisDistributedLockService`、`IdempotencyService`，共用 `LocalExpiringStore`）。
+  限流早就这么做了（`LocalRateWindows`），这两个没有 —— 2026-09-25 实测：Redis 连不上时任务页「快速添加」（总带着
+  `Idempotency-Key`）回的是 `Unable to connect to Redis`，同一个请求不带这个头却能成功；提醒调度拿锁直接抛，一条都发不出去。
+  **桌面版和配置里从没提过要装 Redis** —— 这台机器上恰好装着，所以一直没人发现。单实例部署（桌面、小服务器）上进程内的锁
+  就是对的；多实例而没有 Redis，本来就谈不上互斥。修完之后同样的实测：两次带同一个键的添加回同一个任务 id，没有重复。
+- **放锁不抛异常**：它总在 finally 里，一抛就把前面已经成功的写操作报成失败，客户端一重试就是重复写入。
+  进程内的锁只放自己那一把（过期后被别人拿走的不能误放）。
+- **任务的密文不进接口回包**（`StudyTask` 上 `@JsonIgnore`）：页面从不读，每条任务却带着明文 + 密文两份标题和描述。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
