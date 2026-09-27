@@ -7,12 +7,9 @@
 // 但用户翻回去要看的是当时说了什么。每一步的写法和当时一样（⏺ 做了什么、⎿ 结果的第一行），
 // 不是用户打的 user 消息（goal 模式推的下一轮、命令行补的说明）不显示成「› …」。
 import { describeCall, parseArgs } from './agent.js';
+import { generatedOrigin } from './origins.js';
 
 const RESULT_CHARS = 120;
-
-/** 没有 origin 标记的旧记录里，命令行自己写的那几种 user 消息。 */
-const LEGACY_GOAL = /^(目标：[\s\S]*\n开始做。$|继续朝目标推进：|核对没通过：|目标还没有宣告完成。接着做)/;
-const LEGACY_SYSTEM = /^（你的回答被输出上限截断了/;
 
 function textOf(content) {
   if (typeof content === 'string') return content;
@@ -27,10 +24,8 @@ function firstLine(text) {
 
 function originOf(entry) {
   if (entry.origin) return entry.origin;
-  const text = textOf(entry.message.content);
-  if (LEGACY_GOAL.test(text)) return 'goal';
-  if (LEGACY_SYSTEM.test(text)) return 'system';
-  return null;
+  // 没有 origin 标记的旧记录：靠命令行自己写的那几句固定开头认
+  return generatedOrigin(textOf(entry.message.content));
 }
 
 /** 把 transcript() 的条目画出来。返回画了几条用户消息（没有就说没有）。 */

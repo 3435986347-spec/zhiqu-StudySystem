@@ -126,6 +126,7 @@ export class SessionStore {
     let messages = [];
     let mode = null;
     let goal = null;
+    let todos = [];
     let broken = 0;
     const text = fs.existsSync(this.file(id)) ? fs.readFileSync(this.file(id), 'utf8') : '';
     for (const line of text.split('\n')) {
@@ -136,8 +137,9 @@ export class SessionStore {
       else if (e.type === 'compact' && Array.isArray(e.messages)) messages = e.messages;
       else if (e.type === 'mode' && e.mode) mode = e.mode;
       else if (e.type === 'goal') goal = e.goal || null;
+      else if (e.type === 'todos' && Array.isArray(e.todos)) todos = e.todos;
     }
-    return { meta, messages: dropDanglingToolCalls(messages), mode, goal, broken };
+    return { meta, messages: dropDanglingToolCalls(messages), mode, goal, todos, broken };
   }
 
   /**

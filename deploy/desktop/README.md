@@ -36,6 +36,10 @@ cd deploy\desktop
 .\package-windows.ps1            # 版本默认 1.0.0
 ```
 
+第一次打包会联网下载 Maven 依赖（之后走本地缓存）；`mvn` 或 `jpackage` 任何一步失败，脚本会带着退出码停下，
+不会打印「完成」。内置的 Java 运行时用 jpackage 的默认模块集（已实测包含 `jdk.charsets` 与 `jdk.crypto.ec`，
+不会出现 macOS 版踩过的中文乱码 / HTTPS 握手失败），所以比 macOS 版大一些（运行时约 130MB）。
+
 装了 WiX Toolset 就出单文件安装程序 `知趣象限-1.0.0.exe`；没装则出一个免安装目录，
 里面的 `知趣象限.exe` 双击即运行。Windows 版双击后在**默认浏览器**里打开界面 —— 要做成
 和 macOS 一样的无边框原生窗口需要 WebView2 外壳（C#），单独做。固定端口（记住登录）、
@@ -63,7 +67,9 @@ zhiqu stop                 # 停掉由 zhiqu 在后台启动的后端
 - 应用没开也能用：`zhiqu` 会在后台把后端拉起来（日志 `~/.zhiqu/logs/backend-cli.log`），
   之后再打开应用会直接连上它。终端里按 Ctrl+C 或关掉终端都不会把后端带走。
 - 对话记在名为「命令行」的 Notebook 里，网页里切过去也能看到。
-- Windows 版暂时没有 `zhiqu`：启动脚本是 bash，自动拉起后端用的是 `sh`/`nohup`。
+- 上面这个是随应用打包的 Java 版（bash 启动脚本，只有 macOS）。**Windows 上用 npm 版 `zhiqu`**：
+  装好 Node 22，`cd zhiqu-cli && npm link`，它默认连的就是本机桌面应用（`http://127.0.0.1:47615`）。
+  npm 版是现在的主力版本（循环和工具在你电脑上跑），Java 版只是还留在应用包里。
 
 ## 用户配置：`~/.zhiqu/application.yml`
 

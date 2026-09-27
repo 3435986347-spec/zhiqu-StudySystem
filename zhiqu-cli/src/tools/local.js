@@ -47,7 +47,7 @@ export function localSchemas() {
       '写文件（新建、追加、替换一段都用它 —— 没有单独的 replace / edit 工具）。三种用法选一种：',
       '1）整份写入：给 content —— 新建文件，或者整份重写一个读过全文的文件；',
       '2）追加：给 content 并且 append=true —— 长文件分几次写，就先写开头再一段段追加；',
-      '3）替换一段：给 old_string 和 new_string —— old_string 必须和文件里的原文一字不差、且只出现一次。改一小段就用它，不要整份重写。',
+      '3）替换一段：给 old_string 和 new_string —— old_string 必须和文件里的原文一字不差（缩进也算）、且只出现一次；同样的一段要全部替换就加 replace_all=true。改一小段就用它，不要整份重写。',
       '上级目录不存在会自动建。',
     ].join('\n'), {
       path: { type: 'string', description: '相对工作区根的路径' },
@@ -55,6 +55,7 @@ export function localSchemas() {
       append: { type: 'boolean', description: '为 true 时把 content 追加到文件末尾' },
       old_string: { type: 'string', description: '替换用法：要被替换的原文' },
       new_string: { type: 'string', description: '替换用法：替换成的新文字' },
+      replace_all: { type: 'boolean', description: '替换用法：old_string 出现几处就换几处（改名这类）' },
     }, ['path']),
     fn('delete_file', [
       '删除工作区里的一个文件（只能是文件，不能是目录）。',
@@ -93,6 +94,47 @@ function realRelative(root, abs) {
   return path.relative(root, path.join(real, ...tail)).split(path.sep).join('/');
 }
 const lineCount = (s) => (s === '' ? 0 : s.split('\n').length - (s.endsWith('\n') ? 1 : 0));
+
+/** 不重叠的每一处出现的位置。 */
+function occurrences(hay, needle) {
+  const out = [];
+  for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + needle.length)) out.push(at);
+  return out;
+}
+const lineAt = (text, index) => text.slice(0, index).split('\n').length;
+const squash = (line) => line.replace(/\s+/g, ' ').trim();
+
+/**
+ * old_string 没找到时给线索。原来只回一句「没找到，先 read_file」—— 模型多半会凭记忆再拼一遍，
+ * 差的往往只是缩进（搜索结果、它自己记的版本）或行尾空白，于是又错，几轮之后放弃替换、整份重写。
+ * 这里先按「忽略空白」找同样的几行：找到了就说在第几行、原文一字不差是什么，照着抄就对；
+ * 找不到再看第一行在哪（多半是那段已经被改过了）。
+ */
+function notFoundHint(rel, text, needle) {
+  const lines = text.split('\n');
+  const want = needle.split('\n').map(squash);
+  while (want.length && !want[0]) want.shift();
+  while (want.length && !want[want.length - 1]) want.pop();
+  const show = (from, to) => {
+    const block = lines.slice(from, to).join('\n');
+    return block.length > 2000 ? `${block.slice(0, 2000)}\n…` : block;
+  };
+  if (want.length) {
+    for (let i = 0; i + want.length <= lines.length; i++) {
+      if (want.every((w, k) => squash(lines[i + k]) === w)) {
+        return `old_string 在 ${rel} 里没有一字不差的原文，但第 ${i + 1}–${i + want.length} 行只差空白（缩进、空格或行尾空白不一样）。`
+          + `那几行的原文是（照这个抄，缩进也要一样）：\n${show(i, i + want.length)}`;
+      }
+    }
+    const first = want[0];
+    const near = lines.findIndex((l) => squash(l) === first || (first.length >= 8 && squash(l).includes(first)));
+    if (near >= 0) {
+      return `old_string 在 ${rel} 里没找到。它的第一行出现在第 ${near + 1} 行，但后面对不上 —— 那一段可能已经被改过了。`
+        + `第 ${near + 1} 行起现在是：\n${show(near, near + want.length + 2)}\n先按现在的内容重新拼 old_string。`;
+    }
+  }
+  return `old_string 在 ${rel} 里没找到（空格、缩进、换行都要一字不差）。先 read_file 看一下现在的原文，不要凭记忆拼。`;
+}
 
 export class LocalTools {
   constructor({ root, extensions, maxFileBytes, commands, execTimeoutMs = 120_000 } = {}) {
@@ -148,7 +190,11 @@ export class LocalTools {
     };
   }
 
-  readFile(args = {}) {
+  /**
+   * maxChars：这个模型一次能看的量（agent 按窗口算好传进来）。原来这里按 10 万字切、agent 再按窗口从中间截断 ——
+   * 头部写着「共 300 行」、`full` 也记成读全了，模型实际只看到前一段，却被允许整份重写，没看到的部分就被冲掉了。
+   */
+  readFile(args = {}, { maxChars } = {}) {
     const r = this.guard.resolveReadable(args.path);
     if (r.reason !== Reason.OK) return { error: describe(r.reason, args.path, this.guard.maxFileBytes) };
     const buf = fs.readFileSync(r.path);
@@ -159,19 +205,25 @@ export class LocalTools {
     const offset = Math.max(1, Number(args.offset) || 1);
     const limit = Math.max(1, Math.min(READ_MAX_LINES, Number(args.limit) || READ_MAX_LINES));
     let slice = all.slice(offset - 1, offset - 1 + limit);
+    const cap = Math.max(200, Math.min(READ_MAX_CHARS, Number(maxChars) || READ_MAX_CHARS));
     let chars = 0;
     let cut = slice.length;
-    for (let i = 0; i < slice.length; i++) { chars += slice[i].length + 1; if (chars > READ_MAX_CHARS) { cut = i; break; } }
+    for (let i = 0; i < slice.length; i++) { chars += slice[i].length + 1; if (chars > cap) { cut = i; break; } }
     slice = slice.slice(0, Math.max(1, cut));
+    // 一行就超过上限（压缩过的 js、生成的数据）：只给这一行的前一段，并且不算读全
+    const longLine = slice.length === 1 && slice[0].length > cap ? slice[0].length : 0;
+    if (longLine) slice[0] = slice[0].slice(0, cap);
     const end = offset - 1 + slice.length;
-    const full = offset === 1 && end >= total;
+    const full = !longLine && offset === 1 && end >= total;
     const rel = this.guard.display(r.path);
     const prev = this.known.get(rel);
     const hash = sha(buf);
     this.known.set(rel, { hash, full: full || Boolean(prev && prev.hash === hash && prev.full) });
-    const header = full
-      ? `【${rel}，共 ${total} 行】`
-      : `【${rel} 第 ${offset}–${end} 行（共 ${total} 行）${end < total ? `；没读完，用 offset=${end + 1} 接着读` : ''}】`;
+    const header = longLine
+      ? `【${rel} 第 ${offset} 行（共 ${total} 行）：这一行有 ${longLine} 字，只显示了前 ${cap} 字 —— 压缩过的 / 生成的文件不要整份重写，也别对着它改】`
+      : full
+        ? `【${rel}，共 ${total} 行】`
+        : `【${rel} 第 ${offset}–${end} 行（共 ${total} 行）${end < total ? `；没读完，用 offset=${end + 1} 接着读` : ''}】`;
     return { content: `${header}\n${slice.join('\n')}`, summary: full ? `${total} 行` : `第 ${offset}–${end} 行 / 共 ${total} 行` };
   }
 
@@ -206,7 +258,8 @@ export class LocalTools {
           if ((ic ? line.toLowerCase() : line).includes(needle)) {
             if (hits.length >= SEARCH_MAX_HITS) { truncated = `命中太多，只列出了前 ${SEARCH_MAX_HITS} 条`; return; }
             const shown = line.length > SEARCH_MAX_LINE_CHARS ? `${line.slice(0, SEARCH_MAX_LINE_CHARS)}…` : line;
-            hits.push(`${this.guard.display(child)}:${i + 1}: ${shown.trim()}`);
+            // 保留缩进：模型常把搜到的那行直接拿去当 old_string，去掉缩进就对不上了
+            hits.push(`${this.guard.display(child)}:${i + 1}: ${shown.trimEnd()}`);
           }
         }
       }
@@ -257,15 +310,27 @@ export class LocalTools {
     }
     let newText;
     let kind;
+    let replaced = 0;
     if (replacing) {
       if (!exists) return { error: `替换用法只能用在已存在的文件上：${rel} 不存在。新建文件请直接给 content。` };
       const oldStr = String(args.old_string);
       if (!oldStr) return { error: 'old_string 不能为空' };
-      const first = currentText.indexOf(oldStr);
-      if (first < 0) return { error: `old_string 在 ${rel} 里没找到（空格、缩进、换行都要一字不差）。先 read_file 看一下原文。` };
-      const second = currentText.indexOf(oldStr, first + oldStr.length);
-      if (second >= 0) return { error: `old_string 在 ${rel} 里出现了不止一次，请多带几行上下文让它唯一。` };
-      newText = currentText.slice(0, first) + String(args.new_string ?? '') + currentText.slice(first + oldStr.length);
+      // Windows 换行（全是 \r\n）的文件：模型给的是 \n，原来多行的 old_string 永远「没找到」。
+      // 在统一成 \n 的文本里找、换，写回去再变回 \r\n。混着两种换行的文件不动它，照原样一字不差地比。
+      const crlf = currentText.includes('\r\n') && !/(^|[^\r])\n/.test(currentText);
+      const hay = crlf ? currentText.replace(/\r\n/g, '\n') : currentText;
+      const needle = crlf ? oldStr.replace(/\r\n/g, '\n') : oldStr;
+      const replacement = crlf ? String(args.new_string ?? '').replace(/\r\n/g, '\n') : String(args.new_string ?? '');
+      const at = occurrences(hay, needle);
+      if (!at.length) return { error: notFoundHint(rel, hay, needle) };
+      if (at.length > 1 && !args.replace_all) {
+        const where = at.slice(0, 12).map((i) => lineAt(hay, i)).join('、');
+        return { error: `old_string 在 ${rel} 里出现了 ${at.length} 处（第 ${where}${at.length > 12 ? ' …' : ''} 行）。`
+          + '只改其中一处就多带几行上下文让它唯一；要全部替换就加 replace_all: true。' };
+      }
+      const next = at.length > 1 ? hay.split(needle).join(replacement) : hay.slice(0, at[0]) + replacement + hay.slice(at[0] + needle.length);
+      newText = crlf ? next.replace(/\n/g, '\r\n') : next;
+      replaced = at.length;
       kind = 'replace';
     } else {
       if (args.content == null) return { error: '没有给出 content（整份写入 / 追加），也没有给出 old_string（替换）' };
@@ -277,7 +342,7 @@ export class LocalTools {
       return { error: `写完之后 ${rel} 会有 ${bytes} 字节，超过 ${this.guard.maxFileBytes} 字节的上限。请拆成几个文件。` };
     }
     return {
-      rel, abs: w.path, kind, creating: !exists, oldText: currentText, newText, baseline: current ? sha(current) : null,
+      rel, abs: w.path, kind, replaced, creating: !exists, oldText: currentText, newText, baseline: current ? sha(current) : null,
       newDirectories: exists ? [] : this.guard.missingParents(args.path),
     };
   }
@@ -300,7 +365,8 @@ export class LocalTools {
     const lines = lineCount(prep.newText);
     const what = { create: '已新建', overwrite: '已重写', append: '已追加到', replace: '已修改' }[prep.kind];
     const dirs = prep.newDirectories.length ? `，连同新建目录 ${prep.newDirectories.join('、')}` : '';
-    return { content: `${what} ${prep.rel}${dirs}（+${added} -${removed}，现在共 ${lines} 行）`, summary: `+${added} -${removed}`, added, removed };
+    const times = prep.replaced > 1 ? `，替换了 ${prep.replaced} 处` : '';
+    return { content: `${what} ${prep.rel}${dirs}（+${added} -${removed}${times}，现在共 ${lines} 行）`, summary: `+${added} -${removed}`, added, removed };
   }
 
   // ── 删除 ──────────────────────────────────────────────────────────────

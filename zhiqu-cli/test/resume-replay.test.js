@@ -93,3 +93,18 @@ test('还没聊过的会话：说一句「还没有聊天记录」，不画空�
   assert.match(ui.text(), /还没有聊天记录/);
   assert.ok(!ui.text().includes('── 之前的记录 ──'));
 });
+
+test('/resume：任务清单和用户最后一次的原话也接回来（压缩过、原话不在 messages 里了也一样）', async () => {
+  const root = tmpdir();
+  const ctx = makeCtx(root, [
+    { calls: [{ name: 'update_todos', args: { todos: [{ content: '改接口', status: 'completed' }, { content: '改前端', status: 'pending' }] } }] },
+    { text: '接口改好了，前端要等设计稿？' },
+  ]);
+  await runTurn(ctx, '把用户名改成昵称，但数据库字段别动');
+  ctx.store.append(ctx.session.id, { type: 'compact', messages: [{ role: 'user', content: '【之前对话的摘要】改名' }] });
+  const later = makeCtx(root, [{ text: '好' }]);
+  resumeInto(later, ctx.session.id);
+  assert.deepEqual(later.todos.map((t) => t.content), ['改接口', '改前端']);
+  assert.match(later.ui.text(), /任务清单还有 1 项没做完：改前端/);
+  assert.equal(later.request.text, '把用户名改成昵称，但数据库字段别动');
+});

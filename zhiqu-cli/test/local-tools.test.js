@@ -47,7 +47,7 @@ test('替换：没找到、出现不止一次都拒；追加接在末尾', () =>
   write(root, 'a.js', 'x = 1\nx = 1\ny = 2\n');
   t.readFile({ path: 'a.js' });
   assert.match(t.prepareWrite({ path: 'a.js', old_string: 'z', new_string: 'q' }).error, /没找到/);
-  assert.match(t.prepareWrite({ path: 'a.js', old_string: 'x = 1', new_string: 'x = 3' }).error, /不止一次/);
+  assert.match(t.prepareWrite({ path: 'a.js', old_string: 'x = 1', new_string: 'x = 3' }).error, /出现了 2 处（第 1、2 行）/);
   const ap = t.prepareWrite({ path: 'a.js', content: 'z = 3\n', append: true });
   assert.equal(ap.kind, 'append');
   t.commitWrite(ap);

@@ -162,12 +162,12 @@
     }
   };
 
-  function toast(msg, kind) {
+  function toast(msg, kind, ms) {
     var el = document.createElement('div');
     el.textContent = msg;
     el.style.cssText = 'position:fixed;right:22px;top:22px;z-index:99999;max-width:360px;padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);box-shadow:var(--zq-sh2);color:' + (kind === 'error' ? 'var(--zq-bad)' : 'var(--zq-text)') + ';font-size:13px;font-weight:600;';
     document.body.appendChild(el);
-    setTimeout(function () { el.remove(); }, 2600);
+    setTimeout(function () { el.remove(); }, ms || 2600);
   }
   // 右上角持久通知（Claude 弹窗风格）：notice('正在测试…') → {update(msg,{done}), close()}
   // update 传 {done:true} 时切换为完成态并在 2s 后自动消失
@@ -4239,6 +4239,8 @@
           else if (event === 'agent.step.start') { if (sameNb()) upsertAgentStep(data, false); }
           else if (event === 'agent.step.done') { if (sameNb()) upsertAgentStep(data, true); }
           else if (event === 'agent.step.note') { if (sameNb()) addAgentStepNote(data); }
+          // 消息太长被截了中间（后端 UserMessageFit）：说给用户，而且多停一会儿 —— 这句话要读完
+          else if (event === 'message.notice') { toast((data && data.message) || '这条消息被截短了', data && data.level === 'error' ? 'error' : 'warn', 9000); }
           else if (event === 'artifact.created') {
             if (sameNb()) {
               var incoming = normalizeArtifact(data);

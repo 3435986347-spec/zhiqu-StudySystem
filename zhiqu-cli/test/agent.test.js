@@ -28,7 +28,8 @@ const toolMessages = (ctx) => ctx.messages.filter((m) => m.role === 'tool').map(
 
 test('plan 档只下发读 / 搜 / 查（含远程只读）和 exit_plan_mode；ask / auto 下发全部，没有 exit_plan_mode', () => {
   const plan = names(makeCtx({ mode: 'plan' }));
-  assert.deepEqual(plan, ['list_files', 'read_file', 'search', 'search_wiki', 'read_wiki_page', 'read_memory', 'exit_plan_mode']);
+  // update_todos 三档都有（第九轮）：只动命令行自己记的清单，不碰文件
+  assert.deepEqual(plan, ['list_files', 'read_file', 'search', 'search_wiki', 'read_wiki_page', 'read_memory', 'update_todos', 'exit_plan_mode']);
   for (const mode of ['ask', 'auto']) {
     const all = names(makeCtx({ mode }));
     for (const n of ['write_file', 'run_command', 'create_study_plan', 'propose_memory']) assert.ok(all.includes(n), `${mode} 缺 ${n}`);
@@ -138,13 +139,21 @@ test('plan：交计划 → 用户选 a → 切到 auto，下一次请求就有�
   assert.equal(denied.mode, 'plan');
 });
 
-test('工具输出按模型的窗口截断：窗口 8000 的模型读一个 3 万字的文件，只放进前 2800 字并说明', async () => {
+test('工具输出按模型的窗口截断：窗口 8000 的模型读一个 3 万字的文件，只放进窗口 × 0.35 以内并说明', async () => {
   const root = tmpdir();
   write(root, 'big.txt', '长'.repeat(30_000));
   const ctx = makeCtx({ root, window: 8000, replies: [{ calls: [{ name: 'read_file', args: { path: 'big.txt' } }] }, { text: '好' }] });
   await runTurn(ctx, '读');
   const out = toolMessages(ctx)[0];
   assert.ok(out.length < 3100, `放进上下文的有 ${out.length} 字`);
+  // 读文件自己按这个量给（第九轮起）：一行 3 万字只显示前 2500 字（2800 减去头部余量），并说明不算读全
+  assert.match(out, /这一行有 30000 字，只显示了前 2500 字/);
+});
+
+test('其它工具的大段输出（命令、MCP…）仍按窗口截断并说明', async () => {
+  const { capToolOutput } = await import('../src/agent.js');
+  const out = capToolOutput('长'.repeat(30_000), 8000);
+  assert.ok(out.length < 3100);
   assert.match(out, /只给了前 2800 字/);
 });
 

@@ -19,6 +19,8 @@ import { compactMessages, needsCompaction, SUMMARY_INSTRUCTIONS } from './compac
 import { dropDanglingToolCalls } from './session.js';
 import { ApiError } from './api.js';
 import { sleep } from './http.js';
+import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todoSchema, unfinished } from './todos.js';
+import { spillLongInput } from './longinput.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 
 export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory']);
@@ -64,6 +66,7 @@ export function toolset(ctx) {
     if (!plan || REMOTE_READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'remote' });
   }
   if (ctx.skills && ctx.skills.length) out.push({ schema: loadSkillSchema(), kind: 'skill' });
+  out.push({ schema: todoSchema(), kind: 'todo' });   // 三档都有：plan 档列计划正用得上
   if (ctx.mcp) for (const t of ctx.mcp.schemas({ readOnlyOnly: plan })) out.push({ schema: t, kind: 'mcp' });
   if (plan) out.push({ schema: exitPlanSchema(), kind: 'plan' });
   if (ctx.goal && ctx.goal.status === 'active') out.push({ schema: goalSchema(), kind: 'goal' });
@@ -77,9 +80,25 @@ export function systemText(ctx) {
     root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.mode, commands: ctx.local.commands,
     today: today(),
   });
-  // 目标置顶：在系统内容之后、其它一切之前
-  const goal = goalBlock(ctx.goal);
-  return buildSystemMessage({ systemText: goal ? `${ctx.system.text.trim()}\n\n${goal}` : ctx.system.text, env, instructions: ctx.instructionsText, skills: ctx.skillsText });
+  // 目标、用户这次的原话、任务清单置顶：在系统内容之后、其它一切之前 —— 每一轮都在，压缩也压不掉
+  const pinned = [goalBlock(ctx.goal), requestBlock(ctx), todoBlock(ctx.todos)].filter(Boolean).join('\n\n');
+  return buildSystemMessage({ systemText: pinned ? `${ctx.system.text.trim()}\n\n${pinned}` : ctx.system.text, env, instructions: ctx.instructionsText, skills: ctx.skillsText });
+}
+
+const REQUEST_PIN_CHARS = 6000;
+
+/**
+ * 用户这次的原话 —— 只在对话里已经没有原文（被压缩成摘要了）时才放。摘要是转述，
+ * 「但 localhost 的不要动」这种约束条件在转述里最容易丢；丢了，做出来的就是另一件事，然后一轮轮返工。
+ */
+export function requestBlock(ctx) {
+  const text = ctx.request && ctx.request.text;
+  if (!text) return '';
+  if (ctx.messages.some((m) => m.role === 'user' && m.content === text)) return '';
+  const shown = text.length > REQUEST_PIN_CHARS
+    ? `${text.slice(0, REQUEST_PIN_CHARS - 1500)}\n…（中间略）…\n${text.slice(-1500)}`
+    : text;
+  return `## 用户这次的原话（对话压缩过，原文放在这里；收尾之前对照它逐条检查）\n${shown}`;
 }
 
 /**
@@ -258,6 +277,7 @@ export function describeCall(name, args) {
     case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
     case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
     case 'exit_plan_mode': return '提交计划';
+    case TODO_TOOL: return '更新任务清单';
     case GOAL_TOOL: return `目标状态：${args.status}`;
     case 'search_wiki': return `查知识库「${args.query}」`;
     case 'read_wiki_page': return `读知识库「${args.title}」`;
@@ -316,6 +336,28 @@ function refuseUnoffered(ctx, name, offered) {
   return `没有叫 ${name} 的工具 —— 不是暂时不可用，重试也不会有。${alias ? alias.hint : ''}能用的工具：${available}。`;
 }
 
+// ── 打转 ────────────────────────────────────────────────────────────────
+//
+// 「叫它干一个活不要一直偏离然后一直修正」（用户 2026-09-27）。最常见的打转是同一件事一模一样地失败：
+// 改同一个文件对不上原文、跑同一条命令报同一个错 —— 模型凭记忆再拼一遍、换个参数再跑一遍，越改越偏。
+// 第 3 次失败时在工具结果后面附一句提醒：不拦它，只叫它停下来换个做法。成功一次就重新计数；每一轮（用户的一句话）重新计数。
+export const SPIN_LIMIT = 3;
+
+function failed(ctx, key, content, reminder) {
+  const n = (ctx.spin.get(key) || 0) + 1;
+  ctx.spin.set(key, n);
+  return n >= SPIN_LIMIT ? `${content}\n\n【提醒】${reminder(n)}` : content;
+}
+
+function succeeded(ctx, key) {
+  ctx.spin.delete(key);
+}
+
+const writeReminder = (file) => (n) => `你已经连续 ${n} 次没能改成 ${file}。停下来：先 read_file 重新读它现在的内容，`
+  + '照原文一字不差地拼 old_string（或者挑一段更短、只出现一次的原文）；不要凭记忆再试。如果是方案本身有问题，先想清楚再动手。';
+const runReminder = (line) => (n) => `同一条命令 ${line} 已经连续 ${n} 次失败。先把上面的错误信息完整读一遍，找出根因（不是症状）、`
+  + '想清楚要改哪里再改，一次改对；如果是环境问题或者需要用户决定，就停下来说明，不要换着花样重跑。';
+
 async function executeTool(ctx, call, offered, signal) {
   const ui = ctx.ui;
   const name = call.function && call.function.name;
@@ -334,14 +376,17 @@ async function executeTool(ctx, call, offered, signal) {
   if (kind === 'local') {
     const local = ctx.local;
     if (name === 'list_files' || name === 'read_file' || name === 'search') {
-      const r = name === 'list_files' ? local.listFiles(args) : name === 'read_file' ? local.readFile(args) : local.search(args);
+      // 读文件按这个模型一次能看的量给（留一点给头部）：否则它以为看全了，其实后半截被截断了
+      const cap = toolOutputCap(ctx.model ? ctx.model.effectiveContextWindow : null) - 300;
+      const r = name === 'list_files' ? local.listFiles(args) : name === 'read_file' ? local.readFile(args, { maxChars: cap }) : local.search(args);
       if (r.error) { ui.result(r.error, false); return r.error; }
       ui.result(r.summary);
       return r.content;
     }
     if (name === 'write_file') {
+      const spinKey = `write:${String(args.path || '')}`;
       const prep = local.prepareWrite(args);
-      if (prep.error) { ui.result(prep.error, false); return prep.error; }
+      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, writeReminder(args.path)); }
       if (prep.newDirectories.length) ui.note(`    （会连同新建目录 ${prep.newDirectories.join('、')}）`);
       if (!(await confirmWrite(ctx, prep))) {
         ui.result('用户没有同意，没写', false);
@@ -349,6 +394,7 @@ async function executeTool(ctx, call, offered, signal) {
       }
       const r = local.commitWrite(prep);
       if (r.error) { ui.result(r.error, false); return r.error; }
+      succeeded(ctx, spinKey);
       ctx.changedFiles.add(prep.rel);
       ui.result(ui.paint.green(`✓ ${r.content.split('（')[0]}  +${r.added} -${r.removed}`));
       return r.content;
@@ -367,8 +413,10 @@ async function executeTool(ctx, call, offered, signal) {
       return r.content;
     }
     if (name === 'run_command') {
+      const line = [args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ');
+      const spinKey = `run:${line}${args.cwd ? `@${args.cwd}` : ''}`;
       const prep = local.prepareRun(args);
-      if (prep.error) { ui.result(prep.error, false); return prep.error; }
+      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, runReminder(line)); }
       if (!(await confirmRun(ctx, prep))) {
         ui.result('用户没有同意，没运行', false);
         return `用户没有同意运行 ${[prep.command, ...prep.args].join(' ')}。不要原样重试；问问用户，或者换个做法。`;
@@ -378,7 +426,8 @@ async function executeTool(ctx, call, offered, signal) {
       const lastLines = r.output.split('\n').filter((l) => l.trim()).slice(-8);
       for (const l of lastLines) ui.line(`    ${ui.paint.dim(l.length > 200 ? `${l.slice(0, 200)}…` : l)}`);
       ui.result(r.summary, r.exitCode === 0);
-      return r.content;
+      if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content; }
+      return failed(ctx, spinKey, r.content, runReminder(line));
     }
   }
   if (kind === 'remote') {
@@ -412,6 +461,16 @@ async function executeTool(ctx, call, offered, signal) {
   }
   if (kind === 'plan') {
     return approvePlan(ctx, String(args.plan || ''));
+  }
+  if (kind === 'todo') {
+    const r = parseTodos(args);
+    if (r.error) { ui.result(r.error, false); return r.error; }
+    ctx.todos = r.todos;
+    const [head, ...items] = todoLines(r.todos, ui.paint);
+    ui.result(head);
+    for (const l of items) ui.line(`  ${l}`);
+    if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'todos', todos: ctx.todos });
+    return todoReply(r.todos);
   }
   if (kind === 'goal') {
     const reply = applyGoalUpdate(ctx.goal, args);
@@ -448,8 +507,9 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
   const result = await compactMessages(ctx.messages, window, async (transcriptText) => {
     // 真要调模型压摘要时才说：自动触发、又只有最近一轮可留的时候，这里一句话都不该打
     if (!manual) ui.step(`对话快到上下文上限（窗口 ${window} token 的 80%），把较早的部分压成摘要`);
+    // 摘要的输出上限随窗口走：窗口 8000 的模型写一份 4096 token 的摘要，压完比压之前还挤，下一轮又要压
     const r = await callModel(ctx, [], signal, {
-      render: false, maxTokens: 4096,
+      render: false, maxTokens: Math.max(512, Math.min(4096, Math.floor(window * 0.12))),
       messages: [{ role: 'system', content: SUMMARY_INSTRUCTIONS }, { role: 'user', content: transcriptText }],
     });
     return r.text.trim() || '（摘要为空）';
@@ -471,14 +531,22 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
 
 export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   ctx.steps = [];
+  ctx.spin = new Map();
   ctx.changedFiles = ctx.changedFiles || new Set();
-  record(ctx, { role: 'user', content: userText }, origin);
+  const turnWindow = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
+  // 很长的输入存成文件、让模型分段读（见 longinput.js）；只对用户自己说的话
+  const spilled = !origin && ctx.local && ctx.local.root ? spillLongInput(ctx.local.root, userText, turnWindow) : null;
+  const content = spilled ? spilled.message : userText;
+  if (spilled) ctx.ui.note(`· 这条消息很长（${spilled.chars} 字），原文存进了 ${spilled.files.join('、')}，模型会分段读`);
+  if (!origin) ctx.request = { text: content };
+  record(ctx, { role: 'user', content }, origin);
   if (ctx.session && ctx.store && !ctx.session.title) {
     ctx.session.title = userText.replace(/\s+/g, ' ').slice(0, 40);
     ctx.store.touch(ctx.session.id, { title: ctx.session.title });
   }
   let finalText = '';
   let continuations = 0;
+  let nudged = false;
   const maxRounds = ctx.maxRounds || 60;
   for (let round = 0; round < maxRounds; round++) {
     if (signal && signal.aborted) break;
@@ -517,6 +585,12 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     record(ctx, message);
     if (!calls.length) {
       finalText = message.content || '';
+      // 清单没做完就收尾：推一次。在问用户问题、plan 档、已经推过一次，都不推
+      if (!nudged && ctx.mode !== 'plan' && unfinished(ctx.todos).length && !/[？?]\s*$/.test(finalText.trim())) {
+        nudged = true;
+        record(ctx, { role: 'user', content: todoNudge(ctx.todos) }, 'system');
+        continue;
+      }
       break;
     }
     prefetchRemoteReads(ctx, calls, offered, signal);

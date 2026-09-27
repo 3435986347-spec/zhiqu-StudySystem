@@ -27,6 +27,15 @@ import { colorEnabled, displayWidth, painter } from './render/term.js';
 import { matchCommands } from './commands.js';
 
 const MENU_ROWS = 8;
+// 同步输出（DEC 2026）：支持的终端在 h 与 l 之间攒着不画，整块换帧；不支持的按规矩忽略不认识的私有模式。
+const SYNC_BEGIN = '\u001b[?2026h';
+const SYNC_END = '\u001b[?2026l';
+// 括号粘贴（DEC 2004）：开着它，终端把粘贴的内容包在 ESC[200~ … ESC[201~ 里，Node 的 keypress 认成 paste-start / paste-end
+const PASTE_ON = '\u001b[?2004h';
+const PASTE_OFF = '\u001b[?2004l';
+/** 粘贴超过这么长（或者有换行）就在输入行里放一个占位，回车时换回原文。 */
+const PASTE_INLINE_MAX = 500;
+const PASTE_TOKEN = /\[粘贴 #(\d+) · \d+ (?:行|字)\]/g;
 const plain = (s) => String(s).replace(/\u001b\[[0-9;]*m/g, '');
 
 /** 截到终端宽度以内（按显示宽度，中文算两格），截了就加 …：菜单一项一行，说明太长折成几行的话菜单就散了。
@@ -42,6 +51,14 @@ function fit(text, width) {
 }
 
 export const PROMPT = '› ';
+
+/** 多行 / 很长的输入只留一行摘要（排队的那一行、记录里的「› …」）。 */
+export function briefInput(text) {
+  const s = String(text);
+  const lines = s.split('\n');
+  if (lines.length > 1) return `${lines[0].length > 60 ? `${lines[0].slice(0, 60)}…` : lines[0]} …（共 ${lines.length} 行）`;
+  return s.length > 200 ? `${s.slice(0, 60)}… （共 ${s.length} 字）` : s;
+}
 
 export class Ui {
   constructor({ input = process.stdin, output = process.stdout, color, interactive, commands = [] } = {}) {
@@ -60,6 +77,11 @@ export class Ui {
     this.menu = null;        // { items, sel }：输入 / 时弹出的命令菜单
     this.idle = null;        // 空闲（没在干活）时只放菜单的那块区域，形状和 live 一样
     this.dismissed = null;   // Esc 关掉菜单时的那段输入：原样不再弹，接着打字才再弹
+    this.pasting = null;     // 括号粘贴进行中攒的文字
+    this.pastes = new Map(); // 占位编号 → 原文
+    this.pasteSeq = 0;
+    this.burst = null;       // 同一批到达的几行（终端不支持括号粘贴时的兜底）：{ waiter, lines } 或 { queued: true }
+    this.framing = false;
     const self = this;
     this.status = {
       set(text) { self.setStatus(text); },
@@ -78,21 +100,64 @@ export class Ui {
     this.rl.on('SIGINT', () => {
       if (this.onInterrupt) this.onInterrupt();
     });
-    if (this.interactive && this.commands.length) this.installMenuKeys();
+    if (this.interactive) {
+      this.installKeys();
+      this.output.write(PASTE_ON);
+      this.pasteMode = true;
+      // 进程被异常带走时也把括号粘贴关掉（只对真终端；测试里的输出流不挂）
+      if (this.output === process.stdout) process.once('exit', () => { if (this.pasteMode) process.stdout.write(PASTE_OFF); });
+    }
   }
 
-  // ── 命令菜单 ───────────────────────────────────────────────────────────
+  // ── 按键：粘贴、命令菜单 ─────────────────────────────────────────────────
 
-  installMenuKeys() {
+  installKeys() {
     const input = this.input;
     const originals = input.listeners('keypress');
     input.removeAllListeners('keypress');
     input.on('keypress', (s, key) => {
       if (this.closed) return;
+      if (this.pasteKey(s, key || {})) return;
       if (this.menuKey(key || {})) return;
       for (const listener of originals) listener.call(input, s, key);
       this.afterKey();
     });
+  }
+
+  /**
+   * 括号粘贴：粘贴的内容自己攒着，不交给 readline —— 交给它的话，内容里的每个换行都是一次回车，
+   * 一段五行的报错就成了五条消息（原来就是这样：第一行立刻发出，其余每行各排成一轮）。
+   */
+  pasteKey(s, key) {
+    if (key.name === 'paste-start') { this.pasting = ''; return true; }
+    if (this.pasting === null) return false;
+    if (key.name === 'paste-end') {
+      const text = this.pasting.replace(/\r\n?/g, '\n');
+      this.pasting = null;
+      this.insertPaste(text);
+      return true;
+    }
+    if (typeof s === 'string') this.pasting += s;
+    return true;
+  }
+
+  /** 短的一行原样进输入行；有换行或者很长就放一个占位，回车时换回原文。 */
+  insertPaste(text) {
+    if (!text) return;
+    const lines = text.split('\n');
+    if (lines.length === 1 && text.length <= PASTE_INLINE_MAX) {
+      this.rl.write(text);
+    } else {
+      const n = ++this.pasteSeq;
+      this.pastes.set(n, text);
+      if (this.pastes.size > 50) this.pastes.delete(this.pastes.keys().next().value);
+      this.rl.write(lines.length > 1 ? `[粘贴 #${n} · ${lines.length} 行]` : `[粘贴 #${n} · ${text.length} 字]`);
+    }
+    this.afterKey();
+  }
+
+  expandPastes(line) {
+    return String(line).replace(PASTE_TOKEN, (token, n) => (this.pastes.has(Number(n)) ? this.pastes.get(Number(n)) : token));
   }
 
   /** 菜单开着时的按键；返回 true = 这个键是菜单的，不交给 readline。 */
@@ -179,17 +244,25 @@ export class Ui {
       // 此刻屏幕上只有输入行：当它是一块「上方 0 行」的区域，擦掉输入行再连菜单一起画
       this.idle = { partial: '', status: '', question: this.rl.getPrompt(), drawn: true, rowsAbove: 0 };
     }
-    this.eraseLive();
-    this.drawLive();
+    this.frame(() => {
+      this.eraseLive();
+      this.drawLive();
+    });
     if (!this.live && !this.menu) this.idle = null;
   }
 
-  onLine(line) {
+  onLine(raw) {
+    // 屏幕上的是占位（raw），交出去的是原文（line）
+    const line = this.expandPastes(raw);
+    this.frame(() => this.handleLine(raw, line));
+  }
+
+  handleLine(raw, line) {
     if (this.live) {
       // readline 在回车时已经写了 \r\n、把输入行留在了原处：先把「活动区 + 那一行」擦掉再重画。
       // 那一行的前缀是<b>当时显示的</b>那个 —— 正在问问题时是问题本身，长问题会折成几行，按「› 」算就擦少了
       const shown = this.live.question || this.prompt;
-      this.eraseLive(this.rowsOf(shown + line));
+      this.eraseLive(this.rowsOf(shown + raw));
       const w = this.waiters.find((x) => x.fresh) || (this.live.question ? null : this.waiters[0]);
       if (w) {
         this.waiters.splice(this.waiters.indexOf(w), 1);
@@ -205,12 +278,63 @@ export class Ui {
         w.resolve(line);
         return;
       }
-      if (line.trim()) this.queue.push(line);
+      if (line.trim() || (this.burst && this.burst.queued)) this.enqueue(line);
       this.drawLive();
       return;
     }
+    // 空闲时主提示符上的回车。同一批到达的几行合成一条：终端不支持括号粘贴（旧的 Windows 控制台）时，
+    // 粘贴的多行文字就是这样到的 —— 人一行一行打，两次回车不可能落在同一批里。
+    if (this.burst && this.burst.waiter) { this.burst.lines.push(line); return; }
     const w = this.waiters.shift();
-    if (w) w.resolve(line); else this.queue.push(line);
+    if (!w) { this.enqueue(line); return; }
+    if (!this.interactive || w.fresh) { w.resolve(line); return; }
+    this.burst = { waiter: w, lines: [line] };
+    setImmediate(() => {
+      const b = this.burst;
+      this.burst = null;
+      b.waiter.resolve(b.lines.join('\n'));
+    });
+  }
+
+  /** 排队；同一批到达的几行并进上一条。 */
+  enqueue(line) {
+    if (this.interactive && this.burst && this.burst.queued && this.queue.length) {
+      this.queue[this.queue.length - 1] += `\n${line}`;
+      return;
+    }
+    this.queue.push(line);
+    if (this.interactive) {
+      const mark = { queued: true };
+      this.burst = mark;
+      setImmediate(() => { if (this.burst === mark) this.burst = null; });
+    }
+  }
+
+  /**
+   * 一帧：fn 里所有的写（包括 readline 重画输入行）攒成一次写出去，外面包一层同步输出。
+   * 由来（2026-09-27 用户报的「输入之后、显示模型处理之前，输入框会短暂不见」）：擦、打、画原来是分开的几次写，
+   * 终端在两次写之间刷一帧，那一帧里就没有输入框 —— 等模型时状态行每秒刷一次，流式输出每个增量一次，一直在闪。
+   */
+  frame(fn) {
+    if (this.framing || !this.interactive) return fn();
+    const out = this.output;
+    const own = Object.prototype.hasOwnProperty.call(out, 'write');
+    const original = out.write;
+    let buf = '';
+    out.write = (chunk, encoding, cb) => {
+      buf += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+      const done = typeof encoding === 'function' ? encoding : cb;
+      if (typeof done === 'function') process.nextTick(done);
+      return true;
+    };
+    this.framing = true;
+    try {
+      return fn();
+    } finally {
+      this.framing = false;
+      if (own) out.write = original; else delete out.write;
+      if (buf) out.write(`${SYNC_BEGIN}${buf}${SYNC_END}`);
+    }
   }
 
   // ── 读输入 ─────────────────────────────────────────────────────────────
@@ -239,9 +363,11 @@ export class Ui {
       };
       this.waiters.push(waiter);
       if (this.live) {
-        this.eraseLive();
-        this.live.question = prompt;
-        this.drawLive();
+        this.frame(() => {
+          this.eraseLive();
+          this.live.question = prompt;
+          this.drawLive();
+        });
       } else if (this.interactive) {
         this.rl.setPrompt(prompt || this.prompt);
         this.rl.prompt();
@@ -271,15 +397,17 @@ export class Ui {
     if (!this.interactive) return;
     this.start();
     this.live = { partial: '', status: '', question: null, drawn: false, rowsAbove: 0 };
-    this.drawLive();
+    this.frame(() => this.drawLive());
   }
 
   endLive() {
     if (!this.live) return;
-    this.eraseLive();
-    const partial = this.live.partial;
-    this.live = null;
-    if (partial) this.output.write(`${partial}\n`);
+    this.frame(() => {
+      this.eraseLive();
+      const partial = this.live.partial;
+      this.live = null;
+      if (partial) this.output.write(`${partial}\n`);
+    });
   }
 
   cols() {
@@ -296,7 +424,8 @@ export class Ui {
     const l = this.live || this.idle;
     const lines = [];
     if (l.partial) lines.push(l.partial);
-    if (this.live) for (const q of this.queue) lines.push(this.paint.dim(`⋯ 排队：${q.length > 60 ? `${q.slice(0, 60)}…` : q}`));
+    // 多行的（粘贴的）只显示一行摘要：原文里的换行会把活动区撑乱（擦的时候按一行算）
+    if (this.live) for (const q of this.queue) lines.push(this.paint.dim(`⋯ 排队：${q.includes('\n') ? briefInput(q) : q.length > 60 ? `${q.slice(0, 60)}…` : q}`));
     if (l.status) lines.push(l.status);
     return lines.concat(this.menuLines());
   }
@@ -328,14 +457,20 @@ export class Ui {
   setStatus(text) {
     if (!this.live) return;       // 不是交互终端就不打：管道 / 日志里一行行「正在生成 …」只是噪音
     if (this.live.status === text) return;
-    this.eraseLive();
-    this.live.status = text;
-    this.drawLive();
+    this.frame(() => {
+      this.eraseLive();
+      this.live.status = text;
+      this.drawLive();
+    });
   }
 
   // ── 输出 ───────────────────────────────────────────────────────────────
 
   write(text) {
+    this.frame(() => this.writeNow(text));
+  }
+
+  writeNow(text) {
     if (!this.live) {
       if (this.idle) {
         // 空闲时菜单开着又要打印（比如 Ctrl+C 的提示）：先收起菜单，打完再把输入行画回来
@@ -384,5 +519,9 @@ export class Ui {
   close() {
     this.endLive();
     if (this.rl) this.rl.close();
+    if (this.pasteMode) {
+      this.pasteMode = false;
+      this.output.write(PASTE_OFF);
+    }
   }
 }

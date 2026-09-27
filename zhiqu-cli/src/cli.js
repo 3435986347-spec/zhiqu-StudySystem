@@ -13,6 +13,8 @@ import path from 'node:path';
 import { Api, ApiError } from './api.js';
 import { archiveTurn, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode } from './agent.js';
 import { newGoal } from './goal.js';
+import { generatedOrigin } from './origins.js';
+import { unfinished } from './todos.js';
 import { SLASH_COMMANDS, slashHelp } from './commands.js';
 import { replayTranscript } from './replay.js';
 import { DEFAULT_SERVER, loadUserConfig, normalizeMode, resetSystemContent, resolveSettings, saveUserConfig, stripSlash, systemContent, userDir, MODES } from './config.js';
@@ -24,7 +26,7 @@ import { hunks } from './render/diff.js';
 import { SessionStore } from './session.js';
 import { discoverSkills, skillsBlock } from './skills.js';
 import { LocalTools } from './tools/local.js';
-import { Ui } from './ui.js';
+import { Ui, briefInput } from './ui.js';
 import { checkForUpdate, updateMessage } from './update.js';
 import { VERSION } from './version.js';
 
@@ -194,6 +196,8 @@ function openSession(ctx, flags) {
   }
   ctx.session = ctx.store.create({ model: ctx.model ? ctx.model.label : null });
   ctx.messages = [];
+  ctx.todos = [];
+  ctx.request = null;
 }
 
 export function resumeInto(ctx, id) {
@@ -202,9 +206,17 @@ export function resumeInto(ctx, id) {
   ctx.messages = loaded.messages;
   if (loaded.mode && MODES.includes(loaded.mode)) ctx.mode = loaded.mode;
   ctx.goal = loaded.goal || null;
+  ctx.todos = loaded.todos || [];
+  const said = ctx.store.transcript(id);
+  // 用户最后一次自己说的话：对话压缩过的话它不在 messages 里了，但仍要置顶（见 agent.js requestBlock）
+  const last = said.filter((e) => e.kind === 'message' && e.message.role === 'user' && !e.origin
+    && typeof e.message.content === 'string' && !generatedOrigin(e.message.content)).at(-1);
+  ctx.request = last ? { text: last.message.content } : null;
   if (ctx.goal && ctx.goal.status === 'active') ctx.ui.note(`· 这段会话有一个还没完成的目标：${ctx.goal.text}（/goal continue 接着追）`);
+  const left = unfinished(ctx.todos);
+  if (left.length) ctx.ui.note(`· 任务清单还有 ${left.length} 项没做完：${left.map((t) => t.content).join('；')}`);
   ctx.store.touch(id);
-  replayTranscript(ctx.ui, ctx.store.transcript(id));
+  replayTranscript(ctx.ui, said);
   ctx.ui.note(`· 接着「${loaded.meta.title || '（无标题）'}」这段会话（${loaded.messages.length} 条记录${loaded.broken ? `，${loaded.broken} 行坏了已跳过` : ''}）`);
 }
 
@@ -339,7 +351,7 @@ async function readInput(ui) {
   // 干活时排队的消息：这一轮结束后按顺序发出，并把它作为「› 消息」留在记录里 —— 回头看得出这是用户说的
   const queued = ui.interactive ? ui.takeQueued() : undefined;
   if (queued !== undefined) {
-    ui.line(`${ui.paint.bold('›')} ${queued}`);
+    ui.line(`${ui.paint.bold('›')} ${briefInput(queued)}`);   // 粘贴的一大段只留一行摘要
     return queued;
   }
   let text = await ui.ask(`${ui.paint.bold('›')} `);
@@ -371,8 +383,13 @@ async function repl(ctx, flags = {}) {
     running = null;
   }
   for (;;) {
-    ui.line();
-    const input = await readInput(ui);
+    // 收起上一轮的活动区、空一行、画出下一个提示符 —— 一帧写完。turn / pursue 结束时不自己收：
+    // 分开写的话，「收起」和「画提示符」之间那一刻输入框不见（2026-09-27 真终端实录里每轮结尾一次）
+    const input = await ui.frame(() => {
+      ui.endLive();
+      ui.line();
+      return readInput(ui);
+    });
     if (input == null) break;
     const text = input.trim();
     if (!text) continue;
@@ -395,14 +412,23 @@ async function repl(ctx, flags = {}) {
   return 0;
 }
 
+/** 第一轮要等 MCP 服务器起来（工具表里要有它们）；等的时候状态行说在等什么，输入框照常在。 */
+async function mcpStarted(ctx) {
+  if (!ctx.mcpReady) return;
+  ctx.ui.status.set(ctx.ui.paint.dim('… 等 MCP 服务器启动'));
+  try {
+    await ctx.mcpReady;
+  } finally {
+    ctx.mcpReady = null;
+    ctx.ui.status.clear();
+  }
+}
+
 async function pursue(ctx, setRunning) {
   const controller = new AbortController();
   setRunning(controller);
-  if (ctx.mcpReady) {
-    await ctx.mcpReady;
-    ctx.mcpReady = null;
-  }
-  ctx.ui.beginLive();      // 干活时输入框一直在（见 ui.js）
+  ctx.ui.beginLive();      // 干活时输入框一直在（见 ui.js）—— 等 MCP 启动的那一段也在
+  await mcpStarted(ctx);
   try {
     await runGoal(ctx, { signal: controller.signal, onTurn: (text, result) => archiveTurn(ctx, text, result) });
   } catch (e) {
@@ -411,19 +437,14 @@ async function pursue(ctx, setRunning) {
       return;
     }
     ctx.ui.error(e.message);
-  } finally {
-    ctx.ui.endLive();
   }
 }
 
 async function turn(ctx, text, setRunning) {
   const controller = new AbortController();
   setRunning(controller);
-  if (ctx.mcpReady) {
-    await ctx.mcpReady;
-    ctx.mcpReady = null;
-  }
-  ctx.ui.beginLive();      // 干活时输入框一直在（见 ui.js）
+  ctx.ui.beginLive();      // 干活时输入框一直在（见 ui.js）—— 等 MCP 启动的那一段也在
+  await mcpStarted(ctx);
   try {
     const result = await runTurn(ctx, text, { signal: controller.signal });
     if (controller.signal.aborted) return;
@@ -434,8 +455,6 @@ async function turn(ctx, text, setRunning) {
     if (controller.signal.aborted || (e && e.name === 'AbortError')) return;
     ctx.ui.error(e.message);
     if (e instanceof ApiError && e.auth) ctx.ui.note('（令牌失效了：退出后运行 zhiqu login）');
-  } finally {
-    ctx.ui.endLive();
   }
 }
 
@@ -489,6 +508,8 @@ async function slash(ctx, text) {
     case '/new':
       ctx.session = ctx.store.create({ model: ctx.model.label });
       ctx.messages = [];
+      ctx.todos = [];
+      ctx.request = null;
       ui.line('已开一段新会话');
       return null;
     case '/resume': case '/sessions': {

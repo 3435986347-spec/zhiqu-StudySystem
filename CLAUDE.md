@@ -491,6 +491,55 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
   （`ReminderPlanServiceImpl.MAX_OFFSETS`）。原来都没有：`repeatWeeks = 1000000`（或 AI 草稿里模型随口写的 520）就是一个事务里
   几百万行写入。判定放在服务里而不是请求 DTO 上 —— AI 草稿确认、参考计划套用都不经过 `@Valid`。超了就拒绝并说清上限，不悄悄截断。
 
+### 第九轮（2026-09-27）：复杂任务、长输入、一次做对 —— 命令行与网页
+
+用户原话：「提高处理复杂任务的能力和长上下文输入时的分析和工作能力」「还要提高任务处理的准确率」
+「叫它干一个活不要一直偏离然后一直修正，最好一次就成功」，外加「输入之后、显示模型处理之前输入框还是会短暂不见」。
+
+**命令行的输入框**
+- **重画一次写完**（`Ui.frame`）：擦活动区、打输出、画回输入行原来是分开的几次 `write`，终端在中间刷一帧就是
+  「输入框不见了」—— 等模型时状态行每秒刷一次，流式每个增量一次。现在一帧攒成一次写，外面包 DEC 2026 同步输出
+  （支持的终端整块换帧，不支持的忽略）。一轮结束到下一个提示符也是一帧（repl 里 `endLive` + 空行 + 提示符一起写）。
+  **判据必须按每一次 write 分别回放**（`redraw-paste.test.js`）—— 只看最终屏幕，分几次写和一次写完长得一样。
+  pty 实录：回车到回答结束，改之前 33 次终端读到输出、11 次底下没有输入行；改之后 16 次、0 次。
+- **粘贴多行是一条消息**：原来五行报错 = 第一行立刻发出 + 其余每行各排一轮。开括号粘贴（DEC 2004），粘贴内容
+  自己攒、不交给 readline（交给它的话每个换行都是回车）；有换行或超过 500 字就在输入行放 `[粘贴 #n · L 行]`，
+  回车时换回原文。擦除行数按**屏幕上的占位**算，不按展开后的原文（按原文算会把上面的输出擦掉 —— 扰动照出来的）。
+  终端不支持括号粘贴（旧 Windows 控制台）时兜底：同一批到达的几行合成一条（人一行一行打不可能落在同一批）。
+  y/n 确认不参与合并。
+- 第一轮等 MCP 启动时输入框也在（原来 `await mcpReady` 在 `beginLive` 之前）。
+
+**命令行的准确率（「一次做对」）**
+- **read_file 按这个模型一次能看的量读**（agent 传 `maxChars`）。原来按 10 万字切、agent 再按窗口×0.35 从中间截断 ——
+  头部写着「共 300 行」、`known.full` 也记成读全了，模型只看了前一段却被允许整份重写，没看到的部分被冲掉。
+  一行就超上限（压缩过的 js）也不算读全。
+- **替换对不上时给线索**：先按「忽略空白」找同样的几行 —— 找到就说第几行、原文一字不差是什么；找不到再说第一行在哪
+  （那段多半被改过了）。原来只回「没找到」，模型凭记忆再拼、又错，几轮之后放弃替换、整份重写。
+  **CRLF 文件**：多行 old_string 原来永远「没找到」；现在在统一成 `\n` 的文本里换、写回 `\r\n`（混着两种换行的不动）。
+  出现几处时说出行号，`replace_all` 一次全换。搜索结果**保留缩进**（模型常把搜到的那行直接当 old_string）。
+- **打转检测**：同一个文件连续改不成、同一条命令同样失败，到第 3 次在工具结果后面附一句提醒（重读原文 / 找根因），
+  不拦；成功一次、用户说新的一句话都重新计数。
+- 系统提示新增「一次做对」一节：先弄清楚再动手、牵涉的地方一次改齐、验证一次、失败找根因、只做用户要的、收尾对照原话。
+
+**命令行的复杂任务与长输入**
+- **任务清单 `update_todos`**（`src/todos.js`，三档都有）：整份替换；终端显示；**置顶进系统提示**（压缩压不掉，全做完了就不占）；
+  记进会话、`/resume` 接回来；没做完就收尾时推一次（在问问题 / plan 档 / 已推过都不推）。
+- **用户这次的原话**：对话被压缩、原文不在 messages 里时置顶进系统提示（摘要是转述，「但 localhost 的不要动」在转述里最容易丢）。
+- **很长的输入**（超过窗口 30%）存成 `.zhiqu/inputs/*.txt`（超过 200KB 分几份），消息里给开头、结尾、路径，模型用
+  read_file / search 分段读。原来整块塞进去：超窗口的整个请求被供应商拒，没超的把模型的地方占满。
+- **压缩**：记录太长时**分块滚动摘要**（原来从中间砍掉一段再摘，那段里的决定就没了）；**用户说过的原话逐字保留**
+  在摘要消息后面（有预算，超了先丢最早的并说出来；再压一次接着带上）；摘要的输出上限跟着窗口缩（窗口 8000 写 4096 token
+  的摘要，压完比压之前还挤）。「哪些 user 消息不是用户打的」收在 `src/origins.js` 一处，回放和压缩共用。
+
+**网页 AI 助手的长输入**（`service/ai/UserMessageFit`）
+- 用户消息原来走 `limitText(message, 12000)` —— 那个函数**先把所有空白压成一个空格**：粘贴的代码 / 日志在模型眼里是一整行
+  （Python 连缩进都没了），存进库的也是压平的（刷新后自己发的代码成了一行）；超过 12000 字从后面截掉、一个字不说。
+  现在换行缩进原样；上限跟着模型窗口（没填窗口仍是 12000，填了按 40%）；超了**保留头尾截中间**，正文里写明，页面弹 `message.notice`。
+- 最终回答入库原来也截在 12000 字（流式看到全文，刷新后半截没了）→ `REPLY_MAX_LENGTH` 20 万。
+
+**Windows 打包脚本**：`mvn -o` 在新机器上必失败 → 去掉；PowerShell 5.1 不因原生命令失败停下 → `Assert-Exit` 查 `$LASTEXITCODE`
+（`WindowsPackagingScriptTest`）。jpackage 默认模块集已实测含 `jdk.charsets` / `jdk.crypto.ec`，没有 macOS 版那两个坑。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -540,7 +589,7 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260925-apply-once`.
+  old bundle. Current token: `20260928-long-input`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

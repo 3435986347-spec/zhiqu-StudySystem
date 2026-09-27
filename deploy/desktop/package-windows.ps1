@@ -18,6 +18,12 @@
 param([string]$Version = "1.0.0")
 $ErrorActionPreference = "Stop"
 
+# 原生命令（mvn、jpackage）失败时 PowerShell 5.1 不会因为 $ErrorActionPreference 停下 ——
+# 它只管 cmdlet。不查 $LASTEXITCODE 的话，打 JAR 失败了照样往下走，最后打印「完成」。
+function Assert-Exit([string]$What) {
+    if ($LASTEXITCODE -ne 0) { throw "$What 失败（退出码 $LASTEXITCODE）" }
+}
+
 $Root = (Resolve-Path "$PSScriptRoot\..\..").Path
 $Backend = Join-Path $Root "zhiqu-backend"
 $Out = Join-Path $Root "build\desktop-windows"
@@ -31,9 +37,14 @@ if (-not (Test-Path $jpackage)) { throw "找不到 jpackage：$jpackage。需要
 Write-Host "JDK: $env:JAVA_HOME"
 
 Write-Host "==> 1/3 打 JAR"
+# 不加 -o（离线）：一台新的 Windows 机器上本地仓库是空的，离线构建必然失败。第一次会下载依赖，之后走缓存。
 Push-Location $Backend
-& mvn -o clean package "-DskipTests" -q
-Pop-Location
+try {
+    & mvn clean package "-DskipTests" -q
+    Assert-Exit "打 JAR（mvn package）"
+} finally {
+    Pop-Location
+}
 $jar = Get-ChildItem (Join-Path $Backend "target") -Filter "zhiqu-backend-*.jar" | Select-Object -First 1
 if (-not $jar) { throw "打包失败：找不到 JAR" }
 Write-Host "    $($jar.Name)  $([math]::Round($jar.Length/1MB,1)) MB"
@@ -70,6 +81,7 @@ if ($type -eq "exe") {
 }
 
 & $jpackage @common
+Assert-Exit "jpackage"
 
 Write-Host ""
 if ($type -eq "exe") {

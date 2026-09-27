@@ -91,6 +91,9 @@ class AiConversationLifecycleIntegrationTest {
     private static final String MEMORY_PROMPT_MARK = "你是长期记忆整理器";
     /** 检索改写器的提示词开头。 */
     private static final String REWRITE_PROMPT_MARK = "你是检索查询改写器";
+    /** 用户消息里带着它，假模型就流式回一段 {@link #LONG_REPLY_CHARS} 字的回答（验证长回答整段入库）。 */
+    private static final String LONG_REPLY_MARK = "请写一篇很长很长的回答";
+    private static final int LONG_REPLY_CHARS = 15_000;
     /** 最后一次改写调用的请求体；null 表示这一轮没有发生重试。 */
     private static volatile String lastRewriteRequestBody;
 
@@ -170,8 +173,17 @@ class AiConversationLifecycleIntegrationTest {
             if (streaming) {
                 lastStreamingRequestBody = requestBody;
             }
+            String streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n";
+            // 只有专门的那条判据会发这句话（新建的 Notebook，没有历史会回显它）
+            if (streaming && requestBody.contains(LONG_REPLY_MARK)) {
+                StringBuilder sse = new StringBuilder();
+                for (int i = 0; i < LONG_REPLY_CHARS / 500; i++) {
+                    sse.append("data: {\"choices\":[{\"delta\":{\"content\":\"").append("长".repeat(500)).append("\"}}]}\n\n");
+                }
+                streamed = sse.append("data: [DONE]\n\n").toString();
+            }
             byte[] body = (streaming
-                    ? "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n"
+                    ? streamed
                     : "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}")
                     .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", streaming ? "text/event-stream" : "application/json");
@@ -492,6 +504,67 @@ class AiConversationLifecycleIntegrationTest {
     }
 
     /** 等待最近一次流式 AgentRun 落到终态（MOCK 环境拿不到 SseEmitter 完成回调，轮询 DB 状态） */
+    private String latestContent(Long ownerId, String role) {
+        return jdbcTemplate.queryForObject(
+                "SELECT content FROM ai_message WHERE user_id = ? AND role = ? ORDER BY id DESC LIMIT 1",
+                String.class, ownerId, role);
+    }
+
+    /**
+     * 粘贴的代码 / 日志：换行和缩进原样进模型、原样入库（第九轮）。原来用户消息走 limitText，
+     * 那个函数先把所有空白压成一个空格 —— Python 失去缩进、日志并成一行，刷新之后自己发的代码也成了一行。
+     */
+    @Test
+    void 粘贴的代码保留换行和缩进_发给模型的和存下来的都是原样() throws Exception {
+        Long notebookId = createNotebook(userId, "粘贴代码");
+        String pasted = "帮我看看这段代码为什么不对：\n```python\ndef f(x):\n    if x:\n        return 1\n    return 2\n```";
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, pasted, modelId, false, "OFF", notebookId, "CHAT_ONLY", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        assertEquals(pasted, latestContent(userId, "user"), "存进库的用户消息被改了（换行、缩进压平）");
+        assertNotNull(lastStreamingRequestBody);
+        assertTrue(lastStreamingRequestBody.contains("def f(x):\\n    if x:\\n        return 1"),
+                "发给模型的代码丢了换行或缩进");
+    }
+
+    /**
+     * 超过模型一次能处理的量：保留开头和结尾、截掉中间，并且写明（第九轮）。原来从后面截掉、一个字都不说 ——
+     * 而问题常写在最后（「……以上是日志，哪里出错了？」）。没填上下文窗口的模型仍是原来的 12000 字。
+     */
+    @Test
+    void 超长消息保留头尾截掉中间_并且写明_填了窗口的模型放得更多() throws Exception {
+        Long notebookId = createNotebook(userId, "超长消息");
+        String longMessage = "开头的要求：只看报错那几行\n" + "一行普通日志\n".repeat(3000) + "结尾的问题：哪里出错了？";
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, longMessage, modelId, false, "OFF", notebookId, "CHAT_ONLY", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        String stored = latestContent(userId, "user");
+        assertTrue(stored.startsWith("开头的要求：只看报错那几行\n一行普通日志\n"), stored.substring(0, 60));
+        assertTrue(stored.endsWith("结尾的问题：哪里出错了？"), "结尾（问题常写在这里）被截掉了");
+        assertTrue(stored.contains("中间略去"), "截了要说出来");
+        assertTrue(stored.length() <= 12_200, "没填窗口的模型应当仍按 12000 字：" + stored.length());
+        assertTrue(lastStreamingRequestBody.contains("结尾的问题：哪里出错了？"), "发给模型的也要带着结尾");
+
+        Long bigModel = ((Number) aiService.saveModel(userId, null, Map.of(
+                "providerType", "OPENAI_COMPATIBLE", "displayName", "big-window",
+                "apiUrl", "http://127.0.0.1:" + fakeModelServer.getAddress().getPort() + "/v1/chat/completions",
+                "apiKey", "sk-test", "modelName", "fake-model", "contextWindowTokens", 128_000)).get("id")).longValue();
+        before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, longMessage, bigModel, false, "OFF", notebookId, "CHAT_ONLY", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        assertEquals(longMessage, latestContent(userId, "user"), "窗口 128000 的模型放得下 2 万字，不该截");
+    }
+
+    /** 长回答整段入库（第九轮）。原来最终回答入库截在 12000 字 —— 流式时看到的是全文，刷新之后后半截没了。 */
+    @Test
+    void 长回答整段入库_不在一万二千字处截断() throws Exception {
+        Long notebookId = createNotebook(userId, "长回答");
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, LONG_REPLY_MARK, modelId, false, "OFF", notebookId, "CHAT_ONLY", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        assertEquals(LONG_REPLY_CHARS, latestContent(userId, "assistant").length());
+    }
+
     private Long latestRunId(Long ownerId, Long notebookId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT id FROM ai_agent_run WHERE user_id = ? AND notebook_id = ? ORDER BY id DESC LIMIT 1",

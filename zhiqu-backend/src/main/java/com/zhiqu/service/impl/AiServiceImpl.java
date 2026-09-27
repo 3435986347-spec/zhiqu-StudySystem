@@ -39,6 +39,7 @@ import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.CodeContextPrompt;
 import com.zhiqu.service.ai.CodeWorkspaceAgent;
+import com.zhiqu.service.ai.UserMessageFit;
 import com.zhiqu.service.ai.ContextBudget;
 import com.zhiqu.service.ai.StudyPlanTool;
 import com.zhiqu.service.AiWorkspaceService;
@@ -114,7 +115,11 @@ public class AiServiceImpl implements AiService {
      */
 
     private static final int MEMORY_MAX_LENGTH = 2000;
-    private static final int MESSAGE_MAX_LENGTH = 12000;
+    /**
+     * 回答入库的上限。原来和用户消息共用 12000 —— 流式时用户看到的是全文，刷新之后后半截没了（第九轮改）。
+     * 列是 MEDIUMTEXT（16MB），这个数只是防一个失控的模型把库写爆。用户消息的上限见 {@link UserMessageFit}。
+     */
+    private static final int REPLY_MAX_LENGTH = 200_000;
     private static final long SYSTEM_MODEL_ID = -1L;
     // 64x64 纯红 PNG。探测图必须足够大——1x1 退化图会被上游图片管线拒绝
     // （返回 400 "Could not process image"），导致视觉探测恒被误判为“不支持”。
@@ -419,7 +424,8 @@ public class AiServiceImpl implements AiService {
                 messages.add(Map.of("role", normalizeChatRole(item.getRole()), "content", item.getContent()));
             }
         }
-        String limitedMessage = limitText(message, MESSAGE_MAX_LENGTH);
+        // 换行、缩进原样保留；超长的保留头尾、截掉中间并写明（见 UserMessageFit）
+        String limitedMessage = UserMessageFit.of(message, UserMessageFit.limitFor(config.getContextWindowTokens())).text();
         List<WebSearchProvider.SearchResult> citations = Boolean.TRUE.equals(enableWebSearch)
                 ? webResearchService.research(limitedMessage, history)
                 : List.of();
@@ -464,7 +470,7 @@ public class AiServiceImpl implements AiService {
                     userId,
                     live.getId(),
                     "assistant",
-                    limitRawMarkdown(liveFinalReply, MESSAGE_MAX_LENGTH),
+                    limitRawMarkdown(liveFinalReply, REPLY_MAX_LENGTH),
                     isReasoningRequested(normalizedReasoningMode) ? aiCallResult.reasoningSummary() : "",
                     RetrievalPresentation.citationRows(citations),
                     retrievalStatus,
@@ -551,7 +557,9 @@ public class AiServiceImpl implements AiService {
         if (isReasoningRequested(normalizedReasoningMode) && !supportsDeepReasoning(config)) {
             throw new BusinessException("当前模型不支持深度思考，请切换到 DeepSeek Reasoner、OpenAI reasoning 或 Claude thinking 模型");
         }
-        String limitedMessage = limitText(message, MESSAGE_MAX_LENGTH);
+        // 换行、缩进原样保留；超长的保留头尾、截掉中间并写明，下面 stream.start 之后再弹给用户（见 UserMessageFit）
+        UserMessageFit messageFit = UserMessageFit.of(message, UserMessageFit.limitFor(config.getContextWindowTokens()));
+        String limitedMessage = messageFit.text();
         if (Boolean.TRUE.equals(enableWebSearch) && !webResearchService.canResearch(limitedMessage)) {
             throw new BusinessException("联网搜索需要配置搜索源；如果只想读取网页，请直接在问题里提供 http/https 链接。");
         }
@@ -616,6 +624,9 @@ public class AiServiceImpl implements AiService {
         start.put("userMessageId", userMessage.getId());
         start.put("assistantMessageId", assistantMessage.getId());
         emitSse(emitter, "stream.start", start);
+        if (messageFit.truncated()) {
+            emitSse(emitter, "message.notice", Map.of("level", "warn", "message", messageFit.notice()));
+        }
 
         AgentTraceRecorder trace = new AgentTraceRecorder(objectMapper, aiWorkspaceService,
                 agentTaskGraphService, requestId, agentRun);
@@ -1491,7 +1502,7 @@ public class AiServiceImpl implements AiService {
             // 这次写入不会复活被清空的消息，也不会把终态消息回退成半截。
             StreamingContentFlusher flusher = new StreamingContentFlusher(text -> messageMapper
                     .flushStreamingContent(s.assistantMessage.getId(), s.userId,
-                            limitRawMarkdown(text, MESSAGE_MAX_LENGTH)));
+                            limitRawMarkdown(text, REPLY_MAX_LENGTH)));
             s.allCitationRows.addAll(s.webCitationRows);
             // 注意：增量判空用非空而不是非空白——纯换行增量（"\n\n"）是段落分隔，丢弃会把正文压成一行
             AiCallResult aiCallResult = callAiApiStream(s.config, messages, s.reasoningMode, event -> {
@@ -1538,7 +1549,7 @@ public class AiServiceImpl implements AiService {
             // 收尾补一次：最后一段增量距上次 flush 很可能不足节流间隔，
             // 不补的话它要等到提交事务才落库，而那中间还隔着 POST_STREAM 的三次模型往返。
             flusher.flushNow(reply);
-            s.finalReply = limitRawMarkdown(reply.toString(), MESSAGE_MAX_LENGTH);
+            s.finalReply = limitRawMarkdown(reply.toString(), REPLY_MAX_LENGTH);
             s.finalReasoningSummary = isReasoningRequested(s.reasoningMode)
                     ? limitRawMarkdown(reasoning.toString(), 2000)
                     : "";
