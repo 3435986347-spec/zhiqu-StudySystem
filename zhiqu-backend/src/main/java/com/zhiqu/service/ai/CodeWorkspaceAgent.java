@@ -9,6 +9,7 @@ import com.zhiqu.entity.AiModelConfig;
 import com.zhiqu.service.AdminGuard;
 import com.zhiqu.service.agent.AgentPlanDecision;
 import com.zhiqu.service.workspace.WorkspaceExecutor;
+import com.zhiqu.service.workspace.TextEdit;
 import com.zhiqu.service.workspace.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -125,6 +126,13 @@ public class CodeWorkspaceAgent {
      */
     static final class LoopState {
         final Map<String, String> baselines = new LinkedHashMap<>();
+        /**
+         * 读过<b>全文</b>的文件（第十轮）。大文件现在分段读，只看过一段就整份重写，会把没看到的部分冲掉 ——
+         * 整份写已存在的文件要求它在这里；改一段用替换（old_string / new_string）。
+         */
+        final Set<String> fullyRead = new java.util.HashSet<>();
+        /** 一次读文件最多给多少字，随模型窗口走（{@link ContextBudget#toolOutputChars()}）。 */
+        int readCapChars = ContextBudget.DEFAULT.toolOutputChars();
         final List<Map<String, Object>> drafts = new ArrayList<>();
         /**
          * 本轮有没有真的跑过一次判题。
@@ -168,6 +176,7 @@ public class CodeWorkspaceAgent {
             return Result.EMPTY;
         }
         LoopState loop = new LoopState();
+        loop.readCapChars = limits.toolOutputChars();
         StringBuilder context = new StringBuilder();
         boolean writeOffered = false;
         try {
@@ -215,6 +224,11 @@ public class CodeWorkspaceAgent {
                 // 2026-09-21 端到端扰动发现的：把写工具改成永不下发，草稿照样产了出来。
                 Set<String> offered = offeredToolNames(tools);
                 // 每次调用的限额随预算走：显式「代码」模式要能一次写出一整个文件（见 CodeLoopBudget）
+                // 对话有预算：超了先省略旧的工具输出（见 ToolLoopContext）。原来没有上限，几个大文件之后整个请求被拒
+                int elided = ToolLoopContext.fit(messages, limits.toolLoopChars(), objectMapper);
+                if (elided > 0) {
+                    log.debug("代码工作区工具循环省略了 {} 段较早的内容 userId={} round={}", elided, userId, round);
+                }
                 JsonNode message;
                 try {
                     message = provider.callToolTurn(config, messages, tools,
@@ -368,8 +382,11 @@ public class CodeWorkspaceAgent {
 
         Map<String, Object> readProps = new LinkedHashMap<>();
         readProps.put("path", ToolSchemas.schemaProp("string", "相对工作区根的文件路径，例如 src/main/java/Foo.java"));
+        readProps.put("offset", ToolSchemas.schemaProp("integer", "从第几行开始读（1 起），默认 1"));
+        readProps.put("limit", ToolSchemas.schemaProp("integer", "最多读几行，默认 2000"));
         tools.add(ToolSchemas.functionTool("read_workspace_file",
-                "读取工作区里一个文件的完整内容。回答关于具体代码的问题前必须先读，不要凭文件名猜。",
+                "读取工作区里一个文件的内容。回答关于具体代码的问题前必须先读，不要凭文件名猜。"
+                        + "长文件一次只给一段，结果开头会写「没读完，用 offset=… 接着读」。",
                 readProps, List.of("path")));
 
         Map<String, Object> searchProps = new LinkedHashMap<>();
@@ -384,13 +401,18 @@ public class CodeWorkspaceAgent {
         if (canWrite) {
             Map<String, Object> writeProps = new LinkedHashMap<>();
             writeProps.put("path", ToolSchemas.schemaProp("string", "相对工作区根的文件路径"));
-            writeProps.put("content", ToolSchemas.schemaProp("string", "这个文件修改后的<b>完整</b>内容，不是差异片段"));
+            writeProps.put("content", ToolSchemas.schemaProp("string", "整份写入用：这个文件修改后的完整内容"));
+            writeProps.put("old_string", ToolSchemas.schemaProp("string", "替换用：要被替换的原文，一字不差（缩进也算）、只出现一次"));
+            writeProps.put("new_string", ToolSchemas.schemaProp("string", "替换用：替换成的新文字"));
+            writeProps.put("replace_all", ToolSchemas.schemaProp("boolean", "替换用：old_string 出现几处就换几处"));
             tools.add(ToolSchemas.functionTool("write_workspace_file",
-                    "把一个文件修改后的完整内容写成<b>草稿</b>。注意：这不会改动磁盘上的文件，"
-                            + "只是生成一份待用户确认的草稿，用户在界面上看过 diff、点了确认才会落盘。"
+                    "把对一个文件的修改写成<b>草稿</b>。两种用法选一种：给 content 是整份写入（新建文件，或重写一个读过全文的文件）；"
+                            + "给 old_string 和 new_string 是只替换其中一段 —— 改一个已存在的文件时优先用它，不要把整个文件重写一遍。"
+                            + "同一个文件多次替换会叠在同一份草稿上。"
+                            + "注意：这不会改动磁盘上的文件，只是生成一份待用户确认的草稿，用户在界面上看过 diff、点了确认才会落盘。"
                             + "所以不要说「我已经改好了」，要说「改动已生成草稿，确认后生效」。"
                             + "改一个已存在的文件之前必须先 read_workspace_file 读过它 —— 没读过就改是盲写。",
-                    writeProps, List.of("path", "content")));
+                    writeProps, List.of("path")));
         }
         if (canExec) {
             Map<String, Object> runProps = new LinkedHashMap<>();
@@ -406,6 +428,63 @@ public class CodeWorkspaceAgent {
                     runProps, List.of("command")));
         }
         return tools;
+    }
+
+    private static final int READ_MAX_LINES = 2000;
+
+    /**
+     * 按这个模型一次能看的量给一段（第十轮）。和命令行的 read_file 同一个规矩：读全了原样给（和原来一样，不加头）；
+     * 没读全就在开头写明第几行到第几行、共几行、用 offset 接着读 —— 否则模型以为自己看到的就是全文。
+     * 一行就超过上限的（压缩过的 js）只给前一段，也不算读全。
+     */
+    static String readSlice(String path, String content, Map<String, Object> args, LoopState loop) {
+        List<String> all = new ArrayList<>(List.of(content.split("\n", -1)));
+        if (content.endsWith("\n")) {
+            all.remove(all.size() - 1);
+        }
+        int total = all.size();
+        int offset = Math.max(1, intArg(args, "offset", 1));
+        int limit = Math.max(1, Math.min(READ_MAX_LINES, intArg(args, "limit", READ_MAX_LINES)));
+        int cap = Math.max(200, loop.readCapChars);
+        List<String> slice = new ArrayList<>(all.subList(Math.min(offset - 1, total), Math.min(total, offset - 1 + limit)));
+        int chars = 0;
+        int cut = slice.size();
+        for (int i = 0; i < slice.size(); i++) {
+            chars += slice.get(i).length() + 1;
+            if (chars > cap) {
+                cut = i;
+                break;
+            }
+        }
+        slice = new ArrayList<>(slice.subList(0, Math.max(Math.min(1, slice.size()), cut)));
+        int longLine = slice.size() == 1 && slice.get(0).length() > cap ? slice.get(0).length() : 0;
+        if (longLine > 0) {
+            slice.set(0, slice.get(0).substring(0, cap));
+        }
+        int end = offset - 1 + slice.size();
+        boolean full = longLine == 0 && offset == 1 && end >= total;
+        if (full) {
+            loop.fullyRead.add(path);
+            return content;
+        }
+        String header = longLine > 0
+                ? "【" + path + " 第 " + offset + " 行（共 " + total + " 行）：这一行有 " + longLine + " 字，只显示了前 " + cap
+                        + " 字 —— 压缩过的 / 生成的文件不要整份重写】"
+                : "【" + path + " 第 " + offset + "–" + end + " 行（共 " + total + " 行）"
+                        + (end < total ? "；没读完，用 offset=" + (end + 1) + " 接着读" : "") + "】";
+        return header + "\n" + String.join("\n", slice);
+    }
+
+    private static int intArg(Map<String, Object> args, String key, int fallback) {
+        Object v = args.get(key);
+        if (v instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return v == null ? fallback : Integer.parseInt(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     /** 执行一个工作区工具，返回给模型的文本。拒绝时把<b>原因</b>给模型，让它能如实转述。 */
@@ -446,12 +525,46 @@ public class CodeWorkspaceAgent {
                 String content = workspaceService.read(path);
                 // 记下读到这一刻的指纹：写草稿要靠它，确认时拿它和磁盘现状比
                 loop.baselines.put(path, workspaceService.baselineOf(path));
-                return content;
+                return readSlice(path, content, args, loop);
             }
             if ("write_workspace_file".equals(name)) {
                 String path = String.valueOf(args.getOrDefault("path", ""));
-                String content = String.valueOf(args.getOrDefault("content", ""));
+                Map<String, Object> pending = loop.drafts.stream().filter(d -> path.equals(d.get("path"))).findFirst().orElse(null);
+                int replaced = 0;
+                String content;
                 String baseline = loop.baselines.get(path);
+                if (args.get("old_string") != null) {
+                    // 替换一段（第十轮）：在这个文件的草稿上接着改（同一个文件改两处叠在一起），没有草稿就在读到的那一份上改
+                    String base;
+                    if (pending != null) {
+                        base = String.valueOf(pending.get("content"));
+                        baseline = String.valueOf(pending.get("baseline"));
+                    } else {
+                        if (baseline == null) {
+                            return "操作被拒绝：替换之前必须先 read_workspace_file 读过 " + path + " —— 没读过就拼 old_string 是凭记忆改。";
+                        }
+                        if (!baseline.equals(workspaceService.baselineOf(path))) {
+                            return "操作被拒绝：" + path + " 在你读过之后被改过了（可能是用户在编辑器里改的），请重新 read_workspace_file 再改。";
+                        }
+                        base = workspaceService.read(path);
+                    }
+                    TextEdit.Result edit = TextEdit.apply(base, String.valueOf(args.get("old_string")),
+                            args.get("new_string") == null ? "" : String.valueOf(args.get("new_string")),
+                            Boolean.TRUE.equals(args.get("replace_all")));
+                    if (!edit.ok()) {
+                        return TextEdit.describe(edit.error(), path);
+                    }
+                    content = edit.text();
+                    replaced = edit.replaced();
+                } else {
+                    content = String.valueOf(args.getOrDefault("content", ""));
+                    // 整份重写一个已存在的文件：必须读过全文（或者这一轮自己整份写过它）。只看了一段就整份写，没看到的部分就没了
+                    boolean exists = baseline != null && !WorkspaceService.ABSENT.equals(baseline);
+                    if (exists && pending == null && !loop.fullyRead.contains(path)) {
+                        return "操作被拒绝：" + path + " 你只读了一部分，整份重写会把没读到的部分冲掉。"
+                                + "请用替换用法（old_string / new_string）只改要改的那一段，或者先把全文读完。";
+                    }
+                }
                 if (baseline == null) {
                     // 没读过就要改：对已存在的文件这是盲写，必须挡住。
                     // 文件本来就不存在（新建）则不需要先读 —— 基线就是 ABSENT。
@@ -473,9 +586,9 @@ public class CodeWorkspaceAgent {
                 if (!newDirs.isEmpty()) {
                     draft.put("newDirectories", newDirs);   // 确认框里要说出来：会连同这些目录一起建
                 }
-                loop.drafts.removeIf(d -> path.equals(d.get("path")));   // 同一文件以最后一次为准
+                loop.drafts.removeIf(d -> path.equals(d.get("path")));   // 同一文件以最后一次为准（替换是在上一次的基础上改的）
                 loop.drafts.add(draft);
-                return "已生成草稿（磁盘上的文件没有改动）：" + path
+                return "已生成草稿（磁盘上的文件没有改动）：" + path + (replaced > 1 ? "（替换了 " + replaced + " 处）" : "")
                         + "。请告诉用户到「待确认」面板看过 diff 之后确认才会落盘。";
             }
             if ("run_workspace_command".equals(name)) {

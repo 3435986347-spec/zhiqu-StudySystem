@@ -332,4 +332,134 @@ class CodeWorkspaceAgentTest {
         assertTrue(second.contains("被截断") && second.contains("拆成"),
                 "模型没被告知它被截断了、该怎么改 —— 下一轮它会原样再写一遍、再被截断：" + second);
     }
+
+    // ── 第十轮：大文件分段读、按原文替换、工具循环的上下文预算 ─────────────────────────────
+
+    private static String numbered(int n) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i <= n; i++) {
+            sb.append("line ").append(i).append(" ").append("x".repeat(24)).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static String args(Map<String, Object> m) throws Exception {
+        return JSON.writeValueAsString(m);
+    }
+
+    /**
+     * 原来 read_workspace_file 一次给全文、write_workspace_file 只收全文：读一个 9 万字的文件就撑爆小模型，
+     * 改三行也要把整个文件重写一遍。现在按窗口分段读；只看了一段不许整份重写；改一段用替换。
+     */
+    @Test
+    @DisplayName("大文件：按预算分段读并说没读完；只读了一部分不许整份重写；按原文替换可以，草稿是全文换掉那一段")
+    void 大文件分段读与替换() throws Exception {
+        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        String big = numbered(3000);
+        when(rig.workspace.read("src/Big.java")).thenReturn(big);
+        when(rig.workspace.baselineOf("src/Big.java")).thenReturn("h1");
+        rig.modelSays(
+                toolCall("read_workspace_file", args(Map.of("path", "src/Big.java"))),
+                toolCall("write_workspace_file", args(Map.of("path", "src/Big.java", "content", "class Big {}"))),
+                toolCall("write_workspace_file", args(Map.of("path", "src/Big.java",
+                        "old_string", "line 10 ", "new_string", "LINE 10 "))));
+        CodeWorkspaceAgent.Result r = rig.run("改一下 src/Big.java", CODE_MODE);
+        String ctx = r.context();
+        assertTrue(ctx.contains("没读完，用 offset="), "读结果没说没读完");
+        // 拒绝写在执行轨迹里（context 有 12000 字的上限，读到的那一大段已经把它占满了）
+        assertTrue(rig.results().contains("只读了一部分"), "只看了一段就整份重写，没被拦：" + rig.results());
+        assertEquals(1, r.drafts().size(), "替换应当产出一份草稿");
+        assertEquals(big.replace("line 10 ", "LINE 10 "), r.drafts().get(0).get("content"));
+        assertEquals("h1", r.drafts().get(0).get("baseline"));
+        assertTrue(rig.notes.stream().anyMatch(n -> String.valueOf(n.get("message")).startsWith("修改草稿 src/Big.java")),
+                "执行轨迹里替换应当说「修改草稿」：" + rig.notes);
+    }
+
+    @Test
+    @DisplayName("按原文替换：没读过不许；读过之后文件被改过（指纹变了）也不许；对不上时说出最像的那几行")
+    void 替换的前提() throws Exception {
+        Rig unread = new Rig(WorkspaceMode.WRITE, true);
+        when(unread.workspace.baselineOf("a.py")).thenReturn("h1");
+        unread.modelSays(toolCall("write_workspace_file", args(Map.of("path", "a.py", "old_string", "x", "new_string", "y"))));
+        CodeWorkspaceAgent.Result r1 = unread.run("改 a.py", CODE_MODE);
+        assertTrue(r1.drafts().isEmpty());
+        assertTrue(r1.context().contains("先 read_workspace_file"), r1.context());
+
+        Rig changed = new Rig(WorkspaceMode.WRITE, true);
+        when(changed.workspace.read("a.py")).thenReturn("def f():\n    return 1\n");
+        when(changed.workspace.baselineOf("a.py")).thenReturn("h1", "h2");
+        changed.modelSays(
+                toolCall("read_workspace_file", args(Map.of("path", "a.py"))),
+                toolCall("write_workspace_file", args(Map.of("path", "a.py", "old_string", "return 1", "new_string", "return 2"))));
+        CodeWorkspaceAgent.Result r2 = changed.run("改 a.py", CODE_MODE);
+        assertTrue(r2.drafts().isEmpty(), "读过之后文件变了，还按旧的内容替换");
+        assertTrue(r2.context().contains("被改过"), r2.context());
+
+        Rig near = new Rig(WorkspaceMode.WRITE, true);
+        when(near.workspace.read("a.py")).thenReturn("def f():\n    return 1\n");
+        when(near.workspace.baselineOf("a.py")).thenReturn("h1");
+        near.modelSays(
+                toolCall("read_workspace_file", args(Map.of("path", "a.py"))),
+                toolCall("write_workspace_file", args(Map.of("path", "a.py", "old_string", "def f():\n  return 1", "new_string", "x"))));
+        CodeWorkspaceAgent.Result r3 = near.run("改 a.py", CODE_MODE);
+        assertTrue(r3.context().contains("第 1–2 行只差空白"), r3.context());
+    }
+
+    @Test
+    @DisplayName("同一个文件改两处：两次替换叠在同一份草稿上（不是第二次把第一次冲掉）")
+    void 两次替换叠加() throws Exception {
+        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        when(rig.workspace.read("m.js")).thenReturn("const a = 1;\nconst b = 2;\n");
+        when(rig.workspace.baselineOf("m.js")).thenReturn("h1");
+        rig.modelSays(
+                toolCall("read_workspace_file", args(Map.of("path", "m.js"))),
+                toolCall("write_workspace_file", args(Map.of("path", "m.js", "old_string", "a = 1", "new_string", "a = 10"))),
+                toolCall("write_workspace_file", args(Map.of("path", "m.js", "old_string", "b = 2", "new_string", "b = 20"))));
+        CodeWorkspaceAgent.Result r = rig.run("改 m.js", CODE_MODE);
+        assertEquals(1, r.drafts().size());
+        assertEquals("const a = 10;\nconst b = 20;\n", r.drafts().get(0).get("content"));
+    }
+
+    /**
+     * 工具循环里的对话原来没有上限：每读一个文件就多一整份，十轮下来几个中等文件就超过模型的窗口，
+     * 供应商拒绝整个请求 —— 用户看到的是「工具循环中断」。现在超预算先省略旧的工具输出（最近几条原样）。
+     */
+    @Test
+    @DisplayName("工具循环的上下文有预算：读了很多大文件之后，发给模型的不超过预算，最新的原样、旧的从最旧的开始省略并说明")
+    @SuppressWarnings("unchecked")
+    void 工具循环上下文有预算() throws Exception {
+        Rig rig = new Rig(WorkspaceMode.READ, true);
+        String file = "文".repeat(20_000);
+        List<Integer> sizes = new ArrayList<>();
+        List<String> replies = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            when(rig.workspace.read("f" + i + ".txt")).thenReturn(file);
+            when(rig.workspace.baselineOf("f" + i + ".txt")).thenReturn("h" + i);
+            replies.add(toolCall("read_workspace_file", args(Map.of("path", "f" + i + ".txt"))));
+        }
+        replies.add("{\"role\":\"assistant\",\"content\":\"读完了\"}");
+        java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+        List<Map<String, Object>>[] last = new List[1];
+        when(rig.provider.callToolTurn(any(), any(), any(), any())).thenAnswer(inv -> {
+            List<Map<String, Object>> msgs = inv.getArgument(1);
+            int total = 0;
+            for (Map<String, Object> m : msgs) {
+                total += String.valueOf(m.get("content")).length();
+            }
+            sizes.add(total);
+            last[0] = new ArrayList<>(msgs);
+            return JSON.readTree(replies.get(Math.min(n.getAndIncrement(), replies.size() - 1)));
+        });
+        rig.run("把 f0 到 f5 这几个文件都读一遍", CODE_MODE);
+        int budget = ContextBudget.DEFAULT.toolLoopChars();
+        assertTrue(sizes.size() >= 7, "应当调了 7 次模型：" + sizes);
+        for (int size : sizes) {
+            assertTrue(size <= budget, "发给模型的有 " + size + " 字，超过预算 " + budget + "：" + sizes);
+        }
+        List<String> tools = last[0].stream().filter(m -> "tool".equals(m.get("role")))
+                .map(m -> String.valueOf(m.get("content"))).toList();
+        assertEquals(6, tools.size());
+        assertTrue(tools.get(5).equals(file), "最近一条工具输出要原样");
+        assertTrue(tools.get(0).contains("较早的工具输出已省略"), () -> "旧的应当省略并说明：" + tools.get(0).substring(0, Math.min(40, tools.get(0).length())));
+    }
 }

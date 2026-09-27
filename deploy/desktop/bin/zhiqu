@@ -28,12 +28,11 @@ if [ ! -x "$JAVA" ] || [ -z "$JAR" ]; then
   exit 1
 fi
 
-# PropertiesLauncher + loader.main：从 Spring Boot 的胖 JAR 里跑一个非 Spring 的入口，
-# BOOT-INF/lib 里的依赖（Jackson）照样在类路径上。
+# 应用里放的是解压后的瘦 JAR（第十轮起，为了 CDS 启动加速）：它的 Class-Path 指向同目录的 lib/，
+# 所以直接 -cp 它、点名入口类就行 —— 不再需要胖 JAR 那套 PropertiesLauncher + loader.main。
 # TieredStopAtLevel=1：命令行是短进程，C1 足够，启动更快。
 exec "$JAVA" \
   -XX:TieredStopAtLevel=1 \
   -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 \
-  -Dloader.main=com.zhiqu.cli.ZhiquCli \
   -Dzhiqu.cli.java="$JAVA" -Dzhiqu.cli.jar="$JAR" \
-  -cp "$JAR" org.springframework.boot.loader.launch.PropertiesLauncher "$@"
+  -cp "$JAR" com.zhiqu.cli.ZhiquCli "$@"

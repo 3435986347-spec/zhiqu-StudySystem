@@ -40,6 +40,22 @@ public record ContextBudget(int historyMessages, int historyChars, int codeConte
                 (int) (w * 0.15));
     }
 
+    /**
+     * code agent 一次工具输出（读一个文件）最多给多少字 —— 和它的历史预算同一个量（窗口的 35%；没填窗口是 24000）。
+     * 第十轮加的：原来一次给全文（最多 256KB），一个大文件就能撑爆小窗口的模型。更长的按行分段读。
+     */
+    public int toolOutputChars() {
+        return codeHistoryChars;
+    }
+
+    /**
+     * code agent 工具循环里，整段对话（系统提示、历史、每一轮的调用与结果）最多留多少字；超了先省略旧的工具输出。
+     * 第十轮加的：原来没有上限，每读一个文件就多一整份，几个中等文件之后请求被供应商拒绝，用户看到「工具循环中断」。
+     */
+    public int toolLoopChars() {
+        return codeHistoryChars * 2;
+    }
+
     /** 保存时的校验：空（用默认）或 [MIN_WINDOW, MAX_WINDOW]。 */
     public static Integer validate(Integer windowTokens) {
         if (windowTokens == null) {

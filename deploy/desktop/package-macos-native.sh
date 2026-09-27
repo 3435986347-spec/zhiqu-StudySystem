@@ -39,7 +39,11 @@ APP="$OUT/$NAME.app"
 echo "==> 2/6 搭 bundle 骨架"
 rm -rf "$OUT"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app" "$APP/Contents/Resources/bin"
-cp "$JAR" "$APP/Contents/Resources/app/"
+# 解压成「瘦 JAR + lib/」，不放胖 JAR（第十轮）：应用类的 CDS 归档只收内置类加载器加载的类，
+# 胖 JAR 里的类走 Spring Boot 自己的加载器，一个都归档不了。解压后的瘦 JAR 用 Class-Path 指向 lib/，
+# java -jar 照样能跑。归档本身在用户第一次运行时生成（见 macos-shell/CdsCache.swift）。
+"$JAVA_HOME/bin/java" -Djarmode=tools -jar "$JAR" extract --destination "$APP/Contents/Resources/app" > /dev/null
+[ -f "$APP/Contents/Resources/app/$(basename "$JAR")" ] || { echo "解压失败：找不到瘦 JAR"; exit 1; }
 # 命令行入口 zhiqu：用应用自带的 JRE 跑同一个 JAR 里的 com.zhiqu.cli.ZhiquCli。
 # 放在 Resources/bin 而不是 MacOS/：MacOS/ 里的可执行文件会被当成应用的主程序候选。
 cp "$ROOT/deploy/desktop/bin/zhiqu" "$APP/Contents/Resources/bin/zhiqu"
@@ -65,7 +69,12 @@ echo "==> 3/6 裁一份 JRE（jlink）"
 "$JAVA_HOME/bin/jlink" \
   --add-modules java.base,java.logging,java.xml,java.sql,java.naming,java.management,java.instrument,java.desktop,java.security.jgss,java.security.sasl,jdk.crypto.ec,jdk.charsets,jdk.unsupported,jdk.jfr,java.net.http,java.compiler,java.rmi,java.scripting,java.transaction.xa,jdk.management \
   --strip-debug --no-header-files --no-man-pages --compress=2 \
+  --generate-cds-archive \
   --output "$APP/Contents/Resources/runtime/Contents/Home"
+# --generate-cds-archive：给 JDK 自己的类生成基础归档。单看它几乎不提速，但应用类的归档（-XX:ArchiveClassesAtExit）
+# 必须叠在它上面 —— 没有它，第一次运行生成归档那一步直接报错跳过。
+# classes_nocoops.jsa 只在关掉压缩指针（堆 > 32GB）时用，应用固定 -Xmx1g，删掉省 11MB。
+rm -f "$APP/Contents/Resources/runtime/Contents/Home/lib/server/classes_nocoops.jsa"
 echo "    runtime  $(du -sh "$APP/Contents/Resources/runtime" | cut -f1)"
 
 echo "==> 4/6 生成应用图标"
@@ -80,9 +89,15 @@ rm -f "$ICON_TOOL"
 echo "    $NAME.icns  $(du -h "$APP/Contents/Resources/$NAME.icns" | cut -f1)"
 
 echo "==> 5/6 编译 Swift 外壳"
+# 两个源文件一起编译时，只有叫 main.swift 的那个能有顶层代码（外壳最后那几行 NSApplication.run 就是）——
+# 原样一起编译报「expressions are not allowed at the top level」。所以拷一份改名成 main.swift 再编。
+SWIFT_BUILD="$OUT/swift-src"
+mkdir -p "$SWIFT_BUILD"
+cp "$SHELL_SRC" "$SWIFT_BUILD/main.swift"
 swiftc -O -target arm64-apple-macos13.0 \
   -framework AppKit -framework WebKit \
-  -o "$APP/Contents/MacOS/$NAME" "$SHELL_SRC"
+  -o "$APP/Contents/MacOS/$NAME" "$SWIFT_BUILD/main.swift" "$ROOT/deploy/desktop/macos-shell/CdsCache.swift"
+rm -rf "$SWIFT_BUILD"
 echo "    外壳  $(du -h "$APP/Contents/MacOS/$NAME" | cut -f1)"
 
 cat > "$APP/Contents/Info.plist" <<PLIST

@@ -11,6 +11,8 @@ import path from 'node:path';
 import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_BYTES } from './guard.js';
 import { checkCommand, describeRefusal, DEFAULT_COMMANDS, ExecRefusal } from './execrules.js';
 import { planLaunch, resolveOnPath, runProcess } from './exec.js';
+import { applyEdit, describeEditError } from './edit.js';
+import { syntaxProblem } from './syntax.js';
 import { stat as diffStat } from '../render/diff.js';
 import { formatBytes } from '../render/term.js';
 
@@ -94,47 +96,6 @@ function realRelative(root, abs) {
   return path.relative(root, path.join(real, ...tail)).split(path.sep).join('/');
 }
 const lineCount = (s) => (s === '' ? 0 : s.split('\n').length - (s.endsWith('\n') ? 1 : 0));
-
-/** 不重叠的每一处出现的位置。 */
-function occurrences(hay, needle) {
-  const out = [];
-  for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + needle.length)) out.push(at);
-  return out;
-}
-const lineAt = (text, index) => text.slice(0, index).split('\n').length;
-const squash = (line) => line.replace(/\s+/g, ' ').trim();
-
-/**
- * old_string 没找到时给线索。原来只回一句「没找到，先 read_file」—— 模型多半会凭记忆再拼一遍，
- * 差的往往只是缩进（搜索结果、它自己记的版本）或行尾空白，于是又错，几轮之后放弃替换、整份重写。
- * 这里先按「忽略空白」找同样的几行：找到了就说在第几行、原文一字不差是什么，照着抄就对；
- * 找不到再看第一行在哪（多半是那段已经被改过了）。
- */
-function notFoundHint(rel, text, needle) {
-  const lines = text.split('\n');
-  const want = needle.split('\n').map(squash);
-  while (want.length && !want[0]) want.shift();
-  while (want.length && !want[want.length - 1]) want.pop();
-  const show = (from, to) => {
-    const block = lines.slice(from, to).join('\n');
-    return block.length > 2000 ? `${block.slice(0, 2000)}\n…` : block;
-  };
-  if (want.length) {
-    for (let i = 0; i + want.length <= lines.length; i++) {
-      if (want.every((w, k) => squash(lines[i + k]) === w)) {
-        return `old_string 在 ${rel} 里没有一字不差的原文，但第 ${i + 1}–${i + want.length} 行只差空白（缩进、空格或行尾空白不一样）。`
-          + `那几行的原文是（照这个抄，缩进也要一样）：\n${show(i, i + want.length)}`;
-      }
-    }
-    const first = want[0];
-    const near = lines.findIndex((l) => squash(l) === first || (first.length >= 8 && squash(l).includes(first)));
-    if (near >= 0) {
-      return `old_string 在 ${rel} 里没找到。它的第一行出现在第 ${near + 1} 行，但后面对不上 —— 那一段可能已经被改过了。`
-        + `第 ${near + 1} 行起现在是：\n${show(near, near + want.length + 2)}\n先按现在的内容重新拼 old_string。`;
-    }
-  }
-  return `old_string 在 ${rel} 里没找到（空格、缩进、换行都要一字不差）。先 read_file 看一下现在的原文，不要凭记忆拼。`;
-}
 
 export class LocalTools {
   constructor({ root, extensions, maxFileBytes, commands, execTimeoutMs = 120_000 } = {}) {
@@ -313,24 +274,11 @@ export class LocalTools {
     let replaced = 0;
     if (replacing) {
       if (!exists) return { error: `替换用法只能用在已存在的文件上：${rel} 不存在。新建文件请直接给 content。` };
-      const oldStr = String(args.old_string);
-      if (!oldStr) return { error: 'old_string 不能为空' };
-      // Windows 换行（全是 \r\n）的文件：模型给的是 \n，原来多行的 old_string 永远「没找到」。
-      // 在统一成 \n 的文本里找、换，写回去再变回 \r\n。混着两种换行的文件不动它，照原样一字不差地比。
-      const crlf = currentText.includes('\r\n') && !/(^|[^\r])\n/.test(currentText);
-      const hay = crlf ? currentText.replace(/\r\n/g, '\n') : currentText;
-      const needle = crlf ? oldStr.replace(/\r\n/g, '\n') : oldStr;
-      const replacement = crlf ? String(args.new_string ?? '').replace(/\r\n/g, '\n') : String(args.new_string ?? '');
-      const at = occurrences(hay, needle);
-      if (!at.length) return { error: notFoundHint(rel, hay, needle) };
-      if (at.length > 1 && !args.replace_all) {
-        const where = at.slice(0, 12).map((i) => lineAt(hay, i)).join('、');
-        return { error: `old_string 在 ${rel} 里出现了 ${at.length} 处（第 ${where}${at.length > 12 ? ' …' : ''} 行）。`
-          + '只改其中一处就多带几行上下文让它唯一；要全部替换就加 replace_all: true。' };
-      }
-      const next = at.length > 1 ? hay.split(needle).join(replacement) : hay.slice(0, at[0]) + replacement + hay.slice(at[0] + needle.length);
-      newText = crlf ? next.replace(/\n/g, '\r\n') : next;
-      replaced = at.length;
+      // 规矩与网页 code agent 同一套（edit.js / TextEdit.java，跑同一份 conformance/text-edit.json）
+      const r = applyEdit(currentText, args.old_string, args.new_string, { replaceAll: Boolean(args.replace_all) });
+      if (r.error) return { error: describeEditError(r.error, rel) };
+      newText = r.text;
+      replaced = r.replaced;
       kind = 'replace';
     } else {
       if (args.content == null) return { error: '没有给出 content（整份写入 / 追加），也没有给出 old_string（替换）' };
@@ -366,7 +314,10 @@ export class LocalTools {
     const what = { create: '已新建', overwrite: '已重写', append: '已追加到', replace: '已修改' }[prep.kind];
     const dirs = prep.newDirectories.length ? `，连同新建目录 ${prep.newDirectories.join('、')}` : '';
     const times = prep.replaced > 1 ? `，替换了 ${prep.replaced} 处` : '';
-    return { content: `${what} ${prep.rel}${dirs}（+${added} -${removed}${times}，现在共 ${lines} 行）`, summary: `+${added} -${removed}`, added, removed };
+    // 写完立刻查语法（JSON / JS）：写坏了当场说，不等它接着写别的、跑起来才发现（见 syntax.js）
+    const syntax = syntaxProblem(prep.abs, prep.rel, prep.newText);
+    const warn = syntax ? `\n⚠ 写进去的内容有语法错误 —— 先修好它再做别的：\n${syntax}` : '';
+    return { content: `${what} ${prep.rel}${dirs}（+${added} -${removed}${times}，现在共 ${lines} 行）${warn}`, summary: `+${added} -${removed}`, added, removed, syntax };
   }
 
   // ── 删除 ──────────────────────────────────────────────────────────────

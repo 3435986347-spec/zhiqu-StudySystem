@@ -32,9 +32,11 @@ public final class CodeToolNarration {
         String path = text(a, "path");
         return switch (tool == null ? "" : tool) {
             case "list_workspace_files" -> "列出目录 " + (path.isEmpty() ? "（根目录）" : path);
-            case "read_workspace_file" -> "读取 " + orUnknown(path);
+            case "read_workspace_file" -> "读取 " + orUnknown(path) + (text(a, "offset").isEmpty() || "1".equals(text(a, "offset")) ? "" : "（从第 " + text(a, "offset") + " 行）");
             case "search_workspace" -> "搜索「" + text(a, "query") + "」" + (path.isEmpty() ? "" : "（在 " + path + " 下）");
-            case "write_workspace_file" -> "生成草稿 " + orUnknown(path) + "（" + lineCount(text(a, "content")) + " 行，未落盘）";
+            case "write_workspace_file" -> a.hasNonNull("old_string")
+                    ? "修改草稿 " + orUnknown(path) + "（替换一段，未落盘）"
+                    : "生成草稿 " + orUnknown(path) + "（" + lineCount(text(a, "content")) + " 行，未落盘）";
             case "run_workspace_command" -> "运行 " + commandLine(a) + (path.isEmpty() ? "" : "（在 " + path + " 下）");
             case "search_wiki" -> "查知识库「" + text(a, "query") + "」";
             case "read_wiki_page" -> "读知识页 " + orUnknown(text(a, "title"));

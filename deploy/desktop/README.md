@@ -28,6 +28,10 @@ deploy/desktop/package-macos-native.sh          # → build/desktop-native/{知�
 deploy/desktop/package-macos-native.sh 1.2.0
 ```
 
+启动：第一次打开约 3.5 秒（顺带生成启动加速用的归档，退出时多花两三秒写它），之后约 1.6 秒。
+加速用的两样东西放在 `~/.zhiqu/app`（应用 JAR 的 ASCII 路径副本）和 `~/.zhiqu/cds`（类归档），共约 160MB；
+删掉是安全的，下次启动自动重建（只是那一次慢）。
+
 **Windows —— `.exe`**：只能在 Windows 上打（jpackage 不做跨平台，macOS 上打不出 .exe）。
 在那台 Windows 机器上，装好 JDK 17（Temurin）并设好 `JAVA_HOME`，然后：
 

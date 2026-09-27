@@ -158,3 +158,43 @@ test('用户说了新的一句话就重新计数：上一轮的失败不算到�
   assert.equal(out.length, 4);
   assert.ok(!out.some((m) => /连续 \d 次/.test(m)), out.join('\n---\n'));
 });
+
+// ── 写完立刻知道语法错了（第十轮）──────────────────────────────────────
+
+function writeAndCommit(root, rel, content) {
+  const tools = new LocalTools({ root });
+  const prep = tools.prepareWrite({ path: rel, content });
+  assert.ok(!prep.error, prep.error);
+  return tools.commitWrite(prep);
+}
+
+test('写了一个坏的 JSON：结果里当场说出第几行第几列坏了；好的不说', () => {
+  const root = tmpdir();
+  const bad = writeAndCommit(root, 'package.json', '{\n  "name": "x",\n  "version": "1.0.0"\n  "main": "a.js"\n}\n');
+  assert.match(bad.content, /语法错误/);
+  assert.match(bad.content, /第 4 行/);
+  const good = writeAndCommit(root, 'ok.json', '{ "a": 1 }\n');
+  assert.ok(!/语法错误/.test(good.content), good.content);
+});
+
+test('写了一个坏的 JS：node --check 的报错当场给出（只解析不执行）；JSX 这种要编译的不误报', () => {
+  const root = tmpdir();
+  const bad = writeAndCommit(root, 'a.js', 'function add(a, b) {\n  return a + ;\n}\n');
+  assert.match(bad.content, /语法错误/);
+  assert.match(bad.content, /a\.js:2/);
+  const good = writeAndCommit(root, 'b.mjs', 'export const x = 1;\n');
+  assert.ok(!/语法错误/.test(good.content), good.content);
+  const jsx = writeAndCommit(root, 'App.js', 'export default function App() {\n  return <div className="app">hi</div>;\n}\n');
+  assert.ok(!/语法错误/.test(jsx.content), `JSX 被当成语法错误了：${jsx.content}`);
+  // 实测 node 22：原地 --check 一个带 export 的 .js，连真的语法错误也放行（退出码 0）—— 必须按内容定类型再查
+  const badEsm = writeAndCommit(root, 'bad-esm.js', 'export const a = 1;\nconst b = ;\n');
+  assert.match(badEsm.content, /语法错误/, `ES 模块写法的 .js 里的语法错误没报：${badEsm.content}`);
+  assert.match(badEsm.content, /bad-esm\.js:2/);
+  const esm = writeAndCommit(root, 'esm.js', 'import fs from "node:fs";\nexport const a = fs.constants;\n');
+  assert.ok(!/语法错误/.test(esm.content), `.js 里的 ES 模块写法被当成语法错误了：${esm.content}`);
+  const tsconfig = writeAndCommit(root, 'tsconfig.json', '{\n  // 注释在 tsconfig 里是合法的\n  "compilerOptions": {}\n}\n');
+  assert.ok(!/语法错误/.test(tsconfig.content), `tsconfig（JSONC）被当成坏 JSON 了：${tsconfig.content}`);
+  const ran = path.join(root, 'ran.txt');
+  writeAndCommit(root, 'side.js', `require('fs').writeFileSync(${JSON.stringify(ran)}, 'x');\n`);
+  assert.ok(!fs.existsSync(ran), '语法检查执行了代码');
+});

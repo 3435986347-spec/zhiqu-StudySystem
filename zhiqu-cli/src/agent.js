@@ -397,6 +397,7 @@ async function executeTool(ctx, call, offered, signal) {
       succeeded(ctx, spinKey);
       ctx.changedFiles.add(prep.rel);
       ui.result(ui.paint.green(`✓ ${r.content.split('（')[0]}  +${r.added} -${r.removed}`));
+      if (r.syntax) ui.result(`语法错误：${r.syntax.split('\n')[0]}`, false);
       return r.content;
     }
     if (name === 'delete_file') {

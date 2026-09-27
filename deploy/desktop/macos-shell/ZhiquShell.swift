@@ -33,6 +33,8 @@ final class Backend {
     private let portFile: URL
     /// 已经有我们的实例在跑，这次只是连过去，没有自己拉 JVM。
     private var attached = false
+    /// 应用类的 CDS 归档（启动快一半，见 CdsCache.swift）。第一次运行时顺带生成，退出时才落成正式文件。
+    private var cds: CdsCache?
 
     /// 端口文件放在临时目录，每次启动一个新的 —— 不能复用固定路径：
     /// 上一次遗留的文件会让外壳立刻连到一个已经不存在的端口上。
@@ -71,8 +73,15 @@ final class Backend {
                                  includingPropertiesForKeys: nil)
             .first { $0.pathExtension == "jar" }!
 
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        // 应用包路径是中文的：JDK 17 的应用类归档对它只归档一小部分，从 ASCII 路径的副本跑（见 CdsCache.swift 的 AppStage）
+        let runJar = AppStage.runnableJar(bundleApp: resources.appendingPathComponent("app"), jar: jar,
+                                          root: home.appendingPathComponent(".zhiqu/app"))
+        let cache = CdsCache(directory: home.appendingPathComponent(".zhiqu/cds"), jar: runJar, java: java)
+        cds = cache
+
         process.executableURL = java
-        process.arguments = [
+        process.arguments = cache.jvmArguments() + [
             "-Dspring.profiles.active=desktop",
             "-Dserver.port=\(Backend.port)",   // 固定端口 —— 见类头，为了「记住登录」
             "-Dfile.encoding=UTF-8",
@@ -81,7 +90,7 @@ final class Backend {
             "-Djava.awt.headless=true",
             "-Dzhiqu.desktop.port-file=\(portFile.path)",
             "-Xmx1g",
-            "-jar", jar.path,
+            "-jar", runJar.path,
         ]
         try process.run()
     }
@@ -116,13 +125,20 @@ final class Backend {
         guard process.isRunning else { return }
         process.terminate()
         // 给 Spring 一点时间收尾（关连接池、flush 掉还在流式输出的消息）。
-        let deadline = Date().addingTimeInterval(5)
+        // 第一次运行还要把应用类归档写出来（实测约 3 秒），多等一会儿 —— 只有这一次
+        let training = cds?.training ?? false
+        let deadline = Date().addingTimeInterval(training ? 20 : 5)
         while process.isRunning && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.05)
         }
+        var killed = false
         if process.isRunning {
             kill(process.processIdentifier, SIGKILL)
+            killed = true
+            process.waitUntilExit()
         }
+        // 只有它自己正常退出的，归档才算写完了；被 SIGKILL 的那份可能是半截，删掉
+        cds?.finish(cleanExit: !killed)
     }
 }
 

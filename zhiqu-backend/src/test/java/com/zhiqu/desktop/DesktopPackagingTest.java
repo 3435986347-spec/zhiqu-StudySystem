@@ -131,23 +131,49 @@ class DesktopPackagingTest {
     }
 
     /**
-     * 启动脚本用 PropertiesLauncher + loader.main 从胖 JAR 里跑一个非 Spring 入口。
-     * 入口类改名或挪包时，脚本里那个字符串不会报编译错误 —— 只会在用户敲 zhiqu 时
+     * 启动脚本点名一个入口类。入口类改名或挪包时，脚本里那个字符串不会报编译错误 —— 只会在用户敲 zhiqu 时
      * 报 ClassNotFoundException。所以这里拿脚本里写的类名去真的加载一次。
+     *
+     * <p>第十轮起应用里放的是<b>解压后的瘦 JAR</b>（为了 CDS 启动加速），它的 Class-Path 指向 lib/，
+     * 直接 {@code -cp} 它就能跑；原来胖 JAR 那套 PropertiesLauncher + loader.main 在瘦 JAR 里根本不存在 ——
+     * 脚本要是还写着它，敲 zhiqu 就是 ClassNotFoundException。
      */
     @Test
-    @DisplayName("zhiqu 脚本指向的入口类真实存在且有 main；走的是 PropertiesLauncher 与应用自带的 JRE")
+    @DisplayName("zhiqu 脚本指向的入口类真实存在且有 main；直接 -cp 瘦 JAR，不再走胖 JAR 的 PropertiesLauncher；用应用自带的 JRE")
     void 命令行入口类要存在() throws Exception {
         String script = read(CLI_SCRIPT);
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("-Dloader\\.main=([\\w.]+)").matcher(script);
-        assertTrue(m.find(), "zhiqu 脚本里找不到 -Dloader.main=… —— 判据的锚点没了");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("-cp \"\\$JAR\" ([\\w.]+)").matcher(script);
+        assertTrue(m.find(), "zhiqu 脚本里找不到 -cp \"$JAR\" <入口类> —— 判据的锚点没了");
         Class<?> entry = Class.forName(m.group(1));
         assertTrue(java.lang.reflect.Modifier.isStatic(entry.getMethod("main", String[].class).getModifiers()),
                 m.group(1) + " 没有 public static void main(String[])");
-        assertTrue(script.contains("org.springframework.boot.loader.launch.PropertiesLauncher"),
-                "zhiqu 没走 PropertiesLauncher —— 直接 -cp 胖 JAR 找不到 BOOT-INF/ 下的类");
+        assertFalse(script.contains("PropertiesLauncher") || script.contains("loader.main"),
+                "zhiqu 还在走胖 JAR 的 PropertiesLauncher —— 应用里现在是瘦 JAR，那个类不存在");
         assertTrue(script.contains("runtime/Contents/Home/bin/java"),
                 "zhiqu 没用应用自带的 JRE —— 用户机器上不一定装了 Java 17");
+    }
+
+    /**
+     * 启动加速（第十轮，实测 3.3 秒 → 1.7 秒）的三个前提，少一个就悄悄回到慢的那条路 —— 应用照常能用，没人会发现：
+     * 运行时带基础归档（没有它，生成应用类归档那一步直接跳过）、放解压后的瘦 JAR（胖 JAR 里的类一个都归档不了）、
+     * 外壳把 CdsCache 编进去并在 -jar 之前加上它的参数、退出时收尾。
+     */
+    @Test
+    @DisplayName("启动加速：jlink 生成基础 CDS 归档；应用里放解压的瘦 JAR；外壳编进 CdsCache、参数在 -jar 之前、退出时收尾")
+    void 启动加速的前提() throws IOException {
+        String script = read(NATIVE_SCRIPT);
+        assertTrue(script.contains("--generate-cds-archive"), "jlink 没生成基础 CDS 归档");
+        assertTrue(script.contains("-Djarmode=tools -jar \"$JAR\" extract --destination \"$APP/Contents/Resources/app\""),
+                "应用里不是解压后的瘦 JAR");
+        assertFalse(script.contains("cp \"$JAR\" \"$APP/Contents/Resources/app/\""), "胖 JAR 又被拷进去了");
+        assertTrue(script.contains("macos-shell/CdsCache.swift"), "CdsCache.swift 没编进外壳");
+        String shell = read(Path.of("..", "deploy", "desktop", "macos-shell", "ZhiquShell.swift"));
+        int args = shell.indexOf("process.arguments = cache.jvmArguments() + [");
+        assertTrue(args > 0, "外壳没把 CDS 参数加在 JVM 参数最前面（必须在 -jar 之前，之后的会被当成应用参数）");
+        assertTrue(shell.indexOf("\"-jar\", runJar.path") > args, "外壳没从 ASCII 路径的副本跑（中文路径下应用类只归档一小部分）");
+        assertTrue(shell.contains("CdsCache(directory: home.appendingPathComponent(\".zhiqu/cds\"), jar: runJar"),
+                "归档要按实际运行的那个 JAR 算");
+        assertTrue(shell.contains("cds?.finish(cleanExit: !killed)"), "退出时没收尾：生成的归档永远是 .part，下次还是慢的");
     }
 
     private static String read(Path path) throws IOException {
