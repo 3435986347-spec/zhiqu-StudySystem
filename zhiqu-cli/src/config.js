@@ -80,6 +80,8 @@ export function resolveSettings(root, flags = {}) {
     maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 60),
     execTimeoutMs: Number(project.execTimeoutMs ?? user.execTimeoutMs ?? 120_000),
     allowedCommands: project.allowedCommands ?? user.allowedCommands ?? null,
+    // 思考过程默认不显示（用户 2026-09-28）；/verbose 或 --verbose 打开，/verbose 会记进 ~/.zhiqu/config.json
+    showThinking: Boolean(flags.verbose ?? user.showThinking ?? false),
     extensions: project.extensions ?? user.extensions ?? null,
     warnings,
   };

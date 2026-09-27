@@ -2244,6 +2244,23 @@ public class AiServiceImpl implements AiService {
     }
 
     @Override
+    public Integer setContextWindow(Long userId, Long modelId, Object tokens) {
+        // 给的不是整数（"1m" 这种写法命令行自己换算好再发）：按范围的那句话回，和超范围一样
+        if (!(tokens instanceof Number n) || n.doubleValue() != Math.rint(n.doubleValue())) {
+            throw new BusinessException("上下文窗口要在 " + ContextBudget.MIN_WINDOW + " 到 " + ContextBudget.MAX_WINDOW + " token 之间（给一个整数）");
+        }
+        Integer window = ContextBudget.validate(n.intValue());
+        // 一条只动这一列的语句，条件里带着归属：别人的、系统的（owner_type=SYSTEM）一律 0 行
+        int updated = modelConfigMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<AiModelConfig>()
+                .eq(AiModelConfig::getId, modelId).eq(AiModelConfig::getUserId, userId).eq(AiModelConfig::getOwnerType, "USER")
+                .set(AiModelConfig::getContextWindowTokens, window));
+        if (updated != 1) {
+            throw new BusinessException("只能设自己的模型；系统模型的窗口由管理员在网页后台设");
+        }
+        return window;
+    }
+
+    @Override
     public Map<String, Object> listModels(Long userId) {
         ensureLegacyConfigMigrated(userId);
         List<Map<String, Object>> systemModels = new ArrayList<>();

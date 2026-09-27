@@ -141,6 +141,21 @@ public class HarnessController {
                 .anyMatch(a -> JwtAuthenticationFilter.ACCESS_TOKEN_AUTHORITY.equals(a.getAuthority()));
     }
 
+    /**
+     * 命令行 /window：给自己的模型设上下文窗口（第十二轮）。用户的 1M 模型原来被按默认 64000 算 —— 配置里没填，
+     * 网页里能填、命令行里没人告诉他。只改窗口这一列、只能改自己的（见 AiService#setContextWindow）。
+     */
+    @PostMapping("/models/{id}/context-window")
+    public Result<Map<String, Object>> setContextWindow(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        Integer window = aiService.setContextWindow(userId, id, body == null ? null : body.get("tokens"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", id);
+        out.put("contextWindowTokens", window);
+        out.put("effectiveContextWindow", HarnessContext.effectiveWindow(window));
+        return Result.success(out);
+    }
+
     /** 这个用户能用的模型，拍平成一个列表；只列启用的。 */
     @GetMapping("/models")
     public Result<Map<String, Object>> models() {

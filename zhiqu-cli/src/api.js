@@ -10,9 +10,10 @@ import { SseParser } from './sse.js';
 import { USER_AGENT } from './version.js';
 
 export class ApiError extends Error {
-  constructor(message, { status = 0, auth = false, retryable = false, retryAfter = null, beforeOutput = true } = {}) {
+  constructor(message, { status = 0, auth = false, retryable = false, retryAfter = null, beforeOutput = true, code = null } = {}) {
     super(message);
     this.status = status;
+    this.code = code;   // 网络层的错误码（ECONNREFUSED …）：连接被拒 = 服务器没在跑，见 desktop.js
     this.auth = auth;
     this.retryable = retryable;
     this.retryAfter = retryAfter;
@@ -43,8 +44,8 @@ export class Api {
     return new ApiError(`连不上服务器 ${this.server}（${why}）`, { retryable: e instanceof HttpError ? e.retryable : false, code });
   }
 
-  async request(method, pathname, body, { signal, timeoutMs = 30_000 } = {}) {
-    const attempts = method === 'GET' ? GET_BACKOFF.length + 1 : 2;
+  async request(method, pathname, body, { signal, timeoutMs = 30_000, retry = true } = {}) {
+    const attempts = !retry ? 1 : method === 'GET' ? GET_BACKOFF.length + 1 : 2;
     let last;
     for (let i = 0; i < attempts; i++) {
       let res;

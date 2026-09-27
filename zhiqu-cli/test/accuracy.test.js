@@ -198,3 +198,26 @@ test('写了一个坏的 JS：node --check 的报错当场给出（只解析不�
   writeAndCommit(root, 'side.js', `require('fs').writeFileSync(${JSON.stringify(ran)}, 'x');\n`);
   assert.ok(!fs.existsSync(ran), '语法检查执行了代码');
 });
+
+// ── 第十二轮：用户贴的记录里查出的两件 ─────────────────────────────────
+
+test('search 的 path 给一个文件：就在这个文件里搜（原来报「不是一个普通文件」，模型以为搜索坏了，改成一段段读）', () => {
+  const root = tmpdir();
+  write(root, 'mario.html', '<script>\nconst ROWS = 14;\nconst COLS = 220;\nlet r = ROWS - 1;\n</script>\n');
+  write(root, 'other.js', 'const ROWS = 3;\n');
+  const r = new LocalTools({ root }).search({ query: 'ROWS', path: 'mario.html' });
+  assert.ok(!r.error, r.error);
+  assert.match(r.content, /mario\.html:2: const ROWS = 14;/);
+  assert.match(r.content, /mario\.html:4:/);
+  assert.ok(!r.content.includes('other.js'), '只搜给的那个文件');
+});
+
+test('写 .html：内联 <script> 的语法当场查（行号对到 HTML 里）；外链脚本、JSON 数据块不查；好的不报', () => {
+  const root = tmpdir();
+  const html = '<!doctype html>\n<html>\n<body>\n<canvas></canvas>\n<script>\nfunction draw() {\n  ctx.translate(x, ;\n}\n</script>\n</body>\n</html>\n';
+  const bad = writeAndCommit(root, 'mario.html', html);
+  assert.match(bad.content, /语法错误/);
+  assert.match(bad.content, /mario\.html:7/, bad.content);
+  const good = writeAndCommit(root, 'ok.html', '<script src="x.js">这里不是 JS { 浏览器也不会执行它</script>\n<script type="application/json">{not js</script>\n<script type="module">\nimport a from "./a.js";\nexport const b = a;\n</script>\n<script>\nconst c = 1;\n</script>\n');
+  assert.ok(!/语法错误/.test(good.content), good.content);
+});

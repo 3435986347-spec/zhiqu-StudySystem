@@ -39,6 +39,12 @@ public interface AiService {
     Map<String, Object> listModels(Long userId);
 
     /**
+     * 给自己的模型设上下文窗口（命令行 /window，第十二轮）。只改这一列、只能改自己的（USER、没删的），
+     * 范围与网页那一处同一个 {@link com.zhiqu.service.ai.ContextBudget#validate}。返回设好的窗口。
+     */
+    Integer setContextWindow(Long userId, Long modelId, Object tokens);
+
+    /**
      * 按用户解析一个可用的模型（id 为空 = 用户的默认模型，再退到系统模型）。
      * 与聊天用的是同一个判定：没启用、没 API Key 都会抛出同样的提示。命令行的模型网关用它。
      */

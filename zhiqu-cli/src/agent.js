@@ -25,6 +25,14 @@ import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSche
 
 export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory']);
 
+/*
+ * 思考过程不展示（用户 2026-09-28）：默认只打印结论（不再调工具的那条回复）和改了什么（写 / 删 / 跑命令，写带 diff）。
+ * 模型写在工具调用之间的字、读 / 搜 / 列目录这几步，只在状态行的「思考中」后面一闪（ui.startThinking）。
+ * ctx.verbose（/verbose、配置 showThinking）切回全显示。
+ */
+export const QUIET_TOOLS = new Set([...READ_TOOLS, ...REMOTE_READ_TOOLS, 'load_skill']);
+const quiet = (ctx) => !ctx.verbose;
+
 /**
  * 单条工具输出进上下文前的上限，随模型的窗口走（按字算；中文一字约一个 token）。
  * 由来：窗口 8000 的模型读一个 3 万字的文件，一轮就超了 —— 客户端压缩只能压「更早的轮」，
@@ -151,13 +159,16 @@ async function callModel(ctx, tools, signal, opts = {}) {
 
 async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DEFAULT_MAX_TOKENS, messages } = {}) {
   const ui = ctx.ui;
-  const md = render ? ui.markdown() : null;
+  // 安静模式：不边收边打（收完才知道这是结论还是调工具前的思考 —— 见 runTurn），状态行是「思考中」
+  const hush = render && quiet(ctx);
+  const md = render && !hush ? ui.markdown() : null;
   let done = null;
   let text = '';
   const toolNames = new Map();
   // 第一个字到来之前显示在等多久（只在终端里）：用户分得清「在等模型」和「卡死了」
   const started = Date.now();
-  let waiting = render ? setInterval(() => ui.status.set(ui.paint.dim(`… 等待模型回复 ${Math.round((Date.now() - started) / 1000)}s`)), 1000) : null;
+  let waiting = render && !hush ? setInterval(() => ui.status.set(ui.paint.dim(`… 等待模型回复 ${Math.round((Date.now() - started) / 1000)}s`)), 1000) : null;
+  if (hush) ui.setActivity('');
   const stopWaiting = () => { if (waiting) { clearInterval(waiting); waiting = null; ui.status.clear(); } };
   const body = {
     modelId: ctx.model ? ctx.model.id : null,
@@ -179,10 +190,12 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     } else if (name === 'tool_call') {
       toolNames.set(data.index, data.name);
       if (md && md.wroteAnything) md.finish();     // 正文说完了才轮到工具：先把这段收尾换行
-      if (render) ui.status.set(ui.paint.dim(`✎ 正在准备 ${data.name} …`));
+      if (hush) ui.setActivity(`准备 ${data.name}`);
+      else if (render) ui.status.set(ui.paint.dim(`✎ 正在准备 ${data.name} …`));
     } else if (name === 'tool_progress') {
       const tool = toolNames.get(data.index) || '工具';
-      if (render) ui.status.set(ui.paint.dim(`✎ 正在生成 ${tool} 的内容 … ${formatBytes(data.chars)}`));
+      if (hush) ui.setActivity(`生成 ${tool} 的内容 ${formatBytes(data.chars)}`);
+      else if (render) ui.status.set(ui.paint.dim(`✎ 正在生成 ${tool} 的内容 … ${formatBytes(data.chars)}`));
     } else if (name === 'done') {
       done = data;
     }
@@ -190,7 +203,7 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   } finally {
     stopWaiting();
   }
-  ui.status.clear();
+  if (!hush) ui.status.clear();
   if (md) md.finish();
   if (!done) throw new Error('模型的回复没有正常结束（连接中途断开了）');
   if (ctx.usage) {
@@ -320,6 +333,18 @@ function existingToolNames(ctx) {
   return new Set([...all, 'exit_plan_mode']);
 }
 
+/** 安静模式下的读类工具：step 变成状态行上的「在做什么」，result 不打。 */
+function hushedUi(ui) {
+  return new Proxy(ui, {
+    get(target, key) {
+      if (key === 'step') return (text) => target.setActivity(text);
+      if (key === 'result' || key === 'line' || key === 'note') return () => {};
+      const v = target[key];
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  });
+}
+
 function refuseUnoffered(ctx, name, offered) {
   const ui = ctx.ui;
   const available = [...offered.keys()].join('、');
@@ -353,16 +378,45 @@ function succeeded(ctx, key) {
   ctx.spin.delete(key);
 }
 
+// 另外两种空转（用户 2026-09-28 贴的记录：DeepSeek 在工具调用之间写了上万字推测、反复读同一个文件，
+// 真正的 bug 最后是写脚本做实验找到的）：调工具的回复里写了一大段（> LONG_THINKING 字）；连续 READ_STREAK 次只看不动。
+// 都是在工具结果后面附一句，不拦。
+export const LONG_THINKING = 3000;
+export const READ_STREAK = 8;
+const thinkingReminder = (n) => `上面那段分析有 ${n} 字。别在回复里长篇推测：已知的够就直接改；拿不准就写一个最小的复现脚本跑一下，用输出判断。`;
+const streakReminder = (n) => `你已经连续查看了 ${n} 次还没动手。已知的够就直接改；拿不准就写一个最小的复现脚本跑一下，用结果说话，不要继续猜。`;
+
+/**
+ * 省上下文：较早几轮「调工具的那几条回复」里的长篇思考，发给模型时只留开头（最近 keep 条原样）。
+ * 结论另有不调工具的那条回复；会话记录里是原话（记录是 record 时写的），省略的只是 ctx.messages 这一份。
+ */
+export const THINKING_KEEP_CHARS = 200;
+export function slimThinking(messages, keep = 2) {
+  const at = [];
+  messages.forEach((m, i) => { if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) at.push(i); });
+  let slimmed = 0;
+  for (const i of at.slice(0, Math.max(0, at.length - keep))) {
+    const c = messages[i].content;
+    if (typeof c === 'string' && c.length > THINKING_KEEP_CHARS * 3 && !c.includes('这段思考已省略')) {
+      messages[i] = { ...messages[i], content: `${c.slice(0, THINKING_KEEP_CHARS)}…（这段思考已省略，原来 ${c.length} 字）` };
+      slimmed++;
+    }
+  }
+  return slimmed;
+}
+
 const writeReminder = (file) => (n) => `你已经连续 ${n} 次没能改成 ${file}。停下来：先 read_file 重新读它现在的内容，`
   + '照原文一字不差地拼 old_string（或者挑一段更短、只出现一次的原文）；不要凭记忆再试。如果是方案本身有问题，先想清楚再动手。';
 const runReminder = (line) => (n) => `同一条命令 ${line} 已经连续 ${n} 次失败。先把上面的错误信息完整读一遍，找出根因（不是症状）、`
   + '想清楚要改哪里再改，一次改对；如果是环境问题或者需要用户决定，就停下来说明，不要换着花样重跑。';
 
 async function executeTool(ctx, call, offered, signal) {
-  const ui = ctx.ui;
   const name = call.function && call.function.name;
+  // 读 / 搜 / 列目录、没下发的名字、参数坏了 —— 都是过程，安静模式下只在状态行里一闪，不留成行
+  const hush = quiet(ctx) && (QUIET_TOOLS.has(name) || !offered.get(name));
+  const ui = hush ? hushedUi(ctx.ui) : ctx.ui;
   const kind = offered.get(name);
-  if (!kind) return refuseUnoffered(ctx, name, offered);
+  if (!kind) return refuseUnoffered({ ...ctx, ui }, name, offered);
   const parsed = parseArgs(call.function.arguments);
   if (!parsed.ok) {
     ui.step(`${name}（参数不对）`);
@@ -372,6 +426,10 @@ async function executeTool(ctx, call, offered, signal) {
   const args = parsed.value;
   ui.step(describeCall(name, args));
   ctx.steps.push(describeCall(name, args));
+  if (ctx.turnStats && QUIET_TOOLS.has(name)) {
+    const key = name === 'read_file' || name === 'read_wiki_page' ? 'read' : name === 'list_files' ? 'list' : 'search';
+    ctx.turnStats[key] += 1;
+  }
 
   if (kind === 'local') {
     const local = ctx.local;
@@ -507,7 +565,11 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
   if (manual) ui.step('压缩对话');
   const result = await compactMessages(ctx.messages, window, async (transcriptText) => {
     // 真要调模型压摘要时才说：自动触发、又只有最近一轮可留的时候，这里一句话都不该打
-    if (!manual) ui.step(`对话快到上下文上限（窗口 ${window} token 的 80%），把较早的部分压成摘要`);
+    if (!manual) {
+      ui.step(`对话快到上下文上限（窗口 ${window} token 的 80%），把较早的部分压成摘要`);
+      // 用户 2026-09-28：1M 的模型被按默认 64000 算、压缩了两次 —— 没填窗口时这里要说出来
+      if (ctx.model && !ctx.model.contextWindowTokens) ui.note('    （这个模型没填上下文窗口，按默认算的；它实际更大的话用 /window 设，比如 /window 1m）');
+    }
     // 摘要的输出上限随窗口走：窗口 8000 的模型写一份 4096 token 的摘要，压完比压之前还挤，下一轮又要压
     const r = await callModel(ctx, [], signal, {
       render: false, maxTokens: Math.max(512, Math.min(4096, Math.floor(window * 0.12))),
@@ -548,6 +610,10 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   let finalText = '';
   let continuations = 0;
   let nudged = false;
+  ctx.turnStats = { read: 0, search: 0, list: 0 };
+  ctx.readStreak = 0;
+  if (quiet(ctx)) ctx.ui.startThinking();
+  try {
   const maxRounds = ctx.maxRounds || 60;
   for (let round = 0; round < maxRounds; round++) {
     if (signal && signal.aborted) break;
@@ -555,10 +621,13 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     if (needsCompaction(systemText(ctx), ctx.messages, window)) await compactNow(ctx, signal);
     const tools = toolset(ctx);
     const offered = new Map(tools.map((t) => [t.schema.function.name, t.kind]));
+    slimThinking(ctx.messages);
     const res = await callModel(ctx, tools, signal);
     const message = res.message || { role: 'assistant', content: res.text };
     const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
 
+    // 安静模式下文字是收完才打的：不调工具的那条就是结论（被截断的结论也是结论的一段），调工具的那条是过程，不打
+    if (quiet(ctx) && !calls.length && (message.content || '').trim()) showAnswer(ctx, message.content);
     if (res.finishReason === 'length') {
       // 被截断不是「说完了」：截断的工具调用不执行，告诉模型为什么、该怎么改
       const broken = calls.filter((c) => !parseArgs(c.function.arguments).ok);
@@ -595,18 +664,45 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       break;
     }
     prefetchRemoteReads(ctx, calls, offered, signal);
-    for (const call of calls) {
+    const thought = (message.content || '').length;
+    for (const [i, call] of calls.entries()) {
       if (signal && signal.aborted) break;
-      const content = await executeTool(ctx, call, offered, signal);
-      record(ctx, { role: 'tool', tool_call_id: call.id, content: capToolOutput(content, window) });
+      let content = capToolOutput(await executeTool(ctx, call, offered, signal), window);
+      const reminders = [];
+      if (i === 0 && thought > LONG_THINKING) reminders.push(thinkingReminder(thought));
+      const name = call.function && call.function.name;
+      ctx.readStreak = QUIET_TOOLS.has(name) ? (ctx.readStreak || 0) + 1 : 0;
+      if (ctx.readStreak > 0 && ctx.readStreak % READ_STREAK === 0) reminders.push(streakReminder(ctx.readStreak));
+      if (reminders.length) content += reminders.map((r) => `\n\n【提醒】${r}`).join('');
+      record(ctx, { role: 'tool', tool_call_id: call.id, content });
     }
     if (round === maxRounds - 1) {
       ctx.ui.warn(`已经连续调用了 ${maxRounds} 轮工具，先停在这里。说「继续」可以接着做。`);
     }
   }
+  } finally {
+    ctx.ui.stopThinking();
+  }
   if (signal && signal.aborted) ctx.messages = dropDanglingToolCalls(ctx.messages);
   if (ctx.store && ctx.session) ctx.store.touch(ctx.session.id, { messages: ctx.messages.length, model: ctx.model ? ctx.model.label : null });
-  return { finalText, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles] };
+  return { finalText, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats } };
+}
+
+/** 结论：一次整段打（按 Markdown 渲染）。 */
+function showAnswer(ctx, text) {
+  const md = ctx.ui.markdown();
+  md.feed(text.endsWith('\n') ? text : `${text}\n`);
+  md.finish();
+}
+
+/** 一轮结束时那一句：这一轮看了什么（安静模式下读 / 搜没有留成行，说个数）。 */
+export function statsNote(stats) {
+  if (!stats) return '';
+  const parts = [];
+  if (stats.read) parts.push(`读了 ${stats.read} 次文件`);
+  if (stats.search) parts.push(`搜了 ${stats.search} 次`);
+  if (stats.list) parts.push(`看了 ${stats.list} 次目录`);
+  return parts.length ? `· 这一轮${parts.join('、')}` : '';
 }
 
 /**

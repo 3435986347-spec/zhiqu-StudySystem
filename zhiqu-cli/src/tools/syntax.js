@@ -24,6 +24,31 @@ export function syntaxProblem(abs, rel, text) {
   const ext = path.extname(abs).toLowerCase();
   if (ext === '.json') return jsonProblem(abs, rel, text);
   if (JS.has(ext)) return jsProblem(ext, rel, text);
+  if (ext === '.html' || ext === '.htm') return htmlProblem(rel, text);
+  return null;
+}
+
+/**
+ * HTML 里内联的 <script>（第十二轮：单文件的小游戏、小页面最常见 —— 用户贴的记录里模型自己写 check.js 用 new Function 查）。
+ * 外链脚本（src=）、非 JS 的数据块（type="application/json"、模板）不查；type="module" 按 ES 模块查。报错的行号对到 HTML 里。
+ */
+const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+const JS_TYPES = new Set(['', 'text/javascript', 'application/javascript', 'module']);
+
+function htmlProblem(rel, text) {
+  for (const m of text.matchAll(SCRIPT)) {
+    const attrs = m[1] || '';
+    if (/\bsrc\s*=/i.test(attrs)) continue;
+    const type = (/\btype\s*=\s*["']?([^"'\s>]+)/i.exec(attrs) || [, ''])[1].toLowerCase();
+    if (!JS_TYPES.has(type) || !m[2].trim()) continue;
+    const bodyStart = m.index + m[0].indexOf('>') + 1;
+    const firstLine = text.slice(0, bodyStart).split('\n').length;   // 脚本第 1 行在 HTML 的第几行
+    const problem = jsProblem(type === 'module' ? '.mjs' : '.cjs', rel, m[2]);
+    if (problem) {
+      // jsProblem 报的是「rel:脚本里的行号」，换成 HTML 里的行号
+      return problem.replace(new RegExp(`${rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:(\\d+)`), (_, n) => `${rel}:${firstLine + Number(n) - 1}`);
+    }
+  }
   return null;
 }
 

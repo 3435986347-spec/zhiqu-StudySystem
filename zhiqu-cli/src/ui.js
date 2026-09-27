@@ -52,6 +52,17 @@ function fit(text, width) {
 
 export const PROMPT = '› ';
 
+// 思考中的像素图案（用户 2026-09-28 要的「动态的小的像素图案来表示在思考」）：4 格点阵字符，高度像均衡器一样起伏。
+const PIXELS = ['\u28c0', '\u28e4', '\u28f6', '\u28ff'];   // ⣀ ⣤ ⣶ ⣿
+const WAVE = [0, 1, 2, 3, 2, 1];
+const THINKING_FRAME_MS = 120;
+
+export function pixelFrame(tick, cells = 4) {
+  let out = '';
+  for (let i = 0; i < cells; i++) out += PIXELS[WAVE[(tick + i) % WAVE.length]];
+  return out;
+}
+
 /** 多行 / 很长的输入只留一行摘要（排队的那一行、记录里的「› …」）。 */
 export function briefInput(text) {
   const s = String(text);
@@ -454,6 +465,47 @@ export class Ui {
     l.drawn = true;
   }
 
+  // ── 思考中 ─────────────────────────────────────────────────────────────
+  //
+  // 一轮干活的全程（等模型、模型在想、读文件、搜索）状态行都是它：像素图案 +「思考中 Ns」+ 此刻在做什么。
+  // 模型写在工具调用之间的那些字（思考过程）不再打印 —— 见 agent.js。只在交互终端里画；管道里什么都不打。
+
+  startThinking() {
+    if (!this.interactive || !this.live || this.thinking) return;
+    this.thinking = { started: Date.now(), tick: 0, activity: '' };
+    this.renderThinking();
+    this.thinkingTimer = setInterval(() => this.thinkingTick(), THINKING_FRAME_MS);
+    if (this.thinkingTimer.unref) this.thinkingTimer.unref();
+  }
+
+  thinkingTick() {
+    if (!this.thinking) return;
+    this.thinking.tick++;
+    this.renderThinking();
+  }
+
+  setActivity(text) {
+    if (!this.thinking) return;
+    this.thinking.activity = text ? String(text).replace(/\s+/g, ' ') : '';
+    this.renderThinking();
+  }
+
+  renderThinking() {
+    const t = this.thinking;
+    const secs = Math.floor((Date.now() - t.started) / 1000);
+    const room = this.cols() - 16;
+    const act = t.activity ? ` · ${t.activity}` : '';
+    this.setStatus(`${this.paint.cyan(pixelFrame(t.tick))} ${this.paint.dim(fit(`思考中 ${secs}s${act}`, Math.max(10, room)))}`);
+  }
+
+  stopThinking() {
+    if (this.thinkingTimer) clearInterval(this.thinkingTimer);
+    this.thinkingTimer = null;
+    if (!this.thinking) return;
+    this.thinking = null;
+    this.setStatus('');
+  }
+
   setStatus(text) {
     if (!this.live) return;       // 不是交互终端就不打：管道 / 日志里一行行「正在生成 …」只是噪音
     if (this.live.status === text) return;
@@ -517,6 +569,7 @@ export class Ui {
   }
 
   close() {
+    this.stopThinking();
     this.endLive();
     if (this.rl) this.rl.close();
     if (this.pasteMode) {

@@ -81,6 +81,7 @@ test('模型编了一个不存在的工具名（replace）：说清「不是暂�
     { calls: [{ name: 'replace', args: { path: 'a.js', old_string: '1', new_string: '2' } }] },
     { calls: [{ name: 'write_file', args: { path: 'a.js', old_string: 'x = 1', new_string: 'x = 2' } }] },
     { text: '改好了' }] });
+  ctx.verbose = true;   // 用户那一行只在 /verbose 下显示（第十二轮起默认不显示过程）；给模型的话两种模式一样
   await runTurn(ctx, '把 1 改成 2');
   const refusal = toolMessages(ctx)[1];
   assert.match(refusal, /没有叫 replace 的工具 —— 不是暂时不可用/);
@@ -89,6 +90,12 @@ test('模型编了一个不存在的工具名（replace）：说清「不是暂�
   assert.ok(!/这一轮/.test(refusal), '「这一轮」听起来像暂时的，模型会一遍遍重试');
   assert.match(ctx.ui.text(), /replace（没有这个工具，应当用 write_file）/, '用户看到的那一行也要说清');
   assert.equal(fs.readFileSync(path.join(root, 'a.js'), 'utf8'), 'const x = 2;\n');
+
+  // 默认（安静）模式：给模型的话一样，用户那边不留这一行 —— 它是过程，不是结论也不是改动
+  const q = makeCtx({ root: tmpdir(), replies: [{ calls: [{ name: 'replace', args: {} }] }, { text: '好' }] });
+  await runTurn(q, '改');
+  assert.match(toolMessages(q)[0], /没有叫 replace 的工具/);
+  assert.ok(!/replace（没有这个工具/.test(q.ui.text()), q.ui.text());
 });
 
 test('别家的工具名各自指到这里的对应工具（rm → delete_file）', async () => {

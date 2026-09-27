@@ -191,13 +191,29 @@ export class LocalTools {
   search(args = {}) {
     const query = args.query == null ? '' : String(args.query);
     if (!query) return { error: '没有给出要搜索的文字' };
+    // path 可以是目录，也可以是一个文件（第十二轮：原来给文件报「不是一个普通文件」，模型以为搜索坏了、改成一段段读）
     const dir = this.guard.resolveDirectory(args.path);
-    if (dir.reason !== Reason.OK) return { error: describe(dir.reason, args.path || '.') };
+    const single = dir.reason === Reason.OK ? null : this.guard.resolveReadable(args.path);
+    if (dir.reason !== Reason.OK && single.reason !== Reason.OK) return { error: describe(dir.reason, args.path || '.') };
     const ic = Boolean(args.ignore_case);
     const needle = ic ? query.toLowerCase() : query;
     const hits = [];
     let files = 0;
     let truncated = null;
+    const scan = (file) => {
+      let text;
+      try { text = fs.readFileSync(file, 'utf8'); } catch { return; }
+      const lines = text.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if ((ic ? line.toLowerCase() : line).includes(needle)) {
+          if (hits.length >= SEARCH_MAX_HITS) { truncated = `命中太多，只列出了前 ${SEARCH_MAX_HITS} 条`; return; }
+          const shown = line.length > SEARCH_MAX_LINE_CHARS ? `${line.slice(0, SEARCH_MAX_LINE_CHARS)}…` : line;
+          // 保留缩进：模型常把搜到的那行直接拿去当 old_string，去掉缩进就对不上了
+          hits.push(`${this.guard.display(file)}:${i + 1}: ${shown.trimEnd()}`);
+        }
+      }
+    };
     const walk = (abs) => {
       let names;
       try { names = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
@@ -211,21 +227,10 @@ export class LocalTools {
         try { st = fs.statSync(child); } catch { continue; }
         if (st.size > this.guard.maxFileBytes) continue;
         if (++files > SEARCH_MAX_FILES) { truncated = `文件太多，只搜了前 ${SEARCH_MAX_FILES} 个`; return; }
-        let text;
-        try { text = fs.readFileSync(child, 'utf8'); } catch { continue; }
-        const lines = text.split('\n');
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          if ((ic ? line.toLowerCase() : line).includes(needle)) {
-            if (hits.length >= SEARCH_MAX_HITS) { truncated = `命中太多，只列出了前 ${SEARCH_MAX_HITS} 条`; return; }
-            const shown = line.length > SEARCH_MAX_LINE_CHARS ? `${line.slice(0, SEARCH_MAX_LINE_CHARS)}…` : line;
-            // 保留缩进：模型常把搜到的那行直接拿去当 old_string，去掉缩进就对不上了
-            hits.push(`${this.guard.display(child)}:${i + 1}: ${shown.trimEnd()}`);
-          }
-        }
+        scan(child);
       }
     };
-    walk(dir.path);
+    if (single) scan(single.path); else walk(dir.path);
     const body = hits.length ? hits.join('\n') : '（没有找到）';
     // 截断必须说出来：模型把「80 条」当成「一共 80 条」就会给出错误结论
     return { content: truncated ? `${body}\n（${truncated} —— 这不是全部结果，请缩小范围再搜）` : body,

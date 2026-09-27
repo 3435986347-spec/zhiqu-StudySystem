@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Api, ApiError } from './api.js';
-import { archiveTurn, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode } from './agent.js';
+import { archiveTurn, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote } from './agent.js';
 import { newGoal } from './goal.js';
 import { generatedOrigin } from './origins.js';
 import { unfinished } from './todos.js';
@@ -27,6 +27,8 @@ import { SessionStore } from './session.js';
 import { discoverSkills, skillsBlock } from './skills.js';
 import { LocalTools } from './tools/local.js';
 import { Ui, briefInput } from './ui.js';
+import { ensureLocalServer } from './desktop.js';
+import { setWindow, windowLine } from './window.js';
 import { checkForUpdate, updateMessage } from './update.js';
 import { VERSION } from './version.js';
 
@@ -43,6 +45,7 @@ export function parseArgs(argv) {
     const next = () => { if (i + 1 >= argv.length) throw new Error(`${a} 后面要跟一个值`); return argv[++i]; };
     if (a === '-p' || a === '--print') flags.print = next();
     else if (a === '-c' || a === '--continue') flags.continue = true;
+    else if (a === '--verbose') flags.verbose = true;
     else if (a === '--resume') flags.resume = argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : true;
     else if (a === '--mode') flags.mode = next();
     else if (a === '--model') flags.model = next();
@@ -216,7 +219,7 @@ export function resumeInto(ctx, id) {
   const left = unfinished(ctx.todos);
   if (left.length) ctx.ui.note(`· 任务清单还有 ${left.length} 项没做完：${left.map((t) => t.content).join('；')}`);
   ctx.store.touch(id);
-  replayTranscript(ctx.ui, said);
+  replayTranscript(ctx.ui, said, { verbose: ctx.verbose });
   ctx.ui.note(`· 接着「${loaded.meta.title || '（无标题）'}」这段会话（${loaded.messages.length} 条记录${loaded.broken ? `，${loaded.broken} 行坏了已跳过` : ''}）`);
 }
 
@@ -226,10 +229,12 @@ function banner(ctx) {
   ui.line(`📁 ${path.basename(ctx.root)}/  ${ui.paint.dim(ctx.root)}`);
   if (ctx.goal && ctx.goal.status === 'active') ui.line(ui.paint.bold(`🎯 目标：${ctx.goal.text}`));
   const bits = [`档位：${MODE_LABEL[ctx.mode]}`, `模型：${ctx.model.label}`];
+  if (ctx.model.contextWindowTokens) bits.push(windowLine(ctx.model));
   const n = ctx.instructions.files.length;
   if (n) bits.push(`已加载 ${n} 份说明（${ctx.instructions.files.map((f) => displayPath(f.file, ctx.root, userDir())).join('、')}）`);
   if (ctx.skills.length) bits.push(`${ctx.skills.length} 个 skill`);
   ui.line(ui.paint.dim(`${bits.join(' · ')} · /help`));
+  if (!ctx.model.contextWindowTokens) ui.note(`· ${windowLine(ctx.model)}`);
   if (ctx.system.notice) ui.note(`· ${ctx.system.notice}`);
   for (const w of ctx.settings.warnings) ui.warn(w);
 }
@@ -266,8 +271,10 @@ async function runAgent(cwd, flags) {
     Object.assign(settings, resolveSettings(root, flags));
   }
   const api = new Api({ server: settings.server, token: settings.token });
+  // 默认连的本机桌面应用没开：macOS 上替用户打开、等它起来（见 desktop.js）
+  if (await ensureLocalServer({ api, server: settings.server, ui }) === 'failed') return 1;
   const ctx = {
-    ui, api, root, settings, mode: modeFlag || settings.mode, maxRounds: settings.maxRounds,
+    ui, api, root, settings, mode: modeFlag || settings.mode, maxRounds: settings.maxRounds, verbose: settings.showThinking,
     local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs }),
     store: new SessionStore(root), allow: { write: false, run: false, delete: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
@@ -277,7 +284,8 @@ async function runAgent(cwd, flags) {
     const [, , remote] = await Promise.all([
       api.get('/api/harness/me'),
       pickModel(ctx, flags.model ?? settings.model),
-      api.get('/api/harness/tools').catch((e) => { ui.warn(`远程工具（Wiki / 计划 / 记忆）拿不到：${e.message}`); return []; }),
+      // 连不上服务器时下一行会报，这里就不再叠一句（原来同一个「连不上」报两遍）
+      api.get('/api/harness/tools').catch((e) => { if (e.status) ui.warn(`远程工具（Wiki / 计划 / 记忆）拿不到：${e.message}`); return []; }),
     ]);
     ctx.remoteTools = remote;
   } catch (e) {
@@ -323,7 +331,7 @@ async function goalShot(ctx) {
   ctx.ui.onInterrupt = () => controller.abort();
   process.once('SIGINT', () => controller.abort());
   try {
-    const outcome = await runGoal(ctx, { signal: controller.signal, onTurn: (text, result) => archiveTurn(ctx, text, result) });
+    const outcome = await runGoal(ctx, { signal: controller.signal, onTurn: (text, result) => { turnNote(ctx, result); archiveTurn(ctx, text, result); } });
     return { achieved: 0, blocked: 2, exhausted: 3 }[outcome] ?? 1;
   } catch (e) {
     ctx.ui.error(e.message);
@@ -430,7 +438,7 @@ async function pursue(ctx, setRunning) {
   ctx.ui.beginLive();      // 干活时输入框一直在（见 ui.js）—— 等 MCP 启动的那一段也在
   await mcpStarted(ctx);
   try {
-    await runGoal(ctx, { signal: controller.signal, onTurn: (text, result) => archiveTurn(ctx, text, result) });
+    await runGoal(ctx, { signal: controller.signal, onTurn: (text, result) => { turnNote(ctx, result); archiveTurn(ctx, text, result); } });
   } catch (e) {
     if (controller.signal.aborted || (e && e.name === 'AbortError')) {
       ctx.ui.note('（已停下；/goal continue 接着追）');
@@ -450,12 +458,19 @@ async function turn(ctx, text, setRunning) {
     if (controller.signal.aborted) return;
     if (result.changedFiles.length) ctx.ui.note(`· 这一轮改动的文件：${result.changedFiles.join('、')}`);
     ctx.changedFiles = new Set();
+    turnNote(ctx, result);
     archiveTurn(ctx, text, result);   // 后台发，不挡下一句话
   } catch (e) {
     if (controller.signal.aborted || (e && e.name === 'AbortError')) return;
     ctx.ui.error(e.message);
     if (e instanceof ApiError && e.auth) ctx.ui.note('（令牌失效了：退出后运行 zhiqu login）');
   }
+}
+
+/** 一轮结束：安静模式下读 / 搜没有留成行，说一句个数。 */
+function turnNote(ctx, result) {
+  const note = !ctx.verbose && result ? statsNote(result.stats) : '';
+  if (note) ctx.ui.note(note);
 }
 
 async function slash(ctx, text) {
@@ -549,6 +564,21 @@ async function slash(ctx, text) {
       if (arg === 'reset') { const f = resetSystemContent(); ctx.system = systemContent(ctx.root); ui.line(`已把 ${f} 换成内置版本`); return null; }
       if (arg === 'diff') { ui.diff(hunks(ctx.system.text, BUILTIN_SYSTEM_PROMPT, 2)); return null; }
       ui.line(`正在用的系统内容：${ctx.system.file}（${ctx.system.source === 'project' ? '工作区' : '用户级'}）\n/system diff 看它和内置版本的差别，/system reset 换回内置版本`);
+      return null;
+    }
+    case '/window': {
+      try {
+        ui.line(await setWindow(ctx, arg));
+      } catch (e) {
+        ui.error(`没设成：${e.message}`);
+      }
+      return null;
+    }
+    case '/verbose': {
+      ctx.verbose = !ctx.verbose;
+      saveUserConfig({ showThinking: ctx.verbose });
+      ui.line(ctx.verbose ? '显示思考过程：模型的每一段分析、每一次读文件都打印出来（再输一次 /verbose 关掉）'
+        : '隐藏思考过程：只显示结论和改了什么，思考时状态行是一个动的小图案（再输一次 /verbose 打开）');
       return null;
     }
     case '/usage': {

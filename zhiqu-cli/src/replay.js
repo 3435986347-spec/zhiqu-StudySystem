@@ -6,7 +6,7 @@
 // 显示的是原话（SessionStore.transcript），不是发给模型的那一份：压缩过的话，模型只看得到摘要，
 // 但用户翻回去要看的是当时说了什么。每一步的写法和当时一样（⏺ 做了什么、⎿ 结果的第一行），
 // 不是用户打的 user 消息（goal 模式推的下一轮、命令行补的说明）不显示成「› …」。
-import { describeCall, parseArgs } from './agent.js';
+import { describeCall, parseArgs, QUIET_TOOLS } from './agent.js';
 import { generatedOrigin } from './origins.js';
 
 const RESULT_CHARS = 120;
@@ -28,8 +28,12 @@ function originOf(entry) {
   return generatedOrigin(textOf(entry.message.content));
 }
 
-/** 把 transcript() 的条目画出来。返回画了几条用户消息（没有就说没有）。 */
-export function replayTranscript(ui, entries) {
+/**
+ * 把 transcript() 的条目画出来。返回画了几条用户消息（没有就说没有）。
+ * 和当时的显示同一个规矩（第十二轮）：默认不显示调工具那几条回复里的字（思考过程）、不显示读 / 搜 / 列目录；verbose 全显示。
+ */
+export function replayTranscript(ui, entries, { verbose = false } = {}) {
+  const hiddenCalls = new Set();
   const said = entries.filter((e) => e.kind === 'message');
   if (!said.length) {
     ui.note('· 这段会话还没有聊天记录');
@@ -62,19 +66,21 @@ export function replayTranscript(ui, entries) {
     }
     if (m.role === 'assistant') {
       const text = textOf(m.content);
-      if (text.trim()) {
+      const thinking = !verbose && (m.tool_calls || []).length > 0;
+      if (text.trim() && !thinking) {
         const md = ui.markdown();
         md.feed(text.endsWith('\n') ? text : `${text}\n`);
         md.finish();
       }
       for (const call of m.tool_calls || []) {
         const name = call.function && call.function.name;
+        if (!verbose && QUIET_TOOLS.has(name)) { hiddenCalls.add(call.id); continue; }
         const parsed = parseArgs(call.function && call.function.arguments);
         ui.step(describeCall(name, parsed.ok ? parsed.value : {}));
       }
       continue;
     }
-    if (m.role === 'tool') ui.result(firstLine(textOf(m.content)));
+    if (m.role === 'tool' && !hiddenCalls.has(m.tool_call_id)) ui.result(firstLine(textOf(m.content)));
   }
   ui.line(ui.paint.dim('── 以上是之前的记录 ──'));
   return users;

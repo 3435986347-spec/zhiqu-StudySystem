@@ -592,6 +592,27 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - 客户端上报运行问题（`/api/runtime-issue/client`）原来在放行名单里、不去重、不限量，而现在的页面根本不调它（只有没人加载的
   旧 `js/common.js` 调）→ 要登录（只由 SecurityConfig 这一道管）、10 分钟内同一条只记一次、每人每小时 30 条。
 
+### 第十二轮（2026-09-28）：命令行 —— 只说结论、不空转、用满模型的窗口
+
+用户贴的真实记录（DeepSeek V4 Pro 在工具调用之间写了上万字推测、反复读同一文件；1M 的模型被按 64000 算、压缩两次）加一句：
+「思考内容不要展示出来，用一个动态的小的像素图案来表示在思考，并且说明在思考中，然后只告诉用户结论和更改了什么」。计划在 `docs/rounds/round-12.md`。
+
+- **思考过程不展示**（默认；`/verbose` 或 `--verbose` 切回全显示，记进 `~/.zhiqu/config.json` 的 `showThinking`）：
+  模型的回复**收完才打**—— 不调工具的那条是结论，按 Markdown 整段打；调工具的那条里的字是过程，不打。
+  读 / 搜 / 列目录 / 没下发的名字 / 参数坏了，只在状态行里一闪（`hushedUi` 把 step 换成 `setActivity`）；写 / 删 / 跑命令照常打印（写带 diff）。
+  一轮结束说一句「读了几次文件、搜了几次」。`/resume` 回放同一个规矩。被输出上限截断又接着说的结论，两段都打。
+- **像素图案**：`ui.startThinking()`，4 个点阵字符像均衡器起伏（`pixelFrame`，120ms 一帧）+「思考中 Ns · 在做什么」，
+  按终端宽度截短（折行的话擦的时候行数对不上）；一轮的 finally 里 `stopThinking`（Ctrl+C 也走这里，定时器不留）。
+- **不空转**：调工具的回复里写了 > 3000 字、连续 8 次只看不动 → 工具结果后面附一句（拿不准就写最小复现）；
+  发给模型之前，较早几轮调工具那几条回复里的长篇思考只留开头 200 字（`slimThinking`，最近 2 条原样；会话记录里是原话）；
+  系统提示新增「少说、多做」。
+- **窗口**：模型配置没填窗口就按 `HarnessContext.DEFAULT_WINDOW`（64000）算 —— 启动横幅和压缩时现在都说出来；
+  `/window 1m`（也收 `128k`、纯数字）调 `POST /api/harness/models/{id}/context-window` 设自己的模型（范围 8000–1000000，
+  与网页同一个 `ContextBudget.validate`）。
+- 记录里顺带查出的：`search` 的 path 可以是文件（原来报「不是一个普通文件」，模型以为搜索坏了）；写 .html 也查内联 `<script>`
+  （src 外链、非 JS 的 type 不查；module 按 ES 模块；行号对到 HTML）；默认连本机桌面应用而它没开时，macOS 上 `open -g -b com.zhiqu.quadrant`
+  打开它、最多等 40 秒（`src/desktop.js`；探测不带重试，否则光探测就 1.3 秒），没装就说清楚、不再报两遍「连不上」。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
