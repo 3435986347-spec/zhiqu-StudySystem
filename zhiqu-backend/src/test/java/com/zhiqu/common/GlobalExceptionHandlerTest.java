@@ -84,4 +84,17 @@ class GlobalExceptionHandlerTest {
         String hash = bcrypt.encode("密".repeat(30));
         assertTrue(bcrypt.matches("密".repeat(24) + "完全不同的结尾", hash), "BCrypt 不再截断了 —— 重新看看 PasswordRules 还要不要");
     }
+
+    @Test
+    @DisplayName("对面已经断开（刷新、关页面）：不记运行问题 —— 那不是服务器的问题（第十三轮：AI 回答到一半刷新，每次一条 Broken pipe）")
+    void 客户端走了不记() {
+        for (Exception e : new Exception[]{new java.io.IOException("Broken pipe"),
+                new RuntimeException("写回包失败", new java.io.IOException("Connection reset by peer")),
+                new org.springframework.web.context.request.async.AsyncRequestNotUsableException("Response not usable")}) {
+            handler.handleOther(e, new MockHttpServletRequest());
+        }
+        verify(issues, never()).reportServerIssue(any(), any());
+        handler.handleOther(new java.io.IOException("No space left on device"), new MockHttpServletRequest());
+        verify(issues).reportServerIssue(any(), any());
+    }
 }

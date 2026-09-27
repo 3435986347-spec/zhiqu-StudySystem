@@ -106,6 +106,7 @@ export class Ui {
     this.rl.on('line', (line) => this.onLine(line));
     this.rl.on('close', () => {
       this.closed = true;
+      this.dropQuestion('（输入结束，按不同意算）');
       for (const w of this.waiters.splice(0)) w.resolve(null);
     });
     this.rl.on('SIGINT', () => {
@@ -155,16 +156,38 @@ export class Ui {
   /** 短的一行原样进输入行；有换行或者很长就放一个占位，回车时换回原文。 */
   insertPaste(text) {
     if (!text) return;
-    const lines = text.split('\n');
-    if (lines.length === 1 && text.length <= PASTE_INLINE_MAX) {
-      this.rl.write(text);
-    } else {
-      const n = ++this.pasteSeq;
-      this.pastes.set(n, text);
-      if (this.pastes.size > 50) this.pastes.delete(this.pastes.keys().next().value);
-      this.rl.write(lines.length > 1 ? `[粘贴 #${n} · ${lines.length} 行]` : `[粘贴 #${n} · ${text.length} 字]`);
-    }
+    this.rl.write(this.pasteSlot(text));
     this.afterKey();
+  }
+
+  /** 输入行里放什么：短的一行原样；有换行或者很长就是一个占位（回车时 expandPastes 换回原文）。 */
+  pasteSlot(text) {
+    const lines = text.split('\n');
+    if (lines.length === 1 && text.length <= PASTE_INLINE_MAX) return text;
+    const n = ++this.pasteSeq;
+    this.pastes.set(n, text);
+    if (this.pastes.size > 50) this.pastes.delete(this.pastes.keys().next().value);
+    return lines.length > 1 ? `[粘贴 #${n} · ${lines.length} 行]` : `[粘贴 #${n} · ${text.length} 字]`;
+  }
+
+  /**
+   * Ctrl+C 停下时，排队的消息放回输入框、不发。原来停下之后它们照样被自动发出去，新的一轮又干起来了 ——
+   * 按 Ctrl+C 的人要的是停（第十三轮真终端实测：排了一句「顺便改个颜色」再按 Ctrl+C，模型接着就去改颜色了）。
+   * 放回输入框：回车就发，也可以先改；正打着的字接在后面。多条、多行的照粘贴那样放一个占位。
+   */
+  unqueue() {
+    if (!this.interactive || this.closed || !this.queue.length) return;
+    const text = this.queue.splice(0).join('\n');
+    this.frame(() => {
+      const typed = this.rl.line;
+      if (typed) this.setLine('');
+      this.rl.write(this.pasteSlot(text));
+      if (typed) this.rl.write(` ${typed}`);
+      if (this.live) {
+        this.eraseLive();
+        this.drawLive();          // 输入框上方那几行「⋯ 排队：…」跟着没了
+      }
+    });
   }
 
   expandPastes(line) {
@@ -397,6 +420,32 @@ export class Ui {
     return hit ? hit.key : fallback;
   }
 
+  /**
+   * Ctrl+C 打断这一轮时，正在问的确认一并作废（按不同意算）。
+   * 原来只中断了这一轮、问题还挂着：屏幕上照样是「写入 b.js？」、思考中的图案照样在转，
+   * 用户接着打的下一句话被当成对这个问题的回答吃掉（第十三轮真终端实测：「还在吗」→「用户没有同意，没写」，那句话没了）。
+   */
+  cancelQuestion() {
+    const fresh = this.waiters.filter((w) => w.fresh);
+    if (!fresh.length) return;
+    this.waiters = this.waiters.filter((w) => !w.fresh);
+    this.dropQuestion('（取消）');
+    for (const w of fresh) w.resolve(null);
+  }
+
+  /** 屏幕上正问着的问题收起来、连同为什么没有回答留成一行（答过的问题也是这样留着的，见 handleLine）。 */
+  dropQuestion(why) {
+    if (!this.live || !this.live.question) return;
+    this.frame(() => {
+      // 答了一半的字不留到下一个提示符上。先清再擦：清的时候 readline 会在原处重画输入行
+      if (!this.closed && this.rl.line) this.setLine('');
+      this.eraseLive();
+      const question = this.live.question;
+      this.live.question = null;
+      this.writeNow(`${this.live.partial ? '\n' : ''}${question}${this.paint.dim(why)}\n`);
+    });
+  }
+
   /** 排队中的消息（工作时按回车发的）；下一轮要用。 */
   takeQueued() {
     return this.queue.shift();
@@ -459,10 +508,20 @@ export class Ui {
     for (const line of above) this.output.write(`${line}\n`);
     l.rowsAbove = above.reduce((n, line) => n + this.rowsOf(line), 0);
     // 输入行交给 readline 画：它的 prevRows 以为光标在输入行的某一行，而我们刚把光标放在了新的一行行首
-    this.rl.prevRows = 0;
-    this.rl.setPrompt(l.question || this.prompt);
-    this.rl.prompt(true);
+    this.promptAgain(l.question || this.prompt);
     l.drawn = true;
+  }
+
+  /**
+   * 画回输入行。readline 关了（Ctrl+D）之后不许再调 prompt：它会顺手 resume() 输入流，
+   * 进程就再也退不出去（第十三轮真终端实测：确认提问时按 Ctrl+D，这一轮照常收尾，然后进程挂住 ——
+   * 收尾时画活动区又调了一次 prompt，stdin 重新开始读）。
+   */
+  promptAgain(prompt) {
+    if (this.closed) return;
+    this.rl.prevRows = 0;
+    if (prompt != null) this.rl.setPrompt(prompt);
+    this.rl.prompt(true);
   }
 
   // ── 思考中 ─────────────────────────────────────────────────────────────
@@ -530,8 +589,7 @@ export class Ui {
         this.eraseLive();
         this.idle = null;
         this.output.write(text);
-        this.rl.prevRows = 0;
-        this.rl.prompt(true);
+        this.promptAgain();
         return;
       }
       this.output.write(text);

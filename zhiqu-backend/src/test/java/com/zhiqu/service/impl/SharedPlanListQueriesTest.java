@@ -118,7 +118,8 @@ class SharedPlanListQueriesTest {
     @Test
     @DisplayName("点赞：点赞数只改那一列（按点赞表重数），不把读到的整个模板写回去")
     void 点赞只改计数列() {
-        when(templates.selectById(anyLong())).thenReturn(template(7, "EXAM"));
+        // 第十三轮起点赞先用加锁读（selectOne … FOR UPDATE）拿这个计划 —— 并发时按计划排队，见 ConcurrencyStormIntegrationTest
+        when(templates.selectOne(any())).thenReturn(template(7, "EXAM"));
         service.toggleLike(1L, 7L);
         verify(templates).refreshLikeCount(7L);
         verify(templates, never()).updateById(any(SharedPlanTemplate.class));

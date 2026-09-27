@@ -372,20 +372,43 @@ async function readInput(ui) {
   return text;
 }
 
-async function repl(ctx, flags = {}) {
-  const { ui } = ctx;
-  let running = null;
-  let lastInterrupt = 0;
-  ui.onInterrupt = () => {
-    if (running) {
-      running.abort();
+/** 打断之后这么久之内的 Ctrl+C 算同一次「停下」，不算「退出」。 */
+export const STOP_GRACE_MS = 800;
+
+/**
+ * 交互时的 Ctrl+C（第十三轮真终端暴力测试定的）：
+ * - 干活时：停下这一轮；正在问的确认一并作废（按不同意算）—— 否则问题还挂着，下一句话被当成回答吃掉；
+ *   排队的消息放回输入框、不发 —— 否则停下之后它们接着被发出去，又干起来了。
+ *   已经在停了（命令还在收尾）再按，不再每下打一行「已中断」。
+ * - 刚停下的那一小会儿（STOP_GRACE_MS）：不算数。想让它停下的人会连按好几下，原来第三下就把程序退了。
+ * - 空闲时：按一下提示，两秒内再按一下退出。
+ */
+export function interruptHandler(ui, running, clock = Date.now) {
+  let lastAbort = -Infinity;
+  let lastHint = -Infinity;
+  return () => {
+    const controller = running();
+    if (controller) {
+      if (controller.signal.aborted) return;
+      ui.cancelQuestion();
+      controller.abort();
+      ui.unqueue();
+      lastAbort = clock();
       ui.line(ui.paint.yellow('\n（已中断）'));
       return;
     }
-    if (Date.now() - lastInterrupt < 2000) { ui.close(); return; }
-    lastInterrupt = Date.now();
+    const now = clock();
+    if (now - lastAbort < STOP_GRACE_MS) return;
+    if (now - lastHint < 2000) { ui.close(); return; }
+    lastHint = now;
     ui.line(ui.paint.dim('\n（再按一次 Ctrl+C 退出，或者输入 /exit）'));
   };
+}
+
+async function repl(ctx, flags = {}) {
+  const { ui } = ctx;
+  let running = null;
+  ui.onInterrupt = interruptHandler(ui, () => running);
   if (flags.goal) {
     await pursue(ctx, (c) => { running = c; });
     running = null;

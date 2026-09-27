@@ -375,7 +375,11 @@ public class SharedPlanServiceImpl implements SharedPlanService {
     @Override
     @Transactional
     public Map<String, Object> toggleLike(Long userId, Long id) {
-        SharedPlanTemplate template = templateMapper.selectById(id);
+        // 先锁住这个计划那一行：同一个计划的点赞按顺序来。原来是普通读 → 插 / 删点赞 → 按点赞数刷计数，
+        // 并发时各自拿锁的顺序不一样，MySQL 直接判死锁（第十三轮并发暴力测试：同时点 20 次，好几次 500）。
+        // 也必须是第一条读：它是加锁读、不建快照，后面读点赞记录时看到的是前一个人提交之后的样子。
+        SharedPlanTemplate template = templateMapper.selectOne(new LambdaQueryWrapper<SharedPlanTemplate>()
+                .eq(SharedPlanTemplate::getId, id).last("FOR UPDATE"));
         if (template == null || !"APPROVED".equals(template.getStatus())) {
             throw new BusinessException("参考计划不存在或暂不可点赞");
         }

@@ -121,8 +121,28 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public Result<Void> handleOther(Exception e, HttpServletRequest request) {
+        if (clientGone(e)) {
+            // 客户端已经走了（刷新、关页面、断网）：没人收这个回包，也不是服务器的问题 —— 不记运行问题。
+            // 第十三轮暴力测试：AI 回答到一半刷新，每刷一次记一条「IOException：Broken pipe」，管理员后台被刷屏
+            return null;
+        }
         Long id = runtimeIssueService.reportServerIssue(e, request);
         return Result.fail("服务器出错了，已经记录下来" + (id == null ? "" : "（编号 " + id + "）") + "，请稍后再试");
+    }
+
+    /** 是不是「对面已经断开」：Spring 的 AsyncRequestNotUsableException、Tomcat 的 ClientAbortException、断管 / 连接被对面重置。 */
+    static boolean clientGone(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            String name = t.getClass().getName();
+            if (name.endsWith("AsyncRequestNotUsableException") || name.endsWith("ClientAbortException")) {
+                return true;
+            }
+            if (t instanceof java.io.IOException && t.getMessage() != null
+                    && (t.getMessage().contains("Broken pipe") || t.getMessage().contains("Connection reset by peer"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Result<Void> bad(String message) {

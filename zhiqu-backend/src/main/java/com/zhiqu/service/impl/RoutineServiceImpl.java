@@ -167,10 +167,14 @@ public class RoutineServiceImpl implements RoutineService {
             try {
                 checkinMapper.insert(checkin);
             } catch (DuplicateKeyException e) {
+                // 必须是加锁读（FOR UPDATE = 读最新提交的那一行）。普通的 SELECT 在这个事务里读的是开头那一刻的快照
+                //（MySQL 默认可重复读），另一个请求刚插进来的那一行看不见 —— 于是 existing 为空、把撞键原样抛出去，
+                // 连点打卡变成「服务器出错」（第十三轮并发暴力测试：同一天打卡同时 20 次，十几次 500）
                 StudyRoutineCheckin existing = checkinMapper.selectOne(new LambdaQueryWrapper<StudyRoutineCheckin>()
                         .eq(StudyRoutineCheckin::getUserId, userId)
                         .eq(StudyRoutineCheckin::getRoutineId, routineId)
-                        .eq(StudyRoutineCheckin::getCheckDate, checkDate));
+                        .eq(StudyRoutineCheckin::getCheckDate, checkDate)
+                        .last("LIMIT 1 FOR UPDATE"));
                 if (existing == null) {
                     throw e;
                 }
