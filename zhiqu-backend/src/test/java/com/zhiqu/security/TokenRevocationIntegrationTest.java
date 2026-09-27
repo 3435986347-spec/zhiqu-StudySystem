@@ -221,4 +221,21 @@ class TokenRevocationIntegrationTest {
         assertEquals(java.util.Arrays.asList(null, null, null), java.util.Arrays.asList(row.get("school"), row.get("major"), row.get("email")),
                 "清空没有写进去：" + row);
     }
+
+    /**
+     * 第十一轮：这一版 BCrypt 对超过 72 字节的密码静默截断（实测 30 个汉字的密码，前 24 个字加别的也能登）。
+     * 注册、改密码都要拒绝，并说清按字节算 —— 规矩在 PasswordRules，这里钉「两处真的都调了它」。
+     */
+    @Test
+    @DisplayName("超过 72 字节的新密码：注册与改密码都拒绝（说清按字节算）；72 字节以内照常")
+    void 密码超过72字节拒绝() throws Exception {
+        String tooLong = "密".repeat(25);   // 75 字节
+        JsonNode r = call(fromNewPeer(post("/api/auth/register")).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"long-pw\",\"password\":\"" + tooLong + "\",\"confirmPassword\":\"" + tooLong + "\"}"));
+        assertTrue(r.path("code").asInt() != 200 && r.path("message").asText().contains("72 字节"), r.toString());
+        String token = register("long-pw", "short-pass-1");
+        JsonNode change = changePassword(token, "short-pass-1", tooLong);
+        assertTrue(change.path("code").asInt() != 200 && change.path("message").asText().contains("72 字节"), change.toString());
+        assertEquals(200, changePassword(token, "short-pass-1", "密".repeat(24)).path("code").asInt(), "72 字节以内应当照常");
+    }
 }

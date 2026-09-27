@@ -570,6 +570,28 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   没标记的当半截；拷不成照原样从应用包跑）。`~/.zhiqu/app` 与 `~/.zhiqu/cds` 共约 160MB，删了下次自动重建。
 - 命令行 `bin/zhiqu` 改成直接 `-cp` 瘦 JAR 点名入口类（瘦 JAR 里没有 PropertiesLauncher）。
 
+### 第十一轮（2026-09-28）：暴力测试 —— 全接口坏输入
+
+用户要的「暴力的测试…不同输入、不停刷新、没耐心的极端情况」。计划与结果在 `docs/rounds/round-11.md`（每轮的计划都存在 `docs/rounds/`）。
+
+- **`EndpointFuzzIntegrationTest`**：从 Spring 映射表枚举全部 `/api/**`（不手写名单，新接口自动纳入；少于 150 个就判扫空），
+  每个接口喂坏输入（空体、错类型、畸形 JSON、10 万字、零宽 / RTL / `<script>` / SQL 片段、溢出的数、2026-02-30、路径给字母），
+  管理员和普通用户各一遍。**判据是「坏输入不许变成服务器出错」**：每个请求前后比 `runtime_issue` 里 `source='SERVER'` 的行
+  （兜底分支会记一条），外加 HTTP 500 与 20 秒超时。第一次跑出 499 处，修完 0 处。它在全量里，约 45 秒。
+  注意 `/api/runtime-issue/client` 本来就往那张表写（`source='CLIENT'`），所以只比 SERVER 行 —— 第一版把它当成了异常。
+- **`GlobalExceptionHandler`**：框架层的请求错误（不是合法 JSON、字段类型不对、路径 id 给字母、缺参数 / 请求头、没按上传格式、
+  方法不对、日期格式）回 400 并说清哪个字段、应当是什么，**不记运行问题**（原来全落兜底：管理员后台被坏输入刷屏，
+  用户看到 `Failed to convert value of type 'java.lang.String'…`）。兜底分支照旧记运行问题，但**不再把异常原文回给用户**
+  （原文里有 SQL、表名、类名）—— 回一句话加编号（`reportServerIssue` 现在返回编号）。
+  注意 `Result.fail` 的业务错误本来就是 code 500，所以「是不是意外」看的是有没有记运行问题，不是 code。
+- 长度按列长校验（用户名 50、昵称 50、学校 / 专业 100、邮箱 120、例行计划标题 200 / 说明 2000 / 类型 50）：
+  原来超长直接数据库报「Data too long」（个人资料 10 万字时 MySQL 拒收 1.2MB 的语句）。
+- **BCrypt 静默截断 72 字节以后的部分**（这一版 Spring Security 6.3.4，实测 30 个汉字的密码前 24 个字加别的也能登）→
+  `PasswordRules.requireStorable` 在注册、改密码两处按字节拒绝。`GlobalExceptionHandlerTest` 里留了一条「截断确实存在」的判据：
+  哪天它不成立了，说明依赖改了行为，这条限制可以重新评估。
+- 客户端上报运行问题（`/api/runtime-issue/client`）原来在放行名单里、不去重、不限量，而现在的页面根本不调它（只有没人加载的
+  旧 `js/common.js` 调）→ 要登录（只由 SecurityConfig 这一道管）、10 分钟内同一条只记一次、每人每小时 30 条。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，

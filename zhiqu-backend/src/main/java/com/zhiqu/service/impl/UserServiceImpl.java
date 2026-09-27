@@ -109,6 +109,7 @@ public class UserServiceImpl implements UserService {
         if (!passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
             throw new BusinessException("旧密码不正确");
         }
+        com.zhiqu.common.PasswordRules.requireStorable(request.getNewPassword());
         if (sysUserMapper.changePassword(userId, passwordEncoder.encode(request.getNewPassword())) != 1) {
             throw new BusinessException("密码没有改成，请刷新后重试");
         }

@@ -38,7 +38,6 @@ public class SecurityConfig {
                                 "/api/harness/device/poll",
                                 // 服务器版本 / 命令行最低版本 —— 新版本提示在登录前也要能读
                                 "/api/harness/meta",
-                                "/api/runtime-issue/client",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/uploads/**",

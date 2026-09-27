@@ -63,6 +63,7 @@ public class AuthServiceImpl implements AuthService {
         if (!request.getPassword().equals(request.getConfirmPassword())) {
             throw new BusinessException("两次密码输入不一致");
         }
+        com.zhiqu.common.PasswordRules.requireStorable(request.getPassword());
         SysUser exists = sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getUsername, request.getUsername()));
         if (exists != null) {

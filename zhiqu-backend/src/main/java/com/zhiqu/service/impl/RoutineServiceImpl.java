@@ -57,15 +57,16 @@ public class RoutineServiceImpl implements RoutineService {
     public StudyRoutine create(Long userId, Map<String, Object> body) {
         StudyRoutine routine = new StudyRoutine();
         routine.setUserId(userId);
-        routine.setTitle(requiredText(body.get("title"), "例行计划标题不能为空"));
-        routine.setDescription(text(body.get("description")));
+        // 长度上限就是 study_routine 各列的长度（V5）：超了原来是数据库报「Data too long」、把 SQL 原文回给用户（第十一轮暴力测试）
+        routine.setTitle(bounded(requiredText(body.get("title"), "例行计划标题不能为空"), 200, "例行计划标题"));
+        routine.setDescription(bounded(text(body.get("description")), 2000, "例行计划说明"));
         routine.setFrequency(normalizeFrequency(text(body.get("frequency"))));
         routine.setDaysOfWeek(normalizeDaysOfWeek(body.get("daysOfWeek"), routine.getFrequency()));
         routine.setStartDate(parseDate(body.get("startDate"), clock.today()));
         routine.setEndDate(parseDate(body.get("endDate"), routine.getStartDate().plusDays(29)));
         routine.setPreferredTime(parseTime(body.get("preferredTime")));
         routine.setDurationMinutes(parseInt(body.get("durationMinutes"), null));
-        routine.setTaskType(defaultText(body.get("taskType"), "other"));
+        routine.setTaskType(bounded(defaultText(body.get("taskType"), "other"), 50, "任务类型"));
         routine.setDifficulty(clamp(parseInt(body.get("difficulty"), 3), 1, 5));
         routine.setQuadrant(clamp(parseInt(firstNonNull(body.get("quadrant"), body.get("suggestedQuadrant")), 2), 1, 4));
         routine.setPriority(clamp(parseInt(body.get("priority"), 1), 0, 3));
@@ -450,6 +451,13 @@ public class RoutineServiceImpl implements RoutineService {
 
     private Object firstNonNull(Object first, Object second) {
         return first != null ? first : second;
+    }
+
+    private static String bounded(String text, int max, String label) {
+        if (text != null && text.codePointCount(0, text.length()) > max) {
+            throw new BusinessException(label + "最长 " + max + " 个字");
+        }
+        return text;
     }
 
     private String requiredText(Object value, String message) {
