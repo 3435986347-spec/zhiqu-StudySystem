@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260928-display-phone2" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260928-display-phone2">
-  <link rel="manifest" href="manifest.json?v=20260928-display-phone2">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260928-display-phone3" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260928-display-phone3">
+  <link rel="manifest" href="manifest.json?v=20260928-display-phone3">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260928-display-phone2">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260928-display-phone3">
 </head>
 <body>
   <div class="zq-app">
@@ -22,8 +22,10 @@
         height（不是 min-height）—— 内层正好等于视口减去 .zq-main 的上下 padding（110px），
         整页不产生外层滚动，正文在 #zq-doc 内部滚。目录收起后那个展开箭头在竖条顶端，
         外层一滚就够不到，所以这里必须是定高。
+        但定高要有下限（第二十轮）：浏览器放大到 200%（1366×768 → 683×384）时定高之后正文区是 0px。
+        低于 520px 时宁可整页滚一点，正文得先看得见。手机上的高度见 zhiqu-ui.css 的 @media。
       -->
-      <div style="display:flex; flex-direction:column; gap:12px; height:calc(100vh - 110px); animation:zqFadeIn .3s ease both;">
+      <div style="display:flex; flex-direction:column; gap:12px; height:calc(100vh - 110px); min-height:520px; animation:zqFadeIn .3s ease both;">
         <header style="display:flex; align-items:center; justify-content:space-between; gap:18px; padding:2px 2px 0; flex-wrap:wrap;">
           <h1 class="zq-h1">知识 Wiki</h1>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -85,7 +87,7 @@
               改 #zq-doc 的 26px 时这里要跟着改，WikiTabsTest.标题与正文左边缘要对齐 盯着。
             -->
             <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px 14px 26px; border-bottom:1px solid var(--zq-border-soft); flex-wrap:wrap;">
-              <div style="min-width:0;"><p class="zq-eyebrow" style="margin-bottom:3px; font-size:10.5px;">文档视图</p><h2 id="zq-doc-title" class="zq-h2" style="font-size:16px;"></h2></div>
+              <div style="min-width:0;"><p class="zq-eyebrow" style="margin-bottom:3px; font-size:10.5px;">文档视图</p><h2 id="zq-doc-title" class="zq-h2" style="font-size:16px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;"></h2></div>
               <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span style="font-size:11.5px; color:var(--zq-text3);">点击正文或标题即可编辑</span>
                 <span style="font-size:11.5px; color:var(--zq-text3);">段落</span>
@@ -126,7 +128,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260928-display-phone2"></script>
+  <script src="assets/zhiqu-ui.js?v=20260928-display-phone3"></script>
   <script>
     var wtag={'目标':['q2'],'计划':['primary'],'偏好':['q4'],'薄弱点':['q1'],'资料':['q3'],'对话摘要':['soft'],'index':['soft'],'规则':['soft'],'log':['soft']};
     function tagColors(t){ var k=wtag[t]?wtag[t][0]:'soft'; if(k==='soft') return ['var(--zq-card-soft)','var(--zq-text3)']; if(k==='primary') return ['var(--zq-tint)','var(--zq-primary)']; return ['var(--zq-'+k+'-bg)','var(--zq-'+k+')']; }
@@ -180,6 +182,6 @@
     function sel(i){ cur=i; paintTree(); paintDoc(); }
     paintTree(); paintDoc();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260928-display-phone2"></script>
+  <script src="assets/zhiqu-api.js?v=20260928-display-phone3"></script>
 </body>
 </html>

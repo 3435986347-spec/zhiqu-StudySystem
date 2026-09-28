@@ -9,11 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260928-display-phone2" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260928-display-phone2">
-  <link rel="manifest" href="manifest.json?v=20260928-display-phone2">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260928-display-phone3" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260928-display-phone3">
+  <link rel="manifest" href="manifest.json?v=20260928-display-phone3">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260928-display-phone2">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260928-display-phone3">
 </head>
 <body>
   <div class="zq-app">
@@ -24,8 +24,10 @@
         于是**整页不产生外层滚动**，长内容在对话区内部滚。
         这一条不只是观感：面板收起后，展开箭头在竖条顶端，是收起状态下唯一的展开入口。
         外层一滚它就跑出视野，人只能先滚回去才能展开 —— 用 min-height 时就是这样。
+        但定高要有下限（第二十轮）：浏览器放大到 200%、手机横屏时视口只有三四百像素高，定高之后对话区只剩 40px。
+        低于 520px 时宁可整页滚一点，对话区和输入框得先能用。手机上的高度见 zhiqu-ui.css 的 @media。
       -->
-      <div style="display:flex;flex-direction:column;gap:12px;height:calc(100vh - 110px);animation:zqFadeIn .3s ease both;">
+      <div style="display:flex;flex-direction:column;gap:12px;height:calc(100vh - 110px);min-height:520px;animation:zqFadeIn .3s ease both;">
         <header style="padding:2px 2px 0;">
           <h1 class="zq-h1">AI 助手</h1>
         </header>
@@ -125,7 +127,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260928-display-phone2"></script>
-  <script src="assets/zhiqu-api.js?v=20260928-display-phone2"></script>
+  <script src="assets/zhiqu-ui.js?v=20260928-display-phone3"></script>
+  <script src="assets/zhiqu-api.js?v=20260928-display-phone3"></script>
 </body>
 </html>

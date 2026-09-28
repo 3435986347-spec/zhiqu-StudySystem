@@ -533,12 +533,13 @@ body{background:var(--zq-bg);color:var(--zq-text);font-family:var(--zq-fontBody)
    一处一处补 overflow-wrap 补不完（此前已经补了七八处），所以放在 body 上一次给全。
    anywhere 而不是 break-word：后者不缩小 min-content，flex / grid 里的项目照样被长单词撑宽。
    表格单元格例外：不然一张 40 列的表会被压成每格一个字，宁可让表格在自己的框里横向滚动。
-   按钮、下拉框本来就是 nowrap，不受影响。 */
+   按钮、下拉框是 nowrap，不受影响 —— 包括长得像按钮的 <a class="zq-btn-ghost">：它原来不在 nowrap 里，
+   手机上「回到看板」被挤成两行，有了 anywhere 之后还会从词中间断开。 */
 td,th{overflow-wrap:normal;}
 h1,h2,h3,h4,p{margin:0;}
 a{color:inherit;text-decoration:none;}
 button,input,select,textarea{font-family:inherit;color:inherit;}
-button,select{white-space:nowrap;}
+button,select,.zq-btn,.zq-btn-ghost{white-space:nowrap;}
 input:not([type=checkbox]):not([type=radio]){width:100%;}
 input,textarea{min-width:0;max-width:100%;}
 select{max-width:100%;}
@@ -579,20 +580,6 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-side.is-collapsed .zq-nav a{justify-content:center;padding-left:0;padding-right:0;}
 .zq-side.is-collapsed .zq-user{justify-content:center;}
 .zq-main.is-side-collapsed{margin-left:56px;}
-
-/* ── 手机（第二十轮）──────────────────────────────────────────────────────
-   原来这份样式表一条 @media 都没有：375px 宽时侧栏照样 188px，正文剩 150px，标题一个字一行，整页横向多出 246px。
-   侧栏在手机上默认就是折叠态（zhiqu-ui.js 的 isMobile），展开时浮在正文上面、不推正文。
-   页面级的多栏布局都写在内联 style 里，所以只能按 style 属性认：并排的几栏改成一栏，四个一排的数字卡改成两个一排；
-   行内部的「时间 + 标题」、本身就会横向滚动的（一周日历、任务表）、auto-fit 本来就会换行的，不动。
-   新加一种 grid-template-columns 时 MobileLayoutTest 会要求你决定它在手机上怎么排。 */
-@media (max-width: 760px){
-  .zq-main,.zq-main.is-side-collapsed{margin-left:56px;padding:18px 12px 64px;}
-  .zq-side:not(.is-collapsed){box-shadow:0 0 0 100vmax rgba(0,0,0,.35);}
-  .zq-main [style*="grid-template-columns"]:not([style*="grid-template-columns:52px"]):not([style*="grid-template-columns:36px"]):not([style*="auto-fit"]):not([style*="repeat(7"]):not([style*="minmax(200px,2.2fr)"]):not([style*="minmax(120px,1.1fr)"]):not([style*="repeat(4"]):not([style*="repeat(5"]):not([style*="repeat(6"]){grid-template-columns:minmax(0,1fr)!important;}
-  /* 两条规则认的是互不相交的两批 —— 上面那条要是不排除这三种，它的 :not 叠得更多、优先级更高，数字卡会被它压成一栏 */
-  .zq-main [style*="repeat(4"],.zq-main [style*="repeat(5"],.zq-main [style*="repeat(6"]{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
-}
 
 /* 收起按钮：在导航栏最上方，折叠后仍可点（它是唯一的回路） */
 .zq-side-toggle{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:28px;
@@ -699,7 +686,11 @@ html.zq-booting .zq-main{opacity:0;}
 body.zq-modal-open{overflow:hidden;}
 
 /* ── Wiki 文档工具栏（圆角、随主题；替换旧方框内联样式） ── */
-.zq-toolbar{display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:var(--zq-rs);background:var(--zq-card-soft);}
+.zq-toolbar{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px;padding:2px;border-radius:var(--zq-rs);background:var(--zq-card-soft);}
+/* KaTeX 给读屏准备的那份 MathML 是 position:absolute（视觉上藏起来）。#zq-doc 会滚动、但不是定位元素，
+   于是它按整页定位 —— 长页面靠下的一个公式把整页撑到它那儿（1280×800 的 Wiki 整页能滚到 1388px），
+   而 Wiki 页是定高、不许整页滚的（展开目录的箭头会滚出视野）。让它挂在公式自己身上。 */
+.katex{position:relative;}
 .zq-tbtn{height:24px;min-width:26px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;border:none;border-radius:calc(var(--zq-rs) - 1px);background:transparent;color:var(--zq-text2);font-size:12px;line-height:1;cursor:pointer;}
 .zq-tbtn:hover{background:var(--zq-card);color:var(--zq-primary);box-shadow:var(--zq-sh1);}
 .zq-tbtn.on{background:var(--zq-tint);color:var(--zq-primary);font-weight:700;}
@@ -787,3 +778,50 @@ body.zq-modal-open{overflow:hidden;}
 .zq-plan-actions button:hover{border-color:var(--zq-primary);color:var(--zq-primary);}
 .zq-plan-actions .zq-btn-primary{background:var(--zq-primary);border-color:var(--zq-primary);color:#fff;}
 .zq-plan-actions .zq-btn-primary:hover{filter:brightness(1.06);color:#fff;}
+
+/* ── 手机（第二十轮）──────────────────────────────────────────────────────
+   原来这份样式表一条 @media 都没有：375px 宽时侧栏照样 188px，正文剩 150px，标题一个字一行，整页横向多出 246px。
+   侧栏在手机上默认就是折叠态（zhiqu-ui.js 的 isMobile），展开时浮在正文上面、不推正文。
+   页面级的多栏布局都写在内联 style 里，所以只能按 style 属性认：并排的几栏改成一栏，四个一排的数字卡改成两个一排；
+   行内部的「时间 + 标题」、本身就会横向滚动的（一周日历、任务表）、auto-fit 本来就会换行的，不动。
+   新加一种 grid-template-columns 时 MobileLayoutTest 会要求你决定它在手机上怎么排。
+   这一段必须留在文件最后：@media 不加优先级，同优先级的规则谁在后谁赢。它原来夹在文件中间，
+   后面的 .zq-main{margin-left:188px; padding:30px 34px 80px} 压过了它 —— 手机上一展开侧栏，正文就被推到 188px、换回桌面 padding
+   （收起时 .zq-main.is-side-collapsed 优先级更高，所以平时看不出来）。MobileLayoutTest 钉着「最后」。
+   「三个一排的小数字」（个人中心的连续天数 / 完成任务 / 本月时长）不拆：三个数 240px 也放得下，拆成一栏是三行各一个数。 */
+@media (max-width: 760px){
+  .zq-main,.zq-main.is-side-collapsed{margin-left:56px;padding:18px 12px 64px;}
+  .zq-side:not(.is-collapsed){box-shadow:0 0 0 100vmax rgba(0,0,0,.35);}
+  .zq-main [style*="grid-template-columns"]:not([style*="grid-template-columns:52px"]):not([style*="grid-template-columns:36px"]):not([style*="auto-fit"]):not([style*="repeat(7"]):not([style*="minmax(200px,2.2fr)"]):not([style*="minmax(120px,1.1fr)"]):not([style*="1fr 1fr 1fr"]):not([style*="repeat(4"]):not([style*="repeat(5"]):not([style*="repeat(6"]){grid-template-columns:minmax(0,1fr)!important;}
+  /* 两条规则认的是互不相交的两批 —— 上面那条要是不排除这三种，它的 :not 叠得更多、优先级更高，数字卡会被它压成一栏 */
+  .zq-main [style*="repeat(4"],.zq-main [style*="repeat(5"],.zq-main [style*="repeat(6"]{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+  /* 页头：标题一侧和按钮一侧放不下就上下排（原来按钮被挤成两行、或者把标题挤成一个字一行） */
+  .zq-main header{flex-wrap:wrap;}
+
+  /* 两侧可收起的面板（AI 助手、Wiki）：桌面上是三栏，收起时各留一条 44px 的竖条。
+     手机上两条竖条加间距吃掉将近 100px，320px 宽时 Wiki 正文只剩 82px、工具栏被切掉 163px；展开一侧聊天区只剩 30px。
+     所以手机上：收起的面板变成正文上方的一排两个页签，正文拿满宽；展开的面板浮在正文上面，不挤它。
+     .zq-panel-host 由 zhiqu-ui.js 的 setupPanels 加在面板的父元素上。 */
+  .zq-panel-host{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:8px!important;position:relative;margin:0!important;}
+  .zq-panel-host>:not([data-zq-collapse]){grid-column:1 / -1;grid-row:2;min-width:0;}
+  .zq-panel-host>[data-zq-collapse="left"]{grid-column:1;grid-row:1;}
+  .zq-panel-host>[data-zq-collapse="right"]{grid-column:2;grid-row:1;}
+  .zq-panel-host>[data-zq-collapse].zq-collapsed{width:auto!important;min-width:0!important;padding:4px 8px!important;align-items:stretch;}
+  .zq-panel-host>.zq-collapsed .zq-rail{flex-direction:row;gap:8px;padding-top:0;}
+  .zq-panel-host>[data-zq-collapse="right"].zq-collapsed .zq-rail{flex-direction:row-reverse;}
+  .zq-panel-host>.zq-collapsed .zq-rlabel{writing-mode:horizontal-tb;letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+  .zq-panel-host>[data-zq-collapse]:not(.zq-collapsed){position:absolute!important;top:0;bottom:0;z-index:8;width:min(300px,88%)!important;box-shadow:0 8px 30px rgba(0,0,0,.28)!important;}
+  .zq-panel-host>[data-zq-collapse="left"]:not(.zq-collapsed){left:0;}
+  .zq-panel-host>[data-zq-collapse="right"]:not(.zq-collapsed){right:0;}
+
+  /* AI 输入区：输入框单独占一行（原来 min-width:200px，320px 宽时伸出去 23px）；
+     拖拽框在手机上没有「拖」这回事，只在上传中 / 出错时出现（上传进度写在它里面），平时用「上传」按钮 */
+  #zq-draft{order:-1;flex:1 1 100%!important;min-width:0!important;}
+  .zq-ai-drop-zone:not(.is-uploading):not(.is-error){display:none;}
+  #zq-chat{padding:14px 12px!important;}
+  /* AI 助手、Wiki 的定高容器：桌面上减的 110px 是 .zq-main 的上下 padding，手机上 padding 是 18+64=82px，
+     照减 110px 底下白空 28px。dvh 跟着手机浏览器地址栏的收放走；不支持 dvh 的浏览器丢掉这一条，退回内联的 100vh。 */
+  .zq-main>[style*="calc(100vh - 110px)"]{height:calc(100dvh - 82px)!important;}
+  /* Wiki 正文头上那行静态提示（「点击正文或标题即可编辑」「段落」）：手机上让给正文 */
+  .zq-main div:has(> #zq-wiki-block)>span{display:none;}
+}

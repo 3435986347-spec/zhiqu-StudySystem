@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260928-display-phone2" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260928-display-phone2">
-  <link rel="manifest" href="manifest.json?v=20260928-display-phone2">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260928-display-phone3" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260928-display-phone3">
+  <link rel="manifest" href="manifest.json?v=20260928-display-phone3">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260928-display-phone2">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260928-display-phone3">
 </head>
 <body>
   <div class="zq-app">
@@ -30,7 +30,7 @@
 
         <div style="display:grid; grid-template-columns:minmax(0,1.7fr) minmax(280px,1fr); gap:16px; align-items:start;">
           <section class="zq-card zq-card-lg">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
               <h2 class="zq-h2" style="font-size:16px;">学习时长趋势</h2>
               <div id="zq-tabs" style="display:inline-flex; border:1px solid var(--zq-border); border-radius:var(--zq-rs); overflow:hidden;"></div>
             </div>
@@ -54,7 +54,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260928-display-phone2"></script>
+  <script src="assets/zhiqu-ui.js?v=20260928-display-phone3"></script>
   <script>
     var sets = {
       day:{ labels:['6/20','6/21','6/22','6/23','6/24','6/25','6/26','6/27','6/28','6/29','6/30','7/1','7/2','7/3'], vals:[95,140,60,180,150,0,210,165,120,190,145,230,175,110] },
@@ -88,6 +88,6 @@
       return '<div style="display:flex; align-items:center; gap:8px; font-size:12.5px;"><span style="width:10px; height:10px; flex:none; border-radius:3px; background:var(--zq-'+l[1]+');"></span><span style="flex:1; color:var(--zq-text2);">'+l[0]+'</span><span class="zq-mono" style="font-weight:600;">'+l[2]+'</span></div>';
     }).join('');
   </script>
-  <script src="assets/zhiqu-api.js?v=20260928-display-phone2"></script>
+  <script src="assets/zhiqu-api.js?v=20260928-display-phone3"></script>
 </body>
 </html>

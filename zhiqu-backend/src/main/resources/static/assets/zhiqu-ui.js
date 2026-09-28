@@ -168,14 +168,26 @@
     var rail=document.createElement('div'); rail.className='zq-rail';
     rail.innerHTML='<button type="button" class="zq-xbtn">'+(opts.dir==='right'?'‹':'›')+'</button><div class="zq-rlabel">'+opts.label+'</div>';
     panel.insertBefore(rail, panel.firstChild);
-    function set(c){ panel.classList.toggle('zq-collapsed',c); if(opts.onToggle) opts.onToggle(c); lss(opts.key, c?'1':'0'); }
+    // 手机上展开是临时的（浮在正文上面，见 zhiqu-ui.css 的 .zq-panel-host）：不写进桌面上记住的偏好
+    function set(c){ panel.classList.toggle('zq-collapsed',c); if(opts.onToggle) opts.onToggle(c); if(!isMobile()) lss(opts.key, c?'1':'0'); }
     cbtn.addEventListener('click',function(e){e.stopPropagation();set(true);});
     rail.querySelector('.zq-xbtn').addEventListener('click',function(e){e.stopPropagation();set(false);});
     rail.querySelector('.zq-rlabel').addEventListener('click',function(e){e.stopPropagation();set(false);});
-    var st=ls(opts.key); set(st===null?(opts.defaultCollapsed!==false):(st==='1'));
+    function remembered(){ var st=ls(opts.key); return st===null?(opts.defaultCollapsed!==false):(st==='1'); }
+    set(isMobile() || remembered());
+    // 手机上点面板外面就收起（它盖着正文，不收起就只能去找那个小按钮）
+    document.addEventListener('mousedown',function(e){
+      if(isMobile() && !panel.classList.contains('zq-collapsed') && !panel.contains(e.target)) set(true);
+    });
+    try {
+      var mq=window.matchMedia(MOBILE_QUERY);
+      var onChange=function(){ set(isMobile() || remembered()); };
+      if(mq.addEventListener) mq.addEventListener('change',onChange); else if(mq.addListener) mq.addListener(onChange);
+    } catch(e) {}
   }
   function setupPanels(){
     document.querySelectorAll('[data-zq-collapse]').forEach(function(el){
+      if(el.parentElement) el.parentElement.classList.add('zq-panel-host');
       var dir=el.getAttribute('data-zq-collapse'); // left | right
       makeCollapsible(el,{ key:'zq.c.'+(el.id||el.getAttribute('data-zq-label')||dir), label:el.getAttribute('data-zq-label')||'面板', dir:dir, defaultCollapsed: el.getAttribute('data-zq-open')!=='1' });
     });
