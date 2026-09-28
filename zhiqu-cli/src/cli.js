@@ -39,6 +39,8 @@ const MODE_LABEL = {
   auto: 'auto（写文件、跑命令不再问，做完再告诉你）',
 };
 
+const STARTUP_TIMEOUT_MS = 15_000;
+
 export function parseArgs(argv) {
   const flags = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -167,7 +169,7 @@ function broadRoot(dir) {
 }
 
 async function pickModel(ctx, wanted) {
-  const { models, defaultModelId } = await ctx.api.get('/api/harness/models');
+  const { models, defaultModelId } = await ctx.api.get('/api/harness/models', { timeoutMs: STARTUP_TIMEOUT_MS });
   ctx.models = models;
   if (!models.length) throw new Error('这个账号还没有可用的模型：请先在网页「个人中心 → AI 模型配置」里配一个');
   let model = null;
@@ -275,7 +277,12 @@ async function runAgent(cwd, flags) {
     if (await login(root, { ...flags, quietWarnings: true }, ui) !== 0) return 1;
     Object.assign(settings, resolveSettings(root, flags));
   }
-  const api = new Api({ server: settings.server, token: settings.token });
+  // 同时发出去的几个请求一起卡住时，「再试一次」只说一遍
+  let lastRetryNote = '';
+  const api = new Api({ server: settings.server, token: settings.token, onRetry: (why) => {
+    if (why !== lastRetryNote) ui.note(`· ${why}，再试一次…`);
+    lastRetryNote = why;
+  } });
   // 默认连的本机桌面应用没开：macOS 上替用户打开、等它起来（见 desktop.js）
   if (await ensureLocalServer({ api, server: settings.server, ui }) === 'failed') return 1;
   const ctx = {
@@ -286,11 +293,12 @@ async function runAgent(cwd, flags) {
   };
   try {
     // 三个请求互不依赖，一起发（原来一个等一个，服务器远的时候启动慢一倍多）
+    // 启动时的这几个平常几十毫秒就回：等 15 秒还没回就是服务器卡住了，再等一次就说（原来每个等 30 秒、重来两次）
     const [, , remote] = await Promise.all([
-      api.get('/api/harness/me'),
+      api.get('/api/harness/me', { timeoutMs: STARTUP_TIMEOUT_MS }),
       pickModel(ctx, flags.model ?? settings.model),
       // 连不上服务器时下一行会报，这里就不再叠一句（原来同一个「连不上」报两遍）
-      api.get('/api/harness/tools').catch((e) => { if (e.status) ui.warn(`远程工具（Wiki / 计划 / 记忆）拿不到：${e.message}`); return []; }),
+      api.get('/api/harness/tools', { timeoutMs: STARTUP_TIMEOUT_MS }).catch((e) => { if (e.status) ui.warn(`远程工具（Wiki / 计划 / 记忆）拿不到：${e.message}`); return []; }),
     ]);
     ctx.remoteTools = remote;
   } catch (e) {

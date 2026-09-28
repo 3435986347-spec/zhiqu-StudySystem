@@ -74,7 +74,8 @@ function wrap(e) {
 export function request(url, { method, headers, body, signal, timeoutMs = 30_000 } = {}) {
   return new Promise((resolve, reject) => {
     const req = open(url, { method, headers, body, signal });
-    const timer = setTimeout(() => req.destroy(Object.assign(new Error('请求超时'), { code: 'ETIMEDOUT' })), timeoutMs);
+    // 连接接上了、服务器一个字节都不回（卡死、半开连接）：原来报「ETIMEDOUT」—— 和系统层的连不上混在一起，用户看不懂
+    const timer = setTimeout(() => req.destroy(Object.assign(new Error(`服务器 ${Math.round(timeoutMs / 1000)} 秒没有回应`), { code: 'NO_RESPONSE' })), timeoutMs);
     req.on('response', (res) => {
       const chunks = [];
       res.on('data', (d) => chunks.push(d));

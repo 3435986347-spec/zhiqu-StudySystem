@@ -615,6 +615,10 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-card-lg{box-shadow:var(--zq-sh2);}
 .zq-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 16px;border:none;border-radius:var(--zq-rs);background:var(--zq-primary);color:var(--zq-on-primary);font-size:13px;font-weight:600;cursor:pointer;}
 .zq-btn:hover{background:var(--zq-primary-dark);}
+/* 写请求还没回来（zhiqu-api.js 的 writeStarted，第二十二轮）：刚点的按钮变淡、光标转圈；页面顶上一句「正在保存…」 */
+button[aria-busy="true"]{opacity:.62;cursor:progress;}
+#zq-saving{position:fixed;left:50%;top:calc(env(safe-area-inset-top, 0px) + 10px);transform:translateX(-50%);z-index:99998;padding:6px 14px;border-radius:999px;background:var(--zq-card);border:1px solid var(--zq-border);box-shadow:var(--zq-sh2);color:var(--zq-text2);font-size:12.5px;font-weight:600;pointer-events:none;}
+#zq-saving[hidden]{display:none;}
 .zq-btn-ghost{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 14px;border-radius:var(--zq-rs);background:var(--zq-card);color:var(--zq-text);border:1px solid var(--zq-border);font-size:13px;font-weight:600;cursor:pointer;}
 .zq-btn-ghost:hover{background:var(--zq-card);border-color:var(--zq-primary);color:var(--zq-primary);}
 .zq-input,.zq-select,.zq-textarea{height:32px;padding:0 12px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-input-bg);color:var(--zq-text);font-size:13px;}

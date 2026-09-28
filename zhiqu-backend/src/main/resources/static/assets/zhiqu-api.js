@@ -93,8 +93,9 @@
   // 落在页面启动时，renderInitError 会把整块主区域换成错误页。代理回的是 HTML 错误页（502）时，
   // JSON.parse 抛出「Unexpected token <」—— 用户看到的是一句看不懂的话。
   //
-  // 重试只在安全的时候：GET 遇到断网 / 超时 / 502 / 503 / 504 / 429 重来两次；写操作只在 429 时重来 ——
-  // 429 是限流过滤器在进业务之前拒的，肯定没处理；而断网、超时、502 的写操作可能已经生效了，重来会写两遍。
+  // 重试只在安全的时候：GET 遇到断网 / 超时 / 502 / 503 / 504 / 429 重来两次。写操作带着幂等键（见下面的 request）：
+  // 同一个键服务器只做一次、再来拿回上次的结果，所以断网、超时、502 也能用同一个键重来；「上一次还在处理」（409）等一下再来。
+  // 不带键的写（上传、登录注册）只在 429 时重来 —— 429 是限流过滤器在进业务之前拒的，肯定没处理；别的可能已经生效了，重来会写两遍。
   // 行为判据：src/test/resources/js/request-check.js（直接跑这里发布的实现）。
   var REQUEST_TIMEOUT_MS = 30000;
   var UPLOAD_TIMEOUT_MS = 180000;
@@ -122,19 +123,21 @@
       res = await fetch(API + path, Object.assign({ credentials: 'same-origin' }, options || {}, { headers: headers, signal: ctrl ? ctrl.signal : undefined }));
       text = await res.text();
     } catch (e) {
-      throw requestError(ctrl && ctrl.signal.aborted
+      var timedOut = !!(ctrl && ctrl.signal.aborted);
+      throw requestError(timedOut
         ? '服务器 ' + Math.round(timeoutMs / 1000) + ' 秒没有回应，请稍后再试'
-        : '网络连接失败，请检查网络后重试', { retryable: true, network: true });
+        : '网络连接失败，请检查网络后重试', { retryable: true, network: true,
+        why: timedOut ? '服务器 ' + Math.round(timeoutMs / 1000) + ' 秒没有回应' : '网络连接断了' });
     } finally {
       if (timer) clearTimeout(timer);
     }
     if (res.status === 401 || res.status === 403) {
       redirectToLogin();
-      throw requestError('未登录或无权限');
+      throw requestError('未登录或无权限', { auth: true });
     }
     if (RETRYABLE_STATUS.indexOf(res.status) >= 0) {
       throw requestError(res.status === 429 ? '请求过于频繁，请稍后再试' : '服务器暂时不可用（HTTP ' + res.status + '），请稍后再试',
-        { retryable: true, status: res.status });
+        { retryable: true, status: res.status, why: '服务器暂时不可用（HTTP ' + res.status + '）' });
     }
     var json;
     try {
@@ -142,9 +145,14 @@
     } catch (e) {
       throw requestError('服务器返回了看不懂的内容（HTTP ' + res.status + '），请稍后再试', { status: res.status });
     }
+    if (json.code === 409) {
+      // 同一个幂等键的上一次还在处理（IdempotencyService）：不是失败，等一下用同一个键再来
+      throw requestError(json.message || '上一次提交还在处理，请稍后再试', { retryable: true, inProgress: true });
+    }
     if (json.code !== 200) {
-      if (isAuthFailure(json)) redirectToLogin();
-      throw requestError(json.message || '请求失败');
+      var authFailed = isAuthFailure(json);
+      if (authFailed) redirectToLogin();
+      throw requestError(json.message || '请求失败', authFailed ? { auth: true } : null);
     }
     return json.data;
   }
@@ -152,30 +160,123 @@
   // 双击「创建」、连按回车、等得不耐烦又点，原来各建一份 —— 服务器没法替它去重，两次都是合法的新建
   //（第十四轮真浏览器实测：双击「创建例行计划」建出两个）。回来之后再点就是新的一次，照常发。
   // GET 不走这里（本来就能重来）；上传的内容没法比，也不走。
+  //
+  // 回应丢在路上（第二十二轮）：服务器已经做完了，回应断了。原来页面说「网络连接失败，请检查网络后重试」，学生照着再点 ——
+  // 例行计划、Notebook、Wiki 页、反馈、番茄钟、任务全是两份，删除的第二下说「任务不存在」（真浏览器里掐掉回应实测）。
+  // 现在每个写请求带一个幂等键，服务器同一个键只做一次（IdempotentWriteAspect）：回应丢了就用同一个键自动重来；
+  // 重来也不行，就照实说「不确定有没有保存上 —— 再点一次不会重复保存」，并把键留着 —— 内容一模一样的下一次（照着提示再点）
+  // 还用它，做过了服务器就把上次的结果交回来。键留 10 分钟（服务器存结果的时长）；这期间同一块数据（地址第一段相同）
+  // 有别的写成功了就作废：打卡没弄清 → 撤销打卡 → 再打卡，再打卡是新的一次，拿旧键只会拿回旧结果、什么都没做。
+  // 宁可偶尔多一份（看得见、删得掉），不能说做了其实没做。
+  // 调用方自己带了键的（套用参考计划）照它的来；/auth/ 下的（登录注册，没有登录的用户，服务器不认键）不带、不重来。
+  // 慢网下点了保存，回应要几秒才回来：原来这几秒里页面上什么都不变（第二十二轮 3 秒延迟实测：按钮、页面都看不出在保存），
+  // 学生以为没点上又点。现在写请求 0.6 秒还没回来，页面顶上说「正在保存…」；刚点的那个按钮标成忙（aria-busy：变淡、光标转圈）。
+  // 按钮不禁用：禁用由各处自己管（套用参考计划、发送），这里一碰就可能和它们打架；再点也不会写两遍（上面说的幂等键）。
+  var SAVING_DELAY_MS = 600;
+  var writesInFlight = 0, savingTimer = null, lastClick = null;
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest ? e.target.closest('button') : null;
+      lastClick = b ? { el: b, at: Date.now() } : null;
+    }, true);
+  }
+  /** 一个写请求开始了；返回「它结束了」要调的函数（调几次都只算一次）。 */
+  function writeStarted(method) {
+    if (typeof document === 'undefined' || !document.getElementById) return function () {};
+    writesInFlight++;
+    var btn = lastClick && Date.now() - lastClick.at < 1000 ? lastClick.el : null;
+    if (btn) btn.setAttribute('aria-busy', 'true');
+    if (!savingTimer) savingTimer = setTimeout(function () { savingTimer = null; if (writesInFlight > 0) showSaving(method); }, SAVING_DELAY_MS);
+    var ended = false;
+    return function () {
+      if (ended) return;
+      ended = true;
+      writesInFlight = Math.max(0, writesInFlight - 1);
+      if (btn) btn.removeAttribute('aria-busy');
+      if (!writesInFlight) {
+        if (savingTimer) { clearTimeout(savingTimer); savingTimer = null; }
+        var el = document.getElementById('zq-saving');
+        if (el) el.hidden = true;
+      }
+    };
+  }
+  function showSaving(method) {
+    var el = document.getElementById('zq-saving');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'zq-saving';
+      el.setAttribute('role', 'status');
+      document.body.appendChild(el);
+    }
+    el.textContent = method === 'DELETE' ? '正在删除…' : '正在保存…';
+    el.hidden = false;
+  }
   var inflightWrites = {};
+  var uncertainWrites = {};
+  var UNCERTAIN_KEY_MS = 10 * 60 * 1000;
+  function writeKey() {
+    return 'ui-' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2));
+  }
+  function writeArea(path) { return String(path).split(/[/?]/)[1] || ''; }
   function request(path, options) {
     var method = String((options && options.method) || 'GET').toUpperCase();
     var upload = !!(options && typeof FormData !== 'undefined' && options.body instanceof FormData);
-    if (method === 'GET' || upload) return requestWithRetry(path, options, method, upload);
-    var key = method + ' ' + path + '\n' + (options.body == null ? '' : options.body) + '\n' + JSON.stringify(options.headers || {});
-    if (inflightWrites[key]) return inflightWrites[key];
-    var pending = requestWithRetry(path, options, method, upload);
-    inflightWrites[key] = pending;
-    var settle = function () { if (inflightWrites[key] === pending) delete inflightWrites[key]; };
+    if (method === 'GET') return requestWithRetry(path, options, method, upload, false);
+    if (upload) {
+      var uploaded = requestWithRetry(path, options, method, upload, false);
+      var endUpload = writeStarted(method);
+      uploaded.then(endUpload, endUpload);
+      return uploaded;
+    }
+    var sig = method + ' ' + path + '\n' + (options.body == null ? '' : options.body) + '\n' + JSON.stringify(options.headers || {});
+    if (inflightWrites[sig]) return inflightWrites[sig];
+    var headers = Object.assign({}, options.headers || {});
+    var ownKey = !headers['Idempotency-Key'] && !/^\/auth\//.test(path);
+    if (ownKey) {
+      var kept = uncertainWrites[sig];
+      headers['Idempotency-Key'] = kept && Date.now() - kept.at < UNCERTAIN_KEY_MS ? kept.key : writeKey();
+    }
+    var area = writeArea(path);
+    var pending = requestWithRetry(path, Object.assign({}, options, { headers: headers }), method, false, !!headers['Idempotency-Key'])
+      .then(function (data) {
+        Object.keys(uncertainWrites).forEach(function (s) { if (uncertainWrites[s].area === area) delete uncertainWrites[s]; });
+        return data;
+      }, function (e) {
+        if (ownKey) {
+          if (e.uncertain) uncertainWrites[sig] = { key: headers['Idempotency-Key'], at: Date.now(), area: area };
+          else delete uncertainWrites[sig];
+        }
+        throw e;
+      });
+    inflightWrites[sig] = pending;
+    var ended = writeStarted(method);
+    var settle = function () { ended(); if (inflightWrites[sig] === pending) delete inflightWrites[sig]; };
     pending.then(settle, settle);
     return pending;
   }
-  async function requestWithRetry(path, options, method, upload) {
+  async function requestWithRetry(path, options, method, upload, keyed) {
     var timeoutMs = upload ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
     for (var attempt = 0; ; attempt++) {
       try {
         return await requestOnce(path, options, timeoutMs);
       } catch (e) {
-        var safe = e.retryable && (method === 'GET' || e.status === 429);
-        if (!safe || attempt >= RETRY_WAITS_MS.length) throw e;
+        var safe = e.retryable && (method === 'GET' || keyed || e.status === 429);
+        if (!safe || attempt >= RETRY_WAITS_MS.length) throw keyed ? uncertain(e, method) : e;
         await waitMs(RETRY_WAITS_MS[attempt]);
       }
     }
+  }
+  /**
+   * 带键的写，重来几次都没拿到回应：服务器可能做了、也可能没做 —— 照实说，并告诉学生再点一次是安全的（同一个键）。
+   * 业务上拒了的、被限流的（429，进业务之前就拒了）是确定没做，原样说。
+   */
+  function uncertain(e, method) {
+    if (!e.retryable || e.status === 429) return e;
+    var del = method === 'DELETE';
+    var message = e.inProgress
+      ? '上一次提交还在处理，稍等一下再点一次' + (del ? '' : '（不会重复保存）')
+      : e.why + (del ? '，不确定有没有删掉 —— 再点一次就好' : '，不确定有没有保存上 —— 再点一次不会重复保存');
+    return requestError(message, { uncertain: true, network: !!e.network, status: e.status });
   }
   var api = {
     get: function (p) { return request(p, { method: 'GET' }); },
@@ -698,13 +799,89 @@
   }
   async function updatePomoCount() {
     var host = $('#zq-pomo-count'); if (!host) return;
+    var waiting = pendingPomodoros().length;
+    var tail = waiting ? ' ｜ 另有 ' + waiting + ' 个还没传上去（连上网自动补记）' : '';
     try {
       var t = today();
       var recs = await api.get('/record/list?from=' + t + '&to=' + t);
       var todays = (recs || []).filter(function (rec) { return d10(rec.studyDate) === t; });
       var mins = todays.reduce(function (a, rec) { return a + (rec.durationMinutes || 0); }, 0);
-      host.textContent = '今日：' + todays.length + ' 个 ｜ ' + mins + ' 分钟';
-    } catch (e) { /* 忽略 */ }
+      host.textContent = '今日：' + todays.length + ' 个 ｜ ' + mins + ' 分钟' + tail;
+    } catch (e) {
+      if (tail) host.textContent = tail.slice(3);
+    }
+  }
+
+  // ── 番茄钟的待补记（第二十二轮）────────────────────────────────────
+  //
+  // 专注完的那一刻网断了（地铁里、电梯里、Wi-Fi 切 4G）：原来说「这个番茄钟没记上：网络连接失败」，25 分钟就没了 ——
+  // 页面上也没有能「再点一次」的东西。现在先记在这台设备上（localStorage），连上网、再打开哪一页时自动补记。
+  // 每一条带自己的幂等键：补记几次、回应又丢了、两个标签页同时补，都只记一份（IdempotentWriteAspect）。
+  // 跨了天才补上的，带上完成那天的日期（不带就记到了补记那天）；当天补上的不带 —— 服务端定（第二十一轮）。
+  // 各人的只由各人补：同一个浏览器换了账号，别的账号的留着，等那个账号登录。
+  // 行为判据：src/test/resources/js/pomo-outbox-check.js（直接跑这里发布的实现）。
+  var POMO_OUTBOX = 'zq-pomo-outbox';
+  var pomoFlushing = null;
+  function readPomoOutbox() {
+    try { var v = JSON.parse(localStorage.getItem(POMO_OUTBOX) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  }
+  function writePomoOutbox(list) {
+    try { if (list.length) localStorage.setItem(POMO_OUTBOX, JSON.stringify(list)); else localStorage.removeItem(POMO_OUTBOX); } catch (e) { /* 存不下：照旧只能当场发 */ }
+  }
+  function dropPomodoro(key) { writePomoOutbox(readPomoOutbox().filter(function (x) { return x.key !== key; })); }
+  function pomoOwner() { return state.user && state.user.id != null ? String(state.user.id) : ''; }
+  function pendingPomodoros() { var me = pomoOwner(); return readPomoOutbox().filter(function (x) { return x.user === me; }); }
+  /** 补记这个人待补的番茄钟。返回 { sent, failed: [原因…], waiting }；同一时间只跑一趟。 */
+  function flushPomodoros() {
+    if (pomoFlushing) return pomoFlushing;
+    pomoFlushing = (async function () {
+      var result = { sent: 0, failed: [], waiting: 0 };
+      var list = pendingPomodoros();
+      for (var i = 0; i < list.length; i++) {
+        var x = list[i];
+        var body = { taskId: x.taskId, durationMinutes: x.durationMinutes, note: x.note };
+        if (x.day && x.day < today()) body.studyDate = x.day;
+        try {
+          await api.post('/record', body, { 'Idempotency-Key': x.key });
+          dropPomodoro(x.key);
+          result.sent++;
+        } catch (e) {
+          // 还连不上 / 服务器不确定 / 登录过期了：留着，下次再补（后面的也先不试）
+          if (e.uncertain || e.retryable || e.network || e.auth) { result.waiting = list.length - i; break; }
+          dropPomodoro(x.key);             // 服务器明确拒了：留着也补不上，说出来
+          result.failed.push(e.message);
+        }
+      }
+      return result;
+    })();
+    var clear = function () { pomoFlushing = null; };
+    pomoFlushing.then(clear, clear);
+    return pomoFlushing;
+  }
+  /** 专注完了：先落在这台设备上，再发。说清楚是记上了、先存着、还是真的没记上。 */
+  async function recordPomodoro(rec) {
+    var key = writeKey();
+    var list = readPomoOutbox();
+    list.push({ key: key, user: pomoOwner(), day: today(), taskId: rec.taskId == null ? null : rec.taskId, durationMinutes: rec.durationMinutes, note: rec.note || '' });
+    writePomoOutbox(list);
+    var r = await flushPomodoros();
+    if (r.failed.length) toast('这个番茄钟没记上：' + r.failed[0], 'error', 6000);
+    else if (readPomoOutbox().some(function (x) { return x.key === key; })) {
+      toast('网络断了：这个番茄钟先存在这台设备上，连上网会自动补记', 'error', 6000);
+    }
+    if (r.sent && window.zqApi && window.zqApi.afterRecord) window.zqApi.afterRecord();
+    else updatePomoCount();
+    return r;
+  }
+  /** 打开页面、网回来了、每分钟（有待补的时候）：补一趟，补上了说一声。 */
+  async function catchUpPomodoros() {
+    if (!pendingPomodoros().length) return;
+    var r = await flushPomodoros();
+    if (r.sent) {
+      toast('补记了 ' + r.sent + ' 个番茄钟（专注完的时候网断了）');
+      if (window.zqApi && window.zqApi.afterRecord) window.zqApi.afterRecord();
+    }
+    if (r.failed.length) toast('有 ' + r.failed.length + ' 个番茄钟补记不上：' + r.failed[0], 'error', 6000);
   }
   function renderWeek(days) {
     var host = $('#zq-week');
@@ -820,22 +997,12 @@
     $all('[data-del-task]', host).forEach(function (b) { b.onclick = function () { deleteTask(Number(b.dataset.delTask)); }; });
     $all('[data-edit-task]', host).forEach(function (b) { b.onclick = function () { editTaskPrompt(Number(b.dataset.editTask)); }; });
   }
-  // 一次提交一个幂等键：同一次提交被重复投递（网络重发、代理重试）时后端只执行一次。
-  // 它挡的是「同一次提交到了两次」，不是「用户点了两次」—— 后者是两个意图，本来就该建两条。
-  //
-  // 旧写法 'ui-' + Date.now() 是反的：只有同一毫秒内的两次调用才会拿到相同键（那不会发生），
-  // 正常间隔的重复投递反而各拿一个新键，于是幂等在唯一该生效的场合失效。
-  function newIdempotencyKey() {
-    if (window.crypto && window.crypto.randomUUID) return 'ui-' + window.crypto.randomUUID();
-    return 'ui-' + Date.now() + '-' + Math.random().toString(16).slice(2);
-  }
-
   async function createTaskPrompt() {
     var title = await askText({ title: '新建任务', label: '任务标题', placeholder: '例如：数学二轮 · 重积分专题' }); if (!title || !title.trim()) return;
-    // 键在提交之前生成一次，safe 内部若重发用的是同一个
-    var idempotencyKey = newIdempotencyKey();
+    // 幂等键交给 request()：原来这里每次点击生成一个新键 —— 回应丢了、学生照着「网络连接失败」再点一次，拿的是新键，
+    // 服务器当成新的一次，建出两份（第二十二轮实测）。request() 在「不确定有没有保存上」之后，内容一样的下一次沿用同一个键。
     await safe('创建任务', async function () {
-      await api.post('/task', { title: title.trim(), description: '', quadrant: 2, priority: 1, status: 0 }, { 'Idempotency-Key': idempotencyKey });
+      await api.post('/task', { title: title.trim(), description: '', quadrant: 2, priority: 1, status: 0 });
       toast('任务已创建'); await bootTasks();
     });
   }
@@ -1706,7 +1873,7 @@
       var applyBtn = buttons.find(function (b) { return /套用/.test(b.textContent); });
       // 这一次打开这个计划就是「一次套用」：键在这里生成，连点、等得不耐烦又点一次，带的都是同一个键 ——
       // 服务器只执行一次（原来连点两下就建两整份任务）。换个开始日期是另一次，所以键里带上日期。
-      var applyKey = newIdempotencyKey();
+      var applyKey = writeKey();
       if (applyBtn) applyBtn.onclick = async function () {
         if (applyBtn.disabled) return;
         var startDate = await askText({ title: '套用参考计划', label: '开始日期', value: today(), hint: '格式 YYYY-MM-DD，计划内任务将从该日期起排入你的日历。', okText: '套用' });
@@ -4485,6 +4652,10 @@
     var res;
     try {
       res = await fetch(API + '/ai/chat/stream', { method: 'POST', credentials: 'same-origin', headers: headers, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined });
+    } catch (e) {
+      // 一个字节都没回来就连不上。原来原样抛出浏览器的「Failed to fetch」，页面上就是这句英文（第二十二轮断网实测）
+      throw requestError(ctrl && ctrl.signal.aborted ? '服务器 ' + Math.round(REQUEST_TIMEOUT_MS / 1000) + ' 秒没有回应' : '网络连接失败',
+        { network: true, beforeResponse: true });
     } finally {
       if (headTimer) clearTimeout(headTimer);
     }
@@ -4501,6 +4672,7 @@
       } catch (e) {
         if (e && e.idle) { try { reader.cancel(); } catch (x) { /* 已经断了 */ } }
         if (terminalSeen) break;
+        if (e && !e.userFacing) throw requestError('连接断了', { network: true });   // 浏览器的原话是「network error」
         throw e;
       }
       if (chunk.done) break;
@@ -4640,6 +4812,8 @@
     // 传输层断开（与 SSE 的 error 事件不同：那是流正常结束）。断了之后要去把
     // 后端已经落库的部分接回来，见下面的 finally。
     var disconnected = false;
+    // 一个字都没收到就连不上（断着网点了发送）：多半根本没发出去
+    var notSent = false;
     try {
       await safe('AI 发送', async function () {
       try {
@@ -4702,6 +4876,16 @@
           }
         });
       } catch (e) {
+        if (!gotEvent && e && e.beforeResponse) {
+          // 断着网点了发送：原来这里也当成「流到一半断了」—— 气泡里写「（连接中断，正在尝试接回…）」，可根本没有什么可接的，
+          // 而且一直挂在那（第二十二轮断网实测）。本地先摆上的这两条撤掉，字放回输入框（finally），照实说没发出去。
+          // 万一其实发到了（回应丢在路上）：网回来之后拉一次消息，那两条会从服务器那边回来
+          notSent = true;
+          var at = state.messages.indexOf(assistant);
+          if (at > 0 && state.messages[at - 1]._clientKey === clientKey + '-user') state.messages.splice(at - 1, 2);
+          renderAiMessages();
+          throw requestError(e.message + '，这句没发出去 —— 字放回输入框了，连上网再发', { network: true });
+        }
         // 连接断了，但后端多半还在生成 —— 而正文已经在阶段性落库（flushStreamingContent）。
         // 所以这里不再是死路。真正的重新拉取放在 finally 里：那时 state.aiSending 才置回
         // false，watchStreamingMessages 才会真的开始轮询（它见 aiSending 为真就直接返回）。
@@ -4710,7 +4894,7 @@
         assistant.status = '';
         if (!assistant.content) assistant.content = '（连接中断，正在尝试接回…）';
         renderAiMessages();
-        throw e;
+        throw e && e.network ? requestError('连接断了，网回来之后会把回答接上', { network: true }) : e;
       }
       if (dropped) {
         // 当前会话若还挂在已删 notebook 上,回落到默认选择(与右键删除 notebook 的刷新流程一致);
@@ -4747,8 +4931,27 @@
       }
       // 断线接回：此刻 aiSending 已经是 false，loadAiMessages 末尾的 watchStreamingMessages
       // 才会真的开始轮询，把后端继续生成的部分续上。不用用户手动刷新。
-      if (disconnected) loadAiMessages().catch(function () {});
+      // 网还断着的话这一下拉不到 —— 原来就停在这了；现在等网回来再拉（whenOnline）
+      if (disconnected || notSent) whenOnline(function () { return sameNb() && !state.aiSending ? loadAiMessages() : null; });
     }
+  }
+  /**
+   * 网回来之后做一次 fn（返回 promise）：现在就试；失败了等 online 事件或 3 秒再试，最多试 40 次（约两分钟）。
+   * 「网还断着」浏览器不一定知道（Wi-Fi 连着、外面不通），所以不只等 online 事件。
+   */
+  function whenOnline(fn) {
+    var tries = 0;
+    function attempt() {
+      tries++;
+      Promise.resolve().then(fn).catch(function () {
+        if (tries >= 40) return;
+        var fired = false;
+        var go = function () { if (fired) return; fired = true; window.removeEventListener('online', go); clearTimeout(timer); attempt(); };
+        var timer = setTimeout(go, 3000);
+        window.addEventListener('online', go);
+      });
+    }
+    attempt();
   }
 
 
@@ -5245,6 +5448,7 @@
     document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
   }
 
+  var pomoWatched = false;
   function route() {
     maintainShellCache();
     flushDeniedNotice();
@@ -5280,6 +5484,12 @@
         if (!dayWatched && DAY_RELOAD[page]) { dayWatched = true; watchBusinessDay(DAY_RELOAD[page]); }
         var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'routines.html': bootRoutines, 'statistics.html': bootStatistics, 'achievement.html': bootAchievement, 'profile.html': bootProfile, 'admin.html': bootAdmin, 'feedback-admin.html': bootFeedbackAdmin, 'account-admin.html': bootAccountAdmin, 'shared-plans.html': bootSharedPlans, 'shared-plan-admin.html': bootSharedPlanAdmin, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
         if (boots[page]) await boots[page]();
+        if (!pomoWatched) {
+          pomoWatched = true;
+          catchUpPomodoros();
+          window.addEventListener('online', catchUpPomodoros);
+          setInterval(catchUpPomodoros, 60000);
+        }
       } finally {
         // 卡死不了：zhiqu-ui.js:31 那个 2.5s 无条件兜底仍会摘遮罩，
         // 所以万一导航没成行，页面也不会永远停在空白。
@@ -5290,6 +5500,6 @@
 
   // localDate 一并暴露：页面内联脚本（如 dashboard 的番茄钟）也要算「今天」，
   // 让它们用同一份定义，而不是各写一个 toISOString
-  window.zqApi = { api: api, reload: route, today: today, localDate: localDate, now: nowMs, serverTime: serverTime, businessDate: businessDate, toast: toast };
+  window.zqApi = { api: api, reload: route, today: today, localDate: localDate, now: nowMs, serverTime: serverTime, businessDate: businessDate, toast: toast, recordPomodoro: recordPomodoro };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', route); else route();
 })();

@@ -257,6 +257,16 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
       done = data;
     }
   }, { signal });
+  } catch (e) {
+    // 安静模式不边收边打：这时断了，已经收到的那一段就这么没了（第二十二轮实测：回答到一半服务器重启，只剩一句「断开了」）。
+    // 把它打出来 —— 用户至少看得到说到哪了
+    if (hush && text.trim() && !(e && e.name === 'AbortError')) {
+      ui.note('（断开前已经收到的：）');
+      const partial = ui.markdown();
+      partial.feed(text);
+      partial.finish();
+    }
+    throw e;
   } finally {
     stopWaiting();
   }
@@ -557,7 +567,8 @@ async function executeTool(ctx, call, offered, signal) {
       return r.content;
     } catch (e) {
       ui.result(e.message, false);
-      return `远程工具调用失败：${e.message}`;
+      // 没拿到回应（服务器可能已经做了）：别说成「失败」—— 模型会换个说法再调一次；照原样再调，同一个键，不会重复
+      return e.uncertain ? `远程工具没拿到回应：${e.message}` : `远程工具调用失败：${e.message}`;
     }
   }
   if (kind === 'skill') {
@@ -795,6 +806,8 @@ async function sendPending(ctx) {
       // 一个请求：会话不存在时服务器用 title / workspace 建（原来先开会话再写消息，两个请求）
       await ctx.api.post(`/api/harness/sessions/${item.sessionId}/messages`, {
         title: item.title, workspace: path.basename(ctx.local.root), messages: item.messages,
+      // 回应丢了（服务器其实收到了）之后下一轮补发：内容不变，Api 沿用没弄清的那个键 —— 网页上不会多出一份（第二十二轮）。
+      // 原来这里另给每条存档一个键，扰动照出它和那条规矩重复：删掉哪一道都不红，留一道
       }, { timeoutMs: 10_000 });
       ctx.archivePending.shift();
     } catch (e) {

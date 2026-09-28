@@ -44,6 +44,12 @@ public class GlobalExceptionHandler {
         this.runtimeIssueService = runtimeIssueService;
     }
 
+    /** 同一个幂等键的上一次还在处理：409，页面等一下用同一个键再来（第二十二轮）。 */
+    @ExceptionHandler(RequestInProgressException.class)
+    public Result<Void> handleInProgress(RequestInProgressException e) {
+        return new Result<>(409, e.getMessage(), null);
+    }
+
     @ExceptionHandler(BusinessException.class)
     public Result<Void> handleBusiness(BusinessException e) {
         return Result.fail(e.getMessage());

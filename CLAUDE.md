@@ -14,7 +14,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V38`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V39`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -823,6 +823,28 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   `Date.now()` 只留给要和别处对得上的时刻（写进记录、和文件修改时间比）。
 - 这个产品是**单一时区**的：截止时间、提醒按北京时间理解；浏览器时区不同时看板标题说「（北京时间）」。按人设置时区没有做。
 
+### 第二十二轮（2026-09-29）：网络和服务器的极端 —— 回应丢了、半路重启、慢网 / 断网
+
+计划与结果在 `docs/rounds/round-22.md`。
+
+- **每一个登录后的写接口都认 `Idempotency-Key`**（`IdempotentWriteAspect`，挂在 controller 的 `@Post/Put/Delete/PatchMapping` 上）：同一个用户 + 接口 + 地址 + 键
+  只做一次，再来交回上次的结果（10 分钟，Redis + 表 `idempotency_record` —— 重启之后也认得）。不接的由 `IdempotentWriteIntegrationTest` 一个一个列着：
+  自己在参数里接了这个头的、参数里有 `HttpServletResponse` 的（回应带 Cookie，缓存重放不出来）、不回 `Result` 的（流）。**新加的写接口默认就接**；
+  新加一个回 Cookie 的写接口，那张清单会红 —— 想清楚重放时少了 Cookie 行不行。同一个键「上一次还在处理」回 409（`RequestInProgressException`）。
+  锁 6 分钟，要比最长的一次写长（`IdempotencyLockSpanTest`）：比页面超时短的话，超时后的重来会和还没做完的那一次同时执行。
+- **页面的写请求都带键**（`request()`），断网 / 超时 / 502 / 503 / 504 / 409 用同一个键重来；还不行就说「不确定有没有保存上 —— 再点一次不会重复保存」，
+  键留 10 分钟给内容一模一样的下一次，同一块数据（地址第一段）有别的写成功就作废。**不要在点击里现生成键**（`writeKey()` 每次一个新的 = 回应丢了再点就是两份）；
+  自己带键的只有「一次打开 = 一次」的套用参考计划和番茄钟待补记（`RequestResilienceTest.键交给request` 钉着）。`/auth/` 下的不带、不重来。
+- 写请求 0.6 秒没回来：刚点的按钮 `aria-busy`、页面顶上「正在保存…」（`writeStarted`）。按钮不禁用。
+- **番茄钟先存在设备上再发**（`recordPomodoro` / `zq-pomo-outbox`）：每条自己的键、打开页面 / `online` / 每分钟补一趟、跨了天补的带完成那天的日期。
+- **聊天流**：`streamAiChat` 连不上抛 `beforeResponse`（发送那边撤掉本地两条、字放回输入框）；断在半路说「连接断了」；断线接回用 `whenOnline`（网还断着就等）。
+  Chromium 的 `setOffline` 不掐已经建立的连接 —— 演「流到一半断网」要真的掐（这一轮用的是自己写的 TCP 代理）。
+- **启动时收拾上一个进程没做完的**（`InterruptedWorkRecovery`）：STREAMING 的回答、RUNNING 的执行记录 / 步骤 / 任务收成失败（没轮到的 SKIPPED），只动进程启动之前建的行。
+  假设单实例。新加「请求线程里写一行进行中、做完改终态」的东西，要么加进这里，要么像 RAG 任务那样有租约。
+- **回包压缩**（`server.compression`）：文字类；`text/event-stream` 不能加进去（压缩要攒够一块才发，流就憋住了）。
+- **命令行**：登录后的 POST 自动带键（`Api.writeKey`），断在半路也用同一个键重来、不确定时沿用（存档补发内容不变，也就沿用）。服务器卡住（接了连接不回）只再等一次、重来前说一声
+  （`onRetry`）；启动时的几个 GET 15 秒超时。流断了说是和**服务器**的连接断了（不是模型），安静模式下把断开前收到的打出来。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -875,7 +897,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260928-time-zones`.
+  old bundle. Current token: `20260929-network`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

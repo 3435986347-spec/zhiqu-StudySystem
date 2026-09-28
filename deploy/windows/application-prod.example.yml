@@ -2,6 +2,12 @@ server:
   port: 8080
   address: 127.0.0.1
   forward-headers-strategy: native
+  # 文字类回包压缩（第二十二轮，见 application.yml）。前面挂着 Caddy（encode zstd gzip）时它看到已经压过就不再压；
+  # 没挂反向代理直接对外的部署靠的就是这里。text/event-stream 不能加进去 —— 流会被憋住。
+  compression:
+    enabled: true
+    min-response-size: 2KB
+    mime-types: text/html,text/css,text/plain,text/javascript,application/javascript,application/json,image/svg+xml
 
 spring:
   application:

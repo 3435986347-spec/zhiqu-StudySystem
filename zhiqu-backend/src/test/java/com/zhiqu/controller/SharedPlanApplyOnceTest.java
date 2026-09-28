@@ -109,7 +109,7 @@ class SharedPlanApplyOnceTest {
     @DisplayName("页面：键在打开计划时生成（不在点击里），套用时带上键和日期；请求没回来之前按钮不响应")
     void 页面带键() throws Exception {
         String js = SourceText.stripComments(Files.readString(NodeRunner.API_JS));
-        int keyAt = js.indexOf("var applyKey = newIdempotencyKey();");
+        int keyAt = js.indexOf("var applyKey = writeKey();");
         int handlerAt = js.indexOf("applyBtn.onclick = async function () {");
         assertTrue(keyAt > 0 && handlerAt > keyAt, "键要在点击处理之外、打开计划时生成 —— 每次点击都新生成一个键就等于没去重");
         String handler = js.substring(handlerAt, js.indexOf("};", handlerAt));

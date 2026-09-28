@@ -1,5 +1,12 @@
 server:
   port: 8080
+  # 压缩文字类的回包（第二十二轮）：慢网（Slow 3G）下看板第一次打开要 8.8 秒 —— zhiqu-api.js 338KB、看板数据 224KB 都是原样发的。
+  # 只有 Windows 部署前面挂的 Caddy 会压（encode zstd gzip），手机直连服务器、Linux 部署都没压。
+  # 流式回答（text/event-stream）不在里面：压缩要攒够一块才发，会把一个字一个字的流憋住。
+  compression:
+    enabled: true
+    min-response-size: 2KB
+    mime-types: text/html,text/css,text/plain,text/javascript,application/javascript,application/json,image/svg+xml
 
 spring:
   application:

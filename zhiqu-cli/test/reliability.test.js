@@ -41,7 +41,7 @@ test('GET 遇到 503 重试，第三次成功就当没事发生；业务错误�
   } finally { server.close(); }
 });
 
-test('POST 连接中途被掐断不重试（服务器可能已经处理了 —— 比如草稿已经建了）；连接被拒才重试', { timeout: 20_000 }, async () => {
+test('没登录的 POST（设备码登录，服务器不认幂等键）连接中途被掐断不重试（服务器可能已经处理了）；连接被拒才重试', { timeout: 20_000 }, async () => {
   let hits = 0;
   const server = http.createServer((req) => { hits++; req.socket.destroy(); });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -57,6 +57,126 @@ test('POST 连接中途被掐断不重试（服务器可能已经处理了 —�
   const t = Date.now();
   await assert.rejects(refused.post('/x', {}), /连接被拒绝/);
   assert.ok(Date.now() - t >= 250, '连接被拒的 POST 应当等一下再试一次');
+});
+
+/**
+ * 认幂等键的假服务器（照 IdempotentWriteAspect 的样子）：同一个键只做一次、再来交回上次的结果。
+ * script 依次决定每一下请求的命运：'ok' 正常回；'lost' 做完了、回应断在半路；'502' 做完了、代理回 502；
+ * 'busy' 回「上一次还在处理」（409，不做）；'refused' 不在这里模拟（用关着的端口）。
+ */
+async function idempotentServer(script) {
+  const done = new Map();   // 键 → 结果
+  const seen = [];          // 每一下请求带的键
+  let n = 0, executed = 0;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      const key = req.headers['idempotency-key'] || null;
+      seen.push(key);
+      const fate = script[Math.min(n++, script.length - 1)];
+      if (fate === 'busy') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ code: 409, message: '上一次提交还在处理，请稍后再试' })); return; }
+      if (!key || !done.has(key)) { executed++; const r = { id: executed, body: JSON.parse(body || '{}') }; if (key) done.set(key, r); }
+      const data = key ? done.get(key) : { id: executed };
+      if (fate === 'lost') { req.socket.destroy(); return; }
+      if (fate === '502') { res.writeHead(502); res.end('<html>bad gateway</html>'); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ code: 200, data }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return {
+    url: `http://127.0.0.1:${server.address().port}`, seen, get executed() { return executed; },
+    setScript(next) { script = next; n = 0; seen.length = 0; },
+    close() { server.closeAllConnections(); server.close(); },
+  };
+}
+
+test('登录后的 POST 带幂等键：回应断在半路 / 502 / 「还在处理」都用同一个键重来，服务器只做了一次（第二十二轮）', { timeout: 20_000 }, async () => {
+  const s = await idempotentServer(['lost', '502', 'ok']);
+  try {
+    const api = new Api({ server: s.url, token: 't' });
+    const r = await api.post('/api/harness/tools/call', { name: 'create_study_plan', arguments: { title: 'A' } });
+    assert.equal(s.seen.length, 3, '应当重来两次');
+    assert.ok(s.seen[0] && s.seen.every((k) => k === s.seen[0]), `每一下都该带同一个键：${s.seen}`);
+    assert.equal(s.executed, 1, '服务器只该做一次');
+    assert.equal(r.id, 1);
+    s.setScript(['busy', 'ok']);
+    await api.post('/api/harness/tools/call', { name: 'create_study_plan', arguments: { title: 'B' } });
+    assert.equal(s.seen.length, 2, '「上一次还在处理」（409）等一下再来');
+  } finally { s.close(); }
+});
+
+test('重来也没回应：照实说「不确定有没有做成」；模型照原样再调（内容完全一样）沿用那个键 —— 草稿不会多一份', { timeout: 20_000 }, async () => {
+  const s = await idempotentServer(['lost']);
+  try {
+    const api = new Api({ server: s.url, token: 't' });
+    const call = { sessionId: 's', name: 'create_study_plan', arguments: { title: '线代' } };
+    await assert.rejects(api.post('/api/harness/tools/call', call), (e) => {
+      assert.equal(e.uncertain, true);
+      assert.match(e.message, /不确定这一下有没有做成；内容不变再来一次不会重复/);
+      return true;
+    });
+    const lostKey = s.seen[0];
+    assert.equal(s.executed, 1);
+    s.setScript(['ok']);
+    const again = await api.post('/api/harness/tools/call', call);
+    assert.equal(s.seen[0], lostKey, '内容一样的下一次该沿用没弄清的那个键');
+    assert.equal(again.id, 1, '交回的是上一次做的那一份');
+    assert.equal(s.executed, 1, '服务器还是只做了一次');
+    s.setScript(['ok']);
+    await api.post('/api/harness/tools/call', call);
+    assert.notEqual(s.seen[0], lostKey, '那一次弄清了之后，再来是新的一次');
+    s.setScript(['ok']);
+    await api.post('/api/harness/tools/call', { ...call, arguments: { title: '高数' } });
+    assert.equal(s.executed, 3, '内容不同的是另一件事');
+  } finally { s.close(); }
+  const refused = new Api({ server: 'http://127.0.0.1:1', token: 't' });
+  await assert.rejects(refused.post('/x', {}), (e) => {
+    assert.equal(e.uncertain, false, '连接被拒 = 请求没到服务器，确定没做，不说「不确定」');
+    assert.match(e.message, /连接被拒绝/);
+    return true;
+  });
+});
+
+test('存档：回应丢了（服务器其实收到了），下一轮补发内容不变、沿用同一个键 —— 网页上不会多出一份', { timeout: 20_000 }, async () => {
+  const s = await idempotentServer(['lost']);
+  try {
+    const ctx = ctxFor(new Api({ server: s.url, token: 't' }));
+    await archiveTurn(ctx, '第一句', { steps: [], finalText: '一' });
+    assert.equal(ctx.archivePending.length, 1, '没拿到回应，留在队列里');
+    const firstKey = s.seen[0];
+    s.setScript(['ok']);
+    await archiveTurn(ctx, '第二句', { steps: [], finalText: '二' });
+    await flushArchive(ctx);
+    assert.equal(ctx.archivePending.length, 0);
+    assert.ok(firstKey, '存档要带键');
+    assert.equal(s.seen[0], firstKey, '补发那一条沿用的是没弄清的那个键');
+    assert.equal(s.executed, 2, '两条存档，各一份');
+  } finally { s.close(); }
+});
+
+test('服务器卡住（接了连接、一个字节都不回）：等满超时只再等一次、重来前说一声，最后说「N 秒没有回应」而不是 ETIMEDOUT（第二十二轮：原来一声不吭 91 秒）', { timeout: 20_000 }, async () => {
+  let hits = 0;
+  const server = http.createServer(() => { hits++; });   // 不回
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const notes = [];
+  try {
+    const api = new Api({ server: `http://127.0.0.1:${server.address().port}`, token: 't', onRetry: (why) => notes.push(why) });
+    const t = Date.now();
+    await assert.rejects(api.get('/api/harness/me', { timeoutMs: 1000 }), (e) => {
+      assert.match(e.message, /服务器 1 秒没有回应/);
+      assert.doesNotMatch(e.message, /ETIMEDOUT/);
+      return true;
+    });
+    assert.equal(hits, 2, '卡住的服务器只再等一次');
+    assert.ok(Date.now() - t < 4000);
+    assert.equal(notes.length, 1, '重来之前要说一声');
+    assert.match(notes[0], /1 秒没有回应/);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
 });
 
 function ctxFor(api, root = tmpdir()) {
@@ -80,12 +200,17 @@ test('模型调用：还没有任何输出时断了（闪断 / 502）就重试�
   } finally { await s.close(); }
 });
 
-test('模型调用：已经输出了一半才断线 —— 不重试（重来会让用户看到重复内容、工具调用也可能重复），把原因报出来', { timeout: 20_000 }, async () => {
+test('模型调用：已经输出了一半才断线 —— 不重试（重来会让用户看到重复内容、工具调用也可能重复），把原因报出来、已经收到的那段打出来', { timeout: 20_000 }, async () => {
   const s = await startFakeHarness({ model: [{ dropAfterText: '我先写一半' }, { text: '不该走到这里' }] });
   try {
     const ctx = ctxFor(new Api({ server: s.url }));
-    await assert.rejects(runTurn(ctx, '你好'), /中途断开/);
+    await assert.rejects(runTurn(ctx, '你好'), (e) => {
+      // 断的是和我们服务器的连接（服务器重启、网络断了），不是模型 —— 第二十二轮
+      assert.match(e.message, /中途断开了：和服务器 http:\/\/127\.0\.0\.1:\d+ 的连接断了/);
+      return true;
+    });
     assert.equal(s.requests.filter((q) => q.route.endsWith('/model/stream')).length, 1);
+    assert.match(ctx.ui.text(), /断开前已经收到的[\s\S]*我先写一半/, '安静模式下断开前收到的那一段要打出来，不能就这么没了');
   } finally { await s.close(); }
 });
 
