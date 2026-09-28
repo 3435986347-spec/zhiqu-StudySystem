@@ -18,6 +18,8 @@ function slice(startMark, endMark) {
 }
 const escSrc = slice('function esc(v) {', 'function maintainShellCache');
 const bodySrc = slice('function messageBodyHtml(m, i) {', '  /**\n   * 流式增量');
+// waitText 用业务时钟（第二十一轮）：把那一段也抠进来 —— 真的实现，不是替身
+const clockSrc = slice('  var clock = { zone:', '  /** 浏览器的钟面和业务时区不一样时');
 if (!/function waitText/.test(bodySrc)) throw new Error('抠出来的片段里没有 waitText —— 抠错地方了');
 
 // 正文的 Markdown 渲染不是这里要判的：换成最朴素的转义，只看正文之外多出来的那几行
@@ -26,7 +28,7 @@ const mod = new Function(
   + 'var setInterval = function () {};\n'
   + 'function renderMarkdown(s) { return "<p>" + esc(s) + "</p>"; }\n'
   + 'function reflowFlatMarkdown(s) { return s; }\n'
-  + escSrc + '\n' + bodySrc + '\nreturn { messageBodyHtml, waitText };')();
+  + escSrc + '\n' + clockSrc + '\n' + bodySrc + '\nreturn { messageBodyHtml, waitText };')();
 
 let fail = 0;
 function judge(name, cond, detail) {

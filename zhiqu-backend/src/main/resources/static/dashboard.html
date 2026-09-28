@@ -9,11 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260928-display-phone3" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260928-display-phone3">
-  <link rel="manifest" href="manifest.json?v=20260928-display-phone3">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260928-time-zones" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260928-time-zones">
+  <link rel="manifest" href="manifest.json?v=20260928-time-zones">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260928-display-phone3">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260928-time-zones">
 </head>
 <body>
   <div class="zq-app">
@@ -108,7 +108,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260928-display-phone3"></script>
+  <script src="assets/zhiqu-ui.js?v=20260928-time-zones"></script>
   <script>
     // ── 示例数据（后续可由接口替换） ──
     var qTag = { routine:['var(--zq-tint)','var(--zq-primary)'], 1:['var(--zq-q1-bg)','var(--zq-q1)'], 2:['var(--zq-q2-bg)','var(--zq-q2)'], 3:['var(--zq-q3-bg)','var(--zq-q3)'], 4:['var(--zq-q4-bg)','var(--zq-q4)'] };
@@ -167,9 +167,11 @@
       return '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft);"><div style="min-width:0;"><strong style="display:block; font-size:12.5px; line-height:1.35; font-weight:600;">'+d[0]+'</strong><span style="display:block; margin-top:3px; color:var(--zq-text2); font-size:11.5px;">'+d[1]+'</span></div><span class="zq-badge zq-mono" style="flex:none; background:'+(d[3]?'var(--zq-bad-tint)':'var(--zq-card-soft)')+'; color:'+(d[3]?'var(--zq-bad)':'var(--zq-text2)')+';">'+d[2]+'</span></div>';
     }).join('');
 
-    // ── 番茄钟（纯前端演示） ──
+    // ── 番茄钟 ──
+    // 按结束时刻倒数，不按「每跳一次减一秒」（第二十一轮）：切到别的标签页后浏览器把定时器限到一分钟一次，原来 25 分钟的番茄钟
+    // 要走一整天；合上笔记本就停。时钟往回拨（校时、手动改时间）时结束时刻跟着往回挪 —— 剩下的时间不会变多、也不会卡住不走。
     (function(){
-      var total=25*60, secs=total, running=false, timer=null, C=2*Math.PI*80;
+      var total=25*60, secs=total, running=false, timer=null, endAt=0, lastNow=0, C=2*Math.PI*80;
       var elTime=document.getElementById('zq-pomo-time'), elPhase=document.getElementById('zq-pomo-phase'), elRing=document.getElementById('zq-pomo-ring'), elStart=document.getElementById('zq-pomo-start'), elMin=document.getElementById('zq-pomo-min');
       function fmt(s){ return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
       function draw(){ elTime.textContent=fmt(secs); var frac=(total-secs)/total; elRing.setAttribute('stroke-dasharray',(frac*C).toFixed(1)+' '+C.toFixed(1)); }
@@ -177,18 +179,31 @@
         if(mins<1||!window.zqApi||!window.zqApi.api) return;
         var sel=document.getElementById('zq-pomo-task');
         var tid=sel&&sel.value?Number(sel.value):null;
-        window.zqApi.api.post('/record',{taskId:tid,studyDate:window.zqApi.today(),durationMinutes:mins,note:'番茄钟专注时段'}).then(function(){ if(window.zqApi&&window.zqApi.afterRecord) window.zqApi.afterRecord(); }).catch(function(){});
+        // 不带日期：记到服务端的「今天」。没记上要说出来 —— 原来 catch 了什么都不说，专注完的 25 分钟就这么没了
+        window.zqApi.api.post('/record',{taskId:tid,durationMinutes:mins,note:'番茄钟专注时段'}).then(function(){ if(window.zqApi&&window.zqApi.afterRecord) window.zqApi.afterRecord(); }).catch(function(e){ window.zqApi.toast('这个番茄钟没记上：'+((e&&e.message)||'网络出错了'),'error'); });
+      }
+      function tick(){
+        if(!running) return;
+        var now=Date.now();
+        if(now<lastNow) endAt-=lastNow-now;          // 时钟往回拨了：结束时刻一起往回挪
+        lastNow=now;
+        secs=Math.max(0,Math.ceil((endAt-now)/1000));
+        if(secs<=0){ clearInterval(timer); running=false; elStart.textContent='开始'; elPhase.textContent='已完成'; zqPomoRecord(Math.round(total/60)); secs=total; draw(); return; }
+        draw();
       }
       elMin.addEventListener('change',function(){ if(running) return; total=parseInt(elMin.value,10)*60; secs=total; draw(); });
       elStart.addEventListener('click',function(){
-        if(running){ clearInterval(timer); running=false; elStart.textContent='继续'; elPhase.textContent='已暂停'; return; }
+        if(running){ tick(); clearInterval(timer); running=false; elStart.textContent='继续'; elPhase.textContent='已暂停'; return; }
         running=true; elStart.textContent='暂停'; elPhase.textContent='专注中';
-        timer=setInterval(function(){ if(secs<=1){ clearInterval(timer); running=false; elStart.textContent='开始'; elPhase.textContent='已完成'; zqPomoRecord(Math.round(total/60)); secs=total; draw(); return; } secs--; draw(); },1000);
+        lastNow=Date.now(); endAt=lastNow+secs*1000;
+        timer=setInterval(tick,1000);
       });
+      // 切回这个标签页、笔记本醒来：马上按真实时间刷一次，不等下一跳
+      document.addEventListener('visibilitychange',function(){ if(!document.hidden) tick(); });
       document.getElementById('zq-pomo-reset').addEventListener('click',function(){ clearInterval(timer); running=false; secs=total; elStart.textContent='开始'; elPhase.textContent='待开始'; draw(); });
       draw();
     })();
   </script>
-  <script src="assets/zhiqu-api.js?v=20260928-display-phone3"></script>
+  <script src="assets/zhiqu-api.js?v=20260928-time-zones"></script>
 </body>
 </html>

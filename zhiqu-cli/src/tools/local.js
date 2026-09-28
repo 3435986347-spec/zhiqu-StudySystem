@@ -16,6 +16,7 @@ import { applyEdit, describeEditError } from './edit.js';
 import { syntaxProblem } from './syntax.js';
 import { stat as diffStat } from '../render/diff.js';
 import { formatBytes } from '../render/term.js';
+import { monotonic } from '../clock.js';
 
 export const SKIPPED_DIRS = new Set(['.git', 'node_modules', 'target', 'build', 'dist', 'out', '.idea', '.vscode',
   '__pycache__', '.venv', 'venv', '.gradle', '.next', '.nuxt', 'coverage', '.zhiqu', '.svn', '.hg']);
@@ -353,7 +354,7 @@ export class LocalTools {
     // 跳过了什么要说出来（第十六轮）：原来太大的、读不了的一声不吭地跳过 —— 「1 处」其实是「在能看的那些里 1 处」，
     // 模型据此下「别处没有」的结论
     const skipped = { huge: [], binary: [], denied: 0 };
-    const started = Date.now();
+    const started = monotonic();
     const buf = Buffer.alloc(CHUNK_BYTES);      // 一次搜索共用一块（原来每个文件新分配 1MB，五万个文件就是五十 GB 的分配）
     const onLine = (file, lineNo, line) => {
       if (!(ic ? line.toLowerCase() : line).includes(needle)) return true;
@@ -405,7 +406,7 @@ export class LocalTools {
         try { st = fs.statSync(child); } catch { continue; }
         if (st.size > SEARCH_STREAM_MAX_BYTES) { skipped.huge.push(`${this.guard.display(child)}（${formatBytes(st.size)}）`); continue; }
         if (++files > SEARCH_MAX_FILES) { truncated = `文件太多，只搜了前 ${SEARCH_MAX_FILES} 个`; return; }
-        if (Date.now() - started > SEARCH_TIME_BUDGET_MS) { truncated = `搜了 ${SEARCH_TIME_BUDGET_MS / 1000} 秒（${files - 1} 个文件）还没搜完，先停在这里`; return; }
+        if (monotonic() - started > SEARCH_TIME_BUDGET_MS) { truncated = `搜了 ${SEARCH_TIME_BUDGET_MS / 1000} 秒（${files - 1} 个文件）还没搜完，先停在这里`; return; }
         scan(child);
       }
     };

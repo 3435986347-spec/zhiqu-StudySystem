@@ -195,9 +195,15 @@ class FrontendTokenAndDateTest {
     void 日期实现必须被内联脚本共用() throws IOException {
         String api = SourceText.stripComments(
                 Files.readString(STATIC_DIR.resolve("assets/zhiqu-api.js"), StandardCharsets.UTF_8));
-        assertTrue(api.contains("window.zqApi = { api: api, reload: route, today: today, localDate: localDate };"),
-                "localDate/today 必须挂在 window.zqApi 上 —— dashboard 的番茄钟等内联脚本要算「今天」，"
-                        + "不暴露的话它们只能各写一个 toISOString，而那正是刚修掉的那个 bug");
+        java.util.regex.Matcher m = Pattern.compile("window\\.zqApi = \\{([^}]*)\\};").matcher(api);
+        assertTrue(m.find(), "zhiqu-api.js 里找不到 window.zqApi = { … };");
+        List<String> members = List.of(m.group(1).split("\\s*,\\s*"));
+        // 第二十一轮起「今天」是业务日期（服务端的时区、服务器的钟），内联脚本也得用这一份
+        for (String need : List.of("today: today", "localDate: localDate")) {
+            assertTrue(members.stream().anyMatch(x -> x.trim().equals(need)),
+                    need + " 必须挂在 window.zqApi 上 —— dashboard 的番茄钟等内联脚本要算「今天」，"
+                            + "不暴露的话它们只能各写一个 toISOString，而那正是刚修掉的那个 bug（现在的成员：" + members + "）");
+        }
     }
 
     /**

@@ -22,6 +22,7 @@ import { sleep } from './http.js';
 import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todoSchema, unfinished } from './todos.js';
 import { spillLongInput } from './longinput.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
+import { monotonic } from './clock.js';
 
 export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory']);
 
@@ -222,8 +223,8 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   let text = '';
   const toolNames = new Map();
   // 第一个字到来之前显示在等多久（只在终端里）：用户分得清「在等模型」和「卡死了」
-  const started = Date.now();
-  let waiting = render && !hush ? setInterval(() => ui.status.set(ui.paint.dim(`… 等待模型回复 ${Math.round((Date.now() - started) / 1000)}s`)), 1000) : null;
+  const started = monotonic();
+  let waiting = render && !hush ? setInterval(() => ui.status.set(ui.paint.dim(`… 等待模型回复 ${Math.round((monotonic() - started) / 1000)}s`)), 1000) : null;
   if (hush) ui.setActivity('');
   const stopWaiting = () => { if (waiting) { clearInterval(waiting); waiting = null; ui.status.clear(); } };
   const body = {

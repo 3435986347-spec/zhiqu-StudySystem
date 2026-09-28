@@ -31,6 +31,7 @@ import { ensureLocalServer } from './desktop.js';
 import { setWindow, windowLine } from './window.js';
 import { checkForUpdate, updateMessage } from './update.js';
 import { VERSION } from './version.js';
+import { monotonic } from './clock.js';
 
 const MODE_LABEL = {
   plan: 'plan（只读，先出计划）',
@@ -141,8 +142,8 @@ export async function login(cwd, flags, ui = new Ui()) {
   const url = server + start.verifyPath;
   ui.line(`在浏览器里打开下面的地址，确认是你本人之后点「允许」：\n\n  ${ui.paint.bold(url)}\n\n设备码：${ui.paint.bold(start.userCode)}（${Math.round(start.expiresIn / 60)} 分钟内有效；也可以在「个人中心 → 命令行登录」里手动输入）`);
   if (!flags.noBrowser && process.stdout.isTTY) openBrowser(url);
-  const deadline = Date.now() + start.expiresIn * 1000;
-  while (Date.now() < deadline) {
+  const deadline = monotonic() + start.expiresIn * 1000;
+  while (monotonic() < deadline) {
     await new Promise((r) => setTimeout(r, Math.max(1, start.interval) * 1000));
     const r = await api.post('/api/harness/device/poll', { deviceCode: start.deviceCode });
     if (r.status === 'APPROVED') {

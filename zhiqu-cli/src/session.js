@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeFileAtomic } from './config.js';
+import { monotonic } from './clock.js';
 
 const GITIGNORE = '# zhiqu：个人的聊天记录与本机设置不进仓库；skills/、mcp.json、settings.json 可以提交共享\nsessions/\nsetup.json\nsettings.local.json\n';
 
@@ -88,7 +89,7 @@ export class SessionStore {
   withIndexLock(fn) {
     this.ensure();
     const lock = `${this.index}.lock`;
-    const deadline = Date.now() + 3000;
+    const deadline = monotonic() + 3000;
     let fd = null;
     while (fd == null) {
       try {
@@ -98,7 +99,7 @@ export class SessionStore {
         try {
           if (Date.now() - fs.statSync(lock).mtimeMs > 10_000) { fs.rmSync(lock, { force: true }); continue; }
         } catch { continue; }
-        if (Date.now() > deadline) break;
+        if (monotonic() > deadline) break;
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
       }
     }

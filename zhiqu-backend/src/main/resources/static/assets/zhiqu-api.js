@@ -346,15 +346,66 @@
     var m = d.getMonth() + 1, day = d.getDate();
     return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
   }
-  function today() { return localDate(); }
+
+  // ── 业务时钟（第二十一轮）────────────────────────────────────────────────────
+  // localDate 是<b>浏览器所在时区</b>的日历日，只给「把某个 Date 按本机日历写出来」用。「今天」是另一回事：
+  // 服务端的业务日期（BusinessClock，默认 Asia/Shanghai），而且按服务器的钟。原来 today() = localDate()，又被当成数据发回去 ——
+  // 打卡的 checkDate、番茄钟记到哪天、新建例行计划的开始日期。真浏览器实测：UTC+14 的浏览器给今天列表里「周一三五」的例行计划打卡，
+  // 发的是周二，服务器拒了、页面一声不吭；比东八区晚的浏览器过了北京时间零点，打卡成功地记到了昨天，今天的那一条还是没打。
+  // 看板标题是浏览器的日期拼服务端的星期：「2026-09-29 · 周一」。
+  // 每个页面启动时都先取 /auth/info（initAuth），它带回 clock：{ zone, today, now, offsetMinutes }；回来之前用默认值、本机的钟。
+  var clock = { zone: 'Asia/Shanghai', skew: 0, offsetMinutes: 480 };
+  var zoneFormat = null;
+  function applyServerClock(c, sentAt, receivedAt) {
+    if (!c) return;
+    try { zoneFormat = new Intl.DateTimeFormat('en-US', { timeZone: c.zone, year: 'numeric', month: '2-digit', day: '2-digit' }); clock.zone = c.zone; } catch (e) { zoneFormat = null; }
+    // 本机时钟和服务器差多少：服务器的 now 落在请求发出和收到之间，取中点
+    if (typeof c.now === 'number' && sentAt && receivedAt) clock.skew = c.now - (sentAt + receivedAt) / 2;
+    if (typeof c.offsetMinutes === 'number') clock.offsetMinutes = c.offsetMinutes;
+  }
+  /** 一个按 UTC 构造的 Date 的日历日（addDays 之类只在日历上算的地方用；不是「今天」）。 */
+  function ymdUTC(d) {
+    var m = d.getUTCMonth() + 1, day = d.getUTCDate();
+    return d.getUTCFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+  }
+  /** 此刻（毫秒），按服务器的钟 —— 本机时钟快了慢了不影响算出来的日期。 */
+  function nowMs() { return Date.now() + clock.skew; }
+  /** 某一时刻（毫秒，默认此刻）在业务时区里是哪一天。 */
+  function businessDate(ms) {
+    var d = new Date(ms == null ? nowMs() : ms);
+    try {
+      if (!zoneFormat) zoneFormat = new Intl.DateTimeFormat('en-US', { timeZone: clock.zone, year: 'numeric', month: '2-digit', day: '2-digit' });
+      var parts = {};
+      zoneFormat.formatToParts(d).forEach(function (p) { parts[p.type] = p.value; });
+      return parts.year + '-' + parts.month + '-' + parts.day;
+    } catch (e) {
+      // 没有时区数据的浏览器：按服务端给的偏移算
+      return ymdUTC(new Date(d.getTime() + clock.offsetMinutes * 60000));
+    }
+  }
+  function today() { return businessDate(); }
+  /** 服务端不带时区的时间（"2026-09-28T22:51:47"，业务时区的钟面）→ 时刻（毫秒）。原来 Date.parse 按浏览器时区解释。 */
+  function serverTime(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(s || ''));
+    if (!m) return NaN;
+    return Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) - clock.offsetMinutes * 60000;
+  }
+  /** 日历日加减天数：只在日历上算，不经过任何时区（夏令时那天也不会差一天）。 */
+  function addDays(ymd, n) {
+    var p = String(ymd).split('-');
+    return ymdUTC(new Date(Date.UTC(+p[0], p[1] - 1, +p[2] + n)));
+  }
+  /** 业务日期所在的那一周（周一到周日），offset 周之后。 */
   function weekRange(offset) {
-    var now = new Date();
-    var day = now.getDay() || 7;
-    var mon = new Date(now); mon.setDate(now.getDate() - day + 1 + (offset || 0) * 7);
-    var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-    // 与 getDay() 保持同一时区：原来这里是 getDay() 取本地、再用 toISOString() 按 UTC 序列化，
-    // 一半本地一半 UTC，凌晨时段整周范围会整体错一天
-    return [localDate(mon), localDate(sun)];
+    var t = today(), p = t.split('-');
+    var dow = new Date(Date.UTC(+p[0], p[1] - 1, +p[2])).getUTCDay() || 7;
+    var mon = addDays(t, 1 - dow + (offset || 0) * 7);
+    return [mon, addDays(mon, 6)];
+  }
+  /** 浏览器的钟面和业务时区不一样时（在国外、时区设错），日期旁边说一句是按哪里的时间。 */
+  function zoneNote() {
+    if (-new Date(nowMs()).getTimezoneOffset() === clock.offsetMinutes) return '';
+    return clock.zone === 'Asia/Shanghai' ? '（北京时间）' : '（' + clock.zone + ' 时间）';
   }
   function qLabel(q) { return ({ 1: '重要且紧急', 2: '重要不紧急', 3: '紧急不重要', 4: '不重要不紧急' })[q] || '未分类'; }
   function qKey(q) { return ({ 1: 'q1', 2: 'q2', 3: 'q3', 4: 'q4' })[q] || 'q4'; }
@@ -497,7 +548,9 @@
 
   async function initAuth() {
     if (page === 'index.html') return null;
+    var sentAt = Date.now();
     state.user = await api.get('/auth/info');
+    applyServerClock(state.user && state.user.clock, sentAt, Date.now());
     updateSidebarUser(state.user);
     return state.user;
   }
@@ -608,9 +661,10 @@
     if (statNums[3]) statNums[3].textContent = (sum.routineDone || 0) + '/' + (sum.routineTotal || 0);
     var headerDate = $('header span');
     var todayRow = (data.days || []).find(function (d) { return d.today; });
-    if (headerDate) headerDate.textContent = today() + (todayRow && todayRow.weekday ? ' · ' + todayRow.weekday : '');
+    // 日期和星期都用服务端那一行的：原来是浏览器的日期拼服务端的星期（UTC+14 时「2026-09-29 · 周一」）
+    if (headerDate) headerDate.textContent = (todayRow ? todayRow.date + ' · ' + todayRow.weekday : today()) + zoneNote();
     renderWeek(data.days || []);
-    renderToday((data.days || []).find(function (d) { return d.today; })?.items || []);
+    renderToday(todayRow ? todayRow.items || [] : [], todayRow ? todayRow.date : null);
     renderQuadrants(data.quadrants || []);
     renderDeadlines(data.upcomingDeadlines || []);
     // 周历标题随范围更新
@@ -634,9 +688,12 @@
     var sel = $('#zq-pomo-task'); if (!sel) return;
     try {
       var tasks = ((await api.get('/task/page?status=0&limit=50')).items || []).map(normalizeTask);
+      // 看板会被重新取（换周、记完一个番茄钟、跨过零点）：番茄钟正在跑时选好的任务不能被换回「不指定」
+      var keep = sel.value;
       sel.innerHTML = '<option value="">（不指定任务）</option>' + tasks.map(function (t) {
         return '<option value="' + t.id + '">' + esc(t.title) + '</option>';
       }).join('');
+      if (keep && tasks.some(function (t) { return String(t.id) === keep; })) sel.value = keep;
     } catch (e) { /* 忽略：下拉保持默认项 */ }
   }
   async function updatePomoCount() {
@@ -659,21 +716,23 @@
       return '<div style="min-height:225px;padding:10px;border:1px solid ' + (d.today ? 'var(--zq-primary)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (d.today ? 'var(--zq-tint)' : 'var(--zq-card-soft)') + ';"><div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;"><span style="color:' + (d.today ? 'var(--zq-primary)' : 'var(--zq-text2)') + ';font-size:11.5px;font-weight:700;">' + esc(d.weekday) + '</span><strong class="zq-mono" style="font-size:18px;color:' + (d.today ? 'var(--zq-primary)' : 'var(--zq-text)') + ';">' + esc(d.day) + '</strong></div><div style="display:flex;flex-direction:column;gap:7px;">' + items + '</div></div>';
     }).join('') : empty('暂无本周安排');
   }
-  function renderToday(items) {
+  function renderToday(items, date) {
     var host = $('#zq-today');
     if (!host) return;
     host.innerHTML = items.length ? items.map(function (x) {
       var routine = x.kind === 'ROUTINE';
       var q = routine ? 'routine' : qKey(x.quadrant);
       var color = routine ? 'var(--zq-primary)' : 'var(--zq-' + q + ')';
-      return '<div style="display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:' + (routine ? 'var(--zq-tint)' : 'var(--zq-card)') + ';opacity:' + (x.status === 2 || x.completed ? .58 : 1) + ';"><span class="zq-mono" style="color:var(--zq-primary);font-size:12.5px;font-weight:600;">' + esc(x.time || hm(x.deadline) || '') + '</span><div style="min-width:0;"><div style="font-size:13.5px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(x.title) + '</div><div style="display:flex;gap:6px;margin-top:4px;align-items:center;min-width:0;"><span class="zq-badge" style="background:var(--zq-tint);color:' + color + ';">' + esc(routine ? '例行' : qLabel(x.quadrant)) + '</span><span style="flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--zq-text2);font-size:11.5px;">' + esc(x.description || fmtDate(x.deadline)) + '</span></div></div><button class="zq-btn-ghost" data-task-done="' + esc(x.id || '') + '" data-kind="' + esc(x.kind || '') + '" style="height:28px;padding:0 11px;font-size:12px;">' + (x.status === 2 || x.completed ? '已完成' : '完成') + '</button></div>';
+      return '<div style="display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:' + (routine ? 'var(--zq-tint)' : 'var(--zq-card)') + ';opacity:' + (x.status === 2 || x.completed ? .58 : 1) + ';"><span class="zq-mono" style="color:var(--zq-primary);font-size:12.5px;font-weight:600;">' + esc(x.time || hm(x.deadline) || '') + '</span><div style="min-width:0;"><div style="font-size:13.5px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(x.title) + '</div><div style="display:flex;gap:6px;margin-top:4px;align-items:center;min-width:0;"><span class="zq-badge" style="background:var(--zq-tint);color:' + color + ';">' + esc(routine ? '例行' : qLabel(x.quadrant)) + '</span><span style="flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--zq-text2);font-size:11.5px;">' + esc(x.description || fmtDate(x.deadline)) + '</span></div></div><button class="zq-btn-ghost" data-task-done="' + esc(x.id || '') + '" data-kind="' + esc(x.kind || '') + '" data-date="' + esc(date || '') + '" style="height:28px;padding:0 11px;font-size:12px;">' + (x.status === 2 || x.completed ? '已完成' : '完成') + '</button></div>';
     }).join('') : empty('今天暂时没有安排');
     $all('[data-task-done]', host).forEach(function (btn) {
       btn.onclick = function () {
         var id = btn.getAttribute('data-task-done');
         if (!id) return;
         safe('完成', async function () {
-          if (btn.getAttribute('data-kind') === 'ROUTINE') await api.post('/routine/' + id + '/checkin', { checkDate: today(), status: 'DONE' });
+          // 打卡记到这一行所在的那天（服务端给的日期），不是按下去这一刻浏览器算的「今天」：页面开着跨过零点、还没刷新时，
+          // 用户看着的是昨天的列表，点的就是昨天那一条
+          if (btn.getAttribute('data-kind') === 'ROUTINE') await api.post('/routine/' + id + '/checkin', { checkDate: btn.getAttribute('data-date') || today(), status: 'DONE' });
           else await api.put('/task/' + id + '/status?status=2');
           await bootDashboard();
         });
@@ -901,7 +960,7 @@
       var check = phase === 'active' ? '<button data-check-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">标记完成</button>' : '';
       return '<div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><div class="zq-mono" style="flex:none;min-width:46px;height:32px;padding:0 8px;border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">' + esc((r.preferredTime || '08:00').slice(0, 5)) + '</div><div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(r.title) + '</div><div style="font-size:11.5px;color:var(--zq-text2);margin-top:3px;">' + esc(freqLabel(r.frequency, r.daysOfWeek) + ' · ' + (r.durationMinutes || 0) + ' 分钟' + when) + '</div></div>' + check + '<button data-del-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">删除</button></div>';
     }).join('') : empty('暂无例行计划');
-    $all('[data-check-routine]', host).forEach(function (b) { b.onclick = async function () { await api.post('/routine/' + b.dataset.checkRoutine + '/checkin', { checkDate: today(), status: 'DONE' }); await loadRoutines(); }; });
+    $all('[data-check-routine]', host).forEach(function (b) { b.onclick = async function () { await api.post('/routine/' + b.dataset.checkRoutine + '/checkin', { status: 'DONE' }); await loadRoutines(); }; });
     $all('[data-del-routine]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '删除例行计划', message: '删除这个例行计划？相关的未来提醒会一并停止。', okText: '删除', danger: true })) { await api.del('/routine/' + b.dataset.delRoutine); await loadRoutines(); } }; });
   }
   async function createRoutineFromForm() {
@@ -3969,11 +4028,13 @@
    */
   function waitSince(m) {
     if (m._startedAt) return m._startedAt;
-    var t = m.createdAt ? Date.parse(m.createdAt) : NaN;
-    return isFinite(t) && t <= Date.now() ? t : Date.now();
+    // createdAt 是业务时区的钟面、不带时区：按业务时区换成时刻，和按服务器的钟的「此刻」比（第二十一轮：原来 Date.parse 按浏览器时区，
+    // 比东八区快的浏览器一刷新就是「已等 21600 秒」、慢的永远从 0 数起）
+    var t = m.createdAt ? serverTime(m.createdAt) : NaN;
+    return isFinite(t) && t <= nowMs() ? t : nowMs();
   }
   function waitText(since) {
-    var s = Math.floor((Date.now() - since) / 1000);
+    var s = Math.floor((nowMs() - since) / 1000);
     if (s < 5) return '正在生成…';
     if (s < 30) return '正在生成…（已等 ' + s + ' 秒）';
     return '还在等模型开始回答（已等 ' + s + ' 秒）';
@@ -4544,7 +4605,7 @@
       reasoningMode: reasoningMode,
       status: 'STREAMING',
       _clientKey: clientKey,
-      _startedAt: Date.now()
+      _startedAt: nowMs()
     };
     state.messages.push({ role: 'user', content: txt, _clientKey: clientKey + '-user' }, assistant);
     // 用户刚按下发送，这是他自己的动作：无条件回到底部，之后再由他的滚动决定跟不跟随
@@ -5165,6 +5226,25 @@
   function currentUserIsAdmin() {
     return String((state.user && state.user.role) || '').toUpperCase() === 'ADMIN';
   }
+  /**
+   * 页面开着跨过业务日期的零点（第二十一轮）：看板的「今天」、例行计划的今日列表原来一直是昨天的 —— 零点过后点「完成」，
+   * 列表是昨天的、打卡记到今天；番茄钟的「今日 N 个」也不归零。每分钟、切回这个标签页时看一眼业务日期，变了就重新取这一页的数据：
+   * 不整页刷新（正在跑的番茄钟、打了一半的字都还在），也不重新绑事件（bootRoutines 用 addEventListener，重跑一次每个按钮点一下就提交两遍）。
+   */
+  var DAY_RELOAD = { 'dashboard.html': function () { return bootDashboard(); }, 'routines.html': function () { return loadRoutines(); } };
+  var dayWatched = false;
+  function watchBusinessDay(reload) {
+    var day = today();
+    function check() {
+      var now = today();
+      if (now === day) return;
+      day = now;
+      safe('刷新今天', reload);
+    }
+    setInterval(check, 60000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+  }
+
   function route() {
     maintainShellCache();
     flushDeniedNotice();
@@ -5196,6 +5276,8 @@
           return;
         }
 
+        // 页面开着跨过业务日期的零点：只重新取数据（看板、例行计划的「今天」），见 watchBusinessDay
+        if (!dayWatched && DAY_RELOAD[page]) { dayWatched = true; watchBusinessDay(DAY_RELOAD[page]); }
         var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'routines.html': bootRoutines, 'statistics.html': bootStatistics, 'achievement.html': bootAchievement, 'profile.html': bootProfile, 'admin.html': bootAdmin, 'feedback-admin.html': bootFeedbackAdmin, 'account-admin.html': bootAccountAdmin, 'shared-plans.html': bootSharedPlans, 'shared-plan-admin.html': bootSharedPlanAdmin, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
         if (boots[page]) await boots[page]();
       } finally {
@@ -5208,6 +5290,6 @@
 
   // localDate 一并暴露：页面内联脚本（如 dashboard 的番茄钟）也要算「今天」，
   // 让它们用同一份定义，而不是各写一个 toISOString
-  window.zqApi = { api: api, reload: route, today: today, localDate: localDate };
+  window.zqApi = { api: api, reload: route, today: today, localDate: localDate, now: nowMs, serverTime: serverTime, businessDate: businessDate, toast: toast };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', route); else route();
 })();

@@ -803,6 +803,26 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   假设终端会重排折行的文字（Terminal.app / iTerm2 / VS Code / Windows Terminal）。交互终端里比终端还宽的 Markdown 表格按记录显示。
 - `test/vt.js` 的组合符号零宽是**自己判的**、不问 `displayWidth`；`resize` 按主流终端重排 —— 模拟器和被测代码共用一个宽度函数时，两边错成一样、屏幕看着是对的。
 
+### 第二十一轮（2026-09-28）：时间的极端 —— 时区、跨零点、时钟跳
+
+计划与结果在 `docs/rounds/round-21.md`。
+
+- **页面的「今天」是业务日期**（`zhiqu-api.js` 的业务时钟）：每页启动取 `/auth/info` 时带回 `clock`（`zone`、`today`、服务器此刻的 `now`、`offsetMinutes`），
+  `today()` = 业务时区里的那一天、按服务器的钟；`weekRange` 只在日历上算；服务端不带时区的时间用 `serverTime()` 换成时刻（不要 `Date.parse`）。
+  `localDate` 只用来把某个 Date 按本机日历写出来，**不是今天**。原来 `today()` 是浏览器的日历日：UTC+14 的浏览器打卡被拒、晚于东八区的过了北京时间零点打卡记到昨天。
+- **发给服务端的日期尽量不由浏览器算**：看板打卡用那一行（服务端给的）的日期，番茄钟、例行计划页的「标记完成」不带日期（服务端用 `clock.today()`）。
+  服务端不收**将来**的打卡 / 学习记录 —— 连续天数的 SQL 只往前挪 `last_study_date`，一条将来的记录会把连续天数冻住。
+- **进程默认时区 = 业务时区**（`ProcessTimeZone`，只在 `main` 里挂在 `ApplicationEnvironmentPreparedEvent` 上）：`LocalDateTime.now()` 写的审计时间是显示给用户看的，
+  原来跟着机器走（Docker 默认 UTC 时页面上的时间差 8 小时）。数据库会话时区默认 `SET time_zone = '+08:00'`（最低优先级，部署配了 `connection-init-sql` 就用部署的）——
+  MySQL 自己填的 `CURRENT_TIMESTAMP` / `NOW()` 也按业务时区。库里的时间列都是 DATETIME（换会话时区不挪旧数据）；新加 TIMESTAMP 列之前想清楚这一点。
+- `BusinessClock.fixedAt(zone, "2026-12-31T23:59:59")` 让测试停在日历边界上。判据：`TimeEdgesTest`、`FrontendClockTest`（`clock-check.js` 把 node 的 `TZ`
+  换成六个地方、把 `Date` 整个换成假时钟 —— 只换 `Date.now` 的话不带参数的 `new Date()` 读的还是真的钟）。
+- **计时按结束时刻算，不按「每跳一次减一秒」**：后台标签页的定时器一分钟一次、合上笔记本就停（番茄钟原来就这样）。页面开着跨过业务日期的零点时，
+  `watchBusinessDay` 只重新取数据（看板用 `bootDashboard`、例行计划用 `loadRoutines`，不重新绑事件）。
+- **命令行量「过了多久」用 `src/clock.js` 的单调时钟**，不用 `Date.now()`：系统时钟往回拨一小时原来就是「思考中 -3600s」、搜索「搜了 5 秒（0 个文件）还没搜完」。
+  `Date.now()` 只留给要和别处对得上的时刻（写进记录、和文件修改时间比）。
+- 这个产品是**单一时区**的：截止时间、提醒按北京时间理解；浏览器时区不同时看板标题说「（北京时间）」。按人设置时区没有做。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -834,11 +854,14 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   CJK serif after it: font fallback is **per character**, and JetBrains Mono / Consolas have no
   CJK glyphs, so Latin stays monospaced while Chinese matches the rest of the page.
   `FrontendTokenAndDateTest` fails the build on any dangling `var(--zq-*)`.
-- **Calendar dates in the frontend come from `localDate()`, never `toISOString()`.** The latter is
-  UTC: between 00:00 and 08:00 CST it yields *yesterday*. That was shipping — the dashboard header
-  showed yesterday, routine check-ins recorded `checkDate` as yesterday (breaking the streak), and
-  pomodoro study time landed on the previous day. `localDate` is exposed on `window.zqApi` so page
-  inline scripts share the one implementation.
+- **"Today" in the frontend is `today()` — the business date (business time zone, server's clock) —
+  never `toISOString()`, and since round 21 not `localDate()` either.** `toISOString()` is UTC:
+  between 00:00 and 08:00 CST it yields *yesterday* (the dashboard header showed yesterday, check-ins
+  broke the streak, pomodoro time landed on the previous day). `localDate()` is the *browser's*
+  calendar day: a browser at UTC+14 or west of CST disagrees with the server by a day, and that date
+  was being sent to the server as data. `localDate` remains only for writing a given Date in the
+  viewer's own calendar. Both are exposed on `window.zqApi` so page inline scripts share the one
+  implementation; see 第二十一轮 above.
 - **12 of the 14 pages still ship design-phase demo data** — inline scripts that write a fabricated
   study plan into the DOM *before* `zhiqu-api.js` loads (`dashboard.html` labels its own block
   `// ── 示例数据（后续可由接口替换） ──`). Users never see it, and that rests on exactly one
@@ -852,7 +875,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260928-display-phone3`.
+  old bundle. Current token: `20260928-time-zones`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

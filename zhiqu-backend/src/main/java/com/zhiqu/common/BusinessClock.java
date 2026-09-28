@@ -1,8 +1,11 @@
 package com.zhiqu.common;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -29,8 +32,9 @@ import java.time.ZoneId;
  * <h2>为什么日期可以统一而时间戳不必</h2>
  *
  * <p>{@code LocalDate} 一旦写进库就不带时区了，所以唯一的问题是「此刻算哪一天」——
- * 把这个判断收成一处就够了。而 {@code created_at} 这类审计时间戳只要在同一个 JVM 内
- * 自洽即可，不在本类的职责范围内。
+ * 把这个判断收成一处就够了。{@code created_at} 这类审计时间戳原来说「只要在同一个 JVM 内自洽即可」，
+ * 但它们是显示给用户看的（消息时间、「审核于 …」、页面算「已等 N 秒」）—— 第二十一轮起启动时把 JVM 默认时区
+ * 钉成业务时区（{@link ProcessTimeZone}），裸的 {@code LocalDateTime.now()} 因此也是业务时区的时间。
  */
 @Component
 public class BusinessClock {
@@ -43,9 +47,26 @@ public class BusinessClock {
      * {@code BusinessClockWiringTest} 钉住。
      */
     private final ZoneId zone;
+    private final Clock base;
 
+    @Autowired
     public BusinessClock(@Value("${app.timezone:" + DEFAULT_ZONE + "}") String timezone) {
-        this.zone = ZoneId.of(timezone == null || timezone.isBlank() ? DEFAULT_ZONE : timezone.trim());
+        this(ZoneId.of(timezone == null || timezone.isBlank() ? DEFAULT_ZONE : timezone.trim()), Clock.systemUTC());
+    }
+
+    private BusinessClock(ZoneId zone, Clock base) {
+        this.zone = zone;
+        this.base = base;
+    }
+
+    /**
+     * 测试用：停在业务时区的某一刻（第二十一轮）。日历的边界 —— 12 月 31 日 23:59、1 月 1 日零点、2 月 29 日、周日与周一 ——
+     * 原来没法测：today() 是真的今天，判据只能在碰巧是那一天的时候跑到。
+     */
+    public static BusinessClock fixedAt(String zone, String localDateTime) {
+        ZoneId z = ZoneId.of(zone);
+        Instant at = LocalDateTime.parse(localDateTime).atZone(z).toInstant();
+        return new BusinessClock(z, Clock.fixed(at, z));
     }
 
     /** 默认业务时区 —— 与 {@code ReminderScheduler} 的 cron zone 必须一致。 */
@@ -57,11 +78,11 @@ public class BusinessClock {
 
     /** 业务意义上的今天。 */
     public LocalDate today() {
-        return LocalDate.now(zone);
+        return LocalDate.now(base.withZone(zone));
     }
 
     /** 业务时区的此刻 —— 需要同时用到日期与时间时用它，避免两者来自不同时区。 */
     public LocalDateTime now() {
-        return LocalDateTime.now(zone);
+        return LocalDateTime.now(base.withZone(zone));
     }
 }

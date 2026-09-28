@@ -146,6 +146,11 @@ public class RoutineServiceImpl implements RoutineService {
     public Map<String, Object> checkin(Long userId, Long routineId, Map<String, Object> body) {
         StudyRoutine routine = ownedRoutine(userId, routineId);
         LocalDate checkDate = parseDate(body == null ? null : body.get("checkDate"), clock.today());
+        // 还没到的日子不能打卡（第二十一轮）。原来什么日期都收：UTC+14 的浏览器发来的「明天」照样记上，
+        // 电脑时钟快一年就打到明年去。补打过去的（零点过后补昨晚的）照旧可以
+        if (checkDate.isAfter(clock.today())) {
+            throw new BusinessException("还没到 " + checkDate + "，不能打卡（今天是 " + clock.today() + "）");
+        }
         if (!occursOn(routine, checkDate)) {
             throw new BusinessException("该日期不在例行计划范围内");
         }

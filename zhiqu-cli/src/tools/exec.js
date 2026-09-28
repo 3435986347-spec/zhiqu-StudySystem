@@ -11,6 +11,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { monotonic } from '../clock.js';
 
 export const DEFAULT_OUTPUT_LIMIT = 64 * 1024;
 
@@ -78,7 +79,7 @@ export function childEnv(binary, cwd, platform = process.platform) {
 
 export function runProcess({ binary, args, cwd, timeoutMs, outputLimit = DEFAULT_OUTPUT_LIMIT, signal, onOutput }) {
   return new Promise((resolve) => {
-    const started = Date.now();
+    const started = monotonic();
     const posix = process.platform !== 'win32';
     let child;
     try {
@@ -123,7 +124,7 @@ export function runProcess({ binary, args, cwd, timeoutMs, outputLimit = DEFAULT
       if (truncated) output += `\n【输出超过 ${outputLimit} 字节，已截断】`;
       if (timedOut) output += `\n【超时：超过 ${timeoutMs}ms，已强制结束】`;
       if (aborted) output += '\n【用户中断了这条命令】';
-      resolve({ exitCode: code == null ? -1 : code, signal: sig, output, truncated, timedOut, aborted, millis: Date.now() - started });
+      resolve({ exitCode: code == null ? -1 : code, signal: sig, output, truncated, timedOut, aborted, millis: Math.round(monotonic() - started) });
     });
   });
 }

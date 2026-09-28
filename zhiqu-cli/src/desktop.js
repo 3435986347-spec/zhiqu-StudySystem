@@ -6,6 +6,7 @@
 import { spawn } from 'node:child_process';
 import { isLoopbackUrl, LOCAL_DESKTOP_SERVER } from './defaults.js';
 import { sleep } from './http.js';
+import { monotonic } from './clock.js';
 
 export const BUNDLE_ID = 'com.zhiqu.quadrant';
 const DESKTOP_PORT = new URL(LOCAL_DESKTOP_SERVER).port;
@@ -50,8 +51,8 @@ export async function ensureLocalServer({ api, server, ui, platform = process.pl
     ui.error('没找到知趣象限应用：先安装它（打开 dmg、拖进「应用程序」），或者用 --server 连你自己的服务器');
     return 'failed';
   }
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const deadline = monotonic() + timeoutMs;
+  while (monotonic() < deadline) {
     await wait(500);
     const now = await probe();
     if (now === 'up') {

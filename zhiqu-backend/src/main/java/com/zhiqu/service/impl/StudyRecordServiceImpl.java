@@ -55,12 +55,18 @@ public class StudyRecordServiceImpl implements StudyRecordService {
             }
             record.setTaskId(request.getTaskId());
         }
-        record.setStudyDate(request.getStudyDate());
+        // 学习日期不能晚于今天（第二十一轮）。连续天数的 SQL 只往前挪 last_study_date：一条记到将来的记录
+        //（UTC+14 的浏览器、快了一年的电脑时钟）之后，所有真实的记录都算「过去的」，连续天数冻在那儿直到那一天
+        LocalDate studyDate = request.getStudyDate() == null ? clock.today() : request.getStudyDate();
+        if (studyDate.isAfter(clock.today())) {
+            throw new BusinessException("学习日期 " + studyDate + " 还没到（今天是 " + clock.today() + "）");
+        }
+        record.setStudyDate(studyDate);
         record.setDurationMinutes(request.getDurationMinutes());
         record.setNote(request.getNote());
         studyRecordMapper.insert(record);
 
-        sysUserMapper.addStudyMinutesAndRefreshStreak(userId, request.getDurationMinutes(), request.getStudyDate());
+        sysUserMapper.addStudyMinutesAndRefreshStreak(userId, request.getDurationMinutes(), studyDate);
         achievementService.checkAndUnlock(userId, "study_record_added");
         return record;
     }

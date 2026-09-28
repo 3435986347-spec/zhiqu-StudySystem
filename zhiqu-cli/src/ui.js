@@ -25,6 +25,7 @@ import readline from 'node:readline';
 import { Markdown } from './render/markdown.js';
 import { colorEnabled, displayWidth, painter, rowsIn, termSafe } from './render/term.js';
 import { matchCommands } from './commands.js';
+import { monotonic } from './clock.js';
 
 const MENU_ROWS = 8;
 // 同步输出（DEC 2026）：支持的终端在 h 与 l 之间攒着不画，整块换帧；不支持的按规矩忽略不认识的私有模式。
@@ -568,7 +569,7 @@ export class Ui {
 
   startThinking() {
     if (!this.interactive || !this.live || this.thinking) return;
-    this.thinking = { started: Date.now(), tick: 0, activity: '' };
+    this.thinking = { started: monotonic(), tick: 0, activity: '' };
     this.renderThinking();
     this.thinkingTimer = setInterval(() => this.thinkingTick(), THINKING_FRAME_MS);
     if (this.thinkingTimer.unref) this.thinkingTimer.unref();
@@ -588,7 +589,7 @@ export class Ui {
 
   renderThinking() {
     const t = this.thinking;
-    const secs = Math.floor((Date.now() - t.started) / 1000);
+    const secs = Math.floor((monotonic() - t.started) / 1000);
     const room = this.cols() - 16;
     const act = t.activity ? ` · ${t.activity}` : '';
     this.setStatus(`${this.paint.cyan(pixelFrame(t.tick))} ${this.paint.dim(fit(`思考中 ${secs}s${act}`, Math.max(10, room)))}`);
