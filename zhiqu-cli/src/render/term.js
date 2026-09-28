@@ -15,18 +15,46 @@ export function painter(enabled) {
   };
 }
 
-/** 终端里占几格：中日韩全角两格，ANSI 转义不占格。 */
+// 不占格的：组合附加符号（带声调的字母、Zalgo）、零宽空格 / 连接符、变体选择符。
+// macOS 的文件名是 NFD —— café.md 里的 é 是 e + U+0301，这不是罕见情况（第二十轮）
+const ZERO_WIDTH = /[\p{Mn}\p{Me}​-‍⁠︀-️]/u;
+
+/** 一个字符（码点）占几格：中日韩全角、emoji 两格，组合符号零格。 */
+export function charWidth(ch) {
+  if (ZERO_WIDTH.test(ch)) return 0;
+  const cp = ch.codePointAt(0);
+  const wide = (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3)
+    || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xfe30 && cp <= 0xfe4f) || (cp >= 0xff00 && cp <= 0xff60)
+    || (cp >= 0xffe0 && cp <= 0xffe6) || (cp >= 0x1f300 && cp <= 0x1faff) || (cp >= 0x20000 && cp <= 0x3fffd);
+  return wide ? 2 : 1;
+}
+
+/** 终端里占几格：中日韩全角两格，组合符号、ANSI 转义不占格。 */
 export function displayWidth(s) {
   const plain = String(s).replace(/\u001b\[[0-9;]*m/g, '');
   let w = 0;
-  for (const ch of plain) {
-    const cp = ch.codePointAt(0);
-    const wide = (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3)
-      || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xfe30 && cp <= 0xfe4f) || (cp >= 0xff00 && cp <= 0xff60)
-      || (cp >= 0xffe0 && cp <= 0xffe6) || (cp >= 0x1f300 && cp <= 0x1faff) || (cp >= 0x20000 && cp <= 0x3fffd);
-    w += wide ? 2 : 1;
-  }
+  for (const ch of plain) w += charWidth(ch);
   return w;
+}
+
+/**
+ * 一段不含换行的文字在 cols 列宽的终端里折成几行 —— 照终端自己折的方式数，不是「总宽 ÷ 列宽」。
+ * 两格的字放不进这一行最后一格时，终端把它整个挪到下一行、这一行空一格；列宽是奇数、又全是中文时每一行都空一格，
+ * 除法就一行比一行少算。活动区擦的时候按这个数往上挪，少算一行就留一行残影，每刷一次多一行（第二十轮 25 列实测：
+ * 排队的一条中文消息刷了几次状态行，屏幕上留下五份）。多算则相反，把上面已经打印好的输出擦掉。
+ * 写满最后一格时终端是「延迟换行」：不算多一行，下一个字到了才换。
+ */
+export function rowsIn(text, cols) {
+  const plain = String(text).replace(/\u001b\[[0-9;]*m/g, '');
+  let rows = 1;
+  let col = 0;
+  for (const ch of plain) {
+    const w = charWidth(ch);
+    if (!w) continue;
+    if (col + w > cols) { rows++; col = 0; }
+    col += w;
+  }
+  return rows;
 }
 
 export function formatBytes(n) {

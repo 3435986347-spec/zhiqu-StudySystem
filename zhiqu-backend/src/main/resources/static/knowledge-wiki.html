@@ -22,7 +22,7 @@
         height（不是 min-height）—— 内层正好等于视口减去 .zq-main 的上下 padding（110px），
         整页不产生外层滚动，正文在 #zq-doc 内部滚。目录收起后那个展开箭头在竖条顶端，
         外层一滚就够不到，所以这里必须是定高。
-        但定高要有下限（第二十轮）：浏览器放大到 200%（1366×768 → 683×384）时定高之后正文区是 0px。
+        但定高要有下限（第二十轮）：浏览器放大到 200%（1366×768 → 683×384）时定高之后正文区只剩 52px（标题和工具栏占满）。
         低于 520px 时宁可整页滚一点，正文得先看得见。手机上的高度见 zhiqu-ui.css 的 @media。
       -->
       <div style="display:flex; flex-direction:column; gap:12px; height:calc(100vh - 110px); min-height:520px; animation:zqFadeIn .3s ease both;">

@@ -211,7 +211,7 @@ class MobileLayoutTest {
     }
 
     @Test
-    @DisplayName("AI 助手、Wiki 的定高容器：有下限（200% 放大时正文区原来是 0px），并且和手机样式认的是同一个字面")
+    @DisplayName("AI 助手、Wiki 的定高容器：有下限（200% 放大时 AI 对话区原来 40px、Wiki 正文区 52px），并且和手机样式认的是同一个字面")
     void 定高容器有下限() throws IOException {
         int pages = 0;
         for (String page : new String[]{"ai-assistant.html", "knowledge-wiki.html"}) {

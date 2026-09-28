@@ -781,6 +781,28 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - 顺带：例行计划、参考计划、AI 草稿里的周期显示成「每天」「每周一、三」（`freqLabel`），原来直接是 `DAILY` / `WEEKLY`。
   删了 `AiServiceImpl` 里两个没人调用的旧流式方法（流式早就走 `ModelStreamAdapter`）。
 
+### 第二十轮（2026-09-28）：显示的极端 —— 手机、放大、窄终端
+
+计划与结果在 `docs/rounds/round-20.md`。**量之前先塞极端内容**：空账号 9 页 × 3 个尺寸全绿，塞了内容之后看板 21007px 高。
+工具在 `tools/layout-check/`（`seed.js` 塞内容、`fake-model.js`、`check.js` 在无头 Chromium 里逐页量整页溢出 / 被切掉 / 太高 / 弹框，有 FAIL 退出码 1）。
+
+- **手机样式只有一段 `@media (max-width: 760px)`，必须在 `zhiqu-ui.css` 的最后**：`@media` 不加优先级，它原来夹在中间，后面的
+  `.zq-main{margin-left:188px…}` 压过了它 —— 手机上一展开侧栏正文就被推开（收起态优先级更高，平时看不出）。`zhiqu-ui.js` 的
+  `MOBILE_QUERY` 和它一字不差。页面级多栏布局都写在内联 style 里，手机段只能按 `[style*="…"]` 认：新加一种 `grid-template-columns`
+  时 `MobileLayoutTest` 会红，要你在 `DECISIONS` 里决定手机上一栏 / 两个一排 / 不动，再让样式表真的那样排。
+- **两侧可收起的面板**（AI 助手、Wiki，`[data-zq-collapse]`）：`setupPanels` 给父元素加 `.zq-panel-host`，手机上收起的变成正文上方一排页签、
+  展开的浮在正文上面；默认收起、展开不写桌面偏好（和侧栏同一个规矩）。
+- **定高页（AI 助手、Wiki）**：`height:calc(100vh - 110px)` 有 `min-height:520px` 下限（放大 200% 时原来对话区 40px、正文区 52px）；
+  手机段按这个**字面**把它换成 `100dvh - 82px` —— 改了字面那条就不生效，判据钉着。
+- **定高页里任何 `position:absolute` 的后代都要有定位祖先在滚动框里面**：KaTeX 给读屏的 MathML 按整页定位，长 Wiki 页靠下的公式把整页撑到 1388px。
+  `.katex{position:relative}`。
+- 列表里的用户原文要收住（限行 / 省略号），详情里的完整显示；`<a class="zq-btn-ghost">` 也 nowrap。
+- **命令行活动区的行数照终端折行的方式数**（`term.js` 的 `rowsIn` / `charWidth`）：不是「总宽 ÷ 列宽」—— 奇数列宽全是中文时每一行都空一格，
+  25 列时一条排队消息留下五份残影；组合符号（Zalgo、macOS 的 NFD 文件名）零格，原来各算一格、多算就把上面打印好的输出擦掉。
+- **`Ui` 接管了输出流的 `resize`**（SIGWINCH）：按新宽度重数、整块重画；readline 自己的 resize 按旧宽度的 `prevRows` 挪，只有输入行时也由我们挪。
+  假设终端会重排折行的文字（Terminal.app / iTerm2 / VS Code / Windows Terminal）。交互终端里比终端还宽的 Markdown 表格按记录显示。
+- `test/vt.js` 的组合符号零宽是**自己判的**、不问 `displayWidth`；`resize` 按主流终端重排 —— 模拟器和被测代码共用一个宽度函数时，两边错成一样、屏幕看着是对的。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，

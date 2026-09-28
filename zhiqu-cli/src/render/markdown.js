@@ -10,9 +10,10 @@ import { displayWidth, termSafe } from './term.js';
 const BLOCK_START = /^(#{1,6}|\||`{1,3}|[-*+](\s|$)|>|\d+[.)]|-{2,}|\*{2,}|_{3,})/;
 
 export class Markdown {
-  constructor(write, color) {
+  constructor(write, color, width = null) {
     this.write = write;          // (text) => void
     this.color = color;
+    this.width = width;          // () => 终端列宽；不给（管道、测试）就不管宽度
     this.line = '';
     this.streamingParagraph = false;
     this.inCode = false;
@@ -111,6 +112,23 @@ export class Markdown {
       r.forEach((c, i) => { width[i] = Math.max(width[i], displayWidth(c)); });
     }
     const header = rows.length > 1 && isSep(rows[1]);
+    // 按列对齐之后比终端还宽（窄终端、列多、格子里字多）：每一行都折成几段、各列的碎片交错在一起，没法读。
+    // 那就一行记录一段：「• 列名: 值」，其余各列缩进在下面（第二十轮，40 列 / 20 列终端实测）
+    const total = width.reduce((a, b) => a + b, 0) + 3 * (cols - 1);
+    const room = this.width ? this.width() : Infinity;
+    if (total > room) {
+      const names = header ? rows[0] : null;
+      rows.forEach((r, ri) => {
+        if (isSep(r) || (header && ri === 0)) return;
+        if (!names) { this.println(`• ${r.filter(Boolean).join(this.dim(' · '))}`); return; }
+        r.forEach((cell, i) => {
+          const name = names[i] || '';
+          const label = name ? `${this.color ? `\u001b[1m${name}\u001b[22m` : name}: ` : '';
+          this.println(`${i === 0 ? '• ' : '  '}${label}${cell}`);
+        });
+      });
+      return;
+    }
     rows.forEach((r, ri) => {
       if (isSep(r)) {
         this.println(this.dim(width.map((w) => '─'.repeat(w)).join('─┼─')));

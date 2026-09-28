@@ -11,13 +11,23 @@ export class Vt {
     this.r = 0;
     this.c = 0;
     this.pendingWrap = false;
+    this.wrapped = [];     // wrapped[i]：第 i 行是被自动折行接到下一行的（不是 \n）—— 改宽度时按它重排
   }
 
   row(i) { while (this.rows.length <= i) this.rows.push([]); return this.rows[i]; }
 
   put(ch) {
+    // 组合附加符号（Zalgo、带声调的字母）、零宽连接符、变体选择符：真终端里不占格，叠在前一格上。
+    // 这一条自己判、不问 displayWidth —— 模拟器和被测代码用同一个宽度函数，两边错成一样时屏幕看着是对的（第二十轮）
+    if (/[\p{Mn}\p{Me}​-‍⁠︀-️]/u.test(ch)) {
+      const row = this.row(this.r);
+      let at = this.pendingWrap ? this.c : this.c - 1;
+      while (at > 0 && row[at] === null) at--;      // 前一格是宽字符的后半格
+      if (at >= 0 && row[at] != null) row[at] += ch;
+      return;
+    }
     const w = displayWidth(ch) || 1;
-    if (this.pendingWrap || this.c + w > this.cols) { this.r++; this.c = 0; this.pendingWrap = false; }
+    if (this.pendingWrap || this.c + w > this.cols) { this.wrapped[this.r] = true; this.r++; this.c = 0; this.pendingWrap = false; }
     const row = this.row(this.r);
     while (row.length < this.c) row.push(' ');
     row[this.c] = ch;
@@ -39,7 +49,7 @@ export class Vt {
       }
       if (ch === '\r') { this.c = 0; this.pendingWrap = false; continue; }
       // 真终端的输出端开着 ONLCR（libuv 的 raw 模式特意保留了它）：\n 会被转成 \r\n
-      if (ch === '\n') { this.r++; this.c = 0; this.row(this.r); this.pendingWrap = false; continue; }
+      if (ch === '\n') { this.wrapped[this.r] = false; this.r++; this.c = 0; this.row(this.r); this.pendingWrap = false; continue; }
       if (ch === '\b') { this.c = Math.max(0, this.c - 1); this.pendingWrap = false; continue; }
       if (ch === '\u0007') continue;
       const cp = s.codePointAt(i);
@@ -60,18 +70,61 @@ export class Vt {
       case 'G': this.c = Math.max(0, n - 1); this.pendingWrap = false; break;
       case 'J': {
         const mode = params === '' ? 0 : Number(params);
-        if (mode === 2) { this.rows = [[]]; this.r = 0; this.c = 0; break; }
+        if (mode === 2) { this.rows = [[]]; this.wrapped = []; this.r = 0; this.c = 0; break; }
         this.row(this.r).length = Math.min(this.row(this.r).length, this.c);
         this.rows.length = this.r + 1;
+        this.wrapped.length = this.r;
         break;
       }
       case 'K': {
         const mode = params === '' ? 0 : Number(params);
         if (mode === 2) this.rows[this.r] = [];
         else this.row(this.r).length = Math.min(this.row(this.r).length, this.c);
+        this.wrapped[this.r] = false;
         break;
       }
       default: break;   // m（颜色）等
+    }
+  }
+
+  /**
+   * 改终端宽度（SIGWINCH），照现在的主流终端（Terminal.app、iTerm2、VS Code、Windows Terminal）那样重排：
+   * 被自动折行的几行接回一段、按新宽度重新折；光标跟着它所在的那个字走。
+   */
+  resize(cols) {
+    const logical = [];
+    let cur = null;
+    let cursor = null;
+    for (let i = 0; i < this.rows.length; i++) {
+      if (!cur) { cur = []; logical.push(cur); }
+      const row = this.rows[i];
+      for (let c = 0; c < row.length; c++) {
+        if (i === this.r && c === this.c) cursor = { line: logical.length - 1, at: cur.length };
+        if (row[c] !== null) cur.push(row[c]);
+      }
+      if (i === this.r && !cursor) cursor = { line: logical.length - 1, at: cur.length + Math.max(0, this.c - row.length) };
+      if (!this.wrapped[i]) cur = null;
+    }
+    // 折行空出来的那一格（宽字符放不下时）不是内容：重排时去掉行尾空白，除非光标在那儿
+    this.cols = cols;
+    this.rows = [[]];
+    this.wrapped = [];
+    this.r = 0; this.c = 0; this.pendingWrap = false;
+    let target = null;
+    logical.forEach((cells, li) => {
+      if (li > 0) this.feed('\n');
+      const keep = cursor && cursor.line === li ? Math.max(cursor.at, cells.length) : cells.length;
+      let n = cells.length;
+      while (n > 0 && cells[n - 1] === ' ' && !(cursor && cursor.line === li && n <= cursor.at)) n--;
+      for (let k = 0; k < Math.min(n, keep); k++) {
+        if (cursor && cursor.line === li && k === cursor.at) target = { r: this.r, c: this.pendingWrap ? this.c + 1 : this.c };
+        this.put(cells[k]);
+      }
+      if (cursor && cursor.line === li && !target) target = { r: this.r, c: this.pendingWrap ? this.cols : this.c };
+    });
+    if (target) {
+      this.r = target.r;
+      if (target.c >= this.cols) { this.c = this.cols - 1; this.pendingWrap = true; } else { this.c = target.c; this.pendingWrap = false; }
     }
   }
 

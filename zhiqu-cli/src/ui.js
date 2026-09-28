@@ -23,7 +23,7 @@
 // 按键从 keypress 事件上截（把 readline 自己的监听器包一层），不碰 readline 的内部方法；菜单没开时一切照旧（↑↓ 翻历史）。
 import readline from 'node:readline';
 import { Markdown } from './render/markdown.js';
-import { colorEnabled, displayWidth, painter, termSafe } from './render/term.js';
+import { colorEnabled, displayWidth, painter, rowsIn, termSafe } from './render/term.js';
 import { matchCommands } from './commands.js';
 
 const MENU_ROWS = 8;
@@ -114,6 +114,7 @@ export class Ui {
     });
     if (this.interactive) {
       this.installKeys();
+      this.installResize();
       this.output.write(PASTE_ON);
       this.pasteMode = true;
       // 进程被异常带走时也把括号粘贴关掉（只对真终端；测试里的输出流不挂）
@@ -134,6 +135,43 @@ export class Ui {
       for (const listener of originals) listener.call(input, s, key);
       this.afterKey();
     });
+  }
+
+  /**
+   * 拖窗口改了终端宽度（SIGWINCH）：活动区的行数是按画它时的宽度数的，宽度一变就不对了 ——
+   * 原来下一次刷状态行（思考中每 120ms 一次）就按旧行数往上挪，窄了擦不干净、宽了擦进上面的输出。
+   * 现在按新宽度重数、擦掉、重画。这里假设终端会把折行的文字按新宽度重排（Terminal.app、iTerm2、
+   * VS Code、Windows Terminal 都是）；不重排的老 xterm 上仍可能留一两行，它们本来也不重排输出。
+   * readline 自己也听 resize，但它按旧宽度的 prevRows 往上挪、只重画输入行 —— 和这里抢着挪光标，
+   * 所以把它的监听器接过来：活动区在的时候由这里整块重画（输入行在其中）；只有输入行（在等人打字）时按新宽度挪、
+   * 让它重画；屏幕上什么都没在画时照旧交给它。
+   */
+  installResize() {
+    const output = this.output;
+    if (typeof output.on !== 'function') return;
+    const originals = output.listeners('resize');
+    for (const listener of originals) output.removeListener('resize', listener);
+    this.resizeListener = () => {
+      if (this.closed) return;
+      const l = this.live || this.idle;
+      if (!l || !l.drawn) {
+        if (!this.waiters.length) { for (const listener of originals) listener.call(output); return; }
+        // 只有输入行在屏幕上：readline 自己重画时按旧宽度的行数往上挪，重排之后差一行就留一份打了一半的字。按新宽度挪
+        this.frame(() => {
+          const up = this.rl.getCursorPos().rows;
+          if (up > 0) output.write(`\u001b[${up}A`);
+          output.write('\r\u001b[J');
+          this.promptAgain();
+        });
+        return;
+      }
+      this.frame(() => {
+        l.rowsAbove = this.aboveLines().reduce((n, line) => n + this.rowsOf(line), 0);
+        this.eraseLive();
+        this.drawLive();
+      });
+    };
+    output.on('resize', this.resizeListener);
   }
 
   /**
@@ -474,10 +512,9 @@ export class Ui {
     return Math.max(10, this.output.columns || 80);
   }
 
-  /** 一段不含换行的文字在终端里占几行。 */
+  /** 一段不含换行的文字在终端里占几行（照终端折行的方式数，见 term.js 的 rowsIn）。 */
   rowsOf(text) {
-    const w = displayWidth(String(text));
-    return Math.max(1, Math.ceil(w / this.cols()));
+    return rowsIn(text, this.cols());
   }
 
   aboveLines() {
@@ -613,7 +650,7 @@ export class Ui {
   result(text, ok = true) { const t = termSafe(text, { keepSgr: true }); this.line(`  ${this.paint.dim('⎿')} ${ok ? t : this.paint.red(t)}`); }
 
   markdown() {
-    return new Markdown((s) => this.write(s), this.color);
+    return new Markdown((s) => this.write(s), this.color, this.interactive ? () => this.cols() : null);
   }
 
   /** diff 分块：+ 绿、- 红、@@ 灰。最多 maxLines 行，多了说还有几行。 */
@@ -631,6 +668,7 @@ export class Ui {
   close() {
     this.stopThinking();
     this.endLive();
+    if (this.resizeListener) { this.output.removeListener('resize', this.resizeListener); this.resizeListener = null; }
     if (this.rl) this.rl.close();
     if (this.pasteMode) {
       this.pasteMode = false;
