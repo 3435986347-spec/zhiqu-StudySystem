@@ -4,6 +4,7 @@ import com.zhiqu.service.RuntimeIssueService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.validation.FieldError;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.LocalDate;
@@ -83,6 +84,26 @@ class GlobalExceptionHandlerTest {
         var bcrypt = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder(4);
         String hash = bcrypt.encode("密".repeat(30));
         assertTrue(bcrypt.matches("密".repeat(24) + "完全不同的结尾", hash), "BCrypt 不再截断了 —— 重新看看 PasswordRules 还要不要");
+    }
+
+    /** 字段先后就是用户在表单上看到的先后。 */
+    static class PasswordForm {
+        String oldPassword;
+        String newPassword;
+    }
+
+    @Test
+    @DisplayName("几个字段都不对：按字段在请求类里写的先后说，每次都一样（第十四轮：原来一会儿「旧密码…；新密码…」一会儿反过来）")
+    void 校验消息顺序固定() {
+        for (boolean reversed : new boolean[]{false, true}) {
+            org.springframework.validation.BeanPropertyBindingResult r = new org.springframework.validation.BeanPropertyBindingResult(new PasswordForm(), "form");
+            FieldError oldErr = new FieldError("form", "oldPassword", "旧密码不能为空");
+            FieldError newErr = new FieldError("form", "newPassword", "新密码不能为空");
+            FieldError newLen = new FieldError("form", "newPassword", "新密码至少 6 位");
+            if (reversed) { r.addError(newLen); r.addError(newErr); r.addError(oldErr); } else { r.addError(oldErr); r.addError(newErr); r.addError(newLen); }
+            Result<Void> out = handler.handleInvalid(new org.springframework.validation.BindException(r));
+            assertEquals("旧密码不能为空；新密码不能为空；新密码至少 6 位", out.getMessage(), "校验器给出的顺序变了，回给用户的话不该跟着变");
+        }
     }
 
     @Test

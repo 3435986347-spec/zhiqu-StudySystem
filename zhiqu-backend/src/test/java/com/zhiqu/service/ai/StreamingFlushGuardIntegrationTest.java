@@ -46,7 +46,6 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 @DisabledIfSystemProperty(named = "zhiqu.skipDockerTests", matches = "true",
         disabledReason = "Docker integration tests were explicitly disabled")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK, properties = {
-        "spring.task.scheduling.enabled=false",
         "app.cookie.secure=false",
         "app.rag.enabled=false"
 })

@@ -36,7 +36,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @DisabledIfSystemProperty(named = "zhiqu.skipDockerTests", matches = "true",
         disabledReason = "Docker integration tests were explicitly disabled")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK, properties = {
-        "spring.task.scheduling.enabled=false",
         "app.cookie.secure=false",
         "app.rag.enabled=false"
 })

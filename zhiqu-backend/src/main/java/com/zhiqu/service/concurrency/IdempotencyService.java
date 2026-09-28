@@ -1,5 +1,6 @@
 package com.zhiqu.service.concurrency;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.common.Result;
@@ -11,6 +12,7 @@ import java.util.function.Supplier;
 
 @Service
 public class IdempotencyService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(IdempotencyService.class);
     private static final Duration RESULT_TTL = Duration.ofMinutes(10);
     private static final Duration LOCK_TTL = Duration.ofSeconds(30);
 
@@ -56,13 +58,9 @@ public class IdempotencyService {
         String base = "zhiqu:idem:" + userId + ":" + scope.trim() + ":" + cleanKey;
         String resultKey = base + ":result";
         String lockKey = base + ":lock";
-        String cached = cachedResult(resultKey);
-        if (cached != null) {
-            try {
-                return (Result<T>) objectMapper.readValue(cached, Result.class);
-            } catch (Exception e) {
-                dropResult(resultKey);
-            }
+        Result<T> hit = readCached(resultKey);
+        if (hit != null) {
+            return hit;
         }
 
         RedisDistributedLockService.LockHandle lock = lockService.tryLock(lockKey, LOCK_TTL);
@@ -70,21 +68,49 @@ public class IdempotencyService {
             throw new BusinessException("请求正在处理中，请稍后重试");
         }
         try {
-            cached = cachedResult(resultKey);
-            if (cached != null) {
-                return (Result<T>) objectMapper.readValue(cached, Result.class);
+            hit = readCached(resultKey);
+            if (hit != null) {
+                return hit;
             }
+            // 业务这一步抛什么就原样往外抛，交给 GlobalExceptionHandler：日期写错回 400 说清楚，真的意外记运行问题、
+            // 不把原文回给用户。原来这里 catch (Exception) 一律包成 BusinessException(e.getMessage()) —— 于是带着
+            // Idempotency-Key 的接口（快速添加任务、套用参考计划、AI 批量建任务）上：日期写错回的是 Java 的原文
+            //「Text '2026-02-30' could not be parsed…」，真的服务器 bug 把 SQL / 类名原样回给用户、而且一条运行问题都不记
+            //（第十四轮真浏览器里套用参考计划填错日期撞出来的；第十一轮的全接口暴力测试不带这个头，所以没看见）。
             Result<T> result = supplier.get();
             if (result != null && result.getCode() == 200) {
-                storeResult(resultKey, objectMapper.writeValueAsString(result));
+                storeQuietly(resultKey, result);
             }
             return result;
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BusinessException(e.getMessage() == null ? "幂等处理失败" : e.getMessage());
         } finally {
             lockService.unlock(lock);
+        }
+    }
+
+    /** 缓存里的结果；读不回来（格式坏了）就当没有、删掉。 */
+    @SuppressWarnings("unchecked")
+    private <T> Result<T> readCached(String resultKey) {
+        String cached = cachedResult(resultKey);
+        if (cached == null) {
+            return null;
+        }
+        try {
+            return (Result<T>) objectMapper.readValue(cached, Result.class);
+        } catch (JsonProcessingException e) {
+            dropResult(resultKey);
+            return null;
+        }
+    }
+
+    /**
+     * 存不进缓存也照样把结果交回去：业务那一步已经做完了，这时候报错，客户端就会以为没成、再发一次 —— 正是幂等要防的重复。
+     * 代价只是这一个键失去去重（同键再来会再执行一次），这里记一行日志。
+     */
+    private void storeQuietly(String resultKey, Result<?> result) {
+        try {
+            storeResult(resultKey, objectMapper.writeValueAsString(result));
+        } catch (JsonProcessingException e) {
+            log.warn("幂等结果序列化失败，这个键不再去重：{}", e.getOriginalMessage());
         }
     }
 

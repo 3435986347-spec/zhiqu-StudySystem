@@ -90,8 +90,11 @@
   var UPLOAD_TIMEOUT_MS = 180000;
   var RETRY_WAITS_MS = [700, 2000];
   var RETRYABLE_STATUS = [429, 502, 503, 504];
+  // 请求层抛出的错误都带 userFacing：它的 message 是写给用户看的（「网络连接失败…」、服务器回的业务提示），
+  // 没接住时 reportUnhandled 可以原样说出来；别的错误（代码里的 TypeError）不是
   function requestError(message, extra) {
     var e = new Error(message);
+    e.userFacing = true;
     Object.keys(extra || {}).forEach(function (k) { e[k] = extra[k]; });
     return e;
   }
@@ -117,7 +120,7 @@
     }
     if (res.status === 401 || res.status === 403) {
       redirectToLogin();
-      throw new Error('未登录或无权限');
+      throw requestError('未登录或无权限');
     }
     if (RETRYABLE_STATUS.indexOf(res.status) >= 0) {
       throw requestError(res.status === 429 ? '请求过于频繁，请稍后再试' : '服务器暂时不可用（HTTP ' + res.status + '），请稍后再试',
@@ -131,13 +134,28 @@
     }
     if (json.code !== 200) {
       if (isAuthFailure(json)) redirectToLogin();
-      throw new Error(json.message || '请求失败');
+      throw requestError(json.message || '请求失败');
     }
     return json.data;
   }
-  async function request(path, options) {
+  // 同一个写请求（方法、地址、内容、请求头都一样）还没回来时又发一次：不再发，两边拿同一个结果。
+  // 双击「创建」、连按回车、等得不耐烦又点，原来各建一份 —— 服务器没法替它去重，两次都是合法的新建
+  //（第十四轮真浏览器实测：双击「创建例行计划」建出两个）。回来之后再点就是新的一次，照常发。
+  // GET 不走这里（本来就能重来）；上传的内容没法比，也不走。
+  var inflightWrites = {};
+  function request(path, options) {
     var method = String((options && options.method) || 'GET').toUpperCase();
     var upload = !!(options && typeof FormData !== 'undefined' && options.body instanceof FormData);
+    if (method === 'GET' || upload) return requestWithRetry(path, options, method, upload);
+    var key = method + ' ' + path + '\n' + (options.body == null ? '' : options.body) + '\n' + JSON.stringify(options.headers || {});
+    if (inflightWrites[key]) return inflightWrites[key];
+    var pending = requestWithRetry(path, options, method, upload);
+    inflightWrites[key] = pending;
+    var settle = function () { if (inflightWrites[key] === pending) delete inflightWrites[key]; };
+    pending.then(settle, settle);
+    return pending;
+  }
+  async function requestWithRetry(path, options, method, upload) {
     var timeoutMs = upload ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
     for (var attempt = 0; ; attempt++) {
       try {
@@ -169,6 +187,21 @@
     document.body.appendChild(el);
     setTimeout(function () { el.remove(); }, ms || 2600);
   }
+  // 事件处理里没接住的失败（onclick 里 await api.post 却没有 catch）：原来页面上什么都不显示，控制台里一行
+  // Uncaught (in promise) —— 用户以为没点上，接着点（第十四轮真浏览器：套用参考计划填错日期，一个字都没有）。
+  // 这里兜底说出来。显式处理（safe、try/catch）照旧优先：接住了的失败到不了这里。返回是否说了。
+  function reportUnhandled(reason) {
+    if (redirecting || !reason) return false;
+    if (reason.name === 'AbortError') return false;       // 用户自己取消的（停止生成、取消选文件）
+    if (reason.userFacing && reason.message) {
+      toast(reason.message, 'error');
+    } else {
+      console.error('[zhiqu-api] 没接住的错误', reason);
+      toast('操作没有完成（页面出了错），请刷新后重试', 'error');
+    }
+    return true;
+  }
+  window.addEventListener('unhandledrejection', function (e) { reportUnhandled(e.reason); });
   // 右上角持久通知（Claude 弹窗风格）：notice('正在测试…') → {update(msg,{done}), close()}
   // update 传 {done:true} 时切换为完成态并在 2s 后自动消失
   function notice(msg) {
@@ -338,6 +371,14 @@
       + esc(message)
       + '</p><button class="zq-btn" onclick="location.reload()">重新加载</button>'
       + '</section>';
+  }
+  // 同一处连着查了几次（来回切「日 / 周 / 月」、改筛选条件、点刷新、写完之后的重载）：响应可能乱序回来，只认最后一次的。
+  // 原来先发的那次要是后回来，就把它的结果画在后点的那个标签 / 筛选条件下面（第十四轮）。
+  // 用法：var current = latestOnly('trend'); var list = await api.get(…); if (!current()) return;
+  var latestSeq = {};
+  function latestOnly(key) {
+    var mine = (latestSeq[key] = (latestSeq[key] || 0) + 1);
+    return function () { return latestSeq[key] === mine; };
   }
   async function safe(name, fn, options) {
     try { return await fn(); } catch (e) {
@@ -562,7 +603,10 @@
       if (p) params.set('priority', p - 1);
       params.set('sortBy', selects[3] && selects[3].selectedIndex === 1 ? 'deadline' : selects[3] && selects[3].selectedIndex === 2 ? 'priority' : 'updatedAt');
       params.set('sortOrder', selects[4] && selects[4].selectedIndex === 1 ? 'asc' : 'desc');
-      state.tasks = (await api.get('/task/list?' + params.toString())).map(normalizeTask);
+      var current = latestOnly('tasks');
+      var list = (await api.get('/task/list?' + params.toString())).map(normalizeTask);
+      if (!current()) return;
+      state.tasks = list;
       renderTaskRows(state.tasks);
     }
   }
@@ -629,6 +673,11 @@
       if (filterSel) filterSel.onchange = function () { loadRoutineSources(filterSel.selectedIndex); };
       if (refreshBtn) refreshBtn.onclick = function () { loadRoutineSources(filterSel ? filterSel.selectedIndex : 0); };
     }
+    // 开始日期默认今天、结束日期空着（服务器按开始日期 +29 天）。原来 HTML 里写死 2026-07-06 → 2026-08-30，
+    // 是设计稿上的日期：过了那天照默认值建出来的就是一个已经结束的计划（第十四轮真浏览器里看到的）
+    var newSection = $all('section').find(function (s) { return /新建例行计划/.test(s.textContent); });
+    var startInput = newSection && $('input[type="date"]', newSection);
+    if (startInput && !startInput.value) startInput.value = today();
     // 星期选择器接线（点亮/熄灭），仅前端状态，提交时读取
     $all('#zq-wd button').forEach(function (b) {
       if (b.dataset.wired) return; b.dataset.wired = '1';
@@ -643,7 +692,9 @@
   }
   async function loadRoutineSources(statusIdx) {
     var params = statusIdx === 1 ? '?status=0' : statusIdx === 2 ? '?status=1' : '';
+    var current = latestOnly('routine-sources');
     var tasks = (await api.get('/task/list' + params)).map(normalizeTask);
+    if (!current()) return;
     renderRoutineSources(tasks);
   }
   function selectedWeekdays() {
@@ -672,6 +723,8 @@
         if (frequency === 'WEEKLY' && days.length) payload.daysOfWeek = days;
         await api.post('/routine', payload);
       }
+      // 生成完把勾去掉：勾还在的话，回来之后再点一下就把同一批任务又生成一遍（同「新建例行计划」清空表单）
+      checked.forEach(function (c) { c.checked = false; });
       toast('已生成 ' + checked.length + ' 个例行计划');
       await loadRoutines();
     });
@@ -682,11 +735,27 @@
       return '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);cursor:pointer;"><input type="checkbox" value="' + t.id + '" style="accent-color:var(--zq-primary);"><div style="min-width:0;flex:1;"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.title) + '</div><div style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;">' + esc(qLabel(t.quadrant) + ' · ' + sLabel(t.status)) + '</div></div></label>';
     }).join('') || empty('暂无可选择任务');
   }
+  // 例行计划今天是什么状态：没开始 / 进行中 / 已结束（日期都是 YYYY-MM-DD，按字符串比就是按日期比）。
+  // 原来一律当「进行中」、都给「标记完成」—— 已经结束的点了只会报「该日期不在例行计划范围内」（第十四轮连点暴力测试撞见的）
+  function routinePhase(r, day) {
+    if (r.startDate && String(r.startDate).slice(0, 10) > day) return 'upcoming';
+    if (r.endDate && String(r.endDate).slice(0, 10) < day) return 'ended';
+    return 'active';
+  }
   async function loadRoutines() {
     var host = $('#zq-rt'); if (!host) return;
     var list = await api.get('/routine/list');
+    var day = today();
+    var active = list.filter(function (r) { return routinePhase(r, day) === 'active'; }).length;
+    // 标题旁那句「N 个进行中」原来是设计稿写死的「5 个进行中」，从来不变
+    var countEl = host.closest('section') && $all('span', host.closest('section')).find(function (x) { return /个进行中/.test(x.textContent); });
+    if (countEl) countEl.textContent = active + ' 个进行中';
     host.innerHTML = list.length ? list.map(function (r) {
-      return '<div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><div class="zq-mono" style="flex:none;min-width:46px;height:32px;padding:0 8px;border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">' + esc((r.preferredTime || '08:00').slice(0, 5)) + '</div><div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(r.title) + '</div><div style="font-size:11.5px;color:var(--zq-text2);margin-top:3px;">' + esc((r.frequency || 'DAILY') + ' · ' + (r.durationMinutes || 0) + ' 分钟') + '</div></div><button data-check-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">标记完成</button><button data-del-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">删除</button></div>';
+      var phase = routinePhase(r, day);
+      var when = phase === 'upcoming' ? ' · ' + String(r.startDate).slice(5, 10).replace('-', '/') + ' 开始'
+        : phase === 'ended' ? ' · 已结束（' + String(r.endDate).slice(5, 10).replace('-', '/') + '）' : '';
+      var check = phase === 'active' ? '<button data-check-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">标记完成</button>' : '';
+      return '<div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><div class="zq-mono" style="flex:none;min-width:46px;height:32px;padding:0 8px;border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">' + esc((r.preferredTime || '08:00').slice(0, 5)) + '</div><div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(r.title) + '</div><div style="font-size:11.5px;color:var(--zq-text2);margin-top:3px;">' + esc((r.frequency || 'DAILY') + ' · ' + (r.durationMinutes || 0) + ' 分钟' + when) + '</div></div>' + check + '<button data-del-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">删除</button></div>';
     }).join('') : empty('暂无例行计划');
     $all('[data-check-routine]', host).forEach(function (b) { b.onclick = async function () { await api.post('/routine/' + b.dataset.checkRoutine + '/checkin', { checkDate: today(), status: 'DONE' }); await loadRoutines(); }; });
     $all('[data-del-routine]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '删除例行计划', message: '删除这个例行计划？相关的未来提醒会一并停止。', okText: '删除', danger: true })) { await api.del('/routine/' + b.dataset.delRoutine); await loadRoutines(); } }; });
@@ -707,6 +776,10 @@
         preferredTime: '08:00',
         reminderEnabled: true
       });
+      // 建好就清空标题和说明：这是页面上常驻的表单，不像弹窗那样一建就关。不清的话，
+      // 回来之后多点的那一下（第十四轮真浏览器：双击后又补了一下）会拿同一个标题再建一个
+      $('input[placeholder*="英语单词"]', section).value = '';
+      $('textarea', section).value = '';
       toast('例行计划已创建'); await loadRoutines();
     });
   }
@@ -756,7 +829,9 @@
     }
   }
   async function paintTrend(type) {
+    var current = latestOnly('trend');
     var list = await api.get('/record/trend?type=' + encodeURIComponent(type));
+    if (!current()) return;
     var vals = list.map(function (x) { return Number(x.minutes || x.totalMinutes || x.value || 0); });
     var labels = list.map(function (x) { return x.label || x.date || x.period || ''; });
     var max = Math.max.apply(null, vals.concat([1]));
@@ -1347,7 +1422,9 @@
     if (category) qs.push('category=' + category);
     if (sort) qs.push('sort=' + sort);
     if (order) qs.push('order=' + order);
+    var current = latestOnly('shared-plans');
     var plans = await api.get('/shared-plans' + (qs.length ? '?' + qs.join('&') : ''));
+    if (!current()) return;
     host.innerHTML = plans.map(function (p) {
       var cat = (p.category || 'GENERAL').toUpperCase();
       var k = CAT_KEY[cat] || 'q4';

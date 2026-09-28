@@ -52,9 +52,33 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class})
     public Result<Void> handleInvalid(BindException e) {
         // 校验注解上写的就是给人看的话（「用户名最长 50 个字符」）；Spring 自己的那句是「Validation failed for argument [0]…」
-        String message = e.getFieldErrors().stream().map(FieldError::getDefaultMessage)
+        String message = inDeclarationOrder(e).stream().map(FieldError::getDefaultMessage)
                 .filter(m -> m != null && !m.isBlank()).distinct().collect(Collectors.joining("；"));
         return bad(message.isEmpty() ? "提交的内容不符合要求" : message);
+    }
+
+    /**
+     * 按字段在请求类里写的先后排。校验器给出的顺序每次都可能不一样（它内部是个 HashSet）——
+     * 第十四轮连点暴力测试时，同一个空表单一会儿回「旧密码不能为空；新密码不能为空」、一会儿反过来。
+     * 同一个字段上的几条按消息排，也是为了每次一样。
+     */
+    static java.util.List<FieldError> inDeclarationOrder(BindException e) {
+        java.util.List<String> order = new java.util.ArrayList<>();
+        for (Class<?> c = e.getTarget() == null ? null : e.getTarget().getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            java.util.List<String> own = new java.util.ArrayList<>();
+            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                own.add(f.getName());
+            }
+            order.addAll(0, own);   // 父类的字段排在前面
+        }
+        java.util.Comparator<FieldError> byDeclaration = java.util.Comparator.comparingInt(fe -> {
+            int i = order.indexOf(fe.getField());
+            return i < 0 ? Integer.MAX_VALUE : i;
+        });
+        return e.getFieldErrors().stream()
+                .sorted(byDeclaration.thenComparing(FieldError::getField)
+                        .thenComparing(fe -> fe.getDefaultMessage() == null ? "" : fe.getDefaultMessage()))
+                .toList();
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

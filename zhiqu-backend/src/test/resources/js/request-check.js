@@ -76,6 +76,7 @@ async function rejects(p) { try { await p; return null; } catch (e) { return e; 
   script(res(200, '{"code":500,"message":"模型没配"}'));
   const e6 = await rejects(mod.request('/x', { method: 'GET' }));
   judge('业务错误（code != 200）不重试，原样报出', e6 && calls.length === 1 && e6.message === '模型没配', e6 && e6.message);
+  judge('业务错误带 userFacing（没接住时兜底原样说出来）', e6 && e6.userFacing === true);
 
   script(res(200, '<html>login page</html>'));
   const e7 = await rejects(mod.request('/x', { method: 'GET' }));
@@ -92,6 +93,37 @@ async function rejects(p) { try { await p; return null; } catch (e) { return e; 
   redirected = 0;
   const e9 = await rejects(mod.request('/x', { method: 'GET' }));
   judge('401 跳登录、不重试', e9 && redirected === 1 && calls.length === 1);
+
+  // ── 同一个写请求还没回来又发一次（双击「创建」、连按回车、等不及又点）—— 第十四轮 ──
+  const deferred = () => { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; };
+  const post = (path, body, headers = {}) => mod.request(path, { method: 'POST', body, headers });
+  let gate = deferred();
+  script(() => gate.p.then(() => ok({ id: 7 })));
+  const a1 = post('/routine', '{"title":"背单词"}');
+  const a2 = post('/routine', '{"title":"背单词"}');
+  gate.resolve();
+  const [b1, b2] = await Promise.all([a1, a2]);
+  judge('双击「创建」：同一个写请求只发一次，两边拿到同一个结果', calls.length === 1 && b1.id === 7 && b2.id === 7, 'calls=' + calls.length);
+
+  script(ok({ id: 8 }));
+  const b3 = await post('/routine', '{"title":"背单词"}');
+  judge('回来之后再点是新的一次：照常发', calls.length === 1 && b3.id === 8, 'calls=' + calls.length);
+
+  gate = deferred();
+  script(() => gate.p.then(() => ok({})));
+  const many = [post('/routine', '{"title":"A"}'), post('/routine', '{"title":"B"}'), post('/task', '{"title":"A"}'),
+    post('/task', '{"title":"A"}', { 'Idempotency-Key': 'k1' }), post('/task', '{"title":"A"}', { 'Idempotency-Key': 'k2' }),
+    mod.request('/routine', { method: 'PUT', body: '{"title":"A"}' }), mod.request('/x', { method: 'GET' }), mod.request('/x', { method: 'GET' })];
+  gate.resolve();
+  await Promise.all(many);
+  judge('内容不同、地址不同、幂等键不同、方法不同、GET：各发各的', calls.length === 8, 'calls=' + calls.length);
+
+  gate = deferred();
+  script(() => gate.p.then(() => res(200, '{"code":500,"message":"标题重复"}')), ok({ id: 9 }));
+  const [f1, f2] = await Promise.all([rejects(post('/routine', '{"t":1}')), rejects(post('/routine', '{"t":1}')), Promise.resolve(gate.resolve())]);
+  judge('失败了两次点击都知道原因', f1 && f2 && f1.message === '标题重复' && f2.message === '标题重复' && calls.length === 1, (f1 && f1.message) + ' calls=' + calls.length);
+  const b4 = await post('/routine', '{"t":1}').catch((e) => e);
+  judge('失败之后再点照常发（不会一直卡在「还没回来」）', b4 && b4.id === 9 && calls.length === 2, 'calls=' + calls.length);
 
   judge('SSE：心跳注释帧不是事件', mod.parseSseFrame(':ping') === null);
   const f = mod.parseSseFrame('event:message.delta\ndata:{"text":"你好"}');

@@ -94,7 +94,8 @@ success. The mismatch only surfaces at runtime as `NoSuchMethodError`, which rea
 dependency problem rather than what it is.
 
 Integration tests use an in-process stand-in for Redis (`src/test/resources/application.properties` points it at port 1) —
-never the developer's own `localhost:6379`; see round 13. Integration tests need Docker (Testcontainers). Without it they skip silently — `Tests run: N,
+never the developer's own `localhost:6379`; see round 13. The same file turns scheduled jobs off (`app.scheduling.enabled=false`,
+round 14 — `spring.task.scheduling.enabled` is not a Spring Boot property and did nothing). Integration tests need Docker (Testcontainers). Without it they skip silently — `Tests run: N,
 Skipped: N` is not a pass. Use `-Dzhiqu.skipDockerTests=true` to make the skip explicit.
 
 **A new assertion does not count until it has been seen red.** A green can mean *the judgment
@@ -645,6 +646,43 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
     判：退出码、没有堆栈、会话记录每行是合法 JSON、退出时关掉括号粘贴、命令的子进程不留。**驱动自己也要边写边读**：一次往 pty 写 30 万字节而
     不读，对面回显把输出缓冲写满，两边互等 —— 第一版驱动就这样挂住，看起来像 zhiqu 卡死。
 
+### 第十四轮（2026-09-28）：暴力测试 —— 网页上没耐心的人（真浏览器）
+
+计划与结果在 `docs/rounds/round-14.md`。先在真浏览器里双击 / 连点，再修。
+
+- **`@DeadlockRetry` 只在最外层的事务边界上重试**（`DeadlockRetryAspect`：已经在事务里就原样往外抛）。它标在 15 个服务方法上，
+  互相调用（新建例行计划 → 成就检查，两个都带）。两个请求同时解锁同一个成就就死锁，MySQL 回滚的是**整个**事务，
+  里层的重试却在那个已经死掉的事务里把成就检查再跑一遍 —— 外层早被标 rollback-only，提交时 `UnexpectedRollbackException`，
+  用户看到「服务器出错了」。真浏览器里双击「创建例行计划」撞出来的；`ConcurrencyStormIntegrationTest.同时新建` 钉着。
+- **同一个写请求没回来前不重发**（`zhiqu-api.js` 的 `request()`：方法 + 地址 + 内容 + 请求头都一样就共用那一个 Promise）。
+  双击「创建」、连按回车原来各建一份 —— 服务器没法替它去重，两次都是合法的新建。回来之后再点是新的一次；GET、上传不走这里。
+  直接调 `fetch` 的写操作会绕开它，`RequestResilienceTest.写操作不绕过request` 扫着（只许聊天流，它有自己的发送中保护）。
+  **页面上常驻的新建表单建好要清空**（例行计划的标题 / 说明、从任务生成的勾选）：回来之后多点的那一下否则再建一份同名的
+  （弹窗一建就关，点不到）。`InlineFormResetTest`。
+- **只认最后一次的响应**（`latestOnly(key)`）：来回切「日 / 周 / 月」、改筛选、写完之后的重载，响应可能乱序回来。
+  趋势图、任务列表、从任务生成的来源列表、参考计划列表四处用它；`latest-check.js` 拿趋势图真跑。Notebook 切换、Wiki 切页原来就有这道。
+- **幂等那一层不改写异常**（`IdempotencyService.execute`）：原来 `catch (Exception)` 一律包成 `BusinessException(e.getMessage())` ——
+  带 `Idempotency-Key` 的接口（快速添加任务、套用参考计划、AI 批量建任务）上，日期写错回 Java 原文，真的服务器 bug 把 SQL / 类名
+  原样回给用户、**一条运行问题都不记**。第十一轮的全接口暴力测试不带这个头，而且这类 bug 正好把它找的那条运行问题吞了，看不见。
+  结果存不进缓存时照样返回（业务已经做完，这时报错客户端会再发一次）。
+- **没接住的失败要说出来**（`unhandledrejection` → `reportUnhandled`）：onclick 里 `await api.post` 却没有 catch 的地方
+  （套用、点赞、打卡、删除……）失败时页面上一个字没有。请求层的错误都带 `userFacing`，原样说；代码里的错误只说「没有完成」；
+  用户自己取消（AbortError）和正在跳登录时不吭声。显式处理照旧优先。
+- 连点暴力测试（每页 1.5 秒随机点 60 多下）顺带查出：例行计划的「开始 / 结束日期」HTML 里写死 2026-07-06 → 08-30（设计稿日期，
+  过了那天默认值建出来的就是已经结束的计划；现在脚本填 today()，`FrontendTokenAndDateTest.日期输入框不写死日期`）；
+  列表把已结束 / 没开始的也当「进行中」、都给「标记完成」（点了只会报错），「5 个进行中」是写死的（`routinePhase`）；
+  校验消息的先后每次不一样（校验器内部是 HashSet）→ 按字段在请求类里写的先后排。
+- **定时任务的开关是真的开关**（`app.scheduling.enabled`，`SchedulingConfig`，默认开）。27 个集成测试写着
+  `spring.task.scheduling.enabled=false` —— **Spring Boot 没有这个属性**，写了等于没写：RAG worker 每秒在每个测试上下文里领作业；
+  测试类结束时它的 MySQL 容器停了、上下文还缓存着，worker 卡在连不上的库上，关 JVM 时 Spring 等它 30 秒，surefire 强杀 ——
+  第九轮以来每次全量都白等 30 秒，外加结尾那串 `EOFException: Can not read response from server`。现在测试的
+  `application.properties` 一处关掉；`SchedulingSwitchTest` 钉「只有一处 @EnableScheduling（全限定名写法也算 —— 第一版只认短名，
+  扰动时漏过去了）」「没人再写那个假属性」。**写一个配置属性之前先确认它存在**：Spring 不认识的键不报错。
+  关掉定时任务之后全量**还是**被强杀 —— 第二个原因（surefire 强杀前自己写的线程转储在 `target/surefire-reports/*.dump`）：
+  `HikariPool.shutdown` 在等「补连接」的线程。为了保住 `minimum-idle`，每个缓存着的上下文的连接池都在往已经停掉的 MySQL 上补连接
+  （退避重试，最长 5 秒一次），关的时候各等一阵，二十几个加起来过了 30 秒。测试里 `spring.datasource.hikari.minimum-idle=0`：
+  没人等连接就不补。**一个修复不等于那个症状没了**：修完第一个原因要重跑全量看那一行还在不在。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -694,7 +732,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260928-long-input`.
+  old bundle. Current token: `20260928-once-per-click`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

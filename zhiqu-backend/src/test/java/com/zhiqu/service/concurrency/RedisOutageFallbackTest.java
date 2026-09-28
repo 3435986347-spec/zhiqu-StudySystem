@@ -40,7 +40,7 @@ import static org.mockito.Mockito.when;
 class RedisOutageFallbackTest {
 
     @SuppressWarnings("unchecked")
-    private static StringRedisTemplate redisDown() {
+    static StringRedisTemplate redisDown() {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         ValueOperations<String, String> ops = mock(ValueOperations.class);
         RedisConnectionFailureException down = new RedisConnectionFailureException("Unable to connect to Redis");

@@ -167,6 +167,29 @@ class FrontendTokenAndDateTest {
                         + "番茄钟的学习时长记到昨天。用 localDate() 取本地日期");
     }
 
+    /**
+     * 日期输入框不许在 HTML 里写死一个日期（第十四轮）。例行计划的「开始 / 结束日期」原来是设计稿上的
+     * 2026-07-06 → 2026-08-30：过了那天，照默认值建出来的就是一个已经结束的计划。默认值由脚本按 today() 填。
+     */
+    @Test
+    void 日期输入框不写死日期() throws IOException {
+        List<String> offenders = new ArrayList<>();
+        int dateInputs = 0;
+        for (Path file : frontendFiles()) {
+            if (!file.toString().endsWith(".html")) continue;
+            String src = Files.readString(file, StandardCharsets.UTF_8).replaceAll("(?s)<!--.*?-->", " ");
+            Matcher m = Pattern.compile("<input[^>]*type=\"date\"[^>]*>").matcher(src);
+            while (m.find()) {
+                dateInputs++;
+                if (Pattern.compile("value=\"\\d").matcher(m.group()).find()) {
+                    offenders.add(STATIC_DIR.relativize(file) + "：" + m.group());
+                }
+            }
+        }
+        assertTrue(dateInputs >= 2, "只扫到 " + dateInputs + " 个日期输入框 —— 扫空了？（例行计划页至少两个）");
+        assertEquals(List.of(), offenders, "这些日期输入框写死了日期，过了那天默认值就是错的：用脚本填 today()");
+    }
+
     /** 唯一的日期实现必须暴露出去，页面内联脚本才不会各写一份。 */
     @Test
     void 日期实现必须被内联脚本共用() throws IOException {

@@ -48,7 +48,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisabledIfSystemProperty(named = "zhiqu.skipDockerTests", matches = "true",
         disabledReason = "Docker integration tests were explicitly disabled")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "spring.task.scheduling.enabled=false",
         "app.cookie.secure=false",
         "app.rag.enabled=false",
         "app.proxy.trust-forwarded-headers=true"
@@ -67,6 +66,7 @@ class ConcurrencyStormIntegrationTest {
     @LocalServerPort private int port;
     @org.springframework.beans.factory.annotation.Value("${spring.data.redis.port}") private int redisPort;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private org.springframework.context.ApplicationContext context;
     @Autowired private JwtUtils jwt;
     @Autowired private ObjectMapper json;
 
@@ -81,6 +81,11 @@ class ConcurrencyStormIntegrationTest {
         // 测试不许连开发机上的真 Redis（src/test/resources/application.properties）：连了的话幂等结果跨测试串，
         // 「同一个键套用 20 次」会拿到上一次跑剩下的「成功」、一条任务都不建 —— 这一轮就是这么时好时坏的
         org.junit.jupiter.api.Assertions.assertNotEquals(6379, redisPort, "集成测试连到了开发机的 Redis");
+        // 定时任务在测试上下文里不许跑（SchedulingConfig + 测试的 application.properties）：跑的话 RAG worker 每秒领作业、
+        // 测试结束卡在停掉的 MySQL 上 30 秒（第十四轮）
+        org.junit.jupiter.api.Assertions.assertFalse(context.containsBean(
+                org.springframework.scheduling.config.TaskManagementConfigUtils.SCHEDULED_ANNOTATION_PROCESSOR_BEAN_NAME),
+                "集成测试的上下文里定时任务开着");
         String name = "storm_" + PEER.incrementAndGet();
         jdbc.update("INSERT INTO sys_user(username, password, nickname, role, status, deleted) VALUES (?, 'x', ?, 'USER', 1, 0)", name, name);
         userId = jdbc.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, name);
@@ -167,6 +172,35 @@ class ConcurrencyStormIntegrationTest {
         for (Reply r : replies) {
             assertTrue(r.code() == 200 || r.message().contains("已存在") || r.status() == 429, "失败的那些没说清原因：" + r.body());
         }
+    }
+
+    @Test
+    @DisplayName("同时新建 20 个例行计划、20 个任务（双击、两个标签页）：各建出 20 个、成就积分只加一次，没有服务器出错")
+    void 同时新建() throws Exception {
+        // 第十四轮真浏览器里双击「创建例行计划」撞出来的：两个请求同时解锁同一个成就 → 死锁 → MySQL 回滚整个事务，
+        // 而重试注解在里层（成就检查）上又跑了一遍 —— 外层事务早被标成 rollback-only，提交时 UnexpectedRollbackException
+        List<Reply> routines = storm(k -> req("/api/routine").POST(body("{\"title\":\"风暴例行" + k + "\",\"frequency\":\"DAILY\"}")).build());
+        calm("同时新建例行计划", routines);
+        assertEquals(N, jdbc.queryForObject("SELECT COUNT(*) FROM study_routine WHERE user_id = ? AND deleted = 0", Integer.class, userId));
+        List<Reply> tasks = storm(k -> req("/api/task").POST(body("{\"title\":\"风暴任务" + k + "\",\"quadrant\":2}")).build());
+        calm("同时新建任务", tasks);
+        assertEquals(N, jdbc.queryForObject("SELECT COUNT(*) FROM study_task WHERE user_id = ? AND deleted = 0", Integer.class, userId));
+        Integer unlockedPoints = jdbc.queryForObject("SELECT COALESCE(SUM(d.points), 0) FROM user_achievement ua JOIN achievement_def d ON d.id = ua.achievement_id WHERE ua.user_id = ?",
+                Integer.class, userId);
+        assertTrue(unlockedPoints > 0, "这一场应当解锁了成就（否则没考到并发解锁）");
+        assertEquals(unlockedPoints, jdbc.queryForObject("SELECT COALESCE(achievement_points, 0) FROM sys_user WHERE id = ?", Integer.class, userId),
+                "成就积分应当正好是解锁的那几个成就的分数之和（加重了 = 重试时重复加分）");
+    }
+
+    @Test
+    @DisplayName("带 Idempotency-Key 的接口上填错日期：回 400、说清应当像什么，不回 Java 原文（第十四轮：幂等那一层原来把异常包成带原文的业务错误）")
+    void 幂等接口上的坏日期() throws Exception {
+        long plan = approvedPlan();
+        Reply r = send(req("/api/shared-plans/" + plan + "/apply").header("Idempotency-Key", "bad-date-" + plan)
+                .POST(body("{\"startDate\":\"2026-02-30\"}")).build());
+        assertEquals(400, r.code(), r.body() == null ? "" : r.body().toString());
+        assertTrue(r.message().contains("应当像 2026-09-28") && !r.message().contains("could not be parsed"), r.message());
+        calm("幂等接口上的坏日期", List.of(r));
     }
 
     @Test
