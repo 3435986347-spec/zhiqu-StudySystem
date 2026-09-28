@@ -70,7 +70,17 @@
   function redirectToLogin() {
     if (redirecting) return;
     clearAuth();
-    if (page !== 'index.html') { redirecting = true; location.replace('index.html?login=1'); }
+    // 带上原来那一页：登录之后回到这里（第十五轮：原来一律回看板，在哪一页、打了什么都没了 —— 打的字由草稿接住，见 drafts）
+    if (page !== 'index.html') { redirecting = true; location.replace('index.html?login=1&next=' + encodeURIComponent(page + location.search)); }
+  }
+  /**
+   * 登录之后去哪：只认本站的「xxx.html」加查询串 —— 不是本站的（//别处、https:、javascript:、../）一律回看板，
+   * 否则 index.html?login=1&next=https://钓鱼站 就是一个开放跳转。
+   */
+  function safeNext(raw) {
+    var next = String(raw || '');
+    if (/^[a-z0-9_-]+\.html(\?[^#\s\\]*)?$/i.test(next) && !/^index\.html/i.test(next) && next.indexOf('//') < 0) return next;
+    return 'dashboard.html';
   }
   function isAuthFailure(json) {
     if (!json) return false;
@@ -380,6 +390,102 @@
     var mine = (latestSeq[key] = (latestSeq[key] || 0) + 1);
     return function () { return latestSeq[key] === mine; };
   }
+  // ── 打了一半的字：刷新、关页、登录过期、断网之后还在（第十五轮） ──────────────────
+  //
+  // 一处存：localStorage「zq.draft.<用户 id>.<键>」→ {text, at, …}。按用户分开（公用电脑上换个人登录看不到上一个人的）；
+  // 空了就删；太长（DRAFT_MAX_CHARS）、存储满了、被禁用（隐私模式）就不存 —— 不报错，功能照常，只是没有草稿；
+  // DRAFT_TTL_MS 之后当没有。主动退出时删掉这个人的全部草稿；登录过期不删。
+  var DRAFT_PREFIX = 'zq.draft.';
+  var DRAFT_MAX_CHARS = 200000;
+  var DRAFT_TTL_MS = 14 * 24 * 3600 * 1000;
+  var DRAFT_SAVE_DELAY_MS = 400;
+  function draftStorageKey(key) {
+    var uid = state.user && state.user.id;
+    return uid == null || !key ? null : DRAFT_PREFIX + uid + '.' + key;
+  }
+  var drafts = {
+    save: function (key, text, extra) {
+      var k = draftStorageKey(key); if (!k) return false;
+      try {
+        var t = text == null ? '' : String(text);
+        if (!t.trim()) { localStorage.removeItem(k); return true; }
+        if (t.length > DRAFT_MAX_CHARS) return false;
+        localStorage.setItem(k, JSON.stringify(Object.assign({}, extra || {}, { text: t, at: Date.now() })));
+        return true;
+      } catch (e) { return false; }
+    },
+    load: function (key) {
+      var k = draftStorageKey(key); if (!k) return null;
+      try {
+        var v = JSON.parse(localStorage.getItem(k) || 'null');
+        if (!v || typeof v.text !== 'string') return null;
+        if (!(Date.now() - (v.at || 0) <= DRAFT_TTL_MS)) { localStorage.removeItem(k); return null; }
+        return v;
+      } catch (e) { return null; }
+    },
+    clear: function (key) {
+      var k = draftStorageKey(key); if (!k) return;
+      try { localStorage.removeItem(k); } catch (e) {}
+    },
+    /** 只在存着的还是这段字时才删 —— 发出去之后用户又打了新的一句，那句不能跟着删。 */
+    clearIf: function (key, text) {
+      var d = drafts.load(key);
+      if (d && d.text.trim() === String(text || '').trim()) drafts.clear(key);
+    },
+    clearUser: function () {
+      var uid = state.user && state.user.id; if (uid == null) return;
+      try {
+        var mine = DRAFT_PREFIX + uid + '.';
+        Object.keys(localStorage).filter(function (k) { return k.indexOf(mine) === 0; }).forEach(function (k) { localStorage.removeItem(k); });
+      } catch (e) {}
+    }
+  };
+  /**
+   * 一个输入框的草稿。keyFn 给出此刻该存在哪个键（聊天框跟着 Notebook 变）。框是空的而有草稿就填回去；
+   * 打字之后 DRAFT_SAVE_DELAY_MS 存一次、离开页面时马上存 —— 只存用户打过字的（程序把框清空不算，
+   * 否则发出去之后一刷新，空框会把还没确认送达的那句从草稿里抹掉）。
+   */
+  function keepDraft(el, keyFn, onRestore) {
+    if (!el) return { flush: function () {}, reload: function () {}, clear: function () {}, key: function () { return null; } };
+    var keyOf = typeof keyFn === 'function' ? keyFn : function () { return keyFn; };
+    var shownKey = keyOf();
+    var timer = null;
+    var dirty = false;
+    function flush() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (!dirty) return;
+      dirty = false;
+      drafts.save(shownKey, el.value);
+    }
+    function show() {
+      var d = drafts.load(shownKey);
+      if (d && !el.value) { el.value = d.text; if (onRestore) onRestore(); }
+    }
+    show();
+    el.addEventListener('input', function () {
+      dirty = true;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(flush, DRAFT_SAVE_DELAY_MS);
+    });
+    window.addEventListener('pagehide', flush);
+    return {
+      flush: flush,
+      /** 换了键（换 Notebook）：先把这边打的存到原来的键，再换成那边的草稿。 */
+      reload: function () {
+        flush();
+        shownKey = keyOf();
+        el.value = '';
+        show();
+        if (onRestore) onRestore();
+      },
+      clear: function (key) {
+        if (timer) { clearTimeout(timer); timer = null; }
+        dirty = false;
+        drafts.clear(key || shownKey);
+      },
+      key: function () { return shownKey; }
+    };
+  }
   async function safe(name, fn, options) {
     try { return await fn(); } catch (e) {
       if (redirecting) return;
@@ -461,7 +567,7 @@
       safe('登录', async function () {
         var data = await api.post('/auth/login', { username: ins[0].value.trim(), password: ins[1].value, rememberMe: remember });
         setAuth(data, remember);
-        location.href = 'dashboard.html';
+        location.href = safeNext(new URLSearchParams(location.search).get('next'));
       });
     });
     if (reg) reg.addEventListener('submit', function (e) {
@@ -484,7 +590,7 @@
     });
   }
   function bootIndex() {
-    if (token()) { location.href = 'dashboard.html'; return; }
+    if (token()) { location.href = safeNext(new URLSearchParams(location.search).get('next')); return; }
     $all('[data-auth]').forEach(function (b) { b.onclick = function () { openAuthModal(b.getAttribute('data-auth')); }; });
     var q = new URLSearchParams(location.search);
     if (q.get('login') != null) openAuthModal(q.get('login') === 'register' ? 'register' : 'login');
@@ -678,6 +784,11 @@
     var newSection = $all('section').find(function (s) { return /新建例行计划/.test(s.textContent); });
     var startInput = newSection && $('input[type="date"]', newSection);
     if (startInput && !startInput.value) startInput.value = today();
+    // 标题、说明打了一半刷新也还在（第十五轮）；建好之后清空（见 createRoutineFromForm）
+    if (newSection && !state.routineDrafts) {
+      state.routineDrafts = [keepDraft($('input[placeholder*="英语单词"]', newSection), 'routine.new.title'),
+        keepDraft($('textarea', newSection), 'routine.new.desc')];
+    }
     // 星期选择器接线（点亮/熄灭），仅前端状态，提交时读取
     $all('#zq-wd button').forEach(function (b) {
       if (b.dataset.wired) return; b.dataset.wired = '1';
@@ -780,6 +891,7 @@
       // 回来之后多点的那一下（第十四轮真浏览器：双击后又补了一下）会拿同一个标题再建一个
       $('input[placeholder*="英语单词"]', section).value = '';
       $('textarea', section).value = '';
+      (state.routineDrafts || []).forEach(function (d) { d.clear(); });
       toast('例行计划已创建'); await loadRoutines();
     });
   }
@@ -1058,7 +1170,7 @@
       });
     }
     var logout = $('a[href="index.html"].zq-btn-ghost');
-    if (logout) logout.onclick = function (e) { e.preventDefault(); safe('退出', async function () { await api.post('/auth/logout', {}); clearAuth(); location.href = 'index.html'; }); };
+    if (logout) logout.onclick = function (e) { e.preventDefault(); safe('退出', async function () { await api.post('/auth/logout', {}); drafts.clearUser(); clearAuth(); location.href = 'index.html'; }); };
     var pw = $all('section').find(function (s) { return /修改密码/.test(s.textContent); });
     if (pw) {
       var pis = $all('input', pw), b = $('.zq-btn', pw);
@@ -1716,6 +1828,10 @@
    */
   async function paintWikiDoc(p, opts) {
     opts = opts || {};
+    // 正在编辑时点了目录里的别的页：原来改的字直接被新页面冲掉，一声不吭。先存成草稿，回到这一页时能恢复
+    if (state.wikiDirty) saveWikiDraftNow();
+    state.wikiDirty = false;
+    removeWikiDraftBar();
     trackWikiNavigation(p, opts);
     state.wikiCur = p;
     removeWikiActionBar();
@@ -1738,6 +1854,70 @@
     if (insp) insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">点击正文即可编辑 · [[双链]]可跳转</span></div>';
     paintWikiTree();
     paintWikiTabs();
+    offerWikiDraft(p);
+  }
+
+  // ── 知识 Wiki 没保存的改动（第十五轮） ─────────────────────────────────
+  //
+  // 编辑时打的字存成草稿（drafts，键 wiki.<页 id>，带着开始改时的版本号 base）：刷新、关页、登录过期、点了别的页都还在，
+  // 回到这一页时顶上一条「恢复 / 丢弃」。恢复后保存用的是 base —— 这一页之后被别人改过的话，乐观锁会挡住，
+  // 不会拿一份旧草稿盖掉新内容；挡住时草稿还在、字还在编辑框里。
+  function wikiDraftKey(p) { return 'wiki.' + p.id; }
+  function currentWikiMarkdown() {
+    var doc = $('#zq-doc');
+    if (!doc || doc.dataset.editing !== '1') return null;
+    return doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
+  }
+  function saveWikiDraftNow() {
+    if (state.wikiDraftTimer) { clearTimeout(state.wikiDraftTimer); state.wikiDraftTimer = null; }
+    var p = state.wikiCur, md = currentWikiMarkdown();
+    if (!p || p.id == null || md == null) return;
+    drafts.save(wikiDraftKey(p), md, { base: p._draftBase != null ? p._draftBase : p.version, title: p.title });
+  }
+  function wireWikiDrafts(doc) {
+    if (!doc || doc.dataset.draftWired) return;
+    doc.dataset.draftWired = '1';
+    // 源码模式的 textarea 在 doc 里面，它的 input 事件也冒泡到这里
+    doc.addEventListener('input', function () {
+      if (doc.dataset.editing !== '1') return;
+      state.wikiDirty = true;
+      if (state.wikiDraftTimer) clearTimeout(state.wikiDraftTimer);
+      state.wikiDraftTimer = setTimeout(saveWikiDraftNow, 800);
+    });
+    window.addEventListener('pagehide', function () { if (state.wikiDirty) saveWikiDraftNow(); });
+    // 编辑了还没保存就要走：草稿先存下，浏览器再问一句
+    window.addEventListener('beforeunload', function (e) {
+      if (!state.wikiDirty) return;
+      saveWikiDraftNow();
+      e.preventDefault();
+      e.returnValue = '';
+    });
+  }
+  function removeWikiDraftBar() { var b = document.getElementById('zq-wiki-draft'); if (b) b.remove(); }
+  function offerWikiDraft(p) {
+    removeWikiDraftBar();
+    var doc = $('#zq-doc');
+    if (!doc || !p || p.id == null) return;
+    var d = drafts.load(wikiDraftKey(p));
+    if (!d || d.text === (p.content || '')) return;
+    var bar = document.createElement('div');
+    bar.id = 'zq-wiki-draft';
+    bar.style.cssText = 'display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:9px 12px;border:1px solid var(--zq-tint-strong);border-radius:var(--zq-rs);background:var(--zq-tint);font-size:12.5px;color:var(--zq-text);';
+    var when = new Date(d.at);
+    var moved = d.base != null && p.version != null && Number(d.base) !== Number(p.version);
+    bar.innerHTML = '<span style="flex:1;">这一页有没保存的修改（' + esc((when.getMonth() + 1) + '/' + when.getDate() + ' ' + String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0'))
+      + '）' + (moved ? '。之后这一页被改过，恢复后保存时会先问你' : '') + '</span>'
+      + '<button class="zq-btn" data-draft="restore" style="height:28px;">恢复</button><button class="zq-btn-ghost" data-draft="drop" style="height:28px;">丢弃</button>';
+    doc.parentNode.insertBefore(bar, doc);
+    $('[data-draft="restore"]', bar).onclick = function () {
+      removeWikiDraftBar();
+      enterWikiEdit();
+      if (doc.dataset.source !== '1') toggleWikiSource();
+      var ta = $('#zq-src-ta'); if (ta) ta.value = d.text;
+      p._draftBase = d.base != null ? d.base : p.version;
+      state.wikiDirty = true;
+    };
+    $('[data-draft="drop"]', bar).onclick = function () { drafts.clear(wikiDraftKey(p)); removeWikiDraftBar(); };
   }
   // ── 知识 Wiki 的标签页 ────────────────────────────────────────────────
   //
@@ -2073,6 +2253,7 @@
   function ensureWikiEditing() { var doc = $('#zq-doc'); if (doc && doc.dataset.editing !== '1') enterWikiEdit(); }
   function enterWikiEdit() {
     var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || doc.dataset.editing === '1') return;
+    wireWikiDrafts(doc);
     doc.dataset.editing = '1'; doc.dataset.source = '0';
     doc.contentEditable = 'true'; doc.style.outline = 'none';
     doc.focus();
@@ -2160,7 +2341,13 @@
     doc.parentNode.appendChild(bar);
     $('#zq-wiki-save').onclick = saveWikiEdit;
     // history:true —— 取消编辑是重绘当前页，不是一次跳转，不该压进返回栈
-    $('#zq-wiki-cancel').onclick = function () { paintWikiDoc(state.wikiCur, { history: true }); };
+    $('#zq-wiki-cancel').onclick = function () {
+      // 取消 = 明确不要这些改动：草稿一起删，不再提示恢复
+      var cur = state.wikiCur;
+      state.wikiDirty = false;
+      if (cur) { drafts.clear(wikiDraftKey(cur)); cur._draftBase = null; }
+      paintWikiDoc(state.wikiCur, { history: true });
+    };
     if ($('#zq-wiki-del')) $('#zq-wiki-del').onclick = function () { deleteWikiPage(state.wikiCur); };
   }
   function isSystemWikiPage(p) { return !!p && ['INDEX', 'LOG', 'SCHEMA'].indexOf(String(p.pageType || '').toUpperCase()) >= 0; }
@@ -2172,11 +2359,28 @@
     }
   }
   function removeWikiActionBar() { var b = document.getElementById('zq-wiki-actions'); if (b) b.remove(); }
-  function saveWikiEdit() {
+  async function saveWikiEdit() {
     var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p) return;
     var md = doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
+    // 恢复的是一份旧版本上改的草稿，而这一页之后被改过：直接按旧版本存会被乐观锁挡住，而且每次都挡 —— 刷新重试也一样，
+    // 草稿永远存不进去（第十五轮真浏览器里走出来的死胡同）。所以先明说，用户点了「替换」才按现在的版本存。
+    if (p._draftBase != null && p.version != null && Number(p._draftBase) !== Number(p.version)) {
+      var replace = await askConfirm({
+        title: '这一页在你离开之后被改过',
+        message: '编辑框里是你当时没保存的那一版。直接保存会用它替换现在的内容 —— 别处后来加的会没了。\n\n想先对照的话点「取消」，在另一个标签页打开这一页看看现在是什么样。',
+        okText: '用我的这一版替换',
+        danger: true
+      });
+      if (!replace) return;
+      p._draftBase = p.version;
+    }
     safe('保存知识页', async function () {
-      var updated = await api.put('/knowledge/pages/' + p.id, { title: p.title, content: md, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned, version: p.version });
+      var baseVersion = p._draftBase != null ? p._draftBase : p.version;
+      var updated = await api.put('/knowledge/pages/' + p.id, { title: p.title, content: md, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned, version: baseVersion });
+      // 存上了才删草稿；被乐观锁挡住时走不到这里，草稿和编辑框里的字都还在
+      drafts.clear(wikiDraftKey(p));
+      p._draftBase = null;
+      state.wikiDirty = false;
       p.content = updated && updated.content != null ? updated.content : md;
       if (updated && updated.version != null) p.version = updated.version;
       if (updated && updated.updatedAt) p.updatedAt = updated.updatedAt;
@@ -2284,6 +2488,8 @@
           $('#zq-imp-text-box', b).style.display = up ? 'none' : '';
           $('#zq-imp-file-box', b).style.display = up ? '' : 'none';
         };
+        // 粘贴的一大段原文：弹窗被遮罩点掉、刷新、登录过期都还在（第十五轮）；导入成功才删
+        var contentDraft = keepDraft($('#zq-imp-content', b), 'wiki.import.content');
         $('#zq-imp-cancel', b).onclick = h.close;
         $('#zq-imp-ok', b).onclick = function () {
           var title = $('#zq-imp-title', b).value.trim();
@@ -2305,6 +2511,7 @@
           if (!title) return toast('请填写来源标题', 'error');
           safe('导入来源', async function () {
             var saved = await api.post('/knowledge/sources', { title: title, content: content, sourceType: type });
+            contentDraft.clear();
             h.close(); toast('来源已导入' + truncatedNote(saved));
           });
         };
@@ -2748,6 +2955,7 @@
     if (thinkBtn) thinkBtn.onclick = function () { aiToggle('think'); };
     if (sendBtn) sendBtn.onclick = sendAiMessage;
     if (draft) {
+      state.chatDraft = keepDraft(draft, chatDraftKey, growDraft);
       draft.addEventListener('input', growDraft);
       draft.addEventListener('keydown', function (event) {
         // ⌘/Ctrl + 回车发送，单独回车换行 —— 与多数聊天工具一致。
@@ -3935,6 +4143,7 @@
     });
   }
   function renderNotebooks() {
+    if (state.chatDraft && state.chatDraft.key() !== chatDraftKey()) state.chatDraft.reload();
     var host = $('#zq-notebooks'); if (!host) return;
     renderCurrentNotebookLabel();
     host.innerHTML = (state.notebooks || []).map(function (nb) {
@@ -4232,6 +4441,8 @@
    * 输入框自适应高度。先置 auto 再读 scrollHeight —— 不置的话 scrollHeight 会被
    * 当前高度撑住，内容变少时收不回去。
    */
+  /** 聊天框的草稿按 Notebook 分开存。 */
+  function chatDraftKey() { return 'chat.' + (state.notebookId || 'none'); }
   function growDraft() {
     var el = $('#zq-draft');
     if (!el) return;
@@ -4242,6 +4453,12 @@
     if (state.aiSending) return; // 发送中保护:双击/回车连发只算一次
     var inp = $('#zq-draft'), txt = inp && inp.value.trim();
     if (!txt) return;
+    // 草稿等服务器确认收到了这条消息（任一事件带 userMessageId）才删；没收到就把字放回输入框（第十五轮）。
+    // 原来一按发送就清空：没配模型、被限流、一刷新，这句话就没了。
+    if (state.chatDraft) state.chatDraft.flush();
+    var draftKeyAtSend = state.chatDraft ? state.chatDraft.key() : null;
+    var stored = false;
+    var gotEvent = false;
     inp.value = '';
     inp.style.height = DRAFT_BASE_HEIGHT + 'px'; // 收回单行，否则清空后仍撑着上一条的高度
     state.aiSending = true;
@@ -4303,6 +4520,11 @@
       await safe('AI 发送', async function () {
       try {
         await streamAiChat(body, function (event, data) {
+          gotEvent = true;
+          if (!stored && data && data.userMessageId) {
+            stored = true;
+            if (draftKeyAtSend) drafts.clearIf(draftKeyAtSend, txt);
+          }
           if (event === 'message.delta') {
             assistant.content += (data.text || data.delta || data.content || '');
             // 只改这一条气泡。退回全量渲染的两种情形：节点还没渲染出来（第一个增量），
@@ -4391,6 +4613,12 @@
     } finally {
       state.aiSending = false;
       if (sendButton) { sendButton.disabled = false; sendButton.textContent = '发送'; }
+      // 服务器没收到这句（没配模型、限流、根本没连上）：字放回输入框，草稿里也还在 —— 改一改就能再发。
+      // 收到了（事件带过 userMessageId）的不放回：那会诱导再发一遍、存两条
+      if (!stored && (failed || !gotEvent) && sameNb() && inp && !inp.value.trim()) {
+        inp.value = txt;
+        growDraft();
+      }
       // 断线接回：此刻 aiSending 已经是 false，loadAiMessages 末尾的 watchStreamingMessages
       // 才会真的开始轮询，把后端继续生成的部分续上。不用用户手动刷新。
       if (disconnected) loadAiMessages().catch(function () {});

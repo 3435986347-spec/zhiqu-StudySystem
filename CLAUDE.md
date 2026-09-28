@@ -189,7 +189,7 @@ fail tells you nothing (`kill(pid, 0)` reports zombies as alive — see 命令�
   so the frontend must check `result.code === 200`.
 - **`security/`** — Stateless JWT. `JwtUtils` signs/parses (subject = userId), `JwtAuthenticationFilter`
   reads `Authorization: Bearer <token>`, `SecurityUtils.getCurrentUserId()` scopes every query.
-  `RateLimitFilter` throttles per IP: auth 12/60s, `/api/ai/**` 40/60s, other `/api/**` 180/60s
+  `RateLimitFilter` throttles per IP: auth 12/60s, **non-GET** `/api/ai/**` 40/60s, other `/api/**` 180/60s
   (429 `请求过于频繁`). Worth remembering when scripting E2E tests — creating many users trips it.
   The client IP comes from `ClientIpResolver`, which honours `X-Forwarded-For` **only** when
   `app.proxy.trust-forwarded-headers=true` *and* the immediate peer is loopback/site-local —
@@ -683,6 +683,23 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   （退避重试，最长 5 秒一次），关的时候各等一阵，二十几个加起来过了 30 秒。测试里 `spring.datasource.hikari.minimum-idle=0`：
   没人等连接就不补。**一个修复不等于那个症状没了**：修完第一个原因要重跑全量看那一行还在不在。
 
+### 第十五轮（2026-09-28）：不丢字 —— 刷新、关页、登录过期、断网时用户打的字还在
+
+计划与结果在 `docs/rounds/round-15.md`。全文件原来没有一处 `beforeunload`、聊天框草稿不存、登录过期一律回看板。
+
+- **草稿只有一套**（`zhiqu-api.js` 的 `drafts` / `keepDraft`，判据 `drafts-check.js` 直接跑发布的实现）：localStorage
+  「zq.draft.<用户 id>.<键>」，按用户分开；空了删、太长（20 万字）/ 存储满了 / 隐私模式就不存、不报错；14 天过期；
+  **主动退出删这个人的草稿，登录过期不删**。只存用户打过字的：程序把框清空（发送）不算，否则一刷新，空框会把还没确认送达的那句抹掉。
+- **聊天框**按 Notebook 分开存；**服务器确认收到（任一事件带 `userMessageId`）才删**；没收到（没配模型、限流、没连上）
+  把字放回输入框。`stream.start` 在用户消息落库之后才发，所以它是「存上了」的可靠信号。
+- **Wiki 编辑**：打字时存草稿（带开始改时的版本号 base）、换页前先存、关页前浏览器问一句；回到这一页顶上一条「恢复 / 丢弃」。
+  恢复后保存按 base 存 —— 这一页之后被改过时乐观锁挡住，**然后每次都挡**（刷新重试也一样，草稿永远存不进去：真浏览器里走出来的
+  死胡同），所以改成保存前先明说「别处后来改过，用我的这一版替换吗」，点了才按现在的版本存。取消 = 丢草稿。
+- **登录过期**带着原来那一页跳去登录（`index.html?login=1&next=…`），登录后经 `safeNext` 回去 —— 只认本站的 `xxx.html`，
+  不然就是开放跳转。那一页上打的字由草稿接住。
+- **限流的 AI 桶只算写操作**：原来 `/api/ai/**` 的读也算进 40 次 / 分钟 —— AI 助手打开一次 6 个读，刷新六七次整页「加载失败」；
+  回答到一半刷新后每 2 秒轮询一次消息，长回答一分多钟就把桶用完。刷新暴力测试撞出来的（`RateLimitBucketsTest`）。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -732,7 +749,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260928-once-per-click`.
+  old bundle. Current token: `20260928-keep-drafts`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

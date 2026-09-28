@@ -33,7 +33,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String path = request.getRequestURI();
-        Limit limit = limitFor(path);
+        Limit limit = limitFor(request.getMethod(), path);
         if (limit != null && !allow(clientIpResolver.resolve(request) + ":" + limit.key, limit.maxRequests, limit.windowMs)) {
             response.setStatus(429);
             response.setCharacterEncoding(StandardCharsets.UTF_8.name());
@@ -44,7 +44,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private Limit limitFor(String path) {
+    Limit limitFor(String method, String path) {
         if (path.equals("/api/auth/login") || path.equals("/api/auth/register")) {
             return new Limit("auth", 12, 60_000);
         }
@@ -63,7 +63,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (path.equals("/api/harness/model/stream")) {
             return new Limit("harness-model", 60, 60_000);
         }
-        if (path.startsWith("/api/ai/")) {
+        // AI 这一桶挡的是贵的那些（发消息调模型、上传解析、抓网页），所以只算写操作。原来 /api/ai/** 一律算进来：
+        // AI 助手打开一次就有 6 个读（Notebook、模型、资料、消息、执行轨迹…），刷新六七次就被锁一分钟、整页「加载失败」；
+        // 回答到一半刷新后页面每 2 秒轮询一次消息，长回答一分多钟就把这一桶用完（第十五轮刷新暴力测试撞见的）。读走下面的通用桶
+        if (path.startsWith("/api/ai/") && !"GET".equalsIgnoreCase(method)) {
             return new Limit("ai", 40, 60_000);
         }
         if (path.startsWith("/api/")) {
@@ -81,6 +84,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
 
-    private record Limit(String key, int maxRequests, long windowMs) {
+    record Limit(String key, int maxRequests, long windowMs) {
     }
 }
