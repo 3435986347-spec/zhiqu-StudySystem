@@ -22,7 +22,10 @@ export const SKIPPED_DIRS = new Set(['.git', 'node_modules', 'target', 'build', 
 const MAX_ENTRIES = 500;
 const READ_MAX_LINES = 2000;
 const READ_MAX_CHARS = 100_000;
-const SEARCH_MAX_FILES = 3000;
+// 一次搜索最多看这么多个文件、最多花这么久（第十八轮：原来 3000 个 —— 五万个文件的项目里只搜了开头几十个目录就停，
+// 「0 处」而要找的那个在后面；node_modules、build 这类本来就跳过）
+const SEARCH_MAX_FILES = 100000;
+const SEARCH_TIME_BUDGET_MS = 5000;
 const SEARCH_MAX_HITS = 80;
 const SEARCH_MAX_LINE_CHARS = 400;
 /** 搜索时单个文件最多流式扫这么大；再大的跳过并说出来（同步扫，太大会让命令行卡住） */
@@ -350,6 +353,8 @@ export class LocalTools {
     // 跳过了什么要说出来（第十六轮）：原来太大的、读不了的一声不吭地跳过 —— 「1 处」其实是「在能看的那些里 1 处」，
     // 模型据此下「别处没有」的结论
     const skipped = { huge: [], binary: [], denied: 0 };
+    const started = Date.now();
+    const buf = Buffer.alloc(CHUNK_BYTES);      // 一次搜索共用一块（原来每个文件新分配 1MB，五万个文件就是五十 GB 的分配）
     const onLine = (file, lineNo, line) => {
       if (!(ic ? line.toLowerCase() : line).includes(needle)) return true;
       if (hits.length >= SEARCH_MAX_HITS) { truncated = `命中太多，只列出了前 ${SEARCH_MAX_HITS} 条`; return false; }
@@ -362,7 +367,6 @@ export class LocalTools {
       let fd;
       try { fd = fs.openSync(file, 'r'); } catch (e) { if (unreadable(e)) skipped.denied += 1; return; }
       try {
-        const buf = Buffer.alloc(CHUNK_BYTES);
         let decoder = null;
         let pos = 0;
         let lineNo = 1;
@@ -401,6 +405,7 @@ export class LocalTools {
         try { st = fs.statSync(child); } catch { continue; }
         if (st.size > SEARCH_STREAM_MAX_BYTES) { skipped.huge.push(`${this.guard.display(child)}（${formatBytes(st.size)}）`); continue; }
         if (++files > SEARCH_MAX_FILES) { truncated = `文件太多，只搜了前 ${SEARCH_MAX_FILES} 个`; return; }
+        if (Date.now() - started > SEARCH_TIME_BUDGET_MS) { truncated = `搜了 ${SEARCH_TIME_BUDGET_MS / 1000} 秒（${files - 1} 个文件）还没搜完，先停在这里`; return; }
         scan(child);
       }
     };

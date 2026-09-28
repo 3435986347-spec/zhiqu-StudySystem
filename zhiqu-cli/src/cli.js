@@ -221,7 +221,7 @@ export function resumeInto(ctx, id) {
   const left = unfinished(ctx.todos);
   if (left.length) ctx.ui.note(`· 任务清单还有 ${left.length} 项没做完：${left.map((t) => t.content).join('；')}`);
   ctx.store.touch(id);
-  replayTranscript(ctx.ui, said, { verbose: ctx.verbose });
+  replayTranscript(ctx.ui, said, { verbose: ctx.verbose, fullLog: path.relative(ctx.root, ctx.store.file(id)) });
   ctx.ui.note(`· 接着「${loaded.meta.title || '（无标题）'}」这段会话（${loaded.messages.length} 条记录${loaded.broken ? `，${loaded.broken} 行坏了已跳过` : ''}）`);
 }
 

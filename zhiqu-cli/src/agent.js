@@ -30,7 +30,7 @@ export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read
  * 模型写在工具调用之间的字、读 / 搜 / 列目录这几步，只在状态行的「思考中」后面一闪（ui.startThinking）。
  * ctx.verbose（/verbose、配置 showThinking）切回全显示。
  */
-export const QUIET_TOOLS = new Set([...READ_TOOLS, ...REMOTE_READ_TOOLS, 'load_skill']);
+export const QUIET_TOOLS = new Set([...READ_TOOLS, ...REMOTE_READ_TOOLS, 'load_skill', 'find_mcp_tool']);
 const quiet = (ctx) => !ctx.verbose;
 
 /**
@@ -63,6 +63,49 @@ export function exitPlanSchema() {
   };
 }
 
+// ── MCP 工具太多时按需给（第十八轮） ─────────────────────────────────────
+//
+// 接了几个 MCP 服务器、几百个工具，每一轮都把全部定义发给模型：300 个工具实测 15 万字 —— 64K 窗口的模型一半以上的地方
+// 被工具定义占着，而且每一轮都占。超过窗口的一份（MCP_SCHEMA_SHARE，按一个 token 约 3 个字估）就不全发，
+// 改给一个 find_mcp_tool：模型按关键字找，找到的那几个从下一次调用起连定义一起给。
+export const MCP_SCHEMA_SHARE = 0.1;
+const FIND_MCP_TOOL = 'find_mcp_tool';
+const FIND_MCP_LIMIT = 8;
+
+export function mcpOverBudget(ctx, schemas) {
+  const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
+  return JSON.stringify(schemas).length > window * 3 * MCP_SCHEMA_SHARE;
+}
+
+export function findMcpSchema(count) {
+  return {
+    type: 'function',
+    function: {
+      name: FIND_MCP_TOOL,
+      description: `按关键字找 MCP 工具（接了 ${count} 个，太多，不一次全给你）。找到的工具从下一步起就能直接调用。`
+        + '要用外部系统（数据库、工单、日历、浏览器……）时先用它找；关键字用中文英文都行，可以给好几个词。',
+      parameters: { type: 'object', properties: { query: { type: 'string', description: '要找的工具的关键字，比如「issue 创建」「calendar」' } }, required: ['query'] },
+    },
+  };
+}
+
+/** 按关键字给 MCP 工具打分：名字、说明里命中几个词。命中的放进 ctx.mcpActive。 */
+export function findMcpTools(ctx, schemas, query) {
+  const words = String(query || '').toLowerCase().split(/[\s,，、]+/).filter(Boolean);
+  if (!words.length) return { error: '没有给关键字' };
+  const scored = schemas.map((t) => {
+    const hay = `${t.function.name} ${t.function.description || ''}`.toLowerCase();
+    return { t, score: words.filter((w) => hay.includes(w)).length };
+  }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, FIND_MCP_LIMIT);
+  if (!scored.length) return { content: `没有找到和「${query}」相关的 MCP 工具（一共 ${schemas.length} 个）。换个关键字试试。`, summary: '0 个' };
+  ctx.mcpActive = ctx.mcpActive || new Set();
+  for (const { t } of scored) ctx.mcpActive.add(t.function.name);
+  return {
+    content: `找到 ${scored.length} 个，从下一步起可以直接调用：\n${scored.map(({ t }) => `- ${t.function.name}：${(t.function.description || '').slice(0, 160)}`).join('\n')}`,
+    summary: `${scored.length} 个`,
+  };
+}
+
 /** 这一轮给模型哪些工具。 */
 export function toolset(ctx) {
   const plan = ctx.mode === 'plan';
@@ -75,7 +118,20 @@ export function toolset(ctx) {
   }
   if (ctx.skills && ctx.skills.length) out.push({ schema: loadSkillSchema(), kind: 'skill' });
   out.push({ schema: todoSchema(), kind: 'todo' });   // 三档都有：plan 档列计划正用得上
-  if (ctx.mcp) for (const t of ctx.mcp.schemas({ readOnlyOnly: plan })) out.push({ schema: t, kind: 'mcp' });
+  if (ctx.mcp) {
+    const mcp = ctx.mcp.schemas({ readOnlyOnly: plan });
+    if (mcp.length && mcpOverBudget(ctx, mcp)) {
+      // 跟用户说一次（在这里说而不是启动时：启动时还不知道这个模型的窗口有多大）
+      if (!ctx.mcpDeferNoted && ctx.ui) {
+        ctx.mcpDeferNoted = true;
+        ctx.ui.note(`· MCP 工具有 ${mcp.length} 个（定义约 ${Math.round(JSON.stringify(mcp).length / 1000)}K 字，超过这个模型窗口的一成）：不一次全给模型，它要用时先用 find_mcp_tool 找`);
+      }
+      out.push({ schema: findMcpSchema(mcp.length), kind: 'mcp-find' });
+      for (const t of mcp) if (ctx.mcpActive && ctx.mcpActive.has(t.function.name)) out.push({ schema: t, kind: 'mcp' });
+    } else {
+      for (const t of mcp) out.push({ schema: t, kind: 'mcp' });
+    }
+  }
   if (plan) out.push({ schema: exitPlanSchema(), kind: 'plan' });
   if (ctx.goal && ctx.goal.status === 'active') out.push({ schema: goalSchema(), kind: 'goal' });
   // 同名只留第一个：本地工具优先于远程 / MCP（MCP 名字有前缀，本不会撞）
@@ -289,6 +345,7 @@ export function describeCall(name, args) {
     case 'delete_file': return `删除 ${args.path}`;
     case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
     case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
+    case 'find_mcp_tool': return `找 MCP 工具「${args.query}」`;
     case 'exit_plan_mode': return '提交计划';
     case TODO_TOOL: return '更新任务清单';
     case GOAL_TOOL: return `目标状态：${args.status}`;
@@ -514,6 +571,12 @@ async function executeTool(ctx, call, offered, signal) {
       return `用户没有允许调用 ${name}。`;
     }
     const r = await ctx.mcp.call(name, args, { signal });
+    if (r.error) { ui.result(r.error, false); return r.error; }
+    ui.result(r.summary);
+    return r.content;
+  }
+  if (kind === 'mcp-find') {
+    const r = findMcpTools(ctx, ctx.mcp.schemas({ readOnlyOnly: ctx.mode === 'plan' }), args.query);
     if (r.error) { ui.result(r.error, false); return r.error; }
     ui.result(r.summary);
     return r.content;

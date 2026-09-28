@@ -233,9 +233,12 @@ export class McpManager {
       this.servers.push(entry);
       const client = cfg.url ? new HttpClient(cfg) : new StdioClient(cfg, this.root);
       entry.client = client;
+      let timer = null;
       try {
         client.connect();
-        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error(`连接超时（${timeoutMs}ms）`)), timeoutMs));
+        // 连上了要把这个定时器清掉（第十八轮）：原来不清，它挂在那里 15 秒 —— 配了任何一个 MCP 服务器，
+        // zhiqu -p 回答完之后都要再等 15 秒才退出（事件循环里还有它）
+        const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`连接超时（${timeoutMs}ms）`)), timeoutMs); });
         await Promise.race([(async () => {
           await client.request('initialize', { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: 'zhiqu', version: VERSION } });
           client.initialized = true;
@@ -252,6 +255,8 @@ export class McpManager {
         entry.status = 'failed';
         entry.error = e.message;
         try { client.close(); } catch { /* 无所谓 */ }
+      } finally {
+        clearTimeout(timer);
       }
     }));
   }

@@ -32,16 +32,27 @@ function originOf(entry) {
  * 把 transcript() 的条目画出来。返回画了几条用户消息（没有就说没有）。
  * 和当时的显示同一个规矩（第十二轮）：默认不显示调工具那几条回复里的字（思考过程）、不显示读 / 搜 / 列目录；verbose 全显示。
  */
-export function replayTranscript(ui, entries, { verbose = false } = {}) {
+/** /resume 时回放最后几轮 */
+export const REPLAY_TURNS = 20;
+
+export function replayTranscript(ui, entries, { verbose = false, lastTurns = REPLAY_TURNS, fullLog = null } = {}) {
   const hiddenCalls = new Set();
   const said = entries.filter((e) => e.kind === 'message');
   if (!said.length) {
     ui.note('· 这段会话还没有聊天记录');
     return 0;
   }
+  // 只回放最后 lastTurns 轮（第十八轮）：原来整段打出来 —— 一段几万条的会话 /resume 往终端里灌三万行、2.7MB，
+  // 翻不回去、终端要画好几秒。一轮 = 从用户说的一句话开始
+  const turnStarts = [];
+  entries.forEach((e, i) => { if (e.kind === 'message' && e.message.role === 'user' && !originOf(e)) turnStarts.push(i); });
+  const from = turnStarts.length > lastTurns ? turnStarts[turnStarts.length - lastTurns] : 0;
   ui.line(ui.paint.dim('── 之前的记录 ──'));
+  if (from > 0) {
+    ui.note(`· 前面还有 ${turnStarts.length - lastTurns} 轮没显示，这里只显示最后 ${lastTurns} 轮${fullLog ? `（完整记录在 ${fullLog}）` : ''}`);
+  }
   let users = 0;
-  for (const e of entries) {
+  for (const e of entries.slice(from)) {
     if (e.kind === 'compact') {
       ui.note('· （这里压缩过一次：之后模型看到的是上面这些的摘要，这里照样显示原话）');
       continue;
