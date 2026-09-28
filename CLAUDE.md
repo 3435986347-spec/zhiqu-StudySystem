@@ -719,6 +719,24 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **打到终端上的字先 `termSafe`**（`render/term.js`）：文件名、diff、命令输出、模型的回答里的控制字符变成 `\x1b` 这样看得见的写法 ——
   原样打出去会被终端执行（一个叫 `\x1b[2J.js` 的文件，读它的时候屏幕就清空了）。自己上的颜色在这之后才加；`result` 保留颜色码。
 
+### 第十七轮（2026-09-28）：数据量的极端 —— 用了两年的账号
+
+计划与结果在 `docs/rounds/round-17.md`。在 zhiqu_verify 里造了一个三千条任务、八百多页 Wiki、两万六千条消息、两百个例行计划的账号
+（加密字段走接口、其余直接灌库），真浏览器逐页量。
+
+- **页面不许为了显示几十条取回全部**：新接口 `GET /api/task/page`（`{items, total, offset, limit}`，一页最多 500，
+  **按 id 兜底排序** —— 只按 updatedAt 排时并列的几条在两页之间先后不定，扰动实测翻页出现了重复的一条）。任务页一次 100 条 +「加载更多」、
+  页脚写真的总数（1.6MB / 四万多个节点 → 55KB / 一千多）；例行计划「从任务生成」20 条、番茄钟的任务下拉 50 条、提交参考计划 30 条。
+  `DataVolumeFrontendTest` 钉着「zhiqu-api.js 里没有 GET /task/list」。统计页的四象限饼图用 `/record/statistics` 已经数好的分布。
+- **统计页「已完成 / 总任务」一直是 0**：页面读 `completedTasks / totalTasks`，接口给的是 `completedTaskCount / totalTaskCount`。
+  判据用反射拿 `StudyStatisticsVO` 的字段名去核对页面读的每一个 `stat.xxx` —— 两边各自绿不算数。
+- **首页一周 1.1MB → 274KB**：`routineInstances`、`rangeTasks` 页面从不读（和 days 里的重复）；每一条例行计划原来把整行二十几项原样塞进来，
+  现在只带页面用得到的（`DashboardController.ROUTINE_ITEM_FIELDS`）。「今天几个番茄钟」只取今天的学习记录（`/record/list?from&to`），原来取回全部。
+- **知识 Wiki**：打开一次原来把整个 Wiki 的加密正文从库里搬**五遍**（`findPageByTitle` 为了比标题取全部列 × index / log / 维护规则三次，
+  建 index、建目录树各一次）；现在列表查询只取用得到的列（`treeColumns`），目录树的摘要给 120 字（1.2MB → 460KB，220ms → 60ms）。
+  **加一页之后第一次打开要 4 秒**：重建 index 时每个 `[[链接]]` 都 `findPageByTitle` 一次（八百多次全表查询）+ 逐条删旧链接 ——
+  现在一次取全「标题 → id」、一条语句清链接，0.3 秒。`KnowledgeDocumentTreeTest.查询次数不随页数增长` 拿 30 页和 120 页比查询次数。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -768,7 +786,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260928-keep-drafts`.
+  old bundle. Current token: `20260928-big-account`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

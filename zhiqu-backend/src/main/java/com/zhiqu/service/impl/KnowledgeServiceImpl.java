@@ -30,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -91,7 +92,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public List<Map<String, Object>> tree(Long userId) {
-        List<UserKnowledgePage> pages = pageMapper.selectList(new LambdaQueryWrapper<UserKnowledgePage>()
+        List<UserKnowledgePage> pages = pageMapper.selectList(treeColumns(new LambdaQueryWrapper<UserKnowledgePage>())
                 .eq(UserKnowledgePage::getUserId, userId)
                 .orderByAsc(UserKnowledgePage::getSortOrder)
                 .orderByDesc(UserKnowledgePage::getUpdatedAt));
@@ -118,7 +119,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     public List<Map<String, Object>> documentTree(Long userId) {
         ensureSystemPages(userId);
-        List<UserKnowledgePage> pages = pageMapper.selectList(new LambdaQueryWrapper<UserKnowledgePage>()
+        List<UserKnowledgePage> pages = pageMapper.selectList(treeColumns(new LambdaQueryWrapper<UserKnowledgePage>())
                 .eq(UserKnowledgePage::getUserId, userId)
                 .orderByAsc(UserKnowledgePage::getSortOrder)
                 .orderByDesc(UserKnowledgePage::getUpdatedAt));
@@ -1010,14 +1011,17 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         clearPageLinks(userId, pageId);
         Matcher matcher = WIKI_LINK_PATTERN.matcher(value(content, ""));
         Set<String> seen = new HashSet<>();
+        // 规范化标题 → 页 id：第一次用到时一次取全（第十七轮）。原来每个 [[链接]] 都 findPageByTitle 一次 —— 把这个人的全部页面查一遍；
+        // index 页链着每一页，八百多页的 Wiki 上加一页之后再打开，重建 index 的链接就是八百多次全表查询（实测 4 秒）
+        Map<String, Long> idsByTitle = null;
         while (matcher.find()) {
             String targetTitle = matcher.group(1).trim();
             if (targetTitle.isBlank() || !seen.add(normalizeTitle(targetTitle))) continue;
-            UserKnowledgePage target = findPageByTitle(userId, targetTitle);
+            if (idsByTitle == null) idsByTitle = pageIdsByTitle(userId);
             KnowledgePageLink link = new KnowledgePageLink();
             link.setUserId(userId);
             link.setSourcePageId(pageId);
-            link.setTargetPageId(target == null ? null : target.getId());
+            link.setTargetPageId(idsByTitle.get(normalizeTitle(targetTitle)));
             link.setTargetTitle(limit(targetTitle, 180));
             link.setAnchorText(limit(targetTitle, 180));
             link.setLinkType("WIKI");
@@ -1025,13 +1029,22 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
     }
 
+    /** 同名的取列表里先出现的那一页 —— 和 findPageByTitle 一样 */
+    private Map<String, Long> pageIdsByTitle(Long userId) {
+        Map<String, Long> ids = new HashMap<>();
+        for (UserKnowledgePage page : pageMapper.selectList(new LambdaQueryWrapper<UserKnowledgePage>()
+                .select(UserKnowledgePage::getId, UserKnowledgePage::getTitle)
+                .eq(UserKnowledgePage::getUserId, userId))) {
+            ids.putIfAbsent(normalizeTitle(page.getTitle()), page.getId());
+        }
+        return ids;
+    }
+
     private void clearPageLinks(Long userId, Long pageId) {
-        List<KnowledgePageLink> links = linkMapper.selectList(new LambdaQueryWrapper<KnowledgePageLink>()
+        // 一条语句（原来先查出来再逐条删：index 页的八百多条链接就是八百多次 DELETE）
+        linkMapper.delete(new LambdaQueryWrapper<KnowledgePageLink>()
                 .eq(KnowledgePageLink::getUserId, userId)
                 .eq(KnowledgePageLink::getSourcePageId, pageId));
-        for (KnowledgePageLink link : links) {
-            linkMapper.deleteById(link.getId());
-        }
     }
 
     // 目标页被删除后，指向它的入链置为悬空（targetPageId=null），健康检查才能报出
@@ -1207,12 +1220,18 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private UserKnowledgePage findPageByTitle(Long userId, String title) {
         String normalized = normalizeTitle(title);
-        return pageMapper.selectList(new LambdaQueryWrapper<UserKnowledgePage>()
-                .eq(UserKnowledgePage::getUserId, userId))
+        // 先只取 id 和标题来找（标题要按规范化之后比，SQL 里比不了），找到了再取那一行的全部（第十七轮）。
+        // 原来把这个人全部页面连加密正文一起搬过来只为比标题 —— 每打开一次 Wiki，index / log / 维护规则各找一次，
+        // 再加上建 index、建目录树，八百多页的账号一次打开要把整个 Wiki 的正文从库里搬五遍
+        Long id = pageMapper.selectList(new LambdaQueryWrapper<UserKnowledgePage>()
+                        .select(UserKnowledgePage::getId, UserKnowledgePage::getTitle)
+                        .eq(UserKnowledgePage::getUserId, userId))
                 .stream()
                 .filter(page -> normalizeTitle(page.getTitle()).equals(normalized))
+                .map(UserKnowledgePage::getId)
                 .findFirst()
                 .orElse(null);
+        return id == null ? null : pageMapper.selectById(id);
     }
 
     private void writeLog(Long userId, String type, Long pageId, Long patchSetId, Long sourceId, String title, String detail) {
@@ -1283,7 +1302,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private String buildIndexPageContent(Long userId) {
-        List<UserKnowledgePage> pages = pageMapper.selectList(new LambdaQueryWrapper<UserKnowledgePage>()
+        List<UserKnowledgePage> pages = pageMapper.selectList(treeColumns(new LambdaQueryWrapper<UserKnowledgePage>())
                 .eq(UserKnowledgePage::getUserId, userId)
                 .orderByAsc(UserKnowledgePage::getPageType)
                 .orderByAsc(UserKnowledgePage::getTitle));
@@ -1555,6 +1574,21 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return row;
     }
 
+    /**
+     * 目录树、index 页用得到的那几列 —— 不取加密的正文（第十七轮）。第二轮已经不解密正文了，但查询还是 SELECT 全部列：
+     * 八百多页的账号，打开一次 Wiki 就从库里把每一页的加密正文搬过来两遍（建 index 一遍、建目录树一遍），然后扔掉。
+     */
+    private static LambdaQueryWrapper<UserKnowledgePage> treeColumns(LambdaQueryWrapper<UserKnowledgePage> query) {
+        return query.select(UserKnowledgePage::getId, UserKnowledgePage::getUserId, UserKnowledgePage::getParentId,
+                UserKnowledgePage::getPageType, UserKnowledgePage::getSortOrder, UserKnowledgePage::getPinned,
+                UserKnowledgePage::getTitle, UserKnowledgePage::getContentSummary, UserKnowledgePage::getVersion,
+                UserKnowledgePage::getUpdatedAt, UserKnowledgePage::getSourceMessageId,
+                UserKnowledgePage::getSourceConversationId, UserKnowledgePage::getLastUsedAt);
+    }
+
+    /** 目录树上的摘要只是正文还没取回来时的一行预览：给前 120 字（库里存的是 500 字，八百多页就是一兆多的传输） */
+    static final int TREE_SUMMARY_CHARS = 120;
+
     private Map<String, Object> treeNode(UserKnowledgePage page) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", page.getId());
@@ -1563,7 +1597,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         row.put("sortOrder", page.getSortOrder());
         row.put("pinned", page.getPinned() != null && page.getPinned() == 1);
         row.put("title", page.getTitle());
-        row.put("summary", page.getContentSummary());
+        row.put("summary", limit(page.getContentSummary(), TREE_SUMMARY_CHARS));
         row.put("version", page.getVersion());
         row.put("updatedAt", page.getUpdatedAt());
         row.put("children", new ArrayList<Map<String, Object>>());

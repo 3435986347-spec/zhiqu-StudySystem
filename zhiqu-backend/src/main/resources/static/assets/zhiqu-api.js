@@ -633,8 +633,8 @@
   async function populatePomoTasks() {
     var sel = $('#zq-pomo-task'); if (!sel) return;
     try {
-      var tasks = (await api.get('/task/list?status=0')).map(normalizeTask);
-      sel.innerHTML = '<option value="">（不指定任务）</option>' + tasks.slice(0, 50).map(function (t) {
+      var tasks = ((await api.get('/task/page?status=0&limit=50')).items || []).map(normalizeTask);
+      sel.innerHTML = '<option value="">（不指定任务）</option>' + tasks.map(function (t) {
         return '<option value="' + t.id + '">' + esc(t.title) + '</option>';
       }).join('');
     } catch (e) { /* 忽略：下拉保持默认项 */ }
@@ -642,8 +642,8 @@
   async function updatePomoCount() {
     var host = $('#zq-pomo-count'); if (!host) return;
     try {
-      var recs = await api.get('/record/list');
       var t = today();
+      var recs = await api.get('/record/list?from=' + t + '&to=' + t);
       var todays = (recs || []).filter(function (rec) { return d10(rec.studyDate) === t; });
       var mins = todays.reduce(function (a, rec) { return a + (rec.durationMinutes || 0); }, 0);
       host.textContent = '今日：' + todays.length + ' 个 ｜ ' + mins + ' 分钟';
@@ -710,11 +710,27 @@
       params.set('sortBy', selects[3] && selects[3].selectedIndex === 1 ? 'deadline' : selects[3] && selects[3].selectedIndex === 2 ? 'priority' : 'updatedAt');
       params.set('sortOrder', selects[4] && selects[4].selectedIndex === 1 ? 'asc' : 'desc');
       var current = latestOnly('tasks');
-      var list = (await api.get('/task/list?' + params.toString())).map(normalizeTask);
+      var page = await api.get('/task/page?' + params.toString() + '&offset=0&limit=' + TASK_PAGE_SIZE);
       if (!current()) return;
-      state.tasks = list;
+      state.taskQuery = params.toString();
+      state.tasks = (page.items || []).map(normalizeTask);
+      state.taskTotal = Number(page.total || 0);
       renderTaskRows(state.tasks);
     }
+  }
+  /**
+   * 任务页一次取一页（第十七轮）。用了两年的账号有几千条任务：原来一次全取回来（1.6MB）、画出四万多个节点，
+   * 页面要卡好几秒。现在先给 100 条，「加载更多」再取下一页；页脚写的是真的总数。
+   */
+  var TASK_PAGE_SIZE = 100;
+  async function loadMoreTasks() {
+    var query = state.taskQuery;
+    var page = await api.get('/task/page?' + query + '&offset=' + state.tasks.length + '&limit=' + TASK_PAGE_SIZE);
+    // 这期间换了筛选条件（loadTasks 重新来过）：这一页是旧条件下的，不能接到新列表后面
+    if (query !== state.taskQuery) return;
+    state.tasks = state.tasks.concat((page.items || []).map(normalizeTask));
+    state.taskTotal = Number(page.total || 0);
+    renderTaskRows(state.tasks);
   }
   function renderTaskRows(list) {
     var host = $('#zq-rows'); if (!host) return;
@@ -722,8 +738,14 @@
       var q = qKey(t.quadrant);
       return '<div style="display:grid;grid-template-columns:minmax(200px,2.2fr) 104px 64px 78px 118px 118px 108px;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--zq-border-soft);opacity:' + (t.status === 2 ? .55 : 1) + ';"><div style="min-width:0;"><div style="font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.title) + '</div><div style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.description || '—') + '</div></div><span><span class="zq-badge" style="background:var(--zq-' + q + '-bg);color:var(--zq-' + q + ');">' + qLabel(t.quadrant) + '</span></span><span style="font-size:12.5px;font-weight:600;">' + pLabel(t.priority) + '</span><span><button data-cycle-task="' + t.id + '" style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px solid var(--zq-border);border-radius:999px;background:var(--zq-card-soft);color:var(--zq-text2);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">' + sLabel(t.status) + '</button></span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(fmtDate(t.deadline)) + '</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(fmtDate(t.reminderTime)) + '</span><span style="display:flex;justify-content:flex-end;gap:6px;"><button class="zq-btn-ghost" data-edit-task="' + t.id + '" style="height:26px;padding:0 10px;font-size:12px;">编辑</button><button class="zq-btn-ghost" data-del-task="' + t.id + '" style="height:26px;padding:0 10px;font-size:12px;">删除</button></span></div>';
     }).join('') : empty('暂无任务');
+    var total = Math.max(state.taskTotal || 0, list.length);
+    if (total > list.length) {
+      host.insertAdjacentHTML('beforeend', '<div style="padding:12px 16px;text-align:center;"><button class="zq-btn-ghost" data-more-tasks style="height:30px;">加载更多（还有 ' + (total - list.length) + ' 条）</button></div>');
+      var more = $('[data-more-tasks]', host);
+      if (more) more.onclick = function () { more.disabled = true; safe('加载任务', loadMoreTasks); };
+    }
     var foot = $('.zq-table > div:last-child span');
-    if (foot) foot.textContent = '共 ' + list.length + ' 条';
+    if (foot) foot.textContent = '共 ' + total + ' 条' + (total > list.length ? '（显示了 ' + list.length + ' 条）' : '');
     $all('[data-cycle-task]', host).forEach(function (b) { b.onclick = function () { cycleTask(Number(b.dataset.cycleTask)); }; });
     $all('[data-del-task]', host).forEach(function (b) { b.onclick = function () { deleteTask(Number(b.dataset.delTask)); }; });
     $all('[data-edit-task]', host).forEach(function (b) { b.onclick = function () { editTaskPrompt(Number(b.dataset.editTask)); }; });
@@ -802,9 +824,9 @@
     });
   }
   async function loadRoutineSources(statusIdx) {
-    var params = statusIdx === 1 ? '?status=0' : statusIdx === 2 ? '?status=1' : '';
+    var params = statusIdx === 1 ? '&status=0' : statusIdx === 2 ? '&status=1' : '';
     var current = latestOnly('routine-sources');
-    var tasks = (await api.get('/task/list' + params)).map(normalizeTask);
+    var tasks = ((await api.get('/task/page?limit=20' + params)).items || []).map(normalizeTask);
     if (!current()) return;
     renderRoutineSources(tasks);
   }
@@ -901,12 +923,13 @@
     var nums = $all('.zq-stat-num');
     if (nums[0]) nums[0].textContent = stat.consecutiveDays || 0;
     if (nums[1]) nums[1].textContent = stat.totalMinutes || stat.totalStudyMinutes || 0;
-    if (nums[2]) nums[2].textContent = stat.completedTasks || 0;
-    if (nums[3]) nums[3].textContent = stat.totalTasks || 0;
+    // 接口给的是 completedTaskCount / totalTaskCount —— 原来读 completedTasks / totalTasks，这两格永远是 0（第十七轮看到的）
+    if (nums[2]) nums[2].textContent = stat.completedTaskCount || 0;
+    if (nums[3]) nums[3].textContent = stat.totalTaskCount || 0;
     window.setTab = function (k) { highlightStatTab(k); paintTrend(k); };
     await paintTrend('day');
     highlightStatTab('day');
-    await renderQuadrantDonut();
+    renderQuadrantDonut(stat.quadrantDistribution || {});
   }
   function highlightStatTab(k) {
     $all('#zq-tabs button').forEach(function (b) {
@@ -915,11 +938,10 @@
       b.style.color = on ? 'var(--zq-on-primary)' : 'var(--zq-text2)';
     });
   }
-  async function renderQuadrantDonut() {
+  /** 四象限的分布：/record/statistics 已经按象限数好了（一条 GROUP BY）。原来另外取回全部任务在页面里再数一遍（第十七轮：三千条任务就是 1.6MB） */
+  function renderQuadrantDonut(distribution) {
     var donut = $('#zq-donut'); if (!donut) return;
-    var tasks = (await api.get('/task/list')).map(normalizeTask);
-    var counts = [0, 0, 0, 0];
-    tasks.forEach(function (t) { var q = Number(t.quadrant); if (q >= 1 && q <= 4) counts[q - 1]++; });
+    var counts = [1, 2, 3, 4].map(function (q) { return Number((distribution || {})[q] || 0); });
     var total = counts.reduce(function (a, b) { return a + b; }, 0);
     var C = 2 * Math.PI * 66, acc = 0;
     donut.innerHTML = total ? counts.map(function (n, i) {
@@ -1546,7 +1568,7 @@
   }
   function submitPlanTemplate() {
     safe('加载我的任务', async function () {
-      var tasks = ((await api.get('/task/list')) || []).map(normalizeTask).slice(0, 30);
+      var tasks = (((await api.get('/task/page?limit=30')) || {}).items || []).map(normalizeTask);
       var routines = ((await api.get('/routine/list')) || []).slice(0, 30);
       if (!tasks.length && !routines.length) { toast('你还没有任务或例行计划，无法生成模板', 'error'); return; }
       function checkRow(kind, x) {

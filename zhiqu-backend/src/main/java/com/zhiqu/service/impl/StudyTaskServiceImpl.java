@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -179,6 +180,35 @@ public class StudyTaskServiceImpl implements StudyTaskService {
 
     @Override
     public List<StudyTask> list(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder) {
+        return taskPrivacyService.revealAll(studyTaskMapper.selectList(listQuery(userId, quadrant, status, priority, sortBy, sortOrder)));
+    }
+
+    /** 一页最多这么多条 */
+    static final int MAX_PAGE_SIZE = 500;
+
+    /**
+     * 分页（第十七轮）。用了两年的账号有几千条任务：任务页原来一次取回全部（1.6MB）、画出四万多个节点；
+     * 例行计划页「从任务生成」只显示 20 条，也先取回全部。现在只取这一页、只解密这一页的标题。
+     * 排序另按 id 兜底：只按 updatedAt 排的话，同一时刻改的几条在两页之间的先后不确定，会重复或漏掉。
+     */
+    @Override
+    public Map<String, Object> page(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder,
+                                    int offset, int limit) {
+        int size = Math.max(1, Math.min(MAX_PAGE_SIZE, limit));
+        int from = Math.max(0, offset);
+        long total = studyTaskMapper.selectCount(filterQuery(userId, quadrant, status, priority));
+        LambdaQueryWrapper<StudyTask> query = listQuery(userId, quadrant, status, priority, sortBy, sortOrder)
+                .orderByDesc(StudyTask::getId)
+                .last("LIMIT " + size + " OFFSET " + from);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("items", taskPrivacyService.revealAll(studyTaskMapper.selectList(query)));
+        result.put("total", total);
+        result.put("offset", from);
+        result.put("limit", size);
+        return result;
+    }
+
+    private LambdaQueryWrapper<StudyTask> listQuery(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder) {
         LambdaQueryWrapper<StudyTask> wrapper = new LambdaQueryWrapper<StudyTask>()
                 .eq(StudyTask::getUserId, userId);
         if (quadrant != null) {
@@ -201,7 +231,16 @@ public class StudyTaskServiceImpl implements StudyTaskService {
         } else {
             wrapper.orderByDesc(StudyTask::getUpdatedAt);
         }
-        return taskPrivacyService.revealAll(studyTaskMapper.selectList(wrapper));
+        return wrapper;
+    }
+
+    /** 只有筛选、没有排序：数总数用 */
+    private LambdaQueryWrapper<StudyTask> filterQuery(Long userId, Integer quadrant, Integer status, Integer priority) {
+        return new LambdaQueryWrapper<StudyTask>()
+                .eq(StudyTask::getUserId, userId)
+                .eq(quadrant != null, StudyTask::getQuadrant, quadrant)
+                .eq(status != null, StudyTask::getStatus, status)
+                .eq(priority != null, StudyTask::getPriority, priority);
     }
 
     @Override

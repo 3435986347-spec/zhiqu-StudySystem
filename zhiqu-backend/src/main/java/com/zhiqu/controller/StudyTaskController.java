@@ -84,6 +84,18 @@ public class StudyTaskController {
         return Result.success(studyTaskService.list(SecurityUtils.getCurrentUserId(), quadrant, status, priority, sortBy, sortOrder));
     }
 
+    /** 分页的任务列表：{items, total, offset, limit}（第十七轮）。limit 最多 500。 */
+    @GetMapping("/page")
+    public Result<Map<String, Object>> page(@RequestParam(required = false) Integer quadrant,
+                                            @RequestParam(required = false) Integer status,
+                                            @RequestParam(required = false) Integer priority,
+                                            @RequestParam(required = false) String sortBy,
+                                            @RequestParam(required = false) String sortOrder,
+                                            @RequestParam(defaultValue = "0") int offset,
+                                            @RequestParam(defaultValue = "100") int limit) {
+        return Result.success(studyTaskService.page(SecurityUtils.getCurrentUserId(), quadrant, status, priority, sortBy, sortOrder, offset, limit));
+    }
+
     @GetMapping("/quadrant")
     public Result<Map<String, List<StudyTask>>> quadrant() {
         return Result.success(studyTaskService.quadrant(SecurityUtils.getCurrentUserId()));

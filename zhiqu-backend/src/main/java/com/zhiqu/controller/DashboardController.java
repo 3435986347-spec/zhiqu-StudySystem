@@ -92,11 +92,9 @@ public class DashboardController {
         List<Map<String, Object>> routines = routineService.instances(userId, start, end);
 
         Map<String, List<Map<String, Object>>> dayItems = initDayMap(start, end);
-        List<StudyTask> rangeTasks = new ArrayList<>();
         for (StudyTask task : allTasks) {
             LocalDate basis = taskDate(task);
             if (basis != null && !basis.isBefore(start) && !basis.isAfter(end)) {
-                rangeTasks.add(task);
                 dayItems.get(basis.toString()).add(taskItem(task));
             }
         }
@@ -118,8 +116,8 @@ public class DashboardController {
         result.put("days", buildDays(start, end, dayItems, today));
         result.put("quadrants", quadrantSummary(allTasks));
         result.put("upcomingDeadlines", upcomingDeadlines(allTasks, today));
-        result.put("rangeTasks", rangeTasks);
-        result.put("routineInstances", routines);
+        // 原来还回 rangeTasks、routineInstances —— 页面从不读，内容和 days 里的一样：
+        // 用了两年、两百个每日例行计划的账号上，看一周的首页回 1.1MB，其中一半是这两份重复（第十七轮）
         return result;
     }
 
@@ -241,10 +239,20 @@ public class DashboardController {
         return row;
     }
 
+    /**
+     * 首页的一条例行计划只带页面用得到的这几项（第十七轮）。原来把例行计划的整行（二十几项：提醒偏移、星期、难度、开始结束日期……）
+     * 原样塞进一周里每一天的每一条 —— 两百个每日例行计划的账号，看一周的首页就是半兆多。
+     */
+    static final List<String> ROUTINE_ITEM_FIELDS = List.of("id", "routineId", "title", "description", "quadrant", "priority",
+            "status", "completed", "date", "durationMinutes");
+
     private Map<String, Object> routineItem(Map<String, Object> routine) {
-        Map<String, Object> row = new HashMap<>(routine);
+        Map<String, Object> row = new HashMap<>();
+        for (String key : ROUTINE_ITEM_FIELDS) {
+            if (routine.containsKey(key)) row.put(key, routine.get(key));
+        }
         row.put("kind", "ROUTINE");
-        Object preferredTime = row.get("preferredTime");
+        Object preferredTime = routine.get("preferredTime");
         row.put("time", preferredTime == null ? "" : String.valueOf(preferredTime).substring(0, Math.min(5, String.valueOf(preferredTime).length())));
         return row;
     }

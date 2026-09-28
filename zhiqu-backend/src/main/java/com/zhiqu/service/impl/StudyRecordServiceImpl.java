@@ -66,9 +66,11 @@ public class StudyRecordServiceImpl implements StudyRecordService {
     }
 
     @Override
-    public List<StudyRecord> list(Long userId) {
+    public List<StudyRecord> list(Long userId, LocalDate from, LocalDate to) {
         return studyRecordMapper.selectList(new LambdaQueryWrapper<StudyRecord>()
                 .eq(StudyRecord::getUserId, userId)
+                .ge(from != null, StudyRecord::getStudyDate, from)
+                .le(to != null, StudyRecord::getStudyDate, to)
                 .orderByDesc(StudyRecord::getStudyDate));
     }
 
