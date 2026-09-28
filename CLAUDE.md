@@ -14,7 +14,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V37`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V38`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -751,6 +751,36 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **搜索**：原来最多看 3000 个文件 —— 五万个文件的项目里只搜了开头几十个目录，「0 处」而要找的在后面。现在最多 10 万个、最多 5 秒
   （5 万个文件实测 1.1 秒）；每个文件原来新分配 1MB 的读缓冲，改成一次搜索共用一块。
 
+### 第十九轮（2026-09-28）：模型那一侧不配合
+
+计划与结果在 `docs/rounds/round-19.md`。一个按脚本演坏法的假供应商（真 HTTP、真 SSE、真库）演了 18 种：key 错、欠费、模型名错、
+限流、500、502 回 HTML、地址填成官网、空回答、说到一半断、进程崩了、坏 JSON、途中报错、写到输出上限、回一本书、卡住、不说话、连不上、域名解析不了。
+
+- **用户看到的那句话只有 `service/ai/ProviderFailure` 一处出**（网页聊天、测试连接、工具循环、命令行网关共用）：按状态码 / 异常种类说
+  下一步做什么，供应商的原因附在后面（JSON 取 message、HTML 整页不要、最多 300 字），遮 key。原来 401 是「AI 接口调用失败：AI 接口调用失败」
+  （流式 POST 遇到 401 时 JDK 读不到响应体，原因整个丢了）、502 是整页 nginx 的 HTML、连不上是 `I/O error on POST request for "http://…"`。
+  遮 key 是两道各判各的：配置里那一把（不一定长得像 key）、长得像 key 的（不一定是配置里那把）—— 判据原来只用 `sk-` 形状的 key，
+  两道互相替对方挡着，删掉哪一道都不红。
+- **流读完要核对说完了没有**（`AiStreamAdapterSupport.readSse` / `requireComplete`，命令行网关用同一个读取器）：没有 `[DONE]` /
+  finish_reason / message_stop 就是断在半路（`StreamCutOff`）；一行 data 都没有且不是 SSE —— 回的是网页，地址填错了；代理不支持流式、
+  回一整段 JSON 的照非流式认出来。商汤的流没有约定的结束信号，不强求（`expectsEndSignal`）。
+- **失败时已经收到的那一截留着**（`StreamState.streamedReply` → `failAssistantMessage`）：原来 `updateById` 把正文写成空 —— 用户看着
+  一个字一个字出来的半截，刷新就成了空白气泡。失败的半截会进下一轮的历史（`hasText`），这是故意的：用户说「继续」时模型得知道说到哪了。
+- **能用但不完整的回答存一句 `ai_message.notice`**（V38）：写到输出上限（可以说「继续」）、被内容审核拦下、太长 —— 收到 20 万字就不再读上游
+  （`ReplyCapReached`；原来 300 万字全推给浏览器、库里悄悄只存 20 万）。不复用 `error_message`：那一列的意思是「这一轮失败了」。
+- **供应商进程崩了 ≠ 流好好结束但没说完**，这是真浏览器里撞出来的：`com.sun.net.httpserver` 做的假供应商关连接时总会把分块收好尾，
+  于是只演得出「干净的 EOF」；真的进程没了、代理把连接掐了，JDK 报的是 `IOException("Premature EOF")`，原来落进兜底的「和模型服务通信失败」。
+  `ModelMisbehaviorIntegrationTest.连接硬断` 用原始套接字演这一种。写这个夹具时踩了两个坑：我们的后端发请求用**分块编码**（没有 Content-Length，
+  按长度读会读不到头、带着没读的数据关套接字 —— 协议栈发 RST，测到的是 Connection reset）；也不能用 `SO_LINGER 0` 硬断 —— RST 会让对端
+  还没读的数据被丢掉，测的就成了「半截没收到」。
+- **空回答是失败**：网页原来是一条「完成」的空白回答，网关是一个空的 done（命令行那一轮一个字不打就结束）；网关的空回答标可重试。
+- **页面**：失败原因显示在已有正文下面（原来有半截就不说原因，看着像说完了）、刷新之后也在（列表接口一直带着 `errorMessage`，页面从来不读）；
+  不完整的说明显示在回答底下；等第一个字时说出等了几秒（网页没有「停止」，模型卡住要 60 秒才放弃）。`msg-failure-check.js` 用对抗性的
+  供应商原文判转义 —— 失败原因里有别人服务器上的任意文本。
+- 消息列表的行原来有两份一模一样的构造（个人中心的「最近消息」和聊天区），新加的 `notice` 只进了一边 —— 判据红出来的，合成 `messageRow` 一处。
+- 顺带：例行计划、参考计划、AI 草稿里的周期显示成「每天」「每周一、三」（`freqLabel`），原来直接是 `DAILY` / `WEEKLY`。
+  删了 `AiServiceImpl` 里两个没人调用的旧流式方法（流式早就走 `ModelStreamAdapter`）。
+
 ### 启动期密钥守卫
 
 生产由 `--spring.config.location=file:./application-prod.yml` 拉起，它是**替换**而非追加，
@@ -800,7 +830,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260928-big-account`.
+  old bundle. Current token: `20260928-model-failures`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

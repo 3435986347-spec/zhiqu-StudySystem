@@ -126,7 +126,20 @@ public class AiServiceImpl implements AiService {
     private static final String PROBE_IMAGE_BASE64 =
             "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAT0lEQVR42u3PQQkAAAgEsItz/fMYxgi+hcEKLNO+FgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGBywLzk8EPlvGqjQAAAABJRU5ErkJggg==";
 
-    private record AiCallResult(String content, String reasoningSummary) {
+    private record AiCallResult(String content, String reasoningSummary, String finishReason) {
+        AiCallResult(String content, String reasoningSummary) {
+            this(content, reasoningSummary, null);
+        }
+    }
+
+    /**
+     * 回答长到 {@link #REPLY_MAX_LENGTH} 就不再往下收（第十九轮）。原来照单全收：一个出了毛病的供应商回了 300 万字，
+     * 全部推给浏览器，库里却只存了前 20 万字，刷新之后回答短了一大截、一个字没说。
+     */
+    private static final class ReplyCapReached extends BusinessException {
+        ReplyCapReached() {
+            super("回答太长");
+        }
     }
 
     private final UserAiConfigMapper configMapper;
@@ -726,6 +739,7 @@ public class AiServiceImpl implements AiService {
                     return new StreamCompletionResult(userMessage, assistantMessage, "记忆已清空");
                 }
                 if (messageMapper.selectById(assistantMessage.getId()) != null) {
+                    assistantMessage.setNotice(state.finalNotice);
                     completeAssistantMessage(
                             assistantMessage,
                             state.finalReply,
@@ -760,6 +774,7 @@ public class AiServiceImpl implements AiService {
                             Boolean.TRUE.equals(enableWebSearch)
                     );
                     rebuiltAssistant.setAgentRunId(agentRun.getId());
+                    rebuiltAssistant.setNotice(state.finalNotice);
                     completeAssistantMessage(
                             rebuiltAssistant,
                             state.finalReply,
@@ -819,6 +834,9 @@ public class AiServiceImpl implements AiService {
             if (hasText(state.finalReasoningSummary)) {
                 done.put("reasoningSummary", state.finalReasoningSummary);
             }
+            if (state.finalNotice != null) {
+                done.put("notice", state.finalNotice);
+            }
             persistSuggestedPlan(completion.assistantMessage(), state.suggestedPlan);
             ctx.emit("done", done);
         } catch (Exception e) {
@@ -830,7 +848,7 @@ public class AiServiceImpl implements AiService {
             // RUNNING 的已标 ERROR，还没轮到的仍是 PENDING —— 不收的话它们永远停在那里
             state.trace.settleUnrunTasks(ctx, AgentTraceRecorder.FAILED_RUN_TASK_SUMMARY);
             aiWorkspaceService.errorRun(agentRun, e);
-            failAssistantMessage(assistantMessage, e);
+            failAssistantMessage(assistantMessage, e, state.streamedReply);
             Map<String, Object> error = new LinkedHashMap<>();
             error.put("requestId", requestId);
             error.put("agentRunId", agentRun.getId());
@@ -909,6 +927,10 @@ public class AiServiceImpl implements AiService {
         private WikiToolAgent.WikiAgentResult wikiAgent;
         private String finalReply = "";
         private String finalReasoningSummary = "";
+        /** 流式期间已经收到的正文。失败时它要留在那条消息上（原来失败一律把正文写成空：用户看着出来的半截回答，刷新就没了）。 */
+        private final StringBuilder streamedReply = new StringBuilder();
+        /** 回答能用但不完整时的说明，存进 ai_message.notice（V38）。 */
+        private String finalNotice;
         private List<String> memoryItems = List.of();
         private Map<String, Object> suggestedPlan = emptyPlan();
         private Map<String, Object> planArtifactContent = new LinkedHashMap<>();
@@ -1428,6 +1450,20 @@ public class AiServiceImpl implements AiService {
         }
     }
 
+    /** 回答照样能用、但不完整：说出为什么。完整的回答返回 null。 */
+    static String answerNotice(String finishReason) {
+        if (finishReason == null) {
+            return null;
+        }
+        return switch (finishReason) {
+            case "length" -> "回答写到了单次输出的上限（" + ModelProviderClient.MODEL_MAX_TOKENS
+                    + " token），后面的没写出来。可以说「继续」让它接着写。";
+            case "filtered" -> "后面的内容被模型的内容审核拦下了，回答不完整。";
+            case "capped" -> "回答太长，只保留了前 " + (REPLY_MAX_LENGTH / 10_000) + " 万字，后面的没有收。";
+            default -> null;
+        };
+    }
+
     private final class FinalWriterRunner implements AgentStageRunner {
         private final StreamState s;
 
@@ -1495,7 +1531,7 @@ public class AiServiceImpl implements AiService {
                         userText + ChatImageAttachments.noVisionNotice(s.attachedImages.size())));
             }
 
-            StringBuilder reply = new StringBuilder();
+            StringBuilder reply = s.streamedReply;
             StringBuilder reasoning = new StringBuilder();
             // 阶段性把已生成的正文写进库，让「生成途中刷新页面」还能看到已有的部分。
             // 详见 AiMessageMapper.flushStreamingContent —— 它的三个 WHERE 条件决定了
@@ -1505,16 +1541,25 @@ public class AiServiceImpl implements AiService {
                             limitRawMarkdown(text, REPLY_MAX_LENGTH)));
             s.allCitationRows.addAll(s.webCitationRows);
             // 注意：增量判空用非空而不是非空白——纯换行增量（"\n\n"）是段落分隔，丢弃会把正文压成一行
-            AiCallResult aiCallResult = callAiApiStream(s.config, messages, s.reasoningMode, event -> {
+            AiCallResult aiCallResult;
+            try {
+                aiCallResult = callAiApiStream(s.config, messages, s.reasoningMode, event -> {
                 if ("message.delta".equals(event.type()) && event.text() != null && !event.text().isEmpty()) {
-                    reply.append(event.text());
-                    flusher.onGrew(reply);
-                    ctx.emit("message.delta", Map.of(
-                            "requestId", s.requestId,
-                            "agentRunId", s.agentRun.getId(),
-                            "assistantMessageId", s.assistantMessage.getId(),
-                            "text", event.text()
-                    ));
+                    int room = REPLY_MAX_LENGTH - reply.length();
+                    String text = event.text().length() > room ? event.text().substring(0, Math.max(0, room)) : event.text();
+                    if (!text.isEmpty()) {
+                        reply.append(text);
+                        flusher.onGrew(reply);
+                        ctx.emit("message.delta", Map.of(
+                                "requestId", s.requestId,
+                                "agentRunId", s.agentRun.getId(),
+                                "assistantMessageId", s.assistantMessage.getId(),
+                                "text", text
+                        ));
+                    }
+                    if (text.length() < event.text().length()) {
+                        throw new ReplyCapReached();
+                    }
                 } else if ("reasoning.delta".equals(event.type())) {
                     if (isReasoningRequested(s.reasoningMode) && event.text() != null && !event.text().isEmpty()) {
                         reasoning.append(event.text());
@@ -1534,6 +1579,9 @@ public class AiServiceImpl implements AiService {
                     ctx.emit("usage", withStreamMeta(s.usage, s.requestId, s.assistantMessage.getId()));
                 }
             });
+            } catch (ReplyCapReached capped) {
+                aiCallResult = new AiCallResult(reply.toString(), reasoning.toString(), "capped");
+            }
             if (reply.isEmpty() && hasText(aiCallResult.content())) {
                 reply.append(aiCallResult.content());
                 ctx.emit("message.delta", Map.of(
@@ -1548,6 +1596,14 @@ public class AiServiceImpl implements AiService {
             }
             // 收尾补一次：最后一段增量距上次 flush 很可能不足节流间隔，
             // 不补的话它要等到提交事务才落库，而那中间还隔着 POST_STREAM 的三次模型往返。
+            if (reply.isEmpty()) {
+                // 原来照样标成「完成」，页面上是一个空白气泡，刷新之后也一样，没人知道发生了什么
+                throw new BusinessException("length".equals(aiCallResult.finishReason()) && !reasoning.isEmpty()
+                        ? "模型把这次的输出额度全用在了思考上，没来得及写回答：换个说法，或者关掉深度思考再试"
+                        : "模型这次什么都没说（返回了空回答）：稍后再试，或者换一个模型");
+            }
+            // 不另发事件：done 里带着它，库里也存着 —— 页面在那条回答底下说，刷新之后还在
+            s.finalNotice = answerNotice(aiCallResult.finishReason());
             flusher.flushNow(reply);
             s.finalReply = limitRawMarkdown(reply.toString(), REPLY_MAX_LENGTH);
             s.finalReasoningSummary = isReasoningRequested(s.reasoningMode)
@@ -2500,28 +2556,7 @@ public class AiServiceImpl implements AiService {
         );
         Collections.reverse(recentItems);
         for (AiMessage item : recentItems) {
-            Map<String, Object> row = new HashMap<>();
-            row.put("id", item.getId());
-            row.put("role", item.getRole());
-            row.put("content", item.getContent());
-            row.put("agentRunId", item.getAgentRunId());
-            row.put("status", normalizeMessageStatus(item.getStatus()));
-            row.put("requestId", item.getRequestId());
-            row.put("providerType", item.getProviderType());
-            row.put("modelName", item.getModelName());
-            row.put("reasoningSummary", item.getReasoningSummary());
-            row.put("citations", parseCitationsJson(item.getCitationsJson()));
-            row.put("retrievalStatus", parseJsonObjectMap(item.getRetrievalStatusJson()));
-            row.put("usage", parseJsonObjectMap(item.getUsageJson()));
-            Map<String, Object> suggestedPlanRow = parseJsonObjectMap(item.getSuggestedPlanJson());
-            row.put("suggestedTasks", suggestedPlanRow.get("tasks"));
-            row.put("suggestedRoutines", suggestedPlanRow.get("routines"));
-            row.put("reasoningMode", item.getReasoningMode());
-            row.put("webSearchEnabled", Boolean.TRUE.equals(item.getWebSearchEnabled()));
-            row.put("errorMessage", item.getErrorMessage());
-            row.put("createdAt", item.getCreatedAt());
-            row.put("completedAt", item.getCompletedAt());
-            recentMessages.add(row);
+            recentMessages.add(messageRow(item));
         }
         Map<String, Object> result = new HashMap<>();
         result.put("memoryText", decryptMemory(memory));
@@ -2543,30 +2578,36 @@ public class AiServiceImpl implements AiService {
             if (!isChatRole(item.getRole())) {
                 continue;
             }
-            Map<String, Object> row = new HashMap<>();
-            row.put("id", item.getId());
-            row.put("role", item.getRole());
-            row.put("content", item.getContent());
-            row.put("agentRunId", item.getAgentRunId());
-            row.put("status", normalizeMessageStatus(item.getStatus()));
-            row.put("requestId", item.getRequestId());
-            row.put("providerType", item.getProviderType());
-            row.put("modelName", item.getModelName());
-            row.put("reasoningSummary", item.getReasoningSummary());
-            row.put("citations", parseCitationsJson(item.getCitationsJson()));
-            row.put("retrievalStatus", parseJsonObjectMap(item.getRetrievalStatusJson()));
-            row.put("usage", parseJsonObjectMap(item.getUsageJson()));
-            Map<String, Object> suggestedPlanRow = parseJsonObjectMap(item.getSuggestedPlanJson());
-            row.put("suggestedTasks", suggestedPlanRow.get("tasks"));
-            row.put("suggestedRoutines", suggestedPlanRow.get("routines"));
-            row.put("reasoningMode", item.getReasoningMode());
-            row.put("webSearchEnabled", Boolean.TRUE.equals(item.getWebSearchEnabled()));
-            row.put("errorMessage", item.getErrorMessage());
-            row.put("createdAt", item.getCreatedAt());
-            row.put("completedAt", item.getCompletedAt());
-            result.add(row);
+            result.add(messageRow(item));
         }
         return result;
+    }
+
+    /** 一条消息给页面的样子。个人中心的「最近消息」与聊天区的列表原来各写了一份 —— 新加的字段只进了一边（第十九轮的 notice 就是）。 */
+    private Map<String, Object> messageRow(AiMessage item) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", item.getId());
+        row.put("role", item.getRole());
+        row.put("content", item.getContent());
+        row.put("agentRunId", item.getAgentRunId());
+        row.put("status", normalizeMessageStatus(item.getStatus()));
+        row.put("requestId", item.getRequestId());
+        row.put("providerType", item.getProviderType());
+        row.put("modelName", item.getModelName());
+        row.put("reasoningSummary", item.getReasoningSummary());
+        row.put("citations", parseCitationsJson(item.getCitationsJson()));
+        row.put("retrievalStatus", parseJsonObjectMap(item.getRetrievalStatusJson()));
+        row.put("usage", parseJsonObjectMap(item.getUsageJson()));
+        Map<String, Object> suggestedPlanRow = parseJsonObjectMap(item.getSuggestedPlanJson());
+        row.put("suggestedTasks", suggestedPlanRow.get("tasks"));
+        row.put("suggestedRoutines", suggestedPlanRow.get("routines"));
+        row.put("reasoningMode", item.getReasoningMode());
+        row.put("webSearchEnabled", Boolean.TRUE.equals(item.getWebSearchEnabled()));
+        row.put("errorMessage", item.getErrorMessage());
+        row.put("notice", item.getNotice());
+        row.put("createdAt", item.getCreatedAt());
+        row.put("completedAt", item.getCompletedAt());
+        return row;
     }
 
     @Override
@@ -2856,9 +2897,15 @@ public class AiServiceImpl implements AiService {
     }
 
     private void failAssistantMessage(AiMessage message, Exception e) {
+        failAssistantMessage(message, e, null);
+    }
+
+    /** 失败了，但已经收到的那一截正文留着 —— 用户刚刚看着它一个字一个字出来，刷新之后不该变成空白。 */
+    private void failAssistantMessage(AiMessage message, Exception e, CharSequence partial) {
         if (message == null || message.getId() == null) {
             return;
         }
+        message.setContent(partial == null ? "" : limitRawMarkdown(partial.toString(), REPLY_MAX_LENGTH));
         message.setStatus("ERROR");
         message.setCompletedAt(LocalDateTime.now());
         message.setErrorMessage(limitText(e == null || e.getMessage() == null ? "AI 流式调用失败" : e.getMessage(), 500));
@@ -3369,10 +3416,10 @@ public class AiServiceImpl implements AiService {
             }
             return args.isMissingNode() ? "" : args.toString();
         } catch (RestClientResponseException e) {
-            throw new BusinessException(provider.formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e, config));
         } catch (Exception e) {
             // 解析失败等一律上抛，由调用方回退到结构化输出
-            throw new BusinessException("工具调用失败：" + e.getMessage());
+            throw new BusinessException("工具调用失败：" + provider.describeIoFailure(e));
         }
     }
 
@@ -3408,9 +3455,9 @@ public class AiServiceImpl implements AiService {
             }
             return "";
         } catch (RestClientResponseException e) {
-            throw new BusinessException(provider.formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e, config));
         } catch (Exception e) {
-            throw new BusinessException("工具调用失败：" + e.getMessage());
+            throw new BusinessException("工具调用失败：" + provider.describeIoFailure(e));
         }
     }
 
@@ -3641,124 +3688,7 @@ public class AiServiceImpl implements AiService {
         ModelStreamResult result = modelStreamAdapterFactory
                 .getAdapter(provider.normalizeProviderType(config.getProviderType()))
                 .stream(new ModelStreamRequest(config, provider.decryptedApiKey(config), messages, reasoningMode, anthropicVersion), sink::accept);
-        return new AiCallResult(result.content(), result.reasoningSummary());
-    }
-
-    private AiCallResult callOpenAiCompatibleApiStream(AiModelConfig config, List<Map<String, Object>> messages,
-                                                       String reasoningMode, StreamSink sink) {
-        StringBuilder content = new StringBuilder();
-        StringBuilder reasoning = new StringBuilder();
-        try {
-            Map<String, Object> body = new HashMap<>();
-            body.put("model", config.getModelName());
-            body.put("messages", messages);
-            provider.applyTemperature(body);
-            body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
-            body.put("stream", true);
-            applyOpenAiReasoningOptions(config, body, reasoningMode);
-
-            restTemplate.execute(provider.resolveChatCompletionsUrl(config.getApiUrl()), HttpMethod.POST, request -> {
-                request.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-                String apiKey = provider.decryptedApiKey(config);
-                if (hasText(apiKey)) {
-                    request.getHeaders().setBearerAuth(apiKey);
-                }
-                objectMapper.writeValue(request.getBody(), body);
-            }, response -> {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        if (!line.startsWith("data:")) {
-                            continue;
-                        }
-                        String data = line.substring(5).trim();
-                        if (data.isBlank() || "[DONE]".equals(data)) {
-                            continue;
-                        }
-                        JsonNode root = objectMapper.readTree(data);
-                        if (root.has("error")) {
-                            throw new BusinessException(provider.extractAiErrorDetail(root.toString()));
-                        }
-                        String delta = firstTextAt(root,
-                                "/choices/0/delta/content",
-                                "/choices/0/message/content");
-                        if (hasText(delta)) {
-                            content.append(delta);
-                            sink.accept("message.delta", delta);
-                        }
-                        if (isReasoningRequested(reasoningMode)) {
-                            String thought = firstTextAt(root,
-                                    "/choices/0/delta/reasoning_content",
-                                    "/choices/0/delta/reasoning",
-                                    "/choices/0/message/reasoning_content");
-                            if (hasText(thought)) {
-                                reasoning.append(thought);
-                                sink.accept("reasoning.delta", thought);
-                            }
-                        }
-                    }
-                }
-                return null;
-            });
-            return new AiCallResult(content.toString(), reasoning.toString());
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            return callOpenAiCompatibleApi(config, messages, reasoningMode);
-        }
-    }
-
-    private AiCallResult callAnthropicApiStream(AiModelConfig config, List<Map<String, Object>> messages,
-                                                String reasoningMode, StreamSink sink) {
-        StringBuilder content = new StringBuilder();
-        StringBuilder reasoning = new StringBuilder();
-        try {
-            Map<String, Object> body = anthropicBody(config, messages);
-            body.put("stream", true);
-            applyAnthropicThinkingOptions(body, reasoningMode, config);
-            restTemplate.execute(provider.resolveAnthropicMessagesUrl(config.getApiUrl()), HttpMethod.POST, request -> {
-                request.getHeaders().putAll(provider.anthropicHeaders(config));
-                objectMapper.writeValue(request.getBody(), body);
-            }, response -> {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        if (!line.startsWith("data:")) {
-                            continue;
-                        }
-                        String data = line.substring(5).trim();
-                        if (data.isBlank() || "[DONE]".equals(data)) {
-                            continue;
-                        }
-                        JsonNode root = objectMapper.readTree(data);
-                        String type = root.path("type").asText("");
-                        if ("error".equals(type)) {
-                            throw new BusinessException(provider.extractAiErrorDetail(root.toString()));
-                        }
-                        JsonNode delta = root.path("delta");
-                        String text = firstText(delta.path("text"), root.path("content_block").path("text"));
-                        if (hasText(text)) {
-                            content.append(text);
-                            sink.accept("message.delta", text);
-                        }
-                        if (isReasoningRequested(reasoningMode)) {
-                            String thought = firstText(delta.path("thinking"), delta.path("text"));
-                            String deltaType = delta.path("type").asText("");
-                            if (hasText(thought) && (deltaType.contains("thinking") || "thinking_delta".equals(deltaType))) {
-                                reasoning.append(thought);
-                                sink.accept("reasoning.delta", thought);
-                            }
-                        }
-                    }
-                }
-                return null;
-            });
-            return new AiCallResult(content.toString(), reasoning.toString());
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            return callAnthropicApi(config, messages, reasoningMode);
-        }
+        return new AiCallResult(result.content(), result.reasoningSummary(), result.finishReason());
     }
 
     private AiCallResult callOpenAiCompatibleApi(AiModelConfig config, List<Map<String, Object>> messages, String reasoningMode) {
@@ -3790,9 +3720,9 @@ public class AiServiceImpl implements AiService {
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw new BusinessException(provider.formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e, config));
         } catch (Exception e) {
-            throw new BusinessException("AI 接口调用失败：" + e.getMessage());
+            throw new BusinessException(provider.describeIoFailure(e));
         }
     }
 
@@ -3875,14 +3805,14 @@ public class AiServiceImpl implements AiService {
                 throw new BusinessException(
                         "当前模型不支持图片识别，请在个人中心切换为支持视觉的模型（如 gpt-4o、qwen-vl-plus）");
             }
-            throw new BusinessException(provider.formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e, config));
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "";
             if (msg.contains("400") || msg.contains("unsupported") || msg.contains("vision")) {
                 throw new BusinessException(
                         "当前模型不支持图片识别，请在个人中心切换为支持视觉的模型（如 gpt-4o、qwen-vl-plus）");
             }
-            throw new BusinessException("AI 接口调用失败：" + msg);
+            throw new BusinessException(provider.describeIoFailure(e));
         }
     }
 
@@ -3958,9 +3888,9 @@ public class AiServiceImpl implements AiService {
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw new BusinessException(provider.formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e, config));
         } catch (Exception e) {
-            throw new BusinessException("Anthropic 接口调用失败：" + e.getMessage());
+            throw new BusinessException(provider.describeIoFailure(e));
         }
     }
 
@@ -3985,9 +3915,9 @@ public class AiServiceImpl implements AiService {
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw new BusinessException(provider.formatAiHttpError(e));
+            throw new BusinessException(provider.formatAiHttpError(e, config));
         } catch (Exception e) {
-            throw new BusinessException("Anthropic 视觉接口调用失败：" + e.getMessage());
+            throw new BusinessException(provider.describeIoFailure(e));
         }
     }
 

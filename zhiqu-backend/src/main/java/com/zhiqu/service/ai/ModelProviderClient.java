@@ -46,6 +46,7 @@ import java.util.Set;
  * <p>工具调用的限额（输出上限、读超时）由调用方按场景给出，见 {@link ToolTurnLimits}：
  * Wiki 与关键词触发的循环要快（4096 token / 25 秒），显式「代码」模式要能一次写出一整个文件。
  */
+@lombok.extern.slf4j.Slf4j
 @Component
 public class ModelProviderClient {
 
@@ -322,10 +323,10 @@ public class ModelProviderClient {
         } catch (ToolTurnTruncatedException e) {
             throw e;   // 原样抛给调用方 —— 它要区分「被截断」和「调用失败」
         } catch (RestClientResponseException e) {
-            throw new BusinessException(formatAiHttpError(e));
+            throw new BusinessException(formatAiHttpError(e, config));
         } catch (Exception e) {
             // 原来写的是「Wiki 工具调用失败」—— code agent 也走这里，那条日志把人往 Wiki 那边引
-            throw new BusinessException("工具调用失败：" + e.getMessage());
+            throw new BusinessException("工具调用失败：" + describeIoFailure(e));
         }
     }
 
@@ -375,9 +376,9 @@ public class ModelProviderClient {
         } catch (ToolTurnTruncatedException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw new BusinessException(formatAiHttpError(e));
+            throw new BusinessException(formatAiHttpError(e, config));
         } catch (Exception e) {
-            throw new BusinessException("工具调用失败：" + e.getMessage());
+            throw new BusinessException("工具调用失败：" + describeIoFailure(e));
         }
     }
 
@@ -409,9 +410,27 @@ public class ModelProviderClient {
         return url + "/v1/messages";
     }
 
-    public String formatAiHttpError(RestClientResponseException e) {
-        String detail = extractAiErrorDetail(e.getResponseBodyAsString());
-        return "AI 接口调用失败（HTTP " + e.getStatusCode().value() + "）：" + detail;
+    /** 供应商回了 HTTP 错误：按状态码说一句用户看得懂的话，供应商的原因附在后面（遮住这个模型的 key）。见 {@link ProviderFailure}。 */
+    public String formatAiHttpError(RestClientResponseException e, AiModelConfig config) {
+        String retryAfter = e.getResponseHeaders() == null ? null : e.getResponseHeaders().getFirst("Retry-After");
+        return ProviderFailure.http(e.getStatusCode().value(), e.getResponseBodyAsString(), retryAfter, keyForRedaction(config));
+    }
+
+    /** 连不上、超时、断开、回的不是 JSON：不带接口地址和异常原文（原文记日志）。 */
+    public String describeIoFailure(Exception e) {
+        log.warn("模型调用失败：{}", e.toString());
+        return ProviderFailure.io(e, 0);
+    }
+
+    private String keyForRedaction(AiModelConfig config) {
+        if (config == null) {
+            return null;
+        }
+        try {
+            return decryptedApiKey(config);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** 工具调用用的 RestTemplate：连接 10 秒，读超时按限额。 */

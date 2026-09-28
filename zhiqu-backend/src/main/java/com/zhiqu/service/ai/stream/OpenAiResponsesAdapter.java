@@ -8,9 +8,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,38 +38,31 @@ public class OpenAiResponsesAdapter implements ModelStreamAdapter {
             if (AiStreamAdapterSupport.isReasoningRequested(request.reasoningMode())) {
                 body.put("reasoning", Map.of("effort", "DEEP".equals(request.reasoningMode()) ? "high" : "medium"));
             }
-            restTemplate.execute(
+            AiStreamAdapterSupport.StreamEnd end = restTemplate.execute(
                     AiStreamAdapterSupport.resolveResponsesUrl(request.config().getApiUrl()),
                     HttpMethod.POST,
                     httpRequest -> {
                         httpRequest.getHeaders().putAll(AiStreamAdapterSupport.jsonHeaders(request.apiKey()));
                         objectMapper.writeValue(httpRequest.getBody(), body);
                     },
-                    response -> {
-                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
-                            String eventName = "";
-                            String line;
-                            while ((line = reader.readLine()) != null) {
-                                if (line.startsWith("event:")) {
-                                    eventName = line.substring(6).trim();
-                                    continue;
-                                }
-                                if (!line.startsWith("data:")) continue;
-                                String data = line.substring(5).trim();
-                                if (data.isBlank() || "[DONE]".equals(data)) continue;
-                                JsonNode root = objectMapper.readTree(data);
-                                handleEvent(eventName, root, sink, content, reasoning, usage);
-                            }
+                    response -> AiStreamAdapterSupport.readSse(response, objectMapper, (eventName, root, streamEnd) -> {
+                        handleEvent(eventName, root, request.apiKey(), sink, content, reasoning, usage);
+                        String type = root.path("type").asText(eventName == null ? "" : eventName);
+                        if ("response.completed".equals(type)) {
+                            streamEnd.finish("stop");
+                        } else if ("response.incomplete".equals(type)) {
+                            String reason = root.at("/response/incomplete_details/reason").asText("");
+                            streamEnd.finish(reason.isBlank() ? "length" : reason);
                         }
-                        return null;
-                    });
-            return new ModelStreamResult(content.toString(), reasoning.toString(), usage);
+                    }));
+            AiStreamAdapterSupport.requireComplete(end, true);
+            return new ModelStreamResult(content.toString(), reasoning.toString(), usage, end.finishReason);
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw AiStreamAdapterSupport.httpError(e);
+            throw AiStreamAdapterSupport.httpError(e, request.apiKey());
         } catch (Exception e) {
-            throw new BusinessException("OpenAI Responses 流式接口调用失败：" + e.getMessage());
+            throw AiStreamAdapterSupport.ioError(e);
         }
     }
 
@@ -87,11 +77,14 @@ public class OpenAiResponsesAdapter implements ModelStreamAdapter {
         return rows;
     }
 
-    private void handleEvent(String eventName, JsonNode root, Consumer<NormalizedStreamEvent> sink,
+    private void handleEvent(String eventName, JsonNode root, String apiKey, Consumer<NormalizedStreamEvent> sink,
                              StringBuilder content, StringBuilder reasoning, Map<String, Object> usage) {
         String type = root.path("type").asText(eventName == null ? "" : eventName);
         if (type.contains("error")) {
-            throw new BusinessException(AiStreamAdapterSupport.extractAiErrorDetail(root.toString()));
+            throw AiStreamAdapterSupport.inStreamError(root, apiKey);
+        }
+        if ("response.failed".equals(type)) {
+            throw AiStreamAdapterSupport.inStreamError(root.path("response"), apiKey);
         }
         if (type.contains("output_text.delta")) {
             String text = root.path("delta").asText("");

@@ -718,6 +718,17 @@
       renderTaskRows(state.tasks);
     }
   }
+  /** 周期给人看的样子（第十九轮）：列表、参考计划、AI 草稿原来直接显示 DAILY / WEEKLY。星期按 ISO：1 是周一。 */
+  function freqLabel(frequency, daysOfWeek) {
+    var f = String(frequency || 'DAILY').toUpperCase();
+    if (f === 'DAILY') return '每天';
+    if (f !== 'WEEKLY') return String(frequency);
+    var names = ['一', '二', '三', '四', '五', '六', '日'];
+    var days = (Array.isArray(daysOfWeek) ? daysOfWeek : String(daysOfWeek || '').split(','))
+      .map(Number).filter(function (d) { return d >= 1 && d <= 7; });
+    return days.length ? '每周' + days.map(function (d) { return names[d - 1]; }).join('、') : '每周';
+  }
+
   /**
    * 任务页一次取一页（第十七轮）。用了两年的账号有几千条任务：原来一次全取回来（1.6MB）、画出四万多个节点，
    * 页面要卡好几秒。现在先给 100 条，「加载更多」再取下一页；页脚写的是真的总数。
@@ -888,7 +899,7 @@
       var when = phase === 'upcoming' ? ' · ' + String(r.startDate).slice(5, 10).replace('-', '/') + ' 开始'
         : phase === 'ended' ? ' · 已结束（' + String(r.endDate).slice(5, 10).replace('-', '/') + '）' : '';
       var check = phase === 'active' ? '<button data-check-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">标记完成</button>' : '';
-      return '<div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><div class="zq-mono" style="flex:none;min-width:46px;height:32px;padding:0 8px;border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">' + esc((r.preferredTime || '08:00').slice(0, 5)) + '</div><div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(r.title) + '</div><div style="font-size:11.5px;color:var(--zq-text2);margin-top:3px;">' + esc((r.frequency || 'DAILY') + ' · ' + (r.durationMinutes || 0) + ' 分钟' + when) + '</div></div>' + check + '<button data-del-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">删除</button></div>';
+      return '<div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><div class="zq-mono" style="flex:none;min-width:46px;height:32px;padding:0 8px;border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">' + esc((r.preferredTime || '08:00').slice(0, 5)) + '</div><div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(r.title) + '</div><div style="font-size:11.5px;color:var(--zq-text2);margin-top:3px;">' + esc(freqLabel(r.frequency, r.daysOfWeek) + ' · ' + (r.durationMinutes || 0) + ' 分钟' + when) + '</div></div>' + check + '<button data-del-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">删除</button></div>';
     }).join('') : empty('暂无例行计划');
     $all('[data-check-routine]', host).forEach(function (b) { b.onclick = async function () { await api.post('/routine/' + b.dataset.checkRoutine + '/checkin', { checkDate: today(), status: 'DONE' }); await loadRoutines(); }; });
     $all('[data-del-routine]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '删除例行计划', message: '删除这个例行计划？相关的未来提醒会一并停止。', okText: '删除', danger: true })) { await api.del('/routine/' + b.dataset.delRoutine); await loadRoutines(); } }; });
@@ -1715,7 +1726,7 @@
         return itemRow(t, '第' + (t.relativeStartDay == null ? 0 : t.relativeStartDay) + '天起 · 截止第' + (t.relativeDeadlineDay == null ? '—' : t.relativeDeadlineDay) + '天' + (t.preferredTime ? ' · ' + t.preferredTime : '') + (t.durationMinutes ? ' · ' + t.durationMinutes + '分钟' : ''));
       }).join('');
       var routines = (d.routines || []).map(function (r) {
-        return itemRow(r, (r.frequency || 'DAILY') + (r.preferredTime ? ' · ' + r.preferredTime : '') + (r.durationMinutes ? ' · ' + r.durationMinutes + '分钟' : '') + ' · 第' + (r.relativeStartDay == null ? 0 : r.relativeStartDay) + '~' + (r.relativeEndDay == null ? '—' : r.relativeEndDay) + '天');
+        return itemRow(r, freqLabel(r.frequency, r.daysOfWeek) + (r.preferredTime ? ' · ' + r.preferredTime : '') + (r.durationMinutes ? ' · ' + r.durationMinutes + '分钟' : '') + ' · 第' + (r.relativeStartDay == null ? 0 : r.relativeStartDay) + '~' + (r.relativeEndDay == null ? '—' : r.relativeEndDay) + '天');
       }).join('');
       var reviews = (d.reviews || []).map(function (rv) {
         return '<div style="font-size:11.5px;color:var(--zq-text2);line-height:1.6;"><span class="zq-mono" style="color:var(--zq-text3);">' + esc(fmtDate(rv.createdAt)) + '</span> ' + esc(rv.action || '') + (rv.note ? ' · ' + esc(rv.note) : '') + '</div>';
@@ -3394,7 +3405,7 @@
   }
   function planRoutineMeta(item) {
     var bits = [];
-    if (item.frequency) bits.push(String(item.frequency));
+    if (item.frequency) bits.push(freqLabel(item.frequency, item.daysOfWeek));
     if (item.preferredTime) bits.push(item.preferredTime);
     if (item.durationMinutes) bits.push(item.durationMinutes + ' 分钟');
     if (item.startDate) bits.push(item.startDate + (item.endDate ? ' → ' + item.endDate : ''));
@@ -3934,15 +3945,43 @@
       ? '<details class="zq-ai-reasoning" data-reason-key="' + esc(reasonKey) + '"' + (state.reasoningExpanded[reasonKey] ? ' open' : '') + '><summary>思考摘要</summary><span>' + esc(reasoningText) + '</span></details>'
       : '';
     // 流式中的内容换行完好且可能只收到半截,跳过压平回填,防止启发式误触
-    var body = m.content ? renderMarkdown((me || m.status === 'STREAMING') ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);">正在生成…</span>' : '');
+    var body = m.content ? renderMarkdown((me || m.status === 'STREAMING') ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);" data-wait-since="' + waitSince(m) + '">' + waitText(waitSince(m)) + '</span>' : '');
     // 刷新之后那条消息会带着「已经生成的一半」回来（后端阶段性落库）。
     // 光有半截正文看不出它是写完了还是还在写 —— 补一个尾巴说清楚，
     // 否则用户会以为回答就到这里为止。
     if (!me && m.content && String(m.status || '').toUpperCase() === 'STREAMING') {
       body += '<div style="margin-top:6px;font-size:11.5px;color:var(--zq-text3);">仍在生成…</div>';
     }
+    // 失败了要说出来，哪怕已经出来了半截（原来有半截正文就把错误原因丢掉，看着像是模型说完了）；
+    // 能用但不完整（输出上限、内容审核、太长）也说。两句都存在库里，刷新之后还在。
+    if (!me && m.errorMessage) {
+      body += '<div data-msg-error style="margin-top:8px;font-size:12px;color:var(--zq-bad);">⚠ ' + esc(m.errorMessage) + '</div>';
+    }
+    if (!me && m.notice) {
+      body += '<div data-msg-notice style="margin-top:8px;font-size:12px;color:var(--zq-warn);">' + esc(m.notice) + '</div>';
+    }
     return reason + body;
   }
+
+  /**
+   * 还没收到第一个字时，说出已经等了多久（第十九轮）。模型卡住时服务器要 60 秒才放弃（回答之前的检索、代码循环更久），
+   * 而网页没有「停止」：原来这段时间里只有一行一动不动的「正在生成…」，看不出是在想还是已经死了。
+   */
+  function waitSince(m) {
+    if (m._startedAt) return m._startedAt;
+    var t = m.createdAt ? Date.parse(m.createdAt) : NaN;
+    return isFinite(t) && t <= Date.now() ? t : Date.now();
+  }
+  function waitText(since) {
+    var s = Math.floor((Date.now() - since) / 1000);
+    if (s < 5) return '正在生成…';
+    if (s < 30) return '正在生成…（已等 ' + s + ' 秒）';
+    return '还在等模型开始回答（已等 ' + s + ' 秒）';
+  }
+  setInterval(function () {
+    var nodes = document.querySelectorAll('[data-wait-since]');
+    for (var i = 0; i < nodes.length; i++) nodes[i].textContent = waitText(Number(nodes[i].getAttribute('data-wait-since')));
+  }, 1000);
 
   /**
    * 流式增量：只改正在生成的那一条，不重建整个聊天区。
@@ -4503,7 +4542,8 @@
       reasoningSummary: '',
       reasoningMode: reasoningMode,
       status: 'STREAMING',
-      _clientKey: clientKey
+      _clientKey: clientKey,
+      _startedAt: Date.now()
     };
     state.messages.push({ role: 'user', content: txt, _clientKey: clientKey + '-user' }, assistant);
     // 用户刚按下发送，这是他自己的动作：无条件回到底部，之后再由他的滚动决定跟不跟随
@@ -4585,6 +4625,7 @@
               }
               if (data && data.assistantMessageId) assistant.id = data.assistantMessageId;
               if (data && data.requestId) assistant.requestId = data.requestId;
+              if (data && data.notice) assistant.notice = data.notice;
               assistant.status = '';
               completed = true;
               if (sameNb()) renderAiMessages();
@@ -4593,7 +4634,8 @@
           else if (event === 'error') {
             failed = true;
             assistant.status = '';
-            assistant.content = assistant.content || ('（出错：' + (data.message || '未知错误') + '）');
+            // 已经收到的半截留着，原因另起一行说（原来有半截就不说原因 —— 看着像是模型说完了）
+            assistant.errorMessage = (data && data.message) || '未知错误';
             if (sameNb()) renderAiMessages();
           }
         });

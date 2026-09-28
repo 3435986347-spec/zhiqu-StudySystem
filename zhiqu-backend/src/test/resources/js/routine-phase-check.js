@@ -20,5 +20,18 @@ judge('昨天结束：已结束', routinePhase({ startDate: '2026-07-06', endDat
 judge('跨年：12 月 31 日结束、1 月 1 日看', routinePhase({ startDate: '2026-12-01', endDate: '2026-12-31' }, '2027-01-01'), 'ended');
 judge('没有结束日期：一直进行中', routinePhase({ startDate: '2026-09-01' }, day), 'active');
 judge('带时间的日期只看日期部分', routinePhase({ startDate: '2026-09-28T08:00:00', endDate: '2026-09-28T00:00:00' }, day), 'active');
+
+// 周期给人看的样子（第十九轮）：原来列表里直接显示 DAILY / WEEKLY
+const fa = src.indexOf('  function freqLabel(frequency, daysOfWeek) {');
+const fb = src.indexOf('\n  }\n', fa);
+if (fa < 0 || fb < 0) throw new Error('抠不到 freqLabel');
+const freqLabel = new Function(src.slice(fa, fb + 4) + '\nreturn freqLabel;')();
+judge('DAILY：每天', freqLabel('DAILY'), '每天');
+judge('没写：按每天', freqLabel(null), '每天');
+judge('WEEKLY + 数组', freqLabel('WEEKLY', [1, 3, 5]), '每周一、三、五');
+judge('WEEKLY + 逗号串（库里的样子）', freqLabel('weekly', '6,7'), '每周六、日');
+judge('WEEKLY 没选星期', freqLabel('WEEKLY', []), '每周');
+judge('越界的星期不显示', freqLabel('WEEKLY', [0, 2, 8]), '每周二');
+judge('认不出的原样', freqLabel('MONTHLY'), 'MONTHLY');
 if (fail) { console.log(fail + ' 条红'); process.exit(1); }
 console.log('ALL-GREEN');

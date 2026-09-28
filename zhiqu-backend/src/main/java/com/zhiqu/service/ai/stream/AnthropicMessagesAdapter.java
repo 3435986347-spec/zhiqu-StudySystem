@@ -10,9 +10,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,33 +39,32 @@ public class AnthropicMessagesAdapter implements ModelStreamAdapter {
             Map<String, Object> body = anthropicBody(request);
             body.put("stream", true);
             AiStreamAdapterSupport.applyAnthropicThinking(body, request.reasoningMode(), request.config().getModelName());
-            restTemplate.execute(
+            AiStreamAdapterSupport.StreamEnd end = restTemplate.execute(
                     AiStreamAdapterSupport.resolveAnthropicMessagesUrl(request.config().getApiUrl()),
                     HttpMethod.POST,
                     httpRequest -> {
                         httpRequest.getHeaders().putAll(anthropicHeaders(request));
                         objectMapper.writeValue(httpRequest.getBody(), body);
                     },
-                    response -> {
-                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
-                            String line;
-                            while ((line = reader.readLine()) != null) {
-                                if (!line.startsWith("data:")) continue;
-                                String data = line.substring(5).trim();
-                                if (data.isBlank() || "[DONE]".equals(data)) continue;
-                                JsonNode root = objectMapper.readTree(data);
-                                handleEvent(root, request, sink, content, reasoning, usage);
-                            }
+                    response -> AiStreamAdapterSupport.readSse(response, objectMapper, (event, root, streamEnd) -> {
+                        handleEvent(root, request, sink, content, reasoning, usage);
+                        String type = root.path("type").asText("");
+                        JsonNode stop = root.at("/delta/stop_reason");
+                        if (stop.isTextual()) {
+                            streamEnd.finish(stop.asText());
                         }
-                        return null;
-                    });
-            return new ModelStreamResult(content.toString(), reasoning.toString(), usage);
+                        if ("message_stop".equals(type)) {
+                            streamEnd.finish(null);
+                        }
+                    }));
+            AiStreamAdapterSupport.requireComplete(end, true);
+            return new ModelStreamResult(content.toString(), reasoning.toString(), usage, end.finishReason);
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw AiStreamAdapterSupport.httpError(e);
+            throw AiStreamAdapterSupport.httpError(e, request.apiKey());
         } catch (Exception e) {
-            throw new BusinessException("Anthropic 流式接口调用失败：" + e.getMessage());
+            throw AiStreamAdapterSupport.ioError(e);
         }
     }
 
@@ -76,7 +72,7 @@ public class AnthropicMessagesAdapter implements ModelStreamAdapter {
                              StringBuilder content, StringBuilder reasoning, Map<String, Object> usage) {
         String type = root.path("type").asText("");
         if ("error".equals(type)) {
-            throw new BusinessException(AiStreamAdapterSupport.extractAiErrorDetail(root.toString()));
+            throw AiStreamAdapterSupport.inStreamError(root, request.apiKey());
         }
         JsonNode delta = root.path("delta");
         String deltaType = delta.path("type").asText("");

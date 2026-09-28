@@ -224,6 +224,11 @@ public final class ToolStreamAccumulator {
         return calls.stream().anyMatch(c -> !c.name.isEmpty()) ? "tool_calls" : "stop";
     }
 
+    /** 供应商自己说了为什么停（而不是推断的）：流没有 [DONE] 时，有它也算说完了。 */
+    public boolean providerSaidFinish() {
+        return finishReason != null && !finishReason.isBlank();
+    }
+
     public String text() {
         return text.toString();
     }

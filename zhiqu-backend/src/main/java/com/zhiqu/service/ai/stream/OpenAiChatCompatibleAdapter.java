@@ -9,9 +9,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -52,37 +49,61 @@ public class OpenAiChatCompatibleAdapter implements ModelStreamAdapter {
             body.put("stream", true);
             AiStreamAdapterSupport.applyOpenAiReasoningOptions(request.config(), body, request.reasoningMode());
 
-            restTemplate.execute(
+            AiStreamAdapterSupport.StreamEnd end = restTemplate.execute(
                     AiStreamAdapterSupport.resolveChatCompletionsUrl(request.config().getApiUrl()),
                     HttpMethod.POST,
                     httpRequest -> {
                         httpRequest.getHeaders().putAll(AiStreamAdapterSupport.jsonHeaders(request.apiKey()));
                         objectMapper.writeValue(httpRequest.getBody(), body);
                     },
-                    response -> {
-                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
-                            String line;
-                            while ((line = reader.readLine()) != null) {
-                                if (!line.startsWith("data:")) continue;
-                                String data = line.substring(5).trim();
-                                if (data.isBlank() || "[DONE]".equals(data)) continue;
-                                JsonNode root = objectMapper.readTree(data);
-                                if (root.has("error")) {
-                                    throw new BusinessException(AiStreamAdapterSupport.extractAiErrorDetail(root.toString()));
-                                }
-                                handleChunk(root, request, sink, content, reasoning, usage);
-                            }
+                    response -> AiStreamAdapterSupport.readSse(response, objectMapper, (event, root, streamEnd) -> {
+                        if (root.has("error")) {
+                            throw AiStreamAdapterSupport.inStreamError(root, request.apiKey());
                         }
-                        return null;
-                    });
-            return new ModelStreamResult(content.toString(), reasoning.toString(), usage);
+                        handleChunk(root, request, sink, content, reasoning, usage);
+                        JsonNode finish = root.at("/choices/0/finish_reason");
+                        if (finish.isTextual()) {
+                            streamEnd.finish(finish.asText());
+                        }
+                    }));
+            if (end != null && end.dataLines == 0 && end.contentType.toLowerCase(Locale.ROOT).contains("json")) {
+                // 有的代理不支持流式，stream:true 也回一整段 JSON：照非流式的格式认出来，而不是当成空回答
+                wholeBody(end, request, sink, content, reasoning, usage);
+            }
+            AiStreamAdapterSupport.requireComplete(end, expectsEndSignal());
+            return new ModelStreamResult(content.toString(), reasoning.toString(), usage, end.finishReason);
         } catch (BusinessException e) {
             throw e;
         } catch (RestClientResponseException e) {
-            throw AiStreamAdapterSupport.httpError(e);
+            throw AiStreamAdapterSupport.httpError(e, request.apiKey());
         } catch (Exception e) {
-            throw new BusinessException("AI 流式接口调用失败：" + e.getMessage());
+            throw AiStreamAdapterSupport.ioError(e);
         }
+    }
+
+    /** 这家协议有没有「说完了」的信号（[DONE] 或 finish_reason）。没有的话，流断在半路和正常结束分不出来。 */
+    protected boolean expectsEndSignal() {
+        return true;
+    }
+
+    private void wholeBody(AiStreamAdapterSupport.StreamEnd end, ModelStreamRequest request, Consumer<NormalizedStreamEvent> sink,
+                           StringBuilder content, StringBuilder reasoning, Map<String, Object> usage) {
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(end.rawBody);
+        } catch (Exception e) {
+            return;
+        }
+        if (root == null || !root.isObject()) {
+            return;
+        }
+        if (root.has("error")) {
+            throw AiStreamAdapterSupport.inStreamError(root, request.apiKey());
+        }
+        handleChunk(root, request, sink, content, reasoning, usage);
+        end.dataLines++;
+        JsonNode finish = root.at("/choices/0/finish_reason");
+        end.finish(finish.isTextual() ? finish.asText() : "stop");
     }
 
     protected void handleChunk(JsonNode root, ModelStreamRequest request, Consumer<NormalizedStreamEvent> sink,

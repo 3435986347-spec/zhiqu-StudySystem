@@ -4,18 +4,160 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.AiModelConfig;
+import com.zhiqu.service.ai.ProviderFailure;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 
+@Slf4j
 public final class AiStreamAdapterSupport {
     private AiStreamAdapterSupport() {
+    }
+
+    /** 两次读之间最多等多久。网页聊天没有「停止」按钮，所以不像命令行网关那样等 3 分钟。 */
+    public static final int STREAM_READ_TIMEOUT_SECONDS = 60;
+    /** 回的不是 SSE 时，最多留多少字去认它是什么（整段 JSON 回答、HTML 页面）。 */
+    private static final int RAW_BODY_CAP = 1_000_000;
+
+    /**
+     * 一次流式读取的收尾情况（第十九轮）。原来流读完就算「说完了」：连接中途断开的半截回答照样标成完成，
+     * 被输出上限截断、被内容审核拦下也一个字不说，地址填成官网（回一页 HTML）得到的是一条空白回答。
+     */
+    public static final class StreamEnd {
+        int dataLines;
+        boolean ended;
+        String finishReason;
+        String contentType = "";
+        String rawBody = "";
+
+        void finish(String reason) {
+            ended = true;
+            if (reason != null && !reason.isBlank()) {
+                finishReason = normalizeFinish(reason);
+            }
+        }
+
+        /** 调用方按自家协议认出了结束事件（Anthropic 的 message_stop）。 */
+        public void markEnded() {
+            ended = true;
+        }
+
+        /** 看到了结束信号（[DONE]、finish_reason、message_stop…）。 */
+        public boolean ended() {
+            return ended;
+        }
+
+        public int dataLines() {
+            return dataLines;
+        }
+
+        /** 一行 data 都没有、回的也不是 SSE（网页、别的东西）：这时给出那句「地址可能填错了」，否则 null。 */
+        public String notAStreamMessage() {
+            if (dataLines > 0) {
+                return null;
+            }
+            String type = contentType.toLowerCase(Locale.ROOT);
+            if (type.contains("event-stream")) {
+                return null;
+            }
+            String shown = type.isEmpty() ? "没有类型" : type.split(";")[0];
+            return "接口返回的不是模型的流式回答（返回的是 " + shown
+                    + "）：「接口地址」可能填错了，一般形如 https://…/v1/chat/completions";
+        }
+    }
+
+    /** 连接断在半路：已经收到的那一截由调用方留着，并告诉用户没说完。 */
+    public static final class StreamCutOff extends BusinessException {
+        public StreamCutOff() {
+            super("模型的回答没说完，连接就断了");
+        }
+    }
+
+    @FunctionalInterface
+    public interface SseHandler {
+        void onData(String eventName, JsonNode root, StreamEnd end);
+    }
+
+    /** 各家的「为什么停」归成几种：stop / length（输出上限）/ filtered（内容审核）。 */
+    static String normalizeFinish(String reason) {
+        String r = reason.trim().toLowerCase(Locale.ROOT);
+        return switch (r) {
+            case "length", "max_tokens", "max_output_tokens" -> "length";
+            case "content_filter", "safety", "refusal", "recitation", "prohibited_content", "blocklist", "spii" -> "filtered";
+            case "stop", "end_turn", "stop_sequence", "tool_calls", "tool_use", "function_call", "finish_reason_unspecified" -> "stop";
+            default -> r;
+        };
+    }
+
+    /** 读一条 SSE 流：记下有几行 data、有没有 [DONE]、回的是什么类型；不是 SSE 的内容留一截给调用方认。 */
+    public static StreamEnd readSse(ClientHttpResponse response, ObjectMapper mapper, SseHandler handler) throws IOException {
+        StreamEnd end = new StreamEnd();
+        MediaType type = response.getHeaders().getContentType();
+        end.contentType = type == null ? "" : type.toString();
+        StringBuilder raw = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
+            String eventName = "";
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("event:")) {
+                    eventName = line.substring(6).trim();
+                    continue;
+                }
+                if (!line.startsWith("data:")) {
+                    if (end.dataLines == 0 && raw.length() < RAW_BODY_CAP) {
+                        raw.append(line).append('\n');
+                    }
+                    continue;
+                }
+                String data = line.substring(5).trim();
+                if (data.isBlank()) {
+                    continue;
+                }
+                end.dataLines++;
+                if ("[DONE]".equals(data)) {
+                    end.ended = true;
+                    continue;
+                }
+                handler.onData(eventName, mapper.readTree(data), end);
+            }
+        }
+        end.rawBody = end.dataLines == 0 ? raw.toString() : "";
+        return end;
+    }
+
+    /**
+     * 流读完之后核对：一行 data 都没有且不是 SSE —— 回的是网页或别的东西；有内容却没有结束信号 —— 断在半路。
+     * 空的 SSE（直接 [DONE]）不在这里判：「什么都没说」由调用方说，它知道这一轮还有没有别的产出。
+     */
+    static void requireComplete(StreamEnd end, boolean expectEndSignal) {
+        String notAStream = end.notAStreamMessage();
+        if (notAStream != null) {
+            throw new BusinessException(notAStream);
+        }
+        if (end.dataLines > 0 && expectEndSignal && !end.ended) {
+            throw new StreamCutOff();
+        }
+    }
+
+    static BusinessException ioError(Exception e) {
+        log.warn("模型流式调用失败：{}", e.toString());
+        return new BusinessException(ProviderFailure.io(e, STREAM_READ_TIMEOUT_SECONDS));
+    }
+
+    static BusinessException inStreamError(JsonNode root, String apiKey) {
+        return new BusinessException(ProviderFailure.inStream(root, apiKey));
     }
 
     static boolean hasText(String value) {
@@ -75,7 +217,7 @@ public final class AiStreamAdapterSupport {
     static RestTemplate timeoutRestTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
-        factory.setReadTimeout(60_000);
+        factory.setReadTimeout(STREAM_READ_TIMEOUT_SECONDS * 1000);
         return new RestTemplate(factory);
     }
 
@@ -204,23 +346,8 @@ public final class AiStreamAdapterSupport {
         return row;
     }
 
-    static String extractAiErrorDetail(String body) {
-        if (!hasText(body)) {
-            return "AI 接口调用失败";
-        }
-        try {
-            JsonNode root = new ObjectMapper().readTree(body);
-            String message = firstTextAt(root, "/error/message", "/message", "/error");
-            if (hasText(message)) {
-                return message;
-            }
-        } catch (Exception ignored) {
-            // fall through
-        }
-        return body.length() > 500 ? body.substring(0, 500) + "..." : body;
-    }
-
-    static BusinessException httpError(RestClientResponseException e) {
-        return new BusinessException("AI 接口调用失败：" + extractAiErrorDetail(e.getResponseBodyAsString()));
+    static BusinessException httpError(RestClientResponseException e, String apiKey) {
+        String retryAfter = e.getResponseHeaders() == null ? null : e.getResponseHeaders().getFirst("Retry-After");
+        return new BusinessException(ProviderFailure.http(e.getStatusCode().value(), e.getResponseBodyAsString(), retryAfter, apiKey));
     }
 }

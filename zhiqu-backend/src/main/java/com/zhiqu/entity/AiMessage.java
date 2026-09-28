@@ -28,6 +28,8 @@ public class AiMessage {
     private Boolean webSearchEnabled;
     private LocalDateTime completedAt;
     private String errorMessage;
+    /** 回答能用但不完整时的说明（V38）。见 AiServiceImpl.FinalWriterRunner。 */
+    private String notice;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

@@ -1,6 +1,5 @@
 package com.zhiqu.service.harness;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.AiModelConfig;
@@ -9,6 +8,7 @@ import com.zhiqu.mapper.HarnessUsageMapper;
 import com.zhiqu.service.AiService;
 import com.zhiqu.service.ai.AnthropicFormat;
 import com.zhiqu.service.ai.ModelProviderClient;
+import com.zhiqu.service.ai.ProviderFailure;
 import com.zhiqu.service.ai.ToolStreamAccumulator;
 import com.zhiqu.service.ai.stream.AiStreamAdapterSupport;
 import com.zhiqu.service.ai.stream.ModelStreamAdapterFactory;
@@ -23,10 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -87,8 +84,11 @@ public class HarnessModelGateway {
     }
 
     static boolean retryableStatus(int status) {
-        return status == 429 || status >= 500;
+        return ProviderFailure.retryable(status);
     }
+
+    /** 两次读之间最多等多久：推理模型在第一个字之前可能要想很久。 */
+    static final int READ_TIMEOUT_SECONDS = 180;
 
     /** 客户端断开：不再往回发，也不再读上游。 */
     public static final class ClientGone extends RuntimeException {
@@ -116,8 +116,7 @@ public class HarnessModelGateway {
         this.anthropicVersion = anthropicVersion;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
-        // 两次读之间最多等 3 分钟：推理模型在第一个字之前可能要想很久
-        factory.setReadTimeout(180_000);
+        factory.setReadTimeout(READ_TIMEOUT_SECONDS * 1000);
         this.restTemplate = new RestTemplate(factory);
     }
 
@@ -241,15 +240,21 @@ public class HarnessModelGateway {
                     last = new BusinessException("模型拒绝了输出上限：" + detail);
                     continue;
                 }
-                throw new ModelCallException("AI 接口调用失败（HTTP " + e.getStatusCode().value() + "）：" + detail,
-                        retryableStatus(e.getStatusCode().value()));
+                // 与网页聊天同一套说法（ProviderFailure）：按状态码说人话，供应商的原因附在后面、遮住 key
+                throw new ModelCallException(provider.formatAiHttpError(e, config), retryableStatus(e.getStatusCode().value()));
             } catch (org.springframework.web.client.ResourceAccessException e) {
-                // 连不上、读超时、连接被重置 —— 都是临时的
-                throw new ModelCallException("连不上模型服务：" + e.getMessage(), true);
+                // 原来一律「连不上模型服务：I/O error on POST request for "http://…"」—— 接口地址、异常原文一起给到终端，
+                // 流里有一段坏 JSON 也说成「连不上」并让命令行重试
+                log.warn("命令行模型调用失败：{}", e.toString());
+                throw new ModelCallException(ProviderFailure.io(e, READ_TIMEOUT_SECONDS), ProviderFailure.retryableIo(e));
             }
         }
         if (last != null) {
             throw last;
+        }
+        if (acc.outputChars() == 0 && !"length".equals(acc.finishReason())) {
+            // 空回答原来照样发 done：命令行那一轮一个字都不打就结束了。可以重试 —— 多半是供应商那一下抽风
+            throw new ModelCallException("模型这次什么都没说（返回了空回答）", true);
         }
 
         boolean estimated = acc.promptTokens() == null || acc.completionTokens() == null;
@@ -315,7 +320,7 @@ public class HarnessModelGateway {
             }
             json.writeValue(request.getBody(), body);
         }, response -> {
-            readSse(response.getBody(), acc::onOpenAiChunk);
+            requireComplete(AiStreamAdapterSupport.readSse(response, json, (event, root, end) -> acc.onOpenAiChunk(root)), acc);
             return null;
         });
     }
@@ -340,20 +345,27 @@ public class HarnessModelGateway {
             request.getHeaders().putAll(provider.anthropicHeaders(config));
             json.writeValue(request.getBody(), body);
         }, response -> {
-            readSse(response.getBody(), acc::onAnthropicEvent);
+            requireComplete(AiStreamAdapterSupport.readSse(response, json, (event, root, end) -> {
+                acc.onAnthropicEvent(root);
+                if ("message_stop".equals(root.path("type").asText(""))) {
+                    end.markEnded();
+                }
+            }), acc);
             return null;
         });
     }
 
-    private void readSse(java.io.InputStream in, java.util.function.Consumer<JsonNode> onData) throws IOException {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (!line.startsWith("data:")) continue;
-                String data = line.substring(5).trim();
-                if (data.isEmpty() || "[DONE]".equals(data)) continue;
-                onData.accept(json.readTree(data));
-            }
+    /**
+     * 流读完了，核对它是不是真的说完了（第十九轮）：原来连接断在半路也照样发 done —— 半截的工具调用参数被当成完整的交给命令行，
+     * 地址填成官网（回一页 HTML）得到的是一个空的 done。可以重试的前提是还一个字都没收到，否则命令行会把前面那截再收一遍。
+     */
+    private static void requireComplete(AiStreamAdapterSupport.StreamEnd end, ToolStreamAccumulator acc) {
+        String notAStream = end.notAStreamMessage();
+        if (notAStream != null) {
+            throw new ModelCallException(notAStream, false);
+        }
+        if (end.dataLines() > 0 && !end.ended() && !acc.providerSaidFinish()) {
+            throw new ModelCallException("模型的回答没说完，连接就断了", acc.outputChars() == 0);
         }
     }
 

@@ -65,7 +65,8 @@ class HarnessModelGatewayTest {
             headers.add(h);
             Object[] reply = handler.apply(body);
             byte[] bytes = ((String) reply[1]).getBytes(StandardCharsets.UTF_8);
-            ex.getResponseHeaders().add("Content-Type", (int) reply[0] == 200 ? "text/event-stream" : "application/json");
+            ex.getResponseHeaders().add("Content-Type", reply.length > 2 ? (String) reply[2]
+                    : (int) reply[0] == 200 ? "text/event-stream" : "application/json");
             ex.sendResponseHeaders((int) reply[0], bytes.length);
             try (OutputStream out = ex.getResponseBody()) {
                 out.write(bytes);
@@ -288,5 +289,76 @@ class HarnessModelGatewayTest {
         }));
         assertEquals(List.of("start", "delta"), seen, "断开之后不该再发");
         verify(usageMapper, never()).insert(any(HarnessUsage.class));
+    }
+
+    // ── 第十九轮：供应商那一侧不配合 ─────────────────────────────────────
+
+    private HarnessModelGateway.ModelCallException failure(Function<JsonNode, Object[]> handler) throws Exception {
+        model("OPENAI_COMPATIBLE", fakeModel(handler), null);
+        HarnessModelGateway.ModelCallException e = assertThrows(HarnessModelGateway.ModelCallException.class,
+                () -> gateway(true).stream(1L, body(ASK), sink()));
+        assertFalse(events.contains("done"), "出了错就不该再发 done：" + events);
+        for (String leak : List.of("http://", "I/O error", "Source:", "sk-test")) {
+            assertFalse(e.getMessage().contains(leak), "给终端的话里不该有「" + leak + "」：" + e.getMessage());
+        }
+        return e;
+    }
+
+    @Test
+    @DisplayName("说到一半连接断了（没有 [DONE]、没有 finish_reason）：不发 done，说「没说完」；已经输出过就不可重试（重来会重复），还没输出过可以")
+    void 说到一半断开() throws Exception {
+        HarnessModelGateway.ModelCallException after = failure(b -> new Object[]{200, sse(
+                "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}")});
+        assertTrue(after.getMessage().contains("没说完"), after.getMessage());
+        assertFalse(after.retryable(), "半截的工具调用已经转给命令行了");
+        server.stop(0);
+        events.clear();
+        HarnessModelGateway.ModelCallException before = failure(b -> new Object[]{200, sse(
+                "{\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}")});
+        assertTrue(before.getMessage().contains("没说完"), before.getMessage());
+        assertTrue(before.retryable(), "一个字都还没收到：可以原样重来");
+    }
+
+    @Test
+    @DisplayName("有 finish_reason 没有 [DONE]：算说完了（有的供应商不发 [DONE]）")
+    void 只有finishReason() throws Exception {
+        model("OPENAI_COMPATIBLE", fakeModel(b -> new Object[]{200, sse(
+                "{\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":\"stop\"}]}")}), null);
+        gateway(true).stream(1L, body(ASK), sink());
+        assertEquals("done", events.get(events.size() - 1));
+    }
+
+    @Test
+    @DisplayName("接口地址填成了官网（200 回一页 HTML）：说地址可能填错了，不可重试（原来是一个空的 done）")
+    void 回的是网页() throws Exception {
+        HarnessModelGateway.ModelCallException e = failure(b -> new Object[]{200, "<!doctype html><html><body>Welcome</body></html>", "text/html"});
+        assertTrue(e.getMessage().contains("「接口地址」可能填错了"), e.getMessage());
+        assertFalse(e.retryable());
+    }
+
+    @Test
+    @DisplayName("空回答（直接 [DONE]）：说什么都没说，可以重试（原来发一个空的 done，那一轮一个字不打就结束）")
+    void 空回答() throws Exception {
+        HarnessModelGateway.ModelCallException e = failure(b -> new Object[]{200, sse("[DONE]")});
+        assertTrue(e.getMessage().contains("什么都没说"), e.getMessage());
+        assertTrue(e.retryable());
+    }
+
+    @Test
+    @DisplayName("流里一块 JSON 坏了：说数据格式不对、不可重试（原来说成「连不上模型服务：I/O error on POST request for http://…」还标可重试）")
+    void 坏JSON() throws Exception {
+        HarnessModelGateway.ModelCallException e = failure(b -> new Object[]{200,
+                "data: {\"choices\":[{\"delta\":{\"content\":\"坏\n\n"});
+        assertTrue(e.getMessage().contains("不是合法的 JSON"), e.getMessage());
+        assertFalse(e.retryable());
+    }
+
+    @Test
+    @DisplayName("key 错（401，报错里回显了 key）：说「API Key 不对」，key 遮住")
+    void key错() throws Exception {
+        HarnessModelGateway.ModelCallException e = failure(b -> new Object[]{401,
+                "{\"error\":{\"message\":\"Incorrect API key provided: sk-test\"}}"});
+        assertTrue(e.getMessage().contains("API Key 不对"), e.getMessage());
+        assertFalse(e.retryable());
     }
 }
