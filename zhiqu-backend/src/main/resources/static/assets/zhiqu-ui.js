@@ -64,6 +64,11 @@
   function storeSideCollapsed(on){
     try { localStorage.setItem(SIDE_COLLAPSED_KEY, on ? '1' : '0'); } catch (e) {}
   }
+  // 手机宽度（与 zhiqu-ui.css 里的 @media 同一个断点）：侧栏默认收起、展开是临时的 —— 不改桌面上存的偏好
+  var MOBILE_QUERY = '(max-width: 760px)';
+  function isMobile(){
+    try { return !!(window.matchMedia && window.matchMedia(MOBILE_QUERY).matches); } catch (e) { return false; }
+  }
   function applySideCollapsed(on){
     var host = document.getElementById('zq-side');
     if (host) host.classList.toggle('is-collapsed', on);
@@ -101,12 +106,22 @@
     var toggle = host.querySelector('.zq-side-toggle');
     if (toggle) {
       toggle.onclick = function () {
-        var next = !sideCollapsed();
-        storeSideCollapsed(next);
+        var next = !host.classList.contains('is-collapsed');
+        if (!isMobile()) storeSideCollapsed(next);
         applySideCollapsed(next);
       };
     }
-    applySideCollapsed(sideCollapsed());
+    applySideCollapsed(isMobile() || sideCollapsed());
+    // 手机上展开的侧栏浮在正文上面：点正文就收起（不然只能再找到那个小按钮）
+    document.addEventListener('mousedown', function (e) {
+      if (isMobile() && !host.classList.contains('is-collapsed') && !host.contains(e.target)) applySideCollapsed(true);
+    });
+    // 转屏 / 拖窗口跨过断点：回到那个宽度该有的样子
+    try {
+      var mq = window.matchMedia(MOBILE_QUERY);
+      var onChange = function () { applySideCollapsed(isMobile() || sideCollapsed()); };
+      if (mq.addEventListener) mq.addEventListener('change', onChange); else if (mq.addListener) mq.addListener(onChange);
+    } catch (e) {}
     // 跨页面保留导航滚动位置：MPA 每次跳转都重建侧栏，不记忆的话 scrollTop 会归零
     var nav = host.querySelector('.zq-nav');
     if (nav) {

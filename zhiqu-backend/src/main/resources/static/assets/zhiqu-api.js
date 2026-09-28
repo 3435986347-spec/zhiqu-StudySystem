@@ -4167,6 +4167,7 @@
       return Number(item.id) === Number(state.notebookId);
     });
     label.textContent = current ? '当前 Notebook：' + (current.title || '未命名') : '普通聊天（未选择 Notebook）';
+    label.title = current ? (current.title || '未命名') : '';   // 名字长时标题栏只显示开头，悬停看全名
   }
   // 右键浮出菜单（资料删除 / notebook 改名共用），点击别处自动关闭
   function popMenu(x, y, items) {
@@ -4209,7 +4210,7 @@
     renderCurrentNotebookLabel();
     host.innerHTML = (state.notebooks || []).map(function (nb) {
       var active = nb.id === state.notebookId;
-      return '<div data-notebook="' + nb.id + '" style="padding:9px 11px;border:1px solid ' + (active ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (active ? 'var(--zq-tint)' : 'var(--zq-card)') + ';cursor:pointer;"><div data-nb-name="' + nb.id + '" title="' + (active ? '点击重命名' : '') + '" style="font-size:12.5px;font-weight:600;">' + esc(nb.title || 'Notebook') + '</div><div style="font-size:11px;color:var(--zq-text3);margin-top:2px;">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
+      return '<div data-notebook="' + nb.id + '" style="padding:9px 11px;border:1px solid ' + (active ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (active ? 'var(--zq-tint)' : 'var(--zq-card)') + ';cursor:pointer;"><div data-nb-name="' + nb.id + '" title="' + esc(nb.title || 'Notebook') + (active ? ' · 点击重命名' : '') + '" style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(nb.title || 'Notebook') + '</div><div style="font-size:11px;color:var(--zq-text3);margin-top:2px;">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
     }).join('') || '<div class="zq-ai-empty-notebook"><strong>暂无 Notebook</strong><span>普通聊天仍可使用；上传资料前请先新建。</span></div>';
     $all('[data-notebook]', host).forEach(function (d) {
       var id = Number(d.dataset.notebook);

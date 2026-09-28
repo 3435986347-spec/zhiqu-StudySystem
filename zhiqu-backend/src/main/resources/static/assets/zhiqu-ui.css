@@ -528,7 +528,13 @@ html[data-zq-ver="v4"][data-zq-mode="dark"]{
 
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
-body{background:var(--zq-bg);color:var(--zq-text);font-family:var(--zq-fontBody);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;}
+body{background:var(--zq-bg);color:var(--zq-text);font-family:var(--zq-fontBody);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-wrap:anywhere;}
+/* 第二十轮：一个没有空格的长网址 / 长单词原来能把看板撑宽 1374px、把聊天区推出去 3000px —— 用户的内容出现在几十处，
+   一处一处补 overflow-wrap 补不完（此前已经补了七八处），所以放在 body 上一次给全。
+   anywhere 而不是 break-word：后者不缩小 min-content，flex / grid 里的项目照样被长单词撑宽。
+   表格单元格例外：不然一张 40 列的表会被压成每格一个字，宁可让表格在自己的框里横向滚动。
+   按钮、下拉框本来就是 nowrap，不受影响。 */
+td,th{overflow-wrap:normal;}
 h1,h2,h3,h4,p{margin:0;}
 a{color:inherit;text-decoration:none;}
 button,input,select,textarea{font-family:inherit;color:inherit;}
@@ -573,6 +579,20 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-side.is-collapsed .zq-nav a{justify-content:center;padding-left:0;padding-right:0;}
 .zq-side.is-collapsed .zq-user{justify-content:center;}
 .zq-main.is-side-collapsed{margin-left:56px;}
+
+/* ── 手机（第二十轮）──────────────────────────────────────────────────────
+   原来这份样式表一条 @media 都没有：375px 宽时侧栏照样 188px，正文剩 150px，标题一个字一行，整页横向多出 246px。
+   侧栏在手机上默认就是折叠态（zhiqu-ui.js 的 isMobile），展开时浮在正文上面、不推正文。
+   页面级的多栏布局都写在内联 style 里，所以只能按 style 属性认：并排的几栏改成一栏，四个一排的数字卡改成两个一排；
+   行内部的「时间 + 标题」、本身就会横向滚动的（一周日历、任务表）、auto-fit 本来就会换行的，不动。
+   新加一种 grid-template-columns 时 MobileLayoutTest 会要求你决定它在手机上怎么排。 */
+@media (max-width: 760px){
+  .zq-main,.zq-main.is-side-collapsed{margin-left:56px;padding:18px 12px 64px;}
+  .zq-side:not(.is-collapsed){box-shadow:0 0 0 100vmax rgba(0,0,0,.35);}
+  .zq-main [style*="grid-template-columns"]:not([style*="grid-template-columns:52px"]):not([style*="grid-template-columns:36px"]):not([style*="auto-fit"]):not([style*="repeat(7"]):not([style*="minmax(200px,2.2fr)"]):not([style*="minmax(120px,1.1fr)"]):not([style*="repeat(4"]):not([style*="repeat(5"]):not([style*="repeat(6"]){grid-template-columns:minmax(0,1fr)!important;}
+  /* 两条规则认的是互不相交的两批 —— 上面那条要是不排除这三种，它的 :not 叠得更多、优先级更高，数字卡会被它压成一栏 */
+  .zq-main [style*="repeat(4"],.zq-main [style*="repeat(5"],.zq-main [style*="repeat(6"]{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+}
 
 /* 收起按钮：在导航栏最上方，折叠后仍可点（它是唯一的回路） */
 .zq-side-toggle{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:28px;
