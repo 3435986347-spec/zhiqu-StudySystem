@@ -23,7 +23,7 @@
 // 按键从 keypress 事件上截（把 readline 自己的监听器包一层），不碰 readline 的内部方法；菜单没开时一切照旧（↑↓ 翻历史）。
 import readline from 'node:readline';
 import { Markdown } from './render/markdown.js';
-import { colorEnabled, displayWidth, painter } from './render/term.js';
+import { colorEnabled, displayWidth, painter, termSafe } from './render/term.js';
 import { matchCommands } from './commands.js';
 
 const MENU_ROWS = 8;
@@ -545,7 +545,7 @@ export class Ui {
 
   setActivity(text) {
     if (!this.thinking) return;
-    this.thinking.activity = text ? String(text).replace(/\s+/g, ' ') : '';
+    this.thinking.activity = text ? termSafe(text, { singleLine: true }).replace(/\s+/g, ' ') : '';
     this.renderThinking();
   }
 
@@ -604,11 +604,13 @@ export class Ui {
   }
 
   line(text = '') { this.write(`${text}\n`); }
-  note(text) { this.line(this.paint.dim(text)); }
-  warn(text) { this.line(this.paint.yellow(`! ${text}`)); }
-  error(text) { this.line(this.paint.red(`✗ ${text}`)); }
-  step(text) { this.line(`${this.paint.cyan('⏺')} ${text}`); }
-  result(text, ok = true) { this.line(`  ${this.paint.dim('⎿')} ${ok ? text : this.paint.red(text)}`); }
+  // 这几个打的都是带着文件名、工具输出的字：先 termSafe（第十六轮），控制字符不许原样到终端
+  note(text) { this.line(this.paint.dim(termSafe(text))); }
+  warn(text) { this.line(this.paint.yellow(`! ${termSafe(text)}`)); }
+  error(text) { this.line(this.paint.red(`✗ ${termSafe(text)}`)); }
+  step(text) { this.line(`${this.paint.cyan('⏺')} ${termSafe(text, { singleLine: true })}`); }
+  /** 调用方有时已经上过色（✓ 绿），所以只保留颜色码、别的控制字符照样转义 */
+  result(text, ok = true) { const t = termSafe(text, { keepSgr: true }); this.line(`  ${this.paint.dim('⎿')} ${ok ? t : this.paint.red(t)}`); }
 
   markdown() {
     return new Markdown((s) => this.write(s), this.color);
@@ -616,7 +618,7 @@ export class Ui {
 
   /** diff 分块：+ 绿、- 红、@@ 灰。最多 maxLines 行，多了说还有几行。 */
   diff(lines, maxLines = 200) {
-    const shown = lines.slice(0, maxLines);
+    const shown = lines.slice(0, maxLines).map((l) => termSafe(l, { singleLine: true }));
     for (const l of shown) {
       if (l.startsWith('@@')) this.line(`    ${this.paint.dim(l)}`);
       else if (l.startsWith('+')) this.line(`    ${this.paint.green(l)}`);

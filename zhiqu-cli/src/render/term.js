@@ -58,3 +58,24 @@ export class StatusLine {
     this.active = false;
   }
 }
+
+/**
+ * 送去终端之前，把控制字符换成看得见的写法（第十六轮）。文件名、文件内容、命令输出、模型的回答里都可能有 ESC ——
+ * 原样打到终端上，它会被当成命令执行：变色、挪光标、清屏、改标题。一个叫「\x1b[2J.js」的文件，读它的时候屏幕就清空了。
+ * 自己加的颜色（paint）在这之后才加，不受影响。
+ * singleLine：换行也换成 ⏎（步骤标题、状态行只占一行，换行会把活动区撑乱）。
+ * keepSgr：保留只改颜色的那种（ESC [ 数字 m）—— 给调用方已经上过色的文字用。
+ */
+export function termSafe(text, { singleLine = false, keepSgr = false } = {}) {
+  let s = String(text == null ? '' : text).replace(/\r(?=\n|$)/g, '');
+  const sgr = [];
+  // 颜色码先换成私用区字符占位（不是控制字符，下一步不会被转义），转义完再换回来
+  if (keepSgr) s = s.replace(/\u001b\[[0-9;]*m/g, (m) => { sgr.push(m); return `\ue000${sgr.length - 1}\ue001`; });
+  s = s.replace(singleLine ? /[\u0000-\u001f\u007f-\u009f]/g : /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, (c) => {
+    if (c === '\n') return '⏎';
+    if (c === '\t') return ' ';
+    return `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`;
+  });
+  if (keepSgr) s = s.replace(/\ue000(\d+)\ue001/g, (m, i) => (sgr[Number(i)] === undefined ? m : sgr[Number(i)]));
+  return s;
+}

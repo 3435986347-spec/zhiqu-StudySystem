@@ -30,12 +30,48 @@ export class SessionStore {
   }
 
   readIndex() {
-    try {
-      const data = JSON.parse(fs.readFileSync(this.index, 'utf8'));
-      return { version: 1, sessions: Array.isArray(data.sessions) ? data.sessions : [], lastSessionId: data.lastSessionId || null };
-    } catch {
-      return { version: 1, sessions: [], lastSessionId: null };
+    let data = null;
+    try { data = JSON.parse(fs.readFileSync(this.index, 'utf8')); } catch { /* 没有，或者坏了：下面按会话文件补回来 */ }
+    const sessions = data && Array.isArray(data.sessions) ? data.sessions.filter((s) => s && typeof s.id === 'string') : [];
+    const known = new Set(sessions.map((s) => s.id));
+    for (const found of this.orphanSessions(known)) sessions.push(found);
+    return { version: 1, sessions, lastSessionId: (data && data.lastSessionId) || null };
+  }
+
+  /**
+   * 会话文件在、索引里没有它：从文件本身重建一条（第十六轮）。原来索引坏了（强杀在写索引的那一刻、手改坏了）就当成空的，
+   * 下一次写索引把它整个换掉 —— 聊天记录都还在 sessions/ 里，/resume 却再也找不到，等于丢了。
+   * 平时一个都没有，只多一次 readdir；补回来的下一次写索引时就存进去了。
+   */
+  orphanSessions(known) {
+    let files = [];
+    try { files = fs.readdirSync(this.sessionsDir).filter((f) => f.endsWith('.jsonl')); } catch { return []; }
+    const out = [];
+    for (const f of files) {
+      const id = f.slice(0, -'.jsonl'.length);
+      if (known.has(id) || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) continue;
+      const file = path.join(this.sessionsDir, f);
+      let title = '';
+      let createdAt = null;
+      let messages = 0;
+      let mtime;
+      try {
+        mtime = fs.statSync(file).mtime.toISOString();
+        for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+          if (!line) continue;
+          let e;
+          try { e = JSON.parse(line); } catch { continue; }
+          if (!createdAt && e.at) createdAt = e.at;
+          if (e.type === 'message' && e.message) {
+            messages += 1;
+            const m = e.message;
+            if (!title && m.role === 'user' && typeof m.content === 'string' && !e.origin && !m.origin) title = m.content.trim().slice(0, 40);
+          }
+        }
+      } catch { continue; }
+      out.push({ id, title: title || '（从记录里找回的会话）', createdAt: createdAt || mtime, updatedAt: mtime, messages, model: null, recovered: true });
     }
+    return out;
   }
 
   writeIndex(index) {

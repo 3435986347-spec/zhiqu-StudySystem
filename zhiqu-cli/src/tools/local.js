@@ -7,6 +7,7 @@
 // 整份重写还要求读的是全文 —— 只读了前 2000 行就整份重写，会把没读到的部分冲掉。
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { StringDecoder } from 'node:string_decoder';
 import path from 'node:path';
 import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_BYTES } from './guard.js';
 import { checkCommand, describeRefusal, DEFAULT_COMMANDS, ExecRefusal } from './execrules.js';
@@ -24,6 +25,103 @@ const READ_MAX_CHARS = 100_000;
 const SEARCH_MAX_FILES = 3000;
 const SEARCH_MAX_HITS = 80;
 const SEARCH_MAX_LINE_CHARS = 400;
+/** 搜索时单个文件最多流式扫这么大；再大的跳过并说出来（同步扫，太大会让命令行卡住） */
+const SEARCH_STREAM_MAX_BYTES = 512 * 1024 * 1024;
+const CHUNK_BYTES = 1 << 20;
+
+/**
+ * 一段字节是什么（第十六轮）：
+ *   binary —— 有 NUL，或一成以上是控制字符（图片改了个 .txt 的名字、数据库转储：原来读进来就是几千个乱码塞进模型的上下文）；
+ *   utf8；
+ *   gb18030 —— 不是 UTF-8、但按 GB18030 解得通（老的 Windows 项目、老师发的 C 代码常是 GBK；第一版把它们判成了二进制）；
+ *   unknown —— 都解不通。
+ * partial：只拿到文件的开头一段（末尾可能切在一个字的中间），解码时容许最后几个字节不完整。
+ */
+export function classifyText(buf, { partial = false } = {}) {
+  const head = buf.subarray(0, 8192);
+  if (head.includes(0)) return 'binary';
+  let ctrl = 0;
+  for (const b of head) if (b < 32 && b !== 9 && b !== 10 && b !== 12 && b !== 13) ctrl += 1;
+  if (head.length && ctrl / head.length > 0.1) return 'binary';
+  const decodes = (enc) => {
+    for (let k = 0; k <= (partial ? 3 : 0) && k < buf.length; k++) {
+      try { new TextDecoder(enc, { fatal: true }).decode(buf.subarray(0, buf.length - k)); return true; } catch { /* 下一个 */ }
+    }
+    return buf.length === 0;
+  };
+  if (decodes('utf-8')) return 'utf8';
+  if (decodes('gb18030')) return 'gb18030';
+  return 'unknown';
+}
+export function looksBinary(buf) { return classifyText(buf, { partial: true }) === 'binary'; }
+const ENCODING_NAME = { gb18030: 'GBK / GB18030', unknown: '认不出的编码' };
+
+function unreadable(e) { return e && (e.code === 'EACCES' || e.code === 'EPERM'); }
+
+/**
+ * 超过一次读的上限的文件，按行流式读其中一段，不把整份读进内存（第十六轮：原来一律「超过上限」，
+ * 几百 MB 的日志连最后几行都看不了）。offset < 0 = 最后 |offset| 行。返回 { lines, first, eof }；first 为 null 表示不知道行号（从尾巴读的）。
+ */
+export function readLarge(file, { offset, limit, cap }) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const buf = Buffer.alloc(CHUNK_BYTES);
+    if (offset < 0) {
+      const want = Math.min(-offset, limit);
+      let pos = size;
+      let tail = Buffer.alloc(0);
+      while (pos > 0) {
+        const n = Math.min(CHUNK_BYTES, pos);
+        pos -= n;
+        fs.readSync(fd, buf, 0, n, pos);
+        tail = Buffer.concat([Buffer.from(buf.subarray(0, n)), tail]);
+        let nl = 0;
+        for (const b of tail) if (b === 10) nl += 1;
+        if (nl > want + 1 || tail.length > cap * 4) break;
+      }
+      let text = tail.toString('utf8');
+      if (text.endsWith('\n')) text = text.slice(0, -1);
+      const all = text.split('\n');
+      if (pos > 0) all.shift();                         // 第一行多半只读到后半截
+      let lines = all.slice(-want);
+      let chars = 0;
+      const keep = [];
+      for (let i = lines.length - 1; i >= 0; i--) {     // 从最后一行往前收，收到字数上限为止
+        chars += lines[i].length + 1;
+        if (chars > cap && keep.length) break;
+        keep.unshift(lines[i].length > cap ? lines[i].slice(0, cap) : lines[i]);
+      }
+      lines = keep;
+      return { lines, first: null, eof: true };
+    }
+    const decoder = new StringDecoder('utf8');
+    let lineNo = 1;
+    let rest = '';
+    let pos = 0;
+    let chars = 0;
+    const out = [];
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, CHUNK_BYTES, pos);
+      if (n === 0) break;
+      pos += n;
+      const parts = (rest + decoder.write(buf.subarray(0, n))).split('\n');
+      rest = parts.pop();
+      for (const line of parts) {
+        if (lineNo >= offset) {
+          if (out.length >= limit || (chars + line.length + 1 > cap && out.length)) return { lines: out, first: offset, eof: false };
+          out.push(line.length > cap ? line.slice(0, cap) : line);
+          chars += line.length + 1;
+        }
+        lineNo += 1;
+      }
+    }
+    if (rest && lineNo >= offset && out.length < limit) out.push(rest.length > cap ? rest.slice(0, cap) : rest);
+    return { lines: out, first: offset, eof: true };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 export const READ_TOOLS = new Set(['list_files', 'read_file', 'search']);
 
@@ -37,9 +135,9 @@ export function localSchemas() {
     fn('list_files', '列出工作区里某个目录的文件和子目录（默认展开两层）。读不了的文件（密钥、证书这类）会标出来。',
       { path: { type: 'string', description: '相对工作区根的目录，默认是根' },
         depth: { type: 'integer', description: '展开几层，1–3，默认 2' } }),
-    fn('read_file', '读取一个文件的内容。长文件一次最多给 2000 行，用 offset 接着读。改文件之前必须先读过。',
+    fn('read_file', '读取一个文件的内容。长文件一次最多给 2000 行，用 offset 接着读；很大的文件（日志）用负的 offset 看最后几行。改文件之前必须先读过。',
       { path: { type: 'string', description: '相对工作区根的路径' },
-        offset: { type: 'integer', description: '从第几行开始（1 起），默认 1' },
+        offset: { type: 'integer', description: '从第几行开始（1 起），默认 1；负数 = 最后几行（-100 就是最后 100 行）' },
         limit: { type: 'integer', description: '最多读几行，默认 2000' } }, ['path']),
     fn('search', '在工作区的文件里按字面文本搜索（不是正则），返回「路径:行号: 内容」。',
       { query: { type: 'string', description: '要找的文字，原样匹配' },
@@ -118,9 +216,17 @@ export class LocalTools {
     const lines = [];
     let count = 0;
     let truncated = false;
+    let rootDenied = false;
     const walk = (abs, level) => {
       let names;
-      try { names = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
+      try {
+        names = fs.readdirSync(abs, { withFileTypes: true });
+      } catch (e) {
+        // 读不了的目录不是空目录（原来列出来是「（空目录）」）
+        if (level === 0) rootDenied = true;
+        else if (unreadable(e) && lines.length) lines[lines.length - 1] += ' （没有读权限）';
+        return;
+      }
       names.sort((a, b) => (Number(b.isDirectory()) - Number(a.isDirectory())) || a.name.localeCompare(b.name));
       for (const d of names) {
         if (count >= MAX_ENTRIES) { truncated = true; return; }
@@ -146,7 +252,8 @@ export class LocalTools {
     if (truncated) lines.push(`（条目太多，只列出了前 ${MAX_ENTRIES} 个 —— 这不是全部，请进到子目录再看）`);
     const shown = this.guard.display(dir.path);
     return {
-      content: lines.length ? `${shown === '.' ? '工作区根' : shown}：\n${lines.join('\n')}` : `${shown}：（空目录）`,
+      content: rootDenied ? `${shown}：（没有读权限，列不出来）`
+        : lines.length ? `${shown === '.' ? '工作区根' : shown}：\n${lines.join('\n')}` : `${shown}：（空目录）`,
       summary: `${count} 项${truncated ? '（已截断）' : ''}`,
     };
   }
@@ -157,9 +264,20 @@ export class LocalTools {
    */
   readFile(args = {}, { maxChars } = {}) {
     const r = this.guard.resolveReadable(args.path);
+    if (r.reason === Reason.TOO_LARGE && r.path) return this.readLargeFile(r, args, maxChars);
     if (r.reason !== Reason.OK) return { error: describe(r.reason, args.path, this.guard.maxFileBytes) };
-    const buf = fs.readFileSync(r.path);
-    const text = buf.toString('utf8');
+    let buf;
+    try {
+      buf = fs.readFileSync(r.path);
+    } catch (e) {
+      return { error: unreadable(e) ? `没有读权限：${this.guard.display(r.path)}` : `读不了 ${this.guard.display(r.path)}：${e.code || e.message}` };
+    }
+    const kind = classifyText(buf);
+    let text = kind === 'gb18030' ? new TextDecoder('gb18030').decode(buf) : buf.toString('utf8');
+    const badChars = kind === 'unknown' ? (text.match(/\ufffd/g) || []).length : 0;
+    if (kind === 'binary' || (kind === 'unknown' && badChars > text.length / 10)) {
+      return { error: `${this.guard.display(r.path)} 看起来是二进制文件（${formatBytes(buf.length)}，不是文本）：不读进上下文。要知道里面是什么，看文件名、来源，或者用能解析它的命令` };
+    }
     const all = text.split('\n');
     if (text.endsWith('\n')) all.pop();
     const total = all.length;
@@ -179,13 +297,42 @@ export class LocalTools {
     const rel = this.guard.display(r.path);
     const prev = this.known.get(rel);
     const hash = sha(buf);
-    this.known.set(rel, { hash, full: full || Boolean(prev && prev.hash === hash && prev.full) });
+    // 不是 UTF-8 的不算读全：整份重写会把编码改掉（write_file 那边也会拒绝改它）
+    const utf8 = kind === 'utf8';
+    this.known.set(rel, { hash, full: utf8 && (full || Boolean(prev && prev.hash === hash && prev.full)) });
+    const encodingNote = utf8 ? '' : `【这个文件不是 UTF-8，是 ${ENCODING_NAME[kind]}${kind === 'gb18030' ? '，已按它解码' : '，认不出的字节显示成 �'}；不能用 write_file 改它（会把编码改掉）—— 要改先和用户确认要不要转成 UTF-8】\n`;
     const header = longLine
       ? `【${rel} 第 ${offset} 行（共 ${total} 行）：这一行有 ${longLine} 字，只显示了前 ${cap} 字 —— 压缩过的 / 生成的文件不要整份重写，也别对着它改】`
       : full
         ? `【${rel}，共 ${total} 行】`
         : `【${rel} 第 ${offset}–${end} 行（共 ${total} 行）${end < total ? `；没读完，用 offset=${end + 1} 接着读` : ''}】`;
-    return { content: `${header}\n${slice.join('\n')}`, summary: full ? `${total} 行` : `第 ${offset}–${end} 行 / 共 ${total} 行` };
+    return { content: `${encodingNote}${header}\n${slice.join('\n')}`, summary: `${full ? `${total} 行` : `第 ${offset}–${end} 行 / 共 ${total} 行`}${utf8 ? '' : `（${ENCODING_NAME[kind]}）`}` };
+  }
+
+  /** 太大的文件：流式读一段（offset < 0 读最后几行）。不算读全 —— 不能整份重写。 */
+  readLargeFile(r, args, maxChars) {
+    const rel = this.guard.display(r.path);
+    const cap = Math.max(200, Math.min(READ_MAX_CHARS, Number(maxChars) || READ_MAX_CHARS));
+    const limit = Math.max(1, Math.min(READ_MAX_LINES, Number(args.limit) || READ_MAX_LINES));
+    const raw = Number(args.offset);
+    const offset = raw < 0 ? Math.max(-READ_MAX_LINES, Math.trunc(raw)) : Math.max(1, Math.trunc(raw) || 1);
+    let head;
+    try {
+      const probe = Buffer.alloc(8192);
+      const fd = fs.openSync(r.path, 'r');
+      try { fs.readSync(fd, probe, 0, 8192, 0); } finally { fs.closeSync(fd); }
+      if (looksBinary(probe)) return { error: `${rel} 看起来是二进制文件（${formatBytes(r.size)}，不是文本）：不读进上下文` };
+      head = readLarge(r.path, { offset, limit, cap });
+    } catch (e) {
+      return { error: unreadable(e) ? `没有读权限：${rel}` : `读不了 ${rel}：${e.code || e.message}` };
+    }
+    const n = head.lines.length;
+    const where = head.first == null ? `最后 ${n} 行` : `第 ${head.first}–${head.first + n - 1} 行`;
+    const next = head.first == null ? '' : head.eof ? '；已经到文件末尾' : `；用 offset=${head.first + n} 接着读`;
+    return {
+      content: `【${rel} ${where}（文件 ${formatBytes(r.size)}，太大，不能整份读${next}；offset=-100 看最后 100 行，search 找关键字）】\n${head.lines.join('\n')}`,
+      summary: `${where} / ${formatBytes(r.size)}`,
+    };
   }
 
   search(args = {}) {
@@ -200,23 +347,50 @@ export class LocalTools {
     const hits = [];
     let files = 0;
     let truncated = null;
+    // 跳过了什么要说出来（第十六轮）：原来太大的、读不了的一声不吭地跳过 —— 「1 处」其实是「在能看的那些里 1 处」，
+    // 模型据此下「别处没有」的结论
+    const skipped = { huge: [], binary: [], denied: 0 };
+    const onLine = (file, lineNo, line) => {
+      if (!(ic ? line.toLowerCase() : line).includes(needle)) return true;
+      if (hits.length >= SEARCH_MAX_HITS) { truncated = `命中太多，只列出了前 ${SEARCH_MAX_HITS} 条`; return false; }
+      const shown = line.length > SEARCH_MAX_LINE_CHARS ? `${line.slice(0, SEARCH_MAX_LINE_CHARS)}…` : line;
+      // 保留缩进：模型常把搜到的那行直接拿去当 old_string，去掉缩进就对不上了
+      hits.push(`${this.guard.display(file)}:${lineNo}: ${shown.trimEnd()}`);
+      return true;
+    };
     const scan = (file) => {
-      let text;
-      try { text = fs.readFileSync(file, 'utf8'); } catch { return; }
-      const lines = text.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if ((ic ? line.toLowerCase() : line).includes(needle)) {
-          if (hits.length >= SEARCH_MAX_HITS) { truncated = `命中太多，只列出了前 ${SEARCH_MAX_HITS} 条`; return; }
-          const shown = line.length > SEARCH_MAX_LINE_CHARS ? `${line.slice(0, SEARCH_MAX_LINE_CHARS)}…` : line;
-          // 保留缩进：模型常把搜到的那行直接拿去当 old_string，去掉缩进就对不上了
-          hits.push(`${this.guard.display(file)}:${i + 1}: ${shown.trimEnd()}`);
+      let fd;
+      try { fd = fs.openSync(file, 'r'); } catch (e) { if (unreadable(e)) skipped.denied += 1; return; }
+      try {
+        const buf = Buffer.alloc(CHUNK_BYTES);
+        let decoder = null;
+        let pos = 0;
+        let lineNo = 1;
+        let rest = '';
+        for (;;) {
+          const n = fs.readSync(fd, buf, 0, CHUNK_BYTES, pos);
+          if (n === 0) break;
+          if (pos === 0) {
+            const kind = classifyText(buf.subarray(0, n), { partial: n === CHUNK_BYTES });
+            if (kind === 'binary') { skipped.binary.push(this.guard.display(file)); return; }
+            // GBK 的文件按 GBK 解：原来当 UTF-8 解，里面的中文永远搜不到
+            decoder = new TextDecoder(kind === 'gb18030' ? 'gb18030' : 'utf-8');
+          }
+          pos += n;
+          const parts = (rest + decoder.decode(buf.subarray(0, n), { stream: true })).split('\n');
+          rest = parts.pop();
+          for (const line of parts) { if (!onLine(file, lineNo, line)) return; lineNo += 1; }
         }
+        if (rest) onLine(file, lineNo, rest);
+      } catch (e) {
+        if (unreadable(e)) skipped.denied += 1;
+      } finally {
+        fs.closeSync(fd);
       }
     };
     const walk = (abs) => {
       let names;
-      try { names = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
+      try { names = fs.readdirSync(abs, { withFileTypes: true }); } catch (e) { if (unreadable(e)) skipped.denied += 1; return; }
       for (const d of names) {
         if (truncated) return;
         const child = path.join(abs, d.name);
@@ -225,16 +399,22 @@ export class LocalTools {
         if (!this.guard.extensionAllowed(child)) continue;
         let st;
         try { st = fs.statSync(child); } catch { continue; }
-        if (st.size > this.guard.maxFileBytes) continue;
+        if (st.size > SEARCH_STREAM_MAX_BYTES) { skipped.huge.push(`${this.guard.display(child)}（${formatBytes(st.size)}）`); continue; }
         if (++files > SEARCH_MAX_FILES) { truncated = `文件太多，只搜了前 ${SEARCH_MAX_FILES} 个`; return; }
         scan(child);
       }
     };
     if (single) scan(single.path); else walk(dir.path);
     const body = hits.length ? hits.join('\n') : '（没有找到）';
+    const notes = [];
     // 截断必须说出来：模型把「80 条」当成「一共 80 条」就会给出错误结论
-    return { content: truncated ? `${body}\n（${truncated} —— 这不是全部结果，请缩小范围再搜）` : body,
-      summary: `${hits.length} 处${truncated ? '（已截断）' : ''}` };
+    if (truncated) notes.push(`${truncated} —— 这不是全部结果，请缩小范围再搜`);
+    if (skipped.huge.length) notes.push(`跳过了 ${skipped.huge.length} 个太大的文件（超过 ${formatBytes(SEARCH_STREAM_MAX_BYTES)}）：${skipped.huge.slice(0, 5).join('、')} —— 那里面有没有，没搜`);
+    if (skipped.binary.length) notes.push(`跳过了 ${skipped.binary.length} 个二进制文件：${skipped.binary.slice(0, 5).join('、')}`);
+    if (skipped.denied) notes.push(`有 ${skipped.denied} 个文件 / 目录没有读权限，没搜到里面`);
+    const partial = truncated || skipped.huge.length || skipped.denied;
+    return { content: notes.length ? `${body}\n${notes.map((n) => `（${n}）`).join('\n')}` : body,
+      summary: `${hits.length} 处${truncated ? '（已截断）' : partial ? '（有没搜到的）' : ''}` };
   }
 
   // ── 写 ────────────────────────────────────────────────────────────────
@@ -258,7 +438,15 @@ export class LocalTools {
     const guarded = this.protectedDir(w.path);
     if (guarded) return { error: this.protectedError(guarded, rel, '改') };
     const exists = fs.existsSync(w.path);
+    // 太大的文件只能分段读，也就不能改（先读进整个文件再拒绝，几百 MB 就白占了内存）
+    if (exists && fs.statSync(w.path).size > this.guard.maxFileBytes) {
+      return { error: `${this.guard.display(w.path)} 太大（${formatBytes(fs.statSync(w.path).size)}，超过 ${formatBytes(this.guard.maxFileBytes)}）：只能分段读，不能用 write_file 改` };
+    }
     const current = exists ? fs.readFileSync(w.path) : null;
+    const currentKind = current ? classifyText(current) : 'utf8';
+    if (currentKind !== 'utf8') {
+      return { error: `${this.guard.display(w.path)} 不是 UTF-8 编码（${ENCODING_NAME[currentKind] || '二进制'}）：用 write_file 改会把整个文件的编码换掉，原来的中文就成了乱码。先和用户确认要不要转成 UTF-8（比如 iconv -f GB18030 -t UTF-8），转好再改` };
+    }
     const currentText = current ? current.toString('utf8') : '';
     const known = this.known.get(rel);
     const replacing = args.old_string != null;

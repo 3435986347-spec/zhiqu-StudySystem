@@ -11,7 +11,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { hunks } from './render/diff.js';
-import { formatBytes } from './render/term.js';
+import { formatBytes, termSafe } from './render/term.js';
 import { localSchemas, READ_TOOLS } from './tools/local.js';
 import { loadSkill, loadSkillSchema } from './skills.js';
 import { buildSystemMessage, environmentBlock, today } from './prompt.js';
@@ -483,7 +483,7 @@ async function executeTool(ctx, call, offered, signal) {
       let tail = '';
       const r = await local.commitRun(prep, { signal, onOutput: (s) => { tail = (tail + s).slice(-4000); } });
       const lastLines = r.output.split('\n').filter((l) => l.trim()).slice(-8);
-      for (const l of lastLines) ui.line(`    ${ui.paint.dim(l.length > 200 ? `${l.slice(0, 200)}…` : l)}`);
+      for (const l of lastLines) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
       ui.result(r.summary, r.exitCode === 0);
       if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content; }
       return failed(ctx, spinKey, r.content, runReminder(line));

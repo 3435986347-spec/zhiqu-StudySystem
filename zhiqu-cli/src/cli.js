@@ -102,6 +102,7 @@ export async function main(argv) {
   }
   if (cmd === 'whoami' || cmd === 'models') {
     const settings = resolveSettings(cwd, flags);
+    for (const w of settings.warnings) process.stderr.write(`! ${w}\n`);
     const api = new Api({ server: settings.server, token: settings.token });
     if (cmd === 'whoami') {
       const me = await api.get('/api/harness/me');
@@ -126,6 +127,7 @@ function openBrowser(url) {
 
 export async function login(cwd, flags, ui = new Ui()) {
   const settings = resolveSettings(cwd, flags);
+  if (!flags.quietWarnings) for (const w of settings.warnings) ui.warn(w);
   const server = stripSlash(flags.server || settings.server);
   if (flags.token) {
     const api = new Api({ server, token: flags.token });
@@ -236,7 +238,6 @@ function banner(ctx) {
   ui.line(ui.paint.dim(`${bits.join(' · ')} · /help`));
   if (!ctx.model.contextWindowTokens) ui.note(`· ${windowLine(ctx.model)}`);
   if (ctx.system.notice) ui.note(`· ${ctx.system.notice}`);
-  for (const w of ctx.settings.warnings) ui.warn(w);
 }
 
 async function startMcp(ctx, flags) {
@@ -259,6 +260,9 @@ async function runAgent(cwd, flags) {
     return 1;
   }
   const settings = resolveSettings(root, flags);
+  // 配置上的问题（坏掉的配置文件、项目设置里的令牌）一开头就说 —— 原来只在交互横幅的末尾说，-p 单发时一句都不说；
+  // 而 config.json 坏了的话下一句就是「还没登录」，不先说清原因，用户只会去重新登录
+  for (const w of settings.warnings) ui.warn(w);
   const modeFlag = flags.mode ? normalizeMode(flags.mode) : null;
   if (flags.mode && !modeFlag) throw new Error(`--mode 只接受 plan / ask / auto，收到 ${flags.mode}`);
   if (!settings.token) {
@@ -267,7 +271,7 @@ async function runAgent(cwd, flags) {
       return 1;
     }
     ui.line('还没登录，先登录一下。');
-    if (await login(root, flags, ui) !== 0) return 1;
+    if (await login(root, { ...flags, quietWarnings: true }, ui) !== 0) return 1;
     Object.assign(settings, resolveSettings(root, flags));
   }
   const api = new Api({ server: settings.server, token: settings.token });

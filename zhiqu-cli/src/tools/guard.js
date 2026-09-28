@@ -91,7 +91,8 @@ export class WorkspaceGuard {
     const st = statOrNull(c.path);
     if (!st || !st.isFile()) return { reason: Reason.NOT_REGULAR_FILE };
     if (!this.extensionAllowed(c.path)) return { reason: Reason.EXTENSION_NOT_ALLOWED };
-    if (st.size > this.maxFileBytes) return { reason: Reason.TOO_LARGE };
+    // 太大的也带上路径和大小：判定不变（还是 TOO_LARGE），但命令行可以流式读其中一段（local.js 的 readLarge）
+    if (st.size > this.maxFileBytes) return { reason: Reason.TOO_LARGE, path: c.path, size: st.size };
     return { path: c.path, reason: Reason.OK };
   }
 

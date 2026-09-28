@@ -5,7 +5,7 @@
 //
 // 流式怎么不卡：普通段落边收边出，行内的 ** / ` 用小状态机处理（标记被拆在两次增量之间也不会错）；
 // 只有要看全才能排版的才攒 —— 表格攒到表结束再按列对齐，其余块攒到一行结束。
-import { displayWidth } from './term.js';
+import { displayWidth, termSafe } from './term.js';
 
 const BLOCK_START = /^(#{1,6}|\||`{1,3}|[-*+](\s|$)|>|\d+[.)]|-{2,}|\*{2,}|_{3,})/;
 
@@ -25,7 +25,8 @@ export class Markdown {
 
   feed(delta) {
     if (!delta) return;
-    for (const c of delta) {
+    // 模型的回答里也可能带控制字符（它读过的文件里就有）：原样打到终端会被执行（第十六轮）
+    for (const c of termSafe(delta)) {
       if (c === '\r') continue;
       if (c === '\n') { this.endLine(); continue; }
       if (this.streamingParagraph) this.inline(c);
