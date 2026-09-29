@@ -11,6 +11,7 @@
 //   - 流式模型调用：在 agent 那一层按「还没收到任何输出」决定要不要重来（见 agent.callModel）。
 // 业务错误（code != 200）、登录失效一律不重试。
 import crypto from 'node:crypto';
+import { monotonic } from './clock.js';
 import { HttpError, openStream, request, RETRYABLE_STATUS, retryAfterMs, sleep } from './http.js';
 import { SseParser } from './sse.js';
 import { USER_AGENT } from './version.js';
@@ -30,7 +31,7 @@ export class ApiError extends Error {
 }
 
 const GET_BACKOFF = [300, 1000];
-const UNCERTAIN_KEY_MS = 10 * 60 * 1000;   // 服务器存结果的时长（IdempotencyService.RESULT_TTL）
+const UNCERTAIN_KEY_MS = 10 * 60 * 1000;   // 放弃之后留 10 分钟；服务器存结果 15 分钟（IdempotencyService.RESULT_TTL），多出来的给自动重来那几轮
 
 export class Api {
   /** onRetry(说明)：要重来之前说一声 —— 服务器卡住时一次要等满超时，不说的话终端上一片空白，像是卡死了。 */
@@ -49,13 +50,16 @@ export class Api {
     return h;
   }
 
-  /** 这一次写请求用哪个键：调用方给了就用它；内容完全一样、上一次没弄清（10 分钟内）就沿用；否则新的。没登录不带。 */
+  /**
+   * 这一次写请求用哪个键：调用方给了就用它；内容完全一样、上一次没弄清（10 分钟内）就沿用；否则新的。没登录不带。
+   * 「10 分钟」用单调时钟量（系统时钟会跳，见 clock.js）。
+   */
   writeKey(method, pathname, payload, given) {
     if (method === 'GET' || !this.token) return { key: null, sig: null };
     if (given) return { key: given, sig: null };
     const sig = `${method} ${pathname}\n${payload ?? ''}`;
     const kept = this.uncertainKeys.get(sig);
-    const key = kept && Date.now() - kept.at < UNCERTAIN_KEY_MS ? kept.key : `cli-${crypto.randomUUID()}`;
+    const key = kept && monotonic() - kept.at < UNCERTAIN_KEY_MS ? kept.key : `cli-${crypto.randomUUID()}`;
     return { key, sig };
   }
 
@@ -79,7 +83,7 @@ export class Api {
       return data;
     } catch (e) {
       if (sig) {
-        if (e.uncertain) this.uncertainKeys.set(sig, { key, at: Date.now() });
+        if (e.uncertain) this.uncertainKeys.set(sig, { key, at: monotonic() });
         else this.uncertainKeys.delete(sig);
       }
       throw e;

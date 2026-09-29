@@ -9,6 +9,7 @@
 //   { drop: true }                 连接建立后什么都不发就断开（模拟网络闪断）
 //   { hang: true }                 连接建立后什么都不发、也不断（模拟卡死）
 //   { dropAfterText: '…' }         先发一段文字再断开（已经输出了一半时断线）
+//   { endAfterText: '…' }          先发一段文字，然后好好地结束响应、却没有 done（服务器收尾时把流关了）
 //   { thinkMs, heartbeat }         先等 thinkMs 再回；heartbeat 为真时等待期间每 50ms 发一行 SSE 注释
 import http from 'node:http';
 
@@ -53,6 +54,11 @@ export async function startFakeHarness({ latencyMs = 0, model = [{ text: '好' }
     if (step.dropAfterText) {        // 先发一段文字再断开：模拟「已经输出了一半」时断线
       res.write(`event:start\ndata:{}\n\nevent:delta\ndata:${JSON.stringify({ text: step.dropAfterText })}\n\n`);
       setTimeout(() => res.socket.destroy(), 20);
+      return;
+    }
+    if (step.endAfterText) {
+      res.write(`event:start\ndata:{}\n\nevent:delta\ndata:${JSON.stringify({ text: step.endAfterText })}\n\n`);
+      res.end();
       return;
     }
     const send = (event, data) => res.write(`event:${event}\ndata:${JSON.stringify(data)}\n\n`);

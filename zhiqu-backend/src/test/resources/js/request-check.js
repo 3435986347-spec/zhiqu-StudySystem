@@ -217,6 +217,19 @@ async function rejects(p) { try { await p; return null; } catch (e) { return e; 
   const q1 = await rejects(post('/routine', '{"title":"限流"}'));
   judge('一直被限流（429，进业务之前就拒了）：确定没做，不说「不确定」', q1 && !q1.uncertain && /请求过于频繁/.test(q1.message), q1 && q1.message);
 
+  script(drop, res(429, '{}'), res(429, '{}'));
+  const q2 = await rejects(post('/routine', '{"title":"先断后限流"}'));
+  const k5 = calls[0] && calls[0].key;
+  script(ok({}));
+  await post('/routine', '{"title":"先断后限流"}');
+  judge('第一下断了（可能已经做了）、后面被限流：还是「不确定」，键留着 —— 只看最后一下的话键被扔了，再点就建第二份',
+    q2 && q2.uncertain === true && calls[0].key === k5, (q2 && q2.message) + ' ' + JSON.stringify({ k5, now: calls[0].key }));
+
+  script(drop, ok({}));
+  const pw = await rejects(mod.request('/user/password', { method: 'PUT', body: '{"oldPassword":"a","newPassword":"b"}' }));
+  judge('改密码（服务器不替它去重：回应里带 Cookie）断了不自动重来、不带键 —— 第一下已经改了的话，重来拿的是作废的旧令牌、旧密码也对不上',
+    pw && calls.length === 1 && !calls[0].key && !pw.uncertain, (pw && pw.message) + ' calls=' + JSON.stringify(calls));
+
   script(drop, ok({ ok: 1 }));
   const own = await post('/shared-plans/3/apply', '{}', { 'Idempotency-Key': 'plan-k:2026-10-01' }).catch((e) => e);
   judge('调用方自己带的键照它的来，断了也用它重来', own && own.ok === 1 && calls.length === 2 && calls.every((c) => c.key === 'plan-k:2026-10-01'), JSON.stringify(calls));
@@ -271,6 +284,13 @@ async function rejects(p) { try { await p; return null; } catch (e) { return e; 
   const s2 = await rejects(mod.streamAiChat({}, (ev, d) => got.push(d.text)));
   judge('聊天流流到一半断了：说「连接断了」（不是 network error），不标成「没发出去」',
     s2 && s2.message === '连接断了' && !s2.beforeResponse && s2.network === true && got[0] === '半句', s2 && s2.message);
+
+  script((url, opts) => new Promise((resolve, reject) => {
+    opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  }));
+  const s3 = await rejects(mod.streamAiChat({}, () => {}));
+  judge('聊天流等满超时一个字节都没回：连接是通的、这句多半到了 —— 不标成「没发出去」（那会诱导再发一遍）',
+    s3 && /秒没有回应/.test(s3.message) && s3.beforeResponse === false && s3.timedOut === true, s3 && JSON.stringify({ m: s3.message, b: s3.beforeResponse }));
 
   let calls2 = 0;
   const offlineUntil = 3;

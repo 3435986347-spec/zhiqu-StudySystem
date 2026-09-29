@@ -12,11 +12,16 @@ import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -44,6 +49,7 @@ class InterruptedWorkRecoveryIntegrationTest {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private InterruptedWorkRecovery recovery;
+    @Autowired private DataSource dataSource;
 
     private long insert(String sql, Object... args) {
         jdbc.update(sql, args);
@@ -56,7 +62,7 @@ class InterruptedWorkRecoveryIntegrationTest {
 
     @Test
     @DisplayName("启动之前留下的：回答（有半截 / 一个字没有）改成 ERROR 并说清原因、半截留着；执行记录、步骤、正在跑的任务 ERROR，没轮到的 SKIPPED；启动之后建的不碰")
-    void 收拾上一个进程留下的() {
+    void 收拾上一个进程留下的() throws Exception {
         LocalDateTime before = LocalDateTime.now().minusMinutes(5);
         LocalDateTime after = LocalDateTime.now().plusMinutes(5);   // 「这个进程启动之后才建的」
         long user = insert("INSERT INTO sys_user(username,password,nickname,role,deleted) VALUES('recovery','x','r','USER',0)");
@@ -76,6 +82,7 @@ class InterruptedWorkRecoveryIntegrationTest {
         // 走启动时的那个入口（ApplicationRunner）：只测 recover() 的话，启动时没接上也是绿的
         assertTrue(recovery instanceof ApplicationRunner, "启动时要跑：得是 ApplicationRunner");
         recovery.run(null);
+        recovery.lastRun().get(30, TimeUnit.SECONDS);
 
         assertEquals("ERROR", row("ai_message", partial).get("status"));
         assertEquals("第1段。第2段。", row("ai_message", partial).get("content"), "已经落库的半截留着");
@@ -93,5 +100,29 @@ class InterruptedWorkRecoveryIntegrationTest {
         assertEquals("SKIPPED", row("ai_agent_task", waiting).get("status"));
 
         assertArrayEquals(new int[]{0, 0, 0, 0}, recovery.recover(), "再跑一遍什么都不改");
+    }
+
+    @Test
+    @DisplayName("收拾那一趟不挡启动：它的 UPDATE 被别的事务的行锁卡住时，启动照样往下走；锁放了它自己收完")
+    void 不挡启动() throws Exception {
+        LocalDateTime before = LocalDateTime.now().minusMinutes(5);
+        long user = insert("INSERT INTO sys_user(username,password,nickname,role,deleted) VALUES('recovery-lock','x','r','USER',0)");
+        long conv = insert("INSERT INTO ai_conversation(user_id) VALUES(?)", user);
+        long stuck = insert("INSERT INTO ai_message(user_id,conversation_id,role,content,status,created_at,deleted) VALUES(?,?,'assistant','半句','STREAMING',?,0)", user, conv, before);
+        // 大库上整表扫要好几秒、锁等待能等五十秒 —— 用一把真的行锁演「这一趟很慢」
+        try (Connection holder = dataSource.getConnection()) {
+            holder.setAutoCommit(false);
+            try (Statement st = holder.createStatement()) {
+                st.executeUpdate("UPDATE ai_message SET content = content WHERE id = " + stuck);
+            }
+            long t0 = System.nanoTime();
+            recovery.run(null);
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertTrue(ms < 2000, "启动等着收拾那一趟等了 " + ms + "ms —— 大库上这就是服务晚起来的那几秒，出错时是起不来");
+            assertFalse(recovery.lastRun().isDone(), "行锁还攥着，它不该已经收完了");
+            holder.commit();
+        }
+        recovery.lastRun().get(30, TimeUnit.SECONDS);
+        assertEquals("ERROR", row("ai_message", stuck).get("status"), "锁放了之后它自己收完");
     }
 }

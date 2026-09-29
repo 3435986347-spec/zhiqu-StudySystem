@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 全都变成两份；删除的第二下说「任务不存在或无权访问」，其实删掉了。页面不敢自动重来也是这个原因：重来可能写两遍。
  *
  * <p>这里给所有 {@code @PostMapping / @PutMapping / @DeleteMapping / @PatchMapping} 统一接上：带着这个头来的，按
- * 「用户 + 这个接口 + 这个地址 + 键」只执行一次，同键再来拿回上一次的结果（成功的留 10 分钟，见 {@link IdempotencyService}）。
+ * 「用户 + 这个接口 + 这个地址 + 键」只执行一次，同键再来拿回上一次的结果（成功的留 15 分钟，见 {@link IdempotencyService}）。
  * 页面那边（{@code zhiqu-api.js} 的 {@code request()}）给每个写请求带一个键，回应丢了就用同一个键自动重来、学生再点也用同一个键。
  *
  * <p>不接的：

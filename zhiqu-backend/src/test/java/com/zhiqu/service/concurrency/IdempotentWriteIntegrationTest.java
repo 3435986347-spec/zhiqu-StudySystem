@@ -73,6 +73,7 @@ class IdempotentWriteIntegrationTest {
     @Autowired private JwtUtils jwt;
     @Autowired private ObjectMapper json;
     @Autowired private org.springframework.data.redis.core.StringRedisTemplate redis;
+    @Autowired private com.zhiqu.service.privacy.SensitiveCryptoService crypto;
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private static final AtomicInteger PEER = new AtomicInteger(1);
@@ -202,16 +203,46 @@ class IdempotentWriteIntegrationTest {
         java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
         java.util.function.Supplier<com.zhiqu.common.Result<Integer>> write = () -> com.zhiqu.common.Result.success(runs.incrementAndGet());
         // 两个实例 = 重启前后的两个进程：Redis 连不上（测试不连真 Redis），进程内的缓存各是各的，只有库是同一个
-        IdempotencyService before = new IdempotencyService(redis, new RedisDistributedLockService(redis), json, jdbc);
-        IdempotencyService after = new IdempotencyService(redis, new RedisDistributedLockService(redis), json, jdbc);
+        IdempotencyService before = new IdempotencyService(redis, new RedisDistributedLockService(redis), json, jdbc, crypto);
+        IdempotencyService after = new IdempotencyService(redis, new RedisDistributedLockService(redis), json, jdbc, crypto);
         assertEquals(1, before.execute(userId, "RoutineController.create POST /api/routine", "ui-restart", write).getData());
         assertEquals(1, after.execute(userId, "RoutineController.create POST /api/routine", "ui-restart", write).getData(),
                 "重启之后同一个键再来，交回的应当是上一次的结果");
         assertEquals(1, runs.get(), "重启之后同一个键又做了一遍");
         jdbc.update("UPDATE idempotency_record SET expires_at = ? WHERE user_id = ?", java.time.LocalDateTime.now().minusSeconds(1), userId);
-        IdempotencyService later = new IdempotencyService(redis, new RedisDistributedLockService(redis), json, jdbc);
+        IdempotencyService later = new IdempotencyService(redis, new RedisDistributedLockService(redis), json, jdbc, crypto);
         assertEquals(2, later.execute(userId, "RoutineController.create POST /api/routine", "ui-restart", write).getData(),
                 "过了 10 分钟就不再认（和 Redis 里的一样）");
+    }
+
+    @Test
+    @DisplayName("落库的回包是密文：新建的个人访问令牌、临时密码、任务标题这些，库里本来就不存明文")
+    void 落库的是密文() throws Exception {
+        String secret = "zqp_" + "s".repeat(40);
+        IdempotencyService idem = new IdempotencyService(redis, new RedisDistributedLockService(redis), json, jdbc, crypto);
+        idem.execute(userId, "AccessTokenController.create POST /api/access-tokens", "ui-secret",
+                () -> com.zhiqu.common.Result.success(java.util.Map.of("token", secret)));
+        List<String> stored = jdbc.queryForList("SELECT result_json FROM idempotency_record WHERE user_id = ?", String.class, userId);
+        assertEquals(1, stored.size());
+        assertTrue(!stored.get(0).contains(secret) && crypto.isEncrypted(stored.get(0)), "库里存的是明文：" + stored.get(0));
+        IdempotencyService restarted = new IdempotencyService(redis, new RedisDistributedLockService(redis), json, jdbc, crypto);
+        assertEquals(secret, ((java.util.Map<?, ?>) restarted.execute(userId, "AccessTokenController.create POST /api/access-tokens", "ui-secret",
+                () -> com.zhiqu.common.Result.success(java.util.Map.of("token", "第二次不该执行"))).getData()).get("token"),
+                "密文读回来要能解开，交回上一次的结果");
+    }
+
+    @Test
+    @DisplayName("过期的清得完：每个写都插一行，一次只删 1000 行的话写得多了表只涨不落")
+    void 过期的清得完() {
+        java.time.LocalDateTime old = java.time.LocalDateTime.now().minusHours(1);
+        jdbc.batchUpdate("INSERT INTO idempotency_record(key_hash, user_id, result_json, expires_at) VALUES (?, ?, 'x', ?)",
+                java.util.stream.IntStream.range(0, 2500)
+                        .mapToObj(i -> new Object[]{String.format("%064d", i), userId, old}).toList());
+        IdempotencyService idem = new IdempotencyService(redis, new RedisDistributedLockService(redis), json, jdbc, crypto);
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        assertTrue(idem.sweepExpired(now) >= 2500, "一次清理没删完");
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM idempotency_record WHERE user_id = ? AND expires_at < ?",
+                Integer.class, userId, now), "过期的还剩着");
     }
 
     @Test

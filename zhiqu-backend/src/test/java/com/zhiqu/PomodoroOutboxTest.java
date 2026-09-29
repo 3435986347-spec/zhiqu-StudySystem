@@ -21,7 +21,7 @@ class PomodoroOutboxTest {
     }
 
     @Test
-    @DisplayName("接线：看板的番茄钟走 recordPomodoro（不再直接 post）；每一页打开时、网回来时、每分钟都补一趟")
+    @DisplayName("接线：看板的番茄钟走 recordPomodoro（不再直接 post）；每一页打开时、网回来时、每分钟都补一趟 —— 页面启动失败也补")
     void 接线() throws Exception {
         String dashboard = SourceText.stripComments(Files.readString(Path.of("src/main/resources/static/dashboard.html")));
         String record = dashboard.substring(dashboard.indexOf("function zqPomoRecord("), dashboard.indexOf("elMin.addEventListener"));
@@ -31,6 +31,13 @@ class PomodoroOutboxTest {
         String route = js.substring(js.indexOf("function route() {"), js.indexOf("window.zqApi = {"));
         assertTrue(route.contains("catchUpPomodoros();") && route.contains("window.addEventListener('online', catchUpPomodoros);")
                 && route.contains("setInterval(catchUpPomodoros, 60000);"), "打开页面 / 网回来 / 每分钟补一趟，少了哪个：\n" + route);
+        // 页面启动失败（网断着打开的、被限流）正是有待补记的时候：网回来 / 每分钟那两路要在启动之前挂上，当场那一趟在 finally 里
+        int boot = route.indexOf("await boots[page]()");
+        assertTrue(boot > 0, "找不到页面启动那一行：\n" + route);
+        assertTrue(route.indexOf("window.addEventListener('online', catchUpPomodoros);") < boot
+                && route.indexOf("setInterval(catchUpPomodoros, 60000);") < boot, "补记挂在页面启动之后 —— 启动失败的那一页就不补了：\n" + route);
+        String afterBoot = route.substring(boot, route.indexOf("catchUpPomodoros();", boot));
+        assertTrue(afterBoot.contains("finally"), "当场那一趟补记不在 finally 里 —— 启动失败就不跑：\n" + afterBoot);
         assertTrue(js.contains("recordPomodoro: recordPomodoro"), "window.zqApi 上没有 recordPomodoro");
     }
 }

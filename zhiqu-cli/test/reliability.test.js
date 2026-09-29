@@ -139,6 +139,34 @@ test('重来也没回应：照实说「不确定有没有做成」；模型照�
   });
 });
 
+test('没弄清的键按单调时钟算 10 分钟：系统时钟往前跳一小时（校时、休眠醒来）不会让它提前作废、再做一份（第二十一轮的规矩）', { timeout: 20_000 }, async () => {
+  const s = await idempotentServer(['lost']);
+  const real = Date.now;
+  try {
+    const api = new Api({ server: s.url, token: 't' });
+    const call = { sessionId: 's', name: 'create_study_plan', arguments: { title: '钟跳了' } };
+    await assert.rejects(api.post('/api/harness/tools/call', call), (e) => e.uncertain === true);
+    const lostKey = s.seen[0];
+    s.setScript(['ok']);
+    Date.now = () => real() + 3600 * 1000;
+    await api.post('/api/harness/tools/call', call);
+    assert.equal(s.seen[0], lostKey, '系统时钟一跳，没弄清的那个键就被当成过期了 —— 服务器还记得它，换了新键就是再做一份');
+    assert.equal(s.executed, 1);
+  } finally {
+    Date.now = real;
+    s.close();
+  }
+});
+
+test('模型的流好好结束了却没有 done（服务器收尾时关了流）：安静模式下已经收到的那段也要打出来', { timeout: 20_000 }, async () => {
+  const s = await startFakeHarness({ model: [{ endAfterText: '说到一半' }] });
+  try {
+    const ctx = ctxFor(new Api({ server: s.url }));
+    await assert.rejects(runTurn(ctx, '你好'), /没有正常结束/);
+    assert.match(ctx.ui.text(), /断开前已经收到的[\s\S]*说到一半/, '流没有 done 就结束时，收到的那一段就这么没了');
+  } finally { await s.close(); }
+});
+
 test('存档：回应丢了（服务器其实收到了），下一轮补发内容不变、沿用同一个键 —— 网页上不会多出一份', { timeout: 20_000 }, async () => {
   const s = await idempotentServer(['lost']);
   try {
@@ -177,6 +205,22 @@ test('服务器卡住（接了连接、一个字节都不回）：等满超时�
     server.closeAllConnections();
     server.close();
   }
+});
+
+test('「再试一次」：同时卡住的几个请求只说一遍；过一会儿同一个原因又卡住，照样要说', async () => {
+  const { retryNoter } = await import('../src/cli.js');
+  let now = 0;
+  const said = [];
+  const note = retryNoter((t) => said.push(t), () => now);
+  note('服务器 15 秒没有回应');
+  note('服务器 15 秒没有回应');
+  note('服务器 15 秒没有回应');
+  assert.equal(said.length, 1, '同一刻一起卡住的只说一遍');
+  now += 60_000;
+  note('服务器 15 秒没有回应');
+  assert.equal(said.length, 2, '一分钟之后同一个原因又卡住：不说的话终端又是一片空白');
+  note('连接被拒绝');
+  assert.equal(said.length, 3, '换了原因要说');
 });
 
 function ctxFor(api, root = tmpdir()) {

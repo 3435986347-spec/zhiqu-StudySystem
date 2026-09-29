@@ -246,13 +246,20 @@ class CodeAgentLoopIntegrationTest {
         assertEquals(0, drafts);
     }
 
+    /**
+     * 等这一轮真的跑完。streamChat 立刻返回，run 那一行是后台线程里建的 —— 原来只看「没有 RUNNING 的」，
+     * 而 run 还没建出来的时候也是「没有」：这里立刻返回、断言对着一轮没跑的环路，接着测试类收尾把假模型和库都关了，
+     * 后台那一轮撞上「连接被拒绝」。机器快的时候 run 抢在第一次查询之前建好，所以时好时坏；慢一点的机器上次次红。
+     */
     private void awaitRunFinished() throws InterruptedException {
         long deadline = System.currentTimeMillis() + 60_000;
         while (System.currentTimeMillis() < deadline) {
+            Integer started = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM ai_agent_run WHERE user_id = ?", Integer.class, userId);
             Integer running = jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM ai_agent_run WHERE user_id = ? AND status = 'RUNNING'",
                     Integer.class, userId);
-            if (running != null && running == 0) {
+            if (started != null && started > 0 && running != null && running == 0) {
                 TimeUnit.MILLISECONDS.sleep(300);   // 让 COMMIT 相位的写入落完
                 return;
             }

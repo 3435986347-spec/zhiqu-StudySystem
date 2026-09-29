@@ -120,6 +120,32 @@ function judge(name, cond, detail) {
   await mod.catchUpPomodoros();
   judge('补到一半网又断了：补上的去掉，没补上的留着', mod.readPomoOutbox().length === 1 && mod.readPomoOutbox()[0].note === 'B', JSON.stringify(mod.readPomoOutbox()));
 
+  reset(); postImpl = () => Promise.resolve({ id: 9 });
+  const realSet = localStorage.setItem;
+  localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+  try {
+    await mod.recordPomodoro({ taskId: 3, durationMinutes: 25, note: '存不下' });
+  } finally {
+    localStorage.setItem = realSet;
+  }
+  judge('这台设备存不下（存储满了、被禁用了）：照旧当场发，不悄悄丢',
+    posts.length === 1 && posts[0].body.note === '存不下' && posts[0].key && recorded === 1 && !toasts.length, JSON.stringify({ posts, toasts }));
+
+  localStorage.removeItem('zq-pomo-outbox');
+  reset(); postImpl = offline;
+  await mod.recordPomodoro({ taskId: null, durationMinutes: 25, note: '旧的' });
+  reset();
+  let open;
+  const held = new Promise((r) => { open = r; });
+  postImpl = () => held.then(() => ({}));
+  const catching = mod.catchUpPomodoros();           // 打开页面时的那一趟正在补「旧的」
+  const fresh = mod.recordPomodoro({ taskId: null, durationMinutes: 25, note: '新的' });
+  open();
+  await Promise.all([catching, fresh]);
+  judge('补记正在跑的时候又专注完一个：这一个也当场发上去，不说「网络断了」',
+    posts.some((p) => p.body.note === '新的') && !toasts.some((t) => /网络断了/.test(t)) && mod.readPomoOutbox().length === 0,
+    JSON.stringify({ posts: posts.map((p) => p.body.note), toasts, left: mod.readPomoOutbox() }));
+
   store.set('zq-pomo-outbox', '{坏了');
   judge('设备上存的坏了：当作没有，不抛', mod.pendingPomodoros().length === 0);
 

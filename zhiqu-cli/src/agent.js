@@ -233,6 +233,15 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     tools: tools.map((t) => t.schema),
     maxTokens,
   };
+  // 安静模式不边收边打：这时断了，已经收到的那一段就这么没了（第二十二轮实测：回答到一半服务器重启，只剩一句「断开了」）。
+  // 把它打出来 —— 用户至少看得到说到哪了。断的两种样子都要：连接出错（下面的 catch）、流好好结束了却没有 done
+  const showPartial = () => {
+    if (!hush || !text.trim()) return;
+    ui.note('（断开前已经收到的：）');
+    const partial = ui.markdown();
+    partial.feed(text);
+    partial.finish();
+  };
   try {
   await ctx.api.stream('/api/harness/model/stream', body, (name, data) => {
     if (name !== 'start') stopWaiting();
@@ -258,21 +267,18 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     }
   }, { signal });
   } catch (e) {
-    // 安静模式不边收边打：这时断了，已经收到的那一段就这么没了（第二十二轮实测：回答到一半服务器重启，只剩一句「断开了」）。
-    // 把它打出来 —— 用户至少看得到说到哪了
-    if (hush && text.trim() && !(e && e.name === 'AbortError')) {
-      ui.note('（断开前已经收到的：）');
-      const partial = ui.markdown();
-      partial.feed(text);
-      partial.finish();
-    }
+    if (!(e && e.name === 'AbortError')) showPartial();
     throw e;
   } finally {
     stopWaiting();
   }
   if (!hush) ui.status.clear();
   if (md) md.finish();
-  if (!done) throw new Error('模型的回复没有正常结束（连接中途断开了）');
+  if (!done) {
+    showPartial();
+    // 服务器把流关了却没发 done（它在收尾、在重启）—— 不是模型的事，和连接断在半路一样说
+    throw new Error('回复没有正常结束：服务器那边把流关了，没说完 —— 服务器可能在重启；等一下再说一次就好');
+  }
   if (ctx.usage) {
     ctx.usage.prompt += done.usage ? done.usage.promptTokens || 0 : 0;
     ctx.usage.completion += done.usage ? done.usage.completionTokens || 0 : 0;

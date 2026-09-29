@@ -41,6 +41,21 @@ const MODE_LABEL = {
 
 const STARTUP_TIMEOUT_MS = 15_000;
 
+/**
+ * 「连不上 …，再试一次…」怎么说：同时发出去的几个请求一起卡住时只说一遍（同一句 5 秒内不重复）；之后再卡住照样要说 ——
+ * 第一版记住上一句就再也不说了，同一个原因第二次卡住，终端又是一片空白，正是 onRetry 要治的样子。
+ */
+export function retryNoter(say, clock = monotonic) {
+  let last = '';
+  let lastAt = -Infinity;
+  return (why) => {
+    const now = clock();
+    if (why !== last || now - lastAt > 5000) say(`· ${why}，再试一次…`);
+    last = why;
+    lastAt = now;
+  };
+}
+
 export function parseArgs(argv) {
   const flags = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -277,12 +292,7 @@ async function runAgent(cwd, flags) {
     if (await login(root, { ...flags, quietWarnings: true }, ui) !== 0) return 1;
     Object.assign(settings, resolveSettings(root, flags));
   }
-  // 同时发出去的几个请求一起卡住时，「再试一次」只说一遍
-  let lastRetryNote = '';
-  const api = new Api({ server: settings.server, token: settings.token, onRetry: (why) => {
-    if (why !== lastRetryNote) ui.note(`· ${why}，再试一次…`);
-    lastRetryNote = why;
-  } });
+  const api = new Api({ server: settings.server, token: settings.token, onRetry: retryNoter((text) => ui.note(text)) });
   // 默认连的本机桌面应用没开：macOS 上替用户打开、等它起来（见 desktop.js）
   if (await ensureLocalServer({ api, server: settings.server, ui }) === 'failed') return 1;
   const ctx = {

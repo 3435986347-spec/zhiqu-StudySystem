@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * 上一个进程没做完的事，启动时收干净（第二十二轮）。
@@ -53,12 +54,33 @@ public class InterruptedWorkRecovery implements ApplicationRunner {
         this.runs = runs;
         this.steps = steps;
         this.tasks = tasks;
-        this.startedAt = LocalDateTime.now();
+        // 往前让 2 秒：库里的时间列是 DATETIME、按整秒四舍五入存，同一秒里建的一行存下来可能比这一刻还早 —— 收拾是在后台跑的，
+        // 启动之后新来的请求可能先到，不让一步它会被当成上一个进程的收成失败。上一个进程没了到这个进程起来，中间远不止 2 秒
+        this.startedAt = LocalDateTime.now().minusSeconds(2);
     }
 
+    private volatile CompletableFuture<int[]> lastRun = CompletableFuture.completedFuture(new int[4]);
+
+    /**
+     * 在后台收，不挡启动。这几条 UPDATE 在大库上要整表扫（状态列没有索引；实测 60 万行的 ai_agent_step 一条约 1 秒），
+     * 同步跑会把服务就绪（桌面应用的端口文件、窗口）拖住几秒；更糟的是一条 UPDATE 出错（锁等待超时）整个服务就起不来。
+     * 只动这个进程启动之前建的行，和启动之后新来的请求互不相干，所以放到后台是安全的；出错只记日志，下次启动再收。
+     */
     @Override
     public void run(ApplicationArguments args) {
-        recover();
+        lastRun = CompletableFuture.supplyAsync(this::recover, task -> {
+            Thread t = new Thread(task, "interrupted-work-recovery");
+            t.setDaemon(true);
+            t.start();
+        }).exceptionally(e -> {
+            log.warn("收拾上一个进程没做完的事失败了（下次启动再收）：{}", e.getMessage());
+            return null;
+        });
+    }
+
+    /** 启动时那一趟（测试等它）。 */
+    CompletableFuture<int[]> lastRun() {
+        return lastRun;
     }
 
     /** 收拾一遍，返回各改了几行：[回答, 执行记录, 步骤, 任务]。 */

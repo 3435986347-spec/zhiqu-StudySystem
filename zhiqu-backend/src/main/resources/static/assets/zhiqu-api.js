@@ -165,7 +165,7 @@
   // 例行计划、Notebook、Wiki 页、反馈、番茄钟、任务全是两份，删除的第二下说「任务不存在」（真浏览器里掐掉回应实测）。
   // 现在每个写请求带一个幂等键，服务器同一个键只做一次（IdempotentWriteAspect）：回应丢了就用同一个键自动重来；
   // 重来也不行，就照实说「不确定有没有保存上 —— 再点一次不会重复保存」，并把键留着 —— 内容一模一样的下一次（照着提示再点）
-  // 还用它，做过了服务器就把上次的结果交回来。键留 10 分钟（服务器存结果的时长）；这期间同一块数据（地址第一段相同）
+  // 还用它，做过了服务器就把上次的结果交回来。键留 10 分钟（服务器存结果 15 分钟，比这长 —— 放弃之前自动重来的那几轮也算在里面）；这期间同一块数据（地址第一段相同）
   // 有别的写成功了就作废：打卡没弄清 → 撤销打卡 → 再打卡，再打卡是新的一次，拿旧键只会拿回旧结果、什么都没做。
   // 宁可偶尔多一份（看得见、删得掉），不能说做了其实没做。
   // 调用方自己带了键的（套用参考计划）照它的来；/auth/ 下的（登录注册，没有登录的用户，服务器不认键）不带、不重来。
@@ -218,6 +218,11 @@
     return 'ui-' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2));
   }
   function writeArea(path) { return String(path).split(/[/?]/)[1] || ''; }
+  // 服务器不替它们去重的写：/auth/ 下的（没有登录的用户）、改密码（回应里带 Cookie）—— 见 IdempotentWriteAspect.covers 与
+  // IdempotentWriteIntegrationTest.不接的只有这些。它们不带键、断网 / 超时 / 502 不自动重来：改密码第一下已经生效、回应丢了的话，
+  // 重来那一下拿的是已经作废的旧令牌（被踢回登录页）或者旧密码对不上（说「原密码错误」），而页面还说着「再点一次不会重复保存」。
+  // 那张清单里多了一个页面会调的写接口，这里也要跟着加。
+  var UNKEYED_WRITE = /^\/auth\/|^\/user\/password(?:[?#]|$)/;
   function request(path, options) {
     var method = String((options && options.method) || 'GET').toUpperCase();
     var upload = !!(options && typeof FormData !== 'undefined' && options.body instanceof FormData);
@@ -231,7 +236,7 @@
     var sig = method + ' ' + path + '\n' + (options.body == null ? '' : options.body) + '\n' + JSON.stringify(options.headers || {});
     if (inflightWrites[sig]) return inflightWrites[sig];
     var headers = Object.assign({}, options.headers || {});
-    var ownKey = !headers['Idempotency-Key'] && !/^\/auth\//.test(path);
+    var ownKey = !headers['Idempotency-Key'] && !UNKEYED_WRITE.test(path);
     if (ownKey) {
       var kept = uncertainWrites[sig];
       headers['Idempotency-Key'] = kept && Date.now() - kept.at < UNCERTAIN_KEY_MS ? kept.key : writeKey();
@@ -256,26 +261,30 @@
   }
   async function requestWithRetry(path, options, method, upload, keyed) {
     var timeoutMs = upload ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+    // 有没有哪一下可能已经到了服务器、做了（断网、超时、502…、还在处理）—— 429 不算。要看每一下，不只看最后一下：
+    // 第一下超时（其实做了）、最后一下 429，原来就按「确定没做」把键扔了，学生再点拿新键，又做一遍
+    var maybeDone = false;
     for (var attempt = 0; ; attempt++) {
       try {
         return await requestOnce(path, options, timeoutMs);
       } catch (e) {
+        if (e.retryable && e.status !== 429) maybeDone = true;
         var safe = e.retryable && (method === 'GET' || keyed || e.status === 429);
-        if (!safe || attempt >= RETRY_WAITS_MS.length) throw keyed ? uncertain(e, method) : e;
+        if (!safe || attempt >= RETRY_WAITS_MS.length) throw keyed ? uncertain(e, method, maybeDone) : e;
         await waitMs(RETRY_WAITS_MS[attempt]);
       }
     }
   }
   /**
    * 带键的写，重来几次都没拿到回应：服务器可能做了、也可能没做 —— 照实说，并告诉学生再点一次是安全的（同一个键）。
-   * 业务上拒了的、被限流的（429，进业务之前就拒了）是确定没做，原样说。
+   * 业务上拒了的是确定没做；每一下都被限流（429，进业务之前就拒了）也是确定没做 —— 原样说。
    */
-  function uncertain(e, method) {
-    if (!e.retryable || e.status === 429) return e;
+  function uncertain(e, method, maybeDone) {
+    if (!e.retryable || !maybeDone) return e;
     var del = method === 'DELETE';
     var message = e.inProgress
       ? '上一次提交还在处理，稍等一下再点一次' + (del ? '' : '（不会重复保存）')
-      : e.why + (del ? '，不确定有没有删掉 —— 再点一次就好' : '，不确定有没有保存上 —— 再点一次不会重复保存');
+      : (e.status === 429 ? '请求过于频繁' : e.why) + (del ? '，不确定有没有删掉 —— 再点一次就好' : '，不确定有没有保存上 —— 再点一次不会重复保存');
     return requestError(message, { uncertain: true, network: !!e.network, status: e.status });
   }
   var api = {
@@ -831,6 +840,11 @@
   function dropPomodoro(key) { writePomoOutbox(readPomoOutbox().filter(function (x) { return x.key !== key; })); }
   function pomoOwner() { return state.user && state.user.id != null ? String(state.user.id) : ''; }
   function pendingPomodoros() { var me = pomoOwner(); return readPomoOutbox().filter(function (x) { return x.user === me; }); }
+  function postPomodoro(x) {
+    var body = { taskId: x.taskId, durationMinutes: x.durationMinutes, note: x.note };
+    if (x.day && x.day < today()) body.studyDate = x.day;
+    return api.post('/record', body, { 'Idempotency-Key': x.key });
+  }
   /** 补记这个人待补的番茄钟。返回 { sent, failed: [原因…], waiting }；同一时间只跑一趟。 */
   function flushPomodoros() {
     if (pomoFlushing) return pomoFlushing;
@@ -839,10 +853,8 @@
       var list = pendingPomodoros();
       for (var i = 0; i < list.length; i++) {
         var x = list[i];
-        var body = { taskId: x.taskId, durationMinutes: x.durationMinutes, note: x.note };
-        if (x.day && x.day < today()) body.studyDate = x.day;
         try {
-          await api.post('/record', body, { 'Idempotency-Key': x.key });
+          await postPomodoro(x);
           dropPomodoro(x.key);
           result.sent++;
         } catch (e) {
@@ -860,13 +872,24 @@
   }
   /** 专注完了：先落在这台设备上，再发。说清楚是记上了、先存着、还是真的没记上。 */
   async function recordPomodoro(rec) {
-    var key = writeKey();
+    var item = { key: writeKey(), user: pomoOwner(), day: today(), taskId: rec.taskId == null ? null : rec.taskId, durationMinutes: rec.durationMinutes, note: rec.note || '' };
     var list = readPomoOutbox();
-    list.push({ key: key, user: pomoOwner(), day: today(), taskId: rec.taskId == null ? null : rec.taskId, durationMinutes: rec.durationMinutes, note: rec.note || '' });
+    list.push(item);
     writePomoOutbox(list);
-    var r = await flushPomodoros();
+    var kept = function () { return readPomoOutbox().some(function (x) { return x.key === item.key; }); };
+    var r;
+    if (!kept()) {
+      // 这台设备存不下（存储满了、被禁用了）：补记那一趟是从设备上读清单的，读不到这一条 —— 照旧当场发，没记上就说出来。
+      // 原来这里什么都不发、什么都不说，25 分钟悄悄没了
+      r = { sent: 0, failed: [], waiting: 0 };
+      try { await postPomodoro(item); r.sent = 1; } catch (e) { r.failed.push(e.message); }
+    } else {
+      r = await flushPomodoros();
+      // 正在跑的是之前开始的那一趟（打开页面、网回来时的补记）：它开始时这一条还不在清单里。网是通的就再补一趟
+      if (kept() && !r.waiting) r = await flushPomodoros();
+    }
     if (r.failed.length) toast('这个番茄钟没记上：' + r.failed[0], 'error', 6000);
-    else if (readPomoOutbox().some(function (x) { return x.key === key; })) {
+    else if (kept()) {
       toast('网络断了：这个番茄钟先存在这台设备上，连上网会自动补记', 'error', 6000);
     }
     if (r.sent && window.zqApi && window.zqApi.afterRecord) window.zqApi.afterRecord();
@@ -4653,9 +4676,11 @@
     try {
       res = await fetch(API + '/ai/chat/stream', { method: 'POST', credentials: 'same-origin', headers: headers, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined });
     } catch (e) {
-      // 一个字节都没回来就连不上。原来原样抛出浏览器的「Failed to fetch」，页面上就是这句英文（第二十二轮断网实测）
-      throw requestError(ctrl && ctrl.signal.aborted ? '服务器 ' + Math.round(REQUEST_TIMEOUT_MS / 1000) + ' 秒没有回应' : '网络连接失败',
-        { network: true, beforeResponse: true });
+      // 一个字节都没回来就连不上。原来原样抛出浏览器的「Failed to fetch」，页面上就是这句英文（第二十二轮断网实测）。
+      // 等满 30 秒没有回应不算「没发出去」：连接是通的、请求多半已经到了，只是服务器卡着 —— 它可能正在存这句、正在回答
+      var headTimedOut = !!(ctrl && ctrl.signal.aborted);
+      throw requestError(headTimedOut ? '服务器 ' + Math.round(REQUEST_TIMEOUT_MS / 1000) + ' 秒没有回应' : '网络连接失败',
+        { network: true, beforeResponse: !headTimedOut, timedOut: headTimedOut });
     } finally {
       if (headTimer) clearTimeout(headTimer);
     }
@@ -4894,6 +4919,11 @@
         assistant.status = '';
         if (!assistant.content) assistant.content = '（连接中断，正在尝试接回…）';
         renderAiMessages();
+        if (!gotEvent && e && e.timedOut) {
+          // 服务器等满 30 秒都没回应：这句可能已经存上了、正在回答。不说「没发出去」（那会诱导再发一遍、问两次），
+          // 等一下从服务器拉一次（finally 里的 whenOnline）：存上了就接着显示，没存上那两条会自己消失
+          throw requestError(e.message + '，不确定这句发出去没有 —— 稍后会从服务器拉一次，先别重发', { network: true });
+        }
         throw e && e.network ? requestError('连接断了，网回来之后会把回答接上', { network: true }) : e;
       }
       if (dropped) {
@@ -5483,12 +5513,18 @@
         // 页面开着跨过业务日期的零点：只重新取数据（看板、例行计划的「今天」），见 watchBusinessDay
         if (!dayWatched && DAY_RELOAD[page]) { dayWatched = true; watchBusinessDay(DAY_RELOAD[page]); }
         var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'routines.html': bootRoutines, 'statistics.html': bootStatistics, 'achievement.html': bootAchievement, 'profile.html': bootProfile, 'admin.html': bootAdmin, 'feedback-admin.html': bootFeedbackAdmin, 'account-admin.html': bootAccountAdmin, 'shared-plans.html': bootSharedPlans, 'shared-plan-admin.html': bootSharedPlanAdmin, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
-        if (boots[page]) await boots[page]();
-        if (!pomoWatched) {
+        // 番茄钟的待补记不能挂在页面启动之后：启动失败（网断着打开的、被限流）时正是有待补记的时候，挂在后面的话这一页就不补了。
+        // 当场那一趟放在启动之后（成不成都跑）：补上了要刷新的看板数字，得等看板自己先起来
+        var watchPomodoros = !pomoWatched;
+        if (watchPomodoros) {
           pomoWatched = true;
-          catchUpPomodoros();
           window.addEventListener('online', catchUpPomodoros);
           setInterval(catchUpPomodoros, 60000);
+        }
+        try {
+          if (boots[page]) await boots[page]();
+        } finally {
+          if (watchPomodoros) catchUpPomodoros();
         }
       } finally {
         // 卡死不了：zhiqu-ui.js:31 那个 2.5s 无条件兜底仍会摘遮罩，
