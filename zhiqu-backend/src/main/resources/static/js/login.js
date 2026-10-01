@@ -1,4 +1,22 @@
-localStorage.removeItem('token');
+tryAutoLogin();
+
+async function tryAutoLogin() {
+    const token = getAuthToken();
+    try {
+        const response = await fetch(BASE_URL + '/auth/info', {
+            headers: token ? { Authorization: 'Bearer ' + token } : {},
+            credentials: 'same-origin'
+        });
+        if (!response.ok) return;
+        const result = await response.json();
+        if (result.code === 200) {
+            sessionStorage.setItem('role', (result.data && result.data.role) || 'USER');
+            window.location.href = '/dashboard.html';
+        }
+    } catch (ignored) {
+        clearAuthState();
+    }
+}
 
 function switchTab(name) {
     document.querySelectorAll('.tab-btn').forEach((b) => {
@@ -20,10 +38,11 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
     err.textContent = '';
     const username = document.getElementById('login-username').value.trim();
     const password = document.getElementById('login-password').value;
+    const rememberMe = document.getElementById('remember-me').checked;
     try {
-        const res = await api.post('/auth/login', { username, password });
+        const res = await api.post('/auth/login', { username, password, rememberMe });
         if (res.data && res.data.token) {
-            localStorage.setItem('token', res.data.token);
+            setAuthState(res.data.token, res.data.role || 'USER');
             window.location.href = '/dashboard.html';
         } else {
             err.textContent = '登录响应异常';

@@ -125,16 +125,24 @@ h1 {
   letter-spacing: -0.01em;
   white-space: nowrap;
 }
-.navbar-brand::before {
-  content: '📚 ';
-  font-size: 1rem;
-}
+.navbar-brand::before { content: ''; }
 
 .navbar-links {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-wrap: wrap;
+}
+
+.nav-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.nav-section-title {
+  display: none;
 }
 
 .nav-link {

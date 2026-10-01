@@ -4,8 +4,11 @@ import com.zhiqu.common.Result;
 import com.zhiqu.dto.TaskCreateRequest;
 import com.zhiqu.dto.TaskUpdateRequest;
 import com.zhiqu.entity.StudyTask;
+import com.zhiqu.entity.TaskReminder;
 import com.zhiqu.security.SecurityUtils;
+import com.zhiqu.service.ReminderPlanService;
 import com.zhiqu.service.StudyTaskService;
+import com.zhiqu.service.concurrency.IdempotencyService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,24 +19,37 @@ import java.util.Map;
 @RequestMapping("/api/task")
 public class StudyTaskController {
     private final StudyTaskService studyTaskService;
+    private final ReminderPlanService reminderPlanService;
+    private final IdempotencyService idempotencyService;
 
-    public StudyTaskController(StudyTaskService studyTaskService) {
+    public StudyTaskController(StudyTaskService studyTaskService,
+                               ReminderPlanService reminderPlanService,
+                               IdempotencyService idempotencyService) {
         this.studyTaskService = studyTaskService;
+        this.reminderPlanService = reminderPlanService;
+        this.idempotencyService = idempotencyService;
     }
 
     @PostMapping
-    public Result<StudyTask> create(@RequestBody @Valid TaskCreateRequest request) {
-        return Result.success(studyTaskService.create(SecurityUtils.getCurrentUserId(), request));
+    public Result<StudyTask> create(@RequestBody @Valid TaskCreateRequest request,
+                                    @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        return idempotencyService.execute(userId, "task.create", idempotencyKey,
+                () -> Result.success(studyTaskService.create(userId, request)));
     }
 
     /** 创建周期重复任务：按 repeatWeeks 展开为多条 */
-    @PostMapping("/create-with-repeat")
-    public Result<Map<String, Object>> createWithRepeat(@RequestBody @Valid TaskCreateRequest request) {
-        List<StudyTask> tasks = studyTaskService.createRepeated(SecurityUtils.getCurrentUserId(), request);
-        return Result.success(Map.of(
-                "created", tasks.size(),
-                "groupId", tasks.isEmpty() ? "" : (tasks.get(0).getRepeatGroupId() == null ? "" : tasks.get(0).getRepeatGroupId())
-        ));
+    @PostMapping({"/create-with-repeat", "/repeat"})
+    public Result<Map<String, Object>> createWithRepeat(@RequestBody @Valid TaskCreateRequest request,
+                                                        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        return idempotencyService.execute(userId, "task.createWithRepeat", idempotencyKey, () -> {
+            List<StudyTask> tasks = studyTaskService.createRepeated(userId, request);
+            return Result.success(Map.of(
+                    "created", tasks.size(),
+                    "groupId", tasks.isEmpty() ? "" : (tasks.get(0).getRepeatGroupId() == null ? "" : tasks.get(0).getRepeatGroupId())
+            ));
+        });
     }
 
     @PutMapping("/{id}")
@@ -52,6 +68,13 @@ public class StudyTaskController {
         return Result.success(studyTaskService.detail(SecurityUtils.getCurrentUserId(), id));
     }
 
+    @GetMapping("/{id}/reminders")
+    public Result<List<TaskReminder>> reminders(@PathVariable Long id) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        studyTaskService.detail(userId, id);
+        return Result.success(reminderPlanService.listTaskReminders(userId, id));
+    }
+
     @GetMapping("/list")
     public Result<List<StudyTask>> list(@RequestParam(required = false) Integer quadrant,
                                         @RequestParam(required = false) Integer status,
@@ -59,6 +82,18 @@ public class StudyTaskController {
                                         @RequestParam(required = false) String sortBy,
                                         @RequestParam(required = false) String sortOrder) {
         return Result.success(studyTaskService.list(SecurityUtils.getCurrentUserId(), quadrant, status, priority, sortBy, sortOrder));
+    }
+
+    /** 分页的任务列表：{items, total, offset, limit}（第十七轮）。limit 最多 500。 */
+    @GetMapping("/page")
+    public Result<Map<String, Object>> page(@RequestParam(required = false) Integer quadrant,
+                                            @RequestParam(required = false) Integer status,
+                                            @RequestParam(required = false) Integer priority,
+                                            @RequestParam(required = false) String sortBy,
+                                            @RequestParam(required = false) String sortOrder,
+                                            @RequestParam(defaultValue = "0") int offset,
+                                            @RequestParam(defaultValue = "100") int limit) {
+        return Result.success(studyTaskService.page(SecurityUtils.getCurrentUserId(), quadrant, status, priority, sortBy, sortOrder, offset, limit));
     }
 
     @GetMapping("/quadrant")

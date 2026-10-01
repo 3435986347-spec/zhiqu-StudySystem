@@ -3,7 +3,98 @@ package com.zhiqu.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.zhiqu.entity.SysUser;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
+
+import java.time.LocalDate;
 
 @Mapper
 public interface SysUserMapper extends BaseMapper<SysUser> {
+    @Select("""
+            SELECT id FROM sys_user
+            WHERE id = #{userId} AND deleted = 0
+            FOR UPDATE
+            """)
+    Long lockKnowledgeTreeOwner(@Param("userId") Long userId);
+
+    /**
+     * 锁住用户行，串行化长期记忆的读—改—写。
+     *
+     * <p>{@code user_ai_memory} 每用户一行自由文本，合并条目的动作是「读全文 → 合并 → 整份写回」。
+     * 不加锁时两个并发确认会各读到同一份旧全文，后写的覆盖先写的 —— 用户勾了两批条目，
+     * 最后只留一批，<b>而且两个请求都返回成功</b>；首次写入则直接撞 user_id 的唯一键。
+     *
+     * <p>锁的是 sys_user 行而不是 user_ai_memory 行：首次写入时后者还不存在，
+     * {@code FOR UPDATE} 锁不住不存在的行，挡不住并发 INSERT。与 {@link #lockKnowledgeTreeOwner}
+     * 是同一行，两者会互相串行 —— 可接受，都是低频的用户级写操作。
+     */
+    @Select("SELECT id FROM sys_user WHERE id = #{userId} AND deleted = 0 FOR UPDATE")
+    Long lockMemoryOwner(@Param("userId") Long userId);
+
+    /** 清空记忆时纪元 +1 —— 在途 run 的快照就此过期，它们的记忆草稿不再能确认。 */
+    @Update("UPDATE sys_user SET memory_epoch = COALESCE(memory_epoch, 0) + 1 WHERE id = #{userId}")
+    int bumpMemoryEpoch(@Param("userId") Long userId);
+
+    /**
+     * 换密码，并让之前签发的登录令牌全部失效 —— 一条语句，只动这几列。
+     *
+     * <p>原来是读出整行、改密码、{@code updateById} 写回：这张表有 {@code @Version}，中间谁改过这一行，
+     * 那次写入就是 0 行，而接口照样回「密码已更新」。反过来，一个并发的整行写入（比如改资料）会把
+     * <b>旧的</b>密码哈希写回去。这里同时把 version +1：拿着旧版本号的整行写入会失败，而不是把密码改回去。
+     */
+    @Update("UPDATE sys_user SET password = #{hash}, token_epoch = token_epoch + 1, version = COALESCE(version, 0) + 1 "
+            + "WHERE id = #{userId} AND deleted = 0")
+    int changePassword(@Param("userId") Long userId, @Param("hash") String hash);
+
+    /*
+     * 下面三条和 changePassword 同一个理由：这张表有 @Version，「读整行 → 改一列 → updateById 写回」
+     * 在中间有人动过这一行时就是 0 行（而原来的调用方都不看返回值）—— 资料没存上照样回「已保存」，
+     * 管理员点了「禁用」而账号其实没禁用。只动自己那几列，就没有版本冲突这回事。
+     */
+
+    @Update("UPDATE sys_user SET nickname = #{nickname}, school = #{school}, major = #{major}, email = #{email} "
+            + "WHERE id = #{userId} AND deleted = 0")
+    int updateProfile(@Param("userId") Long userId, @Param("nickname") String nickname, @Param("school") String school,
+                      @Param("major") String major, @Param("email") String email);
+
+    @Update("UPDATE sys_user SET avatar = #{avatar} WHERE id = #{userId} AND deleted = 0")
+    int updateAvatar(@Param("userId") Long userId, @Param("avatar") String avatar);
+
+    @Update("UPDATE sys_user SET status = #{status} WHERE id = #{userId} AND deleted = 0")
+    int updateStatus(@Param("userId") Long userId, @Param("status") int status);
+
+    @Select("SELECT COALESCE(memory_epoch, 0) FROM sys_user WHERE id = #{userId}")
+    Long currentMemoryEpoch(@Param("userId") Long userId);
+
+    @Update("""
+            UPDATE sys_user
+            SET total_study_minutes = COALESCE(total_study_minutes, 0) + #{minutes},
+                consecutive_days = CASE
+                    WHEN last_study_date IS NULL THEN 1
+                    WHEN #{studyDate} = last_study_date THEN GREATEST(COALESCE(consecutive_days, 0), 1)
+                    WHEN #{studyDate} = DATE_ADD(last_study_date, INTERVAL 1 DAY) THEN COALESCE(consecutive_days, 0) + 1
+                    WHEN #{studyDate} > DATE_ADD(last_study_date, INTERVAL 1 DAY) THEN 1
+                    ELSE consecutive_days
+                END,
+                last_study_date = CASE
+                    WHEN last_study_date IS NULL OR #{studyDate} > last_study_date THEN #{studyDate}
+                    ELSE last_study_date
+                END,
+                updated_at = NOW(),
+                version = version + 1
+            WHERE id = #{userId}
+            """)
+    int addStudyMinutesAndRefreshStreak(@Param("userId") Long userId,
+                                        @Param("minutes") Integer minutes,
+                                        @Param("studyDate") LocalDate studyDate);
+
+    @Update("""
+            UPDATE sys_user
+            SET achievement_points = COALESCE(achievement_points, 0) + #{points},
+                updated_at = NOW(),
+                version = version + 1
+            WHERE id = #{userId}
+            """)
+    int addAchievementPoints(@Param("userId") Long userId, @Param("points") Integer points);
 }

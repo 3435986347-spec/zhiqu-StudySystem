@@ -10,7 +10,7 @@ import java.util.Map;
 public interface StudyRecordService {
     StudyRecord create(Long userId, StudyRecordCreateRequest request);
 
-    List<StudyRecord> list(Long userId);
+    List<StudyRecord> list(Long userId, java.time.LocalDate from, java.time.LocalDate to);
 
     StudyStatisticsVO statistics(Long userId);
 

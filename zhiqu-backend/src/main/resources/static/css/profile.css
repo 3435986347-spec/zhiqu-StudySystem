@@ -10,6 +10,82 @@
   margin-bottom: 28px;
 }
 
+#profile-stats.stat-cards {
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.profile-stat-card {
+  display: block;
+  min-height: 96px;
+  padding: 18px;
+  border: 1px solid var(--border-soft, #ECE7DD);
+  border-top: 0;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  text-decoration: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.profile-stat-card:hover {
+  transform: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.profile-stat-card.is-clickable {
+  cursor: pointer;
+}
+
+.profile-stat-card.is-clickable:hover,
+.profile-stat-card.is-clickable:focus-visible {
+  border-color: rgba(47, 95, 115, 0.36);
+  background: #FBFAF6;
+  outline: none;
+}
+
+.profile-stat-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.profile-stat-card .value {
+  flex: 0 0 auto;
+  min-width: 0;
+  color: var(--text-primary, #20252B);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  font-size: 31px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.profile-stat-copy {
+  min-width: 0;
+  text-align: right;
+}
+
+.profile-stat-card .label {
+  margin-top: 0;
+  color: var(--text-secondary, #69737D);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-stat-action {
+  margin-top: 8px;
+  color: var(--primary, #2F5F73);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.profile-stat-action.muted {
+  color: var(--text-secondary, #69737D);
+}
+
 /* ── Avatar block ── */
 .avatar-block {
   text-align: center;
@@ -86,4 +162,352 @@
   font-size: 11px;
   color: var(--text-secondary);
   line-height: 1.7;
+}
+
+#ai-memory-text {
+  width: 100%;
+  min-height: 130px;
+  resize: vertical;
+  line-height: 1.7;
+}
+.ai-memory-meta {
+  margin: 8px 0 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.reminder-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.reminder-switch input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+.reminder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.account-security-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft, #ECE7DD);
+  border-radius: 8px;
+  background: #FAF9F5;
+}
+
+.account-security-row strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-primary, #20252B);
+  font-size: 14px;
+}
+
+.account-security-row p {
+  margin: 0;
+  color: var(--text-secondary, #69737D);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.account-security-row .btn {
+  flex: 0 0 auto;
+}
+.reminder-channel-panel {
+  display: none;
+}
+.reminder-channel-panel.active {
+  display: block;
+}
+
+.privacy-note {
+  margin: -4px 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft, #ECE7DD);
+  border-radius: 8px;
+  background: #FAF9F5;
+  color: var(--text-secondary, #69737D);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.ai-model-list,
+.knowledge-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.ai-model-card,
+.knowledge-card {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--border-soft, #ECE7DD);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ai-model-card.system {
+  background: #F8FAFA;
+}
+
+.ai-model-head,
+.knowledge-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-model-name,
+.knowledge-title {
+  margin: 0;
+  color: var(--text-primary, #20252B);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.ai-model-subtitle {
+  margin-top: 5px;
+  color: var(--text-secondary, #69737D);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.ai-model-owner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 5px;
+  background: #EEF4F6;
+  color: var(--primary, #2F5F73);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ai-model-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ai-model-detail-grid div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft, #ECE7DD);
+  border-radius: 7px;
+  background: #FAF9F5;
+}
+
+.ai-model-detail-grid span,
+.ai-model-detail-grid strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-model-detail-grid span {
+  margin-bottom: 4px;
+  color: var(--text-secondary, #69737D);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ai-model-detail-grid strong {
+  color: var(--text-primary, #20252B);
+  font-size: 12px;
+}
+
+.ai-capability-note {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft, #ECE7DD);
+  border-radius: 8px;
+  background: #FAF9F5;
+  color: var(--text-secondary, #69737D);
+  font-size: 13px;
+}
+
+.ai-capability-note strong {
+  color: var(--text-primary, #20252B);
+}
+
+.ai-probe-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #EEF2F7;
+  color: #64748B;
+}
+
+.ai-probe-status.verified {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803D;
+}
+
+.ai-probe-status.unsupported {
+  background: rgba(148, 163, 184, 0.16);
+  color: #64748B;
+}
+
+.ai-probe-status.failed {
+  background: rgba(220, 38, 38, 0.11);
+  color: #B91C1C;
+}
+
+.ai-model-meta,
+.knowledge-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text-secondary, #69737D);
+  font-size: 11px;
+}
+
+.ai-model-key,
+.knowledge-content-preview {
+  color: var(--text-secondary, #69737D);
+  font-size: 12px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+.ai-model-actions,
+.knowledge-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ai-model-form,
+.knowledge-grid {
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft, #ECE7DD);
+}
+
+.capability-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 4px 0 18px;
+}
+
+.capability-row label,
+.knowledge-revision-card label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-secondary, #69737D);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.capability-row input,
+.knowledge-revision-card input {
+  accent-color: var(--primary, #2F5F73);
+}
+
+.empty-line {
+  padding: 18px;
+  border: 1px dashed var(--border, #DDD8CF);
+  border-radius: 8px;
+  color: var(--text-secondary, #69737D);
+  font-size: 12px;
+  text-align: center;
+}
+
+.btn-sm {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.knowledge-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 16px;
+}
+
+.knowledge-revision-card {
+  padding: 12px;
+  border: 1px solid var(--border-soft, #ECE7DD);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.knowledge-revision-card.pending {
+  border-left: 3px solid var(--primary, #2F5F73);
+}
+
+.knowledge-entry-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--border-soft, #ECE7DD);
+  border-radius: 8px;
+  background: #FAF9F5;
+}
+
+.knowledge-entry-card strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-primary, #20252B);
+  font-size: 15px;
+}
+
+.knowledge-entry-card p {
+  margin: 0;
+  color: var(--text-secondary, #69737D);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+@media (max-width: 920px) {
+  #profile-stats.stat-cards {
+    grid-template-columns: 1fr;
+  }
+  .profile-stat-main {
+    align-items: center;
+  }
+  .knowledge-layout {
+    grid-template-columns: 1fr;
+  }
+  .ai-model-detail-grid {
+    grid-template-columns: 1fr;
+  }
+  .account-security-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .knowledge-entry-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }

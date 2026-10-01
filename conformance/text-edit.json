@@ -1,0 +1,25 @@
+{
+  "_说明": "「按原文替换一段」的一致性用例（第十轮）。npm 版 zhiqu 的 write_file 替换用法（zhiqu-cli/src/tools/edit.js）与网页 code agent 的 write_workspace_file 替换用法（TextEdit.java）跑同一份：两边各自绿不算数，对同一份输入给出同样的结论才算数。expect 里有 text 就是应当成功、结果一字不差；有 error 就是应当拒绝，并核对种类与行号（提示文字两边可以不同）。",
+  "cases": [
+    { "name": "一处，照原文换", "text": "a = 1\nb = 2\n", "old": "a = 1", "new": "a = 3", "expect": { "text": "a = 3\nb = 2\n", "replaced": 1 } },
+    { "name": "多行一段", "text": "function f() {\n  return 1;\n}\n", "old": "  return 1;\n}", "new": "  return 2;\n}", "expect": { "text": "function f() {\n  return 2;\n}\n", "replaced": 1 } },
+    { "name": "换成空（删掉一段）", "text": "keep\ndrop me\nkeep\n", "old": "drop me\n", "new": "", "expect": { "text": "keep\nkeep\n", "replaced": 1 } },
+    { "name": "CRLF 文件：多行 old 用 \\n 也对得上，写回仍是 CRLF", "text": "line1\r\nline2\r\nline3\r\n", "old": "line1\nline2", "new": "L1\nL2", "expect": { "text": "L1\r\nL2\r\nline3\r\n", "replaced": 1 } },
+    { "name": "CRLF 文件：old 自己带着 \\r\\n 也行", "text": "x\r\ny\r\n", "old": "x\r\ny", "new": "X\r\nY", "expect": { "text": "X\r\nY\r\n", "replaced": 1 } },
+    { "name": "混着两种换行：照原样比，不改别的行", "text": "a\r\nb\nc\n", "old": "b", "new": "B", "expect": { "text": "a\r\nB\nc\n", "replaced": 1 } },
+    { "name": "中文与 emoji", "text": "标题：旧的 😀\n正文\n", "old": "旧的 😀", "new": "新的 🎉", "expect": { "text": "标题：新的 🎉\n正文\n", "replaced": 1 } },
+    { "name": "出现两处：拒绝，说出行号", "text": "n++;\nx\nn++;\n", "old": "n++;", "new": "n += 1;", "expect": { "error": "ambiguous", "count": 2, "lines": [1, 3] } },
+    { "name": "出现三处 + replace_all：全换", "text": "n++;\nn++;\nm\nn++;\n", "old": "n++;", "new": "n += 1;", "replaceAll": true, "expect": { "text": "n += 1;\nn += 1;\nm\nn += 1;\n", "replaced": 3 } },
+    { "name": "replace_all 但只有一处：照常", "text": "only\n", "old": "only", "new": "one", "replaceAll": true, "expect": { "text": "one\n", "replaced": 1 } },
+    { "name": "CRLF 文件里出现两处：行号按行算", "text": "a\r\nb\r\na\r\n", "old": "a", "new": "z", "expect": { "error": "ambiguous", "count": 2, "lines": [1, 3] } },
+    { "name": "只差缩进：指出第几行", "text": "function f() {\n    return 1;\n}\n", "old": "function f() {\n  return 1;\n}", "new": "x", "expect": { "error": "not_found", "hint": "whitespace", "from": 1, "to": 3 } },
+    { "name": "只差行尾空白", "text": "a\n\nfunction g() {\n    return 2;   \n}\n", "old": "    return 2;\n}", "new": "x", "expect": { "error": "not_found", "hint": "whitespace", "from": 4, "to": 5 } },
+    { "name": "全角空格也算空白", "text": "标题　第一章\n", "old": "标题 第一章", "new": "x", "expect": { "error": "not_found", "hint": "whitespace", "from": 1, "to": 1 } },
+    { "name": "old 首尾的空行不参与比对", "text": "a\nb\nc\n", "old": "\nb \n\n", "new": "x", "expect": { "error": "not_found", "hint": "whitespace", "from": 2, "to": 2 } },
+    { "name": "第一行还在、后面变了：指出第一行在哪", "text": "function total(items) {\n  let sum = 0;\n  return sum;\n}\n", "old": "function total(items) {\n  let s = 0;", "new": "x", "expect": { "error": "not_found", "hint": "first_line", "at": 1 } },
+    { "name": "第一行太短（< 8 字）不做包含匹配", "text": "xx ab yy\n", "old": "ab\ncd", "new": "x", "expect": { "error": "not_found", "hint": null } },
+    { "name": "第一行够长时按包含匹配", "text": "const answer = compute(a, b);\nnext\n", "old": "answer = compute(a, b)\nother", "new": "x", "expect": { "error": "not_found", "hint": "first_line", "at": 1 } },
+    { "name": "完全没有", "text": "abc\n", "old": "zzz", "new": "x", "expect": { "error": "not_found", "hint": null } },
+    { "name": "old 为空：拒绝", "text": "abc\n", "old": "", "new": "x", "expect": { "error": "empty_old" } }
+  ]
+}

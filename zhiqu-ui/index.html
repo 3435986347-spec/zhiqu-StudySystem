@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录 - 知趣·象限学习系统</title>
+  <script>/* 防闪白：首帧前应用主题 */(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css">
+</head>
+<body>
+  <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; padding:32px;">
+    <div class="zq-card zq-card-lg" style="width:400px; max-width:100%; padding:36px 34px; animation:zqFadeIn .35s ease both;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+        <div style="width:34px; height:34px; border-radius:8px; background:var(--zq-primary); color:var(--zq-on-primary); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:16px;">知</div>
+        <h1 style="margin:0; font-size:20px; font-weight:700; letter-spacing:-.01em;">知趣 · 象限学习系统</h1>
+      </div>
+      <p style="margin:0 0 22px 44px; color:var(--zq-text2); font-size:13px;">自主学习看板 · 让每一天的安排都清晰可控</p>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; border-bottom:1px solid var(--zq-border-soft); margin-bottom:20px;">
+        <button type="button" id="tab-login" onclick="zqTab('login')" style="height:38px; border:none; background:none; cursor:pointer; font-size:14px; font-weight:700; color:var(--zq-primary); border-bottom:2px solid var(--zq-primary);">登录</button>
+        <button type="button" id="tab-reg" onclick="zqTab('reg')" style="height:38px; border:none; background:none; cursor:pointer; font-size:14px; font-weight:500; color:var(--zq-text2); border-bottom:2px solid transparent;">注册</button>
+      </div>
+
+      <form id="form-login" style="display:flex; flex-direction:column; gap:14px;" onsubmit="return false;">
+        <div class="zq-field"><label class="zq-label">用户名</label><input class="zq-input" placeholder="请输入用户名"></div>
+        <div class="zq-field"><label class="zq-label">密码</label><input class="zq-input" type="password" placeholder="请输入密码"></div>
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--zq-text2); cursor:pointer;"><input type="checkbox" style="accent-color:var(--zq-primary);"><span>记住登录状态</span></label>
+        <button class="zq-btn" style="height:38px; margin-top:4px;">登 录</button>
+      </form>
+
+      <form id="form-reg" style="display:none; flex-direction:column; gap:14px;" onsubmit="return false;">
+        <div class="zq-field"><label class="zq-label">用户名</label><input class="zq-input" placeholder="请输入用户名"></div>
+        <div class="zq-field"><label class="zq-label">密码</label><input class="zq-input" type="password" placeholder="至少 6 位密码"></div>
+        <div class="zq-field"><label class="zq-label">确认密码</label><input class="zq-input" type="password" placeholder="再次输入密码"></div>
+        <button class="zq-btn" style="height:38px; margin-top:4px;">注 册</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    function zqTab(t){
+      var lg=t==='login';
+      document.getElementById('form-login').style.display=lg?'flex':'none';
+      document.getElementById('form-reg').style.display=lg?'none':'flex';
+      var a=document.getElementById('tab-login'), b=document.getElementById('tab-reg');
+      a.style.fontWeight=lg?'700':'500'; a.style.color=lg?'var(--zq-primary)':'var(--zq-text2)'; a.style.borderBottomColor=lg?'var(--zq-primary)':'transparent';
+      b.style.fontWeight=lg?'500':'700'; b.style.color=lg?'var(--zq-text2)':'var(--zq-primary)'; b.style.borderBottomColor=lg?'transparent':'var(--zq-primary)';
+    }
+  </script>
+</body>
+</html>

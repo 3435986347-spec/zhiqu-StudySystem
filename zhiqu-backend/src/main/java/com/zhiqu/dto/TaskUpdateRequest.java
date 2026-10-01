@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 public class TaskUpdateRequest {
@@ -27,6 +28,14 @@ public class TaskUpdateRequest {
 
     private LocalDateTime startTime;
     private Integer durationMinutes;
+    private String taskType;
+    @Min(value = 1, message = "难度范围是1到5")
+    @Max(value = 5, message = "难度范围是1到5")
+    private Integer difficulty;
+    private String aiReminderReason;
+    private List<Integer> reminderOffsets;
     private LocalDateTime deadline;
     private LocalDateTime reminderTime;
+
+    private Integer version;
 }

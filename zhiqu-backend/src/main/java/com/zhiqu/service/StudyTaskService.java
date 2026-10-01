@@ -21,6 +21,10 @@ public interface StudyTaskService {
 
     List<StudyTask> list(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder);
 
+    /** 分页的列表：{items, total, offset, limit}。筛选、排序和 list 一样，另按 id 排出确定的先后，翻页不重不漏。 */
+    Map<String, Object> page(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder,
+                             int offset, int limit);
+
     Map<String, List<StudyTask>> quadrant(Long userId);
 
     StudyTask updateStatus(Long userId, Long taskId, Integer status);

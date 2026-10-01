@@ -1,6 +1,7 @@
 package com.zhiqu.config;
 
 import com.zhiqu.security.JwtAuthenticationFilter;
+import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -26,20 +27,42 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // SSE(SseEmitter)完成时 Tomcat 以 ASYNC dispatch 重新进入过滤链,无状态部署下
+                        // SecurityContext 已不存在:不放行会 AccessDenied 并异常切断响应(缺终止 chunk),
+                        // 浏览器 fetch 读取器报 network error。鉴权在初始 REQUEST dispatch 已完成,放行内部重入不削弱安全。
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         .requestMatchers(
                                 "/api/auth/**",
+                                // 设备码登录：命令行此时还没有任何凭据；deviceCode 本身就是凭据
+                                "/api/harness/device/start",
+                                "/api/harness/device/poll",
+                                // 服务器版本 / 命令行最低版本 —— 新版本提示在登录前也要能读
+                                "/api/harness/meta",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/uploads/**",
                                 "/",
+                                "/favicon.ico",
                                 "/index.html",
                                 "/dashboard.html",
+                                "/ai-assistant.html",
+                                "/shared-plans.html",
+                                "/knowledge-wiki.html",
+                                "/admin.html",
+                                "/account-admin.html",
+                                "/feedback-admin.html",
+                                "/shared-plan-admin.html",
                                 "/tasks.html",
+                                "/routines.html",
                                 "/statistics.html",
                                 "/achievement.html",
                                 "/profile.html",
+                                "/manifest.json",
+                                "/service-worker.js",
                                 "/css/**",
-                                "/js/**"
+                                "/js/**",
+                                "/vendor/**",
+                                "/assets/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )
