@@ -96,7 +96,8 @@ mkdir -p "$SWIFT_BUILD"
 cp "$SHELL_SRC" "$SWIFT_BUILD/main.swift"
 swiftc -O -target arm64-apple-macos13.0 \
   -framework AppKit -framework WebKit \
-  -o "$APP/Contents/MacOS/$NAME" "$SWIFT_BUILD/main.swift" "$ROOT/deploy/desktop/macos-shell/CdsCache.swift"
+  -o "$APP/Contents/MacOS/$NAME" "$SWIFT_BUILD/main.swift" \
+  "$ROOT/deploy/desktop/macos-shell/CdsCache.swift" "$ROOT/deploy/desktop/macos-shell/PageView.swift"
 rm -rf "$SWIFT_BUILD"
 echo "    外壳  $(du -h "$APP/Contents/MacOS/$NAME" | cut -f1)"
 

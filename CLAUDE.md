@@ -236,6 +236,15 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
   任务标题是加密存储的（明文进 `encrypted_title`），所以只有 Wiki 受影响。
   `jdk.crypto.ec` 同理：缺了 HTTPS 握手失败，报错像是对端的问题。
 
+**WKWebView 不实现代理方法就不做浏览器理所当然的事，而且不报错**（2026-10-01，用户报「Wiki 导入来源 → 上传文件解析，点了没反应」）。
+没有 `runOpenPanelWith`，`<input type="file">` 一点就被当成取消，系统面板根本不出来（AI 助手上传资料、换头像同一个原因）；
+导航策略对 `<a download href="blob:…">` 回 `.allow` 的话，**整个应用窗口被导航成那份文件的原文**，无边框窗口没有后退（Wiki 导出、下载原件）。
+这些都收在 `deploy/desktop/macos-shell/PageView.swift`：WKWebView 的子类、自己当自己的代理 —— `uiDelegate` 是 weak 的，
+写成 `webView.uiDelegate = SomeHelper()` 当场就被释放、又回到「点了没反应」。两个实测出来、不看代码想不到的：在保存面板里点取消
+**不会**走到 `didFailWithError`；而写不进只读目录时 WebKit 报的恰恰是 `NSURLErrorCancelled`、说明为空 —— 按「取消」滤掉就成了一声不吭。
+`DesktopPageViewTest` 把 PageView.swift 和检查程序一起编译，在真的 WKWebView 里真点 file input、真点 a[download]（面板换成桩）。
+**外壳的改动要重新打包才到用户手里**（`package-macos-native.sh`），网页的改动不用。
+
 原生外壳与后端靠 `-Dzhiqu.desktop.port-file` 交接端口（临时文件 + 原子改名 —— 外壳是
 轮询这个文件的，直接写可能读到半个端口号）。设了这个属性后端就**不再弹浏览器**。
 
@@ -885,6 +894,12 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   was being sent to the server as data. `localDate` remains only for writing a given Date in the
   viewer's own calendar. Both are exposed on `window.zqApi` so page inline scripts share the one
   implementation; see 第二十一轮 above.
+- **The task form** (`openTaskForm` / `taskFormPayload`, 2026-10-01): until then 「新建任务」 asked for a title only and
+  「编辑」 changed only the title — deadline, reminder time, quadrant and priority could not be set from the task page at all.
+  Times are `datetime-local` values sent as-is (business-zone wall clock, never through `Date`). The server does not store
+  the 「截止前提醒」 setting, only the reminders it scheduled, so the edit form shows the days of the still-PENDING `AUTO`
+  reminders; `reminderOffsets: null` means "server default", `[]` means "none". `task-form-check.js` runs the published
+  `taskFormPayload`.
 - **12 of the 14 pages still ship design-phase demo data** — inline scripts that write a fabricated
   study plan into the DOM *before* `zhiqu-api.js` loads (`dashboard.html` labels its own block
   `// ── 示例数据（后续可由接口替换） ──`). Users never see it, and that rests on exactly one
@@ -895,10 +910,14 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   call, and that no demo container sits outside `.zq-main`. The demo blocks are tangled with real
   wiring (`paintWd`, `zqPomoRecord`, `openModal` are referenced from inline `onclick`), so
   removing them is a separate job — not a reason to leave the guard unpinned.
+  The other half of the same hazard: **demo text that the boot code never overwrites stays on screen for real users.**
+  参考计划's 「已审核模板 · 4 个」 and the dashboard pomodoro's 「第 3 轮 · 专注阶段」 shipped that way until 2026-10-01.
+  The sweep that found them: after a page boots, list visible `.zq-main` text that contains a digit and matches the
+  static HTML or inline demo script word for word (run on every user page that day; only those two turned up).
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20260929-network-review`.
+  old bundle. Current token: `20261001-task-form`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

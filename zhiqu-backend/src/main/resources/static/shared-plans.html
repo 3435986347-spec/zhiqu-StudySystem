@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20260929-network-review" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20260929-network-review">
-  <link rel="manifest" href="manifest.json?v=20260929-network-review">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261001-task-form" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261001-task-form">
+  <link rel="manifest" href="manifest.json?v=20261001-task-form">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20260929-network-review">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261001-task-form">
 </head>
 <body>
   <div class="zq-app">
@@ -32,7 +32,7 @@
           <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">排序</label><select class="zq-select" style="min-width:110px;"><option>发布时间</option><option>赞数</option></select></div>
           <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">方向</label><select class="zq-select" style="min-width:88px;"><option>倒序</option><option>正序</option></select></div>
           <button class="zq-btn-ghost">刷新</button>
-          <span style="margin-left:auto; font-size:12.5px; color:var(--zq-text3);">已审核模板 · 4 个</span>
+          <span id="zq-plan-count" style="margin-left:auto; font-size:12.5px; color:var(--zq-text3);">已审核模板</span>
         </div>
 
         <div id="zq-plans" style="display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px;"></div>
@@ -67,7 +67,7 @@
     </div>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20260929-network-review"></script>
+  <script src="assets/zhiqu-ui.js?v=20261001-task-form"></script>
   <script>
     var cat = { EXAM:['考试备考','q1'], COMPUTER:['计算机学习','q2'], LANGUAGE:['语言学习','q3'], GENERAL:['通用规划','q4'] };
     var plans = [
@@ -97,6 +97,6 @@
     }
     function closeModal(){ document.getElementById('zq-modal').style.display='none'; }
   </script>
-  <script src="assets/zhiqu-api.js?v=20260929-network-review"></script>
+  <script src="assets/zhiqu-api.js?v=20261001-task-form"></script>
 </body>
 </html>

@@ -816,6 +816,9 @@
       var todays = (recs || []).filter(function (rec) { return d10(rec.studyDate) === t; });
       var mins = todays.reduce(function (a, rec) { return a + (rec.durationMinutes || 0); }, 0);
       host.textContent = '今日：' + todays.length + ' 个 ｜ ' + mins + ' 分钟' + tail;
+      // 原来是设计稿写死的「第 3 轮 · 专注阶段」，新账号一个没做也是第 3 轮（2026-10-01 排查参考计划假数字时一起查出）
+      var round = $('#zq-pomo-round');
+      if (round) round.textContent = '今天第 ' + (todays.length + 1) + ' 轮';
     } catch (e) {
       if (tail) host.textContent = tail.slice(3);
     }
@@ -958,7 +961,7 @@
     var selects = $all('.zq-card .zq-select');
     var queryBtn = $all('.zq-card .zq-btn')[0], newBtn = $all('.zq-card .zq-btn')[1];
     if (queryBtn) queryBtn.onclick = loadTasks;
-    if (newBtn) newBtn.onclick = createTaskPrompt;
+    if (newBtn) newBtn.onclick = function () { openTaskForm(null); };
     await loadTasks();
     async function loadTasks() {
       var params = new URLSearchParams();
@@ -1018,23 +1021,171 @@
     if (foot) foot.textContent = '共 ' + total + ' 条' + (total > list.length ? '（显示了 ' + list.length + ' 条）' : '');
     $all('[data-cycle-task]', host).forEach(function (b) { b.onclick = function () { cycleTask(Number(b.dataset.cycleTask)); }; });
     $all('[data-del-task]', host).forEach(function (b) { b.onclick = function () { deleteTask(Number(b.dataset.delTask)); }; });
-    $all('[data-edit-task]', host).forEach(function (b) { b.onclick = function () { editTaskPrompt(Number(b.dataset.editTask)); }; });
+    $all('[data-edit-task]', host).forEach(function (b) { b.onclick = function () { safe('打开任务', function () { return openTaskForm(Number(b.dataset.editTask)); }); }; });
   }
-  async function createTaskPrompt() {
-    var title = await askText({ title: '新建任务', label: '任务标题', placeholder: '例如：数学二轮 · 重积分专题' }); if (!title || !title.trim()) return;
-    // 幂等键交给 request()：原来这里每次点击生成一个新键 —— 回应丢了、学生照着「网络连接失败」再点一次，拿的是新键，
-    // 服务器当成新的一次，建出两份（第二十二轮实测）。request() 在「不确定有没有保存上」之后，内容一样的下一次沿用同一个键。
-    await safe('创建任务', async function () {
-      await api.post('/task', { title: title.trim(), description: '', quadrant: 2, priority: 1, status: 0 });
-      toast('任务已创建'); await bootTasks();
-    });
+  // ── 任务表单（2026-10-01）──────────────────────────────────────────────────
+  // 原来「新建任务」只问一个标题、「编辑」也只改标题：截止时间、提醒时间、象限、优先级在任务页上都设置不了 ——
+  // 列表里明明有这几列，只能靠 AI 草稿去填。表单把服务端收的字段摆出来，新建和编辑共用一份。
+  // 时间用 datetime-local：它的值是不带时区的钟面（"2026-10-08T22:00"），和服务端存的一样按业务时区理解，
+  // 原样发过去、不经过 Date —— 浏览器在别的时区也不会挪。
+  var TASK_REMIND = { DEFAULT: 'default', NONE: 'none', CUSTOM: 'custom' };
+  /** 业务时区此刻的钟面，"YYYY-MM-DDTHH:mm:ss"（和 datetime-local 的值、服务端的时间同一种写法，能直接按字符串比先后）。 */
+  function businessNowText() {
+    var d = new Date(nowMs() + clock.offsetMinutes * 60000);
+    var hh = d.getUTCHours(), mm = d.getUTCMinutes(), ss = d.getUTCSeconds();
+    return ymdUTC(d) + 'T' + (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
   }
-  async function editTaskPrompt(id) {
-    var t = state.tasks.find(function (x) { return x.id === id; }); if (!t) return;
-    var title = await askText({ title: '修改任务', label: '任务标题', value: t.title }); if (!title || !title.trim()) return;
-    await safe('修改任务', async function () {
-      await api.put('/task/' + id, Object.assign({}, t, { title: title.trim() }));
-      toast('任务已保存'); await bootTasks();
+  /** 服务端的时间 → datetime-local 的值（只要到分钟）。 */
+  function toLocalInput(v) {
+    var m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(String(v || ''));
+    return m ? m[1] + 'T' + m[2] : '';
+  }
+  /**
+   * 表单里填的 → 发给服务端的。纯函数：task-form-check.js 直接跑这一份。
+   * f：表单原样的字符串；now：businessNowText()；before：编辑前的任务（新建时为 null）。
+   * 返回 { error } 或 { url, method, body }。拿不准的一律拒绝并说清楚，不悄悄改掉用户填的东西。
+   */
+  function taskFormPayload(f, now, before) {
+    var title = String(f.title || '').trim();
+    if (!title) return { error: '请填写任务标题' };
+    var bad = null;
+    function when(v, label) {
+      v = String(v || '').trim();
+      if (!v) return null;
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)) return v + ':00';
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(v)) return v;
+      bad = bad || label + '的格式不对，请重新选一下';
+      return null;
+    }
+    function int(v, lo, hi) {
+      v = String(v == null ? '' : v).trim();
+      if (!/^\d+$/.test(v)) return NaN;
+      var n = Number(v);
+      return n >= lo && n <= hi ? n : NaN;
+    }
+    var start = when(f.startTime, '开始时间'), deadline = when(f.deadline, '截止时间'), reminder = when(f.reminderTime, '提醒时间');
+    if (bad) return { error: bad };
+    var quadrant = int(f.quadrant, 1, 4), priority = int(f.priority, 0, 3);
+    if (isNaN(quadrant)) return { error: '请选择象限' };
+    if (isNaN(priority)) return { error: '请选择优先级' };
+    if (start && deadline && deadline < start) return { error: '截止时间早于开始时间' };
+    // 已经过去的提醒时间服务端不会建提醒（不报错）—— 说出来。编辑时原样没动的旧时间（早就提醒过了）不拦
+    var beforeReminder = before && before.reminderTime ? when(toLocalInput(before.reminderTime), '') : null;
+    if (reminder && reminder <= now && reminder !== beforeReminder) {
+      return { error: '提醒时间已经过去了，到时候不会再提醒 —— 换一个以后的时间，或者清空它' };
+    }
+    var duration = null;
+    if (String(f.durationMinutes || '').trim()) {
+      duration = int(f.durationMinutes, 1, 1440);
+      if (isNaN(duration)) return { error: '预计时长写 1 到 1440 之间的分钟数' };
+    }
+    var offsets = null;   // null = 服务端按默认（截止前几天的早上 8 点）
+    if (f.remindMode === TASK_REMIND.NONE) offsets = [];
+    else if (f.remindMode === TASK_REMIND.CUSTOM) {
+      var parts = String(f.remindDays || '').split(/[,，、\s]+/).filter(Boolean);
+      if (!parts.length) return { error: '自定义的截止前提醒至少写一个天数，例如 7,3,1' };
+      offsets = [];
+      for (var i = 0; i < parts.length; i++) {
+        var d = int(parts[i], 0, 365);
+        if (isNaN(d)) return { error: '「截止前提醒」写天数（0 到 365，0 是截止当天），用逗号隔开，例如 7,3,1' };
+        if (offsets.indexOf(d) < 0) offsets.push(d);
+      }
+      if (offsets.length > 10) return { error: '截止前提醒最多 10 个（这次是 ' + offsets.length + ' 个）' };
+      if (!deadline) return { error: '「截止前提醒」按截止时间算，请先填截止时间' };
+      offsets.sort(function (a, b) { return b - a; });
+    }
+    var fields = {
+      title: title, description: String(f.description || '').trim(), quadrant: quadrant, priority: priority,
+      startTime: start, durationMinutes: duration, deadline: deadline, reminderTime: reminder, reminderOffsets: offsets
+    };
+    // 编辑：其余字段（版本号、状态、任务类型、难度）照旧带上 —— 服务端的整份更新会把没带的清空
+    if (before) return { url: '/task/' + before.id, method: 'put', body: Object.assign({}, before, fields) };
+    var weeks = 1;
+    if (String(f.repeatWeeks || '').trim()) {
+      weeks = int(f.repeatWeeks, 1, 52);
+      if (isNaN(weeks)) return { error: '每周重复写 1 到 52 之间的周数' };
+    }
+    if (weeks > 1 && !start) return { error: '每周重复要先填开始时间：每一周在同一时间各建一条' };
+    var body = Object.assign({ status: 0 }, fields);
+    if (weeks > 1) { body.repeatWeeks = weeks; return { url: '/task/create-with-repeat', method: 'post', body: body }; }
+    return { url: '/task', method: 'post', body: body };
+  }
+  function taskFormHtml(t, remind, isNew) {
+    function opts(labels, current, from) {
+      return labels.map(function (label, i) { var v = i + from; return '<option value="' + v + '"' + (v === current ? ' selected' : '') + '>' + label + '</option>'; }).join('');
+    }
+    function field(id, label, control) { return '<div class="zq-field"><label class="zq-label" for="' + id + '">' + label + '</label>' + control + '</div>'; }
+    function dt(id, v) { return '<input id="' + id + '" type="datetime-local" class="zq-input" value="' + esc(toLocalInput(v)) + '">'; }
+    return field('zq-tf-title', '任务标题', '<input id="zq-tf-title" class="zq-input" maxlength="200" placeholder="例如：数学二轮 · 重积分专题" value="' + esc(t.title || '') + '">')
+      + field('zq-tf-desc', '说明（可留空）', '<textarea id="zq-tf-desc" class="zq-textarea" style="min-height:60px;">' + esc(t.description || '') + '</textarea>')
+      + '<div class="zq-form-grid">'
+      + field('zq-tf-q', '象限', '<select id="zq-tf-q" class="zq-select">' + opts(['重要且紧急', '重要不紧急', '紧急不重要', '不重要不紧急'], Number(t.quadrant || 2), 1) + '</select>')
+      + field('zq-tf-p', '优先级', '<select id="zq-tf-p" class="zq-select">' + opts(['低', '中', '高', '紧急'], Number(t.priority == null ? 1 : t.priority), 0) + '</select>')
+      + field('zq-tf-start', '开始时间（可留空）', dt('zq-tf-start', t.startTime))
+      + field('zq-tf-dur', '预计时长（分钟，可留空）', '<input id="zq-tf-dur" type="number" min="1" max="1440" step="1" class="zq-input" value="' + esc(t.durationMinutes == null ? '' : t.durationMinutes) + '">')
+      + field('zq-tf-deadline', '截止时间（可留空）', dt('zq-tf-deadline', t.deadline))
+      + field('zq-tf-remind', '提醒时间（可留空）', dt('zq-tf-remind', t.reminderTime))
+      + '</div>'
+      + field('zq-tf-mode', '截止前提醒', '<div style="display:flex;gap:8px;"><select id="zq-tf-mode" class="zq-select" style="flex:none;">'
+        + '<option value="' + TASK_REMIND.DEFAULT + '"' + (remind.mode === TASK_REMIND.DEFAULT ? ' selected' : '') + '>默认</option>'
+        + '<option value="' + TASK_REMIND.CUSTOM + '"' + (remind.mode === TASK_REMIND.CUSTOM ? ' selected' : '') + '>自定义天数</option>'
+        + '<option value="' + TASK_REMIND.NONE + '"' + (remind.mode === TASK_REMIND.NONE ? ' selected' : '') + '>不提醒</option></select>'
+        + '<input id="zq-tf-days" class="zq-input" style="flex:1;min-width:0;" placeholder="提前几天，例如 7,3,1" value="' + esc(remind.days || '') + '"' + (remind.mode === TASK_REMIND.CUSTOM ? '' : ' hidden') + '></div>')
+      + '<p style="margin:-4px 0 13px;font-size:12px;color:var(--zq-text3);line-height:1.6;">「提醒时间」到点提醒一次；「截止前提醒」在截止前那几天的早上 8 点提醒（默认按任务难度提前几天，0 是截止当天）。都发到个人中心里设置的提醒渠道。</p>'
+      + (isNew ? field('zq-tf-weeks', '每周重复（周，可留空）', '<input id="zq-tf-weeks" type="number" min="1" max="52" step="1" class="zq-input" placeholder="填 2 以上：从开始时间起每周建一条，最多 52 周">') : '')
+      + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-tf-cancel">取消</button><button type="button" class="zq-btn" id="zq-tf-ok">' + (isNew ? '创建' : '保存') + '</button></div>';
+  }
+  /** 编辑时「截止前提醒」显示成现在真的排着的那几天（服务端不单独存这个设置，只存排好的提醒）；查不到就按默认。 */
+  async function currentRemind(id) {
+    try {
+      var list = (await api.get('/task/' + id + '/reminders')) || [];
+      var days = [];
+      list.forEach(function (r) {
+        if (r.reminderType === 'AUTO' && r.status === 'PENDING' && r.offsetDays != null && days.indexOf(r.offsetDays) < 0) days.push(r.offsetDays);
+      });
+      days.sort(function (a, b) { return b - a; });
+      return days.length ? { mode: TASK_REMIND.CUSTOM, days: days.join(',') } : { mode: TASK_REMIND.DEFAULT };
+    } catch (e) {
+      return { mode: TASK_REMIND.DEFAULT };
+    }
+  }
+  async function openTaskForm(id) {
+    var before = id == null ? null : state.tasks.find(function (x) { return x.id === id; });
+    if (id != null && !before) return;
+    var remind = before ? await currentRemind(id) : { mode: TASK_REMIND.DEFAULT };
+    openModal({
+      title: before ? '编辑任务' : '新建任务',
+      width: '560px',
+      bodyHtml: taskFormHtml(before || {}, remind, !before),
+      onMount: function (b, h) {
+        var modeSel = $('#zq-tf-mode', b), days = $('#zq-tf-days', b), ok = $('#zq-tf-ok', b);
+        modeSel.onchange = function () { days.hidden = modeSel.value !== TASK_REMIND.CUSTOM; if (!days.hidden) days.focus(); };
+        // 新建时打的字：弹窗被遮罩点掉、刷新、登录过期都还在（第十五轮）；建好了才删
+        var keep = before ? [] : [keepDraft($('#zq-tf-title', b), 'task.new.title'), keepDraft($('#zq-tf-desc', b), 'task.new.desc')];
+        $('#zq-tf-cancel', b).onclick = h.close;
+        ok.onclick = function () {
+          if (ok.disabled) return;
+          var weeks = $('#zq-tf-weeks', b);
+          var plan = taskFormPayload({
+            title: $('#zq-tf-title', b).value, description: $('#zq-tf-desc', b).value,
+            quadrant: $('#zq-tf-q', b).value, priority: $('#zq-tf-p', b).value,
+            startTime: $('#zq-tf-start', b).value, durationMinutes: $('#zq-tf-dur', b).value,
+            deadline: $('#zq-tf-deadline', b).value, reminderTime: $('#zq-tf-remind', b).value,
+            remindMode: modeSel.value, remindDays: days.value, repeatWeeks: weeks ? weeks.value : ''
+          }, businessNowText(), before);
+          if (plan.error) return toast(plan.error, 'error');
+          // 幂等键交给 request()：原来这里每次点击生成一个新键 —— 回应丢了、学生照着「网络连接失败」再点一次，拿的是新键，
+          // 服务器当成新的一次，建出两份（第二十二轮实测）。request() 在「不确定有没有保存上」之后，内容一样的下一次沿用同一个键。
+          ok.disabled = true;
+          safe(before ? '保存任务' : '创建任务', async function () {
+            var res = await api[plan.method](plan.url, plan.body);
+            keep.forEach(function (k) { k.clear(); });
+            h.close();
+            toast(before ? '任务已保存' : (res && res.created ? '已创建 ' + res.created + ' 条（每周一条）' : '任务已创建'));
+            await bootTasks();
+          }).finally(function () { ok.disabled = false; });
+        };
+      }
     });
   }
   async function deleteTask(id) {
@@ -1817,8 +1968,11 @@
     if (sort) qs.push('sort=' + sort);
     if (order) qs.push('order=' + order);
     var current = latestOnly('shared-plans');
-    var plans = await api.get('/shared-plans' + (qs.length ? '?' + qs.join('&') : ''));
+    var plans = await api.get('/shared-plans' + (qs.length ? '?' + qs.join('&') : '')) || [];
     if (!current()) return;
+    // 原来这里是设计稿写死的「已审核模板 · 4 个」，从来不变（2026-10-01 用户报）。接口不分页，列表有几个就是几个
+    var count = $('#zq-plan-count');
+    if (count) count.textContent = (category ? (CAT_LABEL[category] || '已审核模板') : '已审核模板') + ' · ' + plans.length + ' 个';
     host.innerHTML = plans.map(function (p) {
       var cat = (p.category || 'GENERAL').toUpperCase();
       var k = CAT_KEY[cat] || 'q4';
@@ -2759,7 +2913,7 @@
         + '<div class="zq-field"><label class="zq-label">内容 / 链接</label><textarea id="zq-imp-content" class="zq-textarea" style="min-height:110px;" placeholder="粘贴文本，或填入 http/https 链接"></textarea></div>'
         + '</div>'
         + '<div id="zq-imp-file-box" style="display:none;">'
-        + '<div class="zq-field"><label class="zq-label">选择文件</label><input id="zq-imp-file" type="file" class="zq-input" style="height:auto;padding:7px 12px;" accept=".pdf,.xlsx,.xls,.txt,.md,.csv,.json,.xml,.png,.jpg,.jpeg,.webp"></div>'
+        + '<div class="zq-field"><label class="zq-label" for="zq-imp-file">选择文件</label><input id="zq-imp-file" type="file" class="zq-input" style="height:auto;padding:7px 12px;" accept=".pdf,.xlsx,.xls,.txt,.md,.csv,.json,.xml,.png,.jpg,.jpeg,.webp"></div>'
         + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">pdf / xlsx / txt / md / csv / json / xml 会自动解析正文；图片仅记录文件信息，暂不做内容识别。</p>'
         + '</div>'
         + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-imp-cancel">取消</button><button type="button" class="zq-btn" id="zq-imp-ok">导入</button></div>',

@@ -685,6 +685,8 @@ html.zq-booting .zq-main{opacity:0;}
 .zq-modal-body{padding:18px 20px 20px;overflow-y:auto;}
 .zq-modal-body .zq-field{margin-bottom:13px;}
 .zq-modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:6px;}
+/* 弹窗里两个一排的字段（任务表单）：手机上一个一排，见文件末尾那段 @media */
+.zq-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:12px;}
 @keyframes zqMaskIn{from{opacity:0;}to{opacity:1;}}
 @keyframes zqModalIn{from{opacity:0;transform:translateY(10px) scale(.98);}to{opacity:1;transform:none;}}
 body.zq-modal-open{overflow:hidden;}
@@ -801,6 +803,7 @@ body.zq-modal-open{overflow:hidden;}
   .zq-main [style*="repeat(4"],.zq-main [style*="repeat(5"],.zq-main [style*="repeat(6"]{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
   /* 页头：标题一侧和按钮一侧放不下就上下排（原来按钮被挤成两行、或者把标题挤成一个字一行） */
   .zq-main header{flex-wrap:wrap;}
+  .zq-form-grid{grid-template-columns:minmax(0,1fr);}
 
   /* 两侧可收起的面板（AI 助手、Wiki）：桌面上是三栏，收起时各留一条 44px 的竖条。
      手机上两条竖条加间距吃掉将近 100px，320px 宽时 Wiki 正文只剩 82px、工具栏被切掉 163px；展开一侧聊天区只剩 30px。

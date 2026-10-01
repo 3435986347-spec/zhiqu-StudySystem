@@ -49,7 +49,8 @@ class DesktopPackagingTest {
     @DisplayName("原生外壳版相反：JVM 要保持 headless —— 外壳自己才是 GUI 进程")
     void 原生外壳版要保持headless() throws IOException {
         String shell = read(Path.of("..", "deploy", "desktop", "macos-shell", "ZhiquShell.swift"));
-        assertTrue(shell.contains("WKWebView"), "扫到的不是外壳源码 —— 空扫会假绿");
+        // 锚点认外壳建页面的那一句（2026-10-01 起 WKWebView 收进了 PageView.swift，外壳源码里不再出现这个词）
+        assertTrue(shell.contains("webView = PageView(frame:"), "扫到的不是外壳源码 —— 空扫会假绿");
         assertTrue(shell.contains("-Djava.awt.headless=true"),
                 "外壳版里 JVM 只是后台子进程。让它也去连窗口服务器会在 Dock 里多出一个图标。");
         assertFalse(shell.contains("-Djava.awt.headless=false"),

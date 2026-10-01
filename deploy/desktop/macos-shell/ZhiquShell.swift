@@ -161,10 +161,10 @@ final class DragStrip: NSView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private let backend = Backend()
     private var window: NSWindow!
-    private var webView: WKWebView!
+    private var webView: PageView!
     private var loadingLabel: NSTextField!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -209,17 +209,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.center()
         window.setFrameAutosaveName("ZhiquMainWindow")
 
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()   // localStorage 要持久化 —— 登录态存在那里
-        // 给 User-Agent 追加应用标识。不加的话 WKWebView 发的是 Safari 式 UA，
-        // 「个人中心 → 登录设备」只能把它认成浏览器：用户明明从应用登录，却显示
-        // 「Safari · macOS」。前端 shortUA() 认这个标记。
-        config.applicationNameForUserAgent = "ZhiquDesktop/1.0"
-        webView = WKWebView(frame: frame, configuration: config)
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
+        // 文件选择、下载、外部链接、User-Agent、localStorage 持久化都在 PageView.swift 里（它自己当自己的代理）
+        webView = PageView(frame: frame)
         webView.autoresizingMask = [.width, .height]
-        webView.setValue(false, forKey: "drawsBackground")
 
         loadingLabel = NSTextField(labelWithString: "正在启动…")
         loadingLabel.alignment = .center
@@ -247,31 +239,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func fail(_ message: String) {
         loadingLabel.stringValue = message
         loadingLabel.isHidden = false
-    }
-
-    /// 外部链接走系统浏览器，不在应用窗口里打开 —— 应用窗口是这个产品，不是一个浏览器。
-    func webView(_ webView: WKWebView,
-                 decidePolicyFor navigationAction: WKNavigationAction,
-                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        if let url = navigationAction.request.url,
-           let host = url.host,
-           host != "127.0.0.1" && host != "localhost" {
-            NSWorkspace.shared.open(url)
-            decisionHandler(.cancel)
-            return
-        }
-        decisionHandler(.allow)
-    }
-
-    /// target="_blank" 也走系统浏览器（否则 WKWebView 默认什么都不做，链接看起来像坏的）。
-    func webView(_ webView: WKWebView,
-                 createWebViewWith configuration: WKWebViewConfiguration,
-                 for navigationAction: WKNavigationAction,
-                 windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url {
-            NSWorkspace.shared.open(url)
-        }
-        return nil
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
