@@ -51,7 +51,7 @@ class TaskFormTest {
         assertFalse(code.contains("askText({ title: '新建任务'") || code.contains("askText({ title: '修改任务'"),
                 "还有只问一个标题的新建 / 编辑");
 
-        int f = code.indexOf("async function openTaskForm(id)");
+        int f = code.indexOf("async function openTaskForm(id, onSaved)");
         int g = code.indexOf("\n  }\n", f);
         assertTrue(f >= 0 && g > f, "找不到 openTaskForm");
         String open = code.substring(f, g);

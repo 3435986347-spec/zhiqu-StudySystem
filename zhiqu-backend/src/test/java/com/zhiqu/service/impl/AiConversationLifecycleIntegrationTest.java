@@ -118,6 +118,8 @@ class AiConversationLifecycleIntegrationTest {
      * 查库只能看到摘要还在，看不到它有没有被用上。只认流式：摘要器/记忆抽取自己也调模型，那些是非流式。
      */
     private static volatile String lastStreamingRequestBody;
+    /** 假模型只对这一句回一个真的计划（见 startFakeModelServer）。 */
+    private static final String PLAN_REQUEST = "把下周的工作计划生成任务";
 
     @BeforeAll
     static void startFakeModelServer() throws Exception {
@@ -181,10 +183,19 @@ class AiConversationLifecycleIntegrationTest {
                 }
                 streamed = sse.append("data: [DONE]\n\n").toString();
             }
-            byte[] body = (streaming
-                    ? streamed
-                    : "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}")
-                    .getBytes(StandardCharsets.UTF_8);
+            String nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}";
+            // 抽计划那一步：请求里带着 create_study_plan 工具、而且是 PLAN_REQUEST 那句话时，像真模型一样回一个工具调用（任务 + 例行计划都有）。
+            // 原来这里一律回「测试回复」，计划草稿那条路一次都走不到 —— 一份计划弹三个确认框就是这样没被看见的。
+            // 只对那一句：「节点预期」表里「帮我生成任务」那一行写的就是「模型没解析出计划」，不能顺手把它的前提改掉
+            if (!streaming && requestBody.contains("\"create_study_plan\"") && requestBody.contains(PLAN_REQUEST)) {
+                nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_1\","
+                        + "\"type\":\"function\",\"function\":{\"name\":\"create_study_plan\",\"arguments\":"
+                        + "\"{\\\"tasks\\\":[{\\\"title\\\":\\\"整理季度汇报材料\\\",\\\"deadline\\\":\\\"2026-12-02 18:00:00\\\"},"
+                        + "{\\\"title\\\":\\\"提交报销单\\\",\\\"deadline\\\":\\\"2026-12-04 12:00:00\\\"}],"
+                        + "\\\"routines\\\":[{\\\"title\\\":\\\"下班前写工作日志\\\",\\\"frequency\\\":\\\"DAILY\\\"}]}\"}}]},"
+                        + "\"finish_reason\":\"tool_calls\"}]}";
+            }
+            byte[] body = (streaming ? streamed : nonStreamed).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", streaming ? "text/event-stream" : "application/json");
             exchange.sendResponseHeaders(200, body.length);
             try (OutputStream out = exchange.getResponseBody()) {
@@ -507,6 +518,68 @@ class AiConversationLifecycleIntegrationTest {
         return jdbcTemplate.queryForObject(
                 "SELECT content FROM ai_message WHERE user_id = ? AND role = ? ORDER BY id DESC LIMIT 1",
                 String.class, ownerId, role);
+    }
+
+    /**
+     * 执行轨迹不能说做了没做的事（2026-10-03 走主流程）：只提到「计划」、没说要建任务时不出草稿（这是故意的），
+     * 原来 PLANNER 那一步照样写「计划草稿已整理」—— 用户在轨迹里看到它，却等不到确认框。
+     */
+    @Test
+    void 没有出计划草稿时轨迹不说已整理() throws Exception {
+        Long notebookId = createNotebook(userId, "只聊计划");
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "帮我看看下周的计划合不合理", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        Long runId = latestRunId(userId, notebookId);
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'PLAN_DRAFT'", Integer.class, runId));
+        List<String> plannerSays = jdbcTemplate.queryForList(
+                "SELECT public_summary FROM ai_agent_step WHERE run_id = ? AND agent_type = 'PLANNER'", String.class, runId);
+        assertFalse(plannerSays.isEmpty(), "这句话里有「计划」，PLANNER 应当在图里 —— 一步都没扫到，判据就什么也没看");
+        assertTrue(plannerSays.stream().noneMatch(t -> t != null && t.contains("已整理")),
+                "没有草稿，轨迹却写着：" + plannerSays);
+    }
+
+    /**
+     * 「测试连通」的结果要记到模型卡片上（2026-10-03 走主流程）：原来只有「能力测试」写「连通性」那一栏，
+     * 测通了卡片上还是「未测试」。连不上的记「失败」，而且照样把错误回给页面。
+     */
+    @Test
+    void 测试连通的结果记到模型上_通了是通过_连不上是失败() {
+        aiService.testModel(userId, modelId);
+        assertEquals("VERIFIED", jdbcTemplate.queryForObject(
+                "SELECT capability_probe_status FROM ai_model_config WHERE id = ?", String.class, modelId));
+        assertNotNull(jdbcTemplate.queryForObject("SELECT last_probe_at FROM ai_model_config WHERE id = ?", Object.class, modelId));
+
+        Map<String, Object> dead = aiService.saveModel(userId, null, Map.of(
+                "providerType", "OPENAI_COMPATIBLE", "displayName", "dead-endpoint",
+                "apiUrl", "http://127.0.0.1:1/v1/chat/completions", "apiKey", "sk-test", "modelName", "fake-model"));
+        Long deadId = ((Number) dead.get("id")).longValue();
+        assertThrows(RuntimeException.class, () -> aiService.testModel(userId, deadId), "连不上要照样报错给页面");
+        assertEquals("FAILED", jdbcTemplate.queryForObject(
+                "SELECT capability_probe_status FROM ai_model_config WHERE id = ?", String.class, deadId));
+    }
+
+    /**
+     * 一份计划只确认一次（2026-10-03 走主流程）。说「生成任务」时 PLANNER 和 TASK_DRAFTER 都在图里，原来各自从同一份计划建草稿：
+     * PLAN_DRAFT（任务 + 例行）、TASK_DRAFT（任务）、ROUTINE_DRAFT（例行）—— 页面一个接一个弹三个确认框，第一个框里改过的条目，
+     * 第二个框又拿出没改过的原样，照着点「确认写入」就是两份任务（实测 3 条变 6 条）。
+     */
+    @Test
+    void 一份计划只弹一次确认_计划草稿建了就不再另建任务和例行草稿() throws Exception {
+        Long notebookId = createNotebook(userId, "一份计划");
+        Long before = latestRunId(userId, notebookId);
+        // 页面发的是 AUTO（zhiqu-api.js 的 agentMode）；CHAT_ONLY 不造 PLANNER，照不出这个问题
+        aiService.streamChat(userId, PLAN_REQUEST, modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        Long runId = latestRunId(userId, notebookId);
+        List<String> drafts = jdbcTemplate.queryForList(
+                "SELECT artifact_type FROM ai_agent_artifact WHERE run_id = ? AND artifact_type IN ('PLAN_DRAFT','TASK_DRAFT','ROUTINE_DRAFT') ORDER BY id",
+                String.class, runId);
+        assertEquals(List.of("PLAN_DRAFT"), drafts, "同一份计划要确认几次，就会被写进去几份");
+        String plan = jdbcTemplate.queryForObject(
+                "SELECT content_json FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'PLAN_DRAFT'", String.class, runId);
+        assertTrue(plan.contains("整理季度汇报材料") && plan.contains("下班前写工作日志"), "计划草稿里要有任务也有例行计划：" + plan);
     }
 
     /**

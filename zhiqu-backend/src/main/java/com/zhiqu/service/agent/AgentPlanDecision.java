@@ -118,8 +118,9 @@ public record AgentPlanDecision(
      */
     private static final List<String> TASK_CREATE_PLAN_WORDS =
             List.of("计划", "规划", "安排", "拆", "任务", "ddl", "deadline");
+    /** 「制定」2026-10-03 补上：「帮我制定下周的工作计划」原来不出计划（PlanCreationIntentTest 拿真实说法探着）。 */
     private static final List<String> TASK_CREATE_VERB_WORDS =
-            List.of("生成", "写到", "写入", "加入", "添加", "创建", "放到", "导入", "过目");
+            List.of("生成", "制定", "写到", "写入", "加入", "添加", "创建", "放到", "导入", "过目");
 
     /**
      * Wiki 工具循环的门 —— 从 {@code AiServiceImpl.looksWikiToolIntent} 搬来。

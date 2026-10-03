@@ -122,6 +122,10 @@ So assert on the perturbed source before running it (`grep -c` the removed condi
 to continue unless it is 0), and never chain `grep -c` with `&&` — it exits 1 on a count of zero
 and will break the chain you meant to guard.
 
+**Keep perturbation backups outside `src/`.** Maven copies everything under `src/main/resources/static/` into `target/classes`,
+so a `zhiqu-api.js.perturb-bak` left next to the source during a test run lands in `target/classes` — and a JAR packaged without
+`clean` would ship it (2026-10-03).
+
 **And restore with a fresh mtime.** On 2026-09-23 a perturbation batch restored files with
 `cp -p` (to keep an executable bit) — which also restores the file's *old modification time*.
 Maven's incremental compile then judges the source older than its `.class` and keeps the
@@ -920,7 +924,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261001-task-form`.
+  old bundle. Current token: `20261003-walkthrough`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -932,6 +936,10 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - Planning uses OpenAI-style function calling (`create_study_plan`). The gate
   `AgentPlanDecision.taskCreationIntent()` requires **both** a plan word (计划/规划/安排/任务…) **and** a create
   word (生成/创建/制定/添加…); "帮我安排下周任务" alone will not produce a plan.
+- **One plan, one confirmation** (2026-10-03): PLANNER turns the plan into one `PLAN_DRAFT` (tasks + routines); TASK_DRAFTER
+  only builds `TASK_DRAFT` / `ROUTINE_DRAFT` when PLANNER did not (project milestones). Both used to build drafts from the same
+  plan — three dialogs, and confirming the first then the second wrote every task twice. The lifecycle integration test's fake
+  model now answers `create_study_plan` with a real tool call; before that, no test ever reached the plan-draft path.
 - A generated plan is **never written to the calendar automatically**. It becomes a DRAFT artifact
   (`PLAN_DRAFT` / `TASK_DRAFT` / `ROUTINE_DRAFT`) plus `ai_message.suggested_plan_json`, and the UI
   auto-opens a confirmation modal (忽略 / 修改 / 确认写入). Only

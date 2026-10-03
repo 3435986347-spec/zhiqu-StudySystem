@@ -934,6 +934,11 @@ public class AiServiceImpl implements AiService {
         private List<String> memoryItems = List.of();
         private Map<String, Object> suggestedPlan = emptyPlan();
         private Map<String, Object> planArtifactContent = new LinkedHashMap<>();
+        /**
+         * PLANNER 这一轮建出来的 PLAN_DRAFT（没建就是 null）。TASK_DRAFTER 看它决定还要不要再建 ——
+         * 两个都建的话，同一份计划弹三个确认框（计划 / 任务 / 例行），照着点就是两份任务（2026-10-03 走主流程实测 3 条变 6 条）。
+         */
+        private Long planDraftArtifactId;
 
         private AiMessage liveUser;
         private AiMessage liveAssistant;
@@ -1321,6 +1326,7 @@ public class AiServiceImpl implements AiService {
             AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
                     s.agentRun.getId(), s.plannerStep.getId(), "PLAN_DRAFT", "AI 计划草稿",
                     s.planArtifactContent, s.liveUser.getId());
+            s.planDraftArtifactId = artifact.getId();
             ctx.emit("artifact.created", s.trace.artifactEvent(s.plannerStep, artifact, artifactStreamSummary(artifact)));
             AiAgentClaim claim = agentBlackboardService.createClaim(
                     s.agentRun.getId(), s.plannerStep.getId(), ctx.task("PLANNER").getId(), "PLAN_DRAFT",
@@ -1331,9 +1337,12 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void commit(AgentRunContext ctx) {
-            s.trace.finishStep(ctx, s.plannerStep, "计划草稿已整理", "planDraft=" + hasPlanDraft(s.planArtifactContent));
+            // 没有草稿时不能也写「已整理」：原来两种情况一句话，用户在轨迹里看到「计划草稿已整理」却等不到确认框
+            boolean drafted = s.planDraftArtifactId != null;
+            s.trace.finishStep(ctx, s.plannerStep, drafted ? "计划草稿已整理，等你确认" : "这一轮没有生成计划草稿",
+                    "planDraft=" + drafted);
             s.trace.completeTask(ctx, ctx.task("PLANNER"),
-                    Map.of("planDraft", hasPlanDraft(s.planArtifactContent)), "Plan draft ready");
+                    Map.of("planDraft", drafted), drafted ? "Plan draft ready" : "No plan draft");
         }
     }
 
@@ -1921,6 +1930,12 @@ public class AiServiceImpl implements AiService {
             if (!hasPlanDraft(s.suggestedPlan)) {
                 return;
             }
+            // PLANNER 已经把同一份计划建成了 PLAN_DRAFT（任务 + 例行都在里面）：再建 TASK_DRAFT / ROUTINE_DRAFT
+            // 就是同一份东西让用户确认三次、写进去两份。只剩 PLANNER 不在图里的情况（项目里程碑）才由这里建。
+            if (s.planDraftArtifactId != null) {
+                s.trace.skipTask(ctx, ctx.task("TASK_DRAFTER"), "计划草稿里已经有这些任务和例行计划，不再另建一份");
+                return;
+            }
             AiAgentTask task = ctx.task("TASK_DRAFTER");
             s.trace.startTask(ctx, task);
             AiAgentStep step = s.trace.startStep(ctx, task, "TASK_DRAFTER", 31, "正在拆分任务草稿");
@@ -2452,8 +2467,31 @@ public class AiServiceImpl implements AiService {
     @Override
     public Map<String, Object> testModel(Long userId, Long id) {
         AiModelConfig model = requireModel(userId, id);
-        String reply = callAiApi(model, "你是连通性测试助手。", "请只回复 OK");
+        String reply;
+        try {
+            reply = callAiApi(model, "你是连通性测试助手。", "请只回复 OK");
+        } catch (RuntimeException e) {
+            recordConnectivity(userId, model, false);
+            throw e;
+        }
+        recordConnectivity(userId, model, true);
         return Map.of("ok", true, "reply", limitText(reply, 80));
+    }
+
+    /**
+     * 「测试连通」的结果记到模型卡片的「连通性」那一栏。原来只有「能力测试」写它：测通了，卡片上还是「未测试」，
+     * 用户不知道配好了没有（2026-10-03 走主流程）。只记用户自己的模型 —— 系统模型是大家共用的，一个人测一下不该改所有人看到的状态。
+     * 只写这两列（新建一个只带这两个字段的对象，updateById 跳过空字段），不把读出来的整行写回去。
+     */
+    private void recordConnectivity(Long userId, AiModelConfig model, boolean ok) {
+        if (model.getId() == null || !"USER".equals(model.getOwnerType()) || !Objects.equals(userId, model.getUserId())) {
+            return;
+        }
+        AiModelConfig patch = new AiModelConfig();
+        patch.setId(model.getId());
+        patch.setCapabilityProbeStatus(ok ? "VERIFIED" : "FAILED");
+        patch.setLastProbeAt(LocalDateTime.now());
+        modelConfigMapper.updateById(patch);
     }
 
     @Override

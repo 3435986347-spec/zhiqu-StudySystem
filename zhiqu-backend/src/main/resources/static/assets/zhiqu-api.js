@@ -738,9 +738,19 @@
       var ins = $all('input', reg);
       if (ins[1].value !== ins[2].value) return toast('两次密码不一致', 'error');
       safe('注册', async function () {
-        await api.post('/auth/register', { username: ins[0].value.trim(), password: ins[1].value, confirmPassword: ins[2].value });
-        toast('注册成功，请登录');
-        switchAuthTab(root, 'login');
+        var username = ins[0].value.trim(), password = ins[1].value;
+        await api.post('/auth/register', { username: username, password: password, confirmPassword: ins[2].value });
+        // 注册完直接登录（2026-10-03 走主流程：原来注册成功之后还要把密码再输一遍）。登录没成（比如撞了登录限流）就退回登录页、用户名填好
+        try {
+          var data = await api.post('/auth/login', { username: username, password: password, rememberMe: false });
+          setAuth(data, false);
+          location.href = safeNext(new URLSearchParams(location.search).get('next'));
+        } catch (err) {
+          toast('注册成功，请登录');
+          switchAuthTab(root, 'login');
+          var loginName = login && $all('input', login)[0];
+          if (loginName) loginName.value = username;
+        }
       });
     });
   }
@@ -769,6 +779,9 @@
     if (statNums[1]) statNums[1].textContent = sum.overdue || 0;
     if (statNums[2]) statNums[2].textContent = sum.remindersToday || 0;
     if (statNums[3]) statNums[3].textContent = (sum.routineDone || 0) + '/' + (sum.routineTotal || 0);
+    // 进度条原来是设计稿写死的 width:60%（0/0、0/1 都显示六成，2026-10-03 走主流程看到的）
+    var routineBar = $('#zq-routine-bar');
+    if (routineBar) routineBar.style.width = (sum.routineTotal ? Math.min(100, Math.round(100 * (sum.routineDone || 0) / sum.routineTotal)) : 0) + '%';
     var headerDate = $('header span');
     var todayRow = (data.days || []).find(function (d) { return d.today; });
     // 日期和星期都用服务端那一行的：原来是浏览器的日期拼服务端的星期（UTC+14 时「2026-09-29 · 周一」）
@@ -789,7 +802,8 @@
       };
     });
     var add = $('header .zq-btn');
-    if (add) add.onclick = function () { location.href = 'tasks.html'; };
+    // 原来只跳到任务页，还要再点一次「新建任务」（2026-10-03 走主流程）；建好之后刷新的是看板
+    if (add) add.onclick = function () { openTaskForm(null, bootDashboard); };
     await populatePomoTasks();
     await updatePomoCount();
     if (window.zqApi) window.zqApi.afterRecord = function () { bootDashboard(); };
@@ -1132,6 +1146,7 @@
         + '<option value="' + TASK_REMIND.NONE + '"' + (remind.mode === TASK_REMIND.NONE ? ' selected' : '') + '>不提醒</option></select>'
         + '<input id="zq-tf-days" class="zq-input" style="flex:1;min-width:0;" placeholder="提前几天，例如 7,3,1" value="' + esc(remind.days || '') + '"' + (remind.mode === TASK_REMIND.CUSTOM ? '' : ' hidden') + '></div>')
       + '<p style="margin:-4px 0 13px;font-size:12px;color:var(--zq-text3);line-height:1.6;">「提醒时间」到点提醒一次；「截止前提醒」在截止前那几天的早上 8 点提醒（默认按任务难度提前几天，0 是截止当天）。都发到个人中心里设置的提醒渠道。</p>'
+      + '<p id="zq-tf-remind-warn" hidden style="margin:-6px 0 13px;padding:8px 10px;border-radius:var(--zq-rs);background:var(--zq-q1-bg);color:var(--zq-q1);font-size:12px;line-height:1.6;"></p>'
       + (isNew ? field('zq-tf-weeks', '每周重复（周，可留空）', '<input id="zq-tf-weeks" type="number" min="1" max="52" step="1" class="zq-input" placeholder="填 2 以上：从开始时间起每周建一条，最多 52 周">') : '')
       + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-tf-cancel">取消</button><button type="button" class="zq-btn" id="zq-tf-ok">' + (isNew ? '创建' : '保存') + '</button></div>';
   }
@@ -1149,7 +1164,19 @@
       return { mode: TASK_REMIND.DEFAULT };
     }
   }
-  async function openTaskForm(id) {
+  /** 提醒为什么发不出去（发得出去时为 null）。和后端 ReminderServiceImpl.isEnabled 同一个条件：开关开着、渠道凭据齐全。 */
+  async function reminderBlocker() {
+    try {
+      var settings = (await api.get('/reminder/settings')) || {};
+      if (!reminderChannelReady(settings)) return '还没填推送渠道的凭据';
+      if (!settings.enabled) return '「提醒推送」没有打开';
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+  /** onSaved：保存之后刷新哪一页（默认任务页；看板上的「新增任务」传 bootDashboard）。 */
+  async function openTaskForm(id, onSaved) {
     var before = id == null ? null : state.tasks.find(function (x) { return x.id === id; });
     if (id != null && !before) return;
     var remind = before ? await currentRemind(id) : { mode: TASK_REMIND.DEFAULT };
@@ -1160,6 +1187,14 @@
       onMount: function (b, h) {
         var modeSel = $('#zq-tf-mode', b), days = $('#zq-tf-days', b), ok = $('#zq-tf-ok', b);
         modeSel.onchange = function () { days.hidden = modeSel.value !== TASK_REMIND.CUSTOM; if (!days.hidden) days.focus(); };
+        // 提醒发不出去要当场说（2026-10-03 走主流程）：原来没配推送渠道时照样让人设提醒时间，到点服务端记一条
+        // 「提醒渠道未启用或未配置」，界面上哪里都看不出来 —— 用户以为会被提醒。查不到设置就不说（不拦着建任务）
+        reminderBlocker().then(function (why) {
+          var warn = $('#zq-tf-remind-warn', b);
+          if (!why || !warn) return;
+          warn.innerHTML = '提醒现在还发不出去：' + esc(why) + '。<a href="profile.html" style="color:inherit;font-weight:700;">去个人中心设置 →</a>';
+          warn.hidden = false;
+        });
         // 新建时打的字：弹窗被遮罩点掉、刷新、登录过期都还在（第十五轮）；建好了才删
         var keep = before ? [] : [keepDraft($('#zq-tf-title', b), 'task.new.title'), keepDraft($('#zq-tf-desc', b), 'task.new.desc')];
         $('#zq-tf-cancel', b).onclick = h.close;
@@ -1182,7 +1217,7 @@
             keep.forEach(function (k) { k.clear(); });
             h.close();
             toast(before ? '任务已保存' : (res && res.created ? '已创建 ' + res.created + ' 条（每周一条）' : '任务已创建'));
-            await bootTasks();
+            await (onSaved || bootTasks)();
           }).finally(function () { ok.disabled = false; });
         };
       }
@@ -1567,7 +1602,8 @@
       };
     }
     wireCliLogin();
-    // 早八提醒 ↔ /reminder/settings（开关 + 渠道凭据）
+    // 提醒推送 ↔ /reminder/settings（开关 + 渠道凭据）。这个开关管的是全部提醒（到点的、截止前的、早八汇总）——
+    // 后端 isEnabled 不开就一条都不发；原来卡片叫「早八提醒」、说明只写早八汇总，设了提醒时间的人不会想到要来开它
     var morning = $('#zq-morning');
     if (morning) {
       var settings = await safe('提醒设置', function () { return api.get('/reminder/settings'); });
@@ -1586,7 +1622,7 @@
           await api.put('/reminder/settings', { channel: currentReminderChannel(settings), enabled: next });
           settings.enabled = next;
           setMorningToggle(morning, next);
-          toast(next ? '早八提醒已开启' : '早八提醒已关闭');
+          toast(next ? '提醒推送已开启' : '提醒推送已关闭');
         });
       };
     }
@@ -3048,18 +3084,59 @@
       });
     });
   }
+  /**
+   * 待合入变更：AI（或「从来源生成」）对 Wiki 的修改先成草稿，在这里逐组看过、确认合入或忽略（2026-10-03 走主流程）。
+   * 原来这里只列标题，写着「逐条审阅与合入将在后续版本提供」—— 后端的合入 / 驳回接口一直都在，审阅界面只在零页面加载的旧
+   * js/knowledge-wiki.js 里，于是「让 AI 写进知识库」走到底是死路：草稿永远合不进去。
+   * 合入走后端那一套（行锁、基线核对：读过之后这一页被改过就拒绝并说明），这里不另做判断。
+   */
+  var PATCH_ACTION_LABEL = { UPSERT: '新建或更新', CREATE: '新建', UPDATE: '更新', DELETE: '删除', MOVE: '移动' };
+  function patchSetCard(ps) {
+    var items = Array.isArray(ps.items) ? ps.items : [];
+    var itemHtml = items.map(function (it) {
+      var action = PATCH_ACTION_LABEL[String(it.actionType || 'UPSERT').toUpperCase()] || it.actionType;
+      return '<details style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);margin-top:6px;">'
+        + '<summary style="cursor:pointer;padding:7px 10px;font-size:12.5px;"><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);margin-right:6px;">' + esc(action) + '</span>'
+        + '<strong>' + esc(it.title || '未命名页面') + '</strong></summary>'
+        + '<div class="zq-md" style="padding:4px 12px 10px;font-size:13px;line-height:1.7;max-height:260px;overflow-y:auto;">' + renderMarkdown(String(it.content || '')) + '</div></details>';
+    }).join('') || '<p style="margin:6px 0 0;font-size:12px;color:var(--zq-text3);">这组变更里没有页面。</p>';
+    return '<section data-patch-set="' + esc(ps.id) + '" style="padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card-soft);">'
+      + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;">'
+      + '<strong style="font-size:13.5px;">' + esc(ps.title || ('变更 #' + ps.id)) + '</strong>'
+      + (ps.createdAt ? '<span class="zq-mono" style="margin-left:8px;font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(ps.createdAt)) + '</span>' : '')
+      + (ps.summary ? '<p style="margin:4px 0 0;font-size:12px;color:var(--zq-text2);line-height:1.6;">' + esc(ps.summary) + '</p>' : '')
+      + '</div><div style="display:flex;gap:6px;flex:none;">'
+      + '<button type="button" class="zq-btn-ghost" data-patch-reject="' + esc(ps.id) + '" style="height:28px;padding:0 11px;font-size:12px;">忽略</button>'
+      + '<button type="button" class="zq-btn" data-patch-apply="' + esc(ps.id) + '" style="height:28px;padding:0 11px;font-size:12px;">确认合入</button>'
+      + '</div></div>' + itemHtml + '</section>';
+  }
   async function showWikiPatchSets() {
     await safe('待合入变更', async function () {
-      var list = await api.get('/knowledge/patch-sets?status=PENDING');
-      var n = (list || []).length;
+      var list = (await api.get('/knowledge/patch-sets?status=PENDING')) || [];
       await refreshWikiPatchBadge();
-      if (!n) { await showInfo({ title: '待合入变更', message: '当前没有待合入的变更。AI 对知识库的修改建议会先出现在这里，确认后才写入正文。' }); return; }
-      var SHOW_MAX = 10;
-      var items = list.slice(0, SHOW_MAX).map(function (ps) {
-        return '<div style="padding:9px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:12.5px;line-height:1.6;"><strong>' + esc(ps.title || ps.summary || ('变更 #' + ps.id)) + '</strong>' + (ps.createdAt ? '<span class="zq-mono" style="float:right;font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(ps.createdAt)) + '</span>' : '') + '</div>';
-      }).join('');
-      var more = n > SHOW_MAX ? '<div style="padding:7px 12px;font-size:12px;color:var(--zq-text3);text-align:center;">仅显示前 ' + SHOW_MAX + ' 条，还有 ' + (n - SHOW_MAX) + ' 条未展示</div>' : '';
-      await showInfo({ title: '待合入变更 · ' + n + ' 组', html: '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:300px;overflow-y:auto;">' + items + more + '</div><p style="margin:0 0 14px;font-size:12px;color:var(--zq-text3);">逐条审阅与合入将在后续版本提供。</p>' });
+      if (!list.length) { await showInfo({ title: '待合入变更', message: '当前没有待合入的变更。AI 对知识库的修改建议会先出现在这里，确认后才写入正文。' }); return; }
+      openModal({
+        title: '待合入变更 · ' + list.length + ' 组',
+        width: '640px',
+        bodyHtml: '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.6;">点开每一页看看要写进去的内容；确认合入之后才会改动知识库，忽略的不会写入。</p>'
+          + '<div style="display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow-y:auto;">' + list.map(patchSetCard).join('') + '</div>',
+        onMount: function (body, h) {
+          function settle(id, verb, done) {
+            var card = $('[data-patch-set="' + id + '"]', body);
+            $all('button', card).forEach(function (x) { x.disabled = true; });
+            safe(verb, async function () {
+              await api.post('/knowledge/patch-sets/' + id + '/' + (verb === '合入变更' ? 'apply' : 'reject'), {});
+              card.remove();
+              toast(done);
+              await refreshWikiPatchBadge();
+              await bootKnowledge();
+              if (!$('[data-patch-set]', body)) h.close();
+            }).finally(function () { $all('button', card).forEach(function (x) { x.disabled = false; }); });
+          }
+          $all('[data-patch-apply]', body).forEach(function (b) { b.onclick = function () { settle(b.dataset.patchApply, '合入变更', '已合入知识库'); }; });
+          $all('[data-patch-reject]', body).forEach(function (b) { b.onclick = function () { settle(b.dataset.patchReject, '忽略变更', '已忽略这组变更'); }; });
+        }
+      });
     });
   }
   function flattenKnowledge(nodes) {
@@ -3455,10 +3532,7 @@
   }
 
   function chooseAiFiles(cb) {
-    if (!state.notebookId) {
-      toast('请先新建或选择 Notebook，再上传资料', 'error');
-      return;
-    }
+    // 没有 Notebook 也让选：上传时 ensureAiNotebook 会替用户建一个（2026-10-03 走主流程：原来这里只说「请先新建」）
     var input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
@@ -3597,14 +3671,40 @@
     });
   }
 
-  async function uploadAiFiles(files, attachToNextMessage) {
-    if (!state.notebookId) {
-      toast('请先新建或选择 Notebook，再上传资料', 'error');
-      return;
+  /**
+   * 资料总要放进一个 Notebook。用户没选的时候（「普通聊天」）原来直接拒绝：「请先新建或选择 Notebook，再上传资料」——
+   * 输入框旁边的「上传」按钮点了只会报错，而用户只是想把一个文件交给 AI（2026-10-03 走主流程）。
+   * 现在按第一个文件的名字建一个、切过去；已经打在输入框里的字跟着过去（草稿按 Notebook 分开存，不带过去就像被吞了）。
+   */
+  async function ensureAiNotebook(files) {
+    if (state.notebookId) return state.notebookId;
+    var first = files[0] && files[0].name ? String(files[0].name).replace(/\.[^.]+$/, '').trim() : '';
+    var title = (first || '我的资料').slice(0, 40);
+    var draft = $('#zq-draft');
+    var typed = draft ? draft.value : '';
+    var nb = await api.post('/ai/notebooks', { title: title, description: '上传资料时自动新建' });
+    if (!nb || !nb.id) throw new Error('没能新建 Notebook');
+    state.notebookId = nb.id;
+    await loadAiNotebooks();
+    await loadAiMessages();
+    if (draft && typed && !draft.value) {
+      draft.value = typed;
+      draft.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    var notebookId = state.notebookId;
+    toast('已新建 Notebook「' + title + '」来放这份资料');
+    return nb.id;
+  }
+
+  async function uploadAiFiles(files, attachToNextMessage) {
     var list = Array.prototype.slice.call(files || []).filter(Boolean);
     if (!list.length) return;
+    var notebookId;
+    try {
+      notebookId = await ensureAiNotebook(list);
+    } catch (e) {
+      toast('上传之前要先有一个 Notebook，新建没有成功：' + (e.message || '请稍后再试'), 'error');
+      return;
+    }
     setAiDropState('正在上传 0 / ' + list.length + '…', 'uploading');
     var readyCount = 0, archiveCount = 0, errorCount = 0, imageCount = 0, firstError = '';
     for (var i = 0; i < list.length; i++) {
@@ -3651,10 +3751,32 @@
     var sel = $('#zq-model'); if (!sel) return;
     try {
       var models = normalizeModelList(await api.get('/ai/models'));
-      sel.innerHTML = '<option value="">默认模型</option>' + (models || []).map(function (m) {
+      // 一个能用的模型都没有时不能再写「默认模型」—— 像是有一个；新用户发出第一句才看到一行红字（2026-10-03 走主流程）
+      state.aiNoModel = !(models || []).length;
+      sel.innerHTML = '<option value="">' + (state.aiNoModel ? '还没有可用的模型' : '默认模型') + '</option>' + (models || []).map(function (m) {
         return '<option value="' + m.id + '">' + esc(m.label || m.displayName || m.modelName) + '</option>';
       }).join('');
+      if (!(state.messages || []).length) renderAiMessages();
     } catch (e) { /* 保持默认项 */ }
+  }
+  /**
+   * 对话区空着的时候说点什么（2026-10-03 走主流程）：原来新用户进来是一片空白 —— 不知道有没有模型、能让它做什么。
+   * 示例照着真能触发的说法写（出计划要「制定 / 生成」，写进知识库要「整理到知识库」），点一下填进输入框，不直接发。
+   */
+  var AI_EXAMPLES = ['总结一下我上传的资料，列出要点', '根据这些资料，帮我制定下周的工作计划', '把刚才的结论整理到知识库里'];
+  function aiEmptyState() {
+    if (state.aiNoModel) {
+      return '<div data-ai-empty style="max-width:420px;margin:56px auto 0;text-align:center;color:var(--zq-text2);font-size:13px;line-height:1.75;">'
+        + '<div style="font-size:15px;font-weight:700;color:var(--zq-text);margin-bottom:6px;">还没有可用的 AI 模型</div>'
+        + '到个人中心的「AI 模型配置」填一个（OpenAI 兼容、Anthropic、本地 Ollama 都行），回来就能用。'
+        + '<div style="margin-top:14px;"><a class="zq-btn" href="profile.html" style="display:inline-flex;">去配置模型 →</a></div></div>';
+    }
+    return '<div data-ai-empty style="max-width:460px;margin:48px auto 0;text-align:center;color:var(--zq-text2);font-size:13px;line-height:1.7;">'
+      + '<div style="font-size:15px;font-weight:700;color:var(--zq-text);margin-bottom:6px;">可以这样开始</div>'
+      + '左边新建 Notebook、上传资料，它就会照着你的资料回答；计划和知识库的改动都先给你确认。'
+      + '<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">' + AI_EXAMPLES.map(function (t) {
+        return '<button type="button" class="zq-btn-ghost" data-ai-example="' + esc(t) + '" style="justify-content:flex-start;height:auto;min-height:34px;white-space:normal;text-align:left;">' + esc(t) + '</button>';
+      }).join('') + '</div></div>';
   }
   function renderSteps(steps) {
     var host = $('#zq-steps'); if (!host) return;
@@ -4490,6 +4612,17 @@
       var body = messageBodyHtml(m, i);
       return '<div data-msg-idx="' + i + '" style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div data-msg-body="' + i + '" class="zq-msg-body" style="max-width:72%;padding:8px 12px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + body + '</div></div>';
     }).join('');
+    if (!state.messages.length) {
+      host.innerHTML = moreRow + aiEmptyState();
+      $all('[data-ai-example]', host).forEach(function (b) {
+        b.onclick = function () {
+          var draft = $('#zq-draft'); if (!draft) return;
+          draft.value = b.dataset.aiExample;
+          draft.dispatchEvent(new Event('input', { bubbles: true }));
+          draft.focus();
+        };
+      });
+    }
     var olderButton = host.querySelector('[data-load-older]');
     if (olderButton) olderButton.onclick = function () { loadOlderMessages(); };
     $all('details[data-reason-key]', host).forEach(function (details) {
