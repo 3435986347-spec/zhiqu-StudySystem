@@ -134,6 +134,15 @@ public record AgentPlanDecision(
             "存到", "存进", "存入", "保存", "收录", "放进", "放到", "加入", "记到", "记进",
             "查", "看看", "找", "读");
 
+    /**
+     * 这句话提到了计划 / 安排 / 任务，但没说要建（没有「制定 / 生成 / 添加…」）。2026-10-03 用户定：这种时候<b>让模型判断</b>
+     * 要不要把它落成任务草稿 —— 计划工具交给模型、不强制（{@code tool_choice: auto}），模型不调就没有草稿。
+     * 原来一律不出：「帮我把下周的工作安排一下」这种最自然的说法得不到计划，AI 助手的定位下靠关键词猜意图会一直漏。
+     */
+    public static boolean planMention(String message) {
+        return containsAny(message, TASK_CREATE_PLAN_WORDS);
+    }
+
     /** 「这句话要求把计划提取成任务草稿吗」—— 唯一定义。 */
     public static boolean taskCreationIntent(String message) {
         return containsAny(message, TASK_CREATE_PLAN_WORDS) && containsAny(message, TASK_CREATE_VERB_WORDS);
@@ -229,7 +238,9 @@ public record AgentPlanDecision(
                 containsAny(message, TASK_DRAFT_WORDS) || projectIntent(message),
                 wikiWriteIntent(message),
                 containsAny(message, MEMORY_DRAFT_WORDS),
-                taskCreationIntent(message),
+                // 说了要建（制定 / 生成…）就强制抽计划；只提到计划（「安排一下」）而模型能用工具时，也抽 —— 由模型自己判断要不要建（见 planMention）。
+                // 纯聊天模式不替用户判断要不要建任务
+                taskCreationIntent(message) || (planMention(message) && toolCallingSupported && !chatOnly),
                 wikiToolIntent(message) && toolCallingSupported,
                 // 三个条件缺一不可。workspaceReadable 来自执行侧（WorkspaceAccess 的生效档位）——
                 // 工作区没开时造出这个节点，就是一个结构上跑不了的幽灵节点，

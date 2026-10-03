@@ -3371,7 +3371,10 @@ public class AiServiceImpl implements AiService {
         Map<String, Object> empty = new HashMap<>();
         empty.put("tasks", List.of());
         empty.put("routines", List.of());
-        if (!AgentPlanDecision.taskCreationIntent(userMessage)) {
+        boolean explicit = AgentPlanDecision.taskCreationIntent(userMessage);
+        // 只提到计划、没说要建：让模型自己判断（不强制调工具）。不支持工具调用的模型判断不了，就不出 —— 宁可漏，不弹没要的确认框
+        boolean askModel = !explicit && AgentPlanDecision.planMention(userMessage) && provider.supportsToolCalling(config);
+        if (!explicit && !askModel) {
             return empty;
         }
         String userPrompt = """
@@ -3386,13 +3389,19 @@ public class AiServiceImpl implements AiService {
         // OpenAI 协议兼容；不支持工具的提供方或调用失败时，回退到下面的结构化输出方案。
         if (provider.supportsToolCalling(config)) {
             try {
-                String toolArgs = callStudyPlanToolCall(config, getStudyPlanToolSystemPrompt(), userPrompt);
+                String toolArgs = callStudyPlanToolCall(config,
+                        askModel ? getStudyPlanToolSystemPrompt() + PLAN_DECIDE_PROMPT : getStudyPlanToolSystemPrompt(),
+                        userPrompt, !askModel);
                 if (hasText(toolArgs)) {
                     return studyPlanTool.parse(toolArgs);
                 }
             } catch (Exception ignored) {
                 // 该模型/网关不支持 tools 或调用失败，回退到结构化输出
             }
+        }
+        // 模型没调工具 = 它判断这句话不是要建任务。不再用结构化输出硬抽 —— 那会把「我的计划合理吗」也抽成一堆任务
+        if (askModel) {
+            return empty;
         }
         try {
             String aiResponse = callAiApi(config, getChatTaskExtractionPrompt(), userPrompt);
@@ -3408,10 +3417,21 @@ public class AiServiceImpl implements AiService {
      * 强制 tool_choice 保证拿到结构化 tool_call，返回其 arguments 的 JSON 字符串（与 {tasks,routines} 同形）。
      * 无 tool_call 时返回空串，交由上层回退。
      */
-    private String callStudyPlanToolCall(AiModelConfig config, String systemPrompt, String userMessage) {
+    /**
+     * 只提到计划、没说要建时附在系统提示后面：先判断要不要调工具（2026-10-03 用户定「让模型判断」）。
+     */
+    private static final String PLAN_DECIDE_PROMPT = """
+
+            先判断：用户这句话是不是要你把一份安排落成日历里的任务 / 例行计划（例如「帮我把下周的工作安排一下」「把这些事排进下周」）？
+            是，才调用 create_study_plan；只是在讨论、询问或评估一个计划（例如「我的计划合理吗」「下周有什么安排」「蓝鲸计划是哪天上线的」），
+            不要调用任何工具，直接回答「不需要」。拿不准时不要调用 —— 调用了会弹一个确认框打扰用户。
+            """;
+
+    /** forced：已经判定要建（说了「制定 / 生成…」），强制调工具；false 时交给模型判断（tool_choice auto）。 */
+    private String callStudyPlanToolCall(AiModelConfig config, String systemPrompt, String userMessage, boolean forced) {
         provider.validateProviderRequestUrl(config.getApiUrl());
         if (provider.isAnthropicProvider(config)) {
-            return callStudyPlanToolCallAnthropic(config, systemPrompt, userMessage);
+            return callStudyPlanToolCallAnthropic(config, systemPrompt, userMessage, forced);
         }
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -3427,8 +3447,10 @@ public class AiServiceImpl implements AiService {
         provider.applyTemperature(body);
         body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
         body.put("tools", studyPlanTool.tools());
-        // 已判定为写计划意图，强制模型调用该工具，稳定拿到结构化调用参数
-        body.put("tool_choice", Map.of("type", "function", "function", Map.of("name", StudyPlanTool.NAME)));
+        // 已判定为写计划意图时强制调用该工具，稳定拿到结构化调用参数；只提到计划时交给模型判断
+        body.put("tool_choice", forced
+                ? Map.of("type", "function", "function", Map.of("name", StudyPlanTool.NAME))
+                : "auto");
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
@@ -3461,8 +3483,8 @@ public class AiServiceImpl implements AiService {
         }
     }
 
-    /** Anthropic 原生工具调用版：强制 create_study_plan，从 tool_use 块取 input（返回与 OpenAI 版同形的 JSON 字符串）。 */
-    private String callStudyPlanToolCallAnthropic(AiModelConfig config, String systemPrompt, String userMessage) {
+    /** Anthropic 原生工具调用版：forced 时强制 create_study_plan、否则交给模型判断；从 tool_use 块取 input（返回与 OpenAI 版同形的 JSON 字符串）。 */
+    private String callStudyPlanToolCallAnthropic(AiModelConfig config, String systemPrompt, String userMessage, boolean forced) {
         // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
         // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
         provider.validateProviderRequestUrl(config.getApiUrl());
@@ -3476,7 +3498,7 @@ public class AiServiceImpl implements AiService {
         }
         body.put("messages", List.of(Map.of("role", "user", "content", userMessage)));
         body.put("tools", provider.toAnthropicTools(studyPlanTool.tools()));
-        body.put("tool_choice", Map.of("type", "tool", "name", StudyPlanTool.NAME));
+        body.put("tool_choice", forced ? Map.of("type", "tool", "name", StudyPlanTool.NAME) : Map.of("type", "auto"));
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(

@@ -252,6 +252,11 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 `DesktopPageViewTest` 把 PageView.swift 和检查程序一起编译，在真的 WKWebView 里真点 file input、真点 a[download]（面板换成桩）。
 **外壳的改动要重新打包才到用户手里**（`package-macos-native.sh`），网页的改动不用。
 
+**WKWebView 里网页的 `Notification` 存在，但 `requestPermission()` 直接回 `"denied"`、什么都不弹**（2026-10-04 实测）。
+所以页面在桌面版里发通知走外壳的桥 `window.webkit.messageHandlers.zqNotify`（`PageView` 只认 `notify` / `authorize`，各字段有长度上限），
+外壳用 `UNUserNotificationCenter` 发原生通知；`ZhiquShell` 是通知中心的代理（前台也显示横幅、点了把窗口拉到前面）。
+消息处理者挂的是 `WeakMessageHandler` —— `userContentController` 强持有处理者，直接挂 PageView 自己是循环引用。
+
 原生外壳与后端靠 `-Dzhiqu.desktop.port-file` 交接端口（临时文件 + 原子改名 —— 外壳是
 轮询这个文件的，直接写可能读到半个端口号）。设了这个属性后端就**不再弹浏览器**。
 
@@ -882,6 +887,13 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   the 「截止前提醒」 setting, only the reminders it scheduled, so the edit form shows the days of the still-PENDING `AUTO`
   reminders; `reminderOffsets: null` means "server default", `[]` means "none". `task-form-check.js` runs the published
   `taskFormPayload`.
+- **Page reminders and shared login** (round 25, `docs/rounds/round-25.md`). Every signed-in page watches
+  `GET /api/reminder/upcoming` (next 24h + last 15 min, regardless of whether a third-party channel delivered it — people with
+  no channel configured are exactly who needs it) and, when one is due, chimes + notifies + toasts once: "already reminded" is
+  written to localStorage **before** notifying so other tabs skip it. Notification permission is only requested inside a
+  click (pomodoro start, saving a task with a reminder/deadline) — browsers refuse otherwise. Tabs share the login over
+  `BroadcastChannel('zq-auth')`: a tab without a token borrows one before `initAuth()`; logout and password change are
+  broadcast but only act on tabs holding **the same token** (another tab may be signed in as someone else).
 - **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
   study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
   «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't
@@ -895,7 +907,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261004-cleanup`.
+  old bundle. Current token: `20261004-notify`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
@@ -904,9 +916,12 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 
 - Chat streams over SSE (`POST /api/ai/chat/stream`). **`SecurityContext` does not propagate to the
   async thread**, so tool executors take an explicit `userId`.
-- Planning uses OpenAI-style function calling (`create_study_plan`). The gate
-  `AgentPlanDecision.taskCreationIntent()` requires **both** a plan word (计划/规划/安排/任务…) **and** a create
-  word (生成/创建/制定/添加…); "帮我安排下周任务" alone will not produce a plan.
+- Planning uses OpenAI-style function calling (`create_study_plan`). With **both** a plan word (计划/规划/安排/任务…)
+  **and** a create word (生成/创建/制定/添加…) — `AgentPlanDecision.taskCreationIntent()` — the tool call is forced.
+  With only a plan word ("帮我把下周的工作安排一下", `planMention`), a tool-calling model outside chat-only mode gets the tool
+  with `tool_choice: auto` plus `PLAN_DECIDE_PROMPT`, and **not calling it means no** — there is deliberately no keyword
+  fallback extraction on that path (user's decision 2026-10-03, round 25). The lifecycle test's fake model calls the tool only
+  when the request quotes the user's sentence verbatim; the decide prompt contains that very sentence as an example.
 - **One plan, one confirmation** (2026-10-03): PLANNER turns the plan into one `PLAN_DRAFT` (tasks + routines); TASK_DRAFTER
   only builds `TASK_DRAFT` / `ROUTINE_DRAFT` when PLANNER did not (project milestones). Both used to build drafts from the same
   plan — three dialogs, and confirming the first then the second wrote every task twice. The lifecycle integration test's fake

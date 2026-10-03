@@ -1,5 +1,6 @@
 package com.zhiqu.controller;
 
+import com.zhiqu.common.BusinessClock;
 import com.zhiqu.common.Result;
 import com.zhiqu.security.SecurityUtils;
 import com.zhiqu.service.ReminderService;
@@ -10,15 +11,24 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api/reminder")
 public class ReminderController {
     private final ReminderService reminderService;
+    private final BusinessClock clock;
 
-    public ReminderController(ReminderService reminderService) {
+    public ReminderController(ReminderService reminderService, BusinessClock clock) {
         this.reminderService = reminderService;
+        this.clock = clock;
+    }
+
+    /** 接下来 24 小时的任务提醒（页面开着时在页面里提醒，第二十五轮）。「此刻」是业务时区的 —— 提醒时间是用户的墙上时间。 */
+    @GetMapping("/upcoming")
+    public Result<List<Map<String, Object>>> upcoming() {
+        return Result.success(reminderService.upcoming(SecurityUtils.getCurrentUserId(), clock.now()));
     }
 
     @GetMapping("/settings")

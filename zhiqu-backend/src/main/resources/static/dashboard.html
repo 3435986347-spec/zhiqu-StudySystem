@@ -9,11 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261004-cleanup" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261004-cleanup">
-  <link rel="manifest" href="manifest.json?v=20261004-cleanup">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261004-notify" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261004-notify">
+  <link rel="manifest" href="manifest.json?v=20261004-notify">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261004-cleanup">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261004-notify">
 </head>
 <body>
   <div class="zq-app">
@@ -108,7 +108,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261004-cleanup"></script>
+  <script src="assets/zhiqu-ui.js?v=20261004-notify"></script>
   <script>
     // ── 番茄钟 ──
     // 按结束时刻倒数，不按「每跳一次减一秒」（第二十一轮）：切到别的标签页后浏览器把定时器限到一分钟一次，原来 25 分钟的番茄钟
@@ -127,11 +127,12 @@
         window.zqApi.recordPomodoro({taskId:tid,durationMinutes:mins,note:'番茄钟专注时段'}).catch(function(e){ window.zqApi.toast('这个番茄钟没记上：'+((e&&e.message)||'出错了'),'error'); });
       }
       // 结束了要让人知道（2026-10-03 走主流程：在别的标签页专注时，25 分钟到了页面上一点动静都没有）。
-      // 标签页标题挂上「✓ 专注结束」，直到切回这一页；声音和系统通知要用户授权，见 docs/product-plan.md「要你定」第 5 条
+      // 标签页标题挂上「✓ 专注结束」，直到切回这一页；再响一声、弹浏览器通知（第二十五轮，授权在点「开始」时问）
       function announceDone(){
         var title=document.title.replace(/^✓ 专注结束 — /,'');
         document.title='✓ 专注结束 — '+title;
-        if(window.zqApi&&window.zqApi.toast) window.zqApi.toast('专注结束，记进今天的时长了，休息一下');
+        // 响一声、弹浏览器通知（授权过的话）、页面里提示一句（第二十五轮）
+        if(window.zqApi&&window.zqApi.notify) window.zqApi.notify('专注结束','记进今天的时长了，休息一下','zq-pomodoro');
         function restore(){ if(document.hidden) return; setTimeout(function(){ document.title=title; },4000); document.removeEventListener('visibilitychange',restore); }
         document.addEventListener('visibilitychange',restore); restore();
       }
@@ -147,6 +148,7 @@
       elMin.addEventListener('change',function(){ if(running) return; total=parseInt(elMin.value,10)*60; secs=total; draw(); });
       elStart.addEventListener('click',function(){
         if(running){ tick(); clearInterval(timer); running=false; elStart.textContent='继续'; elPhase.textContent='已暂停'; return; }
+        if(window.zqApi&&window.zqApi.askNotifyPermission) window.zqApi.askNotifyPermission();   // 到点要弹通知：在这次点击里问授权
         running=true; elStart.textContent='暂停'; elPhase.textContent='专注中';
         lastNow=Date.now(); endAt=lastNow+secs*1000;
         timer=setInterval(tick,1000);
@@ -157,6 +159,6 @@
       draw();
     })();
   </script>
-  <script src="assets/zhiqu-api.js?v=20261004-cleanup"></script>
+  <script src="assets/zhiqu-api.js?v=20261004-notify"></script>
 </body>
 </html>

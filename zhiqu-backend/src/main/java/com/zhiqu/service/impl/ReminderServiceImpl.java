@@ -71,6 +71,46 @@ public class ReminderServiceImpl implements ReminderService {
         this.channels = channels.stream().collect(Collectors.toMap(NotificationChannel::channel, c -> c));
     }
 
+    /** 页面里的提醒看多远、往回看多久（错过了几分钟的照样提醒一次，比如刚打开页面）。 */
+    static final int UPCOMING_HOURS = 24;
+    static final int UPCOMING_PAST_MINUTES = 15;
+
+    @Override
+    public List<Map<String, Object>> upcoming(Long userId, LocalDateTime now) {
+        List<TaskReminder> rows = taskReminderMapper.selectList(new LambdaQueryWrapper<TaskReminder>()
+                .eq(TaskReminder::getUserId, userId)
+                .ne(TaskReminder::getStatus, STATUS_SKIPPED)
+                .ge(TaskReminder::getScheduledAt, now.minusMinutes(UPCOMING_PAST_MINUTES))
+                .le(TaskReminder::getScheduledAt, now.plusHours(UPCOMING_HOURS))
+                .orderByAsc(TaskReminder::getScheduledAt)
+                .last("LIMIT 200"));
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        List<Long> taskIds = rows.stream().map(TaskReminder::getTaskId).distinct().toList();
+        Map<Long, StudyTask> tasks = taskPrivacyService.revealAll(studyTaskMapper.selectList(new LambdaQueryWrapper<StudyTask>()
+                        .eq(StudyTask::getUserId, userId)
+                        .in(StudyTask::getId, taskIds)))
+                .stream().collect(Collectors.toMap(StudyTask::getId, t -> t, (x, y) -> x));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (TaskReminder r : rows) {
+            StudyTask task = tasks.get(r.getTaskId());
+            if (task == null || Integer.valueOf(2).equals(task.getStatus())) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", r.getId());
+            row.put("taskId", r.getTaskId());
+            row.put("title", task.getTitle());
+            row.put("scheduledAt", r.getScheduledAt());
+            row.put("type", r.getReminderType());
+            row.put("offsetDays", r.getOffsetDays());
+            row.put("deadline", task.getDeadline());
+            out.add(row);
+        }
+        return out;
+    }
+
     @Override
     public Map<String, Object> getSettings(Long userId) {
         UserReminderSetting setting = getOrDefaultSetting(userId);

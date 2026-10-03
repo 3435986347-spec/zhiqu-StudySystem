@@ -120,6 +120,11 @@ class AiConversationLifecycleIntegrationTest {
     private static volatile String lastStreamingRequestBody;
     /** 假模型只对这一句回一个真的计划（见 startFakeModelServer）。 */
     private static final String PLAN_REQUEST = "把下周的工作计划生成任务";
+    /** 只提到计划、没说要建的那一句：交给模型判断时，假模型对它调工具，对别的句子回「不需要」。 */
+    private static final String ASK_PLAN_REQUEST = "帮我把下周的工作安排一下";
+    /** 最近一次「交给模型判断」（tool_choice auto）的抽计划请求 / 最近一次强制的。 */
+    private static volatile String lastAskPlanBody;
+    private static volatile String lastForcedPlanBody;
 
     @BeforeAll
     static void startFakeModelServer() throws Exception {
@@ -187,7 +192,26 @@ class AiConversationLifecycleIntegrationTest {
             // 抽计划那一步：请求里带着 create_study_plan 工具、而且是 PLAN_REQUEST 那句话时，像真模型一样回一个工具调用（任务 + 例行计划都有）。
             // 原来这里一律回「测试回复」，计划草稿那条路一次都走不到 —— 一份计划弹三个确认框就是这样没被看见的。
             // 只对那一句：「节点预期」表里「帮我生成任务」那一行写的就是「模型没解析出计划」，不能顺手把它的前提改掉
-            if (!streaming && requestBody.contains("\"create_study_plan\"") && requestBody.contains(PLAN_REQUEST)) {
+            boolean planTool = !streaming && requestBody.contains("\"create_study_plan\"");
+            boolean askModel = planTool && requestBody.contains("\"tool_choice\":\"auto\"");
+            if (askModel) {
+                lastAskPlanBody = requestBody;
+            } else if (planTool) {
+                lastForcedPlanBody = requestBody;
+            }
+            // 只看「用户刚才的请求」那一段：系统提示里拿「帮我把下周的工作安排一下」当例子，在整个请求体上 contains 每次都命中
+            // （这个坑第一次跑就踩了 —— 「看看计划合不合理」也被当成要建，出了草稿）
+            boolean userAsked = requestBody.contains("用户刚才的请求：\\n" + ASK_PLAN_REQUEST)
+                    || requestBody.contains("用户刚才的请求：\\n" + PLAN_REQUEST);
+            // 结构化输出那条回退路（不带工具、要一段 JSON）：对「看看计划合不合理」照样给一份计划 ——
+            // 模型说了不要之后要是还走这条路，就会硬抽出草稿；这样那道「模型没调工具就不再硬抽」才看得见
+            if (!streaming && !planTool && requestBody.contains("用户刚才的请求：\\n帮我看看下周的计划合不合理")) {
+                nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":"
+                        + "\"{\\\"tasks\\\":[{\\\"title\\\":\\\"硬抽出来的任务\\\",\\\"deadline\\\":\\\"2026-12-02 18:00:00\\\"}],\\\"routines\\\":[]}\"}}]}";
+            }
+            if (askModel && !userAsked) {
+                nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"不需要\"},\"finish_reason\":\"stop\"}]}";
+            } else if (planTool && userAsked) {
                 nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_1\","
                         + "\"type\":\"function\",\"function\":{\"name\":\"create_study_plan\",\"arguments\":"
                         + "\"{\\\"tasks\\\":[{\\\"title\\\":\\\"整理季度汇报材料\\\",\\\"deadline\\\":\\\"2026-12-02 18:00:00\\\"},"
@@ -528,9 +552,13 @@ class AiConversationLifecycleIntegrationTest {
     void 没有出计划草稿时轨迹不说已整理() throws Exception {
         Long notebookId = createNotebook(userId, "只聊计划");
         Long before = latestRunId(userId, notebookId);
+        lastAskPlanBody = null;
         aiService.streamChat(userId, "帮我看看下周的计划合不合理", modelId, false, "OFF", notebookId, "AUTO", Map.of());
         awaitRunAfter(userId, notebookId, before);
         Long runId = latestRunId(userId, notebookId);
+        // 没有草稿要是因为「问过模型、它说不要」，而不是「根本没问」—— 否则下面那条和「门把它挡掉了」长得一样
+        assertNotNull(lastAskPlanBody, "提到计划的这句话应当交给模型判断");
+        assertTrue(lastAskPlanBody.contains("帮我看看下周的计划合不合理"), "交给模型判断的不是这一句");
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'PLAN_DRAFT'", Integer.class, runId));
         List<String> plannerSays = jdbcTemplate.queryForList(
@@ -580,6 +608,28 @@ class AiConversationLifecycleIntegrationTest {
         String plan = jdbcTemplate.queryForObject(
                 "SELECT content_json FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'PLAN_DRAFT'", String.class, runId);
         assertTrue(plan.contains("整理季度汇报材料") && plan.contains("下班前写工作日志"), "计划草稿里要有任务也有例行计划：" + plan);
+        assertNotNull(lastForcedPlanBody, "说了「生成」，抽计划那一步应当强制调工具");
+        assertTrue(lastForcedPlanBody.contains("\"tool_choice\":{") && !lastForcedPlanBody.contains("\"tool_choice\":\"auto\""),
+                "说了要建时要强制调工具（tool_choice 指名 create_study_plan），不是交给模型判断");
+    }
+
+    /**
+     * 只说「安排一下」：2026-10-03 用户定「让模型判断」—— 计划工具交给模型、不强制，模型调了就出草稿。
+     * 原来这句话一律不出计划（动词表里没有建的动作），最自然的说法得不到计划。
+     */
+    @Test
+    void 只说安排一下时交给模型判断_模型调了工具就出计划草稿() throws Exception {
+        Long notebookId = createNotebook(userId, "安排一下");
+        lastAskPlanBody = null;
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, ASK_PLAN_REQUEST, modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        Long runId = latestRunId(userId, notebookId);
+        assertNotNull(lastAskPlanBody, "只提到计划的这句话没有交给模型判断");
+        assertTrue(lastAskPlanBody.contains("先判断"), "交给模型判断时要告诉它什么时候该调、什么时候不该调");
+        assertEquals(List.of("PLAN_DRAFT"), jdbcTemplate.queryForList(
+                "SELECT artifact_type FROM ai_agent_artifact WHERE run_id = ? AND artifact_type IN ('PLAN_DRAFT','TASK_DRAFT','ROUTINE_DRAFT')",
+                String.class, runId), "模型判断要建，就该有一份（且只有一份）计划草稿");
     }
 
     /**

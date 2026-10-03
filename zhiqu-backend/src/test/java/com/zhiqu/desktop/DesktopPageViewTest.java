@@ -66,6 +66,21 @@ class DesktopPageViewTest {
         assertEquals("true", out.get("external.stayed"), "外部链接在应用窗口里打开了");
     }
 
+    /**
+     * 第二十五轮：页面开着时到点提醒。WKWebView 里网页的 Notification 授权一请求就是「拒绝」（实测），所以页面在桌面应用里
+     * 走 {@code window.webkit.messageHandlers.zqNotify} 这座桥、外壳发 macOS 原生通知。这里真的从页面里发消息过来（通知中心换成桩）。
+     */
+    @Test
+    @DisplayName("页面经 zqNotify 桥发通知、要授权；认不出的消息不理；标题和正文截断")
+    void 通知的桥() throws Exception {
+        Map<String, String> out = runCheck();
+        assertEquals("1", out.get("bridge.authorize"), "页面要授权时没有转给系统");
+        assertEquals("任务提醒|发周报|zq-reminder-7", out.get("bridge.first"), "通知没有原样转出去");
+        assertEquals("专注结束|休息一下|专注结束", out.get("bridge.defaultTag"), "没给标识时用标题当标识");
+        assertEquals("3", out.get("bridge.count"), "认不出的消息（错的 action、不是对象）不该发通知");
+        assertEquals(String.valueOf(80 + 1 + 240 + 1 + 1), out.get("bridge.capped"), "标题 80 字、正文 240 字之外要截掉");
+    }
+
     @Test
     @DisplayName("外壳用的就是 PageView：不另设代理（uiDelegate 是 weak 的，另设一个当场就被释放）")
     void 外壳接上的是PageView() throws Exception {
@@ -76,6 +91,8 @@ class DesktopPageViewTest {
         assertFalse(shell.contains("WKWebView("), "ZhiquShell.swift 里另建了一个裸的 WKWebView");
         String script = Files.readString(Path.of("../deploy/desktop/package-macos-native.sh"), StandardCharsets.UTF_8);
         assertTrue(script.contains("macos-shell/PageView.swift\""), "打包脚本没把 PageView.swift 编进外壳");
+        assertTrue(shell.contains("UNUserNotificationCenter.current().delegate = self"),
+                "外壳没接通知中心的代理 —— 应用在前台时系统不弹横幅，点通知也不会把窗口叫到前面");
     }
 
     /** 编译并跑一次检查程序。 */
@@ -90,7 +107,7 @@ class DesktopPageViewTest {
         Files.copy(Path.of("src/test/resources/swift/page-view-check.swift"), src.resolve("main.swift"));
         Files.copy(SHELL.resolve("PageView.swift"), src.resolve("PageView.swift"));
         Path bin = tmp.resolve("check");
-        run(600, "/usr/bin/swiftc", "-O", "-framework", "AppKit", "-framework", "WebKit", "-o", bin.toString(),
+        run(600, "/usr/bin/swiftc", "-O", "-framework", "AppKit", "-framework", "WebKit", "-framework", "UserNotifications", "-o", bin.toString(),
                 src.resolve("main.swift").toString(), src.resolve("PageView.swift").toString());
         Path work = Files.createDirectories(tmp.resolve("work"));
         String text = run(90, bin.toString(), work.toString());

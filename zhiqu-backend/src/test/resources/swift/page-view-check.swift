@@ -44,6 +44,11 @@ web.chooseSaveLocation = { panel, _, done in
     done(nextSave)
 }
 web.openExternally = { opened.append($0) }
+// 页面里的提醒 → 原生通知的桥（第二十五轮）：真的通知中心在检查程序里用不了（没有应用包），换成记下来
+var delivered: [String] = []
+var authorizeCalls = 0
+web.deliverNotification = { title, body, tag in delivered.append(title + "|" + body + "|" + tag) }
+web.requestNotificationAuthorization = { authorizeCalls += 1 }
 web.reportFailure = { message, _ in failures.append(message) }
 
 let html = """
@@ -140,7 +145,27 @@ step("writeFail.report", {
     out("writeFail.namesPlace", failures.first?.contains(readOnly.appendingPathComponent("x.txt").path) ?? false)
 }, until: { true })
 
-// 8. 外部链接：交给系统浏览器，窗口不走
+// 8. 页面经桥发通知 / 要授权；认不出的消息一律不理；太长的截断
+step("bridge", {
+    js("""
+      const b = window.webkit.messageHandlers.zqNotify;
+      b.postMessage({action: 'authorize'});
+      b.postMessage({action: 'notify', title: '任务提醒', body: '发周报', tag: 'zq-reminder-7'});
+      b.postMessage({action: 'notify', title: '专注结束', body: '休息一下'});
+      b.postMessage({action: 'rm -rf'});
+      b.postMessage('just a string');
+      b.postMessage({action: 'notify', title: 'x'.repeat(500), body: 'y'.repeat(2000), tag: 't'});
+    """)
+}, until: { delivered.count >= 3 })
+step("bridge.report", {
+    out("bridge.authorize", authorizeCalls)
+    out("bridge.first", delivered.first ?? "none")
+    out("bridge.defaultTag", delivered.count > 1 ? delivered[1] : "none")
+    out("bridge.count", delivered.count)
+    out("bridge.capped", delivered.count > 2 ? delivered[2].count : 0)
+}, until: { true })
+
+// 9. 外部链接：交给系统浏览器，窗口不走
 step("external", { js("location.href = 'https://example.com/x'") }, until: { !opened.isEmpty })
 step("external.loc", { location = ""; readLocation() }, until: { !location.isEmpty })
 step("external.report", {

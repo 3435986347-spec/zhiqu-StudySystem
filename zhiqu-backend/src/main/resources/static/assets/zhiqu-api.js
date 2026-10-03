@@ -66,6 +66,127 @@
     sessionStorage.removeItem('token'); sessionStorage.removeItem('role');
     localStorage.removeItem('token'); localStorage.removeItem('role');
   }
+  // ── 同一个浏览器会话里的标签页共享登录（第二十五轮，用户 2026-10-03 定）────────────────
+  // 没勾「记住登录状态」时令牌只在 sessionStorage 里，按标签页隔离：新开一个标签页就要重新登录（第二十三轮走主流程撞到）。
+  // 现在新标签页没有令牌时，先问同一个浏览器里开着的其它标签页要（BroadcastChannel 只在同源之间通）；
+  // 关掉最后一个标签页，sessionStorage 跟着没了 —— 「不记住」的意思仍然成立。「记住」照旧走 localStorage、管跨重启。
+  // 退出、改密码换了令牌也告诉别的标签页：退出了别的页不该还登着，改了密码旧令牌已经作废。
+  // 只动和自己手里同一张令牌的那些页（同一个浏览器里两个标签页登的可能是两个人）。行为判据：auth-share-check.js 两个「标签页」真的互相问。
+  var authChannel = null;
+  try { authChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('zq-auth') : null; } catch (e) { authChannel = null; }
+  if (authChannel) {
+    authChannel.onmessage = function (e) {
+      var m = e.data || {}, mine = sessionStorage.getItem('token');
+      if (m.type === 'ask' && mine) {
+        authChannel.postMessage({ type: 'token', nonce: m.nonce, token: mine, role: sessionStorage.getItem('role') || 'USER' });
+      } else if (m.type === 'logout' && mine && mine === m.token) {
+        sessionStorage.removeItem('token'); sessionStorage.removeItem('role');
+        if (page !== 'index.html') location.replace('index.html');
+      } else if (m.type === 'refresh' && mine && mine === m.old && m.token) {
+        sessionStorage.setItem('token', m.token);
+      }
+    };
+  }
+  /** 这一页没有令牌：问其它标签页要，最多等 400 毫秒（没人应就照旧去登录）。拿到了返回 true。 */
+  function borrowToken() {
+    return new Promise(function (resolve) {
+      if (!authChannel || token()) { resolve(false); return; }
+      var nonce = Math.random().toString(36).slice(2), done = false;
+      function finish(ok) { if (done) return; done = true; clearTimeout(timer); authChannel.removeEventListener('message', onReply); resolve(ok); }
+      function onReply(e) {
+        var m = e.data || {};
+        if (m.type !== 'token' || m.nonce !== nonce || !m.token) return;
+        sessionStorage.setItem('token', m.token);
+        sessionStorage.setItem('role', m.role || 'USER');
+        finish(true);
+      }
+      var timer = setTimeout(function () { finish(false); }, 400);
+      authChannel.addEventListener('message', onReply);
+      authChannel.postMessage({ type: 'ask', nonce: nonce });
+    });
+  }
+  function announceLogout(oldToken) { if (authChannel && oldToken) authChannel.postMessage({ type: 'logout', token: oldToken }); }
+  function announceNewToken(oldToken, fresh) { if (authChannel && oldToken && fresh) authChannel.postMessage({ type: 'refresh', old: oldToken, token: fresh }); }
+  // ── 共享登录到此 ──────────────────────────────────────────────────────────────
+
+  // ── 页面里的提醒（第二十五轮，用户 2026-10-03 定「做」）────────────────────────────
+  // 页面开着时：番茄钟到点、任务的提醒时间 / 截止前提醒到点，响一声、弹浏览器通知（授权过的话）、页面里再提示一句。
+  // 第三方推送（PushPlus / 企业微信 / QQ）管离开电脑的时候，两条路互不依赖 —— 没配渠道时页面里照样提醒。
+  // 通知权限只在用户自己点了东西时请求（开始番茄钟、保存带提醒的任务）：浏览器不许无故弹授权框，无缘无故弹的也只会被点「拒绝」。
+  // 拒绝了就只剩响一声、标签页标题和页面内提示，不再问。
+  // 桌面应用（WKWebView）里网页的 Notification 授权一请求就是「拒绝」（实测）—— 外壳给了一座桥，走 macOS 原生通知（PageView.swift）
+  function desktopBridge() {
+    try { return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.zqNotify || null; } catch (e) { return null; }
+  }
+  function askNotifyPermission() {
+    var bridge = desktopBridge();
+    if (bridge) { try { bridge.postMessage({ action: 'authorize' }); } catch (e) {} return; }
+    try { if (window.Notification && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {}
+  }
+  var chimeCtx = null;
+  function chime() {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      chimeCtx = chimeCtx || new AC();
+      [0, 0.22].forEach(function (at, i) {
+        var o = chimeCtx.createOscillator(), g = chimeCtx.createGain(), t = chimeCtx.currentTime + at;
+        o.frequency.value = i ? 1046.5 : 784; o.type = 'sine';
+        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.18, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+        o.connect(g); g.connect(chimeCtx.destination); o.start(t); o.stop(t + 0.55);
+      });
+    } catch (e) {}
+  }
+  function pageNotify(title, body, tag) {
+    chime();
+    var bridge = desktopBridge();
+    try {
+      if (bridge) bridge.postMessage({ action: 'notify', title: title, body: body, tag: tag || title });
+      else if (window.Notification && Notification.permission === 'granted') new Notification(title, { body: body, tag: tag || title, icon: 'assets/icons/icon-192.png' });
+    } catch (e) {}
+    toast(title + '：' + body);
+  }
+  /**
+   * 该提醒的有哪些（纯函数，reminder-notify-check.js 直接跑它）：时间到了、过去不到 15 分钟（刚打开页面也补一次，太久的就不翻旧账了）、
+   * 这台浏览器还没提醒过（seen：id → 提醒的时刻，几个标签页、刷新都共用一份）。
+   */
+  var REMIND_LATE_MS = 15 * 60000;
+  function dueReminders(list, now, seen) {
+    return (list || []).filter(function (r) {
+      var at = serverTime(r.scheduledAt);
+      return r && r.id != null && !isNaN(at) && at <= now && now - at < REMIND_LATE_MS && !(seen && seen[r.id]);
+    });
+  }
+  function reminderText(r) {
+    return String(r.title || '任务') + (r.type === 'AUTO' && r.deadline ? '（截止 ' + fmtDate(r.deadline) + '）' : '');
+  }
+  var upcomingReminders = [], reminderWatched = false;
+  function seenKey() { return 'zq.reminded.' + ((state.user && state.user.id) || 'anon'); }
+  function readSeen() { try { return JSON.parse(localStorage.getItem(seenKey()) || '{}') || {}; } catch (e) { return {}; } }
+  function writeSeen(seen) {
+    var cutoff = nowMs() - 2 * 86400000, kept = {};
+    Object.keys(seen).forEach(function (k) { if (seen[k] > cutoff) kept[k] = seen[k]; });
+    try { localStorage.setItem(seenKey(), JSON.stringify(kept)); } catch (e) {}
+  }
+  async function refreshUpcomingReminders() {
+    try { upcomingReminders = (await api.get('/reminder/upcoming')) || []; } catch (e) { /* 拿不到就等下一次 */ }
+  }
+  function checkDueReminders() {
+    var seen = readSeen(), now = nowMs();
+    var due = dueReminders(upcomingReminders, now, seen);
+    if (!due.length) return;
+    due.forEach(function (r) { seen[r.id] = now; });
+    writeSeen(seen);   // 先记下再提醒：另一个标签页这时候读到的就是「已提醒」
+    due.forEach(function (r) { pageNotify('任务提醒', reminderText(r), 'zq-reminder-' + r.id); });
+  }
+  function watchReminders() {
+    if (reminderWatched) return; reminderWatched = true;
+    refreshUpcomingReminders().then(checkDueReminders);
+    setInterval(function () { refreshUpcomingReminders().then(checkDueReminders); }, 10 * 60000);
+    setInterval(checkDueReminders, 30000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshUpcomingReminders().then(checkDueReminders); });
+  }
+  // ── 页面里的提醒到此 ──────────────────────────────────────────────────────────
+
   var redirecting = false;
   function redirectToLogin() {
     if (redirecting) return;
@@ -1209,12 +1330,14 @@
             remindMode: modeSel.value, remindDays: days.value, repeatWeeks: weeks ? weeks.value : ''
           }, businessNowText(), before);
           if (plan.error) return toast(plan.error, 'error');
+          if (plan.body.reminderTime || plan.body.deadline) askNotifyPermission();   // 页面开着时到点弹通知（第二十五轮）；在点击里问，浏览器才肯弹授权框
           // 幂等键交给 request()：原来这里每次点击生成一个新键 —— 回应丢了、学生照着「网络连接失败」再点一次，拿的是新键，
           // 服务器当成新的一次，建出两份（第二十二轮实测）。request() 在「不确定有没有保存上」之后，内容一样的下一次沿用同一个键。
           ok.disabled = true;
           safe(before ? '保存任务' : '创建任务', async function () {
             var res = await api[plan.method](plan.url, plan.body);
             keep.forEach(function (k) { k.clear(); });
+            refreshUpcomingReminders();   // 刚设的提醒马上进页面里的提醒清单，不等 10 分钟那一趟
             h.close();
             toast(before ? '任务已保存' : (res && res.created ? '已创建 ' + res.created + ' 条（每周一条）' : '任务已创建'));
             await (onSaved || bootTasks)();
@@ -1644,7 +1767,7 @@
       });
     }
     var logout = $('a[href="index.html"].zq-btn-ghost');
-    if (logout) logout.onclick = function (e) { e.preventDefault(); safe('退出', async function () { await api.post('/auth/logout', {}); drafts.clearUser(); clearAuth(); location.href = 'index.html'; }); };
+    if (logout) logout.onclick = function (e) { e.preventDefault(); safe('退出', async function () { var had = token(); await api.post('/auth/logout', {}); drafts.clearUser(); clearAuth(); announceLogout(had); location.href = 'index.html'; }); };
     var pw = $all('section').find(function (s) { return /修改密码/.test(s.textContent); });
     if (pw) {
       var pis = $all('input', pw), b = $('.zq-btn', pw);
@@ -1653,7 +1776,11 @@
         safe('修改密码', async function () {
           // 改完密码，之前签发的令牌（别的设备上的、被偷走的）全部作废；这个会话拿新令牌接着用，「记住我」照旧
           var fresh = await api.put('/user/password', { oldPassword: pis[0].value, newPassword: pis[1].value });
-          if (fresh && fresh.token) setAuth({ token: fresh.token, role: role() || 'USER' }, Boolean(localStorage.getItem('token')));
+          var before = token();
+          if (fresh && fresh.token) {
+            setAuth({ token: fresh.token, role: role() || 'USER' }, Boolean(localStorage.getItem('token')));
+            announceNewToken(before, fresh.token);   // 同一个浏览器里别的标签页手里是旧令牌，已经作废了
+          }
           toast('密码已更新，其他设备上的登录已失效');
           pis.forEach(function (i) { i.value = ''; });
         });
@@ -5781,7 +5908,12 @@
       // 摘掉 zq-booting 会让后台骨架淡入 180ms（zhiqu-ui.css:616 的过渡）才被导航打断。
       var leaving = false;
       try {
-        if (page === 'index.html' || $('#form-login')) { revealContent(); return bootIndex(); }
+        if (page === 'index.html' || $('#form-login')) {
+          // 别的标签页已经登录了：落地页直接进看板（或 next 指的那一页），不再让人登第二遍
+          if (!token() && await borrowToken()) { location.href = safeNext(new URLSearchParams(location.search).get('next')); return; }
+          revealContent(); return bootIndex();
+        }
+        if (!token()) await borrowToken();
         await initAuth();
 
         // 非管理员直达后台页 → 劝返。**这一步不改变安全边界**：后端 AdminController 的
@@ -5804,6 +5936,7 @@
           return;
         }
 
+        watchReminders();
         // 页面开着跨过业务日期的零点：只重新取数据（看板、例行计划的「今天」），见 watchBusinessDay
         if (!dayWatched && DAY_RELOAD[page]) { dayWatched = true; watchBusinessDay(DAY_RELOAD[page]); }
         var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'routines.html': bootRoutines, 'statistics.html': bootStatistics, 'achievement.html': bootAchievement, 'profile.html': bootProfile, 'admin.html': bootAdmin, 'feedback-admin.html': bootFeedbackAdmin, 'account-admin.html': bootAccountAdmin, 'shared-plans.html': bootSharedPlans, 'shared-plan-admin.html': bootSharedPlanAdmin, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
@@ -5830,6 +5963,7 @@
 
   // localDate 一并暴露：页面内联脚本（如 dashboard 的番茄钟）也要算「今天」，
   // 让它们用同一份定义，而不是各写一个 toISOString
-  window.zqApi = { api: api, reload: route, today: today, localDate: localDate, now: nowMs, serverTime: serverTime, businessDate: businessDate, toast: toast, recordPomodoro: recordPomodoro };
+  window.zqApi = { api: api, reload: route, today: today, localDate: localDate, now: nowMs, serverTime: serverTime, businessDate: businessDate, toast: toast, recordPomodoro: recordPomodoro,
+    notify: pageNotify, askNotifyPermission: askNotifyPermission };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', route); else route();
 })();

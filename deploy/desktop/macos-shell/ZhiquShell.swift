@@ -14,6 +14,7 @@
 //   给直接 java -jar 跑的场景用 —— 区分靠 -Dzhiqu.desktop.port-file 这个属性在不在。
 
 import AppKit
+import UserNotifications
 import WebKit
 
 // MARK: - 后端进程
@@ -161,13 +162,15 @@ final class DragStrip: NSView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let backend = Backend()
     private var window: NSWindow!
     private var webView: PageView!
     private var loadingLabel: NSTextField!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 应用在前台时系统默认不弹横幅 —— 页面里已经有提示和声音了，这里仍然弹横幅、进通知中心（不带声音，见 PageView.deliverNotification）
+        UNUserNotificationCenter.current().delegate = self
         makeWindow()
         NSApp.activate(ignoringOtherApps: true)
 
@@ -239,6 +242,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func fail(_ message: String) {
         loadingLabel.stringValue = message
         loadingLabel.isHidden = false
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list])
+    }
+
+    /// 点通知：把窗口叫到前面。
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        completionHandler()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

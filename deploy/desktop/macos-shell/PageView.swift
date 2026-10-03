@@ -19,9 +19,19 @@
 // 自己当自己的代理，就不存在「谁来持有它」这个问题。
 
 import AppKit
+import UserNotifications
 import WebKit
 
-final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+/// userContentController 强持有消息处理者，而 PageView 又持有 configuration —— 直接把自己挂上去就是循环引用，窗口关了也不释放。
+private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: WKScriptMessageHandler?
+    init(_ target: WKScriptMessageHandler) { self.target = target }
+    func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.userContentController(c, didReceive: message)
+    }
+}
+
+final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler {
     /// 弹文件选择面板，回调给选中的文件（nil = 取消）。检查程序换成不开面板的桩，外壳用默认的。
     var chooseFiles: (NSOpenPanel, NSWindow?, @escaping ([URL]?) -> Void) -> Void = { panel, window, done in
         if let window {
@@ -48,6 +58,21 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
     }
 
+    /// 页面要提醒用户（番茄钟到点、任务提醒到点，第二十五轮）。WKWebView 里网页的 Notification 授权一请求就是「拒绝」（实测），
+    /// 所以页面在桌面应用里改走这座桥（`window.webkit.messageHandlers.zqNotify`），这里发 macOS 原生通知 —— 窗口在后台、最小化也看得到。
+    /// 声音由页面自己响（WebAudio），原生通知不再带声音，免得响两遍。参数：标题、正文、标识（同一条提醒重复发只留最新的）。
+    var deliverNotification: (String, String, String) -> Void = { title, body, tag in
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: tag, content: content, trigger: nil))
+        if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }   // Dock 图标跳一下
+    }
+    /// 页面请求通知授权（用户点「开始」番茄钟、保存带提醒的任务时）。第一次会弹系统的授权框，之后系统记着。
+    var requestNotificationAuthorization: () -> Void = {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { _, _ in }
+    }
+
     /// persistent = false 只给检查程序用：不碰真实的 localStorage（登录态存在那里）。
     init(frame: NSRect, persistent: Bool = true) {
         let config = WKWebViewConfiguration()
@@ -59,10 +84,29 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         super.init(frame: frame, configuration: config)
         navigationDelegate = self
         uiDelegate = self
+        config.userContentController.add(WeakMessageHandler(self), name: "zqNotify")
         setValue(false, forKey: "drawsBackground")
     }
 
     required init?(coder: NSCoder) { fatalError("PageView 只从代码里建") }
+
+    // MARK: 页面里的提醒 → macOS 通知
+
+    /// 页面发来的：{action: "notify", title, body, tag} 或 {action: "authorize"}。别的一律不理（页面内容不可信，只接这两种）。
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "zqNotify", let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
+        switch action {
+        case "authorize":
+            requestNotificationAuthorization()
+        case "notify":
+            let title = String(((body["title"] as? String) ?? "知趣").prefix(80))
+            let text = String(((body["body"] as? String) ?? "").prefix(240))
+            let tag = String(((body["tag"] as? String) ?? title).prefix(80))
+            deliverNotification(title, text, tag)
+        default:
+            break
+        }
+    }
 
     // MARK: 文件选择
 
