@@ -194,14 +194,16 @@
     // 带上原来那一页：登录之后回到这里（第十五轮：原来一律回看板，在哪一页、打了什么都没了 —— 打的字由草稿接住，见 drafts）
     if (page !== 'index.html') { redirecting = true; location.replace('index.html?login=1&next=' + encodeURIComponent(page + location.search)); }
   }
+  /** 登录之后的首页（第二十六轮：定位改成 AI 办公助手，AI 助手放第一位；原来是看板）。 */
+  var HOME_PAGE = 'ai-assistant.html';
   /**
-   * 登录之后去哪：只认本站的「xxx.html」加查询串 —— 不是本站的（//别处、https:、javascript:、../）一律回看板，
+   * 登录之后去哪：只认本站的「xxx.html」加查询串 —— 不是本站的（//别处、https:、javascript:、../）一律回首页，
    * 否则 index.html?login=1&next=https://钓鱼站 就是一个开放跳转。
    */
   function safeNext(raw) {
     var next = String(raw || '');
     if (/^[a-z0-9_-]+\.html(\?[^#\s\\]*)?$/i.test(next) && !/^index\.html/i.test(next) && next.indexOf('//') < 0) return next;
-    return 'dashboard.html';
+    return HOME_PAGE;
   }
   function isAuthFailure(json) {
     if (!json) return false;
@@ -1710,7 +1712,7 @@
       var nums = card.querySelectorAll('.zq-mono');
       if (nums[0]) nums[0].textContent = u.consecutiveDays || 0;
       if (nums[2]) nums[2].textContent = Math.round((u.totalStudyMinutes || 0) / 60 * 10) / 10 + 'h';
-      safe('学习统计', async function () { var stat = await api.get('/record/statistics'); if (nums[1]) nums[1].textContent = stat.completedTasks || 0; });
+      safe('专注统计', async function () { var stat = await api.get('/record/statistics'); if (nums[1]) nums[1].textContent = stat.completedTasks || 0; });
     }
     var basic = $all('section').find(function (s) { return /基本资料/.test(s.textContent); });
     if (basic) {
@@ -2062,19 +2064,33 @@
     $all('[data-reset-user]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '重置密码', message: '重置该账号密码为随机临时密码？原密码将立即失效。', okText: '重置' })) safe('重置密码', async function () { var res = await api.post('/admin/users/' + b.dataset.resetUser + '/reset-password', {}); var pw = res && res.tempPassword ? res.tempPassword : '(已重置)'; await showInfo({ title: '密码已重置', html: '<p style="margin:0 0 10px;font-size:13px;color:var(--zq-text2);">临时密码（请复制并转交用户，登录后尽快修改）：</p><div class="zq-mono" style="margin:0 0 16px;padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:15px;font-weight:600;user-select:all;">' + esc(pw) + '</div>' }); }); }; });
   }
 
-  var CAT_LABEL = { EXAM: '考试备考', COMPUTER: '计算机学习', LANGUAGE: '语言学习', GENERAL: '通用规划' };
-  var CAT_KEY = { EXAM: 'q1', COMPUTER: 'q2', LANGUAGE: 'q3', GENERAL: 'q4' };
+  // 参考计划的分类（第二十六轮改成办公方向）：[key, 名字, 配色]。同一份清单在 V40 迁移和 SharedPlanServiceImpl.CATEGORY_NAMES 里，
+  // PlanCategoryListTest 核对三处一致 —— 原来这里散着五份（筛选、卡片、提交、审核列表、审核编辑），各写各的。
+  var PLAN_CATEGORIES = [
+    ['PROJECT', '项目推进', 'q1'], ['MEETING', '会议与汇报', 'q2'], ['ROUTINE', '日常事务', 'q3'],
+    ['COMPUTER', '技能提升', 'q2'], ['LANGUAGE', '外语', 'q3'], ['EXAM', '考证与培训', 'q1'], ['GENERAL', '通用规划', 'q4']
+  ];
+  function planCategory(key) {
+    var k = String(key || '').toUpperCase();
+    return PLAN_CATEGORIES.find(function (c) { return c[0] === k; }) || null;
+  }
+  function planCategoryOptions(selected, withAll) {
+    var k = String(selected || '').toUpperCase();
+    return (withAll ? '<option value="">全部</option>' : '') + PLAN_CATEGORIES.map(function (c) {
+      return '<option value="' + c[0] + '"' + (c[0] === k ? ' selected' : '') + '>' + c[1] + '</option>';
+    }).join('');
+  }
   async function bootSharedPlans() {
     // 详情弹窗的遮罩、×、取消（第二十四轮：原来调示例脚本里的全局 closeModal）
     $all('#zq-modal [data-close-modal]').forEach(function (b) { b.onclick = function () { $('#zq-modal').style.display = 'none'; }; });
     var filterCard = $('.zq-card');
     var selects = filterCard ? $all('select', filterCard) : [];
+    if (selects[0]) selects[0].innerHTML = planCategoryOptions('', true);
     var submitBtn = $('header .zq-btn');
     if (submitBtn) submitBtn.onclick = submitPlanTemplate;
     var refreshBtn = filterCard && $all('button', filterCard).find(function (b) { return /刷新/.test(b.textContent); });
     var doLoad = function () {
-      var cats = ['', 'EXAM', 'COMPUTER', 'LANGUAGE', 'GENERAL'];
-      var category = selects[0] ? cats[selects[0].selectedIndex] : '';
+      var category = selects[0] ? selects[0].value : '';
       var sort = selects[1] && selects[1].selectedIndex === 1 ? 'likeCount' : 'time';
       var order = selects[2] && selects[2].selectedIndex === 1 ? 'asc' : 'desc';
       loadPlans(category, sort, order);
@@ -2142,11 +2158,11 @@
     if (!current()) return;
     // 原来这里是设计稿写死的「已审核模板 · 4 个」，从来不变（2026-10-01 用户报）。接口不分页，列表有几个就是几个
     var count = $('#zq-plan-count');
-    if (count) count.textContent = (category ? (CAT_LABEL[category] || '已审核模板') : '已审核模板') + ' · ' + plans.length + ' 个';
+    if (count) count.textContent = ((planCategory(category) || [])[1] || '已审核模板') + ' · ' + plans.length + ' 个';
     host.innerHTML = plans.map(function (p) {
-      var cat = (p.category || 'GENERAL').toUpperCase();
-      var k = CAT_KEY[cat] || 'q4';
-      return '<article data-plan="' + p.id + '" style="padding:16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);cursor:pointer;"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;"><span class="zq-badge" style="background:var(--zq-' + k + '-bg);color:var(--zq-' + k + ');font-weight:700;">' + esc(CAT_LABEL[cat] || '通用规划') + '</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text3);">♡ ' + esc(p.likeCount || 0) + '</span></div><h3 style="margin:0 0 6px;font-size:15.5px;font-weight:700;">' + esc(p.title || p.name) + '</h3><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(p.description || '') + '</p><div style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--zq-text3);border-top:1px solid var(--zq-border-soft);padding-top:9px;"><span>' + esc(p.targetAudience || p.audience || '通用') + '</span><span>' + esc(p.creatorNickname || (p.creator && (p.creator.nickname || p.creator.username)) || '') + '</span></div></article>';
+      var known = planCategory(p.category || 'GENERAL');
+      var k = known ? known[2] : 'q4';
+      return '<article data-plan="' + p.id + '" style="padding:16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);cursor:pointer;"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;"><span class="zq-badge" style="background:var(--zq-' + k + '-bg);color:var(--zq-' + k + ');font-weight:700;">' + esc(p.categoryName || (known || planCategory('GENERAL'))[1]) + '</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text3);">♡ ' + esc(p.likeCount || 0) + '</span></div><h3 style="margin:0 0 6px;font-size:15.5px;font-weight:700;">' + esc(p.title || p.name) + '</h3><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(p.description || '') + '</p><div style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--zq-text3);border-top:1px solid var(--zq-border-soft);padding-top:9px;"><span>' + esc(p.targetAudience || p.audience || '通用') + '</span><span>' + esc(p.creatorNickname || (p.creator && (p.creator.nickname || p.creator.username)) || '') + '</span></div></article>';
     }).join('') || empty('暂无参考计划');
     $all('[data-plan]', host).forEach(function (b) { b.onclick = function () { openPlan(Number(b.dataset.plan)); }; });
   }
@@ -2164,8 +2180,8 @@
         title: '分享我的计划',
         width: '520px',
         bodyHtml:
-          '<div class="zq-field"><label class="zq-label">模板标题</label><input id="zq-spt-title" class="zq-input" placeholder="例如：408 暑期基础 30 天"></div>'
-          + '<div class="zq-field"><label class="zq-label">分类</label><select id="zq-spt-cat" class="zq-select"><option value="EXAM">考试备考</option><option value="COMPUTER">计算机学习</option><option value="LANGUAGE">语言学习</option><option value="GENERAL" selected>通用规划</option></select></div>'
+          '<div class="zq-field"><label class="zq-label">模板标题</label><input id="zq-spt-title" class="zq-input" placeholder="例如：新项目启动前两周"></div>'
+          + '<div class="zq-field"><label class="zq-label">分类</label><select id="zq-spt-cat" class="zq-select">' + planCategoryOptions('GENERAL') + '</select></div>'
           + '<div class="zq-field"><label class="zq-label">简介（可留空）</label><textarea id="zq-spt-desc" class="zq-textarea" style="min-height:70px;" placeholder="一句话说明这套计划适合谁、怎么用"></textarea></div>'
           + '<div style="display:flex;align-items:center;justify-content:space-between;margin:2px 0 7px;"><span class="zq-label">勾选要分享的内容</span><span style="display:flex;gap:8px;"><button type="button" class="zq-btn-ghost" id="zq-spt-all" style="height:24px;padding:0 9px;font-size:11.5px;">全选</button><button type="button" class="zq-btn-ghost" id="zq-spt-none" style="height:24px;padding:0 9px;font-size:11.5px;">清空</button></span></div>'
           + '<div style="max-height:250px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;margin-bottom:10px;">'
@@ -2244,7 +2260,6 @@
     });
   }
 
-  var SP_CAT = { EXAM: '考试备考', COMPUTER: '计算机学习', LANGUAGE: '语言学习', GENERAL: '通用规划' };
   async function bootSharedPlanAdmin() {
     var list = await api.get('/admin/shared-plans');
     var host = $('#zq-reviews');
@@ -2254,7 +2269,7 @@
     var pendEl = $('#zq-pending');
     if (pendEl) pendEl.textContent = '待审核 ' + groups.PENDING.length + ' 个 · 已发布 ' + groups.APPROVED.length + ' 个';
     function creator(p) { return esc((p.creator && (p.creator.nickname || p.creator.username)) || p.creatorNickname || p.username || '匿名'); }
-    function catName(p) { return esc(p.categoryName || SP_CAT[String(p.category || '').toUpperCase()] || p.category || '未分类'); }
+    function catName(p) { return esc(p.categoryName || (planCategory(p.category) || [])[1] || p.category || '未分类'); }
     function card(p, actions, dim) {
       return '<article class="zq-card" style="' + (dim ? 'opacity:.72;' : '') + '">'
         + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;"><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);">' + catName(p) + '</span><span class="zq-mono" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(p.createdAt)) + '</span></div>'
@@ -2322,7 +2337,7 @@
   function editSharedPlan(id) {
     safe('加载共享计划', async function () {
       var d = await api.get('/admin/shared-plans/' + id);
-      var catOptions = Object.keys(SP_CAT).map(function (k) { return '<option value="' + k + '"' + (String(d.category || '').toUpperCase() === k ? ' selected' : '') + '>' + SP_CAT[k] + '</option>'; }).join('');
+      var catOptions = planCategoryOptions(d.category);
       openModal({
         title: '修改共享计划',
         width: '520px',
@@ -2901,7 +2916,7 @@
       var m = openModal({
         title: '插入参考链接',
         bodyHtml:
-          '<div class="zq-field"><label class="zq-label">显示标题</label><input id="zq-ref-title" class="zq-input" placeholder="例如：王道考研官网"></div>'
+          '<div class="zq-field"><label class="zq-label">显示标题</label><input id="zq-ref-title" class="zq-input" placeholder="例如：公司内部知识库"></div>'
           + '<div class="zq-field" style="margin-top:12px;"><label class="zq-label">链接地址</label><input id="zq-ref-url" class="zq-input" placeholder="https://…"></div>'
           + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;"><button class="zq-btn-ghost" id="zq-ref-cancel" style="height:32px;">取消</button><button class="zq-btn" id="zq-ref-ok" style="height:32px;">插入</button></div>',
         onMount: function (body, handle) {
@@ -3076,7 +3091,7 @@
     openModal({
       title: '导入来源',
       bodyHtml:
-        '<div class="zq-field"><label class="zq-label">来源标题</label><input id="zq-imp-title" class="zq-input" placeholder="例如：408 考试大纲"></div>'
+        '<div class="zq-field"><label class="zq-label">来源标题</label><input id="zq-imp-title" class="zq-input" placeholder="例如：产品需求文档 v2"></div>'
         + '<div class="zq-field"><label class="zq-label">导入方式</label><select id="zq-imp-mode" class="zq-select"><option value="TEXT">粘贴文本 / 链接</option><option value="UPLOAD">上传文件解析</option></select></div>'
         + '<div id="zq-imp-text-box">'
         + '<div class="zq-field"><label class="zq-label">类型</label><select id="zq-imp-type" class="zq-select"><option value="NOTE">笔记 / 文本</option><option value="URL">网址链接</option><option value="FILE">资料摘录</option></select></div>'
@@ -3639,7 +3654,7 @@
       openModal({
         title: '新建 Notebook',
         bodyHtml:
-          '<div class="zq-field"><label class="zq-label">名称</label><input id="zq-nb-name" class="zq-input" placeholder="例如：考研数学资料" value="新资料本"></div>'
+          '<div class="zq-field"><label class="zq-label">名称</label><input id="zq-nb-name" class="zq-input" placeholder="例如：项目资料" value="新资料本"></div>'
           + '<div class="zq-field"><label class="zq-label">说明（可选）</label><textarea id="zq-nb-desc" class="zq-textarea" style="min-height:70px;" placeholder="这个资料本用来收集什么"></textarea></div>'
           + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-nb-cancel">取消</button><button type="button" class="zq-btn" id="zq-nb-ok">创建</button></div>',
         onMount: function (b, h) {
@@ -4296,7 +4311,7 @@
       tasks: data.tasks.map(function () { return true; }),
       routines: data.routines.map(function () { return true; })
     };
-    var handle = openModal({ title: 'AI 生成的学习计划', width: 640, bodyHtml: '<div class="zq-plan-confirm"></div>' });
+    var handle = openModal({ title: 'AI 生成的计划', width: 640, bodyHtml: '<div class="zq-plan-confirm"></div>' });
     var root = handle.body.querySelector('.zq-plan-confirm');
 
     function rowHtml(kind, item, index, metaFn) {
@@ -5932,7 +5947,7 @@
           leaving = true;
           try { sessionStorage.setItem(DENIED_FLAG, '1'); } catch (e) {}
           // replace 而不是 href：不留历史条目，否则用户按「后退」会再弹回来一次。
-          location.replace('dashboard.html');
+          location.replace(HOME_PAGE);
           return;
         }
 

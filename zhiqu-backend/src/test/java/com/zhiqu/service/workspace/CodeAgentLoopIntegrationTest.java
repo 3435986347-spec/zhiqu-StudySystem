@@ -95,7 +95,7 @@ class CodeAgentLoopIntegrationTest {
     private static final AtomicInteger codeAgentRound = new AtomicInteger();
 
     /** code agent 的系统提示词里独有的一句，用来把它的调用和别的调用区分开。 */
-    private static final String CODE_AGENT_MARK = "你在帮一名学生读懂和改进他自己电脑上的代码";
+    private static final String CODE_AGENT_MARK = "你在帮用户读懂和改进他自己电脑上的代码";
 
     @Autowired private AiService aiService;
     @Autowired private JdbcTemplate jdbcTemplate;

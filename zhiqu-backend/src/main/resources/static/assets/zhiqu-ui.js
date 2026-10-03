@@ -33,10 +33,11 @@
   // ── 侧边导航数据 ──
   var NAV = {
     main: [
-      ['dashboard.html','看板','▦'], ['ai-assistant.html','AI 助手','✦'], ['tasks.html','任务','☰'],
+      ['ai-assistant.html','AI 助手','✦'], ['dashboard.html','看板','▦'], ['tasks.html','任务','☰'],
       ['routines.html','例行计划','↻'], ['shared-plans.html','参考计划','❏'], ['knowledge-wiki.html','知识 Wiki','≣'], ['profile.html','个人中心','◉']
     ],
-    data: [ ['statistics.html','学习统计','∿'], ['achievement.html','成就系统','✪'] ],
+    // 成就从导航收起（第二十六轮，用户定的：偏游戏化、偏学生）：页面和数据都还在，直接打地址照样能进
+    data: [ ['statistics.html','专注统计','∿'] ],
     admin: [ ['admin.html','监管后台','◈'], ['account-admin.html','账号管理','⌘'], ['feedback-admin.html','反馈管理','✉'], ['shared-plan-admin.html','共享计划审核','✓'] ]
   };
   function curFile(){ var p=location.pathname.split('/').pop(); return p || 'dashboard.html'; }
@@ -89,7 +90,7 @@
     if (!host) return;
     host.className = 'zq-side';
     host.innerHTML =
-      '<div class="zq-brand"><div class="zq-brand-badge">知</div><div class="zq-brand-name">知趣<span> · 象限学习</span></div></div>'
+      '<div class="zq-brand"><div class="zq-brand-badge">知</div><div class="zq-brand-name">知趣<span> · 象限</span></div></div>'
       + '<button type="button" class="zq-side-toggle" aria-expanded="true" title="收起导航栏">'
       +   '<span class="zq-ic">«</span><span>收起</span></button>'
       + '<div class="zq-nav">' + navGroup('', NAV.main) + navGroup('数据', NAV.data)

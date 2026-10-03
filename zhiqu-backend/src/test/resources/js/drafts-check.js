@@ -13,7 +13,8 @@ let draftsSrc = slice('  var DRAFT_PREFIX = ', '  async function safe(');
 const delayFrom = 'var DRAFT_SAVE_DELAY_MS = 400;';
 if (!draftsSrc.includes(delayFrom)) throw new Error('常量对不上，判据没法调短等待：' + delayFrom);
 draftsSrc = draftsSrc.replace(delayFrom, 'var DRAFT_SAVE_DELAY_MS = 5;');
-const nextSrc = slice('  function safeNext(raw) {', '\n  }\n') + '\n  }\n';
+// 首页常量和 safeNext 一起抠（第二十六轮起首页是 AI 助手，不再写死在函数里）
+const nextSrc = slice('  var HOME_PAGE = ', '\n  /**') + slice('  function safeNext(raw) {', '\n  }\n') + '\n  }\n';
 
 function fakeStorage() {
   const data = {};
@@ -114,8 +115,8 @@ function fakeInput(value = '') {
   const bad = ['', null, 'index.html', 'index.html?login=1', '//evil.example', 'https://evil.example/tasks.html', 'javascript:alert(1)',
     '../tasks.html', '/tasks.html', 'tasks.html?x=//evil.example', 'tasks.html#x', 'tasks.html\\evil', 'tasks.html?a=1 b', 'data:text/html,x'];
   judge('登录后回原来那一页：本站的页照去', ok.every((x) => safeNext(x) === x), ok.map((x) => safeNext(x)).join(','));
-  const leaked = bad.filter((x) => safeNext(x) !== 'dashboard.html');
-  judge('不是本站的一律回看板（不做开放跳转）', leaked.length === 0, JSON.stringify(leaked));
+  const leaked = bad.filter((x) => safeNext(x) !== 'ai-assistant.html');
+  judge('不是本站的一律回首页（不做开放跳转）', leaked.length === 0, JSON.stringify(leaked));
 
   if (fail) { console.log(fail + ' 条红'); process.exit(1); }
   console.log('ALL-GREEN');

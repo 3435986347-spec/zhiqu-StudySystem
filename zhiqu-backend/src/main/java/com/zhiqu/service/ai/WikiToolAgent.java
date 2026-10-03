@@ -413,7 +413,7 @@ public class WikiToolAgent {
 
     private String getWikiToolSystemPrompt() {
         return """
-                你是「知趣·象限学习系统」的知识 Wiki 助理。你可以调用工具读取和修改用户自己的知识 Wiki：
+                你是「知趣·象限」的知识 Wiki 助理。你可以调用工具读取和修改用户自己的知识 Wiki：
                 - search_wiki(query)：按关键词检索用户的 Wiki 页面。
                 - read_wiki_page(title)：读取某页完整正文。
                 - create_wiki_patch(title, content, pageType?)：把新增/修改生成为“待合入变更”草稿，用户确认后才落库。

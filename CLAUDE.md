@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**知趣·象限自主学习系统** — A web-based learning system for college students, built around the
-four-quadrant (Eisenhower) method and extended with an AI assistant, a personal Knowledge Wiki,
-and optional semantic retrieval (RAG). The frontend is plain HTML/CSS/JS embedded as static files
+**知趣·象限 AI 办公助手** — a personal AI office assistant built around the four-quadrant
+(Eisenhower) method, with a personal Knowledge Wiki and optional semantic retrieval (RAG).
+Until 2026-10-04 it was a learning system for college students; the rename reached the UI, the AI's
+system prompts and the seed data in round 26 (`docs/rounds/round-26.md`) — internal names
+(`StudyTask`, `study_record`, `create_study_plan`) were deliberately left alone. The frontend is plain HTML/CSS/JS embedded as static files
 inside the Spring Boot JAR, so there is **no separate frontend build step**.
 
 ## Commands
@@ -14,7 +16,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V39`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V41`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -887,6 +889,15 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   the 「截止前提醒」 setting, only the reminders it scheduled, so the edit form shows the days of the still-PENDING `AUTO`
   reminders; `reminderOffsets: null` means "server default", `[]` means "none". `task-form-check.js` runs the published
   `taskFormPayload`.
+- **Positioning lives in a few single sources** (round 26). The home page after login is `HOME_PAGE` in
+  `zhiqu-api.js` (the AI assistant) and `manifest.json`'s `start_url` must match it; the sidebar is `NAV` in `zhiqu-ui.js`
+  (AI first; achievements deliberately out of the nav — page and data kept). Shared-plan categories are one list in three
+  places — migration `V40`, `SharedPlanServiceImpl.CATEGORY_NAMES`, `PLAN_CATEGORIES` in the shell — and
+  `PlanCategoryListTest` checks they agree. `PositioningCopyTest` keeps student-only phrasing (考研, 学习统计, 早八…) out of
+  pages, the shell, the manifest **and every text block / string literal in `src/main/java`** — the AI's system prompts
+  are where the old positioning hid longest. Matching the user's own words is the exception (`AgentPlanDecision`, and a
+  per-file allow-list). The AI cannot read the user's tasks (nothing in the AI pipeline touches `StudyTask`), so do not add
+  entry points that promise it can.
 - **Page reminders and shared login** (round 25, `docs/rounds/round-25.md`). Every signed-in page watches
   `GET /api/reminder/upcoming` (next 24h + last 15 min, regardless of whether a third-party channel delivered it — people with
   no channel configured are exactly who needs it) and, when one is due, chimes + notifies + toasts once: "already reminded" is
@@ -907,7 +918,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261004-notify`.
+  old bundle. Current token: `20261004-office`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

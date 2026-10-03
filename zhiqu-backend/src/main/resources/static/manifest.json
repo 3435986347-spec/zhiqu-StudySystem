@@ -1,8 +1,8 @@
 {
-  "name": "知趣·象限学习系统",
+  "name": "知趣·象限 AI 办公助手",
   "short_name": "知趣",
-  "description": "可信的个人学习计划、任务、例行计划与早八提醒系统",
-  "start_url": "/dashboard.html",
+  "description": "个人的 AI 办公助手：四象限任务、日程与例行计划、提醒、知识库和 AI 对话",
+  "start_url": "/ai-assistant.html",
   "scope": "/",
   "display": "standalone",
   "background_color": "#F7F6F2",

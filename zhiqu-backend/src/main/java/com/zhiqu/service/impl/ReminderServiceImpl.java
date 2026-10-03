@@ -183,7 +183,7 @@ public class ReminderServiceImpl implements ReminderService {
     @Override
     public void sendTest(Long userId) {
         UserReminderSetting setting = getEnabledSetting(userId);
-        getChannel(setting).send(setting, "知趣提醒测试：如果你看到这条消息，早八 DDL 提醒已经连通。");
+        getChannel(setting).send(setting, "知趣提醒测试：如果你看到这条消息，提醒已经连通。");
     }
 
     @Override
@@ -334,7 +334,7 @@ public class ReminderServiceImpl implements ReminderService {
 
     private String buildMessage(List<ReminderLine> lines, List<Map<String, Object>> routineLines) {
         StringBuilder sb = new StringBuilder();
-        sb.append("知趣 DDL 早八提醒\n\n");
+        sb.append("知趣 早间提醒\n\n");
         sb.append("今天有 ").append(lines.size() + routineLines.size()).append(" 个提醒需要看一眼：\n");
         int index = 1;
         for (ReminderLine line : lines) {

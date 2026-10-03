@@ -68,7 +68,7 @@ public class HarnessRemoteTools {
         List<Map<String, Object>> out = new ArrayList<>(wiki.buildWikiTools(true));
         out.addAll(plans.tools());
         out.add(ToolSchemas.functionTool(READ_MEMORY,
-                "读取用户在学习系统里保存的长期记忆（偏好、目标、习惯）。回答涉及「我之前说过」「按我的习惯」时先读。",
+                "读取用户在知趣·象限里保存的长期记忆（偏好、目标、习惯）。回答涉及「我之前说过」「按我的习惯」时先读。",
                 new LinkedHashMap<>(), List.of()));
         Map<String, Object> memoryProps = new LinkedHashMap<>();
         memoryProps.put("items", ToolSchemas.schemaArray("string",

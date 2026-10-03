@@ -1,4 +1,4 @@
-const ZHIQU_CACHE = 'zhiqu-shell-v20261004-notify';
+const ZHIQU_CACHE = 'zhiqu-shell-v20261004-office';
 
 // 核心资源：必须全部缓存成功，否则安装失败、保留旧 Worker（旧缓存不被清理），避免一次网络抖动就丢掉离线能力
 const CORE_ASSETS = [
@@ -109,11 +109,11 @@ self.addEventListener('push', (event) => {
     try {
         payload = event.data ? event.data.json() : {};
     } catch (ignored) {
-        payload = { title: '知趣提醒', body: event.data ? event.data.text() : '你有新的学习提醒' };
+        payload = { title: '知趣提醒', body: event.data ? event.data.text() : '你有新的提醒' };
     }
     const title = payload.title || '知趣提醒';
     const options = {
-        body: payload.body || payload.content || '你有新的学习提醒',
+        body: payload.body || payload.content || '你有新的提醒',
         tag: payload.tag || 'zhiqu-reminder',
         data: payload.url || '/dashboard.html'
     };

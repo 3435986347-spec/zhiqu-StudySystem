@@ -88,7 +88,7 @@ class TaskFormTest {
         int b = code.indexOf("\n  }\n", a);
         assertTrue(a >= 0 && b > a, "找不到 loadPlans");
         // 钉整句（「if (false) count.textContent = …」也含着那几个片段 —— 扰动时这样漏过去过）
-        assertTrue(code.substring(a, b).contains("if (count) count.textContent = (category ? (CAT_LABEL[category] || '已审核模板') : '已审核模板') + ' · ' + plans.length + ' 个';"),
+        assertTrue(code.substring(a, b).contains("if (count) count.textContent = ((planCategory(category) || [])[1] || '已审核模板') + ' · ' + plans.length + ' 个';"),
                 "loadPlans 没有按列表写个数");
     }
 

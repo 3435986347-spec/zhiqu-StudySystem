@@ -98,7 +98,7 @@ class InitErrorReplacesDemoContentTest {
         try (Stream<Path> files = Files.list(STATIC_DIR)) {
             for (Path page : files.filter(p -> p.toString().endsWith(".html")).sorted().toList()) {
                 String name = page.getFileName().toString();
-                // index.html 是落地页：轮播里是产品示意图（宣传物料），文案归定位那一步（docs/product-plan.md 第 3 步）
+                // index.html 是落地页（没有 .zq-main）：轮播是产品截图，文案由 PositioningCopyTest 管
                 if ("index.html".equals(name)) {
                     continue;
                 }
@@ -128,6 +128,14 @@ class InitErrorReplacesDemoContentTest {
                 Matcher width = Pattern.compile("(?<![-\\w])width:\\s*([1-9]\\d*)%").matcher(markup.substring(mainAt));
                 while (width.find()) {
                     found.add(name + " 写死了一个 " + width.group(1) + "% 的宽度（进度条？）");
+                }
+                // 输入框的 value 也算：个人资料的五个框原来写着设计稿的「王明远」「沪上理工大学」—— 第二十六轮才看到，上面那几道只看文字、
+                // 不看属性。启动时会被真值盖掉所以没露出来，但它就是示例数据。数字 / 时间是表单默认值（例行计划的 45 分钟、08:00）。
+                Matcher value = Pattern.compile("<(?:input|textarea)\\b[^>]*\\bvalue=\"([^\"]*)\"").matcher(markup.substring(mainAt));
+                while (value.find()) {
+                    if (!value.group(1).matches("[0-9:.\\-]*")) {
+                        found.add(name + " 的输入框写死了 value=「" + value.group(1) + "」");
+                    }
                 }
             }
         }

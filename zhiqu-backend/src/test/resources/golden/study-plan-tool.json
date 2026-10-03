@@ -4,7 +4,7 @@
     "type" : "function",
     "function" : {
       "name" : "create_study_plan",
-      "description" : "把用户认可的学习计划拆解为可写入知趣系统的一次性任务(tasks)和例行计划(routines)，生成草稿供用户确认后落库。当用户希望把计划写进系统时调用；没有可落地项时两个数组都传空。",
+      "description" : "把用户认可的计划拆解为可写入知趣系统的一次性任务(tasks)和例行计划(routines)，生成草稿供用户确认后落库。当用户希望把计划写进系统时调用；没有可落地项时两个数组都传空。",
       "parameters" : {
         "type" : "object",
         "properties" : {

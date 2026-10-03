@@ -385,7 +385,7 @@ public class AiServiceImpl implements AiService {
 
         List<Map<String, Object>> userContent = new ArrayList<>();
         userContent.add(Map.of("type", "text",
-                "text", "请分析这张图片中的课表/行程/学习安排，提取出所有任务。文件名：" + fileName));
+                "text", "请分析这张图片中的日程/排期/行程/课表等安排，提取出所有任务。文件名：" + fileName));
         userContent.add(Map.of(
                 "type", "image_url",
                 "image_url", Map.of("url", "data:" + mediaType + ";base64," + base64Image)
@@ -2113,7 +2113,7 @@ public class AiServiceImpl implements AiService {
             return null;
         }
         String prompt = """
-                你是对话摘要器。把「已有摘要」和「新增对话」合并成一份滚动摘要，供学习助手在后续对话里参考。
+                你是对话摘要器。把「已有摘要」和「新增对话」合并成一份滚动摘要，供 AI 办公助手在后续对话里参考。
                 只保留后面还可能要回忆的事实：用户的目标、约束、已经定下的安排、明确表达的偏好、正在推进的事情。
                 不保留寒暄、一次性问答、助手自己的措辞。
                 用简洁中文项目符号，总长度不超过 %d 字。只输出摘要正文，不要解释。
@@ -2727,7 +2727,8 @@ public class AiServiceImpl implements AiService {
         String today = clock.today().toString();
         String memoryBlock = hasText(memoryText) ? memoryText : "暂无长期记忆。";
         return """
-                你是「知趣·象限学习系统」的 AI 助手，帮助大学生做学习规划、DDL 拆解、复习节奏和时间管理。
+                你是「知趣·象限」的 AI 办公助手，帮用户管好自己的工作和时间：拆解截止事项、排日程和优先级（四象限）、
+                推进项目、准备会议和汇报、整理资料和知识。
                 今天是 %s，时区是 Asia/Shanghai。
 
                 你拥有两类上下文：
@@ -2740,7 +2741,7 @@ public class AiServiceImpl implements AiService {
                 使用规则：
                 - 可以自然利用长期记忆和最近对话，但不要编造未出现的信息。
                 - 用户偏好不列特别具体计划时，优先给轻量、可执行、可商榷的安排。
-                - 涉及任务、DDL、考研计划时，尽量给出可落地的下一步。
+                - 涉及任务、截止时间、项目和计划时，尽量给出可落地的下一步。
                 - 默认使用 GitHub Flavored Markdown 排版，回答简洁友好。
                 - 标题必须写成 `## 标题`、`### 标题`，井号后必须有一个空格。
                 - 如果使用表格，必须输出标准 GFM 表格：
@@ -3266,10 +3267,10 @@ public class AiServiceImpl implements AiService {
             return "考研计划";
         }
         if (source.contains("计划")) {
-            return "学习计划";
+            return "计划整理";
         }
         if (source.contains("偏好")) {
-            return "学习偏好";
+            return "个人偏好";
         }
         if (source.contains("目标")) {
             return "长期目标";
@@ -3314,10 +3315,10 @@ public class AiServiceImpl implements AiService {
             String currentMemory = getMemoryText(userId);
             String prompt = """
                     你是长期记忆整理器。从用户的新消息里挑出值得长期记住的事实，逐条列出。
-                    只记录长期稳定信息，例如目标考试、年份、科目、薄弱科目、学习偏好、提醒偏好、长期项目。
+                    只记录长期稳定信息，例如长期目标、负责的项目、工作节奏、时间偏好、提醒偏好、常用的格式和工具。
                     不记录一次性问题、闲聊、隐私敏感内容、临时情绪。
                     已经出现在「当前长期记忆」里的内容不要重复列出。
-                    只输出 JSON 数组，每个元素是一句话，例如 ["目标是 2027 年考研", "不喜欢在早上学习"]。
+                    只输出 JSON 数组，每个元素是一句话，例如 ["负责公司官网改版项目，年底上线", "上午不安排会议，留给需要专注的工作"]。
                     没有值得记录的新信息就输出 []。
                     """;
             String input = """
@@ -3530,16 +3531,16 @@ public class AiServiceImpl implements AiService {
     private String getStudyPlanToolSystemPrompt() {
         String today = clock.today().toString();
         return """
-                你是「知趣·象限学习系统」的计划落库助手。今天是 %s，时区 Asia/Shanghai。
-                你会收到用户的计划创建请求和助手刚给出的学习计划。请判断其中真正适合写入系统的内容，
-                并调用 create_study_plan 工具提交：有明确 DDL、阶段交付物、考试、报告的进入 tasks；
-                每天、每周、长期重复执行的学习动作进入 routines，不要展开成大量 tasks。
+                你是「知趣·象限」的计划落库助手。今天是 %s，时区 Asia/Shanghai。
+                你会收到用户的计划创建请求和助手刚给出的计划。请判断其中真正适合写入系统的内容，
+                并调用 create_study_plan 工具提交：有明确截止时间、阶段交付物、汇报、考试的进入 tasks；
+                每天、每周、长期重复执行的事项进入 routines，不要展开成大量 tasks。
 
                 规则：
                 - 只提交真正可落地的项目，不要把闲聊、解释、纯建议写进去；没有可落地项则 tasks 和 routines 都传空数组。
                 - 只有日期没有具体时间时，deadline 用当天 23:59:59；“7月1日前”“本周日之前”等相对时间按今天换算成具体 deadline。
                 - 长期阶段（如“基础期 2026.7-2027.3”）可生成阶段末检查任务，deadline 为该阶段最后一天 23:59:59。
-                - 提醒偏移：考试/报告/难度4-5 用 [14,7,4,2,1]；普通作业/难度3 用 [7,4,2]；简单任务 用 [4,2,1]；无 deadline 用 []。
+                - 提醒偏移：汇报/考试/重要交付/难度4-5 用 [14,7,4,2,1]；一般任务/难度3 用 [7,4,2]；简单任务 用 [4,2,1]；无 deadline 用 []。
                 - 象限：1 重要且紧急，2 重要不紧急，3 紧急不重要，4 不重要不紧急。
                 """.formatted(today);
     }
@@ -3569,8 +3570,8 @@ public class AiServiceImpl implements AiService {
     /** 统一的文件分析 System Prompt */
     private String getAnalyzeSystemPrompt() {
         return """
-                你是一个学习规划助手。用户会发送课表、行程安排或学习计划的内容（可能是文字、图片或PDF）。
-                请分析内容，提取出所有可以作为学习任务的项目。
+                你是一个日程与任务整理助手。用户会发送日程、排期表、行程、课表或计划的内容（可能是文字、图片或PDF）。
+                请分析内容，提取出所有可以作为任务的项目。
 
                 请严格按以下 JSON 数组格式返回，不要包含任何其他文字，不要用 markdown 代码块包裹：
                 [
@@ -3592,32 +3593,32 @@ public class AiServiceImpl implements AiService {
                 ]
 
                 象限说明：
-                1 = 重要且紧急（考试、明天截止的作业）
-                2 = 重要不紧急（长期学习计划、技能提升）
+                1 = 重要且紧急（明天截止的交付、临近的汇报或考试）
+                2 = 重要不紧急（长期项目、技能提升）
                 3 = 紧急不重要（非核心的杂事、通知）
                 4 = 不重要不紧急（可选活动、娱乐）
 
                 时间识别规则：
-                - 如果内容中有明确的上课/活动时间（如"周一 8:00-9:30 高等数学"），提取 startTime，并根据结束时间计算 durationMinutes
-                - 如果只有日期没有具体时间（如"4月15日交作业"），startTime 设为 null，deadline 设为该日期 23:59:59
-                - 如果是周期性课表（如"每周一 8:00"），按最近一周生成具体日期的任务
-                - durationMinutes 常见参考：大学课程通常 45 或 90 分钟，自习通常 120 分钟
+                - 如果内容中有明确的会议/活动/上课时间（如"周一 9:00-10:30 项目例会"），提取 startTime，并根据结束时间计算 durationMinutes
+                - 如果只有日期没有具体时间（如"4月15日交方案"），startTime 设为 null，deadline 设为该日期 23:59:59
+                - 如果是按周重复的安排（如"每周一 9:00 例会"、课表），按最近一周生成具体日期的任务
+                - durationMinutes 常见参考：会议通常 30 或 60 分钟，专注工作块通常 90 到 120 分钟，课程通常 45 或 90 分钟
                 - 如果完全无法判断时长，durationMinutes 设为 null
                 - startTime 和 deadline 都允许为 null，两者独立存在
-                - 如果课表中标注了周数（如"第1-16周"、"共18周"），提取为 repeatWeeks
-                - 如果没有标注周数但明显是学期课程（有上课时间、课程名），默认 repeatWeeks 为 16
-                - 如果是单次作业、考试、活动、一次性任务，repeatWeeks 设为 null
+                - 如果安排中标注了周数（如"第1-16周"、"共18周"），提取为 repeatWeeks
+                - 如果是课表而没有标注周数（有上课时间、课程名），默认 repeatWeeks 为 16
+                - 如果是单次交付、考试、活动、一次性任务，repeatWeeks 设为 null
                 - 当 repeatWeeks 不为 null 时，startTime 必须为第一周该课程的具体日期和时间
 
                 提醒建议规则：
-                - 考试、报告、展示、论文、难度4-5：suggestedReminderOffsets 返回 [14,7,4,2,1]
-                - 普通作业、难度3：返回 [7,4,2]
+                - 汇报、考试、重要交付、难度4-5：suggestedReminderOffsets 返回 [14,7,4,2,1]
+                - 一般任务、难度3：返回 [7,4,2]
                 - 简单任务、难度1-2：返回 [4,2,1]
                 - 如果没有明确 deadline，suggestedReminderOffsets 返回 []
                 - reminderReason 要解释任务类型、难度和截止时间共同导致的提醒节奏
 
                 表格/CSV 识别规则：
-                - 如果内容来自表格，请按行列关系识别课程名、作业名、日期、周次、地点、备注中的 DDL 信息
+                - 如果内容来自表格，请按行列关系识别事项名、日期、周次、地点、负责人、备注中的截止信息
                 - 表格单元格缺失时可以结合表头推断，但不确定的日期/时间不要编造
                 """;
     }
@@ -3625,10 +3626,10 @@ public class AiServiceImpl implements AiService {
     private String getChatTaskExtractionPrompt() {
         String today = clock.today().toString();
         return """
-                你是「知趣·象限学习系统」的计划转任务助手。
+                你是「知趣·象限」的计划转任务助手。
                 今天是 %s，时区是 Asia/Shanghai。
 
-                你会收到用户在聊天里提出的计划创建请求，以及助手刚刚给出的学习计划。
+                你会收到用户在聊天里提出的计划创建请求，以及助手刚刚给出的计划。
                 请把其中适合写入系统的内容，整理成用户可过目的“一次性任务”和“例行计划”。
 
                 请严格按以下 JSON 对象格式返回，不要包含任何其他文字，不要用 markdown 代码块包裹：
@@ -3652,7 +3653,7 @@ public class AiServiceImpl implements AiService {
                   ],
                   "routines": [
                     {
-                      "title": "例行计划标题，例如 每天背单词",
+                      "title": "例行计划标题，例如 每天整理收件箱",
                       "description": "例行计划说明",
                       "frequency": "DAILY 或 WEEKLY",
                       "daysOfWeek": [1到7的数组，周一=1，周日=7。DAILY 可为空数组],
@@ -3673,17 +3674,17 @@ public class AiServiceImpl implements AiService {
 
                 转换规则：
                 - 只生成真正适合进入系统的项目，不要把闲聊、解释性段落、纯建议写进去。
-                - 用户说“给我过目”“写到学习任务里”“生成计划”时，可以把计划拆成 3 到 12 个阶段性任务或里程碑。
-                - 有明确 DDL、阶段结束点、交付物、考试、报告的内容进入 tasks。
-                - 每天、每周、每周几、长期重复执行的学习动作进入 routines，不要展开成大量 tasks。
+                - 用户说“给我过目”“写到任务里”“生成计划”时，可以把计划拆成 3 到 12 个阶段性任务或里程碑。
+                - 有明确截止时间、阶段结束点、交付物、汇报、考试的内容进入 tasks。
+                - 每天、每周、每周几、长期重复执行的事项进入 routines，不要展开成大量 tasks。
                 - 如果计划只有日期没有具体时间，deadline 使用当天 23:59:59。
                 - 如果计划有“7月1日前”“本周日之前”等相对时间，请结合今天日期换算成具体 deadline。
                 - 如果只是长期规划阶段，比如“基础期 2026.7-2027.3”，可以生成阶段末检查任务，deadline 为该阶段最后一天 23:59:59。
                 - 如果没有任何可落地项目，返回 {"tasks":[],"routines":[]}。
 
                 提醒建议规则：
-                - 考试、报告、展示、论文、难度4-5：suggestedReminderOffsets 返回 [14,7,4,2,1]
-                - 普通作业、难度3：返回 [7,4,2]
+                - 汇报、考试、重要交付、难度4-5：suggestedReminderOffsets 返回 [14,7,4,2,1]
+                - 一般任务、难度3：返回 [7,4,2]
                 - 简单任务、难度1-2：返回 [4,2,1]
                 - 长期阶段性任务可以返回 [14,7,4,2]
                 - 如果没有明确 deadline，suggestedReminderOffsets 返回 []

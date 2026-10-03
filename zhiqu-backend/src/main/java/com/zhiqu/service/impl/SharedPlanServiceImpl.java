@@ -47,6 +47,23 @@ import java.util.Objects;
 
 @Service
 public class SharedPlanServiceImpl implements SharedPlanService {
+    /**
+     * 参考计划的分类（第二十六轮改成办公方向）。库里的种子在 {@code V40__office_plan_categories.sql}，页面的筛选在
+     * {@code zhiqu-api.js} 的 {@code PLAN_CATEGORIES} —— 三份由 {@code PlanCategoryListTest} 核对一致。
+     * 这里只在自动归类、而库里恰好没有那一行时用来补建。
+     */
+    static final Map<String, String> CATEGORY_NAMES;
+    static {
+        Map<String, String> names = new LinkedHashMap<>();
+        names.put("PROJECT", "项目推进");
+        names.put("MEETING", "会议与汇报");
+        names.put("ROUTINE", "日常事务");
+        names.put("COMPUTER", "技能提升");
+        names.put("LANGUAGE", "外语");
+        names.put("EXAM", "考证与培训");
+        names.put("GENERAL", "通用规划");
+        CATEGORY_NAMES = java.util.Collections.unmodifiableMap(names);
+    }
     private final BusinessClock clock;
     private final SharedPlanTemplateMapper templateMapper;
     private final SharedPlanTaskTemplateMapper taskTemplateMapper;
@@ -515,7 +532,7 @@ public class SharedPlanServiceImpl implements SharedPlanService {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (SharedPlanTemplate template : templates) {
             String key = template.getCategory();
-            String name = !hasText(key) ? "通用规划" : names.getOrDefault(key, key);
+            String name = !hasText(key) ? CATEGORY_NAMES.get("GENERAL") : names.getOrDefault(key, key);
             rows.add(templateRow(template, name, liked.contains(template.getId())));
         }
         return rows;
@@ -686,17 +703,20 @@ public class SharedPlanServiceImpl implements SharedPlanService {
 
     private String ensureGeneratedCategory(String source) {
         String key = "GENERAL";
-        String name = "通用规划";
-        if (source.contains("考研") || source.contains("考试") || source.contains("备考")) {
+        if (containsAny(source, "项目", "里程碑", "上线", "交付", "排期")) {
+            key = "PROJECT";
+        } else if (containsAny(source, "会议", "汇报", "周报", "述职", "演示")) {
+            key = "MEETING";
+        } else if (containsAny(source, "考研", "考试", "备考", "证书", "认证")) {
             key = "EXAM";
-            name = "考试备考";
-        } else if (source.contains("算法") || source.contains("编程") || source.contains("计算机") || source.contains("408")) {
+        } else if (containsAny(source, "算法", "编程", "数据分析", "excel")) {
             key = "COMPUTER";
-            name = "计算机学习";
-        } else if (source.contains("英语") || source.contains("单词") || source.contains("阅读")) {
+        } else if (containsAny(source, "英语", "日语", "外语", "单词")) {
             key = "LANGUAGE";
-            name = "语言学习";
+        } else if (containsAny(source, "邮件", "报销", "归档")) {
+            key = "ROUTINE";
         }
+        String name = CATEGORY_NAMES.get(key);
         SharedPlanCategory existing = categoryMapper.selectOne(new LambdaQueryWrapper<SharedPlanCategory>()
                 .eq(SharedPlanCategory::getCategoryKey, key));
         if (existing == null) {
@@ -710,6 +730,15 @@ public class SharedPlanServiceImpl implements SharedPlanService {
             categoryMapper.insert(category);
         }
         return key;
+    }
+
+    private static boolean containsAny(String source, String... words) {
+        for (String word : words) {
+            if (source.contains(word)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void touchCategory(String categoryKey) {
@@ -730,7 +759,7 @@ public class SharedPlanServiceImpl implements SharedPlanService {
 
     private String categoryName(String key) {
         if (!hasText(key)) {
-            return "通用规划";
+            return CATEGORY_NAMES.get("GENERAL");
         }
         SharedPlanCategory category = categoryMapper.selectOne(new LambdaQueryWrapper<SharedPlanCategory>()
                 .eq(SharedPlanCategory::getCategoryKey, key));

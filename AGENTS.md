@@ -7,9 +7,9 @@ Guidance for coding agents working in this repository.
 
 ## Project Overview
 
-**知趣·象限自主学习系统** — A learning system for college students built on the four-quadrant
-(Eisenhower) method, extended with an AI assistant, a personal Knowledge Wiki, and optional
-semantic retrieval (RAG). The frontend is plain HTML/CSS/JS served from inside the Spring Boot
+**知趣·象限 AI 办公助手** — a personal AI office assistant built on the four-quadrant
+(Eisenhower) method, with a personal Knowledge Wiki and optional semantic retrieval (RAG).
+Until 2026-10-04 it was positioned as a learning system for college students; see `docs/product-plan.md`. The frontend is plain HTML/CSS/JS served from inside the Spring Boot
 JAR — there is **no frontend build step**.
 
 ## Commands

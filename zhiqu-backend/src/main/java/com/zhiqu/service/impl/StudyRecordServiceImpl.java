@@ -51,7 +51,7 @@ public class StudyRecordServiceImpl implements StudyRecordService {
                     .eq(StudyTask::getId, request.getTaskId())
                     .eq(StudyTask::getUserId, userId));
             if (task == null) {
-                throw new BusinessException("任务不存在或无权限关联学习记录");
+                throw new BusinessException("任务不存在或无权限关联专注记录");
             }
             record.setTaskId(request.getTaskId());
         }
@@ -59,7 +59,7 @@ public class StudyRecordServiceImpl implements StudyRecordService {
         //（UTC+14 的浏览器、快了一年的电脑时钟）之后，所有真实的记录都算「过去的」，连续天数冻在那儿直到那一天
         LocalDate studyDate = request.getStudyDate() == null ? clock.today() : request.getStudyDate();
         if (studyDate.isAfter(clock.today())) {
-            throw new BusinessException("学习日期 " + studyDate + " 还没到（今天是 " + clock.today() + "）");
+            throw new BusinessException("专注日期 " + studyDate + " 还没到（今天是 " + clock.today() + "）");
         }
         record.setStudyDate(studyDate);
         record.setDurationMinutes(request.getDurationMinutes());

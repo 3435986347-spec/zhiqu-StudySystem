@@ -36,7 +36,7 @@ public class PushPlusNotificationChannel implements NotificationChannel {
             headers.setContentType(new MediaType("application", "json", StandardCharsets.UTF_8));
             Map<String, Object> body = Map.of(
                     "token", setting.getPushplusToken(),
-                    "title", "知趣 DDL 早八提醒",
+                    "title", "知趣 提醒",
                     "content", content,
                     "template", "txt"
             );
