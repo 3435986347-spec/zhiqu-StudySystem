@@ -49,31 +49,13 @@ cd deploy\desktop
 和 macOS 一样的无边框原生窗口需要 WebView2 外壳（C#），单独做。固定端口（记住登录）、
 headless、图标这些修复 Windows 版都有。
 
-## 命令行 `zhiqu`（macOS）
+## 命令行 `zhiqu`
 
-应用包里带着一个命令行入口，连的就是应用里那个后端 —— 同一个库、同一个账号、同一条 agent 流水线。
-在任意项目文件夹里敲 `zhiqu`，就是一个直接能用的 coding agent：
+命令行是 npm 版（仓库里的 `zhiqu-cli/`）：循环和工具在你电脑上跑，默认连的就是本机这个桌面应用（`http://127.0.0.1:47615`）。
+装好 Node 22，`cd zhiqu-cli && npm link`；macOS 和 Windows 一样。用法见 `zhiqu-cli/README.md`。
 
-```bash
-ln -s "/Applications/知趣象限.app/Contents/Resources/bin/zhiqu" /opt/homebrew/bin/zhiqu   # Intel Mac 用 /usr/local/bin
-cd ~/Developer/我的项目
-zhiqu                      # 第一次会问用户名和密码，之后 30 天免登录
-zhiqu -p "解释一下 main.py" # 只问一句就退出
-zhiqu --mode exec          # 允许它运行工作区里的文件
-zhiqu stop                 # 停掉由 zhiqu 在后台启动的后端
-```
-
-- 当前文件夹就是工作区（网页里的工作区也会跟着切过去）。在 `/` 或家目录下运行会被拒绝 ——
-  那等于把所有文件交给 agent；真要这样加 `--allow-broad-root`。
-- 每一步都会打出来：读了哪个文件、生成了哪个文件的草稿、跑了什么命令、输出是什么。
-- 改文件先出 **diff**，你按 `y` 才写到磁盘上；`n` 丢弃，直接回车先放着（`/drafts` 或网页里再处理）。
-  同一轮里「写完立刻跑」做不到，这是刻意的：执行只跑磁盘上已经存在、你看过的文件。
-- 应用没开也能用：`zhiqu` 会在后台把后端拉起来（日志 `~/.zhiqu/logs/backend-cli.log`），
-  之后再打开应用会直接连上它。终端里按 Ctrl+C 或关掉终端都不会把后端带走。
-- 对话记在名为「命令行」的 Notebook 里，网页里切过去也能看到。
-- 上面这个是随应用打包的 Java 版（bash 启动脚本，只有 macOS）。**Windows 上用 npm 版 `zhiqu`**：
-  装好 Node 22，`cd zhiqu-cli && npm link`，它默认连的就是本机桌面应用（`http://127.0.0.1:47615`）。
-  npm 版是现在的主力版本（循环和工具在你电脑上跑），Java 版只是还留在应用包里。
+> 应用包里原来带着一个 Java 版的 `zhiqu`（`Contents/Resources/bin/zhiqu`），2026-10-04 删除了。
+> 以前照着这里建过软链的，删掉它：`rm /opt/homebrew/bin/zhiqu`（Intel Mac 是 `/usr/local/bin/zhiqu`），再按上面装 npm 版。
 
 ## 用户配置：`~/.zhiqu/application.yml`
 

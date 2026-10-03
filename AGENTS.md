@@ -94,11 +94,11 @@ never ran — that proves nothing. It is the mirror image of "an empty scan look
 - **`mvn spring-boot:run` works again** (re-verified 2026-09-21 from the new path). It used to
   fail with `Could not find or load main class com.zhiqu.ZhiquApplication` because the repo path
   contained CJK characters; the move to `~/Developer/zhiqu-quadrant/` retired that.
-- **`static/js/*.js` is dead code — no page loads it.** The live application shell is
-  `static/assets/zhiqu-api.js` (all 14 HTML pages load it). Editing `js/` has no runtime effect.
+- **The live application shell is `static/assets/zhiqu-api.js`** (all 14 HTML pages load it). The old `static/js/` and
+  `static/css/` were deleted on 2026-10-04; pages carry no demo data.
 - **Bump the asset cache token after any frontend change**, in every HTML file *and*
   `service-worker.js` (`ZHIQU_CACHE`), or users keep the stale bundle.
-  Current token: `20260924-context-window`.
+  Current token: see `CLAUDE.md` (it changes with every frontend change).
   `StaticAssetCacheTokenTest` fails if any page drifts from the service worker's `ZHIQU_CACHE`.
 - **Rate limiting is on by default** (`RateLimitFilter`): auth 12/60s, `/api/ai/**` 40/60s, other
   `/api/**` 180/60s → HTTP 429. Scripted E2E runs that register many users will trip it.

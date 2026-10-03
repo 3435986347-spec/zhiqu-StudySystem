@@ -38,16 +38,13 @@ echo "    $(basename "$JAR")  $(du -h "$JAR" | cut -f1)"
 APP="$OUT/$NAME.app"
 echo "==> 2/6 搭 bundle 骨架"
 rm -rf "$OUT"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app" "$APP/Contents/Resources/bin"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 # 解压成「瘦 JAR + lib/」，不放胖 JAR（第十轮）：应用类的 CDS 归档只收内置类加载器加载的类，
 # 胖 JAR 里的类走 Spring Boot 自己的加载器，一个都归档不了。解压后的瘦 JAR 用 Class-Path 指向 lib/，
 # java -jar 照样能跑。归档本身在用户第一次运行时生成（见 macos-shell/CdsCache.swift）。
 "$JAVA_HOME/bin/java" -Djarmode=tools -jar "$JAR" extract --destination "$APP/Contents/Resources/app" > /dev/null
 [ -f "$APP/Contents/Resources/app/$(basename "$JAR")" ] || { echo "解压失败：找不到瘦 JAR"; exit 1; }
-# 命令行入口 zhiqu：用应用自带的 JRE 跑同一个 JAR 里的 com.zhiqu.cli.ZhiquCli。
-# 放在 Resources/bin 而不是 MacOS/：MacOS/ 里的可执行文件会被当成应用的主程序候选。
-cp "$ROOT/deploy/desktop/bin/zhiqu" "$APP/Contents/Resources/bin/zhiqu"
-chmod +x "$APP/Contents/Resources/bin/zhiqu"
+# 命令行不再随应用打包：Java 版 zhiqu 2026-10-04 删除，命令行是 npm 版（zhiqu-cli/，连的就是这个应用）。
 
 echo "==> 3/6 裁一份 JRE（jlink）"
 # 只带用得到的模块。全量 JDK 约 300MB，裁完约 50MB。

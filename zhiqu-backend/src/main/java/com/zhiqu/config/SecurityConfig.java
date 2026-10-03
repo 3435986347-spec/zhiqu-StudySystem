@@ -59,8 +59,6 @@ public class SecurityConfig {
                                 "/profile.html",
                                 "/manifest.json",
                                 "/service-worker.js",
-                                "/css/**",
-                                "/js/**",
                                 "/vendor/**",
                                 "/assets/**"
                         ).permitAll()

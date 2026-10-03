@@ -129,7 +129,7 @@ static/
 └─ service-worker.js           # PWA 外壳与字体预缓存（版本号即缓存 key）
 ```
 
-> 说明：`static/css/`、`static/js/`、`static/vendor/` 为改版前的旧前端，已不再被页面引用，保留仅作历史参考。
+> 说明：页面的脚本和样式都在 `static/assets/`（`zhiqu-api.js`、`zhiqu-ui.js`、`zhiqu-ui.css`）；`static/vendor/` 是它们用到的第三方库（KaTeX、DOMPurify、Vditor）。改版前的旧前端 `static/js/`、`static/css/` 已在 2026-10-04 删除。
 
 数据库迁移：
 

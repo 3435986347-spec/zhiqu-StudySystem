@@ -1,7 +1,7 @@
 // 登录设备列表的 User-Agent 解析（shortUA）—— 直接跑 assets/zhiqu-api.js 里发布的那份实现。
 //
 //   用法：node src/test/resources/js/ua-check.js <zhiqu-api.js 的路径> <CLI 真实发出的 UA>
-//   第二个参数由 LoginDeviceLabelTest 从 ZhiquCli.userAgent() 取来 —— 判的是
+//   第二个参数是 Java 版 zhiqu 命令行最后的真实 UA（Java 版 2026-10-04 删除，历史登录记录里还有）—— 判的是
 //   「命令行发什么」和「前端认什么」这一对，不是两边各写死一份样本各自为绿。
 //
 // 由来：桌面应用那一支（ZhiquDesktop）上线时没有任何判据；它内嵌的是系统 WebView，
@@ -25,7 +25,7 @@ function judge(name, got, want) {
 
 const SAFARI_MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
 
-judge('命令行（ZhiquCli.userAgent 的真实值）', shortUA(cliUa), '命令行 · macOS');
+judge('命令行（Java 版 zhiqu 的 UA，历史记录）', shortUA(cliUa), '命令行 · macOS');
 judge('桌面应用（WKWebView + ZhiquDesktop 标记）', shortUA(SAFARI_MAC + ' ZhiquDesktop/1.0'), '桌面应用 · macOS');
 judge('普通 Safari 仍是 Safari', shortUA(SAFARI_MAC), 'Safari · macOS');
 judge('Windows 上的 Chrome', shortUA('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36'), 'Chrome · Windows');

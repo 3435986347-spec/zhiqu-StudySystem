@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261003-walkthrough" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261003-walkthrough">
-  <link rel="manifest" href="manifest.json?v=20261003-walkthrough">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261004-cleanup" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261004-cleanup">
+  <link rel="manifest" href="manifest.json?v=20261004-cleanup">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261003-walkthrough">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261004-cleanup">
 </head>
 <body>
   <div class="zq-app">
@@ -40,7 +40,7 @@
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">频率</label><select class="zq-select" style="height:30px;"><option>每天</option><option>每周</option></select></div>
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">预计时长（分钟）</label><input class="zq-input" type="number" value="45" style="height:30px;"></div>
               </div>
-              <div id="zq-wd" style="display:flex; gap:5px; flex-wrap:wrap;"></div>
+              <div id="zq-wd" style="display:flex; gap:5px; flex-wrap:wrap;"><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周一</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周二</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周三</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周四</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周五</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周六</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周日</button></div>
               <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">偏好时间</label><input class="zq-input" type="time" value="08:00" style="height:30px;"></div>
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">早八提醒</label><select class="zq-select" style="height:30px;"><option>开启</option><option>关闭</option></select></div>
@@ -72,7 +72,7 @@
           <section class="zq-card zq-card-lg">
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
               <div><p class="zq-eyebrow">进行中</p><h2 class="zq-h2">我的例行计划</h2></div>
-              <span style="font-size:12px; color:var(--zq-text3);">5 个进行中</span>
+              <span id="zq-rt-count" style="font-size:12px; color:var(--zq-text3);"></span>
             </div>
             <div id="zq-rt" style="display:flex; flex-direction:column; gap:10px;"></div>
           </section>
@@ -81,44 +81,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261003-walkthrough"></script>
-  <script>
-    var src = [
-      ['英语六级真题模考（2024-12 卷）','截止 07-05 12:00 · 重要不紧急',1],
-      ['数据结构二轮复习 · 图论专题','截止 07-09 22:00 · 重要不紧急',1],
-      ['考研政治 · 马原选择题 30 题','截止 07-07 22:00 · 重要不紧急',0],
-      ['毕设开题报告 · 文献综述初稿','截止 07-06 23:59 · 进行中',0],
-      ['高数错题整理','无截止 · 不重要不紧急',0]
-    ];
-    document.getElementById('zq-src').innerHTML = src.map(function(s,i){
-      return '<label style="display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid '+(s[2]?'var(--zq-tint-strong)':'var(--zq-border-soft)')+'; border-radius:var(--zq-rs); background:'+(s[2]?'var(--zq-tint)':'var(--zq-card)')+'; cursor:pointer;"><input type="checkbox" '+(s[2]?'checked':'')+' style="accent-color:var(--zq-primary);"><div style="min-width:0; flex:1;"><div style="font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+s[0]+'</div><div style="font-size:11.5px; color:var(--zq-text3); margin-top:2px;">'+s[1]+'</div></div></label>';
-    }).join('');
-
-    var wd = ['周一','周二','周三','周四','周五','周六','周日'];
-    document.getElementById('zq-wd').innerHTML = wd.map(function(d,i){
-      var on = i<7;
-      return '<button type="button" onclick="this.dataset.on=this.dataset.on===\'1\'?\'0\':\'1\';paintWd(this)" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">'+d+'</button>';
-    }).join('');
-    function paintWd(b){ var on=b.dataset.on==='1'; b.style.borderColor=on?'var(--zq-primary)':'var(--zq-border)'; b.style.background=on?'var(--zq-tint)':'var(--zq-card)'; b.style.color=on?'var(--zq-primary)':'var(--zq-text2)'; }
-
-    var rt = [
-      ['08:00','晨间单词 60 个','每天 · 25 分钟 · 早八提醒已开','23 天',1],
-      ['12:40','午间听力 15 分钟','每天 · 15 分钟','11 天',1],
-      ['18:30','算法题每日一道','每天 · 40 分钟','17 天',1],
-      ['21:30','每周复盘 · 学习日志','每周五 · 20 分钟','9 周',0],
-      ['22:10','政治时政速览','周一/三/五 · 10 分钟','6 周',0]
-    ];
-    function paintRt(){
-      document.getElementById('zq-rt').innerHTML = rt.map(function(r,i){
-        return '<div style="display:flex; align-items:center; gap:11px; padding:11px 13px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card);">'
-          + '<div style="flex:none; min-width:46px; height:32px; padding:0 8px; border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); display:flex; align-items:center; justify-content:center; font-family:var(--zq-fontM); font-size:12px; font-weight:600; white-space:nowrap;" class="zq-mono">'+r[0]+'</div>'
-          + '<div style="flex:1; min-width:0;"><div style="font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">'+r[1]+'</div><div style="font-size:11.5px; color:var(--zq-text2); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">'+r[2]+'</div></div>'
-          + '<div style="flex:none; text-align:right; white-space:nowrap;"><div class="zq-mono" style="font-size:13px; font-weight:600; color:var(--zq-primary);">'+r[3]+'</div><div style="font-size:11px; color:var(--zq-text3);">连续</div></div>'
-          + '<button onclick="rt['+i+'][4]=rt['+i+'][4]?0:1;paintRt()" style="flex:none; height:28px; padding:0 11px; border:1px solid '+(r[4]?'var(--zq-ok-tint)':'var(--zq-border)')+'; border-radius:var(--zq-rs); background:'+(r[4]?'var(--zq-ok-tint)':'var(--zq-card)')+'; color:'+(r[4]?'var(--zq-ok)':'var(--zq-text2)')+'; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">'+(r[4]?'今日已完成':'标记完成')+'</button></div>';
-      }).join('');
-    }
-    paintRt();
-  </script>
-  <script src="assets/zhiqu-api.js?v=20261003-walkthrough"></script>
+  <script src="assets/zhiqu-ui.js?v=20261004-cleanup"></script>
+  <script src="assets/zhiqu-api.js?v=20261004-cleanup"></script>
 </body>
 </html>

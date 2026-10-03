@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 /**
  * 客户端上报运行问题的接口（{@code POST /api/runtime-issue/client}）—— 第十一轮暴力测试查出来的：
- * 它在放行名单里（<b>不登录也能调</b>），不去重、不限量，每条最多 8000 字；而现在的页面根本不调它（只有没人加载的旧 js/common.js 调）。
+ * 它在放行名单里（<b>不登录也能调</b>），不去重、不限量，每条最多 8000 字；而现在的页面根本不调它（只有没人加载的旧 js/common.js 调过，2026-10-04 已删）。
  * 于是它唯一的实际用途，是让任何人往管理员后台的「运行问题」里灌垃圾。现在：要登录；同一个人 10 分钟内同一条只记一次；
  * 每人每小时最多 30 条。
  */

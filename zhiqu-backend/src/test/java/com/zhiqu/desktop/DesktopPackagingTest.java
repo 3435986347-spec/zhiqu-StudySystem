@@ -109,49 +109,20 @@ class DesktopPackagingTest {
                         + "两处各写一个端口，界面会连到后端没监听的那个。");
     }
 
-    // ── 命令行入口 zhiqu ────────────────────────────────────────────────
-
-    private static final Path CLI_SCRIPT = Path.of("..", "deploy", "desktop", "bin", "zhiqu");
+    // ── 命令行 ────────────────────────────────────────────────────────
 
     /**
-     * 包里要有 zhiqu，而且能执行。
-     *
-     * <p>少了拷贝那一行，打出来的应用照样能用 —— 只是命令行入口不存在，用户照着文档
-     * 建软链会指向一个空位置，报的是「No such file or directory」，读起来像他自己敲错了。
+     * 应用包里不再带 Java 版命令行（2026-10-04 删除，由 npm 版 zhiqu 接替）。脚本里留着拷它的那几行的话，
+     * 打包直接失败（源文件没了）；留着空的 Resources/bin 则是一个指向不存在东西的入口。
      */
     @Test
-    @DisplayName("打包脚本把 zhiqu 拷进 Contents/Resources/bin 并加可执行权限")
-    void 包里要有命令行入口() throws IOException {
+    @DisplayName("应用包不带 Java 版命令行：不拷 bin/zhiqu、不建 Resources/bin，仓库里也没有它")
+    void 不再打包Java版命令行() throws IOException {
         String script = read(NATIVE_SCRIPT);
-        assertTrue(script.contains("cp \"$ROOT/deploy/desktop/bin/zhiqu\" \"$APP/Contents/Resources/bin/zhiqu\""),
-                "打包脚本没有把 zhiqu 拷进应用包");
-        assertTrue(script.contains("chmod +x \"$APP/Contents/Resources/bin/zhiqu\""),
-                "拷进去的 zhiqu 没有可执行权限 —— 敲 zhiqu 会报 Permission denied");
-        assertTrue(Files.isExecutable(CLI_SCRIPT),
-                "仓库里的 deploy/desktop/bin/zhiqu 没有可执行位（git 会记住这一位，丢了要 chmod +x 再提交）");
-    }
-
-    /**
-     * 启动脚本点名一个入口类。入口类改名或挪包时，脚本里那个字符串不会报编译错误 —— 只会在用户敲 zhiqu 时
-     * 报 ClassNotFoundException。所以这里拿脚本里写的类名去真的加载一次。
-     *
-     * <p>第十轮起应用里放的是<b>解压后的瘦 JAR</b>（为了 CDS 启动加速），它的 Class-Path 指向 lib/，
-     * 直接 {@code -cp} 它就能跑；原来胖 JAR 那套 PropertiesLauncher + loader.main 在瘦 JAR 里根本不存在 ——
-     * 脚本要是还写着它，敲 zhiqu 就是 ClassNotFoundException。
-     */
-    @Test
-    @DisplayName("zhiqu 脚本指向的入口类真实存在且有 main；直接 -cp 瘦 JAR，不再走胖 JAR 的 PropertiesLauncher；用应用自带的 JRE")
-    void 命令行入口类要存在() throws Exception {
-        String script = read(CLI_SCRIPT);
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("-cp \"\\$JAR\" ([\\w.]+)").matcher(script);
-        assertTrue(m.find(), "zhiqu 脚本里找不到 -cp \"$JAR\" <入口类> —— 判据的锚点没了");
-        Class<?> entry = Class.forName(m.group(1));
-        assertTrue(java.lang.reflect.Modifier.isStatic(entry.getMethod("main", String[].class).getModifiers()),
-                m.group(1) + " 没有 public static void main(String[])");
-        assertFalse(script.contains("PropertiesLauncher") || script.contains("loader.main"),
-                "zhiqu 还在走胖 JAR 的 PropertiesLauncher —— 应用里现在是瘦 JAR，那个类不存在");
-        assertTrue(script.contains("runtime/Contents/Home/bin/java"),
-                "zhiqu 没用应用自带的 JRE —— 用户机器上不一定装了 Java 17");
+        assertTrue(script.contains("mkdir -p \"$APP/Contents/MacOS\" \"$APP/Contents/Resources/app\""), "扫到的不是打包脚本 —— 空扫会假绿");
+        assertFalse(script.contains("bin/zhiqu") || script.contains("Resources/bin"), "打包脚本还在拷 Java 版 zhiqu");
+        assertFalse(Files.exists(Path.of("..", "deploy", "desktop", "bin", "zhiqu")), "deploy/desktop/bin/zhiqu 还在");
+        assertFalse(Files.exists(Path.of("src", "main", "java", "com", "zhiqu", "cli")), "com.zhiqu.cli 还在");
     }
 
     /**

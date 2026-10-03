@@ -1327,7 +1327,8 @@
     var day = today();
     var active = list.filter(function (r) { return routinePhase(r, day) === 'active'; }).length;
     // 标题旁那句「N 个进行中」原来是设计稿写死的「5 个进行中」，从来不变
-    var countEl = host.closest('section') && $all('span', host.closest('section')).find(function (x) { return /个进行中/.test(x.textContent); });
+    // 按 id 找（第二十四轮）：原来按「个进行中」这几个字找那个 span —— 字是设计稿写死的「5 个进行中」，删掉示例数据就找不到了
+    var countEl = $('#zq-rt-count');
     if (countEl) countEl.textContent = active + ' 个进行中';
     host.innerHTML = list.length ? list.map(function (r) {
       var phase = routinePhase(r, day);
@@ -1373,6 +1374,8 @@
     if (nums[2]) nums[2].textContent = stat.completedTaskCount || 0;
     if (nums[3]) nums[3].textContent = stat.totalTaskCount || 0;
     window.setTab = function (k) { highlightStatTab(k); paintTrend(k); };
+    // 日 / 周 / 月三个按钮写在页面里（第二十四轮：原来由设计稿的示例脚本画出来，删掉示例之后这里自己接）
+    $all('#zq-tabs button[data-k]').forEach(function (b) { b.onclick = function () { window.setTab(b.dataset.k); }; });
     await paintTrend('day');
     highlightStatTab('day');
     renderQuadrantDonut(stat.quadrantDistribution || {});
@@ -1455,6 +1458,8 @@
       });
       renderAchList(k);
     };
+    // 全部 / 已解锁 / 未解锁写在页面里（第二十四轮：原来由示例脚本画出来）
+    $all('#zq-filters button[data-k]').forEach(function (b) { b.onclick = function () { window.setF(b.dataset.k); }; });
     renderAchList('all');
   }
   function renderAchList(filter) {
@@ -1670,7 +1675,7 @@
       // 先走下面的浏览器分支就会把「从应用登录」显示成「Safari · macOS」。
       // 标记由原生外壳用 applicationNameForUserAgent 追加（ZhiquShell.swift）。
       if (/ZhiquDesktop/.test(ua)) return '桌面应用' + (os ? ' · ' + os : '');
-      // zhiqu 命令行（ZhiquCli.userAgent）：UA 里没有任何浏览器标记，不认的话落到「浏览器」
+      // Java 版 zhiqu 命令行的 UA（2026-10-04 删除；历史登录记录里还有）：UA 里没有任何浏览器标记，不认的话落到「浏览器」
       if (/ZhiquCLI\//.test(ua)) return '命令行' + (os ? ' · ' + os : '');
     var br = /Edg\//.test(ua) ? 'Edge' : /Chrome/.test(ua) ? 'Chrome' : /Firefox/.test(ua) ? 'Firefox' : /Safari/.test(ua) ? 'Safari' : '浏览器';
     return (br + (os ? ' · ' + os : '')) || ua.slice(0, 40);
@@ -1933,6 +1938,8 @@
   var CAT_LABEL = { EXAM: '考试备考', COMPUTER: '计算机学习', LANGUAGE: '语言学习', GENERAL: '通用规划' };
   var CAT_KEY = { EXAM: 'q1', COMPUTER: 'q2', LANGUAGE: 'q3', GENERAL: 'q4' };
   async function bootSharedPlans() {
+    // 详情弹窗的遮罩、×、取消（第二十四轮：原来调示例脚本里的全局 closeModal）
+    $all('#zq-modal [data-close-modal]').forEach(function (b) { b.onclick = function () { $('#zq-modal').style.display = 'none'; }; });
     var filterCard = $('.zq-card');
     var selects = filterCard ? $all('select', filterCard) : [];
     var submitBtn = $('header .zq-btn');

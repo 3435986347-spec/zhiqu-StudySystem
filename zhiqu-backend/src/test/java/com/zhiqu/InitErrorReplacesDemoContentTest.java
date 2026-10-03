@@ -16,38 +16,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 页面里还躺着设计期的<b>示例数据</b>，而挡住它们的只有一处：加载失败时整块替换 {@code .zq-main}。
+ * 页面里不放示例数据；页面加载失败时整块换成错误卡片。
  *
- * <h2>这是什么局面</h2>
+ * <h2>由来</h2>
  *
- * <p>14 个页面里有 12 个内联了一段脚本，在应用脚本加载<b>之前</b>就把一批编造的学习数据
- * 写进 DOM —— 「2027 考研总目标」「王道 2027 版」「数学薄弱点清单」「番茄钟记录」之类。
- * {@code dashboard.html} 里作者自己标了 {@code // ── 示例数据（后续可由接口替换） ──}。
+ * <p>14 个页面里原来有 12 个内联了一段脚本，在应用脚本加载<b>之前</b>就把一批编造的学习数据写进 DOM ——
+ * 「2027 考研总目标」「数学薄弱点清单」「番茄钟记录」之类，静态 HTML 里还写着「共 1,284 个账号」「第 17 教学周」。
+ * 挡住它们的只有一处：boot 失败时 {@link #INIT_ERROR} 把整个 {@code .zq-main} 换成错误卡片。而 boot <b>成功</b>时
+ * 没被重绘的那部分照样露出来 ——「已审核模板 · 4 个」「第 3 轮」「例行完成 60%」都是这么上线的（2026-10-01、10-03）。
  *
- * <p>正常情况下用户看不到它们，靠三层：{@code zq-booting} 遮罩盖到 boot 完成；
- * boot 成功后重绘容器；boot <b>失败</b>时 {@link #INIT_ERROR} 把整个 {@code .zq-main}
- * 换成错误卡片。前两层在成功路径上，第三层是失败路径上唯一的一道 ——
- * 而 boot 失败并不罕见：本仓库对 {@code /api/**} 限流 180/60s，连续刷新就会 429。
- *
- * <h2>把它改成「只弹个提示」会怎样</h2>
- *
- * <p>页面接口一失败，用户就会看到一份完整的、不属于自己的学习计划：别人的考研目标、
- * 别人的薄弱点、别人的番茄钟记录，而且看起来像是自己的数据。没有任何报错说明那是假的。
- *
- * <p>所以这条判据钉的是<b>替换</b>这个动作本身，不是「有没有提示用户」。
- *
- * <h2>为什么不干脆删掉示例数据</h2>
- *
- * <p>那是更彻底的修法，但那些内联脚本里混着真实接线（{@code paintWd}、{@code zqPomoRecord}、
- * {@code openModal} 等被 HTML 的 {@code onclick} 直接引用），逐页拆分风险不小，
- * 而当前没有任何用户可见的问题。先把这道唯一的防线钉住，删除留作单独一件事。
+ * <p>第二十四轮（2026-10-04）把示例数据删了：内联脚本只剩主题初始化那一行和看板的番茄钟；示例脚本顺带画出来的真控件
+ * （统计页的日 / 周 / 月、成就页的筛选、例行计划的星期）挪进了静态 HTML。这里钉两件事：不许再长回来；
+ * 加载失败时照旧整块替换 —— 示例数据没了，但一个画了一半的页面同样会误导人。
  */
 class InitErrorReplacesDemoContentTest {
     private static final Path STATIC_DIR = Path.of("src/main/resources/static");
     private static final Path API_JS = STATIC_DIR.resolve("assets/zhiqu-api.js");
-
-    /** 含内联示例数据的页面数量下界 —— 低于它说明扫描坏了，而不是页面变干净了。 */
-    private static final int MIN_DEMO_PAGES = 8;
 
     private static final Pattern INLINE_SCRIPT =
             Pattern.compile("(?s)<script(?![^>]*src=)[^>]*>(.*?)</script>");
@@ -68,7 +52,7 @@ class InitErrorReplacesDemoContentTest {
     void 加载失败必须替换主内容区而不是只提示() throws IOException {
         String code = apiJs();
         int at = code.indexOf("function " + INIT_ERROR + "(");
-        assertTrue(at >= 0, INIT_ERROR + " 不见了 —— 它是 12 个页面里的示例数据唯一的挡板");
+        assertTrue(at >= 0, INIT_ERROR + " 不见了 —— 页面加载失败时要整块换成错误卡片");
         String body = code.substring(at, Math.min(code.length(), at + 1200));
 
         assertTrue(body.contains("$('.zq-main')"),
@@ -93,52 +77,91 @@ class InitErrorReplacesDemoContentTest {
     }
 
     /**
-     * 示例数据必须全部位于 {@code .zq-main} 之内。
-     *
-     * <p>这条是上面那条的前提：替换 {@code .zq-main} 之所以够用，正因为没有一处示例数据
-     * 落在它外面。哪天有人把一块示例内容挪进侧边栏或页头，挡板就漏了 —— 而其它判据不会红。
+     * 静态 HTML 里写着的数字，只许是这些说明文字（它们说的是规则，不是某个人的数据）。
+     * 加一句带数字的说明时加进这里；加一个写死的统计数、日期、条数时，这条会红 —— 那正是它要拦的。
      */
+    private static final List<String> COPY_WITH_DIGITS = List.of(
+            "平台运行总览 · 数据每 5 分钟刷新 · 不展示用户任务与知识库正文",
+            "近 15 分钟请求量",
+            "打开后，任务的提醒时间、截止前提醒和每天 08:00 的待办汇总都推送到下面的渠道",
+            "，把它显示的 8 位设备码填在这里。命令行不会拿到你的密码，只拿到一张可随时撤销的令牌。",
+            "Anthropic 用 /v1/messages；Ollama 默认 http://localhost:11434/v1/chat/completions。",
+            "25:00");   // 番茄钟没开始时的显示（默认 25 分钟），不是数据
+
+    /** 看板的番茄钟是真功能（不是示例），它的内联脚本以这一行开头。 */
+    private static final String POMODORO_SCRIPT_HEAD = "// ── 番茄钟 ──";
+
     @Test
-    void 示例数据不得出现在主内容区之外() throws IOException {
-        List<String> leaked = new ArrayList<>();
-        int demoPages = 0;
-        try (Stream<Path> pages = Files.list(STATIC_DIR)) {
-            for (Path page : pages.filter(p -> p.toString().endsWith(".html")).sorted().toList()) {
-                String html = Files.readString(page, StandardCharsets.UTF_8);
-                // index.html 是落地页（轮播占位图），不含用户数据，renderInitError 也显式跳过它
-                if ("index.html".equals(page.getFileName().toString())) {
+    void 页面里没有示例数据() throws IOException {
+        List<String> found = new ArrayList<>();
+        int pages = 0;
+        try (Stream<Path> files = Files.list(STATIC_DIR)) {
+            for (Path page : files.filter(p -> p.toString().endsWith(".html")).sorted().toList()) {
+                String name = page.getFileName().toString();
+                // index.html 是落地页：轮播里是产品示意图（宣传物料），文案归定位那一步（docs/product-plan.md 第 3 步）
+                if ("index.html".equals(name)) {
                     continue;
                 }
-                List<String> targets = new ArrayList<>();
+                pages++;
+                String html = Files.readString(page, StandardCharsets.UTF_8);
                 Matcher scripts = INLINE_SCRIPT.matcher(html);
                 while (scripts.find()) {
-                    String body = scripts.group(1);
-                    if (body.chars().filter(c -> c == '\n').count() <= 3) {
-                        continue;   // 首个是主题初始化的一行式脚本
-                    }
-                    Matcher ids = Pattern.compile("getElementById\\('([^']+)'\\)").matcher(body);
-                    while (ids.find()) {
-                        targets.add(ids.group(1));
+                    String body = scripts.group(1).strip();
+                    boolean theme = body.contains("localStorage.getItem('zq.ver')") && !body.contains("\n");
+                    boolean pomodoro = "dashboard.html".equals(name) && body.startsWith(POMODORO_SCRIPT_HEAD);
+                    if (!theme && !pomodoro) {
+                        found.add(name + " 有内联脚本：" + body.substring(0, Math.min(60, body.length())).replace('\n', ' '));
                     }
                 }
-                if (targets.isEmpty()) {
-                    continue;
-                }
-                demoPages++;
-                int mainAt = html.indexOf("zq-main");
-                assertTrue(mainAt >= 0, page.getFileName() + " 没有 .zq-main 容器，挡板无处可依");
-                for (String id : targets) {
-                    int idAt = html.indexOf("id=\"" + id + "\"");
-                    if (idAt < 0 || idAt < mainAt) {
-                        leaked.add(page.getFileName() + "#" + id);
+                // <option> 是可选项（番茄钟的 25 / 45 / 60 分钟），不是谁的数据
+                String markup = html.replaceAll("(?s)<script.*?</script>", " ").replaceAll("(?s)<!--.*?-->", " ")
+                        .replaceAll("(?s)<option[^>]*>.*?</option>", " ");
+                int mainAt = markup.indexOf("class=\"zq-main\"");
+                assertTrue(mainAt >= 0, name + " 没有 .zq-main");
+                Matcher text = Pattern.compile(">([^<>]*\\d[^<>]*)<").matcher(markup.substring(mainAt));
+                while (text.find()) {
+                    String t = text.group(1).strip();
+                    if (!t.isEmpty() && !COPY_WITH_DIGITS.contains(t)) {
+                        found.add(name + " 写死了「" + t + "」");
                     }
+                }
+                Matcher width = Pattern.compile("(?<![-\\w])width:\\s*([1-9]\\d*)%").matcher(markup.substring(mainAt));
+                while (width.find()) {
+                    found.add(name + " 写死了一个 " + width.group(1) + "% 的宽度（进度条？）");
                 }
             }
         }
-        assertTrue(demoPages >= MIN_DEMO_PAGES,
-                "只扫到 " + demoPages + " 个带内联示例数据的页面 —— 空扫和干净的扫形状一样，"
-                        + "这个下界用来区分它们");
-        assertEquals(List.of(), leaked,
-                "这些示例数据写在 .zq-main 之外，加载失败时不会被替换掉，会直接呈现给用户");
+        assertTrue(pages >= 12, "只扫到 " + pages + " 个页面 —— 空扫和干净的扫长得一样");
+        assertEquals(List.of(), found, "页面里还有示例数据：启动成功时没被重绘的那部分会原样露给用户");
+    }
+
+    /**
+     * 示例脚本顺带画出来的那几个真控件，现在写在页面里、由壳绑定。删示例时最容易一起删掉的就是它们 ——
+     * 页面照样打开，只是统计页切不了日 / 周 / 月、成就页筛不了、例行计划选不了星期、参考计划的弹窗关不上，一个字都不报。
+     */
+    @Test
+    void 示例脚本画的真控件写在页面里并且接上了() throws IOException {
+        String stats = Files.readString(STATIC_DIR.resolve("statistics.html"), StandardCharsets.UTF_8);
+        String ach = Files.readString(STATIC_DIR.resolve("achievement.html"), StandardCharsets.UTF_8);
+        String rt = Files.readString(STATIC_DIR.resolve("routines.html"), StandardCharsets.UTF_8);
+        String sp = Files.readString(STATIC_DIR.resolve("shared-plans.html"), StandardCharsets.UTF_8);
+        for (String k : List.of("day", "week", "month")) {
+            assertTrue(stats.contains("data-k=\"" + k + "\""), "统计页少了「" + k + "」按钮");
+        }
+        for (String k : List.of("all", "on", "off")) {
+            assertTrue(ach.contains("data-k=\"" + k + "\""), "成就页少了「" + k + "」筛选");
+        }
+        int wd = rt.split("<button type=\"button\" data-on=\"1\"", -1).length - 1;
+        assertEquals(7, wd, "例行计划的星期按钮应当是 7 个");
+        assertEquals(3, sp.split("data-close-modal", -1).length - 1, "参考计划详情弹窗的遮罩、×、取消三处要能关");
+        String code = apiJs();
+        assertTrue(code.contains("$all('#zq-tabs button[data-k]').forEach(function (b) { b.onclick = function () { window.setTab(b.dataset.k); }; });"),
+                "统计页的日 / 周 / 月没有接上");
+        assertTrue(code.contains("$all('#zq-filters button[data-k]').forEach(function (b) { b.onclick = function () { window.setF(b.dataset.k); }; });"),
+                "成就页的筛选没有接上");
+        assertTrue(code.contains("$all('#zq-wd button').forEach(function (b) {") && code.contains("b.addEventListener('click', function () {\n        b.dataset.on = b.dataset.on === '1' ? '0' : '1';"),
+                "例行计划的星期按钮没有接上");
+        assertTrue(code.contains("$all('#zq-modal [data-close-modal]').forEach(function (b) { b.onclick = function () { $('#zq-modal').style.display = 'none'; }; });"),
+                "参考计划的弹窗关不上");
     }
 }

@@ -9,11 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261003-walkthrough" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261003-walkthrough">
-  <link rel="manifest" href="manifest.json?v=20261003-walkthrough">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261004-cleanup" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261004-cleanup">
+  <link rel="manifest" href="manifest.json?v=20261004-cleanup">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261003-walkthrough">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261004-cleanup">
 </head>
 <body>
   <div class="zq-app">
@@ -25,17 +25,17 @@
           <div>
             <p class="zq-eyebrow">今日行动台</p>
             <h1 class="zq-h1">先看今天，再看本周</h1>
-            <span style="display:block; margin-top:6px; color:var(--zq-text2); font-size:13px;">7月3日 星期五 · 第 17 教学周</span>
+            <span style="display:block; margin-top:6px; color:var(--zq-text2); font-size:13px;">—</span>
           </div>
           <button class="zq-btn">新增任务</button>
         </header>
 
         <!-- 概览卡 -->
         <section class="zq-grid" style="grid-template-columns:repeat(4, minmax(0,1fr));">
-          <article class="zq-stat"><span class="zq-stat-label">今日待办</span><strong class="zq-stat-num">6</strong></article>
-          <article class="zq-stat"><span class="zq-stat-label">逾期未完</span><strong class="zq-stat-num" style="color:var(--zq-bad);">2</strong></article>
-          <article class="zq-stat"><span class="zq-stat-label">早八提醒</span><strong class="zq-stat-num">3</strong></article>
-          <article class="zq-stat"><span class="zq-stat-label">例行完成</span><strong class="zq-stat-num" style="color:var(--zq-primary);">3/5</strong>
+          <article class="zq-stat"><span class="zq-stat-label">今日待办</span><strong class="zq-stat-num">—</strong></article>
+          <article class="zq-stat"><span class="zq-stat-label">逾期未完</span><strong class="zq-stat-num" style="color:var(--zq-bad);">—</strong></article>
+          <article class="zq-stat"><span class="zq-stat-label">早八提醒</span><strong class="zq-stat-num">—</strong></article>
+          <article class="zq-stat"><span class="zq-stat-label">例行完成</span><strong class="zq-stat-num" style="color:var(--zq-primary);">—</strong>
             <div style="height:5px; margin-top:10px; overflow:hidden; border-radius:999px; background:var(--zq-tint);"><i id="zq-routine-bar" style="display:block; width:0%; height:100%; border-radius:inherit; background:var(--zq-primary);"></i></div>
           </article>
         </section>
@@ -46,7 +46,7 @@
             <!-- 本周日历 -->
             <section class="zq-card zq-card-lg">
               <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
-                <div><p class="zq-eyebrow">本周日历</p><h2 class="zq-h2">06/29 – 07/05</h2></div>
+                <div><p class="zq-eyebrow">本周日历</p><h2 class="zq-h2">本周</h2></div>
                 <div style="display:inline-flex; align-items:center; gap:6px;">
                   <button class="zq-btn-ghost" data-week-nav="prev" style="width:30px; padding:0; font-size:17px;">‹</button>
                   <button class="zq-btn-ghost" data-week-nav="today" style="height:30px;">本周</button>
@@ -95,7 +95,7 @@
                 <button class="zq-btn" id="zq-pomo-start" style="height:30px;">开始</button>
                 <button class="zq-btn-ghost" id="zq-pomo-reset" style="height:30px;">重置</button>
               </div>
-              <div id="zq-pomo-count" style="font-size:12px; color:var(--zq-text2); margin-top:12px; padding-top:10px; border-top:1px solid var(--zq-border-soft);">今日：2 个 ｜ 50 分钟</div>
+              <div id="zq-pomo-count" style="font-size:12px; color:var(--zq-text2); margin-top:12px; padding-top:10px; border-top:1px solid var(--zq-border-soft);">今日：—</div>
             </div>
 
             <section class="zq-card zq-card-lg">
@@ -108,65 +108,8 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261003-walkthrough"></script>
+  <script src="assets/zhiqu-ui.js?v=20261004-cleanup"></script>
   <script>
-    // ── 示例数据（后续可由接口替换） ──
-    var qTag = { routine:['var(--zq-tint)','var(--zq-primary)'], 1:['var(--zq-q1-bg)','var(--zq-q1)'], 2:['var(--zq-q2-bg)','var(--zq-q2)'], 3:['var(--zq-q3-bg)','var(--zq-q3)'], 4:['var(--zq-q4-bg)','var(--zq-q4)'] };
-
-    var week = [
-      { name:'周一', num:'29', items:[['08:00','晨间单词',1],['14:00','数据结构复习',0]] },
-      { name:'周二', num:'30', items:[['08:00','晨间单词',1],['10:00','计网实验',0],['19:00','六级阅读训练',0]] },
-      { name:'周三', num:'01', items:[['08:00','晨间单词',1],['15:00','小组项目会议',0]] },
-      { name:'周四', num:'02', items:[['08:00','晨间单词',1],['13:30','毕设文献阅读',0],['20:00','政治刷题 30 题',0]] },
-      { name:'周五', num:'03', today:1, items:[['10:00','高数作业 第7章',0],['14:00','操作系统实验报告',0],['21:30','每周复盘',1]] },
-      { name:'周六', num:'04', items:[['09:00','六级真题模考',0],['15:00','毕设开题初稿',0]] },
-      { name:'周日', num:'05', items:[] }
-    ];
-    document.getElementById('zq-week').innerHTML = week.map(function(d){
-      var today = d.today;
-      var items = d.items.length ? d.items.map(function(it){
-        return '<div style="display:grid; grid-template-columns:36px minmax(0,1fr); gap:6px; align-items:center; padding:6px 7px; border-radius:var(--zq-rs); background:'+(it[2]?'var(--zq-tint)':'var(--zq-card)')+'; border:1px solid var(--zq-border-soft);"><span class="zq-mono" style="color:var(--zq-primary); font-size:10.5px; font-weight:600;">'+it[0]+'</span><span style="min-width:0; overflow:hidden; color:var(--zq-text); font-size:11.5px; font-weight:500; text-overflow:ellipsis; white-space:nowrap;">'+it[1]+'</span></div>';
-      }).join('') : '<div style="padding:10px 0; text-align:center; color:var(--zq-text3); font-size:11.5px;">无安排</div>';
-      return '<div style="min-height:225px; padding:10px; border:1px solid '+(today?'var(--zq-primary)':'var(--zq-border-soft)')+'; border-radius:var(--zq-rs); background:'+(today?'var(--zq-tint)':'var(--zq-card-soft)')+';"><div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px;"><span style="color:'+(today?'var(--zq-primary)':'var(--zq-text2)')+'; font-size:11.5px; font-weight:700;">'+d.name+'</span><strong class="zq-mono" style="font-size:18px; color:'+(today?'var(--zq-primary)':'var(--zq-text)')+';">'+d.num+'</strong></div><div style="display:flex; flex-direction:column; gap:7px;">'+items+'</div></div>';
-    }).join('');
-
-    var today = [
-      ['08:00','英语六级 · 晨间单词 60 个','例行','routine','每日 · 约 25 分钟',0],
-      ['10:00','高数作业 第 7 章（第 3–8 题）','重要且紧急',1,'截止 今天 22:00',0],
-      ['14:00','操作系统实验报告 · 内存管理','重要且紧急',1,'截止 明天 12:00',1],
-      ['16:30','毕设开题 · 文献综述初稿','重要不紧急',2,'本周五前推进 2 小时',0],
-      ['19:30','计网实验预习 · 抓包练习','紧急不重要',3,'明早实验课',0],
-      ['21:30','每周复盘 · 更新学习日志','例行','routine','每周五 · 约 20 分钟',0]
-    ];
-    document.getElementById('zq-today').innerHTML = today.map(function(t,i){
-      var tag = qTag[t[3]]; var done=t[5];
-      return '<div style="display:grid; grid-template-columns:52px minmax(0,1fr) auto; gap:12px; align-items:center; padding:8px 12px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:'+(t[3]==='routine'?'var(--zq-tint)':'var(--zq-card)')+'; opacity:'+(done?0.55:1)+';">'
-        + '<span class="zq-mono" style="color:var(--zq-primary); font-size:12.5px; font-weight:600;">'+t[0]+'</span>'
-        + '<div style="min-width:0;"><div style="font-size:13.5px; font-weight:600; line-height:1.35; text-decoration:'+(done?'line-through':'none')+';">'+t[1]+'</div>'
-        + '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; align-items:center;"><span class="zq-badge" style="background:'+tag[0]+'; color:'+tag[1]+';">'+t[2]+'</span><span style="color:var(--zq-text2); font-size:11.5px;">'+t[4]+'</span></div></div>'
-        + '<button onclick="zqDone(this)" class="zq-btn-ghost" style="height:28px; padding:0 11px; font-size:12px;'+(done?'border-color:var(--zq-ok);background:var(--zq-ok-tint);color:var(--zq-ok);':'')+'">'+(done?'已完成':'完成')+'</button></div>';
-    }).join('');
-    function zqDone(btn){ var done = btn.textContent==='完成'; btn.textContent = done?'已完成':'完成'; var row=btn.closest('div[style]').parentElement; }
-
-    var quad = [
-      ['重要且紧急','q1','3 项',['高数作业 第7章','操作系统实验报告','计网实验预习']],
-      ['重要不紧急','q2','4 项',['毕设开题报告','数据结构二轮复习','六级真题模考']],
-      ['紧急不重要','q3','2 项',['班级材料收集','实验室值日安排']],
-      ['不重要不紧急','q4','2 项',['整理浏览器书签','社团纳新海报']]
-    ];
-    document.getElementById('zq-quad').innerHTML = quad.map(function(q){
-      var items = q[3].map(function(x){ return '<div style="padding:7px 9px; border-radius:var(--zq-rs); background:var(--zq-'+q[1]+'-bg); font-size:12px; font-weight:500; color:var(--zq-text); line-height:1.45; word-break:break-word;">'+x+'</div>'; }).join('');
-      return '<div style="min-height:150px; padding:13px; border:1px solid var(--zq-'+q[1]+'-border); border-radius:var(--zq-rs); background:var(--zq-card); border-top:3px solid var(--zq-'+q[1]+');"><div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;"><span style="font-size:12px; font-weight:700; color:var(--zq-'+q[1]+'); white-space:nowrap;">'+q[0]+'</span><span class="zq-mono" style="flex:none; font-size:12px; font-weight:600; color:var(--zq-text3); white-space:nowrap;">'+q[2]+'</span></div><div style="display:flex; flex-direction:column; gap:7px;">'+items+'</div></div>';
-    }).join('');
-
-    var ddl = [
-      ['高数作业 第 7 章','今天 22:00','8 小时',1],['操作系统实验报告','明天 12:00','1 天',1],
-      ['计网实验预习','明天 08:00','18 小时',0],['毕设开题报告初稿','07-06 23:59','3 天',0],['六级考试报名确认','07-08 17:00','5 天',0]
-    ];
-    document.getElementById('zq-ddl').innerHTML = ddl.map(function(d){
-      return '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft);"><div style="min-width:0;"><strong style="display:block; font-size:12.5px; line-height:1.35; font-weight:600;">'+d[0]+'</strong><span style="display:block; margin-top:3px; color:var(--zq-text2); font-size:11.5px;">'+d[1]+'</span></div><span class="zq-badge zq-mono" style="flex:none; background:'+(d[3]?'var(--zq-bad-tint)':'var(--zq-card-soft)')+'; color:'+(d[3]?'var(--zq-bad)':'var(--zq-text2)')+';">'+d[2]+'</span></div>';
-    }).join('');
-
     // ── 番茄钟 ──
     // 按结束时刻倒数，不按「每跳一次减一秒」（第二十一轮）：切到别的标签页后浏览器把定时器限到一分钟一次，原来 25 分钟的番茄钟
     // 要走一整天；合上笔记本就停。时钟往回拨（校时、手动改时间）时结束时刻跟着往回挪 —— 剩下的时间不会变多、也不会卡住不走。
@@ -214,6 +157,6 @@
       draw();
     })();
   </script>
-  <script src="assets/zhiqu-api.js?v=20261003-walkthrough"></script>
+  <script src="assets/zhiqu-api.js?v=20261004-cleanup"></script>
 </body>
 </html>

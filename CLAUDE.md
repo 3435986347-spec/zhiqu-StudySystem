@@ -267,8 +267,8 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 ### npm 版 `zhiqu`（`zhiqu-cli/`，harness：循环与工具在用户电脑上）
 
 零依赖的 ESM 包，`cd zhiqu-cli && npm link` 装到本机（发布到 npm 之前单独问用户；`package.json` 留着
-`"private": true` 挡误发）。服务器那一侧见上面「命令行 harness 的服务端网关」。它接替了下面那个 Java 版的
-`zhiqu` 命令（本机 `/opt/homebrew/bin/zhiqu` 旧软链已移走；桌面包里仍带着 Java 版）。不看代码想不到的几件事：
+`"private": true` 挡误发）。服务器那一侧见上面「命令行 harness 的服务端网关」。它接替了 Java 版的
+`zhiqu` 命令（Java 版 2026-10-04 删除，桌面包也不再带它；见下面那一小节留下的教训）。不看代码想不到的几件事：
 
 - **三档权限 plan / ask / auto**（用户定的）：plan 只下发读工具 + `exit_plan_mode`，批准计划才切档；
   ask 写 / 跑前给 diff、问 y/n；auto 不问、做完再汇报。**「下发了什么」和「能执行什么」是同一份清单**，每轮重算。
@@ -337,37 +337,13 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 - **默认服务器**来自 `package.json` 的 `zhiqu.defaultServer`：仓库里是本机桌面应用（测试用），发布版要指向用户的服务器
   （`npm run set-server -- https://…`）；`prepublishOnly` 挡住本机地址、非 https、还挂着 `private` 的版本。
 
-### 命令行 `zhiqu`（Java 版，同一个后端上的 coding agent；已由 npm 版接替）
+### 命令行 `zhiqu` 的 Java 版（2026-10-04 删除）
 
-`deploy/desktop/bin/zhiqu` 随应用打进 `Contents/Resources/bin/`，用应用自带的 JRE 跑
-**同一个 JAR** 里的 `com.zhiqu.cli.ZhiquCli`（`PropertiesLauncher` + `-Dloader.main`，不启动 Spring，
-0.8 秒起来）。它**只是客户端**：登录、把当前目录设成工作区、按「代码」模式发消息、画出每一步、
-草稿在终端看 diff 按 y 落盘 —— 落盘走的是网页确认框同一个 `/api/ai/artifacts/{id}/confirm`。
-不自己读写磁盘、不自己跑命令：第二份安全规则迟早比第一份松。对话进名为「命令行」的 Notebook。
-
-几件不看代码想不到的事：
-
-- **根目录护栏在客户端**：在 `/` 或家目录下运行直接拒绝（`--allow-broad-root` 才放行），
-  而且在登录**之前**判 —— 不该让人输完密码才被告知这里不能用。
-- **后端没开时它自己拉起来**，用 `sh -c 'nohup "$@" … & echo $!'`：非交互 shell 的后台命令
-  SIGINT 被置为忽略，JVM 启动时发现已忽略就不装自己的处理器；nohup 再管 SIGHUP。
-  直接 `ProcessBuilder` 起的话后端和 CLI 同一个前台进程组，终端里一个 Ctrl+C 两个一起死。
-  **这条是实测的，而且实验本身骗了我三次**：执行环境继承下来的信号处置、然后是怀疑掩码，
-  最后发现是检测方法 —— `kill(pid, 0)` 对**僵尸进程**也返回「存在」，直接起的那个 JVM 早死了，
-  只是没被 `wait()` 回收。对照组一直「活着」，实验就分不出两种启动方式。改成看 `ps` 的状态
-  （排除 `Z`）后：直接起的退出码 130，`nohup … &` 起的照常运行。**对照组不死的实验不作数。**
-- `zhiqu stop` 只停 pid 文件里记的、且命令行带 `zhiqu.desktop.port-file` 的那个进程 ——
-  按端口或进程名去杀会误伤图形界面起的那个。
-- 密码用 `Console.readPassword` 读，不是交互终端就拒绝（从管道读密码的脚本迟早把它写进日志）；
-  落盘的只有令牌，`~/.zhiqu/cli-token`，600 权限。
-- **模型不单独配置**：不指定时后端用用户的默认模型（再退到系统模型），`--model` / `/model <id>` 只对本次会话生效。
-  `GET /api/ai/models` 返回的是对象 `{systemModels, userModels, defaultModelId}` —— 第一版 `/model`
-  把它当数组遍历，列出来是空白（`CliModels` 照网页的 `normalizeModelList` 拍平）。模型信息带
-  `toolCalling`（由 `supportsToolCalling` 一处给出）：选了 Ollama / Gemini 这类不支持工具调用的模型，
-  coding agent **静默**不运行，所以启动和切换时都要明说；CLI 不许按 providerType 自己再猜一遍。
-- User-Agent 是 `ZhiquCLI/…`（`CliUserAgent`），登录设备列表显示「命令行」。
-  `LoginDeviceLabelTest` 把 CLI 的**真实** UA 喂给前端的 `shortUA` —— 判的是一对，
-  不是两边各写死一份样本各自为绿（`NodeRunner.run` 为此多了可变参数）。
+原来随桌面应用打包的 `com.zhiqu.cli.*` + `deploy/desktop/bin/zhiqu`，只是后端的客户端；npm 版接替之后删掉了。
+留下一条它教会的事：**对照组不死的实验不作数。** 验证「`nohup … &` 拉起的后端不会被终端的 Ctrl+C 带走」时，
+实验骗了我三次 —— 最后发现是检测方法：`kill(pid, 0)` 对**僵尸进程**也返回「存在」，直接起的那个 JVM 早死了，
+只是没被 `wait()` 回收，于是对照组一直「活着」，两种启动方式分不出来。改成看 `ps` 的状态（排除 `Z`）才看清。
+历史登录记录里的 `ZhiquCLI/…` UA 前端照旧认成「命令行」（`LoginDeviceLabelTest`）。
 
 ### 命令行 harness 的服务端网关（P1，`/api/harness/**`）
 
@@ -586,7 +562,6 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **中文路径会让应用类归档只归档一小部分**（实测：`知趣象限.app` 里 64MB / 2.15 秒，ASCII 路径 86MB / 1.66 秒；与 locale 无关，软链也不行 ——
   JVM 按真实路径算）。所以外壳把 `Resources/app` 拷一份到 `~/.zhiqu/app/<版本>/` 再跑（`AppStage`；APFS 上是克隆；最后写 `.complete`，
   没标记的当半截；拷不成照原样从应用包跑）。`~/.zhiqu/app` 与 `~/.zhiqu/cds` 共约 160MB，删了下次自动重建。
-- 命令行 `bin/zhiqu` 改成直接 `-cp` 瘦 JAR 点名入口类（瘦 JAR 里没有 PropertiesLauncher）。
 
 ### 第十一轮（2026-09-28）：暴力测试 —— 全接口坏输入
 
@@ -878,10 +853,10 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   shared modal helper `openModal({title, bodyHtml, width, onMount}) → {close, body, mask}`.
   `assets/zhiqu-ui.js` / `assets/zhiqu-ui.css` provide the shell chrome and design tokens
   (`var(--zq-*)`).
-- **`js/*.js` and `css/*.css` are legacy and are loaded by zero pages.** Do not "fix" behaviour or
-  styling there expecting it to take effect — change `assets/zhiqu-api.js` / `assets/zhiqu-ui.css`
-  instead. This is not theoretical: the reminder-channel credential UI lived only in
-  `js/profile.js`, so 早八提醒 never worked for anyone using the real UI (fixed 2026-09-21).
+- **The old `js/` and `css/` folders were deleted on 2026-10-04** (33 files, 22,346 lines, loaded by zero pages but
+  shipped in the JAR). Twice a feature existed only there and so worked for no one: the reminder-channel credential UI
+  (fixed 2026-09-21) and the Wiki pending-change review (fixed 2026-10-03). `static/vendor/` (KaTeX, DOMPurify, Vditor)
+  is live and stays.
 - **Design tokens have exactly one definition, in `assets/zhiqu-ui.css`'s base `:root`.** A
   `var(--x)` whose `--x` is undefined does not warn — CSS drops the whole declaration and falls
   back to the initial value, so backgrounds and borders silently become transparent. Two of these
@@ -907,24 +882,20 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   the 「截止前提醒」 setting, only the reminders it scheduled, so the edit form shows the days of the still-PENDING `AUTO`
   reminders; `reminderOffsets: null` means "server default", `[]` means "none". `task-form-check.js` runs the published
   `taskFormPayload`.
-- **12 of the 14 pages still ship design-phase demo data** — inline scripts that write a fabricated
-  study plan into the DOM *before* `zhiqu-api.js` loads (`dashboard.html` labels its own block
-  `// ── 示例数据（后续可由接口替换） ──`). Users never see it, and that rests on exactly one
-  thing: when a page's boot function throws, `renderInitError` replaces **all of `.zq-main`**.
-  Weaken that to a toast and any failed load — a 429 from the 180/60s rate limit is enough —
-  shows the user someone else's goals, weaknesses and pomodoro history as if they were their own.
-  `InitErrorReplacesDemoContentTest` pins the replacement, the `renderError: true` on the boot
-  call, and that no demo container sits outside `.zq-main`. The demo blocks are tangled with real
-  wiring (`paintWd`, `zqPomoRecord`, `openModal` are referenced from inline `onclick`), so
-  removing them is a separate job — not a reason to leave the guard unpinned.
-  The other half of the same hazard: **demo text that the boot code never overwrites stays on screen for real users.**
-  参考计划's 「已审核模板 · 4 个」 and the dashboard pomodoro's 「第 3 轮 · 专注阶段」 shipped that way until 2026-10-01.
-  The sweep that found them: after a page boots, list visible `.zq-main` text that contains a digit and matches the
-  static HTML or inline demo script word for word (run on every user page that day; only those two turned up).
+- **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
+  study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
+  «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't
+  repaint stayed on screen — 「已审核模板 · 4 个」, 「第 3 轮」 and a 60% progress bar all shipped that way.
+  `InitErrorReplacesDemoContentTest` now pins: only the one-line theme script and the dashboard's pomodoro script may be
+  inline; any digit in a page's static `.zq-main` text must be on its short list of real copy; and a failed load still
+  replaces all of `.zq-main`. The real controls the demo scripts used to draw (statistics 日/周/月, achievement filters,
+  routine weekdays, the shared-plan modal's close buttons) now live in the static HTML and are bound by the shell — the
+  same test pins that, because deleting them breaks the page silently. `index.html` (landing page mockups) is excluded
+  until the positioning step rewrites it.
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261003-walkthrough`.
+  old bundle. Current token: `20261004-cleanup`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

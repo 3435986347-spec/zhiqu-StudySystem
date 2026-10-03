@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261003-walkthrough" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261003-walkthrough">
-  <link rel="manifest" href="manifest.json?v=20261003-walkthrough">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261004-cleanup" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261004-cleanup">
+  <link rel="manifest" href="manifest.json?v=20261004-cleanup">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261003-walkthrough">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261004-cleanup">
 </head>
 <body>
   <div class="zq-app">
@@ -29,16 +29,16 @@
               <h2 class="zq-h2" style="font-size:17px;">王明远</h2>
               <span class="zq-badge" style="margin-top:7px; background:var(--zq-tint); color:var(--zq-primary); font-weight:700;">管理员</span>
               <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:16px; padding-top:14px; border-top:1px solid var(--zq-border-soft);">
-                <div><strong class="zq-mono" style="display:block; font-size:18px;">23</strong><span style="font-size:11px; color:var(--zq-text3);">连续天数</span></div>
-                <div><strong class="zq-mono" style="display:block; font-size:18px;">128</strong><span style="font-size:11px; color:var(--zq-text3);">完成任务</span></div>
-                <div><strong class="zq-mono" style="display:block; font-size:18px;">47.6h</strong><span style="font-size:11px; color:var(--zq-text3);">本月时长</span></div>
+                <div><strong class="zq-mono" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">连续天数</span></div>
+                <div><strong class="zq-mono" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">完成任务</span></div>
+                <div><strong class="zq-mono" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">本月时长</span></div>
               </div>
             </section>
             <section class="zq-card">
               <h3 style="margin:0 0 10px; font-size:14px; font-weight:700;">提醒推送</h3>
               <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
                 <span style="font-size:12.5px; color:var(--zq-text2); line-height:1.5;">打开后，任务的提醒时间、截止前提醒和每天 08:00 的待办汇总都推送到下面的渠道</span>
-                <button id="zq-morning" onclick="tog()" style="flex:none; width:42px; height:24px; border:none; border-radius:999px; background:var(--zq-primary); cursor:pointer; position:relative; transition:background .2s;"><i style="position:absolute; top:3px; left:21px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s;"></i></button>
+                <button id="zq-morning" type="button" style="flex:none; width:42px; height:24px; border:none; border-radius:999px; background:var(--zq-border); cursor:pointer; position:relative; transition:background .2s;"><i style="position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s;"></i></button>
               </div>
               <!-- 渠道配置。此前这一整块只存在于 js/profile.js —— 那个文件零页面加载
                    （见 CLAUDE.md），于是用户没有任何途径填凭据，而开关照样显示「已开启」，
@@ -93,7 +93,7 @@
             <section class="zq-card">
               <h3 style="margin:0 0 12px; font-size:14px; font-weight:700;">账号与安全</h3>
               <div style="display:flex; flex-direction:column;">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft); font-size:12.5px;"><span style="color:var(--zq-text2); flex:none;">最近登录</span><span style="font-weight:600; text-align:right;">07-04 09:12 · 上海</span></div>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft); font-size:12.5px;"><span style="color:var(--zq-text2); flex:none;">最近登录</span><span style="font-weight:600; text-align:right;">—</span></div>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft); font-size:12.5px;"><span style="color:var(--zq-text2); flex:none;">登录设备</span><span style="font-weight:600; text-align:right;">Chrome · macOS</span></div>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft); font-size:12.5px;"><span style="color:var(--zq-text2); flex:none;">知识 Wiki</span><a href="knowledge-wiki.html" style="color:var(--zq-primary); font-weight:600; white-space:nowrap;">进入知识库 →</a></div>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; font-size:12.5px;"><span style="color:var(--zq-text2); flex:none;">退出登录</span><a href="index.html" class="zq-btn-ghost" style="height:26px; padding:0 12px; font-size:12px;">退出</a></div>
@@ -139,25 +139,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261003-walkthrough"></script>
-  <script>
-    function tog(){ var b=document.getElementById('zq-morning'), i=b.firstElementChild, on=i.style.left==='21px'; i.style.left=on?'3px':'21px'; b.style.background=on?'var(--zq-border)':'var(--zq-primary)'; }
-    var models=[
-      ['Claude Sonnet（我的）','claude-sonnet-4-20250514','ANTHROPIC','我的',1,'sk-ant-****7f2','✓ 通过','✓ 支持','✓ 支持'],
-      ['校园公共模型（系统）','deepseek-chat','OPENAI_COMPATIBLE','系统',0,'系统托管','✓ 通过','— 未测试','✓ 支持']
-    ];
-    document.getElementById('zq-models').innerHTML = models.map(function(m){
-      var mine=m[4];
-      return '<article style="border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:'+(mine?'var(--zq-card)':'var(--zq-card-soft)')+'; padding:12px 14px;">'
-        + '<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;"><div style="min-width:0;"><div style="font-size:13.5px; font-weight:700;">'+m[0]+'</div><div class="zq-mono" style="font-size:11.5px; color:var(--zq-text3); margin-top:2px;">'+m[1]+'</div></div><span class="zq-badge" style="background:'+(mine?'var(--zq-tint)':'var(--zq-card-soft)')+'; color:'+(mine?'var(--zq-primary)':'var(--zq-text2)')+'; font-weight:700;">'+m[3]+'</span></div>'
-        + '<div style="display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:8px; margin-top:11px; padding-top:11px; border-top:1px solid var(--zq-border-soft);">'
-        + tile('Provider',m[2],'var(--zq-text)')+tile('连通性',m[6],'var(--zq-ok)')+tile('视觉（多模态）',m[7],m[7].indexOf('✓')>=0?'var(--zq-ok)':'var(--zq-text3)')+tile('深度思考',m[8],'var(--zq-ok)')+tile('Key',m[5],'var(--zq-text2)')
-        + '</div>'
-        + '<div style="display:flex; gap:6px; margin-top:11px; flex-wrap:wrap;">'+(mine?'<button class="zq-btn-ghost" style="height:26px; padding:0 11px; font-size:12px;">编辑</button>':'')+'<button class="zq-btn-ghost" style="height:26px; padding:0 11px; font-size:12px;">测试</button>'+(mine?'<button style="height:26px; padding:0 11px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12px; font-weight:600; cursor:pointer;">能力测试</button><button class="zq-btn-ghost" style="height:26px; padding:0 11px; font-size:12px;">删除</button>':'')+'</div>'
-        + '</article>';
-    }).join('');
-    function tile(k,v,c){ return '<div><span style="display:block; font-size:10.5px; color:var(--zq-text3);">'+k+'</span><strong style="display:block; margin-top:3px; font-size:11.5px; font-weight:600; color:'+c+'; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+v+'</strong></div>'; }
-  </script>
-  <script src="assets/zhiqu-api.js?v=20261003-walkthrough"></script>
+  <script src="assets/zhiqu-ui.js?v=20261004-cleanup"></script>
+  <script src="assets/zhiqu-api.js?v=20261004-cleanup"></script>
 </body>
 </html>
