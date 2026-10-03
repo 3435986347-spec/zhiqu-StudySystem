@@ -177,6 +177,9 @@ fail tells you nothing (`kill(pid, 0)` reports zombies as alive — see 命令�
 
 ## 进行中的计划
 
+**产品方案（2026-10-03）见 [`docs/product-plan.md`](docs/product-plan.md)**：定位从「学生学习系统」改成「AI 办公助手」（用户定的），
+五步按顺序做（走主流程 → 删 → 定位落地 → 前端拆模块 → 本文件瘦身），标「要你定」的先问用户。
+
 **zhiqu harness（P0–P7）见 [`docs/zhiqu-harness-plan.md`](docs/zhiqu-harness-plan.md)**。用户要求全部都做、严格按表执行、
 不擅自增删；每完成一项更新那份文件的「进度」列。npm 发布（P7）前必须单独问用户。
 
