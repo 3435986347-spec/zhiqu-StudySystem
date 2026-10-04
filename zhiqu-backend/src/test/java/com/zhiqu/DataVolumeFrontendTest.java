@@ -69,7 +69,7 @@ class DataVolumeFrontendTest {
     @Test
     @DisplayName("任务页「加载更多」：这期间换了筛选条件，就不把旧条件下的那一页接到新列表后面")
     void 加载更多认筛选条件() throws Exception {
-        String f = body(api(), "async function loadMoreTasks()");
+        String f = body(SourceText.pageModule("tasks.js"), "async function loadMoreTasks()");
         int fetch = f.indexOf("await api.get('/task/page?' + query");
         int guard = f.indexOf("if (query !== state.taskQuery) return;");
         assertTrue(fetch > 0 && guard > fetch, "加载更多要在拿到结果之后核对筛选条件还是不是发请求时那一套");

@@ -43,13 +43,24 @@ class TaskFormTest {
     @DisplayName("任务页：新建和编辑都打开同一份表单，表单里每一项都真的读进请求")
     void 新建和编辑都走表单() throws Exception {
         String code = api();
-        int a = code.indexOf("async function bootTasks()");
-        int b = code.indexOf("\n  }\n", a);
-        assertTrue(a >= 0 && b > a, "找不到 bootTasks");
-        assertTrue(code.substring(a, b).contains("newBtn.onclick = function () { openTaskForm(null); }"), "「新建任务」没有打开任务表单");
-        assertTrue(code.contains("return openTaskForm(Number(b.dataset.editTask));"), "「编辑」没有打开任务表单");
-        assertFalse(code.contains("askText({ title: '新建任务'") || code.contains("askText({ title: '修改任务'"),
+        // 任务页第三十四轮起是模块（pages/tasks.js）；表单还在壳里（看板也用）
+        String tasks = SourceText.pageModule("tasks.js");
+        assertTrue(SourceText.functionBody(tasks, "async function bootTasks()").contains("newBtn.onclick = function () { openTaskForm(null, bootTasks); }"),
+                "「新建任务」没有打开任务表单");
+        assertTrue(tasks.contains("return openTaskForm(Number(b.dataset.editTask), bootTasks);"), "「编辑」没有打开任务表单");
+        String all = SourceText.frontendScripts();
+        assertFalse(all.contains("askText({ title: '新建任务'") || all.contains("askText({ title: '修改任务'"),
                 "还有只问一个标题的新建 / 编辑");
+        // 表单保存之后刷新什么由打开它的那一页说（壳里不再默认刷新任务页 —— 任务页挪走了）：每一处都要传
+        Matcher call = Pattern.compile("(?<!function )openTaskForm\\(([^;]*?)\\);").matcher(all);
+        List<String> noRefresh = new ArrayList<>();
+        int calls = 0;
+        while (call.find()) {
+            calls++;
+            if (!Pattern.compile(",\\s*\\w+\\s*\\)?$").matcher(call.group(1)).find()) noRefresh.add(call.group());
+        }
+        assertTrue(calls >= 3, "只扫到 " + calls + " 处打开任务表单 —— 任务页新建、编辑，看板新增");
+        assertEquals(List.of(), noRefresh, "这些地方打开任务表单时没说保存之后刷新什么 —— 保存了、列表却还是旧的");
 
         int f = code.indexOf("async function openTaskForm(id, onSaved)");
         int g = code.indexOf("\n  }\n", f);

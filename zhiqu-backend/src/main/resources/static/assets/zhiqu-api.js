@@ -1100,29 +1100,6 @@
     }).join('') : empty('暂无临近 DDL');
   }
 
-  async function bootTasks() {
-    var selects = $all('.zq-card .zq-select');
-    var queryBtn = $all('.zq-card .zq-btn')[0], newBtn = $all('.zq-card .zq-btn')[1];
-    if (queryBtn) queryBtn.onclick = loadTasks;
-    if (newBtn) newBtn.onclick = function () { openTaskForm(null); };
-    await loadTasks();
-    async function loadTasks() {
-      var params = new URLSearchParams();
-      var q = selects[0] ? selects[0].selectedIndex : 0, s = selects[1] ? selects[1].selectedIndex : 0, p = selects[2] ? selects[2].selectedIndex : 0;
-      if (q) params.set('quadrant', q);
-      if (s) params.set('status', s - 1);
-      if (p) params.set('priority', p - 1);
-      params.set('sortBy', selects[3] && selects[3].selectedIndex === 1 ? 'deadline' : selects[3] && selects[3].selectedIndex === 2 ? 'priority' : 'updatedAt');
-      params.set('sortOrder', selects[4] && selects[4].selectedIndex === 1 ? 'asc' : 'desc');
-      var current = latestOnly('tasks');
-      var page = await api.get('/task/page?' + params.toString() + '&offset=0&limit=' + TASK_PAGE_SIZE);
-      if (!current()) return;
-      state.taskQuery = params.toString();
-      state.tasks = (page.items || []).map(normalizeTask);
-      state.taskTotal = Number(page.total || 0);
-      renderTaskRows(state.tasks);
-    }
-  }
   /** 周期给人看的样子（第十九轮）：列表、参考计划、AI 草稿原来直接显示 DAILY / WEEKLY。星期按 ISO：1 是周一。 */
   function freqLabel(frequency, daysOfWeek) {
     var f = String(frequency || 'DAILY').toUpperCase();
@@ -1134,38 +1111,6 @@
     return days.length ? '每周' + days.map(function (d) { return names[d - 1]; }).join('、') : '每周';
   }
 
-  /**
-   * 任务页一次取一页（第十七轮）。用了两年的账号有几千条任务：原来一次全取回来（1.6MB）、画出四万多个节点，
-   * 页面要卡好几秒。现在先给 100 条，「加载更多」再取下一页；页脚写的是真的总数。
-   */
-  var TASK_PAGE_SIZE = 100;
-  async function loadMoreTasks() {
-    var query = state.taskQuery;
-    var page = await api.get('/task/page?' + query + '&offset=' + state.tasks.length + '&limit=' + TASK_PAGE_SIZE);
-    // 这期间换了筛选条件（loadTasks 重新来过）：这一页是旧条件下的，不能接到新列表后面
-    if (query !== state.taskQuery) return;
-    state.tasks = state.tasks.concat((page.items || []).map(normalizeTask));
-    state.taskTotal = Number(page.total || 0);
-    renderTaskRows(state.tasks);
-  }
-  function renderTaskRows(list) {
-    var host = $('#zq-rows'); if (!host) return;
-    host.innerHTML = list.length ? list.map(function (t) {
-      var q = qKey(t.quadrant);
-      return '<div style="display:grid;grid-template-columns:minmax(200px,2.2fr) 104px 64px 78px 118px 118px 108px;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--zq-border-soft);opacity:' + (t.status === 2 ? .55 : 1) + ';"><div style="min-width:0;"><div style="font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.title) + '</div><div style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.description || '—') + '</div></div><span><span class="zq-badge" style="background:var(--zq-' + q + '-bg);color:var(--zq-' + q + ');">' + qLabel(t.quadrant) + '</span></span><span style="font-size:12.5px;font-weight:600;">' + pLabel(t.priority) + '</span><span><button data-cycle-task="' + t.id + '" style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px solid var(--zq-border);border-radius:999px;background:var(--zq-card-soft);color:var(--zq-text2);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">' + sLabel(t.status) + '</button></span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(fmtDate(t.deadline)) + '</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(fmtDate(t.reminderTime)) + '</span><span style="display:flex;justify-content:flex-end;gap:6px;"><button class="zq-btn-ghost" data-edit-task="' + t.id + '" style="height:26px;padding:0 10px;font-size:12px;">编辑</button><button class="zq-btn-ghost" data-del-task="' + t.id + '" style="height:26px;padding:0 10px;font-size:12px;">删除</button></span></div>';
-    }).join('') : empty('暂无任务');
-    var total = Math.max(state.taskTotal || 0, list.length);
-    if (total > list.length) {
-      host.insertAdjacentHTML('beforeend', '<div style="padding:12px 16px;text-align:center;"><button class="zq-btn-ghost" data-more-tasks style="height:30px;">加载更多（还有 ' + (total - list.length) + ' 条）</button></div>');
-      var more = $('[data-more-tasks]', host);
-      if (more) more.onclick = function () { more.disabled = true; safe('加载任务', loadMoreTasks); };
-    }
-    var foot = $('.zq-table > div:last-child span');
-    if (foot) foot.textContent = '共 ' + total + ' 条' + (total > list.length ? '（显示了 ' + list.length + ' 条）' : '');
-    $all('[data-cycle-task]', host).forEach(function (b) { b.onclick = function () { cycleTask(Number(b.dataset.cycleTask)); }; });
-    $all('[data-del-task]', host).forEach(function (b) { b.onclick = function () { deleteTask(Number(b.dataset.delTask)); }; });
-    $all('[data-edit-task]', host).forEach(function (b) { b.onclick = function () { safe('打开任务', function () { return openTaskForm(Number(b.dataset.editTask)); }); }; });
-  }
   // ── 任务表单（2026-10-01）──────────────────────────────────────────────────
   // 原来「新建任务」只问一个标题、「编辑」也只改标题：截止时间、提醒时间、象限、优先级在任务页上都设置不了 ——
   // 列表里明明有这几列，只能靠 AI 草稿去填。表单把服务端收的字段摆出来，新建和编辑共用一份。
@@ -1304,7 +1249,7 @@
       return null;
     }
   }
-  /** onSaved：保存之后刷新哪一页（默认任务页；看板上的「新增任务」传 bootDashboard）。 */
+  /** onSaved：保存之后刷新什么（任务页传自己的 bootTasks，看板上的「新增任务」传 bootDashboard）—— 第三十四轮任务页挪进模块之后壳里不再有默认值。 */
   async function openTaskForm(id, onSaved) {
     var before = id == null ? null : state.tasks.find(function (x) { return x.id === id; });
     if (id != null && !before) return;
@@ -1348,21 +1293,12 @@
             refreshUpcomingReminders();   // 刚设的提醒马上进页面里的提醒清单，不等 10 分钟那一趟
             h.close();
             toast(before ? '任务已保存' : (res && res.created ? '已创建 ' + res.created + ' 条（每周一条）' : '任务已创建'));
-            await (onSaved || bootTasks)();
+            if (onSaved) await onSaved();
           }).finally(function () { ok.disabled = false; });
         };
       }
     });
   }
-  async function deleteTask(id) {
-    if (!await askConfirm({ title: '删除任务', message: '确定删除这个任务？删除后不可恢复。', okText: '删除', danger: true })) return;
-    await safe('删除任务', async function () { await api.del('/task/' + id); await bootTasks(); });
-  }
-  async function cycleTask(id) {
-    var t = state.tasks.find(function (x) { return x.id === id; }); if (!t) return;
-    await safe('切换状态', async function () { await api.put('/task/' + id + '/status?status=' + ((t.status + 1) % 3)); await bootTasks(); });
-  }
-
   // /ai/models 返回的是对象 {systemModels, userModels, defaultModelId,...}，统一拍平成数组
   function normalizeModelList(data) {
     if (Array.isArray(data)) return data;
@@ -4913,7 +4849,7 @@
     'admin.html': 'pages/admin.js', 'account-admin.html': 'pages/admin.js',
     'feedback-admin.html': 'pages/admin.js', 'shared-plan-admin.html': 'pages/admin.js',
     'routines.html': 'pages/routines.js', 'statistics.html': 'pages/statistics.js',
-    'shared-plans.html': 'pages/shared-plans.js'
+    'shared-plans.html': 'pages/shared-plans.js', 'tasks.html': 'pages/tasks.js'
   };
   function isDialogHash(h) { return /^#(?:settings(?:[/?]|$)|achievements$)/.test(h || ''); }
   var dialog = null;            // 开着的那个：{ kind, handle }
@@ -4980,7 +4916,7 @@
     api: api, state: state, esc: esc, toast: toast, notice: notice, askConfirm: askConfirm, askText: askText, showInfo: showInfo, safe: safe, openModal: openModal,
     $: $, $all: $all, pickFile: pickFile, empty: empty, fmtDate: fmtDate, d10: d10, updateSidebarUser: updateSidebarUser, normalizeModelList: normalizeModelList,
     planCategory: planCategory, planCategoryOptions: planCategoryOptions, freqLabel: freqLabel,
-    today: today, latestOnly: latestOnly, keepDraft: keepDraft, writeKey: writeKey, normalizeTask: normalizeTask, qLabel: qLabel, sLabel: sLabel,
+    today: today, latestOnly: latestOnly, keepDraft: keepDraft, writeKey: writeKey, qKey: qKey, pLabel: pLabel, openTaskForm: openTaskForm, normalizeTask: normalizeTask, qLabel: qLabel, sLabel: sLabel,
     REMINDER_FIELDS: REMINDER_FIELDS, currentReminderChannel: currentReminderChannel, reminderChannelReady: reminderChannelReady,
     logout: logout, adoptNewToken: adoptNewToken
   };
@@ -5034,7 +4970,7 @@
         watchDialogs();
         // 页面开着跨过业务日期的零点：只重新取数据（看板、例行计划的「今天」），见 watchBusinessDay
         if (!dayWatched && DAY_RELOAD[page]) { dayWatched = true; watchBusinessDay(DAY_RELOAD[page]); }
-        var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
+        var boots = { 'dashboard.html': bootDashboard, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
         // 番茄钟的待补记不能挂在页面启动之后：启动失败（网断着打开的、被限流）时正是有待补记的时候，挂在后面的话这一页就不补了。
         // 当场那一趟放在启动之后（成不成都跑）：补上了要刷新的看板数字，得等看板自己先起来
         var watchPomodoros = !pomoWatched;
