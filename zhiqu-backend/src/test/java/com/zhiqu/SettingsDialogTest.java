@@ -67,25 +67,9 @@ class SettingsDialogTest {
     }
 
     @Test
-    @DisplayName("模块只用 zqShared 里给了的东西（少一样要到打开那一栏时才炸）；查 DOM 只在弹窗里")
-    void 模块只用壳给的东西() throws IOException {
+    @DisplayName("设置弹窗查元素只在弹窗里（弹窗和底下的页面同时在）；它和壳之间那根线（zqShared）由 PageModulesTest 核对")
+    void 查元素只在弹窗里() throws IOException {
         String js = module();
-        Set<String> used = new TreeSet<>();
-        Matcher u = Pattern.compile("\\bsh\\.([A-Za-z_][A-Za-z0-9_]*)").matcher(js);
-        while (u.find()) used.add(u.group(1));
-        assertTrue(used.size() >= 15, "settings.js 里只认出 " + used.size() + " 样 sh.xxx —— 扫空了？" + used);
-
-        String shell = shell();
-        int a = shell.indexOf("var zqShared = {");
-        assertTrue(a >= 0, "壳里找不到 var zqShared = {");
-        String literal = shell.substring(a, shell.indexOf("};", a));
-        Set<String> given = new TreeSet<>();
-        Matcher k = Pattern.compile("([A-Za-z_][A-Za-z0-9_]*):\\s*[A-Za-z_]").matcher(literal);
-        while (k.find()) given.add(k.group(1));
-        Set<String> missing = new TreeSet<>(used);
-        missing.removeAll(given);
-        assertEquals(Set.of(), missing, "settings.js 用了 zqShared 里没有的东西");
-
         for (String global : List.of("document.querySelector", "document.getElementById", "document.querySelectorAll")) {
             assertFalse(js.contains(global), "settings.js 在整页上找元素（" + global + "）—— 弹窗和底下的页面同时在，要在弹窗里找");
         }
@@ -108,9 +92,11 @@ class SettingsDialogTest {
     @DisplayName("壳在第一次打开时才 import 模块，带上和自己同一个缓存令牌；页面不直接加载它；离线缓存里有它")
     void 按需加载并带令牌() throws IOException {
         String shell = shell();
-        String load = fn(shell, "function loadSettingsModule() {");
+        // 第三十一轮起加载收成一个 loadModule（页面模块也走它），设置弹窗只是其中一个
+        String load = fn(shell, "function loadModule(rel) {");
+        assertTrue(shell.contains("function loadSettingsModule() { return loadModule('settings.js'); }"), "设置弹窗没走 loadModule");
         assertTrue(load.contains("query = new URL(SELF_SRC).search;")
-                        && load.contains("import(new URL('assets/settings.js' + query, location.href).href)"),
+                        && load.contains("import(new URL('assets/' + rel + query, location.href).href)"),
                 "模块的地址没带上壳自己的 ?v= —— 发版之后浏览器会拿缓存里的旧模块配新壳（StaticAssetCacheTokenTest 只看页面里写着的引用，看不到这里）");
         assertTrue(shell.contains("var SELF_SRC = (function () { try { return (document.currentScript && document.currentScript.src) || ''; }"),
                 "SELF_SRC 要在脚本加载的那一刻取（currentScript 只在同步执行时有值）");

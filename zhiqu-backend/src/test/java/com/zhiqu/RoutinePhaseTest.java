@@ -37,7 +37,14 @@ class RoutinePhaseTest {
     @Test
     @DisplayName("周期只经 freqLabel 显示：例行计划列表、参考计划里的例行计划、AI 草稿，三处都不再露出 DAILY / WEEKLY（第十九轮）")
     void 周期显示成中文() throws Exception {
-        String code = SourceText.stripComments(Files.readString(Path.of("src/main/resources/static/assets/zhiqu-api.js")));
+        // 壳和拆出去的模块一起扫（第三十一轮：共享计划审核的详情弹窗挪进了 pages/admin.js —— 只扫壳的话，那一处原样显示周期也看不见）
+        StringBuilder all = new StringBuilder();
+        try (java.util.stream.Stream<Path> walk = Files.walk(Path.of("src/main/resources/static/assets"))) {
+            for (Path f : walk.filter(p -> p.toString().endsWith(".js") && !p.toString().contains("/vendor/")).sorted().toList()) {
+                all.append(SourceText.stripComments(Files.readString(f))).append('\n');
+            }
+        }
+        String code = all.toString();
         java.util.regex.Matcher raw = java.util.regex.Pattern.compile(
                 "\\(\\s*\\w+\\.frequency\\s*\\|\\|\\s*'DAILY'\\s*\\)|String\\(\\s*\\w+\\.frequency\\s*\\)").matcher(code);
         boolean found = raw.find();

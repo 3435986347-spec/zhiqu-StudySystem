@@ -129,6 +129,10 @@ class MobileLayoutTest {
         }
         files.add(STATIC.resolve("assets/zhiqu-api.js"));
         files.add(STATIC.resolve("assets/zhiqu-ui.js"));
+        // 页面模块（第三十一轮起，方案第 4 步）画在 .zq-main 里，和壳里的页面代码同一个规矩；设置弹窗另有一条（弹窗里的网格）
+        try (Stream<Path> s = Files.list(STATIC.resolve("assets/pages"))) {
+            s.filter(p -> p.toString().endsWith(".js")).sorted().forEach(files::add);
+        }
 
         Pattern stylePat = Pattern.compile("style=\"([^\"]*grid-template-columns[^\"]*)\"");
         Pattern valuePat = Pattern.compile("grid-template-columns:\\s*([^;\"']+)");

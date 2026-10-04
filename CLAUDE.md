@@ -891,6 +891,16 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   say how they lay out on a phone with `zq-phone-1col` / `zq-phone-2col` — the `[style*=…]` phone rules only reach `.zq-main`.
   `profile.html` / `achievement.html` are redirect stubs kept for old bookmarks and for `profile.html#harness=…` links printed
   by older CLIs; the server now hands out `/ai-assistant.html#settings/cli?harness=…`, and the login redirect carries that hash.
+- **Page modules** (round 31, `docs/rounds/round-31.md`; step 4 continues page by page). A moved page lives in
+  `assets/pages/<name>.js`, exports `boots[<page>.html](zqShared)`, and is listed in the shell's `PAGE_MODULES`; `route()` imports
+  it through `loadModule` (same `?v=`, loaded once, a user-facing error when it can't load, failures not cached) **after** the
+  admin gate, so non-admins never download `pages/admin.js`. Modules `bind()` what they need from `zqShared` into same-named
+  locals so moved code stays byte-identical. `PageModulesTest` imports every entry, checks every app page is booted by
+  exactly one side, and flags a shell helper a module calls without binding it (that is a ReferenceError only when the
+  page opens). Page modules render into `.zq-main`, so `MobileLayoutTest` scans `assets/pages/` too.
+  **Before moving a block, grep `src/test` for its distinctive lines, not just its function names** — tests that read
+  `zhiqu-api.js` for a call or a phrase go red (or, worse, vacuously green) once it moves. Rounds 30 and 31 each found
+  some only in the full run (`latest-check.js`, `ReminderChannelWiringTest`, `RoutinePhaseTest`); scan `assets/**/*.js`.
 - **"Today" in the frontend is `today()` — the business date (business time zone, server's clock) —
   never `toISOString()`, and since round 21 not `localDate()` either.** `toISOString()` is UTC:
   between 00:00 and 08:00 CST it yields *yesterday* (the dashboard header showed yesterday, check-ins
@@ -948,7 +958,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261004-settings`.
+  old bundle. Current token: `20261004-admin`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

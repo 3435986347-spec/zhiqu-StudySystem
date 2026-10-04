@@ -1,4 +1,4 @@
-const ZHIQU_CACHE = 'zhiqu-shell-v20261004-settings';
+const ZHIQU_CACHE = 'zhiqu-shell-v20261004-admin';
 
 // 核心资源：必须全部缓存成功，否则安装失败、保留旧 Worker（旧缓存不被清理），避免一次网络抖动就丢掉离线能力
 const CORE_ASSETS = [
@@ -21,6 +21,7 @@ const CORE_ASSETS = [
     '/assets/zhiqu-ui.js',
     '/assets/zhiqu-api.js',
     '/assets/settings.js',
+    // 页面模块（assets/pages/，第三十一轮起）不预先下载：后台那一个普通用户根本不该下载；打开过的页面会被下面的 fetch 处理器顺手缓存
     '/assets/vendor/katex/katex.min.css',
     '/assets/vendor/katex/katex.min.js'
 ];
