@@ -172,7 +172,7 @@ class InitErrorReplacesDemoContentTest {
         String routines = SourceText.pageModule("routines.js");
         assertTrue(routines.contains("$all('#zq-wd button').forEach(function (b) {") && routines.contains("b.addEventListener('click', function () {\n      b.dataset.on = b.dataset.on === '1' ? '0' : '1';"),
                 "例行计划的星期按钮没有接上");
-        assertTrue(code.contains("$all('#zq-modal [data-close-modal]').forEach(function (b) { b.onclick = function () { $('#zq-modal').style.display = 'none'; }; });"),
+        assertTrue(SourceText.pageModule("shared-plans.js").contains("$all('#zq-modal [data-close-modal]').forEach(function (b) { b.onclick = function () { $('#zq-modal').style.display = 'none'; }; });"),
                 "参考计划的弹窗关不上");
     }
 }

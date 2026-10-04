@@ -83,12 +83,10 @@ class TaskFormTest {
         Matcher span = Pattern.compile("<span id=\"zq-plan-count\"[^>]*>([^<]*)</span>").matcher(page);
         assertTrue(span.find(), "shared-plans.html 里找不到 #zq-plan-count");
         assertFalse(span.group(1).matches(".*\\d.*"), "个数那一格里写死了数字：" + span.group(1));
-        String code = api();
-        int a = code.indexOf("async function loadPlans(");
-        int b = code.indexOf("\n  }\n", a);
-        assertTrue(a >= 0 && b > a, "找不到 loadPlans");
+        // 第三十三轮起参考计划页是模块（pages/shared-plans.js）
+        String body = SourceText.functionBody(SourceText.pageModule("shared-plans.js"), "async function loadPlans(");
         // 钉整句（「if (false) count.textContent = …」也含着那几个片段 —— 扰动时这样漏过去过）
-        assertTrue(code.substring(a, b).contains("if (count) count.textContent = ((planCategory(category) || [])[1] || '已审核模板') + ' · ' + plans.length + ' 个';"),
+        assertTrue(body.contains("if (count) count.textContent = ((planCategory(category) || [])[1] || '已审核模板') + ' · ' + plans.length + ' 个';"),
                 "loadPlans 没有按列表写个数");
     }
 

@@ -29,7 +29,12 @@ class RequestResilienceTest {
     @DisplayName("写操作都经过 request()：「同一个写请求没回来前不重发」住在那里，直接 fetch 的写操作会绕开它（只许聊天流，它有自己的发送中保护）")
     void 写操作不绕过request() throws Exception {
         Path root = Path.of("src/main/resources/static");
-        List<Path> files = new ArrayList<>(List.of(root.resolve("assets/zhiqu-api.js"), root.resolve("assets/zhiqu-ui.js")));
+        // assets 下的脚本一个不落（第三十轮起拆出去的模块也是活的前端：原来只列壳和 zhiqu-ui.js，模块里直接 fetch 写操作 / 现生成键都看不见）
+        List<Path> files = new ArrayList<>();
+        try (Stream<Path> js = Files.walk(root.resolve("assets"))) {
+            js.filter(p -> p.toString().endsWith(".js") && !p.toString().contains("/vendor/")).sorted().forEach(files::add);
+        }
+        assertTrue(files.size() >= 6, "assets 下只扫到 " + files.size() + " 个脚本");
         try (Stream<Path> html = Files.list(root)) {
             html.filter(p -> p.toString().endsWith(".html")).forEach(files::add);
         }
@@ -67,7 +72,12 @@ class RequestResilienceTest {
     @DisplayName("幂等键交给 request()：页面上自己带键的只有套用参考计划（一次打开 = 一次套用）和番茄钟的待补记（一条一个键，存在设备上）—— 每次点击现生成一个键，回应丢了之后再点就是新的一次，建出两份")
     void 键交给request() throws Exception {
         Path root = Path.of("src/main/resources/static");
-        List<Path> files = new ArrayList<>(List.of(root.resolve("assets/zhiqu-api.js"), root.resolve("assets/zhiqu-ui.js")));
+        // assets 下的脚本一个不落（第三十轮起拆出去的模块也是活的前端：原来只列壳和 zhiqu-ui.js，模块里直接 fetch 写操作 / 现生成键都看不见）
+        List<Path> files = new ArrayList<>();
+        try (Stream<Path> js = Files.walk(root.resolve("assets"))) {
+            js.filter(p -> p.toString().endsWith(".js") && !p.toString().contains("/vendor/")).sorted().forEach(files::add);
+        }
+        assertTrue(files.size() >= 6, "assets 下只扫到 " + files.size() + " 个脚本");
         try (Stream<Path> html = Files.list(root)) {
             html.filter(p -> p.toString().endsWith(".html")).forEach(files::add);
         }
@@ -79,8 +89,10 @@ class RequestResilienceTest {
                 found.add(f.getFileName() + "：" + m.group());
             }
         }
-        assertTrue(found.equals(List.of("zhiqu-api.js：{ 'Idempotency-Key': x.key }",
-                        "zhiqu-api.js：{ 'Idempotency-Key': applyKey + ':' + startDate.trim() }")),
+        // 按文件名排了再比：扫的是整个 assets 目录，先后跟着目录结构走，不是这条判据关心的
+        assertTrue(found.stream().sorted().toList().equals(List.of(
+                        "shared-plans.js：{ 'Idempotency-Key': applyKey + ':' + startDate.trim() }",
+                        "zhiqu-api.js：{ 'Idempotency-Key': x.key }")),
                 "自己带键的写请求应当只有番茄钟的待补记和套用参考计划，实际：\n" + String.join("\n", found));
     }
 }
