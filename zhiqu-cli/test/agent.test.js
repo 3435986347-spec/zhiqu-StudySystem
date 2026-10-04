@@ -9,7 +9,7 @@ import { SessionStore } from '../src/session.js';
 import { LocalTools } from '../src/tools/local.js';
 import { fakeApi, fakeUi, tmpdir, write } from './helpers.js';
 
-const REMOTE = ['search_wiki', 'read_wiki_page', 'create_wiki_patch', 'create_study_plan', 'read_memory', 'propose_memory']
+const REMOTE = ['search_wiki', 'read_wiki_page', 'create_wiki_patch', 'create_study_plan', 'read_memory', 'propose_memory', 'list_tasks', 'update_task_status']
   .map((name) => ({ type: 'function', function: { name, parameters: { type: 'object', properties: {} } } }));
 
 function makeCtx({ mode = 'auto', replies = [{ text: '好' }], answers = [], window = 64_000, root = tmpdir() } = {}) {
@@ -29,7 +29,8 @@ const toolMessages = (ctx) => ctx.messages.filter((m) => m.role === 'tool').map(
 test('plan 档只下发读 / 搜 / 查（含远程只读）和 exit_plan_mode；ask / auto 下发全部，没有 exit_plan_mode', () => {
   const plan = names(makeCtx({ mode: 'plan' }));
   // update_todos 三档都有（第九轮）：只动命令行自己记的清单，不碰文件
-  assert.deepEqual(plan, ['list_files', 'read_file', 'search', 'search_wiki', 'read_wiki_page', 'read_memory', 'update_todos', 'exit_plan_mode']);
+  // list_tasks 是读（第二十九轮），update_task_status 直接生效、plan 档不给
+  assert.deepEqual(plan, ['list_files', 'read_file', 'search', 'search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks', 'update_todos', 'exit_plan_mode']);
   for (const mode of ['ask', 'auto']) {
     const all = names(makeCtx({ mode }));
     for (const n of ['write_file', 'run_command', 'create_study_plan', 'propose_memory']) assert.ok(all.includes(n), `${mode} 缺 ${n}`);
@@ -174,7 +175,24 @@ test('远程工具带上这段会话的 id；网页存档先开会话再写消�
   assert.equal(last.pathname, `/api/harness/sessions/${ctx.session.id}/messages`, '一轮只发一个存档请求');
   assert.equal(last.body.title, '排个计划');
   assert.equal(last.body.workspace, path.basename(ctx.root));
-  assert.match(last.body.messages[1].content, /> 过程：生成学习计划草稿/);
+  assert.match(last.body.messages[1].content, /> 过程：生成计划草稿/);
+});
+
+test('改任务状态直接生效（第二十九轮）：ask 档先问、说 n 不调；说 y 调；auto 档不问', async () => {
+  const call = { calls: [{ name: 'update_task_status', args: { task_id: 12, status: 'done' } }] };
+  const calledStatus = (ctx) => ctx.api.posts.filter((p) => p.pathname === '/api/harness/tools/call' && p.body.name === 'update_task_status').length;
+  const denied = makeCtx({ mode: 'ask', answers: ['n'], replies: [call, { text: '好' }] });
+  await runTurn(denied, '把 12 标完成');
+  assert.match(denied.ui.text(), /把任务 #12 标成已完成？/);
+  assert.equal(calledStatus(denied), 0, '用户说不改，就不许调到服务器上');
+  assert.match(toolMessages(denied)[0], /用户没有允许改这条任务的状态/);
+  const yes = makeCtx({ mode: 'ask', answers: ['y'], replies: [call, { text: '好' }] });
+  await runTurn(yes, '把 12 标完成');
+  assert.equal(calledStatus(yes), 1);
+  const auto = makeCtx({ mode: 'auto', replies: [call, { text: '好' }] });
+  await runTurn(auto, '把 12 标完成');
+  assert.equal(calledStatus(auto), 1);
+  assert.doesNotMatch(auto.ui.text(), /标成已完成？/, 'auto 档不问');
 });
 
 test('会话记录：一轮下来 user / assistant / tool 都落进 jsonl，续接能原样读回', async () => {

@@ -6,6 +6,7 @@
 //   zhiqu --resume [id]       挑一段会话接着做
 //   zhiqu login [--server u]  设备码登录（不在网络上传密码）；--token zqp_… 直接用一张令牌
 //   zhiqu logout | whoami | models | --version | help
+//   zhiqu mcp                 当 MCP 服务器（stdio）：把知识 Wiki、任务、计划草稿、长期记忆给 Claude Code / Cursor 这些客户端用
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -92,6 +93,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
   zhiqu login [--server URL]  登录（浏览器里确认，命令行不接触密码）
   zhiqu login --token zqp_…   用个人中心签的令牌登录
   zhiqu logout | whoami | models | help | --version
+  zhiqu mcp                   当 MCP 服务器：让 Claude Code / Claude 桌面版 / Cursor 读写你的知识 Wiki 和任务（见 README）
 
 选项
   --mode plan|ask|auto        档位：只读出计划 / 逐个确认 / 全自动（默认 ask，或 ~/.zhiqu/config.json 里的 mode）
@@ -130,6 +132,13 @@ export async function main(argv) {
       for (const m of models) process.stdout.write(`${m.isDefault ? '*' : ' '} ${m.id}  ${m.label}  ${m.modelName}${m.toolCalling ? '' : '  （不支持工具调用）'}\n`);
     }
     return 0;
+  }
+  if (cmd === 'mcp') {
+    // stdout 只走 MCP 协议：配置文件的警告、出错都写 stderr。按需加载 —— 平常跑命令行用不到它
+    const settings = resolveSettings(cwd, flags);
+    for (const w of settings.warnings) process.stderr.write(`! ${w}\n`);
+    const { runMcpServer } = await import('./mcp-server.js');
+    return runMcpServer({ api: new Api({ server: settings.server, token: settings.token }), loggedIn: Boolean(settings.token) });
   }
   if (cmd) throw new Error(`不认识的命令：${cmd}（zhiqu help 查看用法）`);
   return runAgent(cwd, flags);
@@ -298,7 +307,7 @@ async function runAgent(cwd, flags) {
   const ctx = {
     ui, api, root, settings, mode: modeFlag || settings.mode, maxRounds: settings.maxRounds, verbose: settings.showThinking,
     local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs }),
-    store: new SessionStore(root), allow: { write: false, run: false, delete: false, mcp: new Set() },
+    store: new SessionStore(root), allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
   };
   try {

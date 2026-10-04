@@ -43,13 +43,16 @@ class HarnessRemoteToolsTest {
     private final LongTermMemoryStore memory = mock(LongTermMemoryStore.class);
     private final AiWorkspaceService workspace = mock(AiWorkspaceService.class);
     private final HarnessSessionService sessions = mock(HarnessSessionService.class);
+    private final com.zhiqu.service.ai.AssistantTaskReader taskReader = mock(com.zhiqu.service.ai.AssistantTaskReader.class);
+    private final com.zhiqu.service.StudyTaskService taskService = mock(com.zhiqu.service.StudyTaskService.class);
+    private final com.zhiqu.mapper.SysUserMapper users = mock(com.zhiqu.mapper.SysUserMapper.class);
     private final HarnessRemoteTools tools;
 
     HarnessRemoteToolsTest() {
         BusinessClock clock = mock(BusinessClock.class);
         when(clock.today()).thenReturn(LocalDate.of(2026, 9, 24));
         StudyPlanTool plans = new StudyPlanTool(clock, mock(ReminderPlanService.class), JSON);
-        tools = new HarnessRemoteTools(wiki, plans, memory, workspace, sessions, JSON);
+        tools = new HarnessRemoteTools(wiki, plans, memory, workspace, sessions, JSON, taskReader, taskService, users);
         // 工具声明用真实的那一份（只拼 schema，不碰字段）—— 判的是远程工具表和 Wiki 真实声明一致
         when(wiki.buildWikiTools(org.mockito.ArgumentMatchers.anyBoolean())).thenCallRealMethod();
         when(sessions.draftRun(anyLong(), anyString())).thenReturn(77L);
@@ -69,12 +72,12 @@ class HarnessRemoteToolsTest {
     }
 
     @Test
-    @DisplayName("工具表：Wiki 三个、计划一个、记忆两个，不重名")
+    @DisplayName("工具表：Wiki 三个、计划一个、记忆两个、任务两个，不重名")
     void 工具表() {
         List<String> names = new ArrayList<>();
         for (Map<String, Object> t : tools.tools()) names.add(String.valueOf(((Map<?, ?>) t.get("function")).get("name")));
         assertEquals(Set.of("search_wiki", "read_wiki_page", "create_wiki_patch", "create_study_plan",
-                "read_memory", "propose_memory"), new HashSet<>(names));
+                "read_memory", "propose_memory", "list_tasks", "update_task_status"), new HashSet<>(names));
         assertEquals(names.size(), new HashSet<>(names).size());
     }
 
@@ -129,5 +132,62 @@ class HarnessRemoteToolsTest {
     void 拒绝() {
         assertThrows(BusinessException.class, () -> tools.call(1L, "s1", "rm_rf", "{}"));
         assertThrows(BusinessException.class, () -> tools.call(1L, "../x", "read_memory", "{}"));
+    }
+
+    // ── 任务（第二十九轮：命令行 / MCP 接上任务；用户定的「新建走草稿，改状态直接做」）──
+
+    private static com.zhiqu.entity.SysUser userWithSwitch(Integer aiReadTasks) {
+        com.zhiqu.entity.SysUser u = new com.zhiqu.entity.SysUser();
+        u.setId(1L);
+        u.setAiReadTasks(aiReadTasks);
+        return u;
+    }
+
+    @Test
+    @DisplayName("列工具里有 list_tasks（无参数）和 update_task_status（task_id 整数、status 只有三种）")
+    void 任务工具的声明() {
+        Map<String, Map<String, Object>> byName = new java.util.HashMap<>();
+        for (Map<String, Object> t : tools.tools()) {
+            @SuppressWarnings("unchecked") Map<String, Object> fn = (Map<String, Object>) t.get("function");
+            byName.put(String.valueOf(fn.get("name")), fn);
+        }
+        assertTrue(byName.containsKey("list_tasks") && byName.containsKey("update_task_status"), byName.keySet().toString());
+        String schema = byName.get("update_task_status").get("parameters").toString();
+        assertTrue(schema.contains("task_id") && schema.contains("integer") && schema.contains("todo") && schema.contains("done"), schema);
+    }
+
+    @Test
+    @DisplayName("list_tasks：开关开着（空也算开）读带 #编号的那一份；关着读不到、说清楚，连读都不去读")
+    void 读任务跟着开关() {
+        when(users.selectById(1L)).thenReturn(userWithSwitch(null));
+        when(taskReader.read(1L, true)).thenReturn(new com.zhiqu.service.ai.AssistantTaskReader.Read("【任务】- #12 交周报", 1, 1));
+        assertEquals("【任务】- #12 交周报", tools.call(1L, "s1", "list_tasks", "{}").get("content"));
+
+        when(users.selectById(1L)).thenReturn(userWithSwitch(0));
+        String off = String.valueOf(tools.call(1L, "s1", "list_tasks", "{}").get("content"));
+        assertTrue(off.contains("关掉了「让 AI 读我的任务」"), off);
+        verify(taskReader, org.mockito.Mockito.times(1)).read(anyLong(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    @DisplayName("update_task_status：直接改（不是草稿），#12 和 12 都认；状态 / 编号不对、不是自己的任务都说清楚，不抛到协议层")
+    void 改任务状态() {
+        com.zhiqu.entity.StudyTask t = new com.zhiqu.entity.StudyTask();
+        t.setId(12L);
+        t.setTitle("交周报");
+        when(taskService.updateStatus(1L, 12L, 2)).thenReturn(t);
+        String done = String.valueOf(tools.call(1L, "s1", "update_task_status", "{\"task_id\":\"#12\",\"status\":\"done\"}").get("content"));
+        assertEquals("已把 #12「交周报」标成已完成。", done);
+        verify(taskService).updateStatus(1L, 12L, 2);
+
+        String badStatus = String.valueOf(tools.call(1L, "s1", "update_task_status", "{\"task_id\":12,\"status\":\"finished\"}").get("content"));
+        assertTrue(badStatus.contains("todo") && badStatus.contains("done"), badStatus);
+        String badId = String.valueOf(tools.call(1L, "s1", "update_task_status", "{\"task_id\":\"周报\",\"status\":\"done\"}").get("content"));
+        assertTrue(badId.contains("#编号"), badId);
+        verify(taskService, org.mockito.Mockito.times(1)).updateStatus(anyLong(), anyLong(), org.mockito.ArgumentMatchers.anyInt());
+
+        when(taskService.updateStatus(1L, 99L, 1)).thenThrow(new BusinessException("任务不存在"));
+        String notMine = String.valueOf(tools.call(1L, "s1", "update_task_status", "{\"task_id\":99,\"status\":\"doing\"}").get("content"));
+        assertTrue(notMine.startsWith("没有改成：任务不存在"), notMine);
     }
 }

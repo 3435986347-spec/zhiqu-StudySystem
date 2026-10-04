@@ -117,6 +117,22 @@ class PositioningCopyTest {
     }
 
     @Test
+    @DisplayName("命令行 zhiqu 的源码里也没有（第二十九轮：内置系统提示写着「『知趣·象限』学习系统的 coding agent」，第二十六轮只扫了网页和后端）")
+    void 命令行() throws IOException {
+        Path cli = Path.of("../zhiqu-cli/src");
+        List<String> found = new ArrayList<>();
+        int files = 0;
+        try (Stream<Path> walk = Files.walk(cli)) {
+            for (Path f : walk.filter(p -> p.toString().endsWith(".js")).sorted().toList()) {
+                files++;
+                scan("zhiqu-cli/" + cli.relativize(f), SourceText.stripComments(read(f)), found);
+            }
+        }
+        assertTrue(files >= 20, "只扫到 " + files + " 个文件 —— 空扫和干净的扫长得一样");
+        assertEquals(List.of(), found, "命令行里还有学生系统的说法（系统提示、终端里显示的字）");
+    }
+
+    @Test
     @DisplayName("AI 助手在侧栏第一位、登录后落在 AI 助手、安装到桌面也从它打开；成就从导航收起")
     void AI放在第一位() throws IOException {
         String ui = SourceText.stripComments(read(STATIC.resolve("assets/zhiqu-ui.js")));

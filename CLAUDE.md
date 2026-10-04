@@ -341,6 +341,10 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 - **`/resume` 把那段会话的聊天记录原样显示出来**（用户要的）：读 `SessionStore.transcript()`，不是 `load()` ——
   后者是发给模型的那一份，压缩过就只剩摘要。不是用户打的 user 消息（goal 推的每一轮、截断时补的说明）记录时带
   `origin`，回放时不冒充「› …」；旧记录没有标记，靠那几句固定开头认。
+- **`zhiqu mcp`**（第二十九轮，`src/mcp-server.js`）：把远程工具里的八个（Wiki 三个、`list_tasks` / `update_task_status`、`create_study_plan`、记忆两个）
+  做成 stdio MCP 服务器给 Claude Code / Cursor 用，令牌用 `zhiqu login` 存的。**stdout 只走协议**（写一个字的日志客户端就断开 —— 真起进程的判据钉着）；
+  工具出错回 `isError` 而不是协议错误；转哪些工具是 `EXPOSED_TOOLS` 一个一个列的，服务器新加的远程工具不会自动转出去。
+  `update_task_status` 是远程工具里唯一直接生效的（`REMOTE_DIRECT_WRITE_TOOLS`）：plan 档不给，ask 档单独问。`list_tasks` 和网页 AI 读任务是同一个开关。
 - **默认服务器**来自 `package.json` 的 `zhiqu.defaultServer`：仓库里是本机桌面应用（测试用），发布版要指向用户的服务器
   （`npm run set-server -- https://…`）；`prepublishOnly` 挡住本机地址、非 https、还挂着 `private` 的版本。
 

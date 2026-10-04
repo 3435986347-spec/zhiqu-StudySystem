@@ -24,7 +24,9 @@ import { spillLongInput } from './longinput.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
 
-export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory']);
+export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks']);
+/** 远程工具里**直接生效**的（不是草稿）：plan 档不给，ask 档先问（第二十九轮，用户定的「改状态直接做」）。 */
+export const REMOTE_DIRECT_WRITE_TOOLS = new Set(['update_task_status']);
 
 /*
  * 思考过程不展示（用户 2026-09-28）：默认只打印结论（不再调工具的那条回复）和改了什么（写 / 删 / 跑命令，写带 diff）。
@@ -322,6 +324,19 @@ async function confirmRun(ctx, prep) {
   return pick === 'y' || pick === 'a';
 }
 
+const TASK_STATUS_LABEL = { todo: '待办', doing: '进行中', done: '已完成' };
+
+/** 改任务状态直接生效：ask 档先问，单独一个「本会话都允许」—— 允许了写文件，不等于允许了改任务。 */
+async function confirmTaskStatus(ctx, args) {
+  if (ctx.mode === 'auto' || (ctx.allow && ctx.allow.tasks)) return true;
+  const label = TASK_STATUS_LABEL[String(args.status)] || String(args.status);
+  const pick = await ctx.ui.choose(`把任务 #${String(args.task_id).replace('#', '')} 标成${label}？`, [
+    { key: 'y', label: '改' }, { key: 'n', label: '不改' }, { key: 'a', label: '本会话都允许改任务状态' },
+  ], 'n');
+  if (pick === 'a') ctx.allow.tasks = true;
+  return pick === 'y' || pick === 'a';
+}
+
 async function confirmMcp(ctx, name) {
   // 每个 MCP 工具第一次用都问 —— 三档都问：MCP 服务器是第三方写的，auto 免不了这一问
   if (ctx.allow.mcp.has(name)) return true;
@@ -369,7 +384,9 @@ export function describeCall(name, args) {
     case 'search_wiki': return `查知识库「${args.query}」`;
     case 'read_wiki_page': return `读知识库「${args.title}」`;
     case 'create_wiki_patch': return `生成知识库草稿「${args.title}」`;
-    case 'create_study_plan': return '生成学习计划草稿';
+    case 'create_study_plan': return '生成计划草稿';
+    case 'list_tasks': return '读你的任务';
+    case 'update_task_status': return `把任务 #${String(args.task_id).replace('#', '')} 标成${TASK_STATUS_LABEL[String(args.status)] || args.status}`;
     case 'read_memory': return '读长期记忆';
     case 'propose_memory': return '生成长期记忆草稿';
     default: return name.startsWith('mcp__') ? `MCP ${name.slice(5).replace('__', '/')}` : name;
@@ -564,6 +581,10 @@ async function executeTool(ctx, call, offered, signal) {
     }
   }
   if (kind === 'remote') {
+    if (REMOTE_DIRECT_WRITE_TOOLS.has(name) && !(await confirmTaskStatus(ctx, args))) {
+      ui.result('用户没有允许', false);
+      return '用户没有允许改这条任务的状态。';
+    }
     try {
       const pre = ctx.prefetched && ctx.prefetched.get(call.id);
       const r = pre ? await pre.then((v) => { if (v.error) throw v.error; return v.value; })

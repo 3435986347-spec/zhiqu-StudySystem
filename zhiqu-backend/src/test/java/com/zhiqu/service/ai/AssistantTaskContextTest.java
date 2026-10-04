@@ -77,6 +77,14 @@ class AssistantTaskContextTest {
     }
 
     @Test
+    @DisplayName("命令行 / MCP 那一份每条带 #编号（拿去改状态）；网页那一份不带")
+    void 编号() {
+        StudyTask t = task(12, "交周报", NOW.plusHours(2), null, 1, 0);
+        assertTrue(AssistantTaskContext.block(List.of(t), 1, NOW, true).contains("\n- #12 交周报｜"));
+        assertFalse(AssistantTaskContext.block(List.of(t), 1, NOW).contains("#12"));
+    }
+
+    @Test
     @DisplayName("没有任务时明说没有，并且照样有头尾（模型不该把空当成「没读到」）")
     void 空列表() {
         String block = AssistantTaskContext.block(List.of(), 0, NOW);

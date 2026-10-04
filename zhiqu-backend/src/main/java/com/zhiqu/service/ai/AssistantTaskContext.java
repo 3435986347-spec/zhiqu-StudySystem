@@ -49,6 +49,11 @@ public final class AssistantTaskContext {
      * @param now   业务时区的此刻
      */
     public static String block(List<StudyTask> open, long total, LocalDateTime now) {
+        return block(open, total, now, false);
+    }
+
+    /** @param withIds 每条前面带 {@code #编号} —— 命令行 / MCP 要拿它改状态（{@code update_task_status}）；网页的回答用不着。 */
+    public static String block(List<StudyTask> open, long total, LocalDateTime now, boolean withIds) {
         List<StudyTask> sorted = open.stream().sorted(ORDER).toList();
         List<StudyTask> shown = sorted.subList(0, Math.min(MAX_SHOWN, sorted.size()));
         StringBuilder sb = new StringBuilder(HEAD).append('\n');
@@ -58,7 +63,7 @@ public final class AssistantTaskContext {
         } else {
             sb.append("未完成的任务一共 ").append(Math.max(total, sorted.size())).append(" 条：\n");
             for (StudyTask t : shown) {
-                sb.append("- ").append(line(t, now.toLocalDate())).append('\n');
+                sb.append("- ").append(line(t, now.toLocalDate(), withIds)).append('\n');
             }
             long rest = Math.max(total, sorted.size()) - shown.size();
             if (rest > 0) {
@@ -69,7 +74,12 @@ public final class AssistantTaskContext {
     }
 
     static String line(StudyTask t, LocalDate today) {
-        StringBuilder sb = new StringBuilder(oneLine(t.getTitle()));
+        return line(t, today, false);
+    }
+
+    static String line(StudyTask t, LocalDate today, boolean withIds) {
+        StringBuilder sb = new StringBuilder(withIds && t.getId() != null ? "#" + t.getId() + " " : "");
+        sb.append(oneLine(t.getTitle()));
         sb.append("｜").append(quadrant(t.getQuadrant()));
         sb.append("｜优先级").append(priority(t.getPriority()));
         sb.append("｜").append(t.getStatus() != null && t.getStatus() == 1 ? "进行中" : "待办");
@@ -94,7 +104,7 @@ public final class AssistantTaskContext {
     }
 
     /** 标题压成一行、去掉控制字符、截到 {@link #TITLE_MAX} 个字（按码点，不会把一个 emoji 劈成两半）。 */
-    static String oneLine(String title) {
+    public static String oneLine(String title) {
         String flat = (title == null ? "" : title).replaceAll("[\\p{Cntrl}\\u2028\\u2029]+", " ").replaceAll("\\s+", " ").strip();
         if (flat.isEmpty()) return "（无标题）";
         if (flat.codePointCount(0, flat.length()) <= TITLE_MAX) return flat;

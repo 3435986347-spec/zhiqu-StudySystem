@@ -35,12 +35,17 @@ public class AssistantTaskReader {
     }
 
     public Read read(Long userId) {
+        return read(userId, false);
+    }
+
+    /** @param withIds 每条带 {@code #编号}（命令行 / MCP 的 {@code list_tasks}，好拿去改状态）。 */
+    public Read read(Long userId, boolean withIds) {
         long total = taskMapper.selectCount(open(userId));
         // 与 AssistantTaskContext.ORDER 同一个顺序（有日期的先、日期早的先、再按优先级），否则取回来的 200 条不一定是该列的那些
         List<StudyTask> tasks = taskMapper.selectList(open(userId)
                 .last("ORDER BY COALESCE(deadline, start_time) IS NULL, COALESCE(deadline, start_time), priority DESC, id LIMIT " + FETCH));
         privacy.revealAll(tasks);
-        String block = AssistantTaskContext.block(tasks, total, clock.now());
+        String block = AssistantTaskContext.block(tasks, total, clock.now(), withIds);
         return new Read(block, (int) Math.min(tasks.size(), AssistantTaskContext.MAX_SHOWN), total);
     }
 

@@ -1,7 +1,7 @@
 # zhiqu
 
 知趣·象限的命令行 coding agent。**循环和工具跑在你的电脑上**（读、搜、写、跑命令都在本机的工作区里），
-**模型、登录和学习数据在服务器上**（API Key 只在服务器，命令行拿不到）。
+**模型、登录和你的数据（任务、知识 Wiki、记忆）在服务器上**（API Key 只在服务器，命令行拿不到）。
 
 ```bash
 npm i -g zhiqu          # 或者在仓库里：cd zhiqu-cli && npm link
@@ -85,8 +85,42 @@ zhiqu logout | whoami | models
 
 ## 对话在网页里也看得到
 
-每段命令行会话在网页「AI 助手」里是一个 Notebook（「命令行 · 项目名 · 标题」）。让它排学习计划、记长期记忆、写知识 Wiki
-时生成的都是草稿，在网页里确认之后才生效。
+每段命令行会话在网页「AI 助手」里是一个 Notebook（「命令行 · 项目名 · 标题」）。让它排计划、改任务状态、记长期记忆、写知识 Wiki
+时，除了改任务状态是直接生效，其余生成的都是草稿，在网页里确认之后才生效。
+
+## 让别的 AI 也用上你的 Wiki 和任务：`zhiqu mcp`
+
+`zhiqu mcp` 是一个 MCP 服务器（stdio）。接上之后，Claude Code、Claude 桌面版、Cursor 这些客户端能用你在知趣·象限里的东西：
+
+| 工具 | 做什么 |
+|---|---|
+| `search_wiki` / `read_wiki_page` | 查、读知识 Wiki |
+| `create_wiki_patch` | 改 Wiki —— **只生成草稿**，到网页「知识 Wiki → 待合入变更」里确认 |
+| `list_tasks` | 读没做完的任务（带 `#编号`）。个人中心关了「让 AI 读我的任务」时读不到 |
+| `update_task_status` | 把一条任务标成待办 / 进行中 / 已完成 —— **直接生效** |
+| `create_study_plan` | 新建任务 / 例行计划 —— **只生成草稿**，到网页 AI 助手里确认 |
+| `read_memory` / `propose_memory` | 读长期记忆 / 提议新的（草稿） |
+
+先 `zhiqu login` 登录一次（令牌存在 `~/.zhiqu/config.json`，`zhiqu mcp` 用的就是它）。连的是登录时的那台服务器 —— 默认是本机的桌面应用，
+那就要开着桌面应用；连服务器的话 `zhiqu login --server https://…`。
+
+**Claude Code**（所有项目都能用）：
+
+```bash
+claude mcp add --scope user zhiqu -- zhiqu mcp
+```
+
+**Claude 桌面版**：`~/Library/Application Support/Claude/claude_desktop_config.json`（Windows 是 `%APPDATA%\Claude\claude_desktop_config.json`）。
+图形界面的应用不一定找得到 `zhiqu`，`command` 写 `which zhiqu` 给出的完整路径：
+
+```json
+{ "mcpServers": { "zhiqu": { "command": "/opt/homebrew/bin/zhiqu", "args": ["mcp"] } } }
+```
+
+**Cursor**：`~/.cursor/mcp.json`，内容同上。
+
+一个 MCP 连接算一段会话：它生成的草稿挂在网页 AI 助手里一个「MCP · 客户端名」的 Notebook 上。每个工具第一次用时客户端会问你允不允许；
+读的那几个标了只读（`readOnlyHint`），客户端可以据此少问几次。
 
 ## 开发
 

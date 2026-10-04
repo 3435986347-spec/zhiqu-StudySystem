@@ -37,6 +37,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class HarnessRemoteTools {
 
+    /** 读用户没做完的任务（第二十九轮）。和网页 AI 读到的是同一份，多带 #编号；和网页同一个开关。 */
+    static final String LIST_TASKS = "list_tasks";
+    /** 改一条任务的状态（第二十九轮）。用户定的：新建走草稿（create_study_plan），改状态直接做。 */
+    static final String UPDATE_TASK_STATUS = "update_task_status";
     static final String READ_MEMORY = "read_memory";
     static final String PROPOSE_MEMORY = "propose_memory";
     static final int MAX_MEMORY_ITEMS = 20;
@@ -49,13 +53,21 @@ public class HarnessRemoteTools {
     private final AiWorkspaceService workspace;
     private final HarnessSessionService sessions;
     private final ObjectMapper json;
+    private final com.zhiqu.service.ai.AssistantTaskReader taskReader;
+    private final com.zhiqu.service.StudyTaskService taskService;
+    private final com.zhiqu.mapper.SysUserMapper users;
     private final Map<String, TimedState> wikiStates = new ConcurrentHashMap<>();
 
     private record TimedState(WikiToolAgent.WikiLoopState state, long touched) {
     }
 
     public HarnessRemoteTools(WikiToolAgent wiki, StudyPlanTool plans, LongTermMemoryStore memory,
-                              AiWorkspaceService workspace, HarnessSessionService sessions, ObjectMapper json) {
+                              AiWorkspaceService workspace, HarnessSessionService sessions, ObjectMapper json,
+                              com.zhiqu.service.ai.AssistantTaskReader taskReader, com.zhiqu.service.StudyTaskService taskService,
+                              com.zhiqu.mapper.SysUserMapper users) {
+        this.taskReader = taskReader;
+        this.taskService = taskService;
+        this.users = users;
         this.wiki = wiki;
         this.plans = plans;
         this.memory = memory;
@@ -67,6 +79,16 @@ public class HarnessRemoteTools {
     public List<Map<String, Object>> tools() {
         List<Map<String, Object>> out = new ArrayList<>(wiki.buildWikiTools(true));
         out.addAll(plans.tools());
+        out.add(ToolSchemas.functionTool(LIST_TASKS,
+                "读用户没做完的任务：逾期的、今天的、接下来的、没有日期的，每条带 #编号、象限、优先级、开始 / 截止时间。"
+                        + "问到今天、这周怎么安排，或者要改任务状态之前先读。",
+                new LinkedHashMap<>(), List.of()));
+        Map<String, Object> statusProps = new LinkedHashMap<>();
+        statusProps.put("task_id", ToolSchemas.schemaProp("integer", "list_tasks 给的 #编号（只写数字）"));
+        statusProps.put("status", ToolSchemas.schemaEnum("todo 待办 / doing 进行中 / done 已完成", "todo", "doing", "done"));
+        out.add(ToolSchemas.functionTool(UPDATE_TASK_STATUS,
+                "把一条任务标成待办 / 进行中 / 已完成。直接生效，不是草稿。新建任务用 create_study_plan（草稿，用户在网页确认）。",
+                statusProps, List.of("task_id", "status")));
         out.add(ToolSchemas.functionTool(READ_MEMORY,
                 "读取用户在知趣·象限里保存的长期记忆（偏好、目标、习惯）。回答涉及「我之前说过」「按我的习惯」时先读。",
                 new LinkedHashMap<>(), List.of()));
@@ -93,6 +115,17 @@ public class HarnessRemoteTools {
         }
         if (StudyPlanTool.NAME.equals(name)) {
             return studyPlan(userId, clientSessionId, args);
+        }
+        if (LIST_TASKS.equals(name)) {
+            com.zhiqu.entity.SysUser user = users.selectById(userId);
+            if (user == null || !user.aiReadsTasks()) {
+                // 和网页同一个开关：用户关掉了「让 AI 读我的任务」，这里也读不到 —— 说清楚，免得模型去编
+                return result(com.zhiqu.service.ai.AssistantTaskContext.DECLINED);
+            }
+            return result(taskReader.read(userId, true).block());
+        }
+        if (UPDATE_TASK_STATUS.equals(name)) {
+            return updateTaskStatus(userId, args);
         }
         if (READ_MEMORY.equals(name)) {
             String text = memory.read(userId);
@@ -126,6 +159,35 @@ public class HarnessRemoteTools {
 
     int trackedWikiStates() {
         return wikiStates.size();
+    }
+
+    /** 改一条任务的状态：只能改自己的（StudyTaskService.updateStatus 按用户查），编号 / 状态不对说清楚，不抛到协议层。 */
+    private Map<String, Object> updateTaskStatus(Long userId, String args) {
+        Map<String, Object> a = ToolSchemas.argsOf(json, args);
+        Long taskId;
+        try {
+            taskId = Long.valueOf(String.valueOf(a.get("task_id")).replace("#", "").trim());
+        } catch (NumberFormatException e) {
+            return result("task_id 不对：要写 list_tasks 给的 #编号里的数字，比如 12。");
+        }
+        Integer status = switch (String.valueOf(a.get("status")).trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "todo" -> 0;
+            case "doing" -> 1;
+            case "done" -> 2;
+            default -> null;
+        };
+        if (status == null) {
+            return result("status 只能是 todo（待办）、doing（进行中）、done（已完成）之一。");
+        }
+        com.zhiqu.entity.StudyTask task;
+        try {
+            task = taskService.updateStatus(userId, taskId, status);
+        } catch (BusinessException e) {
+            return result("没有改成：" + e.getMessage() + "（编号要用 list_tasks 给的 #编号）");
+        }
+        String label = status == 2 ? "已完成" : status == 1 ? "进行中" : "待办";
+        return result("已把 #" + taskId + "「" + com.zhiqu.service.ai.AssistantTaskContext.oneLine(task == null ? "" : task.getTitle())
+                + "」标成" + label + "。");
     }
 
     private static Map<String, Object> result(String content) {
