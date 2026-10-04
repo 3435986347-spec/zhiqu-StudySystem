@@ -102,6 +102,8 @@ public class AiServiceImpl implements AiService {
     private final CodeWorkspaceAgent codeWorkspaceAgent;
     /** 读用户的任务（第二十七轮）。 */
     private final AssistantTaskReader taskReader;
+    /** 进行中的回答 / 执行记录的心跳（第二十八轮）。 */
+    private final com.zhiqu.service.support.StreamLiveness streamLiveness;
     /** create_study_plan 的 schema 与解析器（拆第六刀）。PLANNER 与 code agent 共用这一份。 */
     private final StudyPlanTool studyPlanTool;
     private static final Logger log = LoggerFactory.getLogger(AiServiceImpl.class);
@@ -281,11 +283,13 @@ public class AiServiceImpl implements AiService {
                          BusinessClock clock,
                          CodeWorkspaceAgent codeWorkspaceAgent,
                          AssistantTaskReader taskReader,
+                         com.zhiqu.service.support.StreamLiveness streamLiveness,
                          StudyPlanTool studyPlanTool,
                          com.zhiqu.service.support.SseHeartbeats heartbeats) {
         this.clock = clock;
         this.codeWorkspaceAgent = codeWorkspaceAgent;
         this.taskReader = taskReader;
+        this.streamLiveness = streamLiveness;
         this.studyPlanTool = studyPlanTool;
         this.configMapper = configMapper;
         this.modelConfigMapper = modelConfigMapper;
@@ -540,10 +544,13 @@ public class AiServiceImpl implements AiService {
         // 放宽到 5 分钟：为回答前的 Wiki 工具循环 + 慢模型流式输出留出余量，避免首个 token 前就触发 SSE 总超时
         SseEmitter emitter = new SseEmitter(AiWorkspaceService.STREAM_TIMEOUT_MS);
         com.zhiqu.service.support.SseHeartbeats.Beat beat = heartbeats.start(emitter);
+        // 这一轮的数据库心跳（第二十八轮，StreamLiveness）：在 streamChatInternal 里建好回答和执行记录之后开始，这里的 finally 停 ——
+        // 不管从哪条路出来（正常、业务错误、意外异常）都停
+        List<AutoCloseable> leases = new java.util.concurrent.CopyOnWriteArrayList<>();
         CompletableFuture.runAsync(() -> {
             try {
                 streamChatInternal(emitter, userId, message, modelConfigId, enableWebSearch, reasoningMode,
-                        notebookId, agentMode, contextOptions == null ? Map.of() : contextOptions);
+                        notebookId, agentMode, contextOptions == null ? Map.of() : contextOptions, leases);
                 beat.close();
                 emitter.complete();
             } catch (Exception e) {
@@ -561,6 +568,14 @@ public class AiServiceImpl implements AiService {
                 log.error("流式回合异常终止：{}", e.getMessage(), e);
                 emitSse(emitter, "error", Map.of("message", e.getMessage() == null ? "AI 流式调用失败" : e.getMessage()));
                 emitter.complete();
+            } finally {
+                for (AutoCloseable lease : leases) {
+                    try {
+                        lease.close();
+                    } catch (Exception ignored) {
+                        // 停心跳不会失败；真失败了最多多跳几下，到上限自己停
+                    }
+                }
             }
         });
         return emitter;
@@ -568,7 +583,8 @@ public class AiServiceImpl implements AiService {
 
     private void streamChatInternal(SseEmitter emitter, Long userId, String message, Long modelConfigId,
                                     Boolean enableWebSearch, String reasoningMode,
-                                    Long notebookId, String agentMode, Map<String, Object> contextOptions) {
+                                    Long notebookId, String agentMode, Map<String, Object> contextOptions,
+                                    List<AutoCloseable> leases) {
         AiModelConfig config = requireModel(userId, modelConfigId);
         if (!hasText(message)) {
             throw new BusinessException("消息不能为空");
@@ -634,6 +650,7 @@ public class AiServiceImpl implements AiService {
                 userMessage,
                 assistantMessage
         );
+        leases.add(streamLiveness.hold(assistantMessage.getId(), agentRun.getId()));
         emitSse(emitter, "agent.run.start", Map.of(
                 "requestId", requestId,
                 "runId", agentRun.getId(),

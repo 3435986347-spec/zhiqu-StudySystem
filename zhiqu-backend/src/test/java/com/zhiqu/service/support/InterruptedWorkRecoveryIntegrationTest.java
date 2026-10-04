@@ -50,6 +50,8 @@ class InterruptedWorkRecoveryIntegrationTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private InterruptedWorkRecovery recovery;
     @Autowired private DataSource dataSource;
+    @Autowired private StreamLiveness liveness;
+    @Autowired private com.zhiqu.service.concurrency.ScheduledJobClaims claims;
 
     private long insert(String sql, Object... args) {
         jdbc.update(sql, args);
@@ -61,7 +63,7 @@ class InterruptedWorkRecoveryIntegrationTest {
     }
 
     @Test
-    @DisplayName("启动之前留下的：回答（有半截 / 一个字没有）改成 ERROR 并说清原因、半截留着；执行记录、步骤、正在跑的任务 ERROR，没轮到的 SKIPPED；启动之后建的不碰")
+    @DisplayName("心跳停了的（没有心跳的旧行按建立时间算）：回答（有半截 / 一个字没有）改成 ERROR 并说清原因、半截留着；执行记录、步骤、正在跑的任务 ERROR，没轮到的 SKIPPED；刚建的不碰")
     void 收拾上一个进程留下的() throws Exception {
         LocalDateTime before = LocalDateTime.now().minusMinutes(5);
         LocalDateTime after = LocalDateTime.now().plusMinutes(5);   // 「这个进程启动之后才建的」
@@ -100,6 +102,63 @@ class InterruptedWorkRecoveryIntegrationTest {
         assertEquals("SKIPPED", row("ai_agent_task", waiting).get("status"));
 
         assertArrayEquals(new int[]{0, 0, 0, 0}, recovery.recover(), "再跑一遍什么都不改");
+    }
+
+    /**
+     * 好几个后端连同一个库（第二十八轮；用户的部署：桌面应用和网页端连同一个远程 MySQL）。另一个进程正在生成的回答 ——
+     * 早就建了、但心跳还在跳 —— 不许被收；心跳停了 3 分钟以上的才收。原来按「这个进程启动之前建的」收，
+     * 桌面应用一启动，服务器上正在生成的回答就成了「服务在回答途中重启了」。
+     */
+    @Test
+    @DisplayName("别的进程正在做的（早建了、心跳还在跳）不收；心跳停了的收，连同它下面的步骤和任务")
+    void 看心跳不看启动时间() throws Exception {
+        LocalDateTime longAgo = LocalDateTime.now().minusMinutes(20);
+        long user = insert("INSERT INTO sys_user(username,password,nickname,role,deleted) VALUES('recovery-beat','x','r','USER',0)");
+        long conv = insert("INSERT INTO ai_conversation(user_id) VALUES(?)", user);
+        long alive = insert("INSERT INTO ai_message(user_id,conversation_id,role,content,status,created_at,heartbeat_at,deleted) VALUES(?,?,'assistant','别的进程正在说','STREAMING',?,NOW(),0)", user, conv, longAgo);
+        long dead = insert("INSERT INTO ai_message(user_id,conversation_id,role,content,status,created_at,heartbeat_at,deleted) VALUES(?,?,'assistant','说到一半没了','STREAMING',?,NOW() - INTERVAL 5 MINUTE,0)", user, conv, longAgo);
+        long aliveRun = insert("INSERT INTO ai_agent_run(user_id,status,created_at,heartbeat_at) VALUES(?,'RUNNING',?,NOW())", user, longAgo);
+        long aliveStep = insert("INSERT INTO ai_agent_step(run_id,agent_type,step_order,status,created_at) VALUES(?,'CHAT',1,'RUNNING',?)", aliveRun, longAgo);
+        long aliveTask = insert("INSERT INTO ai_agent_task(run_id,agent_type,task_type,status,created_at) VALUES(?,'CHAT','ANSWER','PENDING',?)", aliveRun, longAgo);
+        long deadRun = insert("INSERT INTO ai_agent_run(user_id,status,created_at,heartbeat_at) VALUES(?,'RUNNING',?,NOW() - INTERVAL 5 MINUTE)", user, longAgo);
+        long deadStep = insert("INSERT INTO ai_agent_step(run_id,agent_type,step_order,status,created_at) VALUES(?,'CHAT',1,'RUNNING',?)", deadRun, longAgo);
+
+        recovery.recover();
+
+        assertEquals("STREAMING", row("ai_message", alive).get("status"), "心跳还在跳的回答属于一个活着的进程，不许收");
+        assertEquals("ERROR", row("ai_message", dead).get("status"));
+        assertEquals("RUNNING", row("ai_agent_run", aliveRun).get("status"));
+        assertEquals("RUNNING", row("ai_agent_step", aliveStep).get("status"), "活着的执行记录下面的步骤不许收");
+        assertEquals("PENDING", row("ai_agent_task", aliveTask).get("status"), "活着的执行记录下面没轮到的任务不许收");
+        assertEquals("ERROR", row("ai_agent_run", deadRun).get("status"));
+        assertEquals("ERROR", row("ai_agent_step", deadStep).get("status"), "心跳停了的执行记录，它下面的步骤跟着收");
+    }
+
+    @Test
+    @DisplayName("心跳：开始就碰一次（用数据库的钟）、只碰还在进行中的、停了就不再碰；每 2 分钟一趟的收拾接上了定时")
+    void 心跳() throws Exception {
+        long user = insert("INSERT INTO sys_user(username,password,nickname,role,deleted) VALUES('recovery-lease','x','r','USER',0)");
+        long conv = insert("INSERT INTO ai_conversation(user_id) VALUES(?)", user);
+        long msg = insert("INSERT INTO ai_message(user_id,conversation_id,role,content,status,deleted) VALUES(?,?,'assistant','','STREAMING',0)", user, conv);
+        long run = insert("INSERT INTO ai_agent_run(user_id,status) VALUES(?,'RUNNING')", user);
+        long finished = insert("INSERT INTO ai_message(user_id,conversation_id,role,content,status,deleted) VALUES(?,?,'assistant','完','DONE',0)", user, conv);
+        try (StreamLiveness.Lease lease = liveness.hold(msg, run)) {
+            assertTrue(row("ai_message", msg).get("heartbeat_at") != null, "hold() 一返回就该已经碰过一次心跳（当场碰，不等定时线程）");
+            assertTrue(row("ai_agent_run", run).get("heartbeat_at") != null, "执行记录也要有心跳");
+        }
+        liveness.touch(finished, null);
+        assertTrue(row("ai_message", finished).get("heartbeat_at") == null, "已经结束的回答不该再被碰心跳");
+        assertTrue(InterruptedWorkRecovery.class.getMethod("sweep").isAnnotationPresent(org.springframework.scheduling.annotation.Scheduled.class),
+                "收拾要定时跑：别的进程没了、又不再启动的那一份遗留，只能由还活着的实例收");
+    }
+
+    @Test
+    @DisplayName("一天一次的定时任务按天认领：同一天第二个实例认领不到，换一天又能认领")
+    void 按天认领() {
+        String day = "2099-01-0" + (System.nanoTime() % 9 + 1);
+        assertTrue(claims.claim("daily-reminder-test", day), "第一个实例认领到");
+        assertFalse(claims.claim("daily-reminder-test", day), "同一天的第二个实例不该再发一遍");
+        assertTrue(claims.claim("daily-reminder-test", day + "x"), "换一天照常");
     }
 
     @Test

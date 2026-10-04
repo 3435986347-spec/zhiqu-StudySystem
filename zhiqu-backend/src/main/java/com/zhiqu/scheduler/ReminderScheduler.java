@@ -3,6 +3,7 @@ package com.zhiqu.scheduler;
 import com.zhiqu.common.BusinessClock;
 import com.zhiqu.service.ReminderService;
 import com.zhiqu.service.concurrency.RedisDistributedLockService;
+import com.zhiqu.service.concurrency.ScheduledJobClaims;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -17,8 +18,11 @@ public class ReminderScheduler {
     private final ReminderService reminderService;
     private final RedisDistributedLockService lockService;
     private final BusinessClock clock;
+    private final ScheduledJobClaims claims;
 
-    public ReminderScheduler(ReminderService reminderService, RedisDistributedLockService lockService, BusinessClock clock) {
+    public ReminderScheduler(ReminderService reminderService, RedisDistributedLockService lockService, BusinessClock clock,
+                             ScheduledJobClaims claims) {
+        this.claims = claims;
         this.reminderService = reminderService;
         this.lockService = lockService;
         this.clock = clock;
@@ -33,16 +37,12 @@ public class ReminderScheduler {
     @Scheduled(cron = "0 0 8 * * ?", zone = "Asia/Shanghai")
     public void sendDailyDdlReminders() {
         LocalDateTime now = clock.now();
-        String key = "zhiqu:lock:reminder:daily:" + LOCK_TIME.format(now);
-        RedisDistributedLockService.LockHandle lock = lockService.tryLock(key, Duration.ofMinutes(20));
-        if (lock == null) {
+        // 一天一次、按天在库里认领（第二十八轮）：好几个后端连同一个库时只有一个实例发。原来这里是一把锁 ——
+        // 没有共享 Redis 时它只在本进程有效，每个开着的实例（服务器、每台电脑上的桌面应用）各发一遍汇报
+        if (!claims.claim("daily-reminder", now.toLocalDate().toString())) {
             return;
         }
-        try {
-            reminderService.processDueReminders(now);
-        } finally {
-            lockService.unlock(lock);
-        }
+        reminderService.processDueReminders(now);
     }
 
     @Scheduled(cron = "0 */5 * * * ?", zone = "Asia/Shanghai")

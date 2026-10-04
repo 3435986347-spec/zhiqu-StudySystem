@@ -642,6 +642,24 @@ class AiConversationLifecycleIntegrationTest {
     }
 
     /**
+     * 一轮回答进行中有心跳（第二十八轮）：好几个后端连同一个库时，别的实例看心跳判断「还有没有人在做它」。
+     * 心跳没接上的话，一条正在生成的回答在另一个实例眼里和「进程没了」一模一样，3 分钟后就被收成失败。
+     */
+    @Test
+    void 一轮回答进行中有心跳() throws Exception {
+        Long notebookId = createNotebook(userId, "心跳");
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "你好", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        Long runId = latestRunId(userId, notebookId);
+        assertNotNull(jdbcTemplate.queryForObject("SELECT heartbeat_at FROM ai_agent_run WHERE id = ?", java.sql.Timestamp.class, runId),
+                "执行记录没有心跳");
+        assertNotNull(jdbcTemplate.queryForObject(
+                "SELECT m.heartbeat_at FROM ai_message m JOIN ai_agent_run r ON r.assistant_message_id = m.id WHERE r.id = ?",
+                java.sql.Timestamp.class, runId), "回答没有心跳");
+    }
+
+    /**
      * AI 读得到任务（第二十七轮，用户 2026-10-04 定的「让它读，给一个开关」）。问到今天的安排、开关开着：轨迹里有读任务的节点，
      * 发给模型的那一轮里有任务（以数据的名义）；关掉之后不读、不发，模型被告知看不到、不许编；没问安排时开着也不读。
      * 观察点是「这一轮到底发给模型什么」（lastStreamingRequestBody）—— 查库只看得到节点在，看不到任务有没有真的送到。

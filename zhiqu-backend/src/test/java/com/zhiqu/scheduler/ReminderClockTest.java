@@ -60,7 +60,9 @@ class ReminderClockTest {
         ReminderService service = mock(ReminderService.class);
         RedisDistributedLockService locks = mock(RedisDistributedLockService.class);
         when(locks.tryLock(anyString(), any(Duration.class))).thenReturn(new RedisDistributedLockService.LockHandle("k", "t"));
-        ReminderScheduler scheduler = new ReminderScheduler(service, locks, clock);
+        com.zhiqu.service.concurrency.ScheduledJobClaims claims = mock(com.zhiqu.service.concurrency.ScheduledJobClaims.class);
+        when(claims.claim(anyString(), anyString())).thenReturn(true);
+        ReminderScheduler scheduler = new ReminderScheduler(service, locks, clock, claims);
 
         scheduler.sendDailyDdlReminders();
         scheduler.sendDueTaskReminders();
@@ -74,6 +76,18 @@ class ReminderClockTest {
             long minutes = Math.abs(Duration.between(got, shanghaiNow).toMinutes());
             assertTrue(minutes < 2, "交给发送逻辑的是 " + got + "，东八区此刻是 " + shanghaiNow + "（差 " + minutes + " 分钟）");
         }
+    }
+
+    @Test
+    @DisplayName("早上 8 点那一趟：这一天被别的实例认领了就不发（好几个后端连同一个库，第二十八轮）；认领用的是业务日期")
+    void 别的实例认领了就不发() {
+        ReminderService service = mock(ReminderService.class);
+        RedisDistributedLockService locks = mock(RedisDistributedLockService.class);
+        com.zhiqu.service.concurrency.ScheduledJobClaims claims = mock(com.zhiqu.service.concurrency.ScheduledJobClaims.class);
+        when(claims.claim(anyString(), anyString())).thenReturn(false);
+        new ReminderScheduler(service, locks, clock, claims).sendDailyDdlReminders();
+        verify(service, org.mockito.Mockito.never()).processDueReminders(any());
+        verify(claims).claim("daily-reminder", LocalDateTime.now(SHANGHAI).toLocalDate().toString());
     }
 
     @Test

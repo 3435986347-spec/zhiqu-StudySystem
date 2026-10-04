@@ -16,7 +16,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V42`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V43`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -838,8 +838,11 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **番茄钟先存在设备上再发**（`recordPomodoro` / `zq-pomo-outbox`）：每条自己的键、打开页面 / `online` / 每分钟补一趟、跨了天补的带完成那天的日期。
 - **聊天流**：`streamAiChat` 连不上抛 `beforeResponse`（发送那边撤掉本地两条、字放回输入框）；断在半路说「连接断了」；断线接回用 `whenOnline`（网还断着就等）。
   Chromium 的 `setOffline` 不掐已经建立的连接 —— 演「流到一半断网」要真的掐（这一轮用的是自己写的 TCP 代理）。
-- **启动时收拾上一个进程没做完的**（`InterruptedWorkRecovery`，**后台跑**、不挡启动 —— 状态列没有索引，大库上整表扫要几秒；出错只记日志）：STREAMING 的回答、RUNNING 的执行记录 / 步骤 / 任务收成失败（没轮到的 SKIPPED），只动进程启动之前建的行。
-  假设单实例。新加「请求线程里写一行进行中、做完改终态」的东西，要么加进这里，要么像 RAG 任务那样有租约。
+- **收拾没做完的回答 / 执行记录看心跳，不看「是不是这个进程启动之前建的」**（第二十二轮建，第二十八轮改）：进行中的回答（`ai_message`）和执行记录
+  （`ai_agent_run`）每 30 秒用数据库的 `NOW()` 碰一下 `heartbeat_at`（`StreamLiveness`，`hold()` 当场先碰一次），`InterruptedWorkRecovery` 只收心跳停了
+  3 分钟以上的（启动一趟、之后每 2 分钟一趟），步骤和任务跟着它们的执行记录走。**每个时间跟写它的那个钟比**：心跳跟 `NOW()` 比，没有心跳的旧行的 `created_at`
+  （JVM 写的）跟 JVM 算的截止时刻比 —— 数据库会话时区只在 `main` 里钉成业务时区，测试里差 8 小时，第一版两样都跟 `NOW()` 比时当场红了。
+  新加「请求线程里写一行进行中、做完改终态」的东西：要么挂上心跳并加进这里，要么像 RAG 任务那样有租约。
 - **回包压缩**（`server.compression`）：文字类；`text/event-stream` 不能加进去（压缩要攒够一块才发，流就憋住了）。
 - **命令行**：登录后的 POST 自动带键（`Api.writeKey`），断在半路也用同一个键重来、不确定时沿用（存档补发内容不变，也就沿用）。服务器卡住（接了连接不回）只再等一次、重来前说一声
   （`onRetry`）；启动时的几个 GET 15 秒超时。流断了说是和**服务器**的连接断了（不是模型），安静模式下把断开前收到的打出来。
@@ -897,6 +900,13 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   pages, the shell, the manifest **and every text block / string literal in `src/main/java`** — the AI's system prompts
   are where the old positioning hid longest. Matching the user's own words is the exception (`AgentPlanDecision`, and a
   per-file allow-list).
+- **Several backends share one database** (round 28; the user's deployment: the desktop app and the web server both connect to
+  the same remote MySQL). Every instance must use the same `app.crypto.master-key`: `CryptoKeyCanary` (a bean, so it runs
+  after migrations and before Tomcat serves) refuses to start when its key cannot open `crypto_canary` — or, with no canary
+  yet, when it cannot open a single sampled ciphertext (it then also refuses to write the canary, so a misconfigured instance
+  that starts first cannot lock out the correct ones). `crypto_canary` is in `CryptoKeyRotation.TABLES`. Once-a-day jobs claim
+  their day in `scheduled_job_claim` (`ScheduledJobClaims`) — the in-process lock fallback is per-instance. The desktop
+  README's `~/.zhiqu/application.yml` template now carries `app.crypto.master-key`.
 - **The AI reads the user's open tasks** (round 27, user's decision 2026-10-04: "let it read, with a switch"). A `TASK_READER`
   node (`PRE_STREAM` 12) exists only when the message is about scheduling (`AgentPlanDecision.taskReadIntent`), the mode
   is not chat-only **and** `sys_user.ai_read_tasks` is not 0 (V42; NULL means on — `SysUser.aiReadsTasks()` is the only

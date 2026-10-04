@@ -84,6 +84,8 @@ public final class CryptoKeyRotation {
             new TableSpec("knowledge_source", "encrypted_content"),
             new TableSpec("user_knowledge_page", "encrypted_content"),
             new TableSpec("user_knowledge_revision", "encrypted_content"),
-            new TableSpec("user_ai_memory", "encrypted_memory_text")
+            new TableSpec("user_ai_memory", "encrypted_memory_text"),
+            // 主密钥哨兵（第二十八轮，CryptoKeyCanary）：轮换时不跟着换的话，换完主密钥服务就起不来了
+            new TableSpec("crypto_canary", "encrypted_value")
     );
 }

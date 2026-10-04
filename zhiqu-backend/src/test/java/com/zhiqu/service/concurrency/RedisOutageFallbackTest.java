@@ -107,8 +107,10 @@ class RedisOutageFallbackTest {
     @DisplayName("提醒调度：Redis 挂了照常发（原来拿锁直接抛，一条都发不出去）")
     void 提醒照发() {
         ReminderService reminders = mock(ReminderService.class);
+        ScheduledJobClaims claims = mock(ScheduledJobClaims.class);
+        when(claims.claim(any(), any())).thenReturn(true);
         ReminderScheduler scheduler = new ReminderScheduler(reminders, new RedisDistributedLockService(redisDown()),
-                new BusinessClock("Asia/Shanghai"));
+                new BusinessClock("Asia/Shanghai"), claims);
         assertDoesNotThrow(scheduler::sendDueTaskReminders);
         assertDoesNotThrow(scheduler::sendDailyDdlReminders);
         verify(reminders, times(1)).processDueTaskReminders(any());

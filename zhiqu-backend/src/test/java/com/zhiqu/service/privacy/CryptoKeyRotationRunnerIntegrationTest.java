@@ -57,6 +57,11 @@ class CryptoKeyRotationRunnerIntegrationTest {
         jdbc.update("INSERT INTO sys_user(username, password) VALUES('rotate_user','x')");
         Long uid = jdbc.queryForObject("SELECT id FROM sys_user WHERE username='rotate_user'", Long.class);
 
+        // 主密钥哨兵（第二十八轮）：真实部署里它和别的密文一样，是这个服务一直在用的那把（OLD）写的。
+        // 测试上下文起来时是用开发默认值写的 —— 不换成 OLD 的话，它在轮换眼里就是「第三方 key 的一行」
+        String contextCanary = jdbc.queryForObject("SELECT encrypted_value FROM crypto_canary WHERE id = 1", String.class);
+        jdbc.update("UPDATE crypto_canary SET encrypted_value = ? WHERE id = 1", oldC.encrypt(CryptoKeyCanary.PLAINTEXT));
+
         // 四行，四种情况
         long idOld = insertTask(uid, oldC.encrypt("旧密文标题"), oldC.encrypt("旧密文描述"));
         long idPlain = insertTask(uid, "历史明文标题", null);
@@ -103,6 +108,12 @@ class CryptoKeyRotationRunnerIntegrationTest {
         assertEquals("旧密文标题",
                 newC.decrypt(jdbc.queryForObject("SELECT encrypted_title FROM study_task WHERE id=?", String.class, idOld)));
 
+        // 哨兵跟着换了：换完主密钥（改成 NEW）服务照常起得来
+        assertEquals(CryptoKeyCanary.PLAINTEXT, newC.decrypt(
+                jdbc.queryForObject("SELECT encrypted_value FROM crypto_canary WHERE id = 1", String.class)),
+                "主密钥哨兵没跟着轮换 —— 换完主密钥服务就起不来了");
+
+        jdbc.update("UPDATE crypto_canary SET encrypted_value = ? WHERE id = 1", contextCanary);
         jdbc.update("DELETE FROM study_task WHERE user_id=?", uid);
         jdbc.update("DELETE FROM sys_user WHERE id=?", uid);
     }
