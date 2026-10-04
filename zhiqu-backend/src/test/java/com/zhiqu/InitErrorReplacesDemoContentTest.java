@@ -164,11 +164,13 @@ class InitErrorReplacesDemoContentTest {
         assertEquals(7, wd, "例行计划的星期按钮应当是 7 个");
         assertEquals(3, sp.split("data-close-modal", -1).length - 1, "参考计划详情弹窗的遮罩、×、取消三处要能关");
         String code = apiJs();
-        assertTrue(code.contains("$all('#zq-tabs button[data-k]').forEach(function (b) { b.onclick = function () { window.setTab(b.dataset.k); }; });"),
+        // 统计页、例行计划页第三十二轮起是模块（pages/statistics.js、pages/routines.js）
+        assertTrue(SourceText.pageModule("statistics.js").contains("$all('#zq-tabs button[data-k]').forEach(function (b) { b.onclick = function () { window.setTab(b.dataset.k); }; });"),
                 "统计页的日 / 周 / 月没有接上");
         assertTrue(ach.contains("root.querySelectorAll('[data-ach-filters] button[data-k]').forEach(function (b) { b.onclick = function () { filter = b.dataset.k; renderAchList(filter); }; });"),
                 "成就的筛选没有接上");
-        assertTrue(code.contains("$all('#zq-wd button').forEach(function (b) {") && code.contains("b.addEventListener('click', function () {\n        b.dataset.on = b.dataset.on === '1' ? '0' : '1';"),
+        String routines = SourceText.pageModule("routines.js");
+        assertTrue(routines.contains("$all('#zq-wd button').forEach(function (b) {") && routines.contains("b.addEventListener('click', function () {\n      b.dataset.on = b.dataset.on === '1' ? '0' : '1';"),
                 "例行计划的星期按钮没有接上");
         assertTrue(code.contains("$all('#zq-modal [data-close-modal]').forEach(function (b) { b.onclick = function () { $('#zq-modal').style.display = 'none'; }; });"),
                 "参考计划的弹窗关不上");

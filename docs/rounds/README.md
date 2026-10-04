@@ -33,3 +33,4 @@
 | [第二十九轮](round-29.md) | 命令行接上任务（list_tasks 读、update_task_status 直接改，ask 档先问）；`zhiqu mcp` 把 Wiki / 任务 / 计划草稿 / 记忆做成 MCP 服务器给 Claude Code / Cursor 用；命令行的学生口吻收尾 | （见 git log） |
 | [第三十轮](round-30.md) | 头像菜单 + 设置弹窗（方案第 4 步的第一块）：侧栏只放干活的地方，设置 / 成就 / 统计 / 主题 / 后台 / 退出进左下角头像的菜单；设置是带地址的 Claude 式弹窗；第一个 ES 模块 `assets/settings.js`；旧地址和命令行的链接照常能用；顺带查出个人资料的「完成任务」一直是 0 | （见 git log） |
 | [第三十一轮](round-31.md) | 后台四页拆成模块（方案第 4 步的第二块）：立起「页面模块」的形状（`assets/pages/*.js` 导出 `boots`，壳按页面 `import`）；普通用户不再下载后台的代码；模块加载不上时说人话 | （见 git log） |
+| [第三十二轮](round-32.md) | 例行计划、专注统计拆成模块（方案第 4 步的第三块）：模块导出 `dayReload` 交给壳的零点重新取数据；两个从源码里抠函数的 node 判据改成 import 模块；测试侧加 `frontendScripts` / `functionBody` | （见 git log） |

@@ -1363,199 +1363,6 @@
     await safe('切换状态', async function () { await api.put('/task/' + id + '/status?status=' + ((t.status + 1) % 3)); await bootTasks(); });
   }
 
-  async function bootRoutines() {
-    await loadRoutineSources(0);
-    await loadRoutines();
-    var buttons = $all('button.zq-btn, button.zq-btn-ghost');
-    var createBtn = buttons.find(function (b) { return /创建例行计划/.test(b.textContent); });
-    if (createBtn) createBtn.onclick = createRoutineFromForm;
-    var genBtn = buttons.find(function (b) { return /生成例行计划/.test(b.textContent); });
-    if (genBtn) genBtn.onclick = generateRoutinesFromTasks;
-    var genSection = $all('section').find(function (s) { return /从任务生成/.test(s.textContent); });
-    if (genSection) {
-      var filterSel = $('select', genSection);
-      var refreshBtn = $all('button', genSection).find(function (b) { return /刷新/.test(b.textContent); });
-      if (filterSel) filterSel.onchange = function () { loadRoutineSources(filterSel.selectedIndex); };
-      if (refreshBtn) refreshBtn.onclick = function () { loadRoutineSources(filterSel ? filterSel.selectedIndex : 0); };
-    }
-    // 开始日期默认今天、结束日期空着（服务器按开始日期 +29 天）。原来 HTML 里写死 2026-07-06 → 2026-08-30，
-    // 是设计稿上的日期：过了那天照默认值建出来的就是一个已经结束的计划（第十四轮真浏览器里看到的）
-    var newSection = $all('section').find(function (s) { return /新建例行计划/.test(s.textContent); });
-    var startInput = newSection && $('input[type="date"]', newSection);
-    if (startInput && !startInput.value) startInput.value = today();
-    // 标题、说明打了一半刷新也还在（第十五轮）；建好之后清空（见 createRoutineFromForm）
-    if (newSection && !state.routineDrafts) {
-      state.routineDrafts = [keepDraft($('input[placeholder*="英语单词"]', newSection), 'routine.new.title'),
-        keepDraft($('textarea', newSection), 'routine.new.desc')];
-    }
-    // 星期选择器接线（点亮/熄灭），仅前端状态，提交时读取
-    $all('#zq-wd button').forEach(function (b) {
-      if (b.dataset.wired) return; b.dataset.wired = '1';
-      b.addEventListener('click', function () {
-        b.dataset.on = b.dataset.on === '1' ? '0' : '1';
-        var on = b.dataset.on === '1';
-        b.style.borderColor = on ? 'var(--zq-primary)' : 'var(--zq-border)';
-        b.style.background = on ? 'var(--zq-tint)' : 'var(--zq-card)';
-        b.style.color = on ? 'var(--zq-primary)' : 'var(--zq-text2)';
-      });
-    });
-  }
-  async function loadRoutineSources(statusIdx) {
-    var params = statusIdx === 1 ? '&status=0' : statusIdx === 2 ? '&status=1' : '';
-    var current = latestOnly('routine-sources');
-    var tasks = ((await api.get('/task/page?limit=20' + params)).items || []).map(normalizeTask);
-    if (!current()) return;
-    renderRoutineSources(tasks);
-  }
-  function selectedWeekdays() {
-    var days = [];
-    $all('#zq-wd button').forEach(function (b, i) { if (b.dataset.on === '1') days.push(i + 1); });
-    return days;
-  }
-  async function generateRoutinesFromTasks() {
-    var genSection = $all('section').find(function (s) { return /从任务生成/.test(s.textContent); });
-    if (!genSection) return;
-    var checked = $all('#zq-src input[type="checkbox"]').filter(function (c) { return c.checked; });
-    if (!checked.length) return toast('请先勾选要生成的任务', 'error');
-    var selects = $all('select', genSection);
-    var freqSel = selects[1], remindSel = selects[2];
-    var frequency = freqSel && freqSel.selectedIndex === 1 ? 'WEEKLY' : 'DAILY';
-    var duration = Number(($('input[type="number"]', genSection) || {}).value || 45);
-    var pref = ($('input[type="time"]', genSection) || {}).value || '08:00';
-    var reminderEnabled = !remindSel || remindSel.selectedIndex === 0;
-    var days = selectedWeekdays();
-    await safe('生成例行计划', async function () {
-      for (var i = 0; i < checked.length; i++) {
-        var label = checked[i].closest('label');
-        var titleEl = label && label.querySelector('div > div');
-        var title = titleEl ? titleEl.textContent : '例行计划';
-        var payload = { title: title, frequency: frequency, durationMinutes: duration, preferredTime: pref, reminderEnabled: reminderEnabled, startDate: today() };
-        if (frequency === 'WEEKLY' && days.length) payload.daysOfWeek = days;
-        await api.post('/routine', payload);
-      }
-      // 生成完把勾去掉：勾还在的话，回来之后再点一下就把同一批任务又生成一遍（同「新建例行计划」清空表单）
-      checked.forEach(function (c) { c.checked = false; });
-      toast('已生成 ' + checked.length + ' 个例行计划');
-      await loadRoutines();
-    });
-  }
-  function renderRoutineSources(tasks) {
-    var host = $('#zq-src'); if (!host) return;
-    host.innerHTML = tasks.slice(0, 20).map(function (t) {
-      return '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);cursor:pointer;"><input type="checkbox" value="' + t.id + '" style="accent-color:var(--zq-primary);"><div style="min-width:0;flex:1;"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.title) + '</div><div style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;">' + esc(qLabel(t.quadrant) + ' · ' + sLabel(t.status)) + '</div></div></label>';
-    }).join('') || empty('暂无可选择任务');
-  }
-  // 例行计划今天是什么状态：没开始 / 进行中 / 已结束（日期都是 YYYY-MM-DD，按字符串比就是按日期比）。
-  // 原来一律当「进行中」、都给「标记完成」—— 已经结束的点了只会报「该日期不在例行计划范围内」（第十四轮连点暴力测试撞见的）
-  function routinePhase(r, day) {
-    if (r.startDate && String(r.startDate).slice(0, 10) > day) return 'upcoming';
-    if (r.endDate && String(r.endDate).slice(0, 10) < day) return 'ended';
-    return 'active';
-  }
-  async function loadRoutines() {
-    var host = $('#zq-rt'); if (!host) return;
-    var list = await api.get('/routine/list');
-    var day = today();
-    var active = list.filter(function (r) { return routinePhase(r, day) === 'active'; }).length;
-    // 标题旁那句「N 个进行中」原来是设计稿写死的「5 个进行中」，从来不变
-    // 按 id 找（第二十四轮）：原来按「个进行中」这几个字找那个 span —— 字是设计稿写死的「5 个进行中」，删掉示例数据就找不到了
-    var countEl = $('#zq-rt-count');
-    if (countEl) countEl.textContent = active + ' 个进行中';
-    host.innerHTML = list.length ? list.map(function (r) {
-      var phase = routinePhase(r, day);
-      var when = phase === 'upcoming' ? ' · ' + String(r.startDate).slice(5, 10).replace('-', '/') + ' 开始'
-        : phase === 'ended' ? ' · 已结束（' + String(r.endDate).slice(5, 10).replace('-', '/') + '）' : '';
-      var check = phase === 'active' ? '<button data-check-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">标记完成</button>' : '';
-      return '<div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);"><div class="zq-mono" style="flex:none;min-width:46px;height:32px;padding:0 8px;border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;">' + esc((r.preferredTime || '08:00').slice(0, 5)) + '</div><div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(r.title) + '</div><div style="font-size:11.5px;color:var(--zq-text2);margin-top:3px;">' + esc(freqLabel(r.frequency, r.daysOfWeek) + ' · ' + (r.durationMinutes || 0) + ' 分钟' + when) + '</div></div>' + check + '<button data-del-routine="' + r.id + '" class="zq-btn-ghost" style="height:28px;padding:0 11px;font-size:12px;">删除</button></div>';
-    }).join('') : empty('暂无例行计划');
-    $all('[data-check-routine]', host).forEach(function (b) { b.onclick = async function () { await api.post('/routine/' + b.dataset.checkRoutine + '/checkin', { status: 'DONE' }); await loadRoutines(); }; });
-    $all('[data-del-routine]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '删除例行计划', message: '删除这个例行计划？相关的未来提醒会一并停止。', okText: '删除', danger: true })) { await api.del('/routine/' + b.dataset.delRoutine); await loadRoutines(); } }; });
-  }
-  async function createRoutineFromForm() {
-    var section = $all('section').find(function (s) { return /新建例行计划/.test(s.textContent); });
-    if (!section) return;
-    var title = $('input[placeholder*="英语单词"]', section).value.trim();
-    if (!title) return toast('请输入标题', 'error');
-    await safe('创建例行计划', async function () {
-      await api.post('/routine', {
-        title: title,
-        description: $('textarea', section).value || '',
-        frequency: $('select', section).selectedIndex === 0 ? 'DAILY' : 'WEEKLY',
-        durationMinutes: Number($('input[type="number"]', section).value || 45),
-        startDate: $('input[type="date"]', section).value || today(),
-        endDate: $all('input[type="date"]', section)[1]?.value || '',
-        preferredTime: '08:00',
-        reminderEnabled: true
-      });
-      // 建好就清空标题和说明：这是页面上常驻的表单，不像弹窗那样一建就关。不清的话，
-      // 回来之后多点的那一下（第十四轮真浏览器：双击后又补了一下）会拿同一个标题再建一个
-      $('input[placeholder*="英语单词"]', section).value = '';
-      $('textarea', section).value = '';
-      (state.routineDrafts || []).forEach(function (d) { d.clear(); });
-      toast('例行计划已创建'); await loadRoutines();
-    });
-  }
-
-  async function bootStatistics() {
-    var stat = await api.get('/record/statistics');
-    var nums = $all('.zq-stat-num');
-    if (nums[0]) nums[0].textContent = stat.consecutiveDays || 0;
-    if (nums[1]) nums[1].textContent = stat.totalMinutes || stat.totalStudyMinutes || 0;
-    // 接口给的是 completedTaskCount / totalTaskCount —— 原来读 completedTasks / totalTasks，这两格永远是 0（第十七轮看到的）
-    if (nums[2]) nums[2].textContent = stat.completedTaskCount || 0;
-    if (nums[3]) nums[3].textContent = stat.totalTaskCount || 0;
-    window.setTab = function (k) { highlightStatTab(k); paintTrend(k); };
-    // 日 / 周 / 月三个按钮写在页面里（第二十四轮：原来由设计稿的示例脚本画出来，删掉示例之后这里自己接）
-    $all('#zq-tabs button[data-k]').forEach(function (b) { b.onclick = function () { window.setTab(b.dataset.k); }; });
-    await paintTrend('day');
-    highlightStatTab('day');
-    renderQuadrantDonut(stat.quadrantDistribution || {});
-  }
-  function highlightStatTab(k) {
-    $all('#zq-tabs button').forEach(function (b) {
-      var on = b.dataset.k === k;
-      b.style.background = on ? 'var(--zq-primary)' : 'var(--zq-card)';
-      b.style.color = on ? 'var(--zq-on-primary)' : 'var(--zq-text2)';
-    });
-  }
-  /** 四象限的分布：/record/statistics 已经按象限数好了（一条 GROUP BY）。原来另外取回全部任务在页面里再数一遍（第十七轮：三千条任务就是 1.6MB） */
-  function renderQuadrantDonut(distribution) {
-    var donut = $('#zq-donut'); if (!donut) return;
-    var counts = [1, 2, 3, 4].map(function (q) { return Number((distribution || {})[q] || 0); });
-    var total = counts.reduce(function (a, b) { return a + b; }, 0);
-    var C = 2 * Math.PI * 66, acc = 0;
-    donut.innerHTML = total ? counts.map(function (n, i) {
-      if (!n) return '';
-      var len = n / total * C;
-      var seg = '<circle cx="86" cy="86" r="66" fill="none" stroke="var(--zq-q' + (i + 1) + ')" stroke-width="22" stroke-dasharray="' + len.toFixed(1) + ' ' + (C - len).toFixed(1) + '" stroke-dashoffset="' + (-acc).toFixed(1) + '" transform="rotate(-90 86 86)"></circle>';
-      acc += len; return seg;
-    }).join('') : '<circle cx="86" cy="86" r="66" fill="none" stroke="var(--zq-card-soft)" stroke-width="22"></circle>';
-    var wrap = donut.parentElement;
-    var center = wrap && wrap.querySelector('.zq-mono');
-    if (center) center.textContent = total;
-    var legendHost = $('#zq-legend');
-    if (legendHost) {
-      var labels = ['重要且紧急', '重要不紧急', '紧急不重要', '不重要不紧急'];
-      legendHost.innerHTML = counts.map(function (n, i) {
-        var pct = total ? Math.round(n / total * 100) : 0;
-        return '<div style="display:flex; align-items:center; gap:8px; font-size:12.5px;"><span style="width:10px; height:10px; flex:none; border-radius:3px; background:var(--zq-q' + (i + 1) + ');"></span><span style="flex:1; color:var(--zq-text2);">' + labels[i] + '</span><span class="zq-mono" style="font-weight:600;">' + n + ' 项 · ' + pct + '%</span></div>';
-      }).join('');
-    }
-  }
-  async function paintTrend(type) {
-    var current = latestOnly('trend');
-    var list = await api.get('/record/trend?type=' + encodeURIComponent(type));
-    if (!current()) return;
-    var vals = list.map(function (x) { return Number(x.minutes || x.totalMinutes || x.value || 0); });
-    var labels = list.map(function (x) { return x.label || x.date || x.period || ''; });
-    var max = Math.max.apply(null, vals.concat([1]));
-    var host = $('#zq-bars'); if (!host) return;
-    host.innerHTML = vals.map(function (v, i) {
-      var h = Math.max(3, Math.round(v / max * 168));
-      return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;height:100%;justify-content:flex-end;"><span class="zq-mono" style="font-size:10px;color:var(--zq-text3);">' + v + '</span><div style="width:100%;max-width:34px;height:' + h + 'px;border-radius:4px 4px 2px 2px;background:var(--zq-tint-strong);"></div><span style="font-size:10.5px;color:var(--zq-text3);white-space:nowrap;">' + esc(labels[i]) + '</span></div>';
-    }).join('') || empty('暂无趋势数据');
-  }
-
   // /ai/models 返回的是对象 {systemModels, userModels, defaultModelId,...}，统一拍平成数组
   function normalizeModelList(data) {
     if (Array.isArray(data)) return data;
@@ -5234,7 +5041,8 @@
    * 列表是昨天的、打卡记到今天；番茄钟的「今日 N 个」也不归零。每分钟、切回这个标签页时看一眼业务日期，变了就重新取这一页的数据：
    * 不整页刷新（正在跑的番茄钟、打了一半的字都还在），也不重新绑事件（bootRoutines 用 addEventListener，重跑一次每个按钮点一下就提交两遍）。
    */
-  var DAY_RELOAD = { 'dashboard.html': function () { return bootDashboard(); }, 'routines.html': function () { return loadRoutines(); } };
+  // 已经拆成模块的页面由模块自己导出 dayReload（例行计划，第三十二轮），见 route()
+  var DAY_RELOAD = { 'dashboard.html': function () { return bootDashboard(); } };
   var dayWatched = false;
   function watchBusinessDay(reload) {
     var day = today();
@@ -5283,7 +5091,8 @@
    */
   var PAGE_MODULES = {
     'admin.html': 'pages/admin.js', 'account-admin.html': 'pages/admin.js',
-    'feedback-admin.html': 'pages/admin.js', 'shared-plan-admin.html': 'pages/admin.js'
+    'feedback-admin.html': 'pages/admin.js', 'shared-plan-admin.html': 'pages/admin.js',
+    'routines.html': 'pages/routines.js', 'statistics.html': 'pages/statistics.js'
   };
   function isDialogHash(h) { return /^#(?:settings(?:[/?]|$)|achievements$)/.test(h || ''); }
   var dialog = null;            // 开着的那个：{ kind, handle }
@@ -5350,6 +5159,7 @@
     api: api, state: state, esc: esc, toast: toast, notice: notice, askConfirm: askConfirm, askText: askText, showInfo: showInfo, safe: safe, openModal: openModal,
     $: $, $all: $all, pickFile: pickFile, empty: empty, fmtDate: fmtDate, d10: d10, updateSidebarUser: updateSidebarUser, normalizeModelList: normalizeModelList,
     planCategory: planCategory, planCategoryOptions: planCategoryOptions, freqLabel: freqLabel,
+    today: today, latestOnly: latestOnly, keepDraft: keepDraft, normalizeTask: normalizeTask, qLabel: qLabel, sLabel: sLabel,
     REMINDER_FIELDS: REMINDER_FIELDS, currentReminderChannel: currentReminderChannel, reminderChannelReady: reminderChannelReady,
     logout: logout, adoptNewToken: adoptNewToken
   };
@@ -5403,7 +5213,7 @@
         watchDialogs();
         // 页面开着跨过业务日期的零点：只重新取数据（看板、例行计划的「今天」），见 watchBusinessDay
         if (!dayWatched && DAY_RELOAD[page]) { dayWatched = true; watchBusinessDay(DAY_RELOAD[page]); }
-        var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'routines.html': bootRoutines, 'statistics.html': bootStatistics, 'shared-plans.html': bootSharedPlans, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
+        var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'shared-plans.html': bootSharedPlans, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
         // 番茄钟的待补记不能挂在页面启动之后：启动失败（网断着打开的、被限流）时正是有待补记的时候，挂在后面的话这一页就不补了。
         // 当场那一趟放在启动之后（成不成都跑）：补上了要刷新的看板数字，得等看板自己先起来
         var watchPomodoros = !pomoWatched;
@@ -5414,7 +5224,12 @@
         }
         try {
           if (boots[page]) await boots[page]();
-          else if (PAGE_MODULES[page]) await (await loadModule(PAGE_MODULES[page])).boots[page](zqShared);
+          else if (PAGE_MODULES[page]) {
+            var pageModule = await loadModule(PAGE_MODULES[page]);
+            // 页面开着跨过业务日期的零点要重新取什么：拆成模块的页面自己说（同 DAY_RELOAD）
+            if (!dayWatched && pageModule.dayReload && pageModule.dayReload[page]) { dayWatched = true; watchBusinessDay(pageModule.dayReload[page]); }
+            await pageModule.boots[page](zqShared);
+          }
         } finally {
           if (watchPomodoros) catchUpPomodoros();
         }

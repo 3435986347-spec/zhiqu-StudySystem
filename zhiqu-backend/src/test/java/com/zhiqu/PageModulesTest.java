@@ -115,6 +115,22 @@ class PageModulesTest {
     }
 
     @Test
+    @DisplayName("页面开着跨过业务日期的零点：拆成模块的页面由模块导出 dayReload，壳接到 watchBusinessDay 上；DAY_RELOAD 里不再有已经拆走的页面")
+    void 零点重新取数据() throws IOException {
+        String shell = shell();
+        Matcher reload = Pattern.compile("var DAY_RELOAD = \\{(.*)\\};").matcher(shell);
+        assertTrue(reload.find(), "找不到 var DAY_RELOAD");
+        Set<String> stale = new TreeSet<>();
+        Matcher p = Pattern.compile("'([a-z0-9-]+\\.html)'").matcher(reload.group(1));
+        while (p.find()) if (pageModules().containsKey(p.group(1))) stale.add(p.group(1));
+        assertEquals(Set.of(), stale, "DAY_RELOAD 里还写着已经拆进模块的页面 —— 它调的函数已经不在壳里了");
+        String route = fn(shell, "function route() {");
+        int load = route.indexOf("var pageModule = await loadModule(PAGE_MODULES[page]);");
+        int watch = route.indexOf("watchBusinessDay(pageModule.dayReload[page]);");
+        assertTrue(load >= 0 && watch > load, "拆成模块的页面的 dayReload 没有接到 watchBusinessDay 上 —— 页面开着过了零点，「今天」还是昨天");
+    }
+
+    @Test
     @DisplayName("模块只用 zqShared 给了的东西；壳的助手在模块里被直接调用时，模块要么解构了它、要么自己定义了它（否则打开那一页才 ReferenceError）")
     void 模块只用壳给的东西() throws IOException {
         String shell = shell();

@@ -901,6 +901,10 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   **Before moving a block, grep `src/test` for its distinctive lines, not just its function names** — tests that read
   `zhiqu-api.js` for a call or a phrase go red (or, worse, vacuously green) once it moves. Rounds 30 and 31 each found
   some only in the full run (`latest-check.js`, `ReminderChannelWiringTest`, `RoutinePhaseTest`); scan `assets/**/*.js`.
+  Test helpers for this: `SourceText.frontendScripts()` (shell + every module) and `SourceText.functionBody()` (works for the
+  shell's two-space indent and modules' top level). A page that must refetch when the business day rolls over exports
+  `dayReload[page]` (round 32); the shell wires it to `watchBusinessDay`. Run a perturbation batch only after the clean run is
+  green — round 32's first batch looked all-red partly because a new assertion was red on clean code.
 - **"Today" in the frontend is `today()` — the business date (business time zone, server's clock) —
   never `toISOString()`, and since round 21 not `localDate()` either.** `toISOString()` is UTC:
   between 00:00 and 08:00 CST it yields *yesterday* (the dashboard header showed yesterday, check-ins
@@ -958,7 +962,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261004-admin`.
+  old bundle. Current token: `20261004-routines`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

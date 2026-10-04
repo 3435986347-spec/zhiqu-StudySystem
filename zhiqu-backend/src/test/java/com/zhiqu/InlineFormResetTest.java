@@ -20,17 +20,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class InlineFormResetTest {
 
     private static String functionBody(String code, String name) {
-        Matcher m = Pattern.compile("async function " + Pattern.quote(name) + "\\(\\)\\s*\\{").matcher(code);
-        assertTrue(m.find(), "找不到 " + name + " —— 改名了？");
-        int start = m.end();
-        int end = code.indexOf("\n  async function ", start);
-        int endSync = code.indexOf("\n  function ", start);
-        if (end < 0 || (endSync >= 0 && endSync < end)) end = endSync;
-        return code.substring(start, end < 0 ? code.length() : end);
+        return SourceText.functionBody(code, "async function " + name + "() {");
     }
 
+    /** 例行计划页（第三十二轮起是模块 pages/routines.js）。 */
     private static String api() throws Exception {
-        return SourceText.stripComments(Files.readString(Path.of("src/main/resources/static/assets/zhiqu-api.js")));
+        return SourceText.pageModule("routines.js");
     }
 
     @Test

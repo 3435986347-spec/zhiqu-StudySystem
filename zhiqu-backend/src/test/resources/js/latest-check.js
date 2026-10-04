@@ -1,4 +1,4 @@
-// 来回切「日 / 周 / 月」时乱序回来的响应 —— 直接跑 assets/zhiqu-api.js 里发布的 latestOnly 与 paintTrend（第十四轮）。
+// 来回切「日 / 周 / 月」时乱序回来的响应 —— 直接跑发布的 latestOnly（壳 assets/zhiqu-api.js）与 paintTrend（import assets/pages/statistics.js）（第十四轮）。
 //
 //   用法：node src/test/resources/js/latest-check.js <zhiqu-api.js 的路径>
 //   打印 ALL-GREEN 且退出码 0 = 全绿。由 LatestResponseTest 调用。
@@ -12,16 +12,20 @@ function slice(startMark, endMark) {
   if (b < 0) throw new Error('抠不到终点: ' + endMark);
   return src.slice(a, b);
 }
-// paintTrend 抠到它自己的结尾（两格缩进的「}」）—— 第三十轮把它后面的成就页挪进了 settings.js，按「下一个函数」抠就断了
-const code = slice('  var latestSeq = {};', '  async function safe(') + slice('  async function paintTrend(type) {', '\n  }\n') + '\n  }\n';
+// latestOnly 还在壳里（好几页都用）；paintTrend 第三十二轮起在 pages/statistics.js 里 —— 直接 import，用 bind 注入假的 api / $
+const code = slice('  var latestSeq = {};', '  async function safe(');
+const latest = new Function(code + '\nreturn { latestOnly };')();
+const shellDir = require('path').dirname(require('path').resolve(process.argv[2]));
+const statsUrl = require('url').pathToFileURL(require('path').join(shellDir, 'pages', 'statistics.js')).href;
 
 const host = { innerHTML: '' };
 const pending = {};
 const api = { get: (path) => new Promise((resolve) => { pending[path] = resolve; }) };
 const $ = (sel) => (sel === '#zq-bars' ? host : null);
+const $all = () => [];
 const esc = (s) => String(s);
 const empty = (s) => '<empty>' + s + '</empty>';
-const mod = new Function('api', '$', 'esc', 'empty', code + '\nreturn { latestOnly, paintTrend };')(api, $, esc, empty);
+const mod = { latestOnly: latest.latestOnly, paintTrend: null };
 
 let fail = 0;
 function judge(name, cond, detail) {
@@ -31,6 +35,10 @@ function judge(name, cond, detail) {
 const tick = () => new Promise((r) => setImmediate(r));
 
 (async () => {
+  const stats = await import(statsUrl);
+  if (typeof stats.paintTrend !== 'function' || typeof stats.bind !== 'function') throw new Error('pages/statistics.js 没有导出 paintTrend / bind');
+  stats.bind({ api, $, $all, esc, empty, latestOnly: latest.latestOnly });
+  mod.paintTrend = stats.paintTrend;
   const day = mod.paintTrend('day');
   const month = mod.paintTrend('month');
   pending['/record/trend?type=month']([{ label: '9月', minutes: 300 }]);

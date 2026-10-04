@@ -29,18 +29,14 @@ class DataVolumeFrontendTest {
     }
 
     private static String body(String code, String signature) {
-        int a = code.indexOf(signature);
-        assertTrue(a >= 0, "找不到 " + signature + " —— 改名了？");
-        int b = code.indexOf("\n  async function ", a + signature.length());
-        int c = code.indexOf("\n  function ", a + signature.length());
-        int end = Math.min(b < 0 ? code.length() : b, c < 0 ? code.length() : c);
-        return code.substring(a, end);
+        return SourceText.functionBody(code, signature);
     }
 
     @Test
     @DisplayName("页面里不再有「取回全部任务」：要多少取多少（/task/page），要数字就用统计接口")
     void 不取全部任务() throws Exception {
-        String code = api();
+        // 壳和拆出去的页面模块一起扫：只扫壳的话，挪进模块的页面去取全部任务也看不见
+        String code = SourceText.frontendScripts();
         assertTrue(!code.contains("api.get('/task/list"), "还有地方 GET /task/list 取回全部任务：用 /task/page?limit=…");
         int pages = 0;
         Matcher m = Pattern.compile("api\\.get\\('/task/page\\?").matcher(code);
@@ -58,7 +54,7 @@ class DataVolumeFrontendTest {
     @Test
     @DisplayName("统计页读的每一个 stat.xxx 都是接口真的给的字段（原来读 completedTasks / totalTasks，接口给的是 …Count —— 两格永远是 0）")
     void 统计页字段对得上() throws Exception {
-        String f = body(api(), "async function bootStatistics()");
+        String f = body(SourceText.pageModule("statistics.js"), "async function bootStatistics()");
         Set<String> real = Arrays.stream(StudyStatisticsVO.class.getDeclaredFields()).map(Field::getName).collect(Collectors.toSet());
         List<String> used = new ArrayList<>();
         Matcher m = Pattern.compile("\\bstat\\.([A-Za-z_]\\w*)").matcher(f);

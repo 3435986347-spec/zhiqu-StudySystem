@@ -29,22 +29,17 @@ class LatestResponseTest {
     @Test
     @DisplayName("筛选 / 刷新会连着触发的列表：拿到结果先问 current()，过期的不画")
     void 列表都只认最后一次() throws Exception {
-        String code = SourceText.stripComments(Files.readString(Path.of("src/main/resources/static/assets/zhiqu-api.js")));
+        // 壳和页面模块一起扫（第三十二轮起趋势图、例行计划的来源列表在模块里）
+        String code = SourceText.frontendScripts();
         for (String name : List.of("paintTrend", "loadTasks", "loadRoutineSources", "loadPlans")) {
             Matcher m = Pattern.compile("async function " + name + "\\([^)]*\\)\\s*\\{").matcher(code);
             assertTrue(m.find(), "找不到 " + name + " —— 改名了？这条判据要跟着改");
-            int next = Math.min(indexOrMax(code, "\n  async function ", m.end()), indexOrMax(code, "\n  function ", m.end()));
-            String body = code.substring(m.end(), next);
+            String body = SourceText.functionBody(code, m.group());
             int token = body.indexOf("latestOnly(");
             int fetch = body.indexOf("await api.get(");
             int check = body.indexOf("if (!current()) return;");
             assertTrue(token >= 0 && fetch > token && check > fetch,
                     name + "：要在发请求之前领一个 latestOnly、拿到结果之后先 if (!current()) return; —— 否则乱序回来的旧结果会盖掉新的");
         }
-    }
-
-    private static int indexOrMax(String s, String needle, int from) {
-        int i = s.indexOf(needle, from);
-        return i < 0 ? s.length() : i;
     }
 }

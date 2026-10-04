@@ -37,6 +37,47 @@ public final class SourceText {
         return source.replaceAll("(?<!:)//[^\\n]*", " ").replaceAll("(?s)/\\*.*?\\*/", " ");
     }
 
+    /**
+     * 网页端全部自己写的脚本（壳 {@code zhiqu-api.js}、{@code zhiqu-ui.js}、设置弹窗、{@code assets/pages/} 下的页面模块），剥掉注释、拼在一起。
+     *
+     * <p>方案第 4 步把壳一页一页拆成模块（第三十轮起）。「全前端都不许 X」「全前端至少 N 处 Y」这类判据要扫这一份，不能只扫壳：
+     * 只扫壳的话，代码一搬走，{@code assertFalse} 类的自动变绿、计数类的少了一截 —— 第三十、三十一轮各撞上过（{@code ReminderChannelWiringTest}、
+     * {@code RoutinePhaseTest}）。{@code static/vendor/} 不算（第三方的）。
+     */
+    public static String frontendScripts() throws java.io.IOException {
+        StringBuilder all = new StringBuilder();
+        int files = 0;
+        try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(java.nio.file.Path.of("src/main/resources/static/assets"))) {
+            for (java.nio.file.Path f : walk.filter(p -> p.toString().endsWith(".js") && !p.toString().contains("/vendor/")).sorted().toList()) {
+                files++;
+                all.append(stripComments(java.nio.file.Files.readString(f, java.nio.charset.StandardCharsets.UTF_8))).append('\n');
+            }
+        }
+        if (files < 4) throw new IllegalStateException("assets 下只扫到 " + files + " 个脚本 —— 扫空了？");
+        return all.toString();
+    }
+
+    /** 一个页面模块（{@code assets/pages/<name>.js}），剥掉注释。 */
+    public static String pageModule(String name) throws java.io.IOException {
+        return stripComments(java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/resources/static/assets/pages", name), java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /**
+     * 从 {@code signature} 截到下一个顶层函数开始之前 —— 壳里的函数缩进两格、模块里的顶格，两种都认。
+     * 原来各个判据自己找 {@code "\n  async function "}，函数挪进模块（顶格）之后就截不到结尾了。
+     */
+    public static String functionBody(String code, String signature) {
+        int a = code.indexOf(signature);
+        if (a < 0) throw new AssertionError("找不到 " + signature + " —— 改名了、或者挪到别的文件了？");
+        int end = code.length();
+        for (String next : new String[]{"\n  async function ", "\n  function ", "\nasync function ", "\nfunction ", "\nexport "}) {
+            int i = code.indexOf(next, a + signature.length());
+            if (i >= 0 && i < end) end = i;
+        }
+        return code.substring(a, end);
+    }
+
     private SourceText() {
     }
 }

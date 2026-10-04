@@ -23,11 +23,8 @@ class RoutinePhaseTest {
     @Test
     @DisplayName("列表：只给进行中的「标记完成」，「N 个进行中」按真实数目写")
     void 列表按分段画() throws Exception {
-        String code = SourceText.stripComments(Files.readString(Path.of("src/main/resources/static/assets/zhiqu-api.js")));
-        int a = code.indexOf("async function loadRoutines()");
-        int b = code.indexOf("\n  async function ", a + 10);
-        assertTrue(a >= 0 && b > a, "找不到 loadRoutines");
-        String body = code.substring(a, b);
+        // 第三十二轮起例行计划页是模块（pages/routines.js）
+        String body = SourceText.functionBody(SourceText.pageModule("routines.js"), "async function loadRoutines()");
         assertTrue(body.contains("var check = phase === 'active' ? '<button data-check-routine="), "「标记完成」要只给进行中的例行计划");
         assertTrue(!body.replace("var check = phase === 'active' ? '<button data-check-routine=", "").contains("<button data-check-routine="),
                 "列表里另有一处不看分段就画「标记完成」");
@@ -38,13 +35,7 @@ class RoutinePhaseTest {
     @DisplayName("周期只经 freqLabel 显示：例行计划列表、参考计划里的例行计划、AI 草稿，三处都不再露出 DAILY / WEEKLY（第十九轮）")
     void 周期显示成中文() throws Exception {
         // 壳和拆出去的模块一起扫（第三十一轮：共享计划审核的详情弹窗挪进了 pages/admin.js —— 只扫壳的话，那一处原样显示周期也看不见）
-        StringBuilder all = new StringBuilder();
-        try (java.util.stream.Stream<Path> walk = Files.walk(Path.of("src/main/resources/static/assets"))) {
-            for (Path f : walk.filter(p -> p.toString().endsWith(".js") && !p.toString().contains("/vendor/")).sorted().toList()) {
-                all.append(SourceText.stripComments(Files.readString(f))).append('\n');
-            }
-        }
-        String code = all.toString();
+        String code = SourceText.frontendScripts();
         java.util.regex.Matcher raw = java.util.regex.Pattern.compile(
                 "\\(\\s*\\w+\\.frequency\\s*\\|\\|\\s*'DAILY'\\s*\\)|String\\(\\s*\\w+\\.frequency\\s*\\)").matcher(code);
         boolean found = raw.find();
