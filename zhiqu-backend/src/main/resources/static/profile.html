@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261004-office" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261004-office">
-  <link rel="manifest" href="manifest.json?v=20261004-office">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261004-readtasks" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261004-readtasks">
+  <link rel="manifest" href="manifest.json?v=20261004-readtasks">
   <meta name="theme-color" content="#2E538F">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261004-office">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261004-readtasks">
 </head>
 <body>
   <div class="zq-app">
@@ -118,6 +118,11 @@
             <section class="zq-card zq-card-lg">
               <h2 class="zq-h2" style="font-size:16px;">AI 模型配置</h2>
               <p style="margin:8px 0 12px; padding:8px 12px; border-radius:var(--zq-rs); background:var(--zq-tint); font-size:12px; color:var(--zq-text2); line-height:1.55;">API Key 加密存储；监管后台不会显示你的完整 Key、知识库正文或任务正文。</p>
+              <!-- 第二十七轮：AI 读不读得到你的任务（用户定的「让它读，给一个开关」；默认开）。说清楚打开时什么会发给谁。 -->
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 14px;">
+                <span style="font-size:12.5px; color:var(--zq-text2); line-height:1.55;"><b style="color:var(--zq-text);">让 AI 读我的任务</b>：问到今天、这周怎么安排时，AI 先看一眼你没完成的任务（标题、时间、象限）再回答。打开时，这些内容会发给你配置的模型供应商。</span>
+                <button id="zq-ai-read-tasks" type="button" aria-label="让 AI 读我的任务" style="flex:none; width:42px; height:24px; border:none; border-radius:999px; background:var(--zq-border); cursor:pointer; position:relative; transition:background .2s;"><i style="position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s;"></i></button>
+              </div>
               <div id="zq-models" style="display:flex; flex-direction:column; gap:10px; margin-bottom:18px;"></div>
               <div style="display:flex; flex-direction:column; gap:12px; padding-top:16px; border-top:1px solid var(--zq-border-soft);">
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">显示名称</label><input class="zq-input" placeholder="例如 Claude Sonnet / DeepSeek / 本地 Ollama"></div>
@@ -139,7 +144,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261004-office"></script>
-  <script src="assets/zhiqu-api.js?v=20261004-office"></script>
+  <script src="assets/zhiqu-ui.js?v=20261004-readtasks"></script>
+  <script src="assets/zhiqu-api.js?v=20261004-readtasks"></script>
 </body>
 </html>

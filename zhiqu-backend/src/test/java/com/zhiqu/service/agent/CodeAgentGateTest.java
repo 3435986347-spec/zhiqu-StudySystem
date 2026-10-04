@@ -50,7 +50,7 @@ class CodeAgentGateTest {
 
     private static AgentPlanDecision decide(String message, boolean toolCalling, boolean workspaceReadable) {
         return AgentPlanDecision.of("AUTO", message, false, null, Map.of(),
-                toolCalling, false, workspaceReadable);
+                toolCalling, false, workspaceReadable, false);
     }
 
     @Test

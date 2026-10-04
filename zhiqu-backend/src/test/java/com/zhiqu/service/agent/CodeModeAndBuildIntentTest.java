@@ -37,7 +37,7 @@ class CodeModeAndBuildIntentTest {
 
     private static AgentPlanDecision decide(String message, Map<String, Object> options,
                                             boolean toolCalling, boolean workspaceReadable) {
-        return AgentPlanDecision.of("AUTO", message, false, null, options, toolCalling, false, workspaceReadable);
+        return AgentPlanDecision.of("AUTO", message, false, null, options, toolCalling, false, workspaceReadable, false);
     }
 
     @Test

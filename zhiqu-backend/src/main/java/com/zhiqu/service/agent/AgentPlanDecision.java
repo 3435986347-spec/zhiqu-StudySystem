@@ -56,7 +56,8 @@ public record AgentPlanDecision(
         boolean needsWikiTool,
         boolean needsCodeAgent,
         boolean needsAnswerVerifier,
-        boolean needsSummary
+        boolean needsSummary,
+        boolean needsTaskReader
 ) {
 
     private static final Set<String> MODES = Set.of("AUTO", "CHAT_ONLY", "RESEARCH", "PLAN");
@@ -139,6 +140,19 @@ public record AgentPlanDecision(
      * 要不要把它落成任务草稿 —— 计划工具交给模型、不强制（{@code tool_choice: auto}），模型不调就没有草稿。
      * 原来一律不出：「帮我把下周的工作安排一下」这种最自然的说法得不到计划，AI 助手的定位下靠关键词猜意图会一直漏。
      */
+    /**
+     * 说到了安排、今天、这周这一类 —— AI 该看看用户的任务再回答（第二十七轮，用户 2026-10-04 定的「让它读，给一个开关」）。
+     * 会过触发（「今天天气怎么样」也算）：过触发的代价是这一轮把任务标题多发给模型一次，漏触发的代价是模型对着空气编一份
+     * 「你今天的任务」。用户不想让它读就关开关 —— 这道门只管「这一句像不像在问安排」。
+     */
+    public static boolean taskReadIntent(String message) {
+        return containsAny(message, TASK_READ_WORDS);
+    }
+
+    private static final List<String> TASK_READ_WORDS = List.of(
+            "今天", "明天", "后天", "这周", "本周", "下周", "这几天", "最近要", "待办", "任务", "日程", "安排",
+            "先做", "先干", "优先", "截止", "ddl", "逾期", "排一下", "排个", "排期", "忙不忙", "要做什么", "做什么");
+
     public static boolean planMention(String message) {
         return containsAny(message, TASK_CREATE_PLAN_WORDS);
     }
@@ -210,7 +224,7 @@ public record AgentPlanDecision(
     public static AgentPlanDecision of(String agentMode, String message, boolean enableWebSearch,
                                        Long notebookId, Map<String, Object> contextOptions,
                                        boolean toolCallingSupported, boolean historyFull,
-                                       boolean workspaceReadable) {
+                                       boolean workspaceReadable, boolean tasksReadable) {
         String mode = normalizeMode(agentMode);
         Map<String, Object> options = contextOptions == null ? Map.of() : contextOptions;
         boolean chatOnly = "CHAT_ONLY".equals(mode);
@@ -248,7 +262,9 @@ public record AgentPlanDecision(
                 codeAgentIntent(message, options) && toolCallingSupported && workspaceReadable,
                 // 没检索就没有引用可核 —— 与 needsRetriever 同条件，不另起一个会漂的门
                 needsRetriever,
-                historyFull
+                historyFull,
+                // 读任务：开关关着就不造这个节点（不造出来再跳过 —— 那是幽灵节点）。tasksReadable 来自执行侧（用户的开关）
+                !chatOnly && tasksReadable && taskReadIntent(message)
         );
     }
 

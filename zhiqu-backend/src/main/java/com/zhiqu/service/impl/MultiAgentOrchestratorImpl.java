@@ -86,6 +86,11 @@ public class MultiAgentOrchestratorImpl implements MultiAgentOrchestrator {
         if (decision.needsRetriever() && specs.stream().noneMatch(item -> item.agentType().endsWith("_RESEARCHER"))) {
             specs.add(new NodeSpec("RETRIEVER", "RESEARCH_CONTEXT", Map.of(), "Search available context"));
         }
+        // 读用户的任务（第二十七轮）。门在 AgentPlanDecision.needsTaskReader，用户的开关已经算进去了 ——
+        // 关着时这个节点根本不会被造出来，而不是造出来再跳过。
+        if (decision.needsTaskReader()) {
+            specs.add(new NodeSpec("TASK_READER", "READ_USER_TASKS", Map.of(), "Read the user's open tasks"));
+        }
         if (decision.needsWikiTool()) {
             specs.add(new NodeSpec("WIKI_TOOL_AGENT", "WIKI_TOOL_LOOP", Map.of(), "Read and edit Wiki via tools"));
         }

@@ -1732,6 +1732,20 @@
       };
     }
     wireCliLogin();
+    // 让 AI 读我的任务（第二十七轮）↔ PUT /user/ai-read-tasks；/auth/info 带着 aiReadTasks（服务端：空 = 开）
+    var readTasks = $('#zq-ai-read-tasks');
+    if (readTasks) {
+      setMorningToggle(readTasks, u.aiReadTasks !== false);
+      readTasks.onclick = function () {
+        var next = readTasks.dataset.on !== '1';
+        safe('保存设置', async function () {
+          await api.put('/user/ai-read-tasks?enabled=' + next);
+          state.user.aiReadTasks = next;
+          setMorningToggle(readTasks, next);
+          toast(next ? '已打开：问到安排时 AI 会先看你的任务' : '已关闭：AI 不再读你的任务');
+        });
+      };
+    }
     // 提醒推送 ↔ /reminder/settings（开关 + 渠道凭据）。这个开关管的是全部提醒（到点的、截止前的、早八汇总）——
     // 后端 isEnabled 不开就一条都不发；原来卡片叫「早八提醒」、说明只写早八汇总，设了提醒时间的人不会想到要来开它
     var morning = $('#zq-morning');
@@ -3672,6 +3686,15 @@
         }
       });
     };
+    // 从别的页带着一句话过来（?ask=…，看板上的「让 AI 排一下今天」，第二十七轮）：填进输入框、不直接发 —— 和空白时的示例一个规矩。
+    // 放在最后：上面载入 Notebook 时会换回这个 Notebook 存着的草稿，先填就被盖掉了。
+    var ask = new URLSearchParams(location.search).get('ask');
+    if (ask && draft) {
+      draft.value = ask.slice(0, 500);
+      draft.dispatchEvent(new Event('input', { bubbles: true }));
+      try { history.replaceState(null, '', location.pathname); } catch (e) { /* 只是不想刷新后再填一遍 */ }
+      draft.focus();
+    }
   }
 
   function pickFile(cb) {

@@ -16,7 +16,7 @@ inside the Spring Boot JAR, so there is **no separate frontend build step**.
 ### Database
 
 The schema is managed by **Flyway** (`zhiqu-backend/src/main/resources/db/migration`, currently
-`V1` … `V41`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
+`V1` … `V42`). Migrations run automatically on startup — do **not** apply `schema.sql` by hand.
 Only the database itself needs to exist:
 
 ```sql
@@ -896,8 +896,15 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   `PlanCategoryListTest` checks they agree. `PositioningCopyTest` keeps student-only phrasing (考研, 学习统计, 早八…) out of
   pages, the shell, the manifest **and every text block / string literal in `src/main/java`** — the AI's system prompts
   are where the old positioning hid longest. Matching the user's own words is the exception (`AgentPlanDecision`, and a
-  per-file allow-list). The AI cannot read the user's tasks (nothing in the AI pipeline touches `StudyTask`), so do not add
-  entry points that promise it can.
+  per-file allow-list).
+- **The AI reads the user's open tasks** (round 27, user's decision 2026-10-04: "let it read, with a switch"). A `TASK_READER`
+  node (`PRE_STREAM` 12) exists only when the message is about scheduling (`AgentPlanDecision.taskReadIntent`), the mode
+  is not chat-only **and** `sys_user.ai_read_tasks` is not 0 (V42; NULL means on — `SysUser.aiReadsTasks()` is the only
+  place that decides). The tasks go to the model as a user-role *data* block built by `AssistantTaskContext` (titles
+  flattened to one line, so a title cannot forge the block's end marker). Switch off + scheduling question → no node, but
+  the answer is told the user turned it off (`AssistantTaskContext.DECLINED`) so it does not invent "your tasks today".
+  "Not completed" is filtered in the query only (`AssistantTaskReader`) — filtering twice made either filter deletable
+  without a red.
 - **Page reminders and shared login** (round 25, `docs/rounds/round-25.md`). Every signed-in page watches
   `GET /api/reminder/upcoming` (next 24h + last 15 min, regardless of whether a third-party channel delivered it — people with
   no channel configured are exactly who needs it) and, when one is due, chimes + notifies + toasts once: "already reminded" is
@@ -918,7 +925,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261004-office`.
+  old bundle. Current token: `20261004-readtasks`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

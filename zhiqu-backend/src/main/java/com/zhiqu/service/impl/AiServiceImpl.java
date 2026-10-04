@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessClock;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.AiModelConfig;
+import com.zhiqu.entity.SysUser;
 import com.zhiqu.entity.AiConversation;
 import com.zhiqu.entity.AiAgentArtifact;
 import com.zhiqu.entity.AiAgentClaim;
@@ -39,6 +40,8 @@ import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.CodeContextPrompt;
 import com.zhiqu.service.ai.CodeWorkspaceAgent;
+import com.zhiqu.service.ai.AssistantTaskContext;
+import com.zhiqu.service.ai.AssistantTaskReader;
 import com.zhiqu.service.ai.UserMessageFit;
 import com.zhiqu.service.ai.ContextBudget;
 import com.zhiqu.service.ai.StudyPlanTool;
@@ -97,6 +100,8 @@ public class AiServiceImpl implements AiService {
     private final BusinessClock clock;
     /** 代码工作区的工具循环（拆第五刀）。工作区、执行器、管理员守卫都在它里面，这里不再直接依赖。 */
     private final CodeWorkspaceAgent codeWorkspaceAgent;
+    /** 读用户的任务（第二十七轮）。 */
+    private final AssistantTaskReader taskReader;
     /** create_study_plan 的 schema 与解析器（拆第六刀）。PLANNER 与 code agent 共用这一份。 */
     private final StudyPlanTool studyPlanTool;
     private static final Logger log = LoggerFactory.getLogger(AiServiceImpl.class);
@@ -275,10 +280,12 @@ public class AiServiceImpl implements AiService {
                          @Value("${app.ai.allow-private-provider-url:false}") boolean allowPrivateProviderUrl,
                          BusinessClock clock,
                          CodeWorkspaceAgent codeWorkspaceAgent,
+                         AssistantTaskReader taskReader,
                          StudyPlanTool studyPlanTool,
                          com.zhiqu.service.support.SseHeartbeats heartbeats) {
         this.clock = clock;
         this.codeWorkspaceAgent = codeWorkspaceAgent;
+        this.taskReader = taskReader;
         this.studyPlanTool = studyPlanTool;
         this.configMapper = configMapper;
         this.modelConfigMapper = modelConfigMapper;
@@ -603,6 +610,8 @@ public class AiServiceImpl implements AiService {
         List<AiMessage> history = writeContext.history();
         AiMessage userMessage = writeContext.userMessage();
         AiMessage assistantMessage = writeContext.assistantMessage();
+        // 用户让不让 AI 读任务（个人中心的开关，第二十七轮）。关着时不造读任务的节点。
+        boolean tasksReadable = userTasksReadable(userId);
         // 意图判定算一次，建图与执行读同一个对象。此前两侧各算一套且已分叉（见 AgentPlanDecision 类注释）。
         AgentPlanDecision decision = AgentPlanDecision.of(
                 agentMode, limitedMessage, Boolean.TRUE.equals(enableWebSearch), notebookId, contextOptions,
@@ -614,7 +623,8 @@ public class AiServiceImpl implements AiService {
                 //      /api/workspace/** 早就限了管理员，而 agent 这条路一度没限 ——
                 //      那样的话普通用户只要对助手说一句「看看 xxx.java」就绕过了那道门，
                 //      HTTP 那一侧的限制等于装饰。
-                codeWorkspaceAgent.readableBy(userId));
+                codeWorkspaceAgent.readableBy(userId),
+                tasksReadable);
         String normalizedAgentMode = decision.mode();
         AiAgentRun agentRun = aiWorkspaceService.beginRun(
                 userId,
@@ -646,6 +656,9 @@ public class AiServiceImpl implements AiService {
         StreamState state = new StreamState(trace, requestId, agentRun, config, userId, notebookId, limitedMessage,
                 contextOptions, Boolean.TRUE.equals(enableWebSearch), normalizedReasoningMode,
                 memoryText, writeContext.summary(), history, userMessage, assistantMessage);
+        // 问到了安排、而用户关着开关：不读，但最终回答要知道为什么看不到任务（否则模型会编一份「你今天的任务」）
+        state.taskReadDeclined = !tasksReadable && !"CHAT_ONLY".equals(normalizedAgentMode)
+                && AgentPlanDecision.taskReadIntent(limitedMessage);
 
         // 这一轮挂的图片：现在就读进来，因为 VERIFIER（PRE_STREAM#20）要靠它把图片从
         // 「选了资料却零证据」那条规则里排除 —— 晚于它装入的话，只挂一张图就会中止整轮。
@@ -678,6 +691,7 @@ public class AiServiceImpl implements AiService {
                     new RetrieverRunner(state),
                     new ContextResearcherRunner(state),
                     new WebResearcherRunner(state),
+                    new TaskReaderRunner(state),
                     new VerifierRunner(state),
                     new PlannerRunner(state),
                     new WikiToolAgentRunner(state),
@@ -903,6 +917,11 @@ public class AiServiceImpl implements AiService {
         private List<Map<String, Object>> codeDrafts = List.of();
         /** 这一轮工具循环有没有拿到写工具 —— 最终回答据此决定能不能贴代码（见 CodeContextPrompt）。 */
         private boolean codeWriteOffered;
+        /** 读到的任务（第二十七轮，{@link TaskReaderRunner}）。空 = 这一轮没读。 */
+        private String taskContext = "";
+        /** 问到了安排、可用户关着「让 AI 读我的任务」—— 最终回答要知道为什么看不到。 */
+        private boolean taskReadDeclined;
+        private AiAgentStep taskReaderStep;
         private AiAgentStep plannerStep;
         private AiAgentStep finalWriterStep;
 
@@ -1242,6 +1261,41 @@ public class AiServiceImpl implements AiService {
     }
 
     /** 校验。注意「阻断」必须发生在收尾之后（见 run 内注释），所以三个时刻都在 run 里。 */
+    /**
+     * 读用户没完成的任务（第二十七轮，用户 2026-10-04 定的「让它读，给一个开关」）。
+     * PRE_STREAM#12：检索之后、校验之前；一次只读查询，不进并发组。节点只在开关开着、问到了安排时才有
+     * （{@link AgentPlanDecision#needsTaskReader()}）—— 这里不再判一遍。
+     */
+    private final class TaskReaderRunner implements AgentStageRunner {
+        private final StreamState s;
+
+        private TaskReaderRunner(StreamState s) {
+            this.s = s;
+        }
+
+        @Override public String agentType() { return "TASK_READER"; }
+        @Override public AgentPosition runAt() { return AgentPosition.at(AgentPhase.PRE_STREAM, 12); }
+
+        @Override
+        public void announce(AgentRunContext ctx) {
+            s.trace.startTask(ctx, ctx.task("TASK_READER"));
+            // 轨迹按 stepOrder、再按 id 排：和检索同一档（2），它在检索之后宣告，于是排在检索后面、回答前面。
+            // 第一版写的 30 是「辅助 agent」那一档，真浏览器里它排到了「最终回答已生成」后面
+            s.taskReaderStep = s.trace.startStep(ctx, ctx.task("TASK_READER"), "TASK_READER", 2, "正在读你的任务");
+        }
+
+        @Override
+        public void run(AgentRunContext ctx) {
+            AssistantTaskReader.Read read = taskReader.read(s.userId);
+            s.taskContext = read.block();
+            // 轨迹里说清楚读了多少 —— 这些任务标题会发给模型供应商，用户得看得见
+            String summary = read.total() == 0 ? "你没有未完成的任务"
+                    : "读了你的 " + read.shown() + " 条任务" + (read.total() > read.shown() ? "（共 " + read.total() + " 条未完成）" : "");
+            s.trace.finishStep(ctx, s.taskReaderStep, summary, "shown=" + read.shown() + ", total=" + read.total());
+            s.trace.completeTask(ctx, ctx.task("TASK_READER"), Map.of("shown", read.shown(), "total", read.total()), summary);
+        }
+    }
+
     private final class VerifierRunner implements AgentStageRunner {
         private final StreamState s;
 
@@ -1517,6 +1571,13 @@ public class AiServiceImpl implements AiService {
                 // 结尾那句「有没有草稿」必须跟着本轮实际结果走 —— 见 CodeContextPrompt。
                 messages.add(Map.of("role", "user", "content",
                         CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered)));
+            }
+            // 用户的任务（第二十七轮）：和 Wiki、工作区一样是数据，以 user 数据块注入（标题是用户写的、可能是粘来的）
+            if (hasText(s.taskContext)) {
+                messages.add(Map.of("role", "user", "content", s.taskContext));
+            }
+            if (s.taskReadDeclined) {
+                messages.add(Map.of("role", "user", "content", AssistantTaskContext.DECLINED));
             }
             String userText = RetrievalPresentation.withNotebookContext(
                     RetrievalPresentation.withWebSearchContext(s.limitedMessage, s.citations), s.notebookContextRows);
@@ -2721,6 +2782,12 @@ public class AiServiceImpl implements AiService {
             throw new BusinessException("当前模型缺少 API Key，请在个人中心补充");
         }
         return model;
+    }
+
+    /** 个人中心「让 AI 读我的任务」开着没有（第二十七轮；没有这个用户就当关着）。 */
+    private boolean userTasksReadable(Long userId) {
+        SysUser user = userMapper.selectById(userId);
+        return user != null && user.aiReadsTasks();
     }
 
     private String buildChatSystemPrompt(String memoryText) {

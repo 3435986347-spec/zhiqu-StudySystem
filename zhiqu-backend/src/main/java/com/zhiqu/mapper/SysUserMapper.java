@@ -58,6 +58,10 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
     int updateProfile(@Param("userId") Long userId, @Param("nickname") String nickname, @Param("school") String school,
                       @Param("major") String major, @Param("email") String email);
 
+    /** 只动这一列（第二十七轮的开关）。不走 updateById：sys_user 有 @Version，整行写回会被并发的写入顶成 0 行。 */
+    @Update("UPDATE sys_user SET ai_read_tasks = #{enabled} WHERE id = #{userId} AND deleted = 0")
+    int updateAiReadTasks(@Param("userId") Long userId, @Param("enabled") int enabled);
+
     @Update("UPDATE sys_user SET avatar = #{avatar} WHERE id = #{userId} AND deleted = 0")
     int updateAvatar(@Param("userId") Long userId, @Param("avatar") String avatar);
 

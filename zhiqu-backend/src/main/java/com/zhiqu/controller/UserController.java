@@ -34,6 +34,12 @@ public class UserController {
         return Result.success(userService.updateProfile(SecurityUtils.getCurrentUserId(), request));
     }
 
+    /** AI 助手能不能读我的任务（第二十七轮；个人中心的开关）。 */
+    @PutMapping("/ai-read-tasks")
+    public Result<Map<String, Object>> setAiReadTasks(@RequestParam boolean enabled) {
+        return Result.success(userService.setAiReadTasks(SecurityUtils.getCurrentUserId(), enabled));
+    }
+
     /**
      * 改密码：别的设备上的登录、被偷走的令牌一并失效；这个会话拿到一张新令牌（到期时间不变）。
      * 这次请求带着「记住我」的 Cookie 的话也换成新令牌 —— 否则 Cookie 里是作废的旧令牌。

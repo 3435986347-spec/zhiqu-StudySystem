@@ -142,6 +142,7 @@ public class AuthServiceImpl implements AuthService {
         data.put("achievementPoints", user.getAchievementPoints() == null ? 0 : user.getAchievementPoints());
         data.put("totalStudyMinutes", user.getTotalStudyMinutes() == null ? 0 : user.getTotalStudyMinutes());
         data.put("consecutiveDays", user.getConsecutiveDays() == null ? 0 : user.getConsecutiveDays());
+        data.put("aiReadTasks", user.aiReadsTasks());
         return data;
     }
 

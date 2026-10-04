@@ -37,6 +37,16 @@ public class SysUser {
     /** 改密码时 +1；登录令牌里带着签发时的值，不一样就失效（见 V37、JwtAuthenticationFilter）。 */
     private Integer tokenEpoch;
 
+    /**
+     * AI 助手能不能读这个人的任务（V42，第二十七轮）。空 = 开 —— 用户定的是「让它读，给一个开关」；
+     * 是不是开着只在 {@link #aiReadsTasks()} 一处判。
+     */
+    private Integer aiReadTasks;
+
+    public boolean aiReadsTasks() {
+        return aiReadTasks == null || aiReadTasks != 0;
+    }
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

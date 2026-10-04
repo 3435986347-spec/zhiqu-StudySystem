@@ -76,6 +76,14 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public Map<String, Object> setAiReadTasks(Long userId, boolean enabled) {
+        if (sysUserMapper.updateAiReadTasks(userId, enabled ? 1 : 0) != 1) {
+            throw new BusinessException("设置没有保存成功，请刷新后重试");
+        }
+        return Map.of("aiReadTasks", enabled);
+    }
+
+    @Override
     public List<Map<String, Object>> loginHistory(Long userId, int limit) {
         int safeLimit = Math.min(50, Math.max(1, limit));
         List<LoginLog> logs = loginLogMapper.selectList(new LambdaQueryWrapper<LoginLog>()

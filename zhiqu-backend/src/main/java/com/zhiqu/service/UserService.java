@@ -10,6 +10,9 @@ import java.util.Map;
 public interface UserService {
     Map<String, Object> updateProfile(Long userId, UpdateProfileRequest request);
 
+    /** AI 助手能不能读这个人的任务（第二十七轮）。 */
+    Map<String, Object> setAiReadTasks(Long userId, boolean enabled);
+
     /** 返回当前会话的新令牌（{@code token}、{@code expiresAt}）：改密码之后旧令牌全部作废。 */
     Map<String, Object> updatePassword(Long userId, UpdatePasswordRequest request, java.util.Date keepExpiresAt);
 

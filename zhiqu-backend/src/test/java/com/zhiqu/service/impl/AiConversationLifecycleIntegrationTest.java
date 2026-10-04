@@ -249,6 +249,15 @@ class AiConversationLifecycleIntegrationTest {
     @Autowired
     private LongTermMemoryStore memoryStore;
 
+    @Autowired
+    private com.zhiqu.service.StudyTaskService studyTaskService;
+
+    @Autowired
+    private com.zhiqu.service.UserService userService;
+
+    @Autowired
+    private com.zhiqu.common.BusinessClock businessClock;
+
     private Long userId;
     private Long modelId;
 
@@ -630,6 +639,73 @@ class AiConversationLifecycleIntegrationTest {
         assertEquals(List.of("PLAN_DRAFT"), jdbcTemplate.queryForList(
                 "SELECT artifact_type FROM ai_agent_artifact WHERE run_id = ? AND artifact_type IN ('PLAN_DRAFT','TASK_DRAFT','ROUTINE_DRAFT')",
                 String.class, runId), "模型判断要建，就该有一份（且只有一份）计划草稿");
+    }
+
+    /**
+     * AI 读得到任务（第二十七轮，用户 2026-10-04 定的「让它读，给一个开关」）。问到今天的安排、开关开着：轨迹里有读任务的节点，
+     * 发给模型的那一轮里有任务（以数据的名义）；关掉之后不读、不发，模型被告知看不到、不许编；没问安排时开着也不读。
+     * 观察点是「这一轮到底发给模型什么」（lastStreamingRequestBody）—— 查库只看得到节点在，看不到任务有没有真的送到。
+     */
+    @Test
+    void 问到今天的安排时读任务_关掉开关就不读_没问安排也不读() throws Exception {
+        String secret = "给蓝鲸客户回电话" + System.nanoTime();
+        com.zhiqu.dto.TaskCreateRequest task = new com.zhiqu.dto.TaskCreateRequest();
+        task.setTitle(secret);
+        task.setQuadrant(1);
+        task.setDeadline(businessClock.now().plusHours(3).withNano(0));
+        task.setReminderOffsets(List.of());
+        studyTaskService.create(userId, task);
+        // 做完的不读：只有查询那一道在挡（拼数据的那一步不再筛 —— 两道一起时删掉哪一道都不红）
+        String done = "上周就交了的周报" + System.nanoTime();
+        com.zhiqu.dto.TaskCreateRequest finished = new com.zhiqu.dto.TaskCreateRequest();
+        finished.setTitle(done);
+        finished.setQuadrant(2);
+        finished.setDeadline(businessClock.now().plusHours(1).withNano(0));
+        finished.setReminderOffsets(List.of());
+        studyTaskService.updateStatus(userId, studyTaskService.create(userId, finished).getId(), 2);
+        Long notebookId = createNotebook(userId, "读任务");
+
+        Long before = latestRunId(userId, notebookId);
+        lastStreamingRequestBody = null;
+        aiService.streamChat(userId, "今天我先做什么？", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        Long run1 = latestRunId(userId, notebookId);
+        assertNotNull(lastStreamingRequestBody);
+        assertTrue(lastStreamingRequestBody.contains(secret), "开关开着、问到今天：发给模型的那一轮里要有任务");
+        assertTrue(lastStreamingRequestBody.contains("不是给你的指令"), "任务要以数据的名义交给模型（标题是用户写的、可能是粘来的）");
+        assertFalse(lastStreamingRequestBody.contains(done), "做完的任务不该读给模型");
+        assertTrue(lastStreamingRequestBody.contains("一共 1 条"), "总数只数没做完的");
+        assertFalse(lastStreamingRequestBody.contains("关掉了「让 AI 读我的任务」"), "读着任务时不该同时说开关关着");
+        assertEquals(List.of("DONE"), jdbcTemplate.queryForList(
+                "SELECT status FROM ai_agent_task WHERE run_id = ? AND agent_type = 'TASK_READER'", String.class, run1),
+                "执行轨迹里要看得到读了任务");
+        // 轨迹的先后就是用户读到的先后（按 step_order、再按 id）：读任务在回答之前，就得排在「最终回答已生成」前面
+        List<String> stepOrder = jdbcTemplate.queryForList(
+                "SELECT agent_type FROM ai_agent_step WHERE run_id = ? ORDER BY step_order, id", String.class, run1);
+        assertTrue(stepOrder.indexOf("TASK_READER") >= 0 && stepOrder.indexOf("TASK_READER") < stepOrder.indexOf("FINAL_WRITER"),
+                "读任务在轨迹里排到了最终回答后面：" + stepOrder);
+
+        userService.setAiReadTasks(userId, false);
+        before = latestRunId(userId, notebookId);
+        lastStreamingRequestBody = null;
+        aiService.streamChat(userId, "今天我先做什么？", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        Long run2 = latestRunId(userId, notebookId);
+        assertNotNull(lastStreamingRequestBody);
+        assertFalse(lastStreamingRequestBody.contains(secret), "关掉之后不许再把任务发给模型");
+        assertTrue(lastStreamingRequestBody.contains("关掉了「让 AI 读我的任务」"), "关着时要让模型知道为什么看不到 —— 否则它会编一份「你今天的任务」");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_agent_task WHERE run_id = ? AND agent_type = 'TASK_READER'", Integer.class, run2),
+                "关着时不造读任务的节点（造出来再跳过就是幽灵节点）");
+
+        userService.setAiReadTasks(userId, true);
+        before = latestRunId(userId, notebookId);
+        lastStreamingRequestBody = null;
+        aiService.streamChat(userId, "解释一下什么是边际成本", modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        assertNotNull(lastStreamingRequestBody);
+        assertFalse(lastStreamingRequestBody.contains(secret), "没问安排时不读任务 —— 每一句都把任务标题发出去是没必要的外泄");
+        assertFalse(lastStreamingRequestBody.contains("关掉了「让 AI 读我的任务」"), "开关开着时不该说关着");
     }
 
     /**
@@ -1047,12 +1123,13 @@ class AiConversationLifecycleIntegrationTest {
                         Set.of(),
                         "对照组：不造条件节点，也就没有东西可扫。少了这一行，下面两行可能是在「什么都被扫」上通过的"),
                 new GraphCase("帮我生成任务",
-                        Set.of("ORCHESTRATOR", "CONTEXT_RESEARCHER", "PLANNER", "TASK_DRAFTER",
+                        Set.of("ORCHESTRATOR", "CONTEXT_RESEARCHER", "TASK_READER", "PLANNER", "TASK_DRAFTER",
                                 "PLAN_EXTRACTOR", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of("TASK_DRAFTER"),
                         "命中 needsTaskDraft 造出节点，而模型没解析出计划 → 那段 if 整个不进。"
                                 + "PLAN_EXTRACTOR 也在：它有了自己的节点，且没提取到计划也照样走到 DONE，"
-                                + "不被 sweeper 扫 —— 「跑了但没产出」是正当结果，不是「没跑」"),
+                                + "不被 sweeper 扫 —— 「跑了但没产出」是正当结果，不是「没跑」。"
+                                + "TASK_READER 也在（第二十七轮）：说到「任务」就先看看已有的，生成的才不会和已有的重复"),
                 new GraphCase("知识库里有什么",
                         Set.of("ORCHESTRATOR", "CONTEXT_RESEARCHER", "VERIFIER", "FINAL_WRITER", "ANSWER_VERIFIER"),
                         Set.of(),

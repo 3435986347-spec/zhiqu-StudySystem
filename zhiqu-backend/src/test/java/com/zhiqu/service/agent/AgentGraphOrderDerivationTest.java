@@ -64,7 +64,8 @@ class AgentGraphOrderDerivationTest {
                 true,   // needsWikiTool
                 true,   // needsCodeAgent
                 true,   // needsAnswerVerifier
-                true);  // needsSummary
+                true,   // needsSummary
+                true);  // needsTaskReader
     }
 
     private static List<AiAgentTask> plan(AgentPlanDecision decision, RecordingGraph graph) {
@@ -201,7 +202,8 @@ class AgentGraphOrderDerivationTest {
                 true, false, false, false, false, false, false, false, false,
                 false,   // needsWikiTool
                 false,   // needsCodeAgent
-                true, false), fallback);
+                true, false,
+                false), fallback);   // needsTaskReader
         assertNull(fallback.group(idOf(only, "RETRIEVER")),
                 "RetrieverRunner 没有并发组 —— 它是合并点。手写的 \"research\" 声称了一个不存在的并发");
     }
