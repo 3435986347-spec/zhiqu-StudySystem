@@ -1,7 +1,7 @@
 /* ════════════════════════════════════════════════════════════
    知趣 · 新前端  zhiqu-ui.js
    - 主题（5 风格 × 浅/深）应用 + 切换弹层（记忆到 localStorage）
-   - 渲染统一侧边导航到 <nav id="zq-side">，按当前文件名高亮
+   - 渲染统一侧边导航到 <nav id="zq-side">，按当前文件名高亮；底部头像点开向上弹的菜单
    - 面板折叠助手（[data-zq-collapse]）：AI 两侧 / Wiki 目录
    仅负责界面显示；业务数据/接口后续接入。
    ════════════════════════════════════════════════════════════ */
@@ -34,27 +34,24 @@
   var NAV = {
     main: [
       ['ai-assistant.html','AI 助手','✦'], ['dashboard.html','看板','▦'], ['tasks.html','任务','☰'],
-      ['routines.html','例行计划','↻'], ['shared-plans.html','参考计划','❏'], ['knowledge-wiki.html','知识 Wiki','≣'], ['profile.html','个人中心','◉']
+      ['routines.html','例行计划','↻'], ['shared-plans.html','参考计划','❏'], ['knowledge-wiki.html','知识 Wiki','≣']
     ],
-    // 成就从导航收起（第二十六轮，用户定的：偏游戏化、偏学生）：页面和数据都还在，直接打地址照样能进
+    // 侧栏只放干活的地方（第三十轮，用户定的）；设置、成就、专注统计、界面风格、后台、退出都在底部头像的菜单里（openUserMenu）。
+    // 成就第二十六轮从导航收起（偏游戏化、偏学生），第三十轮成了菜单里的弹窗
     data: [ ['statistics.html','专注统计','∿'] ],
     admin: [ ['admin.html','监管后台','◈'], ['account-admin.html','账号管理','⌘'], ['feedback-admin.html','反馈管理','✉'], ['shared-plan-admin.html','共享计划审核','✓'] ]
   };
   function curFile(){ var p=location.pathname.split('/').pop(); return p || 'dashboard.html'; }
-  // mark：给该组每个元素打一个属性，供 setAdminNav 事后精确摘除/补回。
-  // 不用「按位置切片」是因为分组数量将来会变，位置法会在加组那天静默错位。
-  function navGroup(title, items, mark){
+  function navGroup(title, items){
     var cur = curFile();
-    var attr = mark ? ' ' + mark : '';
-    var h = title ? '<div class="zq-nav-group"'+attr+'>'+title+'</div>' : '';
+    var h = title ? '<div class="zq-nav-group">'+title+'</div>' : '';
     items.forEach(function(it){
       var active = it[0]===cur ? ' active' : '';
       // title 是折叠态的名称来源 —— 不自己造 tooltip：原生的在触屏与边界情况上都对
-      h += '<a class="'+active.trim()+'"'+attr+' href="'+it[0]+'" title="'+it[1]+'"><span class="zq-ic">'+it[2]+'</span><span>'+it[1]+'</span></a>';
+      h += '<a class="'+active.trim()+'" href="'+it[0]+'" title="'+it[1]+'"><span class="zq-ic">'+it[2]+'</span><span>'+it[1]+'</span></a>';
     });
     return h;
   }
-  var ADMIN_MARK = 'data-zq-nav-admin';
   var SIDE_COLLAPSED_KEY = 'zq-side-collapsed';
 
   // 折叠是一个偏好，不是一次性动作：14 个页面是各自独立的文档（MPA），
@@ -93,17 +90,12 @@
       '<div class="zq-brand"><div class="zq-brand-badge">知</div><div class="zq-brand-name">知趣<span> · 象限</span></div></div>'
       + '<button type="button" class="zq-side-toggle" aria-expanded="true" title="收起导航栏">'
       +   '<span class="zq-ic">«</span><span>收起</span></button>'
-      + '<div class="zq-nav">' + navGroup('', NAV.main) + navGroup('数据', NAV.data)
-      + (isAdminRole(storedRole()) ? navGroup('管理', NAV.admin, ADMIN_MARK) : '') + '</div>'
-      + '<div class="zq-switch" style="padding:12px 4px 2px;border-top:1px solid var(--zq-sb-border);margin-top:10px;">'
-      +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 4px 7px;">'
-      +     '<span style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--zq-text3);">界面风格</span>'
-      +     '<button type="button" class="zq-mode-btn" style="height:24px;padding:0 9px;border:1px solid var(--zq-sb-border);border-radius:var(--zq-rs);background:transparent;color:var(--zq-sb-text);font-size:11px;font-weight:600;cursor:pointer;"></button>'
-      +   '</div>'
-      +   '<button type="button" class="zq-trigger" style="display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;height:30px;padding:0 10px;border:1px solid var(--zq-sb-border);border-radius:var(--zq-rs);background:var(--zq-input-bg);color:var(--zq-text);font-size:12.5px;font-weight:600;cursor:pointer;"><span class="zq-cur">'+verName(readVer())+'</span><span style="opacity:.6;">▧</span></button>'
-      + '</div>'
-      + '<div class="zq-user"><div class="zq-avatar">远</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);">王明远</div><div style="font-size:11px;color:var(--zq-text3);">管理员</div></div></div>';
-    wireSwitch(host);
+      + '<div class="zq-nav">' + navGroup('', NAV.main) + '</div>'
+      // 名字、身份由 zhiqu-api.js 的 updateSidebarUser 拿到 /auth/info 之后填（原来这里写着设计稿的「王明远 · 管理员」，先闪一下才被换掉）
+      + '<button type="button" class="zq-user'+(inMenu(curFile())?' active':'')+'" aria-haspopup="menu" aria-expanded="false" title="设置、成就、统计、退出">'
+      +   '<div class="zq-avatar"></div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);">&nbsp;</div><div style="font-size:11px;color:var(--zq-text3);">&nbsp;</div></div></button>';
+    var userBtn = host.querySelector('.zq-user');
+    userBtn.addEventListener('click', function (e) { e.stopPropagation(); if (menu) closeMenu(); else openUserMenu(userBtn); });
     var toggle = host.querySelector('.zq-side-toggle');
     if (toggle) {
       toggle.onclick = function () {
@@ -134,12 +126,12 @@
   }
 
   // ── 主题切换弹层 ──
-  var pop=null;
+  var pop=null, popAnchor=null;
   function closePop(){ if(pop){ pop.remove(); pop=null; document.removeEventListener('mousedown',onDown,true);} }
-  function onDown(e){ if(pop && !pop.contains(e.target) && !e.target.closest('.zq-trigger')) closePop(); }
+  function onDown(e){ if(pop && !pop.contains(e.target) && !(popAnchor && popAnchor.contains(e.target))) closePop(); }
   function place(tr){ if(!pop) return; var r=tr.getBoundingClientRect(),pw=238,ph=pop.offsetHeight||340; var l=r.right+8; if(l+pw>innerWidth-8) l=r.left-pw-8; if(l<8)l=8; var t=r.top; if(t+ph>innerHeight-8)t=innerHeight-ph-8; if(t<8)t=8; pop.style.left=l+'px'; pop.style.top=t+'px'; }
   function openPop(tr){
-    closePop(); var ver=readVer(),mode=readMode();
+    closePop(); popAnchor=tr; var ver=readVer(),mode=readMode();
     pop=document.createElement('div'); pop.className='zq-pop';
     var h='<div class="zq-pop-t">界面风格</div>';
     VERSIONS.forEach(function(v){ h+='<button type="button" class="zq-opt'+(v.id===ver?' on':'')+'" data-ver="'+v.id+'"><span class="zq-dot"></span><span>'+v.name+'</span></button>'; });
@@ -147,20 +139,77 @@
     pop.innerHTML=h; document.body.appendChild(pop);
     pop.addEventListener('click',function(e){
       var vb=e.target.closest('[data-ver]'), mb=e.target.closest('[data-mode]');
-      if(vb){ lss(K_VER,vb.getAttribute('data-ver')); apply(readVer(),readMode()); pop.querySelectorAll('.zq-opt').forEach(function(o){o.classList.toggle('on',o===vb);}); syncTrig(); }
-      else if(mb){ lss(K_MODE,mb.getAttribute('data-mode')); apply(readVer(),readMode()); pop.querySelectorAll('.zq-m').forEach(function(o){o.classList.toggle('on',o===mb);}); syncMode(); }
+      if(vb){ lss(K_VER,vb.getAttribute('data-ver')); apply(readVer(),readMode()); pop.querySelectorAll('.zq-opt').forEach(function(o){o.classList.toggle('on',o===vb);}); }
+      else if(mb){ lss(K_MODE,mb.getAttribute('data-mode')); apply(readVer(),readMode()); pop.querySelectorAll('.zq-m').forEach(function(o){o.classList.toggle('on',o===mb);}); }
     });
     place(tr); setTimeout(function(){ document.addEventListener('mousedown',onDown,true); },0);
   }
-  function syncTrig(){ document.querySelectorAll('.zq-trigger .zq-cur').forEach(function(el){ el.textContent=verName(readVer()); }); }
-  function syncMode(){ document.querySelectorAll('.zq-mode-btn').forEach(function(b){ b.textContent = readMode()==='dark'?'☾ 深色':'☀ 浅色'; }); }
-  function wireSwitch(scope){
-    var tr=scope.querySelector('.zq-trigger'), mb=scope.querySelector('.zq-mode-btn');
-    if(mb){ mb.textContent=readMode()==='dark'?'☾ 深色':'☀ 浅色'; mb.addEventListener('click',function(e){ e.stopPropagation(); lss(K_MODE, readMode()==='dark'?'light':'dark'); apply(readVer(),readMode()); syncMode(); }); }
-    if(tr){ tr.addEventListener('click',function(e){ e.stopPropagation(); if(pop) closePop(); else openPop(tr); }); }
+  addEventListener('resize',function(){ if(pop && popAnchor && popAnchor.isConnected) place(popAnchor); closeMenu(); });
+  addEventListener('scroll',function(e){ closePop(); if(menu && !menu.contains(e.target)) closeMenu(); },true);
+
+  // ── 头像菜单（第三十轮，用户定的：点左下角头像向上弹出，Claude 那样）──
+  // 设置、成就是地址里的弹窗（#settings/…、#achievements），由 zhiqu-api.js 按地址打开 —— 这里只放链接，所以刷新、后退都对。
+  // 后台那一组只是显示（真正的拦截在后端 AdminGuard）：首屏按本地存的角色，/auth/info 回来后由 setAdminNav 校正。
+  var menu=null;
+  var adminView=isAdminRole(storedRole());
+  /** 这一页属于菜单里的哪一项（专注统计、后台页）：侧栏里没有它的高亮，就让头像按钮亮着 —— 不然用户看不出自己在哪。 */
+  function inMenu(file){ if(file===NAV.data[0][0]) return true; return isAdminPage(file); }
+  function escHtml(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function closeMenu(){
+    if(!menu) return;
+    menu.remove(); menu=null;
+    document.removeEventListener('mousedown',onMenuDown,true);
+    document.removeEventListener('keydown',onMenuKey,true);
+    var b=document.querySelector('#zq-side .zq-user'); if(b) b.setAttribute('aria-expanded','false');
   }
-  addEventListener('resize',function(){ if(pop){ var t=document.querySelector('.zq-trigger'); if(t) place(t); } });
-  addEventListener('scroll',function(){ closePop(); },true);
+  function onMenuDown(e){ if(menu && !menu.contains(e.target) && !e.target.closest('#zq-side .zq-user')) closeMenu(); }
+  function onMenuKey(e){
+    if(!menu) return;
+    if(e.key==='Escape'){ e.stopPropagation(); var b=document.querySelector('#zq-side .zq-user'); closeMenu(); if(b) b.focus(); return; }
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      var items=Array.prototype.slice.call(menu.querySelectorAll('[role="menuitem"]'));
+      var i=items.indexOf(document.activeElement);
+      i = e.key==='ArrowDown' ? (i+1)%items.length : (i<=0?items.length-1:i-1);
+      items[i].focus();
+    }
+  }
+  function menuLink(href, ic, label, cur){ return '<a role="menuitem" href="'+href+'"'+(cur?' aria-current="page"':'')+'><span class="zq-ic">'+ic+'</span><span>'+label+'</span></a>'; }
+  function openUserMenu(btn){
+    closeMenu(); closePop();
+    var cur=curFile();
+    menu=document.createElement('div'); menu.className='zq-user-menu'; menu.setAttribute('role','menu'); menu.setAttribute('aria-label','账号菜单');
+    var h='<div class="zq-user-menu-head"><strong>'+escHtml(btn.dataset.name||'')+'</strong><span>'+escHtml(btn.dataset.account||'')+'</span></div>'
+      + menuLink('#settings/profile','⚙','设置') + menuLink('#achievements','✪','成就')
+      + menuLink(NAV.data[0][0], NAV.data[0][2], NAV.data[0][1], cur===NAV.data[0][0])
+      + '<button type="button" role="menuitem" data-zq-theme><span class="zq-ic">◐</span><span>界面风格</span><span class="zq-user-menu-note">'+verName(readVer())+' · '+(readMode()==='dark'?'深色':'浅色')+'</span></button>';
+    if(adminView){
+      h += '<div class="zq-user-menu-sep"></div><div class="zq-user-menu-group">管理</div>'
+        + NAV.admin.map(function(it){ return menuLink(it[0], it[2], it[1], cur===it[0]); }).join('');
+    }
+    h += '<div class="zq-user-menu-sep"></div><button type="button" role="menuitem" data-zq-logout><span class="zq-ic">⏻</span><span>退出登录</span></button>';
+    menu.innerHTML=h;
+    document.body.appendChild(menu);
+    // 向上弹：底边贴着头像按钮的上沿；收起的窄侧栏里从按钮右边出来
+    var r=btn.getBoundingClientRect(), side=document.getElementById('zq-side');
+    var narrow = side && side.classList.contains('is-collapsed');
+    var w=Math.max(220, narrow ? 0 : r.width);
+    var left = narrow ? r.right+8 : r.left;
+    if(left+w>innerWidth-8) left=Math.max(8, innerWidth-w-8);
+    menu.style.width=w+'px'; menu.style.left=left+'px';
+    menu.style.bottom = (narrow ? Math.max(8, innerHeight-r.bottom) : innerHeight-r.top+6)+'px';
+    btn.setAttribute('aria-expanded','true');
+    menu.addEventListener('click',function(e){
+      if(e.target.closest('a')){ closeMenu(); return; }   // 链接照常走（hash 的由 zhiqu-api.js 打开弹窗）
+      if(e.target.closest('[data-zq-theme]')){ closeMenu(); openPop(btn); return; }
+      if(e.target.closest('[data-zq-logout]')){
+        closeMenu();
+        if(window.zqApi && window.zqApi.logout) window.zqApi.logout(); else location.href='index.html';
+      }
+    });
+    setTimeout(function(){ document.addEventListener('mousedown',onMenuDown,true); document.addEventListener('keydown',onMenuKey,true); },0);
+    var first=menu.querySelector('[role="menuitem"]'); if(first) try{ first.focus({preventScroll:true}); }catch(err){}
+  }
 
   // ── 折叠助手 ──
   function makeCollapsible(panel, opts){
@@ -195,22 +244,18 @@
   }
 
   /**
-   * 用**服务端**角色校正「管理」组 —— zhiqu-api.js 拿到 /auth/info 后调一次。
+   * 用**服务端**角色校正头像菜单里的「管理」组 —— zhiqu-api.js 拿到 /auth/info 后调一次。
    *
-   * 为什么不能只靠 buildSidebar 里的 storedRole()：那个值来自 localStorage/sessionStorage，
+   * 为什么不能只靠 storedRole()：那个值来自 localStorage/sessionStorage，
    * 客户端可改，也可能是上一个账号留下的陈旧值（同一浏览器换人登录）。
    * 服务端角色是唯一权威，这里做最终裁决——两个方向都要走：
    *   存储说不是、服务端说是 → 补回来（否则管理员少了入口）；
    *   存储说是、服务端说不是 → 摘掉（否则就是这次要修的那个 bug 换了个入口重现）。
+   * 菜单每次打开都按 adminView 现画（第三十轮起这一组不在侧栏里了），所以这里记下结论就够。
    */
   function setAdminNav(isAdmin){
-    var nav = document.querySelector('#zq-side .zq-nav');
-    if (!nav) return;
-    var want = isAdminRole(isAdmin === true ? 'ADMIN' : isAdmin);
-    var existing = nav.querySelectorAll('[' + ADMIN_MARK + ']');
-    if (want === (existing.length > 0)) return;
-    if (want) nav.insertAdjacentHTML('beforeend', navGroup('管理', NAV.admin, ADMIN_MARK));
-    else Array.prototype.forEach.call(existing, function (el) { el.remove(); });
+    adminView = isAdminRole(isAdmin === true ? 'ADMIN' : isAdmin);
+    if (menu) closeMenu();
   }
   /**
    * 这个文件名是不是后台页 —— <b>集合从 NAV.admin 派生，不在别处再抄一份</b>。

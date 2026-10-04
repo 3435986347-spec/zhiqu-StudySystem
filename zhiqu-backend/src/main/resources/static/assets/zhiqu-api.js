@@ -192,17 +192,18 @@
     if (redirecting) return;
     clearAuth();
     // 带上原来那一页：登录之后回到这里（第十五轮：原来一律回看板，在哪一页、打了什么都没了 —— 打的字由草稿接住，见 drafts）
-    if (page !== 'index.html') { redirecting = true; location.replace('index.html?login=1&next=' + encodeURIComponent(page + location.search)); }
+    // 地址里的弹窗也带上（第三十轮）：命令行打印的 #settings/cli?harness=… 在没登录的浏览器里打开，登录完要回到那个确认框
+    if (page !== 'index.html') { redirecting = true; location.replace('index.html?login=1&next=' + encodeURIComponent(page + location.search + (isDialogHash(location.hash) ? location.hash : ''))); }
   }
   /** 登录之后的首页（第二十六轮：定位改成 AI 办公助手，AI 助手放第一位；原来是看板）。 */
   var HOME_PAGE = 'ai-assistant.html';
   /**
    * 登录之后去哪：只认本站的「xxx.html」加查询串 —— 不是本站的（//别处、https:、javascript:、../）一律回首页，
-   * 否则 index.html?login=1&next=https://钓鱼站 就是一个开放跳转。
+   * 否则 index.html?login=1&next=https://钓鱼站 就是一个开放跳转。后面可以跟设置 / 成就弹窗的地址（只认那几种写法）。
    */
   function safeNext(raw) {
     var next = String(raw || '');
-    if (/^[a-z0-9_-]+\.html(\?[^#\s\\]*)?$/i.test(next) && !/^index\.html/i.test(next) && next.indexOf('//') < 0) return next;
+    if (/^[a-z0-9_-]+\.html(\?[^#\s\\]*)?(#settings(\/[a-z]+)?(\?harness=[A-Za-z0-9-]{8,9})?|#achievements)?$/i.test(next) && !/^index\.html/i.test(next) && next.indexOf('//') < 0) return next;
     return HOME_PAGE;
   }
   function isAuthFailure(json) {
@@ -466,6 +467,7 @@
     };
   }
   // 可复用的 Claude 风格居中弹窗：openModal({title, bodyHtml, width, onMount(body,handle), onClose}) → {close, body, mask}
+  function lastOf(list) { return list.length ? list[list.length - 1] : null; }
   function openModal(opts) {
     opts = opts || {};
     var mask = document.createElement('div');
@@ -486,7 +488,8 @@
       if (!document.querySelector('.zq-modal-mask')) document.body.classList.remove('zq-modal-open');
       if (opts.onClose) { try { opts.onClose(); } catch (e) {} }
     }
-    function onKey(e) { if (e.key === 'Escape') close(); }
+    // 只关最上面那一层：设置弹窗里点「删除模型」叠出来的确认框，按 Esc 不该把底下的设置一起关掉
+    function onKey(e) { if (e.key === 'Escape' && mask === lastOf(document.querySelectorAll('.zq-modal-mask'))) close(); }
     mask.addEventListener('mousedown', function (e) { if (e.target === mask) close(); });
     mask.querySelector('.zq-modal-close').onclick = close;
     document.addEventListener('keydown', onKey);
@@ -811,6 +814,9 @@
     if (!box || !u) return;
     var name = u.nickname || u.username || '知趣用户';
     var avatar = u.avatar ? '<img src="' + esc(u.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">' : esc(name.slice(0, 1));
+    // 头像菜单的顶上一行（zhiqu-ui.js 的 openUserMenu）从这里读
+    box.dataset.name = name;
+    box.dataset.account = u.username || '';
     box.innerHTML = '<div class="zq-avatar">' + avatar + '</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(name) + '</div><div style="font-size:11px;color:var(--zq-text3);">' + esc(r === 'ADMIN' ? '管理员' : '普通用户') + '</div></div>';
   }
 
@@ -1268,7 +1274,7 @@
         + '<option value="' + TASK_REMIND.CUSTOM + '"' + (remind.mode === TASK_REMIND.CUSTOM ? ' selected' : '') + '>自定义天数</option>'
         + '<option value="' + TASK_REMIND.NONE + '"' + (remind.mode === TASK_REMIND.NONE ? ' selected' : '') + '>不提醒</option></select>'
         + '<input id="zq-tf-days" class="zq-input" style="flex:1;min-width:0;" placeholder="提前几天，例如 7,3,1" value="' + esc(remind.days || '') + '"' + (remind.mode === TASK_REMIND.CUSTOM ? '' : ' hidden') + '></div>')
-      + '<p style="margin:-4px 0 13px;font-size:12px;color:var(--zq-text3);line-height:1.6;">「提醒时间」到点提醒一次；「截止前提醒」在截止前那几天的早上 8 点提醒（默认按任务难度提前几天，0 是截止当天）。都发到个人中心里设置的提醒渠道。</p>'
+      + '<p style="margin:-4px 0 13px;font-size:12px;color:var(--zq-text3);line-height:1.6;">「提醒时间」到点提醒一次；「截止前提醒」在截止前那几天的早上 8 点提醒（默认按任务难度提前几天，0 是截止当天）。都发到「设置 → 提醒」里的推送渠道。</p>'
       + '<p id="zq-tf-remind-warn" hidden style="margin:-6px 0 13px;padding:8px 10px;border-radius:var(--zq-rs);background:var(--zq-q1-bg);color:var(--zq-q1);font-size:12px;line-height:1.6;"></p>'
       + (isNew ? field('zq-tf-weeks', '每周重复（周，可留空）', '<input id="zq-tf-weeks" type="number" min="1" max="52" step="1" class="zq-input" placeholder="填 2 以上：从开始时间起每周建一条，最多 52 周">') : '')
       + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-tf-cancel">取消</button><button type="button" class="zq-btn" id="zq-tf-ok">' + (isNew ? '创建' : '保存') + '</button></div>';
@@ -1315,7 +1321,7 @@
         reminderBlocker().then(function (why) {
           var warn = $('#zq-tf-remind-warn', b);
           if (!why || !warn) return;
-          warn.innerHTML = '提醒现在还发不出去：' + esc(why) + '。<a href="profile.html" style="color:inherit;font-weight:700;">去个人中心设置 →</a>';
+          warn.innerHTML = '提醒现在还发不出去：' + esc(why) + '。<a href="#settings/reminders" style="color:inherit;font-weight:700;">去设置 →</a>';
           warn.hidden = false;
         });
         // 新建时打的字：弹窗被遮罩点掉、刷新、登录过期都还在（第十五轮）；建好了才删
@@ -1550,280 +1556,6 @@
     }).join('') || empty('暂无趋势数据');
   }
 
-  async function bootAchievement() {
-    var info = state.user || {};
-    var list = await api.get('/achievement/list');
-    state.achievements = list;
-    var unlockedList = list.filter(function (x) { return x.unlocked || x.unlockedAt; });
-    var nums = $all('.zq-stat-num');
-    if (nums[0]) nums[0].textContent = unlockedList.length;
-    if (nums[1]) nums[1].textContent = list.length;
-    if (nums[2]) nums[2].textContent = info.achievementPoints || 0;
-    // 「最近解锁」卡片（第 4 个 .zq-stat，无 .zq-stat-num）
-    var lastCard = $all('.zq-stat')[3];
-    if (lastCard) {
-      var recent = unlockedList.slice().sort(function (a, b) {
-        return String(b.unlockedAt || '').localeCompare(String(a.unlockedAt || ''));
-      })[0];
-      var strong = lastCard.querySelector('strong');
-      var spans = lastCard.querySelectorAll('span');
-      if (recent) {
-        if (strong) strong.textContent = recent.name || recent.title || recent.achievementName || '成就';
-        if (spans[1]) spans[1].textContent = recent.unlockedAt ? d10(recent.unlockedAt) + ' 解锁' : '已解锁';
-      } else {
-        if (strong) strong.textContent = '暂无';
-        if (spans[1]) spans[1].textContent = '继续加油';
-      }
-    }
-    window.setF = function (k) {
-      $all('#zq-filters button').forEach(function (b) {
-        var on = b.dataset.k === k;
-        b.style.background = on ? 'var(--zq-primary)' : 'var(--zq-card)';
-        b.style.color = on ? 'var(--zq-on-primary)' : 'var(--zq-text2)';
-      });
-      renderAchList(k);
-    };
-    // 全部 / 已解锁 / 未解锁写在页面里（第二十四轮：原来由示例脚本画出来）
-    $all('#zq-filters button[data-k]').forEach(function (b) { b.onclick = function () { window.setF(b.dataset.k); }; });
-    renderAchList('all');
-  }
-  function renderAchList(filter) {
-    var host = $('#zq-ach'); if (!host) return;
-    var list = (state.achievements || []).filter(function (a) {
-      var on = !!(a.unlocked || a.unlockedAt);
-      return filter === 'all' ? true : (filter === 'on' ? on : !on);
-    });
-    host.innerHTML = list.map(function (a) {
-      var on = !!(a.unlocked || a.unlockedAt);
-      var name = a.name || a.title || a.achievementName || '成就';
-      var desc = a.description || '';
-      var points = a.points || a.score || 0;
-      return '<article style="padding:16px;border:1px solid ' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);opacity:' + (on ? 1 : .82) + ';"><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;"><div style="width:42px;height:42px;flex:none;border-radius:50%;background:' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-card-soft)') + ';color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';display:flex;align-items:center;justify-content:center;font-size:18px;">✪</div><div style="min-width:0;"><h3 style="margin:0;font-size:14.5px;font-weight:700;">' + esc(name) + '</h3><span style="font-size:11.5px;color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';font-weight:600;">' + (on ? '已解锁' : '进行中') + '</span></div></div><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;min-height:38px;">' + esc(desc) + '</p><div style="display:flex;justify-content:flex-end;font-size:11.5px;color:var(--zq-text3);"><span class="zq-mono">+' + points + ' 点</span></div></article>';
-    }).join('') || empty('暂无成就');
-  }
-
-  /**
-   * 命令行登录（设备码）与个人访问令牌。
-   *
-   * 允许之前先把「哪台设备、从哪个地址、什么时候」摆出来 —— 设备码登录的已知风险是别人发起、骗你点允许，
-   * 让人看出「这不是我的机器」是唯一的防线。令牌在列表里只显示末 4 位，撤销立即生效。
-   * 终端里打印的链接是 profile.html#harness=XXXX-XXXX：带着它打开时直接填好码并查看。
-   */
-  function wireCliLogin() {
-    var host = $('#zq-cli-login');
-    if (!host) return;
-    var input = $('#zq-cli-code'), device = $('#zq-cli-device'), list = $('#zq-cli-tokens');
-    async function paintTokens() {
-      var rows = await safe('命令行令牌', function () { return api.get('/access-tokens'); });
-      rows = Array.isArray(rows) ? rows : [];
-      list.innerHTML = rows.length
-        ? rows.map(function (t) {
-            return '<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px;'
-              + ' padding:6px 8px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs);">'
-              + '<div style="min-width:0;"><div style="font-weight:600;">' + esc(t.name) + ' <span class="zq-mono" style="color:var(--zq-text3); font-weight:400;">' + esc(t.hint) + '</span></div>'
-              + '<div style="color:var(--zq-text3); font-size:11px;">' + (t.lastUsedAt ? '最近使用 ' + esc(String(t.lastUsedAt).replace('T', ' ').slice(0, 16)) : '还没用过')
-              + '</div></div><button class="zq-btn-ghost" data-revoke="' + esc(t.id) + '" style="height:24px; padding:0 10px; font-size:11.5px;">撤销</button></div>';
-          }).join('')
-        : '<div style="font-size:11.5px; color:var(--zq-text3);">还没有命令行登录过。</div>';
-      $all('[data-revoke]', list).forEach(function (b) {
-        b.onclick = function () {
-          safe('撤销令牌', async function () {
-            await api.del('/access-tokens/' + encodeURIComponent(b.dataset.revoke));
-            toast('已撤销，那台机器上的命令行需要重新登录');
-            await paintTokens();
-          });
-        };
-      });
-    }
-    async function check() {
-      var code = (input.value || '').trim();
-      if (!code) { device.innerHTML = ''; return; }
-      var info = await safe('查看设备码', function () { return api.get('/access-tokens/device/' + encodeURIComponent(code)); });
-      if (!info) { device.innerHTML = ''; return; }
-      device.innerHTML = '<div style="padding:10px 12px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card-soft); font-size:12px; line-height:1.6;">'
-        + '<div><strong>' + esc(info.clientName || '命令行') + '</strong> 请求登录你的账号</div>'
-        + '<div style="color:var(--zq-text3);">来自 ' + esc(info.clientIp || '未知地址') + ' · ' + esc(String(info.createdAt || '').replace('T', ' ').slice(0, 16)) + ' · 设备码 ' + esc(info.userCode) + '</div>'
-        + '<div style="color:var(--zq-text2); margin-top:4px;">只在这是你自己刚刚在终端里发起的时候才允许。</div>'
-        + '<div style="display:flex; gap:8px; margin-top:8px;"><button class="zq-btn" id="zq-cli-approve" style="height:28px; padding:0 14px; font-size:12px;">允许</button>'
-        + '<button class="zq-btn-ghost" id="zq-cli-deny" style="height:28px; padding:0 12px; font-size:12px;">拒绝</button></div></div>';
-      $('#zq-cli-approve').onclick = function () {
-        safe('允许命令行登录', async function () {
-          await api.post('/access-tokens/device/' + encodeURIComponent(info.userCode) + '/approve', {});
-          device.innerHTML = '<div style="font-size:12px; color:var(--zq-q2);">已允许。回到终端，命令行会自动完成登录。</div>';
-          input.value = '';
-          // 令牌在命令行来取（轮询）的那一刻才签出，时间点不固定 —— 刷几次，直到列表里多出一张
-          var before = list.querySelectorAll('[data-revoke]').length, tries = 0;
-          (function again() {
-            setTimeout(async function () {
-              await paintTokens();
-              if (list.querySelectorAll('[data-revoke]').length <= before && ++tries < 10) again();
-            }, 3000);
-          })();
-        });
-      };
-      $('#zq-cli-deny').onclick = function () {
-        safe('拒绝命令行登录', async function () {
-          await api.post('/access-tokens/device/' + encodeURIComponent(info.userCode) + '/deny', {});
-          device.innerHTML = '<div style="font-size:12px; color:var(--zq-text3);">已拒绝。</div>';
-          input.value = '';
-        });
-      };
-    }
-    $('#zq-cli-check').onclick = check;
-    input.onkeydown = function (e) { if (e.key === 'Enter') check(); };
-    var m = /[#&]harness=([A-Za-z0-9-]{8,9})/.exec(location.hash || '');
-    if (m) {
-      input.value = m[1].toUpperCase();
-      check();
-      if (host.scrollIntoView) host.scrollIntoView({ block: 'center' });
-    }
-    paintTokens();
-  }
-
-  async function bootProfile() {
-    var u = state.user || {};
-    var card = $('.zq-card-lg');
-    if (card) {
-      var av = card.querySelector('div[style*="76px"]');
-      if (av) {
-        var paintAvatar = function () {
-          // 与侧边栏保持一致：有头像显示头像，否则显示昵称首字
-          av.innerHTML = state.user && state.user.avatar
-            ? '<img src="' + esc(state.user.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
-            : esc((u.nickname || u.username || '知').slice(0, 1));
-        };
-        paintAvatar();
-        av.style.cursor = 'pointer';
-        av.title = '点击更换头像';
-        av.onclick = function () {
-          pickFile(function (file) {
-            safe('上传头像', async function () {
-              var r = await api.upload('/user/avatar', file);
-              state.user.avatar = (r && r.avatar) || '';
-              paintAvatar();
-              updateSidebarUser(state.user);
-              toast('头像已更新');
-            });
-          });
-        };
-      }
-      var h = card.querySelector('.zq-h2'); if (h) h.textContent = u.nickname || u.username || '知趣用户';
-      var badge = card.querySelector('.zq-badge'); if (badge) badge.textContent = (u.role === 'ADMIN' ? '管理员' : '普通用户');
-      var nums = card.querySelectorAll('.zq-mono');
-      if (nums[0]) nums[0].textContent = u.consecutiveDays || 0;
-      if (nums[2]) nums[2].textContent = Math.round((u.totalStudyMinutes || 0) / 60 * 10) / 10 + 'h';
-      safe('专注统计', async function () { var stat = await api.get('/record/statistics'); if (nums[1]) nums[1].textContent = stat.completedTasks || 0; });
-    }
-    var basic = $all('section').find(function (s) { return /基本资料/.test(s.textContent); });
-    if (basic) {
-      var ins = $all('input', basic);
-      if (ins[0]) ins[0].value = u.username || '';
-      if (ins[1]) ins[1].value = u.nickname || '';
-      if (ins[2]) ins[2].value = u.school || '';
-      if (ins[3]) ins[3].value = u.major || '';
-      if (ins[4]) ins[4].value = u.email || '';
-      var save = $('.zq-btn', basic);
-      if (save) save.onclick = function () {
-        safe('保存资料', async function () {
-          var data = await api.put('/user/profile', { nickname: ins[1].value.trim(), school: ins[2] ? ins[2].value.trim() : '', major: ins[3] ? ins[3].value.trim() : '', email: ins[4] ? ins[4].value.trim() : '' });
-          Object.assign(state.user, data);
-          toast('资料已保存');
-        });
-      };
-    }
-    wireCliLogin();
-    // 让 AI 读我的任务（第二十七轮）↔ PUT /user/ai-read-tasks；/auth/info 带着 aiReadTasks（服务端：空 = 开）
-    var readTasks = $('#zq-ai-read-tasks');
-    if (readTasks) {
-      setMorningToggle(readTasks, u.aiReadTasks !== false);
-      readTasks.onclick = function () {
-        var next = readTasks.dataset.on !== '1';
-        safe('保存设置', async function () {
-          await api.put('/user/ai-read-tasks?enabled=' + next);
-          state.user.aiReadTasks = next;
-          setMorningToggle(readTasks, next);
-          toast(next ? '已打开：问到安排时 AI 会先看你的任务' : '已关闭：AI 不再读你的任务');
-        });
-      };
-    }
-    // 提醒推送 ↔ /reminder/settings（开关 + 渠道凭据）。这个开关管的是全部提醒（到点的、截止前的、早八汇总）——
-    // 后端 isEnabled 不开就一条都不发；原来卡片叫「早八提醒」、说明只写早八汇总，设了提醒时间的人不会想到要来开它
-    var morning = $('#zq-morning');
-    if (morning) {
-      var settings = await safe('提醒设置', function () { return api.get('/reminder/settings'); });
-      settings = settings || {};
-      setMorningToggle(morning, settings.enabled);
-      wireReminderChannel(settings, morning);
-      morning.onclick = function () {
-        var next = morning.dataset.on !== '1';
-        // 开启之前先确认渠道真的配得起来：后端 isEnabled 要求对应凭据非空，
-        // 否则每天早八都会把提醒标成 FAILED，而用户只看到开关是绿的。
-        if (next && !reminderChannelReady(settings)) {
-          toast('请先填写并保存推送渠道的凭据，否则提醒发不出去', 'error');
-          return;
-        }
-        safe('保存提醒', async function () {
-          await api.put('/reminder/settings', { channel: currentReminderChannel(settings), enabled: next });
-          settings.enabled = next;
-          setMorningToggle(morning, next);
-          toast(next ? '提醒推送已开启' : '提醒推送已关闭');
-        });
-      };
-    }
-    // 账号与安全：真实最近登录
-    var secu = $all('section').find(function (s) { return /账号与安全/.test(s.textContent); });
-    if (secu) {
-      safe('登录历史', async function () {
-        var hist = await api.get('/user/login-history?limit=5');
-        var latest = hist && hist[0];
-        var container = secu.querySelector('h3 + div');
-        var rows = container ? container.children : [];
-        if (rows[0] && rows[0].children[1]) rows[0].children[1].textContent = latest ? (fmtDate(latest.loginAt) + (latest.ip ? ' · ' + latest.ip : '')) : '暂无记录';
-        if (rows[1] && rows[1].children[1]) rows[1].children[1].textContent = latest && latest.userAgent ? shortUA(latest.userAgent) : '—';
-      });
-    }
-    var logout = $('a[href="index.html"].zq-btn-ghost');
-    if (logout) logout.onclick = function (e) { e.preventDefault(); safe('退出', async function () { var had = token(); await api.post('/auth/logout', {}); drafts.clearUser(); clearAuth(); announceLogout(had); location.href = 'index.html'; }); };
-    var pw = $all('section').find(function (s) { return /修改密码/.test(s.textContent); });
-    if (pw) {
-      var pis = $all('input', pw), b = $('.zq-btn', pw);
-      if (b) b.onclick = function () {
-        if (pis[1].value !== pis[2].value) return toast('两次新密码不一致', 'error');
-        safe('修改密码', async function () {
-          // 改完密码，之前签发的令牌（别的设备上的、被偷走的）全部作废；这个会话拿新令牌接着用，「记住我」照旧
-          var fresh = await api.put('/user/password', { oldPassword: pis[0].value, newPassword: pis[1].value });
-          var before = token();
-          if (fresh && fresh.token) {
-            setAuth({ token: fresh.token, role: role() || 'USER' }, Boolean(localStorage.getItem('token')));
-            announceNewToken(before, fresh.token);   // 同一个浏览器里别的标签页手里是旧令牌，已经作废了
-          }
-          toast('密码已更新，其他设备上的登录已失效');
-          pis.forEach(function (i) { i.value = ''; });
-        });
-      };
-    }
-    wireModelForm();
-    await loadModels();
-  }
-  function setMorningToggle(btn, on) {
-    btn.dataset.on = on ? '1' : '0';
-    var knob = btn.firstElementChild;
-    if (knob) knob.style.left = on ? '21px' : '3px';
-    btn.style.background = on ? 'var(--zq-primary)' : 'var(--zq-border)';
-  }
-  function shortUA(ua) {
-    ua = String(ua || '');
-    var os = /Windows/.test(ua) ? 'Windows' : /Mac OS|Macintosh/.test(ua) ? 'macOS' : /Android/.test(ua) ? 'Android' : /iPhone|iPad|iOS/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : '';
-      // 桌面应用要先判：它内嵌的是系统 WebView，UA 和 Safari 长得一模一样，
-      // 先走下面的浏览器分支就会把「从应用登录」显示成「Safari · macOS」。
-      // 标记由原生外壳用 applicationNameForUserAgent 追加（ZhiquShell.swift）。
-      if (/ZhiquDesktop/.test(ua)) return '桌面应用' + (os ? ' · ' + os : '');
-      // Java 版 zhiqu 命令行的 UA（2026-10-04 删除；历史登录记录里还有）：UA 里没有任何浏览器标记，不认的话落到「浏览器」
-      if (/ZhiquCLI\//.test(ua)) return '命令行' + (os ? ' · ' + os : '');
-    var br = /Edg\//.test(ua) ? 'Edge' : /Chrome/.test(ua) ? 'Chrome' : /Firefox/.test(ua) ? 'Firefox' : /Safari/.test(ua) ? 'Safari' : '浏览器';
-    return (br + (os ? ' · ' + os : '')) || ua.slice(0, 40);
-  }
-  var MODEL_PROVIDERS = ['OPENAI_COMPATIBLE', 'ANTHROPIC', 'OLLAMA', 'VLLM', 'GEMINI'];
   // /ai/models 返回的是对象 {systemModels, userModels, defaultModelId,...}，统一拍平成数组
   function normalizeModelList(data) {
     if (Array.isArray(data)) return data;
@@ -1832,81 +1564,6 @@
     var sys = (data.systemModels || []).map(function (m) { return Object.assign({ ownerType: 'SYSTEM' }, m); });
     return mine.concat(sys);
   }
-  // 后端实际取值：VERIFIED / FAILED / UNSUPPORTED / UNTESTED。注意先判 UNSUPPORT，否则会被 SUPPORT 误吞
-  function probeText(s) { s = String(s || '').toUpperCase(); if (!s || s === 'UNTESTED') return '未测试'; if (/UNSUPPORT|NOT_SUPPORT|\bNO\b|FALSE/.test(s)) return '不支持'; if (/VERIFIED|PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return '通过'; if (/FAIL|ERROR/.test(s)) return '失败'; if (/PROB|TESTING|RUNNING/.test(s)) return '测试中'; return s; }
-  function probeColor(s) { s = String(s || '').toUpperCase(); if (/UNSUPPORT|NOT_SUPPORT/.test(s)) return 'var(--zq-text3)'; if (/VERIFIED|PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return 'var(--zq-ok)'; if (/FAIL|ERROR/.test(s)) return 'var(--zq-bad)'; return 'var(--zq-text3)'; }
-  function modelTile(k, v, c) { return '<div style="min-width:0;"><span style="display:block;font-size:10.5px;color:var(--zq-text3);">' + esc(k) + '</span><strong style="display:block;margin-top:3px;font-size:11.5px;font-weight:600;color:' + c + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(v) + '</strong></div>'; }
-  async function loadModels() {
-    var host = $('#zq-models'); if (!host) return;
-    var modelData = await api.get('/ai/models');
-    state.models = normalizeModelList(modelData);
-    host.innerHTML = (state.models || []).map(function (m) {
-      var mine = m.ownerType !== 'SYSTEM';
-      return '<article style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);padding:12px 14px;"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;"><div style="font-size:13.5px;font-weight:700;">' + esc(m.label || m.displayName || m.name) + '</div><div class="zq-mono" style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;">' + esc(m.modelName || '') + '</div></div><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);font-weight:700;">' + esc(mine ? '我的' : '系统') + '</span></div>'
-        + '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:11px;padding-top:11px;border-top:1px solid var(--zq-border-soft);">'
-        + modelTile('Provider', m.providerType || '—', 'var(--zq-text2)')
-        + modelTile('连通性', probeText(m.capabilityProbeStatus), probeColor(m.capabilityProbeStatus))
-        + modelTile('视觉', probeText(m.visionStatus), probeColor(m.visionStatus))
-        + modelTile('深度思考', probeText(m.reasoningStatus), probeColor(m.reasoningStatus))
-        + '</div>'
-        + '<div style="margin-top:9px;font-size:11.5px;color:var(--zq-text3);">Key：' + esc(m.apiKeyMasked || m.maskedApiKey || '—') + (m.lastProbeAt ? ' · 上次探测 ' + esc(fmtDate(m.lastProbeAt)) : '') + '</div>'
-        + '<div style="display:flex;gap:6px;margin-top:11px;flex-wrap:wrap;">' + (mine ? '<button class="zq-btn-ghost" data-model-edit="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">编辑</button>' : '') + '<button class="zq-btn-ghost" data-model-test="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">测试连通</button><button class="zq-btn-ghost" data-model-probe="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">能力测试</button>' + (mine ? '<button class="zq-btn-ghost" data-model-del="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">删除</button>' : '') + '</div></article>';
-    }).join('') || empty('暂无模型配置');
-    $all('[data-model-edit]', host).forEach(function (b) { b.onclick = function () { editModel(Number(b.dataset.modelEdit)); }; });
-    $all('[data-model-test]', host).forEach(function (b) { b.onclick = async function () { var n = notice('正在测试连通性…'); try { var r = await api.post('/ai/models/' + b.dataset.modelTest + '/test', {}); n.update('连通性测试完成：' + (r && (r.message || r.status || (r.ok ? '通过' : '完成')) || '完成'), { done: true }); await loadModels(); } catch (e) { n.update('连通性测试失败：' + (e.message || '未知错误'), { error: true }); } }; });
-    $all('[data-model-probe]', host).forEach(function (b) { b.onclick = async function () { var n = notice('正在进行能力测试…'); try { await api.post('/ai/models/' + b.dataset.modelProbe + '/probe', {}); n.update('能力测试完成', { done: true }); await loadModels(); } catch (e) { n.update('能力测试失败：' + (e.message || '未知错误'), { error: true }); } }; });
-    $all('[data-model-del]', host).forEach(function (b) { b.onclick = async function () { if (await askConfirm({ title: '删除模型', message: '删除该模型配置？已保存的 API Key 会一并移除。', okText: '删除', danger: true })) safe('删除模型', async function () { await api.del('/ai/models/' + b.dataset.modelDel); await loadModels(); }); }; });
-  }
-  function modelFormEls() {
-    var section = $all('section').find(function (s) { return /AI 模型配置/.test(s.textContent); });
-    if (!section) return null;
-    var ins = $all('input', section);
-    return { section: section, display: ins[0], modelName: ins[1], apiUrl: ins[2], apiKey: ins[3], provider: $('select', section),
-      contextWindow: $('#zq-model-context') };
-  }
-  function clearModelForm(els) {
-    els = els || modelFormEls(); if (!els) return;
-    ['display', 'modelName', 'apiUrl', 'apiKey', 'contextWindow'].forEach(function (k) { if (els[k]) els[k].value = ''; });
-    if (els.provider) els.provider.selectedIndex = 0;
-  }
-  function wireModelForm() {
-    var els = modelFormEls(); if (!els) return;
-    var saveBtn = $all('button', els.section).find(function (b) { return /保存模型/.test(b.textContent); });
-    var newBtn = $all('button', els.section).find(function (b) { return /新建模型/.test(b.textContent); });
-    if (newBtn) newBtn.onclick = function () { state.editingModelId = null; clearModelForm(els); toast('已切换到新建模型'); };
-    if (saveBtn) saveBtn.onclick = function () {
-      var body = {
-        displayName: els.display ? els.display.value.trim() : '',
-        providerType: MODEL_PROVIDERS[els.provider ? els.provider.selectedIndex : 0] || 'OPENAI_COMPATIBLE',
-        modelName: els.modelName ? els.modelName.value.trim() : '',
-        apiUrl: els.apiUrl ? els.apiUrl.value.trim() : ''
-      };
-      if (els.apiKey && els.apiKey.value.trim()) body.apiKey = els.apiKey.value.trim();
-      // 总是带上这个键：空串 = 清掉（回到保守默认）。后端只在请求体里有这个键时才改它
-      if (els.contextWindow) body.contextWindowTokens = els.contextWindow.value.trim();
-      if (!body.modelName) return toast('请填写模型名称', 'error');
-      safe('保存模型', async function () {
-        if (state.editingModelId) await api.put('/ai/models/' + state.editingModelId, body);
-        else await api.post('/ai/models', body);
-        toast('模型已保存'); state.editingModelId = null; clearModelForm(els); await loadModels();
-      });
-    };
-  }
-  function editModel(id) {
-    var els = modelFormEls(); if (!els) return;
-    var m = (state.models || []).find(function (x) { return x.id === id; }); if (!m) return;
-    state.editingModelId = id;
-    if (els.display) els.display.value = m.label || m.displayName || '';
-    if (els.modelName) els.modelName.value = m.modelName || '';
-    if (els.apiUrl) els.apiUrl.value = m.apiUrl || m.baseUrl || '';
-    if (els.apiKey) els.apiKey.value = '';
-    if (els.contextWindow) els.contextWindow.value = m.contextWindowTokens || '';
-    var idx = MODEL_PROVIDERS.indexOf(m.providerType);
-    if (els.provider) els.provider.selectedIndex = idx >= 0 ? idx : 0;
-    els.section.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    toast('正在编辑：' + (m.label || m.displayName || m.modelName || '模型'));
-  }
-
   async function bootAdmin() {
     var overview = await api.get('/admin/overview');
     var traffic = overview.traffic || {};
@@ -3940,8 +3597,8 @@
     if (state.aiNoModel) {
       return '<div data-ai-empty style="max-width:420px;margin:56px auto 0;text-align:center;color:var(--zq-text2);font-size:13px;line-height:1.75;">'
         + '<div style="font-size:15px;font-weight:700;color:var(--zq-text);margin-bottom:6px;">还没有可用的 AI 模型</div>'
-        + '到个人中心的「AI 模型配置」填一个（OpenAI 兼容、Anthropic、本地 Ollama 都行），回来就能用。'
-        + '<div style="margin-top:14px;"><a class="zq-btn" href="profile.html" style="display:inline-flex;">去配置模型 →</a></div></div>';
+        + '到「设置 → AI 模型」里填一个（OpenAI 兼容、Anthropic、本地 Ollama 都行），回来就能用。'
+        + '<div style="margin-top:14px;"><a class="zq-btn" href="#settings/models" style="display:inline-flex;">去配置模型 →</a></div></div>';
     }
     return '<div data-ai-empty style="max-width:460px;margin:48px auto 0;text-align:center;color:var(--zq-text2);font-size:13px;line-height:1.7;">'
       + '<div style="font-size:15px;font-weight:700;color:var(--zq-text);margin-bottom:6px;">可以这样开始</div>'
@@ -5404,7 +5061,7 @@
       // 用户看到的就是「闪一下两条，然后什么都没有」—— 而唯一说明"为什么不行"的那句话，
       // 恰好被这一步删掉了，于是他连去查什么都不知道。
       // 实测（未修时，全新用户无模型配置）：SSE 返回
-      //   {"message":"请先在个人中心配置可用的 AI 模型","nonRetryable":true}
+      //   {"message":"请先在「设置 → AI 模型」里配置可用的 AI 模型","nonRetryable":true}
       // 随后 /ai/messages 返回 []，页面消息节点归零。
       if (!failed) await loadAiMessages();
       await renderAgentPanels();
@@ -5445,21 +5102,18 @@
 
 
   /**
-   * 提醒渠道的配置界面。
-   *
-   * <p>此前这一整块只存在于 js/profile.js —— 而那个文件<b>零页面加载</b>（见 CLAUDE.md），
-   * 于是用户没有任何途径填凭据：开关只发 {channel:'PUSHPLUS', enabled:true}，
-   * 而后端的 hasRequiredChannelConfig 要求 pushplusToken 非空，早八时每条提醒都被标成
-   * FAILED（理由「提醒渠道未启用或未配置」）。用户看到的是绿色的开关和一行写死的
-   * 「渠道：PushPlus · 已绑定」，然后什么都收不到。
+   * 提醒渠道的凭据字段，以及「这个渠道配齐了没有」—— 只有这一份：设置弹窗的「提醒」一栏（assets/settings.js，经 zqShared）
+   * 和建任务的表单（reminderBlocker）都用它，和后端 hasRequiredChannelConfig 是同一个条件。
+   * 界面本身在 settings.js 的 bindReminders（第三十轮从个人中心页挪过去）。
    */
   var REMINDER_FIELDS = {
     PUSHPLUS: [['zq-rm-pushplus', 'pushplusToken']],
     WECOM: [['zq-rm-webhook', 'webhookUrl']],
     QQ: [['zq-rm-qq-appid', 'qqAppId'], ['zq-rm-qq-secret', 'qqAppSecret'], ['zq-rm-qq-group', 'qqGroupOpenid']]
   };
-  function currentReminderChannel(settings) {
-    var sel = $('#zq-rm-channel');
+  /** root：设置弹窗里那一栏（看用户正选着的渠道、正在填的字）；不给就只看服务端存着的。 */
+  function currentReminderChannel(settings, root) {
+    var sel = root && $('#zq-rm-channel', root);
     return (sel && sel.value) || settings.channel || 'PUSHPLUS';
   }
   /**
@@ -5468,86 +5122,15 @@
    * 已保存的值从后端回来是脱敏的（****xxxx），占位符里显示；输入框为空 = 沿用已存的值。
    * 所以「齐了」= 每个字段要么输入框有值，要么后端已经存着一个非空值。
    */
-  function reminderChannelReady(settings) {
-    var channel = currentReminderChannel(settings);
+  function reminderChannelReady(settings, root) {
+    var channel = currentReminderChannel(settings, root);
     return (REMINDER_FIELDS[channel] || []).every(function (pair) {
-      var el = $('#' + pair[0]);
+      var el = root && $('#' + pair[0], root);
       if (el && el.value.trim()) return true;
       var stored = settings[pair[1]];
       return !!(stored && String(stored).trim());
     });
   }
-  function paintReminderChannel(settings) {
-    var channel = currentReminderChannel(settings);
-    // 用 style.display 而不是 hidden 属性：这些 div 带着内联样式，
-    // 而内联 display 的优先级高于 [hidden] 的 UA 规则 —— 设 hidden 不会让它们消失
-    $all('[data-rm-group]').forEach(function (group) {
-      group.style.display = group.dataset.rmGroup === channel ? 'flex' : 'none';
-    });
-    Object.keys(REMINDER_FIELDS).forEach(function (key) {
-      REMINDER_FIELDS[key].forEach(function (pair) {
-        var el = $('#' + pair[0]);
-        if (!el) return;
-        var stored = settings[pair[1]];
-        // 脱敏值只作为占位提示，绝不填进 value —— 填进去用户一保存就会把掩码当成新凭据提交
-        el.placeholder = stored && String(stored).trim()
-          ? '已保存（' + stored + '），留空则不修改'
-          : el.dataset.rmPlaceholder || el.placeholder;
-      });
-    });
-    var status = $('#zq-rm-status');
-    if (status) {
-      status.textContent = reminderChannelReady(settings) ? '凭据已配置' : '尚未配置凭据，提醒发不出去';
-      status.style.color = reminderChannelReady(settings) ? 'var(--zq-q2)' : 'var(--zq-q1)';
-    }
-  }
-  function wireReminderChannel(settings, morning) {
-    var sel = $('#zq-rm-channel');
-    if (!sel) return;   // 这一块只在个人中心页存在
-    // 记下原始占位符，后面要在「已保存」与「未保存」之间切换
-    Object.keys(REMINDER_FIELDS).forEach(function (key) {
-      REMINDER_FIELDS[key].forEach(function (pair) {
-        var el = $('#' + pair[0]);
-        if (el) el.dataset.rmPlaceholder = el.placeholder;
-      });
-    });
-    sel.value = settings.channel || 'PUSHPLUS';
-    paintReminderChannel(settings);
-    sel.onchange = function () { paintReminderChannel(settings); };
-
-    var save = $('#zq-rm-save');
-    if (save) save.onclick = function () {
-      var channel = currentReminderChannel(settings);
-      var body = { channel: channel, enabled: !!settings.enabled };
-      var filled = false;
-      (REMINDER_FIELDS[channel] || []).forEach(function (pair) {
-        var el = $('#' + pair[0]);
-        if (el && el.value.trim()) { body[pair[1]] = el.value.trim(); filled = true; }
-      });
-      if (!filled && !reminderChannelReady(settings)) { toast('请先填写凭据', 'error'); return; }
-      safe('保存推送渠道', async function () {
-        await api.put('/reminder/settings', body);
-        var fresh = await api.get('/reminder/settings');
-        Object.keys(fresh || {}).forEach(function (k) { settings[k] = fresh[k]; });
-        (REMINDER_FIELDS[channel] || []).forEach(function (pair) {
-          var el = $('#' + pair[0]); if (el) el.value = '';
-        });
-        paintReminderChannel(settings);
-        if (morning) setMorningToggle(morning, settings.enabled);
-        toast('推送渠道已保存');
-      });
-    };
-
-    var test = $('#zq-rm-test');
-    if (test) test.onclick = function () {
-      safe('发送测试', async function () {
-        await api.post('/reminder/test', {});
-        toast('测试消息已发出，去对应渠道确认');
-      });
-    };
-  }
-
-
   // ───────────────────────── 代码工作区（只读） ─────────────────────────
   /**
    * 工作区面板。
@@ -5937,6 +5520,93 @@
     document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
   }
 
+  // ── 设置 / 成就弹窗（第三十轮：点左下角头像弹出菜单，设置、成就是 Claude 那样的弹窗；地址 #settings/<栏>、#achievements）──
+  //
+  // 代码在 assets/settings.js —— 第一个从这个文件拆出去的 ES 模块，第一次打开时才 import。它用到的壳里的东西都经 zqShared 给：
+  // 这就是第 4 步之后各页模块要用的那一层，模块只认它，不认壳的内部变量。
+  //
+  // 弹窗跟着地址走：点菜单是一次普通的 hash 跳转（往历史里加一条），所以刷新还在、后退就关。关掉弹窗时，那一条是跳转加的就后退回去
+  // （不留一条「还是这一页」的历史），是直接带着 hash 打开的（刷新、外面的链接）就把 hash 抹掉。换栏只改地址、不加历史。
+  var SELF_SRC = (function () { try { return (document.currentScript && document.currentScript.src) || ''; } catch (e) { return ''; } })();
+  var settingsModule = null;
+  function loadSettingsModule() {
+    if (!settingsModule) {
+      // 带上和壳同一个缓存令牌（?v=）：发版换了壳，模块跟着换，浏览器的 HTTP 缓存不会拿旧模块配新壳
+      var query = '';
+      try { query = new URL(SELF_SRC).search; } catch (e) {}
+      settingsModule = import(new URL('assets/settings.js' + query, location.href).href)
+        .catch(function (e) { settingsModule = null; throw e; });
+    }
+    return settingsModule;
+  }
+  function isDialogHash(h) { return /^#(?:settings(?:[/?]|$)|achievements$)/.test(h || ''); }
+  var dialog = null;            // 开着的那个：{ kind, handle }
+  var dialogPushed = false;     // 这条 hash 是不是从「没有弹窗」跳过来、往历史里加的那一条
+  var dialogHashBefore = false;
+  function leaveDialogHash() {
+    if (!isDialogHash(location.hash)) return;
+    if (dialogPushed) { dialogPushed = false; history.back(); }
+    else history.replaceState(history.state, '', location.pathname + location.search);
+  }
+  function syncDialog() {
+    if (!isDialogHash(location.hash)) {
+      if (dialog) { var gone = dialog; dialog = null; gone.handle.close(); }
+      return;
+    }
+    safe('打开设置', async function () {
+      var mod = await loadSettingsModule();
+      var want = mod.parseZqHash(location.hash);   // 加载的这一会儿地址可能又变了：按现在的
+      if (!want) return;
+      if (dialog && dialog.kind === want.kind) {
+        if (want.kind === 'settings') dialog.handle.show(want.tab, want.params);
+        return;
+      }
+      if (dialog) { var old = dialog; dialog = null; old.handle.close(); }
+      var entry = { kind: want.kind, handle: null };
+      var onClose = function () { if (dialog === entry) { dialog = null; leaveDialogHash(); } };
+      dialog = entry;
+      entry.handle = want.kind === 'settings'
+        ? mod.openSettings(zqShared, { tab: want.tab, params: want.params, onClose: onClose,
+            onTab: function (tab) { history.replaceState(history.state, '', '#settings/' + tab); } })
+        : mod.openAchievements(zqShared, { onClose: onClose });
+    });
+  }
+  var dialogWatched = false;
+  function watchDialogs() {
+    if (dialogWatched) return;
+    dialogWatched = true;
+    dialogHashBefore = isDialogHash(location.hash);
+    window.addEventListener('hashchange', function () {
+      var now = isDialogHash(location.hash);
+      if (!now) dialogPushed = false;
+      else if (!dialogHashBefore) dialogPushed = true;
+      dialogHashBefore = now;
+      syncDialog();
+    });
+    syncDialog();
+  }
+  /** 退出登录（头像菜单、设置里的「退出」）。原来只在个人中心页顶上有。 */
+  function logout() {
+    return safe('退出', async function () { var had = token(); await api.post('/auth/logout', {}); drafts.clearUser(); clearAuth(); announceLogout(had); location.href = 'index.html'; });
+  }
+  /**
+   * 改完密码，之前签发的令牌（别的设备上的、被偷走的）全部作废 —— 包括这一页手里那张；服务器给这个会话回一张新的。
+   * 存上它（「记住我」照旧），不然改完密码下一个请求就被踢回登录页。
+   */
+  function adoptNewToken(fresh) {
+    var before = token();
+    if (!fresh) return;
+    setAuth({ token: fresh, role: role() || 'USER' }, Boolean(localStorage.getItem('token')));
+    announceNewToken(before, fresh);   // 同一个浏览器里别的标签页手里是旧令牌，已经作废了
+  }
+  /** 给页面模块的共用层（第 4 步）：模块只用这里面的东西。往里加之前想一想 —— 加进来的每一样，模块都可能依赖它。 */
+  var zqShared = {
+    api: api, state: state, esc: esc, toast: toast, notice: notice, askConfirm: askConfirm, safe: safe, openModal: openModal,
+    pickFile: pickFile, empty: empty, fmtDate: fmtDate, d10: d10, updateSidebarUser: updateSidebarUser, normalizeModelList: normalizeModelList,
+    REMINDER_FIELDS: REMINDER_FIELDS, currentReminderChannel: currentReminderChannel, reminderChannelReady: reminderChannelReady,
+    logout: logout, adoptNewToken: adoptNewToken
+  };
+
   var pomoWatched = false;
   function route() {
     maintainShellCache();
@@ -5950,6 +5620,14 @@
           // 别的标签页已经登录了：落地页直接进看板（或 next 指的那一页），不再让人登第二遍
           if (!token() && await borrowToken()) { location.href = safeNext(new URLSearchParams(location.search).get('next')); return; }
           revealContent(); return bootIndex();
+        }
+        // 个人中心、成就第三十轮改成了弹窗：旧地址（书签、历史记录、命令行打印过的 profile.html#harness=…）换到首页的弹窗。
+        // 在登录检查之前跳：没登录的话首页会带着弹窗的地址去登录页，登录完回来照样打开
+        if (page === 'profile.html' || page === 'achievement.html') {
+          leaving = true;
+          var legacy = await loadSettingsModule();
+          location.replace(HOME_PAGE + legacy.legacyHash(page, location.hash));
+          return;
         }
         if (!token()) await borrowToken();
         await initAuth();
@@ -5975,9 +5653,10 @@
         }
 
         watchReminders();
+        watchDialogs();
         // 页面开着跨过业务日期的零点：只重新取数据（看板、例行计划的「今天」），见 watchBusinessDay
         if (!dayWatched && DAY_RELOAD[page]) { dayWatched = true; watchBusinessDay(DAY_RELOAD[page]); }
-        var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'routines.html': bootRoutines, 'statistics.html': bootStatistics, 'achievement.html': bootAchievement, 'profile.html': bootProfile, 'admin.html': bootAdmin, 'feedback-admin.html': bootFeedbackAdmin, 'account-admin.html': bootAccountAdmin, 'shared-plans.html': bootSharedPlans, 'shared-plan-admin.html': bootSharedPlanAdmin, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
+        var boots = { 'dashboard.html': bootDashboard, 'tasks.html': bootTasks, 'routines.html': bootRoutines, 'statistics.html': bootStatistics, 'admin.html': bootAdmin, 'feedback-admin.html': bootFeedbackAdmin, 'account-admin.html': bootAccountAdmin, 'shared-plans.html': bootSharedPlans, 'shared-plan-admin.html': bootSharedPlanAdmin, 'knowledge-wiki.html': bootKnowledge, 'ai-assistant.html': bootAiAssistant };
         // 番茄钟的待补记不能挂在页面启动之后：启动失败（网断着打开的、被限流）时正是有待补记的时候，挂在后面的话这一页就不补了。
         // 当场那一趟放在启动之后（成不成都跑）：补上了要刷新的看板数字，得等看板自己先起来
         var watchPomodoros = !pomoWatched;
@@ -6002,6 +5681,6 @@
   // localDate 一并暴露：页面内联脚本（如 dashboard 的番茄钟）也要算「今天」，
   // 让它们用同一份定义，而不是各写一个 toISOString
   window.zqApi = { api: api, reload: route, today: today, localDate: localDate, now: nowMs, serverTime: serverTime, businessDate: businessDate, toast: toast, recordPomodoro: recordPomodoro,
-    notify: pageNotify, askNotifyPermission: askNotifyPermission };
+    notify: pageNotify, askNotifyPermission: askNotifyPermission, logout: logout };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', route); else route();
 })();

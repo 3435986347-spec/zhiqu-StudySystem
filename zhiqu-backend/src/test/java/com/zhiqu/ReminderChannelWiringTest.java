@@ -53,10 +53,15 @@ class ReminderChannelWiringTest {
      */
     private static String liveFrontend() throws IOException {
         StringBuilder all = new StringBuilder();
-        all.append(SourceText.stripComments(
-                Files.readString(STATIC_DIR.resolve("assets/zhiqu-api.js"), StandardCharsets.UTF_8)));
-        all.append(SourceText.stripComments(
-                Files.readString(STATIC_DIR.resolve("assets/zhiqu-ui.js"), StandardCharsets.UTF_8)));
+        // assets 下的脚本一个不落：第三十轮提醒渠道的界面挪进了 settings.js（设置弹窗的模块），手写名单就漏了它
+        int scripts = 0;
+        try (Stream<Path> js = Files.list(STATIC_DIR.resolve("assets"))) {
+            for (Path f : js.filter(p -> p.toString().endsWith(".js")).sorted().toList()) {
+                scripts++;
+                all.append(SourceText.stripComments(Files.readString(f, StandardCharsets.UTF_8)));
+            }
+        }
+        assertTrue(scripts >= 3, "assets 下只扫到 " + scripts + " 个脚本");
         try (Stream<Path> pages = Files.list(STATIC_DIR)) {
             for (Path page : pages.filter(p -> p.toString().endsWith(".html")).sorted().toList()) {
                 all.append(Files.readString(page, StandardCharsets.UTF_8)

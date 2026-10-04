@@ -56,7 +56,6 @@ class MobileLayoutTest {
         DECISIONS.put("minmax(120px,1.1fr)minmax(150px,1.3fr)74px62px102px104px128px", Phone.KEEP); // 账号管理表一行
         DECISIONS.put("repeat(auto-fit,minmax(140px,1fr))", Phone.KEEP);
         DECISIONS.put("repeat(auto-fit,minmax(178px,1fr))", Phone.KEEP);
-        DECISIONS.put("1fr1fr1fr", Phone.KEEP);                        // 个人中心三个小数字：240px 也放得下
     }
 
     private static String css() throws IOException {
@@ -158,12 +157,47 @@ class MobileLayoutTest {
                 if (got != want) wrong.add(f.getFileName() + "「" + value + "」应当 " + want + "，zhiqu-ui.css 实际 " + got);
             }
         }
-        assertTrue(seen >= 30 && distinct.size() >= 15,
+        // 第三十轮个人中心、成就页的 6 处挪进了设置弹窗（assets/settings.js，由「弹窗里的网格」那条判），这里少了它们
+        assertTrue(seen >= 24 && distinct.size() >= 14,
                 "只扫到 " + seen + " 处 / " + distinct.size() + " 种 grid-template-columns —— 扫描扫空了（style 的写法变了？），这时下面的判据全是空转");
         assertTrue(undecided.isEmpty(), "新的 grid-template-columns，还没决定它在手机上怎么排：" + undecided
                 + "\n—— 在 MobileLayoutTest.DECISIONS 里写下一栏 / 两个一排 / 不动（不动的话它得本来就窄、或者在会横向滚动的框里），"
                 + "再让 zhiqu-ui.css 的 @media (max-width: 760px) 真的那样排");
         assertTrue(wrong.isEmpty(), String.join("\n", wrong));
+    }
+
+    @Test
+    @DisplayName("设置 / 成就弹窗里的网格（不在 .zq-main 里，正文那两条按 style 认的规则管不到）：手机上怎么排写在类名上，并且和 DECISIONS 一致")
+    void 弹窗里的网格() throws IOException {
+        String js = SourceText.stripComments(Files.readString(STATIC.resolve("assets/settings.js"), StandardCharsets.UTF_8));
+        Matcher tag = Pattern.compile("<(?:div|section)\\b([^>]*grid-template-columns[^>]*)>").matcher(js);
+        Pattern valuePat = Pattern.compile("grid-template-columns:\\s*([^;\"']+)");
+        Pattern classPat = Pattern.compile("class=\"([^\"]*)\"");
+        List<String> wrong = new ArrayList<>();
+        int seen = 0;
+        while (tag.find()) {
+            String attrs = tag.group(1);
+            Matcher vm = valuePat.matcher(attrs);
+            if (!vm.find()) continue;
+            seen++;
+            String value = vm.group(1).trim();
+            Phone want = DECISIONS.get(value.replaceAll("\\s+", ""));
+            Matcher cm = classPat.matcher(attrs);
+            List<String> classes = cm.find() ? List.of(cm.group(1).trim().split("\\s+")) : List.of();
+            if (want == null) {
+                wrong.add("「" + value + "」还没决定手机上怎么排（写进 DECISIONS）");
+                continue;
+            }
+            boolean one = classes.contains("zq-phone-1col"), two = classes.contains("zq-phone-2col");
+            Phone got = one && !two ? Phone.ONE_COLUMN : two && !one ? Phone.TWO_COLUMNS : !one && !two ? Phone.KEEP : null;
+            if (got != want) wrong.add("「" + value + "」应当 " + want + "，类名是 " + classes);
+        }
+        assertTrue(seen >= 5, "settings.js 里只扫到 " + seen + " 处网格 —— 扫空了（写法变了？）");
+        assertTrue(wrong.isEmpty(), String.join("\n", wrong));
+        String block = phoneBlock(css()).body().replace(" ", "");
+        assertTrue(block.contains(".zq-phone-1col{grid-template-columns:minmax(0,1fr)!important;}")
+                        && block.contains(".zq-phone-2col{grid-template-columns:repeat(2,minmax(0,1fr))!important;}"),
+                "手机样式段里没有 zq-phone-1col / zq-phone-2col 这两条 —— 类名写了也不起作用");
     }
 
     @Test

@@ -24,6 +24,10 @@ class MainFlowWalkthroughTest {
         return SourceText.stripComments(Files.readString(STATIC.resolve("assets/zhiqu-api.js"), StandardCharsets.UTF_8));
     }
 
+    private static String settings() throws Exception {
+        return SourceText.stripComments(Files.readString(STATIC.resolve("assets/settings.js"), StandardCharsets.UTF_8));
+    }
+
     private static String page(String name) throws Exception {
         return Files.readString(STATIC.resolve(name), StandardCharsets.UTF_8).replaceAll("(?s)<!--.*?-->", " ");
     }
@@ -59,9 +63,12 @@ class MainFlowWalkthroughTest {
                 "要和后端 isEnabled 同一个条件：凭据齐、开关开着");
         assertTrue(fn(code, "async function openTaskForm(id, onSaved)").contains("reminderBlocker().then("),
                 "建任务的表单没有查提醒发不发得出去");
-        String profile = page("profile.html");
-        assertFalse(profile.contains(">早八提醒</h3>"), "卡片还叫「早八提醒」—— 它的开关管的是全部提醒，设了提醒时间的人不会想到要来开它");
-        assertTrue(profile.contains("任务的提醒时间、截止前提醒和每天 08:00 的待办汇总"), "卡片说明要写清它管哪些提醒");
+        // 第三十轮起这张卡在「设置 → 提醒」里（assets/settings.js）
+        String settings = settings();
+        assertFalse(settings.contains(">早八提醒<"), "卡片还叫「早八提醒」—— 它的开关管的是全部提醒，设了提醒时间的人不会想到要来开它");
+        assertTrue(settings.contains("任务的提醒时间、截止前提醒和每天 08:00 的待办汇总"), "卡片说明要写清它管哪些提醒");
+        assertTrue(fn(code, "async function openTaskForm(id, onSaved)").contains("href=\"#settings/reminders\""),
+                "建任务时说「提醒发不出去」，要能一下打开「设置 → 提醒」");
     }
 
     @Test
@@ -72,7 +79,7 @@ class MainFlowWalkthroughTest {
         assertTrue(load.contains("state.aiNoModel = !(models || []).length;"), "没有判断「一个能用的模型都没有」");
         assertTrue(load.contains("(state.aiNoModel ? '还没有可用的模型' : '默认模型')"), "没有模型时下拉框还写「默认模型」");
         String empty = fn(code, "function aiEmptyState()");
-        assertTrue(empty.contains("if (state.aiNoModel)") && empty.contains("href=\"profile.html\""), "没有模型时要给去配置的入口");
+        assertTrue(empty.contains("if (state.aiNoModel)") && empty.contains("href=\"#settings/models\""), "没有模型时要给去配置的入口（「设置 → AI 模型」）");
         assertTrue(fn(code, "function renderAiMessages(opts)").contains("host.innerHTML = moreRow + aiEmptyState();"),
                 "对话区空着时没有画空状态");
         assertTrue(code.contains("'根据这些资料，帮我制定下周的工作计划'"), "示例要用真能出计划的说法（制定）");

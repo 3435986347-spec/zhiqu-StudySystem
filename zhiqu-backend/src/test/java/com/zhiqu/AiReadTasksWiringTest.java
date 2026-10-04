@@ -39,14 +39,13 @@ class AiReadTasksWiringTest {
     }
 
     @Test
-    @DisplayName("个人中心的开关：说清楚会发给谁、按 /auth/info 的值画、点了保存到 /user/ai-read-tasks")
-    void 个人中心的开关() throws Exception {
-        String profile = read("profile.html").replaceAll("(?s)<!--.*?-->", " ");
-        assertTrue(profile.contains("id=\"zq-ai-read-tasks\""), "个人中心没有这个开关");
-        assertTrue(profile.contains("会发给你配置的模型供应商"), "开关旁边要说清楚打开时任务会发给谁");
-        String api = SourceText.stripComments(read("assets/zhiqu-api.js"));
-        assertTrue(api.contains("setMorningToggle(readTasks, u.aiReadTasks !== false);"), "开关要按服务端的值画（没有这个字段时当开）");
-        assertTrue(api.contains("await api.put('/user/ai-read-tasks?enabled=' + next);"), "点了要保存");
+    @DisplayName("设置里的开关（第三十轮从个人中心挪到「设置 → AI 模型」）：说清楚会发给谁、按 /auth/info 的值画、点了保存到 /user/ai-read-tasks")
+    void 设置里的开关() throws Exception {
+        String settings = SourceText.stripComments(read("assets/settings.js"));
+        assertTrue(settings.contains("TOGGLE('zq-ai-read-tasks', '让 AI 读我的任务')"), "设置里没有这个开关");
+        assertTrue(settings.contains("会发给你配置的模型供应商"), "开关旁边要说清楚打开时任务会发给谁");
+        assertTrue(settings.contains("setToggle(readTasks, u.aiReadTasks !== false);"), "开关要按服务端的值画（没有这个字段时当开）");
+        assertTrue(settings.contains("await sh.api.put('/user/ai-read-tasks?enabled=' + next);"), "点了要保存");
         String auth = SourceText.stripComments(Files.readString(
                 Path.of("src/main/java/com/zhiqu/service/impl/AuthServiceImpl.java"), StandardCharsets.UTF_8));
         assertTrue(auth.contains("data.put(\"aiReadTasks\", user.aiReadsTasks());"), "/auth/info 要带回开关的状态");

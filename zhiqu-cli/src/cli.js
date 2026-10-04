@@ -91,7 +91,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
   zhiqu --resume [id]         挑一段会话接着做
   zhiqu --goal "目标"          goal 模式：一直做到目标达成并核对通过（配 -p 可以无人值守；退出码 0 达成 / 2 卡住 / 3 轮数用完）
   zhiqu login [--server URL]  登录（浏览器里确认，命令行不接触密码）
-  zhiqu login --token zqp_…   用个人中心签的令牌登录
+  zhiqu login --token zqp_…   用网页里签的个人访问令牌登录
   zhiqu logout | whoami | models | help | --version
   zhiqu mcp                   当 MCP 服务器：让 Claude Code / Claude 桌面版 / Cursor 读写你的知识 Wiki 和任务（见 README）
 
@@ -117,7 +117,7 @@ export async function main(argv) {
   if (cmd === 'login') return login(cwd, flags);
   if (cmd === 'logout') {
     saveUserConfig({ token: null });
-    process.stdout.write('已删除本机保存的令牌。要让它彻底失效，请在网页「个人中心 → 命令行登录」里撤销。\n');
+    process.stdout.write('已删除本机保存的令牌。要让它彻底失效，请在网页「设置 → 命令行」里撤销。\n');
     return 0;
   }
   if (cmd === 'whoami' || cmd === 'models') {
@@ -166,7 +166,7 @@ export async function login(cwd, flags, ui = new Ui()) {
   const api = new Api({ server });
   const start = await api.post('/api/harness/device/start', { clientName: `命令行 · ${hostName()}` });
   const url = server + start.verifyPath;
-  ui.line(`在浏览器里打开下面的地址，确认是你本人之后点「允许」：\n\n  ${ui.paint.bold(url)}\n\n设备码：${ui.paint.bold(start.userCode)}（${Math.round(start.expiresIn / 60)} 分钟内有效；也可以在「个人中心 → 命令行登录」里手动输入）`);
+  ui.line(`在浏览器里打开下面的地址，确认是你本人之后点「允许」：\n\n  ${ui.paint.bold(url)}\n\n设备码：${ui.paint.bold(start.userCode)}（${Math.round(start.expiresIn / 60)} 分钟内有效；也可以在网页「设置 → 命令行」里手动输入）`);
   if (!flags.noBrowser && process.stdout.isTTY) openBrowser(url);
   const deadline = monotonic() + start.expiresIn * 1000;
   while (monotonic() < deadline) {
@@ -195,7 +195,7 @@ function broadRoot(dir) {
 async function pickModel(ctx, wanted) {
   const { models, defaultModelId } = await ctx.api.get('/api/harness/models', { timeoutMs: STARTUP_TIMEOUT_MS });
   ctx.models = models;
-  if (!models.length) throw new Error('这个账号还没有可用的模型：请先在网页「个人中心 → AI 模型配置」里配一个');
+  if (!models.length) throw new Error('这个账号还没有可用的模型：请先在网页「设置 → AI 模型」里配一个');
   let model = null;
   if (wanted != null && wanted !== 'default') {
     model = models.find((m) => String(m.id) === String(wanted));

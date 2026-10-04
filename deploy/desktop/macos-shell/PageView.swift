@@ -78,7 +78,7 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         let config = WKWebViewConfiguration()
         config.websiteDataStore = persistent ? .default() : .nonPersistent()   // localStorage 要持久化 —— 登录态存在那里
         // 给 User-Agent 追加应用标识。不加的话 WKWebView 发的是 Safari 式 UA，
-        // 「个人中心 → 登录设备」只能把它认成浏览器：用户明明从应用登录，却显示
+        // 「设置 → 账号与安全」的登录设备只能把它认成浏览器：用户明明从应用登录，却显示
         // 「Safari · macOS」。前端 shortUA() 认这个标记。
         config.applicationNameForUserAgent = "ZhiquDesktop/1.0"
         super.init(frame: frame, configuration: config)

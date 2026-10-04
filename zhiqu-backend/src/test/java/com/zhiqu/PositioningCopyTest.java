@@ -76,10 +76,18 @@ class PositioningCopyTest {
                 scan(page.getFileName().toString(), html, found);
             }
         }
-        for (String asset : List.of("assets/zhiqu-api.js", "assets/zhiqu-ui.js", "service-worker.js", "manifest.json")) {
+        // assets 下的脚本一个不落（第三十轮起页面模块拆成单独的文件，比如 settings.js；手写名单会漏掉下一个）
+        int scripts = 0;
+        try (Stream<Path> files = Files.list(STATIC.resolve("assets"))) {
+            for (Path js : files.filter(p -> p.toString().endsWith(".js")).sorted().toList()) {
+                scripts++;
+                scan("assets/" + js.getFileName(), SourceText.stripComments(read(js)), found);
+            }
+        }
+        for (String asset : List.of("service-worker.js", "manifest.json")) {
             scan(asset, SourceText.stripComments(read(STATIC.resolve(asset))), found);
         }
-        assertTrue(pages >= 14, "只扫到 " + pages + " 个页面 —— 空扫和干净的扫长得一样");
+        assertTrue(pages >= 14 && scripts >= 3, "只扫到 " + pages + " 个页面、" + scripts + " 个脚本 —— 空扫和干净的扫长得一样");
         assertEquals(List.of(), found, "界面里还有学生系统的说法");
     }
 

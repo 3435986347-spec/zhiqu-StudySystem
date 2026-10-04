@@ -391,7 +391,7 @@ public class AiServiceImpl implements AiService {
     public List<Map<String, Object>> analyzeImage(Long userId, String base64Image, String mediaType, String fileName) {
         AiModelConfig config = requireModel(userId, null);
         if (!hasCapability(config, "VISION")) {
-            throw new BusinessException("当前模型未标记为支持图片识别，请在个人中心切换或添加支持视觉的模型");
+            throw new BusinessException("当前模型未标记为支持图片识别，请在「设置 → AI 模型」里切换或添加支持视觉的模型");
         }
 
         List<Map<String, Object>> userContent = new ArrayList<>();
@@ -626,7 +626,7 @@ public class AiServiceImpl implements AiService {
         List<AiMessage> history = writeContext.history();
         AiMessage userMessage = writeContext.userMessage();
         AiMessage assistantMessage = writeContext.assistantMessage();
-        // 用户让不让 AI 读任务（个人中心的开关，第二十七轮）。关着时不造读任务的节点。
+        // 用户让不让 AI 读任务（「设置 → AI 模型」里的开关，第二十七轮）。关着时不造读任务的节点。
         boolean tasksReadable = userTasksReadable(userId);
         // 意图判定算一次，建图与执行读同一个对象。此前两侧各算一套且已分叉（见 AgentPlanDecision 类注释）。
         AgentPlanDecision decision = AgentPlanDecision.of(
@@ -2792,16 +2792,16 @@ public class AiServiceImpl implements AiService {
             }
         }
         if (model == null || model.getEnabled() == null || model.getEnabled() != 1) {
-            throw new BusinessException("请先在个人中心配置可用的 AI 模型");
+            throw new BusinessException("请先在「设置 → AI 模型」里配置可用的 AI 模型");
         }
         if (!"OLLAMA".equals(provider.normalizeProviderType(model.getProviderType()))
                 && !hasText(provider.decryptedApiKey(model))) {
-            throw new BusinessException("当前模型缺少 API Key，请在个人中心补充");
+            throw new BusinessException("当前模型缺少 API Key，请在「设置 → AI 模型」里补充");
         }
         return model;
     }
 
-    /** 个人中心「让 AI 读我的任务」开着没有（第二十七轮；没有这个用户就当关着）。 */
+    /** 「让 AI 读我的任务」开着没有（第二十七轮；没有这个用户就当关着）。 */
     private boolean userTasksReadable(Long userId) {
         SysUser user = userMapper.selectById(userId);
         return user != null && user.aiReadsTasks();
@@ -3948,14 +3948,14 @@ public class AiServiceImpl implements AiService {
             if (e.getStatusCode().value() == 400 &&
                     (lowerDetail.contains("image_url") || lowerDetail.contains("vision") || lowerDetail.contains("unsupported"))) {
                 throw new BusinessException(
-                        "当前模型不支持图片识别，请在个人中心切换为支持视觉的模型（如 gpt-4o、qwen-vl-plus）");
+                        "当前模型不支持图片识别，请在「设置 → AI 模型」里切换为支持视觉的模型（如 gpt-4o、qwen-vl-plus）");
             }
             throw new BusinessException(provider.formatAiHttpError(e, config));
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "";
             if (msg.contains("400") || msg.contains("unsupported") || msg.contains("vision")) {
                 throw new BusinessException(
-                        "当前模型不支持图片识别，请在个人中心切换为支持视觉的模型（如 gpt-4o、qwen-vl-plus）");
+                        "当前模型不支持图片识别，请在「设置 → AI 模型」里切换为支持视觉的模型（如 gpt-4o、qwen-vl-plus）");
             }
             throw new BusinessException(provider.describeIoFailure(e));
         }

@@ -34,7 +34,7 @@ public class UserController {
         return Result.success(userService.updateProfile(SecurityUtils.getCurrentUserId(), request));
     }
 
-    /** AI 助手能不能读我的任务（第二十七轮；个人中心的开关）。 */
+    /** AI 助手能不能读我的任务（第二十七轮；「设置 → AI 模型」里的开关）。 */
     @PutMapping("/ai-read-tasks")
     public Result<Map<String, Object>> setAiReadTasks(@RequestParam boolean enabled) {
         return Result.success(userService.setAiReadTasks(SecurityUtils.getCurrentUserId(), enabled));

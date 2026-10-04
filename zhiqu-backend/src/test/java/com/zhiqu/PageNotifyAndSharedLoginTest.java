@@ -37,7 +37,8 @@ class PageNotifyAndSharedLoginTest {
         assertTrue(borrow >= 0 && auth > borrow, "页面启动时要先向别的标签页借令牌，再去认证 —— 反过来就是先被踢去登录页");
         assertTrue(code.contains("if (!token() && await borrowToken()) { location.href = safeNext("), "落地页借到了令牌要直接进去");
         assertTrue(code.contains("clearAuth(); announceLogout(had);"), "退出要告诉别的标签页");
-        assertTrue(code.contains("announceNewToken(before, fresh.token);"), "改密码换了令牌要告诉别的标签页（旧令牌已经作废）");
+        // 第三十轮起改密码在设置弹窗里，换令牌收在壳的 adoptNewToken（PasswordChangeKeepsSessionTest 钉着模块确实调它）
+        assertTrue(code.contains("announceNewToken(before, fresh);"), "改密码换了令牌要告诉别的标签页（旧令牌已经作废）");
     }
 
     @Test

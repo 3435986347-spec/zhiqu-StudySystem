@@ -98,13 +98,12 @@ class ContextBudgetTest {
 
     /** 界面能填、能回填；新输入框用 id 取，不能插进按位置取的那四个输入框中间。 */
     @Test
-    @DisplayName("个人中心的模型表单能填上下文窗口，保存时发出去、编辑时回填")
+    @DisplayName("设置里的模型表单能填上下文窗口，保存时发出去、编辑时回填")
     void 表单接线() throws Exception {
-        String html = Files.readString(Path.of("src/main/resources/static/profile.html"), StandardCharsets.UTF_8);
-        String js = SourceText.stripComments(Files.readString(Path.of("src/main/resources/static/assets/zhiqu-api.js"), StandardCharsets.UTF_8));
-        int key = html.indexOf("placeholder=\"留空则不修改已保存 Key\"");
-        int ctx = html.indexOf("id=\"zq-model-context\"");
-        assertTrue(key > 0 && ctx > key, "上下文窗口输入框要放在 API Key 之后 —— 插在前面会让按位置取的输入框整体错位");
+        // 第三十轮起表单在设置弹窗里（assets/settings.js），输入框按 id 取，不再有「按位置取」那回事
+        String js = SourceText.stripComments(Files.readString(Path.of("src/main/resources/static/assets/settings.js"), StandardCharsets.UTF_8));
+        assertTrue(js.contains("<input id=\"zq-model-context\" class=\"zq-input\" type=\"number\" min=\"8000\" max=\"1000000\""),
+                "表单里没有上下文窗口输入框（或者范围和后端的 8000–1000000 对不上）");
         assertTrue(js.contains("contextWindow: $('#zq-model-context')"), "表单没取到上下文窗口输入框");
         assertTrue(js.contains("body.contextWindowTokens = els.contextWindow.value.trim()"), "保存时没把窗口发出去");
         assertTrue(js.contains("els.contextWindow.value = m.contextWindowTokens || ''"), "编辑模型时没回填窗口");

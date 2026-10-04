@@ -68,8 +68,8 @@ public class DeviceLoginService {
         out.put("userCode", display(grant.getUserCode()));
         out.put("expiresIn", EXPIRES_SECONDS);
         out.put("interval", POLL_INTERVAL_SECONDS);
-        // 网页那一侧的入口：个人中心会读这个 hash 自动弹出确认框
-        out.put("verifyPath", "/profile.html#harness=" + display(grant.getUserCode()));
+        // 网页那一侧的入口：打开首页的「设置 → 命令行」并填好设备码（第三十轮；老的 /profile.html#harness= 照样会被换过去）
+        out.put("verifyPath", "/ai-assistant.html#settings/cli?harness=" + display(grant.getUserCode()));
         return out;
     }
 

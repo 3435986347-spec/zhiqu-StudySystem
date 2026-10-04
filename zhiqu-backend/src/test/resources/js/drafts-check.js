@@ -111,9 +111,12 @@ function fakeInput(value = '') {
   judge('clear：删当前键', drafts.load('chat.7') === null);
 
   // safeNext
-  const ok = ['knowledge-wiki.html', 'ai-assistant.html?nb=3', 'tasks.html'];
+  // 第三十轮：设置 / 成就弹窗的地址也跟着回去（命令行打印的 #settings/cli?harness=… 在没登录的浏览器里打开时，登录完要回到那个确认框）
+  const ok = ['knowledge-wiki.html', 'ai-assistant.html?nb=3', 'tasks.html', 'ai-assistant.html#settings/cli?harness=ABCD-EFGH',
+    'tasks.html#settings', 'dashboard.html#settings/models', 'ai-assistant.html#achievements'];
   const bad = ['', null, 'index.html', 'index.html?login=1', '//evil.example', 'https://evil.example/tasks.html', 'javascript:alert(1)',
-    '../tasks.html', '/tasks.html', 'tasks.html?x=//evil.example', 'tasks.html#x', 'tasks.html\\evil', 'tasks.html?a=1 b', 'data:text/html,x'];
+    '../tasks.html', '/tasks.html', 'tasks.html?x=//evil.example', 'tasks.html#x', 'tasks.html\\evil', 'tasks.html?a=1 b', 'data:text/html,x',
+    'tasks.html#settings/cli?harness=<b>', 'tasks.html#settings//evil.example', 'tasks.html#achievements//evil', 'tasks.html#settings/models?next=//evil'];
   judge('登录后回原来那一页：本站的页照去', ok.every((x) => safeNext(x) === x), ok.map((x) => safeNext(x)).join(','));
   const leaked = bad.filter((x) => safeNext(x) !== 'ai-assistant.html');
   judge('不是本站的一律回首页（不做开放跳转）', leaked.length === 0, JSON.stringify(leaked));

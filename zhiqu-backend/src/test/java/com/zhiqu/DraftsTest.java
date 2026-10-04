@@ -35,7 +35,7 @@ class DraftsTest {
     @DisplayName("登录过期带上原来那一页，登录之后经 safeNext 回去；主动退出删掉这个人的草稿")
     void 登录接线() throws Exception {
         String code = api();
-        assertTrue(between(code, "function redirectToLogin()", "\n  }").contains("'index.html?login=1&next=' + encodeURIComponent(page + location.search)"),
+        assertTrue(between(code, "function redirectToLogin()", "\n  }").contains("'index.html?login=1&next=' + encodeURIComponent(page + location.search"),
                 "跳去登录时没带上原来那一页");
         assertTrue(between(code, "var data = await api.post('/auth/login'", "if (reg)").contains("location.href = safeNext("), "登录之后没回原来那一页");
         assertTrue(between(code, "function bootIndex()", "\n  }").contains("location.href = safeNext("), "已经登录着打开登录页时没回原来那一页");

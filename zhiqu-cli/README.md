@@ -45,7 +45,7 @@ zhiqu --goal "修好所有失败的测试" --mode auto < /dev/null   无人值�
 zhiqu -p "帮我写个贪吃蛇"    只跑这一句，打印回答后退出
 zhiqu -c                    接着上一段会话
 zhiqu --resume [id]         挑一段会话接着做
-zhiqu login [--server URL]  登录；--token zqp_… 用个人中心签的令牌
+zhiqu login [--server URL]  登录；--token zqp_… 用网页里签的个人访问令牌
 zhiqu logout | whoami | models
 ```
 
@@ -81,7 +81,7 @@ zhiqu logout | whoami | models
 （`auto` 也问）；返回的内容一律当作数据，不当作指令。
 
 **长对话**：用到模型上下文窗口的约 80% 时自动把较早的对话压成摘要（目标、决定、改过的文件、待办），也可以 `/compact`。
-窗口大小在网页「个人中心 → AI 模型配置」里按模型设置。
+窗口大小在网页「设置 → AI 模型」里按模型设置。
 
 ## 对话在网页里也看得到
 
@@ -96,7 +96,7 @@ zhiqu logout | whoami | models
 |---|---|
 | `search_wiki` / `read_wiki_page` | 查、读知识 Wiki |
 | `create_wiki_patch` | 改 Wiki —— **只生成草稿**，到网页「知识 Wiki → 待合入变更」里确认 |
-| `list_tasks` | 读没做完的任务（带 `#编号`）。个人中心关了「让 AI 读我的任务」时读不到 |
+| `list_tasks` | 读没做完的任务（带 `#编号`）。网页「设置 → AI 模型」里关了「让 AI 读我的任务」时读不到 |
 | `update_task_status` | 把一条任务标成待办 / 进行中 / 已完成 —— **直接生效** |
 | `create_study_plan` | 新建任务 / 例行计划 —— **只生成草稿**，到网页 AI 助手里确认 |
 | `read_memory` / `propose_memory` | 读长期记忆 / 提议新的（草稿） |

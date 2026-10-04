@@ -81,10 +81,10 @@ class StaticAssetCacheTokenTest {
      *
      * <h3>范围只到 {@code static/*.html}，<b>不要</b>顺手扫 service-worker.js</h3>
      *
-     * <p>{@code service-worker.js} 的 {@code CORE_ASSETS} 里有 5 条不带令牌的 {@code /assets/...}
+     * <p>{@code service-worker.js} 的 {@code CORE_ASSETS} 里有几条不带令牌的 {@code /assets/...}
      * 路径，那是<b>对的，不是漏网</b>：SW 缓存整体由 {@code ZHIQU_CACHE} 换名作废，
      * 取用又走 {@code caches.match(request, {ignoreSearch:true})}。给预缓存清单加令牌
-     * 反而会让缓存键与实际请求对不上。判据要是扫到那里，会把这 5 行报成违规，
+     * 反而会让缓存键与实际请求对不上。判据要是扫到那里，会把这几行报成违规，
      * 而下一个人多半会照着「修」—— 把一份正确的东西改坏。
      */
     @Test

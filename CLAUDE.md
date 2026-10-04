@@ -365,7 +365,7 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
   管理令牌的接口故意放在 `/api/access-tokens`（只认网页登录态）—— 泄露的令牌不能给自己续命、不能批准别的设备。
   库里只存 SHA-256（令牌有 256 位熵，不需要慢哈希）。`AccessTokenScopeTest` 连「控制器挂在哪个路径」「放行名单里没有
   `/api/harness/**` 通配」都钉着。
-- **设备码登录**：命令行拿 deviceCode（库里存哈希），用户在个人中心「命令行登录」里输入 8 位码、看过设备名和来源 IP
+- **设备码登录**：命令行拿 deviceCode（库里存哈希），用户在「设置 → 命令行」里输入 8 位码、看过设备名和来源 IP
   之后点允许；命令行轮询换令牌，`WHERE status='APPROVED'` 的条件更新保证并发轮询只签出一张。
 - **模型网关**进出都是 OpenAI 格式；Anthropic 的翻译只在 `AnthropicFormat` 一处（服务器端 code agent 的
   `ModelProviderClient.callToolTurn` 也用它 —— 此前 Anthropic 配置被标成支持工具调用，请求却是 OpenAI 格式）。
@@ -882,6 +882,15 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   CJK serif after it: font fallback is **per character**, and JetBrains Mono / Consolas have no
   CJK glyphs, so Latin stays monospaced while Chinese matches the rest of the page.
   `FrontendTokenAndDateTest` fails the build on any dangling `var(--zq-*)`.
+- **Settings and achievements are dialogs, and the first ES module** (round 30, `docs/rounds/round-30.md`). The avatar at the
+  bottom of the sidebar opens a menu (`openUserMenu` in `zhiqu-ui.js`); 设置 / 成就 are links to `#settings/<tab>` and
+  `#achievements`, which the shell opens on any page (`watchDialogs` / `syncDialog`) — refresh keeps the tab, Back closes a
+  dialog opened from the menu, closing a directly-loaded one strips the hash, switching tabs uses `replaceState`. The code is
+  `assets/settings.js`, `import()`-ed on first open with the shell's own `?v=` (taken from `document.currentScript`); it uses
+  only what `zqShared` gives it and looks up elements inside the dialog only (`SettingsDialogTest` checks both). Dialog grids
+  say how they lay out on a phone with `zq-phone-1col` / `zq-phone-2col` — the `[style*=…]` phone rules only reach `.zq-main`.
+  `profile.html` / `achievement.html` are redirect stubs kept for old bookmarks and for `profile.html#harness=…` links printed
+  by older CLIs; the server now hands out `/ai-assistant.html#settings/cli?harness=…`, and the login redirect carries that hash.
 - **"Today" in the frontend is `today()` — the business date (business time zone, server's clock) —
   never `toISOString()`, and since round 21 not `localDate()` either.** `toISOString()` is UTC:
   between 00:00 and 08:00 CST it yields *yesterday* (the dashboard header showed yesterday, check-ins
@@ -898,7 +907,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   `taskFormPayload`.
 - **Positioning lives in a few single sources** (round 26). The home page after login is `HOME_PAGE` in
   `zhiqu-api.js` (the AI assistant) and `manifest.json`'s `start_url` must match it; the sidebar is `NAV` in `zhiqu-ui.js`
-  (AI first; achievements deliberately out of the nav — page and data kept). Shared-plan categories are one list in three
+  (AI first, work pages only — settings, achievements, 专注统计, theme, admin pages and logout live in the avatar menu, round 30). Shared-plan categories are one list in three
   places — migration `V40`, `SharedPlanServiceImpl.CATEGORY_NAMES`, `PLAN_CATEGORIES` in the shell — and
   `PlanCategoryListTest` checks they agree. `PositioningCopyTest` keeps student-only phrasing (考研, 学习统计, 早八…) out of
   pages, the shell, the manifest **and every text block / string literal in `src/main/java`** — the AI's system prompts
@@ -939,7 +948,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261004-readtasks`.
+  old bundle. Current token: `20261004-settings`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

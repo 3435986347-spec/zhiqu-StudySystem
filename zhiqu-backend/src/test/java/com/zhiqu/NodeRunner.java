@@ -27,6 +27,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public final class NodeRunner {
 
     public static final Path API_JS = Path.of("src/main/resources/static/assets/zhiqu-api.js");
+    /** 设置 / 成就弹窗（第三十轮，第一个 ES 模块）：判据脚本直接 import 它，不再从源码里抠函数。 */
+    public static final Path SETTINGS_JS = Path.of("src/main/resources/static/assets/settings.js");
 
     /**
      * 跑一个判据脚本。脚本自报全绿（打印 {@code ALL-GREEN}）且退出码 0 才算过。

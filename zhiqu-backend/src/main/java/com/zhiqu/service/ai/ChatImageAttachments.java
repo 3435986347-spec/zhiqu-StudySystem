@@ -129,7 +129,7 @@ public final class ChatImageAttachments {
     /** 模型不支持视觉时，附在文本后面的说明 —— 让模型据实回答，而不是编造图片内容。 */
     public static String noVisionNotice(int imageCount) {
         return "\n\n【用户挂了 " + imageCount + " 张图片，但当前模型不支持图片识别，你看不到它们。"
-                + "请据实说明，并建议用户在个人中心切换到支持视觉的模型。不要猜测图片内容。】";
+                + "请据实说明，并建议用户在「设置 → AI 模型」里切换到支持视觉的模型。不要猜测图片内容。】";
     }
 
     private ChatImageAttachments() {

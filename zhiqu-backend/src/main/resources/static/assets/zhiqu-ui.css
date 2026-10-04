@@ -574,7 +574,6 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-side.is-collapsed .zq-brand-name,
 .zq-side.is-collapsed .zq-nav-group,
 .zq-side.is-collapsed .zq-nav a > span:not(.zq-ic),
-.zq-side.is-collapsed .zq-switch,
 .zq-side.is-collapsed .zq-user > div:not(.zq-avatar){display:none;}
 .zq-side.is-collapsed .zq-brand{justify-content:center;}
 .zq-side.is-collapsed .zq-nav a{justify-content:center;padding-left:0;padding-right:0;}
@@ -605,6 +604,11 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-main{flex:1;margin-left:188px;min-width:0;padding:30px 34px 80px;max-width:1420px;}
 .zq-user{display:flex;align-items:center;gap:9px;padding:8px;margin-top:8px;border-radius:var(--zq-rs);cursor:pointer;}
 .zq-user:hover{background:var(--zq-sb-active-bg);}
+/* 第三十轮起头像是个按钮（点开菜单）：去掉按钮自带的边框、底色、字体 */
+button.zq-user{width:100%;border:none;background:transparent;color:inherit;font:inherit;text-align:left;}
+.zq-user > div:not(.zq-avatar){flex:1;}
+.zq-user.active,.zq-user[aria-expanded="true"]{background:var(--zq-sb-active-bg);}
+.zq-user:focus-visible{outline:2px solid var(--zq-primary);outline-offset:1px;}
 .zq-avatar{width:28px;height:28px;flex:none;border-radius:50%;background:var(--zq-tint-strong);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;}
 
 /* ── 组件 ── */
@@ -648,7 +652,6 @@ option:hover,option:focus{background:var(--zq-tint);}
 option:checked{background:var(--zq-tint);color:var(--zq-primary);font-weight:600;}
 
 /* ── 面板折叠（AI 两侧 / Wiki 目录·检查；flex 容器内） ── */
-.zq-switch{margin:0;}
 .zq-pop{position:fixed;z-index:6000;width:238px;background:var(--zq-card);color:var(--zq-text);border:1px solid var(--zq-border);border-radius:var(--zq-rl);box-shadow:0 12px 40px rgba(0,0,0,.30);padding:10px;}
 .zq-pop .zq-pop-t{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--zq-text2);padding:2px 6px 8px;}
 .zq-pop .zq-opt{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text);cursor:pointer;font:13px/1.2 inherit;text-align:left;}
@@ -690,6 +693,31 @@ html.zq-booting .zq-main{opacity:0;}
 @keyframes zqMaskIn{from{opacity:0;}to{opacity:1;}}
 @keyframes zqModalIn{from{opacity:0;transform:translateY(10px) scale(.98);}to{opacity:1;transform:none;}}
 body.zq-modal-open{overflow:hidden;}
+
+/* ── 头像菜单（第三十轮，zhiqu-ui.js 的 openUserMenu）：从左下角的头像向上弹出 ── */
+.zq-user-menu{position:fixed;z-index:6000;padding:6px;background:var(--zq-card);color:var(--zq-text);border:1px solid var(--zq-border);border-radius:var(--zq-rl);box-shadow:0 12px 40px rgba(0,0,0,.28);animation:zqMenuIn .14s ease both;}
+.zq-user-menu-head{display:flex;flex-direction:column;gap:2px;min-width:0;padding:7px 10px 9px;margin-bottom:4px;border-bottom:1px solid var(--zq-border-soft);}
+.zq-user-menu-head strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-user-menu-head span{font-size:11.5px;color:var(--zq-text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-user-menu [role="menuitem"]{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:6px 10px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text);font:500 13px/1.2 inherit;text-align:left;text-decoration:none;cursor:pointer;}
+.zq-user-menu [role="menuitem"]:hover,.zq-user-menu [role="menuitem"]:focus-visible{background:var(--zq-tint);outline:none;}
+.zq-user-menu [aria-current="page"]{color:var(--zq-primary);font-weight:650;}
+.zq-user-menu .zq-ic{width:16px;flex:none;display:inline-flex;justify-content:center;opacity:.7;}
+.zq-user-menu-note{margin-left:auto;padding-left:8px;font-size:11.5px;color:var(--zq-text3);white-space:nowrap;}
+.zq-user-menu-sep{height:1px;margin:5px 4px;background:var(--zq-border-soft);}
+.zq-user-menu-group{padding:5px 10px 3px;font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--zq-text3);}
+@keyframes zqMenuIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+
+/* ── 设置弹窗（第三十轮，assets/settings.js）：Claude 那样左边分栏、右边内容。高度固定 —— 换栏时弹窗不跟着内容一跳一跳 ── */
+.zq-modal-wide{width:880px;}
+.zq-modal-body:has(> .zq-settings){padding:0;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+.zq-settings{display:flex;height:min(640px, calc(100vh - 120px));min-height:0;}
+.zq-settings-tabs{flex:none;width:168px;display:flex;flex-direction:column;gap:2px;padding:14px 10px;border-right:1px solid var(--zq-border-soft);background:var(--zq-card-soft);}
+.zq-settings-tabs button{display:flex;align-items:center;flex:none;height:34px;padding:0 12px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text2);font:500 13px/1 inherit;text-align:left;white-space:nowrap;cursor:pointer;}
+.zq-settings-tabs button:hover{background:var(--zq-tint);color:var(--zq-text);}
+.zq-settings-tabs button.on{background:var(--zq-card);color:var(--zq-text);font-weight:650;box-shadow:var(--zq-sh1);}
+.zq-settings-pane{flex:1;min-width:0;overflow-y:auto;padding:20px 24px 26px;}
+.zq-modal-wide .zq-field{margin-bottom:0;}
 
 /* ── Wiki 文档工具栏（圆角、随主题；替换旧方框内联样式） ── */
 .zq-toolbar{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px;padding:2px;border-radius:var(--zq-rs);background:var(--zq-card-soft);}
@@ -793,17 +821,29 @@ body.zq-modal-open{overflow:hidden;}
    新加一种 grid-template-columns 时 MobileLayoutTest 会要求你决定它在手机上怎么排。
    这一段必须留在文件最后：@media 不加优先级，同优先级的规则谁在后谁赢。它原来夹在文件中间，
    后面的 .zq-main{margin-left:188px; padding:30px 34px 80px} 压过了它 —— 手机上一展开侧栏，正文就被推到 188px、换回桌面 padding
-   （收起时 .zq-main.is-side-collapsed 优先级更高，所以平时看不出来）。MobileLayoutTest 钉着「最后」。
-   「三个一排的小数字」（个人中心的连续天数 / 完成任务 / 本月时长）不拆：三个数 240px 也放得下，拆成一栏是三行各一个数。 */
+   （收起时 .zq-main.is-side-collapsed 优先级更高，所以平时看不出来）。MobileLayoutTest 钉着「最后」。 */
 @media (max-width: 760px){
   .zq-main,.zq-main.is-side-collapsed{margin-left:56px;padding:18px 12px 64px;}
   .zq-side:not(.is-collapsed){box-shadow:0 0 0 100vmax rgba(0,0,0,.35);}
-  .zq-main [style*="grid-template-columns"]:not([style*="grid-template-columns:52px"]):not([style*="grid-template-columns:36px"]):not([style*="auto-fit"]):not([style*="repeat(7"]):not([style*="minmax(200px,2.2fr)"]):not([style*="minmax(120px,1.1fr)"]):not([style*="1fr 1fr 1fr"]):not([style*="repeat(4"]):not([style*="repeat(5"]):not([style*="repeat(6"]){grid-template-columns:minmax(0,1fr)!important;}
+  .zq-main [style*="grid-template-columns"]:not([style*="grid-template-columns:52px"]):not([style*="grid-template-columns:36px"]):not([style*="auto-fit"]):not([style*="repeat(7"]):not([style*="minmax(200px,2.2fr)"]):not([style*="minmax(120px,1.1fr)"]):not([style*="repeat(4"]):not([style*="repeat(5"]):not([style*="repeat(6"]){grid-template-columns:minmax(0,1fr)!important;}
   /* 两条规则认的是互不相交的两批 —— 上面那条要是不排除这三种，它的 :not 叠得更多、优先级更高，数字卡会被它压成一栏 */
   .zq-main [style*="repeat(4"],.zq-main [style*="repeat(5"],.zq-main [style*="repeat(6"]{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
   /* 页头：标题一侧和按钮一侧放不下就上下排（原来按钮被挤成两行、或者把标题挤成一个字一行） */
   .zq-main header{flex-wrap:wrap;}
   .zq-form-grid{grid-template-columns:minmax(0,1fr);}
+
+  /* 设置、成就弹窗（第三十轮）：手机上铺满屏幕，分栏变成顶上一排可以横着滑的页签。
+     弹窗不在 .zq-main 里，上面那两条按 style 认的规则管不到它 —— 里面的多栏用类名说自己在手机上怎么排 */
+  .zq-modal-mask:has(.zq-modal-wide){padding:0;}
+  .zq-modal-wide{width:100%!important;height:100%;max-height:100%;border:none;border-radius:0;}
+  .zq-modal-wide .zq-modal-body{flex:1;min-height:0;}
+  .zq-settings{flex-direction:column;flex:1;height:auto;}
+  .zq-settings-tabs{width:auto;flex-direction:row;overflow-x:auto;padding:8px;border-right:none;border-bottom:1px solid var(--zq-border-soft);scrollbar-width:none;}
+  .zq-settings-tabs::-webkit-scrollbar{display:none;}
+  .zq-settings-tabs button{padding:0 10px;}
+  .zq-settings-pane{padding:16px 14px 28px;}
+  .zq-phone-1col{grid-template-columns:minmax(0,1fr)!important;}
+  .zq-phone-2col{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
 
   /* 两侧可收起的面板（AI 助手、Wiki）：桌面上是三栏，收起时各留一条 44px 的竖条。
      手机上两条竖条加间距吃掉将近 100px，320px 宽时 Wiki 正文只剩 82px、工具栏被切掉 163px；展开一侧聊天区只剩 30px。

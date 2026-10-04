@@ -12,7 +12,8 @@ function slice(startMark, endMark) {
   if (b < 0) throw new Error('抠不到终点: ' + endMark);
   return src.slice(a, b);
 }
-const code = slice('  var latestSeq = {};', '  async function safe(') + slice('  async function paintTrend(type) {', '  async function bootAchievement(');
+// paintTrend 抠到它自己的结尾（两格缩进的「}」）—— 第三十轮把它后面的成就页挪进了 settings.js，按「下一个函数」抠就断了
+const code = slice('  var latestSeq = {};', '  async function safe(') + slice('  async function paintTrend(type) {', '\n  }\n') + '\n  }\n';
 
 const host = { innerHTML: '' };
 const pending = {};
