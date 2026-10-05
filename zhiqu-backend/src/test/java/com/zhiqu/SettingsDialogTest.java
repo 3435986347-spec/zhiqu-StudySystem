@@ -139,9 +139,13 @@ class SettingsDialogTest {
                 "服务端角色回来之后没有校正菜单里的后台组（只信本地存的角色，换人登录时会多 / 少一组）");
 
         String shell = shell();
+        // 第三十九轮起左下角只在 zhiqu-ui.js 的 paintUser 一处画（下一页先用上一页记下的画上）；壳的 updateSidebarUser 把 /auth/info 交给它
         String sidebarUser = fn(shell, "function updateSidebarUser(u) {");
-        assertTrue(sidebarUser.contains("box.dataset.name = name;") && sidebarUser.contains("box.dataset.account = u.username || '';"),
-                "菜单顶上的名字从 updateSidebarUser 来");
+        assertTrue(sidebarUser.contains("window.ZQUI.paintUser(box, { name: u.nickname || u.username || '知趣用户', account: u.username || ''"),
+                "菜单顶上的名字从 updateSidebarUser 来（经 ZQUI.paintUser）");
+        String paint = fn(ui, "function paintUser(box, u){");
+        assertTrue(paint.contains("box.dataset.name = name;") && paint.contains("box.dataset.account = u.account || '';"),
+                "paintUser 没把名字、账号记到按钮上 —— 头像菜单顶上那一行是从这里读的");
         assertTrue(shell.contains("askNotifyPermission: askNotifyPermission, logout: logout };"), "壳没把 logout 交给 zhiqu-ui.js 的菜单");
     }
 

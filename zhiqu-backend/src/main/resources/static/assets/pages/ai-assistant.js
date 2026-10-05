@@ -42,8 +42,8 @@ async function bootAiAssistant() {
   // 先确定当前 Notebook，聊天记录按 Notebook 隔离加载。
   // 工作区与 notebook / 模型并行拉：它是独立的一块，不该让首屏多等一轮
   await Promise.all([loadAiNotebooks(), loadAiModelSelect(), loadWorkspace()]);
-  await loadAiMessages();
-  await renderAgentPanels();
+  // 聊天记录和右侧的执行轨迹都只等 Notebook 定下来，互相不等（第三十九轮：原来轨迹排在记录渲染完之后才去取）
+  await Promise.all([loadAiMessages(), renderAgentPanels()]);
 
   var sourceUpload = $('#zq-source-upload');
   if (sourceUpload) sourceUpload.onclick = function () {
@@ -890,6 +890,7 @@ async function loadAiMessages() {
   var list = await api.get('/ai/messages?limit=' + CHAT_PAGE_SIZE + (nbId ? '&notebookId=' + nbId : ''));
   if (nbId !== state.notebookId) return; // 响应期间已切换 notebook,防止慢响应覆盖新窗口
   state.messages = list || [];
+  state.historyOf = { notebookId: nbId };   // 这个 notebook 的记录到手了 —— 此后空着才是真的空（见 historyLoaded）
   // 拿满一页 = 可能还有更早的。这是个上界判断，不是精确值：
   // 正好整页而其实没有更早的时候，用户点一次会拿到空列表，按钮随即消失。
   // 换成精确值要么多查一次、要么改响应形状（现在是裸数组，前端其它地方都按数组读）。
@@ -1159,6 +1160,14 @@ async function loadOlderMessages() {
   }
 }
 
+/**
+ * 当前 notebook 的聊天记录拿到了没有。没拿到时对话区留白，不画「可以这样开始」：
+ * 打开页面时模型列表比聊天记录先回来（loadAiModelSelect 会重画一次），切 notebook 时先清空再取 ——
+ * 原来这两处都会先闪一下空状态（像是「你还没有对话」），记录到了才换成真的（第三十九轮，页面不再整块遮着等数据之后露出来的）。
+ */
+function historyLoaded() {
+  return Boolean(state.historyOf) && state.historyOf.notebookId === state.notebookId;
+}
 function renderAiMessages(opts) {
   var host = $('#zq-chat'); if (!host) return;
   bindChatScroll(host);
@@ -1180,7 +1189,7 @@ function renderAiMessages(opts) {
     return '<div data-msg-idx="' + i + '" style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div data-msg-body="' + i + '" class="zq-msg-body" style="max-width:72%;padding:8px 12px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + body + '</div></div>';
   }).join('');
   if (!state.messages.length) {
-    host.innerHTML = moreRow + aiEmptyState();
+    host.innerHTML = moreRow + (historyLoaded() ? aiEmptyState() : '');
     $all('[data-ai-example]', host).forEach(function (b) {
       b.onclick = function () {
         var draft = $('#zq-draft'); if (!draft) return;
@@ -1220,6 +1229,22 @@ function renderAiMessages(opts) {
   renderMathIn(host);
   // 删除消息等场景保持原滚动位置;其余按「用户是否在底部」决定跟不跟随
   applyChatScroll(host, prevScroll, keepScroll);
+  keepPinned(host);
+}
+/**
+ * 跟着底部的时候，消息画完之后又长高了（公式是 KaTeX 异步排的、图片后到、字体后换上），也留在底部。
+ * 原来这些发生在整页遮着等数据的时候，看不到；第三十九轮页面一打开就露出来，排完公式那一下对话区往上跳了一截。
+ * 用户自己往上翻了（chatFollow 为假）就不动他。
+ */
+var pinObserver = null;
+function keepPinned(host) {
+  if (typeof ResizeObserver !== 'function') return;
+  if (!pinObserver) pinObserver = new ResizeObserver(function () {
+    var chat = $('#zq-chat');
+    if (chat && state.chatFollow) chat.scrollTop = chat.scrollHeight;
+  });
+  pinObserver.disconnect();
+  Array.prototype.forEach.call(host.children, function (row) { pinObserver.observe(row); });
 }
 /**
  * 记住当前 notebook，让刷新之后还落在同一个会话上。

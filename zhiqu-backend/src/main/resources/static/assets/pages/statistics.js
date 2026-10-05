@@ -10,6 +10,9 @@ export const boots = { 'statistics.html': (sh) => { bind(sh); return bootStatist
 export { paintTrend };
 
 async function bootStatistics() {
+  // 趋势图和上面几个总数互不依赖，一起取（第三十九轮：原来总数回来之后才去取趋势）
+  var trend = paintTrend('day');
+  trend.catch(function () {});   // 总数先失败的话下面不会再 await 它：别让它的失败成了没人接的 rejection（页面会多弹一句）；await 照样拿到失败
   var stat = await api.get('/record/statistics');
   var nums = $all('.zq-stat-num');
   if (nums[0]) nums[0].textContent = stat.consecutiveDays || 0;
@@ -20,7 +23,7 @@ async function bootStatistics() {
   window.setTab = function (k) { highlightStatTab(k); paintTrend(k); };
   // 日 / 周 / 月三个按钮写在页面里（第二十四轮：原来由设计稿的示例脚本画出来，删掉示例之后这里自己接）
   $all('#zq-tabs button[data-k]').forEach(function (b) { b.onclick = function () { window.setTab(b.dataset.k); }; });
-  await paintTrend('day');
+  await trend;
   highlightStatTab('day');
   renderQuadrantDonut(stat.quadrantDistribution || {});
 }
@@ -44,14 +47,14 @@ function renderQuadrantDonut(distribution) {
     acc += len; return seg;
   }).join('') : '<circle cx="86" cy="86" r="66" fill="none" stroke="var(--zq-card-soft)" stroke-width="22"></circle>';
   var wrap = donut.parentElement;
-  var center = wrap && wrap.querySelector('.zq-mono');
+  var center = wrap && wrap.querySelector('.zq-num');
   if (center) center.textContent = total;
   var legendHost = $('#zq-legend');
   if (legendHost) {
     var labels = ['重要且紧急', '重要不紧急', '紧急不重要', '不重要不紧急'];
     legendHost.innerHTML = counts.map(function (n, i) {
       var pct = total ? Math.round(n / total * 100) : 0;
-      return '<div style="display:flex; align-items:center; gap:8px; font-size:12.5px;"><span style="width:10px; height:10px; flex:none; border-radius:3px; background:var(--zq-q' + (i + 1) + ');"></span><span style="flex:1; color:var(--zq-text2);">' + labels[i] + '</span><span class="zq-mono" style="font-weight:600;">' + n + ' 项 · ' + pct + '%</span></div>';
+      return '<div style="display:flex; align-items:center; gap:8px; font-size:12.5px;"><span style="width:10px; height:10px; flex:none; border-radius:3px; background:var(--zq-q' + (i + 1) + ');"></span><span style="flex:1; color:var(--zq-text2);">' + labels[i] + '</span><span class="zq-num" style="font-weight:600;">' + n + ' 项 · ' + pct + '%</span></div>';
     }).join('');
   }
 }
@@ -65,6 +68,6 @@ async function paintTrend(type) {
   var host = $('#zq-bars'); if (!host) return;
   host.innerHTML = vals.map(function (v, i) {
     var h = Math.max(3, Math.round(v / max * 168));
-    return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;height:100%;justify-content:flex-end;"><span class="zq-mono" style="font-size:10px;color:var(--zq-text3);">' + v + '</span><div style="width:100%;max-width:34px;height:' + h + 'px;border-radius:4px 4px 2px 2px;background:var(--zq-tint-strong);"></div><span style="font-size:10.5px;color:var(--zq-text3);white-space:nowrap;">' + esc(labels[i]) + '</span></div>';
+    return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;height:100%;justify-content:flex-end;"><span class="zq-num" style="font-size:10px;color:var(--zq-text3);">' + v + '</span><div style="width:100%;max-width:34px;height:' + h + 'px;border-radius:4px 4px 2px 2px;background:var(--zq-tint-strong);"></div><span style="font-size:10.5px;color:var(--zq-text3);white-space:nowrap;">' + esc(labels[i]) + '</span></div>';
   }).join('') || empty('暂无趋势数据');
 }

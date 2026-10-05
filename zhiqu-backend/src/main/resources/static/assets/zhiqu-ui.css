@@ -49,10 +49,11 @@
   --zq-rm: 7px;
   --zq-rl: 9px;
   /* 字体只有这一处定义。主题块（v0..v4 × light/dark）只覆盖颜色，不设字体，所以这两个值对所有主题生效。
-     --zq-fontM 的拉丁部分是等宽字体，中文部分刻意回落到与正文同一族：
-     字体回退是<逐字符>生效的，而 JetBrains Mono / Consolas 都没有中文字形 ——
-     于是中文渲染成 Noto Serif SC（和页面其余部分一样），拉丁字母与符号仍然等宽，
-     Markdown 源码里该对齐的地方照样对齐。
+     第三十九轮（用户定的「switch ui text to system sans-serif to all」）：一律用系统无衬线字体 —— 苹方 / 微软雅黑 / 系统 UI 字体，
+     不再从 Google Fonts 取 Noto Serif SC：那个样式表挡渲染、也挡脚本，这台机器的网络上没缓存时一次 1.3～2.7 秒；而且衬线体做按钮、表格、标签，看着像排版作业。
+     --zq-fontM 只给代码（代码块、diff、路径、命令、源码编辑器）；数字不用它，用 .zq-num（正文字体 + 等宽数位）。
+     --zq-fontM 的拉丁部分是等宽字体，中文部分刻意回落到与正文同一族：字体回退是<逐字符>生效的，等宽字体都没有中文字形 ——
+     于是中文和页面其余部分一样，拉丁字母与符号仍然等宽，Markdown 源码里该对齐的地方照样对齐。
      此前 --zq-fontM 从未被定义过，而 zhiqu-api.js 的源码编辑器写的是 var(--zq-fontM, monospace)，
      于是回落到裸 monospace，中文由系统随便挑一个字体顶上 —— 那就是「源码模式字体很怪」的来源。 */
   /* 象限色的 -bg / -border 曾经定义成 --zq-q1bg / --zq-q1bd（中间没有连字符），
@@ -60,8 +61,8 @@
      var() 找不到变量又没有回落时，属性会变成无效值并回落到初始值：background 变透明。
      于是四象限的底色胶囊一直是透明的（实测 rgba(0,0,0,0)），只有文字颜色是对的。
      这种错配没有任何报错，也不会让页面崩，只是颜色悄悄没了。 */
-  --zq-fontBody: "Noto Serif SC", "Songti SC", "SimSun", "STSong", serif;
-  --zq-fontM: "JetBrains Mono", Consolas, "Noto Serif SC", "Songti SC", "SimSun", monospace;
+  --zq-fontBody: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "Noto Sans CJK SC", "Source Han Sans SC", "Helvetica Neue", Arial, sans-serif;
+  --zq-fontM: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", "PingFang SC", "Microsoft YaHei", monospace;
   color-scheme: light;
 }
 
@@ -544,6 +545,8 @@ input:not([type=checkbox]):not([type=radio]){width:100%;}
 input,textarea{min-width:0;max-width:100%;}
 select{max-width:100%;}
 .zq-mono{font-family:var(--zq-fontM);}
+/* 数字、日期、时间：正文字体 + 等宽数位（一列数字照样对齐），不用等宽字体 —— 等宽字体只给代码（第三十九轮） */
+.zq-num{font-family:var(--zq-fontBody);font-variant-numeric:tabular-nums;}
 /* hidden 属性必须真的能藏住东西。
    它本身只是 UA 样式表里的 [hidden]{display:none}，优先级是 (0,1,0) —— 作者样式表里
    任何一个设了 display 的类选择器都能压过它。于是 <button class="zq-btn-ghost" hidden>
@@ -632,7 +635,7 @@ button[aria-busy="true"]{opacity:.62;cursor:progress;}
 .zq-badge{display:inline-flex;align-items:center;height:20px;padding:0 9px;border-radius:999px;font-size:11px;font-weight:600;}
 .zq-stat{padding:16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);}
 .zq-stat-label{display:block;color:var(--zq-text2);font-size:12px;font-weight:600;}
-.zq-stat-num{display:block;margin-top:8px;font-family:var(--zq-fontM);font-size:28px;line-height:1;}
+.zq-stat-num{display:block;margin-top:8px;font-variant-numeric:tabular-nums;font-size:28px;line-height:1;}
 .zq-grid{display:grid;gap:12px;}
 .zq-row{display:flex;align-items:center;gap:12px;}
 .zq-table{border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);overflow:hidden;}
@@ -674,9 +677,18 @@ option:checked{background:var(--zq-tint);color:var(--zq-primary);font-weight:600
 .zq-rail .zq-xbtn:hover{border-color:var(--zq-primary);color:var(--zq-primary);}
 .zq-rail .zq-rlabel{writing-mode:vertical-rl;letter-spacing:.2em;cursor:pointer;font:700 12px/1 inherit;color:var(--zq-text2);}
 
-/* 首屏防闪：boot 前隐藏主内容区，接口渲染完成后由 zhiqu-api.js 揭示 */
+/* 首屏遮罩：只有后台页和旧地址的跳转页还用（zhiqu-ui.js 的 holdsUntilBoot），接口渲染完成后由 zhiqu-api.js 揭示 */
 html.zq-booting .zq-main{opacity:0;}
 .zq-main{transition:opacity .18s ease;}
+
+/* 页面之间切换（第三十九轮，用户说「页面切换非常不流畅」）：浏览器在新页面画出来之前一直显示旧页面，
+   然后用很短的交叉淡化换过去 —— 原来是「白一下 → 主内容区空白 → 淡入」。侧栏两页一样、单独成组、不做动画，所以它不动。
+   不认这几行的浏览器（Safari 18.2、Chrome 126 以前）照常整页切换，什么都不坏。 */
+@view-transition{navigation:auto;}
+.zq-side{view-transition-name:zq-side;}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.12s;}
+::view-transition-group(zq-side),::view-transition-old(zq-side),::view-transition-new(zq-side){animation:none;}
+@media (prefers-reduced-motion:reduce){::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none !important;}}
 
 /* ── Claude 风格弹窗（可复用；随主题切换） ── */
 .zq-modal-mask{position:fixed;inset:0;z-index:8000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(12,15,20,.46);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:zqMaskIn .16s ease both;}

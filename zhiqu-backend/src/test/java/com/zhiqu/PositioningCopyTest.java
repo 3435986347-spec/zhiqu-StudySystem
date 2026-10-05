@@ -147,7 +147,13 @@ class PositioningCopyTest {
         Matcher first = Pattern.compile("main:\\s*\\[\\s*\\['([^']+)'").matcher(ui);
         assertTrue(first.find(), "找不到侧栏的 NAV.main");
         assertEquals("ai-assistant.html", first.group(1), "侧栏第一项应当是 AI 助手");
-        assertFalse(ui.contains("'achievement.html'"), "成就从导航收起（用户 2026-10-04 定的），页面和数据都还在");
+        // 只看 NAV 那一段：第三十九轮起 zhiqu-ui.js 别处要认出 achievement.html 这个旧地址的跳转页（holdsUntilBoot），那不是导航
+        int navAt = ui.indexOf("var NAV = {");
+        int navEnd = navAt < 0 ? -1 : ui.indexOf("};", navAt);
+        assertTrue(navAt >= 0 && navEnd > navAt, "找不到 NAV 的定义");
+        String nav = ui.substring(navAt, navEnd);
+        assertTrue(nav.contains("'ai-assistant.html'"), "NAV 截错了：里面连 AI 助手都没有");
+        assertFalse(nav.contains("'achievement.html'"), "成就从导航收起（用户 2026-10-04 定的），页面和数据都还在");
 
         String api = SourceText.stripComments(read(STATIC.resolve("assets/zhiqu-api.js")));
         Matcher home = Pattern.compile("var HOME_PAGE = '([^']+)';").matcher(api);

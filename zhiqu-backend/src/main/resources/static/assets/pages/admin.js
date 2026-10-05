@@ -30,7 +30,7 @@ async function bootAdmin() {
     ['限流拦截', traffic.rateLimited || 0, '今日', 'var(--zq-text)']
   ];
   var host = $('#zq-metrics');
-  if (host) host.innerHTML = metrics.map(function (m) { return '<article class="zq-stat" style="padding:14px 16px;"><span class="zq-stat-label" style="font-size:11.5px;">' + esc(m[0]) + '</span><strong class="zq-mono" style="display:block;margin-top:7px;font-size:23px;line-height:1;color:' + m[3] + ';">' + esc(m[1]) + '</strong><span style="display:block;margin-top:5px;font-size:11px;color:var(--zq-text3);">' + esc(m[2]) + '</span></article>'; }).join('');
+  if (host) host.innerHTML = metrics.map(function (m) { return '<article class="zq-stat" style="padding:14px 16px;"><span class="zq-stat-label" style="font-size:11.5px;">' + esc(m[0]) + '</span><strong class="zq-num" style="display:block;margin-top:7px;font-size:23px;line-height:1;color:' + m[3] + ';">' + esc(m[1]) + '</strong><span style="display:block;margin-top:5px;font-size:11px;color:var(--zq-text3);">' + esc(m[2]) + '</span></article>'; }).join('');
   renderTrafficChart(traffic.minuteBuckets || {});
   await bootAdminIssues();
   await bootAdminRag();
@@ -45,7 +45,7 @@ function renderTrafficChart(buckets) {
   host.innerHTML = keys.map(function (k, i) {
     var h = Math.max(4, Math.round(vals[i] / max * 128));
     var last = i === keys.length - 1;
-    return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end;min-width:0;"><span class="zq-mono" style="font-size:9.5px;color:var(--zq-text3);">' + vals[i] + '</span><div title="' + esc(k) + ' · ' + vals[i] + ' 次" style="width:100%;max-width:30px;height:' + h + 'px;border-radius:3px 3px 2px 2px;background:' + (last ? 'var(--zq-primary)' : 'var(--zq-tint-strong)') + ';"></div><span style="font-size:10px;color:var(--zq-text3);white-space:nowrap;">' + esc(k) + '</span></div>';
+    return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end;min-width:0;"><span class="zq-num" style="font-size:9.5px;color:var(--zq-text3);">' + vals[i] + '</span><div title="' + esc(k) + ' · ' + vals[i] + ' 次" style="width:100%;max-width:30px;height:' + h + 'px;border-radius:3px 3px 2px 2px;background:' + (last ? 'var(--zq-primary)' : 'var(--zq-tint-strong)') + ';"></div><span style="font-size:10px;color:var(--zq-text3);white-space:nowrap;">' + esc(k) + '</span></div>';
   }).join('');
 }
 async function bootAdminIssues() {
@@ -53,7 +53,7 @@ async function bootAdminIssues() {
   if (!host) return;
   var list = await api.get('/admin/runtime-issues?status=OPEN');
   host.innerHTML = list.slice(0, 8).map(function (i) {
-    return '<div style="padding:9px 0;border-bottom:1px solid var(--zq-border-soft);"><div style="display:flex;justify-content:space-between;gap:10px;"><strong style="font-size:12.5px;">' + esc(i.category || i.severity || '异常') + '</strong><span class="zq-mono" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(i.createdAt)) + '</span></div><div style="margin-top:4px;font-size:12px;color:var(--zq-text2);line-height:1.45;">' + esc(i.message || '') + '</div></div>';
+    return '<div style="padding:9px 0;border-bottom:1px solid var(--zq-border-soft);"><div style="display:flex;justify-content:space-between;gap:10px;"><strong style="font-size:12.5px;">' + esc(i.category || i.severity || '异常') + '</strong><span class="zq-num" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(i.createdAt)) + '</span></div><div style="margin-top:4px;font-size:12px;color:var(--zq-text2);line-height:1.45;">' + esc(i.message || '') + '</div></div>';
   }).join('') || empty('当前没有开放异常');
 }
 async function bootAdminRag() {
@@ -78,22 +78,22 @@ async function bootAdminRag() {
     + ragMetric('索引进度', active.id ? progress + '%' : '—', 'var(--zq-primary)')
     + ragMetric('任务积压', Number(jobs.PENDING || 0) + Number(jobs.RETRY || 0), Number(jobs.DEAD || 0) ? 'var(--zq-bad)' : 'var(--zq-text)')
     + '</div><div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12px;color:var(--zq-text2);">'
-    + '<span>查询 P50：<b class="zq-mono">' + esc(metrics.queryP50Ms == null ? '—' : metrics.queryP50Ms + ' ms') + '</b></span>'
-    + '<span>查询 P95：<b class="zq-mono">' + esc(metrics.queryP95Ms == null ? '—' : metrics.queryP95Ms + ' ms') + '</b></span>'
-    + '<span>关键词降级：<b class="zq-mono">' + esc(metrics.fallbackCount || 0) + '</b></span>'
-    + '<span>越权候选丢弃：<b class="zq-mono">' + esc(metrics.crossScopeDrops || 0) + '</b></span>'
-    + '<span>DEAD：<b class="zq-mono">' + esc(jobs.DEAD || 0) + '</b></span></div>'
+    + '<span>查询 P50：<b class="zq-num">' + esc(metrics.queryP50Ms == null ? '—' : metrics.queryP50Ms + ' ms') + '</b></span>'
+    + '<span>查询 P95：<b class="zq-num">' + esc(metrics.queryP95Ms == null ? '—' : metrics.queryP95Ms + ' ms') + '</b></span>'
+    + '<span>关键词降级：<b class="zq-num">' + esc(metrics.fallbackCount || 0) + '</b></span>'
+    + '<span>越权候选丢弃：<b class="zq-num">' + esc(metrics.crossScopeDrops || 0) + '</b></span>'
+    + '<span>DEAD：<b class="zq-num">' + esc(jobs.DEAD || 0) + '</b></span></div>'
     + (generations.length ? '<div style="margin-top:14px;border-top:1px solid var(--zq-border-soft);">' + generations.map(function (item) {
         var canActivate = item.status === 'READY' || item.status === 'RETIRED';
         var canDiscard = item.status === 'FAILED';
         return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--zq-border-soft);font-size:12px;">'
-          + '<span class="zq-mono" style="width:32px;color:var(--zq-text3);">#' + esc(item.id) + '</span><strong style="min-width:76px;">' + esc(item.status) + '</strong>'
+          + '<span class="zq-num" style="width:32px;color:var(--zq-text3);">#' + esc(item.id) + '</span><strong style="min-width:76px;">' + esc(item.status) + '</strong>'
           + '<span style="flex:1;min-width:0;overflow-wrap:anywhere;color:var(--zq-text2);">' + esc(item.indexVersion || '') + ' · ' + esc(item.indexedSourceCount || 0) + '/' + esc(item.expectedSourceCount || 0) + '</span>'
           + (canActivate ? '<button type="button" class="zq-btn-ghost" data-rag-activate="' + item.id + '" style="height:26px;padding:0 9px;">' + (item.status === 'RETIRED' ? '回滚' : '启用') + '</button>' : '')
           + (canDiscard ? '<button type="button" class="zq-btn-ghost" data-rag-discard="' + item.id + '" style="height:26px;padding:0 9px;color:var(--zq-bad);">丢弃</button>' : '') + '</div>';
       }).join('') + '</div>' : '')
     + (deadJobs.length ? '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--zq-bad);">失败任务（' + deadJobs.length + '）</summary><div>' + deadJobs.slice(0, 10).map(function (job) {
-        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--zq-border-soft);font-size:12px;"><span class="zq-mono">#' + esc(job.id) + '</span><span style="flex:1;min-width:0;overflow-wrap:anywhere;">' + esc(job.operation) + ' · ' + esc(job.lastError || '未知错误') + '</span><button type="button" class="zq-btn-ghost" data-rag-retry="' + job.id + '" style="height:26px;padding:0 9px;">重试</button></div>';
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--zq-border-soft);font-size:12px;"><span class="zq-num">#' + esc(job.id) + '</span><span style="flex:1;min-width:0;overflow-wrap:anywhere;">' + esc(job.operation) + ' · ' + esc(job.lastError || '未知错误') + '</span><button type="button" class="zq-btn-ghost" data-rag-retry="' + job.id + '" style="height:26px;padding:0 9px;">重试</button></div>';
       }).join('') + '</div></details>' : '')
     + '<div style="display:flex;gap:8px;margin-top:14px;"><button type="button" class="zq-btn-ghost" id="zq-rag-refresh" style="height:30px;">刷新状态</button>'
     + '<button type="button" class="zq-btn-ghost" id="zq-rag-rebuild" style="height:30px;">新建重建代次</button></div>';
@@ -154,7 +154,7 @@ function renderFeedbackList(filter) {
   });
   host.innerHTML = list.map(function (f) {
     var open = (f.status || 'OPEN').toUpperCase() !== 'CLOSED';
-    return '<article class="zq-card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;"><span class="zq-badge" style="background:' + (open ? 'var(--zq-bad-tint)' : 'var(--zq-ok-tint)') + ';color:' + (open ? 'var(--zq-bad)' : 'var(--zq-ok)') + ';font-weight:700;">' + esc(open ? '待处理' : '已关闭') + '</span><span style="font-size:12.5px;font-weight:600;">' + esc(f.nickname || f.username || ('用户 #' + (f.userId || ''))) + '</span><span class="zq-mono" style="font-size:11.5px;color:var(--zq-text3);">' + esc(fmtDate(f.createdAt)) + '</span>' + (open ? '<span style="margin-left:auto;"><button data-close-feedback="' + f.id + '" class="zq-btn-ghost" style="height:26px;padding:0 11px;font-size:12px;">关闭</button></span>' : '') + '</div><p style="margin:0;font-size:13px;line-height:1.6;">' + esc(f.content || '') + '</p></article>';
+    return '<article class="zq-card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;"><span class="zq-badge" style="background:' + (open ? 'var(--zq-bad-tint)' : 'var(--zq-ok-tint)') + ';color:' + (open ? 'var(--zq-bad)' : 'var(--zq-ok)') + ';font-weight:700;">' + esc(open ? '待处理' : '已关闭') + '</span><span style="font-size:12.5px;font-weight:600;">' + esc(f.nickname || f.username || ('用户 #' + (f.userId || ''))) + '</span><span class="zq-num" style="font-size:11.5px;color:var(--zq-text3);">' + esc(fmtDate(f.createdAt)) + '</span>' + (open ? '<span style="margin-left:auto;"><button data-close-feedback="' + f.id + '" class="zq-btn-ghost" style="height:26px;padding:0 11px;font-size:12px;">关闭</button></span>' : '') + '</div><p style="margin:0;font-size:13px;line-height:1.6;">' + esc(f.content || '') + '</p></article>';
   }).join('') || empty('暂无反馈');
   $all('[data-close-feedback]', host).forEach(function (b) { b.onclick = async function () { await api.put('/admin/feedback/' + b.dataset.closeFeedback + '/close'); await bootFeedbackAdmin(); }; });
 }
@@ -178,7 +178,7 @@ async function loadAccounts(keyword, roleIdx) {
   var records = list.records || [];
   host.innerHTML = records.map(function (u) {
     var disabled = Number(u.status) === 0;
-    return '<div style="display:grid;grid-template-columns:minmax(120px,1.1fr) minmax(150px,1.3fr) 74px 62px 102px 104px 128px;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--zq-border-soft);opacity:' + (disabled ? .6 : 1) + ';"><div style="display:flex;align-items:center;gap:9px;min-width:0;"><div style="width:28px;height:28px;flex:none;border-radius:50%;background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;">' + esc((u.nickname || u.username || '知').slice(0, 1)) + '</div><span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(u.nickname || u.username) + '</span></div><span style="font-size:12.5px;color:var(--zq-text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(u.email || u.username) + '</span><span><span class="zq-badge" style="background:' + (u.role === 'ADMIN' ? 'var(--zq-tint)' : 'var(--zq-card-soft)') + ';color:' + (u.role === 'ADMIN' ? 'var(--zq-primary)' : 'var(--zq-text2)') + ';">' + esc(u.role === 'ADMIN' ? '管理员' : '普通用户') + '</span></span><span style="font-size:12px;font-weight:600;color:' + (disabled ? 'var(--zq-bad)' : 'var(--zq-ok)') + ';">' + (disabled ? '已禁用' : '正常') + '</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(u.achievementPoints || 0) + ' 点</span><span class="zq-mono" style="font-size:12px;color:var(--zq-text2);">' + esc(fmtDate(u.updatedAt || u.createdAt)) + '</span><span style="display:flex;justify-content:flex-end;gap:6px;"><button data-reset-user="' + u.id + '" class="zq-btn-ghost" style="height:26px;padding:0 8px;font-size:11.5px;">重置密码</button><button data-toggle-user="' + u.id + '" data-next="' + (disabled ? 1 : 0) + '" class="zq-btn-ghost" style="height:26px;padding:0 8px;font-size:11.5px;">' + (disabled ? '启用' : '禁用') + '</button><button data-delete-user="' + u.id + '" class="zq-btn-ghost" style="height:26px;padding:0 8px;font-size:11.5px;">删除</button></span></div>';
+    return '<div style="display:grid;grid-template-columns:minmax(120px,1.1fr) minmax(150px,1.3fr) 74px 62px 102px 104px 128px;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--zq-border-soft);opacity:' + (disabled ? .6 : 1) + ';"><div style="display:flex;align-items:center;gap:9px;min-width:0;"><div style="width:28px;height:28px;flex:none;border-radius:50%;background:var(--zq-tint);color:var(--zq-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;">' + esc((u.nickname || u.username || '知').slice(0, 1)) + '</div><span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(u.nickname || u.username) + '</span></div><span style="font-size:12.5px;color:var(--zq-text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(u.email || u.username) + '</span><span><span class="zq-badge" style="background:' + (u.role === 'ADMIN' ? 'var(--zq-tint)' : 'var(--zq-card-soft)') + ';color:' + (u.role === 'ADMIN' ? 'var(--zq-primary)' : 'var(--zq-text2)') + ';">' + esc(u.role === 'ADMIN' ? '管理员' : '普通用户') + '</span></span><span style="font-size:12px;font-weight:600;color:' + (disabled ? 'var(--zq-bad)' : 'var(--zq-ok)') + ';">' + (disabled ? '已禁用' : '正常') + '</span><span class="zq-num" style="font-size:12px;color:var(--zq-text2);">' + esc(u.achievementPoints || 0) + ' 点</span><span class="zq-num" style="font-size:12px;color:var(--zq-text2);">' + esc(fmtDate(u.updatedAt || u.createdAt)) + '</span><span style="display:flex;justify-content:flex-end;gap:6px;"><button data-reset-user="' + u.id + '" class="zq-btn-ghost" style="height:26px;padding:0 8px;font-size:11.5px;">重置密码</button><button data-toggle-user="' + u.id + '" data-next="' + (disabled ? 1 : 0) + '" class="zq-btn-ghost" style="height:26px;padding:0 8px;font-size:11.5px;">' + (disabled ? '启用' : '禁用') + '</button><button data-delete-user="' + u.id + '" class="zq-btn-ghost" style="height:26px;padding:0 8px;font-size:11.5px;">删除</button></span></div>';
   }).join('') || empty('暂无账号');
   var foot = $('.zq-table > div:last-child');
   if (foot) foot.textContent = '共 ' + (list.total || records.length) + ' 个账号';
@@ -200,7 +200,7 @@ async function bootSharedPlanAdmin() {
   function catName(p) { return esc(p.categoryName || (planCategory(p.category) || [])[1] || p.category || '未分类'); }
   function card(p, actions, dim) {
     return '<article class="zq-card" style="' + (dim ? 'opacity:.72;' : '') + '">'
-      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;"><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);">' + catName(p) + '</span><span class="zq-mono" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(p.createdAt)) + '</span></div>'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;"><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);">' + catName(p) + '</span><span class="zq-num" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(p.createdAt)) + '</span></div>'
       + '<h3 data-sp-view="' + p.id + '" title="点击查看完整内容" style="margin:0 0 5px;font-size:15px;font-weight:700;cursor:pointer;">' + esc(p.title || p.name || '未命名') + ' <span style="font-size:11px;font-weight:500;color:var(--zq-primary);">查看 ›</span></h3>'
       + '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;">' + esc(p.description || '（无简介）') + '</p>'
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:10px;border-top:1px solid var(--zq-border-soft);"><span style="font-size:12px;color:var(--zq-text3);">' + creator(p) + '</span><span style="display:flex;gap:6px;">' + actions + '</span></div></article>';
@@ -236,7 +236,7 @@ function viewSharedPlan(id) {
     var itemRow = function (x, extra) {
       return '<div style="padding:8px 11px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);"><div style="font-size:12.5px;font-weight:600;">' + esc(x.title || '') + '</div>'
         + (x.description ? '<div style="font-size:11.5px;color:var(--zq-text2);margin-top:2px;line-height:1.5;">' + esc(x.description) + '</div>' : '')
-        + '<div class="zq-mono" style="font-size:10.5px;color:var(--zq-text3);margin-top:3px;">' + esc(extra) + '</div></div>';
+        + '<div class="zq-num" style="font-size:10.5px;color:var(--zq-text3);margin-top:3px;">' + esc(extra) + '</div></div>';
     };
     var tasks = (d.tasks || []).map(function (t) {
       return itemRow(t, '第' + (t.relativeStartDay == null ? 0 : t.relativeStartDay) + '天起 · 截止第' + (t.relativeDeadlineDay == null ? '—' : t.relativeDeadlineDay) + '天' + (t.preferredTime ? ' · ' + t.preferredTime : '') + (t.durationMinutes ? ' · ' + t.durationMinutes + '分钟' : ''));
@@ -245,7 +245,7 @@ function viewSharedPlan(id) {
       return itemRow(r, freqLabel(r.frequency, r.daysOfWeek) + (r.preferredTime ? ' · ' + r.preferredTime : '') + (r.durationMinutes ? ' · ' + r.durationMinutes + '分钟' : '') + ' · 第' + (r.relativeStartDay == null ? 0 : r.relativeStartDay) + '~' + (r.relativeEndDay == null ? '—' : r.relativeEndDay) + '天');
     }).join('');
     var reviews = (d.reviews || []).map(function (rv) {
-      return '<div style="font-size:11.5px;color:var(--zq-text2);line-height:1.6;"><span class="zq-mono" style="color:var(--zq-text3);">' + esc(fmtDate(rv.createdAt)) + '</span> ' + esc(rv.action || '') + (rv.note ? ' · ' + esc(rv.note) : '') + '</div>';
+      return '<div style="font-size:11.5px;color:var(--zq-text2);line-height:1.6;"><span class="zq-num" style="color:var(--zq-text3);">' + esc(fmtDate(rv.createdAt)) + '</span> ' + esc(rv.action || '') + (rv.note ? ' · ' + esc(rv.note) : '') + '</div>';
     }).join('');
     function sec(t, body) { return body ? '<h4 style="margin:14px 0 7px;font-size:12.5px;font-weight:700;">' + t + '</h4><div style="display:flex;flex-direction:column;gap:6px;">' + body + '</div>' : ''; }
     openModal({

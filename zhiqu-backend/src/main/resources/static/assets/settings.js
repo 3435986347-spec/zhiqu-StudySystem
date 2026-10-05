@@ -94,10 +94,10 @@ const PANES = {
     + '<div style="min-width:0; flex:1;"><h2 id="zq-set-name" class="zq-h2" style="font-size:17px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></h2>'
     + '<span id="zq-set-role" class="zq-badge" style="margin-top:6px; background:var(--zq-tint); color:var(--zq-primary); font-weight:700;"></span></div>'
     + '<div style="display:flex; gap:20px; text-align:center;">'
-    + '<div><strong id="zq-set-days" class="zq-mono" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">连续天数</span></div>'
-    + '<div><strong id="zq-set-done" class="zq-mono" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">完成任务</span></div>'
+    + '<div><strong id="zq-set-days" class="zq-num" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">连续天数</span></div>'
+    + '<div><strong id="zq-set-done" class="zq-num" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">完成任务</span></div>'
     // 原来写着「本月时长」，显示的却是 totalStudyMinutes（全部的累计）
-    + '<div><strong id="zq-set-hours" class="zq-mono" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">累计专注</span></div>'
+    + '<div><strong id="zq-set-hours" class="zq-num" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">累计专注</span></div>'
     + '</div></div>'
     + '<div class="zq-phone-1col" style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px;">'
     + FIELD('用户名', '<input id="zq-set-username" class="zq-input" readonly style="background:var(--zq-card-soft); color:var(--zq-text3);">')
@@ -572,7 +572,7 @@ export function openAchievements(sh, opts) {
       var name = a.name || a.title || a.achievementName || '成就';
       var desc = a.description || '';
       var points = a.points || a.score || 0;
-      return '<article style="padding:16px;border:1px solid ' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);opacity:' + (on ? 1 : .82) + ';"><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;"><div style="width:42px;height:42px;flex:none;border-radius:50%;background:' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-card-soft)') + ';color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';display:flex;align-items:center;justify-content:center;font-size:18px;">✪</div><div style="min-width:0;"><h3 style="margin:0;font-size:14.5px;font-weight:700;">' + sh.esc(name) + '</h3><span style="font-size:11.5px;color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';font-weight:600;">' + (on ? '已解锁' : '进行中') + '</span></div></div><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;min-height:38px;">' + sh.esc(desc) + '</p><div style="display:flex;justify-content:flex-end;font-size:11.5px;color:var(--zq-text3);"><span class="zq-mono">+' + sh.esc(points) + ' 点</span></div></article>';
+      return '<article style="padding:16px;border:1px solid ' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);opacity:' + (on ? 1 : .82) + ';"><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;"><div style="width:42px;height:42px;flex:none;border-radius:50%;background:' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-card-soft)') + ';color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';display:flex;align-items:center;justify-content:center;font-size:18px;">✪</div><div style="min-width:0;"><h3 style="margin:0;font-size:14.5px;font-weight:700;">' + sh.esc(name) + '</h3><span style="font-size:11.5px;color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';font-weight:600;">' + (on ? '已解锁' : '进行中') + '</span></div></div><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;min-height:38px;">' + sh.esc(desc) + '</p><div style="display:flex;justify-content:flex-end;font-size:11.5px;color:var(--zq-text3);"><span class="zq-num">+' + sh.esc(points) + ' 点</span></div></article>';
     }).join('') || sh.empty('暂无成就');
   }
   var filter = 'all';

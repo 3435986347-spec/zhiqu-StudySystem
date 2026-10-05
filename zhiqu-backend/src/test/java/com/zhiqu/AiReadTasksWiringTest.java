@@ -63,7 +63,8 @@ class AiReadTasksWiringTest {
         String boot = SourceText.functionBody(SourceText.pageModule("ai-assistant.js"), "async function bootAiAssistant()");
         // 认 bootAiAssistant 自己那一行（两格缩进、单独一行）—— 函数里还有一处 await loadAiMessages()（新建 Notebook 的按钮里），
         // 只找字面的话删掉启动时那一行它照样找得到、照样绿（第三十七轮扰动 W6 照出来的，这个弱点搬家之前就在）
-        int loaded = boot.indexOf("\n  await loadAiMessages();\n");
+        // 第三十九轮起记录和执行轨迹一起取（Promise.all），这一行就是「载入消息」的那一步
+        int loaded = boot.indexOf("\n  await Promise.all([loadAiMessages(), renderAgentPanels()]);\n");
         int ask = boot.indexOf("var ask = new URLSearchParams(location.search).get('ask');");
         assertTrue(loaded > 0 && ask > loaded,
                 "?ask= 要在 bootAiAssistant 里、载入 Notebook 和消息之后再填 —— 先填会被这个 Notebook 存着的草稿盖掉");

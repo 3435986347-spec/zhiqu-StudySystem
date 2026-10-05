@@ -27,8 +27,11 @@
   function apply(ver,mode){ var h=document.documentElement; h.setAttribute('data-zq-ver',ver); h.setAttribute('data-zq-mode',mode); }
   apply(readVer(), readMode());
 
-  // 首屏防闪：隐藏主内容区，等 zhiqu-api.js 渲染真实数据后揭示（2.5s 安全兜底）
-  try { document.documentElement.classList.add('zq-booting'); setTimeout(function(){ document.documentElement.classList.remove('zq-booting'); }, 2500); } catch(e){}
+  // 首屏遮罩只留给「可能马上要被送走」的页面：后台页（普通用户会被劝返，见 zhiqu-api.js 的 route）和两个旧地址的跳转页。
+  // 别的页面一打开就露出自己的骨架（标题、按钮、表头），数据回来再填进去 —— 原来每一页都先把主内容区藏起来、
+  // 等接口全回来再淡入，每切一次页面都是「空白 → 淡入」（第三十九轮，用户说「页面切换非常不流畅」）。
+  // 页面里不再有示例数据（第二十四轮），露出骨架不会先闪一下假内容。2.5s 安全兜底照旧。
+  function holdsUntilBoot(file){ var f=String(file||'').toLowerCase(); return f==='profile.html' || f==='achievement.html' || isAdminPage(f); }
 
   // ── 侧边导航数据 ──
   var NAV = {
@@ -42,6 +45,8 @@
     admin: [ ['admin.html','监管后台','◈'], ['account-admin.html','账号管理','⌘'], ['feedback-admin.html','反馈管理','✉'], ['shared-plan-admin.html','共享计划审核','✓'] ]
   };
   function curFile(){ var p=location.pathname.split('/').pop(); return p || 'dashboard.html'; }
+  // 放在 NAV 之后：isAdminPage 读的是 NAV.admin（放在前面时 NAV 还是 undefined，抛了被 try 吞掉，后台页就不遮了）
+  try { if (holdsUntilBoot(curFile())) { document.documentElement.classList.add('zq-booting'); setTimeout(function(){ document.documentElement.classList.remove('zq-booting'); }, 2500); } } catch(e){}
   function navGroup(title, items){
     var cur = curFile();
     var h = title ? '<div class="zq-nav-group">'+title+'</div>' : '';
@@ -91,10 +96,11 @@
       + '<button type="button" class="zq-side-toggle" aria-expanded="true" title="收起导航栏">'
       +   '<span class="zq-ic">«</span><span>收起</span></button>'
       + '<div class="zq-nav">' + navGroup('', NAV.main) + '</div>'
-      // 名字、身份由 zhiqu-api.js 的 updateSidebarUser 拿到 /auth/info 之后填（原来这里写着设计稿的「王明远 · 管理员」，先闪一下才被换掉）
-      + '<button type="button" class="zq-user'+(inMenu(curFile())?' active':'')+'" aria-haspopup="menu" aria-expanded="false" title="设置、成就、统计、退出">'
-      +   '<div class="zq-avatar"></div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);">&nbsp;</div><div style="font-size:11px;color:var(--zq-text3);">&nbsp;</div></div></button>';
+      // 名字、身份由 zhiqu-api.js 的 updateSidebarUser 拿到 /auth/info 之后填（原来这里写着设计稿的「王明远 · 管理员」，先闪一下才被换掉）。
+      // 上一页画过的先画上（按令牌认，换了账号不认），不然每切一次页面左下角都先空一下再冒出来
+      + '<button type="button" class="zq-user'+(inMenu(curFile())?' active':'')+'" aria-haspopup="menu" aria-expanded="false" title="设置、成就、统计、退出"></button>';
     var userBtn = host.querySelector('.zq-user');
+    paintUser(userBtn, cachedUser());
     userBtn.addEventListener('click', function (e) { e.stopPropagation(); if (menu) closeMenu(); else openUserMenu(userBtn); });
     var toggle = host.querySelector('.zq-side-toggle');
     if (toggle) {
@@ -154,6 +160,27 @@
   var adminView=isAdminRole(storedRole());
   /** 这一页属于菜单里的哪一项（专注统计、后台页）：侧栏里没有它的高亮，就让头像按钮亮着 —— 不然用户看不出自己在哪。 */
   function inMenu(file){ if(file===NAV.data[0][0]) return true; return isAdminPage(file); }
+  // 左下角的名字、身份、头像：只有这一处画（zhiqu-api.js 的 updateSidebarUser 拿到 /auth/info 之后也调它）。
+  // u 为空时画两行空白占位，高度不变
+  var USER_CACHE = 'zq.sideUser';
+  function currentToken(){ try { return sessionStorage.getItem('token') || localStorage.getItem('token') || ''; } catch(e){ return ''; } }
+  function paintUser(box, u){
+    if (!box) return;
+    if (!u) { box.innerHTML = '<div class="zq-avatar"></div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);">&nbsp;</div><div style="font-size:11px;color:var(--zq-text3);">&nbsp;</div></div>'; return; }
+    var name = u.name || '知趣用户';
+    var avatar = u.avatar ? '<img src="' + escHtml(u.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">' : escHtml(name.slice(0, 1));
+    // 头像菜单的顶上一行（openUserMenu）从这里读
+    box.dataset.name = name;
+    box.dataset.account = u.account || '';
+    box.innerHTML = '<div class="zq-avatar">' + avatar + '</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(name) + '</div><div style="font-size:11px;color:var(--zq-text3);">' + escHtml(u.admin ? '管理员' : '普通用户') + '</div></div>';
+  }
+  function rememberUser(u){
+    var t = currentToken();
+    try { if (u && t) sessionStorage.setItem(USER_CACHE, JSON.stringify({ owner: t.slice(-24), name: u.name, account: u.account, avatar: u.avatar, admin: !!u.admin })); } catch(e){}
+  }
+  function cachedUser(){
+    try { var c = JSON.parse(sessionStorage.getItem(USER_CACHE) || 'null'), t = currentToken(); return c && t && c.owner === t.slice(-24) ? c : null; } catch(e){ return null; }
+  }
   function escHtml(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function closeMenu(){
     if(!menu) return;
@@ -278,6 +305,7 @@
   window.ZQUI = window.ZQUI || {};
   window.ZQUI.setAdminNav = setAdminNav;
   window.ZQUI.isAdminPage = isAdminPage;
+  window.ZQUI.paintUser = function (box, u) { paintUser(box, u); rememberUser(u); };
 
   function boot(){ buildSidebar(); setupPanels(); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();

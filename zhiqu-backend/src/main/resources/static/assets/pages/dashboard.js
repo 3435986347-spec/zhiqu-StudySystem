@@ -16,6 +16,9 @@ export const dayReload = { 'dashboard.html': () => bootDashboard() };
 async function bootDashboard() {
   if (state.weekOffset == null) state.weekOffset = 0;
   var r = weekRange(state.weekOffset);
+  // 番茄钟那两块（任务下拉、今日计数）和总览互不依赖，一起取（第三十九轮：原来排在总览画完之后一个接一个）。
+  // 两个都自己接住失败，这里不会有没人管的 rejection
+  var pomo = Promise.all([populatePomoTasks(), updatePomoCount()]);
   var data = await api.get('/dashboard/overview?from=' + r[0] + '&to=' + r[1]);
   var sum = data.summary || {};
   var statNums = $all('.zq-stat-num');
@@ -48,8 +51,7 @@ async function bootDashboard() {
   var add = $('header .zq-btn');
   // 原来只跳到任务页，还要再点一次「新建任务」（2026-10-03 走主流程）；建好之后刷新的是看板
   if (add) add.onclick = function () { openTaskForm(null, bootDashboard); };
-  await populatePomoTasks();
-  await updatePomoCount();
+  await pomo;
   if (window.zqApi) window.zqApi.afterRecord = function () { bootDashboard(); };
 }
 async function populatePomoTasks() {
@@ -70,9 +72,9 @@ function renderWeek(days) {
   if (!host) return;
   host.innerHTML = days.length ? days.map(function (d) {
     var items = (d.items || []).slice(0, 5).map(function (it) {
-      return '<div style="display:grid;grid-template-columns:36px minmax(0,1fr);gap:6px;align-items:center;padding:6px 7px;border-radius:var(--zq-rs);background:' + (it.kind === 'ROUTINE' ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid var(--zq-border-soft);"><span class="zq-mono" style="color:var(--zq-primary);font-size:10.5px;font-weight:600;">' + esc(it.time || hm(it.deadline) || '') + '</span><span style="min-width:0;overflow:hidden;color:var(--zq-text);font-size:11.5px;font-weight:500;text-overflow:ellipsis;white-space:nowrap;">' + esc(it.title) + '</span></div>';
+      return '<div style="display:grid;grid-template-columns:36px minmax(0,1fr);gap:6px;align-items:center;padding:6px 7px;border-radius:var(--zq-rs);background:' + (it.kind === 'ROUTINE' ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid var(--zq-border-soft);"><span class="zq-num" style="color:var(--zq-primary);font-size:10.5px;font-weight:600;">' + esc(it.time || hm(it.deadline) || '') + '</span><span style="min-width:0;overflow:hidden;color:var(--zq-text);font-size:11.5px;font-weight:500;text-overflow:ellipsis;white-space:nowrap;">' + esc(it.title) + '</span></div>';
     }).join('') || '<div style="padding:10px 0;text-align:center;color:var(--zq-text3);font-size:11.5px;">无安排</div>';
-    return '<div style="min-height:225px;padding:10px;border:1px solid ' + (d.today ? 'var(--zq-primary)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (d.today ? 'var(--zq-tint)' : 'var(--zq-card-soft)') + ';"><div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;"><span style="color:' + (d.today ? 'var(--zq-primary)' : 'var(--zq-text2)') + ';font-size:11.5px;font-weight:700;">' + esc(d.weekday) + '</span><strong class="zq-mono" style="font-size:18px;color:' + (d.today ? 'var(--zq-primary)' : 'var(--zq-text)') + ';">' + esc(d.day) + '</strong></div><div style="display:flex;flex-direction:column;gap:7px;">' + items + '</div></div>';
+    return '<div style="min-height:225px;padding:10px;border:1px solid ' + (d.today ? 'var(--zq-primary)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (d.today ? 'var(--zq-tint)' : 'var(--zq-card-soft)') + ';"><div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;"><span style="color:' + (d.today ? 'var(--zq-primary)' : 'var(--zq-text2)') + ';font-size:11.5px;font-weight:700;">' + esc(d.weekday) + '</span><strong class="zq-num" style="font-size:18px;color:' + (d.today ? 'var(--zq-primary)' : 'var(--zq-text)') + ';">' + esc(d.day) + '</strong></div><div style="display:flex;flex-direction:column;gap:7px;">' + items + '</div></div>';
   }).join('') : empty('暂无本周安排');
 }
 function renderToday(items, date) {
@@ -82,7 +84,7 @@ function renderToday(items, date) {
     var routine = x.kind === 'ROUTINE';
     var q = routine ? 'routine' : qKey(x.quadrant);
     var color = routine ? 'var(--zq-primary)' : 'var(--zq-' + q + ')';
-    return '<div style="display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:' + (routine ? 'var(--zq-tint)' : 'var(--zq-card)') + ';opacity:' + (x.status === 2 || x.completed ? .58 : 1) + ';"><span class="zq-mono" style="color:var(--zq-primary);font-size:12.5px;font-weight:600;">' + esc(x.time || hm(x.deadline) || '') + '</span><div style="min-width:0;"><div style="font-size:13.5px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(x.title) + '</div><div style="display:flex;gap:6px;margin-top:4px;align-items:center;min-width:0;"><span class="zq-badge" style="background:var(--zq-tint);color:' + color + ';">' + esc(routine ? '例行' : qLabel(x.quadrant)) + '</span><span style="flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--zq-text2);font-size:11.5px;">' + esc(x.description || fmtDate(x.deadline)) + '</span></div></div><button class="zq-btn-ghost" data-task-done="' + esc(x.id || '') + '" data-kind="' + esc(x.kind || '') + '" data-date="' + esc(date || '') + '" style="height:28px;padding:0 11px;font-size:12px;">' + (x.status === 2 || x.completed ? '已完成' : '完成') + '</button></div>';
+    return '<div style="display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:' + (routine ? 'var(--zq-tint)' : 'var(--zq-card)') + ';opacity:' + (x.status === 2 || x.completed ? .58 : 1) + ';"><span class="zq-num" style="color:var(--zq-primary);font-size:12.5px;font-weight:600;">' + esc(x.time || hm(x.deadline) || '') + '</span><div style="min-width:0;"><div style="font-size:13.5px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(x.title) + '</div><div style="display:flex;gap:6px;margin-top:4px;align-items:center;min-width:0;"><span class="zq-badge" style="background:var(--zq-tint);color:' + color + ';">' + esc(routine ? '例行' : qLabel(x.quadrant)) + '</span><span style="flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--zq-text2);font-size:11.5px;">' + esc(x.description || fmtDate(x.deadline)) + '</span></div></div><button class="zq-btn-ghost" data-task-done="' + esc(x.id || '') + '" data-kind="' + esc(x.kind || '') + '" data-date="' + esc(date || '') + '" style="height:28px;padding:0 11px;font-size:12px;">' + (x.status === 2 || x.completed ? '已完成' : '完成') + '</button></div>';
   }).join('') : empty('今天暂时没有安排');
   $all('[data-task-done]', host).forEach(function (btn) {
     btn.onclick = function () {
@@ -103,12 +105,12 @@ function renderQuadrants(rows) {
   host.innerHTML = rows.map(function (row) {
     var q = qKey(row.quadrant);
     var items = (row.items || []).map(function (x) { return '<div style="padding:7px 9px;border-radius:var(--zq-rs);background:var(--zq-' + q + '-bg);font-size:12px;font-weight:500;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(x.title) + '</div>'; }).join('') || '<div style="font-size:12px;color:var(--zq-text3);">暂无关键任务</div>';
-    return '<div style="min-height:150px;padding:13px;border:1px solid var(--zq-' + q + '-border);border-radius:var(--zq-rs);background:var(--zq-card);border-top:3px solid var(--zq-' + q + ');"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;"><span style="font-size:12px;font-weight:700;color:var(--zq-' + q + ');white-space:nowrap;">' + qLabel(row.quadrant) + '</span><span class="zq-mono" style="font-size:12px;font-weight:600;color:var(--zq-text3);">' + (row.total || 0) + ' 项</span></div><div style="display:flex;flex-direction:column;gap:7px;">' + items + '</div></div>';
+    return '<div style="min-height:150px;padding:13px;border:1px solid var(--zq-' + q + '-border);border-radius:var(--zq-rs);background:var(--zq-card);border-top:3px solid var(--zq-' + q + ');"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;"><span style="font-size:12px;font-weight:700;color:var(--zq-' + q + ');white-space:nowrap;">' + qLabel(row.quadrant) + '</span><span class="zq-num" style="font-size:12px;font-weight:600;color:var(--zq-text3);">' + (row.total || 0) + ' 项</span></div><div style="display:flex;flex-direction:column;gap:7px;">' + items + '</div></div>';
   }).join('');
 }
 function renderDeadlines(list) {
   var host = $('#zq-ddl'); if (!host) return;
   host.innerHTML = list.length ? list.map(function (d) {
-    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--zq-border-soft);"><div style="min-width:0;"><strong style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12.5px;line-height:1.35;font-weight:600;">' + esc(d.title) + '</strong><span style="display:block;margin-top:3px;color:var(--zq-text2);font-size:11.5px;">' + esc(fmtDate(d.deadline)) + '</span></div><span class="zq-badge zq-mono" style="flex:none;background:var(--zq-card-soft);color:var(--zq-text2);">DDL</span></div>';
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--zq-border-soft);"><div style="min-width:0;"><strong style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12.5px;line-height:1.35;font-weight:600;">' + esc(d.title) + '</strong><span style="display:block;margin-top:3px;color:var(--zq-text2);font-size:11.5px;">' + esc(fmtDate(d.deadline)) + '</span></div><span class="zq-badge zq-num" style="flex:none;background:var(--zq-card-soft);color:var(--zq-text2);">DDL</span></div>';
   }).join('') : empty('暂无临近 DDL');
 }

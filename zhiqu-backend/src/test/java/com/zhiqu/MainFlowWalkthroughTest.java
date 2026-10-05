@@ -81,8 +81,12 @@ class MainFlowWalkthroughTest {
         assertTrue(load.contains("(state.aiNoModel ? '还没有可用的模型' : '默认模型')"), "没有模型时下拉框还写「默认模型」");
         String empty = SourceText.functionBody(code, "function aiEmptyState()");
         assertTrue(empty.contains("if (state.aiNoModel)") && empty.contains("href=\"#settings/models\""), "没有模型时要给去配置的入口（「设置 → AI 模型」）");
-        assertTrue(SourceText.functionBody(code, "function renderAiMessages(opts)").contains("host.innerHTML = moreRow + aiEmptyState();"),
-                "对话区空着时没有画空状态");
+        assertTrue(SourceText.functionBody(code, "function renderAiMessages(opts)").contains("host.innerHTML = moreRow + (historyLoaded() ? aiEmptyState() : '');"),
+                "对话区空着时没有画空状态（或者记录还没到就画了 —— 第三十九轮起页面骨架一打开就露出来，空状态会先闪一下）");
+        String loaded = SourceText.functionBody(code, "function historyLoaded()");
+        assertTrue(loaded.contains("state.historyOf.notebookId === state.notebookId"), "「记录到了没有」要按当前 notebook 认 —— 切过去还没取回来时不算");
+        assertTrue(SourceText.functionBody(code, "async function loadAiMessages()").contains("state.historyOf = { notebookId: nbId };"),
+                "取回聊天记录之后没有记下「这个 notebook 的记录到了」，空状态就永远不出来");
         assertTrue(code.contains("'根据这些资料，帮我制定下周的工作计划'"), "示例要用真能出计划的说法（制定）");
     }
 

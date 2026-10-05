@@ -811,13 +811,9 @@
     syncStoredRole(r);
     try { if (window.ZQUI && window.ZQUI.setAdminNav) window.ZQUI.setAdminNav(r); } catch (e) {}
     var box = $('.zq-user');
-    if (!box || !u) return;
-    var name = u.nickname || u.username || '知趣用户';
-    var avatar = u.avatar ? '<img src="' + esc(u.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">' : esc(name.slice(0, 1));
-    // 头像菜单的顶上一行（zhiqu-ui.js 的 openUserMenu）从这里读
-    box.dataset.name = name;
-    box.dataset.account = u.username || '';
-    box.innerHTML = '<div class="zq-avatar">' + avatar + '</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(name) + '</div><div style="font-size:11px;color:var(--zq-text3);">' + esc(r === 'ADMIN' ? '管理员' : '普通用户') + '</div></div>';
+    if (!box || !u || !window.ZQUI || !window.ZQUI.paintUser) return;
+    // 画法在 zhiqu-ui.js（下一页打开时先用这次记下的画上，不用等 /auth/info）
+    window.ZQUI.paintUser(box, { name: u.nickname || u.username || '知趣用户', account: u.username || '', avatar: u.avatar || '', admin: r === 'ADMIN' });
   }
 
   var AUTH_FORM_HTML =
@@ -1820,6 +1816,8 @@
         // 卡死不了：zhiqu-ui.js:31 那个 2.5s 无条件兜底仍会摘遮罩，
         // 所以万一导航没成行，页面也不会永远停在空白。
         if (!leaving) revealContent();
+        // 这一页的数据都画好了的时刻（相对导航开始）：量页面切换要多久时读它（第三十九轮）
+        try { performance.mark('zq-boot-done'); } catch (e) {}
       }
     }, { renderError: true });
   }

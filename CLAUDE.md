@@ -88,10 +88,12 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟待补记、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261005-ai`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261005-smooth`。
 - 设计令牌只在 `assets/zhiqu-ui.css` 的 `:root` 定义一次：引用不存在的 `var(--x)` 不报错，整条声明作废（`FrontendTokenAndDateTest`）。手机样式只有一段 `@media (max-width: 760px)`，必须在 `zhiqu-ui.css` 最后。
 - 业务错误是 HTTP 200 + `code != 200`，前端判 `result.code === 200`。写请求走 `request()`（去重、幂等键、重来、照实说「不确定」），不要直接 `fetch`（`RequestResilienceTest`）。
 - 页面不带示例数据、静态 HTML 里不写死数字（`InitErrorReplacesDemoContentTest`）。细节：`docs/notes/frontend.md`。
+- **页面一打开就露出自己的骨架**，数据到了填进去；只有后台页和旧地址的跳转页先遮着（`zhiqu-ui.js` 的 `holdsUntilBoot`）。页面之间用 `@view-transition` 交叉淡化、侧栏不动。
+  文字一律系统无衬线字体，**不从外网取字体 / 样式表**（挡渲染也挡脚本，网络慢时整页等着）；数字用 `.zq-num`（等宽数位），等宽字体只给代码。见 `PageSwitchSmoothnessTest`、第三十九轮。
 
 ## 踩过就会再踩的坑
 
@@ -154,3 +156,4 @@ cd ../zhiqu-cli && npm test
 - [第三十六轮](docs/rounds/round-36.md) 知识 Wiki 拆成模块
 - [第三十七轮](docs/rounds/round-37.md) AI 助手拆成模块（方案第 4 步做完）
 - [第三十八轮](docs/rounds/round-38.md) CLAUDE.md 瘦身（方案第 5 步）
+- [第三十九轮](docs/rounds/round-39.md) 页面切换流畅：骨架先露、互不依赖的请求一起发、文字一律系统无衬线字体

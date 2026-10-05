@@ -903,7 +903,7 @@ function patchSetCard(ps) {
   return '<section data-patch-set="' + esc(ps.id) + '" style="padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card-soft);">'
     + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;">'
     + '<strong style="font-size:13.5px;">' + esc(ps.title || ('变更 #' + ps.id)) + '</strong>'
-    + (ps.createdAt ? '<span class="zq-mono" style="margin-left:8px;font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(ps.createdAt)) + '</span>' : '')
+    + (ps.createdAt ? '<span class="zq-num" style="margin-left:8px;font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(ps.createdAt)) + '</span>' : '')
     + (ps.summary ? '<p style="margin:4px 0 0;font-size:12px;color:var(--zq-text2);line-height:1.6;">' + esc(ps.summary) + '</p>' : '')
     + '</div><div style="display:flex;gap:6px;flex:none;">'
     + '<button type="button" class="zq-btn-ghost" data-patch-reject="' + esc(ps.id) + '" style="height:28px;padding:0 11px;font-size:12px;">忽略</button>'
