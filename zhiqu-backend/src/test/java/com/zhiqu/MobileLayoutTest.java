@@ -293,13 +293,14 @@ class MobileLayoutTest {
     @Test
     @DisplayName("看板列表里的用户原文要收住（原来整段说明原样摊开：5462 字的说明在 375px 上 5000px 高，桌面上也有 1140px）")
     void 看板列表收住原文() throws IOException {
-        String api = apiJs();
-        String today = fn(api, "function renderToday(");
+        // 第三十五轮起看板是模块（pages/dashboard.js）
+        String api = SourceText.pageModule("dashboard.js");
+        String today = SourceText.functionBody(api, "function renderToday(");
         assertTrue(styleBefore(today, "esc(x.title)").contains("-webkit-line-clamp"), "「今天」的标题没有限行");
         String desc = styleBefore(today, "esc(x.description");
         assertTrue(desc.contains("text-overflow:ellipsis") && desc.contains("white-space:nowrap"), "「今天」的说明没有收成一行");
-        assertTrue(styleBefore(fn(api, "function renderQuadrants("), "esc(x.title)").contains("-webkit-line-clamp"), "象限摘要的标题没有限行");
-        assertTrue(styleBefore(fn(api, "function renderDeadlines("), "esc(d.title)").contains("-webkit-line-clamp"), "临近 DDL 的标题没有限行");
+        assertTrue(styleBefore(SourceText.functionBody(api, "function renderQuadrants("), "esc(x.title)").contains("-webkit-line-clamp"), "象限摘要的标题没有限行");
+        assertTrue(styleBefore(SourceText.functionBody(api, "function renderDeadlines("), "esc(d.title)").contains("-webkit-line-clamp"), "临近 DDL 的标题没有限行");
     }
 
     @Test

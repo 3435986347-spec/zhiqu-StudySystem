@@ -114,20 +114,25 @@ class PageModulesTest {
         assertEquals(List.of(), orphan, "这些页面没有人启动 —— 打开就是一片空白，一个字都不报");
     }
 
+    /** 「今天」要跟着业务日期走的页面：页面开着过了零点要重新取。原来是壳里的 DAY_RELOAD 表，第三十五轮看板挪走之后删了，由页面模块导出 dayReload。 */
+    static final Set<String> DAY_PAGES = Set.of("dashboard.html", "routines.html");
+
     @Test
-    @DisplayName("页面开着跨过业务日期的零点：拆成模块的页面由模块导出 dayReload，壳接到 watchBusinessDay 上；DAY_RELOAD 里不再有已经拆走的页面")
-    void 零点重新取数据() throws IOException {
+    @DisplayName("页面开着跨过业务日期的零点：看板、例行计划的模块导出 dayReload（node 真 import），壳接到 watchBusinessDay 上；壳里不再有第二套（DAY_RELOAD）")
+    void 零点重新取数据() throws Exception {
         String shell = shell();
-        Matcher reload = Pattern.compile("var DAY_RELOAD = \\{(.*)\\};").matcher(shell);
-        assertTrue(reload.find(), "找不到 var DAY_RELOAD");
-        Set<String> stale = new TreeSet<>();
-        Matcher p = Pattern.compile("'([a-z0-9-]+\\.html)'").matcher(reload.group(1));
-        while (p.find()) if (pageModules().containsKey(p.group(1))) stale.add(p.group(1));
-        assertEquals(Set.of(), stale, "DAY_RELOAD 里还写着已经拆进模块的页面 —— 它调的函数已经不在壳里了");
+        assertFalse(shell.contains("DAY_RELOAD"), "壳里又有了 DAY_RELOAD —— 零点重新取数据只该有一套（页面模块导出的 dayReload）");
         String route = fn(shell, "function route() {");
         int load = route.indexOf("var pageModule = await loadModule(PAGE_MODULES[page]);");
         int watch = route.indexOf("watchBusinessDay(pageModule.dayReload[page]);");
-        assertTrue(load >= 0 && watch > load, "拆成模块的页面的 dayReload 没有接到 watchBusinessDay 上 —— 页面开着过了零点，「今天」还是昨天");
+        assertTrue(load >= 0 && watch > load, "页面模块的 dayReload 没有接到 watchBusinessDay 上 —— 页面开着过了零点，「今天」还是昨天");
+        Map<String, String> table = pageModules();
+        List<String> pairs = new ArrayList<>();
+        for (String page : DAY_PAGES) {
+            assertTrue(table.containsKey(page), page + " 不在 PAGE_MODULES 里");
+            pairs.add(page + "=" + table.get(page) + "+dayReload");
+        }
+        NodeRunner.run(Path.of("src/test/resources/js/page-modules-check.js"), ASSETS, pairs.toArray(new String[0]));
     }
 
     @Test

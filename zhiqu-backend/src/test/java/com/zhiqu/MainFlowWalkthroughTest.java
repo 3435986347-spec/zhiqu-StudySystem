@@ -103,7 +103,8 @@ class MainFlowWalkthroughTest {
         String dashboard = page("dashboard.html");
         assertFalse(dashboard.contains("width:60%"), "进度条还写死着 60%");
         assertTrue(dashboard.contains("id=\"zq-routine-bar\""), "进度条要有 id 才接得上数据");
-        String boot = fn(api(), "async function bootDashboard()");
+        // 第三十五轮起看板是模块（pages/dashboard.js）
+        String boot = SourceText.functionBody(SourceText.pageModule("dashboard.js"), "async function bootDashboard()");
         // 连同前面的 if 一起钉：只钉后半句的话，「if (false) routineBar.style.width = …」也满足（扰动 F8 这样漏过去过）
         assertTrue(boot.contains("if (routineBar) routineBar.style.width = (sum.routineTotal ? Math.min(100, Math.round(100 * (sum.routineDone || 0) / sum.routineTotal)) : 0) + '%';"),
                 "进度条没有按 routineDone / routineTotal 画");

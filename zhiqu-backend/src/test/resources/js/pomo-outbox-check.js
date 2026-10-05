@@ -12,7 +12,10 @@ function slice(startMark, endMark) {
   if (b < 0) throw new Error('抠不到终点: ' + endMark);
   return src.slice(a, b);
 }
-const code = slice('  var POMO_OUTBOX = ', '  function renderWeek(');
+// 抠到 catchUpPomodoros 自己的结尾 —— 原来拿后面的 renderWeek 当结尾，第三十五轮看板挪进模块之后它就不在后面了
+const tail = src.indexOf('\n  }\n', src.indexOf('  async function catchUpPomodoros() {'));
+if (tail < 0) throw new Error('抠不到 catchUpPomodoros 的结尾');
+const code = slice('  var POMO_OUTBOX = ', '  async function catchUpPomodoros() {') + src.slice(src.indexOf('  async function catchUpPomodoros() {'), tail) + '\n  }\n';
 
 const store = new Map();
 const localStorage = {

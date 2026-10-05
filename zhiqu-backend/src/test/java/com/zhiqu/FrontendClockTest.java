@@ -35,11 +35,13 @@ class FrontendClockTest {
         String js = SourceText.stripComments(Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8));
         assertTrue(js.contains("state.user = await api.get('/auth/info');\n    applyServerClock(state.user && state.user.clock, sentAt, Date.now());"),
                 "initAuth 拿到 /auth/info 之后没有 applyServerClock —— 业务时钟一直是默认值、本机的钟");
-        assertTrue(js.contains("checkDate: btn.getAttribute('data-date') || today()"), "看板的打卡没有用那一行（服务端给的）日期");
-        assertTrue(js.contains("renderToday(todayRow ? todayRow.items || [] : [], todayRow ? todayRow.date : null);"), "renderToday 没拿到那一行的日期");
-        assertTrue(js.contains("headerDate.textContent = (todayRow ? todayRow.date + ' · ' + todayRow.weekday : today())"),
+        // 看板第三十五轮起是模块（pages/dashboard.js）；「不许拿浏览器算的日期打卡」扫全前端
+        String board = SourceText.pageModule("dashboard.js");
+        assertTrue(board.contains("checkDate: btn.getAttribute('data-date') || today()"), "看板的打卡没有用那一行（服务端给的）日期");
+        assertTrue(board.contains("renderToday(todayRow ? todayRow.items || [] : [], todayRow ? todayRow.date : null);"), "renderToday 没拿到那一行的日期");
+        assertTrue(board.contains("headerDate.textContent = (todayRow ? todayRow.date + ' · ' + todayRow.weekday : today())"),
                 "看板标题的日期不是服务端那一行的（原来是浏览器的日期拼服务端的星期）");
-        assertFalse(js.contains("'/checkin', { checkDate: today()"), "还有地方拿浏览器算的 today() 去打卡");
+        assertFalse(SourceText.frontendScripts().contains("'/checkin', { checkDate: today()"), "还有地方拿浏览器算的 today() 去打卡");
         String dashboard = Files.readString(Path.of("src/main/resources/static/dashboard.html"), StandardCharsets.UTF_8);
         String record = dashboard.substring(dashboard.indexOf("function zqPomoRecord("), dashboard.indexOf("elMin.addEventListener"));
         assertFalse(record.contains("studyDate"), "番茄钟又自己算日期了 —— 浏览器的钟在一次专注里走快了，算出来的「明天」会被拒、记录就丢了");

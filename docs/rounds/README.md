@@ -36,3 +36,4 @@
 | [第三十二轮](round-32.md) | 例行计划、专注统计拆成模块（方案第 4 步的第三块）：模块导出 `dayReload` 交给壳的零点重新取数据；两个从源码里抠函数的 node 判据改成 import 模块；测试侧加 `frontendScripts` / `functionBody` | （见 git log） |
 | [第三十三轮](round-33.md) | 参考计划拆成模块（方案第 4 步的第四块）；`RequestResilienceTest` 补上前几轮留下的空子（模块里直接 fetch 写操作 / 另带幂等键原来看不见） | （见 git log） |
 | [第三十四轮](round-34.md) | 任务页拆成模块（方案第 4 步的第五块）；任务表单（看板也用）留在壳里，「保存之后刷新什么」改由打开它的那一页传 | （见 git log） |
+| [第三十五轮](round-35.md) | 看板拆成模块（方案第 4 步的第六块）；零点重新取数据只剩一套（页面模块导出 `dayReload`，壳里的 `DAY_RELOAD` 删了） | （见 git log） |
