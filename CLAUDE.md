@@ -66,6 +66,7 @@ cd ../zhiqu-cli && npm test
 
 - 产品方案（2026-10-03）：[`docs/product-plan.md`](docs/product-plan.md)，五步按顺序做，标「要你定」的先问用户。
 - zhiqu harness（P0–P7）：[`docs/zhiqu-harness-plan.md`](docs/zhiqu-harness-plan.md)，严格按表执行、不擅自增删，做完一项更新「进度」列。**npm 发布（P7）之前单独问用户**；`zhiqu-cli/package.json` 的 `"private": true` 留着。
+- 界面打磨（2026-10-06）：[`docs/ui-plan.md`](docs/ui-plan.md)，「要你定」的三件（参照风格、主题留几套、第一批截图确认）没定之前不开工。
 - 一轮接一轮：每轮的计划开工时存进 `docs/rounds/round-NN.md`，收口时补结果，随那一轮一起提交，并在 `docs/rounds/README.md` 和本文件末尾各加一行。每轮带一段真浏览器里的暴力测试。
 
 ## 不能碰、不能绕的地方
