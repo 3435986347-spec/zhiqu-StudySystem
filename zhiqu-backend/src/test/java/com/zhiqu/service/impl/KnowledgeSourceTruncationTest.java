@@ -83,7 +83,8 @@ class KnowledgeSourceTruncationTest {
     @Test
     @DisplayName("页面把截断说给用户：两个导入入口都拿回包过 truncatedNote，它读的是 truncated")
     void 页面要说出来() throws Exception {
-        String js = SourceText.stripComments(Files.readString(NodeRunner.API_JS));
+        // 第三十六轮起知识 Wiki 是模块（pages/knowledge-wiki.js）
+        String js = com.zhiqu.SourceText.pageModule("knowledge-wiki.js");
         for (String call : new String[]{"api.upload('/knowledge/sources/upload'", "api.post('/knowledge/sources',"}) {
             int at = js.indexOf(call);
             assertTrue(at > 0, "找不到 " + call);

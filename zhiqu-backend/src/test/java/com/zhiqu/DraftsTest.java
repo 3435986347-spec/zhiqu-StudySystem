@@ -61,8 +61,9 @@ class DraftsTest {
     @Test
     @DisplayName("Wiki：存上了才删草稿、按开始改时的版本保存、取消才丢；换页之前先存草稿")
     void Wiki接线() throws Exception {
-        String code = api();
-        String save = between(code, "async function saveWikiEdit()", "\n  }\n");
+        // 第三十六轮起知识 Wiki 是模块（pages/knowledge-wiki.js）
+        String code = SourceText.pageModule("knowledge-wiki.js");
+        String save = SourceText.functionBody(code, "async function saveWikiEdit()");
         int put = save.indexOf("await api.put('/knowledge/pages/'");
         int clear = save.indexOf("drafts.clear(wikiDraftKey(p))");
         assertTrue(put > 0 && clear > put, "草稿要在保存成功之后才删（被乐观锁挡住时还得在）");

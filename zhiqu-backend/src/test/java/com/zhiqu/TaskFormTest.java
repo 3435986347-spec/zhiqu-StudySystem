@@ -124,7 +124,8 @@ class TaskFormTest {
     @Test
     @DisplayName("文件输入框的标签点得动：label 的 for 指向那个 file input")
     void 文件输入框的标签() throws Exception {
-        String code = api();
+        // 扫全前端：带标签的那个 file input（Wiki 导入来源）第三十六轮挪进了 pages/knowledge-wiki.js —— 只扫壳就一个都看不到了
+        String code = SourceText.frontendScripts();
         Matcher m = Pattern.compile("<label([^>]*)>[^<]*</label><input id=\"([^\"]+)\" type=\"file\"").matcher(code);
         int seen = 0;
         while (m.find()) {

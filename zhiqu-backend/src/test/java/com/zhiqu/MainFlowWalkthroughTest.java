@@ -43,8 +43,9 @@ class MainFlowWalkthroughTest {
     @Test
     @DisplayName("知识 Wiki 的待合入变更能合入、能忽略 —— 原来只列标题，写着「逐条审阅与合入将在后续版本提供」，AI 写的东西永远合不进去")
     void 待合入变更能合入能忽略() throws Exception {
-        String code = api();
-        String show = fn(code, "async function showWikiPatchSets()");
+        // 第三十六轮起知识 Wiki 是模块（pages/knowledge-wiki.js）
+        String code = SourceText.pageModule("knowledge-wiki.js");
+        String show = SourceText.functionBody(code, "async function showWikiPatchSets()");
         assertTrue(show.contains("'/knowledge/patch-sets/' + id + '/' + (verb === '合入变更' ? 'apply' : 'reject')"),
                 "审阅弹窗没有接上合入 / 忽略");
         assertTrue(show.contains("$all('[data-patch-apply]', body)") && show.contains("$all('[data-patch-reject]', body)"),

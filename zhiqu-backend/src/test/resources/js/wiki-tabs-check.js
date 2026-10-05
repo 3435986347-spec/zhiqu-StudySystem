@@ -1,6 +1,9 @@
-// 知识 Wiki 标签页的行为判据 —— 直接跑 assets/zhiqu-api.js 里发布的那份实现。
+// 知识 Wiki 标签页的行为判据 —— 直接跑发布的那份实现（第三十六轮起住在 assets/pages/knowledge-wiki.js）。
 //
-//   用法：node src/test/resources/js/wiki-tabs-check.js <zhiqu-api.js 的路径>
+//   用法：node src/test/resources/js/wiki-tabs-check.js <pages/knowledge-wiki.js 的路径>
+//
+// 这一个没改成 import：它要把 paintWikiDoc 换成替身、只跑标签页的状态机（真的 paintWikiDoc 要画整页）——
+// 模块里的函数互相调用，从外面换不掉，所以照旧从源码里抠同一段。
 //   退出码 0 = 全绿；非 0 = 有判据红了，逐条打印在上面。
 //
 // 由 WikiTabsTest 调用。手动跑也行。
@@ -21,7 +24,7 @@ function slice(startMark, endMark) {
 
 // 抠出整个标签页模块。里面 paintWikiTabs / openWikiQuickSwitch 要碰 DOM ——
 // 下面的替身让 $ 返回 null，它们会在第一行就 return，不影响被测的状态逻辑。
-const tabsSrc = slice('var WIKI_TABS_KEY =', '  function wireWikiTabShortcuts()');
+const tabsSrc = slice('var WIKI_TABS_KEY =', '\nfunction wireWikiTabShortcuts()');
 // 扰动落地核对：抠出来的片段必须真的含这几个函数，否则下面全是空过
 for (const fn of ['trackWikiNavigation', 'wikiHistoryGo', 'closeWikiTab', 'activateWikiTab', 'loadWikiTabs']) {
   if (!new RegExp('function ' + fn).test(tabsSrc)) throw new Error('抠出来的片段里没有 ' + fn);

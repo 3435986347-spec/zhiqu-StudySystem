@@ -898,7 +898,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
   locals so moved code stays byte-identical. `PageModulesTest` imports every entry, checks every app page is booted by
   exactly one side, and flags a shell helper a module calls without binding it (that is a ReferenceError only when the
   page opens). Page modules render into `.zq-main`, so `MobileLayoutTest` scans `assets/pages/` too.
-  **Before moving a block, grep `src/test` for its distinctive lines, not just its function names** — tests that read
+  **Before moving a block, grep `src/test` for its distinctive lines, not just its function names — and check every test that runs a `Pattern` over the shell, since a regex's pieces don't show up in a literal grep (round 36)** — tests that read
   `zhiqu-api.js` for a call or a phrase go red (or, worse, vacuously green) once it moves. Rounds 30 and 31 each found
   some only in the full run (`latest-check.js`, `ReminderChannelWiringTest`, `RoutinePhaseTest`); scan `assets/**/*.js`.
   Test helpers for this: `SourceText.frontendScripts()` (shell + every module) and `SourceText.functionBody()` (works for the
@@ -962,7 +962,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261004-board`.
+  old bundle. Current token: `20261005-wiki`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.

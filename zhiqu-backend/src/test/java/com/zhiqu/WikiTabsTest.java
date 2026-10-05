@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 知识 Wiki 的标签页与前进 / 返回。
  *
  * <p>行为判据跑在 node 上（{@code src/test/resources/js/wiki-tabs-check.js}），直接加载
- * {@code assets/zhiqu-api.js} 里发布的那份实现 —— 在 Java 里重写一份状态机就成了
+ * {@code assets/pages/knowledge-wiki.js} 里发布的那份实现 —— 在 Java 里重写一份状态机就成了
  * 「测试一个副本」。这里的 Java 判据只管两件 node 侧看不到的事：<b>每个打开入口有没有
  * 用对 opts</b>，以及页面上那几个容器还在不在。
  */
@@ -26,11 +26,13 @@ class WikiTabsTest {
 
     private static final Path HARNESS = Path.of("src/test/resources/js/wiki-tabs-check.js");
     private static final Path WIKI_HTML = Path.of("src/main/resources/static/knowledge-wiki.html");
+    /** 第三十六轮起知识 Wiki 是模块：标签页那一段住在这里（wiki-tabs-check.js 也从这里抠）。 */
+    private static final Path WIKI_JS = Path.of("src/main/resources/static/assets/pages/knowledge-wiki.js");
 
     @Test
     @DisplayName("标签页与前进/返回的行为判据必须全绿")
     void 行为判据必须全绿() throws Exception {
-        NodeRunner.run(HARNESS, NodeRunner.API_JS);
+        NodeRunner.run(HARNESS, WIKI_JS);
     }
 
     @Test
@@ -60,8 +62,7 @@ class WikiTabsTest {
     @Test
     @DisplayName("重绘类的调用点要带 history:true（防御深度，承重的是 id 比较）")
     void 重绘不得压历史栈() throws Exception {
-        String js = SourceText.stripComments(
-                Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8));
+        String js = SourceText.pageModule("knowledge-wiki.js");
 
         // 先给「看到了多少」定个正下限：一个都没扫到的话下面是真空通过。
         Matcher all = Pattern.compile("paintWikiDoc\\(").matcher(js);
@@ -81,9 +82,7 @@ class WikiTabsTest {
         // 上下文全是 /admin/shared-plans。锚点不唯一的判据，红绿都不可信。
         int fn = js.indexOf("function saveWikiEdit()");
         assertTrue(fn >= 0, "找不到 saveWikiEdit —— 判据扫空了");
-        int fnEnd = js.indexOf("\n  }", fn);
-        assertTrue(fnEnd > fn, "截不出 saveWikiEdit 的函数体");
-        String saveBody = js.substring(fn, fnEnd);
+        String saveBody = SourceText.functionBody(js, "function saveWikiEdit()");
         assertTrue(saveBody.contains("paintWikiDoc("),
                 "saveWikiEdit 里没有 paintWikiDoc 调用 —— 抠错范围了：" + saveBody);
         assertTrue(saveBody.contains("paintWikiDoc(p, { history: true })"),
@@ -94,8 +93,7 @@ class WikiTabsTest {
     @Test
     @DisplayName("目录项与双链都要支持 ⌘/Ctrl+点击开新标签")
     void 打开入口要支持新标签() throws Exception {
-        String js = SourceText.stripComments(
-                Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8));
+        String js = SourceText.pageModule("knowledge-wiki.js");
         assertTrue(js.contains("newTab: e.metaKey || e.ctrlKey"),
                 "没有一处支持 ⌘/Ctrl+点击开新标签 —— 有标签栏却只能从 + 按钮开，"
                         + "等于少了最常用的那个手势");
@@ -182,7 +180,7 @@ class WikiTabsTest {
     @Test
     @DisplayName("localStorage 的读写都必须包在 try/catch 里")
     void 存储访问必须有兜底() throws Exception {
-        String js = Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8);
+        String js = Files.readString(WIKI_JS, StandardCharsets.UTF_8);
         int at = js.indexOf("function saveWikiTabs()");
         assertTrue(at >= 0, "找不到 saveWikiTabs —— 判据扫空了");
         String block = js.substring(at, Math.min(js.length(), at + 1800));
