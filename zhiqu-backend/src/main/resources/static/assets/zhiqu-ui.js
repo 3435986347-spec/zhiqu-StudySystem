@@ -1,17 +1,19 @@
 /* ════════════════════════════════════════════════════════════
    知趣 · 新前端  zhiqu-ui.js
-   - 主题（5 风格 × 浅/深）应用 + 切换弹层（记忆到 localStorage）
+   - 外观（跟随系统 / 浅色 / 深色）与强调色（金 / 黑白）的应用 + 切换弹层（记忆到 localStorage）
    - 渲染统一侧边导航到 <nav id="zq-side">，按当前文件名高亮；底部头像点开向上弹的菜单
    - 面板折叠助手（[data-zq-collapse]）：AI 两侧 / Wiki 目录
    仅负责界面显示；业务数据/接口后续接入。
    ════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
-  var VERSIONS = [
-    { id: 'v0', name: '暖纸墨青' }, { id: 'v1', name: '石墨蓝' }, { id: 'v2', name: '纸墨松绿' },
-    { id: 'v3', name: '黛紫·静雅' }, { id: 'v4', name: '玄墨鎏金' }
-  ];
-  var DEF_VER = 'v1', DEF_MODE = 'light', K_VER = 'zq.ver', K_MODE = 'zq.mode';
+  // 外观与强调色（第四十轮，用户 2026-10-06 定的「中性风」「白天白色，晚上黑色」）：
+  // 外观默认跟着系统走（macOS 设成「自动」时日落之后系统自己切深色），也可以固定成浅色 / 深色；强调色金色（默认）或黑白。
+  // 用新的键 zq.theme / zq.accent：原来的 zq.mode / zq.ver（五套配色 × 明暗）不再读 —— 手动选过浅色的人也回到「跟随系统」，那正是用户要的。
+  // 每页头上那行内联脚本用同一个规则先定好明暗（免得先闪一下另一种颜色），这里接着管切换和「系统外观变了」。
+  var THEMES = [ { id: 'auto', name: '跟随系统' }, { id: 'light', name: '浅色' }, { id: 'dark', name: '深色' } ];
+  var ACCENTS = [ { id: 'gold', name: '金色' }, { id: 'mono', name: '黑白' } ];
+  var K_THEME = 'zq.theme', K_ACCENT = 'zq.accent';
   function ls(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
   // 登录时存下的角色。侧栏在 zhiqu-api.js 之前同步渲染，/auth/info 还没回来，
   // 只能先用它决定要不要画「管理」组，避免非管理员先看到再被摘掉的闪烁。
@@ -21,11 +23,20 @@
   function storedRole(){ try { return sessionStorage.getItem('role') || localStorage.getItem('role') || ''; } catch(e){ return ''; } }
   function isAdminRole(r){ return String(r || '').toUpperCase() === 'ADMIN'; }
   function lss(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
-  function readVer(){ var v=ls(K_VER); for(var i=0;i<VERSIONS.length;i++) if(VERSIONS[i].id===v) return v; return DEF_VER; }
-  function readMode(){ var m=ls(K_MODE); return (m==='dark'||m==='light')?m:DEF_MODE; }
-  function verName(id){ for(var i=0;i<VERSIONS.length;i++) if(VERSIONS[i].id===id) return VERSIONS[i].name; return id; }
-  function apply(ver,mode){ var h=document.documentElement; h.setAttribute('data-zq-ver',ver); h.setAttribute('data-zq-mode',mode); }
-  apply(readVer(), readMode());
+  function readTheme(){ var t=ls(K_THEME); return (t==='light'||t==='dark')?t:'auto'; }
+  function readAccent(){ return ls(K_ACCENT)==='mono'?'mono':'gold'; }
+  function nameOf(list,id){ for(var i=0;i<list.length;i++) if(list[i].id===id) return list[i].name; return id; }
+  var darkQuery = null;
+  try { darkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null; } catch(e){}
+  function systemDark(){ return !!(darkQuery && darkQuery.matches); }
+  function resolvedMode(){ var t=readTheme(); return t==='auto' ? (systemDark()?'dark':'light') : t; }
+  function apply(){ var h=document.documentElement; h.setAttribute('data-zq-mode',resolvedMode()); h.setAttribute('data-zq-accent',readAccent()); }
+  apply();
+  // 跟随系统时，系统外观一变（日落、日出、手动切）页面当场跟着变；固定了浅 / 深色的不受影响（apply 读的是存下的选择）
+  if (darkQuery) {
+    if (darkQuery.addEventListener) darkQuery.addEventListener('change', apply);
+    else if (darkQuery.addListener) darkQuery.addListener(apply);
+  }
 
   // 首屏遮罩只留给「可能马上要被送走」的页面：后台页（普通用户会被劝返，见 zhiqu-api.js 的 route）和两个旧地址的跳转页。
   // 别的页面一打开就露出自己的骨架（标题、按钮、表头），数据回来再填进去 —— 原来每一页都先把主内容区藏起来、
@@ -137,16 +148,18 @@
   function onDown(e){ if(pop && !pop.contains(e.target) && !(popAnchor && popAnchor.contains(e.target))) closePop(); }
   function place(tr){ if(!pop) return; var r=tr.getBoundingClientRect(),pw=238,ph=pop.offsetHeight||340; var l=r.right+8; if(l+pw>innerWidth-8) l=r.left-pw-8; if(l<8)l=8; var t=r.top; if(t+ph>innerHeight-8)t=innerHeight-ph-8; if(t<8)t=8; pop.style.left=l+'px'; pop.style.top=t+'px'; }
   function openPop(tr){
-    closePop(); popAnchor=tr; var ver=readVer(),mode=readMode();
+    closePop(); popAnchor=tr; var theme=readTheme(),accent=readAccent();
     pop=document.createElement('div'); pop.className='zq-pop';
-    var h='<div class="zq-pop-t">界面风格</div>';
-    VERSIONS.forEach(function(v){ h+='<button type="button" class="zq-opt'+(v.id===ver?' on':'')+'" data-ver="'+v.id+'"><span class="zq-dot"></span><span>'+v.name+'</span></button>'; });
-    h+='<div class="zq-sep"></div><div class="zq-modes"><button type="button" class="zq-m'+(mode==='light'?' on':'')+'" data-mode="light">☀ 浅色</button><button type="button" class="zq-m'+(mode==='dark'?' on':'')+'" data-mode="dark">☾ 深色</button></div>';
+    var h='<div class="zq-pop-t">外观</div><div class="zq-modes">';
+    THEMES.forEach(function(t){ h+='<button type="button" class="zq-m'+(t.id===theme?' on':'')+'" data-theme="'+t.id+'">'+t.name+'</button>'; });
+    h+='</div><div class="zq-pop-t" style="padding-top:12px;">强调色</div><div class="zq-modes">';
+    ACCENTS.forEach(function(a){ h+='<button type="button" class="zq-m'+(a.id===accent?' on':'')+'" data-accent="'+a.id+'">'+a.name+'</button>'; });
+    h+='</div>';
     pop.innerHTML=h; document.body.appendChild(pop);
     pop.addEventListener('click',function(e){
-      var vb=e.target.closest('[data-ver]'), mb=e.target.closest('[data-mode]');
-      if(vb){ lss(K_VER,vb.getAttribute('data-ver')); apply(readVer(),readMode()); pop.querySelectorAll('.zq-opt').forEach(function(o){o.classList.toggle('on',o===vb);}); }
-      else if(mb){ lss(K_MODE,mb.getAttribute('data-mode')); apply(readVer(),readMode()); pop.querySelectorAll('.zq-m').forEach(function(o){o.classList.toggle('on',o===mb);}); }
+      var tb=e.target.closest('[data-theme]'), ab=e.target.closest('[data-accent]');
+      if(tb){ lss(K_THEME,tb.getAttribute('data-theme')); apply(); pop.querySelectorAll('[data-theme]').forEach(function(o){o.classList.toggle('on',o===tb);}); }
+      else if(ab){ lss(K_ACCENT,ab.getAttribute('data-accent')); apply(); pop.querySelectorAll('[data-accent]').forEach(function(o){o.classList.toggle('on',o===ab);}); }
     });
     place(tr); setTimeout(function(){ document.addEventListener('mousedown',onDown,true); },0);
   }
@@ -209,7 +222,7 @@
     var h='<div class="zq-user-menu-head"><strong>'+escHtml(btn.dataset.name||'')+'</strong><span>'+escHtml(btn.dataset.account||'')+'</span></div>'
       + menuLink('#settings/profile','⚙','设置') + menuLink('#achievements','✪','成就')
       + menuLink(NAV.data[0][0], NAV.data[0][2], NAV.data[0][1], cur===NAV.data[0][0])
-      + '<button type="button" role="menuitem" data-zq-theme><span class="zq-ic">◐</span><span>界面风格</span><span class="zq-user-menu-note">'+verName(readVer())+' · '+(readMode()==='dark'?'深色':'浅色')+'</span></button>';
+      + '<button type="button" role="menuitem" data-zq-theme><span class="zq-ic">◐</span><span>界面风格</span><span class="zq-user-menu-note">'+nameOf(THEMES,readTheme())+' · '+nameOf(ACCENTS,readAccent())+'</span></button>';
     if(adminView){
       h += '<div class="zq-user-menu-sep"></div><div class="zq-user-menu-group">管理</div>'
         + NAV.admin.map(function(it){ return menuLink(it[0], it[2], it[1], cur===it[0]); }).join('');

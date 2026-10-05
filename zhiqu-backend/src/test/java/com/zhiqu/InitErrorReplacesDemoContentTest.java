@@ -108,7 +108,7 @@ class InitErrorReplacesDemoContentTest {
                 Matcher scripts = INLINE_SCRIPT.matcher(html);
                 while (scripts.find()) {
                     String body = scripts.group(1).strip();
-                    boolean theme = body.contains("localStorage.getItem('zq.ver')") && !body.contains("\n");
+                    boolean theme = body.contains("localStorage.getItem('zq.theme')") && !body.contains("\n");   // 第四十轮起是 zq.theme（原来 zq.ver）
                     boolean pomodoro = "dashboard.html".equals(name) && body.startsWith(POMODORO_SCRIPT_HEAD);
                     if (!theme && !pomodoro) {
                         found.add(name + " 有内联脚本：" + body.substring(0, Math.min(60, body.length())).replace('\n', ' '));

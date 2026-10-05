@@ -5,8 +5,8 @@
   "start_url": "/ai-assistant.html",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#F7F6F2",
-  "theme_color": "#2E538F",
+  "background_color": "#FAFAFA",
+  "theme_color": "#FAFAFA",
   "icons": [
     {
       "src": "assets/icons/icon-192.png",

@@ -1,0 +1,181 @@
+package com.zhiqu;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * 界面打磨第 1 步（第四十轮，docs/ui-plan.md）：设计令牌。用户 2026-10-06 定的：中性风；白天白色、晚上黑色（跟着系统外观走）；
+ * 强调色金色，也做一版黑白。原来是五套配色 × 明暗共 10 套、次要文字对比度约 2.7 : 1、字重有 650 / 700 / 800。
+ */
+class DesignTokensTest {
+
+    private static final Path STATIC = Path.of("src/main/resources/static");
+    private static final Path CSS = STATIC.resolve("assets/zhiqu-ui.css");
+    private static final String ROOT = ":root";
+    private static final String DARK = "html[data-zq-mode=\"dark\"]";
+    private static final String MONO = "html[data-zq-accent=\"mono\"]";
+    private static final String DARK_MONO = "html[data-zq-mode=\"dark\"][data-zq-accent=\"mono\"]";
+    /** 不随明暗变的令牌：字阶、间距、字重、圆角、字体 */
+    private static final Pattern MODE_FREE = Pattern.compile("--zq-(fs-|sp-|fw-|r[sml]$|font)");
+
+    private static String css() throws IOException {
+        return SourceText.stripComments(Files.readString(CSS, StandardCharsets.UTF_8));
+    }
+
+    /** 选择器正好是 selector 的那一块里的 --zq-* 定义（按出现顺序） */
+    private static Map<String, String> block(String css, String selector) {
+        Matcher m = Pattern.compile("(?m)^" + Pattern.quote(selector) + "\\{([^}]*)\\}").matcher(css);
+        assertTrue(m.find(), "找不到 " + selector + " 那一块");
+        Map<String, String> out = new LinkedHashMap<>();
+        Matcher d = Pattern.compile("(--zq-[\\w-]+)\\s*:\\s*([^;]+);").matcher(m.group(1));
+        while (d.find()) out.put(d.group(1), d.group(2).trim());
+        assertTrue(!m.find(), selector + " 那一块出现了不止一次");
+        return out;
+    }
+
+    private static List<Path> pages() throws IOException {
+        try (Stream<Path> list = Files.list(STATIC)) {
+            return list.filter(p -> p.toString().endsWith(".html")).sorted().collect(Collectors.toList());
+        }
+    }
+
+    @Test
+    @DisplayName("外观跟着系统走、固定了不跟、原来的键不再读、强调色默认金色（在 node 里真跑头上那行和 zhiqu-ui.js）")
+    void 外观() throws Exception {
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/theme-check.js"), STATIC.resolve("assets/zhiqu-ui.js"),
+                STATIC.resolve("dashboard.html").toAbsolutePath().toString()), "theme-check.js 没有全绿");
+    }
+
+    @Test
+    @DisplayName("每一页头上是同一行外观脚本；任何地方都不再有 data-zq-ver（五套配色那一套）")
+    void 只有一套配色() throws IOException {
+        Pattern head = Pattern.compile("<script>(\\(function\\(\\)\\{try\\{var h=document\\.documentElement[^<]*)</script>");
+        Set<String> scripts = new TreeSet<>();
+        List<String> missing = new ArrayList<>();
+        List<Path> pages = pages();
+        assertTrue(pages.size() >= 14, "只扫到 " + pages.size() + " 个页面");
+        for (Path p : pages) {
+            String html = Files.readString(p, StandardCharsets.UTF_8);
+            Matcher m = head.matcher(html);
+            if (m.find()) scripts.add(m.group(1));
+            else missing.add(p.getFileName().toString());
+        }
+        assertEquals(List.of(), missing, "这些页面头上没有那行外观脚本 —— 打开时会先闪一下另一种颜色");
+        assertEquals(1, scripts.size(), "各页头上的外观脚本不一样（只验了一页，别的页会各走各的）：" + scripts);
+
+        List<String> stale = new ArrayList<>();
+        List<Path> all = new ArrayList<>(pages);
+        try (Stream<Path> walk = Files.walk(STATIC.resolve("assets"))) {
+            walk.filter(p -> p.toString().endsWith(".js") || p.toString().endsWith(".css")).filter(p -> !p.toString().contains("/vendor/")).forEach(all::add);
+        }
+        for (Path f : all) {
+            String code = f.toString().endsWith(".html") ? Files.readString(f, StandardCharsets.UTF_8)
+                    : SourceText.stripComments(Files.readString(f, StandardCharsets.UTF_8));
+            if (code.contains("data-zq-ver") || code.contains("'zq.ver'") || code.contains("'zq.mode'")) stale.add(STATIC.relativize(f).toString());
+        }
+        assertEquals(List.of(), stale, "这些文件还在用五套配色那一套（data-zq-ver / zq.ver / zq.mode）");
+
+        String css = css();
+        Map<String, String> root = block(css, ROOT), dark = block(css, DARK), mono = block(css, MONO), darkMono = block(css, DARK_MONO);
+        Set<String> modeTokens = root.keySet().stream().filter(k -> !MODE_FREE.matcher(k).find()).collect(Collectors.toCollection(TreeSet::new));
+        assertTrue(modeTokens.size() >= 40, "浅色只扫到 " + modeTokens.size() + " 个颜色令牌");
+        assertEquals(modeTokens, new TreeSet<>(dark.keySet()), "深色和浅色定义的颜色令牌不是同一批 —— 少定义的那个在深色里会是浅色的值");
+        assertEquals(new TreeSet<>(mono.keySet()), new TreeSet<>(darkMono.keySet()), "黑白强调色的浅 / 深两块定义的令牌不一样");
+        assertTrue(mono.keySet().containsAll(List.of("--zq-primary", "--zq-primary-dark", "--zq-on-primary", "--zq-tint", "--zq-tint-strong", "--zq-accent", "--zq-focus")),
+                "黑白强调色少了几个强调色令牌：" + mono.keySet());
+    }
+
+    @Test
+    @DisplayName("对比度（按样式表里的值算）：浅 / 深 × 金 / 黑白，各级文字在各种底上 ≥ 4.5 : 1，强调色作文字、按钮上的字也是")
+    void 对比度() throws IOException {
+        String css = css();
+        Map<String, String> root = block(css, ROOT), dark = block(css, DARK), mono = block(css, MONO), darkMono = block(css, DARK_MONO);
+        Map<String, Map<String, String>> themes = new LinkedHashMap<>();
+        themes.put("浅色·金", merge(root));
+        themes.put("浅色·黑白", merge(root, mono));
+        themes.put("深色·金", merge(root, dark));
+        themes.put("深色·黑白", merge(root, dark, mono, darkMono));
+        List<String[]> pairs = new ArrayList<>();
+        for (String fg : List.of("--zq-text", "--zq-text2", "--zq-text3"))
+            for (String bg : List.of("--zq-bg", "--zq-card", "--zq-card-soft")) pairs.add(new String[]{fg, bg});
+        pairs.add(new String[]{"--zq-sb-text", "--zq-sb-bg"});
+        pairs.add(new String[]{"--zq-sb-active-text", "--zq-sb-bg"});
+        pairs.add(new String[]{"--zq-on-primary", "--zq-primary"});
+        pairs.add(new String[]{"--zq-primary", "--zq-card"});
+        pairs.add(new String[]{"--zq-primary", "--zq-bg"});
+        for (String c : List.of("--zq-ok", "--zq-warn", "--zq-bad", "--zq-q1", "--zq-q2", "--zq-q3", "--zq-q4")) pairs.add(new String[]{c, "--zq-card"});
+        List<String> low = new ArrayList<>();
+        int checked = 0;
+        for (Map.Entry<String, Map<String, String>> t : themes.entrySet()) {
+            for (String[] p : pairs) {
+                double ratio = contrast(hex(t.getValue(), p[0]), hex(t.getValue(), p[1]));
+                checked++;
+                if (ratio < 4.5) low.add(String.format("%s：%s 在 %s 上 %.2f : 1", t.getKey(), p[0], p[1], ratio));
+            }
+        }
+        assertTrue(checked >= 80, "只算了 " + checked + " 对");
+        assertEquals(List.of(), low, "对比度不够（WCAG AA 要 4.5 : 1）");
+    }
+
+    @Test
+    @DisplayName("组件类的字重只有 400 / 500 / 600（原来有 650、700、800）")
+    void 字重() throws IOException {
+        String css = css();
+        Set<String> weights = new TreeSet<>();
+        Matcher m = Pattern.compile("font-weight\\s*:\\s*(\\d+)|font\\s*:\\s*(\\d{3})\\b").matcher(css);
+        while (m.find()) weights.add(m.group(1) != null ? m.group(1) : m.group(2));
+        Matcher v = Pattern.compile("--zq-fw-[\\w-]+\\s*:\\s*(\\d+)").matcher(css);
+        while (v.find()) weights.add(v.group(1));
+        assertTrue(weights.containsAll(Set.of("500", "600")), "字重扫空了？" + weights);
+        weights.removeAll(Set.of("400", "500", "600"));
+        assertEquals(Set.of(), weights, "样式表里又出现了字阶以外的字重");
+    }
+
+    @SafeVarargs
+    private static Map<String, String> merge(Map<String, String>... layers) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map<String, String> l : layers) out.putAll(l);
+        return out;
+    }
+
+    private static int[] hex(Map<String, String> theme, String token) {
+        String v = theme.get(token);
+        assertTrue(v != null, "没有定义 " + token);
+        Matcher m = Pattern.compile("^#([0-9A-Fa-f]{6})$").matcher(v);
+        assertTrue(m.find(), token + " 不是 #RRGGBB（" + v + "）—— 算不了对比度");
+        int rgb = Integer.parseInt(m.group(1), 16);
+        return new int[]{(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255};
+    }
+
+    private static double luminance(int[] c) {
+        double[] l = new double[3];
+        for (int i = 0; i < 3; i++) {
+            double s = c[i] / 255.0;
+            l[i] = s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2];
+    }
+
+    static double contrast(int[] a, int[] b) {
+        double la = luminance(a), lb = luminance(b);
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+}
