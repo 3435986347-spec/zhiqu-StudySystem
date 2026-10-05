@@ -77,3 +77,44 @@
 服务器 3（死锁重试）+ 幂等 2 + 定时开关 7 + 校验顺序 3 处，网页 7（写请求去重）+ 2（绕过扫描）+ 4（表单清空）+ 1（日期写死）+ 6（只认最后一次）
 + 7（兜底说出来）+ 5（例行计划分段）处，全红。两处一开始是弱判据：「表单在提交之前清空」的扰动写错了（加了一处、没删原来那处，绿是对的，
 重写成「挪到提交之前」后红）；「只有一处 @EnableScheduling」第一版只认短名，全限定名写法漏过去了 —— 改成正则后两种写法都红。
+
+## 收口时记在 CLAUDE.md 里的要点
+
+> 第三十八轮（`CLAUDE.md` 瘦身）从 `CLAUDE.md` 原样挪来，一字未改。
+
+### 第十四轮（2026-09-28）：暴力测试 —— 网页上没耐心的人（真浏览器）
+
+计划与结果在 `docs/rounds/round-14.md`。先在真浏览器里双击 / 连点，再修。
+
+- **`@DeadlockRetry` 只在最外层的事务边界上重试**（`DeadlockRetryAspect`：已经在事务里就原样往外抛）。它标在 15 个服务方法上，
+  互相调用（新建例行计划 → 成就检查，两个都带）。两个请求同时解锁同一个成就就死锁，MySQL 回滚的是**整个**事务，
+  里层的重试却在那个已经死掉的事务里把成就检查再跑一遍 —— 外层早被标 rollback-only，提交时 `UnexpectedRollbackException`，
+  用户看到「服务器出错了」。真浏览器里双击「创建例行计划」撞出来的；`ConcurrencyStormIntegrationTest.同时新建` 钉着。
+- **同一个写请求没回来前不重发**（`zhiqu-api.js` 的 `request()`：方法 + 地址 + 内容 + 请求头都一样就共用那一个 Promise）。
+  双击「创建」、连按回车原来各建一份 —— 服务器没法替它去重，两次都是合法的新建。回来之后再点是新的一次；GET、上传不走这里。
+  直接调 `fetch` 的写操作会绕开它，`RequestResilienceTest.写操作不绕过request` 扫着（只许聊天流，它有自己的发送中保护）。
+  **页面上常驻的新建表单建好要清空**（例行计划的标题 / 说明、从任务生成的勾选）：回来之后多点的那一下否则再建一份同名的
+  （弹窗一建就关，点不到）。`InlineFormResetTest`。
+- **只认最后一次的响应**（`latestOnly(key)`）：来回切「日 / 周 / 月」、改筛选、写完之后的重载，响应可能乱序回来。
+  趋势图、任务列表、从任务生成的来源列表、参考计划列表四处用它；`latest-check.js` 拿趋势图真跑。Notebook 切换、Wiki 切页原来就有这道。
+- **幂等那一层不改写异常**（`IdempotencyService.execute`）：原来 `catch (Exception)` 一律包成 `BusinessException(e.getMessage())` ——
+  带 `Idempotency-Key` 的接口（快速添加任务、套用参考计划、AI 批量建任务）上，日期写错回 Java 原文，真的服务器 bug 把 SQL / 类名
+  原样回给用户、**一条运行问题都不记**。第十一轮的全接口暴力测试不带这个头，而且这类 bug 正好把它找的那条运行问题吞了，看不见。
+  结果存不进缓存时照样返回（业务已经做完，这时报错客户端会再发一次）。
+- **没接住的失败要说出来**（`unhandledrejection` → `reportUnhandled`）：onclick 里 `await api.post` 却没有 catch 的地方
+  （套用、点赞、打卡、删除……）失败时页面上一个字没有。请求层的错误都带 `userFacing`，原样说；代码里的错误只说「没有完成」；
+  用户自己取消（AbortError）和正在跳登录时不吭声。显式处理照旧优先。
+- 连点暴力测试（每页 1.5 秒随机点 60 多下）顺带查出：例行计划的「开始 / 结束日期」HTML 里写死 2026-07-06 → 08-30（设计稿日期，
+  过了那天默认值建出来的就是已经结束的计划；现在脚本填 today()，`FrontendTokenAndDateTest.日期输入框不写死日期`）；
+  列表把已结束 / 没开始的也当「进行中」、都给「标记完成」（点了只会报错），「5 个进行中」是写死的（`routinePhase`）；
+  校验消息的先后每次不一样（校验器内部是 HashSet）→ 按字段在请求类里写的先后排。
+- **定时任务的开关是真的开关**（`app.scheduling.enabled`，`SchedulingConfig`，默认开）。27 个集成测试写着
+  `spring.task.scheduling.enabled=false` —— **Spring Boot 没有这个属性**，写了等于没写：RAG worker 每秒在每个测试上下文里领作业；
+  测试类结束时它的 MySQL 容器停了、上下文还缓存着，worker 卡在连不上的库上，关 JVM 时 Spring 等它 30 秒，surefire 强杀 ——
+  第九轮以来每次全量都白等 30 秒，外加结尾那串 `EOFException: Can not read response from server`。现在测试的
+  `application.properties` 一处关掉；`SchedulingSwitchTest` 钉「只有一处 @EnableScheduling（全限定名写法也算 —— 第一版只认短名，
+  扰动时漏过去了）」「没人再写那个假属性」。**写一个配置属性之前先确认它存在**：Spring 不认识的键不报错。
+  关掉定时任务之后全量**还是**被强杀 —— 第二个原因（surefire 强杀前自己写的线程转储在 `target/surefire-reports/*.dump`）：
+  `HikariPool.shutdown` 在等「补连接」的线程。为了保住 `minimum-idle`，每个缓存着的上下文的连接池都在往已经停掉的 MySQL 上补连接
+  （退避重试，最长 5 秒一次），关的时候各等一阵，二十几个加起来过了 30 秒。测试里 `spring.datasource.hikari.minimum-idle=0`：
+  没人等连接就不补。**一个修复不等于那个症状没了**：修完第一个原因要重跑全量看那一行还在不在。

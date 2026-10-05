@@ -35,7 +35,7 @@ import java.util.Map;
  *
  * <p><b>开了工就必须收工</b>：每个 {@code startTask} 都要有对应的 complete / skip / error。
  * 漏掉的后果不是报错，是用户看着一个永远停在「进行中」的方块 —— 与装配窗口那次同一个物种
- * （见 CLAUDE.md「宁可启动就炸」那一段）。{@code settleUnrunTasks} 就是兜底：
+ * （见 docs/notes/testing.md「宁可启动就炸」那一段）。{@code settleUnrunTasks} 就是兜底：
  * 一轮结束时把还停在 PENDING 的节点统一收成 SKIPPED。
  */
 public final class AgentTraceRecorder {

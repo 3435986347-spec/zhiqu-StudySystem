@@ -57,3 +57,38 @@
 服务器 9 处（打卡快照读 ×2、点赞不加锁 ×2、测试连真 Redis、不认客户端断开 / 认少了一种 / 所有 IOException 都当断开 ×4），
 命令行 14 处，全红。其中一处一开始是弱判据：拿掉 `unqueue` 自己的重画，判据照样绿 —— 调用方紧接着打「已中断」那一行顺带重画了；
 补了一条直接调 `unqueue` 的判据后红。
+
+## 收口时记在 CLAUDE.md 里的要点
+
+> 第三十八轮（`CLAUDE.md` 瘦身）从 `CLAUDE.md` 原样挪来，一字未改。
+
+### 第十三轮（2026-09-28）：暴力测试 —— 连点、刷新、Ctrl+C
+
+「不停刷新、没耐心的极端情况」那一半。计划与结果在 `docs/rounds/round-13.md`。
+
+- **并发暴力测试**（`fuzz/ConcurrencyStormIntegrationTest`，真服务器 + 真库 + 真 HTTP，`CyclicBarrier` 让 20 个请求同时出发；
+  `X-Forwarded-For` 配 `app.proxy.trust-forwarded-headers=true` 让每个线程像不同的 IP，否则限流先把它们拦了）：
+  同名注册、同一天打卡、同时完成 / 删除任务、点赞、同一幂等键套用、同一草稿确认、同一版本保存 Wiki，各 20 次。查出两个真的：
+  - **打卡撞键后的补读必须是加锁读**（`FOR UPDATE`）。MySQL 默认可重复读，普通 SELECT 读的是事务开头的快照，另一个请求刚插进来的那一行
+    看不见 → `existing == null` → 把撞键原样抛出去，连点打卡十几次「服务器出错」。
+  - **点赞死锁**：普通读计划 → 插 / 删点赞 → 刷计数，并发时拿锁顺序不一样。现在第一条读就是 `FOR UPDATE` 锁计划那一行 ——
+    必须是第一条：它不建快照，后面读点赞记录看到的是前一个人提交之后的样子。没有加「死锁就重试」：那会把顺序问题藏起来。
+- **集成测试不再连开发机的 Redis**（`src/test/resources/application.properties` 指到 1 号端口，锁 / 幂等 / 限流走第七轮的进程内替身）。
+  原来连的是 `localhost:6379`，这台机器上正好开着：每次测试库是新建的、id 从 1 开始，同一个幂等键第二次跑拿到上一次缓存的「成功」，
+  一条任务都不建 —— 「同一幂等键套用 20 次」时好时坏，查下来是这个；测试还往用户自己的桌面应用用的 Redis 里写东西。
+  并发测试里有一条断言钉着「连的不是 6379」。要测 Redis 本身的用自己的 Testcontainers Redis。
+- **AI 回答时狂刷新**（`fuzz/StreamImpatienceIntegrationTest`，假的慢模型）：十个回答同时进行、每个读到第一个字就断开 → 全部照样写完、
+  没有停在 STREAMING 的；刚发出就刷新；同一对话不等回答连发 5 条 → 成对、不死锁。查出的是噪音：**每刷新一次记一条运行问题**
+  （`IOException: Broken pipe`）。`GlobalExceptionHandler.clientGone` 顺着 cause 链认「对面已经断开」（Spring 的
+  `AsyncRequestNotUsableException`、Tomcat 的 `ClientAbortException`、断管 / 连接被重置），不记、不回包；别的 IOException（磁盘满）照记。
+- **命令行 Ctrl+C / Ctrl+D**（真 pty 实测出来，`test/interrupt.test.js` 钉住）：
+  - **确认提问时按 Ctrl+C，问题原来还挂着**：屏幕上照样是「写入 b.js？」、图案照样在转，用户接着打的下一句话被当成回答吃掉。
+    现在 `ui.cancelQuestion()` 把它作废（按不同意算，留一行「（取消）」，答了一半的字清掉）。
+  - **确认提问时按 Ctrl+D，这一轮收尾后进程挂住不退**：readline 的 `prompt()` 会顺手 `resume()` 输入流，关了之后收尾时画活动区
+    又调了一次。现在画输入行只走 `promptAgain`，关了就不调。
+  - **排了消息再按 Ctrl+C，停下之后排队的消息照样被自动发出去**，又干起来了。现在放回输入框（`ui.unqueue()`；多条 / 多行放一个占位），
+    回车才发。
+  - 连按 Ctrl+C 想让它停：原来第三下就把程序退了。打断之后 `STOP_GRACE_MS`（800ms）内的 Ctrl+C 算同一次「停下」；已经在停了不重复打「已中断」。
+  - 真 pty 的暴力脚本（思考中 / 确认时 / 命令运行时 / 模型卡死时按 Ctrl+C、Ctrl+D、10 万字一行、控制字符、坏 UTF-8、括号粘贴 10 万字）
+    判：退出码、没有堆栈、会话记录每行是合法 JSON、退出时关掉括号粘贴、命令的子进程不留。**驱动自己也要边写边读**：一次往 pty 写 30 万字节而
+    不读，对面回显把输出缓冲写满，两边互等 —— 第一版驱动就这样挂住，看起来像 zhiqu 卡死。

@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <p>规矩只有三条，而错的那一面都不报错、只是悄悄变慢或者更糟：有归档就用；没有就这一次顺带生成到 {@code .part}；
  * <b>只有正常结束才改名成正式归档</b>（被 SIGKILL 的可能只写了一半）。这里把 CdsCache.swift 和一个检查程序一起编译、
  * 在临时目录里真走一遍 —— 不开窗口、不起 JVM。JVM 那一侧（SIGTERM 时确实写出归档、下次确实变快）是实测过的，
- * 见 CLAUDE.md 第十轮。
+ * 见 docs/rounds/round-10.md（原来记在 CLAUDE.md 的第十轮一节）。
  *
  * <p>只在 macOS 上有意义（外壳只在 macOS 上编译）；macOS 上没有 swiftc 就明确失败并说原因，
  * 要跳过得写明 {@code -Dzhiqu.skipSwiftTests=true} —— 和 node 那批的约定一样。

@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 每个节点开工时是 PENDING/RUNNING，要靠 complete / skip / error 把它收掉。
  * 有一个没收，用户就会看着一个<b>永远转下去</b>的方块 —— 而后端其实早就结束了，
  * 日志干干净净，什么错都没有。这和装配窗口那次是同一个物种
- * （CLAUDE.md「宁可启动就炸」那一段）。
+ * （docs/notes/testing.md「宁可启动就炸」那一段）。
  *
  * <p>兜底的是 {@code settleUnrunTasks}：把还停在 PENDING 的统统收成 SKIPPED。
  * 它必须<b>两条路径上都有</b> —— 成功那条（跑完 COMMIT 相位）和失败那条（catch 里）。

@@ -1,0 +1,114 @@
+# 前端
+
+> 原来是 `CLAUDE.md` 里的「Frontend」，第三十八轮（方案第 5 步，`CLAUDE.md` 瘦身）原样挪到这里，一字未改。
+> `CLAUDE.md` 现在只留规矩；这里是来龙去脉和细节。文中「上面」「下面」指的是原来 `CLAUDE.md` 里的位置。
+
+### Frontend (`zhiqu-backend/src/main/resources/static/`)
+
+- **`assets/zhiqu-api.js` is the shared layer** — all 14 HTML pages load it. Since step 4 of the product plan
+  (rounds 30–37) it owns only what every page needs: the `api` wrapper, auth guard and shared login, the business
+  clock, drafts, page reminders, the pomodoro outbox, the task form, Markdown rendering, the settings-dialog router,
+  and the shared modal helper `openModal({title, bodyHtml, width, onMount}) → {close, body, mask}`. Each page's
+  code is an ES module in `assets/pages/` (AI assistant, Wiki, dashboard, tasks, routines, statistics, shared plans,
+  admin), loaded by `route()` through `PAGE_MODULES` — see the page-modules bullet below.
+  `assets/zhiqu-ui.js` / `assets/zhiqu-ui.css` provide the shell chrome and design tokens
+  (`var(--zq-*)`).
+- **The old `js/` and `css/` folders were deleted on 2026-10-04** (33 files, 22,346 lines, loaded by zero pages but
+  shipped in the JAR). Twice a feature existed only there and so worked for no one: the reminder-channel credential UI
+  (fixed 2026-09-21) and the Wiki pending-change review (fixed 2026-10-03). `static/vendor/` (KaTeX, DOMPurify, Vditor)
+  is live and stays.
+- **Design tokens have exactly one definition, in `assets/zhiqu-ui.css`'s base `:root`.** A
+  `var(--x)` whose `--x` is undefined does not warn — CSS drops the whole declaration and falls
+  back to the initial value, so backgrounds and borders silently become transparent. Two of these
+  shipped: `--zq-fontM` was never defined at all (the Wiki source editor fell back to bare
+  `monospace`, which picks an arbitrary CJK face), and the quadrant colors were defined as
+  `--zq-q1bg` / `--zq-q1bd` while **every** consumer wrote `--zq-q1-bg` / `--zq-q1-border` — so
+  the four-quadrant tint pills, this product's signature visual, rendered transparent
+  (measured `rgba(0,0,0,0)`). `--zq-fontM` deliberately puts a mono family first and the body's
+  CJK serif after it: font fallback is **per character**, and JetBrains Mono / Consolas have no
+  CJK glyphs, so Latin stays monospaced while Chinese matches the rest of the page.
+  `FrontendTokenAndDateTest` fails the build on any dangling `var(--zq-*)`.
+- **Settings and achievements are dialogs, and the first ES module** (round 30, `docs/rounds/round-30.md`). The avatar at the
+  bottom of the sidebar opens a menu (`openUserMenu` in `zhiqu-ui.js`); 设置 / 成就 are links to `#settings/<tab>` and
+  `#achievements`, which the shell opens on any page (`watchDialogs` / `syncDialog`) — refresh keeps the tab, Back closes a
+  dialog opened from the menu, closing a directly-loaded one strips the hash, switching tabs uses `replaceState`. The code is
+  `assets/settings.js`, `import()`-ed on first open with the shell's own `?v=` (taken from `document.currentScript`); it uses
+  only what `zqShared` gives it and looks up elements inside the dialog only (`SettingsDialogTest` checks both). Dialog grids
+  say how they lay out on a phone with `zq-phone-1col` / `zq-phone-2col` — the `[style*=…]` phone rules only reach `.zq-main`.
+  `profile.html` / `achievement.html` are redirect stubs kept for old bookmarks and for `profile.html#harness=…` links printed
+  by older CLIs; the server now hands out `/ai-assistant.html#settings/cli?harness=…`, and the login redirect carries that hash.
+- **Page modules** (round 31, `docs/rounds/round-31.md`; step 4 continues page by page). A moved page lives in
+  `assets/pages/<name>.js`, exports `boots[<page>.html](zqShared)`, and is listed in the shell's `PAGE_MODULES`; `route()` imports
+  it through `loadModule` (same `?v=`, loaded once, a user-facing error when it can't load, failures not cached) **after** the
+  admin gate, so non-admins never download `pages/admin.js`. Modules `bind()` what they need from `zqShared` into same-named
+  locals so moved code stays byte-identical. `PageModulesTest` imports every entry, checks every app page is booted by
+  exactly one side, and flags a shell helper a module calls without binding it (that is a ReferenceError only when the
+  page opens). Page modules render into `.zq-main`, so `MobileLayoutTest` scans `assets/pages/` too.
+  **Before moving a block, grep `src/test` for its distinctive lines, not just its function names — and check every test that runs a `Pattern` over the shell, since a regex's pieces don't show up in a literal grep (round 36)** — tests that read
+  `zhiqu-api.js` for a call or a phrase go red (or, worse, vacuously green) once it moves. Rounds 30 and 31 each found
+  some only in the full run (`latest-check.js`, `ReminderChannelWiringTest`, `RoutinePhaseTest`); scan `assets/**/*.js`.
+  Test helpers for this: `SourceText.frontendScripts()` (shell + every module) and `SourceText.functionBody()` (works for the
+  shell's two-space indent and modules' top level). A page that must refetch when the business day rolls over exports
+  `dayReload[page]` (rounds 32, 35 — the shell's old `DAY_RELOAD` table is gone); the shell wires it to `watchBusinessDay`. Run a perturbation batch only after the clean run is
+  green — round 32's first batch looked all-red partly because a new assertion was red on clean code.
+- **"Today" in the frontend is `today()` — the business date (business time zone, server's clock) —
+  never `toISOString()`, and since round 21 not `localDate()` either.** `toISOString()` is UTC:
+  between 00:00 and 08:00 CST it yields *yesterday* (the dashboard header showed yesterday, check-ins
+  broke the streak, pomodoro time landed on the previous day). `localDate()` is the *browser's*
+  calendar day: a browser at UTC+14 or west of CST disagrees with the server by a day, and that date
+  was being sent to the server as data. `localDate` remains only for writing a given Date in the
+  viewer's own calendar. Both are exposed on `window.zqApi` so page inline scripts share the one
+  implementation; see 第二十一轮 above.
+- **The task form** (`openTaskForm` / `taskFormPayload`, 2026-10-01): until then 「新建任务」 asked for a title only and
+  「编辑」 changed only the title — deadline, reminder time, quadrant and priority could not be set from the task page at all.
+  Times are `datetime-local` values sent as-is (business-zone wall clock, never through `Date`). The server does not store
+  the 「截止前提醒」 setting, only the reminders it scheduled, so the edit form shows the days of the still-PENDING `AUTO`
+  reminders; `reminderOffsets: null` means "server default", `[]` means "none". `task-form-check.js` runs the published
+  `taskFormPayload`.
+- **Positioning lives in a few single sources** (round 26). The home page after login is `HOME_PAGE` in
+  `zhiqu-api.js` (the AI assistant) and `manifest.json`'s `start_url` must match it; the sidebar is `NAV` in `zhiqu-ui.js`
+  (AI first, work pages only — settings, achievements, 专注统计, theme, admin pages and logout live in the avatar menu, round 30). Shared-plan categories are one list in three
+  places — migration `V40`, `SharedPlanServiceImpl.CATEGORY_NAMES`, `PLAN_CATEGORIES` in the shell — and
+  `PlanCategoryListTest` checks they agree. `PositioningCopyTest` keeps student-only phrasing (考研, 学习统计, 早八…) out of
+  pages, the shell, the manifest **and every text block / string literal in `src/main/java`** — the AI's system prompts
+  are where the old positioning hid longest. Matching the user's own words is the exception (`AgentPlanDecision`, and a
+  per-file allow-list).
+- **Several backends share one database** (round 28; the user's deployment: the desktop app and the web server both connect to
+  the same remote MySQL). Every instance must use the same `app.crypto.master-key`: `CryptoKeyCanary` (a bean, so it runs
+  after migrations and before Tomcat serves) refuses to start when its key cannot open `crypto_canary` — or, with no canary
+  yet, when it cannot open a single sampled ciphertext (it then also refuses to write the canary, so a misconfigured instance
+  that starts first cannot lock out the correct ones). `crypto_canary` is in `CryptoKeyRotation.TABLES`. Once-a-day jobs claim
+  their day in `scheduled_job_claim` (`ScheduledJobClaims`) — the in-process lock fallback is per-instance. The desktop
+  README's `~/.zhiqu/application.yml` template now carries `app.crypto.master-key`.
+- **The AI reads the user's open tasks** (round 27, user's decision 2026-10-04: "let it read, with a switch"). A `TASK_READER`
+  node (`PRE_STREAM` 12) exists only when the message is about scheduling (`AgentPlanDecision.taskReadIntent`), the mode
+  is not chat-only **and** `sys_user.ai_read_tasks` is not 0 (V42; NULL means on — `SysUser.aiReadsTasks()` is the only
+  place that decides). The tasks go to the model as a user-role *data* block built by `AssistantTaskContext` (titles
+  flattened to one line, so a title cannot forge the block's end marker). Switch off + scheduling question → no node, but
+  the answer is told the user turned it off (`AssistantTaskContext.DECLINED`) so it does not invent "your tasks today".
+  "Not completed" is filtered in the query only (`AssistantTaskReader`) — filtering twice made either filter deletable
+  without a red.
+- **Page reminders and shared login** (round 25, `docs/rounds/round-25.md`). Every signed-in page watches
+  `GET /api/reminder/upcoming` (next 24h + last 15 min, regardless of whether a third-party channel delivered it — people with
+  no channel configured are exactly who needs it) and, when one is due, chimes + notifies + toasts once: "already reminded" is
+  written to localStorage **before** notifying so other tabs skip it. Notification permission is only requested inside a
+  click (pomodoro start, saving a task with a reminder/deadline) — browsers refuse otherwise. Tabs share the login over
+  `BroadcastChannel('zq-auth')`: a tab without a token borrows one before `initAuth()`; logout and password change are
+  broadcast but only act on tabs holding **the same token** (another tab may be signed in as someone else).
+- **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
+  study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
+  «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't
+  repaint stayed on screen — 「已审核模板 · 4 个」, 「第 3 轮」 and a 60% progress bar all shipped that way.
+  `InitErrorReplacesDemoContentTest` now pins: only the one-line theme script and the dashboard's pomodoro script may be
+  inline; any digit in a page's static `.zq-main` text must be on its short list of real copy; and a failed load still
+  replaces all of `.zq-main`. The real controls the demo scripts used to draw (statistics 日/周/月, achievement filters,
+  routine weekdays, the shared-plan modal's close buttons) now live in the static HTML and are bound by the shell — the
+  same test pins that, because deleting them breaks the page silently. `index.html` (landing page mockups) is excluded
+  until the positioning step rewrites it.
+- **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
+  keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
+  asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
+  old bundle. Current token: `20261005-ai`.
+  `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
+  a **browser** HTTP-cache buster (the service worker is network-first and matches with
+  `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
