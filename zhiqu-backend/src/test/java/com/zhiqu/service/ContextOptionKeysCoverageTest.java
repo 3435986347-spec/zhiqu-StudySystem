@@ -28,9 +28,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ContextOptionKeysCoverageTest {
 
-    /** 14 个页面加载的那个 shell。{@code js/*.js} 是零页面加载的 legacy，<b>不算</b>。 */
-    private static final Path LIVE_SHELL =
-            Path.of("src/main/resources/static/assets/zhiqu-api.js");
+    // 「活壳」= 网页端全部自己写的脚本（SourceText.frontendScripts：壳 + 设置弹窗 + assets/pages/ 的页面模块）。
+    // 原来只读 zhiqu-api.js —— 第三十七轮 AI 助手（发这些键的地方）挪进了 pages/ai-assistant.js，只读壳的话
+    // 「有人在发」那条会红，而「有意未接线的不许有人发」那条会悄悄变绿。
 
     /**
      * 每个客户端键，活壳里至少有一处在发 —— <b>有意未接线的除外，且豁免要写明理由</b>。
@@ -41,7 +41,7 @@ class ContextOptionKeysCoverageTest {
      */
     @Test
     void 每个客户端键在活壳里都有人发() throws IOException {
-        String shell = Files.readString(LIVE_SHELL, StandardCharsets.UTF_8);
+        String shell = com.zhiqu.SourceText.frontendScripts();
 
         List<String> missing = new ArrayList<>();
         for (String key : ContextOptionKeys.CLIENT_SUPPLIED) {
@@ -67,7 +67,7 @@ class ContextOptionKeysCoverageTest {
      */
     @Test
     void 豁免名单里的键确实没有被前端发送() throws IOException {
-        String shell = Files.readString(LIVE_SHELL, StandardCharsets.UTF_8);
+        String shell = com.zhiqu.SourceText.frontendScripts();
 
         for (String key : ContextOptionKeys.UNWIRED_BY_DECISION) {
             assertTrue(ContextOptionKeys.CLIENT_SUPPLIED.contains(key),

@@ -100,8 +100,8 @@ class WorkspaceControllerGuardTest {
     void 列目录的响应形状前后端要一致() throws IOException {
         String controller = SourceText.stripComments(
                 Files.readString(CONTROLLER, StandardCharsets.UTF_8));
-        String api = SourceText.stripComments(Files.readString(
-                Path.of("src/main/resources/static/assets/zhiqu-api.js"), StandardCharsets.UTF_8));
+        // 工作区面板第三十七轮随 AI 助手挪进了模块（pages/ai-assistant.js）
+        String api = SourceText.pageModule("ai-assistant.js");
 
         // 后端：files 方法在顶层放的就是这两个键
         int at = controller.indexOf("public Result<Map<String, Object>> files(");

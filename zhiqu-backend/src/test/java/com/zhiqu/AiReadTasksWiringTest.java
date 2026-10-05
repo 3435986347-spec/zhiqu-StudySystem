@@ -59,12 +59,13 @@ class AiReadTasksWiringTest {
         String question = URLDecoder.decode(link.group(1), StandardCharsets.UTF_8);
         assertTrue(AgentPlanDecision.taskReadIntent(question),
                 "按钮带过去的「" + question + "」过不了读任务的门 —— 按钮说让 AI 排今天，AI 却看不到任务");
-        String api = SourceText.stripComments(read("assets/zhiqu-api.js"));
-        int boot = api.indexOf("async function bootAiAssistant()");
-        int loaded = api.indexOf("await loadAiMessages();", boot);
-        int ask = api.indexOf("var ask = new URLSearchParams(location.search).get('ask');", boot);
-        int end = api.indexOf("\n  }\n", boot);
-        assertTrue(boot >= 0 && loaded > boot && ask > loaded && ask < end,
+        // 第三十七轮起 AI 助手是模块（pages/ai-assistant.js）
+        String boot = SourceText.functionBody(SourceText.pageModule("ai-assistant.js"), "async function bootAiAssistant()");
+        // 认 bootAiAssistant 自己那一行（两格缩进、单独一行）—— 函数里还有一处 await loadAiMessages()（新建 Notebook 的按钮里），
+        // 只找字面的话删掉启动时那一行它照样找得到、照样绿（第三十七轮扰动 W6 照出来的，这个弱点搬家之前就在）
+        int loaded = boot.indexOf("\n  await loadAiMessages();\n");
+        int ask = boot.indexOf("var ask = new URLSearchParams(location.search).get('ask');");
+        assertTrue(loaded > 0 && ask > loaded,
                 "?ask= 要在 bootAiAssistant 里、载入 Notebook 和消息之后再填 —— 先填会被这个 Notebook 存着的草稿盖掉");
     }
 }

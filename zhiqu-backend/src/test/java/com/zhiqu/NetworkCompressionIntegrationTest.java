@@ -19,7 +19,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -66,12 +69,30 @@ class NetworkCompressionIntegrationTest {
     @Test
     @DisplayName("页面脚本、页面、接口的 JSON 按 gzip 发，解开和原文一样、小了一大截")
     void 文字类回包是压过的() throws Exception {
-        byte[] original = Files.readAllBytes(Path.of("src/main/resources/static/assets/zhiqu-api.js"));
-        HttpResponse<byte[]> js = get("/assets/zhiqu-api.js?v=x");
-        assertEquals(200, js.statusCode());
-        assertEquals("gzip", js.headers().firstValue("Content-Encoding").orElse("（没压）"), "页面脚本没压");
-        assertArrayEquals(original, gunzip(js.body()), "解开之后和原文不一样");
-        assertTrue(js.body().length * 3 < original.length, "压完 " + js.body().length + " 字节，原文 " + original.length);
+        // 第三十七轮起页面脚本是壳 + assets/pages/ 下的模块（壳从 338KB 拆到 115KB，大头在模块里）—— 每一个都要压。
+        // 「小了一大截」按总数算：单个小文件、中文多的文件压得没那么狠（专注统计 2.1 倍、壳 2.8 倍），总数是 2.9 倍；
+        // 没压（stored）的 gzip 是 1 倍。
+        Path assets = Path.of("src/main/resources/static/assets");
+        List<Path> scripts = new ArrayList<>();
+        for (Path dir : List.of(assets, assets.resolve("pages"))) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(f -> f.getFileName().toString().endsWith(".js")).sorted().forEach(scripts::add);
+            }
+        }
+        assertTrue(scripts.size() >= 10, "页面脚本扫到 " + scripts.size() + " 个 —— 扫空了？");
+        long originalTotal = 0;
+        long sentTotal = 0;
+        for (Path script : scripts) {
+            String url = "/assets/" + assets.relativize(script).toString().replace('\\', '/') + "?v=x";
+            byte[] original = Files.readAllBytes(script);
+            HttpResponse<byte[]> js = get(url);
+            assertEquals(200, js.statusCode(), url);
+            assertEquals("gzip", js.headers().firstValue("Content-Encoding").orElse("（没压）"), url + " 没压");
+            assertArrayEquals(original, gunzip(js.body()), url + " 解开之后和原文不一样");
+            originalTotal += original.length;
+            sentTotal += js.body().length;
+        }
+        assertTrue(sentTotal * 2 < originalTotal, "页面脚本压完 " + sentTotal + " 字节，原文 " + originalTotal);
 
         HttpResponse<byte[]> html = get("/dashboard.html");
         assertEquals("gzip", html.headers().firstValue("Content-Encoding").orElse("（没压）"), "页面没压");

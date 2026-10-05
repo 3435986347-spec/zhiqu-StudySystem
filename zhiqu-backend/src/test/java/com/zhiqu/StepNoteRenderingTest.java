@@ -32,7 +32,7 @@ class StepNoteRenderingTest {
     @Test
     @DisplayName("agent.step.note 要分派到 addAgentStepNote，renderSteps 要画出 notes")
     void 事件与渲染接线() throws Exception {
-        String js = SourceText.stripComments(Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8));
+        String js = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
         assertTrue(js.contains("event === 'agent.step.note') { if (sameNb()) addAgentStepNote(data); }"),
                 "流式处理里没有把 agent.step.note 交给 addAgentStepNote —— 叙述到了前端就被丢掉");
         int at = js.indexOf("function renderSteps(");

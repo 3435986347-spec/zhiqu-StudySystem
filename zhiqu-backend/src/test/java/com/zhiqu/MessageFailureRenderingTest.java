@@ -31,7 +31,7 @@ class MessageFailureRenderingTest {
     @Test
     @DisplayName("流里来了 error：原因放进 errorMessage，不去改正文；done 带着的说明放进 notice")
     void 事件接线() throws Exception {
-        String js = SourceText.stripComments(Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8));
+        String js = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
         int at = js.indexOf("else if (event === 'error') {");
         assertTrue(at > 0, "找不到流里 error 事件的处理");
         String onError = js.substring(at, js.indexOf("});", at));

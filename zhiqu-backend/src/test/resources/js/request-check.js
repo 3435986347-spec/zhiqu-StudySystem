@@ -13,9 +13,20 @@ function slice(startMark, endMark) {
   return src.slice(a, b);
 }
 let reqSrc = slice('var REQUEST_TIMEOUT_MS = ', '  var api = {');
-let sseSrc = slice('function parseSseFrame(frame) {', '  async function streamAiChat(');
-const streamSrc = slice('  async function streamAiChat(', '  function upsertAgentStep(');
-const onlineSrc = slice('  function whenOnline(fn) {', '\n  }\n') + '\n  }\n';
+
+// 第三十七轮起 AI 助手的代码在 assets/pages/ai-assistant.js 里（顶格）：这一段从那里抠 —— 它要在同一个作用域里替换掉内部用到的东西，
+// import 进来的模块换不掉，所以照第三十六轮 wiki-tabs-check 的做法从源码里抠同一段
+const modSrc = fs.readFileSync(require('path').join(require('path').dirname(require('path').resolve(process.argv[2])), 'pages', 'ai-assistant.js'), 'utf8');
+function sliceMod(startMark, endMark) {
+  const a = modSrc.indexOf(startMark);
+  if (a < 0) throw new Error('模块里抠不到起点: ' + startMark);
+  const b = modSrc.indexOf(endMark, a);
+  if (b < 0) throw new Error('模块里抠不到终点: ' + endMark);
+  return modSrc.slice(a, b);
+}
+let sseSrc = sliceMod('function parseSseFrame(frame) {', '\nasync function streamAiChat(');
+const streamSrc = sliceMod('\nasync function streamAiChat(', '\nfunction upsertAgentStep(');
+const onlineSrc = sliceMod('function whenOnline(fn) {', '\n}\n') + '\n}\n';
 // 把等待调短 —— 替换必须真的落地，否则这份判据会在 30 秒超时上等很久，或者测的根本不是改过的常量
 for (const [from, to] of [['var REQUEST_TIMEOUT_MS = 30000;', 'var REQUEST_TIMEOUT_MS = 60;'], ['var RETRY_WAITS_MS = [700, 2000];', 'var RETRY_WAITS_MS = [5, 5];']]) {
   if (!reqSrc.includes(from)) throw new Error('常量对不上，判据没法调短等待：' + from);

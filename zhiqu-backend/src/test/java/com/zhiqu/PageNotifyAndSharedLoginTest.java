@@ -52,7 +52,7 @@ class PageNotifyAndSharedLoginTest {
     void 页面里的提醒的接线() throws Exception {
         String code = api();
         int watch = code.indexOf("        watchReminders();");
-        int boots = code.indexOf("if (boots[page]) await boots[page]();");
+        int boots = code.indexOf("await pageModule.boots[page](zqShared);");
         assertTrue(watch >= 0 && boots > watch, "登录后的页面要在启动时开始看着提醒");
         assertTrue(code.contains("api.get('/reminder/upcoming')"), "提醒清单要从 /reminder/upcoming 取");
         int form = code.indexOf("async function openTaskForm(id, onSaved)");

@@ -50,9 +50,9 @@ class MainFlowWalkthroughTest {
                 "审阅弹窗没有接上合入 / 忽略");
         assertTrue(show.contains("$all('[data-patch-apply]', body)") && show.contains("$all('[data-patch-reject]', body)"),
                 "合入 / 忽略按钮没有接上");
-        assertTrue(fn(code, "function patchSetCard(ps)").contains("renderMarkdown(String(it.content || ''))"),
+        assertTrue(SourceText.functionBody(code, "function patchSetCard(ps)").contains("renderMarkdown(String(it.content || ''))"),
                 "合入之前要看得到写进去的是什么");
-        assertFalse(code.contains("后续版本"), "代码里还有「后续版本提供」这类占位话");
+        assertFalse(SourceText.frontendScripts().contains("后续版本"), "代码里还有「后续版本提供」这类占位话");   // 全前端：占位话写在哪个模块里都不行
     }
 
     @Test
@@ -75,13 +75,13 @@ class MainFlowWalkthroughTest {
     @Test
     @DisplayName("AI 助手：没有模型时说出来并给入口，下拉框不写「默认模型」；有模型但对话是空的时给几句能真触发的示例")
     void AI助手的空状态() throws Exception {
-        String code = api();
-        String load = fn(code, "async function loadAiModelSelect()");
+        String code = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
+        String load = SourceText.functionBody(code, "async function loadAiModelSelect()");
         assertTrue(load.contains("state.aiNoModel = !(models || []).length;"), "没有判断「一个能用的模型都没有」");
         assertTrue(load.contains("(state.aiNoModel ? '还没有可用的模型' : '默认模型')"), "没有模型时下拉框还写「默认模型」");
-        String empty = fn(code, "function aiEmptyState()");
+        String empty = SourceText.functionBody(code, "function aiEmptyState()");
         assertTrue(empty.contains("if (state.aiNoModel)") && empty.contains("href=\"#settings/models\""), "没有模型时要给去配置的入口（「设置 → AI 模型」）");
-        assertTrue(fn(code, "function renderAiMessages(opts)").contains("host.innerHTML = moreRow + aiEmptyState();"),
+        assertTrue(SourceText.functionBody(code, "function renderAiMessages(opts)").contains("host.innerHTML = moreRow + aiEmptyState();"),
                 "对话区空着时没有画空状态");
         assertTrue(code.contains("'根据这些资料，帮我制定下周的工作计划'"), "示例要用真能出计划的说法（制定）");
     }
@@ -89,13 +89,13 @@ class MainFlowWalkthroughTest {
     @Test
     @DisplayName("没有 Notebook 也能上传：替用户建一个，不再只说「请先新建或选择 Notebook」")
     void 上传时自动建Notebook() throws Exception {
-        String code = api();
-        String upload = fn(code, "async function uploadAiFiles(files, attachToNextMessage)");
+        String code = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
+        String upload = SourceText.functionBody(code, "async function uploadAiFiles(files, attachToNextMessage)");
         assertTrue(upload.contains("notebookId = await ensureAiNotebook(list);"), "上传之前没有确保有 Notebook");
-        String ensure = fn(code, "async function ensureAiNotebook(files)");
+        String ensure = SourceText.functionBody(code, "async function ensureAiNotebook(files)");
         assertTrue(ensure.contains("api.post('/ai/notebooks'") && ensure.contains("draft.value = typed;"),
                 "要替用户建 Notebook，并把已经打的字带过去");
-        assertFalse(code.contains("请先新建或选择 Notebook"), "还有地方只叫用户先去新建 Notebook");
+        assertFalse(SourceText.frontendScripts().contains("请先新建或选择 Notebook"), "还有地方只叫用户先去新建 Notebook");
     }
 
     @Test

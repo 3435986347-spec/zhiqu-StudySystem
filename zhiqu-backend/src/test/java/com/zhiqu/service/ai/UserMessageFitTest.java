@@ -73,7 +73,7 @@ class UserMessageFitTest {
     @Test
     @DisplayName("页面：收到 message.notice 就弹出来（截了要让用户知道），并且多停一会儿")
     void 页面说出来() throws Exception {
-        String js = SourceText.stripComments(Files.readString(NodeRunner.API_JS));
+        String js = com.zhiqu.SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
         int at = js.indexOf("event === 'message.notice'");
         assertTrue(at > 0, "页面没处理 message.notice —— 后端说了，用户看不到");
         String handler = js.substring(at, js.indexOf('\n', at));

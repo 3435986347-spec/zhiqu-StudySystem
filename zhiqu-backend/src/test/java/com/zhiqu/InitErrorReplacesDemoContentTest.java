@@ -67,9 +67,10 @@ class InitErrorReplacesDemoContentTest {
     @Test
     void boot失败必须触发替换() throws IOException {
         String code = apiJs();
-        assertTrue(code.contains("if (boots[page]) await boots[page]();"),
+        // 第三十七轮起每一页都是模块：启动那一行是 await pageModule.boots[page](zqShared);（原来是壳里的 boots 表）
+        assertTrue(code.contains("await pageModule.boots[page](zqShared);"),
                 "页面 boot 的调度写法变了，本判据的锚点要跟着改");
-        int at = code.indexOf("if (boots[page]) await boots[page]();");
+        int at = code.indexOf("await pageModule.boots[page](zqShared);");
         String after = code.substring(at, Math.min(code.length(), at + 900));
         assertTrue(after.contains("renderError: true"),
                 "boot 必须在 renderError 模式下跑，否则失败时只弹个 toast，"

@@ -85,20 +85,11 @@ class PageModulesTest {
     }
 
     @Test
-    @DisplayName("每个应用页面都有人启动：要么在 route() 的 boots 表里，要么在 PAGE_MODULES 里，不能两边都没有（页面一片空白）也不能两边都有")
+    @DisplayName("每个应用页面都由 PAGE_MODULES 里的一个模块启动（第三十七轮起壳里不再有 boots 表）—— 漏了的那一页打开就是一片空白")
     void 每个页面都有人启动() throws IOException {
         String shell = shell();
-        Matcher bootsLine = Pattern.compile("var boots = \\{([^}]*)\\};").matcher(shell);
-        assertTrue(bootsLine.find(), "找不到 route() 里的 var boots = { … };");
-        Set<String> boots = new TreeSet<>();
-        Matcher b = Pattern.compile("'([a-z0-9-]+\\.html)':\\s*boot\\w+").matcher(bootsLine.group(1));
-        while (b.find()) boots.add(b.group(1));
+        assertFalse(shell.contains("var boots = {"), "壳里又有了一张 boots 表 —— 页面的代码都该在 assets/pages/ 的模块里（方案第 4 步）");
         Set<String> modules = pageModules().keySet();
-
-        Set<String> both = new TreeSet<>(boots);
-        both.retainAll(modules);
-        assertEquals(Set.of(), both, "这些页面两边都有：挪进模块之后 boots 表里那一项要删");
-
         List<String> orphan = new ArrayList<>();
         int pages = 0;
         try (Stream<Path> files = Files.list(STATIC)) {
@@ -107,7 +98,7 @@ class PageModulesTest {
                 // 落地页自己启动；个人中心 / 成就页是第三十轮留下的跳转页（route() 一开头就跳走）
                 if (Set.of("index.html", "profile.html", "achievement.html").contains(name)) continue;
                 pages++;
-                if (!boots.contains(name) && !modules.contains(name)) orphan.add(name);
+                if (!modules.contains(name)) orphan.add(name);
             }
         }
         assertTrue(pages >= 11, "只扫到 " + pages + " 个应用页面");
@@ -176,6 +167,27 @@ class PageModulesTest {
         }
         assertTrue(seen >= 20, "模块里一共只认出 " + seen + " 样从壳拿的东西 —— 扫空了？");
         assertEquals(List.of(), problems, "模块和壳之间的线断了：");
+    }
+
+    @Test
+    @DisplayName("模块被 import 时没有副作用：顶层只有声明（function / let / var / const / export）—— 定时器、监听、读 DOM 都在 boot 里开始")
+    void 模块顶层只有声明() throws IOException {
+        // 第三十七轮：AI 助手原来在壳顶层开了一个每秒一次的定时器（每一页都在跑）。挪进模块后它会在 import 时就跑 ——
+        // 测试在 node 里 import 模块（那里没有 document），而且模块「只在需要时才加载」的前提就是加载本身不做事。
+        // 扰动时发现它能悄悄混过去：定时器 1 秒后才第一次触发，node 判据在那之前就跑完退出了。所以这里按源码钉。
+        List<String> bad = new ArrayList<>();
+        int lines = 0;
+        for (Path f : modules()) {
+            String js = SourceText.stripComments(read(f));
+            for (String line : js.split("\n")) {
+                lines++;
+                if (line.matches("^(?!function |async function |let |var |const |export |import |\\}|\\)|\\]|\\s|$)\\S.*")) {
+                    bad.add(ASSETS.relativize(f) + "：" + line.substring(0, Math.min(100, line.length())));
+                }
+            }
+        }
+        assertTrue(lines >= 3000, "模块一共只扫到 " + lines + " 行 —— 扫空了？");
+        assertEquals(List.of(), bad, "模块顶层有会在 import 时就执行的语句（把它挪进 boot 里）");
     }
 
     @Test

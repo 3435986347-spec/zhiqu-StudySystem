@@ -32,7 +32,7 @@ class PomodoroOutboxTest {
         assertTrue(route.contains("catchUpPomodoros();") && route.contains("window.addEventListener('online', catchUpPomodoros);")
                 && route.contains("setInterval(catchUpPomodoros, 60000);"), "打开页面 / 网回来 / 每分钟补一趟，少了哪个：\n" + route);
         // 页面启动失败（网断着打开的、被限流）正是有待补记的时候：网回来 / 每分钟那两路要在启动之前挂上，当场那一趟在 finally 里
-        int boot = route.indexOf("await boots[page]()");
+        int boot = route.indexOf("await pageModule.boots[page](zqShared);");
         assertTrue(boot > 0, "找不到页面启动那一行：\n" + route);
         assertTrue(route.indexOf("window.addEventListener('online', catchUpPomodoros);") < boot
                 && route.indexOf("setInterval(catchUpPomodoros, 60000);") < boot, "补记挂在页面启动之后 —— 启动失败的那一页就不补了：\n" + route);

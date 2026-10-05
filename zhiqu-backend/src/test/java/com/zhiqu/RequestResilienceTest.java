@@ -60,7 +60,7 @@ class RequestResilienceTest {
     @Test
     @DisplayName("接线：断着网点发送 —— 本地先摆上的两条撤掉、字放回输入框、照实说没发出去；断线接回和「万一发到了」都等网回来再拉（第二十二轮）")
     void 断网发送的接线() throws Exception {
-        String js = SourceText.stripComments(Files.readString(NodeRunner.API_JS));
+        String js = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
         int at = js.indexOf("async function sendAiMessage()");
         String send = js.substring(at, js.indexOf("function whenOnline(fn)", at));
         assertTrue(send.contains("if (!gotEvent && e && e.beforeResponse) {") && send.contains("state.messages.splice(at - 1, 2);")

@@ -17,7 +17,18 @@ function slice(startMark, endMark) {
   return src.slice(a, b);
 }
 const escSrc = slice('function esc(v) {', 'function maintainShellCache');
-const bodySrc = slice('function messageBodyHtml(m, i) {', '  /**\n   * 流式增量');
+
+// 第三十七轮起 AI 助手的代码在 assets/pages/ai-assistant.js 里（顶格）：这一段从那里抠 —— 它要在同一个作用域里替换掉内部用到的东西，
+// import 进来的模块换不掉，所以照第三十六轮 wiki-tabs-check 的做法从源码里抠同一段
+const modSrc = fs.readFileSync(require('path').join(require('path').dirname(require('path').resolve(process.argv[2])), 'pages', 'ai-assistant.js'), 'utf8');
+function sliceMod(startMark, endMark) {
+  const a = modSrc.indexOf(startMark);
+  if (a < 0) throw new Error('模块里抠不到起点: ' + startMark);
+  const b = modSrc.indexOf(endMark, a);
+  if (b < 0) throw new Error('模块里抠不到终点: ' + endMark);
+  return modSrc.slice(a, b);
+}
+const bodySrc = sliceMod('function messageBodyHtml(m, i) {', '/**\n * 流式增量');
 // waitText 用业务时钟（第二十一轮）：把那一段也抠进来 —— 真的实现，不是替身
 const clockSrc = slice('  var clock = { zone:', '  /** 浏览器的钟面和业务时区不一样时');
 if (!/function waitText/.test(bodySrc)) throw new Error('抠出来的片段里没有 waitText —— 抠错地方了');

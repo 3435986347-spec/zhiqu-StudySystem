@@ -25,7 +25,7 @@ class ChatBubbleSpacingTest {
     @Test
     @DisplayName("气泡带 zq-msg-body 类，竖向内边距不超过 8px")
     void 气泡收窄() throws Exception {
-        String js = SourceText.stripComments(Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8));
+        String js = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
         Matcher m = Pattern.compile("data-msg-body=\"' \\+ i \\+ '\" class=\"zq-msg-body\" style=\"[^\"]*?padding:(\\d+)px").matcher(js);
         assertTrue(m.find(), "气泡没有 zq-msg-body 类（或写法变了）—— 去首尾外边距的规则找不到它");
         assertTrue(Integer.parseInt(m.group(1)) <= 8, "气泡竖向内边距回到了 " + m.group(1) + "px");

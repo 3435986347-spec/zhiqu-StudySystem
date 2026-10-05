@@ -29,7 +29,7 @@ class CodeModeToggleWiringTest {
     private static final Path STATIC = Path.of("src", "main", "resources", "static");
 
     private static String js() throws IOException {
-        return SourceText.stripComments(Files.readString(STATIC.resolve("assets/zhiqu-api.js"), StandardCharsets.UTF_8));
+        return SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块（pages/ai-assistant.js）
     }
 
     @Test

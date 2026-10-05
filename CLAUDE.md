@@ -862,9 +862,12 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 
 ### Frontend (`zhiqu-backend/src/main/resources/static/`)
 
-- **`assets/zhiqu-api.js` is the live application shell** — all 14 HTML pages load it. It owns the
-  `api` wrapper, auth guard, navigation, the Wiki UI, the AI assistant UI, agent panels and the
-  shared modal helper `openModal({title, bodyHtml, width, onMount}) → {close, body, mask}`.
+- **`assets/zhiqu-api.js` is the shared layer** — all 14 HTML pages load it. Since step 4 of the product plan
+  (rounds 30–37) it owns only what every page needs: the `api` wrapper, auth guard and shared login, the business
+  clock, drafts, page reminders, the pomodoro outbox, the task form, Markdown rendering, the settings-dialog router,
+  and the shared modal helper `openModal({title, bodyHtml, width, onMount}) → {close, body, mask}`. Each page's
+  code is an ES module in `assets/pages/` (AI assistant, Wiki, dashboard, tasks, routines, statistics, shared plans,
+  admin), loaded by `route()` through `PAGE_MODULES` — see the page-modules bullet below.
   `assets/zhiqu-ui.js` / `assets/zhiqu-ui.css` provide the shell chrome and design tokens
   (`var(--zq-*)`).
 - **The old `js/` and `css/` folders were deleted on 2026-10-04** (33 files, 22,346 lines, loaded by zero pages but
@@ -962,7 +965,7 @@ JS（`node --check`，只解析不执行、不带环境变量）。**不能原�
 - **Cache busting**: every page loads assets with a shared `?v=<token>` and `service-worker.js`
   keys its cache off the same token (`ZHIQU_CACHE = 'zhiqu-shell-v<token>'`). After changing any
   asset, bump the token in **all** HTML files *and* the service worker, otherwise users keep the
-  old bundle. Current token: `20261005-wiki`.
+  old bundle. Current token: `20261005-ai`.
   `StaticAssetCacheTokenTest` enforces that every `?v=` and `ZHIQU_CACHE` agree — the token is
   a **browser** HTTP-cache buster (the service worker is network-first and matches with
   `ignoreSearch`), so a drifted page silently keeps serving the old bundle.
