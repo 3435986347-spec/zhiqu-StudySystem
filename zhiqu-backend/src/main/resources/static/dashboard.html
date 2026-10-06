@@ -6,11 +6,11 @@
   <title>看板 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-mono" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-mono">
-  <link rel="manifest" href="manifest.json?v=20261006-mono">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-icons" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-icons">
+  <link rel="manifest" href="manifest.json?v=20261006-icons">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-mono">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-icons">
 </head>
 <body>
   <div class="zq-app">
@@ -25,7 +25,7 @@
             <span style="display:block; margin-top:6px; color:var(--zq-text2); font-size:13px;">—</span>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
-            <a class="zq-btn-ghost" href="ai-assistant.html?ask=%E5%B8%AE%E6%88%91%E7%9C%8B%E7%9C%8B%E4%BB%8A%E5%A4%A9%E7%9A%84%E4%BB%BB%E5%8A%A1%EF%BC%8C%E6%8C%89%E5%9B%9B%E8%B1%A1%E9%99%90%E6%8E%92%E4%B8%80%E4%B8%8B%E5%85%88%E5%81%9A%E4%BB%80%E4%B9%88" style="display:inline-flex; align-items:center;">✦ 让 AI 排一下今天</a>
+            <a class="zq-btn-ghost" href="ai-assistant.html?ask=%E5%B8%AE%E6%88%91%E7%9C%8B%E7%9C%8B%E4%BB%8A%E5%A4%A9%E7%9A%84%E4%BB%BB%E5%8A%A1%EF%BC%8C%E6%8C%89%E5%9B%9B%E8%B1%A1%E9%99%90%E6%8E%92%E4%B8%80%E4%B8%8B%E5%85%88%E5%81%9A%E4%BB%80%E4%B9%88" style="display:inline-flex; align-items:center;"><span data-zq-icon="sparkles"></span>让 AI 排一下今天</a>
             <button class="zq-btn">新增任务</button>
           </div>
         </header>
@@ -48,9 +48,9 @@
               <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
                 <div><p class="zq-eyebrow">本周日历</p><h2 class="zq-h2">本周</h2></div>
                 <div style="display:inline-flex; align-items:center; gap:6px;">
-                  <button class="zq-btn-ghost" data-week-nav="prev" style="width:30px; padding:0; font-size:17px;">‹</button>
+                  <button class="zq-btn-ghost" data-week-nav="prev" aria-label="上一周" style="width:30px; padding:0;"><span data-zq-icon="chevron-left"></span></button>
                   <button class="zq-btn-ghost" data-week-nav="today" style="height:30px;">本周</button>
-                  <button class="zq-btn-ghost" data-week-nav="next" style="width:30px; padding:0; font-size:17px;">›</button>
+                  <button class="zq-btn-ghost" data-week-nav="next" aria-label="下一周" style="width:30px; padding:0;"><span data-zq-icon="chevron-right"></span></button>
                 </div>
               </div>
               <div id="zq-week" style="display:grid; grid-template-columns:repeat(7, minmax(108px,1fr)); gap:9px; overflow-x:auto; padding-bottom:2px;"></div>
@@ -108,7 +108,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261006-mono"></script>
+  <script src="assets/zhiqu-ui.js?v=20261006-icons"></script>
   <script>
     // ── 番茄钟 ──
     // 按结束时刻倒数，不按「每跳一次减一秒」（第二十一轮）：切到别的标签页后浏览器把定时器限到一分钟一次，原来 25 分钟的番茄钟
@@ -159,6 +159,6 @@
       draw();
     })();
   </script>
-  <script src="assets/zhiqu-api.js?v=20261006-mono"></script>
+  <script src="assets/zhiqu-api.js?v=20261006-icons"></script>
 </body>
 </html>

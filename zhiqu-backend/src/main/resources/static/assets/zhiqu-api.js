@@ -32,6 +32,8 @@
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  /** 图标（zhiqu-ui.js 的 ICONS，第四十二轮）：给 SVG 字符串；zhiqu-ui.js 没加载时给空串 */
+  function icon(name) { return window.ZQUI && window.ZQUI.icon ? window.ZQUI.icon(name) : ''; }
   function esc(v) {
     return String(v == null ? '' : v).replace(/[&<>"']/g, function (s) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[s];
@@ -475,7 +477,7 @@
     var w = opts.width ? ('width:' + opts.width + ';') : '';
     mask.innerHTML = '<div class="zq-modal" role="dialog" aria-modal="true" style="' + w + '">'
       + '<div class="zq-modal-head"><h3 class="zq-modal-title">' + esc(opts.title || '') + '</h3>'
-      + '<button type="button" class="zq-modal-close" aria-label="关闭">×</button></div>'
+      + '<button type="button" class="zq-modal-close" aria-label="关闭">' + icon('x') + '</button></div>'
       + '<div class="zq-modal-body"></div></div>';
     var body = mask.querySelector('.zq-modal-body');
     if (opts.bodyHtml != null) body.innerHTML = opts.bodyHtml;
@@ -1743,7 +1745,7 @@
     serverTime: serverTime, highlightCode: highlightCode,
     mathBlockHtml: mathBlockHtml, htmlToMarkdown: htmlToMarkdown, normalizeTask: normalizeTask, qLabel: qLabel, sLabel: sLabel,
     REMINDER_FIELDS: REMINDER_FIELDS, currentReminderChannel: currentReminderChannel, reminderChannelReady: reminderChannelReady,
-    logout: logout, adoptNewToken: adoptNewToken
+    logout: logout, adoptNewToken: adoptNewToken, icon: icon
   };
 
   var pomoWatched = false;

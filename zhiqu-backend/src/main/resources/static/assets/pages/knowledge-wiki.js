@@ -4,10 +4,10 @@
 // 模块里的函数互相调用、从外面换不掉 —— 所以这一段没改成 import）。
 
 let API, api, token, esc, $, $all, empty, fmtDate, safe, toast, notice, askConfirm, askText, showInfo, openModal, popMenu, state, drafts, keepDraft,
-  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown;
+  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, icon;
 export function bind(sh) {
   ({ API, api, token, esc, $, $all, empty, fmtDate, safe, toast, notice, askConfirm, askText, showInfo, openModal, popMenu, state, drafts, keepDraft,
-  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown } = sh);
+  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, icon } = sh);
 }
 
 export const boots = { 'knowledge-wiki.html': (sh) => { bind(sh); return bootKnowledge(); } };
@@ -314,7 +314,7 @@ function paintWikiTabs() {
       '<span style="overflow:hidden;text-overflow:ellipsis;">' + esc(t.title || '新标签页') + '</span>' +
       '<span data-wiki-tab-close="' + i + '" title="关闭" style="flex:0 0 auto;width:16px;height:16px;' +
       'display:flex;align-items:center;justify-content:center;border-radius:4px;' +
-      'color:var(--zq-text3);font-size:13px;line-height:1;">×</span></div>';
+      'color:var(--zq-text3);font-size:13px;line-height:1;">' + icon('x') + '</span></div>';
   }).join('') +
     '<div data-wiki-tab-new="1" title="新标签页" style="display:flex;align-items:center;justify-content:center;' +
     'width:30px;flex:0 0 auto;cursor:pointer;color:var(--zq-text3);font-size:15px;">+</div>';
@@ -809,7 +809,7 @@ async function runWikiLint() {
       title: '健康检查',
       html: count
         ? '<p style="margin:0 0 12px;font-size:13px;color:var(--zq-text2);">发现 ' + count + ' 个问题（如悬空链接等）：</p><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-height:280px;overflow-y:auto;">' + listHtml + '</div>'
-        : '<p style="margin:0 0 16px;font-size:13.5px;color:var(--zq-ok);font-weight:var(--zq-fw-medium);">✓ 未发现问题，知识库链接完好。</p>'
+        : '<p style="display:flex;align-items:center;gap:6px;margin:0 0 16px;font-size:13.5px;color:var(--zq-ok);font-weight:var(--zq-fw-medium);">' + icon('check') + '未发现问题，知识库链接完好。</p>'
     });
   });
 }

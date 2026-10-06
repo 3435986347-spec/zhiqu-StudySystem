@@ -4,10 +4,10 @@
 // 另外导出给测试直接 import 的纯函数（parseSseFrame、stepNoteHtml、messageBodyHtml …），见文件末尾。
 
 let API, REQUEST_TIMEOUT_MS, api, token, role, requestError, redirectToLogin, nowMs, serverTime, state, esc, $, $all, empty, safe, toast, notice,
-  askConfirm, askText, openModal, popMenu, drafts, keepDraft, freqLabel, normalizeModelList, highlightCode, renderMarkdown, renderMathIn;
+  askConfirm, askText, openModal, popMenu, drafts, keepDraft, freqLabel, normalizeModelList, highlightCode, renderMarkdown, renderMathIn, icon;
 export function bind(sh) {
   ({ API, REQUEST_TIMEOUT_MS, api, token, role, requestError, redirectToLogin, nowMs, serverTime, state, esc, $, $all, empty, safe, toast, notice,
-  askConfirm, askText, openModal, popMenu, drafts, keepDraft, freqLabel, normalizeModelList, highlightCode, renderMarkdown, renderMathIn } = sh);
+  askConfirm, askText, openModal, popMenu, drafts, keepDraft, freqLabel, normalizeModelList, highlightCode, renderMarkdown, renderMathIn, icon } = sh);
 }
 
 export const boots = { 'ai-assistant.html': (sh) => { bind(sh); startWaitTicker(); return bootAiAssistant(); } };
@@ -221,7 +221,7 @@ function renderAiAttachments() {
   if (!host) return;
   host.hidden = !state.pendingSources.length;
   host.innerHTML = state.pendingSources.map(function (source) {
-    return '<span class="zq-ai-attachment"><span class="zq-ai-attachment-type">' + esc(srcTypeInfo(source.sourceType)[0]) + '</span><span title="' + esc(source.title || '资料') + '">' + esc(source.title || '资料') + '</span><button type="button" data-remove-source="' + source.id + '" aria-label="移除附件">×</button></span>';
+    return '<span class="zq-ai-attachment"><span class="zq-ai-attachment-type">' + esc(srcTypeInfo(source.sourceType)[0]) + '</span><span title="' + esc(source.title || '资料') + '">' + esc(source.title || '资料') + '</span><button type="button" data-remove-source="' + source.id + '" aria-label="移除附件">' + icon('x') + '</button></span>';
   }).join('');
   $all('[data-remove-source]', host).forEach(function (button) {
     button.onclick = function () {
@@ -1178,9 +1178,9 @@ function renderAiMessages(opts) {
   var moreRow = state.chatHasMore
     ? '<div style="display:flex;justify-content:center;padding:2px 0 6px;">'
       + '<button type="button" data-load-older="1"' + (state.chatLoadingMore ? ' disabled' : '')
-      + ' style="height:26px;padding:0 12px;border:1px solid var(--zq-border);border-radius:999px;'
+      + ' style="display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 12px;border:1px solid var(--zq-border);border-radius:999px;'
       + 'background:var(--zq-card-soft);color:var(--zq-text2);font-size:11.5px;cursor:pointer;">'
-      + (state.chatLoadingMore ? '加载中…' : '↑ 加载更早的消息') + '</button></div>'
+      + (state.chatLoadingMore ? '加载中…' : icon('arrow-up') + '加载更早的消息') + '</button></div>'
     : '';
   host.innerHTML = moreRow + state.messages.map(function (m, i) {
     var me = m.role === 'user';
@@ -1460,7 +1460,7 @@ async function loadAiSources() {
       + (indexText ? ' · ' + indexText : '');
     return '<div class="zq-src-tile" data-source="' + s.id + '" data-source-title="' + esc(title) + '" data-source-url="' + esc(s.url || '') + '" style="--srcc:' + info[1] + ';" title="' + esc(statusText) + '">'
       + '<span class="zq-src-type">' + esc(info[0]) + '</span>'
-      + '<span class="zq-src-dl">↓</span>'
+      + '<span class="zq-src-dl">' + icon('download') + '</span>'
       + '<div class="zq-src-glass">'
       + '<div class="zq-src-title">' + esc(title) + '</div>'
       + '<div class="zq-src-meta"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (status === 'READY' ? 'var(--zq-ok)' : status === 'ERROR' ? 'var(--zq-bad)' : 'var(--zq-text3)') + ';"></span><span>' + esc(srcStatusLabel(status, s.sourceType)) + '</span></div>'
@@ -1944,7 +1944,7 @@ function openWorkspaceFolderPicker(startPath, onPick) {
     bodyHtml:
       '<div id="zq-fp-cur" class="zq-mono" style="font-size:11.5px;color:var(--zq-text2);word-break:break-all;margin-bottom:8px;">读取中…</div>' +
       '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
-        '<button id="zq-fp-up" class="zq-btn-ghost" style="height:28px;font-size:12px;">↑ 上一层</button>' +
+        '<button id="zq-fp-up" class="zq-btn-ghost" style="height:28px;font-size:12px;">' + icon('arrow-up') + '上一层</button>' +
         '<button id="zq-fp-pick" class="zq-btn" style="height:28px;font-size:12px;margin-left:auto;">选定当前文件夹</button>' +
       '</div>' +
       '<div id="zq-fp-list" style="max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:1px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);padding:6px;"></div>',
@@ -2015,7 +2015,7 @@ async function loadWorkspace() {
     // 没开：显示原因（配了没生效）或一句「点⚙开启」，并把文件树/搜索收起来
     $('#zq-ws-sub').textContent = '未启用';
     $('#zq-ws-path').textContent = (status && status.reason)
-      ? status.reason : '点右上角 ⚙ 选择工作文件夹并开启';
+      ? status.reason : '点右上角的设置按钮，选择工作文件夹并开启';
     $('#zq-ws-tree').innerHTML = '';
     $('#zq-ws-up').hidden = true;
     var sr0 = $('#zq-ws-search-row'); if (sr0) sr0.hidden = true;

@@ -44,16 +44,67 @@
   // 页面里不再有示例数据（第二十四轮），露出骨架不会先闪一下假内容。2.5s 安全兜底照旧。
   function holdsUntilBoot(file){ var f=String(file||'').toLowerCase(); return f==='profile.html' || f==='achievement.html' || isAdminPage(f); }
 
+  // ── 图标（第四十二轮，docs/ui-plan.md 第 2 步）────────────────────────────────────
+  // 原来导航、菜单、按钮里是 Unicode 符号（✦ ▦ ☰ ↻ ❏ ≣ ◈ ⌘ ✉ ∿ « » ‹ › ⚙ ◐ ⏻ ✪ ＋ ×），每个来自不同字体、粗细基线都不一样 —— 「玩具感」最直接的来源。
+  // 现在是一套线性图标：24 格、1.75 线宽、圆头圆角。图形照 Lucide 画（https://lucide.dev，ISC 许可：
+  //   Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT).
+  //   All other copyright (c) for Lucide are held by Lucide Contributors 2022.
+  //   Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted,
+  //   provided that the above copyright notice and this permission notice appear in all copies.）
+  // 不从外网取：这里只放用到的几十个，随页面一起发。静态 HTML 写 <span data-zq-icon="名字"></span>，启动时由 paintIcons 填上；
+  // 脚本里拼的用 ZQUI.icon(名字)（页面模块经 zqShared.icon）。认不出的名字给空串 —— 用到的名字都画得出来由判据（IconSetTest）管。
+  var ICONS = {
+    'sparkles': '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/>',
+    'layout-dashboard': '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
+    'list-checks': '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+    'repeat': '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+    'copy': '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+    'book-open': '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>',
+    'chart-column': '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    'shield': '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+    'users': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    'clipboard-check': '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/>',
+    'settings': '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+    'award': '<path d="m15.477 12.89 1.515 8.526a.5.5 0 0 1-.81.47l-3.58-2.687a1 1 0 0 0-1.197 0l-3.586 2.686a.5.5 0 0 1-.81-.469l1.514-8.526"/><circle cx="12" cy="8" r="6"/>',
+    'contrast': '<circle cx="12" cy="12" r="10"/><path d="M12 18a6 6 0 0 0 0-12v12z"/>',
+    'log-out': '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    'panel-left-close': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
+    'panel-left-open': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
+    'chevron-left': '<path d="m15 18-6-6 6-6"/>',
+    'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+    'plus': '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    'x': '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    'check': '<path d="M20 6 9 17l-5-5"/>',
+    'arrow-up': '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+    'arrow-down': '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
+    'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+    'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>'
+  };
+  function icon(name){
+    var body = ICONS[name];
+    return body ? '<svg class="zq-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + body + '</svg>' : '';
+  }
+  /** 静态 HTML 里的 <span data-zq-icon="名字"></span>：填上图形（只填一次） */
+  function paintIcons(root){
+    var nodes = (root || document).querySelectorAll('[data-zq-icon]');
+    Array.prototype.forEach.call(nodes, function (el) {
+      if (el.getAttribute('data-zq-icon-done') === '1') return;
+      el.innerHTML = icon(el.getAttribute('data-zq-icon'));
+      el.setAttribute('data-zq-icon-done', '1');
+    });
+  }
+
   // ── 侧边导航数据 ──
   var NAV = {
     main: [
-      ['ai-assistant.html','AI 助手','✦'], ['dashboard.html','看板','▦'], ['tasks.html','任务','☰'],
-      ['routines.html','例行计划','↻'], ['shared-plans.html','参考计划','❏'], ['knowledge-wiki.html','知识 Wiki','≣']
+      ['ai-assistant.html','AI 助手','sparkles'], ['dashboard.html','看板','layout-dashboard'], ['tasks.html','任务','list-checks'],
+      ['routines.html','例行计划','repeat'], ['shared-plans.html','参考计划','copy'], ['knowledge-wiki.html','知识 Wiki','book-open']
     ],
     // 侧栏只放干活的地方（第三十轮，用户定的）；设置、成就、专注统计、界面风格、后台、退出都在底部头像的菜单里（openUserMenu）。
     // 成就第二十六轮从导航收起（偏游戏化、偏学生），第三十轮成了菜单里的弹窗
-    data: [ ['statistics.html','专注统计','∿'] ],
-    admin: [ ['admin.html','监管后台','◈'], ['account-admin.html','账号管理','⌘'], ['feedback-admin.html','反馈管理','✉'], ['shared-plan-admin.html','共享计划审核','✓'] ]
+    data: [ ['statistics.html','专注统计','chart-column'] ],
+    admin: [ ['admin.html','监管后台','shield'], ['account-admin.html','账号管理','users'], ['feedback-admin.html','反馈管理','message-square'], ['shared-plan-admin.html','共享计划审核','clipboard-check'] ]
   };
   function curFile(){ var p=location.pathname.split('/').pop(); return p || 'dashboard.html'; }
   // 放在 NAV 之后：isAdminPage 读的是 NAV.admin（放在前面时 NAV 还是 undefined，抛了被 try 吞掉，后台页就不遮了）
@@ -64,7 +115,7 @@
     items.forEach(function(it){
       var active = it[0]===cur ? ' active' : '';
       // title 是折叠态的名称来源 —— 不自己造 tooltip：原生的在触屏与边界情况上都对
-      h += '<a class="'+active.trim()+'" href="'+it[0]+'" title="'+it[1]+'"><span class="zq-ic">'+it[2]+'</span><span>'+it[1]+'</span></a>';
+      h += '<a class="'+active.trim()+'" href="'+it[0]+'" title="'+it[1]+'"><span class="zq-ic">'+icon(it[2])+'</span><span>'+it[1]+'</span></a>';
     });
     return h;
   }
@@ -94,8 +145,8 @@
     if (btn) {
       btn.title = on ? '展开导航栏' : '收起导航栏';
       btn.setAttribute('aria-expanded', on ? 'false' : 'true');
-      var icon = btn.querySelector('.zq-ic');
-      if (icon) icon.textContent = on ? '»' : '«';
+      var ic = btn.querySelector('.zq-ic');
+      if (ic) ic.innerHTML = icon(on ? 'panel-left-open' : 'panel-left-close');
     }
   }
   function buildSidebar(){
@@ -105,7 +156,7 @@
     host.innerHTML =
       '<div class="zq-brand"><div class="zq-brand-badge">知</div><div class="zq-brand-name">知趣<span> · 象限</span></div></div>'
       + '<button type="button" class="zq-side-toggle" aria-expanded="true" title="收起导航栏">'
-      +   '<span class="zq-ic">«</span><span>收起</span></button>'
+      +   '<span class="zq-ic">'+icon('panel-left-close')+'</span><span>收起</span></button>'
       + '<div class="zq-nav">' + navGroup('', NAV.main) + '</div>'
       // 名字、身份由 zhiqu-api.js 的 updateSidebarUser 拿到 /auth/info 之后填（原来这里写着设计稿的「王明远 · 管理员」，先闪一下才被换掉）。
       // 上一页画过的先画上（按令牌认，换了账号不认），不然每切一次页面左下角都先空一下再冒出来
@@ -214,20 +265,20 @@
       items[i].focus();
     }
   }
-  function menuLink(href, ic, label, cur){ return '<a role="menuitem" href="'+href+'"'+(cur?' aria-current="page"':'')+'><span class="zq-ic">'+ic+'</span><span>'+label+'</span></a>'; }
+  function menuLink(href, ic, label, cur){ return '<a role="menuitem" href="'+href+'"'+(cur?' aria-current="page"':'')+'><span class="zq-ic">'+icon(ic)+'</span><span>'+label+'</span></a>'; }
   function openUserMenu(btn){
     closeMenu(); closePop();
     var cur=curFile();
     menu=document.createElement('div'); menu.className='zq-user-menu'; menu.setAttribute('role','menu'); menu.setAttribute('aria-label','账号菜单');
     var h='<div class="zq-user-menu-head"><strong>'+escHtml(btn.dataset.name||'')+'</strong><span>'+escHtml(btn.dataset.account||'')+'</span></div>'
-      + menuLink('#settings/profile','⚙','设置') + menuLink('#achievements','✪','成就')
+      + menuLink('#settings/profile','settings','设置') + menuLink('#achievements','award','成就')
       + menuLink(NAV.data[0][0], NAV.data[0][2], NAV.data[0][1], cur===NAV.data[0][0])
-      + '<button type="button" role="menuitem" data-zq-theme><span class="zq-ic">◐</span><span>界面风格</span><span class="zq-user-menu-note">'+nameOf(THEMES,readTheme())+' · '+nameOf(ACCENTS,readAccent())+'</span></button>';
+      + '<button type="button" role="menuitem" data-zq-theme><span class="zq-ic">'+icon('contrast')+'</span><span>界面风格</span><span class="zq-user-menu-note">'+nameOf(THEMES,readTheme())+' · '+nameOf(ACCENTS,readAccent())+'</span></button>';
     if(adminView){
       h += '<div class="zq-user-menu-sep"></div><div class="zq-user-menu-group">管理</div>'
         + NAV.admin.map(function(it){ return menuLink(it[0], it[2], it[1], cur===it[0]); }).join('');
     }
-    h += '<div class="zq-user-menu-sep"></div><button type="button" role="menuitem" data-zq-logout><span class="zq-ic">⏻</span><span>退出登录</span></button>';
+    h += '<div class="zq-user-menu-sep"></div><button type="button" role="menuitem" data-zq-logout><span class="zq-ic">'+icon('log-out')+'</span><span>退出登录</span></button>';
     menu.innerHTML=h;
     document.body.appendChild(menu);
     // 向上弹：底边贴着头像按钮的上沿；收起的窄侧栏里从按钮右边出来
@@ -254,9 +305,9 @@
   // ── 折叠助手 ──
   function makeCollapsible(panel, opts){
     if(!panel || panel.dataset.zqC) return; panel.dataset.zqC='1';
-    var cbtn=document.createElement('button'); cbtn.type='button'; cbtn.className='zq-cbtn'; cbtn.textContent=opts.dir==='right'?'›':'‹'; panel.appendChild(cbtn);
+    var cbtn=document.createElement('button'); cbtn.type='button'; cbtn.className='zq-cbtn'; cbtn.innerHTML=icon(opts.dir==='right'?'chevron-right':'chevron-left'); panel.appendChild(cbtn);
     var rail=document.createElement('div'); rail.className='zq-rail';
-    rail.innerHTML='<button type="button" class="zq-xbtn">'+(opts.dir==='right'?'‹':'›')+'</button><div class="zq-rlabel">'+opts.label+'</div>';
+    rail.innerHTML='<button type="button" class="zq-xbtn">'+icon(opts.dir==='right'?'chevron-left':'chevron-right')+'</button><div class="zq-rlabel">'+opts.label+'</div>';
     panel.insertBefore(rail, panel.firstChild);
     // 手机上展开是临时的（浮在正文上面，见 zhiqu-ui.css 的 .zq-panel-host）：不写进桌面上记住的偏好
     function set(c){ panel.classList.toggle('zq-collapsed',c); if(opts.onToggle) opts.onToggle(c); if(!isMobile()) lss(opts.key, c?'1':'0'); }
@@ -319,7 +370,9 @@
   window.ZQUI.setAdminNav = setAdminNav;
   window.ZQUI.isAdminPage = isAdminPage;
   window.ZQUI.paintUser = function (box, u) { paintUser(box, u); rememberUser(u); };
+  window.ZQUI.icon = icon;
+  window.ZQUI.paintIcons = paintIcons;
 
-  function boot(){ buildSidebar(); setupPanels(); }
+  function boot(){ buildSidebar(); setupPanels(); paintIcons(); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
 })();

@@ -188,6 +188,11 @@ input:not([type=checkbox]):not([type=radio]){width:100%;}
 input,textarea{min-width:0;max-width:100%;}
 select{max-width:100%;}
 .zq-mono{font-family:var(--zq-fontM);}
+/* 图标（第四十二轮）：一套线性 SVG，颜色跟着文字走；默认 16px，按钮里 15px、小按钮里 14px */
+.zq-icon{display:block;width:16px;height:16px;flex:none;}
+[data-zq-icon]{display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.zq-btn .zq-icon,.zq-btn-ghost .zq-icon,.zq-btn-danger .zq-icon{width:15px;height:15px;}
+.zq-sm .zq-icon,.zq-cbtn .zq-icon,.zq-xbtn .zq-icon,.zq-tbtn .zq-icon{width:14px;height:14px;}
 /* 数字、日期、时间：正文字体 + 等宽数位（一列数字照样对齐），不用等宽字体 —— 等宽字体只给代码（第三十九轮） */
 .zq-num{font-family:var(--zq-fontBody);font-variant-numeric:tabular-nums;}
 /* hidden 属性必须真的能藏住东西。
@@ -247,7 +252,7 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-nav a{display:flex;align-items:center;gap:10px;min-height:32px;padding:6px 10px;border-radius:var(--zq-rs);cursor:pointer;font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-regular);color:var(--zq-sb-text);text-decoration:none;}
 .zq-nav a:hover{background:var(--zq-sb-active-bg);}
 .zq-nav a.active{color:var(--zq-sb-active-text);background:var(--zq-sb-active-bg);font-weight:var(--zq-fw-medium);}
-.zq-nav a .zq-ic{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;opacity:.62;}
+.zq-nav a .zq-ic{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;opacity:.7;}
 .zq-nav a.active .zq-ic{opacity:1;}
 .zq-main{flex:1;margin-left:188px;min-width:0;padding:var(--zq-sp-7) var(--zq-sp-8) 80px;max-width:1420px;}
 .zq-user{display:flex;align-items:center;gap:9px;padding:8px;margin-top:8px;border-radius:var(--zq-rs);cursor:pointer;}
@@ -361,7 +366,7 @@ body.zq-modal-open{overflow:hidden;}
 .zq-user-menu [role="menuitem"]{display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:6px 10px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text);font:var(--zq-fw-regular) var(--zq-fs-sm)/1.2 var(--zq-fontBody);text-align:left;text-decoration:none;cursor:pointer;}
 .zq-user-menu [role="menuitem"]:hover,.zq-user-menu [role="menuitem"]:focus-visible{background:var(--zq-card-soft);outline:none;box-shadow:none;}
 .zq-user-menu [aria-current="page"]{color:var(--zq-text);font-weight:var(--zq-fw-medium);}
-.zq-user-menu .zq-ic{width:16px;flex:none;display:inline-flex;justify-content:center;opacity:.7;}
+.zq-user-menu .zq-ic{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;opacity:.7;}
 .zq-user-menu-note{margin-left:auto;padding-left:8px;font-size:var(--zq-fs-xs);color:var(--zq-text3);white-space:nowrap;}
 .zq-user-menu-sep{height:1px;margin:5px 4px;background:var(--zq-border-soft);}
 .zq-user-menu-group{padding:6px 10px 3px;font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);color:var(--zq-text3);}

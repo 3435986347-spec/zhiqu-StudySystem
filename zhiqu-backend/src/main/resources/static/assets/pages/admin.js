@@ -5,9 +5,9 @@
 // 这样挪过来的代码一个字不用改（api.get、esc(...)、$('#…') 照旧），而「用了壳没给的东西」由 SettingsDialogTest 的模块判据扫出来。
 // 这几页本来就画在页面上（不是弹窗里），所以用壳的 $ / $all 在整页上找元素。
 
-let api, esc, $, $all, empty, fmtDate, safe, toast, askConfirm, askText, showInfo, openModal, planCategory, planCategoryOptions, freqLabel;
+let api, esc, $, $all, empty, fmtDate, safe, toast, askConfirm, askText, showInfo, openModal, planCategory, planCategoryOptions, freqLabel, icon;
 function bind(sh) {
-  ({ api, esc, $, $all, empty, fmtDate, safe, toast, askConfirm, askText, showInfo, openModal, planCategory, planCategoryOptions, freqLabel } = sh);
+  ({ api, esc, $, $all, empty, fmtDate, safe, toast, askConfirm, askText, showInfo, openModal, planCategory, planCategoryOptions, freqLabel, icon } = sh);
 }
 let feedbackList = [];   // 原来是壳的 state.feedback —— 只有反馈管理这两个函数用
 
@@ -201,7 +201,7 @@ async function bootSharedPlanAdmin() {
   function card(p, actions, dim) {
     return '<article class="zq-card" style="' + (dim ? 'opacity:.72;' : '') + '">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;"><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);">' + catName(p) + '</span><span class="zq-num" style="font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(p.createdAt)) + '</span></div>'
-      + '<h3 data-sp-view="' + p.id + '" title="点击查看完整内容" style="margin:0 0 5px;font-size:15px;font-weight:var(--zq-fw-medium);cursor:pointer;">' + esc(p.title || p.name || '未命名') + ' <span style="font-size:11px;font-weight:var(--zq-fw-regular);color:var(--zq-primary);">查看 ›</span></h3>'
+      + '<h3 data-sp-view="' + p.id + '" title="点击查看完整内容" style="margin:0 0 5px;font-size:15px;font-weight:var(--zq-fw-medium);cursor:pointer;">' + esc(p.title || p.name || '未命名') + ' <span style="display:inline-flex;align-items:center;gap:2px;vertical-align:middle;font-size:11px;font-weight:var(--zq-fw-regular);color:var(--zq-primary);">查看' + icon('chevron-right') + '</span></h3>'
       + '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;">' + esc(p.description || '（无简介）') + '</p>'
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:10px;border-top:1px solid var(--zq-border-soft);"><span style="font-size:12px;color:var(--zq-text3);">' + creator(p) + '</span><span style="display:flex;gap:6px;">' + actions + '</span></div></article>';
   }
