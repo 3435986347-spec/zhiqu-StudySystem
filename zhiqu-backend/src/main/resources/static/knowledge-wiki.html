@@ -6,11 +6,11 @@
   <title>知识 Wiki - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-icons" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-icons">
-  <link rel="manifest" href="manifest.json?v=20261006-icons">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-shell" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-shell">
+  <link rel="manifest" href="manifest.json?v=20261006-shell">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-icons">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-shell">
 </head>
 <body>
   <div class="zq-app">
@@ -24,15 +24,15 @@
         低于 520px 时宁可整页滚一点，正文得先看得见。手机上的高度见 zhiqu-ui.css 的 @media。
       -->
       <div style="display:flex; flex-direction:column; gap:12px; height:calc(100vh - 110px); min-height:520px;">
-        <header style="display:flex; align-items:center; justify-content:space-between; gap:18px; padding:2px 2px 0; flex-wrap:wrap;">
-          <h1 class="zq-h1">知识 Wiki</h1>
-          <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">导入来源</button>
-            <button style="height:30px; padding:0 12px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12.5px; font-weight:var(--zq-fw-medium); cursor:pointer;">待合入变更</button>
-            <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">健康检查</button>
-            <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">图谱</button>
-            <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">导出</button>
-            <button class="zq-btn" style="height:30px; font-size:12.5px;">新建知识页</button>
+        <header class="zq-page-head">
+          <div><h1 class="zq-h1">知识 Wiki</h1></div>
+          <div class="zq-page-actions">
+            <button class="zq-btn-ghost">导入来源</button>
+            <button style="height:32px; padding:0 14px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:var(--zq-fs-sm); font-weight:var(--zq-fw-medium); cursor:pointer;">待合入变更</button>
+            <button class="zq-btn-ghost">健康检查</button>
+            <button class="zq-btn-ghost">图谱</button>
+            <button class="zq-btn-ghost">导出</button>
+            <button class="zq-btn">新建知识页</button>
           </div>
         </header>
 
@@ -126,7 +126,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261006-icons"></script>
-  <script src="assets/zhiqu-api.js?v=20261006-icons"></script>
+  <script src="assets/zhiqu-ui.js?v=20261006-shell"></script>
+  <script src="assets/zhiqu-api.js?v=20261006-shell"></script>
 </body>
 </html>

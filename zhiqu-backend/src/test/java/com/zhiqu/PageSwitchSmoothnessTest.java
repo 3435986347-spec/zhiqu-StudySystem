@@ -38,7 +38,7 @@ class PageSwitchSmoothnessTest {
     }
 
     @Test
-    @DisplayName("只有后台页和旧地址的跳转页先遮住主内容区；左下角的名字按令牌接着画、转义（在 node 里真跑 zhiqu-ui.js）")
+    @DisplayName("只有后台页和旧地址的跳转页先遮住主内容区；左下角的名字按令牌接着画、转义；收起按钮是品牌那一行里的小图标（在 node 里真跑 zhiqu-ui.js）")
     void 骨架不遮() throws Exception {
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/ui-shell-check.js"), STATIC.resolve("assets/zhiqu-ui.js")),
                 "ui-shell-check.js 没有全绿");

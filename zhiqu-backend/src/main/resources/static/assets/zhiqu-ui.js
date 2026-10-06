@@ -144,6 +144,7 @@
     var btn = host && host.querySelector('.zq-side-toggle');
     if (btn) {
       btn.title = on ? '展开导航栏' : '收起导航栏';
+      btn.setAttribute('aria-label', btn.title);
       btn.setAttribute('aria-expanded', on ? 'false' : 'true');
       var ic = btn.querySelector('.zq-ic');
       if (ic) ic.innerHTML = icon(on ? 'panel-left-open' : 'panel-left-close');
@@ -154,9 +155,10 @@
     if (!host) return;
     host.className = 'zq-side';
     host.innerHTML =
-      '<div class="zq-brand"><div class="zq-brand-badge">知</div><div class="zq-brand-name">知趣<span> · 象限</span></div></div>'
-      + '<button type="button" class="zq-side-toggle" aria-expanded="true" title="收起导航栏">'
-      +   '<span class="zq-ic">'+icon('panel-left-close')+'</span><span>收起</span></button>'
+      // 收起按钮是品牌那一行右边的一个小图标（第四十三轮；原来是导航最上面一整条带字的按钮，比导航项还显眼），收起后在品牌标志下面
+      '<div class="zq-brand"><div class="zq-brand-badge">知</div><div class="zq-brand-name">知趣<span> · 象限</span></div>'
+      +   '<button type="button" class="zq-side-toggle" aria-expanded="true" aria-label="收起导航栏" title="收起导航栏">'
+      +   '<span class="zq-ic">'+icon('panel-left-close')+'</span></button></div>'
       + '<div class="zq-nav">' + navGroup('', NAV.main) + '</div>'
       // 名字、身份由 zhiqu-api.js 的 updateSidebarUser 拿到 /auth/info 之后填（原来这里写着设计稿的「王明远 · 管理员」，先闪一下才被换掉）。
       // 上一页画过的先画上（按令牌认，换了账号不认），不然每切一次页面左下角都先空一下再冒出来

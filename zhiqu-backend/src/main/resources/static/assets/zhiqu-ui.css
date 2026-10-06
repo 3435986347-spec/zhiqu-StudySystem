@@ -228,30 +228,30 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-side.is-collapsed .zq-nav-group,
 .zq-side.is-collapsed .zq-nav a > span:not(.zq-ic),
 .zq-side.is-collapsed .zq-user > div:not(.zq-avatar){display:none;}
-.zq-side.is-collapsed .zq-brand{justify-content:center;}
+.zq-side.is-collapsed .zq-brand{flex-direction:column;justify-content:center;padding-left:0;padding-right:0;}
 .zq-side.is-collapsed .zq-nav a{justify-content:center;padding-left:0;padding-right:0;}
 .zq-side.is-collapsed .zq-user{justify-content:center;}
 .zq-main.is-side-collapsed{margin-left:56px;}
 
-/* 收起按钮：在导航栏最上方，折叠后仍可点（它是唯一的回路） */
-.zq-side-toggle{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;height:28px;padding:0 10px;
-  margin-bottom:8px;border:none;border-radius:var(--zq-rs);
-  background:transparent;color:var(--zq-text3);font-size:var(--zq-fs-xs);cursor:pointer;}
+/* 收起按钮：品牌那一行右边一个小图标按钮（第四十三轮），收起后在品牌标志下面；折叠后它是唯一的回路 */
+.zq-side-toggle{flex:none;display:flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;border-radius:var(--zq-rs);
+  background:transparent;color:var(--zq-text3);cursor:pointer;}
 .zq-side-toggle:hover{color:var(--zq-sb-active-text);background:var(--zq-sb-active-bg);}
-.zq-side.is-collapsed .zq-side-toggle span:not(.zq-ic){display:none;}
 
 /* 折叠后靠原生 title 出名称 —— 不自己造 tooltip：那要处理定位、边界、触屏，
    而原生的在所有平台都对。 */
 .zq-side{position:fixed;inset:0 auto 0 0;width:188px;background:var(--zq-sb-bg);border-right:1px solid var(--zq-sb-border);display:flex;flex-direction:column;padding:var(--zq-sp-5) var(--zq-sp-3) var(--zq-sp-4);z-index:100;}
-.zq-brand{display:flex;align-items:center;gap:var(--zq-sp-2);padding:2px 8px var(--zq-sp-4);margin-bottom:var(--zq-sp-2);}
+.zq-brand{display:flex;align-items:center;gap:var(--zq-sp-2);padding:0 0 var(--zq-sp-4) 8px;margin-bottom:var(--zq-sp-2);}
 .zq-brand-badge{width:26px;height:26px;flex:none;border-radius:var(--zq-rs);background:var(--zq-text);color:var(--zq-card);display:flex;align-items:center;justify-content:center;font-weight:var(--zq-fw-semibold);font-size:var(--zq-fs-sm);}
-.zq-brand-name{font-weight:var(--zq-fw-medium);font-size:var(--zq-fs-sm);color:var(--zq-sb-active-text);line-height:1.3;}
+.zq-brand-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;font-weight:var(--zq-fw-medium);font-size:var(--zq-fs-sm);color:var(--zq-sb-active-text);line-height:1.3;}
 .zq-brand-name span{opacity:.55;font-weight:var(--zq-fw-regular);}
 .zq-nav{flex:1;display:flex;flex-direction:column;gap:2px;overflow-y:auto;min-height:0;}
 .zq-nav-group{padding:var(--zq-sp-4) 10px var(--zq-sp-1);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);color:var(--zq-text3);}
 .zq-nav a{display:flex;align-items:center;gap:10px;min-height:32px;padding:6px 10px;border-radius:var(--zq-rs);cursor:pointer;font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-regular);color:var(--zq-sb-text);text-decoration:none;}
 .zq-nav a:hover{background:var(--zq-sb-active-bg);}
 .zq-nav a.active{color:var(--zq-sb-active-text);background:var(--zq-sb-active-bg);font-weight:var(--zq-fw-medium);}
+/* 键盘走到导航项、收起按钮上：一圈焦点环（鼠标点不出现） */
+.zq-nav a:focus-visible,.zq-side-toggle:focus-visible{outline:none;box-shadow:var(--zq-focus);}
 .zq-nav a .zq-ic{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;opacity:.7;}
 .zq-nav a.active .zq-ic{opacity:1;}
 .zq-main{flex:1;margin-left:188px;min-width:0;padding:var(--zq-sp-7) var(--zq-sp-8) 80px;max-width:1420px;}
@@ -267,6 +267,13 @@ button.zq-user{width:100%;border:none;background:transparent;color:inherit;font:
 /* ── 组件 ── */
 .zq-eyebrow{margin:0 0 var(--zq-sp-1);color:var(--zq-text3);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);}
 .zq-h1{margin:0;font-size:var(--zq-fs-xl);font-weight:var(--zq-fw-medium);letter-spacing:-.02em;line-height:1.3;}
+/* 页面头部（第四十三轮）：标题 + 可选一行说明在左、操作在右，放不下就换行。每页一样写，不再各写各的内联样式；
+   标题上面那行小字（「任务中心」「数据洞察」……）去掉了 —— 侧栏已经亮着在哪一页 */
+.zq-page-head{display:flex;align-items:center;justify-content:space-between;gap:var(--zq-sp-3) var(--zq-sp-4);flex-wrap:wrap;min-height:36px;}
+.zq-page-head>div:first-child{min-width:0;}
+.zq-page-sub{display:block;margin-top:2px;color:var(--zq-text3);font-size:var(--zq-fs-sm);line-height:1.5;}
+.zq-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:var(--zq-sp-2);flex-wrap:wrap;}
+.zq-clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .zq-h2{margin:0;font-size:var(--zq-fs-md);font-weight:var(--zq-fw-medium);letter-spacing:-.01em;line-height:1.4;}
 .zq-card{padding:var(--zq-sp-5);border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);}
 .zq-card-lg{box-shadow:var(--zq-sh2);}
@@ -319,14 +326,16 @@ option:checked{background:var(--zq-tint);color:var(--zq-text);font-weight:var(--
 .zq-pop .zq-modes .zq-m{flex:1;height:30px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);color:var(--zq-text2);font:var(--zq-fw-regular) var(--zq-fs-xs)/1 var(--zq-fontBody);cursor:pointer;}
 .zq-pop .zq-modes .zq-m.on{border-color:var(--zq-text);color:var(--zq-text);background:var(--zq-card-soft);}
 [data-zq-collapse]{position:relative;}
-.zq-cbtn{position:absolute;top:10px;right:10px;z-index:6;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);color:var(--zq-text2);font-size:13px;line-height:1;cursor:pointer;padding:0;}
-.zq-cbtn:hover{background:var(--zq-card-soft);color:var(--zq-text);}
+/* 两侧面板的收起 / 展开按钮只是图标（第四十三轮：AI 助手统一成一种底色之后，白底描边的小方块很跳） */
+.zq-cbtn{position:absolute;top:10px;right:10px;z-index:6;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;line-height:1;cursor:pointer;padding:0;}
+.zq-cbtn:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
 [data-zq-collapse].zq-collapsed{flex:0 0 44px!important;width:44px!important;min-width:44px!important;padding:10px 0!important;overflow:hidden!important;align-items:center;}
 .zq-collapsed>*:not(.zq-rail){display:none!important;}
 .zq-rail{display:none;}
 .zq-collapsed .zq-rail{display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:2px;}
-.zq-rail .zq-xbtn{width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);color:var(--zq-text2);font-size:13px;cursor:pointer;padding:0;}
-.zq-rail .zq-xbtn:hover{background:var(--zq-card-soft);color:var(--zq-text);}
+.zq-rail .zq-xbtn{width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;cursor:pointer;padding:0;}
+.zq-rail .zq-xbtn:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
+.zq-cbtn:focus-visible,.zq-rail .zq-xbtn:focus-visible{outline:none;box-shadow:var(--zq-focus);}
 .zq-rail .zq-rlabel{writing-mode:vertical-rl;letter-spacing:.2em;cursor:pointer;font:var(--zq-fw-regular) var(--zq-fs-xs)/1 var(--zq-fontBody);color:var(--zq-text3);}
 
 /* 首屏遮罩：只有后台页和旧地址的跳转页还用（zhiqu-ui.js 的 holdsUntilBoot），接口渲染完成后由 zhiqu-api.js 揭示 */

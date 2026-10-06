@@ -6,6 +6,8 @@
 //      第一版把这个判断放在 NAV 定义之前 —— isAdminPage 读 NAV.admin 时 NAV 还是 undefined，抛了被 try 吞掉，后台页就不遮了。
 //      源码判据看不出这种错（写法都对，只是先后不对），所以真跑。
 //   2. 左下角的名字：上一页记下的先画上，但只认同一张令牌（换了账号不认）；名字是用户填的，进 innerHTML 之前要转义。
+//   3. 侧栏的收起按钮（第四十三轮）：是品牌那一行里的一个小图标按钮（原来是导航最上面一整条带「收起」二字的按钮）；
+//      只有图标，所以名字靠 aria-label，而且要跟着收起 / 展开换。
 //   由 PageSwitchSmoothnessTest 调用；打印 ALL-GREEN 且退出码 0 = 全绿。
 const fs = require('fs');
 const vm = require('vm');
@@ -35,7 +37,7 @@ function storage(init) {
 }
 
 /** 在 pathname 页面上把 zhiqu-ui.js 跑一遍，返回 html 元素、侧栏、window */
-function load(pathname, session) {
+function load(pathname, session, local) {
   const html = el('html');
   const side = el('aside');
   const document = {
@@ -45,7 +47,7 @@ function load(pathname, session) {
   };
   const window = {
     location: { pathname, hash: '', search: '' }, document,
-    localStorage: storage(), sessionStorage: storage(session),
+    localStorage: storage(local), sessionStorage: storage(session),
     matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {} }),
     addEventListener() {}, setTimeout: () => 0, clearTimeout() {},
   };
@@ -88,6 +90,35 @@ r.ui.paintUser(btn, { name: '李四', account: 'lisi', avatar: '', admin: false 
 const saved = JSON.parse(r.session.getItem('zq.sideUser') || 'null');
 judge('/auth/info 回来画一次就记下，按这张令牌记', saved && saved.name === '李四' && saved.owner === token.slice(-24), saved);
 judge('令牌本身不进这份记录', !String(r.session.getItem('zq.sideUser')).includes(token), r.session.getItem('zq.sideUser'));
+
+// 3. 收起按钮
+/** 从 at 处的 <div 开始，找到和它配对的 </div>，返回整段 */
+function divAt(html, at) {
+  const re = /<div\b|<\/div>/g;
+  re.lastIndex = at;
+  let depth = 0, m;
+  while ((m = re.exec(html))) {
+    depth += m[0] === '</div>' ? -1 : 1;
+    if (depth === 0) return html.slice(at, re.lastIndex);
+  }
+  return '';
+}
+r = load('/dashboard.html', { token });
+const sideHtml = r.side.innerHTML;
+const brandAt = sideHtml.indexOf('<div class="zq-brand">');
+const brand = brandAt < 0 ? '' : divAt(sideHtml, brandAt);
+judge('侧栏有品牌那一行', brand.includes('zq-brand-badge'), sideHtml.slice(0, 200));
+const toggle = (brand.match(/<button[^>]*class="zq-side-toggle"[^>]*>[\s\S]*?<\/button>/) || [''])[0];
+judge('收起按钮在品牌那一行里（不再是导航最上面单独一整条）', toggle !== '', brand);
+judge('整个侧栏只有这一个收起按钮', (sideHtml.match(/class="zq-side-toggle"/g) || []).length === 1, sideHtml);
+judge('收起按钮只有图标，没有字', toggle.includes('<svg') && toggle.replace(/<[^>]*>/g, '').trim() === '', toggle);
+// 只有图标，名字全靠 aria-label：启动时由 applySideCollapsed 按收起与否写上
+let tg = r.side._found['.zq-side-toggle'];
+judge('展开着：按钮叫「收起导航栏」', tg && tg.getAttribute('aria-label') === '收起导航栏' && tg.title === '收起导航栏', tg && [tg.getAttribute('aria-label'), tg.title]);
+r = load('/dashboard.html', { token }, { 'zq-side-collapsed': '1' });
+tg = r.side._found['.zq-side-toggle'];
+judge('收起着：按钮改叫「展开导航栏」（读屏软件念的也跟着换）', r.side.classList.contains('is-collapsed') && tg && tg.getAttribute('aria-label') === '展开导航栏',
+  tg && [r.side.classList.contains('is-collapsed'), tg.getAttribute('aria-label')]);
 
 console.log(fail === 0 ? '\nALL-GREEN' : '\nRED: ' + fail + ' 条');
 process.exit(fail === 0 ? 0 : 1);

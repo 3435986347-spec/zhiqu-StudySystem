@@ -6,11 +6,11 @@
   <title>任务列表 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-icons" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-icons">
-  <link rel="manifest" href="manifest.json?v=20261006-icons">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-shell" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-shell">
+  <link rel="manifest" href="manifest.json?v=20261006-shell">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-icons">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-shell">
 </head>
 <body>
   <div class="zq-app">
@@ -18,9 +18,8 @@
     <main class="zq-main">
       <div style="display:flex; flex-direction:column; gap:16px;">
 
-        <header style="display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:4px 2px 2px;">
-          <div><p class="zq-eyebrow">任务中心</p><h1 class="zq-h1">任务列表</h1></div>
-          <a href="dashboard.html" style="display:inline-flex; align-items:center; gap:4px; color:var(--zq-primary); font-size:13px;"><span data-zq-icon="arrow-left"></span>返回看板</a>
+        <header class="zq-page-head">
+          <div><h1 class="zq-h1">任务列表</h1></div>
         </header>
 
         <!-- 筛选条 -->
@@ -51,7 +50,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261006-icons"></script>
-  <script src="assets/zhiqu-api.js?v=20261006-icons"></script>
+  <script src="assets/zhiqu-ui.js?v=20261006-shell"></script>
+  <script src="assets/zhiqu-api.js?v=20261006-shell"></script>
 </body>
 </html>

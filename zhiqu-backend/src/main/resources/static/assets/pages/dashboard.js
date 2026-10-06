@@ -29,7 +29,7 @@ async function bootDashboard() {
   // 进度条原来是设计稿写死的 width:60%（0/0、0/1 都显示六成，2026-10-03 走主流程看到的）
   var routineBar = $('#zq-routine-bar');
   if (routineBar) routineBar.style.width = (sum.routineTotal ? Math.min(100, Math.round(100 * (sum.routineDone || 0) / sum.routineTotal)) : 0) + '%';
-  var headerDate = $('header span');
+  var headerDate = $('.zq-page-sub');
   var todayRow = (data.days || []).find(function (d) { return d.today; });
   // 日期和星期都用服务端那一行的：原来是浏览器的日期拼服务端的星期（UTC+14 时「2026-09-29 · 周一」）
   if (headerDate) headerDate.textContent = (todayRow ? todayRow.date + ' · ' + todayRow.weekday : today()) + zoneNote();
