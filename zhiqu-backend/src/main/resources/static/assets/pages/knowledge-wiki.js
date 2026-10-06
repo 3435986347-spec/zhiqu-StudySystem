@@ -56,6 +56,8 @@ function paintWikiTree() {
     var lbl = '目录 · ' + total + ' 页';
     toc.setAttribute('data-zq-label', lbl);
     var rl = $('.zq-rlabel', toc); if (rl) rl.textContent = lbl;
+    // 桌面上收起的竖条只有一个图标（第四十四轮），页数在它的提示里
+    var xb = $('.zq-xbtn', toc); if (xb) { xb.title = '展开「' + lbl + '」'; xb.setAttribute('aria-label', xb.title); }
   }
   var f = state.wikiFilter || { q: '', type: '' };
   var wantType = f.type ? (WIKI_TYPE_MAP[f.type] || f.type.toUpperCase()) : '';

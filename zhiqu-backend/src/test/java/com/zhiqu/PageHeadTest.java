@@ -38,7 +38,7 @@ class PageHeadTest {
     }
 
     /** 从 at 处的开标签开始，找到配对的闭标签，返回整段 */
-    private static String elementAt(String html, int at, String tag) {
+    static String elementAt(String html, int at, String tag) {
         Matcher m = Pattern.compile("<" + tag + "\\b|</" + tag + ">").matcher(html);
         int depth = 0;
         int from = at;
@@ -136,7 +136,8 @@ class PageHeadTest {
         assertFalse(section.contains("background:var(--zq-card-soft);\">"), "工作区里又有一条浅灰的头部条");
         assertEquals(1, html.split(">AI 助手<", -1).length - 1, "「AI 助手」在页面上应该只写一次（页面标题）");
         String head = pageHeads().stream().filter(h -> h[0].equals("ai-assistant.html")).findFirst().orElseThrow()[1];
-        assertTrue(head.contains("id=\"zq-current-notebook\"") && head.contains("id=\"zq-sync-count\""), "当前 Notebook、同步状态要在页面头部（原来那条头部条去掉了）");
+        // 同步状态（「已同步 50 条历史消息」）第四十四轮当调试信息去掉了，见 AiComposerTest
+        assertTrue(head.contains("id=\"zq-current-notebook\""), "当前 Notebook 要在页面头部（原来那条头部条去掉了）");
 
         // 两侧面板的收起 / 展开按钮只是图标：白底描边的小方块在一种底色上很跳
         String css = css();

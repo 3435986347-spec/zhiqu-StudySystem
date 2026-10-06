@@ -71,6 +71,12 @@
     'log-out': '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
     'panel-left-close': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
     'panel-left-open': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
+    'panel-right-close': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/>',
+    'panel-right-open': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/>',
+    'paperclip': '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+    'globe': '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+    'lightbulb': '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
+    'code': '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
     'chevron-left': '<path d="m15 18-6-6 6-6"/>',
     'chevron-right': '<path d="m9 18 6-6-6-6"/>',
     'plus': '<path d="M5 12h14"/><path d="M12 5v14"/>',
@@ -307,9 +313,12 @@
   // ── 折叠助手 ──
   function makeCollapsible(panel, opts){
     if(!panel || panel.dataset.zqC) return; panel.dataset.zqC='1';
-    var cbtn=document.createElement('button'); cbtn.type='button'; cbtn.className='zq-cbtn'; cbtn.innerHTML=icon(opts.dir==='right'?'chevron-right':'chevron-left'); panel.appendChild(cbtn);
+    // 开关只是面板图标（第四十四轮；原来收起后的竖条上是竖排的字），名字在提示和 aria-label 里。手机上收起的面板是正文上方的页签，字由样式表露出来
+    var right=opts.dir==='right';
+    var cbtn=document.createElement('button'); cbtn.type='button'; cbtn.className='zq-cbtn'; cbtn.innerHTML=icon(right?'panel-right-close':'panel-left-close');
+    cbtn.title='收起「'+opts.label+'」'; cbtn.setAttribute('aria-label',cbtn.title); panel.appendChild(cbtn);
     var rail=document.createElement('div'); rail.className='zq-rail';
-    rail.innerHTML='<button type="button" class="zq-xbtn">'+icon(opts.dir==='right'?'chevron-left':'chevron-right')+'</button><div class="zq-rlabel">'+opts.label+'</div>';
+    rail.innerHTML='<button type="button" class="zq-xbtn" title="展开「'+opts.label+'」" aria-label="展开「'+opts.label+'」">'+icon(right?'panel-right-open':'panel-left-open')+'</button><div class="zq-rlabel">'+opts.label+'</div>';
     panel.insertBefore(rail, panel.firstChild);
     // 手机上展开是临时的（浮在正文上面，见 zhiqu-ui.css 的 .zq-panel-host）：不写进桌面上记住的偏好
     function set(c){ panel.classList.toggle('zq-collapsed',c); if(opts.onToggle) opts.onToggle(c); if(!isMobile()) lss(opts.key, c?'1':'0'); }

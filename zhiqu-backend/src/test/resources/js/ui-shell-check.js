@@ -1,13 +1,14 @@
 // 页面切换（第三十九轮）—— 在 node 里真跑发布的 assets/zhiqu-ui.js（假的最小 DOM），不从源码里抠。
 //
 //   用法：node src/test/resources/js/ui-shell-check.js <zhiqu-ui.js 的路径>
-//   判两件事：
+//   判这几件事：
 //   1. 哪些页面一打开先遮住主内容区（zq-booting）：只有后台页和两个旧地址的跳转页；别的页面一打开就露出骨架。
 //      第一版把这个判断放在 NAV 定义之前 —— isAdminPage 读 NAV.admin 时 NAV 还是 undefined，抛了被 try 吞掉，后台页就不遮了。
 //      源码判据看不出这种错（写法都对，只是先后不对），所以真跑。
 //   2. 左下角的名字：上一页记下的先画上，但只认同一张令牌（换了账号不认）；名字是用户填的，进 innerHTML 之前要转义。
 //   3. 侧栏的收起按钮（第四十三轮）：是品牌那一行里的一个小图标按钮（原来是导航最上面一整条带「收起」二字的按钮）；
 //      只有图标，所以名字靠 aria-label，而且要跟着收起 / 展开换。
+//   4. 两侧可收起的面板（AI 助手、Wiki，第四十四轮）：开关只是面板图标（原来收起后的竖条上竖排着面板的名字），名字在提示和 aria-label 里。
 //   由 PageSwitchSmoothnessTest 调用；打印 ALL-GREEN 且退出码 0 = 全绿。
 const fs = require('fs');
 const vm = require('vm');
@@ -23,7 +24,8 @@ function el(tag) {
       contains: (c) => classes.has(c), toggle: (c, on) => { const v = on === undefined ? !classes.has(c) : on; if (v) classes.add(c); else classes.delete(c); return v; },
     },
     setAttribute: (k, v) => { attrs[k] = String(v); }, getAttribute: (k) => (k in attrs ? attrs[k] : null), removeAttribute: (k) => { delete attrs[k]; },
-    addEventListener() {}, removeEventListener() {}, appendChild(c) { return c; }, contains: () => false, focus() {},
+    addEventListener() {}, removeEventListener() {}, contains: () => false, focus() {},
+    appendChild(c) { node.children.push(c); return c; }, insertBefore(c) { node.children.unshift(c); return c; },
     querySelectorAll: () => [],
   };
   const found = {};
@@ -37,13 +39,13 @@ function storage(init) {
 }
 
 /** 在 pathname 页面上把 zhiqu-ui.js 跑一遍，返回 html 元素、侧栏、window */
-function load(pathname, session, local) {
+function load(pathname, session, local, panels) {
   const html = el('html');
   const side = el('aside');
   const document = {
     readyState: 'complete', documentElement: html, body: el('body'),
     getElementById: (id) => (id === 'zq-side' ? side : null),
-    querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, createElement: (t) => el(t),
+    querySelector: () => null, querySelectorAll: (sel) => (sel === '[data-zq-collapse]' && panels ? panels : []), addEventListener() {}, createElement: (t) => el(t),
   };
   const window = {
     location: { pathname, hash: '', search: '' }, document,
@@ -119,6 +121,29 @@ r = load('/dashboard.html', { token }, { 'zq-side-collapsed': '1' });
 tg = r.side._found['.zq-side-toggle'];
 judge('收起着：按钮改叫「展开导航栏」（读屏软件念的也跟着换）', r.side.classList.contains('is-collapsed') && tg && tg.getAttribute('aria-label') === '展开导航栏',
   tg && [r.side.classList.contains('is-collapsed'), tg.getAttribute('aria-label')]);
+
+// 4. 两侧面板的开关
+function panel(dir, label) {
+  const p = el('aside');
+  p.setAttribute('data-zq-collapse', dir);
+  p.setAttribute('data-zq-label', label);
+  return p;
+}
+const left = panel('left', 'Notebook · 资料'), rightP = panel('right', '执行轨迹 · 产物');
+r = load('/ai-assistant.html', { token }, {}, [left, rightP]);
+const stripTags = (h) => String(h).replace(/<[^>]*>/g, '').trim();
+for (const [p, dir, label] of [[left, 'left', 'Notebook · 资料'], [rightP, 'right', '执行轨迹 · 产物']]) {
+  const cbtn = p.children.find((c) => c.className === 'zq-cbtn');
+  const rail = p.children.find((c) => c.className === 'zq-rail');
+  judge(dir + '：面板上装好了收起按钮和收起后的竖条', !!cbtn && !!rail, p.children.map((c) => c.className));
+  if (!cbtn || !rail) continue;
+  judge(dir + '：收起按钮是「收起面板」的图标', cbtn.innerHTML === r.ui.icon('panel-' + dir + '-close') && cbtn.innerHTML.includes('<svg'), cbtn.innerHTML.slice(0, 80));
+  judge(dir + '：收起按钮有名字（只有图标，读屏靠它）', cbtn.title === '收起「' + label + '」' && cbtn.getAttribute('aria-label') === cbtn.title, [cbtn.title, cbtn.getAttribute('aria-label')]);
+  const x = (rail.innerHTML.match(/<button[^>]*class="zq-xbtn"[^>]*>[\s\S]*?<\/button>/) || [''])[0];
+  judge(dir + '：竖条上是「展开面板」的图标按钮', x.includes(r.ui.icon('panel-' + dir + '-open')), rail.innerHTML.slice(0, 120));
+  judge(dir + '：竖条上的按钮只有图标、名字在提示和 aria-label 里', stripTags(x) === '' && x.includes('aria-label="展开「' + label + '」"') && x.includes('title="展开「' + label + '」"'), x.slice(0, 160));
+  judge(dir + '：面板的名字还在（手机上收起的面板是页签，要显示字）', rail.innerHTML.includes('<div class="zq-rlabel">' + label + '</div>'), rail.innerHTML);
+}
 
 console.log(fail === 0 ? '\nALL-GREEN' : '\nRED: ' + fail + ' 条');
 process.exit(fail === 0 ? 0 : 1);

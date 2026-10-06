@@ -19,15 +19,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>这里钉结构（气泡有 {@code zq-msg-body} 类、内边距收窄、样式表里有去首尾外边距的规则）；
  * 尺寸是在浏览器里用线上 renderMarkdown 生成的预览实测的。
+ *
+ * <p>第四十四轮起只有用户的话还是气泡（AI 的回答不套气泡、直接排在页面上），气泡的样子从 JS 字符串里的内联样式搬进了样式表的
+ * {@code .zq-msg.is-me .zq-msg-body}；内边距就到那里去读。AI 的回答没有内边距，首尾外边距照样要去：不然每条回答顶上多空 8～14px。
  */
 class ChatBubbleSpacingTest {
 
     @Test
-    @DisplayName("气泡带 zq-msg-body 类，竖向内边距不超过 8px")
+    @DisplayName("消息正文带 zq-msg-body 类；用户的气泡竖向内边距不超过 8px")
     void 气泡收窄() throws Exception {
         String js = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
-        Matcher m = Pattern.compile("data-msg-body=\"' \\+ i \\+ '\" class=\"zq-msg-body\" style=\"[^\"]*?padding:(\\d+)px").matcher(js);
-        assertTrue(m.find(), "气泡没有 zq-msg-body 类（或写法变了）—— 去首尾外边距的规则找不到它");
+        assertTrue(js.contains("<div data-msg-body=\"' + i + '\" class=\"zq-msg-body\">"),
+                "消息正文没有 zq-msg-body 类（或写法变了）—— 去首尾外边距的规则找不到它");
+        String css = Files.readString(java.nio.file.Path.of("src/main/resources/static/assets/zhiqu-ui.css"), StandardCharsets.UTF_8)
+                .replaceAll("(?s)/\\*.*?\\*/", "");
+        Matcher m = Pattern.compile("\\.zq-msg\\.is-me \\.zq-msg-body\\{[^}]*?padding:(\\d+)px").matcher(css);
+        assertTrue(m.find(), "样式表里找不到用户气泡的内边距（.zq-msg.is-me .zq-msg-body）");
         assertTrue(Integer.parseInt(m.group(1)) <= 8, "气泡竖向内边距回到了 " + m.group(1) + "px");
     }
 

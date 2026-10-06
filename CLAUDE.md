@@ -89,12 +89,13 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟待补记、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261006-shell`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261006-composer`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
   图标只用 `zhiqu-ui.js` 的 `ICONS`（`ZQUI.icon` / `data-zq-icon` / `zqShared.icon`），不用 Unicode 符号当图标（`IconSetTest`）。界面打磨的步骤见 `docs/ui-plan.md`。
   页面头部一律 `<header class="zq-page-head">`：标题 + 一行 `.zq-page-sub` 在左、`.zq-page-actions` 在右，标题上面不加小字（`PageHeadTest`）。
+  AI 助手的输入区、消息、开关按下的样子都在样式表（`.zq-composer` / `.zq-msg` / `.zq-chip[aria-pressed]`），JS 只管类和 `aria-*`（`AiComposerTest`）。
 - 设计令牌只在 `assets/zhiqu-ui.css` 的 `:root` 定义一次：引用不存在的 `var(--x)` 不报错，整条声明作废（`FrontendTokenAndDateTest`）。手机样式只有一段 `@media (max-width: 760px)`，必须在 `zhiqu-ui.css` 最后。
 - 业务错误是 HTTP 200 + `code != 200`，前端判 `result.code === 200`。写请求走 `request()`（去重、幂等键、重来、照实说「不确定」），不要直接 `fetch`（`RequestResilienceTest`）。
 - 页面不带示例数据、静态 HTML 里不写死数字（`InitErrorReplacesDemoContentTest`）。细节：`docs/notes/frontend.md`。
@@ -167,3 +168,4 @@ cd ../zhiqu-cli && npm test
 - [第四十一轮](docs/rounds/round-41.md) 第 1 步的调整：默认黑白、字更细（像 Claude）、内联字重收成令牌
 - [第四十二轮](docs/rounds/round-42.md) 界面打磨第 2 步：Unicode 符号换成一套线性图标
 - [第四十三轮](docs/rounds/round-43.md) 界面打磨第 3 步：页面头部一种写法、侧栏收起按钮做小；AI 助手一种底色
+- [第四十四轮](docs/rounds/round-44.md) 界面打磨第 4 步：AI 助手的输入框、两侧面板的图标开关、消息排版

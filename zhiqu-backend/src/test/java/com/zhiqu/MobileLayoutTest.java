@@ -313,8 +313,10 @@ class MobileLayoutTest {
             if (sels.contains(".zq-btn") && sels.contains(".zq-btn-ghost")) found = true;
         }
         assertTrue(found, "没有一条把 .zq-btn / .zq-btn-ghost 设成 white-space:nowrap 的规则");
+        // AI 输入区：原来输入框和六个按钮挤在一排，手机上靠这里把输入框挪到单独一行（它的 min-width:200px 在 320px 宽时伸出去 23px）。
+        // 第四十四轮起输入框本来就单独一行（AiComposerTest 管结构），手机上要管的是底下工具那一条：三个开关只留图标，不然发送键被挤出框外
         String block = phoneBlock(css()).body();
-        assertTrue(block.contains("#zq-draft{order:-1;flex:1 1 100%!important;min-width:0!important;}"),
-                "手机上 AI 输入框没有单独占一行（它的 min-width:200px 在 320px 宽时伸出去 23px）");
+        assertTrue(block.contains(".zq-chip-label{display:none;}"),
+                "手机上 AI 输入区的三个开关还带着字 —— 375px 宽时工具那一条放不下，发送键被挤出框外");
     }
 }

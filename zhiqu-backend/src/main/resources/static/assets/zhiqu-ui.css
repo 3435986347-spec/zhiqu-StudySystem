@@ -333,10 +333,11 @@ option:checked{background:var(--zq-tint);color:var(--zq-text);font-weight:var(--
 .zq-collapsed>*:not(.zq-rail){display:none!important;}
 .zq-rail{display:none;}
 .zq-collapsed .zq-rail{display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:2px;}
-.zq-rail .zq-xbtn{width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;cursor:pointer;padding:0;}
+.zq-rail .zq-xbtn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;cursor:pointer;padding:0;}
 .zq-rail .zq-xbtn:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
 .zq-cbtn:focus-visible,.zq-rail .zq-xbtn:focus-visible{outline:none;box-shadow:var(--zq-focus);}
-.zq-rail .zq-rlabel{writing-mode:vertical-rl;letter-spacing:.2em;cursor:pointer;font:var(--zq-fw-regular) var(--zq-fs-xs)/1 var(--zq-fontBody);color:var(--zq-text3);}
+/* 桌面上收起的竖条只有图标按钮（第四十四轮；原来竖排着面板的名字），名字在按钮的提示里；手机上收起的面板是页签，字在 @media 里露出来 */
+.zq-rail .zq-rlabel{display:none;cursor:pointer;font:var(--zq-fw-regular) var(--zq-fs-xs)/1 var(--zq-fontBody);color:var(--zq-text3);}
 
 /* 首屏遮罩：只有后台页和旧地址的跳转页还用（zhiqu-ui.js 的 holdsUntilBoot），接口渲染完成后由 zhiqu-api.js 揭示 */
 html.zq-booting .zq-main{opacity:0;}
@@ -424,11 +425,51 @@ body.zq-modal-open{overflow:hidden;}
 .zq-notice.zq-notice-error .zq-notice-dot{background:var(--zq-bad);animation:none;}
 
 /* ── AI 工作区：真实上传、附件、思考摘要与结构化产物 ── */
-.zq-ai-drop-zone{border:1.5px dashed var(--zq-border);border-radius:var(--zq-rs);padding:10px 14px;display:flex;align-items:center;gap:10px;color:var(--zq-text3);background:var(--zq-card);font-size:12.5px;cursor:pointer;transition:border-color .15s ease,background .15s ease,color .15s ease;}
-.zq-ai-drop-zone:hover,.zq-ai-drop-zone:focus-visible,.zq-ai-drop-zone.is-dragging{border-color:var(--zq-primary);background:var(--zq-tint);color:var(--zq-primary);outline:none;}
-.zq-ai-drop-zone.is-uploading{border-style:solid;border-color:var(--zq-primary);color:var(--zq-primary);}
+.zq-ai-drop-zone{border:1px solid var(--zq-border);border-radius:var(--zq-rm);padding:7px 12px;display:flex;align-items:center;gap:8px;color:var(--zq-text3);background:var(--zq-card);font-size:var(--zq-fs-xs);cursor:pointer;transition:border-color .15s ease,background .15s ease,color .15s ease;}
+/* 上传中 / 出错时才出现，当输入框上面的一条状态（第四十四轮起桌面也这样；拖文件进来是整栏盖一层 .zq-drop-overlay） */
+.zq-ai-drop-zone:not(.is-uploading):not(.is-error){display:none;}
+.zq-ai-drop-zone:hover,.zq-ai-drop-zone:focus-visible{border-color:var(--zq-primary);color:var(--zq-primary);outline:none;}
+.zq-ai-drop-zone.is-uploading{color:var(--zq-text2);}
 .zq-ai-drop-zone.is-error{border-color:var(--zq-bad);background:var(--zq-bad-tint);color:var(--zq-bad);}
-.zq-ai-drop-icon{font-weight:var(--zq-fw-medium);font-size:15px;line-height:1;}
+.zq-ai-drop-icon{display:inline-flex;}
+
+/* ── AI 助手的输入区（第四十四轮）：一个大圆角框 —— 附件在上、输入在中、工具一条在下；和消息一栏同宽、居中 ── */
+.zq-composer-wrap{padding:4px 22px 18px;display:flex;flex-direction:column;gap:8px;}
+.zq-composer-wrap>*,.zq-msg{width:100%;max-width:760px;margin-left:auto;margin-right:auto;}
+.zq-composer{display:flex;flex-direction:column;gap:6px;padding:12px 10px 8px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);box-shadow:var(--zq-sh1);transition:border-color .12s ease;}
+.zq-composer:focus-within{border-color:var(--zq-text3);}
+.zq-composer textarea{display:block;width:100%;height:44px;max-height:200px;padding:0 4px 0 0;border:none;outline:none;background:transparent;color:var(--zq-text);font:var(--zq-fw-regular) var(--zq-fs-base)/22px var(--zq-fontBody);resize:none;overflow-y:auto;}
+.zq-composer textarea::placeholder{color:var(--zq-text3);}
+.zq-composer-bar{display:flex;align-items:center;gap:4px;min-width:0;margin-left:-6px;}
+.zq-composer-icon{width:30px;height:30px;flex:none;display:inline-flex;align-items:center;justify-content:center;padding:0;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text2);cursor:pointer;}
+.zq-composer-icon:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
+/* 联网 / 深度思考 / 代码：按下的样子只按 aria-pressed 画（JS 只管 aria-pressed） */
+.zq-chip{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;flex:none;border:1px solid transparent;border-radius:999px;background:transparent;color:var(--zq-text2);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);cursor:pointer;transition:background .12s ease,color .12s ease;}
+.zq-chip .zq-icon{width:14px;height:14px;}
+.zq-chip:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
+.zq-chip[aria-pressed="true"]{border-color:var(--zq-tint-strong);background:var(--zq-tint);color:var(--zq-primary);}
+.zq-composer-model{margin-left:auto;flex:0 1 auto;width:auto;min-width:0;max-width:170px;height:28px;padding:0 8px;border-color:transparent;background-color:transparent;color:var(--zq-text2);font-size:var(--zq-fs-xs);cursor:pointer;}
+.zq-composer-model:hover{background-color:var(--zq-sb-active-bg);}
+.zq-composer-model:focus{border-color:var(--zq-border);}
+.zq-send{width:32px;height:32px;flex:none;display:inline-flex;align-items:center;justify-content:center;padding:0;border:none;border-radius:999px;background:var(--zq-primary);color:var(--zq-on-primary);cursor:pointer;transition:opacity .12s ease,background .12s ease;}
+.zq-send:hover{background:var(--zq-primary-dark);}
+/* 输入框空着时箭头变淡（点了也不会发 —— sendAiMessage 先看有没有字） */
+.zq-composer:has(#zq-draft:placeholder-shown) .zq-send:not(.is-busy){opacity:.35;}
+.zq-send.is-busy{cursor:default;}
+.zq-send.is-busy .zq-icon{display:none;}
+.zq-send.is-busy::after{content:"";width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:zqSpin .8s linear infinite;}
+@keyframes zqSpin{to{transform:rotate(360deg);}}
+.zq-composer-icon:focus-visible,.zq-chip:focus-visible,.zq-send:focus-visible,.zq-composer-model:focus-visible{outline:none;box-shadow:var(--zq-focus);}
+/* 拖文件进对话这一栏时整栏盖的那一层（ai-assistant.js 的 bindAiDropZone 给 #zq-chat-col 加 is-dragging） */
+.zq-drop-overlay{position:absolute;inset:10px;z-index:9;display:none;align-items:center;justify-content:center;gap:8px;padding:0 24px;border:1.5px dashed var(--zq-text3);border-radius:var(--zq-rl);background:var(--zq-bg);color:var(--zq-text);font-size:var(--zq-fs-sm);text-align:center;pointer-events:none;}
+#zq-chat-col.is-dragging .zq-drop-overlay{display:flex;}
+
+/* ── 消息（第四十四轮）：用户的话是右边一个浅灰的气泡，AI 的回答不套气泡、不要头像，直接排在页面上（像 Claude）；一栏最宽 760px、居中 ── */
+.zq-msg{display:flex;}
+.zq-msg.is-me{justify-content:flex-end;}
+.zq-msg-body{min-width:0;color:var(--zq-text);font-size:var(--zq-fs-base);line-height:1.7;}
+.zq-msg.is-ai .zq-msg-body{flex:1;}
+.zq-msg.is-me .zq-msg-body{max-width:80%;padding:8px 14px;border-radius:var(--zq-rl);background:var(--zq-tint);}
 .zq-ai-attachments{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
 .zq-ai-attachment{min-width:0;max-width:260px;height:26px;padding:0 5px 0 8px;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--zq-tint-strong);border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-text2);font-size:11.5px;}
 .zq-ai-attachment>span:nth-child(2){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -551,15 +592,16 @@ body.zq-modal-open{overflow:hidden;}
   .zq-panel-host>[data-zq-collapse].zq-collapsed{width:auto!important;min-width:0!important;padding:4px 8px!important;align-items:stretch;}
   .zq-panel-host>.zq-collapsed .zq-rail{flex-direction:row;gap:8px;padding-top:0;}
   .zq-panel-host>[data-zq-collapse="right"].zq-collapsed .zq-rail{flex-direction:row-reverse;}
-  .zq-panel-host>.zq-collapsed .zq-rlabel{writing-mode:horizontal-tb;letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+  .zq-panel-host>.zq-collapsed .zq-rlabel{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
   .zq-panel-host>[data-zq-collapse]:not(.zq-collapsed){position:absolute!important;top:0;bottom:0;z-index:8;width:min(300px,88%)!important;box-shadow:0 8px 30px rgba(0,0,0,.28)!important;}
   .zq-panel-host>[data-zq-collapse="left"]:not(.zq-collapsed){left:0;}
   .zq-panel-host>[data-zq-collapse="right"]:not(.zq-collapsed){right:0;}
 
-  /* AI 输入区：输入框单独占一行（原来 min-width:200px，320px 宽时伸出去 23px）；
-     拖拽框在手机上没有「拖」这回事，只在上传中 / 出错时出现（上传进度写在它里面），平时用「上传」按钮 */
-  #zq-draft{order:-1;flex:1 1 100%!important;min-width:0!important;}
-  .zq-ai-drop-zone:not(.is-uploading):not(.is-error){display:none;}
+  /* AI 输入区（第四十四轮起输入框本来就单独一行）：工具那一条放不下 —— 三个开关只留图标（名字在 aria-label 里），模型窄一点 */
+  .zq-composer-wrap{padding:4px 0 10px;}
+  .zq-chip{padding:0 8px;}
+  .zq-chip-label{display:none;}
+  .zq-composer-model{max-width:120px;}
   #zq-chat{padding:14px 12px!important;}
   /* AI 助手、Wiki 的定高容器：桌面上减的 110px 是 .zq-main 的上下 padding，手机上 padding 是 18+64=82px，
      照减 110px 底下白空 28px。dvh 跟着手机浏览器地址栏的收放走；不支持 dvh 的浏览器丢掉这一条，退回内联的 100vh。 */

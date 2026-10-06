@@ -1374,11 +1374,12 @@
       var rows = tableBuf.map(function (l) {
         return l.replace(/^\|/, '').replace(/\|\s*$/, '').split('|').map(function (c) { return c.trim(); });
       });
-      var cellCss = 'border:1px solid var(--zq-border-soft);padding:6px 10px;text-align:left;vertical-align:top;';
+      // 只有横线（第四十四轮；原来每一格四面描边、表头灰底，一张表像一张格子纸），表头的线深一档
+      var cellCss = 'padding:7px 16px 7px 0;border-bottom:1px solid var(--zq-border-soft);text-align:left;vertical-align:top;';
       var hasHeader = rows.length > 1 && rows[1].length && rows[1].every(function (c) { return c === '' || /^:?-{2,}:?$/.test(c); }) && rows[1].some(function (c) { return /-{2,}/.test(c); });
-      var out = '<div style="overflow-x:auto;margin:12px 0;"><table style="border-collapse:collapse;width:100%;font-size:12.5px;line-height:1.6;">';
+      var out = '<div style="overflow-x:auto;margin:12px 0;"><table style="border-collapse:collapse;width:100%;font-size:var(--zq-fs-sm);line-height:1.6;">';
       if (hasHeader) {
-        out += '<thead><tr>' + rows[0].map(function (c) { return '<th style="' + cellCss + 'background:var(--zq-card-soft);font-weight:var(--zq-fw-medium);">' + mdInline(c) + '</th>'; }).join('') + '</tr></thead>';
+        out += '<thead><tr>' + rows[0].map(function (c) { return '<th style="' + cellCss + 'border-bottom-color:var(--zq-border);color:var(--zq-text2);font-weight:var(--zq-fw-medium);">' + mdInline(c) + '</th>'; }).join('') + '</tr></thead>';
         rows = rows.slice(2);
       }
       out += '<tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td style="' + cellCss + '">' + mdInline(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';

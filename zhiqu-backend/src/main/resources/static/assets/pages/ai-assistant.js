@@ -110,11 +110,8 @@ function setAiToggleState(kind, on) {
   var button = document.getElementById(AI_TOGGLE_IDS[kind]);
   if (!button) return;
   button.dataset.on = on ? '1' : '0';
+  // 按下的样子由样式表按 aria-pressed 画（.zq-chip，第四十四轮）；原来在这里一项一项写内联样式，还写死了字重 600
   button.setAttribute('aria-pressed', on ? 'true' : 'false');
-  button.style.border = '1px solid ' + (on ? 'var(--zq-tint-strong)' : 'var(--zq-border)');
-  button.style.background = on ? 'var(--zq-tint)' : 'var(--zq-card)';
-  button.style.color = on ? 'var(--zq-primary)' : 'var(--zq-text2)';
-  button.style.fontWeight = '600';
 }
 
 function aiToggle(k) {
@@ -144,24 +141,44 @@ function setAiDropState(text, mode) {
 function bindAiDropZone() {
   var zone = $('#zq-drop-zone');
   if (!zone) return;
-  ['dragenter', 'dragover'].forEach(function (name) {
-    zone.addEventListener(name, function (event) {
+  // 拖文件进对话这一栏：整栏盖一层「松开即可上传」（第四十四轮；原来输入框上面一直摆着一条虚线框）。
+  // 拖着走的时候每进出栏里的一个子元素，dragenter / dragleave 都各来一次 —— 只看最后一个事件，那一层会跟着一闪一闪，
+  // 所以数进出了几层，回到 0 才收。有的浏览器拖出窗口、按 Esc 时不给 dragleave：dragover 隔一会儿不来了也收。
+  var col = $('#zq-chat-col');
+  if (col) {
+    var depth = 0, watchdog = 0;
+    var hasFiles = function (event) {
+      var types = event.dataTransfer && event.dataTransfer.types;
+      return !!types && Array.prototype.indexOf.call(types, 'Files') >= 0;
+    };
+    var settle = function () { depth = 0; clearTimeout(watchdog); col.classList.remove('is-dragging'); };
+    col.addEventListener('dragenter', function (event) {
+      if (!hasFiles(event)) return;   // 拖的是页面里的一段字：不管
       event.preventDefault();
-      event.stopPropagation();
-      zone.classList.add('is-dragging');
+      depth++;
+      col.classList.add('is-dragging');
     });
-  });
-  ['dragleave', 'drop'].forEach(function (name) {
-    zone.addEventListener(name, function (event) {
+    col.addEventListener('dragover', function (event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();         // 不拦 dragover，浏览器就不让放（松手会直接打开那个文件）
+      col.classList.add('is-dragging');
+      clearTimeout(watchdog);
+      watchdog = setTimeout(settle, 1000);
+    });
+    col.addEventListener('dragleave', function (event) {
+      if (!hasFiles(event)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) settle();
+    });
+    col.addEventListener('drop', function (event) {
+      if (!hasFiles(event)) return;
       event.preventDefault();
-      event.stopPropagation();
-      zone.classList.remove('is-dragging');
+      settle();
+      var files = Array.prototype.slice.call(event.dataTransfer && event.dataTransfer.files || []);
+      if (files.length) uploadAiFiles(files, true);
     });
-  });
-  zone.addEventListener('drop', function (event) {
-    var files = Array.prototype.slice.call(event.dataTransfer && event.dataTransfer.files || []);
-    if (files.length) uploadAiFiles(files, true);
-  });
+  }
+  // 上传中 / 出错时的那一条状态：点它（或聚焦后按回车 / 空格）也能选文件
   zone.addEventListener('click', function () {
     chooseAiFiles(function (files) { uploadAiFiles(files, true); });
   });
@@ -895,7 +912,6 @@ async function loadAiMessages() {
   // 正好整页而其实没有更早的时候，用户点一次会拿到空列表，按钮随即消失。
   // 换成精确值要么多查一次、要么改响应形状（现在是裸数组，前端其它地方都按数组读）。
   state.chatHasMore = state.messages.length >= CHAT_PAGE_SIZE;
-  var sync = $('#zq-sync-count'); if (sync) sync.textContent = '已同步 ' + state.messages.length + ' 条历史消息';
   renderAiMessages();
   watchStreamingMessages();
 }
@@ -1182,11 +1198,10 @@ function renderAiMessages(opts) {
       + 'background:var(--zq-card-soft);color:var(--zq-text2);font-size:11.5px;cursor:pointer;">'
       + (state.chatLoadingMore ? '加载中…' : icon('arrow-up') + '加载更早的消息') + '</button></div>'
     : '';
+  // 用户的话是右边一个浅灰的气泡，AI 的回答不套气泡、不要头像，直接排在页面上（第四十四轮，像 Claude）；样子都在样式表的 .zq-msg
   host.innerHTML = moreRow + state.messages.map(function (m, i) {
     var me = m.role === 'user';
-    var name = me ? '我' : 'AI';
-    var body = messageBodyHtml(m, i);
-    return '<div data-msg-idx="' + i + '" style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:var(--zq-fw-medium);">' + name + '</div><div data-msg-body="' + i + '" class="zq-msg-body" style="max-width:72%;padding:8px 12px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + body + '</div></div>';
+    return '<div data-msg-idx="' + i + '" class="zq-msg ' + (me ? 'is-me' : 'is-ai') + '"><div data-msg-body="' + i + '" class="zq-msg-body">' + messageBodyHtml(m, i) + '</div></div>';
   }).join('');
   if (!state.messages.length) {
     host.innerHTML = moreRow + (historyLoaded() ? aiEmptyState() : '');
@@ -1609,7 +1624,8 @@ function stepNoteHtml(n) {
     + ';margin-top:2px;word-break:break-all;">⎿ ' + esc(n.message) + '</div>';
 }
 /** 单行时的高度，与同排按钮对齐；也是清空后要回到的高度。 */
-var DRAFT_BASE_HEIGHT = 32;
+var DRAFT_BASE_HEIGHT = 44;   // 两行（输入框行高 22px，第四十四轮起没有上下内边距和边框 —— 框是外面那一层 .zq-composer）
+var DRAFT_MAX_HEIGHT = 200;
 /**
  * 输入框自适应高度。先置 auto 再读 scrollHeight —— 不置的话 scrollHeight 会被
  * 当前高度撑住，内容变少时收不回去。
@@ -1620,7 +1636,7 @@ function growDraft() {
   var el = $('#zq-draft');
   if (!el) return;
   el.style.height = 'auto';
-  el.style.height = Math.max(DRAFT_BASE_HEIGHT, Math.min(el.scrollHeight, 120)) + 'px';
+  el.style.height = Math.max(DRAFT_BASE_HEIGHT, Math.min(el.scrollHeight, DRAFT_MAX_HEIGHT)) + 'px';
 }
 async function sendAiMessage() {
   if (state.aiSending) return; // 发送中保护:双击/回车连发只算一次
@@ -1637,7 +1653,8 @@ async function sendAiMessage() {
   state.aiSending = true;
   stopStreamWatch();   // SSE 接管，轮询再跑就会和它抢着改同一批消息
   var sendButton = $('#zq-send');
-  if (sendButton) { sendButton.disabled = true; sendButton.textContent = '生成中'; }
+  // 发送键只有一个箭头（第四十四轮）：生成中换成转圈（样式表画），读屏念「生成中」
+  if (sendButton) { sendButton.disabled = true; sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中'); }
   var reasoningMode = ($('#zq-think') && $('#zq-think').dataset.on === '1') ? 'DEEP' : 'OFF';
   // READY（有分块，走检索）和 IMAGE（无分块，走视觉内容块）都要发给后端。
   // 只发 READY 的话图片就被挡在这一层，后端永远收不到它。
@@ -1805,7 +1822,7 @@ async function sendAiMessage() {
     });
   } finally {
     state.aiSending = false;
-    if (sendButton) { sendButton.disabled = false; sendButton.textContent = '发送'; }
+    if (sendButton) { sendButton.disabled = false; sendButton.classList.remove('is-busy'); sendButton.setAttribute('aria-label', '发送（⌘/Ctrl + 回车）'); }
     // 服务器没收到这句（没配模型、限流、根本没连上）：字放回输入框，草稿里也还在 —— 改一改就能再发。
     // 收到了（事件带过 userMessageId）的不放回：那会诱导再发一遍、存两条
     if (!stored && (failed || !gotEvent) && sameNb() && inp && !inp.value.trim()) {
