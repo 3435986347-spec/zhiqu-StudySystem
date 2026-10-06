@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-zq-mode="light" data-zq-accent="gold">
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>知识 Wiki - 知趣·象限 AI 办公助手</title>
-  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='mono'?'mono':'gold');}catch(e){}})();</script>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-tokens2" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-tokens2">
-  <link rel="manifest" href="manifest.json?v=20261006-tokens2">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-mono" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-mono">
+  <link rel="manifest" href="manifest.json?v=20261006-mono">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-tokens2">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-mono">
 </head>
 <body>
   <div class="zq-app">
@@ -28,7 +28,7 @@
           <h1 class="zq-h1">知识 Wiki</h1>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">导入来源</button>
-            <button style="height:30px; padding:0 12px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12.5px; font-weight:600; cursor:pointer;">待合入变更</button>
+            <button style="height:30px; padding:0 12px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12.5px; font-weight:var(--zq-fw-medium); cursor:pointer;">待合入变更</button>
             <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">健康检查</button>
             <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">图谱</button>
             <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">导出</button>
@@ -39,7 +39,7 @@
         <div style="display:flex; gap:12px; align-items:stretch; margin:0 -8px; flex:1; min-height:0;">
           <!-- 目录（默认收起） -->
           <aside id="zq-wiki-toc" data-zq-collapse="left" data-zq-label="目录" style="flex:0 0 210px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh1); overflow:hidden; align-self:stretch;">
-            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft);"><h2 style="margin:0; font-size:14px; font-weight:700;">目录</h2><span id="zq-tree-count" style="font-size:11.5px; color:var(--zq-text3);"></span></div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft);"><h2 style="margin:0; font-size:14px; font-weight:var(--zq-fw-medium);">目录</h2><span id="zq-tree-count" style="font-size:11.5px; color:var(--zq-text3);"></span></div>
             <div style="padding:10px 12px; display:flex; flex-direction:column; gap:8px; border-bottom:1px solid var(--zq-border-soft);">
               <input class="zq-input" placeholder="搜索页面 / [[双链]]" style="height:28px; font-size:12px;">
               <select class="zq-select" style="height:28px; font-size:12px;"><option>全部类型</option><option>目标</option><option>计划</option><option>偏好</option><option>薄弱点</option><option>资料</option><option>对话摘要</option><option>index</option><option>规则</option><option>log</option></select>
@@ -102,7 +102,7 @@
                   <option value="HR">分隔线</option>
                 </select>
                 <div class="zq-toolbar">
-                  <button data-wiki-cmd="bold" class="zq-tbtn" style="font-weight:700;">B</button>
+                  <button data-wiki-cmd="bold" class="zq-tbtn" style="font-weight:var(--zq-fw-medium);">B</button>
                   <button data-wiki-cmd="italic" class="zq-tbtn" style="font-style:italic;">I</button>
                   <button data-wiki-cmd="underline" class="zq-tbtn" style="text-decoration:underline;">U</button>
                   <button data-wiki-cmd="code" class="zq-tbtn zq-mono">`</button>
@@ -118,7 +118,7 @@
 
           <!-- 页面检查（默认收起） -->
           <aside data-zq-collapse="right" data-zq-label="页面检查" style="flex:0 0 250px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh1); overflow:hidden; align-self:stretch;">
-            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft); background:var(--zq-card-soft);"><h2 style="margin:0; font-size:14px; font-weight:700;">页面检查</h2></div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft); background:var(--zq-card-soft);"><h2 style="margin:0; font-size:14px; font-weight:var(--zq-fw-medium);">页面检查</h2></div>
             <div id="zq-insp"></div>
           </aside>
         </div>
@@ -126,7 +126,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261006-tokens2"></script>
-  <script src="assets/zhiqu-api.js?v=20261006-tokens2"></script>
+  <script src="assets/zhiqu-ui.js?v=20261006-mono"></script>
+  <script src="assets/zhiqu-api.js?v=20261006-mono"></script>
 </body>
 </html>

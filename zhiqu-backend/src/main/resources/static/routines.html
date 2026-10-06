@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-zq-mode="light" data-zq-accent="gold">
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>例行计划 - 知趣·象限 AI 办公助手</title>
-  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='mono'?'mono':'gold');}catch(e){}})();</script>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-tokens2" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-tokens2">
-  <link rel="manifest" href="manifest.json?v=20261006-tokens2">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-mono" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-mono">
+  <link rel="manifest" href="manifest.json?v=20261006-mono">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-tokens2">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-mono">
 </head>
 <body>
   <div class="zq-app">
@@ -38,7 +38,7 @@
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">频率</label><select class="zq-select" style="height:30px;"><option>每天</option><option>每周</option></select></div>
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">预计时长（分钟）</label><input class="zq-input" type="number" value="45" style="height:30px;"></div>
               </div>
-              <div id="zq-wd" style="display:flex; gap:5px; flex-wrap:wrap;"><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周一</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周二</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周三</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周四</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周五</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周六</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:600; cursor:pointer;">周日</button></div>
+              <div id="zq-wd" style="display:flex; gap:5px; flex-wrap:wrap;"><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:var(--zq-fw-medium); cursor:pointer;">周一</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:var(--zq-fw-medium); cursor:pointer;">周二</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:var(--zq-fw-medium); cursor:pointer;">周三</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:var(--zq-fw-medium); cursor:pointer;">周四</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:var(--zq-fw-medium); cursor:pointer;">周五</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:var(--zq-fw-medium); cursor:pointer;">周六</button><button type="button" data-on="1" style="height:26px; padding:0 10px; border:1px solid var(--zq-primary); border-radius:999px; background:var(--zq-tint); color:var(--zq-primary); font-size:11.5px; font-weight:var(--zq-fw-medium); cursor:pointer;">周日</button></div>
               <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">偏好时间</label><input class="zq-input" type="time" value="08:00" style="height:30px;"></div>
                 <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">早间提醒</label><select class="zq-select" style="height:30px;"><option>开启</option><option>关闭</option></select></div>
@@ -79,7 +79,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261006-tokens2"></script>
-  <script src="assets/zhiqu-api.js?v=20261006-tokens2"></script>
+  <script src="assets/zhiqu-ui.js?v=20261006-mono"></script>
+  <script src="assets/zhiqu-api.js?v=20261006-mono"></script>
 </body>
 </html>

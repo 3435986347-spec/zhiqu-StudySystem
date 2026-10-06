@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-zq-mode="light" data-zq-accent="gold">
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI 助手 - 知趣·象限 AI 办公助手</title>
-  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='mono'?'mono':'gold');}catch(e){}})();</script>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-tokens2" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-tokens2">
-  <link rel="manifest" href="manifest.json?v=20261006-tokens2">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-mono" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-mono">
+  <link rel="manifest" href="manifest.json?v=20261006-mono">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-tokens2">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-mono">
 </head>
 <body>
   <div class="zq-app">
@@ -31,7 +31,7 @@
 
         <section style="flex:1;min-height:0;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);overflow:hidden;display:flex;flex-direction:column;">
           <div style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--zq-border-soft);background:var(--zq-card-soft);">
-            <span style="flex:none;white-space:nowrap;font-size:13.5px;font-weight:700;">AI 助手</span>
+            <span style="flex:none;white-space:nowrap;font-size:13.5px;font-weight:var(--zq-fw-medium);">AI 助手</span>
             <span id="zq-current-notebook" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--zq-text2);">普通聊天（未选择 Notebook）</span>
             <span style="flex:none;white-space:nowrap;margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--zq-ok);"><span style="width:7px;height:7px;border-radius:50%;background:var(--zq-ok);animation:zqPulse 2s infinite;"></span><span id="zq-sync-count">正在同步历史消息…</span></span>
           </div>
@@ -39,7 +39,7 @@
           <div style="flex:1;display:flex;gap:0;min-height:0;align-items:stretch;">
             <aside data-zq-collapse="left" data-zq-label="Notebook · 资料" style="flex:0 0 218px;border-right:1px solid var(--zq-border-soft);background:var(--zq-card-soft);display:flex;flex-direction:column;min-width:0;overflow-y:auto;">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--zq-border-soft);">
-                <div><strong style="display:block;font-size:12.5px;font-weight:700;">Notebook</strong><span style="font-size:11px;color:var(--zq-text3);">资料工作区</span></div>
+                <div><strong style="display:block;font-size:12.5px;font-weight:var(--zq-fw-medium);">Notebook</strong><span style="font-size:11px;color:var(--zq-text3);">资料工作区</span></div>
                 <button id="zq-new-notebook" class="zq-btn-ghost" style="height:26px;padding:0 10px;font-size:11.5px;white-space:nowrap;margin-right:26px;">＋ 新建</button>
               </div>
               <div id="zq-notebooks" style="padding:10px 12px;display:flex;flex-direction:column;gap:6px;border-bottom:1px solid var(--zq-border-soft);"></div>
@@ -55,7 +55,7 @@
               <section id="zq-ws" hidden style="border-top:1px solid var(--zq-border-soft);">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;">
                   <div>
-                    <strong style="display:block;font-size:12.5px;font-weight:700;">代码工作区</strong>
+                    <strong style="display:block;font-size:12.5px;font-weight:var(--zq-fw-medium);">代码工作区</strong>
                     <span id="zq-ws-sub" style="font-size:11px;color:var(--zq-text3);"></span>
                   </div>
                   <div style="display:flex;align-items:center;gap:6px;flex:0 0 auto;">
@@ -82,7 +82,7 @@
                 <!-- 用户往上翻着读时，流式新内容不再把他拽回底部；这个按钮是回去的入口。
                      默认 hidden，由 zhiqu-api.js 按「是否在底部」切换。 -->
                 <button id="zq-chat-jump" type="button" hidden aria-label="回到最新内容"
-                        style="position:absolute;right:20px;bottom:14px;z-index:3;height:30px;padding:0 13px;border:1px solid var(--zq-border);border-radius:999px;background:var(--zq-card);color:var(--zq-text2);font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.14);">↓ 新内容</button>
+                        style="position:absolute;right:20px;bottom:14px;z-index:3;height:30px;padding:0 13px;border:1px solid var(--zq-border);border-radius:999px;background:var(--zq-card);color:var(--zq-text2);font-size:12px;font-weight:var(--zq-fw-medium);cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.14);">↓ 新内容</button>
               </div>
               <div style="padding:12px 18px 16px;border-top:1px solid var(--zq-border-soft);display:flex;flex-direction:column;gap:10px;">
                 <div id="zq-drop-zone" class="zq-ai-drop-zone" role="button" tabindex="0" aria-label="拖拽或选择文件上传到当前 Notebook">
@@ -108,12 +108,12 @@
 
             <aside data-zq-collapse="right" data-zq-label="执行轨迹 · 产物" style="flex:0 0 262px;border-left:1px solid var(--zq-border-soft);background:var(--zq-card-soft);display:flex;flex-direction:column;min-width:0;overflow-y:auto;">
               <div style="padding:12px 14px;border-bottom:1px solid var(--zq-border-soft);">
-                <strong style="display:block;font-size:12.5px;font-weight:700;">执行轨迹</strong>
+                <strong style="display:block;font-size:12.5px;font-weight:var(--zq-fw-medium);">执行轨迹</strong>
                 <span style="font-size:11px;color:var(--zq-text3);">Agent Pipeline</span>
                 <div id="zq-steps" style="display:flex;flex-direction:column;margin-top:10px;"></div>
               </div>
               <div style="padding:12px 14px;">
-                <strong style="display:block;font-size:12.5px;font-weight:700;">产物</strong>
+                <strong style="display:block;font-size:12.5px;font-weight:var(--zq-fw-medium);">产物</strong>
                 <span style="font-size:11px;color:var(--zq-text3);">来源、草稿与确认结果</span>
                 <div id="zq-artifacts" style="display:flex;flex-direction:column;gap:7px;margin-top:10px;"></div>
               </div>
@@ -124,7 +124,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261006-tokens2"></script>
-  <script src="assets/zhiqu-api.js?v=20261006-tokens2"></script>
+  <script src="assets/zhiqu-ui.js?v=20261006-mono"></script>
+  <script src="assets/zhiqu-api.js?v=20261006-mono"></script>
 </body>
 </html>

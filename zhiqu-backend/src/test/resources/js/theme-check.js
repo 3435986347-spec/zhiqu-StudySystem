@@ -4,7 +4,7 @@
 //   各页头上那行是同一行（DesignTokensTest 另外核对），所以跑一页就够。判的是：
 //   - 默认跟着系统外观走：系统深 → 深，系统浅 → 浅；手动固定的浅 / 深不跟系统走；
 //   - 原来的键（zq.mode / zq.ver）不再读 —— 原来手动选过浅色的人也回到「跟随系统」（用户定的就是白天白、晚上黑）；
-//   - 强调色默认金色，存了 mono 就是黑白；
+//   - 强调色默认黑白（第四十一轮用户定的），存了 gold 才是金色；
 //   - zhiqu-ui.js 里：跟随系统时系统外观一变页面当场跟着变；固定了的不变；切换弹层里点了就存、就变。
 //   由 DesignTokensTest 调用；打印 ALL-GREEN 且退出码 0 = 全绿。
 const fs = require('fs');
@@ -56,9 +56,9 @@ judge('跟随系统（存了 auto）→ 跟着系统', runHead({ 'zq.theme': 'au
 judge('固定浅色：系统深色也是浅色', runHead({ 'zq.theme': 'light' }, true).mode === 'light');
 judge('固定深色：系统浅色也是深色', runHead({ 'zq.theme': 'dark' }, false).mode === 'dark');
 judge('原来的键不再读：zq.mode=light、zq.ver=v4 而系统是深色 → 深色', runHead({ 'zq.mode': 'light', 'zq.ver': 'v4' }, true).mode === 'dark', runHead({ 'zq.mode': 'light', 'zq.ver': 'v4' }, true));
-judge('强调色默认金色', runHead({}, false).accent === 'gold');
-judge('存了 mono → 黑白', runHead({ 'zq.accent': 'mono' }, false).accent === 'mono');
-judge('认不出的强调色 → 金色', runHead({ 'zq.accent': 'purple' }, false).accent === 'gold');
+judge('强调色默认黑白', runHead({}, false).accent === 'mono');
+judge('存了 gold → 金色', runHead({ 'zq.accent': 'gold' }, false).accent === 'gold');
+judge('认不出的强调色 → 黑白（包括第四十轮存过的 mono）', runHead({ 'zq.accent': 'purple' }, false).accent === 'mono' && runHead({ 'zq.accent': 'mono' }, false).accent === 'mono');
 
 // zhiqu-ui.js
 function runUi(stored, dark) {
@@ -82,7 +82,9 @@ r = runUi({ 'zq.theme': 'light' }, false);
 r.sys.state.flip(true);
 judge('zhiqu-ui.js：固定了浅色，系统变深也不变', r.html.getAttribute('data-zq-mode') === 'light', r.html.attrs);
 judge('zhiqu-ui.js：data-zq-ver 不再出现', !('data-zq-ver' in r.html.attrs), r.html.attrs);
-judge('zhiqu-ui.js：强调色写上了', r.html.getAttribute('data-zq-accent') === 'gold', r.html.attrs);
+judge('zhiqu-ui.js：强调色写上了（默认黑白）', r.html.getAttribute('data-zq-accent') === 'mono', r.html.attrs);
+r = runUi({ 'zq.accent': 'gold' }, false);
+judge('zhiqu-ui.js：存了 gold 就是金色', r.html.getAttribute('data-zq-accent') === 'gold', r.html.attrs);
 
 console.log(fail === 0 ? '\nALL-GREEN' : '\nRED: ' + fail + ' 条');
 process.exit(fail === 0 ? 0 : 1);

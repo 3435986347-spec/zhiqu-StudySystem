@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 界面打磨第 1 步（第四十轮，docs/ui-plan.md）：设计令牌。用户 2026-10-06 定的：中性风；白天白色、晚上黑色（跟着系统外观走）；
- * 强调色金色，也做一版黑白。原来是五套配色 × 明暗共 10 套、次要文字对比度约 2.7 : 1、字重有 650 / 700 / 800。
+ * 强调色金色，也做一版黑白 —— 第四十一轮用户看过截图定了「主题就黑白的吧」：默认黑白，金色可选。原来是五套配色 × 明暗共 10 套、次要文字对比度约 2.7 : 1、字重有 650 / 700 / 800。
  */
 class DesignTokensTest {
 
@@ -31,8 +31,8 @@ class DesignTokensTest {
     private static final Path CSS = STATIC.resolve("assets/zhiqu-ui.css");
     private static final String ROOT = ":root";
     private static final String DARK = "html[data-zq-mode=\"dark\"]";
-    private static final String MONO = "html[data-zq-accent=\"mono\"]";
-    private static final String DARK_MONO = "html[data-zq-mode=\"dark\"][data-zq-accent=\"mono\"]";
+    private static final String GOLD = "html[data-zq-accent=\"gold\"]";
+    private static final String DARK_GOLD = "html[data-zq-mode=\"dark\"][data-zq-accent=\"gold\"]";
     /** 不随明暗变的令牌：字阶、间距、字重、圆角、字体 */
     private static final Pattern MODE_FREE = Pattern.compile("--zq-(fs-|sp-|fw-|r[sml]$|font)");
 
@@ -94,25 +94,25 @@ class DesignTokensTest {
         assertEquals(List.of(), stale, "这些文件还在用五套配色那一套（data-zq-ver / zq.ver / zq.mode）");
 
         String css = css();
-        Map<String, String> root = block(css, ROOT), dark = block(css, DARK), mono = block(css, MONO), darkMono = block(css, DARK_MONO);
+        Map<String, String> root = block(css, ROOT), dark = block(css, DARK), gold = block(css, GOLD), darkGold = block(css, DARK_GOLD);
         Set<String> modeTokens = root.keySet().stream().filter(k -> !MODE_FREE.matcher(k).find()).collect(Collectors.toCollection(TreeSet::new));
         assertTrue(modeTokens.size() >= 40, "浅色只扫到 " + modeTokens.size() + " 个颜色令牌");
         assertEquals(modeTokens, new TreeSet<>(dark.keySet()), "深色和浅色定义的颜色令牌不是同一批 —— 少定义的那个在深色里会是浅色的值");
-        assertEquals(new TreeSet<>(mono.keySet()), new TreeSet<>(darkMono.keySet()), "黑白强调色的浅 / 深两块定义的令牌不一样");
-        assertTrue(mono.keySet().containsAll(List.of("--zq-primary", "--zq-primary-dark", "--zq-on-primary", "--zq-tint", "--zq-tint-strong", "--zq-accent", "--zq-focus")),
-                "黑白强调色少了几个强调色令牌：" + mono.keySet());
+        assertEquals(new TreeSet<>(gold.keySet()), new TreeSet<>(darkGold.keySet()), "金色强调的浅 / 深两块定义的令牌不一样");
+        assertTrue(gold.keySet().containsAll(List.of("--zq-primary", "--zq-primary-dark", "--zq-on-primary", "--zq-tint", "--zq-tint-strong", "--zq-accent", "--zq-focus")),
+                "金色强调少了几个强调色令牌：" + gold.keySet());
     }
 
     @Test
     @DisplayName("对比度（按样式表里的值算）：浅 / 深 × 金 / 黑白，各级文字在各种底上 ≥ 4.5 : 1，强调色作文字、按钮上的字也是")
     void 对比度() throws IOException {
         String css = css();
-        Map<String, String> root = block(css, ROOT), dark = block(css, DARK), mono = block(css, MONO), darkMono = block(css, DARK_MONO);
+        Map<String, String> root = block(css, ROOT), dark = block(css, DARK), gold = block(css, GOLD), darkGold = block(css, DARK_GOLD);
         Map<String, Map<String, String>> themes = new LinkedHashMap<>();
-        themes.put("浅色·金", merge(root));
-        themes.put("浅色·黑白", merge(root, mono));
-        themes.put("深色·金", merge(root, dark));
-        themes.put("深色·黑白", merge(root, dark, mono, darkMono));
+        themes.put("浅色·黑白", merge(root));
+        themes.put("浅色·金", merge(root, gold));
+        themes.put("深色·黑白", merge(root, dark));
+        themes.put("深色·金", merge(root, dark, gold, darkGold));
         List<String[]> pairs = new ArrayList<>();
         for (String fg : List.of("--zq-text", "--zq-text2", "--zq-text3"))
             for (String bg : List.of("--zq-bg", "--zq-card", "--zq-card-soft")) pairs.add(new String[]{fg, bg});
@@ -147,6 +147,50 @@ class DesignTokensTest {
         assertTrue(weights.containsAll(Set.of("500", "600")), "字重扫空了？" + weights);
         weights.removeAll(Set.of("400", "500", "600"));
         assertEquals(Set.of(), weights, "样式表里又出现了字阶以外的字重");
+    }
+
+    @Test
+    @DisplayName("字细一点但看得清（第四十一轮，用户要「像 claude 里面的一样」）：半粗只给品牌标志和正文里的加粗；主按钮、选中的导航用中等")
+    void 字更细() throws IOException {
+        String css = css();
+        Set<String> semibold = new TreeSet<>(), medium = new TreeSet<>();
+        Matcher rule = Pattern.compile("([^{}]+)\\{([^{}]*)\\}").matcher(css);
+        while (rule.find()) {
+            String selector = rule.group(1).trim(), body = rule.group(2);
+            if (body.contains("--zq-fw-semibold:")) continue;   // 令牌自己的定义
+            if (body.contains("var(--zq-fw-semibold)")) semibold.add(selector);
+            if (body.contains("var(--zq-fw-medium)")) medium.add(selector);
+        }
+        assertEquals(new TreeSet<>(Set.of("b,strong", ".zq-brand-badge")), semibold,
+                "半粗（600）又用到了别处 —— 用户要的是像 Claude 那样细一点的字；标题、按钮用中等（500），其余用常规（400）");
+        assertTrue(medium.containsAll(Set.of(".zq-btn", ".zq-nav a.active", ".zq-h1", ".zq-h2")), "主按钮、选中的导航、标题应当是中等字重：" + medium);
+        // 行首：「.zq-side.is-collapsed .zq-nav a{…}」里也有「.zq-nav a{」，而且排在前面
+        Matcher nav = Pattern.compile("(?m)^\\.zq-nav a\\{([^}]*)\\}").matcher(css);
+        assertTrue(nav.find() && nav.group(1).contains("var(--zq-fw-regular)"), "导航项应当是常规字重");
+        Matcher label = Pattern.compile("(?m)^\\.zq-label\\{([^}]*)\\}").matcher(css);
+        assertTrue(label.find() && label.group(1).contains("var(--zq-fw-regular)"), "表单标签应当是常规字重");
+    }
+
+    @Test
+    @DisplayName("页面、模块、壳里的内联样式不写死字重，只用 --zq-fw-*（原来 95 处 600 / 700，字重一调就漏一大片）")
+    void 内联字重只用令牌() throws IOException {
+        List<Path> files = new ArrayList<>(pages());
+        try (Stream<Path> walk = Files.walk(STATIC.resolve("assets"))) {
+            walk.filter(p -> p.toString().endsWith(".js")).filter(p -> !p.toString().contains("/vendor/")).forEach(files::add);
+        }
+        assertTrue(files.size() >= 25, "只扫到 " + files.size() + " 个文件");
+        List<String> hard = new ArrayList<>();
+        int tokens = 0;
+        Pattern raw = Pattern.compile("font-weight\\s*:\\s*(\\d{3}|bold|bolder|lighter)\\b|font\\s*:\\s*\\d{3}\\b");
+        for (Path f : files) {
+            String code = Files.readString(f, StandardCharsets.UTF_8);
+            Matcher m = raw.matcher(code);
+            while (m.find()) hard.add(STATIC.relativize(f) + "：" + m.group());
+            Matcher t = Pattern.compile("font-weight:\\s*var\\(--zq-fw-").matcher(code);
+            while (t.find()) tokens++;
+        }
+        assertTrue(tokens >= 80, "内联字重只扫到 " + tokens + " 处用令牌 —— 扫空了？");
+        assertEquals(List.of(), hard, "这些地方又写死了字重 —— 用 var(--zq-fw-regular / medium / semibold)");
     }
 
     @SafeVarargs

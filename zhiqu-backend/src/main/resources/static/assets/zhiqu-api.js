@@ -427,7 +427,7 @@
   function toast(msg, kind, ms) {
     var el = document.createElement('div');
     el.textContent = msg;
-    el.style.cssText = 'position:fixed;right:22px;top:22px;z-index:99999;max-width:360px;padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);box-shadow:var(--zq-sh2);color:' + (kind === 'error' ? 'var(--zq-bad)' : 'var(--zq-text)') + ';font-size:13px;font-weight:600;';
+    el.style.cssText = 'position:fixed;right:22px;top:22px;z-index:99999;max-width:360px;padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);box-shadow:var(--zq-sh2);color:' + (kind === 'error' ? 'var(--zq-bad)' : 'var(--zq-text)') + ';font-size:13px;font-weight:var(--zq-fw-medium);';
     document.body.appendChild(el);
     setTimeout(function () { el.remove(); }, ms || 2600);
   }
@@ -818,8 +818,8 @@
 
   var AUTH_FORM_HTML =
     '<div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--zq-border-soft);margin-bottom:18px;">'
-    + '<button type="button" data-authtab="login" style="height:38px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:700;color:var(--zq-primary);border-bottom:2px solid var(--zq-primary);">登录</button>'
-    + '<button type="button" data-authtab="register" style="height:38px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:500;color:var(--zq-text2);border-bottom:2px solid transparent;">注册</button>'
+    + '<button type="button" data-authtab="login" style="height:38px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:var(--zq-fw-medium);color:var(--zq-primary);border-bottom:2px solid var(--zq-primary);">登录</button>'
+    + '<button type="button" data-authtab="register" style="height:38px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:var(--zq-fw-regular);color:var(--zq-text2);border-bottom:2px solid transparent;">注册</button>'
     + '</div>'
     + '<form id="form-login" style="display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">'
     + '<div class="zq-field"><label class="zq-label">用户名</label><input class="zq-input" placeholder="请输入用户名"></div>'
@@ -1163,7 +1163,7 @@
         reminderBlocker().then(function (why) {
           var warn = $('#zq-tf-remind-warn', b);
           if (!why || !warn) return;
-          warn.innerHTML = '提醒现在还发不出去：' + esc(why) + '。<a href="#settings/reminders" style="color:inherit;font-weight:700;">去设置 →</a>';
+          warn.innerHTML = '提醒现在还发不出去：' + esc(why) + '。<a href="#settings/reminders" style="color:inherit;font-weight:var(--zq-fw-medium);">去设置 →</a>';
           warn.hidden = false;
         });
         // 新建时打的字：弹窗被遮罩点掉、刷新、登录过期都还在（第十五轮）；建好了才删
@@ -1246,7 +1246,7 @@
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       // URL 支持一层配对括号（如维基百科的 Function_(mathematics)），不再截断在第一个 )
       .replace(/\[([^\]]+)\]\((https?:\/\/(?:[^()\s]|\([^()]*\))+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;">$1</a>')
-      .replace(/\[\[([^\]]+)\]\]/g, '<a data-wikilink="$1" style="color:var(--zq-primary);cursor:pointer;border-bottom:1px dashed var(--zq-tint-strong);">$1</a>');
+      .replace(/\[\[([^\]]+)\]\]/g, '<a data-wikilink="$1" style="color:var(--zq-primary);cursor:pointer;text-decoration:underline;text-decoration-color:var(--zq-text3);text-underline-offset:3px;">$1</a>');
     t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
     return t.replace(/\u0001(\d+)\u0001/g, function (m, i) {
       return '<code style="background:var(--zq-card-soft);padding:1px 5px;border-radius:4px;font-size:.92em;">' + codeSlots[+i] + '</code>';
@@ -1359,7 +1359,7 @@
     var src = segs.map(function (s) { return s.code ? s.text : normalizeMathDelims(s.text); }).join('\n');
     var lines = src.split('\n');
     var html = '', inUl = false, inOl = false, inCode = false, inMath = false, codeBuf = [], codeLang = '', mathBuf = [], quoteBuf = [], tableBuf = [];
-    var sizes = { 1: '20px;font-weight:800', 2: '17px;font-weight:700', 3: '15.5px;font-weight:700;border-bottom:1px solid var(--zq-border-soft);padding-bottom:6px', 4: '14px;font-weight:700' };
+    var sizes = { 1: '20px;font-weight:var(--zq-fw-medium)', 2: '17px;font-weight:var(--zq-fw-medium)', 3: '15.5px;font-weight:var(--zq-fw-medium);border-bottom:1px solid var(--zq-border-soft);padding-bottom:6px', 4: '14px;font-weight:var(--zq-fw-medium)' };
     function closeUl() { if (inUl) { html += '</ul>'; inUl = false; } }
     function closeOl() { if (inOl) { html += '</ol>'; inOl = false; } }
     function flushQuote() {
@@ -1376,7 +1376,7 @@
       var hasHeader = rows.length > 1 && rows[1].length && rows[1].every(function (c) { return c === '' || /^:?-{2,}:?$/.test(c); }) && rows[1].some(function (c) { return /-{2,}/.test(c); });
       var out = '<div style="overflow-x:auto;margin:12px 0;"><table style="border-collapse:collapse;width:100%;font-size:12.5px;line-height:1.6;">';
       if (hasHeader) {
-        out += '<thead><tr>' + rows[0].map(function (c) { return '<th style="' + cellCss + 'background:var(--zq-card-soft);font-weight:700;">' + mdInline(c) + '</th>'; }).join('') + '</tr></thead>';
+        out += '<thead><tr>' + rows[0].map(function (c) { return '<th style="' + cellCss + 'background:var(--zq-card-soft);font-weight:var(--zq-fw-medium);">' + mdInline(c) + '</th>'; }).join('') + '</tr></thead>';
         rows = rows.slice(2);
       }
       out += '<tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td style="' + cellCss + '">' + mdInline(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';

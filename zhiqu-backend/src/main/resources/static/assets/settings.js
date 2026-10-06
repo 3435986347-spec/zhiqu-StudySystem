@@ -83,16 +83,16 @@ function setToggle(btn, on) {
 const TOGGLE = (id, label) => '<button id="' + id + '" type="button"' + (label ? ' aria-label="' + label + '"' : '')
   + ' style="flex:none; width:42px; height:24px; border:none; border-radius:999px; background:var(--zq-border); cursor:pointer; position:relative; transition:background .2s;">'
   + '<i style="position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s;"></i></button>';
-const H3 = (t) => '<h3 style="margin:0 0 12px; font-size:14px; font-weight:700;">' + t + '</h3>';
+const H3 = (t) => '<h3 style="margin:0 0 12px; font-size:14px; font-weight:var(--zq-fw-medium);">' + t + '</h3>';
 const FIELD = (label, input, wide) => '<div class="zq-field" style="gap:5px;' + (wide ? ' grid-column:1 / -1;' : '') + '"><label class="zq-label" style="font-size:11.5px;">' + label + '</label>' + input + '</div>';
 const ROW = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; font-size:12.5px;';
 
 const PANES = {
   profile: () => ''
     + '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-bottom:16px; margin-bottom:16px; border-bottom:1px solid var(--zq-border-soft);">'
-    + '<div id="zq-set-avatar" title="点击更换头像" style="width:64px; height:64px; flex:none; border-radius:50%; background:var(--zq-tint-strong); color:var(--zq-primary); display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700; cursor:pointer; overflow:hidden;"></div>'
+    + '<div id="zq-set-avatar" title="点击更换头像" style="width:64px; height:64px; flex:none; border-radius:50%; background:var(--zq-tint-strong); color:var(--zq-primary); display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:var(--zq-fw-medium); cursor:pointer; overflow:hidden;"></div>'
     + '<div style="min-width:0; flex:1;"><h2 id="zq-set-name" class="zq-h2" style="font-size:17px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></h2>'
-    + '<span id="zq-set-role" class="zq-badge" style="margin-top:6px; background:var(--zq-tint); color:var(--zq-primary); font-weight:700;"></span></div>'
+    + '<span id="zq-set-role" class="zq-badge" style="margin-top:6px; background:var(--zq-tint); color:var(--zq-primary); font-weight:var(--zq-fw-medium);"></span></div>'
     + '<div style="display:flex; gap:20px; text-align:center;">'
     + '<div><strong id="zq-set-days" class="zq-num" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">连续天数</span></div>'
     + '<div><strong id="zq-set-done" class="zq-num" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">完成任务</span></div>'
@@ -162,8 +162,8 @@ const PANES = {
     + '<input id="zq-pw-again" class="zq-input" type="password" autocomplete="new-password" placeholder="确认新密码">'
     + '<button id="zq-pw-save" class="zq-btn" style="align-self:flex-start;">更新密码</button></div>'
     + '<div style="margin-top:22px;">' + H3('最近登录') + '<div style="display:flex; flex-direction:column;">'
-    + '<div style="' + ROW + ' border-bottom:1px solid var(--zq-border-soft);"><span style="color:var(--zq-text2); flex:none;">时间与地址</span><span id="zq-sec-latest" style="font-weight:600; text-align:right;">—</span></div>'
-    + '<div style="' + ROW + ' border-bottom:1px solid var(--zq-border-soft);"><span style="color:var(--zq-text2); flex:none;">登录设备</span><span id="zq-sec-device" style="font-weight:600; text-align:right;">—</span></div>'
+    + '<div style="' + ROW + ' border-bottom:1px solid var(--zq-border-soft);"><span style="color:var(--zq-text2); flex:none;">时间与地址</span><span id="zq-sec-latest" style="font-weight:var(--zq-fw-medium); text-align:right;">—</span></div>'
+    + '<div style="' + ROW + ' border-bottom:1px solid var(--zq-border-soft);"><span style="color:var(--zq-text2); flex:none;">登录设备</span><span id="zq-sec-device" style="font-weight:var(--zq-fw-medium); text-align:right;">—</span></div>'
     + '<div style="' + ROW + '"><span style="color:var(--zq-text2); flex:none;">退出登录</span><button id="zq-sec-logout" type="button" class="zq-btn-ghost" style="height:26px; padding:0 12px; font-size:12px;">退出</button></div>'
     + '</div></div>'
 };
@@ -234,7 +234,7 @@ function bindModels(sh, root) {
   var els = { display: $('#zq-model-display'), modelName: $('#zq-model-name'), apiUrl: $('#zq-model-url'), apiKey: $('#zq-model-key'),
     provider: $('#zq-model-provider'), contextWindow: $('#zq-model-context') };
   var editingModelId = null;
-  function modelTile(k, v, c) { return '<div style="min-width:0;"><span style="display:block;font-size:10.5px;color:var(--zq-text3);">' + sh.esc(k) + '</span><strong style="display:block;margin-top:3px;font-size:11.5px;font-weight:600;color:' + c + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + sh.esc(v) + '</strong></div>'; }
+  function modelTile(k, v, c) { return '<div style="min-width:0;"><span style="display:block;font-size:10.5px;color:var(--zq-text3);">' + sh.esc(k) + '</span><strong style="display:block;margin-top:3px;font-size:11.5px;font-weight:var(--zq-fw-medium);color:' + c + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + sh.esc(v) + '</strong></div>'; }
   var models = [];
   async function loadModels() {
     var host = $('#zq-models');
@@ -242,7 +242,7 @@ function bindModels(sh, root) {
     models = sh.normalizeModelList(modelData);
     host.innerHTML = models.map(function (m) {
       var mine = m.ownerType !== 'SYSTEM';
-      return '<article style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);padding:12px 14px;"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;"><div style="font-size:13.5px;font-weight:700;">' + sh.esc(m.label || m.displayName || m.name) + '</div><div class="zq-mono" style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;">' + sh.esc(m.modelName || '') + '</div></div><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);font-weight:700;">' + sh.esc(mine ? '我的' : '系统') + '</span></div>'
+      return '<article style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);padding:12px 14px;"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;"><div style="font-size:13.5px;font-weight:var(--zq-fw-medium);">' + sh.esc(m.label || m.displayName || m.name) + '</div><div class="zq-mono" style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;">' + sh.esc(m.modelName || '') + '</div></div><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);font-weight:var(--zq-fw-medium);">' + sh.esc(mine ? '我的' : '系统') + '</span></div>'
         + '<div class="zq-phone-2col" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:11px;padding-top:11px;border-top:1px solid var(--zq-border-soft);">'
         + modelTile('Provider', m.providerType || '—', 'var(--zq-text2)')
         + modelTile('连通性', probeText(m.capabilityProbeStatus), probeColor(m.capabilityProbeStatus))
@@ -399,7 +399,7 @@ function bindCli(sh, root, params) {
       ? rows.map(function (t) {
           return '<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px;'
             + ' padding:6px 8px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs);">'
-            + '<div style="min-width:0;"><div style="font-weight:600;">' + sh.esc(t.name) + ' <span class="zq-mono" style="color:var(--zq-text3); font-weight:400;">' + sh.esc(t.hint) + '</span></div>'
+            + '<div style="min-width:0;"><div style="font-weight:var(--zq-fw-medium);">' + sh.esc(t.name) + ' <span class="zq-mono" style="color:var(--zq-text3); font-weight:var(--zq-fw-regular);">' + sh.esc(t.hint) + '</span></div>'
             + '<div style="color:var(--zq-text3); font-size:11px;">' + (t.lastUsedAt ? '最近使用 ' + sh.esc(String(t.lastUsedAt).replace('T', ' ').slice(0, 16)) : '还没用过')
             + '</div></div><button class="zq-btn-ghost" data-revoke="' + sh.esc(t.id) + '" style="height:24px; padding:0 10px; font-size:11.5px;">撤销</button></div>';
         }).join('')
@@ -536,7 +536,7 @@ export function openSettings(sh, opts) {
  */
 export function openAchievements(sh, opts) {
   opts = opts || {};
-  var filterBtn = function (k, label) { return '<button type="button" data-k="' + k + '" style="height:30px; padding:0 16px; border:none; cursor:pointer; font-size:12.5px; font-weight:600; background:var(--zq-card); color:var(--zq-text2);">' + label + '</button>'; };
+  var filterBtn = function (k, label) { return '<button type="button" data-k="' + k + '" style="height:30px; padding:0 16px; border:none; cursor:pointer; font-size:12.5px; font-weight:var(--zq-fw-medium); background:var(--zq-card); color:var(--zq-text2);">' + label + '</button>'; };
   var handle = sh.openModal({
     title: '成就',
     width: '880px',
@@ -572,7 +572,7 @@ export function openAchievements(sh, opts) {
       var name = a.name || a.title || a.achievementName || '成就';
       var desc = a.description || '';
       var points = a.points || a.score || 0;
-      return '<article style="padding:16px;border:1px solid ' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);opacity:' + (on ? 1 : .82) + ';"><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;"><div style="width:42px;height:42px;flex:none;border-radius:50%;background:' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-card-soft)') + ';color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';display:flex;align-items:center;justify-content:center;font-size:18px;">✪</div><div style="min-width:0;"><h3 style="margin:0;font-size:14.5px;font-weight:700;">' + sh.esc(name) + '</h3><span style="font-size:11.5px;color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';font-weight:600;">' + (on ? '已解锁' : '进行中') + '</span></div></div><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;min-height:38px;">' + sh.esc(desc) + '</p><div style="display:flex;justify-content:flex-end;font-size:11.5px;color:var(--zq-text3);"><span class="zq-num">+' + sh.esc(points) + ' 点</span></div></article>';
+      return '<article style="padding:16px;border:1px solid ' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);opacity:' + (on ? 1 : .82) + ';"><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;"><div style="width:42px;height:42px;flex:none;border-radius:50%;background:' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-card-soft)') + ';color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';display:flex;align-items:center;justify-content:center;font-size:18px;">✪</div><div style="min-width:0;"><h3 style="margin:0;font-size:14.5px;font-weight:var(--zq-fw-medium);">' + sh.esc(name) + '</h3><span style="font-size:11.5px;color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';font-weight:var(--zq-fw-medium);">' + (on ? '已解锁' : '进行中') + '</span></div></div><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;min-height:38px;">' + sh.esc(desc) + '</p><div style="display:flex;justify-content:flex-end;font-size:11.5px;color:var(--zq-text3);"><span class="zq-num">+' + sh.esc(points) + ' 点</span></div></article>';
     }).join('') || sh.empty('暂无成就');
   }
   var filter = 'all';

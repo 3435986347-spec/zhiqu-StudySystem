@@ -69,7 +69,7 @@ async function loadMySubmissions() {
           : '');
     return '<article style="padding:13px 15px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);'
       + 'background:var(--zq-card);"><div style="display:flex;align-items:center;gap:10px;">'
-      + '<span style="font-size:14px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;'
+      + '<span style="font-size:14px;font-weight:var(--zq-fw-medium);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;'
       + 'white-space:nowrap;">' + esc(p.title || '未命名计划') + '</span>'
       + '<span class="zq-badge" style="color:' + st.tone + ';">' + esc(st.label) + '</span></div>'
       + '<div style="margin-top:4px;font-size:11.5px;color:var(--zq-text3);">'
@@ -92,7 +92,7 @@ async function loadPlans(category, sort, order) {
   host.innerHTML = plans.map(function (p) {
     var known = planCategory(p.category || 'GENERAL');
     var k = known ? known[2] : 'q4';
-    return '<article data-plan="' + p.id + '" style="padding:16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);cursor:pointer;"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;"><span class="zq-badge" style="background:var(--zq-' + k + '-bg);color:var(--zq-' + k + ');font-weight:700;">' + esc(p.categoryName || (known || planCategory('GENERAL'))[1]) + '</span><span class="zq-num" style="font-size:12px;color:var(--zq-text3);">♡ ' + esc(p.likeCount || 0) + '</span></div><h3 style="margin:0 0 6px;font-size:15.5px;font-weight:700;">' + esc(p.title || p.name) + '</h3><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(p.description || '') + '</p><div style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--zq-text3);border-top:1px solid var(--zq-border-soft);padding-top:9px;"><span>' + esc(p.targetAudience || p.audience || '通用') + '</span><span>' + esc(p.creatorNickname || (p.creator && (p.creator.nickname || p.creator.username)) || '') + '</span></div></article>';
+    return '<article data-plan="' + p.id + '" style="padding:16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);cursor:pointer;"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;"><span class="zq-badge" style="background:var(--zq-' + k + '-bg);color:var(--zq-' + k + ');font-weight:var(--zq-fw-medium);">' + esc(p.categoryName || (known || planCategory('GENERAL'))[1]) + '</span><span class="zq-num" style="font-size:12px;color:var(--zq-text3);">♡ ' + esc(p.likeCount || 0) + '</span></div><h3 style="margin:0 0 6px;font-size:15.5px;font-weight:var(--zq-fw-medium);">' + esc(p.title || p.name) + '</h3><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(p.description || '') + '</p><div style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--zq-text3);border-top:1px solid var(--zq-border-soft);padding-top:9px;"><span>' + esc(p.targetAudience || p.audience || '通用') + '</span><span>' + esc(p.creatorNickname || (p.creator && (p.creator.nickname || p.creator.username)) || '') + '</span></div></article>';
   }).join('') || empty('暂无参考计划');
   $all('[data-plan]', host).forEach(function (b) { b.onclick = function () { openPlan(Number(b.dataset.plan)); }; });
 }
@@ -115,8 +115,8 @@ function submitPlanTemplate() {
         + '<div class="zq-field"><label class="zq-label">简介（可留空）</label><textarea id="zq-spt-desc" class="zq-textarea" style="min-height:70px;" placeholder="一句话说明这套计划适合谁、怎么用"></textarea></div>'
         + '<div style="display:flex;align-items:center;justify-content:space-between;margin:2px 0 7px;"><span class="zq-label">勾选要分享的内容</span><span style="display:flex;gap:8px;"><button type="button" class="zq-btn-ghost" id="zq-spt-all" style="height:24px;padding:0 9px;font-size:11.5px;">全选</button><button type="button" class="zq-btn-ghost" id="zq-spt-none" style="height:24px;padding:0 9px;font-size:11.5px;">清空</button></span></div>'
         + '<div style="max-height:250px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;margin-bottom:10px;">'
-        + (taskList ? '<div style="font-size:11.5px;font-weight:700;color:var(--zq-text2);margin:3px 0 1px;">一次性任务 · ' + tasks.length + '</div>' + taskList : '')
-        + (routineList ? '<div style="font-size:11.5px;font-weight:700;color:var(--zq-text2);margin:6px 0 1px;">例行计划 · ' + routines.length + '</div>' + routineList : '')
+        + (taskList ? '<div style="font-size:11.5px;font-weight:var(--zq-fw-medium);color:var(--zq-text2);margin:3px 0 1px;">一次性任务 · ' + tasks.length + '</div>' + taskList : '')
+        + (routineList ? '<div style="font-size:11.5px;font-weight:var(--zq-fw-medium);color:var(--zq-text2);margin:6px 0 1px;">例行计划 · ' + routines.length + '</div>' + routineList : '')
         + '</div>'
         + '<label style="display:flex;align-items:flex-start;gap:8px;margin:0 0 12px;font-size:12px;color:var(--zq-text2);line-height:1.6;cursor:pointer;"><input id="zq-spt-consent" type="checkbox" style="accent-color:var(--zq-primary);margin-top:2px;flex:none;"><span>我确认勾选的内容不含个人隐私信息，同意提交给管理员审核，通过后对所有用户可见。</span></label>'
         + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-spt-cancel">取消</button><button type="button" class="zq-btn" id="zq-spt-ok">提交审核</button></div>',

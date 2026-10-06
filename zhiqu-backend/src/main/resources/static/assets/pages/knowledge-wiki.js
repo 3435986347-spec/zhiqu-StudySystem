@@ -809,7 +809,7 @@ async function runWikiLint() {
       title: '健康检查',
       html: count
         ? '<p style="margin:0 0 12px;font-size:13px;color:var(--zq-text2);">发现 ' + count + ' 个问题（如悬空链接等）：</p><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-height:280px;overflow-y:auto;">' + listHtml + '</div>'
-        : '<p style="margin:0 0 16px;font-size:13.5px;color:var(--zq-ok);font-weight:600;">✓ 未发现问题，知识库链接完好。</p>'
+        : '<p style="margin:0 0 16px;font-size:13.5px;color:var(--zq-ok);font-weight:var(--zq-fw-medium);">✓ 未发现问题，知识库链接完好。</p>'
     });
   });
 }

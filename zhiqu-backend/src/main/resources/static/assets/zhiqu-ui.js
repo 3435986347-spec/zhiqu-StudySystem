@@ -8,11 +8,11 @@
 (function () {
   'use strict';
   // 外观与强调色（第四十轮，用户 2026-10-06 定的「中性风」「白天白色，晚上黑色」）：
-  // 外观默认跟着系统走（macOS 设成「自动」时日落之后系统自己切深色），也可以固定成浅色 / 深色；强调色金色（默认）或黑白。
+  // 外观默认跟着系统走（macOS 设成「自动」时日落之后系统自己切深色），也可以固定成浅色 / 深色；强调色黑白（默认，第四十一轮用户定的「主题就黑白的吧」）或金色。
   // 用新的键 zq.theme / zq.accent：原来的 zq.mode / zq.ver（五套配色 × 明暗）不再读 —— 手动选过浅色的人也回到「跟随系统」，那正是用户要的。
   // 每页头上那行内联脚本用同一个规则先定好明暗（免得先闪一下另一种颜色），这里接着管切换和「系统外观变了」。
   var THEMES = [ { id: 'auto', name: '跟随系统' }, { id: 'light', name: '浅色' }, { id: 'dark', name: '深色' } ];
-  var ACCENTS = [ { id: 'gold', name: '金色' }, { id: 'mono', name: '黑白' } ];
+  var ACCENTS = [ { id: 'mono', name: '黑白' }, { id: 'gold', name: '金色' } ];
   var K_THEME = 'zq.theme', K_ACCENT = 'zq.accent';
   function ls(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
   // 登录时存下的角色。侧栏在 zhiqu-api.js 之前同步渲染，/auth/info 还没回来，
@@ -24,7 +24,7 @@
   function isAdminRole(r){ return String(r || '').toUpperCase() === 'ADMIN'; }
   function lss(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
   function readTheme(){ var t=ls(K_THEME); return (t==='light'||t==='dark')?t:'auto'; }
-  function readAccent(){ return ls(K_ACCENT)==='mono'?'mono':'gold'; }
+  function readAccent(){ return ls(K_ACCENT)==='gold'?'gold':'mono'; }
   function nameOf(list,id){ for(var i=0;i<list.length;i++) if(list[i].id===id) return list[i].name; return id; }
   var darkQuery = null;
   try { darkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null; } catch(e){}
@@ -179,13 +179,13 @@
   function currentToken(){ try { return sessionStorage.getItem('token') || localStorage.getItem('token') || ''; } catch(e){ return ''; } }
   function paintUser(box, u){
     if (!box) return;
-    if (!u) { box.innerHTML = '<div class="zq-avatar"></div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);">&nbsp;</div><div style="font-size:11px;color:var(--zq-text3);">&nbsp;</div></div>'; return; }
+    if (!u) { box.innerHTML = '<div class="zq-avatar"></div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:var(--zq-fw-medium);color:var(--zq-sb-active-text);">&nbsp;</div><div style="font-size:11px;color:var(--zq-text3);">&nbsp;</div></div>'; return; }
     var name = u.name || '知趣用户';
     var avatar = u.avatar ? '<img src="' + escHtml(u.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">' : escHtml(name.slice(0, 1));
     // 头像菜单的顶上一行（openUserMenu）从这里读
     box.dataset.name = name;
     box.dataset.account = u.account || '';
-    box.innerHTML = '<div class="zq-avatar">' + avatar + '</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;color:var(--zq-sb-active-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(name) + '</div><div style="font-size:11px;color:var(--zq-text3);">' + escHtml(u.admin ? '管理员' : '普通用户') + '</div></div>';
+    box.innerHTML = '<div class="zq-avatar">' + avatar + '</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:var(--zq-fw-medium);color:var(--zq-sb-active-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(name) + '</div><div style="font-size:11px;color:var(--zq-text3);">' + escHtml(u.admin ? '管理员' : '普通用户') + '</div></div>';
   }
   function rememberUser(u){
     var t = currentToken();

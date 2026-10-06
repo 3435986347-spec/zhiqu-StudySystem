@@ -54,7 +54,7 @@ function renderQuadrantDonut(distribution) {
     var labels = ['重要且紧急', '重要不紧急', '紧急不重要', '不重要不紧急'];
     legendHost.innerHTML = counts.map(function (n, i) {
       var pct = total ? Math.round(n / total * 100) : 0;
-      return '<div style="display:flex; align-items:center; gap:8px; font-size:12.5px;"><span style="width:10px; height:10px; flex:none; border-radius:3px; background:var(--zq-q' + (i + 1) + ');"></span><span style="flex:1; color:var(--zq-text2);">' + labels[i] + '</span><span class="zq-num" style="font-weight:600;">' + n + ' 项 · ' + pct + '%</span></div>';
+      return '<div style="display:flex; align-items:center; gap:8px; font-size:12.5px;"><span style="width:10px; height:10px; flex:none; border-radius:3px; background:var(--zq-q' + (i + 1) + ');"></span><span style="flex:1; color:var(--zq-text2);">' + labels[i] + '</span><span class="zq-num" style="font-weight:var(--zq-fw-medium);">' + n + ' 项 · ' + pct + '%</span></div>';
     }).join('');
   }
 }

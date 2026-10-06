@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-zq-mode="light" data-zq-accent="gold">
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>参考计划 - 知趣·象限 AI 办公助手</title>
-  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='mono'?'mono':'gold');}catch(e){}})();</script>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-tokens2" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-tokens2">
-  <link rel="manifest" href="manifest.json?v=20261006-tokens2">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-mono" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-mono">
+  <link rel="manifest" href="manifest.json?v=20261006-mono">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-tokens2">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-mono">
 </head>
 <body>
   <div class="zq-app">
@@ -38,7 +38,7 @@
         <!-- 我的投稿：后台驳回弹窗写着「驳回原因将展示给提交者」，这里是它唯一的出口。
              没有投稿时整块隐藏，由 zhiqu-api.js 控制。 -->
         <section id="zq-my-submissions" hidden style="margin-top:22px;">
-          <h2 style="margin:0 0 10px; font-size:15px; font-weight:700;">我的投稿</h2>
+          <h2 style="margin:0 0 10px; font-size:15px; font-weight:var(--zq-fw-medium);">我的投稿</h2>
           <div id="zq-my-sub-list" style="display:flex; flex-direction:column; gap:10px;"></div>
         </section>
       </div>
@@ -56,7 +56,7 @@
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px; font-size:12px; color:var(--zq-text3); flex-wrap:wrap;"><span id="zm-meta"></span><span class="zq-num" id="zm-likes"></span></div>
       <p id="zm-desc" style="margin:0 0 14px; font-size:13.5px; color:var(--zq-text2); line-height:1.65;"></p>
       <div id="zm-aud" style="padding:10px 12px; border-radius:var(--zq-rs); background:var(--zq-tint); font-size:12.5px; color:var(--zq-text2); margin-bottom:16px;"></div>
-      <h3 style="margin:0 0 10px; font-size:14px; font-weight:700;">包含内容</h3>
+      <h3 style="margin:0 0 10px; font-size:14px; font-weight:var(--zq-fw-medium);">包含内容</h3>
       <div id="zm-items" style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;"></div>
       <div style="display:flex; justify-content:flex-end; gap:10px; padding-top:14px; border-top:1px solid var(--zq-border-soft);">
         <button type="button" data-close-modal class="zq-btn-ghost">取消</button>
@@ -65,7 +65,7 @@
     </div>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261006-tokens2"></script>
-  <script src="assets/zhiqu-api.js?v=20261006-tokens2"></script>
+  <script src="assets/zhiqu-ui.js?v=20261006-mono"></script>
+  <script src="assets/zhiqu-api.js?v=20261006-mono"></script>
 </body>
 </html>

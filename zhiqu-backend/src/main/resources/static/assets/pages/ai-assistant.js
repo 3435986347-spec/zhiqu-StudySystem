@@ -328,12 +328,12 @@ var AI_EXAMPLES = ['总结一下我上传的资料，列出要点', '根据这�
 function aiEmptyState() {
   if (state.aiNoModel) {
     return '<div data-ai-empty style="max-width:420px;margin:56px auto 0;text-align:center;color:var(--zq-text2);font-size:13px;line-height:1.75;">'
-      + '<div style="font-size:15px;font-weight:700;color:var(--zq-text);margin-bottom:6px;">还没有可用的 AI 模型</div>'
+      + '<div style="font-size:15px;font-weight:var(--zq-fw-medium);color:var(--zq-text);margin-bottom:6px;">还没有可用的 AI 模型</div>'
       + '到「设置 → AI 模型」里填一个（OpenAI 兼容、Anthropic、本地 Ollama 都行），回来就能用。'
       + '<div style="margin-top:14px;"><a class="zq-btn" href="#settings/models" style="display:inline-flex;">去配置模型 →</a></div></div>';
   }
   return '<div data-ai-empty style="max-width:460px;margin:48px auto 0;text-align:center;color:var(--zq-text2);font-size:13px;line-height:1.7;">'
-    + '<div style="font-size:15px;font-weight:700;color:var(--zq-text);margin-bottom:6px;">可以这样开始</div>'
+    + '<div style="font-size:15px;font-weight:var(--zq-fw-medium);color:var(--zq-text);margin-bottom:6px;">可以这样开始</div>'
     + '左边新建 Notebook、上传资料，它就会照着你的资料回答；计划和知识库的改动都先给你确认。'
     + '<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">' + AI_EXAMPLES.map(function (t) {
       return '<button type="button" class="zq-btn-ghost" data-ai-example="' + esc(t) + '" style="justify-content:flex-start;height:auto;min-height:34px;white-space:normal;text-align:left;">' + esc(t) + '</button>';
@@ -347,7 +347,7 @@ function renderSteps(steps) {
     var last = i === steps.length - 1;
     var stepName = s.publicSummary || s.title || s.name || s.agentType || ('步骤 ' + (i + 1));
     var metaLine = (s.agentType && s.publicSummary ? s.agentType + ' · ' : '') + status;
-    return '<div style="display:flex;gap:9px;padding:5px 0;"><div style="display:flex;flex-direction:column;align-items:center;flex:none;width:10px;"><span style="width:8px;height:8px;border-radius:50%;background:' + color + ';margin-top:4px;"></span>' + (last ? '' : '<span style="flex:1;width:1px;background:var(--zq-border-soft);margin-top:2px;"></span>') + '</div><div style="min-width:0;padding-bottom:6px;"><div style="font-size:11.5px;font-weight:600;line-height:1.45;">' + esc(stepName) + '</div><div class="zq-mono" style="font-size:10px;color:' + color + ';margin-top:1px;">' + esc(metaLine) + '</div>' + (s.notes || []).map(stepNoteHtml).join('') + '</div></div>';
+    return '<div style="display:flex;gap:9px;padding:5px 0;"><div style="display:flex;flex-direction:column;align-items:center;flex:none;width:10px;"><span style="width:8px;height:8px;border-radius:50%;background:' + color + ';margin-top:4px;"></span>' + (last ? '' : '<span style="flex:1;width:1px;background:var(--zq-border-soft);margin-top:2px;"></span>') + '</div><div style="min-width:0;padding-bottom:6px;"><div style="font-size:11.5px;font-weight:var(--zq-fw-medium);line-height:1.45;">' + esc(stepName) + '</div><div class="zq-mono" style="font-size:10px;color:' + color + ';margin-top:1px;">' + esc(metaLine) + '</div>' + (s.notes || []).map(stepNoteHtml).join('') + '</div></div>';
   }).join('') : empty('暂无执行记录');
 }
 
@@ -1186,7 +1186,7 @@ function renderAiMessages(opts) {
     var me = m.role === 'user';
     var name = me ? '我' : 'AI';
     var body = messageBodyHtml(m, i);
-    return '<div data-msg-idx="' + i + '" style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + name + '</div><div data-msg-body="' + i + '" class="zq-msg-body" style="max-width:72%;padding:8px 12px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + body + '</div></div>';
+    return '<div data-msg-idx="' + i + '" style="display:flex;gap:10px;flex-direction:' + (me ? 'row-reverse' : 'row') + ';"><div style="width:30px;height:30px;flex:none;border-radius:50%;background:' + (me ? 'var(--zq-card-soft)' : 'var(--zq-primary)') + ';color:' + (me ? 'var(--zq-text2)' : 'var(--zq-on-primary)') + ';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:var(--zq-fw-medium);">' + name + '</div><div data-msg-body="' + i + '" class="zq-msg-body" style="max-width:72%;padding:8px 12px;border-radius:var(--zq-rm);background:' + (me ? 'var(--zq-tint)' : 'var(--zq-card)') + ';border:1px solid ' + (me ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';font-size:13.5px;line-height:1.65;">' + body + '</div></div>';
   }).join('');
   if (!state.messages.length) {
     host.innerHTML = moreRow + (historyLoaded() ? aiEmptyState() : '');
@@ -1314,7 +1314,7 @@ function renderNotebooks() {
   renderCurrentNotebookLabel();
   host.innerHTML = (state.notebooks || []).map(function (nb) {
     var active = nb.id === state.notebookId;
-    return '<div data-notebook="' + nb.id + '" style="padding:9px 11px;border:1px solid ' + (active ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (active ? 'var(--zq-tint)' : 'var(--zq-card)') + ';cursor:pointer;"><div data-nb-name="' + nb.id + '" title="' + esc(nb.title || 'Notebook') + (active ? ' · 点击重命名' : '') + '" style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(nb.title || 'Notebook') + '</div><div style="font-size:11px;color:var(--zq-text3);margin-top:2px;">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
+    return '<div data-notebook="' + nb.id + '" style="padding:9px 11px;border:1px solid ' + (active ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (active ? 'var(--zq-tint)' : 'var(--zq-card)') + ';cursor:pointer;"><div data-nb-name="' + nb.id + '" title="' + esc(nb.title || 'Notebook') + (active ? ' · 点击重命名' : '') + '" style="font-size:12.5px;font-weight:var(--zq-fw-medium);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(nb.title || 'Notebook') + '</div><div style="font-size:11px;color:var(--zq-text3);margin-top:2px;">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
   }).join('') || '<div class="zq-ai-empty-notebook"><strong>暂无 Notebook</strong><span>普通聊天仍可使用；上传资料前请先新建。</span></div>';
   $all('[data-notebook]', host).forEach(function (d) {
     var id = Number(d.dataset.notebook);
@@ -1875,13 +1875,13 @@ function openWorkspaceSettings(settings) {
         '<div style="margin-bottom:12px;padding:9px 11px;border-radius:var(--zq-rs);background:var(--zq-tint);' +
         'font-size:12px;color:var(--zq-text2);line-height:1.6;">当前不是本机回环地址（多半是服务器 / 网页版）。' +
         '出于安全，工作区只能在<b>本机桌面应用</b>里开启，这里改了也不会生效。</div>') +
-      '<div style="font-size:12px;font-weight:700;margin-bottom:6px;">工作文件夹</div>' +
+      '<div style="font-size:12px;font-weight:var(--zq-fw-medium);margin-bottom:6px;">工作文件夹</div>' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">' +
         '<input id="zq-wss-root" class="zq-input" readonly placeholder="（未选择）" style="flex:1;height:32px;font-size:12px;" />' +
         '<button id="zq-wss-browse" class="zq-btn-ghost" style="height:32px;font-size:12px;white-space:nowrap;">浏览…</button>' +
       '</div>' +
       '<div style="font-size:11px;color:var(--zq-text3);margin-bottom:16px;">AI 只能读/改/运行这一个文件夹里的东西，范围越小越安全。</div>' +
-      '<div style="font-size:12px;font-weight:700;margin-bottom:6px;">访问档位</div>' +
+      '<div style="font-size:12px;font-weight:var(--zq-fw-medium);margin-bottom:6px;">访问档位</div>' +
       '<div id="zq-wss-modes" style="display:flex;gap:6px;margin-bottom:8px;">' +
         modes.map(function (m) {
           return '<button type="button" data-mode="' + m + '" class="zq-btn-ghost" style="flex:1;height:32px;font-size:12px;">' +
@@ -2060,7 +2060,7 @@ function paintWorkspacePath() {
   var sep = root.indexOf('\\') >= 0 && root.indexOf('/') < 0 ? '\\' : '/';
   var rootName = root ? root.slice(Math.max(root.lastIndexOf('/'), root.lastIndexOf('\\')) + 1) : '工作区';
   var shown = rootName + '/' + (wsState.path ? wsState.path.replace(/\/+$/, '') + '/' : '');
-  el.innerHTML = '<div style="display:flex;align-items:center;gap:5px;color:var(--zq-text2);font-size:12px;font-weight:600;">'
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:5px;color:var(--zq-text2);font-size:12px;font-weight:var(--zq-fw-medium);">'
     + '<span style="flex:none;">📁</span><span style="min-width:0;word-break:break-all;">' + esc(shown) + '</span></div>'
     + (root ? '<div style="margin-top:2px;font-size:10.5px;color:var(--zq-text3);word-break:break-all;" title="工作文件夹的完整路径">'
       + esc(root + sep + (wsState.path ? wsState.path.split('/').join(sep) + sep : '')) + '</div>' : '');
