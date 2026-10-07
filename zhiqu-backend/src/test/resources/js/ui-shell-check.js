@@ -9,6 +9,7 @@
 //   3. 侧栏的收起按钮（第四十三轮）：是品牌那一行里的一个小图标按钮（原来是导航最上面一整条带「收起」二字的按钮）；
 //      只有图标，所以名字靠 aria-label，而且要跟着收起 / 展开换。
 //   4. 两侧可收起的面板（AI 助手、Wiki，第四十四轮）：开关只是面板图标（原来收起后的竖条上竖排着面板的名字），名字在提示和 aria-label 里。
+//   5. 悬停提示（第四十五轮）：桌面应用的 WKWebView 不显示原生的 title 提示（用户：「鼠标悬停的时候也没有显示名字」），zhiqu-ui.js 自己画。
 //   由 PageSwitchSmoothnessTest 调用；打印 ALL-GREEN 且退出码 0 = 全绿。
 const fs = require('fs');
 const vm = require('vm');
@@ -18,7 +19,10 @@ function el(tag) {
   const classes = new Set();
   const attrs = {};
   const node = {
-    tagName: tag || 'div', style: {}, dataset: {}, innerHTML: '', textContent: '', className: '', children: [],
+    tagName: tag || 'div', style: {}, dataset: {}, innerHTML: '', textContent: '', innerText: '', className: '', children: [],
+    nodeType: 1, parentNode: null, isConnected: true, offsetWidth: 80, offsetHeight: 24, scrollWidth: 0, clientWidth: 0,
+    rect: { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }, getBoundingClientRect: () => node.rect,
+    hasAttribute: (k) => k in attrs,
     classList: {
       add: (...c) => c.forEach((x) => classes.add(x)), remove: (...c) => c.forEach((x) => classes.delete(x)),
       contains: (c) => classes.has(c), toggle: (c, on) => { const v = on === undefined ? !classes.has(c) : on; if (v) classes.add(c); else classes.delete(c); return v; },
@@ -42,21 +46,25 @@ function storage(init) {
 function load(pathname, session, local, panels) {
   const html = el('html');
   const side = el('aside');
+  const docH = {}, timers = [];
   const document = {
     readyState: 'complete', documentElement: html, body: el('body'),
     getElementById: (id) => (id === 'zq-side' ? side : null),
-    querySelector: () => null, querySelectorAll: (sel) => (sel === '[data-zq-collapse]' && panels ? panels : []), addEventListener() {}, createElement: (t) => el(t),
+    querySelector: () => null, querySelectorAll: (sel) => (sel === '[data-zq-collapse]' && panels ? panels : []), createElement: (t) => el(t),
+    addEventListener: (t, f) => { (docH[t] = docH[t] || []).push(f); },
   };
   const window = {
     location: { pathname, hash: '', search: '' }, document,
     localStorage: storage(local), sessionStorage: storage(session),
     matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {} }),
-    addEventListener() {}, setTimeout: () => 0, clearTimeout() {},
+    innerWidth: 1440, innerHeight: 900,
+    addEventListener() {}, clearTimeout: (id) => { if (id && timers[id - 1]) timers[id - 1].live = false; },
+    setTimeout: (f, ms) => { timers.push({ f, ms, live: true }); return timers.length; },
   };
   window.window = window;
   const ctx = vm.createContext(Object.assign({ console }, window));
   vm.runInContext(src, ctx, { filename: 'zhiqu-ui.js' });
-  return { html, side, ui: window.ZQUI, session: window.sessionStorage };
+  return { html, side, ui: window.ZQUI, session: window.sessionStorage, docH, timers, body: document.body };
 }
 
 let fail = 0;
@@ -144,6 +152,80 @@ for (const [p, dir, label] of [[left, 'left', 'Notebook · 资料'], [rightP, 'r
   judge(dir + '：竖条上的按钮只有图标、名字在提示和 aria-label 里', stripTags(x) === '' && x.includes('aria-label="展开「' + label + '」"') && x.includes('title="展开「' + label + '」"'), x.slice(0, 160));
   judge(dir + '：面板的名字还在（手机上收起的面板是页签，要显示字）', rail.innerHTML.includes('<div class="zq-rlabel">' + label + '</div>'), rail.innerHTML);
 }
+
+// 5. 悬停提示
+r = load('/knowledge-wiki.html', { token });
+const fire = (type, ev) => (r.docH[type] || []).forEach((f) => f(ev));
+const runTimers = () => { const due = r.timers.filter((x) => x.live); due.forEach((x) => { x.live = false; x.f(); }); return due.map((x) => x.ms); };
+const tipEl = () => r.body.children.find((c) => c.className === 'zq-tip');
+const tipOn = () => !!tipEl() && tipEl().classList.contains('is-on');
+function hoverable(attrs, opts = {}) {
+  const t = el('button');
+  Object.entries(attrs).forEach(([k, v]) => t.setAttribute(k, v));
+  t.textContent = opts.text || '';
+  t.innerText = opts.innerText !== undefined ? opts.innerText : (opts.text || '');
+  t.rect = opts.rect || { left: 300, top: 100, right: 328, bottom: 128, width: 28, height: 28 };
+  if (opts.strip) t.closest = (sel) => (sel.includes('.zq-rail') ? {} : null);
+  return t;
+}
+let b = hoverable({ title: '展开「目录 · 4 页」' });
+fire('pointerover', { pointerType: 'mouse', target: b });
+judge('提示：停上去时原生的 title 让开（挪到 data-zq-tip），不然浏览器里出两个', b.getAttribute('title') === null && b.getAttribute('data-zq-tip') === '展开「目录 · 4 页」');
+judge('提示：只有图标、没有名字的按钮顺手补上 aria-label', b.getAttribute('aria-label') === '展开「目录 · 4 页」');
+let ms = runTimers();
+judge('提示：停 0.4 秒才出（扫过去不闪）', ms.length === 1 && ms[0] === 400, ms);
+judge('提示：出来了，字是那个名字、role=tooltip', tipOn() && tipEl().textContent === '展开「目录 · 4 页」' && tipEl().getAttribute('role') === 'tooltip', tipEl() && tipEl().textContent);
+judge('提示：一般的出在它下面', tipEl() && tipEl().style.top === (128 + 6) + 'px', tipEl() && tipEl().style);
+const inner = el('svg'); inner.parentNode = b;
+b.contains = (x) => x === inner;
+fire('pointerout', { target: b, relatedTarget: inner });
+judge('提示：从按钮挪到里面的图标上不收', tipOn());
+fire('pointerover', { pointerType: 'mouse', target: inner });
+judge('提示：停到里面的图标上还是同一个，不重新计时', tipOn() && r.timers.filter((x) => x.live).length === 0);
+fire('pointerout', { target: inner, relatedTarget: null });
+judge('提示：移开就收', !tipOn());
+const b2 = hoverable({ title: '收起「页面检查」' });
+fire('pointerover', { pointerType: 'mouse', target: b2 });
+ms = runTimers();
+judge('提示：刚出过一个、接着停到旁边那个：立即出', ms[0] === 0 && tipOn() && tipEl().textContent === '收起「页面检查」', ms);
+fire('pointerdown', {});
+judge('提示：点下去就收', !tipOn());
+const touch = hoverable({ title: '展开' });
+fire('pointerover', { pointerType: 'touch', target: touch });
+judge('提示：触屏不出（点一下会粘住）', r.timers.filter((x) => x.live).length === 0 && touch.getAttribute('title') === '展开');
+b.setAttribute('title', '展开「目录 · 5 页」');
+fire('pointerover', { pointerType: 'mouse', target: b }); runTimers();
+judge('提示：代码之后又写了 title（页数变了）：下次停上去认新的', tipOn() && tipEl().textContent === '展开「目录 · 5 页」', tipEl() && tipEl().textContent);
+fire('pointerout', { target: b, relatedTarget: null });
+const rail = hoverable({ title: '展开「Notebook · 资料」' }, { strip: true, rect: { left: 10, top: 200, right: 38, bottom: 228, width: 28, height: 28 } });
+fire('pointerover', { pointerType: 'mouse', target: rail }); runTimers();
+judge('提示：收起的侧栏、面板竖条上的出在旁边（右边）', tipEl().style.left === (38 + 6) + 'px' && tipEl().style.top === (200 + (28 - 24) / 2) + 'px', tipEl().style);
+fire('pointerout', { target: rail, relatedTarget: null });
+const low = hoverable({ title: '上传文件' }, { rect: { left: 300, top: 870, right: 328, bottom: 898, width: 28, height: 28 } });
+fire('pointerover', { pointerType: 'mouse', target: low }); runTimers();
+judge('提示：下面放不下就出在上面', tipEl().style.top === (870 - 6 - 24) + 'px', tipEl().style);
+fire('pointerout', { target: low, relatedTarget: null });
+const nav = hoverable({ title: '看板' }, { text: '看板' });
+fire('pointerover', { pointerType: 'mouse', target: nav }); runTimers();
+judge('提示：字已经摆在上面了（展开的侧栏）不重复出', !tipOn());
+judge('提示：有字的不补 aria-label', nav.getAttribute('aria-label') === null);
+fire('pointerout', { target: nav, relatedTarget: null });
+const clipped = hoverable({ title: '一个很长很长的 Notebook 名字' }, { text: '一个很长很长的 Notebook 名字' });
+clipped.scrollWidth = 400; clipped.clientWidth = 120;
+fire('pointerover', { pointerType: 'mouse', target: clipped }); runTimers();
+judge('提示：字被截断（省略号）时照出', tipOn());
+fire('pointerout', { target: clipped, relatedTarget: null });
+const named = hoverable({ title: '发送（⌘/Ctrl + 回车）', 'aria-label': '发送' });
+fire('pointerover', { pointerType: 'mouse', target: named });
+judge('提示：已经有 aria-label 的不改', named.getAttribute('aria-label') === '发送');
+fire('pointerout', { target: named, relatedTarget: null });
+const keyed = hoverable({ title: '收起导航栏' });
+keyed.matches = (sel) => sel === ':focus-visible';
+fire('focusin', { target: keyed });
+ms = runTimers();
+judge('提示：键盘走到上面时也出（立即）', ms[0] === 0 && tipOn() && tipEl().textContent === '收起导航栏', ms);
+fire('focusout', {});
+judge('提示：焦点走了就收', !tipOn());
 
 console.log(fail === 0 ? '\nALL-GREEN' : '\nRED: ' + fail + ' 条');
 process.exit(fail === 0 ? 0 : 1);

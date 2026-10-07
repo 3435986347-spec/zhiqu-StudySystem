@@ -265,10 +265,12 @@ public class WikiToolAgent {
     public List<Map<String, Object>> buildWikiTools(boolean includeWrite) {
         List<Map<String, Object>> tools = new ArrayList<>();
         Map<String, Object> searchProps = new LinkedHashMap<>();
-        searchProps.put("query", ToolSchemas.schemaProp("string", "检索关键词（匹配标题、摘要与正文）"));
+        searchProps.put("query", ToolSchemas.schemaProp("string", "检索关键词，匹配标题、摘要、正文和页面类型；空格分开的几个词都要中。可以留空"));
+        searchProps.put("type", ToolSchemas.schemaProp("string", "只看这一类页面：" + com.zhiqu.common.WikiPageTypes.choices() + "，代码或中文名都行。可以不填"));
         tools.add(ToolSchemas.functionTool("search_wiki",
-                "在用户自己的知识 Wiki 里按关键词检索页面，返回匹配到的页面标题、类型与摘要。涉及用户已有笔记/计划/偏好时先检索。",
-                searchProps, List.of("query")));
+                "在用户自己的知识 Wiki 里检索页面，返回匹配到的页面标题、类型与摘要，以及一共匹配了几页。涉及用户已有笔记/计划/目标/偏好时先检索。"
+                        + "要看某一类的全部页面（比如用户问「我有哪些目标 / 计划」）：type 填那一类、query 留空 —— 目标页的标题和正文里不一定写着「目标」两个字。",
+                searchProps, List.of()));
 
         Map<String, Object> readProps = new LinkedHashMap<>();
         readProps.put("title", ToolSchemas.schemaProp("string", "要读取的页面标题（需与检索结果中的标题一致）"));
@@ -289,6 +291,62 @@ public class WikiToolAgent {
         return tools;
     }
 
+    /** search_wiki 一次最多列出的页数；没列全时结果里照实说一共几页 */
+    static final int SEARCH_LIMIT = 20;
+
+    /**
+     * search_wiki：关键词（按空格拆开，每个都要中）匹配标题、摘要、正文和页面类型（代码与中文名）；type 只看那一类。
+     * 第四十五轮之前只拿整串关键词匹配标题、摘要、正文：页面类型不在里面，按「目标」「GOAL」搜不到一页叫「27考研」的目标页，
+     * 也没有「列出某一类全部页面」的办法 —— 用户问「我有哪些计划」，模型搜了三次，回答「Wiki 里没有目标或项目类的页面」。
+     */
+    Map<String, Object> searchWiki(Long userId, Map<String, Object> args) {
+        String query = String.valueOf(com.zhiqu.common.Texts.orDefault(args.get("query"), "")).trim().toLowerCase(Locale.ROOT);
+        String typeArg = String.valueOf(com.zhiqu.common.Texts.orDefault(args.get("type"), "")).trim();
+        String wantLabel = null;
+        if (!typeArg.isEmpty()) {
+            wantLabel = com.zhiqu.common.WikiPageTypes.parse(typeArg);
+            if (wantLabel == null) {
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("error", "不认识的页面类型「" + typeArg + "」。可用的：" + com.zhiqu.common.WikiPageTypes.choices());
+                return err;
+            }
+        }
+        String[] words = query.isEmpty() ? new String[0] : query.split("\\s+");
+        List<Map<String, Object>> hits = new ArrayList<>();
+        int total = 0;
+        for (Map<String, Object> p : knowledgeService.listPages(userId)) {
+            String type = String.valueOf(com.zhiqu.common.Texts.orDefault(p.get("pageType"), "NOTE"));
+            String label = com.zhiqu.common.WikiPageTypes.label(type);
+            if (wantLabel != null && !wantLabel.equals(label)) continue;
+            String title = String.valueOf(com.zhiqu.common.Texts.orDefault(p.get("title"), ""));
+            String summary = String.valueOf(com.zhiqu.common.Texts.orDefault(p.get("summary"), ""));
+            String content = String.valueOf(com.zhiqu.common.Texts.orDefault(p.get("content"), ""));
+            String hay = (title + " " + summary + " " + content + " " + type + " " + label).toLowerCase(Locale.ROOT);
+            boolean all = true;
+            for (String w : words) {
+                if (!hay.contains(w)) { all = false; break; }
+            }
+            if (!all) continue;
+            total++;
+            if (hits.size() < SEARCH_LIMIT) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("title", title);
+                row.put("type", type);
+                row.put("typeLabel", label);
+                row.put("summary", com.zhiqu.common.Texts.limitCollapsed(summary, 120));
+                hits.add(row);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("count", hits.size());
+        out.put("total", total);
+        out.put("pages", hits);
+        if (total > hits.size()) {
+            out.put("note", "一共 " + total + " 页匹配，只列出了前 " + hits.size() + " 页；要找具体的一页请换更具体的关键词或加上 type");
+        }
+        return out;
+    }
+
     /** 执行一个 Wiki 工具，返回给模型的文本结果 + 是否落草稿。所有读写都按显式 userId 隔离。 */
     public WikiToolExecution executeWikiTool(Long userId, String name, String argsJson, WikiLoopState state) {
         Map<String, Object> args;
@@ -300,22 +358,7 @@ public class WikiToolAgent {
         try {
             switch (name == null ? "" : name) {
                 case "search_wiki": {
-                    String q = String.valueOf(com.zhiqu.common.Texts.orDefault(args.get("query"), "")).trim().toLowerCase(Locale.ROOT);
-                    List<Map<String, Object>> hits = new ArrayList<>();
-                    for (Map<String, Object> p : knowledgeService.listPages(userId)) {
-                        String title = String.valueOf(com.zhiqu.common.Texts.orDefault(p.get("title"), ""));
-                        String summary = String.valueOf(com.zhiqu.common.Texts.orDefault(p.get("summary"), ""));
-                        String content = String.valueOf(com.zhiqu.common.Texts.orDefault(p.get("content"), ""));
-                        if (q.isEmpty() || (title + " " + summary + " " + content).toLowerCase(Locale.ROOT).contains(q)) {
-                            Map<String, Object> row = new LinkedHashMap<>();
-                            row.put("title", title);
-                            row.put("type", com.zhiqu.common.Texts.orDefault(p.get("pageType"), "NOTE"));
-                            row.put("summary", com.zhiqu.common.Texts.limitCollapsed(summary, 120));
-                            hits.add(row);
-                            if (hits.size() >= 12) break;
-                        }
-                    }
-                    return WikiToolExecution.read(objectMapper.writeValueAsString(Map.of("count", hits.size(), "pages", hits)));
+                    return WikiToolExecution.read(objectMapper.writeValueAsString(searchWiki(userId, args)));
                 }
                 case "read_wiki_page": {
                     String title = String.valueOf(com.zhiqu.common.Texts.orDefault(args.get("title"), "")).trim();
@@ -414,7 +457,7 @@ public class WikiToolAgent {
     private String getWikiToolSystemPrompt() {
         return """
                 你是「知趣·象限」的知识 Wiki 助理。你可以调用工具读取和修改用户自己的知识 Wiki：
-                - search_wiki(query)：按关键词检索用户的 Wiki 页面。
+                - search_wiki(query, type)：按关键词和 / 或页面类型检索用户的 Wiki 页面；要看某一类的全部页面（目标、计划……）就只给 type、query 留空。
                 - read_wiki_page(title)：读取某页完整正文。
                 - create_wiki_patch(title, content, pageType?)：把新增/修改生成为“待合入变更”草稿，用户确认后才落库。
 

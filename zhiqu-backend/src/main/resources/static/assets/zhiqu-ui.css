@@ -238,8 +238,8 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
   background:transparent;color:var(--zq-text3);cursor:pointer;}
 .zq-side-toggle:hover{color:var(--zq-sb-active-text);background:var(--zq-sb-active-bg);}
 
-/* 折叠后靠原生 title 出名称 —— 不自己造 tooltip：那要处理定位、边界、触屏，
-   而原生的在所有平台都对。 */
+/* 折叠后靠 title 出名称 —— 第四十五轮起由 zhiqu-ui.js 的 setupTips 画（.zq-tip）：原来说「原生的在所有平台都对」，
+   可桌面应用的 WKWebView 根本不显示原生的 title 提示（用户：「鼠标悬停的时候也没有显示名字」）。 */
 .zq-side{position:fixed;inset:0 auto 0 0;width:188px;background:var(--zq-sb-bg);border-right:1px solid var(--zq-sb-border);display:flex;flex-direction:column;padding:var(--zq-sp-5) var(--zq-sp-3) var(--zq-sp-4);z-index:100;}
 .zq-brand{display:flex;align-items:center;gap:var(--zq-sp-2);padding:0 0 var(--zq-sp-4) 8px;margin-bottom:var(--zq-sp-2);}
 .zq-brand-badge{width:26px;height:26px;flex:none;border-radius:var(--zq-rs);background:var(--zq-text);color:var(--zq-card);display:flex;align-items:center;justify-content:center;font-weight:var(--zq-fw-semibold);font-size:var(--zq-fs-sm);}
@@ -329,6 +329,12 @@ option:checked{background:var(--zq-tint);color:var(--zq-text);font-weight:var(--
 /* 两侧面板的收起 / 展开按钮只是图标（第四十三轮：AI 助手统一成一种底色之后，白底描边的小方块很跳） */
 .zq-cbtn{position:absolute;top:10px;right:10px;z-index:6;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;line-height:1;cursor:pointer;padding:0;}
 .zq-cbtn:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
+/* 展开的面板第一行（标题那一行）右边给收起按钮让位（第四十五轮）：按钮是绝对定位的，原来 Wiki 目录的「4 页」叠在它底下，
+   AI 助手那边靠「新建」按钮自己写 margin-right 躲开。setupPanels 把竖条插在最前面，所以紧跟竖条的就是标题那一行 */
+[data-zq-collapse]>.zq-rail+*{padding-right:44px!important;}
+/* 悬停提示（第四十五轮，zhiqu-ui.js 的 setupTips）：反色的小签，不挡鼠标 */
+.zq-tip{position:fixed;left:0;top:0;z-index:3000;max-width:280px;padding:5px 9px;border-radius:var(--zq-rs);background:var(--zq-text);color:var(--zq-bg);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);line-height:1.45;overflow-wrap:anywhere;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .1s ease;}
+.zq-tip.is-on{opacity:1;visibility:visible;}
 [data-zq-collapse].zq-collapsed{flex:0 0 44px!important;width:44px!important;min-width:44px!important;padding:10px 0!important;overflow:hidden!important;align-items:center;}
 .zq-collapsed>*:not(.zq-rail){display:none!important;}
 .zq-rail{display:none;}

@@ -325,6 +325,15 @@ async function confirmRun(ctx, prep) {
 }
 
 const TASK_STATUS_LABEL = { todo: '待办', doing: '进行中', done: '已完成' };
+// search_wiki 第四十五轮起认页面类型（服务端的 WikiPageTypes）：只给类型时显示「查知识库里的目标页」，不显示「查知识库「undefined」」
+const WIKI_TYPE_LABEL = { GOAL: '目标', PROJECT: '计划', PREFERENCE: '偏好', WEAKNESS: '薄弱点', RESOURCE: '资料', MEMORY: '对话摘要', NOTE: '备注' };
+export function wikiSearchLabel(args = {}) {
+  const query = String(args.query ?? '').trim();
+  const type = String(args.type ?? '').trim();
+  const kind = WIKI_TYPE_LABEL[type.toUpperCase()] || type;
+  if (!query) return kind ? `查知识库里的${kind}页` : '列出知识库的页面';
+  return `查知识库「${query}」${kind ? `（${kind}页）` : ''}`;
+}
 
 /** 改任务状态直接生效：ask 档先问，单独一个「本会话都允许」—— 允许了写文件，不等于允许了改任务。 */
 async function confirmTaskStatus(ctx, args) {
@@ -381,7 +390,7 @@ export function describeCall(name, args) {
     case 'exit_plan_mode': return '提交计划';
     case TODO_TOOL: return '更新任务清单';
     case GOAL_TOOL: return `目标状态：${args.status}`;
-    case 'search_wiki': return `查知识库「${args.query}」`;
+    case 'search_wiki': return wikiSearchLabel(args);
     case 'read_wiki_page': return `读知识库「${args.title}」`;
     case 'create_wiki_patch': return `生成知识库草稿「${args.title}」`;
     case 'create_study_plan': return '生成计划草稿';

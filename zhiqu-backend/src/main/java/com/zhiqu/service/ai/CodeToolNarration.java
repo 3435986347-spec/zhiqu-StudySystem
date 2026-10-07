@@ -38,7 +38,7 @@ public final class CodeToolNarration {
                     ? "修改草稿 " + orUnknown(path) + "（替换一段，未落盘）"
                     : "生成草稿 " + orUnknown(path) + "（" + lineCount(text(a, "content")) + " 行，未落盘）";
             case "run_workspace_command" -> "运行 " + commandLine(a) + (path.isEmpty() ? "" : "（在 " + path + " 下）");
-            case "search_wiki" -> "查知识库「" + text(a, "query") + "」";
+            case "search_wiki" -> wikiSearch(text(a, "query"), text(a, "type"));
             case "read_wiki_page" -> "读知识页 " + orUnknown(text(a, "title"));
             case "create_wiki_patch" -> "起草知识页改动 " + orUnknown(text(a, "title"));
             case StudyPlanTool.NAME -> "把里程碑排成任务草稿";
@@ -112,6 +112,14 @@ public final class CodeToolNarration {
         } catch (Exception e) {
             return JSON.createObjectNode();
         }
+    }
+
+    /** 「查知识库「周报」」/ 只给类型时「查知识库里的目标页」（第四十五轮起 search_wiki 认类型） */
+    static String wikiSearch(String query, String type) {
+        String label = com.zhiqu.common.WikiPageTypes.parse(type);
+        String kind = label == null ? (type.isEmpty() ? "" : type) : label;
+        if (query.isEmpty()) return kind.isEmpty() ? "列出知识库的页面" : "查知识库里的" + kind + "页";
+        return "查知识库「" + query + "」" + (kind.isEmpty() ? "" : "（" + kind + "页）");
     }
 
     private static String text(JsonNode a, String field) {

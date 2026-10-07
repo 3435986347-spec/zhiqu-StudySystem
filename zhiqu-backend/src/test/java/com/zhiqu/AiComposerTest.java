@@ -124,7 +124,7 @@ class AiComposerTest {
     }
 
     @Test
-    @DisplayName("两侧面板收起后：桌面上的竖条只有图标（名字不再竖排），手机上收起的面板是页签、名字照样露出来；Wiki 目录的页数挪到按钮提示里")
+    @DisplayName("两侧面板收起后：桌面上的竖条只有图标（名字不再竖排），手机上收起的面板是页签、名字照样露出来；Wiki 目录的页数挪到按钮提示里；展开时第一行给收起按钮让位")
     void 两侧面板的开关() throws IOException {
         String css = css();
         int phone = css.indexOf("@media (max-width: 760px){");
@@ -133,6 +133,10 @@ class AiComposerTest {
         assertFalse(css.contains("writing-mode:vertical"), "又有竖排的字");
         assertTrue(css.substring(phone).contains(".zq-panel-host>.zq-collapsed .zq-rlabel{display:block;"),
                 "手机上收起的面板是正文上方的页签 —— 名字藏起来就只剩两个看不懂的图标");
+        // 展开的面板第一行给右上角的收起按钮让位（第四十五轮：Wiki 目录的「4 页」叠在按钮底下，用户截图）—— 样式表一处，不再各页自己躲
+        assertTrue(css.contains("[data-zq-collapse]>.zq-rail+*{padding-right:44px!important;}"), "面板第一行没给收起按钮让位");
+        assertFalse(html().contains("margin-right:26px"), "又有按钮自己写 margin-right 躲收起按钮了");
+        assertTrue(rule(css, ".zq-tip").contains("pointer-events:none"), "悬停提示要让鼠标穿过去（不然它一出来就挡住下面、触发移开）");
         String wiki = SourceText.stripComments(SourceText.pageModule("knowledge-wiki.js"));
         assertTrue(wiki.contains("xb.title = '展开「' + lbl + '」'; xb.setAttribute('aria-label', xb.title);"),
                 "Wiki 目录的页数（原来写在竖条上）没有挪进展开按钮的提示");

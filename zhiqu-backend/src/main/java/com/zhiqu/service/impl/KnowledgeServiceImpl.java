@@ -1515,17 +1515,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private String typeLabelForMarkdown(String type) {
-        return switch (String.valueOf(type)) {
-            case "GOAL" -> "目标";
-            case "PROJECT", "SCHEDULE" -> "计划";
-            case "PREFERENCE", "REMINDER" -> "偏好";
-            case "WEAKNESS" -> "薄弱点";
-            case "RESOURCE", "MATERIAL" -> "资料";
-            case "LOG" -> "日志";
-            case "SCHEMA" -> "规则";
-            case "MEMORY" -> "对话摘要";
-            default -> "备注";
-        };
+        return com.zhiqu.common.WikiPageTypes.label(type);   // 中文名只在 WikiPageTypes 一处（search_wiki 也按它认类型）
     }
 
     private UserKnowledgePage ownedPage(Long userId, Long id) {

@@ -120,7 +120,7 @@
     var h = title ? '<div class="zq-nav-group">'+title+'</div>' : '';
     items.forEach(function(it){
       var active = it[0]===cur ? ' active' : '';
-      // title 是折叠态的名称来源 —— 不自己造 tooltip：原生的在触屏与边界情况上都对
+      // title 是折叠态的名称来源 —— 第四十五轮起由 setupTips 画成提示（桌面应用不显示原生的）；展开时字就在图标旁边，提示不出
       h += '<a class="'+active.trim()+'" href="'+it[0]+'" title="'+it[1]+'"><span class="zq-ic">'+icon(it[2])+'</span><span>'+it[1]+'</span></a>';
     });
     return h;
@@ -384,6 +384,95 @@
   window.ZQUI.icon = icon;
   window.ZQUI.paintIcons = paintIcons;
 
-  function boot(){ buildSidebar(); setupPanels(); paintIcons(); }
+  // ── 悬停提示（第四十五轮）──
+  // 桌面应用的 WKWebView 不显示原生的 title 提示（用户 2026-10-06：「鼠标悬停的时候也没有显示名字」），浏览器里也要停一秒多才出来；
+  // 而收起的侧栏、两侧面板的开关、截断的名字都只靠它说明。所以自己画：鼠标停在带 title 的元素上 0.4 秒（刚出过一个时立即）出一个小提示，
+  // 在它下面、放不下就上面；收起的侧栏、面板竖条这种窄条上的出在旁边。移开、点下、滚动、按键就收；键盘走到上面时也出。
+  // 原生的那个要让开：停上去的那一刻把 title 挪到 data-zq-tip（之后代码再写 title 也认 —— 下一次停上去再挪一次）。
+  // 触屏不出：点一下就会粘在那里。
+  var TIP_DELAY = 400, TIP_WARM = 600;
+  var tipEl = null, tipTarget = null, tipTimer = 0, tipShown = false, tipWarmUntil = 0;
+  /** 鼠标下面最近的那个有提示的元素；它的 title 挪成 data-zq-tip（只有图标、没有名字的顺手补 aria-label） */
+  function tipHost(node){
+    for (var el = node; el && el.nodeType === 1; el = el.parentNode) {
+      var t = el.getAttribute('title');
+      if (t) {
+        el.setAttribute('data-zq-tip', t);
+        el.removeAttribute('title');
+        if (!el.hasAttribute('aria-label') && !String(el.textContent || '').trim()) el.setAttribute('aria-label', t);
+        return el;
+      }
+      if (el.getAttribute('data-zq-tip')) return el;
+    }
+    return null;
+  }
+  function hideTip(){
+    clearTimeout(tipTimer); tipTimer = 0;
+    if (tipShown) tipWarmUntil = Date.now() + TIP_WARM;
+    tipShown = false; tipTarget = null;
+    if (tipEl) tipEl.classList.remove('is-on');
+  }
+  function placeTip(target){
+    var r = target.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight, gap = 6;
+    var vw = window.innerWidth, vh = window.innerHeight, x, y;
+    var strip = target.closest && target.closest('.zq-side.is-collapsed, .zq-rail');
+    if (strip) {
+      x = (r.left + r.right) / 2 < vw / 2 ? r.right + gap : r.left - gap - w;
+      y = r.top + (r.height - h) / 2;
+    } else {
+      x = r.left + (r.width - w) / 2;
+      y = r.bottom + gap;
+      if (y + h > vh - 4) y = r.top - gap - h;
+    }
+    tipEl.style.left = Math.round(Math.max(4, Math.min(x, vw - w - 4))) + 'px';
+    tipEl.style.top = Math.round(Math.max(4, Math.min(y, vh - h - 4))) + 'px';
+  }
+  /** 提示的字已经整个摆在它上面了（展开的侧栏里「看板」两个字就在图标旁边）：不再重复。字被截断（省略号）时照出 */
+  function saysItAlready(target, text){
+    return String(target.innerText || '').trim() === text && !(target.scrollWidth > target.clientWidth);
+  }
+  function showTip(target){
+    var text = target.getAttribute('data-zq-tip');
+    if (!text || !target.isConnected || saysItAlready(target, text)) return;
+    if (!tipEl) {
+      tipEl = document.createElement('div');
+      tipEl.className = 'zq-tip';
+      tipEl.setAttribute('role', 'tooltip');
+      document.body.appendChild(tipEl);
+    }
+    tipEl.textContent = text;
+    tipEl.classList.add('is-on');
+    placeTip(target);
+    tipShown = true;
+  }
+  function armTip(target, now){
+    if (target === tipTarget) return;
+    hideTip();
+    if (!target) return;
+    tipTarget = target;
+    tipTimer = setTimeout(function(){ tipTimer = 0; if (tipTarget === target) showTip(target); }, now || Date.now() < tipWarmUntil ? 0 : TIP_DELAY);
+  }
+  function setupTips(){
+    document.addEventListener('pointerover', function(e){
+      if (e.pointerType && e.pointerType !== 'mouse') return;
+      armTip(tipHost(e.target));
+    });
+    document.addEventListener('pointerout', function(e){
+      if (!tipTarget) return;
+      if (e.relatedTarget && tipTarget.contains(e.relatedTarget)) return;   // 还在它里面（从按钮挪到里面的图标上）
+      hideTip();
+    });
+    ['pointerdown', 'keydown', 'wheel'].forEach(function(t){ document.addEventListener(t, hideTip, true); });
+    window.addEventListener('scroll', hideTip, true);
+    window.addEventListener('blur', hideTip);
+    document.addEventListener('focusin', function(e){
+      var keyboard = false;
+      try { keyboard = e.target.matches(':focus-visible'); } catch (x) {}
+      if (keyboard) armTip(tipHost(e.target), true);
+    });
+    document.addEventListener('focusout', hideTip);
+  }
+
+  function boot(){ buildSidebar(); setupPanels(); paintIcons(); setupTips(); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
 })();
