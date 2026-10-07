@@ -8,9 +8,12 @@
 // 截出来的和用户在应用里看到的逐像素一致。
 //
 // 用法：
-//   Snapshot <token> <输出目录> <基址> <路径1> [路径2 ...]
+//   Snapshot <token 或 @令牌文件> <输出目录> <基址> <路径1> [路径2 ...]
+//   SNAP_THEME=dark Snapshot ...    浅色 / 深色各截一套（第四十六轮：首页轮播跟着页面的明暗换图）；不给就跟系统
 // 例：
-//   Snapshot eyJ... ./out http://127.0.0.1:8080 /dashboard.html /ai.html
+//   SNAP_THEME=light Snapshot @/tmp/shots.token ./out http://127.0.0.1:8080 /dashboard.html /ai-assistant.html
+//   令牌用 @文件 传：直接写在命令行上，跑的这十几秒里别的进程看得见
+//   SNAP_STORAGE='{"zq.c.zq-wiki-toc":"0"}'  页面打开前再往 localStorage 里写几项（展开哪几块面板），JSON 对象
 
 import AppKit
 import WebKit
@@ -20,7 +23,30 @@ guard args.count >= 5 else {
     FileHandle.standardError.write("用法: Snapshot <token> <outDir> <baseUrl> <path>...\n".data(using: .utf8)!)
     exit(2)
 }
-let token = args[1]
+let token: String = {
+    guard args[1].hasPrefix("@") else { return args[1] }
+    let file = String(args[1].dropFirst())
+    guard let text = try? String(contentsOfFile: file, encoding: .utf8) else {
+        FileHandle.standardError.write("读不到令牌文件 \(file)\n".data(using: .utf8)!)
+        exit(2)
+    }
+    return text.trimmingCharacters(in: .whitespacesAndNewlines)
+}()
+// 页面的明暗由 localStorage 的 zq.theme 定（每页头上那行内联脚本读它）；表单控件、滚动条这些原生的东西跟窗口的外观走，一起设
+let theme = ProcessInfo.processInfo.environment["SNAP_THEME"] ?? ""
+let storage: String = {
+    guard let raw = ProcessInfo.processInfo.environment["SNAP_STORAGE"], !raw.isEmpty else { return "" }
+    guard let data = raw.data(using: .utf8),
+          (try? JSONSerialization.jsonObject(with: data)) as? [String: String] != nil else {
+        FileHandle.standardError.write("SNAP_STORAGE 要是一个 JSON 对象，值都是字符串\n".data(using: .utf8)!)
+        exit(2)
+    }
+    return "var o=\(raw);for(var k in o)localStorage.setItem(k,o[k]);"
+}()
+guard theme.isEmpty || theme == "light" || theme == "dark" else {
+    FileHandle.standardError.write("SNAP_THEME 只认 light / dark\n".data(using: .utf8)!)
+    exit(2)
+}
 let outDir = URL(fileURLWithPath: args[2], isDirectory: true)
 let baseUrl = args[3]
 let paths = Array(args[4...])
@@ -56,7 +82,8 @@ final class Shooter: NSObject, WKNavigationDelegate {
     init(token: String) {
         let config = WKWebViewConfiguration()
         // 登录守卫读 localStorage.token。document-start 注入，赶在页面脚本之前。
-        let js = "try{localStorage.setItem('token', '\(token)');}catch(e){}"
+        let themeJs = theme.isEmpty ? "" : "localStorage.setItem('zq.theme', '\(theme)');"
+        let js = "try{localStorage.setItem('token', '\(token)');\(themeJs)\(storage)}catch(e){}"
         config.userContentController.addUserScript(
             WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height),
@@ -64,6 +91,8 @@ final class Shooter: NSObject, WKNavigationDelegate {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                           styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = webView
+        if theme == "dark" { window.appearance = NSAppearance(named: .darkAqua) }
+        if theme == "light" { window.appearance = NSAppearance(named: .aqua) }
         // orderFrontRegardless 而不是 orderBack：窗口服务器只给「在屏」的窗口分配绘制表面，
         // orderBack 的窗口 takeSnapshot 出来主内容区是空的（DOM 里有内容，只是没被画过）。
         // 窗口坐标在可见区域之外，所以用户看不到它。
@@ -123,7 +152,7 @@ final class Shooter: NSObject, WKNavigationDelegate {
                    let rep = NSBitmapImageRep(data: tiff),
                    let png = rep.representation(using: .png, properties: [:]) {
                     let name = path.replacingOccurrences(of: "/", with: "")
-                        .replacingOccurrences(of: ".html", with: "") + ".png"
+                        .replacingOccurrences(of: ".html", with: "") + (theme.isEmpty ? "" : "-" + theme) + ".png"
                     let url = outDir.appendingPathComponent(name)
                     try? png.write(to: url)
                     print("  \(name)  \(png.count / 1024)KB")

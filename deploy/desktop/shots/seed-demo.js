@@ -2,8 +2,11 @@
 //
 //   node deploy/desktop/shots/seed-demo.js <令牌写到哪个文件>
 //   swiftc -O -o /tmp/Snapshot deploy/desktop/shots/Snapshot.swift
-//   /tmp/Snapshot "$(cat <令牌文件>)" <输出目录> http://127.0.0.1:18080 /ai-assistant.html /dashboard.html /tasks.html /knowledge-wiki.html
-//   cwebp -q 80 -resize 2048 1280 <png> -o zhiqu-backend/src/main/resources/static/assets/shots/<名字>.webp
+//   浅色、深色各一套（第四十六轮起首页跟着页面的明暗换图）；AI 助手展开右边的执行轨迹、Wiki 展开目录：
+//   SNAP_THEME=light SNAP_STORAGE='{"zq.c.执行轨迹 · 产物":"0","zq.c.zq-wiki-toc":"0"}' \
+//     /tmp/Snapshot @<令牌文件> <输出目录> http://127.0.0.1:18080 /ai-assistant.html /dashboard.html /tasks.html /knowledge-wiki.html
+//   SNAP_THEME=dark …（同上）
+//   cwebp -q 80 -resize 2048 1280 <输出目录>/<页>-<light|dark>.png -o zhiqu-backend/src/main/resources/static/assets/shots/<页>-<light|dark>.webp
 //
 // 服务端要连一个可以随便写的库（不要连自己在用的那个），并带 --app.ai.allow-private-provider-url=true 起（模型是本机的假模型）。
 // 账号每次新注册一个、密码随机生成且不打印；令牌写进给的文件（600 权限），只给 Snapshot 用。

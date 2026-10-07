@@ -6,11 +6,11 @@
   <title>知趣·象限 · AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261006-tips" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261006-tips">
-  <link rel="manifest" href="manifest.json?v=20261006-tips">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261008-carousel" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261008-carousel">
+  <link rel="manifest" href="manifest.json?v=20261008-carousel">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261006-tips">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261008-carousel">
   <style>
     .zq-home{min-height:100vh;display:flex;flex-direction:column;background:var(--zq-bg,var(--zq-card-soft));color:var(--zq-text);}
     .zq-home-bar{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 28px;background:color-mix(in srgb, var(--zq-card) 82%, transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--zq-border-soft);}
@@ -22,23 +22,24 @@
     .zq-hero p{margin:0;max-width:38em;font-size:15.5px;line-height:1.75;color:var(--zq-text2);}
     .zq-hero-cta{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:6px;}
     .zq-hero-cta .zq-btn,.zq-hero-cta .zq-btn-ghost{height:44px;padding:0 24px;font-size:14.5px;}
-    /* 轮播图：真实界面截图 */
-    .zq-carousel{position:relative;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rl);overflow:hidden;box-shadow:var(--zq-sh2);background:var(--zq-card);}
-    .zq-slides{display:flex;transition:transform .5s cubic-bezier(.2,.8,.2,1);}
-    /* 用 aspect-ratio 而不是固定 height：截图是 16:10，写死高度会在窄屏上把两侧裁掉，
-       而被裁掉的恰好是侧边栏和右栏 —— 那正是要展示的东西。 */
-    .zq-slide{flex:0 0 100%;margin:0;position:relative;aspect-ratio:2048/1280;background:var(--zq-card-soft);}
-    .zq-slide img{display:block;width:100%;height:100%;object-fit:cover;object-position:top left;}
-    /* 说明文字浮在图片底部；渐变遮罩保证浅色截图上也读得清。 */
-    .zq-slide figcaption{position:absolute;left:0;right:0;bottom:0;padding:34px 20px 14px;
-      font-size:13px;font-weight:var(--zq-fw-medium);color:#fff;text-align:center;letter-spacing:.01em;
-      background:linear-gradient(to top, rgba(17,24,39,.78), rgba(17,24,39,.42) 55%, transparent);}
-    .zq-dots{position:absolute;left:0;right:0;bottom:44px;display:flex;gap:8px;justify-content:center;}
-    .zq-dot{width:8px;height:8px;border-radius:50%;border:none;padding:0;background:color-mix(in srgb, var(--zq-text3) 55%, transparent);cursor:pointer;}
-    .zq-dot.on{background:var(--zq-primary);width:20px;border-radius:999px;}
+    /* 首页轮播（第四十六轮重做）：上面一排页签、一行说明，图片干干净净放在框里（原来说明压在图片底部的深色渐变上、圆点也压在图上）；
+       几张图叠在同一格里淡入淡出；每张有浅、深两张图，跟着页面的明暗换 —— 看不见的那一套 display:none，懒加载的图就不下载 */
+    .zq-tour{display:flex;flex-direction:column;align-items:center;gap:var(--zq-sp-3);}
+    .zq-tour-cap{margin:0;min-height:1.6em;color:var(--zq-text2);font-size:var(--zq-fs-sm);line-height:1.6;text-align:center;}
+    /* 用 aspect-ratio 而不是固定 height：截图是 16:10，写死高度会在窄屏上把两侧裁掉，而被裁掉的恰好是侧边栏和右栏 —— 那正是要展示的东西 */
+    .zq-tour-frame{display:grid;width:100%;aspect-ratio:2048/1280;margin-top:var(--zq-sp-1);border:1px solid var(--zq-border);border-radius:var(--zq-rl);overflow:hidden;box-shadow:var(--zq-sh2);background:var(--zq-card-soft);}
+    .zq-tour-slide{grid-area:1/1;margin:0;min-width:0;opacity:0;visibility:hidden;transition:opacity .45s ease,visibility 0s linear .45s;}
+    .zq-tour-slide.is-on{opacity:1;visibility:visible;transition:opacity .45s ease,visibility 0s;}
+    .zq-tour-slide img{display:block;width:100%;height:100%;object-fit:cover;object-position:top left;}
+    html[data-zq-mode="dark"] .zq-shot-light,html:not([data-zq-mode="dark"]) .zq-shot-dark{display:none;}
+    .zq-tour .zq-seg>button{height:30px;padding:0 14px;font-size:var(--zq-fs-sm);}
+    .zq-tour .zq-seg>button:focus-visible{outline:none;box-shadow:var(--zq-focus);}
+    @media (prefers-reduced-motion:reduce){ .zq-tour-slide,.zq-tour-slide.is-on{transition:none;} }
     .zq-feat{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:34px;}
     .zq-feat .zq-card{display:flex;flex-direction:column;gap:9px;}
-    .zq-feat .zq-fimg{height:96px;border-radius:var(--zq-rm);background:var(--zq-card-soft);display:flex;align-items:center;justify-content:center;font-size:28px;color:var(--zq-primary);}
+    /* 功能卡片的图标（第四十六轮：原来是四个 Unicode 符号放大到 28px，摆在一块灰底上） */
+    .zq-feat .zq-fimg{width:36px;height:36px;border-radius:var(--zq-rm);background:var(--zq-card-soft);display:flex;align-items:center;justify-content:center;color:var(--zq-text);}
+    .zq-feat .zq-fimg .zq-icon{width:18px;height:18px;}
     .zq-feat h3{margin:0;font-size:15px;font-weight:var(--zq-fw-medium);}
     .zq-feat p{margin:0;font-size:12.5px;line-height:1.6;color:var(--zq-text2);}
     .zq-home-foot{border-top:1px solid var(--zq-border-soft);padding:20px 28px;text-align:center;font-size:12px;color:var(--zq-text3);}
@@ -46,7 +47,7 @@
     .zq-home-foot .zq-beian a{color:inherit;text-decoration:none;}
     .zq-home-foot .zq-beian a:hover{color:var(--zq-text2);text-decoration:underline;}
     @media (max-width:900px){ .zq-feat{grid-template-columns:repeat(2,minmax(0,1fr));} .zq-hero h1{font-size:30px;} }
-    @media (max-width:560px){ .zq-feat{grid-template-columns:1fr;} .zq-slide figcaption{font-size:11.5px;padding:24px 12px 10px;} .zq-dots{bottom:36px;} }
+    @media (max-width:560px){ .zq-feat{grid-template-columns:1fr;} .zq-tour .zq-seg>button{padding:0 9px;font-size:var(--zq-fs-xs);} }
   </style>
 </head>
 <body>
@@ -54,7 +55,7 @@
     <header class="zq-home-bar">
       <div class="zq-home-logo"><span class="zq-mark">知</span><span>知趣 · 象限</span></div>
       <div style="display:flex;align-items:center;gap:10px;">
-        <button type="button" id="zq-home-theme" class="zq-btn-ghost" style="height:36px;width:36px;padding:0;font-size:15px;" title="切换深浅色">◑</button>
+        <button type="button" id="zq-home-theme" class="zq-btn-ghost" style="height:36px;width:36px;padding:0;" title="切换深浅色" aria-label="切换深浅色"><span data-zq-icon="contrast"></span></button>
         <button type="button" class="zq-btn-ghost" data-auth="login" style="height:36px;">登录</button>
         <button type="button" class="zq-btn" data-auth="register" style="height:36px;">注册</button>
       </div>
@@ -72,37 +73,43 @@
       </section>
 
       <!--
-        真实界面截图（数据是示例账号的）。先用 deploy/desktop/shots/seed-demo.js 建示例账号，再用 Snapshot.swift 重出：
+        真实界面截图（数据是示例账号的），浅色、深色各一套。先用 deploy/desktop/shots/seed-demo.js 建示例账号，再用 Snapshot.swift 重出（用法在 seed-demo.js 开头）：
         它加载真的页面（注入 token 过登录守卫）再用 WKWebView 截，所以图和线上永远一致。
-        换了界面之后记得重跑一次，否则首页展示的是旧版本的样子。
+        换了界面之后记得重跑一次，否则首页展示的是旧版本的样子（第四十六轮之前的四张一直是 10 月 4 日改版前的样子）。
       -->
-      <div class="zq-carousel" id="zq-carousel">
-        <div class="zq-slides" id="zq-slides">
-          <figure class="zq-slide">
-            <img src="assets/shots/ai-assistant.webp?v=20261006-tips" alt="AI 助手：按四象限理清这周工作的先后，回答里带着表格和今天的安排" width="2048" height="1280">
-            <figcaption>AI 办公助手 · 说一句，帮你理清先后</figcaption>
+      <section class="zq-tour" id="zq-tour" aria-label="产品界面">
+        <div class="zq-seg" role="tablist" aria-label="看哪一页">
+          <button type="button" role="tab" id="zq-tour-tab-0" aria-controls="zq-tour-slide-0" aria-selected="true" tabindex="0" class="on">AI 助手</button>
+          <button type="button" role="tab" id="zq-tour-tab-1" aria-controls="zq-tour-slide-1" aria-selected="false" tabindex="-1">看板</button>
+          <button type="button" role="tab" id="zq-tour-tab-2" aria-controls="zq-tour-slide-2" aria-selected="false" tabindex="-1">任务</button>
+          <button type="button" role="tab" id="zq-tour-tab-3" aria-controls="zq-tour-slide-3" aria-selected="false" tabindex="-1">知识 Wiki</button>
+        </div>
+        <p class="zq-tour-cap" id="zq-tour-cap">说一句，帮你按四象限理清这周的先后 —— 回答里带着表格和今天的安排</p>
+        <div class="zq-tour-frame">
+          <figure class="zq-tour-slide is-on" id="zq-tour-slide-0" role="tabpanel" aria-labelledby="zq-tour-tab-0" data-cap="说一句，帮你按四象限理清这周的先后 —— 回答里带着表格和今天的安排">
+            <img class="zq-shot-light" src="assets/shots/ai-assistant-light.webp?v=20261008-carousel" alt="AI 助手：按四象限理清这周工作的先后，右边是这一轮的执行轨迹和引用的资料" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/ai-assistant-dark.webp?v=20261008-carousel" alt="AI 助手：按四象限理清这周工作的先后，右边是这一轮的执行轨迹和引用的资料" width="2048" height="1280" loading="lazy" decoding="async">
           </figure>
-          <figure class="zq-slide">
-            <img src="assets/shots/dashboard.webp?v=20261006-tips" alt="今日行动台：今日待办、本周日历与番茄钟" width="2048" height="1280" loading="lazy">
-            <figcaption>今日行动台 · 先看今天，再看本周</figcaption>
+          <figure class="zq-tour-slide" id="zq-tour-slide-1" role="tabpanel" aria-labelledby="zq-tour-tab-1" data-cap="先看今天，再看本周：今日待办、本周日历、番茄钟、临近的截止时间">
+            <img class="zq-shot-light" src="assets/shots/dashboard-light.webp?v=20261008-carousel" alt="看板：今日待办、本周日历、番茄钟和临近截止的事" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/dashboard-dark.webp?v=20261008-carousel" alt="看板：今日待办、本周日历、番茄钟和临近截止的事" width="2048" height="1280" loading="lazy" decoding="async">
           </figure>
-          <figure class="zq-slide">
-            <img src="assets/shots/tasks.webp?v=20261006-tips" alt="任务列表：按四象限标注的任务与状态流转" width="2048" height="1280" loading="lazy">
-            <figcaption>四象限任务 · 重要与紧急一眼分清</figcaption>
+          <figure class="zq-tour-slide" id="zq-tour-slide-2" role="tabpanel" aria-labelledby="zq-tour-tab-2" data-cap="重要与紧急一眼分清，截止时间、提醒、状态都在一张表里">
+            <img class="zq-shot-light" src="assets/shots/tasks-light.webp?v=20261008-carousel" alt="任务列表：按四象限标注的任务、截止时间与状态" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/tasks-dark.webp?v=20261008-carousel" alt="任务列表：按四象限标注的任务、截止时间与状态" width="2048" height="1280" loading="lazy" decoding="async">
           </figure>
-          <figure class="zq-slide">
-            <img src="assets/shots/knowledge-wiki.webp?v=20261006-tips" alt="知识 Wiki：项目页里的里程碑表格与双链引用" width="2048" height="1280" loading="lazy">
-            <figcaption>知识 Wiki · 项目资料双链互联，AI 记忆可追溯</figcaption>
+          <figure class="zq-tour-slide" id="zq-tour-slide-3" role="tabpanel" aria-labelledby="zq-tour-tab-3" data-cap="资料、决定和偏好沉淀成页，双链互联；AI 的长期记忆有据可查">
+            <img class="zq-shot-light" src="assets/shots/knowledge-wiki-light.webp?v=20261008-carousel" alt="知识 Wiki：目录、项目页里的里程碑表格与双链引用" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/knowledge-wiki-dark.webp?v=20261008-carousel" alt="知识 Wiki：目录、项目页里的里程碑表格与双链引用" width="2048" height="1280" loading="lazy" decoding="async">
           </figure>
         </div>
-        <div class="zq-dots" id="zq-dots"></div>
-      </div>
+      </section>
 
       <section class="zq-feat">
-        <article class="zq-card"><div class="zq-fimg">✦</div><h3>AI 办公助手</h3><p>对话拆解任务、排出计划；上传资料、PDF、截图识别日程，联网检索辅助判断。写进日历和知识库之前都先给你确认。</p></article>
-        <article class="zq-card"><div class="zq-fimg">▦</div><h3>四象限看板</h3><p>按重要与紧急划分任务，配合番茄钟专注，到点在页面里提醒，进度一目了然。</p></article>
-        <article class="zq-card"><div class="zq-fimg">≣</div><h3>知识 Wiki</h3><p>沉淀资料、决定和偏好，双链互联，AI 的长期记忆可追溯。</p></article>
-        <article class="zq-card"><div class="zq-fimg">◈</div><h3>参考计划</h3><p>套用别人分享的计划模板，一键生成到自己的日历。</p></article>
+        <article class="zq-card"><div class="zq-fimg" data-zq-icon="sparkles"></div><h3>AI 办公助手</h3><p>对话拆解任务、排出计划；上传资料、PDF、截图识别日程，联网检索辅助判断。写进日历和知识库之前都先给你确认。</p></article>
+        <article class="zq-card"><div class="zq-fimg" data-zq-icon="layout-dashboard"></div><h3>四象限看板</h3><p>按重要与紧急划分任务，配合番茄钟专注，到点在页面里提醒，进度一目了然。</p></article>
+        <article class="zq-card"><div class="zq-fimg" data-zq-icon="book-open"></div><h3>知识 Wiki</h3><p>沉淀资料、决定和偏好，双链互联，AI 的长期记忆可追溯。</p></article>
+        <article class="zq-card"><div class="zq-fimg" data-zq-icon="copy"></div><h3>参考计划</h3><p>套用别人分享的计划模板，一键生成到自己的日历。</p></article>
       </section>
     </main>
 
@@ -113,16 +120,43 @@
   </div>
 
   <script>
-    /* 轻量轮播（占位图自动轮播），登录/注册弹窗由 zhiqu-api.js 接管 */
+    /* ── 首页轮播（第四十六轮）── src/test/resources/js/home-tour-check.js 从这里抠出来在 node 里真跑。
+       6 秒换一张；鼠标停在上面、焦点在里面、标签页在后台时不换；点过、按过页签之后不再自己换（你在看哪一张就是哪一张）；
+       系统设了「减少动态效果」就不自己换。页签按左右键 / Home / End 走（roving tabindex）。登录 / 注册弹窗由 zhiqu-api.js 接管。 */
     (function(){
-      var slides=document.getElementById('zq-slides'), dots=document.getElementById('zq-dots');
-      if(!slides||!dots) return;
-      var n=slides.children.length, i=0, timer=null;
-      for(var k=0;k<n;k++){ var d=document.createElement('button'); d.className='zq-dot'+(k===0?' on':''); d.setAttribute('data-i',k); dots.appendChild(d); }
-      function go(x){ i=(x+n)%n; slides.style.transform='translateX(-'+(i*100)+'%)'; var ds=dots.children; for(var j=0;j<ds.length;j++) ds[j].className='zq-dot'+(j===i?' on':''); }
-      dots.addEventListener('click',function(e){ var t=e.target.getAttribute('data-i'); if(t!==null){ go(+t); restart(); } });
-      function restart(){ if(timer) clearInterval(timer); timer=setInterval(function(){ go(i+1); },4500); }
-      restart();
+      var root=document.getElementById('zq-tour'); if(!root) return;
+      var tabs=[].slice.call(root.querySelectorAll('[role="tab"]')), slides=[].slice.call(root.querySelectorAll('[role="tabpanel"]'));
+      var cap=document.getElementById('zq-tour-cap');
+      if(!tabs.length || tabs.length!==slides.length) return;
+      var INTERVAL=6000, i=0, timer=0, hover=false, focused=false, chosen=false, still=false;
+      try{ still=!!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){}
+      function schedule(){
+        clearTimeout(timer); timer=0;
+        if(still || chosen || hover || focused || document.hidden) return;
+        timer=setTimeout(function(){ show(i+1); }, INTERVAL);
+      }
+      function show(x, moveFocus){
+        i=(x+tabs.length)%tabs.length;
+        tabs.forEach(function(t,k){ var on=k===i; t.setAttribute('aria-selected', on?'true':'false'); t.tabIndex=on?0:-1; t.classList.toggle('on', on); });
+        slides.forEach(function(s,k){ s.classList.toggle('is-on', k===i); });
+        if(cap) cap.textContent=slides[i].getAttribute('data-cap')||'';
+        if(moveFocus) tabs[i].focus();
+        schedule();
+      }
+      tabs.forEach(function(t,k){
+        t.addEventListener('click', function(){ chosen=true; show(k); });
+        t.addEventListener('keydown', function(e){
+          var to = e.key==='ArrowRight' ? i+1 : e.key==='ArrowLeft' ? i-1 : e.key==='Home' ? 0 : e.key==='End' ? tabs.length-1 : null;
+          if(to===null) return;
+          e.preventDefault(); chosen=true; show(to, true);
+        });
+      });
+      root.addEventListener('pointerenter', function(){ hover=true; schedule(); });
+      root.addEventListener('pointerleave', function(){ hover=false; schedule(); });
+      root.addEventListener('focusin', function(){ focused=true; schedule(); });
+      root.addEventListener('focusout', function(e){ if(!e.relatedTarget || !root.contains(e.relatedTarget)){ focused=false; schedule(); } });
+      document.addEventListener('visibilitychange', schedule);
+      show(0);
     })();
     /* 深浅色切换（落地页本地实现，不依赖侧栏脚本） */
     (function(){
@@ -130,6 +164,7 @@
       b.onclick=function(){ var cur=document.documentElement.getAttribute('data-zq-mode')==='dark'?'light':'dark'; document.documentElement.setAttribute('data-zq-mode',cur); try{localStorage.setItem('zq.theme',cur);}catch(e){} };
     })();
   </script>
-  <script src="assets/zhiqu-api.js?v=20261006-tips"></script>
+  <script src="assets/zhiqu-ui.js?v=20261008-carousel"></script>
+  <script src="assets/zhiqu-api.js?v=20261008-carousel"></script>
 </body>
 </html>

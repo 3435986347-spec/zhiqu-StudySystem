@@ -27,13 +27,13 @@ class IconSetTest {
 
     private static final Path STATIC = Path.of("src/main/resources/static");
     /** 原来当图标用的那批符号。不在里面的：⌘（快捷键写法「⌘/Ctrl + 回车」）、✓（标签页标题「✓ 专注结束」）、→（正文里的箭头） */
-    private static final Pattern GLYPHS = Pattern.compile("[✦▦☰↻❏≣◈✉∿«»‹›⚙◐⏻✪＋↑↓←]|>\\s*×\\s*<|'×'");
+    private static final Pattern GLYPHS = Pattern.compile("[✦▦☰↻❏≣◈✉∿«»‹›⚙◐◑⏻✪＋↑↓←]|>\\s*×\\s*<|'×'");
 
     private static List<Path> sources() throws IOException {
         List<Path> files = new ArrayList<>();
         try (Stream<Path> list = Files.list(STATIC)) {
-            // 落地页的四张功能卡片留给第 8 步（落地页整页重做）
-            list.filter(p -> p.toString().endsWith(".html") && !p.getFileName().toString().equals("index.html")).sorted().forEach(files::add);
+            // 第四十六轮起落地页也扫（原来它的四张功能卡片和深浅色按钮 ◑ 还是符号，留着没换）
+            list.filter(p -> p.toString().endsWith(".html")).sorted().forEach(files::add);
         }
         try (Stream<Path> walk = Files.walk(STATIC.resolve("assets"))) {
             walk.filter(p -> p.toString().endsWith(".js")).filter(p -> !p.toString().contains("/vendor/")).sorted().forEach(files::add);
