@@ -57,6 +57,7 @@ public class SecurityConfig {
                                 "/statistics.html",
                                 "/achievement.html",
                                 "/profile.html",
+                                "/mini.html",
                                 "/manifest.json",
                                 "/service-worker.js",
                                 "/vendor/**",

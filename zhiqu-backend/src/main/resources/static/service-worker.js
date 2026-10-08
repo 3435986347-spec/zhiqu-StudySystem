@@ -1,4 +1,4 @@
-const ZHIQU_CACHE = 'zhiqu-shell-v20261009-pomo';
+const ZHIQU_CACHE = 'zhiqu-shell-v20261009-mini';
 
 // 核心资源：必须全部缓存成功，否则安装失败、保留旧 Worker（旧缓存不被清理），避免一次网络抖动就丢掉离线能力
 const CORE_ASSETS = [
@@ -17,6 +17,7 @@ const CORE_ASSETS = [
     '/account-admin.html',
     '/feedback-admin.html',
     '/shared-plan-admin.html',
+    '/mini.html',
     '/assets/zhiqu-ui.css',
     '/assets/zhiqu-ui.js',
     '/assets/zhiqu-api.js',

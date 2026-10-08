@@ -107,6 +107,14 @@
   abandons it (press 重置). The dashboard card (`pages/dashboard.js` `wirePomo` / `drawPomo`) only draws and forwards clicks.
   Logout deletes the state like drafts. Checks: `pomo-shared-check.js` (two simulated tabs sharing storage and a lock),
   `pomo-card-check.js`, `PomodoroSharedTest`.
+- **The mini pomodoro page** (round 50, `mini.html` + `assets/pages/mini.js`): a dark translucent capsule (play/pause with a
+  progress ring, countdown, linked task · 「今天第 N 轮」, expand) for the macOS floating panel of step 3. It boots through `route()` like
+  any page and draws from the shell's `pomo`. Differences from other pages: no sidebar or page head; `html.zq-mini-page` makes the page
+  transparent and must out-rank the phone `@media` block's `.zq-main{margin-left:56px}` (the panel is narrower than a phone); the capsule
+  colours are `--zq-mini-*` tokens with the same values in light and dark; when signed out it does not navigate to the login page —
+  `redirectToLogin` adds `zq-signed-out` and the capsule says 「在主窗口登录后再用」; 「展开」 posts `{action:'expand'}` to
+  `webkit.messageHandlers.zqMini` when the shell provides it, otherwise goes to the dashboard. A new HTML page also needs an entry in
+  `SecurityConfig`'s permit list (missing → a blank 403), `service-worker.js` `CORE_ASSETS` and `PAGE_MODULES`.
 - **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
   study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
   «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't

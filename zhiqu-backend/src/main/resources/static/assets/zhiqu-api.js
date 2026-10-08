@@ -204,6 +204,8 @@
   function redirectToLogin() {
     if (redirecting) return;
     clearAuth();
+    // 迷你番茄钟（第五十轮）：一个胶囊里塞不下登录页，也不该自己换成登录页 —— 写一句「在主窗口登录后再用」（mini.html 里那一行，样式表按这个类亮出来）
+    if (page === 'mini.html') { redirecting = true; document.documentElement.classList.add('zq-signed-out'); return; }
     // 带上原来那一页：登录之后回到这里（第十五轮：原来一律回看板，在哪一页、打了什么都没了 —— 打的字由草稿接住，见 drafts）
     // 地址里的弹窗也带上（第三十轮）：命令行打印的 #settings/cli?harness=… 在没登录的浏览器里打开，登录完要回到那个确认框
     if (page !== 'index.html') { redirecting = true; location.replace('index.html?login=1&next=' + encodeURIComponent(page + location.search + (isDialogHash(location.hash) ? location.hash : ''))); }
@@ -908,7 +910,9 @@
   }
 
   async function updatePomoCount() {
-    var host = $('#zq-pomo-count'); if (!host) return;
+    // 看板有「今日：N 个」和「今天第 N 轮」两块，迷你番茄钟（第五十轮）只有后一块：各自有就各自填
+    var host = $('#zq-pomo-count'), round = $('#zq-pomo-round');
+    if (!host && !round) return;
     var waiting = pendingPomodoros().length;
     var tail = waiting ? ' ｜ 另有 ' + waiting + ' 个还没传上去（连上网自动补记）' : '';
     try {
@@ -916,12 +920,11 @@
       var recs = await api.get('/record/list?from=' + t + '&to=' + t);
       var todays = (recs || []).filter(function (rec) { return d10(rec.studyDate) === t; });
       var mins = todays.reduce(function (a, rec) { return a + (rec.durationMinutes || 0); }, 0);
-      host.textContent = '今日：' + todays.length + ' 个 ｜ ' + mins + ' 分钟' + tail;
+      if (host) host.textContent = '今日：' + todays.length + ' 个 ｜ ' + mins + ' 分钟' + tail;
       // 原来是设计稿写死的「第 3 轮 · 专注阶段」，新账号一个没做也是第 3 轮（2026-10-01 排查参考计划假数字时一起查出）
-      var round = $('#zq-pomo-round');
       if (round) round.textContent = '今天第 ' + (todays.length + 1) + ' 轮';
     } catch (e) {
-      if (tail) host.textContent = tail.slice(3);
+      if (tail && host) host.textContent = tail.slice(3);
     }
   }
 
@@ -1881,7 +1884,7 @@
     'feedback-admin.html': 'pages/admin.js', 'shared-plan-admin.html': 'pages/admin.js',
     'routines.html': 'pages/routines.js', 'statistics.html': 'pages/statistics.js',
     'shared-plans.html': 'pages/shared-plans.js', 'tasks.html': 'pages/tasks.js', 'dashboard.html': 'pages/dashboard.js',
-    'knowledge-wiki.html': 'pages/knowledge-wiki.js', 'ai-assistant.html': 'pages/ai-assistant.js'
+    'knowledge-wiki.html': 'pages/knowledge-wiki.js', 'ai-assistant.html': 'pages/ai-assistant.js', 'mini.html': 'pages/mini.js'
   };
   function isDialogHash(h) { return /^#(?:settings(?:[/?]|$)|achievements$)/.test(h || ''); }
   var dialog = null;            // 开着的那个：{ kind, handle }

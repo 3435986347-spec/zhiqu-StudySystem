@@ -119,6 +119,9 @@ class DesignTokensTest {
         pairs.add(new String[]{"--zq-sb-text", "--zq-sb-bg"});
         pairs.add(new String[]{"--zq-sb-active-text", "--zq-sb-bg"});
         pairs.add(new String[]{"--zq-on-primary", "--zq-primary"});
+        // 迷你番茄钟的胶囊（第五十轮）：不跟着明暗变；胶囊是 86% 的不透明度，铺在白底上最浅也只到 #3C3C3E，次要文字在那上面约 5.3 : 1
+        pairs.add(new String[]{"--zq-mini-text", "--zq-mini-bg"});
+        pairs.add(new String[]{"--zq-mini-text2", "--zq-mini-bg"});
         pairs.add(new String[]{"--zq-primary", "--zq-card"});
         pairs.add(new String[]{"--zq-primary", "--zq-bg"});
         for (String c : List.of("--zq-ok", "--zq-warn", "--zq-bad", "--zq-q1", "--zq-q2", "--zq-q3", "--zq-q4")) pairs.add(new String[]{c, "--zq-card"});

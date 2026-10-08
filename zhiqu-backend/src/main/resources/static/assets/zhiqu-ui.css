@@ -59,6 +59,11 @@
   --zq-sb-active-bg: rgba(24,24,27,0.06);
   --zq-sb-active-text: #18181B;
   --zq-input-bg: #FFFFFF;
+  /* 迷你番茄钟的胶囊（第五十轮）：半透明的深色，浮在什么背景上都看得清 —— 不跟着明暗变，深色那一块写一样的值 */
+  --zq-mini-bg: #1C1C1E;
+  --zq-mini-text: #FFFFFF;
+  --zq-mini-text2: #B4B4B8;
+  --zq-mini-line: rgba(255,255,255,0.14);
   /* 圆角三级 */
   --zq-rs: 6px;
   --zq-rm: 10px;
@@ -145,6 +150,10 @@ html[data-zq-mode="dark"]{
   --zq-sb-active-bg: rgba(255,255,255,0.06);
   --zq-sb-active-text: #F4F4F5;
   --zq-input-bg: #0F0F11;
+  --zq-mini-bg: #1C1C1E;
+  --zq-mini-text: #FFFFFF;
+  --zq-mini-text2: #B4B4B8;
+  --zq-mini-line: rgba(255,255,255,0.14);
   color-scheme: dark;
 }
 
@@ -620,6 +629,37 @@ body.zq-modal-open{overflow:hidden;}
 .zq-skeleton{display:block;height:12px;border-radius:var(--zq-rs);background:linear-gradient(90deg,var(--zq-card-soft) 25%,var(--zq-border-soft) 50%,var(--zq-card-soft) 75%);background-size:200% 100%;animation:zqShimmer 1.2s ease infinite;}
 @keyframes zqShimmer{from{background-position:200% 0;}to{background-position:-200% 0;}}
 @media (prefers-reduced-motion:reduce){.zq-skeleton{animation:none;}}
+
+/* ── 迷你番茄钟（第五十轮，mini.html；docs/mini-pomodoro-plan.md 第 2 步）────────────────────────────
+   半透明的深色胶囊（用户定的，像网易云的桌面歌词）。页面本身透明：第 3 步的悬浮面板是透明窗口，只露出胶囊。
+   窄到 240px 也放得下：任务名先省略，「第 N 轮」不动。选择器带 html.zq-mini-page：这个窗口比手机还窄，
+   最后那段 @media 里 .zq-main 要给侧栏让出 56px —— 这里要盖过它（迷你窗没有侧栏）。 */
+html.zq-mini-page,html.zq-mini-page body{background:transparent;min-height:0;overflow:hidden;}
+html.zq-mini-page .zq-main{display:flex;align-items:center;gap:var(--zq-sp-3);height:56px;margin:6px;padding:0 10px 0 8px;max-width:none;min-width:0;box-sizing:border-box;
+  border-radius:999px;background:color-mix(in srgb,var(--zq-mini-bg) 86%,transparent);color:var(--zq-mini-text);border:1px solid var(--zq-mini-line);
+  box-shadow:0 8px 24px rgba(0,0,0,.28);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);-webkit-user-select:none;user-select:none;}
+.zq-mini-go{position:relative;flex:none;width:40px;height:40px;padding:0;border:none;border-radius:50%;background:transparent;color:var(--zq-mini-text);cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.zq-mini-go:hover,.zq-mini-expand:hover{background:var(--zq-mini-line);}
+.zq-mini-go:focus-visible,.zq-mini-expand:focus-visible{outline:none;box-shadow:0 0 0 2px var(--zq-mini-text);}
+.zq-mini-dial{position:absolute;inset:0;width:40px;height:40px;}
+.zq-mini-track{fill:none;stroke:var(--zq-mini-line);stroke-width:2.5;}
+.zq-mini-arc{fill:none;stroke:var(--zq-mini-text);stroke-width:2.5;stroke-linecap:round;transition:stroke-dasharray .4s linear;}
+.zq-mini-go .zq-ic{width:15px;height:15px;display:inline-flex;}
+.zq-mini-go .zq-icon{fill:currentColor;}
+.zq-mini-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.zq-mini-time{font-size:var(--zq-fs-xl);line-height:1.15;font-weight:var(--zq-fw-medium);}
+html.zq-mini-page .zq-main.is-paused .zq-mini-time{color:var(--zq-mini-text2);}
+.zq-mini-sub{display:flex;gap:6px;min-width:0;font-size:var(--zq-fs-xs);color:var(--zq-mini-text2);white-space:nowrap;}
+.zq-mini-note{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.zq-mini-round{flex:none;}
+.zq-mini-round:empty{display:none;}
+.zq-mini-round::before{content:'·';margin-right:6px;}
+.zq-mini-out{display:none;padding-left:var(--zq-sp-2);font-size:var(--zq-fs-sm);color:var(--zq-mini-text2);}
+html.zq-signed-out .zq-mini-go,html.zq-signed-out .zq-mini-time,html.zq-signed-out .zq-mini-sub{display:none;}
+html.zq-signed-out .zq-mini-out{display:block;}
+.zq-mini-expand{flex:none;width:28px;height:28px;padding:0;border:none;border-radius:50%;background:transparent;color:var(--zq-mini-text2);cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.zq-mini-expand:hover{color:var(--zq-mini-text);}
+.zq-mini-expand .zq-ic{width:14px;height:14px;display:inline-flex;}
 
 /* ── 手机（第二十轮）──────────────────────────────────────────────────────
    原来这份样式表一条 @media 都没有：375px 宽时侧栏照样 188px，正文剩 150px，标题一个字一行，整页横向多出 246px。

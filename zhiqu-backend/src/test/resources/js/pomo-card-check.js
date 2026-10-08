@@ -55,7 +55,7 @@ fns.wirePomo();
 fns.wirePomo();   // 看板重新取（换周、记完一个、跨零点）又跑一遍
 judge('看板重新取几遍，按钮只接一次、只订一次', subs === 1, subs);
 let t = T();
-judge('待开始：时间是下拉框的时长、环是空的、按钮写「开始」', t.time === '25:00' && t.phase === '待开始' && t.btn === '开始' && !t.minDisabled && /^0\.0 /.test(t.ring), t);
+judge('待开始：时间是下拉框的时长、环是空的（圆头的那个点也藏起来）、按钮写「开始」', t.time === '25:00' && t.phase === '待开始' && t.btn === '开始' && !t.minDisabled && /^0\.0 /.test(t.ring) && attrs['ring.visibility'] === 'hidden', t);
 els['#zq-pomo-min'].value = '45';
 els['#zq-pomo-min'].onchange();
 judge('待开始时换时长：时间跟着变成 45:00', T().time === '45:00', T());
@@ -68,7 +68,7 @@ view = { phase: 'running', id: 'x', total: 1500, left: 897, taskId: 9, taskTitle
 fns.drawPomo(view);
 t = T();
 judge('在跑：14:57、专注中、按钮写「暂停」、时长锁住并且是这一个钟的 25 分钟、环走了四成多',
-  t.time === '14:57' && t.phase === '专注中' && t.btn === '暂停' && t.minDisabled && t.min === '25' && t.ring.startsWith((603 / 1500 * 2 * Math.PI * 80).toFixed(1) + ' '), t);
+  t.time === '14:57' && t.phase === '专注中' && t.btn === '暂停' && t.minDisabled && attrs['ring.visibility'] === 'visible' && t.min === '25' && t.ring.startsWith((603 / 1500 * 2 * Math.PI * 80).toFixed(1) + ' '), t);
 judge('在跑的那一个关联的任务不在下拉框里（别的页换的、做完了的）：补一项、选上它',
   t.task === '9' && els['#zq-pomo-task'].options.some((o) => o.value === '9' && o.text === '读论文'), els['#zq-pomo-task'].options);
 els['#zq-pomo-start'].onclick();

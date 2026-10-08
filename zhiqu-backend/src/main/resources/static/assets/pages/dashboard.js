@@ -111,7 +111,11 @@ function drawPomo(v) {
   var live = v.phase === 'running' || v.phase === 'paused';
   var total = live ? v.total : parseInt(min.value, 10) * 60, left = live ? v.left : total;
   time.textContent = pomo.clock(left);
-  if (ring) ring.setAttribute('stroke-dasharray', ((total - left) / total * POMO_RING).toFixed(1) + ' ' + POMO_RING.toFixed(1));
+  if (ring) {
+    ring.setAttribute('stroke-dasharray', ((total - left) / total * POMO_RING).toFixed(1) + ' ' + POMO_RING.toFixed(1));
+    // 圆头的线长度是 0 时也会画出一个点（原来待开始时环顶上一直有一个点）：没走的时候整条藏起来
+    ring.setAttribute('visibility', left < total ? 'visible' : 'hidden');
+  }
   if (phase) phase.textContent = POMO_PHASE_TEXT[v.phase] || '';
   if (start) start.textContent = v.phase === 'running' ? '暂停' : v.phase === 'paused' ? '继续' : '开始';
   min.disabled = live;
