@@ -1748,7 +1748,7 @@
   /** 给页面模块的共用层（第 4 步）：模块只用这里面的东西。往里加之前想一想 —— 加进来的每一样，模块都可能依赖它。 */
   var zqShared = {
     api: api, state: state, esc: esc, toast: toast, notice: notice, askConfirm: askConfirm, askText: askText, showInfo: showInfo, safe: safe, openModal: openModal,
-    $: $, $all: $all, pickFile: pickFile, empty: empty, fmtDate: fmtDate, d10: d10, updateSidebarUser: updateSidebarUser, normalizeModelList: normalizeModelList,
+    $: $, $all: $all, pickFile: pickFile, empty: empty, fmtDate: fmtDate, hm: hm, d10: d10, updateSidebarUser: updateSidebarUser, normalizeModelList: normalizeModelList,
     planCategory: planCategory, planCategoryOptions: planCategoryOptions, freqLabel: freqLabel,
     today: today, latestOnly: latestOnly, keepDraft: keepDraft, writeKey: writeKey, qKey: qKey, pLabel: pLabel, openTaskForm: openTaskForm,
     weekRange: weekRange, zoneNote: zoneNote, updatePomoCount: updatePomoCount,

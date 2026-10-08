@@ -296,6 +296,59 @@ button[aria-busy="true"]{opacity:.62;cursor:progress;}
 .zq-stat-label{display:block;color:var(--zq-text2);font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-regular);}
 .zq-stat-num{display:block;margin-top:var(--zq-sp-2);font-variant-numeric:tabular-nums;font-size:var(--zq-fs-2xl);font-weight:var(--zq-fw-medium);letter-spacing:-.02em;line-height:1.1;}
 .zq-grid{display:grid;gap:12px;}
+
+/* ── 看板（第四十八轮，界面打磨第 5 步）── */
+/* 逾期：大于 0 时标签旁边一个红点（dashboard.js 加 is-alert）；数字不再写死大红 */
+.zq-stat.is-alert .zq-stat-label::after{content:"";display:inline-block;width:6px;height:6px;margin-left:6px;vertical-align:middle;border-radius:50%;background:var(--zq-bad);}
+/* 本周日历：一天一格（星期、日期、一排点、几项），点一天看那天的清单 */
+.zq-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;}
+.zq-day{display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:0;padding:10px 10px 11px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:transparent;color:var(--zq-text);font:inherit;text-align:left;cursor:pointer;transition:background .12s ease,border-color .12s ease;}
+.zq-day:hover{background:var(--zq-sb-active-bg);}
+.zq-day.is-on{border-color:var(--zq-text3);background:var(--zq-card);}
+.zq-day:focus-visible{outline:none;box-shadow:var(--zq-focus);}
+.zq-day-head{display:flex;align-items:center;justify-content:space-between;gap:4px;}
+.zq-day-week{color:var(--zq-text3);font-size:var(--zq-fs-xs);white-space:nowrap;}
+.zq-day-num{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;margin-right:-4px;border-radius:999px;font-size:var(--zq-fs-md);font-weight:var(--zq-fw-medium);}
+.zq-day.is-today .zq-day-week{color:var(--zq-text);}
+.zq-day.is-today .zq-day-num{background:var(--zq-primary);color:var(--zq-on-primary);}
+.zq-day-dots{display:flex;flex-wrap:wrap;align-items:center;gap:3px;min-height:6px;}
+.zq-day-dots i{width:6px;height:6px;border-radius:50%;background:var(--zq-text3);}
+.zq-day-dots i.q1{background:var(--zq-q1);}
+.zq-day-dots i.q2{background:var(--zq-q2);}
+.zq-day-dots i.q3{background:var(--zq-q3);}
+.zq-day-dots i.q4{background:var(--zq-q4);}
+.zq-day-dots i.done{opacity:.3;}
+.zq-day-more{color:var(--zq-text3);font-size:10px;line-height:1;}
+.zq-day-count{color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+/* 清单：一条一行、行间细线 */
+.zq-agenda{display:flex;flex-direction:column;}
+.zq-agenda-row{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 2px;border-bottom:1px solid var(--zq-border-soft);font-size:var(--zq-fs-base);}
+.zq-agenda-row:last-child{border-bottom:none;}
+.zq-agenda-row.is-done{opacity:.5;}
+.zq-agenda-time{color:var(--zq-text2);font-size:var(--zq-fs-sm);}
+.zq-agenda-meta{display:flex;align-items:center;gap:8px;min-width:0;margin-top:3px;color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+.zq-agenda-tag{display:inline-flex;align-items:center;gap:5px;flex:none;color:var(--zq-text2);}
+.zq-agenda-tag i,.zq-quad-name i{width:6px;height:6px;flex:none;border-radius:50%;}
+.zq-agenda-btn{height:28px;padding:0 11px;font-size:var(--zq-fs-xs);}
+/* 四象限：一张卡里四格，格与格之间一道细线；象限色只留在名字前的小点上 */
+.zq-quads{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-border-soft);}
+.zq-quad{display:flex;flex-direction:column;gap:2px;min-width:0;padding:12px 14px 10px;background:var(--zq-card);}
+.zq-quad-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}
+.zq-quad-name{display:inline-flex;align-items:center;gap:6px;font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);white-space:nowrap;}
+.zq-quad-count{color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+.zq-quad-item{padding:5px 0;border-top:1px solid var(--zq-border-soft);font-size:var(--zq-fs-sm);line-height:1.45;}
+.zq-quad-empty{padding:5px 0;color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+/* 临近截止：右边写还有几天，今天和逾期的标红 */
+.zq-ddl-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--zq-border-soft);font-size:var(--zq-fs-sm);}
+.zq-ddl-row:last-child{border-bottom:none;}
+.zq-ddl-when{display:block;margin-top:2px;color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+.zq-ddl-due{flex:none;color:var(--zq-text2);font-size:var(--zq-fs-xs);white-space:nowrap;}
+.zq-ddl-due.is-near{color:var(--zq-bad);}
+/* 番茄钟：标题和「今天第 N 轮」一行、环 160px */
+.zq-pomo{text-align:center;}
+.zq-pomo-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px;text-align:left;}
+.zq-pomo-round{color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+.zq-pomo-dial{position:relative;width:160px;margin:0 auto;}
 .zq-row{display:flex;align-items:center;gap:12px;}
 .zq-table{border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);overflow:hidden;}
 .zq-table .zq-thead{background:var(--zq-card-soft);border-bottom:1px solid var(--zq-border);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);color:var(--zq-text3);padding:10px var(--zq-sp-4);}
@@ -573,6 +626,14 @@ body.zq-modal-open{overflow:hidden;}
   /* 页头：标题一侧和按钮一侧放不下就上下排（原来按钮被挤成两行、或者把标题挤成一个字一行） */
   .zq-main header{flex-wrap:wrap;}
   .zq-form-grid{grid-template-columns:minmax(0,1fr);}
+  /* 看板（第四十八轮）：七个日子挤一排，格子里只留星期、日期、点；四象限一格一行 */
+  .zq-week{gap:3px;}
+  .zq-day{padding:7px 4px 8px;gap:6px;align-items:center;}
+  .zq-day-head{flex-direction:column;gap:3px;}
+  .zq-day-num{margin-right:0;}
+  .zq-day-dots{justify-content:center;}
+  .zq-day-count{display:none;}
+  .zq-quads{grid-template-columns:minmax(0,1fr);}
 
   /* 设置、成就弹窗（第三十轮）：手机上铺满屏幕，分栏变成顶上一排可以横着滑的页签。
      弹窗不在 .zq-main 里，上面那两条按 style 认的规则管不到它 —— 里面的多栏用类名说自己在手机上怎么排 */

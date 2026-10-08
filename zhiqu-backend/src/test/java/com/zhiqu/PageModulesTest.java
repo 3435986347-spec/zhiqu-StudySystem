@@ -138,6 +138,12 @@ class PageModulesTest {
         while (k.find()) given.add(k.group(1));
         assertTrue(given.size() >= 20, "zqShared 里只解析出 " + given);
 
+        // 壳（zhiqu-api.js）里定义的所有函数名
+        Set<String> shellFunctions = new TreeSet<>();
+        Matcher sf = Pattern.compile("function\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(").matcher(shell);
+        while (sf.find()) shellFunctions.add(sf.group(1));
+        assertTrue(shellFunctions.size() >= 100, "壳里只认出 " + shellFunctions.size() + " 个函数 —— 扫空了？");
+
         List<String> problems = new ArrayList<>();
         int seen = 0;
         List<Path> files = modules();
@@ -163,6 +169,15 @@ class PageModulesTest {
                 String q = Pattern.quote(helper);
                 boolean defined = Pattern.compile("function\\s+" + q + "(?![\\w$])|(?:var|let|const)\\s+" + q + "\\s*=").matcher(js).find();
                 if (!bound.contains(helper) && !defined) problems.add(name + " 直接调用了 " + helper + "(…)，却没有从 zqShared 解构出来、也没有自己定义");
+            }
+            // 壳里定义了、却根本没放进 zqShared 的函数，在模块里被直接调用（第四十八轮：看板的 hm(…) —— 第三十五轮搬家时留下的，
+            // 上面那道只看 zqShared 里有的名字，照不出来；例行计划没填时间时 renderWeek 一调就 ReferenceError，整个看板画不出来）
+            for (String fn : shellFunctions) {
+                if (given.contains(fn)) continue;
+                String q = Pattern.quote(fn);
+                if (!Pattern.compile("(?<![\\w.$])" + q + "\\s*\\(").matcher(js).find()) continue;
+                boolean defined = Pattern.compile("function\\s+" + q + "(?![\\w$])|(?:var|let|const)\\s+" + q + "\\s*=").matcher(js).find();
+                if (!bound.contains(fn) && !defined) problems.add(name + " 直接调用了壳里的 " + fn + "(…)，可它不在 zqShared 里 —— 模块里调到就是 ReferenceError");
             }
         }
         assertTrue(seen >= 20, "模块里一共只认出 " + seen + " 样从壳拿的东西 —— 扫空了？");
