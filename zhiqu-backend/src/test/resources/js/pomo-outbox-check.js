@@ -149,6 +149,20 @@ function judge(name, cond, detail) {
     posts.some((p) => p.body.note === '新的') && !toasts.some((t) => /网络断了/.test(t)) && mod.readPomoOutbox().length === 0,
     JSON.stringify({ posts: posts.map((p) => p.body.note), toasts, left: mod.readPomoOutbox() }));
 
+  // 第四十九轮（真浏览器里照出来的）：关着页面时到点的番茄钟，打开页面那一刻「记它」和「打开页面的补记」撞在一起 ——
+  // 补记那一趟原来和正在发的那一趟共用结果，把刚记的这一个说成「补记了 1 个番茄钟（专注完的时候网断了）」
+  localStorage.removeItem('zq-pomo-outbox');
+  reset();
+  let open2;
+  const held2 = new Promise((r) => { open2 = r; });
+  postImpl = () => held2.then(() => ({}));
+  const fresh2 = mod.recordPomodoro({ taskId: null, durationMinutes: 25, note: '刚到点' });
+  const catching2 = mod.catchUpPomodoros();
+  open2();
+  await Promise.all([fresh2, catching2]);
+  judge('刚记的那一个正在发、打开页面的补记撞上来：只发一次，不说「补记了 … 网断了」',
+    posts.length === 1 && !toasts.some((t) => /补记了/.test(t)) && mod.readPomoOutbox().length === 0, JSON.stringify({ posts: posts.map((p) => p.body.note), toasts }));
+
   store.set('zq-pomo-outbox', '{坏了');
   judge('设备上存的坏了：当作没有，不抛', mod.pendingPomodoros().length === 0);
 

@@ -23,11 +23,11 @@ class PomodoroOutboxTest {
     @Test
     @DisplayName("接线：看板的番茄钟走 recordPomodoro（不再直接 post）；每一页打开时、网回来时、每分钟都补一趟 —— 页面启动失败也补")
     void 接线() throws Exception {
-        String dashboard = SourceText.stripComments(Files.readString(Path.of("src/main/resources/static/dashboard.html")));
-        String record = dashboard.substring(dashboard.indexOf("function zqPomoRecord("), dashboard.indexOf("elMin.addEventListener"));
-        assertTrue(record.contains("window.zqApi.recordPomodoro({") && !record.contains("api.post('/record'"),
-                "番茄钟又直接发了 —— 网断着的那一下就丢了：\n" + record);
         String js = SourceText.stripComments(Files.readString(NodeRunner.API_JS));
+        // 番茄钟第四十九轮从看板的内联脚本挪进了壳：到点那一步（finishPomo）
+        String record = SourceText.functionBody(js, "function finishPomo(id)");
+        assertTrue(record.contains("recordPomodoro({ key: ended.id,") && !record.contains("api.post('/record'"),
+                "番茄钟又直接发了 —— 网断着的那一下就丢了：\n" + record);
         String route = js.substring(js.indexOf("function route() {"), js.indexOf("window.zqApi = {"));
         assertTrue(route.contains("catchUpPomodoros();") && route.contains("window.addEventListener('online', catchUpPomodoros);")
                 && route.contains("setInterval(catchUpPomodoros, 60000);"), "打开页面 / 网回来 / 每分钟补一趟，少了哪个：\n" + route);

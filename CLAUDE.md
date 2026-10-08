@@ -67,6 +67,7 @@ cd ../zhiqu-cli && npm test
 - 产品方案（2026-10-03）：[`docs/product-plan.md`](docs/product-plan.md)，五步按顺序做，标「要你定」的先问用户。
 - zhiqu harness（P0–P7）：[`docs/zhiqu-harness-plan.md`](docs/zhiqu-harness-plan.md)，严格按表执行、不擅自增删，做完一项更新「进度」列。**npm 发布（P7）之前单独问用户**；`zhiqu-cli/package.json` 的 `"private": true` 留着。
 - 界面打磨（2026-10-06）：[`docs/ui-plan.md`](docs/ui-plan.md)，「要你定」的三件用户已定（见那份末尾）；每一步做完给用户截图。
+- 迷你番茄钟（2026-10-09 用户定了）：[`docs/mini-pomodoro-plan.md`](docs/mini-pomodoro-plan.md)，只做 macOS 桌面应用，三步一步一轮（第 1 步第四十九轮做完）；宠物形态是后话。
 - 一轮接一轮：每轮的计划开工时存进 `docs/rounds/round-NN.md`，收口时补结果，随那一轮一起提交，并在 `docs/rounds/README.md` 和本文件末尾各加一行。每轮带一段真浏览器里的暴力测试。
 
 ## 不能碰、不能绕的地方
@@ -87,9 +88,9 @@ cd ../zhiqu-cli && npm test
 
 ## 前端的规矩
 
-- 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟待补记、任务表单、Markdown、设置弹窗的路由、`openModal`）。
+- 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261008-board`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261009-pomo`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -176,3 +177,4 @@ cd ../zhiqu-cli && npm test
 - [第四十六轮](docs/rounds/round-46.md) 首页轮播：新界面的截图（浅 / 深各一套、跟着页面换），页签 + 淡入淡出，功能卡片换图标
 - [第四十七轮](docs/rounds/round-47.md) review 推送前的 26 个提交：改任务状态也跟着开关、拖偏的文件不被打开、汇报认领失败放回、提示的几处
 - [第四十八轮](docs/rounds/round-48.md) 界面打磨第 5 步：看板（一天一格的日历、点一天看那天、四象限一张卡）；修了没填时间的例行计划让看板打不开
+- [第四十九轮](docs/rounds/round-49.md) 迷你番茄钟第 1 步：番茄钟全站共用一个钟（存在 localStorage、侧栏「专注中」、到点只记一次）；首页轮播的看板截图换新

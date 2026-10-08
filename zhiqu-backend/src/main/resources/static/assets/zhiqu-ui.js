@@ -85,7 +85,8 @@
     'arrow-up': '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
     'arrow-down': '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
     'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
-    'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>'
+    'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+    'timer': '<path d="M10 2h4"/><path d="m12 14 3-3"/><circle cx="12" cy="14" r="8"/>'
   };
   function icon(name){
     var body = ICONS[name];
@@ -166,6 +167,8 @@
       +   '<button type="button" class="zq-side-toggle" aria-expanded="true" aria-label="收起导航栏" title="收起导航栏">'
       +   '<span class="zq-ic">'+icon('panel-left-close')+'</span></button></div>'
       + '<div class="zq-nav">' + navGroup('', NAV.main) + '</div>'
+      // 番茄钟在跑 / 暂停着：头像上面一行「专注中 18:42」，点了去看板（第四十九轮：番茄钟全站共用一个钟，由 zhiqu-api.js 的 renderPomoBadge 填、一秒一跳）
+      + '<a class="zq-side-pomo" href="dashboard.html" hidden><span class="zq-ic">'+icon('timer')+'</span><span class="zq-side-pomo-label">专注中</span><span class="zq-side-pomo-time zq-num"></span></a>'
       // 名字、身份由 zhiqu-api.js 的 updateSidebarUser 拿到 /auth/info 之后填（原来这里写着设计稿的「王明远 · 管理员」，先闪一下才被换掉）。
       // 上一页画过的先画上（按令牌认，换了账号不认），不然每切一次页面左下角都先空一下再冒出来
       + '<button type="button" class="zq-user'+(inMenu(curFile())?' active':'')+'" aria-haspopup="menu" aria-expanded="false" title="设置、成就、统计、退出"></button>';

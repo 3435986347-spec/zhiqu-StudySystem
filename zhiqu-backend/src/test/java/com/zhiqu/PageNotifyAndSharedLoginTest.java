@@ -63,9 +63,6 @@ class PageNotifyAndSharedLoginTest {
                 "保存带提醒的任务时要请求通知授权（在点击里，浏览器才肯弹）");
         assertTrue(code.contains("writeSeen(seen);   ") && code.indexOf("writeSeen(seen);") < code.indexOf("due.forEach(function (r) { pageNotify("),
                 "先记下「提醒过了」再提醒：另一个标签页才不会再提醒一遍");
-        String dash = SourceText.stripComments(Files.readString(STATIC.resolve("dashboard.html"), StandardCharsets.UTF_8));
-        assertTrue(dash.contains("window.zqApi.notify('专注结束'"), "番茄钟到点要通知");
-        assertTrue(dash.contains("window.zqApi.askNotifyPermission();") && dash.indexOf("window.zqApi.askNotifyPermission();") < dash.indexOf("running=true; elStart.textContent='暂停'"),
-                "点「开始」时请求通知授权");
+        // 番茄钟第四十九轮挪进了壳：到点只有记录的那一页通知、点「开始」时请求授权，在 pomo-shared-check.js 里真跑（PomodoroSharedTest）
     }
 }

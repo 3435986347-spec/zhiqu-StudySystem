@@ -4,17 +4,19 @@
 // dayReload：页面开着跨过业务日期的零点时壳叫它重新取（原来是壳里的 DAY_RELOAD，看板是最后一个）。
 
 // hm（时:分）第四十八轮才从壳里给过来：原来模块里直接调、壳却没给 —— 例行计划没填时间时一调就 ReferenceError，整个看板画不出来（PageModulesTest）
+// pomo（番茄钟的钟）第四十九轮起在壳里：换一页、开两个标签页、以后的迷你窗都是同一个钟，这里只画卡片、把按钮交过去
 let api, esc, $, $all, empty, safe, toast, state, today, weekRange, zoneNote, normalizeTask, qKey, qLabel, pLabel, sLabel, fmtDate, hm,
-  openTaskForm, updatePomoCount;
+  openTaskForm, updatePomoCount, pomo;
 export function bind(sh) {
   ({ api, esc, $, $all, empty, safe, toast, state, today, weekRange, zoneNote, normalizeTask, qKey, qLabel, pLabel, sLabel, fmtDate, hm,
-    openTaskForm, updatePomoCount } = sh);
+    openTaskForm, updatePomoCount, pomo } = sh);
 }
 
 export const boots = { 'dashboard.html': (sh) => { bind(sh); return bootDashboard(); } };
 export const dayReload = { 'dashboard.html': () => bootDashboard() };
 
 async function bootDashboard() {
+  wirePomo();
   if (state.weekOffset == null) state.weekOffset = 0;
   var r = weekRange(state.weekOffset);
   // 番茄钟那两块（任务下拉、今日计数）和总览互不依赖，一起取（第三十九轮：原来排在总览画完之后一个接一个）。
@@ -78,7 +80,50 @@ async function populatePomoTasks() {
       return '<option value="' + t.id + '">' + esc(t.title) + '</option>';
     }).join('');
     if (keep && tasks.some(function (t) { return String(t.id) === keep; })) sel.value = keep;
+    drawPomo(pomo.view());   // 在跑的那一个关联的任务不在这 50 条里（做完了、更早的）：补一项，下拉框照样显示它
   } catch (e) { /* 忽略：下拉保持默认项 */ }
+}
+
+/** 环的周长（r = 80） */
+var POMO_RING = 2 * Math.PI * 80;
+var POMO_PHASE_TEXT = { idle: '待开始', running: '专注中', paused: '已暂停', done: '已完成' };
+/**
+ * 番茄钟的卡片（第四十九轮：原来是 dashboard.html 里一段内联脚本，钟在那一页的内存里 —— 切到别的页就没了）。
+ * 看板会被重新取好几次（换周、记完一个、跨过零点），按钮只接一次。
+ */
+function wirePomo() {
+  var start = $('#zq-pomo-start'), reset = $('#zq-pomo-reset'), min = $('#zq-pomo-min'), task = $('#zq-pomo-task');
+  if (!start || start.dataset.wired) return;
+  start.dataset.wired = '1';
+  start.onclick = function () {
+    if (pomo.view().phase === 'running') { pomo.pause(); return; }
+    pomo.start({ minutes: parseInt(min.value, 10), taskId: task.value ? Number(task.value) : null, taskTitle: task.value ? task.options[task.selectedIndex].text : '' });
+  };
+  if (reset) reset.onclick = function () { pomo.reset(); };
+  min.onchange = function () { drawPomo(pomo.view()); };
+  task.onchange = function () { pomo.setTask(task.value ? Number(task.value) : null, task.value ? task.options[task.selectedIndex].text : ''); };
+  pomo.subscribe(drawPomo);
+}
+/** 一秒一次（壳那一跳）：时间、环、状态、按钮上的字；在跑 / 暂停着的时候时长不能换，下拉框跟着那一个钟 */
+function drawPomo(v) {
+  var time = $('#zq-pomo-time'), ring = $('#zq-pomo-ring'), phase = $('#zq-pomo-phase'), start = $('#zq-pomo-start'), min = $('#zq-pomo-min'), task = $('#zq-pomo-task');
+  if (!time || !min) return;
+  var live = v.phase === 'running' || v.phase === 'paused';
+  var total = live ? v.total : parseInt(min.value, 10) * 60, left = live ? v.left : total;
+  time.textContent = pomo.clock(left);
+  if (ring) ring.setAttribute('stroke-dasharray', ((total - left) / total * POMO_RING).toFixed(1) + ' ' + POMO_RING.toFixed(1));
+  if (phase) phase.textContent = POMO_PHASE_TEXT[v.phase] || '';
+  if (start) start.textContent = v.phase === 'running' ? '暂停' : v.phase === 'paused' ? '继续' : '开始';
+  min.disabled = live;
+  if (live && min.querySelector('option[value="' + v.total / 60 + '"]')) min.value = String(v.total / 60);
+  // 别的页（迷你窗）换了任务、这一页刚打开：下拉框跟上。人正在选的时候不动它
+  if (live && task && document.activeElement !== task) {
+    var want = v.taskId == null ? '' : String(v.taskId);
+    if (want && !task.querySelector('option[value="' + want + '"]')) {
+      var opt = document.createElement('option'); opt.value = want; opt.textContent = v.taskTitle || '（这个任务不在列表里）'; task.appendChild(opt);
+    }
+    if (task.value !== want) task.value = want;
+  }
 }
 
 /** 一个日子里最多画几个点（一个点一件事），多了写「+N」 */

@@ -42,11 +42,9 @@ class FrontendClockTest {
         assertTrue(board.contains("headerDate.textContent = (todayRow ? todayRow.date + ' · ' + todayRow.weekday : today())"),
                 "看板标题的日期不是服务端那一行的（原来是浏览器的日期拼服务端的星期）");
         assertFalse(SourceText.frontendScripts().contains("'/checkin', { checkDate: today()"), "还有地方拿浏览器算的 today() 去打卡");
-        String dashboard = Files.readString(Path.of("src/main/resources/static/dashboard.html"), StandardCharsets.UTF_8);
-        String record = dashboard.substring(dashboard.indexOf("function zqPomoRecord("), dashboard.indexOf("elMin.addEventListener"));
-        assertFalse(record.contains("studyDate"), "番茄钟又自己算日期了 —— 浏览器的钟在一次专注里走快了，算出来的「明天」会被拒、记录就丢了");
-        assertTrue(record.contains(".catch(function(e){ window.zqApi.toast("), "番茄钟没记上时要说出来（原来 catch 了什么都不说）");
-        assertTrue(dashboard.contains("endAt=lastNow+secs*1000") && dashboard.contains("secs=Math.max(0,Math.ceil((endAt-now)/1000))"),
-                "番茄钟又变回「每跳一次减一秒」了 —— 后台标签页、合上笔记本时会停");
+        // 番茄钟第四十九轮从看板的内联脚本挪进了壳（zhiqu-api.js 的 finishPomo）；「按结束时刻倒数」「钟往回拨」在 pomo-shared-check.js 里真跑
+        String record = SourceText.functionBody(SourceText.stripComments(Files.readString(NodeRunner.API_JS, StandardCharsets.UTF_8)), "function finishPomo(id)");
+        assertFalse(record.contains("studyDate"), "番茄钟又自己算日期了 —— 浏览器的钟在一次专注里走快了，算出来的「明天」会被拒、记录就丢了（带日期只由补记那一步、只在跨了天时带）");
+        assertTrue(record.contains(".catch(function (e) { toast('这个番茄钟没记上：'"), "番茄钟没记上时要说出来（原来 catch 了什么都不说）");
     }
 }

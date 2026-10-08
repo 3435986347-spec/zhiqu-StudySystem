@@ -103,7 +103,7 @@ class MainFlowWalkthroughTest {
     }
 
     @Test
-    @DisplayName("看板：例行完成的进度条按真实比例画（原来写死六成）；「新增任务」就地打开表单；番茄钟结束要让人知道")
+    @DisplayName("看板：例行完成的进度条按真实比例画（原来写死六成）；「新增任务」就地打开表单（番茄钟结束要让人知道：第四十九轮挪进了壳，见 PomodoroSharedTest）")
     void 看板() throws Exception {
         String dashboard = page("dashboard.html");
         assertFalse(dashboard.contains("width:60%"), "进度条还写死着 60%");
@@ -115,9 +115,7 @@ class MainFlowWalkthroughTest {
                 "进度条没有按 routineDone / routineTotal 画");
         assertTrue(boot.contains("add.onclick = function () { openTaskForm(null, bootDashboard); };"),
                 "看板的「新增任务」要就地打开表单（原来只跳到任务页）");
-        String script = SourceText.stripComments(dashboard);
-        assertTrue(script.contains("zqPomoRecord(Math.round(total/60)); announceDone();"), "番茄钟结束时没有提示");
-        assertTrue(script.contains("document.title='✓ 专注结束 — '+title;"), "在别的标签页时要看得出番茄钟结束了");
+        // 番茄钟结束要让人知道：第四十九轮挪进了壳，到点响、弹通知、每一页的标题挂「✓ 专注结束」在 pomo-shared-check.js 里真跑（PomodoroSharedTest）
     }
 
     @Test

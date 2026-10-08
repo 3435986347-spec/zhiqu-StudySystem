@@ -89,9 +89,6 @@ class InitErrorReplacesDemoContentTest {
             "Anthropic 用 /v1/messages；Ollama 默认 http://localhost:11434/v1/chat/completions。",
             "25:00");   // 番茄钟没开始时的显示（默认 25 分钟），不是数据
 
-    /** 看板的番茄钟是真功能（不是示例），它的内联脚本以这一行开头。 */
-    private static final String POMODORO_SCRIPT_HEAD = "// ── 番茄钟 ──";
-
     @Test
     void 页面里没有示例数据() throws IOException {
         List<String> found = new ArrayList<>();
@@ -109,8 +106,8 @@ class InitErrorReplacesDemoContentTest {
                 while (scripts.find()) {
                     String body = scripts.group(1).strip();
                     boolean theme = body.contains("localStorage.getItem('zq.theme')") && !body.contains("\n");   // 第四十轮起是 zq.theme（原来 zq.ver）
-                    boolean pomodoro = "dashboard.html".equals(name) && body.startsWith(POMODORO_SCRIPT_HEAD);
-                    if (!theme && !pomodoro) {
+                    // 原来还放过看板番茄钟那一段（真功能，不是示例）；第四十九轮番茄钟挪进了壳，这个口子收掉
+                    if (!theme) {
                         found.add(name + " 有内联脚本：" + body.substring(0, Math.min(60, body.length())).replace('\n', ' '));
                     }
                 }

@@ -7,7 +7,7 @@
 
 - **`assets/zhiqu-api.js` is the shared layer** — all 14 HTML pages load it. Since step 4 of the product plan
   (rounds 30–37) it owns only what every page needs: the `api` wrapper, auth guard and shared login, the business
-  clock, drafts, page reminders, the pomodoro outbox, the task form, Markdown rendering, the settings-dialog router,
+  clock, drafts, page reminders, the pomodoro (one shared clock + its outbox, round 49), the task form, Markdown rendering, the settings-dialog router,
   and the shared modal helper `openModal({title, bodyHtml, width, onMount}) → {close, body, mask}`. Each page's
   code is an ES module in `assets/pages/` (AI assistant, Wiki, dashboard, tasks, routines, statistics, shared plans,
   admin), loaded by `route()` through `PAGE_MODULES` — see the page-modules bullet below.
@@ -95,12 +95,24 @@
   click (pomodoro start, saving a task with a reminder/deadline) — browsers refuse otherwise. Tabs share the login over
   `BroadcastChannel('zq-auth')`: a tab without a token borrows one before `initAuth()`; logout and password change are
   broadcast but only act on tabs holding **the same token** (another tab may be signed in as someone else).
+- **One pomodoro clock for the whole site** (round 49, `docs/rounds/round-49.md`, step 1 of `docs/mini-pomodoro-plan.md`).
+  The state lives in localStorage `zq.pomo.<user id>` (`{id, phase: running|paused|done, total, endAt | left, taskId, taskTitle, rev}`),
+  so leaving the dashboard no longer drops a running pomodoro and every signed-in page shows 「专注中 18:42」 above the avatar.
+  `watchPomo()` ticks once a second, follows `storage` events and re-reads on `visibilitychange`; every change goes through
+  `changePomo(fn)` under the Web Lock `zq-pomodoro` (read → check it is still the same one → write, `rev`+1). At the end only the
+  tab that flips running → done records and notifies; the record's idempotency key is the pomodoro id, so the server keeps one
+  even when two tabs race without Web Locks. Other tabs only mark their title. A clock set back is detected against
+  `performance.now()` and shifted once (a tab only shifts the `rev` it saw last tick). A pomodoro that ended while no page was
+  open is recorded on the next page load for the day it ended, silently if more than 15 min late; closing every page no longer
+  abandons it (press 重置). The dashboard card (`pages/dashboard.js` `wirePomo` / `drawPomo`) only draws and forwards clicks.
+  Logout deletes the state like drafts. Checks: `pomo-shared-check.js` (two simulated tabs sharing storage and a lock),
+  `pomo-card-check.js`, `PomodoroSharedTest`.
 - **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
   study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
   «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't
   repaint stayed on screen — 「已审核模板 · 4 个」, 「第 3 轮」 and a 60% progress bar all shipped that way.
-  `InitErrorReplacesDemoContentTest` now pins: only the one-line theme script and the dashboard's pomodoro script may be
-  inline; any digit in a page's static `.zq-main` text must be on its short list of real copy; and a failed load still
+  `InitErrorReplacesDemoContentTest` now pins: only the one-line theme script may be inline (the dashboard's pomodoro script
+  was the other exception until round 49 moved the clock into the shell); any digit in a page's static `.zq-main` text must be on its short list of real copy; and a failed load still
   replaces all of `.zq-main`. The real controls the demo scripts used to draw (statistics 日/周/月, achievement filters,
   routine weekdays, the shared-plan modal's close buttons) now live in the static HTML and are bound by the shell — the
   same test pins that, because deleting them breaks the page silently. `index.html` (landing page mockups) is excluded

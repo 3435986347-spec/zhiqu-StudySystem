@@ -974,11 +974,14 @@
     pomoFlushing.then(clear, clear);
     return pomoFlushing;
   }
-  /** 专注完了：先落在这台设备上，再发。说清楚是记上了、先存着、还是真的没记上。 */
+  /**
+   * 专注完了：先落在这台设备上，再发。说清楚是记上了、先存着、还是真的没记上。
+   * rec.key：番茄钟这一次专注的 id（第四十九轮）—— 两个标签页都记了，清单里也只有一条、服务端也只记一份；rec.day：结束的那一天（一页都没开着时到点、下次打开才补上的）。
+   */
   async function recordPomodoro(rec) {
-    var item = { key: writeKey(), user: pomoOwner(), day: today(), taskId: rec.taskId == null ? null : rec.taskId, durationMinutes: rec.durationMinutes, note: rec.note || '' };
+    var item = { key: rec.key || writeKey(), user: pomoOwner(), day: rec.day || today(), taskId: rec.taskId == null ? null : rec.taskId, durationMinutes: rec.durationMinutes, note: rec.note || '' };
     var list = readPomoOutbox();
-    list.push(item);
+    if (!list.some(function (x) { return x.key === item.key; })) list.push(item);
     writePomoOutbox(list);
     var kept = function () { return readPomoOutbox().some(function (x) { return x.key === item.key; }); };
     var r;
@@ -1003,6 +1006,12 @@
   /** 打开页面、网回来了、每分钟（有待补的时候）：补一趟，补上了说一声。 */
   async function catchUpPomodoros() {
     if (!pendingPomodoros().length) return;
+    // 正在发的那一趟（刚专注完的那一个、另一路补记）自己说结果：等它发完再看还剩什么。原来和它共用结果 —— 关着页面时到点的番茄钟，
+    // 打开页面那一刻「记它」和「打开页面的补记」撞在一起，刚记的这一个被说成「补记了 1 个番茄钟（专注完的时候网断了）」（第四十九轮真浏览器）
+    if (pomoFlushing) {
+      await pomoFlushing;
+      if (!pendingPomodoros().length) return;
+    }
     var r = await flushPomodoros();
     if (r.sent) {
       toast('补记了 ' + r.sent + ' 个番茄钟（专注完的时候网断了）');
@@ -1010,6 +1019,195 @@
     }
     if (r.failed.length) toast('有 ' + r.failed.length + ' 个番茄钟补记不上：' + r.failed[0], 'error', 6000);
   }
+
+  // ── 番茄钟：全站共用一个钟（第四十九轮，迷你番茄钟第 1 步）────────────────────────
+  //
+  // 原来番茄钟是看板页的一段内联脚本，状态在那一页的内存里：开始之后切到别的页，它就没了（不记这一次、到点也不提醒）；两个看板标签页各算各的。
+  // 迷你番茄钟（docs/mini-pomodoro-plan.md）的迷你窗和主窗口要看同一个钟 —— 状态存在 localStorage（按人分开），每一页登录之后都看着它。
+  // 一次专注一个 id：在跑的记结束时刻 endAt（按结束时刻倒数，后台标签页、合上笔记本也不停 —— 第二十一轮），暂停的记还剩几秒 left，
+  // 做完的留着（别的页挂标题、看板写「已完成」）。改它都在浏览器的锁里「读 → 看还是不是那一个 → 写」，rev 每写一次加一：
+  // 到点只有一页标得上「做完」，只有它记录、提醒；记录的幂等键就是 id —— 没有 Web Locks 的浏览器里两页都记了，服务端也只记一份。
+  // 一页都没开着时到点了（关了浏览器、合了盖子）：下次打开哪一页都补上，记到结束的那一天；过了 POMO_LATE_MS 才发现的不响、不弹，只说一句。
+  // 关掉页面不再等于放弃这一次专注 —— 要放弃按「重置」。
+  // 行为判据：src/test/resources/js/pomo-shared-check.js（直接跑这里发布的实现）。
+  var POMO_PREFIX = 'zq.pomo.';
+  var POMO_LATE_MS = 15 * 60000;
+  var POMO_JUMP_MS = 1500;
+  var POMO_PHASES = /^(running|paused|done)$/;
+  var pomoLocal = null;      // 存不进 localStorage（隐私模式、存满了）：这一页自己记着 —— 和原来一样只活在这一页，但照样能用
+  var pomoObs = null;        // 这一页上一跳看到的：{ id, rev, phase, recorded, at, mono }
+  var pomoMine = {};         // 这一页记录的那几次（自己已经刷新过看板，别人标「记上了」时不再刷一遍）
+  var pomoListeners = [];
+  var pomoBadgeTip = null;
+  var pomoClockWatched = false;
+  function pomoKey() { var uid = state.user && state.user.id; return uid == null ? null : POMO_PREFIX + uid; }
+  function readPomo() {
+    var k = pomoKey(); if (!k) return null;
+    var v = null;
+    if (pomoLocal) v = pomoLocal.key === k ? pomoLocal.value : null;
+    else { try { v = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { v = null; } }
+    return v && typeof v.id === 'string' && v.total > 0 && POMO_PHASES.test(v.phase) ? v : null;
+  }
+  function writePomo(v) {
+    var k = pomoKey(); if (!k) return;
+    if (!pomoLocal) {
+      try { if (v) localStorage.setItem(k, JSON.stringify(v)); else localStorage.removeItem(k); return; } catch (e) { pomoLocal = { key: k, value: null }; }
+    }
+    pomoLocal.key = k; pomoLocal.value = v;
+  }
+  /** 此刻（毫秒）按这一页的单调时钟 —— 真钟往回拨了它不跟着拨 */
+  function pomoMono() { try { return performance.now(); } catch (e) { return Date.now(); } }
+  /**
+   * 改番茄钟：在浏览器的锁里读出此刻存着的、交给 fn，fn 返回要写的（undefined = 不写，null = 删掉）。
+   * 几个标签页（以后还有迷你窗）同时改，排着队来；没有 Web Locks 的浏览器直接做。返回的 promise 给出写了没有。
+   */
+  function changePomo(fn) {
+    var run = function () {
+      var cur = readPomo(), next = fn(cur);
+      if (next === undefined) return false;
+      if (next) next.rev = (cur && cur.id === next.id ? cur.rev || 0 : 0) + 1;
+      writePomo(next);
+      return true;
+    };
+    var locks = null;
+    try { locks = navigator.locks && navigator.locks.request ? navigator.locks : null; } catch (e) { locks = null; }
+    var done = locks ? locks.request('zq-pomodoro', run) : new Promise(function (ok) { ok(run()); });
+    return done.then(function (changed) { if (changed) pomoTick(); return changed; }, function () { return false; });
+  }
+  /** 给页面画的样子：phase 是 idle / running / paused / done，left 还剩几秒（没在跑的是整段） */
+  function pomoView() {
+    var s = readPomo(), now = Date.now();
+    if (!s) return { phase: 'idle', left: 0, total: 0, taskId: null, taskTitle: '' };
+    var left = s.phase === 'running' ? Math.max(0, Math.ceil((s.endAt - now) / 1000)) : s.phase === 'paused' ? s.left : s.total;
+    // 做完的过了一阵就只是「待开始」（时长、任务留着，下一次照着来）
+    var phase = s.phase === 'done' && !(now - s.endedAt < POMO_LATE_MS) ? 'idle' : s.phase;
+    return { phase: phase, id: s.id, total: s.total, left: left, taskId: s.taskId == null ? null : s.taskId, taskTitle: s.taskTitle || '' };
+  }
+  function pomoClock(secs) { return String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0'); }
+  /** 某一时刻（本机的钟）在业务时区的钟面：今天的写「HH:mm」，别的日子带上「MM/DD」 */
+  function pomoEndText(ms) {
+    var d = new Date(ms + clock.skew + clock.offsetMinutes * 60000), day = ymdUTC(d), hh = d.getUTCHours(), mm = d.getUTCMinutes();
+    return (day === today() ? '' : day.slice(5).replace('-', '/') + ' ') + (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+  }
+  /** 到点了：只有标得上「做完」的那一页记录、提醒（别的页在 pomoTick 里看到「做完了」只挂标题） */
+  function finishPomo(id) {
+    var ended = null;
+    return changePomo(function (cur) {
+      if (!cur || cur.id !== id || cur.phase !== 'running' || cur.endAt > Date.now()) return undefined;
+      ended = cur;
+      return { id: cur.id, phase: 'done', total: cur.total, endedAt: cur.endAt, taskId: cur.taskId, taskTitle: cur.taskTitle };
+    }).then(function (changed) {
+      if (!changed || !ended) return;
+      var late = !(Date.now() - ended.endAt < POMO_LATE_MS);
+      pomoMine[ended.id] = true;
+      // 不带日期的话记到服务端的「今天」：结束在昨天、今天才补上的，带上结束那天（补记那一步只在跨了天时才发日期）
+      recordPomodoro({ key: ended.id, day: businessDate(ended.endAt + clock.skew), taskId: ended.taskId, durationMinutes: Math.round(ended.total / 60), note: '番茄钟专注时段' })
+        .then(function (r) { if (r && r.sent) markPomoRecorded(ended.id); })
+        .catch(function (e) { toast('这个番茄钟没记上：' + ((e && e.message) || '出错了'), 'error'); });
+      // 响一声、弹通知（授权过的话；桌面应用走原生通知）、页面里提示一句（第二十五轮）。太久之前到点的不响不弹
+      if (!late) pageNotify('专注结束', '记进今天的时长了，休息一下', 'zq-pomodoro');
+      else toast('番茄钟在 ' + pomoEndText(ended.endAt) + ' 到点了（那时一页都没开着），记进那天的专注时长');
+    });
+  }
+  /** 记上了：告诉别的页（看板要刷新今天的个数） */
+  function markPomoRecorded(id) {
+    return changePomo(function (cur) {
+      if (!cur || cur.id !== id || cur.phase !== 'done' || cur.recorded) return undefined;
+      return Object.assign({}, cur, { recorded: true });
+    });
+  }
+  /** 钟往回拨了：结束时刻往回挪 back 毫秒 —— 只挪 seen 那一份（rev 对得上）；别的标签页先挪了、暂停了，就不动 */
+  function shiftPomo(seen, back) {
+    return changePomo(function (cur) {
+      if (!cur || cur.id !== seen.id || cur.rev !== seen.rev || cur.phase !== 'running') return undefined;
+      return Object.assign({}, cur, { endAt: cur.endAt - back });
+    });
+  }
+  // 结束了要让人知道（2026-10-03 走主流程：在别的标签页专注时，25 分钟到了页面上一点动静都没有）。
+  // 标签页标题挂上「✓ 专注结束」，直到切回这一页 —— 每一个开着的页都挂（不知道人在看哪一页）；响和通知只有记录的那一页发
+  function markPomoTitle() {
+    var title = document.title.replace(/^✓ 专注结束 — /, '');
+    document.title = '✓ 专注结束 — ' + title;
+    function restore() { if (document.hidden) return; setTimeout(function () { document.title = title; }, 4000); document.removeEventListener('visibilitychange', restore); }
+    document.addEventListener('visibilitychange', restore); restore();
+  }
+  /** 侧栏头像上面那一行「专注中 18:42」（看板本页不显示：卡片就在那） */
+  function renderPomoBadge(v) {
+    var el = document.querySelector('#zq-side .zq-side-pomo'); if (!el) return;
+    var on = page !== 'dashboard.html' && (v.phase === 'running' || v.phase === 'paused');
+    el.hidden = !on;
+    if (!on) return;
+    var label = v.phase === 'running' ? '专注中' : '已暂停';
+    var text = el.querySelector('.zq-side-pomo-label'), time = el.querySelector('.zq-side-pomo-time');
+    if (text && text.textContent !== label) text.textContent = label;
+    if (time) time.textContent = pomoClock(v.left);
+    el.classList.toggle('is-paused', v.phase === 'paused');
+    var tip = label + (v.taskTitle ? '：' + v.taskTitle : '') + '（点开看板）';
+    if (tip !== pomoBadgeTip) { pomoBadgeTip = tip; el.title = tip; }
+  }
+  /** 一跳：看别的页改了什么、钟有没有往回拨、到没到点，再画 */
+  function pomoTick() {
+    var s = readPomo(), now = Date.now(), mono = pomoMono(), prev = pomoObs;
+    pomoObs = s ? { id: s.id, rev: s.rev, phase: s.phase, recorded: !!s.recorded, at: now, mono: mono } : null;
+    var same = !!(s && prev && prev.id === s.id);
+    if (same && prev.phase === 'running' && s.phase === 'done' && now - s.endedAt < POMO_LATE_MS) markPomoTitle();
+    if (same && !prev.recorded && s.recorded && !pomoMine[s.id]) {
+      if (window.zqApi && window.zqApi.afterRecord) window.zqApi.afterRecord(); else updatePomoCount();
+    }
+    if (s && s.phase === 'running') {
+      // 钟往回拨了（校时、手动改时间）：按这一页的单调时钟，此刻本该是 prev.at + 过去的毫秒数，真钟慢出来多少、结束时刻就往回挪多少 ——
+      // 剩下的时间不会变多、也不会卡住不走（第二十一轮）。只认上一跳以来没人写过的（rev 没变）：别的页挪过了，这一页看到的已经是挪过的
+      var back = same && prev.rev === s.rev ? prev.at + (mono - prev.mono) - now : 0;
+      if (back > POMO_JUMP_MS) shiftPomo(s, back);
+      else if (s.endAt <= now) finishPomo(s.id);
+    }
+    var v = pomoView();
+    renderPomoBadge(v);
+    pomoListeners.slice().forEach(function (fn) { try { fn(v); } catch (e) { /* 一个页面画坏了不挡别的 */ } });
+  }
+  /** 每一页登录之后：一秒一跳；别的页（迷你窗）改了马上跟上；切回来、笔记本醒来马上按真实时间刷一次 */
+  function watchPomo() {
+    if (pomoClockWatched) return; pomoClockWatched = true;
+    pomoTick();
+    setInterval(pomoTick, 1000);
+    window.addEventListener('storage', function (e) { if (e.key == null || e.key === pomoKey()) pomoTick(); });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) pomoTick(); });
+  }
+  /** 给页面（看板的卡片，以后的迷你窗）用的：画什么问 view，按钮交给这几样 */
+  var pomo = {
+    view: pomoView,
+    clock: pomoClock,
+    /** 开始；暂停着的就接着走。到点要弹通知：在点「开始」的这一下里问授权（浏览器只在用户点了东西时才肯弹授权框） */
+    start: function (opts) {
+      opts = opts || {};
+      askNotifyPermission();
+      return changePomo(function (cur) {
+        var now = Date.now();
+        if (cur && cur.phase === 'running') return undefined;   // 别的页刚点了开始
+        if (cur && cur.phase === 'paused') return { id: cur.id, phase: 'running', total: cur.total, endAt: now + cur.left * 1000, taskId: cur.taskId, taskTitle: cur.taskTitle };
+        var mins = Math.min(180, Math.max(1, Math.round(Number(opts.minutes) || 25)));
+        return { id: writeKey(), phase: 'running', total: mins * 60, endAt: now + mins * 60000, taskId: opts.taskId == null ? null : opts.taskId, taskTitle: opts.taskTitle || '' };
+      });
+    },
+    pause: function () {
+      pomoTick();   // 先按真实时间看一眼（钟往回拨了先挪、到点了先做完）—— 排在暂停前面
+      return changePomo(function (cur) {
+        if (!cur || cur.phase !== 'running') return undefined;
+        var left = Math.ceil((cur.endAt - Date.now()) / 1000);
+        if (left <= 0) return undefined;   // 已经到点：交给到点那一步（记录、提醒）
+        return { id: cur.id, phase: 'paused', total: cur.total, left: left, taskId: cur.taskId, taskTitle: cur.taskTitle };
+      });
+    },
+    reset: function () { return changePomo(function (cur) { return cur ? null : undefined; }); },
+    /** 专注到一半换关联的任务：记的时候算新的那个（原来是到点那一刻下拉框里选的那个） */
+    setTask: function (taskId, taskTitle) {
+      return changePomo(function (cur) {
+        if (!cur || cur.phase === 'done') return undefined;
+        return Object.assign({}, cur, { taskId: taskId == null ? null : taskId, taskTitle: taskTitle || '' });
+      });
+    },
+    subscribe: function (fn) { pomoListeners.push(fn); fn(pomoView()); }
+  };
   /** 周期给人看的样子（第十九轮）：列表、参考计划、AI 草稿原来直接显示 DAILY / WEEKLY。星期按 ISO：1 是周一。 */
   function freqLabel(frequency, daysOfWeek) {
     var f = String(frequency || 'DAILY').toUpperCase();
@@ -1731,9 +1929,9 @@
     });
     syncDialog();
   }
-  /** 退出登录（头像菜单、设置里的「退出」）。原来只在个人中心页顶上有。 */
+  /** 退出登录（头像菜单、设置里的「退出」）。原来只在个人中心页顶上有。番茄钟和草稿一样删掉（任务名不留在公用电脑上；第四十九轮）。 */
   function logout() {
-    return safe('退出', async function () { var had = token(); await api.post('/auth/logout', {}); drafts.clearUser(); clearAuth(); announceLogout(had); location.href = 'index.html'; });
+    return safe('退出', async function () { var had = token(); await api.post('/auth/logout', {}); drafts.clearUser(); writePomo(null); clearAuth(); announceLogout(had); location.href = 'index.html'; });
   }
   /**
    * 改完密码，之前签发的令牌（别的设备上的、被偷走的）全部作废 —— 包括这一页手里那张；服务器给这个会话回一张新的。
@@ -1751,7 +1949,7 @@
     $: $, $all: $all, pickFile: pickFile, empty: empty, fmtDate: fmtDate, hm: hm, d10: d10, updateSidebarUser: updateSidebarUser, normalizeModelList: normalizeModelList,
     planCategory: planCategory, planCategoryOptions: planCategoryOptions, freqLabel: freqLabel,
     today: today, latestOnly: latestOnly, keepDraft: keepDraft, writeKey: writeKey, qKey: qKey, pLabel: pLabel, openTaskForm: openTaskForm,
-    weekRange: weekRange, zoneNote: zoneNote, updatePomoCount: updatePomoCount,
+    weekRange: weekRange, zoneNote: zoneNote, updatePomoCount: updatePomoCount, pomo: pomo,
     API: API, token: token, popMenu: popMenu, drafts: drafts, renderMarkdown: renderMarkdown, renderMathIn: renderMathIn,
     REQUEST_TIMEOUT_MS: REQUEST_TIMEOUT_MS, role: role, requestError: requestError, redirectToLogin: redirectToLogin, nowMs: nowMs,
     serverTime: serverTime, highlightCode: highlightCode,
@@ -1806,6 +2004,7 @@
         }
 
         watchReminders();
+        watchPomo();
         watchDialogs();
         // 番茄钟的待补记不能挂在页面启动之后：启动失败（网断着打开的、被限流）时正是有待补记的时候，挂在后面的话这一页就不补了。
         // 当场那一趟放在启动之后（成不成都跑）：补上了要刷新的看板数字，得等看板自己先起来
@@ -1836,8 +2035,8 @@
     }, { renderError: true });
   }
 
-  // localDate 一并暴露：页面内联脚本（如 dashboard 的番茄钟）也要算「今天」，
-  // 让它们用同一份定义，而不是各写一个 toISOString
+  // localDate 一并暴露：页面内联脚本要算「今天」时用同一份定义，而不是各写一个 toISOString
+  // （原来用它的是看板番茄钟那段内联脚本；第四十九轮番茄钟挪进了壳，现在没有内联脚本在用）
   window.zqApi = { api: api, reload: route, today: today, localDate: localDate, now: nowMs, serverTime: serverTime, businessDate: businessDate, toast: toast, recordPomodoro: recordPomodoro,
     notify: pageNotify, askNotifyPermission: askNotifyPermission, logout: logout };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', route); else route();

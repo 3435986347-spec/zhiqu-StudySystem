@@ -231,6 +231,9 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-side.is-collapsed .zq-brand{flex-direction:column;justify-content:center;padding-left:0;padding-right:0;}
 .zq-side.is-collapsed .zq-nav a{justify-content:center;padding-left:0;padding-right:0;}
 .zq-side.is-collapsed .zq-user{justify-content:center;}
+.zq-side.is-collapsed .zq-side-pomo{flex-direction:column;gap:2px;padding-left:0;padding-right:0;}
+.zq-side.is-collapsed .zq-side-pomo-label{display:none;}
+.zq-side.is-collapsed .zq-side-pomo-time{font-size:var(--zq-fs-xs);}
 .zq-main.is-side-collapsed{margin-left:56px;}
 
 /* 收起按钮：品牌那一行右边一个小图标按钮（第四十三轮），收起后在品牌标志下面；折叠后它是唯一的回路 */
@@ -262,6 +265,14 @@ button.zq-user{width:100%;border:none;background:transparent;color:inherit;font:
 .zq-user > div:not(.zq-avatar){flex:1;}
 .zq-user.active,.zq-user[aria-expanded="true"]{background:var(--zq-sb-active-bg);}
 .zq-user:focus-visible{outline:none;box-shadow:var(--zq-focus);}
+/* 番茄钟在跑 / 暂停着：头像上面一行「专注中 18:42」（第四十九轮，全站共用一个钟）；暂停时变灰。display:flex 会盖过 hidden，单独写回去 */
+.zq-side-pomo{display:flex;align-items:center;gap:10px;min-height:32px;padding:6px 10px;margin-top:8px;border-radius:var(--zq-rs);font-size:var(--zq-fs-sm);color:var(--zq-sb-active-text);text-decoration:none;}
+.zq-side-pomo[hidden]{display:none;}
+.zq-side-pomo:hover{background:var(--zq-sb-active-bg);}
+.zq-side-pomo:focus-visible{outline:none;box-shadow:var(--zq-focus);}
+.zq-side-pomo .zq-ic{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;}
+.zq-side-pomo-label{flex:1;min-width:0;white-space:nowrap;}
+.zq-side-pomo.is-paused{color:var(--zq-text3);}
 .zq-avatar{width:28px;height:28px;flex:none;border-radius:50%;background:var(--zq-card-soft);border:1px solid var(--zq-border);color:var(--zq-text2);display:flex;align-items:center;justify-content:center;font-weight:var(--zq-fw-medium);font-size:var(--zq-fs-xs);}
 
 /* ── 组件 ── */
@@ -288,6 +299,8 @@ button[aria-busy="true"]{opacity:.62;cursor:progress;}
 .zq-input,.zq-select,.zq-textarea{height:32px;padding:0 12px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-input-bg);color:var(--zq-text);font-size:var(--zq-fs-sm);transition:border-color .12s ease,box-shadow .12s ease;}
 .zq-input:focus,.zq-select:focus,.zq-textarea:focus{border-color:var(--zq-primary);}
 .zq-input::placeholder,.zq-textarea::placeholder{color:var(--zq-text3);}
+/* 不能改的时候看得出来（第四十九轮：番茄钟在跑时时长锁住，原来锁住的下拉框和能点的一模一样，点了没反应） */
+.zq-input:disabled,.zq-select:disabled,.zq-textarea:disabled{color:var(--zq-text3);cursor:not-allowed;}
 .zq-textarea{height:auto;min-height:64px;padding:var(--zq-sp-2) var(--zq-sp-3);line-height:1.6;resize:vertical;}
 .zq-label{font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);color:var(--zq-text2);}
 .zq-field{display:flex;flex-direction:column;gap:var(--zq-sp-2);}

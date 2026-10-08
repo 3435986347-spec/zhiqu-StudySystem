@@ -6,11 +6,11 @@
   <title>看板 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261008-board" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261008-board">
-  <link rel="manifest" href="manifest.json?v=20261008-board">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261009-pomo" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261009-pomo">
+  <link rel="manifest" href="manifest.json?v=20261009-pomo">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261008-board">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261009-pomo">
 </head>
 <body>
   <div class="zq-app">
@@ -111,57 +111,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261008-board"></script>
-  <script>
-    // ── 番茄钟 ──
-    // 按结束时刻倒数，不按「每跳一次减一秒」（第二十一轮）：切到别的标签页后浏览器把定时器限到一分钟一次，原来 25 分钟的番茄钟
-    // 要走一整天；合上笔记本就停。时钟往回拨（校时、手动改时间）时结束时刻跟着往回挪 —— 剩下的时间不会变多、也不会卡住不走。
-    (function(){
-      var total=25*60, secs=total, running=false, timer=null, endAt=0, lastNow=0, C=2*Math.PI*80;
-      var elTime=document.getElementById('zq-pomo-time'), elPhase=document.getElementById('zq-pomo-phase'), elRing=document.getElementById('zq-pomo-ring'), elStart=document.getElementById('zq-pomo-start'), elMin=document.getElementById('zq-pomo-min');
-      function fmt(s){ return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
-      function draw(){ elTime.textContent=fmt(secs); var frac=(total-secs)/total; elRing.setAttribute('stroke-dasharray',(frac*C).toFixed(1)+' '+C.toFixed(1)); }
-      function zqPomoRecord(mins){
-        if(mins<1||!window.zqApi||!window.zqApi.api) return;
-        var sel=document.getElementById('zq-pomo-task');
-        var tid=sel&&sel.value?Number(sel.value):null;
-        // 先存在这台设备上再发：网断着也不丢，连上网自动补记；没记上、先存着都会说出来（zhiqu-api.js 的 recordPomodoro）。
-        // 不带日期：记到服务端的「今天」（跨了天才补上的，由补记那一步带上完成那天）
-        window.zqApi.recordPomodoro({taskId:tid,durationMinutes:mins,note:'番茄钟专注时段'}).catch(function(e){ window.zqApi.toast('这个番茄钟没记上：'+((e&&e.message)||'出错了'),'error'); });
-      }
-      // 结束了要让人知道（2026-10-03 走主流程：在别的标签页专注时，25 分钟到了页面上一点动静都没有）。
-      // 标签页标题挂上「✓ 专注结束」，直到切回这一页；再响一声、弹浏览器通知（第二十五轮，授权在点「开始」时问）
-      function announceDone(){
-        var title=document.title.replace(/^✓ 专注结束 — /,'');
-        document.title='✓ 专注结束 — '+title;
-        // 响一声、弹浏览器通知（授权过的话）、页面里提示一句（第二十五轮）
-        if(window.zqApi&&window.zqApi.notify) window.zqApi.notify('专注结束','记进今天的时长了，休息一下','zq-pomodoro');
-        function restore(){ if(document.hidden) return; setTimeout(function(){ document.title=title; },4000); document.removeEventListener('visibilitychange',restore); }
-        document.addEventListener('visibilitychange',restore); restore();
-      }
-      function tick(){
-        if(!running) return;
-        var now=Date.now();
-        if(now<lastNow) endAt-=lastNow-now;          // 时钟往回拨了：结束时刻一起往回挪
-        lastNow=now;
-        secs=Math.max(0,Math.ceil((endAt-now)/1000));
-        if(secs<=0){ clearInterval(timer); running=false; elStart.textContent='开始'; elPhase.textContent='已完成'; zqPomoRecord(Math.round(total/60)); announceDone(); secs=total; draw(); return; }
-        draw();
-      }
-      elMin.addEventListener('change',function(){ if(running) return; total=parseInt(elMin.value,10)*60; secs=total; draw(); });
-      elStart.addEventListener('click',function(){
-        if(running){ tick(); clearInterval(timer); running=false; elStart.textContent='继续'; elPhase.textContent='已暂停'; return; }
-        if(window.zqApi&&window.zqApi.askNotifyPermission) window.zqApi.askNotifyPermission();   // 到点要弹通知：在这次点击里问授权
-        running=true; elStart.textContent='暂停'; elPhase.textContent='专注中';
-        lastNow=Date.now(); endAt=lastNow+secs*1000;
-        timer=setInterval(tick,1000);
-      });
-      // 切回这个标签页、笔记本醒来：马上按真实时间刷一次，不等下一跳
-      document.addEventListener('visibilitychange',function(){ if(!document.hidden) tick(); });
-      document.getElementById('zq-pomo-reset').addEventListener('click',function(){ clearInterval(timer); running=false; secs=total; elStart.textContent='开始'; elPhase.textContent='待开始'; draw(); });
-      draw();
-    })();
-  </script>
-  <script src="assets/zhiqu-api.js?v=20261008-board"></script>
+  <script src="assets/zhiqu-ui.js?v=20261009-pomo"></script>
+  <script src="assets/zhiqu-api.js?v=20261009-pomo"></script>
 </body>
 </html>

@@ -201,7 +201,7 @@ class FrontendTokenAndDateTest {
         // 第二十一轮起「今天」是业务日期（服务端的时区、服务器的钟），内联脚本也得用这一份
         for (String need : List.of("today: today", "localDate: localDate")) {
             assertTrue(members.stream().anyMatch(x -> x.trim().equals(need)),
-                    need + " 必须挂在 window.zqApi 上 —— dashboard 的番茄钟等内联脚本要算「今天」，"
+                    need + " 必须挂在 window.zqApi 上 —— 页面内联脚本要算「今天」时用这一份（原来是看板的番茄钟，第四十九轮挪进了壳），"
                             + "不暴露的话它们只能各写一个 toISOString，而那正是刚修掉的那个 bug（现在的成员：" + members + "）");
         }
     }
