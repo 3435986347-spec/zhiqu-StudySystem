@@ -51,3 +51,16 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 现在把两个键都设成 `~/.zhiqu/` 下的绝对路径；`DesktopUploadDirTest` **从代码里扫出**所有相对的
 `*-dir` 键再核对（不手写名单 —— 第一版就只改了 `upload-dir`，贴图照样坏）。落盘失败时图片标
 `ERROR` 并写明原因（文本资料只是降级：文本已从上传流抽出），读不到原件的图也会告诉模型。
+
+**迷你番茄钟的悬浮面板**（第五十一轮，`deploy/desktop/macos-shell/MiniPanel.swift`，`docs/mini-pomodoro-plan.md` 第 3 步）。
+看板的番茄钟卡片上「缩小到桌面」（只在桌面应用里出现：页面看得到 `window.webkit.messageHandlers.zqMini` 才显示）→ 页面发 `{action:'shrink'}`，
+外壳把主窗口 `orderOut`、拿出一个 `NSPanel`：无边框、透明（`isOpaque=false`、底色 clear、不要窗口影子 —— 胶囊的影子是页面自己画的，
+窗口的影子是方的）、`.nonactivatingPanel`（点它不会把应用切到前台）、`.floating`、`canJoinAllSpaces` + `fullScreenAuxiliary`、`hidesOnDeactivate=false`
+（面板默认在应用切到后台时藏起来，迷你窗恰恰是给在别的应用里干活的时候看的）、`canBecomeKey` 覆写成 true（无边框面板默认当不了键窗口，按钮用键盘按不到）、
+`setFrameAutosaveName("ZhiquMiniPanel")` 记位置（第一次在主屏幕右上角）。里面是第二个 `PageView` 打开 `mini.html`（`.default()` 网站数据，和主窗口同一个登录、同一个钟）。
+**拖动**：WKWebView 吃掉鼠标事件，`isMovableByWindowBackground` 对它盖住的地方不起作用 —— 胶囊中间（时间和小字，没有能点的东西）盖一块 `MiniDragZone`
+（`mouseDownCanMoveWindow`），两边的按钮不盖。胶囊上「展开」发 `{action:'expand'}`：面板收起、主窗口回来；点 Dock 图标、点通知、迷你模式下 Cmd+Tab 切回来（胶囊不会让应用到前台，
+所以应用到了前台一定是人特意切过来的）也一样。`PageView` 对 `zqMini` 只认 `shrink` / `expand`。
+**实测（2026-10-09，检查程序里两个共用一份网站数据的 WKWebView）**：localStorage 互相读得到、`navigator.locks` 是同一把（到点只响一次靠它），
+但 **storage 事件不在两个 WKWebView 之间传**（放进窗口里也不传）—— 页面不靠它：一秒一跳、`visibilitychange` 时马上按存的刷一次（藏着的主窗口一拿出来就跟上）。
+`DesktopPageViewTest` 把 `MiniPanel.swift` 一起编进检查程序，建一个面板核对这些设定（不放到屏幕上）、点得到两边的按钮、中间拖得动。

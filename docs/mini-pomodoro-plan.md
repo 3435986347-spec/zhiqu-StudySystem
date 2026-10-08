@@ -56,4 +56,4 @@
 
 - 第 1 步：第四十九轮（番茄钟全站共用一个钟，`docs/rounds/round-49.md`）。
 - 第 2 步：第五十轮（`mini.html` + `assets/pages/mini.js`，`docs/rounds/round-50.md`）。
-- 第 3 步：待做（macOS 外壳的悬浮面板；「展开」走 `zqMini` 这座桥，页面这边第五十轮已经接好）。
+- 第 3 步：第五十一轮（macOS 外壳的悬浮面板 `deploy/desktop/macos-shell/MiniPanel.swift`、看板上「缩小到桌面」，`docs/rounds/round-51.md`）。

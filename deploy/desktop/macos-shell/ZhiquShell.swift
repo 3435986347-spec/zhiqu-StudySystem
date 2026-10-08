@@ -167,6 +167,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var window: NSWindow!
     private var webView: PageView!
     private var loadingLabel: NSTextField!
+    /// 后端的端口：迷你窗的页面也从这里打开
+    private var port: Int?
+    /// 迷你番茄钟的悬浮面板（MiniPanel.swift）：第一次「缩小到桌面」时才建，之后藏起来再拿出来（页面一直开着、一直跟着那个钟）
+    private var miniPanel: NSPanel?
+    private var miniPage: PageView?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 应用在前台时系统默认不弹横幅 —— 页面里已经有提示和声音了，这里仍然弹横幅、进通知中心（不带声音，见 PageView.deliverNotification）
@@ -215,6 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 文件选择、下载、外部链接、User-Agent、localStorage 持久化都在 PageView.swift 里（它自己当自己的代理）
         webView = PageView(frame: frame)
         webView.autoresizingMask = [.width, .height]
+        webView.onMini = { [weak self] action in self?.mini(action) }
 
         loadingLabel = NSTextField(labelWithString: "正在启动…")
         loadingLabel.alignment = .center
@@ -235,8 +241,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func load(port: Int) {
+        self.port = port
         loadingLabel.isHidden = true
         webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/dashboard.html")!))
+    }
+
+    // MARK: 迷你番茄钟（第五十一轮）
+
+    /// 页面说的（PageView 只转 shrink / expand 这两种）：看板上「缩小到桌面」、胶囊上「展开」
+    private func mini(_ action: String) {
+        switch action {
+        case "shrink": showMini()
+        case "expand": showMain()
+        default: break
+        }
+    }
+
+    /// 主窗口藏起来、胶囊出来。不抢焦点：用户多半正要切去别的应用干活
+    private func showMini() {
+        guard let port else { return }
+        if miniPanel == nil {
+            let page = PageView(frame: NSRect(origin: .zero, size: miniPanelSize))
+            page.onMini = { [weak self] action in self?.mini(action) }
+            miniPage = page
+            miniPanel = makeMiniPanel(page: page)
+            page.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/mini.html")!))
+        }
+        window.orderOut(nil)
+        miniPanel?.orderFrontRegardless()
+    }
+
+    /// 胶囊收起、主窗口回来并到最前（点「展开」、点 Dock 图标、点通知）
+    private func showMain() {
+        miniPanel?.orderOut(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// 点 Dock 图标：回到主窗口（迷你模式下主窗口是藏着的，不处理的话点了什么都不出来）
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showMain()
+        return true
+    }
+
+    /// 迷你模式下切回这个应用（Cmd+Tab、从别处切过来）：就是要主窗口。胶囊本身点了不会把应用切到前台（不抢焦点），
+    /// 所以应用到了前台一定是人特意切过来的 —— 不处理的话切过来什么窗口都没有
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if miniPanel?.isVisible == true && !window.isVisible { showMain() }
     }
 
     private func fail(_ message: String) {
@@ -249,11 +300,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         completionHandler([.banner, .list])
     }
 
-    /// 点通知：把窗口叫到前面。
+    /// 点通知：把窗口叫到前面（迷你模式下胶囊收起，和点「展开」一样）。
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        showMain()
         completionHandler()
     }
 

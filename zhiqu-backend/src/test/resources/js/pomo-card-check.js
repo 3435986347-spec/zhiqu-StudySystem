@@ -26,7 +26,7 @@ function select(id, opts) {
 }
 const els = {
   '#zq-pomo-time': node('time'), '#zq-pomo-ring': node('ring'), '#zq-pomo-phase': node('phase'),
-  '#zq-pomo-start': node('start'), '#zq-pomo-reset': node('reset'),
+  '#zq-pomo-start': node('start'), '#zq-pomo-reset': node('reset'), '#zq-pomo-mini': node('mini', { hidden: true }),
   '#zq-pomo-min': select('min', [['25', '25 分钟'], ['45', '45 分钟'], ['60', '60 分钟']]),
   '#zq-pomo-task': select('task', [['', '（不指定任务）'], ['7', '写周报']]),
 };
@@ -41,7 +41,11 @@ const pomo = {
   setTask: (id, title) => calls.push(['setTask', id, title]),
   subscribe: (fn) => { subs++; fn(view); },
 };
-const fns = new Function('$', 'pomo', 'document', body + '\nreturn { wirePomo, drawPomo };')((q) => els[q] || null, pomo, document);
+// 外壳的桥（第五十一轮，迷你番茄钟）：浏览器里没有；桌面应用里有
+let bridge = null;
+const posted = [], toasts = [];
+const fns = new Function('$', 'pomo', 'document', 'miniBridge', 'toast', body + '\nreturn { wirePomo, drawPomo };')(
+  (q) => els[q] || null, pomo, document, () => bridge, (m) => toasts.push(m));
 
 let fail = 0;
 function judge(name, cond, detail) {
@@ -54,6 +58,7 @@ const T = () => ({ time: els['#zq-pomo-time'].textContent, phase: els['#zq-pomo-
 fns.wirePomo();
 fns.wirePomo();   // 看板重新取（换周、记完一个、跨零点）又跑一遍
 judge('看板重新取几遍，按钮只接一次、只订一次', subs === 1, subs);
+judge('浏览器里（没有外壳的桥）：「缩小到桌面」不出现', els['#zq-pomo-mini'].hidden === true && !els['#zq-pomo-mini'].onclick);
 let t = T();
 judge('待开始：时间是下拉框的时长、环是空的（圆头的那个点也藏起来）、按钮写「开始」', t.time === '25:00' && t.phase === '待开始' && t.btn === '开始' && !t.minDisabled && /^0\.0 /.test(t.ring) && attrs['ring.visibility'] === 'hidden', t);
 els['#zq-pomo-min'].value = '45';
@@ -93,6 +98,16 @@ fns.drawPomo(view);
 judge('做完了：写「已完成」，时间回到下拉框的时长、可以再开始', T().phase === '已完成' && T().time === '60:00' && T().btn === '开始' && !T().minDisabled, T());
 els['#zq-pomo-reset'].onclick();
 judge('重置：交给壳', JSON.stringify(calls.pop()) === '["reset"]', calls);
+
+// 桌面应用里：同一个卡片换一个页面实例（按钮只接一次，所以重新做一份元素）
+els['#zq-pomo-start'] = node('start2'); els['#zq-pomo-mini'] = node('mini2', { hidden: true });
+bridge = { postMessage: (m) => posted.push(m) };
+fns.wirePomo();
+judge('桌面应用里（看得到 zqMini 这座桥）：「缩小到桌面」出现，点了告诉外壳 shrink',
+  els['#zq-pomo-mini'].hidden === false && (els['#zq-pomo-mini'].onclick(), JSON.stringify(posted) === '[{"action":"shrink"}]'), { hidden: els['#zq-pomo-mini'].hidden, posted });
+bridge.postMessage = () => { throw new Error('外壳没有回应'); };
+els['#zq-pomo-mini'].onclick();
+judge('外壳不在了：点了说出来，不是没反应', toasts.some((t) => /没能缩小到桌面/.test(t)), toasts);
 
 console.log(fail ? fail + ' FAIL' : 'ALL-GREEN');
 process.exit(fail ? 1 : 0);

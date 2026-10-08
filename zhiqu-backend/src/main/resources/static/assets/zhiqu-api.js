@@ -120,6 +120,10 @@
   function desktopBridge() {
     try { return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.zqNotify || null; } catch (e) { return null; }
   }
+  /** 迷你番茄钟的桥（第五十一轮）：桌面应用的外壳给的，浏览器里没有 —— 看板上的「缩小到桌面」只在有它时出现，胶囊上的「展开」有它就交给外壳 */
+  function miniBridge() {
+    try { return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.zqMini || null; } catch (e) { return null; }
+  }
   function askNotifyPermission() {
     var bridge = desktopBridge();
     if (bridge) { try { bridge.postMessage({ action: 'authorize' }); } catch (e) {} return; }
@@ -1952,7 +1956,7 @@
     $: $, $all: $all, pickFile: pickFile, empty: empty, fmtDate: fmtDate, hm: hm, d10: d10, updateSidebarUser: updateSidebarUser, normalizeModelList: normalizeModelList,
     planCategory: planCategory, planCategoryOptions: planCategoryOptions, freqLabel: freqLabel,
     today: today, latestOnly: latestOnly, keepDraft: keepDraft, writeKey: writeKey, qKey: qKey, pLabel: pLabel, openTaskForm: openTaskForm,
-    weekRange: weekRange, zoneNote: zoneNote, updatePomoCount: updatePomoCount, pomo: pomo,
+    weekRange: weekRange, zoneNote: zoneNote, updatePomoCount: updatePomoCount, pomo: pomo, miniBridge: miniBridge,
     API: API, token: token, popMenu: popMenu, drafts: drafts, renderMarkdown: renderMarkdown, renderMathIn: renderMathIn,
     REQUEST_TIMEOUT_MS: REQUEST_TIMEOUT_MS, role: role, requestError: requestError, redirectToLogin: redirectToLogin, nowMs: nowMs,
     serverTime: serverTime, highlightCode: highlightCode,

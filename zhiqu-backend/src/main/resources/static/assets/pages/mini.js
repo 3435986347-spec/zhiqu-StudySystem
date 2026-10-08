@@ -1,12 +1,12 @@
 // 迷你番茄钟（第五十轮，docs/mini-pomodoro-plan.md 第 2 步）—— mini.html 的页面模块。形状见 pages/admin.js 的开头。
 // 钟在壳里（zhiqu-api.js 的 pomo，第四十九轮）：迷你窗和主窗口是同一份登录、同一份 localStorage，看的是同一个钟 —— 这里只画胶囊、把按钮交给壳。
-// 「今天第 N 轮」也是壳填的（updatePomoCount 认 #zq-pomo-round）。第 3 步 macOS 外壳把这一页装进悬浮面板，「展开」经 zqMini 这座桥告诉外壳；
-// 浏览器里（没有那座桥）直接去看板。
+// 「今天第 N 轮」也是壳填的（updatePomoCount 认 #zq-pomo-round）。第 3 步（第五十一轮）macOS 外壳把这一页装进悬浮面板，「展开」经 zqMini 这座桥
+// （壳的 miniBridge）告诉外壳；浏览器里（没有那座桥）直接去看板。
 // dayReload：开着跨过业务日期的零点，「今天第 N 轮」从 1 重新数。
 
-let $, pomo, icon, updatePomoCount;
+let $, pomo, icon, updatePomoCount, miniBridge;
 export function bind(sh) {
-  ({ $, pomo, icon, updatePomoCount } = sh);
+  ({ $, pomo, icon, updatePomoCount, miniBridge } = sh);
 }
 
 export const boots = { 'mini.html': (sh) => { bind(sh); return bootMini(); } };
@@ -21,11 +21,6 @@ async function bootMini() {
 var MINI_RING = 2 * Math.PI * 18;
 /** 暂停着、刚做完的时候，小字写什么（在跑 / 待开始写关联的任务） */
 var MINI_NOTE = { paused: '已暂停', done: '专注结束' };
-
-/** 外壳给的桥（第 3 步）：有就让外壳把主窗口叫回来 */
-function miniBridge() {
-  try { return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.zqMini || null; } catch (e) { return null; }
-}
 
 function wireMini() {
   var go = $('#zq-mini-go'), expand = $('#zq-mini-expand');

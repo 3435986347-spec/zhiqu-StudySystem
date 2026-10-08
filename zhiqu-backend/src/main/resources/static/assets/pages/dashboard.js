@@ -6,10 +6,10 @@
 // hm（时:分）第四十八轮才从壳里给过来：原来模块里直接调、壳却没给 —— 例行计划没填时间时一调就 ReferenceError，整个看板画不出来（PageModulesTest）
 // pomo（番茄钟的钟）第四十九轮起在壳里：换一页、开两个标签页、以后的迷你窗都是同一个钟，这里只画卡片、把按钮交过去
 let api, esc, $, $all, empty, safe, toast, state, today, weekRange, zoneNote, normalizeTask, qKey, qLabel, pLabel, sLabel, fmtDate, hm,
-  openTaskForm, updatePomoCount, pomo;
+  openTaskForm, updatePomoCount, pomo, miniBridge;
 export function bind(sh) {
   ({ api, esc, $, $all, empty, safe, toast, state, today, weekRange, zoneNote, normalizeTask, qKey, qLabel, pLabel, sLabel, fmtDate, hm,
-    openTaskForm, updatePomoCount, pomo } = sh);
+    openTaskForm, updatePomoCount, pomo, miniBridge } = sh);
 }
 
 export const boots = { 'dashboard.html': (sh) => { bind(sh); return bootDashboard(); } };
@@ -100,6 +100,12 @@ function wirePomo() {
     pomo.start({ minutes: parseInt(min.value, 10), taskId: task.value ? Number(task.value) : null, taskTitle: task.value ? task.options[task.selectedIndex].text : '' });
   };
   if (reset) reset.onclick = function () { pomo.reset(); };
+  // 「缩小到桌面」（第五十一轮，迷你番茄钟）：只在桌面应用里有 —— 外壳把主窗口藏起来、桌面上只留一个悬浮的胶囊（mini.html）
+  var shrink = $('#zq-pomo-mini'), bridge = miniBridge();
+  if (shrink && bridge) {
+    shrink.hidden = false;
+    shrink.onclick = function () { try { bridge.postMessage({ action: 'shrink' }); } catch (e) { toast('没能缩小到桌面：' + ((e && e.message) || '外壳没有回应'), 'error'); } };
+  }
   min.onchange = function () { drawPomo(pomo.view()); };
   task.onchange = function () { pomo.setTask(task.value ? Number(task.value) : null, task.value ? task.options[task.selectedIndex].text : ''); };
   pomo.subscribe(drawPomo);

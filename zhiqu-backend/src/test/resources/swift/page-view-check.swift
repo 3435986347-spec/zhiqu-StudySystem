@@ -50,6 +50,9 @@ var authorizeCalls = 0
 web.deliverNotification = { title, body, tag in delivered.append(title + "|" + body + "|" + tag) }
 web.requestNotificationAuthorization = { authorizeCalls += 1 }
 web.reportFailure = { message, _ in failures.append(message) }
+// 迷你番茄钟的桥（第五十一轮）：外壳换窗口的回调，换成记下来
+var miniActions: [String] = []
+web.onMini = { miniActions.append($0) }
 
 let html = """
 <html><body><input id=one type=file><input id=many type=file multiple><script>
@@ -171,6 +174,82 @@ step("external.loc", { location = ""; readLocation() }, until: { !location.isEmp
 step("external.report", {
     out("external.opened", opened.first?.absoluteString ?? "none")
     out("external.stayed", location == origin)
+}, until: { true })
+
+// 10. 迷你番茄钟的桥：只认 shrink / expand，交给外壳；别的（错的 action、不是对象、通知那一套）不理，也不串到通知那边
+step("mini", {
+    js("""
+      const m = window.webkit.messageHandlers.zqMini;
+      m.postMessage({action: 'shrink'});
+      m.postMessage({action: 'quit'});
+      m.postMessage('expand');
+      m.postMessage({action: 'notify', title: '不该发', body: 'x'});
+      m.postMessage({action: 'expand'});
+    """)
+}, until: { miniActions.count >= 2 })
+step("mini.report", {
+    out("mini.actions", miniActions.joined(separator: ","))
+    out("mini.noNotify", !delivered.contains { $0.hasPrefix("不该发") })
+}, until: { true })
+
+// 11. 主窗口和迷你窗是两个 PageView、共用一份网站数据（外壳里都是 .default()）：一边写 localStorage，另一边读得到 ——
+//     迷你窗和主窗口看同一个钟，靠的就是这一条。浏览器的锁两边是不是同一把（到点只响一次靠它）。
+//     storage 事件实测不在两个 WKWebView 之间传（2026-10-09，放进窗口里也不传）：只记下来，页面靠一秒一跳和 visibilitychange
+let shared = WKWebsiteDataStore.nonPersistent()
+let inboxA = Inbox(), inboxB = Inbox()
+let pageA = PageView(frame: NSRect(x: 0, y: 0, width: 300, height: 68), persistent: false, dataStore: shared)
+let pageB = PageView(frame: NSRect(x: 0, y: 0, width: 300, height: 68), persistent: false, dataStore: shared)
+pageA.configuration.userContentController.add(inboxA, name: "t")
+pageB.configuration.userContentController.add(inboxB, name: "t")
+let twin = """
+<html><body><script>
+function say(x){ window.webkit.messageHandlers.t.postMessage(String(x)); }
+window.addEventListener('storage', function(e){ say('storage:' + e.key + '=' + e.newValue); });
+say('ready');
+</script></body></html>
+"""
+step("twin.load", { pageA.loadHTMLString(twin, baseURL: URL(string: origin)); pageB.loadHTMLString(twin, baseURL: URL(string: origin)) },
+     until: { inboxA.messages.contains("ready") && inboxB.messages.contains("ready") })
+var wroteAt = Date()
+step("twin.write", { wroteAt = Date(); pageA.evaluateJavaScript("localStorage.setItem('zq.pomo.1', 'running')") { _, _ in } },
+     until: { inboxB.messages.contains { $0.hasPrefix("storage:") } || Date().timeIntervalSince(wroteAt) > 1.5 })
+var twinRead = ""
+step("twin.read", { pageB.evaluateJavaScript("localStorage.getItem('zq.pomo.1')") { r, _ in twinRead = (r as? String) ?? "null" } },
+     until: { !twinRead.isEmpty })
+step("twin.lock", {
+    pageA.evaluateJavaScript("navigator.locks.request('zq-pomodoro', () => new Promise(r => setTimeout(r, 3000))); 1") { _, _ in }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        pageB.evaluateJavaScript("navigator.locks.request('zq-pomodoro', {ifAvailable: true}, l => { say('lock:' + (l ? 'free' : 'held')); }); 1") { _, _ in }
+    }
+}, until: { inboxB.messages.contains { $0.hasPrefix("lock:") } })
+step("twin.report", {
+    out("twin.event", inboxB.messages.first { $0.hasPrefix("storage:") } ?? "none")
+    out("twin.read", twinRead)
+    out("twin.lock", inboxB.messages.first { $0.hasPrefix("lock:") } ?? "none")
+}, until: { true })
+
+// 12. 悬浮面板的设定（MiniPanel.swift）：建出来核对，不放到屏幕上
+step("panel", {
+    let page = PageView(frame: NSRect(origin: .zero, size: miniPanelSize), persistent: false)
+    let panel = makeMiniPanel(page: page)
+    out("panel.visible", panel.isVisible)
+    out("panel.floating", panel.level == .floating)
+    out("panel.nonactivating", panel.styleMask.contains(.nonactivatingPanel))
+    out("panel.borderless", !panel.styleMask.contains(.titled))
+    out("panel.allSpaces", panel.collectionBehavior.contains(.canJoinAllSpaces) && panel.collectionBehavior.contains(.fullScreenAuxiliary))
+    out("panel.clear", !panel.isOpaque && panel.backgroundColor.alphaComponent == 0 && !panel.hasShadow)
+    out("panel.staysWhenInactive", !panel.hidesOnDeactivate)
+    out("panel.canBecomeKey", panel.canBecomeKey)
+    out("panel.size", "\(Int(panel.frame.width))x\(Int(panel.frame.height))")
+    out("panel.autosave", panel.frameAutosaveName)
+    let content = panel.contentView!
+    let middle = content.hitTest(NSPoint(x: 150, y: 34))
+    let goButton = content.hitTest(NSPoint(x: 35, y: 34))
+    let expand = content.hitTest(NSPoint(x: miniPanelSize.width - 31, y: 34))
+    out("panel.dragMiddle", middle is MiniDragZone && (middle?.mouseDownCanMoveWindow ?? false))
+    out("panel.buttonsClickable", !(goButton is MiniDragZone) && (goButton?.isDescendant(of: page) ?? false)
+        && !(expand is MiniDragZone) && (expand?.isDescendant(of: page) ?? false))
+    UserDefaults.standard.removeObject(forKey: "NSWindow Frame " + miniPanelAutosaveName)   // 检查程序不留下记住的位置
 }, until: { true })
 
 // 一步等不到就记一笔、接着走：后面那些键照样打出来，Java 那边的断言指得到具体是哪件事没做到

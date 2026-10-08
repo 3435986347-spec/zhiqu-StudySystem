@@ -274,9 +274,8 @@ button.zq-user{width:100%;border:none;background:transparent;color:inherit;font:
 .zq-user > div:not(.zq-avatar){flex:1;}
 .zq-user.active,.zq-user[aria-expanded="true"]{background:var(--zq-sb-active-bg);}
 .zq-user:focus-visible{outline:none;box-shadow:var(--zq-focus);}
-/* 番茄钟在跑 / 暂停着：头像上面一行「专注中 18:42」（第四十九轮，全站共用一个钟）；暂停时变灰。display:flex 会盖过 hidden，单独写回去 */
+/* 番茄钟在跑 / 暂停着：头像上面一行「专注中 18:42」（第四十九轮，全站共用一个钟）；暂停时变灰。不跑的时候 hidden（全局那条 [hidden] 带 !important，压得过这里的 display:flex） */
 .zq-side-pomo{display:flex;align-items:center;gap:10px;min-height:32px;padding:6px 10px;margin-top:8px;border-radius:var(--zq-rs);font-size:var(--zq-fs-sm);color:var(--zq-sb-active-text);text-decoration:none;}
-.zq-side-pomo[hidden]{display:none;}
 .zq-side-pomo:hover{background:var(--zq-sb-active-bg);}
 .zq-side-pomo:focus-visible{outline:none;box-shadow:var(--zq-focus);}
 .zq-side-pomo .zq-ic{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;}

@@ -6,11 +6,11 @@
   <title>看板 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261009-mini" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261009-mini">
-  <link rel="manifest" href="manifest.json?v=20261009-mini">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261009-float" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261009-float">
+  <link rel="manifest" href="manifest.json?v=20261009-float">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261009-mini">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261009-float">
 </head>
 <body>
   <div class="zq-app">
@@ -97,6 +97,7 @@
               <div style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap;">
                 <button class="zq-btn" id="zq-pomo-start" style="height:30px;">开始</button>
                 <button class="zq-btn-ghost" id="zq-pomo-reset" style="height:30px;">重置</button>
+                <button class="zq-btn-ghost" id="zq-pomo-mini" style="height:30px;" title="主窗口藏起来，桌面上只留一个总在最前的小番茄钟" hidden>缩小到桌面</button>
               </div>
               <div id="zq-pomo-count" style="font-size:12px; color:var(--zq-text2); margin-top:12px; padding-top:10px; border-top:1px solid var(--zq-border-soft);">今日：—</div>
             </div>
@@ -111,7 +112,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261009-mini"></script>
-  <script src="assets/zhiqu-api.js?v=20261009-mini"></script>
+  <script src="assets/zhiqu-ui.js?v=20261009-float"></script>
+  <script src="assets/zhiqu-api.js?v=20261009-float"></script>
 </body>
 </html>

@@ -81,6 +81,58 @@ class DesktopPageViewTest {
         assertEquals(String.valueOf(80 + 1 + 240 + 1 + 1), out.get("bridge.capped"), "标题 80 字、正文 240 字之外要截掉");
     }
 
+    /**
+     * 第五十一轮：迷你番茄钟（docs/mini-pomodoro-plan.md 第 3 步）。看板上「缩小到桌面」、胶囊上「展开」经 {@code zqMini} 这座桥告诉外壳；
+     * 迷你窗是另一个 PageView，和主窗口共用一份网站数据 —— 看的是同一个钟。面板建出来核对设定，不放到屏幕上（用户说过预览不要弹窗口）。
+     */
+    @Test
+    @DisplayName("迷你番茄钟：zqMini 只认 shrink / expand；两个页面共用一份网站数据时 localStorage 互相看得到；悬浮面板总在最前、不抢焦点、透明、中间拖、两边的按钮点得到")
+    void 迷你番茄钟() throws Exception {
+        Map<String, String> out = runCheck();
+        assertEquals("shrink,expand", out.get("mini.actions"), "zqMini 转给外壳的不对（只认 {action:'shrink'} / {action:'expand'}，别的一律不理）");
+        assertEquals("true", out.get("mini.noNotify"), "zqMini 上的消息串到了通知那边");
+        assertEquals("running", out.get("twin.read"), "两个页面共用一份网站数据时读不到对方写的 localStorage —— 迷你窗和主窗口不是同一个钟");
+        // 到点「只响一次」靠的是这把锁（只记一次另有幂等键兜着）：两个 WKWebView 拿的是同一把（2026-10-09 实测）
+        assertEquals("lock:held", out.get("twin.lock"), "主窗口和迷你窗的浏览器锁不是同一把 —— 到点两边可能各响一次");
+        // storage 事件实测不在两个 WKWebView 之间传（放进窗口里也不传）：页面不靠它 —— 一秒一跳、切回来（visibilitychange）马上按存的刷一次。
+        // 只要求这一步走完了；哪天 WebKit 开始传了，这里不会红
+        assertTrue(out.containsKey("twin.event"), "storage 事件那一步没走完");
+        assertEquals("false", out.get("panel.visible"), "建面板的时候就放到屏幕上了");
+        assertEquals("true", out.get("panel.floating"), "面板不是总在最前");
+        assertEquals("true", out.get("panel.nonactivating"), "点面板会把应用切到前台（抢了别的应用的焦点）");
+        assertEquals("true", out.get("panel.borderless"), "面板有标题栏");
+        assertEquals("true", out.get("panel.allSpaces"), "换个桌面空间、别的应用全屏时迷你窗就不见了");
+        assertEquals("true", out.get("panel.clear"), "面板不透明 / 有方的影子 —— 胶囊外面露出一块方的");
+        assertEquals("true", out.get("panel.staysWhenInactive"), "应用切到后台时面板跟着藏起来 —— 迷你窗恰恰是给在别的应用里干活的时候看的");
+        assertEquals("true", out.get("panel.canBecomeKey"), "无边框面板当不了键窗口：胶囊上的按钮用键盘按不到");
+        assertEquals("300x68", out.get("panel.size"));
+        assertEquals("ZhiquMiniPanel", out.get("panel.autosave"), "面板不记位置");
+        assertEquals("true", out.get("panel.dragMiddle"), "胶囊中间拖不动（WKWebView 把鼠标事件吃了）");
+        assertEquals("true", out.get("panel.buttonsClickable"), "拖动区域盖住了开始 / 暂停或展开按钮");
+    }
+
+    @Test
+    @DisplayName("外壳接上迷你窗：两个页面的 zqMini 都接到外壳；缩小时主窗口藏、面板出，展开 / 点 Dock 图标 / 点通知都回到主窗口；打包脚本编进 MiniPanel.swift")
+    void 外壳接上迷你窗() throws Exception {
+        String shell = SourceText.stripComments(Files.readString(SHELL.resolve("ZhiquShell.swift"), StandardCharsets.UTF_8));
+        assertTrue(shell.contains("webView.onMini = { [weak self] action in self?.mini(action) }"), "主窗口的页面说「缩小到桌面」，外壳没接");
+        assertTrue(shell.contains("page.onMini = { [weak self] action in self?.mini(action) }"), "迷你窗的页面说「展开」，外壳没接");
+        assertTrue(shell.contains("miniPanel = makeMiniPanel(page: page)") && shell.contains("/mini.html"), "迷你窗不是 MiniPanel.swift 建的面板、或者没打开 mini.html");
+        String showMini = shell.substring(shell.indexOf("private func showMini()"), shell.indexOf("private func showMain()"));
+        assertTrue(showMini.contains("window.orderOut(nil)") && showMini.contains("miniPanel?.orderFrontRegardless()"),
+                "缩小时要主窗口藏起来、面板出来（不抢焦点地出来）：\n" + showMini);
+        String showMain = shell.substring(shell.indexOf("private func showMain()"), shell.indexOf("func applicationShouldHandleReopen"));
+        assertTrue(showMain.contains("miniPanel?.orderOut(nil)") && showMain.contains("window.makeKeyAndOrderFront(nil)"), "展开时面板没收、主窗口没回来：\n" + showMain);
+        assertTrue(shell.contains("func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {\n        showMain()"),
+                "迷你模式下点 Dock 图标，主窗口不出来");
+        assertTrue(shell.contains("func applicationDidBecomeActive(_ notification: Notification) {\n        if miniPanel?.isVisible == true && !window.isVisible { showMain() }"),
+                "迷你模式下 Cmd+Tab 切回应用，什么窗口都没有");
+        String notified = shell.substring(shell.indexOf("didReceive response: UNNotificationResponse"));
+        assertTrue(notified.substring(0, notified.indexOf("completionHandler()")).contains("showMain()"), "迷你模式下点通知，主窗口不出来");
+        String script = Files.readString(Path.of("../deploy/desktop/package-macos-native.sh"), StandardCharsets.UTF_8);
+        assertTrue(script.contains("macos-shell/MiniPanel.swift\""), "打包脚本没把 MiniPanel.swift 编进外壳");
+    }
+
     @Test
     @DisplayName("外壳用的就是 PageView：不另设代理（uiDelegate 是 weak 的，另设一个当场就被释放）")
     void 外壳接上的是PageView() throws Exception {
@@ -106,9 +158,10 @@ class DesktopPageViewTest {
         Path src = Files.createDirectories(tmp.resolve("src"));
         Files.copy(Path.of("src/test/resources/swift/page-view-check.swift"), src.resolve("main.swift"));
         Files.copy(SHELL.resolve("PageView.swift"), src.resolve("PageView.swift"));
+        Files.copy(SHELL.resolve("MiniPanel.swift"), src.resolve("MiniPanel.swift"));
         Path bin = tmp.resolve("check");
         run(600, "/usr/bin/swiftc", "-O", "-framework", "AppKit", "-framework", "WebKit", "-framework", "UserNotifications", "-o", bin.toString(),
-                src.resolve("main.swift").toString(), src.resolve("PageView.swift").toString());
+                src.resolve("main.swift").toString(), src.resolve("PageView.swift").toString(), src.resolve("MiniPanel.swift").toString());
         Path work = Files.createDirectories(tmp.resolve("work"));
         String text = run(90, bin.toString(), work.toString());
         Map<String, String> map = new HashMap<>();

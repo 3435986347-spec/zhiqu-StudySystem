@@ -36,8 +36,10 @@ const pomo = {
 };
 const window = {};
 const location = { href: 'mini.html' };
-const fns = new Function('$', 'pomo', 'icon', 'window', 'location', body.replace(/^export /gm, '') + '\nreturn { wireMini, drawMini };')(
-  (q) => els[q] || null, pomo, (n) => '<svg ' + n + '>', window, location);
+// 壳的 miniBridge（第五十一轮起在壳里）：照它的样子读 window.webkit
+const miniBridge = () => (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.zqMini) || null;
+const fns = new Function('$', 'pomo', 'icon', 'miniBridge', 'window', 'location', body.replace(/^export /gm, '') + '\nreturn { wireMini, drawMini };')(
+  (q) => els[q] || null, pomo, (n) => '<svg ' + n + '>', miniBridge, window, location);
 
 let fail = 0;
 function judge(name, cond, detail) {

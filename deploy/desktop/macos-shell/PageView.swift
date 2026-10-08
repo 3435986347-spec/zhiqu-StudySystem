@@ -72,11 +72,15 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
     var requestNotificationAuthorization: () -> Void = {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { _, _ in }
     }
+    /// 迷你番茄钟（第五十一轮）：页面经 `window.webkit.messageHandlers.zqMini` 说「缩小到桌面」（shrink，看板的番茄钟卡片上）
+    /// 或「展开」（expand，迷你窗的胶囊上），外壳换窗口。页面看得到这座桥才显示「缩小到桌面」—— 浏览器里没有。
+    var onMini: (String) -> Void = { _ in }
 
     /// persistent = false 只给检查程序用：不碰真实的 localStorage（登录态存在那里）。
-    init(frame: NSRect, persistent: Bool = true) {
+    /// dataStore 也只给检查程序用：两个页面共用一份不落盘的网站数据，像主窗口和迷你窗共用 .default() 那样。
+    init(frame: NSRect, persistent: Bool = true, dataStore: WKWebsiteDataStore? = nil) {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = persistent ? .default() : .nonPersistent()   // localStorage 要持久化 —— 登录态存在那里
+        config.websiteDataStore = dataStore ?? (persistent ? .default() : .nonPersistent())   // localStorage 要持久化 —— 登录态存在那里
         // 给 User-Agent 追加应用标识。不加的话 WKWebView 发的是 Safari 式 UA，
         // 「设置 → 账号与安全」的登录设备只能把它认成浏览器：用户明明从应用登录，却显示
         // 「Safari · macOS」。前端 shortUA() 认这个标记。
@@ -85,6 +89,7 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         navigationDelegate = self
         uiDelegate = self
         config.userContentController.add(WeakMessageHandler(self), name: "zqNotify")
+        config.userContentController.add(WeakMessageHandler(self), name: "zqMini")
         setValue(false, forKey: "drawsBackground")
     }
 
@@ -92,13 +97,16 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 
     // MARK: 页面里的提醒 → macOS 通知
 
-    /// 页面发来的：{action: "notify", title, body, tag} 或 {action: "authorize"}。别的一律不理（页面内容不可信，只接这两种）。
+    /// 页面发来的：zqNotify 的 {action: "notify", title, body, tag} / {action: "authorize"}，zqMini 的 {action: "shrink"} / {action: "expand"}。
+    /// 别的一律不理（页面内容不可信，只接这几种）。
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "zqNotify", let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
-        switch action {
-        case "authorize":
+        guard let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
+        switch (message.name, action) {
+        case ("zqMini", "shrink"), ("zqMini", "expand"):
+            onMini(action)
+        case ("zqNotify", "authorize"):
             requestNotificationAuthorization()
-        case "notify":
+        case ("zqNotify", "notify"):
             let title = String(((body["title"] as? String) ?? "知趣").prefix(80))
             let text = String(((body["body"] as? String) ?? "").prefix(240))
             let tag = String(((body["tag"] as? String) ?? title).prefix(80))
