@@ -311,7 +311,9 @@ public class WikiToolAgent {
                 return err;
             }
         }
-        String[] words = query.isEmpty() ? new String[0] : query.split("\\s+");
+        // 按 [\s\u3000] 拆：中文输入法打出来的全角空格（U+3000）不在 \s 里 —— 「27　考研」会被当成一个词，又搜不到（第四十七轮 review）。
+        // 两头的全角空格不用另外去：拆出来的空串哪一页都「中」
+        String[] words = query.isEmpty() ? new String[0] : query.split("[\\s\\u3000]+");
         List<Map<String, Object>> hits = new ArrayList<>();
         int total = 0;
         for (Map<String, Object> p : knowledgeService.listPages(userId)) {

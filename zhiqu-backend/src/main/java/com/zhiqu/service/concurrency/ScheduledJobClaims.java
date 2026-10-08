@@ -25,4 +25,9 @@ public class ScheduledJobClaims {
     public boolean claim(String job, String slot) {
         return jdbc.update("INSERT IGNORE INTO scheduled_job_claim(job, slot) VALUES (?, ?)", job, slot) == 1;
     }
+
+    /** 认领了却没做成（还什么都没发出去就失败了）：放回去，下一趟（自己或别的实例）再认领。 */
+    public void release(String job, String slot) {
+        jdbc.update("DELETE FROM scheduled_job_claim WHERE job = ? AND slot = ?", job, slot);
+    }
 }

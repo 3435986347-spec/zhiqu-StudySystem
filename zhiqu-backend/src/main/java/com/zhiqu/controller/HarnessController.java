@@ -197,7 +197,13 @@ public class HarnessController {
         try {
             streams.execute(() -> {
                 try {
-                    gateway.stream(userId, body, (name, data) -> emitter.send(SseEmitter.event().name(name).data(data)));
+                    gateway.stream(userId, body, (name, data) -> {
+                        // 结束事件之前先停心跳：done / error 后面不该再有 :ping（SseHeartbeats.start 的注释）
+                        if ("done".equals(name) || "error".equals(name)) {
+                            beat.close();
+                        }
+                        emitter.send(SseEmitter.event().name(name).data(data));
+                    });
                     beat.close();
                     emitter.complete();
                 } catch (HarnessModelGateway.ClientGone e) {

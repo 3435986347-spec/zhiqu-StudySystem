@@ -116,16 +116,14 @@ public class HarnessRemoteTools {
         if (StudyPlanTool.NAME.equals(name)) {
             return studyPlan(userId, clientSessionId, args);
         }
-        if (LIST_TASKS.equals(name)) {
+        if (LIST_TASKS.equals(name) || UPDATE_TASK_STATUS.equals(name)) {
+            // 和网页同一个开关：用户关掉了「让 AI 读我的任务」，这里也读不到 —— 说清楚，免得模型去编。
+            // 改状态一样挡：它的回复里带着任务标题，拿编号一个个试就能把标题读出来（第四十七轮 review 照出来的）
             com.zhiqu.entity.SysUser user = users.selectById(userId);
             if (user == null || !user.aiReadsTasks()) {
-                // 和网页同一个开关：用户关掉了「让 AI 读我的任务」，这里也读不到 —— 说清楚，免得模型去编
                 return result(com.zhiqu.service.ai.AssistantTaskContext.DECLINED);
             }
-            return result(taskReader.read(userId, true).block());
-        }
-        if (UPDATE_TASK_STATUS.equals(name)) {
-            return updateTaskStatus(userId, args);
+            return LIST_TASKS.equals(name) ? result(taskReader.read(userId, true).block()) : updateTaskStatus(userId, args);
         }
         if (READ_MEMORY.equals(name)) {
             String text = memory.read(userId);

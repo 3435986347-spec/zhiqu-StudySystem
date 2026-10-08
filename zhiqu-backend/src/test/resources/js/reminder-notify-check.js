@@ -62,5 +62,31 @@ webAsk.fns.askNotifyPermission();
 webAsk.fns.pageNotify('专注结束', '休息一下');
 judge('浏览器、还没授权：点击时问一次，没授权前不弹', [webAsk.asked(), webAsk.made.length, webAsk.toasts.length], [1, 0, 1]);
 
+// ── 几个标签页同时到点（第四十七轮 review）：「读已提醒 → 记下 → 提醒」在浏览器的锁里做 ──
+{
+  const checkSrc = grab('  function reminderText(r) {', '  function watchReminders() {');
+  function tab(locks) {
+    const store = {}, notified = [], requested = [];
+    const localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+    // 和真的 Web Locks 一样：回调出的错落在返回的 promise 上，不往外抛
+    const navigator = locks ? { locks: { request: (name, cb) => { requested.push(name); try { return Promise.resolve(cb()); } catch (e) { return Promise.reject(e); } } } } : {};
+    const api = new Function('localStorage', 'navigator', 'state', 'nowMs', 'dueReminders', 'pageNotify', 'api',
+      checkSrc + '\nreturn { checkDueReminders, set: (l) => { upcomingReminders = l; } };')(
+      localStorage, navigator, { user: { id: 1 } }, () => now, dueReminders, (t, b) => notified.push(b), {});
+    return { api, notified, requested, store };
+  }
+  const withLock = tab(true);
+  withLock.api.set([{ id: 1, scheduledAt: '2026-10-04T09:00:00', title: '交周报' }]);
+  withLock.api.checkDueReminders();
+  judge('有 Web Locks：在锁「zq-reminder-check」里查（两个标签页排队，不会都读到「没提醒过」）', withLock.requested, ['zq-reminder-check']);
+  judge('在锁里照样提醒了一次', withLock.notified.length, 1);
+  withLock.api.checkDueReminders();
+  judge('提醒过的不再提醒', withLock.notified.length, 1);
+  const noLock = tab(false);
+  noLock.api.set([{ id: 2, scheduledAt: '2026-10-04T09:00:00', title: '回邮件' }]);
+  noLock.api.checkDueReminders();
+  judge('没有 Web Locks 的浏览器：照旧直接查、直接提醒', noLock.notified.length, 1);
+}
+
 if (fail) { console.log(fail + ' 条红'); process.exit(1); }
 console.log('ALL-GREEN');

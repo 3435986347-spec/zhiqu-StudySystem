@@ -14,6 +14,11 @@ import { VERSION } from './version.js';
 export const EXPOSED_TOOLS = ['search_wiki', 'read_wiki_page', 'create_wiki_patch', 'list_tasks', 'update_task_status',
   'create_study_plan', 'read_memory', 'propose_memory'];
 const READ_ONLY = new Set(['search_wiki', 'read_wiki_page', 'list_tasks', 'read_memory']);
+/**
+ * 直接改掉已有数据的（不是草稿）。MCP 的 destructiveHint 为假的意思是「只做加法」—— 改状态不是加法（完成的能改回待办），
+ * 标成假的话，有的客户端会不问就放行（第四十七轮 review）。命令行自己那边由 confirmTaskStatus 问。
+ */
+const DIRECT_WRITE = new Set(['update_task_status']);
 const SUPPORTED_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const NOT_LOGGED_IN = '还没有登录知趣·象限：先在终端运行 zhiqu login（登录一次就行，令牌存在 ~/.zhiqu/config.json）。';
 
@@ -42,7 +47,7 @@ export function createMcpServer({ api, loggedIn = true, sessionId = `mcp-${crypt
       name: f.name,
       description: f.description || '',
       inputSchema: f.parameters && f.parameters.type === 'object' ? f.parameters : { type: 'object', properties: {} },
-      annotations: { readOnlyHint: READ_ONLY.has(f.name), destructiveHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: READ_ONLY.has(f.name), destructiveHint: DIRECT_WRITE.has(f.name), openWorldHint: false },
     }));
     return tools;
   }

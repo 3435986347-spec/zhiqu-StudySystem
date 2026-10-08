@@ -10,6 +10,7 @@
 //      只有图标，所以名字靠 aria-label，而且要跟着收起 / 展开换。
 //   4. 两侧可收起的面板（AI 助手、Wiki，第四十四轮）：开关只是面板图标（原来收起后的竖条上竖排着面板的名字），名字在提示和 aria-label 里。
 //   5. 悬停提示（第四十五轮）：桌面应用的 WKWebView 不显示原生的 title 提示（用户：「鼠标悬停的时候也没有显示名字」），zhiqu-ui.js 自己画。
+//   6. 文件拖到页面上没人接的地方（第四十七轮 review）：浏览器 / 桌面应用默认会「打开那个文件」、整页换掉 —— 没人接的地方不让放。
 //   由 PageSwitchSmoothnessTest 调用；打印 ALL-GREEN 且退出码 0 = 全绿。
 const fs = require('fs');
 const vm = require('vm');
@@ -46,7 +47,7 @@ function storage(init) {
 function load(pathname, session, local, panels) {
   const html = el('html');
   const side = el('aside');
-  const docH = {}, timers = [];
+  const docH = {}, winH = {}, timers = [];
   const document = {
     readyState: 'complete', documentElement: html, body: el('body'),
     getElementById: (id) => (id === 'zq-side' ? side : null),
@@ -58,13 +59,13 @@ function load(pathname, session, local, panels) {
     localStorage: storage(local), sessionStorage: storage(session),
     matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {} }),
     innerWidth: 1440, innerHeight: 900,
-    addEventListener() {}, clearTimeout: (id) => { if (id && timers[id - 1]) timers[id - 1].live = false; },
+    addEventListener: (t, f) => { (winH[t] = winH[t] || []).push(f); }, clearTimeout: (id) => { if (id && timers[id - 1]) timers[id - 1].live = false; },
     setTimeout: (f, ms) => { timers.push({ f, ms, live: true }); return timers.length; },
   };
   window.window = window;
   const ctx = vm.createContext(Object.assign({ console }, window));
   vm.runInContext(src, ctx, { filename: 'zhiqu-ui.js' });
-  return { html, side, ui: window.ZQUI, session: window.sessionStorage, docH, timers, body: document.body };
+  return { html, side, ui: window.ZQUI, session: window.sessionStorage, docH, winH, timers, body: document.body, document };
 }
 
 let fail = 0;
@@ -226,6 +227,49 @@ ms = runTimers();
 judge('提示：键盘走到上面时也出（立即）', ms[0] === 0 && tipOn() && tipEl().textContent === '收起导航栏', ms);
 fire('focusout', {});
 judge('提示：焦点走了就收', !tipOn());
+
+// 提示（第四十七轮 review 补的三条）
+const nb = hoverable({ title: '官网改版' });
+fire('pointerover', { pointerType: 'mouse', target: nb }); runTimers();
+fire('pointerout', { target: nb, relatedTarget: null });
+nb.setAttribute('title', '');   // 切回普通聊天：标题栏把 title 清空（ai-assistant.js 的 label.title = ''）
+fire('pointerover', { pointerType: 'mouse', target: nb }); runTimers();
+judge('提示：代码把 title 清空了就不再出（原来出的是上一个 Notebook 的名字）', !tipOn() && nb.getAttribute('data-zq-tip') === null, [tipOn(), nb.getAttribute('data-zq-tip')]);
+fire('pointerout', { target: nb, relatedTarget: null });
+const scrollH = (r.winH.scroll || []);
+const sb = hoverable({ title: '上传文件' });
+fire('pointerover', { pointerType: 'mouse', target: sb }); runTimers();
+const chatBox = el('div'); chatBox.contains = (x) => false;
+scrollH.forEach((f) => f({ target: chatBox }));
+judge('提示：别处在滚（AI 回答流式输出、对话区往下跟）不收', tipOn());
+const holder = el('div'); holder.contains = (x) => x === sb;
+scrollH.forEach((f) => f({ target: holder }));
+judge('提示：它所在的那一块滚了就收（提示会和它错开）', !tipOn());
+fire('pointerover', { pointerType: 'mouse', target: hoverable({ title: '联网' }) }); runTimers();
+scrollH.forEach((f) => f({ target: r.document }));
+judge('提示：整页滚了就收', !tipOn());
+
+// 6. 文件拖到没人接的地方
+function dragEv(types, extra = {}) {
+  return Object.assign({ prevented: false, defaultPrevented: false, dataTransfer: { types, dropEffect: 'copy' }, target: el('div'),
+    preventDefault() { this.prevented = true; } }, extra);
+}
+let dv = dragEv(['Files']);
+fire('dragover', dv);
+judge('拖文件：没人接的地方不让放（拦下 dragover、光标显示不能放）', dv.prevented && dv.dataTransfer.dropEffect === 'none', [dv.prevented, dv.dataTransfer.dropEffect]);
+let dp = dragEv(['Files']);
+fire('drop', dp);
+judge('拖文件：没人接的地方松手什么都不做（不让浏览器打开那个文件）', dp.prevented);
+let taken = dragEv(['Files'], { defaultPrevented: true });
+fire('dragover', taken);
+judge('拖文件：接文件的地方（对话栏）已经接了 —— 不动它的 dropEffect', !taken.prevented && taken.dataTransfer.dropEffect === 'copy');
+const fileInput = el('input'); fileInput.closest = (sel) => (sel.includes('input[type="file"]') ? fileInput : null);
+let toInput = dragEv(['Files'], { target: fileInput });
+fire('dragover', toInput);
+judge('拖文件：原生的文件选择框（Wiki 导入）自己接，不拦', !toInput.prevented && toInput.dataTransfer.dropEffect === 'copy');
+let words = dragEv(['text/plain']);
+fire('dragover', words);
+judge('拖的是一段字：不管', !words.prevented);
 
 console.log(fail === 0 ? '\nALL-GREEN' : '\nRED: ' + fail + ' 条');
 process.exit(fail === 0 ? 0 : 1);

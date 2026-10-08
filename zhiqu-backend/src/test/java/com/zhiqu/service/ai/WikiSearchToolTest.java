@@ -98,6 +98,8 @@ class WikiSearchToolTest {
         assertEquals(List.of("27考研"), titles(a.searchWiki(1L, args("27 考研", null))));
         assertEquals(List.of("27考研"), titles(a.searchWiki(1L, args("考研  真题", null))));
         assertEquals(List.of(), titles(a.searchWiki(1L, args("考研 首页", null))), "两个词不在同一页：不算中");
+        // 中文输入法的全角空格（U+3000）：Java 的 \\s 不认它（第四十七轮 review）
+        assertEquals(List.of("27考研"), titles(a.searchWiki(1L, args("27\u3000考研", null))), "全角空格也要拆开");
     }
 
     @Test

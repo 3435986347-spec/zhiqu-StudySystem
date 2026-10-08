@@ -172,6 +172,7 @@ class HarnessRemoteToolsTest {
     @Test
     @DisplayName("update_task_status：直接改（不是草稿），#12 和 12 都认；状态 / 编号不对、不是自己的任务都说清楚，不抛到协议层")
     void 改任务状态() {
+        when(users.selectById(1L)).thenReturn(userWithSwitch(null));
         com.zhiqu.entity.StudyTask t = new com.zhiqu.entity.StudyTask();
         t.setId(12L);
         t.setTitle("交周报");
@@ -189,5 +190,18 @@ class HarnessRemoteToolsTest {
         when(taskService.updateStatus(1L, 99L, 1)).thenThrow(new BusinessException("任务不存在"));
         String notMine = String.valueOf(tools.call(1L, "s1", "update_task_status", "{\"task_id\":99,\"status\":\"doing\"}").get("content"));
         assertTrue(notMine.startsWith("没有改成：任务不存在"), notMine);
+    }
+
+    @Test
+    @DisplayName("update_task_status 也跟着开关：关着时不改、也不回任务标题（第四十七轮 review：拿编号一个个试，回复里的标题就把关着的开关读穿了）")
+    void 改状态也跟着开关() {
+        when(users.selectById(1L)).thenReturn(userWithSwitch(0));
+        com.zhiqu.entity.StudyTask t = new com.zhiqu.entity.StudyTask();
+        t.setId(12L);
+        t.setTitle("季度汇报");
+        when(taskService.updateStatus(1L, 12L, 2)).thenReturn(t);
+        String off = String.valueOf(tools.call(1L, "s1", "update_task_status", "{\"task_id\":12,\"status\":\"done\"}").get("content"));
+        assertTrue(off.contains("关掉了「让 AI 读我的任务」") && !off.contains("季度汇报"), off);
+        verify(taskService, org.mockito.Mockito.never()).updateStatus(anyLong(), anyLong(), org.mockito.ArgumentMatchers.anyInt());
     }
 }

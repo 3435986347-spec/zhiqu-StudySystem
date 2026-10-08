@@ -53,6 +53,9 @@ test('列工具：只转 EXPOSED_TOOLS 里的；读的那几个标 readOnlyHint�
   assert.deepEqual(tools.map((t) => t.name).sort(), [...EXPOSED_TOOLS].sort());
   const by = Object.fromEntries(tools.map((t) => [t.name, t]));
   for (const n of ['search_wiki', 'read_wiki_page', 'list_tasks', 'read_memory']) assert.equal(by[n].annotations.readOnlyHint, true, n);
+  // 改任务状态直接生效、能把完成的改回待办：不是「只做加法」，标成 destructive，客户端才会照规矩问（第四十七轮 review）
+  assert.equal(by.update_task_status.annotations.destructiveHint, true);
+  for (const n of ['create_wiki_patch', 'create_study_plan', 'propose_memory']) assert.equal(by[n].annotations.destructiveHint, false, n);
   for (const n of ['update_task_status', 'create_wiki_patch', 'create_study_plan', 'propose_memory']) assert.equal(by[n].annotations.readOnlyHint, false, n);
   assert.equal(by.list_tasks.inputSchema.type, 'object');
 });

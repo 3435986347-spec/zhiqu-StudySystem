@@ -91,6 +91,23 @@ class ReminderClockTest {
     }
 
     @Test
+    @DisplayName("早上 8 点那一趟出错（还没发出去）：认领放回去、异常照样抛出去；8 点那一个小时里每 10 分钟再来一趟（第四十七轮 review）")
+    void 出错放回认领() throws Exception {
+        ReminderService service = mock(ReminderService.class);
+        RedisDistributedLockService locks = mock(RedisDistributedLockService.class);
+        com.zhiqu.service.concurrency.ScheduledJobClaims claims = mock(com.zhiqu.service.concurrency.ScheduledJobClaims.class);
+        when(claims.claim(anyString(), anyString())).thenReturn(true);
+        when(service.processDueReminders(any())).thenThrow(new IllegalStateException("库一时连不上"));
+        ReminderScheduler scheduler = new ReminderScheduler(service, locks, clock, claims);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, scheduler::sendDailyDdlReminders);
+        String day = LocalDateTime.now(SHANGHAI).toLocalDate().toString();
+        verify(claims).release("daily-reminder", day);
+        org.springframework.scheduling.annotation.Scheduled cron = ReminderScheduler.class.getMethod("sendDailyDdlReminders")
+                .getAnnotation(org.springframework.scheduling.annotation.Scheduled.class);
+        org.junit.jupiter.api.Assertions.assertEquals("0 0/10 8 * * ?", cron.cron(), "只在 8:00 跑一次的话，放回去的认领没人再来认领");
+    }
+
+    @Test
     @DisplayName("自己填的提醒时间：东八区已经过去了就不排；还在未来的照排")
     void 排提醒用业务时区() {
         TaskReminderMapper mapper = mock(TaskReminderMapper.class);

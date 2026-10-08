@@ -395,10 +395,13 @@
   /** 鼠标下面最近的那个有提示的元素；它的 title 挪成 data-zq-tip（只有图标、没有名字的顺手补 aria-label） */
   function tipHost(node){
     for (var el = node; el && el.nodeType === 1; el = el.parentNode) {
-      var t = el.getAttribute('title');
-      if (t) {
-        el.setAttribute('data-zq-tip', t);
+      if (el.hasAttribute('title')) {
+        var t = el.getAttribute('title');
         el.removeAttribute('title');
+        // 代码把 title 清空了（el.title = ''）= 这里不要提示了：连同之前挪过去的那句一起去掉（第四十七轮 review：从一个 Notebook
+        // 切回普通聊天，标题栏清了 title，停上去还出上一个 Notebook 的名字）。空 title 照原生的规矩也挡住外层的提示
+        if (!t) { el.removeAttribute('data-zq-tip'); return null; }
+        el.setAttribute('data-zq-tip', t);
         if (!el.hasAttribute('aria-label') && !String(el.textContent || '').trim()) el.setAttribute('aria-label', t);
         return el;
       }
@@ -463,7 +466,12 @@
       hideTip();
     });
     ['pointerdown', 'keydown', 'wheel'].forEach(function(t){ document.addEventListener(t, hideTip, true); });
-    window.addEventListener('scroll', hideTip, true);
+    // 只有提示的那个元素跟着滚走了才收（第四十七轮 review：原来页面上哪里一滚就收 —— AI 回答流式输出时对话区一直往下跟，提示一出来就没了）
+    window.addEventListener('scroll', function(e){
+      if (!tipTarget) return;
+      var s = e.target;
+      if (s === document || s === document.documentElement || s === document.body || (s && s.contains && s.contains(tipTarget))) hideTip();
+    }, true);
     window.addEventListener('blur', hideTip);
     document.addEventListener('focusin', function(e){
       var keyboard = false;
@@ -473,6 +481,22 @@
     document.addEventListener('focusout', hideTip);
   }
 
-  function boot(){ buildSidebar(); setupPanels(); paintIcons(); setupTips(); }
+  // ── 文件拖到页面上没人接的地方（第四十七轮 review）──
+  // 浏览器 / 桌面应用对拖进来、又没人接的文件的默认做法是「打开它」：整页换成那个文件，桌面应用里连后退都没有。
+  // AI 助手第四十四轮起只在对话那一栏接文件（拖拽框平时不出现），拖偏一点就掉进这个坑。没人接的地方：光标显示不能放、松手什么都不做。
+  // 接文件的地方（对话栏）自己 preventDefault 了，这里看到 defaultPrevented 就不管 —— 不然会把那里的 dropEffect 也改成「不能放」；
+  // 原生的文件选择框（Wiki 的导入）自己接拖进来的文件，也不管
+  function guardFileDrops(){
+    function unhandled(e){
+      var types = e.dataTransfer && e.dataTransfer.types;
+      if (e.defaultPrevented || !types || Array.prototype.indexOf.call(types, 'Files') < 0) return false;
+      var t = e.target;
+      return !(t && t.closest && t.closest('input[type="file"]'));
+    }
+    document.addEventListener('dragover', function(e){ if (!unhandled(e)) return; e.preventDefault(); try { e.dataTransfer.dropEffect = 'none'; } catch (x) {} });
+    document.addEventListener('drop', function(e){ if (unhandled(e)) e.preventDefault(); });
+  }
+
+  function boot(){ buildSidebar(); setupPanels(); paintIcons(); setupTips(); guardFileDrops(); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
 })();

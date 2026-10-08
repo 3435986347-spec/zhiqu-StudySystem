@@ -1277,7 +1277,6 @@ public class AiServiceImpl implements AiService {
         }
     }
 
-    /** 校验。注意「阻断」必须发生在收尾之后（见 run 内注释），所以三个时刻都在 run 里。 */
     /**
      * 读用户没完成的任务（第二十七轮，用户 2026-10-04 定的「让它读，给一个开关」）。
      * PRE_STREAM#12：检索之后、校验之前；一次只读查询，不进并发组。节点只在开关开着、问到了安排时才有
@@ -1313,6 +1312,7 @@ public class AiServiceImpl implements AiService {
         }
     }
 
+    /** 校验。注意「阻断」必须发生在收尾之后（见 run 内注释），所以三个时刻都在 run 里。 */
     private final class VerifierRunner implements AgentStageRunner {
         private final StreamState s;
 

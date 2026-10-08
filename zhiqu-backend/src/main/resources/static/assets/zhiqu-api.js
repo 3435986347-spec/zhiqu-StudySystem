@@ -172,7 +172,18 @@
   async function refreshUpcomingReminders() {
     try { upcomingReminders = (await api.get('/reminder/upcoming')) || []; } catch (e) { /* 拿不到就等下一次 */ }
   }
+  /**
+   * 几个标签页同时到点：「读已提醒 → 记下 → 提醒」这一串用浏览器的锁排队（第四十七轮 review：两个标签页的 30 秒刚好对上时，
+   * 两边都读到「没提醒过」，响两遍、弹两个通知）。没有 Web Locks 的浏览器照旧直接做（最多偶尔响两遍）。
+   */
   function checkDueReminders() {
+    var locks = null;
+    try { locks = navigator.locks && navigator.locks.request ? navigator.locks : null; } catch (e) { locks = null; }
+    // 锁里那一趟出的错落在 request 返回的 promise 上：接住就好，不要再直接做一遍（那就成了提醒两次）
+    if (locks) { locks.request('zq-reminder-check', checkDueRemindersNow).catch(function () {}); return; }
+    checkDueRemindersNow();
+  }
+  function checkDueRemindersNow() {
     var seen = readSeen(), now = nowMs();
     var due = dueReminders(upcomingReminders, now, seen);
     if (!due.length) return;

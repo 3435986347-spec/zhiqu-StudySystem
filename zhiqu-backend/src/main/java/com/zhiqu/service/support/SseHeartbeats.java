@@ -34,16 +34,35 @@ public class SseHeartbeats {
         this.periodMs = Math.max(10, periodMs);
     }
 
-    /** 开始给这个流发心跳。返回的句柄 {@code close()} 就停 —— 流结束（成功、出错、客户端断开）时都要调。 */
+    /**
+     * 开始给这个流发心跳。返回的句柄 {@code close()} 就停 —— 流结束（成功、出错、客户端断开）时都要调；
+     * 要发结束事件的，<b>先</b> close 再发：close 返回之后不会再有一行 ping 落在后面。
+     *
+     * <p>只 {@code cancel} 不够（第四十七轮：{@code HarnessHeartbeatTest} 在全量里偶尔红 ——「done 之后不该还有心跳」）：
+     * 已经开始跑的那一趟不会被取消，它在 close 之后照样发出去。所以每一趟和 close 在同一把锁上：close 要等正在发的那一趟发完，
+     * 之后的每一趟进锁先看「停了没有」。
+     */
     public Beat start(SseEmitter emitter) {
+        Object lock = new Object();
+        boolean[] closed = {false};
         ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
-            try {
-                emitter.send(SseEmitter.event().comment("ping"));
-            } catch (Exception ignored) {
-                // 对方已经断开，或者流刚结束：发流的那个线程会自己发现
+            synchronized (lock) {
+                if (closed[0]) {
+                    return;
+                }
+                try {
+                    emitter.send(SseEmitter.event().comment("ping"));
+                } catch (Exception ignored) {
+                    // 对方已经断开，或者流刚结束：发流的那个线程会自己发现
+                }
             }
         }, periodMs, periodMs, TimeUnit.MILLISECONDS);
-        return () -> future.cancel(false);
+        return () -> {
+            synchronized (lock) {
+                closed[0] = true;
+            }
+            future.cancel(false);
+        };
     }
 
     @FunctionalInterface

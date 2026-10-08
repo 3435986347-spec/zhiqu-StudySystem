@@ -34,15 +34,26 @@ public class ReminderScheduler {
      * 当天的提醒一条都不算到期，要等到下午四点被五分钟那一路捡走；自己设的提醒时间也整体晚 8 小时。
      */
 
-    @Scheduled(cron = "0 0 8 * * ?", zone = "Asia/Shanghai")
+    /**
+     * 早上 8 点的汇报。8 点那一个小时里每 10 分钟来一趟，按天认领、只有一个实例做成一次（第四十七轮）：
+     * 原来只在 8:00 跑一次，认领之后出错（库一时连不上），认领留着、别的实例跳过，那天的汇报谁都不发了。
+     * 出错时放回认领 —— processDueReminders 抛出来的只会是发之前那几步（每个人的发送各自兜底，不往外抛），这时还什么都没发，重来不会发两遍。
+     */
+    @Scheduled(cron = "0 0/10 8 * * ?", zone = "Asia/Shanghai")
     public void sendDailyDdlReminders() {
         LocalDateTime now = clock.now();
         // 一天一次、按天在库里认领（第二十八轮）：好几个后端连同一个库时只有一个实例发。原来这里是一把锁 ——
         // 没有共享 Redis 时它只在本进程有效，每个开着的实例（服务器、每台电脑上的桌面应用）各发一遍汇报
-        if (!claims.claim("daily-reminder", now.toLocalDate().toString())) {
+        String day = now.toLocalDate().toString();
+        if (!claims.claim("daily-reminder", day)) {
             return;
         }
-        reminderService.processDueReminders(now);
+        try {
+            reminderService.processDueReminders(now);
+        } catch (RuntimeException e) {
+            claims.release("daily-reminder", day);
+            throw e;
+        }
     }
 
     @Scheduled(cron = "0 */5 * * * ?", zone = "Asia/Shanghai")
