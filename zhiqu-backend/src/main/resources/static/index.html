@@ -1,64 +1,170 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>登录 - 知趣·象限学习系统</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/common.css">
-    <link rel="stylesheet" href="/css/login.css">
-    <link rel="stylesheet" href="/css/pixel-theme.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>知趣·象限 · AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261010-review" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261010-review">
+  <link rel="manifest" href="manifest.json?v=20261010-review">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261010-review">
+  <style>
+    .zq-home{min-height:100vh;display:flex;flex-direction:column;background:var(--zq-bg,var(--zq-card-soft));color:var(--zq-text);}
+    .zq-home-bar{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 28px;background:color-mix(in srgb, var(--zq-card) 82%, transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--zq-border-soft);}
+    .zq-home-logo{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:var(--zq-fw-medium);letter-spacing:-.01em;}
+    .zq-home-logo .zq-mark{width:32px;height:32px;border-radius:8px;background:var(--zq-primary);color:var(--zq-on-primary);display:flex;align-items:center;justify-content:center;font-weight:var(--zq-fw-medium);font-size:15px;}
+    .zq-home-main{flex:1;width:100%;max-width:1080px;margin:0 auto;padding:44px 28px 30px;}
+    .zq-hero{display:flex;flex-direction:column;align-items:center;text-align:center;gap:16px;padding:26px 0 40px;}
+    .zq-hero h1{margin:0;font-size:38px;line-height:1.18;font-weight:var(--zq-fw-medium);letter-spacing:-.02em;max-width:16em;}
+    .zq-hero p{margin:0;max-width:38em;font-size:15.5px;line-height:1.75;color:var(--zq-text2);}
+    .zq-hero-cta{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:6px;}
+    .zq-hero-cta .zq-btn,.zq-hero-cta .zq-btn-ghost{height:44px;padding:0 24px;font-size:14.5px;}
+    /* 首页轮播（第四十六轮重做）：上面一排页签、一行说明，图片干干净净放在框里（原来说明压在图片底部的深色渐变上、圆点也压在图上）；
+       几张图叠在同一格里淡入淡出；每张有浅、深两张图，跟着页面的明暗换 —— 看不见的那一套 display:none，懒加载的图就不下载 */
+    .zq-tour{display:flex;flex-direction:column;align-items:center;gap:var(--zq-sp-3);}
+    .zq-tour-cap{margin:0;min-height:1.6em;color:var(--zq-text2);font-size:var(--zq-fs-sm);line-height:1.6;text-align:center;}
+    /* 用 aspect-ratio 而不是固定 height：截图是 16:10，写死高度会在窄屏上把两侧裁掉，而被裁掉的恰好是侧边栏和右栏 —— 那正是要展示的东西 */
+    .zq-tour-frame{display:grid;width:100%;aspect-ratio:2048/1280;margin-top:var(--zq-sp-1);border:1px solid var(--zq-border);border-radius:var(--zq-rl);overflow:hidden;box-shadow:var(--zq-sh2);background:var(--zq-card-soft);}
+    .zq-tour-slide{grid-area:1/1;margin:0;min-width:0;opacity:0;visibility:hidden;transition:opacity .45s ease,visibility 0s linear .45s;}
+    .zq-tour-slide.is-on{opacity:1;visibility:visible;transition:opacity .45s ease,visibility 0s;}
+    .zq-tour-slide img{display:block;width:100%;height:100%;object-fit:cover;object-position:top left;}
+    html[data-zq-mode="dark"] .zq-shot-light,html:not([data-zq-mode="dark"]) .zq-shot-dark{display:none;}
+    .zq-tour .zq-seg>button{height:30px;padding:0 14px;font-size:var(--zq-fs-sm);}
+    .zq-tour .zq-seg>button:focus-visible{outline:none;box-shadow:var(--zq-focus);}
+    @media (prefers-reduced-motion:reduce){ .zq-tour-slide,.zq-tour-slide.is-on{transition:none;} }
+    .zq-feat{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:34px;}
+    .zq-feat .zq-card{display:flex;flex-direction:column;gap:9px;}
+    /* 功能卡片的图标（第四十六轮：原来是四个 Unicode 符号放大到 28px，摆在一块灰底上） */
+    .zq-feat .zq-fimg{width:36px;height:36px;border-radius:var(--zq-rm);background:var(--zq-card-soft);display:flex;align-items:center;justify-content:center;color:var(--zq-text);}
+    .zq-feat .zq-fimg .zq-icon{width:18px;height:18px;}
+    .zq-feat h3{margin:0;font-size:15px;font-weight:var(--zq-fw-medium);}
+    .zq-feat p{margin:0;font-size:12.5px;line-height:1.6;color:var(--zq-text2);}
+    .zq-home-foot{border-top:1px solid var(--zq-border-soft);padding:20px 28px;text-align:center;font-size:12px;color:var(--zq-text3);}
+    .zq-home-foot .zq-beian{margin-top:6px;}
+    .zq-home-foot .zq-beian a{color:inherit;text-decoration:none;}
+    .zq-home-foot .zq-beian a:hover{color:var(--zq-text2);text-decoration:underline;}
+    @media (max-width:900px){ .zq-feat{grid-template-columns:repeat(2,minmax(0,1fr));} .zq-hero h1{font-size:30px;} }
+    @media (max-width:560px){ .zq-feat{grid-template-columns:1fr;} .zq-tour .zq-seg>button{padding:0 9px;font-size:var(--zq-fs-xs);} }
+  </style>
 </head>
 <body>
-    <div class="login-page">
-        <div class="login-card">
-            <h1>知趣·象限学习系统</h1>
-            <p class="login-sub">📚 欢迎使用自主学习看板</p>
-            <div class="tabs">
-                <button type="button" class="tab-btn active" data-tab="login">登录</button>
-                <button type="button" class="tab-btn" data-tab="register">注册</button>
-            </div>
-            <div id="panel-login" class="tab-panel">
-                <form id="form-login">
-                    <div class="form-group">
-                        <label for="login-username">用户名</label>
-                        <input id="login-username" name="username" required autocomplete="username" placeholder="请输入用户名">
-                    </div>
-                    <div class="form-group">
-                        <label for="login-password">密码</label>
-                        <input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="请输入密码">
-                    </div>
-                    <div id="login-error" class="error-msg"></div>
-                    <div class="login-actions">
-                        <button type="submit" class="btn btn-primary">登录</button>
-                    </div>
-                </form>
-            </div>
-            <div id="panel-register" class="tab-panel hidden">
-                <form id="form-register">
-                    <div class="form-group">
-                        <label for="reg-username">用户名</label>
-                        <input id="reg-username" name="username" required autocomplete="username" placeholder="请输入用户名">
-                    </div>
-                    <div class="form-group">
-                        <label for="reg-password">密码</label>
-                        <input id="reg-password" type="password" name="password" required autocomplete="new-password" placeholder="至少6位密码">
-                    </div>
-                    <div class="form-group">
-                        <label for="reg-confirm">确认密码</label>
-                        <input id="reg-confirm" type="password" name="confirmPassword" required autocomplete="new-password" placeholder="再次输入密码">
-                    </div>
-                    <div id="register-error" class="error-msg"></div>
-                    <div class="login-actions">
-                        <button type="submit" class="btn btn-primary">注册</button>
-                    </div>
-                </form>
-            </div>
+  <div class="zq-home">
+    <header class="zq-home-bar">
+      <div class="zq-home-logo"><span class="zq-mark">知</span><span>知趣 · 象限</span></div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button type="button" id="zq-home-theme" class="zq-btn-ghost" style="height:36px;width:36px;padding:0;" title="切换深浅色" aria-label="切换深浅色"><span data-zq-icon="contrast"></span></button>
+        <button type="button" class="zq-btn-ghost" data-auth="login" style="height:36px;">登录</button>
+        <button type="button" class="zq-btn" data-auth="register" style="height:36px;">注册</button>
+      </div>
+    </header>
+
+    <main class="zq-home-main">
+      <section class="zq-hero">
+        <p class="zq-eyebrow" style="margin:0;">AI 办公助手 · 用四象限管好工作和时间</p>
+        <h1>让 AI 帮你把每一天的事，排得清晰可控</h1>
+        <p>跟 AI 说一句就能拆解任务、排出计划；用「重要 / 紧急」四象限定优先级，配合番茄钟、例行计划、提醒和知识 Wiki，让手上的事一件件落地。</p>
+        <div class="zq-hero-cta">
+          <button type="button" class="zq-btn" data-auth="login">立即登录</button>
+          <button type="button" class="zq-btn-ghost" data-auth="register">注册新账号</button>
         </div>
-    </div>
-    <script src="/js/common.js"></script>
-    <script src="/js/login.js"></script>
+      </section>
+
+      <!--
+        真实界面截图（数据是示例账号的），浅色、深色各一套。先用 deploy/desktop/shots/seed-demo.js 建示例账号，再用 Snapshot.swift 重出（用法在 seed-demo.js 开头）：
+        它加载真的页面（注入 token 过登录守卫）再用 WKWebView 截，所以图和线上永远一致。
+        换了界面之后记得重跑一次，否则首页展示的是旧版本的样子（第四十六轮之前的四张一直是 10 月 4 日改版前的样子）。
+      -->
+      <section class="zq-tour" id="zq-tour" aria-label="产品界面">
+        <div class="zq-seg" role="tablist" aria-label="看哪一页">
+          <button type="button" role="tab" id="zq-tour-tab-0" aria-controls="zq-tour-slide-0" aria-selected="true" tabindex="0" class="on">AI 助手</button>
+          <button type="button" role="tab" id="zq-tour-tab-1" aria-controls="zq-tour-slide-1" aria-selected="false" tabindex="-1">看板</button>
+          <button type="button" role="tab" id="zq-tour-tab-2" aria-controls="zq-tour-slide-2" aria-selected="false" tabindex="-1">任务</button>
+          <button type="button" role="tab" id="zq-tour-tab-3" aria-controls="zq-tour-slide-3" aria-selected="false" tabindex="-1">知识 Wiki</button>
+        </div>
+        <p class="zq-tour-cap" id="zq-tour-cap">说一句，帮你按四象限理清这周的先后 —— 回答里带着表格和今天的安排</p>
+        <div class="zq-tour-frame">
+          <figure class="zq-tour-slide is-on" id="zq-tour-slide-0" role="tabpanel" aria-labelledby="zq-tour-tab-0" data-cap="说一句，帮你按四象限理清这周的先后 —— 回答里带着表格和今天的安排">
+            <img class="zq-shot-light" src="assets/shots/ai-assistant-light.webp?v=20261010-review" alt="AI 助手：按四象限理清这周工作的先后，右边是这一轮的执行轨迹和引用的资料" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/ai-assistant-dark.webp?v=20261010-review" alt="AI 助手：按四象限理清这周工作的先后，右边是这一轮的执行轨迹和引用的资料" width="2048" height="1280" loading="lazy" decoding="async">
+          </figure>
+          <figure class="zq-tour-slide" id="zq-tour-slide-1" role="tabpanel" aria-labelledby="zq-tour-tab-1" data-cap="先看今天，再看本周：今日待办、本周日历、番茄钟、临近的截止时间">
+            <img class="zq-shot-light" src="assets/shots/dashboard-light.webp?v=20261010-review" alt="看板：今日待办、本周日历、番茄钟和临近截止的事" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/dashboard-dark.webp?v=20261010-review" alt="看板：今日待办、本周日历、番茄钟和临近截止的事" width="2048" height="1280" loading="lazy" decoding="async">
+          </figure>
+          <figure class="zq-tour-slide" id="zq-tour-slide-2" role="tabpanel" aria-labelledby="zq-tour-tab-2" data-cap="重要与紧急一眼分清，截止时间、提醒、状态都在一张表里">
+            <img class="zq-shot-light" src="assets/shots/tasks-light.webp?v=20261010-review" alt="任务列表：按四象限标注的任务、截止时间与状态" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/tasks-dark.webp?v=20261010-review" alt="任务列表：按四象限标注的任务、截止时间与状态" width="2048" height="1280" loading="lazy" decoding="async">
+          </figure>
+          <figure class="zq-tour-slide" id="zq-tour-slide-3" role="tabpanel" aria-labelledby="zq-tour-tab-3" data-cap="资料、决定和偏好沉淀成页，双链互联；AI 的长期记忆有据可查">
+            <img class="zq-shot-light" src="assets/shots/knowledge-wiki-light.webp?v=20261010-review" alt="知识 Wiki：目录、项目页里的里程碑表格与双链引用" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/knowledge-wiki-dark.webp?v=20261010-review" alt="知识 Wiki：目录、项目页里的里程碑表格与双链引用" width="2048" height="1280" loading="lazy" decoding="async">
+          </figure>
+        </div>
+      </section>
+
+      <section class="zq-feat">
+        <article class="zq-card"><div class="zq-fimg" data-zq-icon="sparkles"></div><h3>AI 办公助手</h3><p>对话拆解任务、排出计划；上传资料、PDF、截图识别日程，联网检索辅助判断。写进日历和知识库之前都先给你确认。</p></article>
+        <article class="zq-card"><div class="zq-fimg" data-zq-icon="layout-dashboard"></div><h3>四象限看板</h3><p>按重要与紧急划分任务，配合番茄钟专注，到点在页面里提醒，进度一目了然。</p></article>
+        <article class="zq-card"><div class="zq-fimg" data-zq-icon="book-open"></div><h3>知识 Wiki</h3><p>沉淀资料、决定和偏好，双链互联，AI 的长期记忆可追溯。</p></article>
+        <article class="zq-card"><div class="zq-fimg" data-zq-icon="copy"></div><h3>参考计划</h3><p>套用别人分享的计划模板，一键生成到自己的日历。</p></article>
+      </section>
+    </main>
+
+    <footer class="zq-home-foot">
+      <div>知趣·象限 · AI 办公助手 · 让每一天的安排都清晰可控</div>
+      <div class="zq-beian"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026091171号-1</a></div>
+    </footer>
+  </div>
+
+  <script>
+    /* ── 首页轮播（第四十六轮）── src/test/resources/js/home-tour-check.js 从这里抠出来在 node 里真跑。
+       6 秒换一张；鼠标停在上面、焦点在里面、标签页在后台时不换；点过、按过页签之后不再自己换（你在看哪一张就是哪一张）；
+       系统设了「减少动态效果」就不自己换。页签按左右键 / Home / End 走（roving tabindex）。登录 / 注册弹窗由 zhiqu-api.js 接管。 */
+    (function(){
+      var root=document.getElementById('zq-tour'); if(!root) return;
+      var tabs=[].slice.call(root.querySelectorAll('[role="tab"]')), slides=[].slice.call(root.querySelectorAll('[role="tabpanel"]'));
+      var cap=document.getElementById('zq-tour-cap');
+      if(!tabs.length || tabs.length!==slides.length) return;
+      var INTERVAL=6000, i=0, timer=0, hover=false, focused=false, chosen=false, still=false;
+      try{ still=!!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){}
+      function schedule(){
+        clearTimeout(timer); timer=0;
+        if(still || chosen || hover || focused || document.hidden) return;
+        timer=setTimeout(function(){ show(i+1); }, INTERVAL);
+      }
+      function show(x, moveFocus){
+        i=(x+tabs.length)%tabs.length;
+        tabs.forEach(function(t,k){ var on=k===i; t.setAttribute('aria-selected', on?'true':'false'); t.tabIndex=on?0:-1; t.classList.toggle('on', on); });
+        slides.forEach(function(s,k){ s.classList.toggle('is-on', k===i); });
+        if(cap) cap.textContent=slides[i].getAttribute('data-cap')||'';
+        if(moveFocus) tabs[i].focus();
+        schedule();
+      }
+      tabs.forEach(function(t,k){
+        t.addEventListener('click', function(){ chosen=true; show(k); });
+        t.addEventListener('keydown', function(e){
+          var to = e.key==='ArrowRight' ? i+1 : e.key==='ArrowLeft' ? i-1 : e.key==='Home' ? 0 : e.key==='End' ? tabs.length-1 : null;
+          if(to===null) return;
+          e.preventDefault(); chosen=true; show(to, true);
+        });
+      });
+      root.addEventListener('pointerenter', function(){ hover=true; schedule(); });
+      root.addEventListener('pointerleave', function(){ hover=false; schedule(); });
+      root.addEventListener('focusin', function(){ focused=true; schedule(); });
+      root.addEventListener('focusout', function(e){ if(!e.relatedTarget || !root.contains(e.relatedTarget)){ focused=false; schedule(); } });
+      document.addEventListener('visibilitychange', schedule);
+      show(0);
+    })();
+    /* 深浅色切换（落地页本地实现，不依赖侧栏脚本） */
+    (function(){
+      var b=document.getElementById('zq-home-theme'); if(!b) return;
+      b.onclick=function(){ var cur=document.documentElement.getAttribute('data-zq-mode')==='dark'?'light':'dark'; document.documentElement.setAttribute('data-zq-mode',cur); try{localStorage.setItem('zq.theme',cur);}catch(e){} };
+    })();
+  </script>
+  <script src="assets/zhiqu-ui.js?v=20261010-review"></script>
+  <script src="assets/zhiqu-api.js?v=20261010-review"></script>
 </body>
 </html>

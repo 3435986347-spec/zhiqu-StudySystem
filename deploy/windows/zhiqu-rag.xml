@@ -1,0 +1,17 @@
+<service>
+  <id>zhiqu-rag</id>
+  <name>Zhiqu RAG Sidecar</name>
+  <description>Zhiqu local semantic retrieval sidecar.</description>
+  <executable>%BASE%\rag-service\.venv\Scripts\python.exe</executable>
+  <arguments>-m uvicorn app.main:app --host 127.0.0.1 --port 8001 --workers 1</arguments>
+  <workingdirectory>%BASE%\rag-service</workingdirectory>
+  <startmode>Automatic</startmode>
+  <env name="PYTHONUTF8" value="1"/>
+  <env name="TOKENIZERS_PARALLELISM" value="false"/>
+  <logpath>%BASE%\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10485760</sizeThreshold>
+    <keepFiles>10</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

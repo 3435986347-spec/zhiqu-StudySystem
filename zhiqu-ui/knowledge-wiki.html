@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>知识 Wiki - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
+        <header style="display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:4px 2px 2px; flex-wrap:wrap;">
+          <div>
+            <p class="zq-eyebrow">知识库</p><h1 class="zq-h1">知识 Wiki</h1>
+            <span style="display:block; margin-top:6px; color:var(--zq-text2); font-size:13px;">像文档一样浏览和编辑长期目标、学习计划、偏好与 AI 提炼出的记忆。</span>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">导入来源</button>
+            <button style="height:30px; padding:0 12px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12.5px; font-weight:600; cursor:pointer;">待合入变更 2</button>
+            <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">健康检查</button>
+            <button class="zq-btn-ghost" style="height:30px; font-size:12.5px;">图谱</button>
+            <button class="zq-btn" style="height:30px; font-size:12.5px;">新建知识页</button>
+          </div>
+        </header>
+
+        <div style="display:flex; gap:12px; align-items:stretch; margin:0 -8px;">
+          <!-- 目录（默认收起） -->
+          <aside data-zq-collapse="left" data-zq-label="目录 · 9 页" style="flex:0 0 210px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh1); overflow:hidden; align-self:stretch;">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft);"><h2 style="margin:0; font-size:14px; font-weight:700;">目录</h2><span style="font-size:11.5px; color:var(--zq-text3);">9 页</span></div>
+            <div style="padding:10px 12px; display:flex; flex-direction:column; gap:8px; border-bottom:1px solid var(--zq-border-soft);">
+              <input class="zq-input" placeholder="搜索页面 / [[双链]]" style="height:28px; font-size:12px;">
+              <select class="zq-select" style="height:28px; font-size:12px;"><option>全部类型</option><option>目标</option><option>计划</option><option>偏好</option><option>薄弱点</option><option>资料</option><option>对话摘要</option><option>index</option><option>规则</option><option>log</option></select>
+            </div>
+            <nav id="zq-tree" style="padding:8px; display:flex; flex-direction:column; gap:2px;"></nav>
+          </aside>
+
+          <!-- 文档视图 -->
+          <section style="flex:1; min-width:0; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh2); overflow:hidden;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px; border-bottom:1px solid var(--zq-border-soft); flex-wrap:wrap;">
+              <div><p class="zq-eyebrow" style="margin-bottom:3px; font-size:10.5px;">文档视图</p><h2 id="zq-doc-title" class="zq-h2" style="font-size:16px;"></h2></div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:11.5px; color:var(--zq-text3);">点击正文或标题即可编辑</span>
+                <div style="display:inline-flex; border:1px solid var(--zq-border); border-radius:var(--zq-rs); overflow:hidden;">
+                  <button style="height:26px; width:28px; border:none; background:var(--zq-card); color:var(--zq-text); font-weight:700; font-size:12px; cursor:pointer;">B</button>
+                  <button style="height:26px; width:28px; border:none; border-left:1px solid var(--zq-border-soft); background:var(--zq-card); color:var(--zq-text); font-style:italic; font-size:12px; cursor:pointer;">I</button>
+                  <button class="zq-mono" style="height:26px; width:28px; border:none; border-left:1px solid var(--zq-border-soft); background:var(--zq-card); color:var(--zq-text); font-size:12px; cursor:pointer;">`</button>
+                  <button style="height:26px; padding:0 9px; border:none; border-left:1px solid var(--zq-border-soft); background:var(--zq-card); color:var(--zq-text); font-size:11.5px; cursor:pointer;">源码</button>
+                </div>
+              </div>
+            </div>
+            <div id="zq-doc" style="padding:22px 26px 30px; min-height:420px;"></div>
+          </section>
+
+          <!-- 页面检查（默认收起） -->
+          <aside data-zq-collapse="right" data-zq-label="页面检查" style="flex:0 0 250px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh1); overflow:hidden; align-self:stretch;">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft); background:var(--zq-card-soft);"><h2 style="margin:0; font-size:14px; font-weight:700;">页面检查</h2></div>
+            <div id="zq-insp"></div>
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js"></script>
+  <script>
+    var wtag={'目标':['q2'],'计划':['primary'],'偏好':['q4'],'薄弱点':['q1'],'资料':['q3'],'对话摘要':['soft'],'index':['soft'],'规则':['soft'],'log':['soft']};
+    function tagColors(t){ var k=wtag[t]?wtag[t][0]:'soft'; if(k==='soft') return ['var(--zq-card-soft)','var(--zq-text3)']; if(k==='primary') return ['var(--zq-tint)','var(--zq-primary)']; return ['var(--zq-'+k+'-bg)','var(--zq-'+k+')']; }
+    var pages=[
+      {type:'目标',title:'2027 考研总目标',metaType:'GOAL · 目标',time:'07-01 21:40',src:'AI 提炼 + 手动整理',outline:['目标院校与分数线','阶段里程碑','风险与对策'],back:['[[暑期复习主线]]','[[数学薄弱点清单]]'],out:['[[暑期复习主线]]','[[数学薄弱点清单]]'],raw:['对话摘要 06-28 #142','手动编辑 07-01'],blocks:[['h','目标院校与分数线'],['p','目标：华东地区 985 计算机学硕，专业课 408。近三年复试线 355–370，按 380 分规划总目标。'],['li','数学一 ≥ 120：暑期完成二轮，每日 3 小时'],['li','英语一 ≥ 70：以真题阅读为主线，每日 1 小时'],['li','408 ≥ 115：数据结构 / 组原先行，9 月后合卷模考'],['h','阶段里程碑'],['task','7 月底：高数二轮 + 数据结构一轮完成',1],['task','8 月底：真题阅读 2010–2018 精读一遍',0],['task','9 月中：首次 408 整卷自测（目标 90+）',0],['quote','AI 摘要（06-28 对话）：你更适合上午攻数学、晚上做英语阅读；周日下午安排整卷自测状态最好。'],['link','[[暑期复习主线]] · [[数学薄弱点清单]]']]},
+      {type:'计划',title:'暑期复习主线',metaType:'PROJECT · 计划',time:'06-30 09:12',src:'手动创建',outline:['时间块安排','每周检查点'],back:['[[2027 考研总目标]]'],out:['[[2027 考研总目标]]'],raw:['手动创建 06-30'],blocks:[['h','时间块安排'],['li','08:30–11:30 数学（教材 + 习题册交替）'],['li','14:00–16:00 408 专业课'],['li','19:30–20:30 英语阅读精读'],['h','每周检查点'],['task','周日晚：错题归档 + 下周排期',1],['task','周六上午：小卷自测 90 分钟',0]]},
+      {type:'偏好',title:'学习偏好与提醒习惯',metaType:'PREFERENCE · 偏好',time:'06-27 22:05',src:'AI 提炼',outline:['作息偏好','提醒方式'],back:['[[2027 考研总目标]]'],out:['[[2027 考研总目标]]'],raw:['AI 提炼 06-27（对话 #128）'],blocks:[['h','作息偏好'],['li','早八前完成单词打卡，上午深度专注效率最高'],['li','连续专注 45 分钟 + 休息 10 分钟的节奏最稳定'],['h','提醒方式'],['li','DDL 提前 7 / 4 / 2 天提醒，当天早八汇总'],['quote','偏好安静提醒：只推送 PushPlus，不需要短信。']]},
+      {type:'薄弱点',title:'数学薄弱点清单',metaType:'WEAKNESS · 薄弱点',time:'07-02 20:18',src:'AI 提炼 + 错题导入',outline:['高频错误','待攻克专题'],back:['[[暑期复习主线]]'],out:['[[暑期复习主线]]'],raw:['错题导入 07-02','AI 提炼 06-29'],blocks:[['h','高频错误'],['li','重积分换序：边界画图不熟练（近两周错 5 题）'],['li','级数敛散性：比较判别法选取参照级数犹豫'],['h','待攻克专题'],['task','本周：重积分专题 20 题限时训练',0],['task','下周：级数专题视频 + 15 题',0]]},
+      {type:'资料',title:'408 资料索引',metaType:'RESOURCE · 资料',time:'06-25 15:44',src:'手动创建',outline:['教材与讲义','题库'],back:[],out:[],raw:['手动创建 06-25'],blocks:[['h','教材与讲义'],['li','数据结构：王道 2027 版 + 天勤配套视频'],['li','组成原理：王道 + 袁春风慕课（第 3、5 章）'],['h','题库'],['li','408 真题 2009–2026 电子版（已按科目拆分）']]},
+      {type:'对话摘要',title:'06-28 与 AI 的规划对话',metaType:'MEMORY · 对话摘要',time:'06-28 23:02',src:'AI 自动生成',outline:['结论','待办'],back:['[[2027 考研总目标]]'],out:['[[2027 考研总目标]]'],raw:['AI 自动生成 06-28'],blocks:[['h','结论'],['p','讨论了暑期日程冲突：实验室值班与数学时间块重叠。结论是把周二/周四数学移到晚间，专注时长由 3 小时调整为 2.5 小时。'],['h','待办'],['task','更新例行计划的周二/周四时间',1],['task','两周后复盘该调整的效果',0]]},
+      {type:'index',title:'_index · 知识库索引',metaType:'INDEX · 索引',time:'07-02 20:18',src:'系统维护 · AI 优先读取',outline:['结构','约定'],back:[],out:['全部 6 个业务页面'],raw:['系统维护'],blocks:[['p','本页是知识库入口。AI 回答任何规划类问题前会先读取本页，据此决定检索哪些页面，而不是把全库塞进上下文。'],['h','结构'],['li','[[2027 考研总目标]] —— GOAL · 目标'],['li','[[暑期复习主线]] —— PROJECT · 计划'],['li','[[学习偏好与提醒习惯]] —— PREFERENCE · 偏好'],['li','[[数学薄弱点清单]] —— WEAKNESS · 薄弱点'],['li','[[408 资料索引]] —— RESOURCE · 资料'],['li','[[06-28 与 AI 的规划对话]] —— MEMORY · 对话摘要'],['h','约定'],['li','新页面创建后必须挂到本索引，否则不参与检索'],['li','悬空链接会被「健康检查」标红']]},
+      {type:'规则',title:'_schema · 写作规则',metaType:'SCHEMA · 规则',time:'06-20 10:00',src:'系统维护 · AI 读写约束',outline:['页面类型','写入规则'],back:['[[_index · 知识库索引]]'],out:['[[_index · 知识库索引]]','[[_log · 变更日志]]'],raw:['系统维护'],blocks:[['p','定义 AI 读写知识库时必须遵守的结构约定，保证多次对话之间记忆稳定、可审计。'],['h','页面类型'],['li','GOAL 目标 / PROJECT 计划 / PREFERENCE 偏好 / WEAKNESS 薄弱点 / RESOURCE 资料 / MEMORY 对话摘要 / NOTE 备注'],['h','写入规则'],['li','引用其他页面必须用 [[双链]]，禁止悬空链接'],['li','AI 生成的修改先进入「待合入变更」，用户确认后才写入正文'],['li','每次合入自动向 [[_log · 变更日志]] 追加一条记录'],['quote','检索策略：AI 聊天时只取相关片段（RAG），不会把完整历史对话或整页正文全部发给模型。']]},
+      {type:'log',title:'_log · 变更日志',metaType:'LOG · 日志',time:'07-02 20:18',src:'系统自动追加 · 只读',outline:['最近 7 天'],back:['[[_index · 知识库索引]]'],out:['[[_index · 知识库索引]]'],raw:['系统自动追加'],blocks:[['h','最近 7 天'],['li','07-02 20:18 合入 AI 变更：[[数学薄弱点清单]] 新增「重积分换序」'],['li','07-01 21:40 手动编辑：[[2027 考研总目标]] 更新阶段里程碑'],['li','06-30 09:12 创建页面：[[暑期复习主线]]'],['li','06-28 23:02 AI 生成：[[06-28 与 AI 的规划对话]]（对话 #142）'],['li','06-27 22:05 AI 提炼偏好 3 条，用户确认 2 条、忽略 1 条'],['quote','日志由系统追加，仅可追溯，不可编辑。']]}
+    ];
+    var logs=[['07-02','合入 AI 变更：新增「重积分换序」薄弱点'],['07-01','编辑「2027 考研总目标」阶段里程碑'],['06-30','创建页面「暑期复习主线」']];
+    var cur=0;
+    function paintTree(){
+      document.getElementById('zq-tree').innerHTML = pages.map(function(p,i){
+        var c=tagColors(p.type);
+        return '<a onclick="sel('+i+')" style="display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:var(--zq-rs); cursor:pointer; background:'+(cur===i?'var(--zq-tint)':'transparent')+';"><span style="flex:none; display:inline-flex; align-items:center; height:17px; padding:0 6px; border-radius:4px; background:'+c[0]+'; color:'+c[1]+'; font-size:10px; font-weight:700;">'+p.type+'</span><span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; font-weight:'+(cur===i?700:500)+'; color:'+(cur===i?'var(--zq-text)':'var(--zq-text2)')+';">'+p.title+'</span></a>';
+      }).join('');
+    }
+    function paintDoc(){
+      var p=pages[cur];
+      document.getElementById('zq-doc-title').textContent=p.title;
+      document.getElementById('zq-doc').innerHTML = p.blocks.map(function(b){
+        var k=b[0], t=b[1];
+        if(k==='h') return '<h3 style="margin:18px 0 10px; font-size:15.5px; font-weight:700; letter-spacing:-.01em; padding-bottom:6px; border-bottom:1px solid var(--zq-border-soft);">'+t+'</h3>';
+        if(k==='p') return '<p style="margin:7px 0; font-size:13.5px; line-height:1.75;">'+t+'</p>';
+        if(k==='li') return '<div style="display:flex; gap:9px; margin:7px 0; font-size:13.5px; line-height:1.7;"><span style="color:var(--zq-accent); flex:none;">•</span><span>'+t+'</span></div>';
+        if(k==='task') return '<div style="display:flex; gap:9px; align-items:flex-start; margin:7px 0; font-size:13.5px; line-height:1.7;"><input type="checkbox" '+(b[2]?'checked':'')+' style="accent-color:var(--zq-primary); margin-top:5px;"><span style="text-decoration:'+(b[2]?'line-through':'none')+'; color:'+(b[2]?'var(--zq-text3)':'var(--zq-text)')+';">'+t+'</span></div>';
+        if(k==='quote') return '<blockquote style="margin:12px 0; padding:10px 16px; border-left:3px solid var(--zq-accent); background:var(--zq-card-soft); border-radius:0 var(--zq-rs) var(--zq-rs) 0; font-size:13px; line-height:1.7; color:var(--zq-text2);">'+t+'</blockquote>';
+        if(k==='link') return '<div style="margin:7px 0; font-size:13.5px; line-height:1.7;">相关页面：<a style="color:var(--zq-primary); cursor:pointer; border-bottom:1px dashed var(--zq-tint-strong);">'+t+'</a></div>';
+        return '';
+      }).join('');
+      paintInsp();
+    }
+    function sec(title, body){ return '<div style="padding:12px 14px; border-bottom:1px solid var(--zq-border-soft);"><h3 style="margin:0 0 8px; font-size:12px; font-weight:700;">'+title+'</h3>'+body+'</div>'; }
+    function paintInsp(){
+      var p=pages[cur];
+      var info='<div style="display:flex; flex-direction:column; gap:7px; font-size:12px; color:var(--zq-text2);">'
+        +'<div style="display:flex; justify-content:space-between; gap:8px;"><span>类型</span><span style="font-weight:600; color:var(--zq-text); text-align:right;">'+p.metaType+'</span></div>'
+        +'<div style="display:flex; justify-content:space-between; gap:8px;"><span>更新</span><span style="font-weight:600; color:var(--zq-text); text-align:right;">'+p.time+'</span></div>'
+        +'<div style="display:flex; justify-content:space-between; gap:8px;"><span>来源</span><span style="font-weight:600; color:var(--zq-text); text-align:right;">'+p.src+'</span></div></div>';
+      var listLinks=function(arr,color){ return (arr&&arr.length?arr:['暂无']).map(function(x){ return '<a style="font-size:12px; color:'+color+'; cursor:pointer; text-decoration:none; display:block;">'+x+'</a>'; }).join(''); };
+      var outline=p.outline.map(function(o){ return '<a style="font-size:12px; color:var(--zq-text2); cursor:pointer; display:block;">'+o+'</a>'; }).join('');
+      var raws=(p.raw&&p.raw.length?p.raw:['暂无']).map(function(x){ return '<div style="font-size:11.5px; color:var(--zq-text2); line-height:1.5;">'+x+'</div>'; }).join('');
+      var lg=logs.map(function(l){ return '<div style="font-size:11.5px; color:var(--zq-text2); line-height:1.5;"><span class="zq-mono" style="color:var(--zq-text3);">'+l[0]+'</span> '+l[1]+'</div>'; }).join('');
+      document.getElementById('zq-insp').innerHTML = sec('页面信息',info)+sec('页面大纲','<div style="display:flex;flex-direction:column;gap:6px;">'+outline+'</div>')+sec('反向链接','<div style="display:flex;flex-direction:column;gap:6px;">'+listLinks(p.back,'var(--zq-primary)')+'</div>')+sec('出链','<div style="display:flex;flex-direction:column;gap:6px;">'+listLinks(p.out,'var(--zq-primary)')+'</div>')+sec('Raw Sources','<div style="display:flex;flex-direction:column;gap:6px;">'+raws+'</div>')+'<div style="padding:12px 14px;"><h3 style="margin:0 0 8px; font-size:12px; font-weight:700;">最近日志</h3><div style="display:flex;flex-direction:column;gap:8px;">'+lg+'</div></div>';
+    }
+    function sel(i){ cur=i; paintTree(); paintDoc(); }
+    paintTree(); paintDoc();
+  </script>
+</body>
+</html>

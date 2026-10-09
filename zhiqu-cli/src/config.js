@@ -1,0 +1,184 @@
+// 配置。npm 版 zhiqu 有自己的一套，放在 .zhiqu/ 下（用户 2026-09-24 定的）：
+//
+//   ~/.zhiqu/config.json          用户级：服务器、令牌、默认模型、默认档位（600 权限）
+//   <工作区>/.zhiqu/settings.json  项目级：同样的键，覆盖用户级 —— 但**不收令牌**（这个文件可能被提交）
+//   ~/.zhiqu/system.md            系统内容：第一次运行时写一份内置系统提示，之后以它为准，用户可以改
+//   <工作区>/.zhiqu/system.md      项目级系统内容，优先
+//
+// 环境变量 ZHIQU_HOME 可以把用户级目录挪走（测试用）；ZHIQU_SERVER / ZHIQU_TOKEN 覆盖对应的配置。
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { BUILTIN_SYSTEM_PROMPT } from './prompt.js';
+
+import { packageDefaultServer } from './defaults.js';
+
+// 默认服务器来自 package.json 的 zhiqu.defaultServer：仓库里是本机桌面应用（测试用），发布版是服务器地址。见 defaults.js
+export const DEFAULT_SERVER = packageDefaultServer();
+export const MODES = ['plan', 'ask', 'auto'];
+const MODE_ALIASES = { read: 'plan', readonly: 'plan', write: 'ask', exec: 'auto', confirm: 'ask', default: 'ask' };
+
+export function normalizeMode(value) {
+  const v = String(value || '').trim().toLowerCase();
+  if (MODES.includes(v)) return v;
+  return MODE_ALIASES[v] || null;
+}
+
+export function userDir() {
+  return process.env.ZHIQU_HOME ? path.resolve(process.env.ZHIQU_HOME) : path.join(os.homedir(), '.zhiqu');
+}
+
+/**
+ * 读坏了的配置文件（在、但不是合法 JSON）记在这里，启动时说出来（第十六轮）。原来坏了就当没有这个文件、一声不吭：
+ * ~/.zhiqu/config.json 手改多了个逗号 → 「还没登录」（明明登录过）；.zhiqu/settings.json 坏了 → 允许的命令悄悄不生效。
+ */
+const brokenFiles = new Map();
+function readJson(file, fallback) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return fallback; }      // 没有这个文件：正常
+  try {
+    const v = JSON.parse(text);
+    brokenFiles.delete(file);
+    return v;
+  } catch (e) {
+    brokenFiles.set(file, e.message);
+    return fallback;
+  }
+}
+/** 一个坏掉的配置文件说成一句话：哪个文件、错在哪、这次怎么处理、文件动没动。 */
+export function describeBroken(file, error, root) {
+  const shown = file.startsWith(userDir()) ? file.replace(os.homedir(), '~') : path.relative(root || process.cwd(), file) || file;
+  const effect = path.basename(file) === 'config.json' && file.startsWith(userDir())
+    ? '这次按没有这个文件算 —— 登录信息和个人设置都读不到'
+    : path.basename(file) === 'settings.json'
+      ? '里面的设置（允许的命令、档位等）这次都不生效'
+      : '这次按没有这个文件算';
+  return `${shown} 不是合法的 JSON（${error}）：${effect}。文件没动，改好之后重新运行`;
+}
+
+/** 原子写：先写临时文件再改名 —— 写到一半被打断不会留下半个 JSON。 */
+export function writeFileAtomic(file, text, mode) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  // 临时文件名带上进程号和一个随机数：同一个进程里两次写同一个文件也不会撞在同一个临时文件上
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  fs.writeFileSync(tmp, text, mode ? { mode } : undefined);
+  fs.renameSync(tmp, file);
+  if (mode) { try { fs.chmodSync(file, mode); } catch { /* Windows */ } }
+}
+
+export function loadUserConfig() {
+  return readJson(path.join(userDir(), 'config.json'), {});
+}
+
+export function saveUserConfig(patch) {
+  const dir = userDir();
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const file = path.join(dir, 'config.json');
+  // 原来的文件坏了：先另存一份再写。它可能是用户手改到一半的（里面有令牌、服务器地址），按「空」合并写回去就全丢了 ——
+  // 而这里每次启动都会走到（记 system.md 的指纹），坏文件原来一启动就被悄悄换掉
+  loadUserConfig();
+  if (brokenFiles.has(file)) {
+    const backup = `${file}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+      fs.renameSync(file, backup);
+      brokenFiles.delete(file);
+      process.stderr.write(`! ${file.replace(os.homedir(), '~')} 不是合法的 JSON，已另存为 ${path.basename(backup)}，再写入新的配置\n`);
+    } catch { /* 挪不动就照原样写：不能因为这个卡住 */ }
+  }
+  const next = { ...loadUserConfig(), ...patch };
+  for (const [k, v] of Object.entries(next)) if (v === undefined || v === null) delete next[k];
+  writeFileAtomic(path.join(dir, 'config.json'), `${JSON.stringify(next, null, 2)}\n`, 0o600);
+  return next;
+}
+
+export function loadProjectSettings(root) {
+  const settings = readJson(path.join(root, '.zhiqu', 'settings.json'), {});
+  const warnings = [];
+  if (settings && Object.prototype.hasOwnProperty.call(settings, 'token')) {
+    delete settings.token;
+    warnings.push('.zhiqu/settings.json 里的 token 已忽略 —— 这个文件可能被提交进仓库，令牌只放在 ~/.zhiqu/config.json');
+  }
+  return { settings: settings || {}, warnings };
+}
+
+/** 各层合在一起：命令行参数 > 环境变量 > 项目 > 用户 > 默认。 */
+export function resolveSettings(root, flags = {}) {
+  const user = loadUserConfig();
+  const { settings: project, warnings } = loadProjectSettings(root);
+  const pick = (key, envName) => flags[key] ?? (envName ? process.env[envName] : undefined) ?? project[key] ?? user[key];
+  const mode = normalizeMode(pick('mode')) || 'ask';
+  return {
+    server: stripSlash(pick('server', 'ZHIQU_SERVER') || DEFAULT_SERVER),
+    token: process.env.ZHIQU_TOKEN || user.token || '',
+    model: pick('model') ?? null,
+    mode,
+    maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 60),
+    execTimeoutMs: Number(project.execTimeoutMs ?? user.execTimeoutMs ?? 120_000),
+    allowedCommands: project.allowedCommands ?? user.allowedCommands ?? null,
+    // 思考过程默认不显示（用户 2026-09-28）；/verbose 或 --verbose 打开，/verbose 会记进 ~/.zhiqu/config.json
+    showThinking: Boolean(flags.verbose ?? user.showThinking ?? false),
+    extensions: project.extensions ?? user.extensions ?? null,
+    // 只说这一次读的那两份：同一个进程里读过别的目录的坏文件（测试、登录后重读）不该混进来
+    warnings: warnings.concat([path.join(userDir(), 'config.json'), path.join(root, '.zhiqu', 'settings.json')]
+      .filter((f) => brokenFiles.has(f)).map((f) => describeBroken(f, brokenFiles.get(f), root))),
+  };
+}
+
+export function stripSlash(url) {
+  let s = String(url || '').trim();
+  while (s.endsWith('/')) s = s.slice(0, -1);
+  return s;
+}
+
+const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+/**
+ * 系统内容（用户说的「里面可以保留一次系统内容」）：
+ *   - ~/.zhiqu/system.md 不存在 → 写一份内置版本（只这一次），记下它的指纹；
+ *   - 存在且没被改过（指纹对得上）、而内置版本更新了 → 跟着更新 —— 没改过的副本不该把人困在旧提示里；
+ *   - 用户改过 → 一个字都不动；内置版本有更新时提示一次，/system diff 可以看差别。
+ * 工作区的 .zhiqu/system.md 存在时优先。
+ */
+export function systemContent(root) {
+  const projectFile = path.join(root, '.zhiqu', 'system.md');
+  if (fs.existsSync(projectFile)) {
+    return { text: fs.readFileSync(projectFile, 'utf8'), source: 'project', file: projectFile, notice: null };
+  }
+  const file = path.join(userDir(), 'system.md');
+  const cfg = loadUserConfig();
+  // config.json 坏了：记不了也读不到指纹，就不做这套记账 —— 否则每次启动都会去写（把坏文件换掉），
+  // 还会因为读不到指纹误报「你的 system.md 改过」。system.md 在就照它用，不在就用内置的，都不写盘
+  if (brokenFiles.has(path.join(userDir(), 'config.json'))) {
+    return fs.existsSync(file)
+      ? { text: fs.readFileSync(file, 'utf8'), source: 'user', file, notice: null }
+      : { text: BUILTIN_SYSTEM_PROMPT, source: 'builtin', file, notice: null };
+  }
+  const builtinHash = sha(BUILTIN_SYSTEM_PROMPT);
+  let notice = null;
+  if (!fs.existsSync(file)) {
+    writeFileAtomic(file, BUILTIN_SYSTEM_PROMPT);
+    saveUserConfig({ systemFileHash: builtinHash, systemBuiltinHash: builtinHash });
+    return { text: BUILTIN_SYSTEM_PROMPT, source: 'user', file, notice: `已把系统内容写到 ${file}（之后以它为准，可以改）` };
+  }
+  const text = fs.readFileSync(file, 'utf8');
+  const fileHash = sha(text);
+  if (cfg.systemBuiltinHash !== builtinHash) {
+    if (fileHash === cfg.systemFileHash) {
+      writeFileAtomic(file, BUILTIN_SYSTEM_PROMPT);
+      saveUserConfig({ systemFileHash: builtinHash, systemBuiltinHash: builtinHash });
+      return { text: BUILTIN_SYSTEM_PROMPT, source: 'user', file, notice: '内置系统内容有更新，你没改过那一份，已跟着更新' };
+    }
+    notice = '内置系统内容有更新；你的 ~/.zhiqu/system.md 改过，所以没动它。/system diff 可以看差别，/system reset 换成新版';
+    saveUserConfig({ systemBuiltinHash: builtinHash });
+  }
+  return { text, source: 'user', file, notice };
+}
+
+export function resetSystemContent() {
+  const file = path.join(userDir(), 'system.md');
+  writeFileAtomic(file, BUILTIN_SYSTEM_PROMPT);
+  const h = sha(BUILTIN_SYSTEM_PROMPT);
+  saveUserConfig({ systemFileHash: h, systemBuiltinHash: h });
+  return file;
+}

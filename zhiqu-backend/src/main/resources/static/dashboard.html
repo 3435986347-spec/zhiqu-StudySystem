@@ -1,285 +1,118 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>看板 - 知趣·象限学习系统</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/common.css">
-    <link rel="stylesheet" href="/css/dashboard.css">
-    <link rel="stylesheet" href="/css/pixel-theme.css">
-    <link rel="stylesheet" href="/css/ai-assistant.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>看板 - 知趣·象限 AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261010-review" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261010-review">
+  <link rel="manifest" href="manifest.json?v=20261010-review">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261010-review">
 </head>
 <body>
-    <div id="navbar"></div>
-    <div class="main-content">
-        <div class="dashboard-layout">
-            <!-- ── Calendar Column ── -->
-            <div class="dashboard-calendar">
-                <div class="cal-panel" id="cal-panel"></div>
-            </div>
-            <!-- ── Quadrant Column ── -->
-            <div class="dashboard-main">
-                <div class="quadrant-grid">
-                    <div class="quad-card q1">
-                        <h3><span class="q-emoji">🔥</span>重要且紧急</h3>
-                        <div class="quad-body">
-                            <ul class="task-mini-list" id="quad-list-1"></ul>
-                        </div>
-                    </div>
-                    <div class="quad-card q2">
-                        <h3><span class="q-emoji">⭐</span>重要不紧急</h3>
-                        <div class="quad-body">
-                            <ul class="task-mini-list" id="quad-list-2"></ul>
-                        </div>
-                    </div>
-                    <div class="quad-card q3">
-                        <h3><span class="q-emoji">⚡</span>紧急不重要</h3>
-                        <div class="quad-body">
-                            <ul class="task-mini-list" id="quad-list-3"></ul>
-                        </div>
-                    </div>
-                    <div class="quad-card q4">
-                        <h3><span class="q-emoji">💤</span>不重要不紧急</h3>
-                        <div class="quad-body">
-                            <ul class="task-mini-list" id="quad-list-4"></ul>
-                        </div>
-                    </div>
-                </div>
-                <button type="button" class="btn btn-primary" id="btn-new-task">＋ 新增任务</button>
-            </div>
-            <aside class="dashboard-side">
-                <div class="pomodoro-panel">
-                    <h2>番茄钟</h2>
-                    <div class="pomo-round" id="pomo-round"></div>
-                    <div class="pomo-ring-wrap" id="pomo-ring-wrap">
-                        <svg width="200" height="200" viewBox="0 0 200 200" aria-hidden="true">
-                            <circle cx="100" cy="100" r="80" fill="none" stroke="#E5E7EB" stroke-width="10"/>
-                            <circle id="pomo-ring-fg" cx="100" cy="100" r="80" fill="none" stroke="#5B8DEF" stroke-width="10" stroke-linecap="round"/>
-                        </svg>
-                        <div class="pomo-center">
-                            <div class="tomato-icon-wrapper" id="tomato-wrapper">
-                                <!-- 现代风：扁平番茄 -->
-                                <svg class="tomato-icon tomato-modern" viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
-                                    <!-- 茎 -->
-                                    <rect x="29" y="6" width="5" height="10" rx="2.5" fill="#6D4C41"/>
-                                    <!-- 左叶 -->
-                                    <ellipse cx="24" cy="10" rx="9" ry="5" fill="#43A047" transform="rotate(-30 24 10)"/>
-                                    <!-- 右叶 -->
-                                    <ellipse cx="40" cy="10" rx="9" ry="5" fill="#66BB6A" transform="rotate(30 40 10)"/>
-                                    <!-- 番茄主体 -->
-                                    <ellipse cx="32" cy="40" rx="22" ry="20" fill="#E53935"/>
-                                    <!-- 亮面 -->
-                                    <ellipse cx="32" cy="40" rx="22" ry="20" fill="url(#tomatoGrad)"/>
-                                    <!-- 高光 -->
-                                    <ellipse cx="23" cy="33" rx="7" ry="9" fill="rgba(255,255,255,0.22)" transform="rotate(-20 23 33)"/>
-                                    <defs>
-                                        <radialGradient id="tomatoGrad" cx="40%" cy="35%" r="60%">
-                                            <stop offset="0%"   stop-color="#EF5350"/>
-                                            <stop offset="100%" stop-color="#B71C1C"/>
-                                        </radialGradient>
-                                    </defs>
-                                </svg>
-                                <!-- 像素风：星露谷风格 8×8 像素番茄 -->
-                                <svg class="tomato-icon tomato-pixel" viewBox="0 0 16 16" width="44" height="44" aria-hidden="true" style="image-rendering:pixelated">
-                                    <!-- 茎 -->
-                                    <rect x="7" y="1" width="2" height="3" fill="#5D4037"/>
-                                    <!-- 左叶 -->
-                                    <rect x="3" y="2" width="4" height="2" fill="#388E3C"/>
-                                    <rect x="4" y="1" width="3" height="1" fill="#43A047"/>
-                                    <!-- 右叶 -->
-                                    <rect x="9" y="2" width="4" height="2" fill="#43A047"/>
-                                    <rect x="9" y="1" width="3" height="1" fill="#66BB6A"/>
-                                    <!-- 番茄顶 -->
-                                    <rect x="4" y="4"  width="8" height="1" fill="#E53935"/>
-                                    <!-- 番茄主体 -->
-                                    <rect x="3" y="5"  width="10" height="1" fill="#E53935"/>
-                                    <rect x="2" y="6"  width="12" height="5" fill="#E53935"/>
-                                    <rect x="3" y="11" width="10" height="2" fill="#C62828"/>
-                                    <rect x="4" y="13" width="8"  height="1" fill="#B71C1C"/>
-                                    <rect x="5" y="14" width="6"  height="1" fill="#B71C1C"/>
-                                    <!-- 高光 -->
-                                    <rect x="4" y="6"  width="2" height="4" fill="#EF9A9A"/>
-                                    <rect x="4" y="5"  width="1" height="1" fill="#FFCDD2"/>
-                                </svg>
-                            </div>
-                            <div class="pomo-time" id="pomo-time">25:00</div>
-                            <div class="pomo-phase" id="pomo-phase">待开始</div>
-                        </div>
-                    </div>
-                    <div class="pomo-fields">
-                        <div class="form-group">
-                            <label for="pomo-work-duration">专注时长</label>
-                            <select id="pomo-work-duration"></select>
-                        </div>
-                        <div class="form-group">
-                            <label for="pomo-task">关联任务</label>
-                            <select id="pomo-task"><option value="">（不指定任务）</option></select>
-                        </div>
-                    </div>
-                    <div class="pomo-controls">
-                        <button type="button" class="btn btn-primary" id="pomo-start">开始</button>
-                        <button type="button" class="btn btn-default" id="pomo-pause">暂停</button>
-                        <button type="button" class="btn btn-default" id="pomo-resume">继续</button>
-                        <button type="button" class="btn btn-default" id="pomo-reset">重置</button>
-                        <button type="button" class="btn btn-warning" id="pomo-skip">跳过</button>
-                    </div>
-                    <div class="pomo-today" id="pomo-today">今日：0 个｜0 分钟</div>
-                </div>
-            </aside>
-        </div>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:18px;">
 
-        <!-- ── AI 学习助手嵌入面板 ── -->
-        <div class="ai-panel" id="aiPanel">
-            <div class="ai-panel-header" onclick="toggleAiPanel()">
-                <span class="ai-panel-title">🤖 AI 学习助手</span>
-                <span class="ai-panel-hint">上传课表 / 行程截图 / PDF，AI 自动识别并生成学习任务</span>
-                <span class="ai-panel-toggle" id="aiPanelToggle">展开 ▼</span>
-            </div>
-            <div class="ai-panel-body hidden" id="aiPanelBody">
-                <div class="ai-panel-content">
-                    <!-- 左侧：对话区域 -->
-                    <div class="ai-chat-side">
-                        <div class="ai-messages" id="aiMessages">
-                            <div class="ai-msg ai-msg-ai">
-                                <div class="ai-msg-avatar">🤖</div>
-                                <div class="ai-msg-content">
-                                    你好！我是你的 AI 学习助手。<br>
-                                    🖼️ <strong>拖拽或上传</strong>课表截图、行程 PDF、文本文件，我帮你自动识别并生成学习任务<br>
-                                    💬 也可以直接<strong>对话</strong>咨询学习规划建议
-                                </div>
-                            </div>
-                        </div>
-                        <div class="ai-drop-zone" id="aiDropZone">
-                            <div class="ai-drop-icon">📂</div>
-                            <div class="ai-drop-text">拖拽文件到此处</div>
-                            <div class="ai-drop-hint">支持图片（png / jpg）、PDF、文本（txt / md / csv / json）</div>
-                        </div>
-                        <div class="ai-input-area">
-                            <label class="ai-upload-btn" title="上传文件">
-                                📎
-                                <input type="file" id="aiFileInput" style="display:none"
-                                       accept=".txt,.csv,.md,.json,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp"
-                                       onchange="handleFileUpload(this.files[0]); this.value='';">
-                            </label>
-                            <input type="text" id="aiInput" class="ai-input"
-                                   placeholder="输入消息，或拖拽 / 点击📎上传文件..."
-                                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiMessage();}">
-                            <button class="ai-send-btn" onclick="sendAiMessage()">发送</button>
-                        </div>
-                    </div>
-                    <!-- 右侧：任务确认区域（默认隐藏） -->
-                    <div class="ai-confirm-side hidden" id="aiConfirmSide">
-                        <div class="ai-confirm-header">
-                            <span class="ai-confirm-title">📋 识别出的任务</span>
-                            <span class="ai-confirm-count" id="aiConfirmCount"></span>
-                        </div>
-                        <div class="ai-confirm-list" id="aiConfirmList"></div>
-                        <div class="ai-confirm-actions">
-                            <button class="btn btn-primary" onclick="confirmAiTasks()">✅ 确认创建选中任务</button>
-                            <button class="btn btn-default" onclick="cancelAiTasks()">取消</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+        <header class="zq-page-head">
+          <div>
+            <h1 class="zq-h1">先看今天，再看本周</h1>
+            <span class="zq-page-sub">—</span>
+          </div>
+          <div class="zq-page-actions">
+            <a class="zq-btn-ghost" href="ai-assistant.html?ask=%E5%B8%AE%E6%88%91%E7%9C%8B%E7%9C%8B%E4%BB%8A%E5%A4%A9%E7%9A%84%E4%BB%BB%E5%8A%A1%EF%BC%8C%E6%8C%89%E5%9B%9B%E8%B1%A1%E9%99%90%E6%8E%92%E4%B8%80%E4%B8%8B%E5%85%88%E5%81%9A%E4%BB%80%E4%B9%88"><span data-zq-icon="sparkles"></span>让 AI 排一下今天</a>
+            <button class="zq-btn">新增任务</button>
+          </div>
+        </header>
 
-    <div id="task-modal" class="modal hidden">
-        <div class="modal-backdrop"></div>
-        <div class="modal-panel">
-            <div class="modal-header">
-                <h2 class="modal-title">新增任务</h2>
-                <button type="button" class="modal-close" id="task-modal-close" aria-label="关闭">&times;</button>
-            </div>
-            <form id="form-new-task">
-                <div class="form-group">
-                    <label for="nt-title">任务标题</label>
-                    <input id="nt-title" required maxlength="200" placeholder="输入任务标题">
-                </div>
-                <div class="form-group">
-                    <label for="nt-desc">任务描述（选填）</label>
-                    <textarea id="nt-desc" placeholder="详细描述..."></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="nt-quadrant">所属象限</label>
-                        <select id="nt-quadrant" required>
-                            <option value="1">🔥 重要且紧急</option>
-                            <option value="2">⭐ 重要不紧急</option>
-                            <option value="3">⚡ 紧急不重要</option>
-                            <option value="4">💤 不重要不紧急</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="nt-priority">优先级</label>
-                        <select id="nt-priority">
-                            <option value="0">低</option>
-                            <option value="1" selected>中</option>
-                            <option value="2">高</option>
-                            <option value="3">紧急</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="nt-start-time">开始时间</label>
-                        <input type="datetime-local" id="nt-start-time">
-                    </div>
-                    <div class="form-group">
-                        <label for="nt-deadline">截止时间</label>
-                        <input type="datetime-local" id="nt-deadline">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="nt-reminder">提醒时间</label>
-                        <input type="datetime-local" id="nt-reminder">
-                    </div>
-                    <div class="form-group">
-                        <label for="nt-repeat-weeks">持续周数（留空为单次任务）</label>
-                        <input type="number" id="nt-repeat-weeks" placeholder="例如 16" min="1" max="52">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-default" id="task-modal-cancel">取消</button>
-                    <button type="submit" class="btn btn-primary">创建任务</button>
-                </div>
-            </form>
-        </div>
-    </div>
+        <!-- 概览卡 -->
+        <section class="zq-grid" style="grid-template-columns:repeat(4, minmax(0,1fr));">
+          <article class="zq-stat"><span class="zq-stat-label">今日待办</span><strong class="zq-stat-num">—</strong></article>
+          <!-- 逾期：不再写死大红字（0 也红），大于 0 时标签旁边一个红点（dashboard.js 加 is-alert） -->
+          <article class="zq-stat" id="zq-stat-overdue"><span class="zq-stat-label">逾期未完</span><strong class="zq-stat-num">—</strong></article>
+          <article class="zq-stat"><span class="zq-stat-label">早间提醒</span><strong class="zq-stat-num">—</strong></article>
+          <article class="zq-stat"><span class="zq-stat-label">例行完成</span><strong class="zq-stat-num">—</strong>
+            <div style="height:5px; margin-top:10px; overflow:hidden; border-radius:999px; background:var(--zq-tint);"><i id="zq-routine-bar" style="display:block; width:0%; height:100%; border-radius:inherit; background:var(--zq-primary);"></i></div>
+          </article>
+        </section>
 
-    <script src="/js/common.js"></script>
-    <script src="/js/pomodoro.js"></script>
-    <script src="/js/calendar.js"></script>
-    <script src="/js/ai-assistant.js"></script>
-    <script src="/js/dashboard.js"></script>
-    <script>
-    /* Tomato icon animation state — wire to pomodoro buttons without touching pomodoro.js */
-    (function() {
-        var wrapper = null;
-        function getWrapper() {
-            return wrapper || (wrapper = document.getElementById('tomato-wrapper'));
-        }
-        function setActive(on) {
-            var w = getWrapper();
-            if (w) { on ? w.classList.add('active') : w.classList.remove('active'); }
-        }
-        document.addEventListener('DOMContentLoaded', function() {
-            var start  = document.getElementById('pomo-start');
-            var pause  = document.getElementById('pomo-pause');
-            var resume = document.getElementById('pomo-resume');
-            var reset  = document.getElementById('pomo-reset');
-            var skip   = document.getElementById('pomo-skip');
-            if (start)  start.addEventListener('click',  function() { setActive(true); });
-            if (resume) resume.addEventListener('click', function() { setActive(true); });
-            if (pause)  pause.addEventListener('click',  function() { setActive(false); });
-            if (reset)  reset.addEventListener('click',  function() { setActive(false); });
-            if (skip)   skip.addEventListener('click',   function() { setActive(false); });
-        });
-    })();
-    </script>
+        <div style="display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:18px; align-items:start;">
+          <main style="display:flex; flex-direction:column; gap:18px; min-width:0;">
+
+            <!-- 本周日历 -->
+            <section class="zq-card zq-card-lg">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px;">
+                <h2 class="zq-h2">本周</h2>
+                <div style="display:inline-flex; align-items:center; gap:6px;">
+                  <button class="zq-btn-ghost" data-week-nav="prev" aria-label="上一周" style="width:30px; padding:0;"><span data-zq-icon="chevron-left"></span></button>
+                  <button class="zq-btn-ghost" data-week-nav="today" style="height:30px;">本周</button>
+                  <button class="zq-btn-ghost" data-week-nav="next" aria-label="下一周" style="width:30px; padding:0;"><span data-zq-icon="chevron-right"></span></button>
+                </div>
+              </div>
+              <!-- 一排七个「日子」：点一天，下面的清单换成那一天的（dashboard.js 的 renderWeek / showDay，第四十八轮） -->
+              <div id="zq-week" class="zq-week"></div>
+            </section>
+
+            <!-- 今日行动清单 -->
+            <section class="zq-card zq-card-lg">
+              <h2 class="zq-h2" id="zq-today-title" style="margin-bottom:6px;">今天</h2>
+              <div id="zq-today" class="zq-agenda"></div>
+            </section>
+
+            <!-- 象限摘要 -->
+            <section class="zq-card zq-card-lg">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px;">
+                <h2 class="zq-h2">四象限</h2>
+                <a href="tasks.html" class="zq-btn-ghost" style="height:30px;">进入任务页</a>
+              </div>
+              <div id="zq-quad" class="zq-quads"></div>
+            </section>
+          </main>
+
+          <!-- 侧栏 -->
+          <aside style="display:flex; flex-direction:column; gap:18px; position:sticky; top:24px;">
+            <div class="zq-card zq-card-lg zq-pomo">
+              <div class="zq-pomo-head">
+                <h2 class="zq-h2">番茄钟</h2>
+                <div id="zq-pomo-round" class="zq-pomo-round">专注一段时间，记进今天的专注时长</div>
+              </div>
+              <div class="zq-pomo-dial">
+                <svg width="160" height="160" viewBox="0 0 200 200" aria-hidden="true">
+                  <circle cx="100" cy="100" r="80" fill="none" stroke="var(--zq-card-soft)" stroke-width="9"></circle>
+                  <circle id="zq-pomo-ring" cx="100" cy="100" r="80" fill="none" stroke="var(--zq-primary)" stroke-width="9" stroke-linecap="round" stroke-dasharray="0 502.4" transform="rotate(-90 100 100)" style="transition:stroke-dasharray .4s linear;"></circle>
+                </svg>
+                <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+                  <div id="zq-pomo-time" class="zq-num" style="font-size:30px; font-weight:var(--zq-fw-medium); line-height:1;">25:00</div>
+                  <div id="zq-pomo-phase" style="font-size:11.5px; color:var(--zq-text2); margin-top:6px;">待开始</div>
+                </div>
+              </div>
+              <div class="zq-pomo-fields">
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">专注时长</label><select class="zq-select" id="zq-pomo-min"><option value="25">25 分钟</option><option value="45">45 分钟</option><option value="60">60 分钟</option></select></div>
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">关联任务</label><select class="zq-select" id="zq-pomo-task"><option value="">（不指定任务）</option></select></div>
+              </div>
+              <div style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap;">
+                <button class="zq-btn" id="zq-pomo-start" style="height:30px;">开始</button>
+                <button class="zq-btn-ghost" id="zq-pomo-reset" style="height:30px;">重置</button>
+                <button class="zq-btn-ghost" id="zq-pomo-mini" style="height:30px;" title="主窗口藏起来，桌面上只留一个总在最前的小番茄钟" hidden>缩小到桌面</button>
+              </div>
+              <div id="zq-pomo-count" style="font-size:12px; color:var(--zq-text2); margin-top:12px; padding-top:10px; border-top:1px solid var(--zq-border-soft);">今日：—</div>
+            </div>
+
+            <section class="zq-card zq-card-lg">
+              <h2 class="zq-h2" style="margin-bottom:4px;">临近截止</h2>
+              <div id="zq-ddl" style="display:flex; flex-direction:column;"></div>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20261010-review"></script>
+  <script src="assets/zhiqu-api.js?v=20261010-review"></script>
 </body>
 </html>

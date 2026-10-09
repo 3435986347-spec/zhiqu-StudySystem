@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-ver="v1" data-zq-mode="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>个人中心 - 知趣·象限学习系统</title>
+  <script>(function(){try{var v=localStorage.getItem('zq.ver')||'v1',m=localStorage.getItem('zq.mode')||'light';document.documentElement.setAttribute('data-zq-ver',v);document.documentElement.setAttribute('data-zq-mode',m);}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div style="display:flex; flex-direction:column; gap:16px; animation:zqFadeIn .3s ease both;">
+        <header style="padding:4px 2px 2px;"><p class="zq-eyebrow">账号</p><h1 class="zq-h1">个人中心</h1></header>
+
+        <div style="display:grid; grid-template-columns:300px minmax(0,1fr); gap:16px; align-items:start;">
+          <!-- 左列 -->
+          <div style="display:flex; flex-direction:column; gap:16px;">
+            <section class="zq-card zq-card-lg" style="text-align:center; padding:22px 16px;">
+              <div style="width:76px; height:76px; margin:0 auto 12px; border-radius:50%; background:var(--zq-tint-strong); color:var(--zq-primary); display:flex; align-items:center; justify-content:center; font-size:28px; font-weight:700;">远</div>
+              <h2 class="zq-h2" style="font-size:17px;">王明远</h2>
+              <span class="zq-badge" style="margin-top:7px; background:var(--zq-tint); color:var(--zq-primary); font-weight:700;">管理员</span>
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:16px; padding-top:14px; border-top:1px solid var(--zq-border-soft);">
+                <div><strong class="zq-mono" style="display:block; font-size:18px;">23</strong><span style="font-size:11px; color:var(--zq-text3);">连续天数</span></div>
+                <div><strong class="zq-mono" style="display:block; font-size:18px;">128</strong><span style="font-size:11px; color:var(--zq-text3);">完成任务</span></div>
+                <div><strong class="zq-mono" style="display:block; font-size:18px;">47.6h</strong><span style="font-size:11px; color:var(--zq-text3);">本月时长</span></div>
+              </div>
+            </section>
+            <section class="zq-card">
+              <h3 style="margin:0 0 10px; font-size:14px; font-weight:700;">早八提醒</h3>
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                <span style="font-size:12.5px; color:var(--zq-text2); line-height:1.5;">每天 08:00 推送今日待办与 DDL 汇总</span>
+                <button id="zq-morning" onclick="tog()" style="flex:none; width:42px; height:24px; border:none; border-radius:999px; background:var(--zq-primary); cursor:pointer; position:relative; transition:background .2s;"><i style="position:absolute; top:3px; left:21px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s;"></i></button>
+              </div>
+              <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--zq-border-soft); font-size:12px; color:var(--zq-text3);">渠道：PushPlus · 已绑定</div>
+            </section>
+            <section class="zq-card">
+              <h3 style="margin:0 0 12px; font-size:14px; font-weight:700;">修改密码</h3>
+              <div style="display:flex; flex-direction:column; gap:10px;">
+                <input class="zq-input" type="password" placeholder="当前密码"><input class="zq-input" type="password" placeholder="新密码（至少 6 位）"><input class="zq-input" type="password" placeholder="确认新密码">
+                <button class="zq-btn">更新密码</button>
+              </div>
+            </section>
+            <section class="zq-card">
+              <h3 style="margin:0 0 12px; font-size:14px; font-weight:700;">账号与安全</h3>
+              <div style="display:flex; flex-direction:column;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft); font-size:12.5px;"><span style="color:var(--zq-text2); flex:none;">最近登录</span><span style="font-weight:600; text-align:right;">07-04 09:12 · 上海</span></div>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft); font-size:12.5px;"><span style="color:var(--zq-text2); flex:none;">登录设备</span><span style="font-weight:600; text-align:right;">Chrome · macOS</span></div>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--zq-border-soft); font-size:12.5px;"><span style="color:var(--zq-text2); flex:none;">知识 Wiki</span><a href="knowledge-wiki.html" style="color:var(--zq-primary); font-weight:600; white-space:nowrap;">进入知识库 →</a></div>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; font-size:12.5px;"><span style="color:var(--zq-text2); flex:none;">退出登录</span><a href="index.html" class="zq-btn-ghost" style="height:26px; padding:0 12px; font-size:12px;">退出</a></div>
+              </div>
+            </section>
+          </div>
+
+          <!-- 右列 -->
+          <div style="display:flex; flex-direction:column; gap:16px;">
+            <section class="zq-card zq-card-lg">
+              <h2 class="zq-h2" style="font-size:16px; margin-bottom:14px;">基本资料</h2>
+              <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px;">
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">用户名</label><input class="zq-input" value="wangmy2024" style="background:var(--zq-card-soft); color:var(--zq-text3);"></div>
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">昵称</label><input class="zq-input" value="王明远"></div>
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">学校</label><input class="zq-input" value="沪上理工大学"></div>
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">专业 / 年级</label><input class="zq-input" value="计算机科学与技术 · 大三"></div>
+                <div class="zq-field" style="gap:5px; grid-column:1 / -1;"><label class="zq-label" style="font-size:11.5px;">邮箱</label><input class="zq-input" value="wangmy@ninfan.com"></div>
+              </div>
+              <div style="display:flex; justify-content:flex-end; margin-top:14px;"><button class="zq-btn">保存资料</button></div>
+            </section>
+
+            <section class="zq-card zq-card-lg">
+              <h2 class="zq-h2" style="font-size:16px;">AI 模型配置</h2>
+              <p style="margin:8px 0 12px; padding:8px 12px; border-radius:var(--zq-rs); background:var(--zq-tint); font-size:12px; color:var(--zq-text2); line-height:1.55;">API Key 加密存储；监管后台不会显示你的完整 Key、知识库正文或任务正文。</p>
+              <div id="zq-models" style="display:flex; flex-direction:column; gap:10px; margin-bottom:18px;"></div>
+              <div style="display:flex; flex-direction:column; gap:12px; padding-top:16px; border-top:1px solid var(--zq-border-soft);">
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">显示名称</label><input class="zq-input" placeholder="例如 Claude Sonnet / DeepSeek / 本地 Ollama"></div>
+                <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px;">
+                  <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">Provider</label><select class="zq-select"><option>OpenAI-compatible</option><option>Anthropic Claude</option><option>Ollama 本地模型</option><option>vLLM</option><option>Google Gemini</option></select></div>
+                  <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">模型名称</label><input class="zq-input" placeholder="gpt-4o-mini / claude-3-5-sonnet"></div>
+                </div>
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">API 接口地址</label><input class="zq-input" placeholder="https://api.openai.com/v1/chat/completions"><span style="font-size:11.5px; color:var(--zq-text3);">Anthropic 用 /v1/messages；Ollama 默认 http://localhost:11434/v1/chat/completions。</span></div>
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">API Key</label><input class="zq-input" type="password" placeholder="留空则不修改已保存 Key"></div>
+                <div style="padding:10px 12px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card-soft);"><strong style="display:block; font-size:12px;">模型能力由系统测试确认</strong><span style="display:block; margin-top:3px; font-size:11.5px; color:var(--zq-text2); line-height:1.55;">保存后可进行连通性、图像识别（多模态）、深度思考探测，会消耗少量 token。</span></div>
+                <div style="display:flex; gap:8px;"><button class="zq-btn">保存模型</button><button class="zq-btn-ghost">新建模型</button></div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js"></script>
+  <script>
+    function tog(){ var b=document.getElementById('zq-morning'), i=b.firstElementChild, on=i.style.left==='21px'; i.style.left=on?'3px':'21px'; b.style.background=on?'var(--zq-border)':'var(--zq-primary)'; }
+    var models=[
+      ['Claude Sonnet（我的）','claude-sonnet-4-20250514','ANTHROPIC','我的',1,'sk-ant-****7f2','✓ 通过','✓ 支持','✓ 支持'],
+      ['校园公共模型（系统）','deepseek-chat','OPENAI_COMPATIBLE','系统',0,'系统托管','✓ 通过','— 未测试','✓ 支持']
+    ];
+    document.getElementById('zq-models').innerHTML = models.map(function(m){
+      var mine=m[4];
+      return '<article style="border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:'+(mine?'var(--zq-card)':'var(--zq-card-soft)')+'; padding:12px 14px;">'
+        + '<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;"><div style="min-width:0;"><div style="font-size:13.5px; font-weight:700;">'+m[0]+'</div><div class="zq-mono" style="font-size:11.5px; color:var(--zq-text3); margin-top:2px;">'+m[1]+'</div></div><span class="zq-badge" style="background:'+(mine?'var(--zq-tint)':'var(--zq-card-soft)')+'; color:'+(mine?'var(--zq-primary)':'var(--zq-text2)')+'; font-weight:700;">'+m[3]+'</span></div>'
+        + '<div style="display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:8px; margin-top:11px; padding-top:11px; border-top:1px solid var(--zq-border-soft);">'
+        + tile('Provider',m[2],'var(--zq-text)')+tile('连通性',m[6],'var(--zq-ok)')+tile('视觉（多模态）',m[7],m[7].indexOf('✓')>=0?'var(--zq-ok)':'var(--zq-text3)')+tile('深度思考',m[8],'var(--zq-ok)')+tile('Key',m[5],'var(--zq-text2)')
+        + '</div>'
+        + '<div style="display:flex; gap:6px; margin-top:11px; flex-wrap:wrap;">'+(mine?'<button class="zq-btn-ghost" style="height:26px; padding:0 11px; font-size:12px;">编辑</button>':'')+'<button class="zq-btn-ghost" style="height:26px; padding:0 11px; font-size:12px;">测试</button>'+(mine?'<button style="height:26px; padding:0 11px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:12px; font-weight:600; cursor:pointer;">能力测试</button><button class="zq-btn-ghost" style="height:26px; padding:0 11px; font-size:12px;">删除</button>':'')+'</div>'
+        + '</article>';
+    }).join('');
+    function tile(k,v,c){ return '<div><span style="display:block; font-size:10.5px; color:var(--zq-text3);">'+k+'</span><strong style="display:block; margin-top:3px; font-size:11.5px; font-weight:600; color:'+c+'; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'+v+'</strong></div>'; }
+  </script>
+</body>
+</html>

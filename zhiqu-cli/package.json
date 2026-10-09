@@ -1,0 +1,27 @@
+{
+  "name": "zhiqu",
+  "version": "0.1.0",
+  "description": "知趣·象限的命令行 coding agent：循环与工具跑在你的电脑上，模型、登录、学习数据在服务器上",
+  "type": "module",
+  "bin": {
+    "zhiqu": "bin/zhiqu.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "set-server": "node scripts/set-default-server.mjs",
+    "prepublishOnly": "node scripts/check-release.mjs"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "zhiqu": {
+    "defaultServer": "http://127.0.0.1:47615"
+  }
+}

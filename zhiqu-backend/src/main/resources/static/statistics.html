@@ -1,38 +1,53 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>学习统计 - 知趣·象限学习系统</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/common.css">
-    <link rel="stylesheet" href="/css/statistics.css">
-    <link rel="stylesheet" href="/css/pixel-theme.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>专注统计 - 知趣·象限 AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261010-review" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261010-review">
+  <link rel="manifest" href="manifest.json?v=20261010-review">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261010-review">
 </head>
 <body>
-    <div id="navbar"></div>
-    <div class="main-content">
-        <h1 class="statistics-title">📊 学习统计</h1>
-        <div class="stat-cards" id="stat-cards"></div>
-        <div class="charts-row">
-            <div class="chart-box chart-trend">
-                <div class="trend-tabs">
-                    <button type="button" data-type="day" class="active">日</button>
-                    <button type="button" data-type="week">周</button>
-                    <button type="button" data-type="month">月</button>
-                </div>
-                <div id="chart-trend" class="chart-inner"></div>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div class="zq-page-stack">
+        <header class="zq-page-head"><div><h1 class="zq-h1">专注统计</h1><span class="zq-page-sub">专注时长来自番茄钟的记录，任务数来自任务页。</span></div></header>
+
+        <section class="zq-grid zq-stat-grid zq-phone-2col">
+          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label">连续专注天数</span></article>
+          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label">总专注时长（分钟）</span></article>
+          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label">完成任务数</span></article>
+          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label">总任务数</span></article>
+        </section>
+
+        <div class="zq-stats-cols zq-phone-1col">
+          <section class="zq-card zq-card-lg zq-trend">
+            <div class="zq-card-head">
+              <h2 class="zq-h2">专注时长趋势</h2>
+              <div class="zq-seg" id="zq-tabs" role="group" aria-label="按日 / 周 / 月看"><button type="button" data-k="day" aria-pressed="true">日</button><button type="button" data-k="week" aria-pressed="false">周</button><button type="button" data-k="month" aria-pressed="false">月</button></div>
             </div>
-            <div class="chart-box chart-pie">
-                <h3>象限分布</h3>
-                <div id="chart-pie" class="chart-inner"></div>
+            <div class="zq-bars" id="zq-bars"></div>
+          </section>
+          <section class="zq-card zq-card-lg">
+            <div class="zq-card-head"><h2 class="zq-h2">象限分布</h2></div>
+            <div class="zq-donut">
+              <svg width="172" height="172" viewBox="0 0 172 172" id="zq-donut"></svg>
+              <div class="zq-donut-center"><strong class="zq-num">—</strong><span>本月任务</span></div>
             </div>
+            <div class="zq-legend" id="zq-legend"></div>
+          </section>
         </div>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-    <script src="/js/common.js"></script>
-    <script src="/js/statistics.js"></script>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20261010-review"></script>
+  <script src="assets/zhiqu-api.js?v=20261010-review"></script>
 </body>
 </html>
