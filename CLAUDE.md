@@ -90,7 +90,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261009-narrow`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261009-wiki`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -186,3 +186,4 @@ cd ../zhiqu-cli && npm test
 - [第五十二轮](docs/rounds/round-52.md) 界面打磨第 6 步：任务页（一行工具条、服务端搜索加密的标题、列宽只写一处、窄窗口和手机不横着滚）
 - [第五十三轮](docs/rounds/round-53.md) 用户在桌面应用里看到的：日历日期出格（窄了换竖排）、番茄钟下拉撑出卡片、下拉是原生样子；在 WebKit 里量的判据
 - [第五十四轮](docs/rounds/round-54.md) AI 助手在桌面应用里一问要等几分钟：工具轮 / 拆计划 / 看图没说不要思考（DeepSeek 默认想）；回答的输出上限 4096 → 16384；代码模式不改写检索
+- [第五十五轮](docs/rounds/round-55.md) 界面打磨第 7 步：知识 Wiki 的正文（一行 42 字、15px、标题分层、重复的页名读时藏起）、一行图标工具栏；Markdown 的样子从内联挪进样式表；任务页的行和勾选项重名

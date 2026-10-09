@@ -88,7 +88,7 @@ judge('象限是小圆点 + 名字（类名，不是整块彩色底）', row.inc
 judge('过了截止时间、没做完：截止红字，提醒是下面一行小字', row.includes('zq-task-when zq-num is-overdue')
   && row.includes('>10-09 09:00</span>') && row.includes('class="zq-task-remind zq-num" title="提醒时间">提醒 10-09 08:30</span>'), row);
 row = fns.taskRowHtml(Object.assign({}, base, { status: 2 }), NOW, '2026');
-judge('做完了的：整行变淡，过了截止也不标红', row.includes('zq-task-row zq-task-grid is-done') && !row.includes('is-overdue'), row);
+judge('做完了的：整行变淡，过了截止也不标红', row.includes('zq-task-line zq-task-grid is-done') && !row.includes('is-overdue'), row);
 row = fns.taskRowHtml(Object.assign({}, base, { status: 1, deadline: '2026-10-20T18:00:00', reminderTime: null, description: '' }), NOW, '2026');
 judge('进行中的状态胶囊重一点；没到截止不标红；没有提醒就没有那一行；没有说明就没有那一行', row.includes('zq-task-status is-doing') && !row.includes('is-overdue')
   && !row.includes('zq-task-remind') && !row.includes('zq-task-desc'), row);

@@ -143,7 +143,7 @@ function shortWhen(v, thisYear) {
 function taskRowHtml(t, now, thisYear) {
   var overdue = t.status !== 2 && !!t.deadline && serverTime(t.deadline) < now;
   var name = esc(t.title);
-  return '<div class="zq-task-row zq-task-grid' + (t.status === 2 ? ' is-done' : '') + '">'
+  return '<div class="zq-task-line zq-task-grid' + (t.status === 2 ? ' is-done' : '') + '">'
     + '<div class="zq-task-main"><button type="button" class="zq-task-title" data-edit-task="' + t.id + '" title="编辑">' + name + '</button>'
     + (t.description ? '<div class="zq-task-desc">' + esc(t.description) + '</div>' : '') + '</div>'
     + '<span class="zq-task-quad"><i class="' + qKey(t.quadrant) + '"></i>' + esc(qLabel(t.quadrant)) + '</span>'

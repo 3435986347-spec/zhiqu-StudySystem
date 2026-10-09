@@ -120,7 +120,9 @@ async function paintWikiDoc(p, opts) {
   if (doc) {
     doc.dataset.editing = '0'; doc.dataset.source = '0';
     doc.contentEditable = 'false';
+    setSourcePressed(false);
     doc.innerHTML = renderMarkdown(p.content || p.summary || '');
+    markDuplicateTitle(doc, p.title);
     renderMathIn(doc);
     wireWikiLinks(doc);
   }
@@ -490,7 +492,8 @@ function wireWikiEditor() {
     else if (v === 'UL') document.execCommand('insertUnorderedList');
     else if (v === 'OL') document.execCommand('insertOrderedList');
     else if (v === 'HR') document.execCommand('insertHorizontalRule');
-    else if (v === 'TASK') document.execCommand('insertHTML', false, '<div class="zq-task-row" style="display:flex;gap:9px;align-items:flex-start;margin:7px 0;"><input type="checkbox" contenteditable="false" style="accent-color:var(--zq-primary);margin-top:5px;flex:none;"><span>待办事项</span></div>');
+    // 和 renderMarkdown 画出来的同一个样子：样式在 zhiqu-ui.css 的 .zq-task-row（第五十五轮起不写内联样式）
+    else if (v === 'TASK') document.execCommand('insertHTML', false, '<div class="zq-task-row"><input type="checkbox" contenteditable="false"><span>待办事项</span></div>');
     else document.execCommand('formatBlock', false, v);
     blockSel.value = 'P';
   };
@@ -540,7 +543,7 @@ function wikiToolbar(cmd) {
   if (cmd === 'bold') document.execCommand('bold');
   else if (cmd === 'italic') document.execCommand('italic');
   else if (cmd === 'underline') document.execCommand('underline');
-  else if (cmd === 'code') { var s = window.getSelection().toString(); if (s) document.execCommand('insertHTML', false, '<code style="background:var(--zq-card-soft);padding:1px 5px;border-radius:4px;">' + esc(s) + '</code>'); }
+  else if (cmd === 'code') { var s = window.getSelection().toString(); if (s) document.execCommand('insertHTML', false, '<code>' + esc(s) + '</code>'); }
   else if (cmd === 'link') {
     // 弹窗会夺走 contentEditable 焦点，先存选区、恢复后再 createLink
     var sel0 = window.getSelection();
@@ -582,7 +585,7 @@ function wikiToolbar(cmd) {
           handle.close();
           doc.focus();
           if (savedR) { var sr = window.getSelection(); sr.removeAllRanges(); sr.addRange(savedR); }
-          document.execCommand('insertHTML', false, '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer" style="color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;">' + esc(t || u) + '</a>&nbsp;');
+          document.execCommand('insertHTML', false, '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(t || u) + '</a>&nbsp;');
         };
         body.querySelector('#zq-ref-title').focus();
       }
@@ -590,15 +593,29 @@ function wikiToolbar(cmd) {
   }
   else if (cmd === 'source') toggleWikiSource();
 }
+/** 「源码」按钮按下的样子（第五十五轮换成图标之后，看不出现在是源码还是排版 —— 按下就是源码） */
+function setSourcePressed(on) {
+  var b = $('#zq-wiki-source'); if (b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+/**
+ * 正文第一行是一级标题、而且和页名一字不差（第五十五轮）：读的时候不显示第二遍 —— 页名就在上面，一页名字连着出现两遍。
+ * 只挂一个类（样式表在不编辑时藏起来），内容里照样留着、保存时原样写回去；编辑时它露出来，改不改由人定。
+ */
+function markDuplicateTitle(doc, title) {
+  var first = doc && doc.querySelector('.zq-md > h1:first-child');
+  if (first && String(first.textContent || '').trim() === String(title || '').trim()) first.classList.add('zq-dup-title');
+}
 function toggleWikiSource() {
   var doc = $('#zq-doc'); if (!doc) return;
   if (doc.dataset.source === '1') {
     var ta = $('#zq-src-ta'); var md = ta ? ta.value : '';
     doc.dataset.source = '0'; doc.contentEditable = 'true';
-    doc.innerHTML = renderMarkdown(md); renderMathIn(doc); doc.focus();
+    doc.innerHTML = renderMarkdown(md); markDuplicateTitle(doc, state.wikiCur && state.wikiCur.title); renderMathIn(doc); doc.focus();
+    setSourcePressed(false);
   } else {
     var md2 = htmlToMarkdown(doc);
     doc.dataset.source = '1'; doc.contentEditable = 'false';
+    setSourcePressed(true);
     doc.innerHTML = '<textarea id="zq-src-ta" style="width:100%;min-height:360px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);padding:12px;font-size:13px;line-height:1.7;font-family:var(--zq-fontM);background:var(--zq-input-bg);color:var(--zq-text);resize:vertical;box-sizing:border-box;"></textarea>';
     $('#zq-src-ta').value = md2;
   }
@@ -900,7 +917,7 @@ function patchSetCard(ps) {
     return '<details style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);margin-top:6px;">'
       + '<summary style="cursor:pointer;padding:7px 10px;font-size:12.5px;"><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);margin-right:6px;">' + esc(action) + '</span>'
       + '<strong>' + esc(it.title || '未命名页面') + '</strong></summary>'
-      + '<div class="zq-md" style="padding:4px 12px 10px;font-size:13px;line-height:1.7;max-height:260px;overflow-y:auto;">' + renderMarkdown(String(it.content || '')) + '</div></details>';
+      + '<div class="zq-rev-body" style="padding:4px 12px 10px;font-size:13px;line-height:1.7;max-height:260px;overflow-y:auto;">' + renderMarkdown(String(it.content || '')) + '</div></details>';
   }).join('') || '<p style="margin:6px 0 0;font-size:12px;color:var(--zq-text3);">这组变更里没有页面。</p>';
   return '<section data-patch-set="' + esc(ps.id) + '" style="padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card-soft);">'
     + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;">'

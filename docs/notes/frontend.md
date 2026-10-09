@@ -130,6 +130,18 @@
   narrower than 260px the paddings and circle shrink — the dashboard's calendar card is ~320px wide in a 960-px desktop window,
   where side-by-side cells pushed the date 24px out of the cell. `DesktopWebKitLayoutTest` lays out the published CSS and the real
   `renderWeek` markup in an off-screen WKWebView and measures it.
+- **Markdown is classes, not inline styles** (round 55, step 7 of `docs/ui-plan.md`). `renderMarkdown` wraps its output in
+  `<div class="zq-md">` and emits bare tags plus five classes (`zq-md-table`, `zq-task-row`, `zq-math`, `zq-math-i`, `zq-mono`); the
+  look is `.zq-md …` in `zhiqu-ui.css`, with exactly the values the inline styles had (the AI assistant's messages measured the same
+  before and after). Only the code highlighter's colour spans stay inline. Before, the Wiki editor's inserted headings and checklists had
+  none of the inline styles and looked different from rendered ones. The Wiki's body adds `.zq-prose`: at most 42em per line
+  (42 characters at 15px — it was 70+ at 1440 wide), line height 1.85, headings 24 / 19 / 16 / 15 with more space above than below,
+  no underline under h3. A first-line h1 equal to the page title gets `.zq-dup-title` and is hidden while reading, shown while
+  editing; it stays in the content, so saving keeps it. **Don't reuse Markdown's class names for page markup**: round 52 named the
+  tasks-page rows `.zq-task-row`, the checklist class, and every Wiki checklist was drawn as a task-table row (padding, a rule,
+  grid) for three rounds — the rows are `.zq-task-line` now. `markdown-check.js` (via `WikiLookTest`) runs the published
+  `renderMarkdown` (attribute allow-list, block shapes, a CSS rule for every class and tag) and scans pages and modules for
+  anyone else emitting those classes.
 - **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
   study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
   «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't

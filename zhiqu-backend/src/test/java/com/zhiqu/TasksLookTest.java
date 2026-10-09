@@ -62,7 +62,7 @@ class TasksLookTest {
     @DisplayName("样式：列宽只定义一次、最窄的桌面窗口里不横着滚；编辑 / 删除悬停或键盘移到这一行时出现，手机上一直在、一行叠成两三行不横着滚")
     void 样式() throws IOException {
         String css = SourceText.stripComments(read("assets/zhiqu-ui.css"));
-        // 只数单独的 .zq-task-grid{（手机那段里的 .zq-task-row.zq-task-grid / .zq-thead.zq-task-grid 是另一回事）
+        // 只数单独的 .zq-task-grid{（手机那段里的 .zq-task-line.zq-task-grid / .zq-thead.zq-task-grid 是另一回事）
         Matcher grid = Pattern.compile("(?<![\\w-])\\.zq-task-grid\\{").matcher(css);
         int grids = 0;
         while (grid.find()) grids++;
@@ -71,12 +71,12 @@ class TasksLookTest {
         assertTrue(min.find(), "找不到 .zq-task-scroll 的最小宽度");
         // 桌面应用最窄 960（ZhiquShell.swift 的 minSize），那时正文里表格实测 680 宽：比它宽就横着滚、编辑 / 删除在右边看不见
         assertTrue(Integer.parseInt(min.group(1)) <= 680, "表格最小 " + min.group(1) + "px —— 最窄的桌面窗口里要横着滚");
-        assertTrue(css.contains(".zq-task-row:hover .zq-task-acts,.zq-task-row:focus-within .zq-task-acts{opacity:1;}"),
+        assertTrue(css.contains(".zq-task-line:hover .zq-task-acts,.zq-task-line:focus-within .zq-task-acts{opacity:1;}"),
                 "编辑 / 删除只在悬停时出现、键盘移过去看不见");
         int media = css.indexOf("@media (max-width: 760px){");
         assertTrue(media > 0 && css.indexOf(".zq-task-acts{opacity:1;}", media) > 0, "手机上没有悬停：编辑 / 删除要一直在");
         // 手机上一行不是一排格子：横着滚的话状态、时间、编辑删除都在屏幕外（第五十二轮暴力测试照出来的）
-        assertTrue(css.indexOf(".zq-task-row.zq-task-grid{display:flex;flex-wrap:wrap;", media) > 0 && css.indexOf(".zq-task-scroll{min-width:0;}", media) > 0,
+        assertTrue(css.indexOf(".zq-task-line.zq-task-grid{display:flex;flex-wrap:wrap;", media) > 0 && css.indexOf(".zq-task-scroll{min-width:0;}", media) > 0,
                 "手机上任务的一行还是一排要横着滚的格子");
     }
 }

@@ -1439,10 +1439,10 @@
     }).join('');
   }
   function mathBlockHtml(tex) {
-    return '<div class="zq-math" data-tex="' + esc(tex) + '" contenteditable="false" style="margin:12px 0;padding:13px 16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);text-align:center;overflow-x:auto;font-size:15px;"><span class="zq-mono" style="font-size:12.5px;color:var(--zq-text2);">' + esc(tex) + '</span></div>';
+    return '<div class="zq-math" data-tex="' + esc(tex) + '" contenteditable="false"><span class="zq-mono">' + esc(tex) + '</span></div>';
   }
   function inlineMathSpan(tex) {
-    return '<span class="zq-math-i" data-tex="' + tex.replace(/"/g, '&quot;') + '" contenteditable="false" style="padding:0 2px;"><span class="zq-mono" style="font-size:.92em;color:var(--zq-text2);">' + tex + '</span></span>';
+    return '<span class="zq-math-i" data-tex="' + tex.replace(/"/g, '&quot;') + '" contenteditable="false"><span class="zq-mono">' + tex + '</span></span>';
   }
   function mdInline(t) {
     t = esc(t);
@@ -1463,11 +1463,11 @@
       })
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       // URL 支持一层配对括号（如维基百科的 Function_(mathematics)），不再截断在第一个 )
-      .replace(/\[([^\]]+)\]\((https?:\/\/(?:[^()\s]|\([^()]*\))+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;">$1</a>')
-      .replace(/\[\[([^\]]+)\]\]/g, '<a data-wikilink="$1" style="color:var(--zq-primary);cursor:pointer;text-decoration:underline;text-decoration-color:var(--zq-text3);text-underline-offset:3px;">$1</a>');
+      .replace(/\[([^\]]+)\]\((https?:\/\/(?:[^()\s]|\([^()]*\))+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/\[\[([^\]]+)\]\]/g, '<a data-wikilink="$1">$1</a>');
     t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
     return t.replace(/\u0001(\d+)\u0001/g, function (m, i) {
-      return '<code style="background:var(--zq-card-soft);padding:1px 5px;border-radius:4px;font-size:.92em;">' + codeSlots[+i] + '</code>';
+      return '<code>' + codeSlots[+i] + '</code>';
     });
   }
   // 完整块类型渲染，对齐 claude design 静态模板：标题/正文/列表/任务勾选/引用/代码块/分隔线/相关页面双链
@@ -1577,12 +1577,11 @@
     var src = segs.map(function (s) { return s.code ? s.text : normalizeMathDelims(s.text); }).join('\n');
     var lines = src.split('\n');
     var html = '', inUl = false, inOl = false, inCode = false, inMath = false, codeBuf = [], codeLang = '', mathBuf = [], quoteBuf = [], tableBuf = [];
-    var sizes = { 1: '20px;font-weight:var(--zq-fw-medium)', 2: '17px;font-weight:var(--zq-fw-medium)', 3: '15.5px;font-weight:var(--zq-fw-medium);border-bottom:1px solid var(--zq-border-soft);padding-bottom:6px', 4: '14px;font-weight:var(--zq-fw-medium)' };
     function closeUl() { if (inUl) { html += '</ul>'; inUl = false; } }
     function closeOl() { if (inOl) { html += '</ol>'; inOl = false; } }
     function flushQuote() {
       if (!quoteBuf.length) return;
-      html += '<blockquote style="margin:12px 0;padding:10px 16px;border-left:3px solid var(--zq-accent);background:var(--zq-card-soft);border-radius:0 var(--zq-rs) var(--zq-rs) 0;font-size:13px;line-height:1.7;color:var(--zq-text2);">' + quoteBuf.join('<br>') + '</blockquote>';
+      html += '<blockquote>' + quoteBuf.join('<br>') + '</blockquote>';
       quoteBuf = [];
     }
     function flushTable() {
@@ -1590,15 +1589,14 @@
       var rows = tableBuf.map(function (l) {
         return l.replace(/^\|/, '').replace(/\|\s*$/, '').split('|').map(function (c) { return c.trim(); });
       });
-      // 只有横线（第四十四轮；原来每一格四面描边、表头灰底，一张表像一张格子纸），表头的线深一档
-      var cellCss = 'padding:7px 16px 7px 0;border-bottom:1px solid var(--zq-border-soft);text-align:left;vertical-align:top;';
+      // 只有横线（第四十四轮；原来每一格四面描边、表头灰底，一张表像一张格子纸），表头的线深一档 —— 样子在 zhiqu-ui.css 的 .zq-md table
       var hasHeader = rows.length > 1 && rows[1].length && rows[1].every(function (c) { return c === '' || /^:?-{2,}:?$/.test(c); }) && rows[1].some(function (c) { return /-{2,}/.test(c); });
-      var out = '<div style="overflow-x:auto;margin:12px 0;"><table style="border-collapse:collapse;width:100%;font-size:var(--zq-fs-sm);line-height:1.6;">';
+      var out = '<div class="zq-md-table"><table>';
       if (hasHeader) {
-        out += '<thead><tr>' + rows[0].map(function (c) { return '<th style="' + cellCss + 'border-bottom-color:var(--zq-border);color:var(--zq-text2);font-weight:var(--zq-fw-medium);">' + mdInline(c) + '</th>'; }).join('') + '</tr></thead>';
+        out += '<thead><tr>' + rows[0].map(function (c) { return '<th>' + mdInline(c) + '</th>'; }).join('') + '</tr></thead>';
         rows = rows.slice(2);
       }
-      out += '<tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td style="' + cellCss + '">' + mdInline(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
+      out += '<tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + mdInline(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
       html += out;
       tableBuf = [];
     }
@@ -1606,7 +1604,7 @@
     lines.forEach(function (line) {
       if (/^```/.test(line.trim())) {
         if (inCode) {
-          html += '<pre style="margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;"><code class="zq-mono" style="font-size:12.5px;line-height:1.65;white-space:pre;">' + highlightCode(codeBuf.join('\n'), codeLang) + '</code></pre>';
+          html += '<pre><code class="zq-mono">' + highlightCode(codeBuf.join('\n'), codeLang) + '</code></pre>';
           codeBuf = []; inCode = false;
         } else { closeBlocks(); inCode = true; codeLang = line.trim().slice(3).trim(); }
         return;
@@ -1632,23 +1630,26 @@
       var li = line.match(/^[-*]\s+(.+)$/);
       var ol = line.match(/^\d+[.)]\s+(.+)$/);
       var q = line.match(/^>\s?(.*)$/);
-      if (h) { closeBlocks(); var lvl = h[1].length; html += '<h' + lvl + ' style="margin:14px 0 8px;font-size:' + sizes[lvl] + ';">' + mdInline(h[2]) + '</h' + lvl + '>'; }
+      if (h) { closeBlocks(); var lvl = h[1].length; html += '<h' + lvl + '>' + mdInline(h[2]) + '</h' + lvl + '>'; }
       else if (task) {
         closeBlocks();
         var done = task[1].toLowerCase() === 'x';
-        html += '<div class="zq-task-row" style="display:flex;gap:9px;align-items:flex-start;margin:7px 0;"><input type="checkbox" ' + (done ? 'checked ' : '') + 'contenteditable="false" style="accent-color:var(--zq-primary);margin-top:5px;flex:none;"><span style="text-decoration:' + (done ? 'line-through' : 'none') + ';color:' + (done ? 'var(--zq-text3)' : 'var(--zq-text)') + ';">' + mdInline(task[2]) + '</span></div>';
+        // 勾上了的划掉、变淡：样式表按 input:checked 画（第五十五轮；原来渲染时写死在 span 上，点一下勾选框样子不跟着变）
+        html += '<div class="zq-task-row"><input type="checkbox" ' + (done ? 'checked ' : '') + 'contenteditable="false"><span>' + mdInline(task[2]) + '</span></div>';
       }
-      else if (li) { closeOl(); flushQuote(); if (!inUl) { html += '<ul style="margin:8px 0;padding-left:22px;">'; inUl = true; } html += '<li style="margin:4px 0;">' + mdInline(li[1]) + '</li>'; }
-      else if (ol) { closeUl(); flushQuote(); if (!inOl) { html += '<ol style="margin:8px 0;padding-left:24px;">'; inOl = true; } html += '<li style="margin:4px 0;">' + mdInline(ol[1]) + '</li>'; }
+      else if (li) { closeOl(); flushQuote(); if (!inUl) { html += '<ul>'; inUl = true; } html += '<li>' + mdInline(li[1]) + '</li>'; }
+      else if (ol) { closeUl(); flushQuote(); if (!inOl) { html += '<ol>'; inOl = true; } html += '<li>' + mdInline(ol[1]) + '</li>'; }
       else if (q) { closeUl(); closeOl(); quoteBuf.push(mdInline(q[1])); }
-      else if (/^(-{3,}|\*{3,})$/.test(line.trim())) { closeBlocks(); html += '<hr style="margin:16px 0;border:none;border-top:1px solid var(--zq-border-soft);">'; }
+      else if (/^(-{3,}|\*{3,})$/.test(line.trim())) { closeBlocks(); html += '<hr>'; }
       else if (line.trim() === '') { closeBlocks(); }
-      else { closeBlocks(); html += '<p style="margin:8px 0;">' + mdInline(line) + '</p>'; }
+      else { closeBlocks(); html += '<p>' + mdInline(line) + '</p>'; }
     });
-    if (inCode) { html += '<pre style="margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;"><code class="zq-mono" style="font-size:12.5px;line-height:1.65;white-space:pre;">' + highlightCode(codeBuf.join('\n'), codeLang) + '</code></pre>'; }
+    if (inCode) { html += '<pre><code class="zq-mono">' + highlightCode(codeBuf.join('\n'), codeLang) + '</code></pre>'; }
     if (inMath && mathBuf.length) { html += mathBlockHtml(mathBuf.join('\n')); }
     closeBlocks();
-    return '<div style="font-size:13.5px;line-height:1.75;">' + (html || '<p></p>') + '</div>';
+    // 样子全在 zhiqu-ui.css 的 .zq-md（第五十五轮：原来每个标签带一串内联样式 —— 编辑器插进去的标题、列表没有这些，和渲染出来的不一样；
+    // 知识 Wiki 的正文另加 .zq-prose 放大、限行宽）
+    return '<div class="zq-md">' + (html || '<p></p>') + '</div>';
   }
   // KaTeX 懒加载：页面出现公式节点时才注入本地 vendor 资源（不依赖外网 CDN，随 JAR 分发、SW 可缓存）。
   // JS 与 CSS 都就绪才开始排版——只成功一半（如 CSS 加载失败）时保留样式化源码降级，不显示裸 KaTeX DOM。

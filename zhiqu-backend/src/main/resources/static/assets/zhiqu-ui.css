@@ -657,10 +657,71 @@ body.zq-modal-open{overflow:hidden;}
 @keyframes zqShimmer{from{background-position:200% 0;}to{background-position:-200% 0;}}
 @media (prefers-reduced-motion:reduce){.zq-skeleton{animation:none;}}
 
+/* ── Markdown（第五十五轮）：renderMarkdown 原来给每个标签带一串内联样式，挪到这里 —— 编辑器插进去的标题、列表、勾选项和渲染出来的长一个样。
+   这一段的数值和原来内联的一模一样（AI 助手的消息就是这一套，前后量过计算样式）；知识 Wiki 的正文另加 .zq-prose（下面）。 */
+.zq-md{font-size:13.5px;line-height:1.75;}
+.zq-md h1,.zq-md h2,.zq-md h3,.zq-md h4{margin:14px 0 8px;font-weight:var(--zq-fw-medium);}
+.zq-md h1{font-size:20px;}
+.zq-md h2{font-size:17px;}
+.zq-md h3{font-size:15.5px;padding-bottom:6px;border-bottom:1px solid var(--zq-border-soft);}
+.zq-md h4{font-size:var(--zq-fs-base);}
+.zq-md p{margin:8px 0;}
+.zq-md ul{margin:8px 0;padding-left:22px;}
+.zq-md ol{margin:8px 0;padding-left:24px;}
+.zq-md li{margin:4px 0;}
+.zq-md blockquote{margin:12px 0;padding:10px 16px;border-left:3px solid var(--zq-accent);border-radius:0 var(--zq-rs) var(--zq-rs) 0;background:var(--zq-card-soft);color:var(--zq-text2);font-size:var(--zq-fs-sm);line-height:1.7;}
+.zq-md pre{margin:12px 0;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);overflow-x:auto;}
+.zq-md pre code{font-size:12.5px;line-height:1.65;white-space:pre;}
+.zq-md :not(pre)>code{padding:1px 5px;border-radius:4px;background:var(--zq-card-soft);font-size:.92em;}
+.zq-md-table{margin:12px 0;overflow-x:auto;}
+.zq-md table{width:100%;border-collapse:collapse;font-size:var(--zq-fs-sm);line-height:1.6;}
+.zq-md th,.zq-md td{padding:7px 16px 7px 0;border-bottom:1px solid var(--zq-border-soft);text-align:left;vertical-align:top;}
+.zq-md th{border-bottom-color:var(--zq-border);color:var(--zq-text2);font-weight:var(--zq-fw-medium);}
+.zq-md hr{margin:16px 0;border:none;border-top:1px solid var(--zq-border-soft);}
+.zq-md a[href]{color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;}
+.zq-md a[data-wikilink]{color:var(--zq-primary);text-decoration:underline;text-decoration-color:var(--zq-text3);text-underline-offset:3px;cursor:pointer;}
+/* 勾选项：勾上了就划掉、变淡 —— 按 input:checked 画（原来渲染时写死在文字上，点一下勾选框样子不跟着变） */
+.zq-task-row{display:flex;align-items:flex-start;gap:9px;margin:7px 0;}
+.zq-task-row>input[type="checkbox"]{flex:none;margin-top:5px;accent-color:var(--zq-primary);}
+.zq-task-row>input:checked+span{color:var(--zq-text3);text-decoration:line-through;}
+.zq-math{margin:12px 0;padding:13px 16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);text-align:center;font-size:var(--zq-fs-md);overflow-x:auto;}
+.zq-math>.zq-mono{color:var(--zq-text2);font-size:12.5px;}
+.zq-math-i{padding:0 2px;}
+.zq-math-i>.zq-mono{color:var(--zq-text2);font-size:.92em;}
+
+/* ── 知识 Wiki 的正文（第五十五轮，界面打磨第 7 步）：读长文的排版 ──────────────────────────
+   原来和聊天气泡一个样（13.5px、行距 1.75、段距 8px）、没有行宽 —— 1440 宽时一行 70 多个字；三级标题带下划线比二级还显眼。
+   现在一行最多 42 个字（42em）、正文 15px、行距 1.85；一级 24 / 二级 19 / 三级 16 / 四级 15，节前留白比节后多。 */
+.zq-prose .zq-md{max-width:42em;font-size:var(--zq-fs-md);line-height:1.85;}
+.zq-prose .zq-md>:first-child{margin-top:0;}
+.zq-prose .zq-md h1{margin:28px 0 14px;font-size:24px;line-height:1.35;}
+.zq-prose .zq-md h2{margin:30px 0 10px;font-size:19px;line-height:1.4;}
+.zq-prose .zq-md h3{margin:24px 0 8px;padding-bottom:0;border-bottom:none;font-size:16px;line-height:1.45;}
+.zq-prose .zq-md h4{margin:20px 0 6px;color:var(--zq-text2);font-size:var(--zq-fs-md);}
+.zq-prose .zq-md p{margin:0 0 12px;}
+.zq-prose .zq-md ul,.zq-prose .zq-md ol{margin:0 0 12px;padding-left:24px;}
+.zq-prose .zq-md li{margin:5px 0;}
+.zq-prose .zq-md blockquote{margin:16px 0;padding:2px 0 2px 16px;border-left-color:var(--zq-border);border-radius:0;background:transparent;font-size:inherit;line-height:inherit;}
+.zq-prose .zq-md pre{margin:16px 0;}
+.zq-prose .zq-md pre code{font-size:13px;}
+.zq-prose .zq-md table{font-size:var(--zq-fs-base);}
+.zq-prose .zq-md hr{margin:28px 0;}
+.zq-prose .zq-task-row{margin:6px 0;}
+.zq-prose .zq-task-row>input[type="checkbox"]{margin-top:6px;}
+/* 正文第一行和页名一样的一级标题：读的时候不显示第二遍（页名就在上面）；编辑时露出来 —— 内容里留着，保存不动它 */
+.zq-prose:not([contenteditable="true"]) .zq-dup-title{display:none;}
+/* 页名（点了改名）和工具栏 */
+.zq-wiki-title{margin:0;font-size:var(--zq-fs-xl);font-weight:var(--zq-fw-medium);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.zq-wiki-tools{display:flex;align-items:center;gap:var(--zq-sp-2);flex-wrap:wrap;}
+.zq-wiki-tools .zq-select{height:28px;min-width:92px;padding:0 8px;font-size:var(--zq-fs-xs);}
+.zq-wiki-tools .zq-tbtn{min-width:28px;padding:0 6px;}
+.zq-wiki-tools .zq-tbtn[aria-pressed="true"]{background:var(--zq-card);color:var(--zq-text);box-shadow:var(--zq-sh1);}
+
 /* ── 任务页（第五十二轮，界面打磨第 6 步）──────────────────────────────────────────
    一行工具条：搜索、状态分段（.zq-seg）、「筛选」展开第二行（改了就查，原来五个下拉 +「查询」）。截止和提醒挤在一格：最窄的桌面窗口（960）里正文 700 上下，表格不横着滚。
    表格的列宽只在 .zq-task-grid 写一处（原来表头一遍、每一行又拼一遍内联样式）；象限是小圆点 + 名字（和看板一样，不再是整块彩色底）；
-   逾期没做完的截止时间红字；编辑 / 删除悬停或键盘移到这一行时才出现（手机上一直在，见最后那段 @media）。 */
+   逾期没做完的截止时间红字；编辑 / 删除悬停或键盘移到这一行时才出现（手机上一直在，见最后那段 @media）。
+   行的类名是 .zq-task-line（第五十五轮改的）：原来叫 .zq-task-row，和 Markdown 勾选项的类重名，知识 Wiki 里的勾选项被套上了这一行的边框和内边距。 */
 .zq-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}
 .zq-task-tools{display:flex;flex-wrap:wrap;align-items:center;gap:var(--zq-sp-2);}
 .zq-search{display:flex;align-items:center;gap:var(--zq-sp-2);flex:1 1 240px;max-width:360px;height:32px;padding:0 10px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-input-bg);color:var(--zq-text3);}
@@ -676,10 +737,10 @@ body.zq-modal-open{overflow:hidden;}
 .zq-task-filter .zq-select{height:30px;}
 .zq-task-scroll{min-width:640px;}
 .zq-task-grid{display:grid;grid-template-columns:minmax(200px,1fr) 96px 44px 72px 128px 60px;gap:var(--zq-sp-3);align-items:center;}
-.zq-task-row{padding:9px var(--zq-sp-4);border-bottom:1px solid var(--zq-border-soft);font-size:var(--zq-fs-sm);}
-.zq-task-row:last-child{border-bottom:none;}
-.zq-task-row:hover,.zq-task-row:focus-within{background:var(--zq-card-soft);}
-.zq-task-row.is-done{color:var(--zq-text3);}
+.zq-task-line{padding:9px var(--zq-sp-4);border-bottom:1px solid var(--zq-border-soft);font-size:var(--zq-fs-sm);}
+.zq-task-line:last-child{border-bottom:none;}
+.zq-task-line:hover,.zq-task-line:focus-within{background:var(--zq-card-soft);}
+.zq-task-line.is-done{color:var(--zq-text3);}
 .zq-task-main{min-width:0;}
 .zq-task-title{display:block;max-width:100%;padding:0;border:none;background:none;color:inherit;font:inherit;font-size:var(--zq-fs-base);text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
 .zq-task-title:hover{text-decoration:underline;text-underline-offset:3px;}
@@ -696,13 +757,13 @@ body.zq-modal-open{overflow:hidden;}
 .zq-task-when{color:var(--zq-text2);font-size:var(--zq-fs-xs);}
 .zq-task-remind{color:var(--zq-text3);font-size:var(--zq-fs-xs);}
 .zq-task-when.is-overdue{color:var(--zq-bad);}
-.zq-task-row.is-done .zq-task-quad,.zq-task-row.is-done .zq-task-pri,.zq-task-row.is-done .zq-task-when{color:var(--zq-text3);}
+.zq-task-line.is-done .zq-task-quad,.zq-task-line.is-done .zq-task-pri,.zq-task-line.is-done .zq-task-when{color:var(--zq-text3);}
 .zq-task-status{display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px solid var(--zq-border);border-radius:999px;background:var(--zq-card);color:var(--zq-text2);font-size:var(--zq-fs-xs);white-space:nowrap;cursor:pointer;}
 .zq-task-status:hover{border-color:var(--zq-text3);color:var(--zq-text);}
 .zq-task-status.is-doing{border-color:var(--zq-text3);color:var(--zq-text);}
 .zq-task-status:focus-visible{outline:none;box-shadow:var(--zq-focus);}
 .zq-task-acts{display:flex;justify-content:flex-end;gap:2px;opacity:0;transition:opacity .12s ease;}
-.zq-task-row:hover .zq-task-acts,.zq-task-row:focus-within .zq-task-acts{opacity:1;}
+.zq-task-line:hover .zq-task-acts,.zq-task-line:focus-within .zq-task-acts{opacity:1;}
 .zq-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text2);cursor:pointer;}
 .zq-icon-btn:hover{background:var(--zq-card);color:var(--zq-text);}
 .zq-icon-btn.is-danger:hover{color:var(--zq-bad);}
@@ -768,7 +829,7 @@ html.zq-signed-out .zq-mini-out{display:block;}
   .zq-search{flex-basis:100%;max-width:none;}
   .zq-task-scroll{min-width:0;}
   .zq-thead.zq-task-grid{display:none;}
-  .zq-task-row.zq-task-grid{display:flex;flex-wrap:wrap;align-items:center;column-gap:10px;row-gap:6px;}
+  .zq-task-line.zq-task-grid{display:flex;flex-wrap:wrap;align-items:center;column-gap:10px;row-gap:6px;}
   .zq-task-main{flex:1 1 100%;}
   .zq-task-time{flex-direction:row;gap:8px;}
   .zq-task-acts{margin-left:auto;}
