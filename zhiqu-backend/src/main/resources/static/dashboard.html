@@ -6,11 +6,11 @@
   <title>看板 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261009-tasks" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261009-tasks">
-  <link rel="manifest" href="manifest.json?v=20261009-tasks">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261009-narrow" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261009-narrow">
+  <link rel="manifest" href="manifest.json?v=20261009-narrow">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261009-tasks">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261009-narrow">
 </head>
 <body>
   <div class="zq-app">
@@ -90,9 +90,9 @@
                   <div id="zq-pomo-phase" style="font-size:11.5px; color:var(--zq-text2); margin-top:6px;">待开始</div>
                 </div>
               </div>
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; text-align:left;">
-                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">专注时长</label><select class="zq-select" id="zq-pomo-min" style="height:30px;"><option value="25">25 分钟</option><option value="45">45 分钟</option><option value="60">60 分钟</option></select></div>
-                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">关联任务</label><select class="zq-select" id="zq-pomo-task" style="height:30px;"><option value="">（不指定任务）</option></select></div>
+              <div class="zq-pomo-fields">
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">专注时长</label><select class="zq-select" id="zq-pomo-min"><option value="25">25 分钟</option><option value="45">45 分钟</option><option value="60">60 分钟</option></select></div>
+                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">关联任务</label><select class="zq-select" id="zq-pomo-task"><option value="">（不指定任务）</option></select></div>
               </div>
               <div style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap;">
                 <button class="zq-btn" id="zq-pomo-start" style="height:30px;">开始</button>
@@ -112,7 +112,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261009-tasks"></script>
-  <script src="assets/zhiqu-api.js?v=20261009-tasks"></script>
+  <script src="assets/zhiqu-ui.js?v=20261009-narrow"></script>
+  <script src="assets/zhiqu-api.js?v=20261009-narrow"></script>
 </body>
 </html>

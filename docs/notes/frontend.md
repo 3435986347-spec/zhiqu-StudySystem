@@ -123,6 +123,13 @@
   whose `.lambda()` carries the rest). Column widths live only in `.zq-task-grid`; deadline and reminder share one cell so the table
   fits a 960-px desktop window without horizontal scrolling; edit/delete are icon buttons shown on hover or keyboard focus, always
   on phones, where each row stacks instead of scrolling sideways. Checks: `tasks-check.js`, `TasksLookTest`, `LargeAccountIntegrationTest`.
+- **WebKit is not Chromium** (round 53). The built-in browser is Chromium; the desktop app is WKWebView. The stylesheet's
+  `appearance: base-select` (customizable `<select>`) is Chromium-only — WebKit falls back to the native gradient control, so
+  `@supports not (appearance: base-select)` gives `.zq-select` / `.zq-composer-model` `appearance:none` and a gradient caret.
+  The week calendar is a size container (`container-type: inline-size`): narrower than 560px each day stacks weekday over date,
+  narrower than 260px the paddings and circle shrink — the dashboard's calendar card is ~320px wide in a 960-px desktop window,
+  where side-by-side cells pushed the date 24px out of the cell. `DesktopWebKitLayoutTest` lays out the published CSS and the real
+  `renderWeek` markup in an off-screen WKWebView and measures it.
 - **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
   study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
   «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't

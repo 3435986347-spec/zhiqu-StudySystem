@@ -173,7 +173,8 @@ class DesktopPageViewTest {
         return map;
     }
 
-    private static String run(int timeoutSeconds, String... cmd) throws Exception {
+    /** 跑一个程序、等它结束、拿回输出（DesktopWebKitLayoutTest 也用）。 */
+    static String run(int timeoutSeconds, String... cmd) throws Exception {
         // 输出写文件、等进程本身（不读到 EOF）：WebKit 的子进程可能晚一点才关掉继承的管道
         Path log = Files.createTempFile("page-view-check", ".log");
         try {

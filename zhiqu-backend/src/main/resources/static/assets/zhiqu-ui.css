@@ -321,8 +321,8 @@ button[aria-busy="true"]{opacity:.62;cursor:progress;}
 /* ── 看板（第四十八轮，界面打磨第 5 步）── */
 /* 逾期：大于 0 时标签旁边一个红点（dashboard.js 加 is-alert）；数字不再写死大红 */
 .zq-stat.is-alert .zq-stat-label::after{content:"";display:inline-block;width:6px;height:6px;margin-left:6px;vertical-align:middle;border-radius:50%;background:var(--zq-bad);}
-/* 本周日历：一天一格（星期、日期、一排点、几项），点一天看那天的清单 */
-.zq-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;}
+/* 本周日历：一天一格（星期、日期、一排点、几项），点一天看那天的清单。.zq-week 是容器：窄的时候每一格换成竖排（见下面的 @container） */
+.zq-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;container-type:inline-size;}
 .zq-day{display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:0;padding:10px 10px 11px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:transparent;color:var(--zq-text);font:inherit;text-align:left;cursor:pointer;transition:background .12s ease,border-color .12s ease;}
 .zq-day:hover{background:var(--zq-sb-active-bg);}
 .zq-day.is-on{border-color:var(--zq-text3);background:var(--zq-card);}
@@ -341,6 +341,23 @@ button[aria-busy="true"]{opacity:.62;cursor:progress;}
 .zq-day-dots i.done{opacity:.3;}
 .zq-day-more{color:var(--zq-text3);font-size:10px;line-height:1;}
 .zq-day-count{color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+/* 日历窄了（第五十三轮，用户在桌面应用里看到的）：星期和日期并排一格至少要 74px（留白 20 + 星期 24 + 间隔 4 + 日期 26），
+   桌面应用常用的 960–1200 宽里日历那张卡片只有 320–360，一格 40 上下 —— 日期被挤出格子、压在旁边一格上。
+   日历本身窄于 560（7 × 74 + 6 × 6）就换成竖排：星期在上、日期在下、居中，「N 项」藏起来（读屏照念 aria-label）。
+   手机上日历一样窄，原来手机那段 @media 里的这几条挪到这里，一处写 */
+@container (max-width: 560px){
+  .zq-day{padding:8px 3px 9px;gap:6px;align-items:center;}
+  .zq-day-head{flex-direction:column;gap:3px;}
+  .zq-day-num{margin-right:0;}
+  .zq-day-dots{justify-content:center;}
+  .zq-day-count{display:none;}
+}
+/* 再窄（320 宽的手机上日历不到 200）：一格 22–25，「周一」两个字 24、日期的圆 26 —— 左右不留白、星期字小一号、圆小一号 */
+@container (max-width: 260px){
+  .zq-day{padding-left:0;padding-right:0;}
+  .zq-day-week{font-size:10px;}
+  .zq-day-num{min-width:20px;height:20px;font-size:var(--zq-fs-sm);}
+}
 /* 清单：一条一行、行间细线 */
 .zq-agenda{display:flex;flex-direction:column;}
 .zq-agenda-row{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 2px;border-bottom:1px solid var(--zq-border-soft);font-size:var(--zq-fs-base);}
@@ -370,6 +387,10 @@ button[aria-busy="true"]{opacity:.62;cursor:progress;}
 .zq-pomo-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px;text-align:left;}
 .zq-pomo-round{color:var(--zq-text3);font-size:var(--zq-fs-xs);}
 .zq-pomo-dial{position:relative;width:160px;margin:0 auto;}
+/* 专注时长、关联任务两栏（第五十三轮）：原来是内联的 1fr 1fr —— 1fr 最小是内容的宽度，任务名长时下拉框按最长的选项撑开、撑出卡片
+   （WebKit 里量过：多出 331px）。minmax(0,1fr) 这一条就够了：格子可以比内容窄，下拉框跟着格子拉伸 */
+.zq-pomo-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0;text-align:left;}
+.zq-pomo-fields .zq-select{height:30px;}
 .zq-row{display:flex;align-items:center;gap:12px;}
 .zq-table{border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);overflow:hidden;}
 .zq-table .zq-thead{background:var(--zq-card-soft);border-bottom:1px solid var(--zq-border);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);color:var(--zq-text3);padding:10px var(--zq-sp-4);}
@@ -386,6 +407,13 @@ select::selectedcontent{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsi
 option{padding:7px 11px;border-radius:var(--zq-rs);font-size:var(--zq-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 option:hover,option:focus{background:var(--zq-tint);}
 option:checked{background:var(--zq-tint);color:var(--zq-text);font-weight:var(--zq-fw-medium);}
+/* 不认 base-select 的（Safari、桌面应用的 WKWebView）：上面那几条都不生效，退回原生的灰渐变和上下箭头（第五十三轮，用户在桌面应用里看到的）——
+   去掉原生样子，自己画一个小箭头（两段渐变拼的，颜色用令牌，明暗跟着变） */
+@supports not (appearance: base-select){
+  .zq-select,.zq-composer-model{-webkit-appearance:none;appearance:none;padding-right:26px;
+    background-image:linear-gradient(45deg,transparent 50%,var(--zq-text3) 50%),linear-gradient(135deg,var(--zq-text3) 50%,transparent 50%);
+    background-position:calc(100% - 14px) 55%,calc(100% - 9px) 55%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;}
+}
 
 /* ── 面板折叠（AI 两侧 / Wiki 目录·检查；flex 容器内） ── */
 .zq-pop{position:fixed;z-index:6000;width:248px;background:var(--zq-card);color:var(--zq-text);border:1px solid var(--zq-border);border-radius:var(--zq-rm);box-shadow:var(--zq-sh2);padding:var(--zq-sp-2);}
@@ -733,11 +761,6 @@ html.zq-signed-out .zq-mini-out{display:block;}
   .zq-form-grid{grid-template-columns:minmax(0,1fr);}
   /* 看板（第四十八轮）：七个日子挤一排，格子里只留星期、日期、点；四象限一格一行 */
   .zq-week{gap:3px;}
-  .zq-day{padding:7px 4px 8px;gap:6px;align-items:center;}
-  .zq-day-head{flex-direction:column;gap:3px;}
-  .zq-day-num{margin-right:0;}
-  .zq-day-dots{justify-content:center;}
-  .zq-day-count{display:none;}
   .zq-quads{grid-template-columns:minmax(0,1fr);}
   /* 任务页（第五十二轮）：手机上没有悬停 —— 编辑 / 删除一直在；搜索框占一整行。
      一行不再是一排格子（横着滚的话状态、时间、编辑删除都在屏幕外）：标题占一整行，象限、优先级、状态、时间、编辑删除排在下面、放不下就换行；表头藏起来 */

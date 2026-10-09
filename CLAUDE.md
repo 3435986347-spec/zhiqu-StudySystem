@@ -90,7 +90,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261009-tasks`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261009-narrow`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -100,6 +100,7 @@ cd ../zhiqu-cli && npm test
   悬停说明照样写 `title`：`zhiqu-ui.js` 的 `setupTips` 把它画成提示（**桌面应用的 WKWebView 不显示原生的 `title`**）；只有图标的按钮另给 `aria-label`。
 - **界面改了，首页轮播的截图要重出**（浅、深两套，用法在 `deploy/desktop/shots/seed-demo.js` 开头；`Snapshot` 要在屏幕上开一个窗口才截得出来 —— 跑之前问用户）。
   第二十六轮的四张在改版后一直没换，直到用户自己发现（第四十六轮，`HomeCarouselTest`）。
+- **桌面应用是 WebKit（WKWebView），内置浏览器是 Chromium**：只有 Chromium 认的写法（`appearance: base-select`）在桌面应用里是另一副样子；样子要在 WebKit 里量（`DesktopWebKitLayoutTest`，不开窗口）。
 - 设计令牌只在 `assets/zhiqu-ui.css` 的 `:root` 定义一次：引用不存在的 `var(--x)` 不报错，整条声明作废（`FrontendTokenAndDateTest`）。手机样式只有一段 `@media (max-width: 760px)`，必须在 `zhiqu-ui.css` 最后。
 - 业务错误是 HTTP 200 + `code != 200`，前端判 `result.code === 200`。写请求走 `request()`（去重、幂等键、重来、照实说「不确定」），不要直接 `fetch`（`RequestResilienceTest`）。
 - 页面不带示例数据、静态 HTML 里不写死数字（`InitErrorReplacesDemoContentTest`）。细节：`docs/notes/frontend.md`。
@@ -182,3 +183,4 @@ cd ../zhiqu-cli && npm test
 - [第五十轮](docs/rounds/round-50.md) 迷你番茄钟第 2 步：`mini.html`，半透明的深色胶囊（倒计时、开始 / 暂停、任务、第几轮、展开）；新页面漏了放行是空白 403
 - [第五十一轮](docs/rounds/round-51.md) 迷你番茄钟第 3 步：macOS 外壳的悬浮面板（不抢焦点、总在最前、中间拖、记位置），看板上「缩小到桌面」
 - [第五十二轮](docs/rounds/round-52.md) 界面打磨第 6 步：任务页（一行工具条、服务端搜索加密的标题、列宽只写一处、窄窗口和手机不横着滚）
+- [第五十三轮](docs/rounds/round-53.md) 用户在桌面应用里看到的：日历日期出格（窄了换竖排）、番茄钟下拉撑出卡片、下拉是原生样子；在 WebKit 里量的判据
