@@ -170,14 +170,15 @@ class FrontendTokenAndDateTest {
     /**
      * 日期输入框不许在 HTML 里写死一个日期（第十四轮）。例行计划的「开始 / 结束日期」原来是设计稿上的
      * 2026-07-06 → 2026-08-30：过了那天，照默认值建出来的就是一个已经结束的计划。默认值由脚本按 today() 填。
+     * 第五十六轮例行计划的表单挪进了弹窗（pages/routines.js 拼的 HTML），所以页面和脚本一起扫。
      */
     @Test
     void 日期输入框不写死日期() throws IOException {
         List<String> offenders = new ArrayList<>();
         int dateInputs = 0;
         for (Path file : frontendFiles()) {
-            if (!file.toString().endsWith(".html")) continue;
-            String src = Files.readString(file, StandardCharsets.UTF_8).replaceAll("(?s)<!--.*?-->", " ");
+            String src = Files.readString(file, StandardCharsets.UTF_8);
+            src = file.toString().endsWith(".js") ? SourceText.stripComments(src) : src.replaceAll("(?s)<!--.*?-->", " ");
             Matcher m = Pattern.compile("<input[^>]*type=\"date\"[^>]*>").matcher(src);
             while (m.find()) {
                 dateInputs++;
@@ -186,7 +187,7 @@ class FrontendTokenAndDateTest {
                 }
             }
         }
-        assertTrue(dateInputs >= 2, "只扫到 " + dateInputs + " 个日期输入框 —— 扫空了？（例行计划页至少两个）");
+        assertTrue(dateInputs >= 2, "只扫到 " + dateInputs + " 个日期输入框 —— 扫空了？（例行计划的新建弹窗至少两个）");
         assertEquals(List.of(), offenders, "这些日期输入框写死了日期，过了那天默认值就是错的：用脚本填 today()");
     }
 

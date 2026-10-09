@@ -20,16 +20,8 @@ class RoutinePhaseTest {
         NodeRunner.run(Path.of("src/test/resources/js/routine-phase-check.js"), NodeRunner.API_JS);
     }
 
-    @Test
-    @DisplayName("列表：只给进行中的「标记完成」，「N 个进行中」按真实数目写")
-    void 列表按分段画() throws Exception {
-        // 第三十二轮起例行计划页是模块（pages/routines.js）
-        String body = SourceText.functionBody(SourceText.pageModule("routines.js"), "async function loadRoutines()");
-        assertTrue(body.contains("var check = phase === 'active' ? '<button data-check-routine="), "「标记完成」要只给进行中的例行计划");
-        assertTrue(!body.replace("var check = phase === 'active' ? '<button data-check-routine=", "").contains("<button data-check-routine="),
-                "列表里另有一处不看分段就画「标记完成」");
-        assertTrue(body.contains("countEl.textContent = active + ' 个进行中'"), "「N 个进行中」要按真实数目写");
-    }
+    // 「列表：只给进行中的『标记完成』、『N 个进行中』按真实数目写」第五十六轮挪进 routines-check.js：
+    // 「完成」只在「今天」那一块（今天轮到的，/routine/instances），「全部」那一块一个都没有；「N 个进行中」按 routinePhase 数。
 
     @Test
     @DisplayName("周期只经 freqLabel 显示：例行计划列表、参考计划里的例行计划、AI 草稿，三处都不再露出 DAILY / WEEKLY（第十九轮）")

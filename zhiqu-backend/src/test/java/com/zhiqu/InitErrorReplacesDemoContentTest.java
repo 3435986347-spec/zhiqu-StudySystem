@@ -150,7 +150,6 @@ class InitErrorReplacesDemoContentTest {
         String stats = Files.readString(STATIC_DIR.resolve("statistics.html"), StandardCharsets.UTF_8);
         // 成就第三十轮成了弹窗（assets/settings.js 的 openAchievements），筛选按钮跟着过去
         String ach = SourceText.stripComments(Files.readString(STATIC_DIR.resolve("assets/settings.js"), StandardCharsets.UTF_8));
-        String rt = Files.readString(STATIC_DIR.resolve("routines.html"), StandardCharsets.UTF_8);
         String sp = Files.readString(STATIC_DIR.resolve("shared-plans.html"), StandardCharsets.UTF_8);
         for (String k : List.of("day", "week", "month")) {
             assertTrue(stats.contains("data-k=\"" + k + "\""), "统计页少了「" + k + "」按钮");
@@ -158,8 +157,7 @@ class InitErrorReplacesDemoContentTest {
         for (String k : List.of("all", "on", "off")) {
             assertTrue(ach.contains("filterBtn('" + k + "', "), "成就少了「" + k + "」筛选");
         }
-        int wd = rt.split("<button type=\"button\" data-on=\"1\"", -1).length - 1;
-        assertEquals(7, wd, "例行计划的星期按钮应当是 7 个");
+        // 例行计划的星期按钮第五十六轮挪进了「新建 / 从任务生成」弹窗（pages/routines.js 的 settingsHtml）：七个、点了按下，在 routines-check.js 里真点
         assertEquals(3, sp.split("data-close-modal", -1).length - 1, "参考计划详情弹窗的遮罩、×、取消三处要能关");
         String code = apiJs();
         // 统计页、例行计划页第三十二轮起是模块（pages/statistics.js、pages/routines.js）
@@ -167,9 +165,6 @@ class InitErrorReplacesDemoContentTest {
                 "统计页的日 / 周 / 月没有接上");
         assertTrue(ach.contains("root.querySelectorAll('[data-ach-filters] button[data-k]').forEach(function (b) { b.onclick = function () { filter = b.dataset.k; renderAchList(filter); }; });"),
                 "成就的筛选没有接上");
-        String routines = SourceText.pageModule("routines.js");
-        assertTrue(routines.contains("$all('#zq-wd button').forEach(function (b) {") && routines.contains("b.addEventListener('click', function () {\n      b.dataset.on = b.dataset.on === '1' ? '0' : '1';"),
-                "例行计划的星期按钮没有接上");
         assertTrue(SourceText.pageModule("shared-plans.js").contains("$all('#zq-modal [data-close-modal]').forEach(function (b) { b.onclick = function () { $('#zq-modal').style.display = 'none'; }; });"),
                 "参考计划的弹窗关不上");
     }

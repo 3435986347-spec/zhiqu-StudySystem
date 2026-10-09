@@ -30,13 +30,14 @@ class LatestResponseTest {
     @DisplayName("筛选 / 刷新会连着触发的列表：拿到结果先问 current()，过期的不画")
     void 列表都只认最后一次() throws Exception {
         // 壳和页面模块一起扫（第三十二轮起趋势图、例行计划的来源列表在模块里）
+        // 第五十六轮例行计划的来源列表挪进「从任务生成」弹窗（loadSources）；「今天」+「全部」一起取的 loadRoutines 也算（打卡后、零点时都会再取）
         String code = SourceText.frontendScripts();
-        for (String name : List.of("paintTrend", "loadTasks", "loadRoutineSources", "loadPlans")) {
+        for (String name : List.of("paintTrend", "loadTasks", "loadSources", "loadRoutines", "loadPlans")) {
             Matcher m = Pattern.compile("async function " + name + "\\([^)]*\\)\\s*\\{").matcher(code);
             assertTrue(m.find(), "找不到 " + name + " —— 改名了？这条判据要跟着改");
             String body = SourceText.functionBody(code, m.group());
             int token = body.indexOf("latestOnly(");
-            int fetch = body.indexOf("await api.get(");
+            int fetch = Math.max(body.indexOf("await api.get("), body.indexOf("await Promise.all([api.get("));
             int check = body.indexOf("if (!current()) return;");
             assertTrue(token >= 0 && fetch > token && check > fetch,
                     name + "：要在发请求之前领一个 latestOnly、拿到结果之后先 if (!current()) return; —— 否则乱序回来的旧结果会盖掉新的");

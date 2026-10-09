@@ -36,22 +36,7 @@ const src = fs.readFileSync(shellPath, 'utf8');
   judge('WEEKLY 没选星期', freqLabel('WEEKLY', []), '每周');
   judge('越界的星期不显示', freqLabel('WEEKLY', [0, 2, 8]), '每周二');
   judge('认不出的原样', freqLabel('MONTHLY'), 'MONTHLY');
-  // 页面开着跨过业务日期的零点（第三十二轮起模块自己导出 dayReload，壳的 watchBusinessDay 叫它）：只重新取列表，不重新跑整页的启动
-  // —— bootRoutines 用 addEventListener 接星期按钮，重跑一次每个按钮点一下就提交两遍
-  const mod = await import(pathToFileURL(path.join(path.dirname(shellPath), 'pages', 'routines.js')).href);
-  const got = [];
-  const host = { innerHTML: '' };
-  mod.bind({
-    api: { get: async (u) => { got.push('GET ' + u); return [{ id: 1, title: 'x', startDate: '2026-09-01', frequency: 'DAILY' }]; } },
-    $: (sel) => (sel === '#zq-rt' ? host : null), $all: (sel) => { got.push('$all ' + sel); return []; },
-    esc: String, empty: String, safe: (n, f) => f(), toast: () => {}, askConfirm: async () => false, today: () => '2026-09-28',
-    latestOnly: () => () => true, keepDraft: () => ({ clear() {} }), normalizeTask: (t) => t, qLabel: String, sLabel: String, freqLabel: () => '每天'
-  });
-  judge('导出了 dayReload[\'routines.html\']', typeof (mod.dayReload || {})['routines.html'], 'function');
-  if (mod.dayReload && mod.dayReload['routines.html']) await mod.dayReload['routines.html']();
-  judge('零点时重新取了例行计划', got.includes('GET /routine/list'), true);
-  judge('零点时没有重新接星期按钮（没有重跑整页启动）', got.some((x) => x.includes('#zq-wd')), false);
-  judge('零点时没有重新取「从任务生成」的来源', got.some((x) => x.includes('/task/page')), false);
+  // 页面开着跨过业务日期的零点（dayReload）只重新取数据：第五十六轮页面改成「今天」+「全部」两块，这几条挪到 routines-check.js 第 6 段
 
   if (fail) { console.log(fail + ' 条红'); process.exit(1); }
   console.log('ALL-GREEN');

@@ -165,7 +165,8 @@ class MobileLayoutTest {
         // 第四十八轮看板的 4 种（一周日历、日历里的一条、「今天」一行、象限摘要）挪进了 zhiqu-ui.css 的类（.zq-week / .zq-agenda-row / .zq-quads），
         // 手机上怎么排写在 @media 里 —— 内联的网格少了是方向（界面打磨第 9 步要把内联样式降下来），下限跟着降。
         // 第五十二轮任务页的表头挪进 .zq-task-grid、第五十三轮番茄钟的两栏挪进 .zq-pomo-fields（内联的 1fr 1fr 正是撑出卡片的那个）
-        assertTrue(seen >= 18 && distinct.size() >= 11,
+        // 第五十六轮例行计划页的 5 处（两栏的表单、上下两块）挪进了弹窗（.zq-form-grid）和 .zq-rt-cols（auto-fit，窄了自己一上一下）
+        assertTrue(seen >= 12 && distinct.size() >= 8,
                 "只扫到 " + seen + " 处 / " + distinct.size() + " 种 grid-template-columns —— 扫描扫空了（style 的写法变了？），这时下面的判据全是空转");
         assertTrue(undecided.isEmpty(), "新的 grid-template-columns，还没决定它在手机上怎么排：" + undecided
                 + "\n—— 在 MobileLayoutTest.DECISIONS 里写下一栏 / 两个一排 / 不动（不动的话它得本来就窄、或者在会横向滚动的框里），"

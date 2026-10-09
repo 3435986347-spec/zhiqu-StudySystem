@@ -142,6 +142,16 @@
   grid) for three rounds — the rows are `.zq-task-line` now. `markdown-check.js` (via `WikiLookTest`) runs the published
   `renderMarkdown` (attribute allow-list, block shapes, a CSS rule for every class and tag) and scans pages and modules for
   anyone else emitting those classes.
+- **The routines page** (round 56, step 8 of `docs/ui-plan.md`, first of three rounds): two blocks only — 「今天」 (today's
+  occurrences from `/routine/instances?from=today&to=today`, drawn like the dashboard's 「今天」 with `.zq-agenda-row`, done rows
+  faded, check-in dated to the row's own date) and 「全部例行计划」 (active, then upcoming, then ended; delete is a hover icon button).
+  「新建例行计划」 and 「从任务生成」 are page-head buttons opening dialogs that share one settings block (`settingsHtml`): daily/weekly
+  segment, weekday chips shown only for weekly with today's weekday pre-pressed (the server picks today when none is sent — now the
+  user sees it), time, duration, reminder; the new-routine dialog adds name, description, start/end. `readRoutineForm` turns the
+  values into the POST body or a reason it can't be sent. Before, 「标记完成」 sat on every in-range routine, so on a Saturday the
+  Mon/Wed/Fri ones failed with 「该日期不在例行计划范围内」, and the page never showed whether today's was done.
+  `routines-check.js` (via `RoutinesLookTest`) imports the module and drives it with stand-ins for the shell (double clicks,
+  a failure half-way through generating, check-in through `safe`, `dayReload`).
 - **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
   study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
   «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't

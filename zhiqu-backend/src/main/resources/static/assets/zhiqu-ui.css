@@ -717,6 +717,37 @@ body.zq-modal-open{overflow:hidden;}
 .zq-wiki-tools .zq-tbtn{min-width:28px;padding:0 6px;}
 .zq-wiki-tools .zq-tbtn[aria-pressed="true"]{background:var(--zq-card);color:var(--zq-text);box-shadow:var(--zq-sh1);}
 
+/* ── 例行计划页（第五十六轮，界面打磨第 8 步）：「今天」和「全部例行计划」两块，新建 / 从任务生成是页头的两个弹窗 ──────────
+   原来两张表单常驻在列表上面，每一行两个字按钮、样子全在 JS 拼的内联样式里。「今天」一行的画法和看板的「今天」同一套（.zq-agenda-row）。 */
+.zq-page-stack{display:flex;flex-direction:column;gap:16px;}
+/* 两块并排放不下（各不到 300px）就一上一下，不另写断点 —— 最窄的桌面窗口（960）里两块各 333px，还是并排 */
+.zq-rt-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:16px;align-items:start;}
+.zq-rt-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--zq-sp-3);margin-bottom:var(--zq-sp-2);}
+.zq-rt-count{color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+.zq-rt-main{display:flex;flex-direction:column;min-width:0;}
+/* 名字最多两行（和看板的「今天」一样），再长的悬停看全 */
+.zq-rt-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;}
+.zq-rt-row{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 2px;border-bottom:1px solid var(--zq-border-soft);font-size:var(--zq-fs-base);}
+.zq-rt-row:last-child{border-bottom:none;}
+.zq-rt-row.is-ended{color:var(--zq-text3);}
+/* 删除悬停或键盘移到这一行时才出现（手机上一直在，见最后那段 @media） */
+.zq-rt-acts{display:flex;gap:2px;opacity:0;transition:opacity .12s ease;}
+.zq-rt-row:hover .zq-rt-acts,.zq-rt-row:focus-within .zq-rt-acts{opacity:1;}
+/* 弹窗里的设置 */
+.zq-rt-desc{min-height:60px;}
+.zq-field>.zq-seg{align-self:flex-start;}
+.zq-rt-days{display:flex;flex-wrap:wrap;gap:6px;}
+.zq-rt-days .zq-chip{border-color:var(--zq-border);}
+/* 选上的那几天要一眼看得出来：和主按钮一样实心（.zq-chip 默认按下的样子是浅灰底，在七个里分不清） */
+.zq-rt-days .zq-chip[aria-pressed="true"]{border-color:var(--zq-primary);background:var(--zq-primary);color:var(--zq-on-primary);}
+.zq-rt-remind{display:flex;align-items:flex-start;gap:8px;margin:0 0 var(--zq-sp-4);color:var(--zq-text2);font-size:var(--zq-fs-sm);line-height:1.5;cursor:pointer;}
+.zq-rt-remind input{flex:none;margin-top:3px;accent-color:var(--zq-primary);}
+.zq-rt-src{display:flex;flex-direction:column;max-height:240px;margin-top:var(--zq-sp-2);overflow-y:auto;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);}
+.zq-rt-src-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--zq-border-soft);font-size:var(--zq-fs-sm);cursor:pointer;}
+.zq-rt-src-row:last-child{border-bottom:none;}
+.zq-rt-src-row:hover{background:var(--zq-card-soft);}
+.zq-rt-src-row input{flex:none;accent-color:var(--zq-primary);}
+
 /* ── 任务页（第五十二轮，界面打磨第 6 步）──────────────────────────────────────────
    一行工具条：搜索、状态分段（.zq-seg）、「筛选」展开第二行（改了就查，原来五个下拉 +「查询」）。截止和提醒挤在一格：最窄的桌面窗口（960）里正文 700 上下，表格不横着滚。
    表格的列宽只在 .zq-task-grid 写一处（原来表头一遍、每一行又拼一遍内联样式）；象限是小圆点 + 名字（和看板一样，不再是整块彩色底）；
@@ -826,6 +857,7 @@ html.zq-signed-out .zq-mini-out{display:block;}
   /* 任务页（第五十二轮）：手机上没有悬停 —— 编辑 / 删除一直在；搜索框占一整行。
      一行不再是一排格子（横着滚的话状态、时间、编辑删除都在屏幕外）：标题占一整行，象限、优先级、状态、时间、编辑删除排在下面、放不下就换行；表头藏起来 */
   .zq-task-acts{opacity:1;}
+  .zq-rt-acts{opacity:1;}
   .zq-search{flex-basis:100%;max-width:none;}
   .zq-task-scroll{min-width:0;}
   .zq-thead.zq-task-grid{display:none;}

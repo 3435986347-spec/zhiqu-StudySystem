@@ -192,8 +192,8 @@ class DesignTokensTest {
             Matcher t = Pattern.compile("font-weight:\\s*var\\(--zq-fw-").matcher(code);
             while (t.find()) tokens++;
         }
-        // 下限跟着内联样式挪进样式表往下走：第五十五轮 renderMarkdown、知识 Wiki 的头挪走一批（80 → 75 处）
-        assertTrue(tokens >= 70, "内联字重只扫到 " + tokens + " 处用令牌 —— 扫空了？");
+        // 下限跟着内联样式挪进样式表往下走：第五十五轮 renderMarkdown、知识 Wiki 的头挪走一批（80 → 75 处），第五十六轮例行计划页又一批（→ 65）
+        assertTrue(tokens >= 60, "内联字重只扫到 " + tokens + " 处用令牌 —— 扫空了？");
         assertEquals(List.of(), hard, "这些地方又写死了字重 —— 用 var(--zq-fw-regular / medium / semibold)");
     }
 
