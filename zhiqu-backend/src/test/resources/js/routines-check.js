@@ -140,7 +140,7 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms || 30));
   judge('排序：进行中（按时间）→ 没开始 → 已结束', mod.sortRoutines(list, DAY).map((r) => r.id).join(',') === '4,3,2,1', mod.sortRoutines(list, DAY).map((r) => r.id).join(','));
   const all = mod.routineRowsHtml(list, DAY);
   judge('没开始的写哪天开始', all.includes('每天 · 10 分钟 · 10/12 开始'), all);
-  judge('已结束的变淡、写哪天结束', /<div class="zq-rt-row is-ended">[\s\S]*?已结束（09\/30）/.test(all), all);
+  judge('已结束的变淡、写哪天结束；一行就是看板「今天」那一行（.zq-agenda-row）', /<div class="zq-agenda-row zq-rt-row is-ended">[\s\S]*?已结束（09\/30）/.test(all), all);
   judge('删除是带名字的图标按钮', all.includes('class="zq-icon-btn is-danger" data-del-routine="4" aria-label="删除「早上的」" title="删除"><svg data-icon="trash-2"></svg>'), all);
   judge('每一行没有字按钮（原来「标记完成」「删除」31 行 62 个）', !/>标记完成</.test(all) && !/>删除</.test(all), all);
   judge('「全部」里没有打卡按钮（只给今天轮到的；原来周六也给「每周一、三、五」的）', !all.includes('data-check-routine'), all);

@@ -137,7 +137,8 @@
   none of the inline styles and looked different from rendered ones. The Wiki's body adds `.zq-prose`: at most 42em per line
   (42 characters at 15px — it was 70+ at 1440 wide), line height 1.85, headings 24 / 19 / 16 / 15 with more space above than below,
   no underline under h3. A first-line h1 equal to the page title gets `.zq-dup-title` and is hidden while reading, shown while
-  editing; it stays in the content, so saving keeps it. **Don't reuse Markdown's class names for page markup**: round 52 named the
+  editing; it stays in the content, so saving keeps it. Revealing it shifts the text down, so the click that starts editing
+  scrolls back by its height and puts the caret where the user clicked (round 58 review; it used to jump ~46px and caret to the start). **Don't reuse Markdown's class names for page markup**: round 52 named the
   tasks-page rows `.zq-task-row`, the checklist class, and every Wiki checklist was drawn as a task-table row (padding, a rule,
   grid) for three rounds — the rows are `.zq-task-line` now. `markdown-check.js` (via `WikiLookTest`) runs the published
   `renderMarkdown` (attribute allow-list, block shapes, a CSS rule for every class and tag) and scans pages and modules for

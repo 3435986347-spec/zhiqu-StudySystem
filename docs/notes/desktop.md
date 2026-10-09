@@ -63,4 +63,5 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 所以应用到了前台一定是人特意切过来的）也一样。`PageView` 对 `zqMini` 只认 `shrink` / `expand`。
 **实测（2026-10-09，检查程序里两个共用一份网站数据的 WKWebView）**：localStorage 互相读得到、`navigator.locks` 是同一把（到点只响一次靠它），
 但 **storage 事件不在两个 WKWebView 之间传**（放进窗口里也不传）—— 页面不靠它：一秒一跳、`visibilitychange` 时马上按存的刷一次（藏着的主窗口一拿出来就跟上）。
+登录不一样：胶囊里登录失效时写「在主窗口登录后再用」、不再跳，主窗口重新登录（或换了账号）它看不出来 —— 所以面板建过之后**每次缩小都重新载入胶囊**（`miniPage?.reload()`，第五十八轮 review）。
 `DesktopPageViewTest` 把 `MiniPanel.swift` 一起编进检查程序，建一个面板核对这些设定（不放到屏幕上）、点得到两边的按钮、中间拖得动。

@@ -110,7 +110,8 @@ async function loadTasks() {
   state.taskQuery = params.toString();
   state.tasks = (page.items || []).map(normalizeTask);
   state.taskTotal = Number(page.total || 0);
-  state.taskCapped = !!page.searchCapped;
+  // 搜索只看了前几条：记下服务端说的条数（没给就只说「没有全部找完」）—— 原来页面里写死 5000，服务端改了上限就说错
+  state.taskCapped = page.searchCapped ? (Number(page.searchLimit) || -1) : 0;
   state.taskFiltered = isFiltered(f);
   renderTaskRows(state.tasks);
 }
@@ -157,11 +158,12 @@ function taskRowHtml(t, now, thisYear) {
     + '<button type="button" class="zq-icon-btn is-danger" data-del-task="' + t.id + '" aria-label="删除「' + name + '」" title="删除">' + icon('trash-2') + '</button>'
     + '</span></div>';
 }
-/** 页头那一行小字：共几条 / 找到几条；关键词搜索看的条数到了上限要说出来（不然「没找到」可能是假的） */
+/** 页头那一行小字：共几条 / 找到几条；关键词搜索看的条数到了上限要说出来（不然「没找到」可能是假的）。capped：只看了前几条（0 = 全看了，-1 = 没说几条） */
 function countText(total, shown, filtered, capped) {
   var t = (filtered ? '找到 ' : '共 ') + total + ' 条';
   if (total > shown) t += '（先显示 ' + shown + ' 条）';
-  if (capped) t += ' · 只在前 5000 条里找了';
+  if (capped > 0) t += ' · 只在前 ' + capped + ' 条里找了';
+  else if (capped) t += ' · 没有全部找完';
   return t;
 }
 function renderTaskRows(list) {

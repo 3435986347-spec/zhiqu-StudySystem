@@ -168,6 +168,7 @@ class LargeAccountIntegrationTest {
                 java.util.stream.IntStream.range(0, n).mapToObj(i -> new Object[]{user, "旧任务 " + i}).toList());
         Map<String, Object> page = tasks.page(user, null, null, null, "updatedAt", "desc", "旧任务", 0, 10);
         assertEquals(Boolean.TRUE, page.get("searchCapped"), "超过上限没说出来");
+        assertEquals((Object) StudyTaskServiceImpl.SEARCH_SCAN_MAX, page.get("searchLimit"), "上限是几条要一起给页面（页面照着说，不自己写死）");
         assertEquals((long) StudyTaskServiceImpl.SEARCH_SCAN_MAX, ((Number) page.get("total")).longValue(), "只该在前 SEARCH_SCAN_MAX 条里找");
     }
 

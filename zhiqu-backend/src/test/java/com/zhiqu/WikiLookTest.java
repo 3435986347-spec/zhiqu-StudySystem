@@ -130,5 +130,11 @@ class WikiLookTest {
             assertTrue(after.contains("markDuplicateTitle(doc, "), "画完正文没有标重复的页名：\n" + after);
         }
         assertEquals(2, n, "把正文画成排版的地方应当是两处（打开一页、从源码回来）");
+        // 第五十八轮 review：点正文进入编辑时这一行页名露出来，下面的字整体往下挪一截 —— 点哪一行，那一行就从手底下跳走（真浏览器量过：滚回去之后点的那一行纹丝不动）
+        String click = SourceText.functionBody(js, "function wireWikiEditor(");
+        int enter = click.indexOf("enterWikiEdit();");
+        assertTrue(enter > 0 && click.indexOf("doc.scrollTop += dup.getBoundingClientRect().height", enter) > enter,
+                "点正文进入编辑之后没有把露出来的页名那一截滚回去：\n" + click);
+        assertTrue(click.indexOf("caretAt(e.clientX, e.clientY);", enter) > enter, "进入编辑之后光标没有放在点的地方");
     }
 }

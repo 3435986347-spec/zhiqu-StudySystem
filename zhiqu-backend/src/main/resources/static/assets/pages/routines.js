@@ -66,7 +66,7 @@ function routineRowsHtml(list, day) {
     var phase = routinePhase(r, day);
     var when = phase === 'upcoming' ? ' · ' + String(r.startDate).slice(5, 10).replace('-', '/') + ' 开始'
       : phase === 'ended' ? ' · 已结束（' + String(r.endDate).slice(5, 10).replace('-', '/') + '）' : '';
-    return '<div class="zq-rt-row' + (phase === 'ended' ? ' is-ended' : '') + '"><span class="zq-agenda-time zq-num">' + esc(hm5(r.preferredTime)) + '</span>'
+    return '<div class="zq-agenda-row zq-rt-row' + (phase === 'ended' ? ' is-ended' : '') + '"><span class="zq-agenda-time zq-num">' + esc(hm5(r.preferredTime)) + '</span>'
       + '<div class="zq-rt-main"><div class="zq-rt-title" title="' + esc(r.title) + '">' + esc(r.title) + '</div><div class="zq-agenda-meta">' + esc(meta(r) + when) + '</div></div>'
       + '<span class="zq-rt-acts"><button type="button" class="zq-icon-btn is-danger" data-del-routine="' + esc(r.id) + '" aria-label="删除「' + esc(r.title) + '」" title="删除">' + icon('trash-2') + '</button></span></div>';
   }).join('');

@@ -266,6 +266,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             miniPage = page
             miniPanel = makeMiniPanel(page: page)
             page.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/mini.html")!))
+        } else {
+            // 再缩小一次就重新载入胶囊（第五十八轮 review）：主窗口那边可能退出过、重新登录过、换了账号 —— 两个 WKWebView 之间不传 storage 事件，
+            // 胶囊自己看不出来：退出再登录之后它一直写「在主窗口登录后再用」，换了账号还在看上一个人的钟
+            miniPage?.reload()
         }
         window.orderOut(nil)
         miniPanel?.orderFrontRegardless()

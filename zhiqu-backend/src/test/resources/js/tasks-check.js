@@ -96,7 +96,8 @@ judge('状态胶囊的说明在提示里（原来是页脚一行字）', row.inc
 
 // ── 页头的数 ──
 judge('共几条 / 找到几条 / 先显示几条 / 搜索看到上限要说出来', fns.countText(300, 100, false, false) === '共 300 条（先显示 100 条）'
-  && fns.countText(12, 12, true, false) === '找到 12 条' && fns.countText(40, 40, true, true) === '找到 40 条 · 只在前 5000 条里找了', fns.countText(40, 40, true, true));
+  && fns.countText(12, 12, true, 0) === '找到 12 条' && fns.countText(40, 40, true, 3000) === '找到 40 条 · 只在前 3000 条里找了'
+  && fns.countText(40, 40, true, -1) === '找到 40 条 · 没有全部找完', fns.countText(40, 40, true, 3000) + ' / ' + fns.countText(40, 40, true, -1));
 
 // ── 工具条：改了就查；「筛选」展开 / 上面写数；清除；连着打字只认最后一次 ──
 (async () => {
@@ -143,6 +144,11 @@ judge('共几条 / 找到几条 / 先显示几条 / 搜索看到上限要说出�
   release[1](); await second; release[0](); await first;
   judge('先发的「周」后回来：不盖掉「周报」的结果', state.tasks.length === 1 && state.tasks[0].title === '周报' && els['#zq-task-count'].textContent === '找到 1 条',
     { tasks: state.tasks, count: els['#zq-task-count'].textContent });
+
+  // 搜索只看了前几条：页头照服务端给的条数说（第五十八轮 review：原来页面里写死 5000）
+  respond = () => Promise.resolve({ items: [{ id: 2, title: '周报', quadrant: 1, priority: 1, status: 0 }], total: 1, searchCapped: true, searchLimit: 3000 });
+  await fns.loadTasks();
+  judge('搜索到了上限：照服务端给的条数说「只在前 3000 条里找了」', els['#zq-task-count'].textContent === '找到 1 条 · 只在前 3000 条里找了', els['#zq-task-count'].textContent);
 
   respond = () => Promise.resolve({ items: [], total: 0 });
   await fns.loadTasks();

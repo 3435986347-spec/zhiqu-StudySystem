@@ -230,6 +230,7 @@ public class StudyTaskServiceImpl implements StudyTaskService {
             result.put("items", from >= hits.size() ? List.of() : new ArrayList<>(hits.subList(from, Math.min(hits.size(), from + size))));
             result.put("total", (long) hits.size());
             result.put("searchCapped", capped);
+            result.put("searchLimit", SEARCH_SCAN_MAX);   // 页面照着这个数说「只在前几条里找了」（第五十八轮 review：原来页面里写死 5000）
         }
         result.put("offset", from);
         result.put("limit", size);

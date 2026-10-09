@@ -106,6 +106,16 @@ class AnswerOutputLimitTest {
     }
 
     @Test
+    @DisplayName("说的是「这个参数不认」（o 系列要 max_completion_tokens）：不是上限太大，不降着重试（第五十八轮 review：原来白发两趟）")
+    void 参数不认不重试() throws Exception {
+        String url = fake(body -> new String[]{"400", "{\"error\":{\"message\":\"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.\",\"type\":\"invalid_request_error\",\"param\":\"max_tokens\",\"code\":\"unsupported_parameter\"}}", "application/json"});
+        assertThrows(BusinessException.class,
+                () -> new OpenAiChatCompatibleAdapter().stream(request(config(url, "o3-mini"), "OFF"), e -> { }));
+        assertEquals(1, bodies.size(), "参数不认却换着上限重试了");
+        assertTrue(OutputLimits.rejectsMaxTokens(400, "max_tokens is too large: 16384. This model supports at most 8192 completion tokens"), "真在说上限太大的还得认");
+    }
+
+    @Test
     @DisplayName("Anthropic 那边同一套：16384，不收就降")
     void anthropic同一套() throws Exception {
         String url = fake(body -> body.path("max_tokens").asInt() > 8192

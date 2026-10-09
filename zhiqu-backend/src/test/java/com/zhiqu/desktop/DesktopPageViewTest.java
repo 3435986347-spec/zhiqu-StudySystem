@@ -121,6 +121,11 @@ class DesktopPageViewTest {
         String showMini = shell.substring(shell.indexOf("private func showMini()"), shell.indexOf("private func showMain()"));
         assertTrue(showMini.contains("window.orderOut(nil)") && showMini.contains("miniPanel?.orderFrontRegardless()"),
                 "缩小时要主窗口藏起来、面板出来（不抢焦点地出来）：\n" + showMini);
+        // 第五十八轮 review：面板只建一次，之后藏起来再拿出来 —— 主窗口退出再登录、换了账号，胶囊看不出来（两个 WKWebView 之间不传 storage 事件），
+        // 一直写「在主窗口登录后再用」。再缩小时重新载入胶囊
+        int built = showMini.indexOf("miniPanel = makeMiniPanel(page: page)");
+        assertTrue(built > 0 && showMini.indexOf("miniPage?.reload()", built) > built,
+                "面板已经建过时，再缩小没有重新载入胶囊（退出再登录之后它一直是「在主窗口登录后再用」）：\n" + showMini);
         String showMain = shell.substring(shell.indexOf("private func showMain()"), shell.indexOf("func applicationShouldHandleReopen"));
         assertTrue(showMain.contains("miniPanel?.orderOut(nil)") && showMain.contains("window.makeKeyAndOrderFront(nil)"), "展开时面板没收、主窗口没回来：\n" + showMain);
         assertTrue(shell.contains("func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {\n        showMain()"),

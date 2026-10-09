@@ -744,8 +744,7 @@ body.zq-modal-open{overflow:hidden;}
 .zq-rt-main{display:flex;flex-direction:column;min-width:0;}
 /* 名字最多两行（和看板的「今天」一样），再长的悬停看全 */
 .zq-rt-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;}
-.zq-rt-row{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 2px;border-bottom:1px solid var(--zq-border-soft);font-size:var(--zq-fs-base);}
-.zq-rt-row:last-child{border-bottom:none;}
+/* 一行的画法就是 .zq-agenda-row（第五十八轮 review：原来这里把它的网格、留白、分隔线原样又写了一遍）；这里只管已结束变淡、删除按钮 */
 .zq-rt-row.is-ended{color:var(--zq-text3);}
 /* 删除悬停或键盘移到这一行时才出现（手机上一直在，见最后那段 @media） */
 .zq-rt-acts{display:flex;gap:2px;opacity:0;transition:opacity .12s ease;}

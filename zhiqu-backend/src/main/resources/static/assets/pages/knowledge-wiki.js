@@ -459,7 +459,13 @@ function wireWikiEditor() {
   // 点正文进入编辑，但链接/勾选框/按钮等正文内控件的点击不算（外链点击、双链跳转不应触发编辑）
   doc.onclick = function (e) {
     if (e.target && e.target.closest && e.target.closest('a,input,button')) return;
-    if (state.wikiCur && doc.dataset.editing !== '1') enterWikiEdit();
+    if (!state.wikiCur || doc.dataset.editing === '1') return;
+    // 读的时候藏着的那一行页名（.zq-dup-title）编辑时露出来，下面的字整体往下挪一截（第五十八轮 review：点哪一行，那一行就从手底下跳走）——
+    // 挪多少滚回去多少，点的那一行留在原处；光标放在点的地方（原来一律在开头）
+    var dup = doc.querySelector('.zq-dup-title');
+    enterWikiEdit();
+    if (dup) { var cs = getComputedStyle(dup); doc.scrollTop += dup.getBoundingClientRect().height + (parseFloat(cs.marginBottom) || 0); }
+    caretAt(e.clientX, e.clientY);
   };
   // 右键菜单：编辑本页 / 删除本页；编辑态不拦截（保留浏览器原生菜单做粘贴等操作）
   doc.oncontextmenu = function (e) {
@@ -526,6 +532,16 @@ function wireWikiEditor() {
       });
     };
   }
+}
+/** 光标放到窗口坐标 (x, y) 处的字前面 */
+function caretAt(x, y) {
+  var r = null;
+  try {
+    if (document.caretRangeFromPoint) r = document.caretRangeFromPoint(x, y);
+    else if (document.caretPositionFromPoint) { var p = document.caretPositionFromPoint(x, y); if (p) { r = document.createRange(); r.setStart(p.offsetNode, p.offset); } }
+  } catch (e) { r = null; }
+  if (!r) return;
+  var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
 }
 function ensureWikiEditing() { var doc = $('#zq-doc'); if (doc && doc.dataset.editing !== '1') enterWikiEdit(); }
 function enterWikiEdit() {

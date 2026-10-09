@@ -90,7 +90,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261010-plans`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261010-review`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -189,3 +189,4 @@ cd ../zhiqu-cli && npm test
 - [第五十五轮](docs/rounds/round-55.md) 界面打磨第 7 步：知识 Wiki 的正文（一行 42 字、15px、标题分层、重复的页名读时藏起）、一行图标工具栏；Markdown 的样子从内联挪进样式表；任务页的行和勾选项重名
 - [第五十六轮](docs/rounds/round-56.md) 界面打磨第 8 步（一）：例行计划页（「今天」+「全部」两块，新建 / 从任务生成是弹窗、同一套设置；不该给的「标记完成」去掉）
 - [第五十七轮](docs/rounds/round-57.md) 界面打磨第 8 步（二）：参考计划（一行工具条、详情用 openModal、点赞后照原筛选）、专注统计（零不写数、日期挤了隔一根写）；「♡」换图标
+- [第五十八轮](docs/rounds/round-58.md) review 推送前的 9 个提交：点正文编辑时字不跳、迷你窗再缩小重新载入、「参数不认」不降着重试、搜索上限照服务端说

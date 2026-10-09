@@ -29,10 +29,15 @@ public final class OutputLimits {
         return out;
     }
 
-    /** 这个 400 / 422 是不是在说「输出上限太大」（或者上限加输入超过了窗口）。 */
+    /**
+     * 这个 400 / 422 是不是在说「输出上限太大」（或者上限加输入超过了窗口）。
+     * 说的是「这个参数不认」（OpenAI 的 o 系列：「'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.」）不算 ——
+     * 换小一点的数还是同一个错，白发两趟（第五十八轮 review）。
+     */
     public static boolean rejectsMaxTokens(int status, String body) {
         if (status != 400 && status != 422) return false;
         String b = body == null ? "" : body.toLowerCase(Locale.ROOT);
+        if (b.contains("not supported") || b.contains("unsupported")) return false;
         return b.contains("max_tokens") || b.contains("max_output_tokens") || b.contains("max_completion_tokens")
                 || b.contains("maximum") && b.contains("token");
     }
