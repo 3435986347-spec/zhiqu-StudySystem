@@ -9,6 +9,7 @@ import com.zhiqu.service.AiService;
 import com.zhiqu.service.ai.AnthropicFormat;
 import com.zhiqu.service.ai.ModelProviderClient;
 import com.zhiqu.service.ai.ProviderFailure;
+import com.zhiqu.service.ai.OutputLimits;
 import com.zhiqu.service.ai.ToolStreamAccumulator;
 import com.zhiqu.service.ai.stream.AiStreamAdapterSupport;
 import com.zhiqu.service.ai.stream.ModelStreamAdapterFactory;
@@ -53,7 +54,8 @@ import java.util.Set;
 public class HarnessModelGateway {
     private static final Logger log = LoggerFactory.getLogger(HarnessModelGateway.class);
 
-    static final int DEFAULT_MAX_TOKENS = 16_384;
+    /** 默认的输出上限：和网页写回答那一次同一档（OutputLimits，第五十四轮挪过去的回退也在那里） */
+    static final int DEFAULT_MAX_TOKENS = OutputLimits.ANSWER_MAX_TOKENS;
     static final int MAX_MAX_TOKENS = 32_000;
     static final int MAX_MESSAGES = 4_000;
     static final int MAX_TOTAL_CHARS = 8_000_000;
@@ -177,24 +179,6 @@ public class HarnessModelGateway {
         return Math.max(256, Math.min(want, window / 2));
     }
 
-    /** 回退的几档：从要的那档往下，8192、4096。 */
-    static List<Integer> fallbackLimits(int maxTokens) {
-        List<Integer> out = new ArrayList<>();
-        out.add(maxTokens);
-        for (int step : new int[]{8_192, 4_096}) {
-            if (step < out.get(out.size() - 1)) out.add(step);
-        }
-        return out;
-    }
-
-    /** 这个 400 是不是在说「输出上限太大」。 */
-    static boolean rejectsMaxTokens(int status, String body) {
-        if (status != 400 && status != 422) return false;
-        String b = body == null ? "" : body.toLowerCase(Locale.ROOT);
-        return b.contains("max_tokens") || b.contains("max_output_tokens") || b.contains("max_completion_tokens")
-                || b.contains("maximum") && b.contains("token");
-    }
-
     public void stream(Long userId, Map<String, Object> body, Sink sink) {
         List<Map<String, Object>> messages = validMessages(body.get("messages"));
         List<Map<String, Object>> tools = validTools(body.get("tools"));
@@ -227,7 +211,7 @@ public class HarnessModelGateway {
         ToolStreamAccumulator acc = new ToolStreamAccumulator(new Forwarder(sink));
         int usedMaxTokens = maxTokens;
         RuntimeException last = null;
-        for (int limit : fallbackLimits(maxTokens)) {
+        for (int limit : OutputLimits.fallbackLimits(maxTokens)) {
             try {
                 usedMaxTokens = limit;
                 call(config, type, trimmed.messages(), tools, limit, acc);
@@ -235,7 +219,7 @@ public class HarnessModelGateway {
                 break;
             } catch (RestClientResponseException e) {
                 String detail = provider.extractAiErrorDetail(e.getResponseBodyAsString());
-                if (rejectsMaxTokens(e.getStatusCode().value(), e.getResponseBodyAsString()) && acc.outputChars() == 0) {
+                if (OutputLimits.rejectsMaxTokens(e.getStatusCode().value(), e.getResponseBodyAsString()) && acc.outputChars() == 0) {
                     log.info("模型拒绝了输出上限 {}，降一档重试：{}", limit, detail);
                     last = new BusinessException("模型拒绝了输出上限：" + detail);
                     continue;

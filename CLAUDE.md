@@ -114,6 +114,7 @@ cd ../zhiqu-cli && npm test
 - **有 `@Version` 的表不要「读整行 → 改 → `updateById`」**：中间有人动过这一行就写进 0 行，接口照样回成功；`updateById` 还会跳过 null（清空的字段写不进去）。只改自己那几列，并检查行数。
 - 请求线程里写一行「进行中」、做完再改终态的东西：要么挂心跳（`StreamLiveness`，由 `InterruptedWorkRecovery` 收拾），要么有租约。只看「是不是这个进程启动之前建的」不行（几个后端共用一个库）。
 - `SecurityContext` 不会传到异步线程：工具执行器显式传 `userId`。
+- **DeepSeek 不说就默认思考**：发给模型的每一处 OpenAI 兼容请求都要 `applyOpenAiReasoningOptions`（干活的轮传 `"OFF"`），新加一处会让 `ModelRequestThinkingTest` 红；写回答的输出上限走 `OutputLimits`（和命令行同一档、不收就降）。
 - 流式请求里的「启动就炸」其实炸在每一次请求里：装配窗口（`beginRun` 之后、各相位之前）要自己 try（记日志、`errorRun`、`failAssistantMessage`）。
 - 搬代码会让判据扫错文件，而扫错文件的判据看起来和通过一模一样：判据要读那条性质现在所在的文件。
 - 桌面应用：工作目录是 `/`（相对路径的上传目录写不进去）；WKWebView 不实现代理方法就不做事，也不报错；jlink 要带 `jdk.charsets` / `jdk.crypto.ec`。见 `docs/notes/desktop.md`。
@@ -184,3 +185,4 @@ cd ../zhiqu-cli && npm test
 - [第五十一轮](docs/rounds/round-51.md) 迷你番茄钟第 3 步：macOS 外壳的悬浮面板（不抢焦点、总在最前、中间拖、记位置），看板上「缩小到桌面」
 - [第五十二轮](docs/rounds/round-52.md) 界面打磨第 6 步：任务页（一行工具条、服务端搜索加密的标题、列宽只写一处、窄窗口和手机不横着滚）
 - [第五十三轮](docs/rounds/round-53.md) 用户在桌面应用里看到的：日历日期出格（窄了换竖排）、番茄钟下拉撑出卡片、下拉是原生样子；在 WebKit 里量的判据
+- [第五十四轮](docs/rounds/round-54.md) AI 助手在桌面应用里一问要等几分钟：工具轮 / 拆计划 / 看图没说不要思考（DeepSeek 默认想）；回答的输出上限 4096 → 16384；代码模式不改写检索

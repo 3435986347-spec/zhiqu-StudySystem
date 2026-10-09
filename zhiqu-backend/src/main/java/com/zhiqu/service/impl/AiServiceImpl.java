@@ -63,6 +63,7 @@ import com.zhiqu.service.agent.AgentStageRunner;
 import com.zhiqu.service.VerifierService;
 import com.zhiqu.service.ai.WebResearchService;
 import com.zhiqu.service.ai.WebSearchProvider;
+import com.zhiqu.service.ai.stream.AiStreamAdapterSupport;
 import com.zhiqu.service.ai.stream.ModelStreamAdapterFactory;
 import com.zhiqu.service.ai.stream.ModelStreamRequest;
 import com.zhiqu.service.ai.stream.ModelStreamResult;
@@ -1202,7 +1203,9 @@ public class AiServiceImpl implements AiService {
             // 放宽 selectedSourceIds 与「用户选定的资料必须被尊重」冲突（见 ADR 与
             // VerifierServiceImpl.SELECTED_SOURCES_UNUSABLE 那条 BLOCKER）；
             // includeWiki 活壳恒发 true，放宽是空操作。
-            if (s.notebookContextRows.isEmpty()) {
+            // 按下「代码」时不改写（第五十四轮）：改写是一整次模型往返、排在写回答前面，而「帮我写个动画」本来就不是在资料里找东西 ——
+            // 用户在桌面应用里每问一句都要多等这一趟（慢模型一趟几十秒）
+            if (s.notebookContextRows.isEmpty() && !AgentPlanDecision.codeModeRequested(s.contextOptions)) {
                 String rewritten = rewriteRetrievalQuery(s.config, s.limitedMessage);
                 if (hasText(rewritten) && !rewritten.equals(s.limitedMessage)) {
                     s.retrievalAttempts = 2;
@@ -3536,6 +3539,8 @@ public class AiServiceImpl implements AiService {
         body.put("tool_choice", forced
                 ? Map.of("type", "function", "function", Map.of("name", StudyPlanTool.NAME))
                 : "auto");
+        // 拆计划这一次明说不要思考（第五十四轮）：DeepSeek 不说就默认想，和命令行不一样 —— 见 ModelProviderClient.callOpenAiToolTurn
+        AiStreamAdapterSupport.applyOpenAiReasoningOptions(config, body, "OFF");
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
@@ -3853,7 +3858,7 @@ public class AiServiceImpl implements AiService {
             body.put("messages", messages);
             provider.applyTemperature(body);
             body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
-            applyOpenAiReasoningOptions(config, body, reasoningMode);
+            AiStreamAdapterSupport.applyOpenAiReasoningOptions(config, body, reasoningMode);
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
@@ -3871,28 +3876,6 @@ public class AiServiceImpl implements AiService {
         }
     }
 
-    /** 调用 AI 视觉接口（携带 Base64 图片，OpenAI Vision 格式） */
-    private void applyOpenAiReasoningOptions(AiModelConfig config, Map<String, Object> body, String reasoningMode) {
-        String name = config.getModelName() == null ? "" : config.getModelName().toLowerCase(Locale.ROOT);
-        if (!isReasoningRequested(reasoningMode)) {
-            if (name.contains("deepseek") && !name.contains("reasoner")) {
-                body.put("thinking", Map.of("type", "disabled"));
-            }
-            return;
-        }
-        if (name.contains("deepseek") && !name.contains("reasoner")) {
-            body.put("thinking", Map.of("type", "enabled"));
-            return;
-        }
-        if (name.contains("deepseek-reasoner") || name.contains("reasoner")) {
-            return;
-        }
-        if (name.startsWith("o1") || name.startsWith("o3") || name.startsWith("o4") || name.startsWith("gpt-5")) {
-            body.put("reasoning", Map.of("effort", "DEEP".equals(reasoningMode) ? "high" : "medium"));
-        }
-    }
-
-
     private void applyAnthropicThinkingOptions(Map<String, Object> body, String reasoningMode, AiModelConfig config) {
         if (!isReasoningRequested(reasoningMode)) {
             return;
@@ -3909,6 +3892,7 @@ public class AiServiceImpl implements AiService {
         }
     }
 
+    /** 调用 AI 视觉接口（携带 Base64 图片，OpenAI Vision 格式） */
     private String callAiApiWithVision(AiModelConfig config, String systemPrompt,
                                        List<Map<String, Object>> userContent) {
         // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
@@ -3933,6 +3917,8 @@ public class AiServiceImpl implements AiService {
             ));
             provider.applyTemperature(body);
             body.put("max_tokens", ModelProviderClient.MODEL_MAX_TOKENS);
+            // 看图这一次明说不要思考（第五十四轮）：DeepSeek 不说就默认想 —— 见 ModelProviderClient.callOpenAiToolTurn
+            AiStreamAdapterSupport.applyOpenAiReasoningOptions(config, body, "OFF");
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(

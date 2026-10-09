@@ -97,5 +97,23 @@ class ModelProviderToolTurnTest {
         assertEquals("/chat/completions", paths.get(0));
         assertEquals("system", bodies.get(0).path("messages").path(0).path("role").asText());
         assertEquals("好", msg.path("content").asText());
+        assertTrue(bodies.get(0).path("thinking").isMissingNode(), "不是 DeepSeek 也塞了 thinking 参数：" + bodies.get(0));
+    }
+
+    /**
+     * 第五十四轮：用户在桌面应用里「每次都要等待好几分钟，在 cli 里面就很快」—— 同一个 deepseek-v4-pro。
+     * 命令行一直明说不要思考（HarnessModelGateway：thinking disabled），code agent 的工具轮什么都不说，DeepSeek 就默认想，每一轮都想一阵。
+     */
+    @Test
+    @DisplayName("DeepSeek 的工具轮明说不要思考（和命令行一样）—— 不说的话它默认想，code agent 每一轮都慢")
+    void deepSeek工具轮不思考() throws Exception {
+        String url = fake("{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"好\"}}]}");
+        AiModelConfig config = new AiModelConfig();
+        config.setProviderType("OPENAI_COMPATIBLE");
+        config.setApiUrl(url);
+        config.setModelName("deepseek-v4-pro");
+        config.setEncryptedApiKey("e");
+        client().callToolTurn(config, MESSAGES, TOOLS, ModelProviderClient.ToolTurnLimits.QUICK);
+        assertEquals("disabled", bodies.get(0).at("/thinking/type").asText(), "DeepSeek 的工具轮没说不要思考：" + bodies.get(0));
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.AiModelConfig;
+import com.zhiqu.service.ai.stream.AiStreamAdapterSupport;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -315,6 +316,9 @@ public class ModelProviderClient {
         body.put("max_tokens", limits.maxTokens());
         body.put("tools", tools);
         body.put("tool_choice", "auto"); // 由模型自行决定调用哪个工具或直接作答
+        // 工具轮明说不要思考（第五十四轮）：DeepSeek 不说就默认想 —— code agent 每一轮都想上一阵，桌面应用里一问要等几分钟，
+        // 命令行（同一个模型）一直是明说不想的，所以快。用户按的「深度思考」管的是写回答那一次，不管这些干活的轮
+        AiStreamAdapterSupport.applyOpenAiReasoningOptions(config, body, "OFF");
         try {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = toolTurnTemplate(limits).postForEntity(

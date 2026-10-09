@@ -3,6 +3,7 @@ package com.zhiqu.service.ai.stream;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
+import com.zhiqu.service.ai.OutputLimits;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -39,24 +40,44 @@ public class AnthropicMessagesAdapter implements ModelStreamAdapter {
             Map<String, Object> body = anthropicBody(request);
             body.put("stream", true);
             AiStreamAdapterSupport.applyAnthropicThinking(body, request.reasoningMode(), request.config().getModelName());
-            AiStreamAdapterSupport.StreamEnd end = restTemplate.execute(
-                    AiStreamAdapterSupport.resolveAnthropicMessagesUrl(request.config().getApiUrl()),
-                    HttpMethod.POST,
-                    httpRequest -> {
-                        httpRequest.getHeaders().putAll(anthropicHeaders(request));
-                        objectMapper.writeValue(httpRequest.getBody(), body);
-                    },
-                    response -> AiStreamAdapterSupport.readSse(response, objectMapper, (event, root, streamEnd) -> {
-                        handleEvent(root, request, sink, content, reasoning, usage);
-                        String type = root.path("type").asText("");
-                        JsonNode stop = root.at("/delta/stop_reason");
-                        if (stop.isTextual()) {
-                            streamEnd.finish(stop.asText());
-                        }
-                        if ("message_stop".equals(type)) {
-                            streamEnd.finish(null);
-                        }
-                    }));
+            // 输出上限和 OpenAI 兼容那边、命令行同一档（OutputLimits，第五十四轮）；不收就降一档再来
+            AiStreamAdapterSupport.StreamEnd end = null;
+            RestClientResponseException rejected = null;
+            for (int limit : OutputLimits.fallbackLimits(OutputLimits.ANSWER_MAX_TOKENS)) {
+                body.put("max_tokens", limit);
+                try {
+                    end = restTemplate.execute(
+                            AiStreamAdapterSupport.resolveAnthropicMessagesUrl(request.config().getApiUrl()),
+                            HttpMethod.POST,
+                            httpRequest -> {
+                                httpRequest.getHeaders().putAll(anthropicHeaders(request));
+                                objectMapper.writeValue(httpRequest.getBody(), body);
+                            },
+                            response -> AiStreamAdapterSupport.readSse(response, objectMapper, (event, root, streamEnd) -> {
+                                handleEvent(root, request, sink, content, reasoning, usage);
+                                String type = root.path("type").asText("");
+                                JsonNode stop = root.at("/delta/stop_reason");
+                                if (stop.isTextual()) {
+                                    streamEnd.finish(stop.asText());
+                                }
+                                if ("message_stop".equals(type)) {
+                                    streamEnd.finish(null);
+                                }
+                            }));
+                    rejected = null;
+                    break;
+                } catch (RestClientResponseException e) {
+                    if (OutputLimits.rejectsMaxTokens(e.getStatusCode().value(), e.getResponseBodyAsString())
+                            && content.length() == 0 && reasoning.length() == 0) {
+                        rejected = e;
+                        continue;
+                    }
+                    throw e;
+                }
+            }
+            if (rejected != null) {
+                throw rejected;
+            }
             AiStreamAdapterSupport.requireComplete(end, true);
             return new ModelStreamResult(content.toString(), reasoning.toString(), usage, end.finishReason);
         } catch (BusinessException e) {
@@ -138,7 +159,7 @@ public class AnthropicMessagesAdapter implements ModelStreamAdapter {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.config().getModelName());
-        body.put("max_tokens", 4096);
+        body.put("max_tokens", OutputLimits.ANSWER_MAX_TOKENS);   // stream() 里按回退的几档再改
         AiStreamAdapterSupport.applyTemperature(body, temperature);
         if (system.length() > 0) body.put("system", system.toString());
         body.put("messages", anthMessages);
