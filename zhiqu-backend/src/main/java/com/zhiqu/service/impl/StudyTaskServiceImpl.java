@@ -1,6 +1,7 @@
 package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.dto.TaskCreateRequest;
 import com.zhiqu.dto.TaskUpdateRequest;
@@ -18,6 +19,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -194,22 +196,54 @@ public class StudyTaskServiceImpl implements StudyTaskService {
     @Override
     public Map<String, Object> page(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder,
                                     int offset, int limit) {
+        return page(userId, quadrant, status, priority, sortBy, sortOrder, null, offset, limit);
+    }
+
+    /** 按关键词找时最多看多少条（第五十二轮）：用了两年的账号几千条，解一遍几十毫秒 */
+    public static final int SEARCH_SCAN_MAX = 5000;
+
+    @Override
+    public Map<String, Object> page(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder,
+                                    String keyword, int offset, int limit) {
         int size = Math.max(1, Math.min(MAX_PAGE_SIZE, limit));
         int from = Math.max(0, offset);
-        long total = studyTaskMapper.selectCount(filterQuery(userId, quadrant, status, priority));
-        LambdaQueryWrapper<StudyTask> query = listQuery(userId, quadrant, status, priority, sortBy, sortOrder)
-                .orderByDesc(StudyTask::getId)
-                .last("LIMIT " + size + " OFFSET " + from);
+        String needle = keyword == null ? "" : keyword.strip().toLowerCase(Locale.ROOT);
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("items", taskPrivacyService.revealAll(studyTaskMapper.selectList(query)));
-        result.put("total", total);
+        if (needle.isEmpty()) {
+            long total = studyTaskMapper.selectCount(filterQuery(userId, quadrant, status, priority));
+            LambdaQueryWrapper<StudyTask> query = listQuery(userId, quadrant, status, priority, sortBy, sortOrder)
+                    .orderByDesc(StudyTask::getId)
+                    .last("LIMIT " + size + " OFFSET " + from);
+            result.put("items", taskPrivacyService.revealAll(studyTaskMapper.selectList(query)));
+            result.put("total", total);
+        } else {
+            // 标题和说明是加密存的（数据库里 LIKE 不了）：按同样的筛选和顺序取出来、解开之后在这里找，再分页。
+            // 多取一条看是不是超过了上限：超过了只在前 SEARCH_SCAN_MAX 条里找，并且告诉页面（不然「没找到」可能是假的）
+            List<StudyTask> scanned = taskPrivacyService.revealAll(studyTaskMapper.selectList(
+                    listQuery(userId, quadrant, status, priority, sortBy, sortOrder)
+                            .orderByDesc(StudyTask::getId)
+                            .last("LIMIT " + (SEARCH_SCAN_MAX + 1))));
+            boolean capped = scanned.size() > SEARCH_SCAN_MAX;
+            List<StudyTask> hits = scanned.stream().limit(SEARCH_SCAN_MAX)
+                    .filter(t -> contains(t.getTitle(), needle) || contains(t.getDescription(), needle))
+                    .collect(Collectors.toList());
+            result.put("items", from >= hits.size() ? List.of() : new ArrayList<>(hits.subList(from, Math.min(hits.size(), from + size))));
+            result.put("total", (long) hits.size());
+            result.put("searchCapped", capped);
+        }
         result.put("offset", from);
         result.put("limit", size);
         return result;
     }
 
+    private static boolean contains(String text, String needle) {
+        return text != null && text.toLowerCase(Locale.ROOT).contains(needle);
+    }
+
     private LambdaQueryWrapper<StudyTask> listQuery(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder) {
-        LambdaQueryWrapper<StudyTask> wrapper = new LambdaQueryWrapper<StudyTask>()
+        // raw 和 wrapper 是同一个查询（lambda() 共用条件和排序）：「截止时间 IS NULL」这种排序只能用列名的写法加
+        QueryWrapper<StudyTask> raw = new QueryWrapper<>();
+        LambdaQueryWrapper<StudyTask> wrapper = raw.lambda()
                 .eq(StudyTask::getUserId, userId);
         if (quadrant != null) {
             wrapper.eq(StudyTask::getQuadrant, quadrant);
@@ -223,6 +257,8 @@ public class StudyTaskServiceImpl implements StudyTaskService {
 
         boolean asc = "asc".equalsIgnoreCase(sortOrder);
         if ("deadline".equalsIgnoreCase(sortBy)) {
+            // 截止早的在前：没填截止时间的排到最后（第五十二轮）。MySQL 升序里 NULL 在最前 —— 原来选「截止时间 · 升序」，先看到的是一屏没有截止时间的
+            if (asc) raw.orderByAsc("deadline IS NULL");
             wrapper.orderBy(true, asc, StudyTask::getDeadline);
         } else if ("priority".equalsIgnoreCase(sortBy)) {
             wrapper.orderBy(true, asc, StudyTask::getPriority);

@@ -45,7 +45,8 @@ class TaskFormTest {
         String code = api();
         // 任务页第三十四轮起是模块（pages/tasks.js）；表单还在壳里（看板也用）
         String tasks = SourceText.pageModule("tasks.js");
-        assertTrue(SourceText.functionBody(tasks, "async function bootTasks()").contains("newBtn.onclick = function () { openTaskForm(null, bootTasks); }"),
+        // 第五十二轮起工具条（含「新建任务」）在 wireTools 里接一次（bootTasks 每次刷新都跑，按钮不能接好几遍）
+        assertTrue(SourceText.functionBody(tasks, "function wireTools()").contains("newBtn.onclick = function () { openTaskForm(null, bootTasks); }"),
                 "「新建任务」没有打开任务表单");
         assertTrue(tasks.contains("return openTaskForm(Number(b.dataset.editTask), bootTasks);"), "「编辑」没有打开任务表单");
         String all = SourceText.frontendScripts();

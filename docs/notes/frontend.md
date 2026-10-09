@@ -115,6 +115,14 @@
   `redirectToLogin` adds `zq-signed-out` and the capsule says 「在主窗口登录后再用」; 「展开」 posts `{action:'expand'}` to
   `webkit.messageHandlers.zqMini` when the shell provides it, otherwise goes to the dashboard. A new HTML page also needs an entry in
   `SecurityConfig`'s permit list (missing → a blank 403), `service-worker.js` `CORE_ASSETS` and `PAGE_MODULES`.
+- **The tasks page** (round 52, step 6 of `docs/ui-plan.md`): one toolbar — search (title and description, 300 ms after typing
+  stops, Enter at once), a status segment, and 「筛选」 opening a second row (quadrant, priority, sort) whose button shows how many
+  are set; changes reload at once (`latestOnly`, no 「查询」 button). Search runs on the server (`/task/page?keyword=`): titles and
+  descriptions are encrypted, so the service decrypts up to 5000 rows matching the other filters, filters in memory, then pages
+  (`searchCapped` when there were more). Deadline-ascending sorts undated tasks last (`deadline IS NULL` via a `QueryWrapper`
+  whose `.lambda()` carries the rest). Column widths live only in `.zq-task-grid`; deadline and reminder share one cell so the table
+  fits a 960-px desktop window without horizontal scrolling; edit/delete are icon buttons shown on hover or keyboard focus, always
+  on phones, where each row stacks instead of scrolling sideways. Checks: `tasks-check.js`, `TasksLookTest`, `LargeAccountIntegrationTest`.
 - **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
   study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
   «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't

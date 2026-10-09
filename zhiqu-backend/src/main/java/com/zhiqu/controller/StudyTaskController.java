@@ -91,9 +91,10 @@ public class StudyTaskController {
                                             @RequestParam(required = false) Integer priority,
                                             @RequestParam(required = false) String sortBy,
                                             @RequestParam(required = false) String sortOrder,
+                                            @RequestParam(required = false) String keyword,
                                             @RequestParam(defaultValue = "0") int offset,
                                             @RequestParam(defaultValue = "100") int limit) {
-        return Result.success(studyTaskService.page(SecurityUtils.getCurrentUserId(), quadrant, status, priority, sortBy, sortOrder, offset, limit));
+        return Result.success(studyTaskService.page(SecurityUtils.getCurrentUserId(), quadrant, status, priority, sortBy, sortOrder, keyword, offset, limit));
     }
 
     @GetMapping("/quadrant")

@@ -25,6 +25,13 @@ public interface StudyTaskService {
     Map<String, Object> page(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder,
                              int offset, int limit);
 
+    /**
+     * 同上，再按关键词在标题和说明里找（第五十二轮，任务页的搜索框；不分大小写）。关键词是空的就和上面一样。
+     * 标题和说明是加密存的、数据库里搜不了：取出符合别的筛选条件的、解开再找 —— 最多看前几千条，超过了结果里 searchCapped = true。
+     */
+    Map<String, Object> page(Long userId, Integer quadrant, Integer status, Integer priority, String sortBy, String sortOrder,
+                             String keyword, int offset, int limit);
+
     Map<String, List<StudyTask>> quadrant(Long userId);
 
     StudyTask updateStatus(Long userId, Long taskId, Integer status);

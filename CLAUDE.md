@@ -90,7 +90,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261009-float`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261009-tasks`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -181,3 +181,4 @@ cd ../zhiqu-cli && npm test
 - [第四十九轮](docs/rounds/round-49.md) 迷你番茄钟第 1 步：番茄钟全站共用一个钟（存在 localStorage、侧栏「专注中」、到点只记一次）；首页轮播的看板截图换新
 - [第五十轮](docs/rounds/round-50.md) 迷你番茄钟第 2 步：`mini.html`，半透明的深色胶囊（倒计时、开始 / 暂停、任务、第几轮、展开）；新页面漏了放行是空白 403
 - [第五十一轮](docs/rounds/round-51.md) 迷你番茄钟第 3 步：macOS 外壳的悬浮面板（不抢焦点、总在最前、中间拖、记位置），看板上「缩小到桌面」
+- [第五十二轮](docs/rounds/round-52.md) 界面打磨第 6 步：任务页（一行工具条、服务端搜索加密的标题、列宽只写一处、窄窗口和手机不横着滚）

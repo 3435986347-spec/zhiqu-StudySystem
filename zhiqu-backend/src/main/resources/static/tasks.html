@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>任务列表 - 知趣·象限 AI 办公助手</title>
+  <title>任务 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261009-float" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261009-float">
-  <link rel="manifest" href="manifest.json?v=20261009-float">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261009-tasks" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261009-tasks">
+  <link rel="manifest" href="manifest.json?v=20261009-tasks">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261009-float">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261009-tasks">
 </head>
 <body>
   <div class="zq-app">
@@ -19,38 +19,39 @@
       <div style="display:flex; flex-direction:column; gap:16px;">
 
         <header class="zq-page-head">
-          <div><h1 class="zq-h1">任务列表</h1></div>
+          <div><h1 class="zq-h1">任务</h1><span class="zq-page-sub" id="zq-task-count">—</span></div>
+          <div class="zq-page-actions"><button type="button" class="zq-btn" id="zq-task-new"><span class="zq-ic" data-zq-icon="plus"></span>新建任务</button></div>
         </header>
 
-        <!-- 筛选条 -->
-        <div class="zq-card" style="display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">
-          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">象限</label><select class="zq-select" style="min-width:128px;"><option>全部</option><option>重要且紧急</option><option>重要不紧急</option><option>紧急不重要</option><option>不重要不紧急</option></select></div>
-          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">状态</label><select class="zq-select" style="min-width:96px;"><option>全部</option><option>待办</option><option>进行中</option><option>已完成</option></select></div>
-          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">优先级</label><select class="zq-select" style="min-width:96px;"><option>全部</option><option>低</option><option>中</option><option>高</option><option>紧急</option></select></div>
-          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">排序</label><select class="zq-select" style="min-width:110px;"><option>更新时间</option><option>截止时间</option><option>优先级</option></select></div>
-          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">方向</label><select class="zq-select" style="min-width:88px;"><option>降序</option><option>升序</option></select></div>
-          <button class="zq-btn">查询</button>
-          <button class="zq-btn" style="border:1px solid var(--zq-ok); background:var(--zq-ok-tint); color:var(--zq-ok);">新建任务</button>
+        <!-- 一行工具条（第五十二轮，界面打磨第 6 步）：搜索、状态分段、「筛选」展开第二行。改了就查（原来五个下拉 + 一个「查询」） -->
+        <div class="zq-task-tools">
+          <label class="zq-search"><span class="zq-ic" data-zq-icon="search"></span><input type="search" id="zq-task-q" placeholder="搜索标题和说明" aria-label="搜索任务" autocomplete="off"></label>
+          <div class="zq-seg" role="group" aria-label="按状态">
+            <button type="button" data-status="" aria-pressed="true">全部</button><button type="button" data-status="0" aria-pressed="false">待办</button><button type="button" data-status="1" aria-pressed="false">进行中</button><button type="button" data-status="2" aria-pressed="false">已完成</button>
+          </div>
+          <button type="button" class="zq-btn-ghost zq-task-more" id="zq-task-more" aria-expanded="false" aria-controls="zq-task-filters"><span class="zq-ic" data-zq-icon="sliders-horizontal"></span><span id="zq-task-more-label">筛选</span></button>
+        </div>
+        <div class="zq-task-filters" id="zq-task-filters" hidden>
+          <label class="zq-task-filter">象限<select class="zq-select" id="zq-task-quadrant"><option value="">全部</option><option value="1">重要且紧急</option><option value="2">重要不紧急</option><option value="3">紧急不重要</option><option value="4">不重要不紧急</option></select></label>
+          <label class="zq-task-filter">优先级<select class="zq-select" id="zq-task-priority"><option value="">全部</option><option value="3">紧急</option><option value="2">高</option><option value="1">中</option><option value="0">低</option></select></label>
+          <label class="zq-task-filter">排序<select class="zq-select" id="zq-task-sort"><option value="updatedAt:desc">最近改过的在前</option><option value="deadline:asc">截止早的在前</option><option value="deadline:desc">截止晚的在前</option><option value="priority:desc">优先级高的在前</option></select></label>
+          <button type="button" class="zq-btn-ghost" id="zq-task-clear">清除筛选</button>
         </div>
 
-        <!-- 表格 -->
-        <div class="zq-table">
-          <div class="zq-scroll-x"><div style="min-width:880px;">
-            <div class="zq-thead" style="display:grid; grid-template-columns:minmax(200px,2.2fr) 104px 64px 78px 118px 118px 108px; gap:8px; align-items:center;">
-              <span>标题</span><span>象限</span><span>优先级</span><span>状态</span><span>截止时间</span><span>提醒时间</span><span style="text-align:right;">操作</span>
+        <!-- 表格：列宽只在样式表里写一处（.zq-task-grid）；编辑 / 删除悬停或键盘移到这一行时才出现 -->
+        <div class="zq-table zq-task-table">
+          <div class="zq-scroll-x"><div class="zq-task-scroll">
+            <div class="zq-thead zq-task-grid">
+              <span>标题</span><span>象限</span><span>优先级</span><span>状态</span><span>截止 / 提醒</span><span class="zq-sr">操作</span>
             </div>
             <div id="zq-rows"></div>
           </div></div>
-          <div style="padding:10px 16px; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--zq-text3);">
-            <span></span>
-            <span>点击状态徽标可快速流转：待办 → 进行中 → 已完成</span>
-          </div>
         </div>
       </div>
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261009-float"></script>
-  <script src="assets/zhiqu-api.js?v=20261009-float"></script>
+  <script src="assets/zhiqu-ui.js?v=20261009-tasks"></script>
+  <script src="assets/zhiqu-api.js?v=20261009-tasks"></script>
 </body>
 </html>

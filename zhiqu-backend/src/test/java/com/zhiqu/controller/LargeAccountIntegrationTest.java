@@ -5,6 +5,7 @@ import com.zhiqu.entity.StudyRecord;
 import com.zhiqu.entity.StudyTask;
 import com.zhiqu.service.StudyRecordService;
 import com.zhiqu.service.StudyTaskService;
+import com.zhiqu.service.impl.StudyTaskServiceImpl;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
@@ -96,6 +97,78 @@ class LargeAccountIntegrationTest {
         assertEquals(84, ((List<?>) done.get("items")).size());
         assertEquals(500, ((Number) tasks.page(user, null, null, null, null, null, 0, 100000).get("limit")).intValue(), "一页的上限");
         assertTrue(((List<?>) tasks.page(user, null, null, null, null, null, 9999, 100).get("items")).isEmpty());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @DisplayName("关键词（第五十二轮，任务页的搜索框）：标题和说明里找、不分大小写；和筛选、分页一起用；空白等于没给；找不到是空的")
+    void 关键词() {
+        long user = newUser("big_search");
+        createTasks(user, 250);   // 「任务 0」…「任务 249」，i % 3 == 0 的做完了
+        TaskCreateRequest r = new TaskCreateRequest();
+        r.setTitle("周五的事");
+        r.setDescription("Send the weekly REPORT to Lin");
+        r.setQuadrant(2);
+        r.setPriority(1);
+        tasks.create(user, r);
+
+        // 「任务 1」：任务 1、10–19、100–199 —— 111 条（标题是加密存的，数据库里 LIKE 不出来）
+        Map<String, Object> first = tasks.page(user, null, null, null, "updatedAt", "desc", "任务 1", 0, 50);
+        assertEquals(111L, ((Number) first.get("total")).longValue());
+        List<StudyTask> items = (List<StudyTask>) first.get("items");
+        assertEquals(50, items.size());
+        assertTrue(items.stream().allMatch(t -> t.getTitle().contains("任务 1")), "找出来的不都含关键词");
+        assertEquals(Boolean.FALSE, first.get("searchCapped"));
+        Set<Long> seen = new HashSet<>();
+        for (int offset = 0; offset < 111; offset += 50) {
+            for (StudyTask t : (List<StudyTask>) tasks.page(user, null, null, null, "updatedAt", "desc", "任务 1", offset, 50).get("items")) {
+                assertTrue(seen.add(t.getId()), "翻页时同一条出现了两次");
+            }
+        }
+        assertEquals(111, seen.size(), "三页翻完没拿全");
+        assertTrue(((List<?>) tasks.page(user, null, null, null, null, null, "任务 1", 200, 50).get("items")).isEmpty(), "翻过头是空的");
+
+        long doneHits = java.util.stream.IntStream.range(0, 250).filter(i -> String.valueOf(i).startsWith("1") && i % 3 == 0).count();
+        assertEquals(doneHits, ((Number) tasks.page(user, null, 2, null, null, null, "任务 1", 0, 500).get("total")).longValue(), "和状态筛选一起用");
+
+        List<StudyTask> byDescription = (List<StudyTask>) tasks.page(user, null, null, null, null, null, "  report ", 0, 50).get("items");
+        assertEquals(List.of("周五的事"), byDescription.stream().map(StudyTask::getTitle).toList(), "说明里的、大小写不同、前后有空格的找不到");
+        assertEquals(251L, ((Number) tasks.page(user, null, null, null, null, null, "   ", 0, 10).get("total")).longValue(), "空白的关键词等于没给");
+        assertFalse(tasks.page(user, null, null, null, null, null, "   ", 0, 10).containsKey("searchCapped"));
+        assertEquals(0L, ((Number) tasks.page(user, null, null, null, null, null, "不存在的东西", 0, 10).get("total")).longValue());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @DisplayName("截止早的在前：没填截止时间的排到最后（原来升序时 NULL 在最前，先看到一屏没有截止时间的）；截止晚的在前时它们本来就在最后")
+    void 截止时间排序() {
+        long user = newUser("big_deadline");
+        createTasks(user, 6);   // 都没有截止时间
+        jdbc.update("UPDATE study_task SET deadline = '2026-10-12 18:00:00' WHERE user_id = ? AND title IS NOT NULL ORDER BY id LIMIT 1", user);
+        jdbc.update("UPDATE study_task SET deadline = '2026-10-10 09:00:00' WHERE user_id = ? AND deadline IS NULL ORDER BY id DESC LIMIT 1", user);
+        List<StudyTask> asc = (List<StudyTask>) tasks.page(user, null, null, null, "deadline", "asc", 0, 10).get("items");
+        assertEquals(List.of("2026-10-10T09:00", "2026-10-12T18:00"), asc.subList(0, 2).stream().map(t -> String.valueOf(t.getDeadline())).toList(),
+                "截止早的在前：前两条应当是有截止时间的、早的在前");
+        assertTrue(asc.subList(2, asc.size()).stream().allMatch(t -> t.getDeadline() == null));
+        List<StudyTask> desc = (List<StudyTask>) tasks.page(user, null, null, null, "deadline", "desc", 0, 10).get("items");
+        assertEquals("2026-10-12T18:00", String.valueOf(desc.get(0).getDeadline()), "截止晚的在前");
+        assertTrue(desc.get(desc.size() - 1).getDeadline() == null);
+        // 关键词搜索走的是同一个查询：顺序一样
+        List<StudyTask> searched = (List<StudyTask>) tasks.page(user, null, null, null, "deadline", "asc", "任务", 0, 10).get("items");
+        assertEquals(asc.stream().map(StudyTask::getId).toList(), searched.stream().map(StudyTask::getId).toList(), "搜索时的顺序和不搜一样");
+    }
+
+    @Test
+    @DisplayName("关键词：超过能看的上限，只在前面那些里找，并且说出来（不然「没找到」可能是假的）")
+    void 关键词超过上限() {
+        long user = newUser("big_search_cap");
+        int n = StudyTaskServiceImpl.SEARCH_SCAN_MAX + 3;
+        // 直接写库（一条一条建要好几十秒）：不加密的旧数据也认得 —— reveal 只解有密文的
+        jdbc.batchUpdate("INSERT INTO study_task(user_id, title, quadrant, priority, status) VALUES (?, ?, 2, 1, 0)",
+                java.util.stream.IntStream.range(0, n).mapToObj(i -> new Object[]{user, "旧任务 " + i}).toList());
+        Map<String, Object> page = tasks.page(user, null, null, null, "updatedAt", "desc", "旧任务", 0, 10);
+        assertEquals(Boolean.TRUE, page.get("searchCapped"), "超过上限没说出来");
+        assertEquals((long) StudyTaskServiceImpl.SEARCH_SCAN_MAX, ((Number) page.get("total")).longValue(), "只该在前 SEARCH_SCAN_MAX 条里找");
     }
 
     @Test
