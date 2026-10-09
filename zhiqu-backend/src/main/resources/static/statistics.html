@@ -6,53 +6,48 @@
   <title>专注统计 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261010-routines" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261010-routines">
-  <link rel="manifest" href="manifest.json?v=20261010-routines">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261010-plans" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261010-plans">
+  <link rel="manifest" href="manifest.json?v=20261010-plans">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261010-routines">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261010-plans">
 </head>
 <body>
   <div class="zq-app">
     <nav id="zq-side"></nav>
     <main class="zq-main">
-      <div style="display:flex; flex-direction:column; gap:16px;">
-        <header class="zq-page-head"><div><h1 class="zq-h1">专注统计</h1></div></header>
+      <div class="zq-page-stack">
+        <header class="zq-page-head"><div><h1 class="zq-h1">专注统计</h1><span class="zq-page-sub">专注时长来自番茄钟的记录，任务数来自任务页。</span></div></header>
 
-        <section class="zq-grid" style="grid-template-columns:repeat(4, minmax(0,1fr));">
-          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label" style="margin-top:9px;">连续专注天数</span></article>
-          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label" style="margin-top:9px;">总专注时长（分钟）</span></article>
-          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label" style="margin-top:9px;">完成任务数</span></article>
-          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label" style="margin-top:9px;">总任务数</span></article>
+        <section class="zq-grid zq-stat-grid zq-phone-2col">
+          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label">连续专注天数</span></article>
+          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label">总专注时长（分钟）</span></article>
+          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label">完成任务数</span></article>
+          <article class="zq-stat"><strong class="zq-stat-num">—</strong><span class="zq-stat-label">总任务数</span></article>
         </section>
 
-        <div style="display:grid; grid-template-columns:minmax(0,1.7fr) minmax(280px,1fr); gap:16px; align-items:start;">
-          <section class="zq-card zq-card-lg">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
-              <h2 class="zq-h2" style="font-size:16px;">专注时长趋势</h2>
-              <div id="zq-tabs" style="display:inline-flex; border:1px solid var(--zq-border); border-radius:var(--zq-rs); overflow:hidden;"><button type="button" data-k="day" style="height:28px; padding:0 14px; border:none; cursor:pointer; font-size:12.5px; font-weight:var(--zq-fw-medium); background:var(--zq-primary); color:var(--zq-on-primary);">日</button><button type="button" data-k="week" style="height:28px; padding:0 14px; border:none; cursor:pointer; font-size:12.5px; font-weight:var(--zq-fw-medium); background:var(--zq-card); color:var(--zq-text2);">周</button><button type="button" data-k="month" style="height:28px; padding:0 14px; border:none; cursor:pointer; font-size:12.5px; font-weight:var(--zq-fw-medium); background:var(--zq-card); color:var(--zq-text2);">月</button></div>
+        <div class="zq-stats-cols zq-phone-1col">
+          <section class="zq-card zq-card-lg zq-trend">
+            <div class="zq-card-head">
+              <h2 class="zq-h2">专注时长趋势</h2>
+              <div class="zq-seg" id="zq-tabs" role="group" aria-label="按日 / 周 / 月看"><button type="button" data-k="day" aria-pressed="true">日</button><button type="button" data-k="week" aria-pressed="false">周</button><button type="button" data-k="month" aria-pressed="false">月</button></div>
             </div>
-            <div id="zq-bars" style="display:flex; align-items:flex-end; gap:7px; height:210px; padding:0 4px;"></div>
+            <div class="zq-bars" id="zq-bars"></div>
           </section>
           <section class="zq-card zq-card-lg">
-            <h2 class="zq-h2" style="font-size:16px; margin-bottom:14px;">象限分布</h2>
-            <div style="display:flex; align-items:center; justify-content:center; padding:6px 0 14px;">
-              <div style="position:relative; width:172px; height:172px;">
-                <svg width="172" height="172" viewBox="0 0 172 172" id="zq-donut"></svg>
-                <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                  <strong class="zq-num" style="font-size:26px; line-height:1;">—</strong>
-                  <span style="font-size:11px; color:var(--zq-text2); margin-top:4px;">本月任务</span>
-                </div>
-              </div>
+            <div class="zq-card-head"><h2 class="zq-h2">象限分布</h2></div>
+            <div class="zq-donut">
+              <svg width="172" height="172" viewBox="0 0 172 172" id="zq-donut"></svg>
+              <div class="zq-donut-center"><strong class="zq-num">—</strong><span>本月任务</span></div>
             </div>
-            <div id="zq-legend" style="display:flex; flex-direction:column; gap:8px;"></div>
+            <div class="zq-legend" id="zq-legend"></div>
           </section>
         </div>
       </div>
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261010-routines"></script>
-  <script src="assets/zhiqu-api.js?v=20261010-routines"></script>
+  <script src="assets/zhiqu-ui.js?v=20261010-plans"></script>
+  <script src="assets/zhiqu-api.js?v=20261010-plans"></script>
 </body>
 </html>

@@ -516,7 +516,8 @@
     document.body.appendChild(mask);
     var handle = { close: close, mask: mask, body: body };
     if (opts.onMount) { try { opts.onMount(body, handle); } catch (e) {} }
-    var first = body.querySelector('input,textarea,select,button'); if (first) { try { first.focus(); } catch (e) {} }
+    // 先给标了 autofocus 的（参考计划详情：第一个能聚焦的是「点赞」，一按回车就赞上了 —— 第五十七轮），没有就第一个能输入 / 能点的
+    var first = body.querySelector('[autofocus]') || body.querySelector('input,textarea,select,button'); if (first) { try { first.focus(); } catch (e) {} }
     return handle;
   }
   // ── 弹窗版 prompt/confirm/alert（替换浏览器原生弹框，统一 Claude 风格） ──

@@ -253,7 +253,7 @@ function viewSharedPlan(id) {
       width: '560px',
       bodyHtml:
         '<p style="margin:0 0 4px;font-size:13px;color:var(--zq-text2);line-height:1.7;">' + esc(d.description || '（无简介）') + '</p>'
-        + '<div style="font-size:12px;color:var(--zq-text3);">' + esc(d.categoryName || d.category || '') + (d.targetAudience ? ' · 适用：' + esc(d.targetAudience) : '') + ' · ♡ ' + (d.likeCount || 0) + ' · 套用 ' + (d.applyCount || 0) + '</div>'
+        + '<div style="font-size:12px;color:var(--zq-text3);">' + esc(d.categoryName || d.category || '') + (d.targetAudience ? ' · 适用：' + esc(d.targetAudience) : '') + ' · ' + (d.likeCount || 0) + ' 个赞' + ' · 套用 ' + (d.applyCount || 0) + '</div>'
         + sec('一次性任务 · ' + (d.tasks || []).length, tasks || '')
         + sec('例行计划 · ' + (d.routines || []).length, routines || '')
         + sec('审核记录', reviews || '')

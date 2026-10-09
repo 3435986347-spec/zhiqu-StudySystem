@@ -6,66 +6,44 @@
   <title>参考计划 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261010-routines" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261010-routines">
-  <link rel="manifest" href="manifest.json?v=20261010-routines">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261010-plans" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261010-plans">
+  <link rel="manifest" href="manifest.json?v=20261010-plans">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261010-routines">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261010-plans">
 </head>
 <body>
   <div class="zq-app">
     <nav id="zq-side"></nav>
     <main class="zq-main">
-      <div style="display:flex; flex-direction:column; gap:16px;">
+      <div class="zq-page-stack">
         <header class="zq-page-head">
           <div>
             <h1 class="zq-h1">参考计划</h1>
             <span class="zq-page-sub">把经过审核的计划模板套用到自己的日历里，任务和例行计划会按开始日期自动展开。</span>
           </div>
-          <div class="zq-page-actions"><button class="zq-btn">提交计划模板</button></div>
+          <div class="zq-page-actions"><button type="button" class="zq-btn" id="zq-plan-submit">分享我的计划</button></div>
         </header>
 
-        <div class="zq-card" style="display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">
-          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">分类</label><select class="zq-select" style="min-width:130px;"><option value="">全部</option></select></div>
-          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">排序</label><select class="zq-select" style="min-width:110px;"><option>发布时间</option><option>赞数</option></select></div>
-          <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">方向</label><select class="zq-select" style="min-width:88px;"><option>倒序</option><option>正序</option></select></div>
-          <button class="zq-btn-ghost">刷新</button>
-          <span id="zq-plan-count" style="margin-left:auto; font-size:12.5px; color:var(--zq-text3);">已审核模板</span>
+        <div class="zq-plan-bar">
+          <select class="zq-select" id="zq-plan-cat" aria-label="分类"><option value="">全部分类</option></select>
+          <select class="zq-select" id="zq-plan-sort" aria-label="排序"><option value="time:desc">最新发布</option><option value="time:asc">最早发布</option><option value="likeCount:desc">赞最多</option></select>
+          <span id="zq-plan-count" class="zq-card-note">已审核模板</span>
         </div>
 
-        <div id="zq-plans" style="display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px;"></div>
+        <div class="zq-plan-grid" id="zq-plans"></div>
 
         <!-- 我的投稿：后台驳回弹窗写着「驳回原因将展示给提交者」，这里是它唯一的出口。
-             没有投稿时整块隐藏，由 zhiqu-api.js 控制。 -->
-        <section id="zq-my-submissions" hidden style="margin-top:22px;">
-          <h2 style="margin:0 0 10px; font-size:15px; font-weight:var(--zq-fw-medium);">我的投稿</h2>
-          <div id="zq-my-sub-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+             没有投稿时整块隐藏，由 pages/shared-plans.js 控制。 -->
+        <section id="zq-my-submissions" class="zq-plan-mine" hidden>
+          <h2 class="zq-h2">我的投稿</h2>
+          <div id="zq-my-sub-list" class="zq-plan-subs"></div>
         </section>
       </div>
     </main>
   </div>
 
-  <!-- 详情弹窗 -->
-  <div id="zq-modal" style="display:none; position:fixed; inset:0; z-index:2000; align-items:center; justify-content:center; padding:24px;">
-    <div data-close-modal style="position:absolute; inset:0; background:rgba(15,20,28,.45);"></div>
-    <div style="position:relative; width:600px; max-width:100%; max-height:86vh; overflow-y:auto; background:var(--zq-card); border:1px solid var(--zq-border-soft); border-radius:var(--zq-rl); box-shadow:var(--zq-sh2); padding:22px 24px; animation:zqFadeIn .22s ease both;">
-      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:6px;">
-        <h2 id="zm-title" class="zq-h2"></h2>
-        <button type="button" data-close-modal aria-label="关闭" style="width:28px; height:28px; flex:none; border:none; background:none; color:var(--zq-text3); cursor:pointer; line-height:1; display:inline-flex; align-items:center; justify-content:center;"><span data-zq-icon="x"></span></button>
-      </div>
-      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px; font-size:12px; color:var(--zq-text3); flex-wrap:wrap;"><span id="zm-meta"></span><span class="zq-num" id="zm-likes"></span></div>
-      <p id="zm-desc" style="margin:0 0 14px; font-size:13.5px; color:var(--zq-text2); line-height:1.65;"></p>
-      <div id="zm-aud" style="padding:10px 12px; border-radius:var(--zq-rs); background:var(--zq-tint); font-size:12.5px; color:var(--zq-text2); margin-bottom:16px;"></div>
-      <h3 style="margin:0 0 10px; font-size:14px; font-weight:var(--zq-fw-medium);">包含内容</h3>
-      <div id="zm-items" style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;"></div>
-      <div style="display:flex; justify-content:flex-end; gap:10px; padding-top:14px; border-top:1px solid var(--zq-border-soft);">
-        <button type="button" data-close-modal class="zq-btn-ghost">取消</button>
-        <button type="button" class="zq-btn">套用到我的日历</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="assets/zhiqu-ui.js?v=20261010-routines"></script>
-  <script src="assets/zhiqu-api.js?v=20261010-routines"></script>
+  <script src="assets/zhiqu-ui.js?v=20261010-plans"></script>
+  <script src="assets/zhiqu-api.js?v=20261010-plans"></script>
 </body>
 </html>

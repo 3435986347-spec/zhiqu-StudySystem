@@ -152,6 +152,21 @@
   Mon/Wed/Fri ones failed with 「该日期不在例行计划范围内」, and the page never showed whether today's was done.
   `routines-check.js` (via `RoutinesLookTest`) imports the module and drives it with stand-ins for the shell (double clicks,
   a failure half-way through generating, check-in through `safe`, `dayReload`).
+- **Reference plans and focus statistics** (round 57, step 8 continued). Plans: one toolbar row (category and sort selects with
+  `aria-label`s; the sort value `time:desc` / `time:asc` / `likeCount:desc` replaces the separate 「排序」 + 「方向」 pair; no
+  「刷新」); cards are keyboard-openable (`role="button"`, Enter / Space) with a category dot (`data-q` from the shell's
+  `PLAN_CATEGORIES`) and a `heart` icon; the detail is an `openModal` (the hard-coded `#zq-modal` in the HTML is gone) that names
+  the category instead of printing `GENERAL`, toggles like with `aria-pressed` and reloads the list with the *current* filters
+  (it used to re-run the whole boot, resetting the list while the selects still showed the old choice), and applies from a date
+  input marked `autofocus` — `openModal` now focuses `[autofocus]` first, otherwise the first focusable (which here was the like
+  button). The apply-once rules are unchanged (key made when the plan opens, date in the key, button ignored while in flight).
+  Statistics: zero bars are `.is-zero` (a baseline, no 「0」 label), others use the accent with the value on top; bar height is data,
+  passed as `--v` (0–1); 日/周/月 is a `.zq-seg` with `aria-pressed`; both cards stretch to one height; `.zq-bars` is a size container
+  so that under 460px every other date label shows in full instead of all being clipped to 「10」.
+  Shared small pieces got generic names this round: `.zq-page-stack`, `.zq-card-head` / `.zq-card-note`, `.zq-pick-list` /
+  `.zq-pick-row` / `.zq-pick-group`, `.zq-check-line`, `.zq-textarea-sm`, `.zq-btn-xs`. `IconSetTest`'s symbol list now includes
+  「♡♥」 (it missed them in JS strings). Checks: `shared-plans-check.js` / `SharedPlansLookTest`, `statistics-check.js` /
+  `StatisticsLookTest`.
 - **Pages carry no demo data** (2026-10-04). 12 of the 14 pages used to ship inline scripts that wrote a fabricated
   study plan into the DOM before `zhiqu-api.js` loaded, plus hardcoded numbers in the static HTML («共 1,284 个账号»,
   «第 17 教学周»). On a failed load `renderInitError` hid them; on a *successful* load whatever the boot code didn't

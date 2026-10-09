@@ -27,7 +27,8 @@ class IconSetTest {
 
     private static final Path STATIC = Path.of("src/main/resources/static");
     /** 原来当图标用的那批符号。不在里面的：⌘（快捷键写法「⌘/Ctrl + 回车」）、✓（标签页标题「✓ 专注结束」）、→（正文里的箭头） */
-    private static final Pattern GLYPHS = Pattern.compile("[✦▦☰↻❏≣◈✉∿«»‹›⚙◐◑⏻✪＋↑↓←]|>\\s*×\\s*<|'×'");
+    // ♡♥：参考计划的点赞原来是这两个字符（第五十七轮才看到 —— 这份名单里没有它们，扫过去是绿的）
+    private static final Pattern GLYPHS = Pattern.compile("[✦▦☰↻❏≣◈✉∿«»‹›⚙◐◑⏻✪＋↑↓←♡♥]|>\\s*×\\s*<|'×'");
 
     private static List<Path> sources() throws IOException {
         List<Path> files = new ArrayList<>();

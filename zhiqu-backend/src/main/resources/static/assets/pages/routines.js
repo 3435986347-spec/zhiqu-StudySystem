@@ -112,7 +112,7 @@ function settingsHtml(day, withText) {
   var wd = isoWeekday(day);
   return (withText
     ? field('zq-rtf-title', '名字', '<input id="zq-rtf-title" class="zq-input" maxlength="200" placeholder="例如：写日报">')
-      + field('zq-rtf-desc', '说明（可留空）', '<textarea id="zq-rtf-desc" class="zq-textarea zq-rt-desc" placeholder="可写资料、目标或注意事项"></textarea>')
+      + field('zq-rtf-desc', '说明（可留空）', '<textarea id="zq-rtf-desc" class="zq-textarea zq-textarea-sm" placeholder="可写资料、目标或注意事项"></textarea>')
     : '')
     + '<div class="zq-field"><span class="zq-label">多久一次</span><div class="zq-seg" role="group" aria-label="多久一次">'
     + '<button type="button" data-freq="DAILY" aria-pressed="true">每天</button><button type="button" data-freq="WEEKLY" aria-pressed="false">每周</button></div></div>'
@@ -128,7 +128,7 @@ function settingsHtml(day, withText) {
         + field('zq-rtf-end', '到哪天（不填就是 30 天）', '<input id="zq-rtf-end" type="date" class="zq-input">')
       : '')
     + '</div>'
-    + '<label class="zq-rt-remind"><input type="checkbox" id="zq-rtf-remind" checked><span>早上提醒我（发到「设置 → 提醒」里的推送渠道）</span></label>';
+    + '<label class="zq-check-line"><input type="checkbox" id="zq-rtf-remind" checked><span>早上提醒我（发到「设置 → 提醒」里的推送渠道）</span></label>';
 }
 /**
  * 表单上读出来的值 → 发给 POST /routine 的内容，或者一句为什么不能交。
@@ -214,7 +214,7 @@ function openNewRoutine() {
 /** 从任务生成：选的那几条（名字和 id）；名字放在 data-title 里，不从显示的字里抠 */
 function sourceRowsHtml(tasks) {
   return tasks.slice(0, 20).map(function (t) {
-    return '<label class="zq-rt-src-row"><input type="checkbox" value="' + esc(t.id) + '" data-title="' + esc(t.title) + '">'
+    return '<label class="zq-pick-row"><input type="checkbox" value="' + esc(t.id) + '" data-title="' + esc(t.title) + '">'
       + '<span class="zq-rt-main"><span class="zq-rt-title">' + esc(t.title) + '</span><span class="zq-agenda-meta">' + esc(qLabel(t.quadrant) + ' · ' + sLabel(t.status)) + '</span></span></label>';
   }).join('') || empty('没有可选的任务');
 }
@@ -225,7 +225,7 @@ function openFromTasks() {
     width: '560px',
     bodyHtml: '<div class="zq-field"><span class="zq-label">选哪些任务</span><div class="zq-seg" role="group" aria-label="任务状态" data-src-filter>'
       + '<button type="button" data-status="" aria-pressed="true">全部</button><button type="button" data-status="0" aria-pressed="false">待办</button><button type="button" data-status="1" aria-pressed="false">进行中</button></div>'
-      + '<div class="zq-rt-src" id="zq-rt-src"></div></div>'
+      + '<div class="zq-pick-list" id="zq-rt-src"></div></div>'
       + settingsHtml(day, false)
       + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-rtf-cancel">取消</button><button type="button" class="zq-btn" id="zq-rtf-ok">生成</button></div>',
     onMount: function (b, h) {
