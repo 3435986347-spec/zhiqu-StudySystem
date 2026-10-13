@@ -193,3 +193,4 @@ cd ../zhiqu-cli && npm test
 - [第五十八轮](docs/rounds/round-58.md) review 推送前的 9 个提交：点正文编辑时字不跳、迷你窗再缩小重新载入、「参数不认」不降着重试、搜索上限照服务端说
 - [第五十九轮](docs/rounds/round-59.md) 模型 API 地址可指向本机、内网和内部域名，保留 HTTP(S) URL 格式校验
 - [第六十轮](docs/rounds/round-60.md) 知趣 CLI + DeepSeek 全量 HumanEval：156/164（95.12%），固定协议、隔离执行与逐题报告
+- [第六十一轮](docs/rounds/round-61.md) 仓库级评测设计：固定 SWE-bench Verified 10 题、真实 CLI 与独立官方评分，Java / JS 补充集单列；未开始付费运行

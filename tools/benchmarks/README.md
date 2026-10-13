@@ -103,3 +103,28 @@ python3 tools/benchmarks/build-humaneval-report.py \
 2026-10-13 的 **95.12% 是修复前冻结 v2 的历史结果**。当前可运行工具为 v3，追加了评测后防御修复，尚未取得重跑后的能力分；没有调用模型重跑或改分。原始正式 `manifest.json`、`score.json` 和指纹保持不变，旧的 6 个工具文件按原字节保存在 [历史文本快照](../../docs/benchmarks/humaneval-20261013/protocol-v2/README.md) 中，供审计，不作为运行入口。原始会话和候选继续留在本地忽略的归档中。
 
 官方来源：https://github.com/openai/human-eval 。题目与检查器按上游 MIT License 使用；分享含原始题目的产物时附上上游 `LICENSE`。
+
+## 后续仓库级评测（设计阶段）
+
+[仓库级方案](../../docs/benchmarks/repository-eval-plan.md) 采用固定 SWE-bench Verified 10题 pilot，精确清单和未就绪的设计协议在 [repository-pilot-20261013](../../docs/benchmarks/repository-pilot-20261013/selection.json)。仓库 worker、broker 和官方评分集成尚未实现；本目录现有 HumanEval 运行器不能直接拿来跑仓库 issue。
+
+`select-sweverified.py` 只读取已经下载的 pinned parquet，不联网、不调用模型、不使用 Docker。只解码四个公开字段，按固定 hash 各选两题，校验500题 / 唯一ID / base / 原始文件SHA，输出可公开的 `selection-metadata.json` 和不应公开提交的 issue 全文 `public-tasks.jsonl`。源数据含隐藏判据，准备器数据和输出都放在生成容器不可读的控制目录。
+
+数据集 revision 是 `c104f840cc67f8b6eec6f759ebc8b2693d585d4a`。从官方读取 metadata 和该 revision 的 data tree：
+
+- `https://huggingface.co/api/datasets/princeton-nlp/SWE-bench_Verified/revision/c104f840cc67f8b6eec6f759ebc8b2693d585d4a`
+- `https://huggingface.co/api/datasets/princeton-nlp/SWE-bench_Verified/tree/c104f840cc67f8b6eec6f759ebc8b2693d585d4a/data`
+- parquet 完整 URL 和 SHA 见 selection.json 的 `source`。
+
+选择器要求 Python 3.9+ 和固定 PyArrow 20.0.0。可使用已有符合版本的环境；如需依赖，放独立临时 `pip --target` 目录，再用 `--pyarrow-path` 指定，无需修改项目依赖。以下只是元数据选择，路径换成自己的控制目录：
+
+```bash
+python3 tools/benchmarks/select-sweverified.py \
+  --parquet /private/tmp/zhiqu-swe-verified-c104f840.parquet \
+  --dataset-meta /private/tmp/zhiqu-swe-verified-dataset-meta.json \
+  --data-tree /private/tmp/zhiqu-swe-verified-c104f840-data-tree.json \
+  --pyarrow-path /private/tmp/zhiqu-swe-parser-deps \
+  --output-dir /private/tmp/zhiqu-swe-selection
+```
+
+`public_index_sha256` 对500行四字段按 instance_id 排序、compact sorted-key UTF-8 JSON + LF 计算；`public_projection_sha256` 对输出10行的实际字节计算。每题另外记录 issue 原始 UTF-8 和选择 hash。选择器源码hash单独保存，变更后不能悄悄沿用旧脚本指纹。
