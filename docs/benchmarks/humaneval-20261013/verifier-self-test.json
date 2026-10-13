@@ -1,0 +1,100 @@
+{
+  "benchmark": "HumanEval",
+  "protocol": "zhiqu file-editing agent; one episode per task; hidden final tests",
+  "scorer": "official human_eval.execution.check_correctness + local single-sample aggregation",
+  "createdAt": "2026-10-13T08:53:36.822916+00:00",
+  "denominator": 164,
+  "testTimeoutSeconds": 3.0,
+  "officialAggregateDependencies": {
+    "numpy": {
+      "available": true
+    },
+    "tqdm": {
+      "available": false
+    },
+    "fire": {
+      "available": false
+    }
+  },
+  "pythonVersion": "3.12.14 (main, Aug 25 2026, 13:50:33) [Clang 22.1.3 ]",
+  "resourceLimits": "Per-worker CPU, file-size, open-file and data limits attempted; parent wall-time enforced",
+  "sourceSha256": "b796127e635a67f93fb35c04f4cb03cf06f38c8072ee7cee8833d7bee06979ef",
+  "officialSource": {
+    "repository": "https://github.com/openai/human-eval",
+    "commit": "6d43fb980f9fee3c892a914eda09951f772ad10d",
+    "dirty": false,
+    "executionSha256": "79901c6f5b59701c465b164aed290fa53abc35abc80a5378fc10f4dac1f9a84c"
+  },
+  "isolation": {
+    "mode": "macos-sandbox-exec",
+    "profileSha256": "5f62005ba598a895d62318a935565c72f344711b885ebdfcc2807095b30083e2",
+    "verifiedByThisScript": true,
+    "probe": {
+      "readDenied": true,
+      "writeDenied": true,
+      "ipNetworkDenied": true,
+      "verificationDurationMs": 56
+    }
+  },
+  "selfTest": {
+    "verified": true,
+    "canonicalPassed": 164,
+    "canonicalAttempted": 164,
+    "canonicalTotal": 164,
+    "canonicalFailures": [],
+    "emptyCompletionControl": {
+      "task_id": "HumanEval/0",
+      "passed": false,
+      "result": "failed: ",
+      "completion_id": 0,
+      "status": "test_failed",
+      "verificationDurationMs": 287
+    },
+    "incorrectImplementationControl": {
+      "task_id": "HumanEval/0",
+      "passed": false,
+      "result": "failed: deliberate incorrect implementation",
+      "completion_id": 0,
+      "status": "test_failed",
+      "verificationDurationMs": 281
+    },
+    "nullCompletionControl": {
+      "task_id": "HumanEval/0",
+      "generation_status": "completed",
+      "passed": false,
+      "status": "protocol_error",
+      "error": "completion must be a string"
+    },
+    "gatewayFailureControl": {
+      "task_id": "HumanEval/0",
+      "generation_status": "gateway_error",
+      "passed": false,
+      "status": "generation_failed"
+    },
+    "integrityMismatchControl": {
+      "task_id": "HumanEval/0",
+      "generation_status": "completed",
+      "solution_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "passed": false,
+      "status": "protocol_error",
+      "error": "solution_sha256 missing or inconsistent with byte-exact prompt + completion"
+    },
+    "missingSampleControl": {
+      "task_id": "HumanEval/0",
+      "passed": false,
+      "status": "missing_sample",
+      "generation_status": "missing"
+    },
+    "validSampleControl": {
+      "task_id": "HumanEval/0",
+      "generation_status": "completed",
+      "solution_sha256": "40560c20a6f56877abd19fa87e39aa5d43f3bff6b7417c68e11fc772c096a6c9",
+      "passed": true,
+      "result": "passed",
+      "completion_id": 0,
+      "status": "passed",
+      "verificationDurationMs": 290
+    }
+  },
+  "status": "self_test_passed"
+}

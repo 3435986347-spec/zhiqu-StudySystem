@@ -1,0 +1,13 @@
+{
+  "source": "user_provided_usage_statistics",
+  "reported_on": "2026-10-13",
+  "currency": "CNY",
+  "amount": 9.51,
+  "api_requests": 1292,
+  "tokens": 4743272,
+  "scope": "formal_run_plus_initial_calibration",
+  "recorded_total_tokens": 4743272,
+  "token_total_matches_records": true,
+  "independently_verified_bill": false,
+  "note": "User provided cost/API request/token figures; API-side request count is separate from local gateway attempts including retries and rate-limited requests."
+}
