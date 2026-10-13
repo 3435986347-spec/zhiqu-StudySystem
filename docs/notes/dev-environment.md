@@ -73,8 +73,7 @@ com.zhiqu.ZhiquApplication` because the path contained CJK characters; the check
 > `~/Documents`.**
 
 Useful flags when testing locally: `--server.port=18080`,
-`--app.ai.allow-private-provider-url=true` (lets you point a model config at a local mock),
-`--app.rag.enabled=false` (skip the sidecar).
+`--app.rag.enabled=false` (skip the sidecar). Model configs can point directly at a local mock.
 
 Stop a local instance **by port, never by process name** (`pkill -f java` will take down unrelated
 JVMs — including your IDE's):

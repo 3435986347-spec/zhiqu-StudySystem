@@ -16,7 +16,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
-import java.net.InetAddress;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,12 +36,10 @@ import java.util.Set;
  * 后者是一整块自洽的东西，不依赖任何业务概念，也不会被业务改动波及 ——
  * 所以它先走，而且走了之后别的 agent 可以只依赖它，不必再依赖那个大类。
  *
- * <h2>这里面有一条安全边界</h2>
+ * <h2>模型端点的校验</h2>
  *
- * <p>{@link #validateProviderRequestUrl} 是 SSRF 防护：不允许把模型 API 指向本机或内网，
- * 除非显式打开 {@code app.ai.allow-private-provider-url}（本地接假模型时才开）。
- * 它挡的是「用户把 API URL 填成 http://169.254.169.254/ 让服务器替他去读云元数据」。
- * 每一条出站请求都要先过它 —— 搬家时这一点没有变，调用点仍然在每个发请求的方法开头。
+ * <p>{@link #validateProviderRequestUrl} 校验 HTTP(S) 地址格式，允许模型部署在本机、内网或公网。
+ * 配置阶段不解析主机名，连接是否可用由实际模型请求判断；每条出站请求前仍校验地址格式。
  *
  * <p>工具调用的限额（输出上限、读超时）由调用方按场景给出，见 {@link ToolTurnLimits}：
  * Wiki 与关键词触发的循环要快（4096 token / 25 秒），显式「代码」模式要能一次写出一整个文件。
@@ -58,7 +55,6 @@ public class ModelProviderClient {
     private final SensitiveCryptoService cryptoService;
     private final String anthropicVersion;
     private final String aiTemperature;
-    private final boolean allowPrivateProviderUrl;
     /** 按读超时缓存的 RestTemplate —— 工具调用的超时随场景变，工厂本身很便宜，但没必要每次造。 */
     private final java.util.concurrent.ConcurrentHashMap<Integer, RestTemplate> toolTurnTemplates =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -120,13 +116,11 @@ public class ModelProviderClient {
     public ModelProviderClient(ObjectMapper objectMapper,
                                SensitiveCryptoService cryptoService,
                                @Value("${app.ai.anthropic-version:2023-06-01}") String anthropicVersion,
-                               @Value("${app.ai.temperature:}") String aiTemperature,
-                               @Value("${app.ai.allow-private-provider-url:false}") boolean allowPrivateProviderUrl) {
+                               @Value("${app.ai.temperature:}") String aiTemperature) {
         this.objectMapper = objectMapper;
         this.cryptoService = cryptoService;
         this.anthropicVersion = anthropicVersion;
         this.aiTemperature = aiTemperature;
-        this.allowPrivateProviderUrl = allowPrivateProviderUrl;
     }
 
     /** 与 {@code AiServiceImpl.hasText} 同义；这里用框架的那一份，不新造第二个定义。 */
@@ -152,54 +146,6 @@ public class ModelProviderClient {
         if (!hasText(host)) {
             throw new BusinessException("AI API URL 缺少主机名");
         }
-        if (allowPrivateProviderUrl) {
-            return;
-        }
-        if (isLocalHostName(host)) {
-            throw new BusinessException("生产环境禁止把 AI API URL 指向本机或内网地址");
-        }
-        try {
-            for (InetAddress address : InetAddress.getAllByName(host)) {
-                if (isPrivateAddress(address)) {
-                    throw new BusinessException("生产环境禁止把 AI API URL 指向本机或内网地址");
-                }
-            }
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BusinessException("AI API URL 主机无法解析");
-        }
-    }
-
-    public boolean isLocalHostName(String host) {
-        String value = host == null ? "" : host.trim().toLowerCase(Locale.ROOT);
-        return "localhost".equals(value) || value.endsWith(".localhost")
-                || "0.0.0.0".equals(value) || "::1".equals(value);
-    }
-
-    public boolean isPrivateAddress(InetAddress address) {
-        if (address.isAnyLocalAddress()
-                || address.isLoopbackAddress()
-                || address.isLinkLocalAddress()
-                || address.isSiteLocalAddress()
-                || address.isMulticastAddress()) {
-            return true;
-        }
-        byte[] bytes = address.getAddress();
-        if (bytes.length == 4) {
-            int first = bytes[0] & 0xff;
-            int second = bytes[1] & 0xff;
-            return first == 10
-                    || (first == 172 && second >= 16 && second <= 31)
-                    || (first == 192 && second == 168)
-                    || (first == 100 && second >= 64 && second <= 127)
-                    || (first == 169 && second == 254);
-        }
-        if (bytes.length == 16) {
-            int first = bytes[0] & 0xff;
-            return (first & 0xfe) == 0xfc;
-        }
-        return false;
     }
 
     public String decryptedApiKey(AiModelConfig model) {

@@ -239,7 +239,6 @@ public class AiServiceImpl implements AiService {
     private final String anthropicVersion;
     private final String aiTemperature;
     private final boolean streamDebug;
-    private final boolean allowPrivateProviderUrl;
     /** 会话临界区互斥:同一用户的「会话解析+首批落库 / 清空记忆」串行执行,持锁期间绝不等模型 */
     private final ConversationLockRegistry conversationLocks;
     /** 网页聊天流的心跳（与命令行网关同一份）：前置阶段、推理模型长时间没有事件时，连接不被代理当成死的。 */
@@ -280,7 +279,6 @@ public class AiServiceImpl implements AiService {
                          @Value("${app.ai.anthropic-version:2023-06-01}") String anthropicVersion,
                          @Value("${app.ai.temperature:}") String aiTemperature,
                          @Value("${app.ai.stream.debug:false}") boolean streamDebug,
-                         @Value("${app.ai.allow-private-provider-url:false}") boolean allowPrivateProviderUrl,
                          BusinessClock clock,
                          CodeWorkspaceAgent codeWorkspaceAgent,
                          AssistantTaskReader taskReader,
@@ -329,7 +327,6 @@ public class AiServiceImpl implements AiService {
         this.anthropicVersion = anthropicVersion;
         this.aiTemperature = aiTemperature;
         this.streamDebug = streamDebug;
-        this.allowPrivateProviderUrl = allowPrivateProviderUrl;
     }
 
     private RestTemplate createAiRestTemplate() {
@@ -3575,7 +3572,7 @@ public class AiServiceImpl implements AiService {
 
     /** Anthropic 原生工具调用版：forced 时强制 create_study_plan、否则交给模型判断；从 tool_use 块取 input（返回与 OpenAI 版同形的 JSON 字符串）。 */
     private String callStudyPlanToolCallAnthropic(AiModelConfig config, String systemPrompt, String userMessage, boolean forced) {
-        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // URL 格式校验：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
         // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
         provider.validateProviderRequestUrl(config.getApiUrl());
         HttpHeaders headers = provider.anthropicHeaders(config);
@@ -3842,7 +3839,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private AiCallResult callOpenAiCompatibleApi(AiModelConfig config, List<Map<String, Object>> messages, String reasoningMode) {
-        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // URL 格式校验：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
         // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
         provider.validateProviderRequestUrl(config.getApiUrl());
         try {
@@ -3895,7 +3892,7 @@ public class AiServiceImpl implements AiService {
     /** 调用 AI 视觉接口（携带 Base64 图片，OpenAI Vision 格式） */
     private String callAiApiWithVision(AiModelConfig config, String systemPrompt,
                                        List<Map<String, Object>> userContent) {
-        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // URL 格式校验：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
         // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
         provider.validateProviderRequestUrl(config.getApiUrl());
         if ("ANTHROPIC".equals(provider.normalizeProviderType(config.getProviderType()))) {
@@ -4003,7 +4000,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private AiCallResult callAnthropicApi(AiModelConfig config, List<Map<String, Object>> messages, String reasoningMode) {
-        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // URL 格式校验：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
         // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
         provider.validateProviderRequestUrl(config.getApiUrl());
         try {
@@ -4027,7 +4024,7 @@ public class AiServiceImpl implements AiService {
 
     private String callAnthropicVisionApi(AiModelConfig config, String systemPrompt,
                                           List<Map<String, Object>> userContent) {
-        // SSRF：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
+        // URL 格式校验：API URL 是用户填的。校验放在<b>真正发请求的这一层</b>，
         // 新增调用方才绕不过去 —— 放在调用方就总会有人忘。
         provider.validateProviderRequestUrl(config.getApiUrl());
         try {

@@ -57,7 +57,7 @@ class ModelProviderToolTurnTest {
     private ModelProviderClient client() {
         SensitiveCryptoService crypto = mock(SensitiveCryptoService.class);
         when(crypto.decrypt(any())).thenReturn("sk");
-        return new ModelProviderClient(JSON, crypto, "2023-06-01", "", true);
+        return new ModelProviderClient(JSON, crypto, "2023-06-01", "");
     }
 
     private static final List<Map<String, Object>> MESSAGES = List.of(

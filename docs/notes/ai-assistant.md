@@ -198,3 +198,8 @@ ObjectMapper，0 个轮次状态字段。第五刀那个 `MilestonePlanning` 接
 修法是把校验放在<b>真正发请求的那一层</b>，不是放在调用方：放调用方就总会有人忘，
 而且新增一个调用方就多一个口子。判据现在钉的是这条不变量本身 ——
 凡是出现 `postForEntity` / `.exchange(` 的方法，同一个方法体里必须先出现校验。
+
+**模型地址策略更新（2026-10-13，第五十九轮）。** 用户明确要求取消「生产环境禁止把 AI API URL 指向本机或内网地址」的限制。
+模型供应商的 URL 现在只校验 URI、HTTP(S) 协议和主机，允许本机、内网 IP 和内部域名；不再做 DNS / 私网判断，
+也不再需要 `app.ai.allow-private-provider-url`。上面保留的是当时的修复经过；出站前校验的判据现在管 URL 格式。
+网页抓取仍走自己的 SSRF 防护（`app.ai.web-fetch.block-private-network=true`）。

@@ -29,7 +29,7 @@ java -jar target/zhiqu-backend-0.0.1-SNAPSHOT.jar
 
 - Windows：`mvn clean package "-DskipTests"`、`java -jar target\zhiqu-backend-0.0.1-SNAPSHOT.jar`。`mvn spring-boot:run` 也行。访问 `http://localhost:8080`。
 - 这台机器默认的 JDK 太新，Lombok 编不过：`export JAVA_HOME=/Users/hmz/Library/Java/JavaVirtualMachines/temurin-17.0.20.1/Contents/Home`。
-- 本地常用：`--server.port=18080`、`--app.ai.allow-private-provider-url=true`（模型配置指向本机的假模型）、`--app.rag.enabled=false`（不连 RAG 旁路）。
+- 本地常用：`--server.port=18080`、`--app.rag.enabled=false`（不连 RAG 旁路）；模型配置可直接指向本机的假模型。
 - **停本地实例按端口，不按进程名**（`pkill -f java` 会带走 IDE）：`kill $(lsof -nP -iTCP:8080 -sTCP:LISTEN -t)`。
 - **检出不要挪回 `~/Desktop` / `~/Documents`**（iCloud 往 `src/` 里丢 `X 2.java`、`zhiqu-api 2.js` 这类冲突副本；`SourceTreeCleanlinessTest` 会让构建失败）。经过见 `docs/notes/dev-environment.md`。
 - 桌面应用：`bash deploy/desktop/package-macos-native.sh`（Windows 版 `package-windows.ps1` 只能在 Windows 上打）。**外壳（Swift）的改动要重新打包才到用户手里**，网页的改动不用。
@@ -80,7 +80,8 @@ cd ../zhiqu-cli && npm test
 - **「今天」只有一个出处**：服务端 `BusinessClock.today()`（`src/main/java` 里不许有裸 `LocalDate.now()`、写死的 `ZoneId.of`），前端 `today()`（不许用 `toISOString()`，也不许拿 `localDate()` 当今天）。
 - **管理员接口每个方法第一句都是 `requireAdmin()`**（`SecurityConfig` 里没有按角色的规则，`AdminAuthorizationTest` 钉着）。个人访问令牌 `zqp_…` 只在 `/api/harness/**` 被认。
 - **写接口默认认 `Idempotency-Key`**（`IdempotentWriteAspect`）；不认的在 `IdempotentWriteIntegrationTest` 里一个一个列着，新加的回 Cookie 的写接口会让它红。
-- **出站请求的 SSRF 校验放在真正发请求的那一层**，不放在调用方。`app.ai.web-fetch.block-private-network=true` 保持。
+- **网页抓取的 SSRF 校验放在真正发请求的那一层**，不放在调用方。`app.ai.web-fetch.block-private-network=true` 保持。
+- **模型 API 地址允许本机、内网和内部域名**（用户 2026-10-13 明确要求取消限制，第五十九轮）；只校验合法的 HTTP(S) URL 和主机，不再需要 `app.ai.allow-private-provider-url`。
 - **执行顺序只有 `AgentPosition` 一个出处**：图的 `priority` / `parallelGroupId` / `dependsOn` 是推导出来的，不要手写。runner 不覆写 `announceAt` / `commitAt` 就等于 `runAt`，一个 runner 默认占三个槽。
 - **密钥只走环境变量，不提交真 key**（`NoCommittedSecretsTest`）；生产配置里 `CHANGE_ME_` 没填就不启动（`StartupSecretGuard`）。
 - 生产配置是**替换**不是追加：`application.yml` 的每个键在生产模板里都要有（`ProdConfigParityTest`）。
@@ -190,3 +191,4 @@ cd ../zhiqu-cli && npm test
 - [第五十六轮](docs/rounds/round-56.md) 界面打磨第 8 步（一）：例行计划页（「今天」+「全部」两块，新建 / 从任务生成是弹窗、同一套设置；不该给的「标记完成」去掉）
 - [第五十七轮](docs/rounds/round-57.md) 界面打磨第 8 步（二）：参考计划（一行工具条、详情用 openModal、点赞后照原筛选）、专注统计（零不写数、日期挤了隔一根写）；「♡」换图标
 - [第五十八轮](docs/rounds/round-58.md) review 推送前的 9 个提交：点正文编辑时字不跳、迷你窗再缩小重新载入、「参数不认」不降着重试、搜索上限照服务端说
+- [第五十九轮](docs/rounds/round-59.md) 模型 API 地址可指向本机、内网和内部域名，保留 HTTP(S) URL 格式校验

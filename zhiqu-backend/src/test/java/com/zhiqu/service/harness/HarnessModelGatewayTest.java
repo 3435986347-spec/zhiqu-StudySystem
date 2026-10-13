@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -85,10 +86,10 @@ class HarnessModelGatewayTest {
     private final AiService aiService = mock(AiService.class);
     private final HarnessUsageMapper usageMapper = mock(HarnessUsageMapper.class);
 
-    private HarnessModelGateway gateway(boolean allowPrivate) {
+    private HarnessModelGateway gateway() {
         SensitiveCryptoService crypto = mock(SensitiveCryptoService.class);
         when(crypto.decrypt(any())).thenReturn("sk-test");
-        ModelProviderClient provider = new ModelProviderClient(JSON, crypto, "2023-06-01", "", allowPrivate);
+        ModelProviderClient provider = new ModelProviderClient(JSON, crypto, "2023-06-01", "");
         return new HarnessModelGateway(aiService, provider, new ModelStreamAdapterFactory(List.of()), usageMapper, JSON, "2023-06-01");
     }
 
@@ -143,7 +144,7 @@ class HarnessModelGatewayTest {
                 "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":1300}}",
                 "[DONE]")});
         model("OPENAI_COMPATIBLE", url, null);
-        gateway(true).stream(1L, body(ASK), sink());
+        gateway().stream(1L, body(ASK), sink());
 
         assertEquals("start", events.get(0));
         // 先断言两个都在：indexOf 找不到是 -1，只比先后的话「tool_call 根本没发」也会通过（扰动 T10 照出来的）
@@ -176,7 +177,7 @@ class HarnessModelGatewayTest {
                 ? new Object[]{400, "{\"error\":{\"message\":\"max_tokens must be less than or equal to 8192\"}}"}
                 : new Object[]{200, sse("{\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":\"stop\"}]}")});
         model("OPENAI_COMPATIBLE", url, null);
-        gateway(true).stream(1L, body(ASK), sink());
+        gateway().stream(1L, body(ASK), sink());
         assertEquals(List.of(16384, 8192), requests.stream().map(r -> r.path("max_tokens").asInt()).toList());
         assertEquals(8192, last.get("done").get("maxTokens"));
         assertFalse(events.contains("error"));
@@ -188,7 +189,7 @@ class HarnessModelGatewayTest {
         String url = fakeModel(b -> new Object[]{400, "{\"error\":{\"message\":\"invalid api key\"}}"});
         model("OPENAI_COMPATIBLE", url, null);
         HarnessModelGateway.ModelCallException e = assertThrows(HarnessModelGateway.ModelCallException.class,
-                () -> gateway(true).stream(1L, body(ASK), sink()));
+                () -> gateway().stream(1L, body(ASK), sink()));
         assertTrue(e.getMessage().contains("invalid api key"), e.getMessage());
         assertFalse(e.retryable());
         assertEquals(1, requests.size());
@@ -200,12 +201,12 @@ class HarnessModelGatewayTest {
         String url = fakeModel(b -> new Object[]{503, "{\"error\":{\"message\":\"overloaded\"}}"});
         model("OPENAI_COMPATIBLE", url, null);
         assertTrue(assertThrows(HarnessModelGateway.ModelCallException.class,
-                () -> gateway(true).stream(1L, body(ASK), sink())).retryable());
+                () -> gateway().stream(1L, body(ASK), sink())).retryable());
         server.stop(0);
         server = null;
         model("OPENAI_COMPATIBLE", "http://127.0.0.1:1", null);
         HarnessModelGateway.ModelCallException down = assertThrows(HarnessModelGateway.ModelCallException.class,
-                () -> gateway(true).stream(1L, body(ASK), sink()));
+                () -> gateway().stream(1L, body(ASK), sink()));
         assertTrue(down.retryable(), down.getMessage());
         assertTrue(HarnessModelGateway.retryableStatus(429));
         assertFalse(HarnessModelGateway.retryableStatus(401));
@@ -225,7 +226,7 @@ class HarnessModelGatewayTest {
         loop.add(Map.of("role", "assistant", "content", "", "tool_calls", List.of(
                 Map.of("id", "t0", "type", "function", "function", Map.of("name", "list_files", "arguments", "{}")))));
         loop.add(Map.of("role", "tool", "tool_call_id", "t0", "content", "（空目录）"));
-        gateway(true).stream(1L, body(loop), sink());
+        gateway().stream(1L, body(loop), sink());
 
         JsonNode sent = requests.get(0);
         assertEquals("你是 zhiqu", sent.path("system").asText());
@@ -243,19 +244,21 @@ class HarnessModelGatewayTest {
     void 不支持工具() throws Exception {
         String url = fakeModel(b -> new Object[]{200, sse()});
         model("GEMINI", url, null);
-        BusinessException e = assertThrows(BusinessException.class, () -> gateway(true).stream(1L, body(ASK), sink()));
+        BusinessException e = assertThrows(BusinessException.class, () -> gateway().stream(1L, body(ASK), sink()));
         assertTrue(e.getMessage().contains("不支持工具调用"), e.getMessage());
         assertTrue(requests.isEmpty());
     }
 
     @Test
-    @DisplayName("SSRF：没开 allow-private-provider-url 时，指向本机的模型地址一律拒，请求发不出去")
-    void ssrf() throws Exception {
-        String url = fakeModel(b -> new Object[]{200, sse()});
+    @DisplayName("本机模型不需要额外开关：实际收到请求并返回完整回答")
+    void localModelEndpoint() throws Exception {
+        String url = fakeModel(b -> new Object[]{200, sse(
+                "{\"choices\":[{\"delta\":{\"content\":\"本机模型回答\"},\"finish_reason\":\"stop\"}]}", "[DONE]")});
         model("OPENAI_COMPATIBLE", url, null);
-        assertThrows(BusinessException.class, () -> gateway(false).stream(1L, body(ASK), sink()));
-        assertTrue(requests.isEmpty(), "校验必须在发请求之前");
-        verify(usageMapper, never()).insert(any(HarnessUsage.class));
+        assertDoesNotThrow(() -> gateway().stream(1L, body(ASK), sink()));
+        assertEquals(1, requests.size(), "本机模型应实际收到请求");
+        assertEquals("本机模型回答", ((Map<?, ?>) last.get("done").get("message")).get("content"));
+        verify(usageMapper).insert(any(HarnessUsage.class));
     }
 
     @Test
@@ -269,7 +272,7 @@ class HarnessModelGatewayTest {
             longChat.add(Map.of("role", "user", "content", "第" + i + "轮" + "字".repeat(500)));
             longChat.add(Map.of("role", "assistant", "content", "答".repeat(500)));
         }
-        gateway(true).stream(1L, body(longChat), sink());
+        gateway().stream(1L, body(longChat), sink());
         int dropped = ((Number) last.get("start").get("droppedMessages")).intValue();
         assertTrue(dropped > 0, "窗口 8000 的模型不该收到 2 万字");
         assertEquals(longChat.size() - dropped, requests.get(0).path("messages").size());
@@ -283,7 +286,7 @@ class HarnessModelGatewayTest {
                 "{\"choices\":[{\"delta\":{\"content\":\"一\"}}]}", "{\"choices\":[{\"delta\":{\"content\":\"二\"}}]}")});
         model("OPENAI_COMPATIBLE", url, null);
         List<String> seen = new ArrayList<>();
-        assertThrows(HarnessModelGateway.ClientGone.class, () -> gateway(true).stream(1L, body(ASK), (name, data) -> {
+        assertThrows(HarnessModelGateway.ClientGone.class, () -> gateway().stream(1L, body(ASK), (name, data) -> {
             seen.add(name);
             if ("delta".equals(name)) throw new IOException("Broken pipe");
         }));
@@ -296,7 +299,7 @@ class HarnessModelGatewayTest {
     private HarnessModelGateway.ModelCallException failure(Function<JsonNode, Object[]> handler) throws Exception {
         model("OPENAI_COMPATIBLE", fakeModel(handler), null);
         HarnessModelGateway.ModelCallException e = assertThrows(HarnessModelGateway.ModelCallException.class,
-                () -> gateway(true).stream(1L, body(ASK), sink()));
+                () -> gateway().stream(1L, body(ASK), sink()));
         assertFalse(events.contains("done"), "出了错就不该再发 done：" + events);
         for (String leak : List.of("http://", "I/O error", "Source:", "sk-test")) {
             assertFalse(e.getMessage().contains(leak), "给终端的话里不该有「" + leak + "」：" + e.getMessage());
@@ -324,7 +327,7 @@ class HarnessModelGatewayTest {
     void 只有finishReason() throws Exception {
         model("OPENAI_COMPATIBLE", fakeModel(b -> new Object[]{200, sse(
                 "{\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":\"stop\"}]}")}), null);
-        gateway(true).stream(1L, body(ASK), sink());
+        gateway().stream(1L, body(ASK), sink());
         assertEquals("done", events.get(events.size() - 1));
     }
 

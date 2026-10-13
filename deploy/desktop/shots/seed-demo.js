@@ -8,7 +8,7 @@
 //   SNAP_THEME=dark …（同上）
 //   cwebp -q 80 -resize 2048 1280 <输出目录>/<页>-<light|dark>.png -o zhiqu-backend/src/main/resources/static/assets/shots/<页>-<light|dark>.webp
 //
-// 服务端要连一个可以随便写的库（不要连自己在用的那个），并带 --app.ai.allow-private-provider-url=true 起（模型是本机的假模型）。
+// 服务端要连一个可以随便写的库（不要连自己在用的那个）；模型直接指向本机的假模型。
 // 账号每次新注册一个、密码随机生成且不打印；令牌写进给的文件（600 权限），只给 Snapshot 用。
 // 截图里是示例数据 —— 它们是宣传图，不是谁的记录。
 const http = require('http');

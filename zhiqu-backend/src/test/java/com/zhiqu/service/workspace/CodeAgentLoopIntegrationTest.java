@@ -63,7 +63,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK, properties = {
         "app.cookie.secure=false",
         "app.rag.enabled=false",
-        "app.ai.allow-private-provider-url=true",
         "server.address=127.0.0.1",
         "app.workspace.mode=EXEC"
 })

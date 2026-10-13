@@ -3,7 +3,7 @@
 //   node tools/layout-check/fake-model.js &                       # 假模型，回答也是极端内容
 //   node tools/layout-check/seed.js <用户令牌> [管理员令牌]         # 给了管理员令牌就顺手把提交的参考计划审核通过
 //
-// 服务端要带 --app.ai.allow-private-provider-url=true 起（模型地址是本机）。BASE 默认 http://127.0.0.1:18080。
+// 模型地址可直接指向本机。BASE 默认 http://127.0.0.1:18080。
 const X = require('./extreme');
 
 const BASE = process.env.BASE || 'http://127.0.0.1:18080';

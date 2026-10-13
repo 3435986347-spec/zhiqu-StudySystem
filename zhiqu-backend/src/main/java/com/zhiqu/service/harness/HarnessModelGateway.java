@@ -267,7 +267,7 @@ public class HarnessModelGateway {
 
     private void call(AiModelConfig config, String type, List<Map<String, Object>> messages,
                       List<Map<String, Object>> tools, int maxTokens, ToolStreamAccumulator acc) {
-        // SSRF：API URL 是用户自己填的。与其它出站请求一样，校验放在真正发请求的这一层
+        // URL 格式校验：API URL 是用户自己填的。与其它出站请求一样，校验放在真正发请求的这一层
         provider.validateProviderRequestUrl(config.getApiUrl());
         if ("ANTHROPIC".equals(type)) {
             streamAnthropic(config, messages, tools, maxTokens, acc);

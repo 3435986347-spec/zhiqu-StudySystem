@@ -55,7 +55,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "app.cookie.secure=false",
         "app.rag.enabled=false",
-        "app.ai.allow-private-provider-url=true",
         "app.proxy.trust-forwarded-headers=true"
 })
 class ModelMisbehaviorIntegrationTest {

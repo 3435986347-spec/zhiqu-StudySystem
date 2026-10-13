@@ -61,7 +61,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         disabledReason = "Docker integration tests were explicitly disabled")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK, properties = {
         "app.cookie.secure=false",
-        "app.ai.allow-private-provider-url=true"
 })
 class AiConversationLifecycleIntegrationTest {
 
