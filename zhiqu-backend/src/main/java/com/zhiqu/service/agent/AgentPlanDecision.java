@@ -95,7 +95,7 @@ public record AgentPlanDecision(
             List.of("wiki", "知识库", "知识页", "知识树", "笔记", "我记");
     private static final List<String> WIKI_WRITE_WORDS = List.of(
             "写进", "写入", "写到", "存入", "存到", "存进", "保存", "收录", "放进", "放到",
-            "加入", "整理到", "同步到", "记到", "记进", "记录", "更新", "补充", "新建");
+            "加入", "整理到", "同步到", "记到", "记进", "记录", "更新", "补充", "新建", "生成", "创建");
     /**
      * 长期记忆草稿的触发词，从 {@code AiServiceImpl.looksMemoryWorthy} 搬过来 —— 那是第六个
      * 散在实现里的意图门，和合并前的 {@code should*} 家族同一个物种：建图侧要用它决定造不造
@@ -133,7 +133,7 @@ public record AgentPlanDecision(
     private static final List<String> WIKI_TOOL_VERB_WORDS = List.of(
             "记录", "写到", "写入", "写进", "整理到", "同步到", "更新", "补充", "新建",
             "存到", "存进", "存入", "保存", "收录", "放进", "放到", "加入", "记到", "记进",
-            "查", "看看", "找", "读");
+            "生成", "创建", "查", "看看", "找", "读");
 
     /**
      * 说到了安排、今天、这周这一类 —— AI 该看看用户的任务再回答（第二十七轮，用户 2026-10-04 定的「让它读，给一个开关」）。
@@ -287,7 +287,33 @@ public record AgentPlanDecision(
     public static boolean wikiWriteIntent(String message) {
         String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
         return WIKI_MENTION_WORDS.stream().anyMatch(text::contains)
-                && WIKI_WRITE_WORDS.stream().anyMatch(text::contains);
+                && WIKI_WRITE_WORDS.stream().anyMatch(text::contains)
+                && !wikiWriteStatusQuestion(text);
+    }
+
+    /** A question about a past write must not grant permission to create a new draft. */
+    private static boolean wikiWriteStatusQuestion(String text) {
+        for (String clause : text.split("[，,。；;？！!?]+")) {
+            for (String verb : WIKI_WRITE_WORDS) {
+                int position = -1;
+                while ((position = clause.indexOf(verb, position + 1)) >= 0) {
+                    String prefix = clause.substring(0, position);
+                    String after = clause.substring(position + verb.length());
+                    boolean query = containsAny(prefix, List.of("有没有", "是否", "是不是", "如何", "怎么", "为什么", "为何"));
+                    // 「把如何生成…的说明保存到 Wiki」的如何属于被保存的材料，
+                    // 不能遮住后面的保存请求；「如何把…保存到 Wiki」仍是只读问题。
+                    boolean transferRequest = Set.of("保存", "存入", "存到", "存进", "写入", "写到", "写进").contains(verb)
+                            && prefix.matches("^(?:请)?(?:帮我)?(?:把|将).*?");
+                    boolean past = after.startsWith("了") || after.startsWith("过") || after.startsWith("的")
+                            || after.startsWith("到了") || after.startsWith("进了") || after.startsWith("入了")
+                            || prefix.endsWith("已经") || prefix.endsWith("已");
+                    boolean statusEnding = clause.endsWith("了吗") || clause.endsWith("了么") || clause.endsWith("了没");
+                    boolean denied = prefix.matches(".*(?:不要|不用|无需|别)(?:直接|自动)?$");
+                    if (!past && !statusEnding && !denied && (!query || transferRequest)) return false;
+                }
+            }
+        }
+        return true;
     }
 
     /**

@@ -113,8 +113,15 @@ public class CodeWorkspaceAgent {
 
     /** 这一轮的产物：给最终回答用的上下文、待确认的写草稿、里程碑计划（可为 null）。 */
     public record Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
-                         boolean writeOffered) {
-        public static final Result EMPTY = new Result("", List.of(), null, false);
+                         boolean writeOffered, List<Long> wikiPendingPatchIds) {
+        public Result {
+            wikiPendingPatchIds = wikiPendingPatchIds == null ? List.of() : List.copyOf(wikiPendingPatchIds);
+        }
+        public Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
+                      boolean writeOffered) {
+            this(context, drafts, milestonePlan, writeOffered, List.of());
+        }
+        public static final Result EMPTY = new Result("", List.of(), null, false, List.of());
     }
 
     /**
@@ -288,7 +295,8 @@ public class CodeWorkspaceAgent {
             narrate(onStep, Map.of("phase", "error", "message", "工具循环中断：" + e.getMessage()));
         }
         return new Result(Texts.limitRaw(context.toString(), limits.codeContextChars()),
-                List.copyOf(loop.drafts), loop.milestonePlan, writeOffered);
+                List.copyOf(loop.drafts), loop.milestonePlan, writeOffered,
+                loop.wiki.pendingPatchIdsByTitle.values().stream().distinct().toList());
     }
 
     /**

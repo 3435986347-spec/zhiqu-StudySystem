@@ -22,6 +22,7 @@ async function bootKnowledge() {
     var t = b.textContent;
     if (/新建知识页/.test(t)) b.onclick = createWikiPage;
     else if (/导入来源/.test(t)) b.onclick = importWikiSource;
+    else if (/来源记录/.test(t)) b.onclick = function () { return showWikiSources(); };
     else if (/健康检查/.test(t)) b.onclick = runWikiLint;
     else if (/图谱/.test(t)) b.onclick = showWikiGraph;
     else if (/导出/.test(t)) b.onclick = exportWikiMarkdown;
@@ -773,8 +774,31 @@ function createWikiPage() {
     }
   });
 }
+var wikiSourceViewToken = 0, wikiSourceViewModal = null;
+var wikiSourceDraftRequests = Object.create(null);
+function beginWikiSourceView() {
+  var previous = wikiSourceViewModal;
+  wikiSourceViewModal = null;
+  wikiSourceViewToken++;
+  if (previous) previous.close();
+  return wikiSourceViewToken;
+}
+function openWikiSourceView(viewToken, options) {
+  if (viewToken !== wikiSourceViewToken) return;
+  var handle;
+  options.onClose = function () {
+    if (wikiSourceViewModal === handle) {
+      wikiSourceViewModal = null;
+      wikiSourceViewToken++;
+    }
+  };
+  handle = openModal(options);
+  wikiSourceViewModal = handle;
+  return handle;
+}
 function importWikiSource() {
-  openModal({
+  var viewToken = beginWikiSourceView();
+  openWikiSourceView(viewToken, {
     title: '导入来源',
     bodyHtml:
       '<div class="zq-field"><label class="zq-label">来源标题</label><input id="zq-imp-title" class="zq-input" placeholder="例如：产品需求文档 v2"></div>'
@@ -798,31 +822,110 @@ function importWikiSource() {
       // 粘贴的一大段原文：弹窗被遮罩点掉、刷新、登录过期都还在（第十五轮）；导入成功才删
       var contentDraft = keepDraft($('#zq-imp-content', b), 'wiki.import.content');
       $('#zq-imp-cancel', b).onclick = h.close;
-      $('#zq-imp-ok', b).onclick = function () {
+      var importButton = $('#zq-imp-ok', b);
+      importButton.onclick = function () {
+        if (importButton.disabled) return;
         var title = $('#zq-imp-title', b).value.trim();
         if (modeSel.value === 'UPLOAD') {
           var file = $('#zq-imp-file', b).files[0];
           if (!file) return toast('请选择要上传的文件', 'error');
+          importButton.disabled = true;
           var n = notice('正在上传并解析「' + (title || file.name) + '」…');
           h.close();
-          safe('上传来源', async function () {
+          var uploadToken = wikiSourceViewToken;
+          return safe('上传来源', async function () {
+            var saved;
             try {
-              var saved = await api.upload('/knowledge/sources/upload', file, title ? { title: title } : {});
+              saved = await api.upload('/knowledge/sources/upload', file, title ? { title: title } : {});
               n.update('来源解析完成' + truncatedNote(saved), { done: true });
             } catch (e) { n.update('解析失败：' + (e.message || '未知错误'), { error: true }); throw e; }
-          });
-          return;
+            if (uploadToken === wikiSourceViewToken) await showWikiSource(saved.id, saved);
+          }).finally(function () { importButton.disabled = false; });
         }
         var content = $('#zq-imp-content', b).value;
         var type = $('#zq-imp-type', b).value;
         if (!title) return toast('请填写来源标题', 'error');
-        safe('导入来源', async function () {
+        importButton.disabled = true;
+        return safe('导入来源', async function () {
           var saved = await api.post('/knowledge/sources', { title: title, content: content, sourceType: type });
           contentDraft.clear();
+          var showSaved = viewToken === wikiSourceViewToken;
           h.close(); toast('来源已导入' + truncatedNote(saved));
-        });
+          if (showSaved) await showWikiSource(saved.id, saved);
+        }).finally(function () { importButton.disabled = false; });
       };
     }
+  });
+}
+async function showWikiSources(page) {
+  page = Math.max(1, Number(page) || 1);
+  var viewToken = beginWikiSourceView();
+  await safe('来源记录', async function () {
+    var result = (await api.get('/knowledge/sources?page=' + page + '&size=20')) || {};
+    if (viewToken !== wikiSourceViewToken) return;
+    var rows = Array.isArray(result.records) ? result.records : [];
+    var total = Number(result.total) || 0;
+    var pages = Math.max(1, Math.ceil(total / 20));
+    openWikiSourceView(viewToken, {
+      title: '来源记录 · ' + total + ' 条',
+      width: '640px',
+      bodyHtml: '<p style="margin:0 0 12px;font-size:12.5px;color:var(--zq-text2);line-height:1.6;">导入的资料保存在这里。查看正文后，可生成待合入变更；确认合入之后才会成为知识页。</p>'
+        + '<div style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow-y:auto;">'
+        + (rows.map(function (source) {
+          return '<button type="button" class="zq-btn-ghost" data-source="' + esc(source.id) + '" style="display:block;text-align:left;height:auto;white-space:normal;padding:12px;border:1px solid var(--zq-border-soft);">'
+            + '<strong style="display:block;font-size:13.5px;">' + esc(source.title || '未命名来源') + '</strong>'
+            + (source.createdAt ? '<span style="display:block;margin-top:3px;font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(source.createdAt)) + '</span>' : '')
+            + (source.summary ? '<span style="display:block;margin-top:5px;font-size:12px;line-height:1.6;color:var(--zq-text2);">' + esc(source.summary) + '</span>' : '') + '</button>';
+        }).join('') || empty('还没有来源记录，点「导入来源」添加资料。')) + '</div>'
+        + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-sources-prev"' + (page <= 1 ? ' disabled' : '') + '>上一页</button>'
+        + '<span style="font-size:12px;color:var(--zq-text3);">第 ' + page + ' / ' + pages + ' 页 · 每页 20 条</span>'
+        + '<button type="button" class="zq-btn-ghost" id="zq-sources-next"' + (page >= pages ? ' disabled' : '') + '>下一页</button></div>',
+      onMount: function (b, h) {
+        $all('[data-source]', b).forEach(function (button) {
+          button.onclick = function () { h.close(); return showWikiSource(button.dataset.source); };
+        });
+        $('#zq-sources-prev', b).onclick = function () { if (page > 1) { h.close(); return showWikiSources(page - 1); } };
+        $('#zq-sources-next', b).onclick = function () { if (page < pages) { h.close(); return showWikiSources(page + 1); } };
+      }
+    });
+  });
+}
+async function showWikiSource(id, saved) {
+  var viewToken = beginWikiSourceView();
+  await safe('查看来源', async function () {
+    var source = await api.get('/knowledge/sources/' + encodeURIComponent(id));
+    if (viewToken !== wikiSourceViewToken) return;
+    openWikiSourceView(viewToken, {
+      title: '来源 · ' + (source.title || '未命名来源'),
+      width: '720px',
+      bodyHtml: '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.6;">来源已保存。下方是保存的正文，生成变更后还需确认合入，才会写入知识库。' + esc(truncatedNote(saved)) + '</p>'
+        + (source.sourceRef ? '<p style="margin:0 0 10px;font-size:11.5px;color:var(--zq-text3);overflow-wrap:anywhere;">' + esc(source.sourceRef) + '</p>' : '')
+        + '<pre style="margin:0;padding:14px;max-height:55vh;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.8 var(--zq-fontBody);border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);">' + esc(source.content || '') + '</pre>'
+        + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-source-list">来源记录</button><button type="button" class="zq-btn" id="zq-source-draft">生成待合入变更</button></div>',
+      onMount: function (b, h) {
+        $('#zq-source-list', b).onclick = function () { h.close(); return showWikiSources(); };
+        var draftButton = $('#zq-source-draft', b);
+        var requestKey = String(id), running = wikiSourceDraftRequests[requestKey];
+        draftButton.disabled = !!running;
+        if (running) running.then(function () { draftButton.disabled = false; }, function () { draftButton.disabled = false; });
+        draftButton.onclick = function () {
+          if (draftButton.disabled || wikiSourceDraftRequests[requestKey]) return;
+          draftButton.disabled = true;
+          var request = safe('生成待合入变更', async function () {
+            await api.post('/knowledge/sources/' + encodeURIComponent(id) + '/patch-set', {});
+            if (viewToken === wikiSourceViewToken) {
+              h.close();
+              await showWikiPatchSets();
+            } else await refreshWikiPatchBadge();
+          }).finally(function () {
+            if (wikiSourceDraftRequests[requestKey] === request) delete wikiSourceDraftRequests[requestKey];
+            draftButton.disabled = false;
+          });
+          wikiSourceDraftRequests[requestKey] = request;
+          return request;
+        };
+      }
+    });
   });
 }
 /** 来源原文超过上限时后端只存前面一段，并在回包里说 {kept, total} —— 这里把它说给用户，不让截断悄悄发生 */

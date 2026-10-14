@@ -73,7 +73,7 @@ async function bootAiAssistant() {
           var description = $('#zq-nb-desc', b).value.trim();
           safe('新建 Notebook', async function () {
             var nb = await api.post('/ai/notebooks', { title: title, description: description });
-            state.notebookId = nb && nb.id ? nb.id : state.notebookId;
+            setAiNotebookId(nb && nb.id ? nb.id : state.notebookId);
             h.close(); await loadAiNotebooks(); await loadAiMessages(); toast('已新建 Notebook');
           });
         };
@@ -262,7 +262,7 @@ async function ensureAiNotebook(files) {
   var typed = draft ? draft.value : '';
   var nb = await api.post('/ai/notebooks', { title: title, description: '上传资料时自动新建' });
   if (!nb || !nb.id) throw new Error('没能新建 Notebook');
-  state.notebookId = nb.id;
+  setAiNotebookId(nb.id);
   await loadAiNotebooks();
   await loadAiMessages();
   if (draft && typed && !draft.value) {
@@ -476,6 +476,35 @@ function artifactDetailsHtml(artifact) {
 // 只有「确认」才调 /ai/artifacts/{id}/confirm 真正写入任务与例行计划。
 var PLAN_DRAFT_TYPES = ['PLAN_DRAFT', 'TASK_DRAFT', 'ROUTINE_DRAFT'];
 var shownPlanModals = Object.create(null); // 已弹过的产物 id，避免同一草稿反复打扰
+var activePlanModal = null;
+var planModalQueue = [];
+var planModalGeneration = 0;
+var planModalNotebookId;
+
+function clearPlanModalQueue() {
+  var previous = activePlanModal;
+  activePlanModal = null;
+  planModalQueue = [];
+  planModalGeneration++;
+  planModalNotebookId = state.notebookId;
+  if (previous && previous.handle) previous.handle.close();
+}
+
+function setAiNotebookId(id) {
+  if (state.notebookId === id) return;
+  state.notebookId = id;
+  clearPlanModalQueue();
+}
+
+function advancePlanModalQueue() {
+  if (activePlanModal || planModalNotebookId !== state.notebookId) return null;
+  while (planModalQueue.length) {
+    var next = planModalQueue.shift();
+    if (!isPlanDraft(next) || shownPlanModals[next.id]) continue;
+    return openPlanConfirmModal(next) ? next : null;
+  }
+  return null;
+}
 
 function isPlanDraft(artifact) {
   var type = String(artifact.artifactType || '').toUpperCase();
@@ -495,6 +524,47 @@ function planDraftItems(artifact) {
   if (!routines.length && type === 'ROUTINE_DRAFT' && content.title) routines = [content];
   var copy = function (item) { return Object.assign({}, item); };
   return { tasks: tasks.map(copy), routines: routines.map(copy) };
+}
+
+// SSE 的预览/重复事件和 GET 详情共用合并规则：不丢完整字段，不把已确认/忽略退回待确认。
+function mergeAgentArtifact(current, incoming) {
+  if (!current) return incoming;
+  var terminal = ['CONFIRMED', 'DISCARDED', 'FAILED'];
+  if (terminal.indexOf(String(current.status || '').toUpperCase()) >= 0
+      && terminal.indexOf(String(incoming.status || '').toUpperCase()) < 0) return current;
+  var merged = Object.assign({}, current, incoming);
+  if (!incoming.content || typeof incoming.content !== 'object') merged.content = current.content;
+  return merged;
+}
+
+function showFreshPlanDraft(artifacts) {
+  if (planModalNotebookId !== state.notebookId) clearPlanModalQueue();
+  var current = (artifacts || []).map(normalizeArtifact);
+  // reload 或终态事件已撤销当前草稿时关闭旧确认框；其 onClose 不得继续旧队列。
+  if (activePlanModal && !current.some(function (artifact) {
+    return String(artifact.id) === String(activePlanModal.id) && isPlanDraft(artifact);
+  })) clearPlanModalQueue();
+  planModalQueue = current.filter(function (artifact) {
+    if (artifact.id == null || !isPlanDraft(artifact) || shownPlanModals[artifact.id]) return false;
+    var items = planDraftItems(artifact);
+    return items.tasks.length || items.routines.length;
+  });
+  return advancePlanModalQueue();
+}
+
+function receiveAgentArtifact(raw) {
+  var incoming = normalizeArtifact(raw);
+  if (incoming.id == null) return null;
+  var existingIndex = state.agentArtifacts.findIndex(function (item) {
+    return String(normalizeArtifact(item).id) === String(incoming.id);
+  });
+  if (existingIndex >= 0) incoming = mergeAgentArtifact(state.agentArtifacts[existingIndex], incoming);
+  if (existingIndex >= 0) state.agentArtifacts[existingIndex] = incoming;
+  else state.agentArtifacts.push(incoming);
+  state.agentArtifactRevision = (state.agentArtifactRevision || 0) + 1;
+  renderArtifacts(state.agentArtifacts);
+  showFreshPlanDraft(state.agentArtifacts);
+  return incoming;
 }
 
 function planTaskMeta(item) {
@@ -734,13 +804,29 @@ function openCodeConfirmModal(artifact) {
 function openPlanConfirmModal(artifact) {
   var data = planDraftItems(artifact);
   if (!data.tasks.length && !data.routines.length) return null;
+  if (planModalNotebookId !== state.notebookId) clearPlanModalQueue();
+  if (activePlanModal) {
+    if (String(activePlanModal.id) === String(artifact.id)) return activePlanModal.handle;
+    if (!planModalQueue.some(function (item) { return String(item.id) === String(artifact.id); })) planModalQueue.unshift(artifact);
+    return null;
+  }
   shownPlanModals[artifact.id] = true;
   var editing = false;
   var picked = {
     tasks: data.tasks.map(function () { return true; }),
     routines: data.routines.map(function () { return true; })
   };
-  var handle = openModal({ title: 'AI 生成的计划', width: 640, bodyHtml: '<div class="zq-plan-confirm"></div>' });
+  var entry = { id: artifact.id, notebookId: state.notebookId, generation: planModalGeneration, handle: null };
+  activePlanModal = entry;
+  var handle = openModal({ title: 'AI 生成的计划', width: 640, bodyHtml: '<div class="zq-plan-confirm"></div>',
+    onClose: function () {
+      if (activePlanModal !== entry) return;
+      activePlanModal = null;
+      if (entry.generation === planModalGeneration && entry.notebookId === state.notebookId) advancePlanModalQueue();
+      else clearPlanModalQueue();
+    }
+  });
+  entry.handle = handle;
   var root = handle.body.querySelector('.zq-plan-confirm');
 
   function rowHtml(kind, item, index, metaFn) {
@@ -873,6 +959,7 @@ function renderArtifacts(artifacts) {
 async function renderAgentPanels() {
   if (!$('#zq-steps') && !$('#zq-artifacts')) return;
   var nbId = state.notebookId;
+  var revision = state.agentArtifactRevision || 0;
   var runs = await safe('执行轨迹', function () { return api.get('/ai/agent-runs' + (nbId ? '?notebookId=' + nbId : '')); });
   if (!nbId && Array.isArray(runs)) {
     // 空 Notebook 工作区只展示真正不绑定 Notebook 的普通聊天 Run，
@@ -881,16 +968,20 @@ async function renderAgentPanels() {
   }
   var latest = runs && runs.length ? runs[0] : null;
   var detail = latest ? await safe('执行详情', function () { return api.get('/ai/agent-runs/' + latest.id); }) : null;
-  if (nbId !== state.notebookId) return; // 响应期间已切换 notebook,丢弃过期数据
+  if (nbId !== state.notebookId || revision !== (state.agentArtifactRevision || 0)) return;
+  // 请求开始后若收到了新 SSE 产物，旧快照不能盖回去或弹出上一轮草稿。
   renderSteps((detail && (detail.steps || detail.stepList)) || []);
   var artifacts = (detail && (detail.artifacts || detail.artifactList)) || [];
+  artifacts = artifacts.map(function (raw) {
+    var incoming = normalizeArtifact(raw);
+    var current = (state.agentArtifacts || []).find(function (item) { return String(item.id) === String(incoming.id); });
+    return mergeAgentArtifact(current, incoming);
+  });
+  state.agentArtifacts = artifacts;
   renderArtifacts(artifacts);
   // 新生成的计划草稿主动弹窗：右侧产物卡片容易被忽略，而计划要用户确认后才写入日历，
   // 不弹的话用户会以为"什么都没发生"。每个草稿只弹一次，之后可从卡片「查看并确认」重开。
-  var freshPlan = groupArtifacts(artifacts).filter(function (a) {
-    return isPlanDraft(a) && !shownPlanModals[a.id];
-  })[0];
-  if (freshPlan) openPlanConfirmModal(freshPlan);
+  showFreshPlanDraft(artifacts);
   var freshMemory = groupArtifacts(artifacts).filter(function (a) {
     return isMemoryDraft(a) && !shownMemoryModals[a.id];
   })[0];
@@ -1053,7 +1144,7 @@ function messageBodyHtml(m, i) {
   // 光有半截正文看不出它是写完了还是还在写 —— 补一个尾巴说清楚，
   // 否则用户会以为回答就到这里为止。
   if (!me && m.content && String(m.status || '').toUpperCase() === 'STREAMING') {
-    body += '<div style="margin-top:6px;font-size:11.5px;color:var(--zq-text3);">仍在生成…</div>';
+    body += '<div style="margin-top:6px;font-size:11.5px;color:var(--zq-text3);">' + esc(m._processing || '仍在生成…') + '</div>';
   }
   // 失败了要说出来，哪怕已经出来了半截（原来有半截正文就把错误原因丢掉，看着像是模型说完了）；
   // 能用但不完整（输出上限、内容审核、太长）也说。两句都存在库里，刷新之后还在。
@@ -1287,7 +1378,7 @@ async function loadAiNotebooks() {
   var list = await api.get('/ai/notebooks');
   state.notebooks = list || [];
   if (!state.notebooks.length) {
-    state.notebookId = null;
+    setAiNotebookId(null);
     rememberNotebook(null);
     clearPendingSources();
     renderNotebooks();
@@ -1298,9 +1389,9 @@ async function loadAiNotebooks() {
   }
   // 本次会话内已有选择就用它；刚刷新时（还没有选择）用上次记住的那个。
   // 记住的那个可能已被删除，所以仍要过「还在不在」这一关，最后才回落到第一个。
-  if (state.notebookId == null) state.notebookId = recallNotebook();
+  if (state.notebookId == null) setAiNotebookId(recallNotebook());
   var selectedStillExists = state.notebooks.some(function (item) { return Number(item.id) === Number(state.notebookId); });
-  if (!selectedStillExists) state.notebookId = state.notebooks[0].id;
+  if (!selectedStillExists) setAiNotebookId(state.notebooks[0].id);
   rememberNotebook(state.notebookId);
   renderNotebooks();
   await loadAiSources();
@@ -1337,7 +1428,7 @@ function renderNotebooks() {
     d.onclick = function (e) {
       // 已选中的 notebook 再点名字 → 改名；否则点击切换
       if (id === state.notebookId && e.target.closest('[data-nb-name]')) { renameNotebook(nb); return; }
-      state.notebookId = id;
+      setAiNotebookId(id);
       rememberNotebook(id);   // 这条切换路径不经过 loadAiNotebooks，要自己记
       clearPendingSources();
       state.messages = [];
@@ -1361,7 +1452,7 @@ function renderNotebooks() {
               await api.del('/ai/notebooks/' + nb.id);
               // 删的是当前选中项时必须清掉,让 loadAiNotebooks 回落到剩余的第一个
               if (state.notebookId === nb.id) {
-                state.notebookId = null;
+                setAiNotebookId(null);
                 state.messages = [];
                 clearPendingSources();
                 renderAiMessages();
@@ -1679,6 +1770,8 @@ async function sendAiMessage() {
   state.chatFollow = true;
   renderAiMessages();
   state.agentSteps = []; state.agentArtifacts = [];
+  clearPlanModalQueue();
+  state.agentArtifactRevision = (state.agentArtifactRevision || 0) + 1;
   renderSteps([]); renderArtifacts([]);
   var modelSel = $('#zq-model');
   var body = {
@@ -1733,18 +1826,27 @@ async function sendAiMessage() {
         else if (event === 'agent.step.note') { if (sameNb()) addAgentStepNote(data); }
         // 消息太长被截了中间（后端 UserMessageFit）：说给用户，而且多停一会儿 —— 这句话要读完
         else if (event === 'message.notice') { toast((data && data.message) || '这条消息被截短了', data && data.level === 'error' ? 'error' : 'warn', 9000); }
+        else if (event === 'message.processing') {
+          if (!assistant._planDraftReady && assistant.status === 'STREAMING' && data && data.stage === 'PLAN_DRAFT') {
+            assistant._processing = data.message || '正在整理可确认的计划草稿…';
+            if (sameNb()) renderAiMessages();
+          }
+        }
         else if (event === 'artifact.created') {
           if (sameNb()) {
-            var incoming = normalizeArtifact(data);
-            var existingIndex = state.agentArtifacts.findIndex(function (item) {
-              return Number(normalizeArtifact(item).id) === Number(incoming.id);
-            });
-            if (existingIndex >= 0) state.agentArtifacts[existingIndex] = incoming;
-            else state.agentArtifacts.push(incoming);
-            renderArtifacts(state.agentArtifacts);
+            var incoming = receiveAgentArtifact(data);
+            if (incoming && isPlanDraft(incoming)) {
+              var readyItems = planDraftItems(incoming);
+              if (readyItems.tasks.length || readyItems.routines.length) {
+                assistant._planDraftReady = true;
+                assistant._processing = '';
+                renderAiMessages();
+              }
+            }
           }
         }
         else if (event === 'done') {
+          assistant._processing = '';
           if (data && (data.dropped || data.status === 'CANCELED')) {
             dropped = true;
             assistant.status = '';
@@ -1764,6 +1866,7 @@ async function sendAiMessage() {
         }
         else if (event === 'error') {
           failed = true;
+          assistant._processing = '';
           assistant.status = '';
           // 已经收到的半截留着，原因另起一行说（原来有半截就不说原因 —— 看着像是模型说完了）
           assistant.errorMessage = (data && data.message) || '未知错误';
@@ -1799,7 +1902,7 @@ async function sendAiMessage() {
     if (dropped) {
       // 当前会话若还挂在已删 notebook 上,回落到默认选择(与右键删除 notebook 的刷新流程一致);
       // 重新拉列表+消息会自然清掉未保存的临时问答
-      if (sameNb()) state.notebookId = null;
+      if (sameNb()) setAiNotebookId(null);
       await loadAiNotebooks();
       await loadAiMessages();
       await renderAgentPanels();

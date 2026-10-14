@@ -111,6 +111,11 @@ public class KnowledgeController {
         return Result.success(knowledgeService.listSources(SecurityUtils.getCurrentUserId(), q, type, page, size));
     }
 
+    @GetMapping("/sources/{id}")
+    public Result<Map<String, Object>> source(@PathVariable Long id) {
+        return Result.success(knowledgeService.sourceDetail(SecurityUtils.getCurrentUserId(), id));
+    }
+
     @PostMapping("/sources")
     public Result<Map<String, Object>> createSource(@RequestBody Map<String, Object> body) {
         return Result.success(knowledgeService.createSource(SecurityUtils.getCurrentUserId(), body));

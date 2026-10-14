@@ -473,6 +473,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     @Override
+    public Map<String, Object> sourceDetail(Long userId, Long id) {
+        KnowledgeSource source = ownedSource(userId, id);
+        Map<String, Object> result = sourceRow(source);
+        result.put("content", cryptoService.decrypt(source.getEncryptedContent()));
+        return result;
+    }
+
+    @Override
     @Transactional
     public Map<String, Object> createSource(Long userId, Map<String, Object> body) {
         if (body == null) body = Map.of();

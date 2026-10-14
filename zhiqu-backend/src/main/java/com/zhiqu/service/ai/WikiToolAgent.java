@@ -80,6 +80,7 @@ public class WikiToolAgent {
     public static final class WikiLoopState {
         final java.util.Set<String> fullyReadTitles = new java.util.HashSet<>();
         final java.util.Set<String> patchedTitles = new java.util.HashSet<>();
+        final java.util.Map<String, Long> pendingPatchIdsByTitle = new LinkedHashMap<>();
         // 完整读取时捕获同一查询返回的规范化正文、哈希和页面版本，后续创建草稿不再二次查询。
         final java.util.Map<String, KnowledgePageSnapshot> readSnapshots = new java.util.HashMap<>();
     }
@@ -102,26 +103,32 @@ public class WikiToolAgent {
     public static final class WikiAgentResult {
         public final String context;
         public final boolean wrotePatch;
-        WikiAgentResult(String context, boolean wrotePatch) {
+        public final boolean writeRequested;
+        public final List<Long> pendingPatchIds;
+        WikiAgentResult(String context, boolean writeRequested, List<Long> pendingPatchIds) {
             this.context = context;
-            this.wrotePatch = wrotePatch;
+            this.writeRequested = writeRequested;
+            this.pendingPatchIds = List.copyOf(pendingPatchIds);
+            this.wrotePatch = !this.pendingPatchIds.isEmpty();
         }
-        static final WikiAgentResult EMPTY = new WikiAgentResult("", false);
+        static final WikiAgentResult EMPTY = new WikiAgentResult("", false, List.of());
     }
 
     /** 单个 Wiki 工具的执行结果：回给模型的文本 + 是否已落「待合入变更」草稿。 */
     public static final class WikiToolExecution {
         public final String result;
         public final boolean wrotePatch;
-        private WikiToolExecution(String result, boolean wrotePatch) {
+        public final Long patchSetId;
+        private WikiToolExecution(String result, Long patchSetId) {
             this.result = result;
-            this.wrotePatch = wrotePatch;
+            this.patchSetId = patchSetId;
+            this.wrotePatch = patchSetId != null;
         }
         static WikiToolExecution read(String result) {
-            return new WikiToolExecution(result, false);
+            return new WikiToolExecution(result, null);
         }
-        static WikiToolExecution wrote(String result) {
-            return new WikiToolExecution(result, true);
+        static WikiToolExecution wrote(String result, Long patchSetId) {
+            return new WikiToolExecution(result, patchSetId);
         }
     }
 
@@ -131,18 +138,19 @@ public class WikiToolAgent {
 
     /** 同上；{@code contextLimit} 由模型的上下文窗口决定（见 ContextBudget）。 */
     public WikiAgentResult runWikiToolAgent(AiModelConfig config, Long userId, String userMessage, int contextLimit) {
+        boolean canWrite = AgentPlanDecision.wikiWriteIntent(userMessage);
         if (!AgentPlanDecision.wikiToolIntent(userMessage) || !provider.supportsToolCalling(config)) {
-            return WikiAgentResult.EMPTY;
+            return canWrite ? new WikiAgentResult("", true, List.of()) : WikiAgentResult.EMPTY;
         }
         if (provider.isAnthropicProvider(config)) {
             return runWikiToolAgentAnthropic(config, userId, userMessage, contextLimit);
         }
         StringBuilder context = new StringBuilder();
         boolean wrotePatch = false;
+        WikiLoopState state = new WikiLoopState();
         try {
             // 最小权限：只有明确写意图才提供写工具，纯查询请求拿不到 create_wiki_patch，避免误写。
-            boolean canWrite = AgentPlanDecision.wikiWriteIntent(userMessage);
-            WikiLoopState state = new WikiLoopState();
+            boolean reminded = false;
             List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", getWikiToolSystemPrompt()));
             messages.add(Map.of("role", "user", "content", userMessage));
@@ -163,13 +171,20 @@ public class WikiToolAgent {
                 messages.add(objectMapper.convertValue(message, new TypeReference<Map<String, Object>>() {}));
                 JsonNode toolCalls = message.path("tool_calls");
                 if (!toolCalls.isArray() || toolCalls.isEmpty()) {
+                    if (canWrite && !wrotePatch && !reminded && round < 3) {
+                        messages.add(Map.of("role", "user", "content", missingWikiWriteReminder()));
+                        reminded = true;
+                        continue;
+                    }
                     break; // 模型给出最终答复，结束工具循环
                 }
                 for (JsonNode call : toolCalls) {
                     String name = call.at("/function/name").asText("");
                     JsonNode argsNode = call.at("/function/arguments");
                     String argsRaw = argsNode.isTextual() ? argsNode.asText("") : (argsNode.isMissingNode() ? "{}" : argsNode.toString());
-                    WikiToolExecution exec = executeWikiTool(userId, name, argsRaw, state);
+                    WikiToolExecution exec = !canWrite && "create_wiki_patch".equals(name)
+                            ? WikiToolExecution.read("本轮是只读查询，未授权创建 Wiki 待合入变更。")
+                            : executeWikiTool(userId, name, argsRaw, state);
                     if (exec.wrotePatch) {
                         wrotePatch = true;
                     }
@@ -187,16 +202,18 @@ public class WikiToolAgent {
         } catch (Exception e) {
             log.warn("Wiki 工具循环失败（不影响主回答） userId={} err={}", userId, e.getMessage());
         }
-        return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), contextLimit), wrotePatch);
+        return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), contextLimit), canWrite,
+                new ArrayList<>(state.pendingPatchIdsByTitle.values()));
     }
 
     /** Anthropic 原生工具循环版：读工具→tool_result 回填→最终答复，与 OpenAI 版等价但用 Anthropic 协议。 */
     private WikiAgentResult runWikiToolAgentAnthropic(AiModelConfig config, Long userId, String userMessage, int contextLimit) {
         StringBuilder context = new StringBuilder();
         boolean wrotePatch = false;
+        boolean canWrite = AgentPlanDecision.wikiWriteIntent(userMessage);
+        WikiLoopState state = new WikiLoopState();
         try {
-            boolean canWrite = AgentPlanDecision.wikiWriteIntent(userMessage);
-            WikiLoopState state = new WikiLoopState();
+            boolean reminded = false;
             List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "user", "content", userMessage));
             List<Map<String, Object>> tools = provider.toAnthropicTools(buildWikiTools(canWrite));
@@ -221,6 +238,11 @@ public class WikiToolAgent {
                 }
                 messages.add(Map.of("role", "assistant", "content", assistantBlocks));
                 if (toolUses.isEmpty()) {
+                    if (canWrite && !wrotePatch && !reminded && round < 3) {
+                        messages.add(Map.of("role", "user", "content", missingWikiWriteReminder()));
+                        reminded = true;
+                        continue;
+                    }
                     break; // 模型给出最终答复，结束工具循环
                 }
                 List<Object> toolResults = new ArrayList<>();
@@ -228,7 +250,9 @@ public class WikiToolAgent {
                     String name = call.path("name").asText("");
                     JsonNode input = call.path("input");
                     String argsRaw = input.isMissingNode() ? "{}" : input.toString();
-                    WikiToolExecution exec = executeWikiTool(userId, name, argsRaw, state);
+                    WikiToolExecution exec = !canWrite && "create_wiki_patch".equals(name)
+                            ? WikiToolExecution.read("本轮是只读查询，未授权创建 Wiki 待合入变更。")
+                            : executeWikiTool(userId, name, argsRaw, state);
                     if (exec.wrotePatch) {
                         wrotePatch = true;
                     }
@@ -246,7 +270,15 @@ public class WikiToolAgent {
         } catch (Exception e) {
             log.warn("Wiki 工具循环(Anthropic)失败（不影响主回答） userId={} err={}", userId, e.getMessage());
         }
-        return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), contextLimit), wrotePatch);
+        return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), contextLimit), canWrite,
+                new ArrayList<>(state.pendingPatchIdsByTitle.values()));
+    }
+
+    private String missingWikiWriteReminder() {
+        return "用户要求实际生成 Wiki 待合入变更，但本轮尚未收到真实 PatchSet 回执。聊天中贴出草稿或声称完成不算提交。"
+                + "若已有用户提供的必要内容，请实际调用 create_wiki_patch；修改已有页仍须先完整读取。"
+                + "信息不足时说明需要补充什么，不要编造内容；系统页 index/log 不可直接修改。"
+                + "若工具失败或没有 PENDING 编号，请如实说明未创建，不得声称保存或更新成功。";
     }
 
     /**
@@ -407,16 +439,21 @@ public class WikiToolAgent {
                     }
                     // P1 幂等（本轮）：同一循环内已为该标题生成过草稿，不重复创建。
                     if (state.patchedTitles.contains(norm)) {
-                        return WikiToolExecution.wrote("本轮已为「" + title + "」生成过待合入草稿，未重复创建。");
+                        Long confirmedId = state.pendingPatchIdsByTitle.get(norm);
+                        return confirmedId == null ? WikiToolExecution.read("本轮同名草稿状态未确认，请到待合入面板核实。")
+                                : WikiToolExecution.wrote("本轮已确认「" + title + "」的待合入草稿（#" + confirmedId + "，PENDING），未重复创建。", confirmedId);
                     }
                     // P1 幂等 + 并发安全：按 用户+标题 加锁，锁内“查已存在 PENDING → 创建”，防两个并发请求同时查不到各自插入。
                     // 注：进程内条带锁，适用于当前单实例部署；横向扩容需改 DB 唯一约束 / 分布式锁 / Idempotency-Key。
                     synchronized (wikiPatchLock(userId, norm)) {
                         for (Map<String, Object> ps : knowledgeService.listPatchSets(userId, "PENDING")) {
                             if (norm.equals(normWikiTitle(String.valueOf(com.zhiqu.common.Texts.orDefault(ps.get("title"), ""))))) {
+                                Long confirmedId = pendingPatchId(ps);
+                                if (confirmedId == null) return WikiToolExecution.read("已存在同名变更，但其 PENDING 编号未确认；未重复创建，请到待合入面板核实。");
                                 state.patchedTitles.add(norm);
-                                return WikiToolExecution.wrote("已存在同名「待合入变更」草稿（#" + com.zhiqu.common.Texts.orDefault(ps.get("id"), "?")
-                                        + "），未重复创建；请先到审核面板处理。");
+                                state.pendingPatchIdsByTitle.put(norm, confirmedId);
+                                return WikiToolExecution.wrote("已存在同名「待合入变更」草稿（#" + confirmedId
+                                        + "，PENDING），未重复创建；请先到审核面板处理。", confirmedId);
                             }
                         }
                         Map<String, Object> item = new LinkedHashMap<>();
@@ -437,11 +474,15 @@ public class WikiToolAgent {
                         patchBody.put("summary", "AI 工具建议的 Wiki 变更：" + title);
                         patchBody.put("triggerType", "AGENT");
                         patchBody.put("items", List.of(item));
-                        knowledgeService.createPatchSet(userId, patchBody, trustedSnapshots);
+                        Map<String, Object> receipt = knowledgeService.createPatchSet(userId, patchBody, trustedSnapshots);
+                        Long confirmedId = pendingPatchId(receipt);
+                        if (confirmedId == null) return WikiToolExecution.read("创建结果未确认：服务未返回真实的 PENDING 变更编号；请到待合入面板核实，不能声称已保存。");
                         state.patchedTitles.add(norm);
+                        state.pendingPatchIdsByTitle.put(norm, confirmedId);
+                        return WikiToolExecution.wrote("已生成「待合入变更」草稿（#" + confirmedId + "，PENDING）：" + title
+                                + (existing != null ? "（更新现有页）" : "（新建页）")
+                                + "。请到知识 Wiki 的“待合入变更”面板确认后落库；index/log 会在用户合入后由系统自动维护。", confirmedId);
                     }
-                    return WikiToolExecution.wrote("已生成「待合入变更」草稿：" + title + (existing != null ? "（更新现有页）" : "（新建页）")
-                            + "。请到知识 Wiki 的“待合入变更”面板确认后落库。");
                 }
                 default:
                     return WikiToolExecution.read("未知工具：" + name);
@@ -456,6 +497,15 @@ public class WikiToolAgent {
         return "index".equalsIgnoreCase(t) || "log".equalsIgnoreCase(t) || "Wiki 维护规则".equals(t);
     }
 
+    /** Service receipts, never model claims, establish that a reviewable draft exists. */
+    private Long pendingPatchId(Map<String, Object> receipt) {
+        if (receipt == null || !"PENDING".equals(receipt.get("status")) || receipt.get("id") == null) return null;
+        try {
+            long id = new java.math.BigDecimal(String.valueOf(receipt.get("id"))).longValueExact();
+            return id > 0 ? id : null;
+        } catch (RuntimeException invalidId) { return null; }
+    }
+
     private String getWikiToolSystemPrompt() {
         return """
                 你是「知趣·象限」的知识 Wiki 助理。你可以调用工具读取和修改用户自己的知识 Wiki：
@@ -467,8 +517,9 @@ public class WikiToolAgent {
                 - 需要引用或修改用户已有内容时，先 search_wiki，再按需 read_wiki_page，最后才 create_wiki_patch，避免凭空覆盖。
                 - 修改页面时 content 必须是整页的完整 Markdown（工具会整页覆盖），不要只给片段。
                 - 若 read_wiki_page 返回 truncated=true，说明页面过长未完整给出，请勿整页覆盖，改为提示用户手动编辑该页。
-                - 系统页 index / log / Wiki 维护规则 不可修改。
+                - 系统页 index / log / Wiki 维护规则 不可修改；index/log 由系统在用户确认合入后自动维护。
                 - 只有用户明确想记录/整理/更新到 Wiki 时才写；只是提问或闲聊则只读或不调用工具。
+                - 用户要求生成/创建 Wiki 内容时，要实际调用 create_wiki_patch。只有工具返回真实 PENDING 编号才算有待合入草稿；聊天里贴文本不等于保存。
                 - 完成后用一两句中文说明你查到了什么、生成了哪些待确认草稿。
                 """;
     }

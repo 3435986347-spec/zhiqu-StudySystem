@@ -49,6 +49,8 @@ public interface KnowledgeService {
 
     Map<String, Object> listSources(Long userId, String query, String type, int page, int size);
 
+    Map<String, Object> sourceDetail(Long userId, Long id);
+
     Map<String, Object> createSource(Long userId, Map<String, Object> body);
 
     Map<String, Object> createSourceFromUpload(Long userId, MultipartFile file, String title);
