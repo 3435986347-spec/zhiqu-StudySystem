@@ -526,6 +526,30 @@
     };
   }
   // 可复用的 Claude 风格居中弹窗：openModal({title, bodyHtml, width, onMount(body,handle), onClose}) → {close, body, mask}
+  var modalScrollState = null;
+  function restoreModalScroll() {
+    if (modalScrollState && (window.scrollX !== modalScrollState.x || window.scrollY !== modalScrollState.y)) {
+      window.scrollTo(modalScrollState.x, modalScrollState.y);
+    }
+  }
+  function lockModalScroll() {
+    if (modalScrollState) return;
+    var body = document.body;
+    var width = body.clientWidth;
+    var padding = parseFloat(window.getComputedStyle(body).paddingRight) || 0;
+    modalScrollState = { x: window.scrollX, y: window.scrollY, paddingRight: body.style.paddingRight };
+    body.classList.add('zq-modal-open');
+    // root.clientWidth 在 Chromium 隐藏滚动条后仍会变大，即使 gutter 已保留；只补 body 实际增加的布局宽度。
+    var gap = Math.max(0, body.clientWidth - width);
+    if (gap) body.style.paddingRight = (padding + gap) + 'px';
+  }
+  function unlockModalScroll() {
+    if (!modalScrollState || document.querySelector('.zq-modal-mask')) return;
+    document.body.classList.remove('zq-modal-open');
+    document.body.style.paddingRight = modalScrollState.paddingRight;
+    restoreModalScroll();
+    modalScrollState = null;
+  }
   function lastOf(list) { return list.length ? list[list.length - 1] : null; }
   function openModal(opts) {
     opts = opts || {};
@@ -544,7 +568,7 @@
       if (closed) return; closed = true;
       document.removeEventListener('keydown', onKey);
       mask.remove();
-      if (!document.querySelector('.zq-modal-mask')) document.body.classList.remove('zq-modal-open');
+      unlockModalScroll();
       if (opts.onClose) { try { opts.onClose(); } catch (e) {} }
     }
     // 只关最上面那一层：设置弹窗里点「删除模型」叠出来的确认框，按 Esc 不该把底下的设置一起关掉
@@ -552,12 +576,13 @@
     mask.addEventListener('mousedown', function (e) { if (e.target === mask) close(); });
     mask.querySelector('.zq-modal-close').onclick = close;
     document.addEventListener('keydown', onKey);
-    document.body.classList.add('zq-modal-open');
+    lockModalScroll();
     document.body.appendChild(mask);
     var handle = { close: close, mask: mask, body: body };
     if (opts.onMount) { try { opts.onMount(body, handle); } catch (e) {} }
     // 先给标了 autofocus 的（参考计划详情：第一个能聚焦的是「点赞」，一按回车就赞上了 —— 第五十七轮），没有就第一个能输入 / 能点的
-    var first = body.querySelector('[autofocus]') || body.querySelector('input,textarea,select,button'); if (first) { try { first.focus(); } catch (e) {} }
+    var first = body.querySelector('[autofocus]') || body.querySelector('input,textarea,select,button'); if (first) { try { first.focus({ preventScroll: true }); } catch (e) { try { first.focus(); } catch (ignored) {} } }
+    restoreModalScroll();
     return handle;
   }
   // ── 弹窗版 prompt/confirm/alert（替换浏览器原生弹框，统一 Claude 风格） ──

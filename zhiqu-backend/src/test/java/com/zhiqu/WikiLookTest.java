@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 界面打磨第 7 步（第五十五轮，docs/ui-plan.md）：知识 Wiki 的正文和工具栏。
  *
- * <p>原来 Wiki 的正文和 AI 助手的聊天气泡一个样（13.5px、行距 1.75、段距 8px），没有行宽 —— 1440 宽的窗口里一行七十多个字；
+ * <p>原来 Wiki 的正文和 AI 助手的聊天气泡一个样（13.5px、行距 1.75、段距 8px）；
  * 三级标题带下划线，比二级还显眼；样子写死在 renderMarkdown 的内联样式里，编辑器插进去的标题、勾选项和渲染出来的不一样。
  * 标题上面压着一行「文档视图」小字，工具栏是「B」「I」「U」「代码」「公式」「源码」一排字按钮；正文第一行往往又是一遍页名。
  *
@@ -66,14 +66,13 @@ class WikiLookTest {
     }
 
     @Test
-    @DisplayName("读长文的排版：行宽 34–46 个字、正文比聊天大、行距 ≥ 1.8；标题一级比一级小、最小的不小于正文、节前留白比节后多；三级标题不带下划线")
+    @DisplayName("读长文的排版：正文使用可用宽度、窄容器可以收缩、正文比聊天大、行距 ≥ 1.8；标题一级比一级小、最小的不小于正文、节前留白比节后多；三级标题不带下划线")
     void 排版() throws IOException {
         String css = css();
         String prose = rule(css, ".zq-prose .zq-md");
-        String width = prop(prose, "max-width");
-        assertTrue(width.endsWith("em"), "行宽要按字数（em）定，不按像素：" + width);
-        double chars = px(css, width);
-        assertTrue(chars >= 34 && chars <= 46, "一行 " + chars + " 个字 —— 中文长文一行 35–45 字读着最顺");
+        assertEquals("100%", prop(prose, "width"), "正文没有使用 Wiki 卡片的可用宽度");
+        assertEquals("none", prop(prose, "max-width"), "正文仍被固定行宽截断，宽窗口右侧会留下大片空白");
+        assertEquals("0", prop(prose, "min-width"), "正文在窄窗口里不能缩小");
         double body = px(css, prop(prose, "font-size"));
         assertTrue(body > px(css, prop(rule(css, ".zq-md"), "font-size")), "Wiki 正文没有比聊天气泡里的字大");
         assertTrue(Double.parseDouble(prop(prose, "line-height")) >= 1.8, "行距太密");

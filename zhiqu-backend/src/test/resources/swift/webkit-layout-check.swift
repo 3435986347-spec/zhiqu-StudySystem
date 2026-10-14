@@ -47,7 +47,7 @@ let measure = """
   task.appendChild(long); task.value = '9';
   var card = document.querySelector('.zq-pomo').getBoundingClientRect(), sel = task.getBoundingClientRect();
   var app = function(el){ var s = getComputedStyle(el); return s.appearance || s.webkitAppearance; };
-  return JSON.stringify({
+  var result = {
     days: document.querySelectorAll('#narrow .zq-day').length,
     narrowOverflow: over(document.getElementById('narrow')), narrowHead: head(document.getElementById('narrow')),
     wideOverflow: over(document.getElementById('wide')), wideHead: head(document.getElementById('wide')),
@@ -55,7 +55,31 @@ let measure = """
     selectOver: Math.round((sel.right - card.right) * 10) / 10,
     selectAppearance: app(task), modelAppearance: app(document.getElementById('model')),
     baseSelect: CSS.supports('appearance', 'base-select')
+  };
+  // 第六十五轮：合成长文，不读取真实 Wiki；读取和 contenteditable 共用发布的 .zq-prose / .zq-md。
+  // 1120px 会揭示旧的 42em（630px）上限，三种宽度都得让宽表格和代码在自己的容器里滚。
+  var wikiCases = 0;
+  [['wide',1120],['narrow',660],['tiny',240]].forEach(function(size){
+    ['read','edit'].forEach(function(mode){
+      var doc = document.createElement('div'); doc.className = 'zq-prose'; doc.contentEditable = mode === 'edit';
+      doc.style.cssText = 'width:' + size[1] + 'px;padding:22px 26px 30px;overflow-y:auto';
+      doc.innerHTML = '<div class="zq-md"><p>' + '知识库正文应使用当前卡片的可用宽度。'.repeat(30)
+        + ' synthetic_' + 'a'.repeat(400) + '</p><p><span class="zq-md-image"><img alt="合成图片" width="1800" height="20" '
+        + 'src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221800%22 height=%2220%22%3E%3C/svg%3E"></span></p>'
+        + '<pre><code>' + 'long_unbroken_code_'.repeat(150) + '</code></pre>'
+        + '<div class="zq-md-table"><table><tr><td>' + 'wide_table_cell_'.repeat(150) + '</td></tr></table></div></div>';
+      document.body.appendChild(doc);
+      var md = doc.firstElementChild, style = getComputedStyle(doc), pre = md.querySelector('pre'), table = md.querySelector('.zq-md-table');
+      var key = 'wiki.' + size[0] + '.' + mode;
+      result[key + '.unusedWidth'] = doc.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - md.getBoundingClientRect().width;
+      result[key + '.overflow'] = Math.max(0, doc.scrollWidth - doc.clientWidth);
+      result[key + '.codeScroll'] = pre.scrollWidth - pre.clientWidth;
+      result[key + '.tableScroll'] = table.scrollWidth - table.clientWidth;
+      wikiCases++;
+    });
   });
+  result.wikiCases = wikiCases;
+  return JSON.stringify(result);
 })()
 """
 var started = Date()

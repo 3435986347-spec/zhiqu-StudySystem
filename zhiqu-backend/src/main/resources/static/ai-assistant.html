@@ -6,18 +6,19 @@
   <title>AI 助手 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261014-wiki-vault-images-motion" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261014-wiki-vault-images-motion">
-  <link rel="manifest" href="manifest.json?v=20261014-wiki-vault-images-motion">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261014-wiki-zip-compat-width" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261014-wiki-zip-compat-width">
+  <link rel="manifest" href="manifest.json?v=20261014-wiki-zip-compat-width">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261014-wiki-vault-images-motion">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261014-wiki-zip-compat-width">
 </head>
 <body>
   <div class="zq-app">
     <nav id="zq-side"></nav>
     <main class="zq-main">
       <!--
-        height（不是 min-height）—— 内层正好等于视口减去 .zq-main 的上下 padding（110px），
+        height（不是 min-height）—— zhiqu-ui.css 让内层等于视口减去 .zq-main 的顶部 padding，
+        底部空间由输入区单独控制；这里的 110px 保留作旧浏览器回退。
         于是**整页不产生外层滚动**，长内容在对话区内部滚。
         这一条不只是观感：面板收起后，展开箭头在竖条顶端，是收起状态下唯一的展开入口。
         外层一滚它就跑出视野，人只能先滚回去才能展开 —— 用 min-height 时就是这样。
@@ -126,7 +127,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261014-wiki-vault-images-motion"></script>
-  <script src="assets/zhiqu-api.js?v=20261014-wiki-vault-images-motion"></script>
+  <script src="assets/zhiqu-ui.js?v=20261014-wiki-zip-compat-width"></script>
+  <script src="assets/zhiqu-api.js?v=20261014-wiki-zip-compat-width"></script>
 </body>
 </html>

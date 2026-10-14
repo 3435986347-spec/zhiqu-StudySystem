@@ -179,6 +179,8 @@ html[data-zq-mode="dark"][data-zq-accent="gold"]{
 
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
+/* 弹窗锁定整页滚动时仍保留滚动条槽位，正文和侧栏不向右跳。旧浏览器由 openModal 按实际宽度变化补偿。 */
+html{scrollbar-gutter:stable;}
 body{background:var(--zq-bg);color:var(--zq-text);font-family:var(--zq-fontBody);font-size:var(--zq-fs-sm);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-wrap:anywhere;}
 /* 第二十轮：一个没有空格的长网址 / 长单词原来能把看板撑宽 1374px、把聊天区推出去 3000px —— 用户的内容出现在几十处，
    一处一处补 overflow-wrap 补不完（此前已经补了七八处），所以放在 body 上一次给全。
@@ -267,6 +269,9 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 .zq-nav a .zq-ic{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;opacity:.7;}
 .zq-nav a.active .zq-ic{opacity:1;}
 .zq-main{flex:1;margin-left:188px;min-width:0;padding:var(--zq-sp-7) var(--zq-sp-8) 80px;max-width:1420px;}
+/* AI 是定高的对话页：底部留白交给输入区，外层不再叠加普通页面的 80px 页脚空间。 */
+.zq-main:has(#zq-chat-col){padding-bottom:0;}
+.zq-main>div:has(#zq-chat-col){height:calc(100vh - var(--zq-sp-7))!important;height:calc(100dvh - var(--zq-sp-7))!important;}
 .zq-user{display:flex;align-items:center;gap:9px;padding:8px;margin-top:8px;border-radius:var(--zq-rs);cursor:pointer;}
 .zq-user:hover{background:var(--zq-sb-active-bg);}
 /* 第三十轮起头像是个按钮（点开菜单）：去掉按钮自带的边框、底色、字体 */
@@ -551,7 +556,7 @@ body.zq-modal-open{overflow:hidden;}
 .zq-ai-drop-icon{display:inline-flex;}
 
 /* ── AI 助手的输入区（第四十四轮）：一个大圆角框 —— 附件在上、输入在中、工具一条在下；和消息一栏同宽、居中 ── */
-.zq-composer-wrap{padding:4px 22px 18px;display:flex;flex-direction:column;gap:8px;}
+.zq-composer-wrap{padding:4px 22px max(22px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;flex:none;}
 .zq-composer-wrap>*,.zq-msg{width:100%;max-width:760px;margin-left:auto;margin-right:auto;}
 .zq-composer{display:flex;flex-direction:column;gap:6px;padding:12px 10px 8px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);box-shadow:var(--zq-sh1);transition:border-color .12s ease;}
 .zq-composer:focus-within{border-color:var(--zq-text3);}
@@ -701,10 +706,10 @@ body.zq-modal-open{overflow:hidden;}
 .zq-math-i{padding:0 2px;}
 .zq-math-i>.zq-mono{color:var(--zq-text2);font-size:.92em;}
 
-/* ── 知识 Wiki 的正文（第五十五轮，界面打磨第 7 步）：读长文的排版 ──────────────────────────
-   原来和聊天气泡一个样（13.5px、行距 1.75、段距 8px）、没有行宽 —— 1440 宽时一行 70 多个字；三级标题带下划线比二级还显眼。
-   现在一行最多 42 个字（42em）、正文 15px、行距 1.85；一级 24 / 二级 19 / 三级 16 / 四级 15，节前留白比节后多。 */
-.zq-prose .zq-md{max-width:42em;font-size:var(--zq-fs-md);line-height:1.85;}
+/* ── 知识 Wiki 的正文（第五十五轮起）：正文 15px、行距 1.85，标题节前留白比节后多。
+   第六十五轮：阅读与编辑均使用卡片可用宽度，取消 42em 的上限，宽窗口不再到一半就换行。
+   长网址沿用 body 的 anywhere 换行，代码和表格继续在自己的容器里横向滚动。 */
+.zq-prose .zq-md{width:100%;max-width:none;min-width:0;font-size:var(--zq-fs-md);line-height:1.85;}
 .zq-prose .zq-md>:first-child{margin-top:0;}
 .zq-prose .zq-md h1{margin:28px 0 14px;font-size:24px;line-height:1.35;}
 .zq-prose .zq-md h2{margin:30px 0 10px;font-size:19px;line-height:1.4;}
@@ -1010,7 +1015,7 @@ html.zq-signed-out .zq-mini-out{display:block;}
   .zq-panel-host>.zq-panel-closing .zq-rail{visibility:hidden;}
 
   /* AI 输入区（第四十四轮起输入框本来就单独一行）：工具那一条放不下 —— 三个开关只留图标（名字在 aria-label 里），模型窄一点 */
-  .zq-composer-wrap{padding:4px 0 10px;}
+  .zq-composer-wrap{padding:4px 0 max(22px,env(safe-area-inset-bottom));}
   .zq-chip{padding:0 8px;}
   .zq-chip-label{display:none;}
   .zq-composer-model{max-width:120px;}
@@ -1018,6 +1023,7 @@ html.zq-signed-out .zq-mini-out{display:block;}
   /* AI 助手、Wiki 的定高容器：桌面上减的 110px 是 .zq-main 的上下 padding，手机上 padding 是 18+64=82px，
      照减 110px 底下白空 28px。dvh 跟着手机浏览器地址栏的收放走；不支持 dvh 的浏览器丢掉这一条，退回内联的 100vh。 */
   .zq-main>[style*="calc(100vh - 110px)"]{height:calc(100dvh - 82px)!important;}
+  .zq-main>div:has(#zq-chat-col){height:calc(100vh - 18px)!important;height:calc(100dvh - 18px)!important;}
   /* Wiki 正文头上那行静态提示（「点击正文或标题即可编辑」「段落」）：手机上让给正文 */
   .zq-main div:has(> #zq-wiki-block)>span{display:none;}
 }

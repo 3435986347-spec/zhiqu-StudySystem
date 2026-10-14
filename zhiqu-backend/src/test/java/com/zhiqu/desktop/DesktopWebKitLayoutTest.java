@@ -35,7 +35,7 @@ class DesktopWebKitLayoutTest {
     Path tmp;
 
     @Test
-    @DisplayName("WebKit 里：窄的日历换成竖排、日期不出格子（一直窄到 320 宽的手机），宽的照旧并排；番茄钟的下拉框不出卡片；下拉框不是原生的样子")
+    @DisplayName("WebKit 里：日历、下拉框不溢出；Wiki 阅读与编辑使用可用宽度，手机上长文本、图片、代码和表格不会撑宽正文")
     void 在WebKit里量() throws Exception {
         Map<String, String> out = runCheck();
         assertEquals("7", out.get("days"), "日历没画出七天：" + out);
@@ -49,6 +49,20 @@ class DesktopWebKitLayoutTest {
         assertEquals("none", out.get("modelAppearance"), "AI 助手的模型下拉在 WebKit 里还是原生的样子");
         // 哪天 WebKit 也认 base-select 了，上面那两条照样成立（走的是 base-select 那套）；这里只记下来
         assertTrue(out.containsKey("baseSelect"));
+        assertEquals("6", out.get("wikiCases"), "Wiki 阅读和编辑、宽窄三种容器没有全部量到：" + out);
+        for (String size : new String[]{"wide", "narrow", "tiny"}) {
+            for (String mode : new String[]{"read", "edit"}) {
+                String key = "wiki." + size + "." + mode;
+                assertTrue(Math.abs(Double.parseDouble(out.get(key + ".unusedWidth"))) <= 0.5,
+                        key + " 正文没有使用容器宽度，右边空了 " + out.get(key + ".unusedWidth") + "px");
+                assertTrue(Double.parseDouble(out.get(key + ".overflow")) <= 0.5,
+                        key + " 的长文本 / 图片 / 表格 / 代码撑出正文 " + out.get(key + ".overflow") + "px");
+                assertTrue(Double.parseDouble(out.get(key + ".codeScroll")) > 0,
+                        key + " 的长代码没有在自己的代码块里横向滚动");
+                assertTrue(Double.parseDouble(out.get(key + ".tableScroll")) > 0,
+                        key + " 的宽表格没有在自己的表格容器里横向滚动");
+            }
+        }
     }
 
     private Map<String, String> runCheck() throws Exception {

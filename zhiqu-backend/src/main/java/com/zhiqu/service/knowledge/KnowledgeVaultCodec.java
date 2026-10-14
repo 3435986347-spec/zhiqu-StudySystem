@@ -4,20 +4,23 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.common.SystemPageTitles;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.text.Normalizer;
 import java.util.*;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
-/** Bounded in-memory ZIP decoding. No archive path is ever extracted to the host filesystem. */
+/** Bounded ZIP decoding. Only the compressed archive is staged; entry paths are never extracted. */
 public final class KnowledgeVaultCodec {
     public static final int MAX_ZIP_BYTES = 20 * 1024 * 1024;
     public static final int MAX_EXPANDED_BYTES = 64 * 1024 * 1024;
@@ -38,26 +41,47 @@ public final class KnowledgeVaultCodec {
         Set<String> entries = new HashSet<>();
         long expanded = 0;
         int count = 0;
-        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8)) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                if (++count > MAX_ENTRIES) throw failure("ZIP 条目超过 3000 个");
-                String path = safePath(entry.getName());
-                if (!entries.add(fold(path))) throw failure("ZIP 含重复或大小写冲突路径：" + path);
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                byte[] block = new byte[8192];
-                int n;
-                while ((n = zip.read(block)) >= 0) {
-                    expanded += n;
-                    if (expanded > MAX_EXPANDED_BYTES) throw failure("ZIP 展开内容超过 64 MiB");
-                    if (out.size() + n > MAX_IMAGE_BYTES) throw failure("单个 ZIP 文件超过 8 MiB：" + path);
-                    out.write(block, 0, n);
+        Path temporaryArchive = null;
+        try {
+            // Finder may use a data descriptor for STORED entries. ZipInputStream
+            // rejects that valid format; ZipFile resolves it through the central directory.
+            temporaryArchive = Files.createTempFile("zhiqu-wiki-vault-", ".zip");
+            Files.write(temporaryArchive, bytes);
+            try (ZipFile zip = new ZipFile(temporaryArchive.toFile(), StandardCharsets.UTF_8)) {
+                var archiveEntries = zip.entries();
+                while (archiveEntries.hasMoreElements()) {
+                    ZipEntry entry = archiveEntries.nextElement();
+                    if (++count > MAX_ENTRIES) throw failure("ZIP 条目超过 3000 个");
+                    String path = safePath(entry.getName());
+                    if (!entries.add(fold(path))) throw failure("ZIP 含重复或大小写冲突路径：" + path);
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    CRC32 crc = new CRC32();
+                    byte[] block = new byte[8192];
+                    try (InputStream stream = zip.getInputStream(entry)) {
+                        int n;
+                        while ((n = stream.read(block)) != -1) {
+                            expanded += n;
+                            if (expanded > MAX_EXPANDED_BYTES) throw failure("ZIP 展开内容超过 64 MiB");
+                            if (out.size() + n > MAX_IMAGE_BYTES) throw failure("单个 ZIP 文件超过 8 MiB：" + path);
+                            out.write(block, 0, n);
+                            crc.update(block, 0, n);
+                        }
+                    }
+                    // ZipFile streams do not validate CRC themselves. Check actual
+                    // expanded bytes too; declared metadata never replaces our limits.
+                    if (out.size() != entry.getSize() || crc.getValue() != entry.getCrc())
+                        throw failure("ZIP 无法读取或已损坏");
+                    if (!entry.isDirectory()) files.put(path, out.toByteArray());
                 }
-                if (!entry.isDirectory()) files.put(path, out.toByteArray());
-                zip.closeEntry();
             }
         } catch (BusinessException e) { throw e; }
         catch (Exception e) { throw failure("ZIP 无法读取或已损坏"); }
+        finally {
+            if (temporaryArchive != null) {
+                try { Files.deleteIfExists(temporaryArchive); }
+                catch (IOException e) { throw failure("ZIP 临时文件清理失败，请重试"); }
+            }
+        }
         if (files.isEmpty()) throw failure("ZIP 没有可读取的文件");
         Set<String> fileKeys = new HashSet<>(); files.keySet().forEach(path -> fileKeys.add(fold(path)));
         for (String path : fileKeys) {
@@ -67,13 +91,19 @@ public final class KnowledgeVaultCodec {
                 slash = path.indexOf('/', slash + 1);
             }
         }
-        String root = commonRoot(files.keySet());
+        Set<String> contentPaths = new TreeSet<>();
+        files.keySet().stream().filter(path -> !ignored(path)).forEach(contentPaths::add);
+        String root = commonRoot(contentPaths);
         Map<String, byte[]> attachments = new LinkedHashMap<>();
         Map<String, Note> notes = new TreeMap<>();
         List<String> warnings = new ArrayList<>();
         for (Map.Entry<String, byte[]> entry : files.entrySet()) {
+            if (ignored(entry.getKey())) {
+                String path = entry.getKey();
+                warnings.add("跳过设置或系统文件：" + (path.startsWith(root) ? path.substring(root.length()) : path));
+                continue;
+            }
             String path = entry.getKey().substring(root.length());
-            if (ignored(path)) { warnings.add("跳过设置或系统文件：" + path); continue; }
             String lower = path.toLowerCase(Locale.ROOT);
             if (lower.endsWith(".md")) {
                 if (entry.getValue().length > MAX_NOTE_BYTES) throw failure("笔记超过 1 MiB：" + path);
@@ -245,6 +275,7 @@ public final class KnowledgeVaultCodec {
     }
 
     private static String commonRoot(Set<String> paths) {
+        if (paths.isEmpty()) return "";
         String first = paths.iterator().next();
         int slash = first.indexOf('/');
         if (slash < 0) return "";

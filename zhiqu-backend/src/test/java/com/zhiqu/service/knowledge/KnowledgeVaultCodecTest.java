@@ -6,6 +6,9 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.zip.CRC32;
+import java.util.zip.Deflater;
+import java.util.zip.DeflaterOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -42,6 +45,39 @@ class KnowledgeVaultCodecTest {
         assertTrue(links.get(1).image());
         assertEquals("320", links.get(1).label());
         assertEquals("Pasted image 100.png", links.get(1).target());
+    }
+
+    @Test void finderStoredEntriesWithDataDescriptorsAndUtf8NamesAreReadable() {
+        byte[] payload = "synthetic note".getBytes(StandardCharsets.UTF_8);
+        var archive = assertDoesNotThrow(() -> codec.decode(descriptorZip("vault/阶段.md", payload, ZipEntry.STORED, 0, 0)));
+        assertEquals(1, archive.notes().size());
+        assertEquals("阶段.md", archive.notes().get(0).path());
+        assertEquals("synthetic note", archive.notes().get(0).content());
+    }
+
+    @Test void centralDirectoryCrcMustAgreeWithTheActualEntry() {
+        byte[] payload = "synthetic note".getBytes(StandardCharsets.UTF_8);
+        byte[] damaged = descriptorZip("vault/阶段.md", payload, ZipEntry.DEFLATED, 1, 0);
+        BusinessException error = assertThrows(BusinessException.class, () -> codec.decode(damaged),
+                "Central directory CRC must be checked independently of the local data descriptor");
+        assertEquals("ZIP 无法读取或已损坏", error.getMessage());
+    }
+
+    @Test void centralDirectoryExpandedSizeMustAgreeWithTheActualEntry() {
+        byte[] payload = "synthetic note".getBytes(StandardCharsets.UTF_8);
+        byte[] damaged = descriptorZip("vault/阶段.md", payload, ZipEntry.DEFLATED, 0, 1);
+        BusinessException error = assertThrows(BusinessException.class, () -> codec.decode(damaged),
+                "Central directory size must be checked independently of the local data descriptor");
+        assertEquals("ZIP 无法读取或已损坏", error.getMessage());
+    }
+
+    @Test void finderSidecarMetadataDoesNotPreventStrippingTheVaultRoot() {
+        var archive = codec.decode(zip(Map.of("vault/阶段.md", "synthetic note", "vault/Next.md", "next",
+                "__MACOSX/vault/._阶段.md", "synthetic metadata", "__MACOSX/._vault", "synthetic metadata")));
+        assertEquals(Set.of("阶段.md", "Next.md"), archive.notes().stream().map(KnowledgeVaultCodec.Note::path)
+                .collect(java.util.stream.Collectors.toSet()));
+        assertTrue(archive.attachments().isEmpty());
+        assertEquals(2, archive.warnings().size());
     }
 
     @Test void exportRetainsHierarchyAndAllocatesPortableNamesWithoutOverwriting() throws Exception {
@@ -163,5 +199,51 @@ class KnowledgeVaultCodecTest {
             }
             return out.toByteArray();
         } catch (Exception e) { throw new AssertionError(e); }
+    }
+
+    /** Finder can put a data descriptor on an uncompressed entry and omit the UTF-8 flag.
+     * The descriptor is valid; central-directory differences intentionally corrupt only that copy. */
+    private static byte[] descriptorZip(String path, byte[] payload, int method, long crcDifference, long sizeDifference) {
+        try {
+            byte[] name = path.getBytes(StandardCharsets.UTF_8);
+            byte[] compressed = payload;
+            if (method == ZipEntry.DEFLATED) {
+                var compressedOut = new ByteArrayOutputStream();
+                var deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
+                try (var stream = new DeflaterOutputStream(compressedOut, deflater)) { stream.write(payload); }
+                finally { deflater.end(); }
+                compressed = compressedOut.toByteArray();
+            }
+            var crc = new CRC32(); crc.update(payload);
+            var out = new ByteArrayOutputStream();
+            littleInt(out, 0x04034b50L); // local header
+            littleShort(out, 20); littleShort(out, 8); littleShort(out, method);
+            littleShort(out, 0); littleShort(out, 0);
+            littleInt(out, 0); littleInt(out, 0); littleInt(out, 0);
+            littleShort(out, name.length); littleShort(out, 0);
+            out.write(name); out.write(compressed);
+            littleInt(out, 0x08074b50L); // signed data descriptor
+            littleInt(out, crc.getValue()); littleInt(out, compressed.length); littleInt(out, payload.length);
+            int centralOffset = out.size();
+            littleInt(out, 0x02014b50L); // central directory header
+            littleShort(out, 20); littleShort(out, 20); littleShort(out, 8); littleShort(out, method);
+            littleShort(out, 0); littleShort(out, 0);
+            littleInt(out, crc.getValue() + crcDifference); littleInt(out, compressed.length);
+            littleInt(out, payload.length + sizeDifference);
+            littleShort(out, name.length); littleShort(out, 0); littleShort(out, 0);
+            littleShort(out, 0); littleShort(out, 0); littleInt(out, 0); littleInt(out, 0);
+            out.write(name);
+            int centralSize = out.size() - centralOffset;
+            littleInt(out, 0x06054b50L); // end of central directory
+            littleShort(out, 0); littleShort(out, 0); littleShort(out, 1); littleShort(out, 1);
+            littleInt(out, centralSize); littleInt(out, centralOffset); littleShort(out, 0);
+            return out.toByteArray();
+        } catch (Exception e) { throw new AssertionError(e); }
+    }
+    private static void littleShort(ByteArrayOutputStream out, int value) {
+        out.write(value & 0xff); out.write((value >>> 8) & 0xff);
+    }
+    private static void littleInt(ByteArrayOutputStream out, long value) {
+        for (int byteIndex = 0; byteIndex < 4; byteIndex++) out.write((int) (value >>> (byteIndex * 8)) & 0xff);
     }
 }
