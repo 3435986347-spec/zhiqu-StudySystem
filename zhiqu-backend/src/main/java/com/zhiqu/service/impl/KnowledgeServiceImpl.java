@@ -1017,13 +1017,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private void syncPageLinks(Long userId, Long pageId, String content) {
         clearPageLinks(userId, pageId);
-        Matcher matcher = WIKI_LINK_PATTERN.matcher(value(content, ""));
         Set<String> seen = new HashSet<>();
         // 规范化标题 → 页 id：第一次用到时一次取全（第十七轮）。原来每个 [[链接]] 都 findPageByTitle 一次 —— 把这个人的全部页面查一遍；
         // index 页链着每一页，八百多页的 Wiki 上加一页之后再打开，重建 index 的链接就是八百多次全表查询（实测 4 秒）
         Map<String, Long> idsByTitle = null;
-        while (matcher.find()) {
-            String targetTitle = matcher.group(1).trim();
+        for (var parsed : com.zhiqu.service.knowledge.VaultMarkdownLinks.read(value(content, ""))) {
+            if (!parsed.wiki() || parsed.image()) continue;
+            String targetTitle = parsed.target().trim();
             if (targetTitle.isBlank() || !seen.add(normalizeTitle(targetTitle))) continue;
             if (idsByTitle == null) idsByTitle = pageIdsByTitle(userId);
             KnowledgePageLink link = new KnowledgePageLink();
@@ -1031,7 +1031,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             link.setSourcePageId(pageId);
             link.setTargetPageId(idsByTitle.get(normalizeTitle(targetTitle)));
             link.setTargetTitle(limit(targetTitle, 180));
-            link.setAnchorText(limit(targetTitle, 180));
+            link.setAnchorText(limit(parsed.label() == null ? targetTitle : parsed.label(), 180));
             link.setLinkType("WIKI");
             linkMapper.insert(link);
         }

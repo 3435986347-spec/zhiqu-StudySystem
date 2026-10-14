@@ -19,10 +19,12 @@ function tab(initialToken, page) {
   };
   const location = { replaced: null, replace(u) { this.replaced = u; } };
   const token = () => sessionStorage.getItem('token') || '';
-  const api = new Function('sessionStorage', 'location', 'page', 'token',
+  let revoked = 0;
+  const revokePrivateMedia = () => { revoked++; };
+  const api = new Function('sessionStorage', 'location', 'page', 'token', 'revokePrivateMedia',
     section + '\nreturn { borrowToken, announceLogout, announceNewToken, close: function () { if (authChannel) authChannel.close(); } };')(
-    sessionStorage, location, page || 'dashboard.html', token);
-  const t = { store, location, api };
+    sessionStorage, location, page || 'dashboard.html', token, revokePrivateMedia);
+  const t = { store, location, api, revoked: () => revoked };
   tabs.push(t);
   return t;
 }
@@ -56,11 +58,13 @@ function judge(name, got, want) {
   A.api.announceNewToken('T1', 'T3');
   await tick(60);
   judge('改密码换了令牌：拿着旧令牌的标签页换成新的', B.store.get('token'), 'T3');
+  judge('换令牌：旧令牌下的私有媒体链接失效', B.revoked(), 1);
   judge('别人的标签页不受影响', C.store.get('token'), 'T2');
   A.store.set('token', 'T3');
   A.api.announceLogout('T3');
   await tick(60);
   judge('退出：同一张令牌的标签页也退出', B.store.has('token'), false);
+  judge('退出：私有媒体链接失效', B.revoked(), 2);
   judge('退出：跳回首页', B.location.replaced, 'index.html');
   judge('退出：别人的标签页不受影响', C.store.get('token'), 'T2');
   judge('没登录的标签页没被打扰', E.location.replaced, null);

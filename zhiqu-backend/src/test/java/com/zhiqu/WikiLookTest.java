@@ -107,7 +107,7 @@ class WikiLookTest {
             assertTrue(b.group(1).contains(" title=\"") && b.group(1).contains(" aria-label=\""), b.group(2) + " 没有 title 或 aria-label（只有图标的按钮）");
             assertTrue(b.group(3).matches("<span data-zq-icon=\"[\\w-]+\"></span>"), b.group(2) + " 不是只有一个图标：" + b.group(3));
         }
-        assertEquals(List.of("bold", "italic", "underline", "code", "link", "math", "ref", "source"), cmds, "工具栏的按钮变了");
+        assertEquals(List.of("bold", "italic", "underline", "code", "link", "image", "math", "ref", "source"), cmds, "工具栏的按钮变了");
         assertTrue(html.contains("data-wiki-cmd=\"source\" class=\"zq-tbtn\" id=\"zq-wiki-source\""), "「源码」按钮没有 id —— setSourcePressed 找不到它");
         assertTrue(html.contains("aria-pressed=\"false\"><span data-zq-icon=\"file-code\">"), "「源码」按钮没有 aria-pressed（图标看不出现在是源码还是排版）");
     }

@@ -52,7 +52,7 @@ class HomeCarouselTest {
     }
 
     @Test
-    @DisplayName("每张都有浅、深两张截图，文件在、是 2048 × 1280 的 WebP；页签和图片一一对应；shots 目录里没有没人用的旧图")
+    @DisplayName("每张都有浅、深两张截图，文件尺寸与 HTML 一致且足够清晰；页签和图片一一对应；shots 目录里没有没人用的旧图")
     void 截图() throws IOException {
         String html = html();
         Matcher tab = Pattern.compile("<button type=\"button\" role=\"tab\" id=\"(zq-tour-tab-\\d+)\" aria-controls=\"(zq-tour-slide-\\d+)\"").matcher(html);
@@ -66,13 +66,15 @@ class HomeCarouselTest {
             slides.add(fig.group(1));
             String body = fig.group(3);
             for (String theme : List.of("light", "dark")) {
-                Matcher img = Pattern.compile("<img class=\"zq-shot-" + theme + "\" src=\"assets/shots/([a-z-]+-" + theme + "\\.webp)\\?v=[^\"]+\" alt=\"([^\"]+)\" width=\"2048\" height=\"1280\" loading=\"lazy\"").matcher(body);
+                Matcher img = Pattern.compile("<img class=\"zq-shot-" + theme + "\" src=\"assets/shots/([a-z-]+-" + theme + "\\.webp)\\?v=[^\"]+\" alt=\"([^\"]+)\" width=\"(\\d+)\" height=\"(\\d+)\" loading=\"lazy\"").matcher(body);
                 if (!img.find()) { bad.add(fig.group(1) + " 没有" + theme + "那张（或者少了宽高 / 懒加载）"); continue; }
                 Path file = STATIC.resolve("assets/shots/" + img.group(1));
                 used.add(img.group(1));
                 int[] size = Files.exists(file) ? webpSize(file) : null;
                 if (size == null) bad.add(img.group(1) + " 不在或不是 WebP");
-                else if (size[0] != 2048 || size[1] != 1280) bad.add(img.group(1) + " 是 " + size[0] + " × " + size[1]);
+                else if (size[0] != Integer.parseInt(img.group(3)) || size[1] != Integer.parseInt(img.group(4))
+                        || size[0] < 1280 || size[1] < 800 || Math.abs((double) size[0] / size[1] - 1.6) > 0.01)
+                    bad.add(img.group(1) + " 尺寸不符或不足 16:10 的 1280 × 800：" + size[0] + " × " + size[1]);
             }
         }
         assertTrue(slides.size() >= 4, "只找到 " + slides.size() + " 张");

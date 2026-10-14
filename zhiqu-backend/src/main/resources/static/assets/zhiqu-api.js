@@ -53,6 +53,7 @@
   function role() { return sessionStorage.getItem('role') || localStorage.getItem('role') || ''; }
   function setAuth(data, remember) {
     if (data && data.token) {
+      if (token() !== data.token) revokePrivateMedia();
       sessionStorage.setItem('token', data.token);
       sessionStorage.setItem('role', data.role || 'USER');
       if (remember) {
@@ -65,6 +66,7 @@
     }
   }
   function clearAuth() {
+    revokePrivateMedia();
     sessionStorage.removeItem('token'); sessionStorage.removeItem('role');
     localStorage.removeItem('token'); localStorage.removeItem('role');
   }
@@ -82,9 +84,11 @@
       if (m.type === 'ask' && mine) {
         authChannel.postMessage({ type: 'token', nonce: m.nonce, token: mine, role: sessionStorage.getItem('role') || 'USER' });
       } else if (m.type === 'logout' && mine && mine === m.token) {
+        revokePrivateMedia();
         sessionStorage.removeItem('token'); sessionStorage.removeItem('role');
         if (page !== 'index.html') location.replace('index.html');
       } else if (m.type === 'refresh' && mine && mine === m.old && m.token) {
+        revokePrivateMedia();
         sessionStorage.setItem('token', m.token);
       }
     };
@@ -371,7 +375,9 @@
     var upload = !!(options && typeof FormData !== 'undefined' && options.body instanceof FormData);
     if (method === 'GET') return requestWithRetry(path, options, method, upload, false);
     if (upload) {
-      var uploaded = requestWithRetry(path, options, method, upload, false);
+      // ZIP 确认导入持有同一个幂等键：回应丢失时只重放结果，不再导入第二份。
+      var uploaded = requestWithRetry(path, options, method, upload,
+        !!(options.headers && options.headers['Idempotency-Key']));
       var endUpload = writeStarted(method);
       uploaded.then(endUpload, endUpload);
       return uploaded;
@@ -418,6 +424,39 @@
       }
     }
   }
+  async function download(path) {
+    if (!/^\/[a-z0-9/_?=&%.-]+$/i.test(path) || path.startsWith('//')) throw requestError('下载地址无效');
+    for (var attempt = 0; ; attempt++) {
+      var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, REQUEST_TIMEOUT_MS) : null;
+      try {
+        var headers = {};
+        if (token()) headers.Authorization = 'Bearer ' + token();
+        var res = await fetch(API + path, { method: 'GET', credentials: 'same-origin', headers: headers,
+          signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
+        if (res.status === 401 || res.status === 403) { redirectToLogin(); throw requestError('未登录或无权限', { auth: true }); }
+        if (RETRYABLE_STATUS.indexOf(res.status) >= 0) throw requestError('下载暂时不可用（HTTP ' + res.status + '）', { retryable: true, status: res.status });
+        var type = res.headers.get('Content-Type') || '';
+        if (!res.ok || /application\/json/i.test(type)) {
+          var error = null;
+          try { error = await res.json(); } catch (ignored) {}
+          throw requestError((error && error.message) || '下载失败（HTTP ' + res.status + '）');
+        }
+        var disposition = res.headers.get('Content-Disposition') || '';
+        var encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        var plain = disposition.match(/filename="?([^";]+)"?/i);
+        var filename = plain ? plain[1] : '';
+        // A malformed optional filename must not turn an already successful body into a retry.
+        if (encoded) { try { filename = decodeURIComponent(encoded[1]); } catch (ignored) {} }
+        filename = filename.replace(/[\\/\r\n]/g, '-');
+        return { blob: await res.blob(), filename: filename };
+      } catch (e) {
+        if (e.userFacing && !e.retryable) throw e;
+        if (attempt >= RETRY_WAITS_MS.length) throw e.userFacing ? e : requestError('网络连接失败，请稍后再试');
+        await waitMs(RETRY_WAITS_MS[attempt]);
+      } finally { if (timer) clearTimeout(timer); }
+    }
+  }
   /**
    * 带键的写，重来几次都没拿到回应：服务器可能做了、也可能没做 —— 照实说，并告诉学生再点一次是安全的（同一个键）。
    * 业务上拒了的是确定没做；每一下都被限流（429，进业务之前就拒了）也是确定没做 —— 原样说。
@@ -432,14 +471,15 @@
   }
   var api = {
     get: function (p) { return request(p, { method: 'GET' }); },
+    download: download,
     post: function (p, b, h) { return request(p, { method: 'POST', body: JSON.stringify(b || {}), headers: h || {} }); },
     put: function (p, b) { return request(p, { method: 'PUT', body: b == null ? undefined : JSON.stringify(b) }); },
     del: function (p) { return request(p, { method: 'DELETE' }); },
-    upload: function (p, file, fields) {
+    upload: function (p, file, fields, headers) {
       var fd = new FormData();
       fd.append('file', file);
       Object.keys(fields || {}).forEach(function (k) { if (fields[k] != null && fields[k] !== '') fd.append(k, fields[k]); });
-      return request(p, { method: 'POST', body: fd });
+      return request(p, { method: 'POST', body: fd, headers: headers || {} });
     }
   };
 
@@ -1445,11 +1485,32 @@
   function inlineMathSpan(tex) {
     return '<span class="zq-math-i" data-tex="' + tex.replace(/"/g, '&quot;') + '" contenteditable="false"><span class="zq-mono">' + tex + '</span></span>';
   }
+  function markdownImage(raw, target, alt, width) {
+    var privateImage = /^\/api\/knowledge\/images\/[1-9]\d*$/.test(target);
+    var externalImage = /^https?:\/\/[^\s<>"']+$/i.test(target);
+    var style = width ? ' style="max-width:min(100%,' + width + 'px)"' : '';
+    var label = alt || target.split('/').pop() || '图片';
+    if (!privateImage && !externalImage) return '<span class="zq-md-image zq-md-image-missing" data-image-markdown="'
+      + esc(raw) + '" contenteditable="false">图片未找到：' + esc(label) + '</span>';
+    var source = privateImage ? ' data-zq-private-image="' + esc(target) + '"' : ' src="' + esc(target) + '"';
+    return '<span class="zq-md-image" data-image-markdown="' + esc(raw) + '" contenteditable="false">'
+      + '<img alt="' + esc(label) + '"' + source + style + ' loading="lazy" decoding="async"></span>';
+  }
   function mdInline(t) {
-    t = esc(t);
     // 行内代码先抽成占位符：反引号里的 $、*、[ 等都是字面量，不参与公式/加粗/链接解析
     var codeSlots = [];
-    t = t.replace(/`([^`]+)`/g, function (m, c) { codeSlots.push(c); return '\u0001' + (codeSlots.length - 1) + '\u0001'; });
+    var imageSlots = [];
+    t = String(t == null ? '' : t).replace(/`([^`]+)`/g, function (m, c) { codeSlots.push(c); return '\u0001' + (codeSlots.length - 1) + '\u0001'; });
+    t = t.replace(/!\[\[([^\]\n]+)\]\]|!\[([^\]\n]*)\]\((<[^>\n]+>|(?:[^()\n]|\([^()\n]*\))+)\)/g, function (raw, wiki, alt, standardTarget) {
+      var parts = wiki ? wiki.split('|') : [];
+      var target = wiki ? parts[0] : standardTarget;
+      var size = wiki && parts.length > 1 && /^[1-9]\d{0,3}$/.test(parts[parts.length - 1]) ? parts[parts.length - 1] : null;
+      if (/^<[^<>]+>$/.test(target)) target = target.slice(1, -1);
+      imageSlots.push(markdownImage(raw, target.trim(), wiki && !size ? parts.slice(1).join('|') : alt,
+        size ? Math.min(2400, Number(size)) : null));
+      return '\u0003' + (imageSlots.length - 1) + '\u0003';
+    });
+    t = esc(t);
     t = t
       .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/g, '<u>$1</u>')
       .replace(/\$\$([^$\n]{1,200}?)\$\$/g, function (m, tex) {
@@ -1465,11 +1526,14 @@
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       // URL 支持一层配对括号（如维基百科的 Function_(mathematics)），不再截断在第一个 )
       .replace(/\[([^\]]+)\]\((https?:\/\/(?:[^()\s]|\([^()]*\))+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-      .replace(/\[\[([^\]]+)\]\]/g, '<a data-wikilink="$1">$1</a>');
+      .replace(/\[([^\]]+)\]\((\/api\/knowledge\/attachments\/[1-9]\d*)\)/g, '<a href="$2" data-zq-private-download="$2">$1</a>')
+      .replace(/\[\[([^\]]+)\]\]/g, function (raw, spec) {
+        var parts = spec.split('|');
+        return '<a data-wikilink="' + spec + '">' + (parts[1] || parts[0]) + '</a>';
+      });
     t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-    return t.replace(/\u0001(\d+)\u0001/g, function (m, i) {
-      return '<code>' + codeSlots[+i] + '</code>';
-    });
+    return t.replace(/\u0001(\d+)\u0001/g, function (m, i) { return '<code>' + esc(codeSlots[+i]) + '</code>'; })
+      .replace(/\u0003(\d+)\u0003/g, function (m, i) { return imageSlots[+i]; });
   }
   // 完整块类型渲染，对齐 claude design 静态模板：标题/正文/列表/任务勾选/引用/代码块/分隔线/相关页面双链
 
@@ -1666,8 +1730,57 @@
       } catch (e) { /* 渲染失败保留源码 */ }
     });
   }
+  var privateMedia = new Map();
+  function revokePrivateMedia() {
+    privateMedia.forEach(function (url, image) {
+      if (image.getAttribute('src') === url) image.removeAttribute('src');
+      URL.revokeObjectURL(url);
+      image.removeAttribute('data-zq-loaded');
+    });
+    privateMedia.clear();
+  }
+  function hydratePrivateMedia(root) {
+    if (!root || !root.querySelectorAll) return;
+    privateMedia.forEach(function (url, image) {
+      if (!image.isConnected) { URL.revokeObjectURL(url); privateMedia.delete(image); }
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('img[data-zq-private-image]'), function (image) {
+      if (image.dataset.zqLoaded || image.dataset.zqLoading) return;
+      var url = image.getAttribute('data-zq-private-image');
+      if (!/^\/api\/knowledge\/images\/[1-9]\d*$/.test(url || '')) return;
+      var authAtStart = token();
+      image.dataset.zqLoading = '1';
+      api.download(url.slice(API.length)).then(function (result) {
+        if (!/^image\/(png|jpeg|gif|webp)$/i.test(result.blob.type || '')) throw requestError('图片格式无效');
+        if (!image.isConnected || image.getAttribute('data-zq-private-image') !== url || token() !== authAtStart) return;
+        var objectUrl = URL.createObjectURL(result.blob);
+        image.src = objectUrl;
+        image.dataset.zqLoaded = '1';
+        privateMedia.set(image, objectUrl);
+      }).catch(function () {
+        if (image.isConnected && token() === authAtStart) image.alt = '图片加载失败：' + (image.alt || '图片');
+      }).finally(function () { delete image.dataset.zqLoading; });
+    });
+    if (!root.dataset || root.dataset.zqPrivateLinksWired) return;
+    root.dataset.zqPrivateLinksWired = '1';
+    root.addEventListener('click', function (event) {
+      var link = event.target && event.target.closest ? event.target.closest('a[data-zq-private-download]') : null;
+      if (!link || !root.contains(link)) return;
+      event.preventDefault(); event.stopPropagation();
+      var path = link.getAttribute('data-zq-private-download');
+      if (!/^\/api\/knowledge\/attachments\/[1-9]\d*$/.test(path || '')) return;
+      api.download(path.slice(API.length)).then(function (result) {
+        var objectUrl = URL.createObjectURL(result.blob);
+        var a = document.createElement('a');
+        a.href = objectUrl; a.download = result.filename || link.textContent || '附件';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 30000);
+      }).catch(function (e) { toast(e.message || '附件下载失败', 'error'); });
+    });
+  }
   function renderMathIn(root) {
     if (!root) return;
+    hydratePrivateMedia(root);
     var nodes = root.querySelectorAll('[data-tex]');
     if (!nodes.length) return;
     if (katexState === 2 && window.katex) { paintMath(nodes); return; }
@@ -1704,6 +1817,10 @@
         if (n.getAttribute && n.getAttribute('data-tex') !== null) {
           var tex = n.getAttribute('data-tex');
           out += (n.classList && n.classList.contains('zq-math')) ? '\n$$\n' + tex + '\n$$\n\n' : ('$' + tex + '$');
+          return;
+        }
+        if (n.getAttribute && n.getAttribute('data-image-markdown') !== null) {
+          out += n.getAttribute('data-image-markdown');
           return;
         }
         var tag = n.tagName.toUpperCase();

@@ -98,6 +98,7 @@
     'italic': '<path d="M19 4h-9"/><path d="M14 20H5"/><path d="M15 4 9 20"/>',
     'underline': '<path d="M6 4v6a6 6 0 0 0 12 0V4"/><path d="M4 20h16"/>',
     'link': '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    'image': '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
     'sigma': '<path d="M18 7V5a1 1 0 0 0-1-1H6.5a.5.5 0 0 0-.4.8l4.5 6a2 2 0 0 1 0 2.4l-4.5 6a.5.5 0 0 0 .4.8H17a1 1 0 0 0 1-1v-2"/>',
     'book-marked': '<path d="M10 2v8l3-3 3 3V2"/><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/>',
     'file-code': '<path d="M10 12.5 8 15l2 2.5"/><path d="m14 12.5 2 2.5-2 2.5"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/>',
@@ -339,20 +340,85 @@
     var rail=document.createElement('div'); rail.className='zq-rail';
     rail.innerHTML='<button type="button" class="zq-xbtn" title="展开「'+opts.label+'」" aria-label="展开「'+opts.label+'」">'+icon(right?'panel-right-open':'panel-left-open')+'</button><div class="zq-rlabel">'+opts.label+'</div>';
     panel.insertBefore(rail, panel.firstChild);
+    var xbtn=rail.querySelector('.zq-xbtn'), endTimer=0, openFrame=0, reduceQuery=null, expandedScroll=0, returnFocus=false;
+    // flex-basis 原来在各页的 style 里；记住它，width 才能在展开和 44px 之间连续变化，不能从 auto 开始。
+    var expanded=panel.style.flexBasis;
+    try { expanded=window.getComputedStyle(panel).flexBasis || expanded; } catch(e) {}
+    if(!expanded || expanded==='auto') expanded=panel.getBoundingClientRect().width+'px';
+    if(panel.style.setProperty) panel.style.setProperty('--zq-panel-expanded-width',expanded);
+    else panel.style['--zq-panel-expanded-width']=expanded;
+    try { reduceQuery=window.matchMedia('(prefers-reduced-motion: reduce)'); } catch(e) {}
+    function reduced(){ return !!(reduceQuery && reduceQuery.matches); }
+    function stopMotion(){
+      clearTimeout(endTimer); endTimer=0;
+      if(openFrame && window.cancelAnimationFrame) window.cancelAnimationFrame(openFrame); openFrame=0;
+      panel.classList.remove('zq-panel-opening','zq-panel-closing');
+    }
+    function finishClose(){
+      endTimer=0; panel.classList.remove('zq-panel-closing');
+      // 手机关闭过程中浮层还占着定位，页签此时才可见；用户已点去别处时不再把焦点抢回来。
+      if(returnFocus && (document.activeElement===document.body || panel.contains(document.activeElement))) xbtn.focus();
+      returnFocus=false;
+    }
+    function access(c){
+      // 收起后只留下展开开关；隐藏内容不能继续收 Tab / 读屏，也不能把焦点留在消失的输入框里。
+      var moveFocus=c ? (panel.contains(document.activeElement) && !rail.contains(document.activeElement)) : rail.contains(document.activeElement);
+      rail.setAttribute('aria-hidden',c?'false':'true');
+      if(c) rail.removeAttribute('inert'); else rail.setAttribute('inert','');
+      Array.prototype.forEach.call(panel.children,function(child){
+        if(child===rail) return;
+        child.setAttribute('aria-hidden',c?'true':'false');
+        if(c) child.setAttribute('inert',''); else child.removeAttribute('inert');
+      });
+      xbtn.setAttribute('aria-expanded',c?'false':'true'); cbtn.setAttribute('aria-expanded',c?'false':'true');
+      if(moveFocus){
+        if(c && panel.classList.contains('zq-panel-closing')) returnFocus=true;
+        else (c?xbtn:cbtn).focus();
+      }
+    }
     // 手机上展开是临时的（浮在正文上面，见 zhiqu-ui.css 的 .zq-panel-host）：不写进桌面上记住的偏好
-    function set(c){ panel.classList.toggle('zq-collapsed',c); if(opts.onToggle) opts.onToggle(c); if(!isMobile()) lss(opts.key, c?'1':'0'); }
+    function set(c,instant){
+      var changed=panel.classList.contains('zq-collapsed')!==c, reversing=panel.classList.contains('zq-panel-closing');
+      stopMotion(); returnFocus=false;
+      if(changed && !instant && isMobile() && !reduced()){
+        if(c) panel.classList.add('zq-panel-closing');
+        else if(!reversing && window.requestAnimationFrame){
+          panel.classList.add('zq-panel-opening');
+          // 在移出 grid 前先固定起点。下一帧淡入浮层；正文的宽度始终不被它挤小。
+          void panel.offsetWidth;
+          openFrame=window.requestAnimationFrame(function(){ openFrame=0; panel.classList.remove('zq-panel-opening'); });
+        }
+      }
+      if(changed && c) expandedScroll=panel.scrollTop || 0;
+      panel.classList.toggle('zq-collapsed',c); access(c);
+      if(changed){
+        if(c) panel.scrollTop=0;
+        else panel.scrollTop=expandedScroll;
+      }
+      if(panel.classList.contains('zq-panel-closing')) endTimer=setTimeout(finishClose,260);
+      if(opts.onToggle) opts.onToggle(c); if(!isMobile()) lss(opts.key, c?'1':'0');
+    }
     cbtn.addEventListener('click',function(e){e.stopPropagation();set(true);});
-    rail.querySelector('.zq-xbtn').addEventListener('click',function(e){e.stopPropagation();set(false);});
+    xbtn.addEventListener('click',function(e){e.stopPropagation();set(false);});
     rail.querySelector('.zq-rlabel').addEventListener('click',function(e){e.stopPropagation();set(false);});
     function remembered(){ var st=ls(opts.key); return st===null?(opts.defaultCollapsed!==false):(st==='1'); }
-    set(isMobile() || remembered());
+    set(isMobile() || remembered(),true);
+    // 初始状态先完成布局，再允许用户触发过渡；刷新不会先播放一次收起动画。
+    void panel.offsetWidth; panel.classList.add('zq-panel-ready');
+    panel.addEventListener('keydown',function(e){ if(e.key==='Escape' && !panel.classList.contains('zq-collapsed')){ e.preventDefault();e.stopPropagation();set(true); } });
+    // inert 在当前 WKWebView 中可用；旧 WebView 或异步新节点意外拿到焦点时仍回到可见开关。
+    panel.addEventListener('focusin',function(e){ if(panel.classList.contains('zq-collapsed') && !rail.contains(e.target)) xbtn.focus(); });
+    if(reduceQuery){
+      var onReduce=function(){ if(reduced()){ clearTimeout(endTimer); finishClose(); stopMotion(); } };
+      if(reduceQuery.addEventListener) reduceQuery.addEventListener('change',onReduce); else if(reduceQuery.addListener) reduceQuery.addListener(onReduce);
+    }
     // 手机上点面板外面就收起（它盖着正文，不收起就只能去找那个小按钮）
     document.addEventListener('mousedown',function(e){
       if(isMobile() && !panel.classList.contains('zq-collapsed') && !panel.contains(e.target)) set(true);
     });
     try {
       var mq=window.matchMedia(MOBILE_QUERY);
-      var onChange=function(){ set(isMobile() || remembered()); };
+      var onChange=function(){ set(isMobile() || remembered(),true); };
       if(mq.addEventListener) mq.addEventListener('change',onChange); else if(mq.addListener) mq.addListener(onChange);
     } catch(e) {}
   }

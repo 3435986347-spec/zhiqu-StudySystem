@@ -6,11 +6,11 @@
   <title>知识 Wiki - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261014-wiki-plan" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261014-wiki-plan">
-  <link rel="manifest" href="manifest.json?v=20261014-wiki-plan">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261014-wiki-vault-images-motion" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261014-wiki-vault-images-motion">
+  <link rel="manifest" href="manifest.json?v=20261014-wiki-vault-images-motion">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261014-wiki-plan">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261014-wiki-vault-images-motion">
 </head>
 <body>
   <div class="zq-app">
@@ -28,11 +28,12 @@
           <div><h1 class="zq-h1">知识 Wiki</h1></div>
           <div class="zq-page-actions">
             <button class="zq-btn-ghost">导入来源</button>
+            <button class="zq-btn-ghost">导入知识库</button>
             <button class="zq-btn-ghost">来源记录</button>
             <button style="height:32px; padding:0 14px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:var(--zq-fs-sm); font-weight:var(--zq-fw-medium); cursor:pointer;">待合入变更</button>
             <button class="zq-btn-ghost">健康检查</button>
             <button class="zq-btn-ghost">图谱</button>
-            <button class="zq-btn-ghost">导出</button>
+            <button class="zq-btn-ghost">导出 ZIP</button>
             <button class="zq-btn">新建知识页</button>
           </div>
         </header>
@@ -108,6 +109,7 @@
                   <button type="button" data-wiki-cmd="underline" class="zq-tbtn" title="下划线" aria-label="下划线"><span data-zq-icon="underline"></span></button>
                   <button type="button" data-wiki-cmd="code" class="zq-tbtn" title="行内代码（先选中文字）" aria-label="行内代码"><span data-zq-icon="code"></span></button>
                   <button type="button" data-wiki-cmd="link" class="zq-tbtn" title="链接" aria-label="链接"><span data-zq-icon="link"></span></button>
+                  <button type="button" data-wiki-cmd="image" class="zq-tbtn" title="插入图片（也可粘贴或拖入）" aria-label="插入图片"><span data-zq-icon="image"></span></button>
                   <button type="button" data-wiki-cmd="math" class="zq-tbtn" title="公式块（LaTeX）" aria-label="公式块"><span data-zq-icon="sigma"></span></button>
                   <button type="button" data-wiki-cmd="ref" class="zq-tbtn" title="参考链接（显示标题 + 地址）" aria-label="参考链接"><span data-zq-icon="book-marked"></span></button>
                   <button type="button" data-wiki-cmd="source" class="zq-tbtn" id="zq-wiki-source" title="看 Markdown 源码 / 回到排版" aria-label="源码" aria-pressed="false"><span data-zq-icon="file-code"></span></button>
@@ -127,7 +129,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261014-wiki-plan"></script>
-  <script src="assets/zhiqu-api.js?v=20261014-wiki-plan"></script>
+  <script src="assets/zhiqu-ui.js?v=20261014-wiki-vault-images-motion"></script>
+  <script src="assets/zhiqu-api.js?v=20261014-wiki-vault-images-motion"></script>
 </body>
 </html>

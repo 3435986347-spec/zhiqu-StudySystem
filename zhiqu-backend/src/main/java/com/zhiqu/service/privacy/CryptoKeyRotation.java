@@ -82,6 +82,7 @@ public final class CryptoKeyRotation {
             new TableSpec("ai_model_config", "encrypted_api_key"),
             new TableSpec("device_push_token", "encrypted_token"),
             new TableSpec("knowledge_source", "encrypted_content"),
+            new TableSpec("knowledge_attachment", "encrypted_data"),
             new TableSpec("user_knowledge_page", "encrypted_content"),
             new TableSpec("user_knowledge_revision", "encrypted_content"),
             new TableSpec("user_ai_memory", "encrypted_memory_text"),

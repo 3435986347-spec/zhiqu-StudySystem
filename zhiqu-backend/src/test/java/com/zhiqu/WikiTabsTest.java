@@ -19,8 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>行为判据跑在 node 上（{@code src/test/resources/js/wiki-tabs-check.js}），直接加载
  * {@code assets/pages/knowledge-wiki.js} 里发布的那份实现 —— 在 Java 里重写一份状态机就成了
- * 「测试一个副本」。这里的 Java 判据只管两件 node 侧看不到的事：<b>每个打开入口有没有
- * 用对 opts</b>，以及页面上那几个容器还在不在。
+ * 「测试一个副本」。链接手势另由 Node 直接运行发布的事件处理器；Java 侧核对页面容器和入口。
  */
 class WikiTabsTest {
 
@@ -95,15 +94,9 @@ class WikiTabsTest {
     void 打开入口要支持新标签() throws Exception {
         String js = SourceText.pageModule("knowledge-wiki.js");
         assertTrue(js.contains("newTab: e.metaKey || e.ctrlKey"),
-                "没有一处支持 ⌘/Ctrl+点击开新标签 —— 有标签栏却只能从 + 按钮开，"
-                        + "等于少了最常用的那个手势");
-
-        Matcher m = Pattern.compile("newTab: e\\.metaKey \\|\\| e\\.ctrlKey").matcher(js);
-        int n = 0;
-        while (m.find()) n++;
-        assertTrue(n >= 2,
-                "只有 " + n + " 处支持 ⌘/Ctrl+点击。目录项和正文里的 [[双链]] 都要支持 —— "
-                        + "只做一半的话用户会以为另一处坏了。");
+                "目录项没有把 ⌘/Ctrl+点击作为新标签打开手势");
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/wiki-link-routing-check.js"), WIKI_JS),
+                "正文 [[双链]] 的点击手势没有正确路由到标签页");
     }
 
     /**

@@ -140,7 +140,9 @@ public final class NodeRunner {
                             + "用 -Dzhiqu.nodePath=/绝对/路径 指过来，或者 -Dzhiqu.skipNodeTests=true 把跳过写明白。");
             return false;
         }
-        java.util.List<String> cmd = new java.util.ArrayList<>(java.util.List.of(node, "--test"));
+        // Newer Node versions may default to the human-readable spec reporter. The parser
+        // below needs TAP, so request it explicitly instead of relying on the runner default.
+        java.util.List<String> cmd = new java.util.ArrayList<>(java.util.List.of(node, "--test", "--test-reporter=tap"));
         cmd.addAll(files);
         Finished r = execute(cmd, workDir, timeoutSeconds);
         String out = r.out();

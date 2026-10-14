@@ -427,25 +427,34 @@ option:checked{background:var(--zq-tint);color:var(--zq-text);font-weight:var(--
 .zq-pop .zq-modes{display:flex;gap:8px;padding:2px 4px;}
 .zq-pop .zq-modes .zq-m{flex:1;height:30px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);color:var(--zq-text2);font:var(--zq-fw-regular) var(--zq-fs-xs)/1 var(--zq-fontBody);cursor:pointer;}
 .zq-pop .zq-modes .zq-m.on{border-color:var(--zq-text);color:var(--zq-text);background:var(--zq-card-soft);}
-[data-zq-collapse]{position:relative;}
+[data-zq-collapse]{--zq-panel-expanded-width:210px;position:relative;display:flex;flex-direction:column;overflow-y:auto!important;}
+/* 第六十四轮：宽度连续变化，内容短暂淡出；保留原面板尺寸，不从 auto 或 display:none 瞬间跳变。
+   ready 在初始布局完成后才加，首次打开 / 刷新直接呈现记住的状态。 */
+[data-zq-collapse].zq-panel-ready{width:var(--zq-panel-expanded-width);overflow-x:hidden!important;transition:flex-basis .24s cubic-bezier(.22,.61,.36,1),width .24s cubic-bezier(.22,.61,.36,1),padding .24s ease,opacity .18s ease,transform .24s cubic-bezier(.22,.61,.36,1);}
+[data-zq-collapse]>*:not(.zq-rail){opacity:1;transform:translateX(0);transition:opacity .16s ease,transform .24s ease,visibility 0s;}
 /* 两侧面板的收起 / 展开按钮只是图标（第四十三轮：AI 助手统一成一种底色之后，白底描边的小方块很跳） */
-.zq-cbtn{position:absolute;top:10px;right:10px;z-index:6;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;line-height:1;cursor:pointer;padding:0;}
+/* 按钮先排在内容前面，再贴住面板的滚动口；负下边距让它仍浮在标题右侧，不挤动原布局。 */
+.zq-cbtn{position:sticky;top:10px;align-self:flex-end;order:-1;flex:0 0 24px;margin:10px 10px -34px 0;z-index:6;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;line-height:1;cursor:pointer;padding:0;}
 .zq-cbtn:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
-/* 展开的面板第一行（标题那一行）右边给收起按钮让位（第四十五轮）：按钮是绝对定位的，原来 Wiki 目录的「4 页」叠在它底下，
+/* 展开的面板第一行（标题那一行）右边给收起按钮让位（第四十五轮）：原来 Wiki 目录的「4 页」叠在按钮底下，
    AI 助手那边靠「新建」按钮自己写 margin-right 躲开。setupPanels 把竖条插在最前面，所以紧跟竖条的就是标题那一行 */
 [data-zq-collapse]>.zq-rail+*{padding-right:44px!important;}
 /* 悬停提示（第四十五轮，zhiqu-ui.js 的 setupTips）：反色的小签，不挡鼠标 */
 .zq-tip{position:fixed;left:0;top:0;z-index:3000;max-width:280px;padding:5px 9px;border-radius:var(--zq-rs);background:var(--zq-text);color:var(--zq-bg);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);line-height:1.45;overflow-wrap:anywhere;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .1s ease;}
 .zq-tip.is-on{opacity:1;visibility:visible;}
 [data-zq-collapse].zq-collapsed{flex:0 0 44px!important;width:44px!important;min-width:44px!important;padding:10px 0!important;overflow:hidden!important;align-items:center;}
-.zq-collapsed>*:not(.zq-rail){display:none!important;}
-.zq-rail{display:none;}
-.zq-collapsed .zq-rail{display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:2px;}
+[data-zq-collapse].zq-collapsed>*:not(.zq-rail){opacity:0;visibility:hidden;pointer-events:none;transform:translateX(-8px);transition:opacity .12s ease,transform .24s ease,visibility 0s .24s;}
+[data-zq-collapse="right"].zq-collapsed>*:not(.zq-rail){transform:translateX(8px);}
+.zq-rail{position:absolute;left:0;right:0;top:10px;display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:2px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s ease,visibility 0s .12s;}
+.zq-collapsed .zq-rail{opacity:1;visibility:visible;pointer-events:auto;transition:opacity .16s ease .08s,visibility 0s;}
 .zq-rail .zq-xbtn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;cursor:pointer;padding:0;}
 .zq-rail .zq-xbtn:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
 .zq-cbtn:focus-visible,.zq-rail .zq-xbtn:focus-visible{outline:none;box-shadow:var(--zq-focus);}
 /* 桌面上收起的竖条只有图标按钮（第四十四轮；原来竖排着面板的名字），名字在按钮的提示里；手机上收起的面板是页签，字在 @media 里露出来 */
 .zq-rail .zq-rlabel{display:none;cursor:pointer;font:var(--zq-fw-regular) var(--zq-fs-xs)/1 var(--zq-fontBody);color:var(--zq-text3);}
+@media (prefers-reduced-motion:reduce){
+  [data-zq-collapse].zq-panel-ready,[data-zq-collapse]>*:not(.zq-rail),[data-zq-collapse].zq-collapsed>*:not(.zq-rail),.zq-rail,.zq-collapsed .zq-rail{transition:none!important;}
+}
 
 /* 首屏遮罩：只有后台页和旧地址的跳转页还用（zhiqu-ui.js 的 holdsUntilBoot），接口渲染完成后由 zhiqu-api.js 揭示 */
 html.zq-booting .zq-main{opacity:0;}
@@ -680,6 +689,9 @@ body.zq-modal-open{overflow:hidden;}
 .zq-md hr{margin:16px 0;border:none;border-top:1px solid var(--zq-border-soft);}
 .zq-md a[href]{color:var(--zq-primary);text-decoration:underline;text-underline-offset:3px;}
 .zq-md a[data-wikilink]{color:var(--zq-primary);text-decoration:underline;text-decoration-color:var(--zq-text3);text-underline-offset:3px;cursor:pointer;}
+.zq-md-image{display:inline-block;max-width:100%;vertical-align:middle;}
+.zq-md-image img{display:block;max-width:100%;height:auto;border-radius:var(--zq-rs);}
+.zq-md-image-missing{padding:5px 8px;border:1px dashed var(--zq-border);border-radius:var(--zq-rs);color:var(--zq-text3);font-size:var(--zq-fs-xs);}
 /* 勾选项：勾上了就划掉、变淡 —— 按 input:checked 画（原来渲染时写死在文字上，点一下勾选框样子不跟着变） */
 .zq-task-row{display:flex;align-items:flex-start;gap:9px;margin:7px 0;}
 .zq-task-row>input[type="checkbox"]{flex:none;margin-top:5px;accent-color:var(--zq-primary);}
@@ -716,6 +728,16 @@ body.zq-modal-open{overflow:hidden;}
 .zq-wiki-tools .zq-select{height:28px;min-width:92px;padding:0 8px;font-size:var(--zq-fs-xs);}
 .zq-wiki-tools .zq-tbtn{min-width:28px;padding:0 6px;}
 .zq-wiki-tools .zq-tbtn[aria-pressed="true"]{background:var(--zq-card);color:var(--zq-text);box-shadow:var(--zq-sh1);}
+/* ZIP 导入：把原生文件框藏在可操作的按钮后，文件名在窄窗口里保持可读。 */
+.zq-vault-file{display:flex;align-items:center;gap:12px;min-width:0;padding:10px;border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card-soft);}
+.zq-vault-file #zq-vault-file{display:none;}
+.zq-vault-file #zq-vault-pick{flex:none;height:36px;border-color:var(--zq-primary);border-radius:8px;background:var(--zq-primary);color:var(--zq-on-primary);font-weight:var(--zq-fw-medium);box-shadow:var(--zq-sh1);transition:background .16s ease,border-color .16s ease,transform .16s ease,box-shadow .16s ease;}
+.zq-vault-file #zq-vault-pick:hover{border-color:var(--zq-primary-dark);background:var(--zq-primary-dark);box-shadow:var(--zq-sh2);transform:translateY(-1px);}
+.zq-vault-file #zq-vault-pick:active{transform:translateY(0);box-shadow:var(--zq-sh1);}
+.zq-vault-file #zq-vault-pick:focus-visible{outline:none;box-shadow:var(--zq-focus);}
+.zq-vault-file #zq-vault-selected{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--zq-text2);font-size:var(--zq-fs-sm);}
+@media (max-width:460px){.zq-vault-file{align-items:stretch;flex-direction:column;}.zq-vault-file #zq-vault-pick{align-self:flex-start;}.zq-vault-file #zq-vault-selected{max-width:100%;}}
+@media (prefers-reduced-motion:reduce){.zq-vault-file #zq-vault-pick{transition:none;}.zq-vault-file #zq-vault-pick:hover{transform:none;}}
 
 /* ── 页面里常用的几样小件（第五十六轮在例行计划页起头，第五十七轮参考计划、专注统计也用，改成通用的名字） ──────────
    卡片头（标题 + 右边一句小字）、弹窗里的勾选列表、一行勾选框 + 说明、矮一点的多行框、分段放在字段里不撑满。 */
@@ -971,17 +993,21 @@ html.zq-signed-out .zq-mini-out{display:block;}
      手机上两条竖条加间距吃掉将近 100px，320px 宽时 Wiki 正文只剩 82px、工具栏被切掉 163px；展开一侧聊天区只剩 30px。
      所以手机上：收起的面板变成正文上方的一排两个页签，正文拿满宽；展开的面板浮在正文上面，不挤它。
      .zq-panel-host 由 zhiqu-ui.js 的 setupPanels 加在面板的父元素上。 */
-  .zq-panel-host{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:8px!important;position:relative;margin:0!important;}
+  .zq-panel-host{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:36px minmax(0,1fr);gap:8px!important;position:relative;margin:0!important;}
   .zq-panel-host>:not([data-zq-collapse]){grid-column:1 / -1;grid-row:2;min-width:0;}
   .zq-panel-host>[data-zq-collapse="left"]{grid-column:1;grid-row:1;}
   .zq-panel-host>[data-zq-collapse="right"]{grid-column:2;grid-row:1;}
   .zq-panel-host>[data-zq-collapse].zq-collapsed{width:auto!important;min-width:0!important;padding:4px 8px!important;align-items:stretch;}
-  .zq-panel-host>.zq-collapsed .zq-rail{flex-direction:row;gap:8px;padding-top:0;}
+  .zq-panel-host>.zq-collapsed .zq-rail{position:static;flex-direction:row;gap:8px;padding-top:0;}
+  .zq-panel-host>[data-zq-collapse].zq-collapsed:not(.zq-panel-closing)>*:not(.zq-rail){display:none!important;}
   .zq-panel-host>[data-zq-collapse="right"].zq-collapsed .zq-rail{flex-direction:row-reverse;}
   .zq-panel-host>.zq-collapsed .zq-rlabel{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
-  .zq-panel-host>[data-zq-collapse]:not(.zq-collapsed){position:absolute!important;top:0;bottom:0;z-index:8;width:min(300px,88%)!important;box-shadow:0 8px 30px rgba(0,0,0,.28)!important;}
-  .zq-panel-host>[data-zq-collapse="left"]:not(.zq-collapsed){left:0;}
-  .zq-panel-host>[data-zq-collapse="right"]:not(.zq-collapsed){right:0;}
+  .zq-panel-host>[data-zq-collapse]:not(.zq-collapsed),.zq-panel-host>[data-zq-collapse].zq-panel-closing{position:absolute!important;top:0;bottom:0;z-index:8;width:min(300px,88%)!important;box-shadow:0 8px 30px rgba(0,0,0,.28)!important;transition:opacity .18s ease,transform .24s cubic-bezier(.22,.61,.36,1);}
+  .zq-panel-host>[data-zq-collapse="left"]:not(.zq-collapsed),.zq-panel-host>[data-zq-collapse="left"].zq-panel-closing{left:0;}
+  .zq-panel-host>[data-zq-collapse="right"]:not(.zq-collapsed),.zq-panel-host>[data-zq-collapse="right"].zq-panel-closing{right:0;}
+  .zq-panel-host>[data-zq-collapse].zq-panel-opening,.zq-panel-host>[data-zq-collapse].zq-panel-closing{opacity:0;transform:translateX(-12px);}
+  .zq-panel-host>[data-zq-collapse="right"].zq-panel-opening,.zq-panel-host>[data-zq-collapse="right"].zq-panel-closing{transform:translateX(12px);}
+  .zq-panel-host>.zq-panel-closing .zq-rail{visibility:hidden;}
 
   /* AI 输入区（第四十四轮起输入框本来就单独一行）：工具那一条放不下 —— 三个开关只留图标（名字在 aria-label 里），模型窄一点 */
   .zq-composer-wrap{padding:4px 0 10px;}

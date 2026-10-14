@@ -69,7 +69,7 @@ class RequestResilienceTest {
     }
 
     @Test
-    @DisplayName("幂等键交给 request()：页面上自己带键的只有套用参考计划（一次打开 = 一次套用）和番茄钟的待补记（一条一个键，存在设备上）—— 每次点击现生成一个键，回应丢了之后再点就是新的一次，建出两份")
+    @DisplayName("幂等键交给 request()；套用参考计划、番茄钟待补记和 ZIP 确认导入持有跨重试稳定键")
     void 键交给request() throws Exception {
         Path root = Path.of("src/main/resources/static");
         // assets 下的脚本一个不落（第三十轮起拆出去的模块也是活的前端：原来只列壳和 zhiqu-ui.js，模块里直接 fetch 写操作 / 现生成键都看不见）
@@ -91,8 +91,9 @@ class RequestResilienceTest {
         }
         // 按文件名排了再比：扫的是整个 assets 目录，先后跟着目录结构走，不是这条判据关心的
         assertTrue(found.stream().sorted().toList().equals(List.of(
+                        "knowledge-wiki.js：{ 'Idempotency-Key': confirmedKey }",
                         "shared-plans.js：{ 'Idempotency-Key': applyKey + ':' + startDate.trim() }",
                         "zhiqu-api.js：{ 'Idempotency-Key': x.key }")),
-                "自己带键的写请求应当只有番茄钟的待补记和套用参考计划，实际：\n" + String.join("\n", found));
+                "自己带键的写请求应当只有 ZIP 确认导入、套用参考计划和番茄钟待补记，实际：\n" + String.join("\n", found));
     }
 }

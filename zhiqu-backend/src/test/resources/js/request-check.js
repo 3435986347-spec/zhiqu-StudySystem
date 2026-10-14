@@ -60,7 +60,7 @@ const fakeDocument = {
 };
 const fakeButton = () => { const b = { attrs: {}, setAttribute(k, v) { b.attrs[k] = v; }, removeAttribute(k) { delete b.attrs[k]; } }; b.closest = () => b; return b; };
 const mod = new Function('API', 'token', 'redirectToLogin', 'isAuthFailure', 'fetch', 'window', 'document',
-  reqSrc + '\n' + sseSrc + '\n' + streamSrc + '\n' + onlineSrc + '\nreturn { request, parseSseFrame, readWithIdleTimeout, streamAiChat, whenOnline };')(
+  reqSrc + '\n' + sseSrc + '\n' + streamSrc + '\n' + onlineSrc + '\nreturn { request, download, parseSseFrame, readWithIdleTimeout, streamAiChat, whenOnline };')(
   env.API, env.token, env.redirectToLogin, env.isAuthFailure, env.fetch, fakeWindow, fakeDocument);
 
 const res = (status, body) => Promise.resolve({ status, text: () => Promise.resolve(body) });
@@ -125,6 +125,17 @@ async function rejects(p) { try { await p; return null; } catch (e) { return e; 
   redirected = 0;
   const e9 = await rejects(mod.request('/x', { method: 'GET' }));
   judge('401 跳登录、不重试', e9 && redirected === 1 && calls.length === 1);
+
+  // A gateway can return a malformed RFC 5987 filename; the body is still usable.
+  const payload = new Blob(['file bytes'], { type: 'application/octet-stream' });
+  script(() => Promise.resolve({ status: 200, ok: true, headers: { get(name) {
+    return name === 'Content-Type' ? 'application/octet-stream'
+      : name === 'Content-Disposition' ? 'attachment; filename="safe.txt"; filename*=UTF-8\'\'bad%ZZ' : '';
+  } }, blob: () => Promise.resolve(payload) }));
+  const malformedName = await mod.download('/knowledge/attachments/3').catch(error => error);
+  judge('损坏的 UTF-8 下载文件名退回普通文件名，不能把成功下载当网络故障重试',
+    malformedName && malformedName.blob === payload && malformedName.filename === 'safe.txt' && calls.length === 1,
+    JSON.stringify({ result: malformedName && malformedName.message, calls: calls.length }));
 
   // ── 同一个写请求还没回来又发一次（双击「创建」、连按回车、等不及又点）—— 第十四轮 ──
   const deferred = () => { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; };

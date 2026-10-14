@@ -244,12 +244,13 @@ class MobileLayoutTest {
         String make = js.substring(a, b);
         String setup = js.substring(b, js.indexOf("\n  }", b));
         // 两处：打开页面时一次，转屏 / 拖窗口跨过断点时一次。只数「出现过」的话删掉其中一处照样绿（扰动照出来的）
-        int calls = make.split(Pattern.quote("set(isMobile() || remembered())"), -1).length - 1;
+        // 第六十四轮初始化和断点切换改为 instant=true，避免进入页面时先播放收起动画；判据仍要求两处都以手机状态决定。
+        int calls = make.split(Pattern.quote("set(isMobile() || remembered(),true)"), -1).length - 1;
         assertEquals(2, calls, "手机上面板没有默认收起（打开页面时、跨过断点时各一处，现在 " + calls + " 处）—— "
                 + "桌面上记住的「展开」会在手机上把正文挤到 30px");
         assertTrue(make.contains("if(!isMobile()) lss(opts.key"), "手机上的展开 / 收起写进了桌面偏好");
         assertTrue(setup.contains("classList.add('zq-panel-host')"), "setupPanels 没给面板的父元素加 zq-panel-host —— 手机样式认不出这一排面板");
-        assertTrue(css().contains(".zq-panel-host>[data-zq-collapse]:not(.zq-collapsed){position:absolute!important"),
+        assertTrue(css().contains(".zq-panel-host>[data-zq-collapse]:not(.zq-collapsed),.zq-panel-host>[data-zq-collapse].zq-panel-closing{position:absolute!important"),
                 "手机上展开的面板没有浮在正文上面");
     }
 

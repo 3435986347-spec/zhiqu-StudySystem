@@ -22,6 +22,7 @@ async function bootKnowledge() {
     var t = b.textContent;
     if (/新建知识页/.test(t)) b.onclick = createWikiPage;
     else if (/导入来源/.test(t)) b.onclick = importWikiSource;
+    else if (/导入知识库/.test(t)) b.onclick = importWikiVault;
     else if (/来源记录/.test(t)) b.onclick = function () { return showWikiSources(); };
     else if (/健康检查/.test(t)) b.onclick = runWikiLint;
     else if (/图谱/.test(t)) b.onclick = showWikiGraph;
@@ -436,21 +437,39 @@ function wireWikiTabShortcuts() {
 }
 
 function wireWikiLinks(doc) {
+  async function follow(a, newTab) {
+    var spec = (a.getAttribute('data-wikilink') || '').split('|')[0];
+    var hash = spec.indexOf('#');
+    var title = (hash < 0 ? spec : spec.slice(0, hash)).trim();
+    var heading = hash < 0 ? '' : spec.slice(hash + 1).trim();
+    var target = (state.wikiPages || []).find(function (x) { return (x.title || '') === title; });
+    if (!target) { toast('页面不存在：' + title, 'error'); return; }
+    await paintWikiDoc(target, { newTab: newTab });
+    if (heading && state.wikiCur === target) {
+      try { heading = decodeURIComponent(heading); } catch (ignored) {}
+      var el = $all('h1,h2,h3,h4', doc).find(function (x) { return (x.textContent || '').trim() === heading; });
+      if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  }
   $all('[data-wikilink]', doc).forEach(function (a) {
+    // Markdown 的 [[双链]] 没有 href；让它能由键盘聚焦、回车打开。
+    a.tabIndex = 0;
+    a.setAttribute('role', 'link');
+    a.onkeydown = function (e) {
+      if (doc.dataset.editing === '1' || e.key !== 'Enter' || e.isComposing || e.repeat) return;
+      e.preventDefault(); e.stopPropagation();
+      follow(a, e.metaKey || e.ctrlKey);
+    };
     a.onclick = function (e) {
       if (doc.dataset.editing === '1') return;
       e.preventDefault();
       e.stopPropagation(); // 阻止冒泡到正文容器，否则跳转后的目标页会立刻进入编辑态
-      var t = a.getAttribute('data-wikilink');
-      var target = (state.wikiPages || []).find(function (x) { return (x.title || '') === t; });
-      if (target) paintWikiDoc(target, { newTab: e.metaKey || e.ctrlKey }); else toast('页面不存在：' + t, 'error');
+      follow(a, e.metaKey || e.ctrlKey);
     };
     a.onauxclick = function (e) {
       if (e.button !== 1 || doc.dataset.editing === '1') return;
       e.preventDefault(); e.stopPropagation();
-      var t = a.getAttribute('data-wikilink');
-      var target = (state.wikiPages || []).find(function (x) { return (x.title || '') === t; });
-      if (target) paintWikiDoc(target, { newTab: true });
+      follow(a, true);
     };
   });
 }
@@ -468,6 +487,23 @@ function wireWikiEditor() {
     if (dup) { var cs = getComputedStyle(dup); doc.scrollTop += dup.getBoundingClientRect().height + (parseFloat(cs.marginBottom) || 0); }
     caretAt(e.clientX, e.clientY);
   };
+  doc.addEventListener('paste', function (e) {
+    var files = Array.from(e.clipboardData && e.clipboardData.files || []);
+    var image = files.find(isWikiImageFile);
+    if (!image || !state.wikiCur) return;
+    e.preventDefault();
+    insertWikiImage(image);
+  });
+  doc.addEventListener('dragover', function (e) {
+    if (Array.from(e.dataTransfer && e.dataTransfer.items || []).some(function (item) { return item.kind === 'file'; })) e.preventDefault();
+  });
+  doc.addEventListener('drop', function (e) {
+    var image = Array.from(e.dataTransfer && e.dataTransfer.files || []).find(isWikiImageFile);
+    if (!image || !state.wikiCur) return;
+    e.preventDefault();
+    if (doc.dataset.source !== '1') caretAt(e.clientX, e.clientY);
+    insertWikiImage(image);
+  });
   // 右键菜单：编辑本页 / 删除本页；编辑态不拦截（保留浏览器原生菜单做粘贴等操作）
   doc.oncontextmenu = function (e) {
     if (doc.dataset.editing === '1' || !state.wikiCur) return;
@@ -487,6 +523,7 @@ function wireWikiEditor() {
   });
   var section = doc.closest('section'); if (!section) return;
   $all('[data-wiki-cmd]', section).forEach(function (b) {
+    if (b.getAttribute('data-wiki-cmd') === 'image') b.onmousedown = function (e) { e.preventDefault(); };
     b.onclick = function (e) { e.preventDefault(); wikiToolbar(b.getAttribute('data-wiki-cmd')); };
   });
   var blockSel = $('#zq-wiki-block', section);
@@ -544,16 +581,84 @@ function caretAt(x, y) {
   if (!r) return;
   var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
 }
+function isWikiImageFile(file) {
+  return !!file && (/^image\/(png|jpeg|gif|webp)$/i.test(file.type || '') || /\.(png|jpe?g|gif|webp)$/i.test(file.name || ''));
+}
+function chooseWikiImage() {
+  if (!state.wikiCur) return;
+  var picker = document.createElement('input');
+  picker.type = 'file'; picker.accept = 'image/png,image/jpeg,image/gif,image/webp';
+  picker.style.display = 'none';
+  document.body.appendChild(picker);
+  picker.onchange = function () {
+    var file = picker.files && picker.files[0];
+    picker.remove();
+    if (file) insertWikiImage(file);
+  };
+  picker.oncancel = function () { picker.remove(); };
+  picker.click();
+}
+var wikiEditSession = 0;
+function insertWikiImage(file) {
+  var doc = $('#zq-doc'), page = state.wikiCur;
+  if (!doc || !page || !isWikiImageFile(file)) return toast('请选择 PNG、JPG、GIF 或 WebP 图片', 'error');
+  if (state.wikiImageUploading) return toast('上一张图片还在上传', 'error');
+  ensureWikiEditing();
+  var editSession = doc.dataset.wikiEditSession;
+  var source = doc.dataset.source === '1';
+  var ta = source ? $('#zq-src-ta') : null;
+  var offset = ta ? { start: ta.selectionStart, end: ta.selectionEnd } : null;
+  var sel = window.getSelection();
+  var range = !source && sel.rangeCount && doc.contains(sel.getRangeAt(0).commonAncestorContainer)
+    ? sel.getRangeAt(0).cloneRange() : null;
+  state.wikiImageUploading = true;
+  return safe('插入图片', async function () {
+    var uploaded = await api.upload('/knowledge/images', file);
+    if (!uploaded || !/^\/api\/knowledge\/images\/[1-9]\d*$/.test(uploaded.url || '')) throw new Error('图片上传结果无效');
+    if (state.wikiCur !== page || doc.dataset.editing !== '1' || doc.dataset.wikiEditSession !== editSession
+        || (doc.dataset.source === '1') !== source) {
+      toast('图片已上传；当前页面已切换，请回原页重新插入', 'error');
+      return;
+    }
+    var name = String(uploaded.name || file.name || '图片').replace(/[|\]\r\n]/g, ' ');
+    var markdown = '![[' + uploaded.url + '|' + name + ']]';
+    if (source && ta && ta.isConnected) {
+      ta.setRangeText(markdown, offset.start, offset.end, 'end');
+      ta.focus();
+    } else {
+      var holder = document.createElement('div');
+      holder.innerHTML = renderMarkdown(markdown);
+      var image = holder.querySelector('[data-image-markdown]');
+      if (!image) throw new Error('图片插入失败');
+      doc.focus();
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      if (!range || !doc.contains(range.commonAncestorContainer)) {
+        range = document.createRange(); range.selectNodeContents(doc); range.collapse(false);
+      }
+      selection.addRange(range);
+      if (!document.execCommand('insertHTML', false, image.outerHTML + '&nbsp;')) {
+        range.deleteContents();
+        var fragment = range.createContextualFragment(image.outerHTML + '&nbsp;');
+        range.insertNode(fragment);
+      }
+      renderMathIn(doc);
+    }
+    doc.dispatchEvent(new Event('input', { bubbles: true }));
+    toast('图片已加入当前草稿，保存页面后生效');
+  }).finally(function () { state.wikiImageUploading = false; });
+}
 function ensureWikiEditing() { var doc = $('#zq-doc'); if (doc && doc.dataset.editing !== '1') enterWikiEdit(); }
 function enterWikiEdit() {
   var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || doc.dataset.editing === '1') return;
   wireWikiDrafts(doc);
-  doc.dataset.editing = '1'; doc.dataset.source = '0';
+  doc.dataset.editing = '1'; doc.dataset.source = '0'; doc.dataset.wikiEditSession = String(++wikiEditSession);
   doc.contentEditable = 'true'; doc.style.outline = 'none';
   doc.focus();
   showWikiActionBar();
 }
 function wikiToolbar(cmd) {
+  if (cmd === 'image') { chooseWikiImage(); return; }
   ensureWikiEditing();
   var doc = $('#zq-doc');
   if (doc.dataset.source === '1' && cmd !== 'source') return;
@@ -697,21 +802,39 @@ async function saveWikiEdit() {
     toast('已保存');
   });
 }
-// 导出整个知识 Wiki 为 Obsidian 风格 Markdown zip；优先让用户选保存位置
+// 一个 ZIP 根目录下放笔记、子目录和原始附件；导入时能还原关系。
 async function exportWikiMarkdown() {
+  var currentAtOpen = state.wikiCur;
+  var selected = await new Promise(function (resolve) {
+    var done = false;
+    openModal({
+      title: '导出知识库 ZIP',
+      bodyHtml: '<p style="margin:0 0 14px;font-size:13px;line-height:1.6;color:var(--zq-text2);">Markdown 笔记、目录、图片与附件会放进同一个 wiki 文件夹。</p>'
+        + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" data-vault-export="cancel">取消</button>'
+        + (currentAtOpen ? '<button type="button" class="zq-btn-ghost" data-vault-export="current">当前页及子页</button>' : '')
+        + '<button type="button" class="zq-btn" data-vault-export="all">整个知识库</button></div>',
+      onMount: function (body, handle) {
+        $all('[data-vault-export]', body).forEach(function (button) {
+          button.onclick = function () {
+            if (done) return;
+            done = true;
+            var choice = button.dataset.vaultExport;
+            handle.close();
+            resolve(choice);
+          };
+        });
+      },
+      onClose: function () { if (!done) { done = true; resolve('cancel'); } }
+    });
+  });
+  if (selected === 'cancel') return;
   var n = notice('正在打包知识 Wiki…');
   try {
-    var headers = {}; if (token()) headers.Authorization = 'Bearer ' + token();
-    var res = await fetch(API + '/knowledge/export/markdown', { headers: headers, credentials: 'same-origin' });
-    var cd = res.headers.get('Content-Disposition') || '';
-    var isAttachment = /attachment/i.test(cd);
-    var ct = res.headers.get('Content-Type') || '';
-    if (!res.ok || (!isAttachment && ct.indexOf('application/json') >= 0)) {
-      var j = null; try { j = await res.json(); } catch (e) {}
-      throw new Error((j && j.message) || ('导出失败(' + res.status + ')'));
-    }
-    var blob = await res.blob();
-    var fname = 'zhiqu-wiki-markdown.zip';
+    var path = '/knowledge/vault/export.zip' + (selected === 'current'
+      ? '?rootPageId=' + encodeURIComponent(currentAtOpen.id) : '');
+    var downloaded = await api.download(path);
+    var blob = downloaded.blob;
+    var fname = selected === 'current' ? 'zhiqu-wiki-page.zip' : 'zhiqu-wiki-vault.zip';
     if (window.showSaveFilePicker) {
       try {
         var handle = await window.showSaveFilePicker({ suggestedName: fname, types: [{ description: 'Zip 压缩包', accept: { 'application/zip': ['.zip'] } }] });
@@ -731,6 +854,113 @@ async function exportWikiMarkdown() {
   } catch (e) {
     n.update('导出失败：' + (e.message || '未知错误'), { error: true });
   }
+}
+function importWikiVault() {
+  var current = state.wikiCur;
+  var closed = false, selectedFile = null, preview = null, confirmedKey = null, busy = false, selectionVersion = 0;
+  openModal({
+    title: '导入知识库 ZIP',
+    width: '620px',
+    bodyHtml: '<p style="margin:0 0 14px;font-size:13px;line-height:1.6;color:var(--zq-text2);">选择 Obsidian 风格 ZIP。先预览目录、双链、图片和重名处理，确认后才新增页面；现有页面不会被覆盖。</p>'
+      + '<div class="zq-field"><label class="zq-label" for="zq-vault-pick">ZIP 文件</label>'
+      + '<div class="zq-vault-file"><input id="zq-vault-file" type="file" accept=".zip,application/zip" hidden>'
+      + '<button type="button" class="zq-btn-ghost" id="zq-vault-pick" aria-describedby="zq-vault-selected">' + icon('paperclip') + ' 选择 ZIP 文件</button>'
+      + '<span id="zq-vault-selected" aria-live="polite">尚未选择文件</span></div></div>'
+      + '<div class="zq-field"><label class="zq-label" for="zq-vault-parent">导入位置</label><select id="zq-vault-parent" class="zq-select"><option value="root">知识库根目录</option>'
+      + (current && !isSystemWikiPage(current) ? '<option value="current">当前页「' + esc(current.title) + '」下面</option>' : '')
+      + '</select></div>'
+      + '<div id="zq-vault-preview" style="max-height:38vh;overflow:auto;margin:12px 0;font-size:12.5px;line-height:1.6;color:var(--zq-text2);"></div>'
+      + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-vault-cancel">取消</button>'
+      + '<button type="button" class="zq-btn-ghost" id="zq-vault-check">预览 ZIP</button>'
+      + '<button type="button" class="zq-btn" id="zq-vault-confirm" disabled>确认导入</button></div>',
+    onMount: function (body, handle) {
+      var fileInput = $('#zq-vault-file', body), parentInput = $('#zq-vault-parent', body);
+      var output = $('#zq-vault-preview', body), check = $('#zq-vault-check', body), confirm = $('#zq-vault-confirm', body);
+      var fileLabel = $('#zq-vault-selected', body), pick = $('#zq-vault-pick', body);
+      $('#zq-vault-cancel', body).onclick = handle.close;
+      function invalidate() {
+        selectionVersion++;
+        preview = null; confirmedKey = null;
+        confirm.disabled = true;
+        output.textContent = '';
+      }
+      pick.onclick = function () { fileInput.click(); };
+      fileInput.onchange = function () {
+        selectedFile = fileInput.files && fileInput.files[0]; invalidate();
+        fileLabel.textContent = selectedFile ? selectedFile.name + ' · ' + (selectedFile.size / 1024 / 1024).toFixed(2) + ' MiB' : '尚未选择文件';
+      };
+      parentInput.onchange = invalidate;
+      async function fields() {
+        if (parentInput.value !== 'current') return {};
+        if (!current) throw new Error('当前页已经关闭，请重新打开导入窗口');
+        var detail = await api.get('/knowledge/pages/' + current.id);
+        return { parentId: current.id, parentVersion: detail.version };
+      }
+      check.onclick = function () {
+        if (busy) return;
+        var file = selectedFile;
+        if (!file || !/\.zip$/i.test(file.name || '') || file.size > 20 * 1024 * 1024) {
+          toast('请选择不超过 20 MiB 的 ZIP 文件', 'error'); return;
+        }
+        busy = true; check.disabled = true; confirm.disabled = true;
+        var requestedVersion = selectionVersion;
+        safe('预览知识库 ZIP', async function () {
+          var target = await fields();
+          var result = await api.upload('/knowledge/vault/import/preview', file, target);
+          if (closed || requestedVersion !== selectionVersion) return;
+          preview = { result: result, file: file, target: target };
+          confirmedKey = 'ui-vault-' + (typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2));
+          var items = (result.pages || []).slice(0, 30).map(function (page) {
+            return '<li>' + esc(page.path) + (page.title !== page.originalTitle ? ' → ' + esc(page.title) : '')
+              + (page.folder ? '（目录）' : '') + '</li>';
+          }).join('');
+          var warnings = (result.warnings || []).slice(0, 20).map(function (warning) {
+            return '<li>' + esc(warning) + '</li>';
+          }).join('');
+          output.innerHTML = '<p style="margin:0 0 8px;">将新增 ' + Number(result.pageCount || 0) + ' 页、'
+            + Number(result.attachmentCount || 0) + ' 个附件、' + Number(result.relationshipCount || 0)
+            + ' 条双链。</p><ul style="margin:0 0 10px;padding-left:20px;">' + items + '</ul>'
+            + (Number(result.pageCount || 0) > 30 ? '<p>其余页面未在此处展开。</p>' : '')
+            + (warnings ? '<p>需要留意：</p><ul style="padding-left:20px;">' + warnings + '</ul>' : '');
+          confirm.disabled = !result.previewToken;
+        }).finally(function () { busy = false; if (!closed) check.disabled = false; });
+      };
+      confirm.onclick = function () {
+        if (closed || busy || !preview || !confirmedKey) return;
+        busy = true; confirm.disabled = true; check.disabled = true;
+        pick.disabled = true; fileInput.disabled = true; parentInput.disabled = true;
+        safe('导入知识库 ZIP', async function () {
+          var fieldsToSend = Object.assign({}, preview.target, { previewToken: preview.result.previewToken });
+          var result = await api.upload('/knowledge/vault/import/confirm', preview.file, fieldsToSend,
+            { 'Idempotency-Key': confirmedKey });
+          // 服务端已确认成功；后续只是刷新当前视图。即使树刷新断网，也不能把已提交的导入报成失败。
+          var summary = '已导入 ' + Number(result && result.pageCount || 0) + ' 页和 '
+            + Number(result && result.attachmentCount || 0) + ' 个附件';
+          handle.close();
+          try {
+            if (state.wikiDirty) saveWikiDraftNow();
+            state.wikiPages = flattenKnowledge((await api.get('/knowledge/document-tree')) || []);
+            paintWikiTree();
+            var firstId = result && result.pageIds && result.pageIds[0];
+            var first = (state.wikiPages || []).find(function (page) { return String(page.id) === String(firstId); });
+            if (first) await paintWikiDoc(first, { newTab: true });
+            toast(summary);
+          } catch (refreshError) {
+            console.error('[zhiqu-api] 导入成功后界面更新失败：' + (refreshError && refreshError.message || '未知错误'));
+            toast(summary + '；界面更新失败，请刷新页面查看', 'error');
+          }
+        }).finally(function () {
+          busy = false;
+          if (!closed) {
+            pick.disabled = false; fileInput.disabled = false; parentInput.disabled = false;
+            check.disabled = false; confirm.disabled = !(preview && preview.result.previewToken);
+          }
+        });
+      };
+    },
+    onClose: function () { closed = true; }
+  });
 }
 var WIKI_PAGE_TYPES = [['GOAL', '目标'], ['PROJECT', '计划'], ['PREFERENCE', '偏好'], ['WEAKNESS', '薄弱点'], ['RESOURCE', '资料'], ['MEMORY', '对话摘要'], ['NOTE', '备注']];
 // 按类型给初始骨架，对齐 claude design 模板各类型页面的结构
