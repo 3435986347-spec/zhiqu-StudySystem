@@ -1,0 +1,106 @@
+{
+  "status": "waiting_for_personal_machine",
+  "reason": "User stopped company-machine preparation after IT warning against Docker download",
+  "dataset_revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
+  "prepared_tasks": 10,
+  "public_source_archive_bytes": 49953187,
+  "real_model_calls": 0,
+  "charged_rmb": 0,
+  "authorized_budget_rmb": 50,
+  "official_controls_verified": false,
+  "official_score": null,
+  "generation_started": false,
+  "harness": {
+    "repository": "https://github.com/SWE-bench/SWE-bench",
+    "commit": "3f01bd622c0a22c00406139f69a234ef08225f22",
+    "release": "v3.0.17",
+    "archive_sha256": "c16008ffedc84862b9b874b1f553e1a498425eda1d0b6437b678e0c302633414",
+    "archive_bytes": 682784,
+    "url": "https://codeload.github.com/SWE-bench/SWE-bench/tar.gz/3f01bd622c0a22c00406139f69a234ef08225f22"
+  },
+  "sources": [
+    {
+      "instance_id": "django__django-12308",
+      "repo": "django/django",
+      "base_commit": "2e0f04507b17362239ba49830d26fec504d46978",
+      "archive_sha256": "3cb6e81957997ca73cee221a03a4b0c25e1b9f44d2df8e2a447a9f9981414631",
+      "archive_bytes": 9101802,
+      "base_tree_sha256": "2f9d2abaa0cea59b48e7034745bd99740f5ff62573fcfc86071a9b813d744edc"
+    },
+    {
+      "instance_id": "django__django-15987",
+      "repo": "django/django",
+      "base_commit": "7e6b537f5b92be152779fc492bb908d27fe7c52a",
+      "archive_sha256": "2d5cb3d31001902f82026032dc2ff35ab277cc82b81f8ac0bd4ac9d7d3bdc2e7",
+      "archive_bytes": 9966107,
+      "base_tree_sha256": "05f9bd97c627a9c8318081ba5d0e67e831fb015e0db6cf29db50e6147a67e467"
+    },
+    {
+      "instance_id": "sympy__sympy-23950",
+      "repo": "sympy/sympy",
+      "base_commit": "88664e6e0b781d0a8b5347896af74b555e92891e",
+      "archive_sha256": "c5cd2c7f8bb32d1c0389edd4998b3b46fc9edfaca00e41b4656aa25f9551370e",
+      "archive_bytes": 7999555,
+      "base_tree_sha256": "f580b94c5217766e829e83fc4022f3cdb53f9269fa2ff5a4b9192050928771ad"
+    },
+    {
+      "instance_id": "sympy__sympy-20154",
+      "repo": "sympy/sympy",
+      "base_commit": "bdb49c4abfb35554a3c8ce761696ffff3bb837fe",
+      "archive_sha256": "6bf852392fa24f95a6f8840c72298d9c8d483cfe6153e9bdca0d25fc8cff5720",
+      "archive_bytes": 6958813,
+      "base_tree_sha256": "a8bcff099780a7ff2520c81933697a922efef44d425f0dba68311ef8166bdc50"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-10356",
+      "repo": "pytest-dev/pytest",
+      "base_commit": "3c1534944cbd34e8a41bc9e76818018fadefc9a1",
+      "archive_sha256": "120e1af522d5ebd2bf720d65cd953767c32139e59517b8f1bbdc3bd9d0aa45c4",
+      "archive_bytes": 1280632,
+      "base_tree_sha256": "27f0254768e01fafebd6c6edaf3ee7ff3f9a02098a56a3c52f99d81b174ebedd"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-5840",
+      "repo": "pytest-dev/pytest",
+      "base_commit": "73c5b7f4b11a81e971f7d1bb18072e06a87060f4",
+      "archive_sha256": "668a7049bee81e6c151564dcc891a03632e92cacdba2ef5d6f87673e35581bfa",
+      "archive_bytes": 961660,
+      "base_tree_sha256": "cd65850b3eaf44fe85c83fd508fe6c601851157f74ec98934e174e22767a0ffc"
+    },
+    {
+      "instance_id": "psf__requests-1921",
+      "repo": "psf/requests",
+      "base_commit": "3c88e520da24ae6f736929a750876e7654accc3d",
+      "archive_sha256": "0f6375a24b3322b74234f1a6c12d7759c304e9c4c4739ad059d30072deda8269",
+      "archive_bytes": 614047,
+      "base_tree_sha256": "ebb719e7b9e96378cd97e8f7fc4db55db59023b76b78dbb2a34b943fbe2a423a"
+    },
+    {
+      "instance_id": "psf__requests-1724",
+      "repo": "psf/requests",
+      "base_commit": "1ba83c47ce7b177efe90d5f51f7760680f72eda0",
+      "archive_sha256": "1cba034abc2c8dea8144a40cc110fa020e94a54499ecd900de62ad4d13643e6f",
+      "archive_bytes": 602875,
+      "base_tree_sha256": "2f4faf08c5857981bc69e3fc4de75def6fa3727ac0f14f9278c6514db605b24a"
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-10297",
+      "repo": "scikit-learn/scikit-learn",
+      "base_commit": "b90661d6a46aa3619d3eec94d5281f5888add501",
+      "archive_sha256": "3fc061ae95f36efada14bdef121d187121d11cfdf553cb1e82efb30fd137775e",
+      "archive_bytes": 5981287,
+      "base_tree_sha256": "54d88a68da59be24a4d2d8a88ab68b50aadf757bf3b069c283680dbd1a1273d5"
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-13496",
+      "repo": "scikit-learn/scikit-learn",
+      "base_commit": "3aefc834dce72e850bff48689bea3c7dff5f3fad",
+      "archive_sha256": "12bbfd0dae5d48ae965a93afa042b54270520bbe95bbef67bea845bc87ebfa1b",
+      "archive_bytes": 6486409,
+      "base_tree_sha256": "88521e4ebbeb6eee3d34bb4835746d297f51c60f591e780ccc98af0a1c650663"
+    }
+  ],
+  "controller_assets_committed": false,
+  "harness_dependency_install": "cancelled; not verified",
+  "docker_download_or_install": "not performed; connectivity HEAD checks only"
+}

@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "name": "zhiqu-sweverified-pilot10-v1-run-20261014",
+  "status": "waiting_for_personal_machine",
+  "execution_ready": false,
+  "model_calls": 0,
+  "dataset": {
+    "name": "princeton-nlp/SWE-bench_Verified",
+    "revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
+    "split": "test",
+    "full_size": 500,
+    "selection_file": "../repository-pilot-20261013/selection.json",
+    "size": 10,
+    "agent_public_fields": [
+      "repo",
+      "instance_id",
+      "base_commit",
+      "problem_statement"
+    ],
+    "hints_text": false
+  },
+  "harness": {
+    "repository": "https://github.com/SWE-bench/SWE-bench",
+    "commit": "3f01bd622c0a22c00406139f69a234ef08225f22",
+    "grading": "official SWE-bench resolved on frozen patch",
+    "run_id": "unique per protocol fingerprint and prediction patch-set SHA256",
+    "release": "v3.0.17",
+    "design_commit": "02e7a74ffd0b707aab73d203fe87bdc7c76afc8e",
+    "change_reason": "Design HEAD expects image/eval_script/log_parser/eval_type absent from pinned classic Verified data; use compatible official release before model calls"
+  },
+  "agent": {
+    "commit": "86a4a3c16a226c7464b3023d2bb63ad5c3d810d9",
+    "cli_git_tree": "693428159f05c12194fb0090db4c013165fce2ed",
+    "implementation": "shipped runTurn + Api/SSE + BUILTIN_SYSTEM_PROMPT + LocalTools/default guards",
+    "file_sha256": {
+      "zhiqu-cli/src/prompt.js": "8c6be63fe025324196fc1f93162bf150c6c233853dce9d556a24600bf739de96",
+      "zhiqu-cli/src/tools/guard.js": "45ece3b39fa83559bb1f83b1de02fa09291c07fd37dc5def8ec15cd9b1aa229b",
+      "zhiqu-cli/src/tools/execrules.js": "69f3f3dd443370a113dc47e704bf20822e1ca8fcf586d2c3272b3d8358a1b9a4",
+      "conformance/workspace-rules.json": "803321d151ba9238eb7f97fd3caedf07b6b86652afa16be49ffb750459b403b2"
+    },
+    "mode": "auto",
+    "remote_office_tools": false,
+    "mcp": false,
+    "personal_skills": false,
+    "personal_instructions": false,
+    "archive_disabled": true,
+    "repository_public_instructions": true,
+    "production_commands_extended": false,
+    "worker_sha256": "21b9e5155fd4b196b64abc905ed8c729f9fd6c7cdfa6315d0d6185e1b234e820",
+    "broker_sha256": "f5697580df36c71a9cd8e98a3ebaf8dce96f156be9cad07293c6496528dee910",
+    "collector_sha256": "667aebf61e6c7249782d2e2a7fc94766ca3a9ca8f2d22d5266616676ffb7955b"
+  },
+  "model": {
+    "id": 1,
+    "model_name": "deepseek-v4-pro",
+    "thinking": "OFF",
+    "expected_context_window_tokens": 1000000,
+    "max_output_tokens_per_request": 16384,
+    "verify_actual_model_each_stream": true,
+    "fallback_allowed": false
+  },
+  "limits": {
+    "episodes_per_task": 1,
+    "agent_rounds": 60,
+    "episode_seconds": 1800,
+    "local_command_seconds": 180,
+    "official_grader_seconds": 1800,
+    "full_suite_diagnostic_seconds": 1800,
+    "generation_concurrency": 1,
+    "grading_concurrency": 1,
+    "transport_requests_per_minute": 50,
+    "transport_min_start_interval_ms": 1200,
+    "max_transport_requests_per_episode": 200,
+    "retry_attempts_in_budget_and_pacing": true,
+    "container_cpus": 4,
+    "container_memory_bytes": 8589934592,
+    "container_pids": 256,
+    "container_tmp_bytes": 1073741824
+  },
+  "runtime": {
+    "preferred_platform": "linux-x86_64",
+    "node_version": "24.19.0",
+    "node_binary_sha256": null,
+    "python_and_dependencies": "per task pinned official environment, validated with production childEnv",
+    "generation_image_digests": null,
+    "grader_image_digests": null,
+    "generation_images_inherit_grader": false,
+    "generation_git_history": false,
+    "task_source": "exported base_commit only",
+    "docker_socket_in_task_or_grader": false
+  },
+  "relay": {
+    "topology": "one internal network per task; independent dual-network broker",
+    "task_network_policy": "namespace OUTPUT DROP; allow fixed broker IPv4 stream port, established and required loopback; reject TCP/UDP 53 and all IPv6",
+    "policy_installer_removed_before_agent": true,
+    "task_net_admin": false,
+    "task_capabilities": [],
+    "broker_ip_forwarding": false,
+    "only_method": "POST",
+    "only_path": "/api/harness/model/stream",
+    "auth": "revocable episode capability; real gateway login in broker only",
+    "request_ledger": "all broker requests including commands bypassing agent Api",
+    "gateway_reachable_address": null,
+    "network_policy_sha256": null
+  },
+  "budget": {
+    "currency": "CNY",
+    "limit_rmb": 50,
+    "input_token_limit": 4000000,
+    "output_token_limit": 500000,
+    "per_episode_input_token_limit": 2000000,
+    "per_episode_output_token_limit": 131072,
+    "missing_usage": "conservative reservation; never zero",
+    "run_with_missing_limits": false,
+    "hard_billing_cap": "requires verified supplier or gateway budget control",
+    "price_input_micro_cny_per_token": 9,
+    "price_output_micro_cny_per_token": 27,
+    "authorization": "User confirmed CNY50 including calibration, failures and retries on 2026-10-14"
+  },
+  "controls": {
+    "empty_patch_all_tasks_actual_failure": false,
+    "gold_patch_all_tasks_resolved": false,
+    "public_test_localtools_smoke": false,
+    "hidden_read_write_and_network_probes": false,
+    "stream_model_and_rejection_probes": false,
+    "cancel_container_descendant_cleanup": false,
+    "grader_tampering_and_empty_collection_rejection": false
+  },
+  "scoring": {
+    "denominator": 10,
+    "metric": "official resolved / fixed N; protocol integrity shown separately",
+    "human_hidden_test_feedback": false,
+    "regenerate_after_scoring": false,
+    "replace_failed_tasks": false,
+    "infrastructure_errors": "repair environment and regrade same frozen patch; no final rate until all graded",
+    "budget_stop": "incomplete fixed-N run; never shrink denominator",
+    "full_suite_and_build": "separate diagnostic, not official resolved",
+    "supplemental_java_js": "six proposed slots, no IDs/base/controls frozen, separate score"
+  },
+  "blockers_before_execution": [
+    "usable Docker execution machine and reachable existing Zhiqu gateway",
+    "implemented and frozen repository worker, broker, collector and official grading adapter",
+    "pinned Linux runtime, dependency locks, image digests and resource limits",
+    "all ten empty-red / gold-green and isolation/lifecycle controls passed",
+    "explicit paid-run RMB and token budgets configured"
+  ],
+  "cost_so_far_rmb": 0,
+  "execution_location": "personal_machine_only; company machine stopped per user after IT Docker download warning",
+  "real_model_calls": 0,
+  "preparation_entry_sha256": "ba5bd10cd22e0156315d03d0e53db83847049855df12f557e9889a7b284c3c8d"
+}

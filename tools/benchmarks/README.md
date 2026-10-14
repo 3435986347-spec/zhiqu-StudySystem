@@ -128,3 +128,6 @@ python3 tools/benchmarks/select-sweverified.py \
 ```
 
 `public_index_sha256` 对500行四字段按 instance_id 排序、compact sorted-key UTF-8 JSON + LF 计算；`public_projection_sha256` 对输出10行的实际字节计算。每题另外记录 issue 原始 UTF-8 和选择 hash。选择器源码hash单独保存，变更后不能悄悄沿用旧脚本指纹。
+
+2026-10-14 用户要求开始仓库测试并确认 **¥50** 上限，随后因 IT 不允许下载 Docker，改为推送准备工具后在个人电脑继续。
+实际状态及个人电脑步骤见 [本轮准备记录](../../docs/benchmarks/repository-pilot-20261014/README.md)。真实模型请求与费用为0；worker / broker / 准备器已有离线验证，但 Docker镜像、隔离控制和完整编排仍待完成，未发布任何 SWE-bench 能力分。
