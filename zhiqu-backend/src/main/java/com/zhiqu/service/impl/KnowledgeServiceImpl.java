@@ -1022,10 +1022,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         // index 页链着每一页，八百多页的 Wiki 上加一页之后再打开，重建 index 的链接就是八百多次全表查询（实测 4 秒）
         Map<String, Long> idsByTitle = null;
         for (var parsed : com.zhiqu.service.knowledge.VaultMarkdownLinks.read(value(content, ""))) {
-            if (!parsed.wiki() || parsed.image()) continue;
+            if (!parsed.wiki()) continue;
             String targetTitle = parsed.target().trim();
-            if (targetTitle.isBlank() || !seen.add(normalizeTitle(targetTitle))) continue;
+            if (targetTitle.isBlank() || targetTitle.startsWith("/api/knowledge/images/") || targetTitle.startsWith("/api/knowledge/attachments/")) continue;
             if (idsByTitle == null) idsByTitle = pageIdsByTitle(userId);
+            if (parsed.image() && !idsByTitle.containsKey(normalizeTitle(targetTitle))) continue;
+            if (!seen.add(normalizeTitle(targetTitle))) continue;
             KnowledgePageLink link = new KnowledgePageLink();
             link.setUserId(userId);
             link.setSourcePageId(pageId);
@@ -1323,34 +1325,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             if (page.getTitle() != null && "index".equalsIgnoreCase(page.getTitle().trim())) continue;
             if (!String.valueOf(page.getPageType()).equals(currentType)) {
                 currentType = String.valueOf(page.getPageType());
-                builder.append("\n## ").append(typeLabelForMarkdown(currentType)).append("\n");
+                builder.append("\n## ").append("NOTE".equals(currentType) ? "笔记" : typeLabelForMarkdown(currentType)).append("\n");
             }
             builder.append("- [[").append(page.getTitle()).append("]]");
-            if (!shouldHideIndexSummary(page) && hasText(page.getContentSummary())) {
-                builder.append(" — ").append(limit(stripMarkdownMarks(page.getContentSummary()), 90));
-            }
+            // The index is navigation: copying body snippets exposes private IDs and implementation URLs.
             builder.append("\n");
         }
         return builder.toString().trim();
-    }
-
-    /**
-     * 摘要是压平的页面正文，包含 # - > ` ** [[]] 等 markdown 记号，
-     * 直接拼进 index 列表项会以原始符号展示，这里剥掉记号只留内文。
-     */
-    private String stripMarkdownMarks(String text) {
-        if (text == null) {
-            return "";
-        }
-        return text
-                .replaceAll("\\[\\[([^\\]]*)\\]\\]", "$1")
-                .replaceAll("\\[([^\\]]+)\\]\\([^)]*\\)", "$1")
-                .replaceAll("\\[[ xX]\\]\\s*", "")
-                .replaceAll("(?m)^\\s*(#{1,6}|[-*>]|\\d+[.)])\\s*", "")
-                .replaceAll("\\s+(#{1,6}|[-*>])\\s+", " ")
-                .replaceAll("[*`_~]", "")
-                .replaceAll("\\s{2,}", " ")
-                .trim();
     }
 
     private String buildLogPageContent(Long userId) {
@@ -1453,7 +1434,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
                 ## 页面约定
                 - 目标、计划、偏好、薄弱点、资料、对话摘要分开建页。
-                - 对话摘要属于高隐私页面，index 只保留 [[双链]]，不展示摘要或正文片段。
+                - index 仅按类型列出页面 [[双链]]，不复制正文片段、测试账号、内部 URL 或图片地址。
                 - 重要结论尽量写来源或链接到相关页面。
                 - 发现矛盾时，新建“冲突/待确认”小节，而不是静默覆盖。
 
@@ -1462,12 +1443,6 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 - ingest/query/patch/lint/export 都应写入 log，方便回溯。
                 - 定期运行 Wiki 健康检查，处理孤立页、缺失双链和过期计划。
                 """.trim();
-    }
-
-    private boolean shouldHideIndexSummary(UserKnowledgePage page) {
-        if (page == null) return false;
-        String type = String.valueOf(page.getPageType()).toUpperCase();
-        return "MEMORY".equals(type) || "LOG".equals(type) || "SCHEMA".equals(type);
     }
 
     private boolean isSystemKnowledgePage(UserKnowledgePage page) {

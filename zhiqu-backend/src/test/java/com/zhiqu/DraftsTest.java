@@ -75,7 +75,8 @@ class DraftsTest {
                 "旧版本上的草稿遇到这一页已被改过：保存前要先问（否则要么悄悄盖掉别人的、要么永远存不进去）");
         String paint = between(code, "async function paintWikiDoc(p, opts)", "state.wikiCur = p;");
         assertTrue(paint.contains("if (state.wikiDirty) saveWikiDraftNow();"), "换页之前没先把正在改的存成草稿");
-        assertTrue(between(code, "$('#zq-wiki-cancel').onclick", "};").contains("drafts.clear(wikiDraftKey(cur))"), "取消编辑要丢掉草稿");
+        assertTrue(code.contains("$('#zq-wiki-cancel').onclick = cancelWikiEdit;"), "取消按钮没接取消编辑");
+        assertTrue(SourceText.functionBody(code, "function cancelWikiEdit()").contains("drafts.clear(wikiDraftKey(cur))"), "取消编辑要丢掉草稿");
         assertTrue(code.contains("wireWikiDrafts(doc);"), "编辑区没接草稿");
     }
 }

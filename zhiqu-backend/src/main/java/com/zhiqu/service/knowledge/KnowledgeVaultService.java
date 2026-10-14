@@ -101,10 +101,12 @@ public class KnowledgeVaultService {
         for (var entry : imported.entrySet()) {
             Set<String> seen = new HashSet<>();
             for (var link : VaultMarkdownLinks.read(contents.get(entry.getKey()))) {
-                if (link.image() || !link.wiki() || link.target().isBlank()) continue;
+                if (!link.wiki() || link.target().isBlank()) continue;
                 String key = titleKey(link.target());
-                if (!seen.add(key)) continue;
                 UserKnowledgePage target = targets.get(key);
+                // ![[note]] is a note transclusion, not an image. Attachments stay outside the page graph.
+                if (link.image() && target == null || PRIVATE_ATTACHMENT.matcher(link.target()).matches()) continue;
+                if (!seen.add(key)) continue;
                 KnowledgePageLink row = new KnowledgePageLink();
                 row.setUserId(userId); row.setSourcePageId(entry.getValue().getId());
                 row.setTargetPageId(target == null ? null : target.getId()); row.setTargetTitle(link.target());
@@ -191,9 +193,9 @@ public class KnowledgeVaultService {
                     if (link.wiki()) return (link.image() ? "!" : "") + "[[" + target + link.anchor() + (link.label() == null ? "" : "|" + link.label()) + "]]";
                     return (link.image() ? "!" : "") + "[" + safeLabel(link.label(), target) + "](" + urlPath(relativeAttachment(paths.get(note.id()), target)) + link.anchor() + ")";
                 }
-                if (link.wiki() && !link.image()) {
+                if (link.wiki()) {
                     String target = titlePaths.get(titleKey(link.target()));
-                    if (target != null) return "[[" + target + link.anchor() + "|" + safeLabel(link.label(), link.target()) + "]]";
+                    if (target != null) return (link.image() ? "!" : "") + "[[" + target + link.anchor() + "|" + safeLabel(link.label(), link.target()) + "]]";
                 }
                 return link.original();
             });
@@ -244,7 +246,7 @@ public class KnowledgeVaultService {
             if (link.target().isBlank() || link.target().matches("^[A-Za-z][A-Za-z0-9+.-]*:.*")) continue;
             String notePath = resolveNote(archive, note.path(), link.target());
             String filePath = KnowledgeVaultCodec.resolve(note.path(), link.target(), archive.attachments().keySet());
-            if (!link.image() && notePath != null) relationCount++;
+            if (notePath != null) relationCount++;
             else if (filePath == null && (link.wiki() || link.image() || link.target().toLowerCase(Locale.ROOT).endsWith(".md")))
                 warnings.add("未解析的引用保留原文：" + note.path() + " → " + link.target());
         }
@@ -258,13 +260,12 @@ public class KnowledgeVaultService {
             String file = KnowledgeVaultCodec.resolve(note.path(), link.target(), attachmentUrls.keySet());
             if (file != null) {
                 String url = attachmentUrls.get(file);
-                boolean image = link.image() && url.startsWith("/api/knowledge/images/");
-                if (image && link.wiki()) return "![[" + url + (link.label() == null ? "" : "|" + link.label()) + "]]";
-                return (image ? "!" : "") + "[" + safeLabel(link.label(), link.target()) + "](" + url + link.anchor() + ")";
+                if (link.wiki()) return (link.image() ? "!" : "") + "[[" + url + link.anchor()
+                        + (link.label() == null ? "" : "|" + link.label()) + "]]";
+                return (link.image() ? "!" : "") + "[" + safeLabel(link.label(), link.target()) + "](" + url + link.anchor() + ")";
             }
-            if (link.image()) return link.original();
             String target = resolveNote(plan.archive(), note.path(), link.target());
-            return target == null ? link.original() : "[[" + plan.titles().get(target) + link.anchor()
+            return target == null ? link.original() : (link.image() ? "!" : "") + "[[" + plan.titles().get(target) + link.anchor()
                     + (link.label() == null ? "" : "|" + safeLabel(link.label(), link.target())) + "]]";
         });
     }

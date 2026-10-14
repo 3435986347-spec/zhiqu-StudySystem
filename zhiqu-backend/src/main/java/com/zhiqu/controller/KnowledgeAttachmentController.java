@@ -1,5 +1,6 @@
 package com.zhiqu.controller;
 
+import com.zhiqu.common.Result;
 import com.zhiqu.security.SecurityUtils;
 import com.zhiqu.service.knowledge.KnowledgeImageService;
 import org.springframework.http.ContentDisposition;
@@ -9,6 +10,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
 
 /** Opaque vault attachments are authenticated downloads, never executable/public resources. */
 @RestController
@@ -18,6 +21,16 @@ public class KnowledgeAttachmentController {
 
     public KnowledgeAttachmentController(KnowledgeImageService attachments) {
         this.attachments = attachments;
+    }
+
+    @GetMapping
+    public Result<List<KnowledgeImageService.AttachmentRecord>> list() {
+        return Result.success(attachments.listOwnedAttachments(SecurityUtils.getCurrentUserId()));
+    }
+
+    @GetMapping("/{id}/preview")
+    public Result<Map<String, Object>> preview(@PathVariable Long id) {
+        return Result.success(attachments.previewOwnedAttachment(SecurityUtils.getCurrentUserId(), id));
     }
 
     @GetMapping("/{id}")

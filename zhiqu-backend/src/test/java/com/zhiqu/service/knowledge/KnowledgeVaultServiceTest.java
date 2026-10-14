@@ -182,6 +182,40 @@ class KnowledgeVaultServiceTest {
         assertTrue(operations.isEmpty());
     }
 
+    @Test void noteAndNonImageEmbedsKeepTheirMeaningAndAnchorsAcrossImportExport() throws Exception {
+        UserKnowledgePage existing = new UserKnowledgePage();
+        existing.setId(1L); existing.setUserId(7L); existing.setTitle("测试用例"); existing.setPageType("NOTE");
+        existing.setEncryptedContent(crypto.encrypt("existing")); pages.put(1L, existing);
+        Map<String, byte[]> archive = new LinkedHashMap<>();
+        archive.put("risk/入口.md", "![[测试用例#范围]]\n![[测试用例#^block]]\n![[assets/settings.json]]\n![[assets/report.pdf#page=2]]\n![声音](assets/voice.wav)\n`![[literal]]`".getBytes(StandardCharsets.UTF_8));
+        archive.put("risk/测试用例.md", "# 范围\n测试说明 ^block".getBytes(StandardCharsets.UTF_8));
+        archive.put("risk/assets/settings.json", "{\"enabled\":true}".getBytes(StandardCharsets.UTF_8));
+        archive.put("risk/assets/report.pdf", "%PDF-1.7\n%%EOF".getBytes(StandardCharsets.US_ASCII));
+        archive.put("risk/assets/voice.wav", "RIFFxxxxWAVEdata".getBytes(StandardCharsets.US_ASCII));
+        MockMultipartFile zip = new MockMultipartFile("file", "risk.zip", "application/zip", KnowledgeVaultCodecTest.zipBytes(archive));
+        Map<String, Object> preview = service.preview(7L, zip, null, null);
+        assertEquals(2, preview.get("relationshipCount"), "笔记嵌入也是页面关系");
+        assertFalse(preview.get("warnings").toString().contains("未解析"), "重名新增可提示，笔记和附件嵌入均应解析");
+        service.confirm(7L, zip, String.valueOf(preview.get("previewToken")), null, null);
+        UserKnowledgePage entry = pages.values().stream().filter(p -> p.getTitle().equals("入口")).findFirst().orElseThrow();
+        String body = crypto.decrypt(entry.getEncryptedContent());
+        assertTrue(body.contains("![[测试用例（导入 2）#范围]]"), body);
+        assertTrue(body.contains("![[测试用例（导入 2）#^block]]"), body);
+        assertTrue(body.contains("![[/api/knowledge/attachments/"), body);
+        assertTrue(body.contains("#page=2]]"), body);
+        assertTrue(body.contains("![声音](/api/knowledge/attachments/"), body);
+        assertTrue(body.contains("`![[literal]]`"));
+        assertEquals(1, relationships.size(), "重复嵌入只建一条图谱关系，附件不作为未找到笔记");
+        assertNotNull(relationships.get(0).getTargetPageId());
+
+        var exported = new KnowledgeVaultCodec().decode(service.export(7L, null));
+        String restored = exported.notes().stream().filter(n -> n.title().equals("入口")).findFirst().orElseThrow().content();
+        assertTrue(restored.contains("![[测试用例（导入 2）#范围|测试用例（导入 2）]]"), restored);
+        assertTrue(restored.contains("![[assets/settings.json]]"), restored);
+        assertTrue(restored.contains("![[assets/report.pdf#page=2]]"), restored);
+        assertTrue(restored.contains("![声音](assets/voice.wav)"), restored);
+    }
+
     interface Operation { Object run(String name, Object[] args); }
     @SuppressWarnings("unchecked")
     private static <T> T proxy(Class<T> type, Operation operation) {

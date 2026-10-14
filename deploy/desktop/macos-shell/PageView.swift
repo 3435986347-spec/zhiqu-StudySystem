@@ -22,6 +22,36 @@ import AppKit
 import UserNotifications
 import WebKit
 
+/// AppKit 的编辑快捷键从原生菜单走 responder chain；WKWebView 本身不会替宿主建立这个菜单。
+func makeZhiquApplicationMenu() -> NSMenu {
+    let main = NSMenu()
+    let application = NSMenuItem(title: "知趣象限", action: nil, keyEquivalent: "")
+    let applicationMenu = NSMenu(title: "知趣象限")
+    applicationMenu.addItem(withTitle: "退出知趣象限", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    application.submenu = applicationMenu
+    main.addItem(application)
+
+    let edit = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
+    let editMenu = NSMenu(title: "编辑")
+    func command(_ title: String, _ action: String, _ key: String, flags: NSEvent.ModifierFlags = .command) {
+        let item = NSMenuItem(title: title, action: NSSelectorFromString(action), keyEquivalent: key)
+        item.keyEquivalentModifierMask = flags
+        // target 留空：Wiki 正文、AI 输入框和系统文件面板都由各自当前的 firstResponder 接收。
+        editMenu.addItem(item)
+    }
+    command("撤销", "undo:", "z")
+    command("重做", "redo:", "Z")
+    editMenu.addItem(.separator())
+    command("剪切", "cut:", "x")
+    command("复制", "copy:", "c")
+    command("粘贴", "paste:", "v")
+    editMenu.addItem(.separator())
+    command("全选", "selectAll:", "a")
+    edit.submenu = editMenu
+    main.addItem(edit)
+    return main
+}
+
 /// userContentController 强持有消息处理者，而 PageView 又持有 configuration —— 直接把自己挂上去就是循环引用，窗口关了也不释放。
 private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     weak var target: WKScriptMessageHandler?

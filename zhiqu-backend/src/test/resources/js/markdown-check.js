@@ -48,6 +48,8 @@ const SAMPLE = [
   '## 二级',
   '### 三级',
   '#### 四级',
+  '##### 五级',
+  '###### 六级',
   '正文 `code` 和 [链接](https://example.com/a_(b)) 和 [[某页]] 和 $x^2$ 。',
   '',
   '- 无序',
@@ -101,7 +103,7 @@ console.log('── 判据 2：每种块的样子；类和标签在样式表里�
 judge('外面恰好包一层 .zq-md', html.startsWith('<div class="zq-md">') && html.endsWith('</div>')
   && (html.match(/class="zq-md"/g) || []).length === 1, html.slice(0, 60));
 const EXPECT = [
-  '<h1>一级 <strong>粗</strong></h1>', '<h2>二级</h2>', '<h3>三级</h3>', '<h4>四级</h4>',
+  '<h1>一级 <strong>粗</strong></h1>', '<h2>二级</h2>', '<h3>三级</h3>', '<h4>四级</h4>', '<h5>五级</h5>', '<h6>六级</h6>',
   '<code>code</code>', '<a href="https://example.com/a_(b)" target="_blank" rel="noopener noreferrer">链接</a>',
   '<a data-wikilink="某页">某页</a>', '<span class="zq-math-i" data-tex="x^2" contenteditable="false"><span class="zq-mono">x^2</span></span>',
   '<ul><li>无序</li></ul>', '<ol><li>有序</li></ol>', '<blockquote>引用</blockquote>',
@@ -123,7 +125,7 @@ for (const c of classes) {
   judge('.' + c + ' 在 zhiqu-ui.css 里有规则', selectors.some(s => re.test(s)));
 }
 // 浏览器默认样式下这些会走样（标题太大、表格没线、引用缩进一大块、链接紫色……）：每个都要在 .zq-md 下有一条
-for (const tag of ['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'table', 'th', 'td', 'hr', 'a']) {
+for (const tag of ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'table', 'th', 'td', 'hr', 'a']) {
   const has = selectors.some(s => /^\.zq-md\s/.test(s)
     && s.split(/[\s>+~]+/).slice(1).some(tok => tok.replace(/[[:].*$/, '') === tag || tok.endsWith(')' + tag)));
   judge('.zq-md ' + tag + ' 在 zhiqu-ui.css 里有规则', has);

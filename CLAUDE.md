@@ -1,8 +1,7 @@
 # CLAUDE.md
 
 给在这个仓库里干活的 Claude Code 看的规矩：怎么跑、怎么测、不能碰的地方、几条踩过就会再踩的坑。
-来龙去脉和各部分的细节在 `docs/`：各部分的说明在 `docs/notes/`，每一轮一份 `docs/rounds/round-NN.md`。
-（第三十八轮从 1529 行压到这里，原来的内容一字不改地挪进了那两处；`ClaudeMdTest` 管着这份不超过 200 行。）
+来龙去脉和各部分的细节在 `docs/`：各部分的说明在 `docs/notes/`，每一轮一份 `docs/rounds/round-NN.md`。（第三十八轮从 1529 行压到这里，原来的内容一字不改地挪进了那两处；`ClaudeMdTest` 管着这份不超过 200 行。）
 
 ## 这是什么
 
@@ -91,7 +90,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261014-wiki-zip-compat-width`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261014-wiki-embed-previews`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第六十三轮](docs/rounds/round-63.md) 计划完整草稿到达即确认、来源记录与正文预览、Wiki 写入以真实 PENDING 回执汇报；连点与乱序请求防重
 - [第六十四轮](docs/rounds/round-64.md) Wiki 的 Obsidian 风格 ZIP 导入导出、私有图片与附件、AI 助手和 Wiki 侧栏动画
 - [第六十五轮](docs/rounds/round-65.md) macOS ZIP 导入兼容、Wiki 正文宽度与弹窗背景稳定
+- [第六十六轮](docs/rounds/round-66.md) Wiki 类型化嵌入预览、原生编辑快捷键、目录备注与编辑滚动稳定

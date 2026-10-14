@@ -6,11 +6,11 @@
   <title>知识 Wiki - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261014-wiki-zip-compat-width" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261014-wiki-zip-compat-width">
-  <link rel="manifest" href="manifest.json?v=20261014-wiki-zip-compat-width">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261014-wiki-embed-previews" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261014-wiki-embed-previews">
+  <link rel="manifest" href="manifest.json?v=20261014-wiki-embed-previews">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261014-wiki-zip-compat-width">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261014-wiki-embed-previews">
 </head>
 <body>
   <div class="zq-app">
@@ -30,6 +30,7 @@
             <button class="zq-btn-ghost">导入来源</button>
             <button class="zq-btn-ghost">导入知识库</button>
             <button class="zq-btn-ghost">来源记录</button>
+            <button id="zq-wiki-attachments" class="zq-btn-ghost">附件</button>
             <button style="height:32px; padding:0 14px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:var(--zq-fs-sm); font-weight:var(--zq-fw-medium); cursor:pointer;">待合入变更</button>
             <button class="zq-btn-ghost">健康检查</button>
             <button class="zq-btn-ghost">图谱</button>
@@ -93,9 +94,12 @@
               <div class="zq-wiki-tools">
                 <select id="zq-wiki-block" class="zq-select" title="段落格式" aria-label="段落格式">
                   <option value="P">正文</option>
-                  <option value="H1">一级标题</option>
-                  <option value="H2">二级标题</option>
-                  <option value="H3">三级标题</option>
+                <option value="H1">标题 1</option>
+                <option value="H2">标题 2</option>
+                <option value="H3">标题 3</option>
+                <option value="H4">标题 4</option>
+                <option value="H5">标题 5</option>
+                <option value="H6">标题 6</option>
                   <option value="QUOTE">引用</option>
                   <option value="CODE">代码块</option>
                   <option value="UL">无序列表</option>
@@ -129,7 +133,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261014-wiki-zip-compat-width"></script>
-  <script src="assets/zhiqu-api.js?v=20261014-wiki-zip-compat-width"></script>
+  <script src="assets/zhiqu-ui.js?v=20261014-wiki-embed-previews"></script>
+  <script src="assets/zhiqu-api.js?v=20261014-wiki-embed-previews"></script>
 </body>
 </html>

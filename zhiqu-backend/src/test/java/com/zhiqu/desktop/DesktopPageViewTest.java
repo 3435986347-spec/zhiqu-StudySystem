@@ -152,6 +152,33 @@ class DesktopPageViewTest {
                 "外壳没接通知中心的代理 —— 应用在前台时系统不弹横幅，点通知也不会把窗口叫到前面");
     }
 
+    @Test
+    @DisplayName("原生编辑菜单：Cmd+A/C/X/V/Z/Shift+Z 真正操作 Wiki 的 contenteditable 与 textarea；检查窗口不显示、不抢焦点")
+    void 原生编辑快捷键() throws Exception {
+        Map<String, String> out = runCheck();
+        assertEquals("true", out.get("edit.responderTargets"), "生产菜单必须由当前 firstResponder 接收编辑命令，不能写死到 Wiki 或主窗口");
+        assertEquals("true", out.get("edit.windowHidden"));
+        assertEquals("true", out.get("edit.windowStayedHidden"), "验证快捷键时不许显示窗口或抢走用户的焦点");
+        for (String command : new String[]{"select", "copy", "cut", "undoCut", "paste", "undo", "redo",
+                "textarea.select", "textarea.copy", "textarea.paste", "textarea.undo"}) {
+            assertEquals("true", out.get("edit." + command + ".handled"), "原生菜单没有处理快捷键 " + command);
+        }
+        assertEquals("原始正文甲乙", out.get("edit.select.selected"), "Cmd+A 没有选中 Wiki 正文");
+        assertEquals("true", out.get("edit.copy.clipboard"), "Cmd+C 没把实际选区复制到系统粘贴板");
+        assertEquals("", out.get("edit.cut.text"), "Cmd+X 没有剪切实际选区");
+        assertEquals("原始正文甲乙", out.get("edit.undoCut.text"), "Cmd+Z 没有撤销剪切");
+        assertEquals("粘贴新正文甲", out.get("edit.paste.text"), "Cmd+V 没有从系统粘贴板粘贴到 Wiki 正文");
+        assertEquals("原始正文甲乙", out.get("edit.undo.text"), "Cmd+Z 没有撤销粘贴");
+        assertEquals("粘贴新正文甲", out.get("edit.redo.text"), "Cmd+Shift+Z 没有重做粘贴");
+        assertEquals("输入框正文丙丁", out.get("edit.textarea.select.selected"), "Cmd+A 没有选中 textarea 正文");
+        assertEquals("true", out.get("edit.textarea.copy.clipboard"), "textarea 的 Cmd+C 没复制到系统粘贴板");
+        assertEquals("粘贴新正文", out.get("edit.textarea.paste.text"), "textarea 的 Cmd+V 没替换实际选区");
+        assertEquals("输入框正文丙丁", out.get("edit.textarea.undo.text"), "textarea 的 Cmd+Z 没撤销粘贴");
+
+        String shell = SourceText.stripComments(Files.readString(SHELL.resolve("ZhiquShell.swift"), StandardCharsets.UTF_8));
+        assertTrue(shell.contains("app.mainMenu = makeZhiquApplicationMenu()"), "外壳没有安装真实的原生菜单，WKWebView 不会自动提供宿主的编辑快捷键");
+    }
+
     /** 编译并跑一次检查程序。 */
     private Map<String, String> runCheck() throws Exception {
         Assumptions.assumeTrue(System.getProperty("os.name", "").toLowerCase().contains("mac"), "外壳只在 macOS 上编译");

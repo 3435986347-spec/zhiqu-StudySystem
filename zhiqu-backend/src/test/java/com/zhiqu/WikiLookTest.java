@@ -112,9 +112,9 @@ class WikiLookTest {
     }
 
     @Test
-    @DisplayName("和页名一样的一级标题：读的时候藏起来（只挂类，不删 —— 保存时原样写回去），编辑时露出来；每次把正文画成排版之后都要标")
+    @DisplayName("和页名一样的一级标题：阅读和排版编辑均藏起来（只挂类，不删 —— 保存时原样写回去），源码仍可修改；每次把正文画成排版之后都要标")
     void 重复的页名() throws IOException {
-        assertTrue(css().contains(".zq-prose:not([contenteditable=\"true\"]) .zq-dup-title{display:none;}"), "样式表里没有「不编辑时藏起重复的页名」");
+        assertTrue(css().contains(".zq-prose .zq-dup-title{display:none;}"), "阅读和排版编辑中没有持续隐藏重复页名，切换时会改变正文高度");
         String js = SourceText.pageModule("knowledge-wiki.js");
         String mark = SourceText.functionBody(js, "function markDuplicateTitle(");
         assertTrue(mark.contains("classList.add('zq-dup-title')"), "markDuplicateTitle 没有挂类：\n" + mark);
@@ -129,11 +129,14 @@ class WikiLookTest {
             assertTrue(after.contains("markDuplicateTitle(doc, "), "画完正文没有标重复的页名：\n" + after);
         }
         assertEquals(2, n, "把正文画成排版的地方应当是两处（打开一页、从源码回来）");
-        // 第五十八轮 review：点正文进入编辑时这一行页名露出来，下面的字整体往下挪一截 —— 点哪一行，那一行就从手底下跳走（真浏览器量过：滚回去之后点的那一行纹丝不动）
+        // 第六十六轮：保持重复页名和按钮区域的高度一致；进入编辑不再添加多余的滚动补偿。
         String click = SourceText.functionBody(js, "function wireWikiEditor(");
         int enter = click.indexOf("enterWikiEdit();");
-        assertTrue(enter > 0 && click.indexOf("doc.scrollTop += dup.getBoundingClientRect().height", enter) > enter,
-                "点正文进入编辑之后没有把露出来的页名那一截滚回去：\n" + click);
+        assertTrue(enter > 0);
+        assertFalse(click.contains("doc.scrollTop += dup.getBoundingClientRect().height"), "重复页名不再露出，却还在补偿它的高度");
+        String editor = SourceText.functionBody(js, "function enterWikiEdit(");
+        assertTrue(editor.contains("focus({ preventScroll: true })"), "聚焦编辑器会滚动到光标而跳动");
+        assertTrue(editor.contains("restoreWikiView(doc, view)"), "进入编辑没有恢复视口锚点");
         assertTrue(click.indexOf("caretAt(e.clientX, e.clientY);", enter) > enter, "进入编辑之后光标没有放在点的地方");
     }
 }

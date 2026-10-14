@@ -159,6 +159,22 @@ class KnowledgeImageServiceTest {
     }
 
     @Test
+    void attachmentListControllerUsesCurrentOwnerAndNeverReadsEncryptedBytes() throws Exception {
+        var own = service.storeOwnedAttachment(11L, "settings.json", "{\"enabled\":true}".getBytes(StandardCharsets.UTF_8), "assets/settings.json");
+        service.storeOwnedAttachment(22L, "private.json", "{\"private\":true}".getBytes(StandardCharsets.UTF_8), "private.json");
+        KnowledgeAttachmentController controller = new KnowledgeAttachmentController(service);
+        assertThrows(BusinessException.class, controller::list);
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(11L, "unused"));
+        var response = controller.list();
+        assertEquals(200, response.getCode());
+        assertEquals(List.of(own.id()), response.getData().stream().map(KnowledgeImageService.AttachmentRecord::id).toList());
+        assertEquals("assets/settings.json", response.getData().get(0).originalPath());
+        assertTrue(lastQuery.getSqlSegment().contains("user_id ="));
+        assertTrue(lastQuery.getParamNameValuePairs().containsValue(11L));
+        assertFalse(lastQuery.getSqlSelect().contains("encrypted_data"));
+    }
+
+    @Test
     void rejectsSvgFakeRasterTraversalAndUnauthenticatedWrites() throws Exception {
         byte[] svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>".getBytes(StandardCharsets.UTF_8);
         assertThrows(BusinessException.class, () -> service.storeOwnedImage(11L, "unsafe.png", svg));

@@ -1510,29 +1510,100 @@
   function inlineMathSpan(tex) {
     return '<span class="zq-math-i" data-tex="' + tex.replace(/"/g, '&quot;') + '" contenteditable="false"><span class="zq-mono">' + tex + '</span></span>';
   }
-  function markdownImage(raw, target, alt, width) {
-    var privateImage = /^\/api\/knowledge\/images\/[1-9]\d*$/.test(target);
+  // Preserve embed syntax on the wrapper: preview content is never copied into the parent note on save.
+  function markdownImage(raw, target, alt, width, height, wiki) {
+    var fragmentAt = target.indexOf('#');
+    var path = fragmentAt < 0 ? target : target.slice(0, fragmentAt);
+    var fragment = fragmentAt < 0 ? '' : target.slice(fragmentAt + 1);
+    var privateImage = /^\/api\/knowledge\/images\/[1-9]\d*$/.test(path);
+    var privateAttachment = /^\/api\/knowledge\/attachments\/[1-9]\d*$/.test(path);
     var externalImage = /^https?:\/\/[^\s<>"']+$/i.test(target);
-    var style = width ? ' style="max-width:min(100%,' + width + 'px)"' : '';
-    var label = alt || target.split('/').pop() || '图片';
+    var style = width ? ' style="max-width:min(100%,' + width + 'px)' + (height ? ';width:' + width + 'px;height:' + height + 'px;object-fit:contain' : '') + '"' : '';
+    var dimensions = width ? ' width="' + width + '"' + (height ? ' height="' + height + '"' : '') : '';
+    var label = alt || path.split('/').pop() || '附件';
+    if (privateAttachment) return '<span class="zq-embed zq-attachment-embed" data-embed-markdown="' + esc(raw)
+      + '" data-zq-attachment="' + esc(path) + '" data-embed-fragment="' + esc(fragment)
+      + '" contenteditable="false"><span class="zq-embed-status">正在加载附件…</span></span>';
+    // Extensionless Wiki targets and .md targets are notes, including #heading / #^block anchors.
+    var knownTitle = typeof state !== 'undefined' && (state.wikiPages || []).some(function (page) {
+      return String(page.title || '') === path.replace(/\.md$/i, '');
+    });
+    var note = wiki && !privateImage && !externalImage && !/^\w+:/.test(path)
+      && (knownTitle || !/\.[^/.]+$/.test(path) || /\.md$/i.test(path));
+    if (note) return '<span class="zq-embed zq-note-embed" data-embed-markdown="' + esc(raw)
+      + '" data-zq-note-embed="' + esc(target) + '" contenteditable="false"><span class="zq-embed-status">正在加载知识页：' + esc(label) + '</span></span>';
     if (!privateImage && !externalImage) return '<span class="zq-md-image zq-md-image-missing" data-image-markdown="'
-      + esc(raw) + '" contenteditable="false">图片未找到：' + esc(label) + '</span>';
-    var source = privateImage ? ' data-zq-private-image="' + esc(target) + '"' : ' src="' + esc(target) + '"';
+      + esc(raw) + '" contenteditable="false">文件未找到：' + esc(label) + '</span>';
+    var source = privateImage ? ' data-zq-private-image="' + esc(path) + '"' : ' src="' + esc(target) + '"';
     return '<span class="zq-md-image" data-image-markdown="' + esc(raw) + '" contenteditable="false">'
-      + '<img alt="' + esc(label) + '"' + source + style + ' loading="lazy" decoding="async"></span>';
+      + '<img alt="' + esc(label) + '"' + source + style + dimensions + ' loading="lazy" decoding="async"></span>';
+  }
+  // Extract an Obsidian section without treating headings / block IDs inside fenced code as anchors.
+  function wikiEmbedSection(markdown, anchor) {
+    var text = String(markdown || '').replace(/\r/g, '');
+    if (!anchor) return text;
+    try { anchor = decodeURIComponent(anchor); } catch (ignored) {}
+    var lines = text.split('\n'), fenced = false, visible = [];
+    lines.forEach(function (line, i) {
+      if (/^\s*(`{3,}|~{3,})/.test(line)) { fenced = !fenced; visible[i] = false; }
+      else visible[i] = !fenced;
+    });
+    if (anchor.charAt(0) === '^') {
+      var id = anchor.slice(1);
+      for (var i = 0; i < lines.length; i++) {
+        if (!visible[i]) continue;
+        var marker = lines[i].match(/(?:^|\s)\^([\w-]+)\s*$/);
+        if (!marker || marker[1] !== id) continue;
+        var first = i;
+        while (first > 0 && visible[first - 1] && lines[first - 1].trim() && !/^#{1,6}\s/.test(lines[first - 1])) first--;
+        return lines.slice(first, i + 1).join('\n').replace(/(?:^|\s)\^[\w-]+\s*$/, '').trim();
+      }
+      return null;
+    }
+    var start = -1, level = 0;
+    for (var j = 0; j < lines.length; j++) {
+      var h = visible[j] && lines[j].match(/^(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/);
+      if (!h) continue;
+      var title = h[2].replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, '$2$1').replace(/[*_`]/g, '').trim();
+      if (start < 0 && title === anchor) { start = j; level = h[1].length; }
+      else if (start >= 0 && h[1].length <= level) return lines.slice(start, j).join('\n').trim();
+    }
+    return start < 0 ? null : lines.slice(start).join('\n').trim();
+  }
+  function markdownFileLink(raw, path, label) {
+    return '<span class="zq-file-link" data-embed-markdown="' + esc(raw) + '" data-zq-attachment-probe="' + esc(path) + '"><a href="' + esc(path)
+      + '" data-zq-private-download="' + esc(path) + '" data-zq-private-preview="1">' + mdInline(label) + '</a></span>';
   }
   function mdInline(t) {
     // 行内代码先抽成占位符：反引号里的 $、*、[ 等都是字面量，不参与公式/加粗/链接解析
     var codeSlots = [];
     var imageSlots = [];
+    function restoreCodeSource(value) {
+      return value == null ? value : String(value).replace(/\u0001(\d+)\u0001/g, function (_marker, i) { return '`' + codeSlots[+i] + '`'; });
+    }
     t = String(t == null ? '' : t).replace(/`([^`]+)`/g, function (m, c) { codeSlots.push(c); return '\u0001' + (codeSlots.length - 1) + '\u0001'; });
     t = t.replace(/!\[\[([^\]\n]+)\]\]|!\[([^\]\n]*)\]\((<[^>\n]+>|(?:[^()\n]|\([^()\n]*\))+)\)/g, function (raw, wiki, alt, standardTarget) {
+      raw = restoreCodeSource(raw); wiki = restoreCodeSource(wiki); alt = restoreCodeSource(alt); standardTarget = restoreCodeSource(standardTarget);
       var parts = wiki ? wiki.split('|') : [];
       var target = wiki ? parts[0] : standardTarget;
-      var size = wiki && parts.length > 1 && /^[1-9]\d{0,3}$/.test(parts[parts.length - 1]) ? parts[parts.length - 1] : null;
+      var size = wiki && parts.length > 1 && /^[1-9]\d{0,3}(?:x[1-9]\d{0,3})?$/.test(parts[parts.length - 1]) ? parts[parts.length - 1].split('x') : null;
       if (/^<[^<>]+>$/.test(target)) target = target.slice(1, -1);
       imageSlots.push(markdownImage(raw, target.trim(), wiki && !size ? parts.slice(1).join('|') : alt,
-        size ? Math.min(2400, Number(size)) : null));
+        size ? Math.min(2400, Number(size[0])) : null, size && size[1] ? Math.min(2400, Number(size[1])) : null, !!wiki));
+      return '\u0003' + (imageSlots.length - 1) + '\u0003';
+    });
+    // Private file wrappers contain original Markdown attributes. Protect them from subsequent italic/link parsing.
+    t = t.replace(/\[([^\]]+)\]\((\/api\/knowledge\/attachments\/[1-9]\d*)\)|\[\[([^\]\n]+)\]\]/g, function (raw, label, path, wikiFile) {
+      if (wikiFile) {
+        var parts = wikiFile.split('|');
+        var match = parts[0].match(/^(\/api\/knowledge\/(?:images|attachments)\/[1-9]\d*)(?:#.*)?$/);
+        if (!match) {
+          imageSlots.push('<a data-wikilink="' + esc(restoreCodeSource(wikiFile)) + '">' + mdInline(restoreCodeSource(parts[1] || parts[0])) + '</a>');
+          return '\u0003' + (imageSlots.length - 1) + '\u0003';
+        }
+        path = match[1]; label = parts[1] || parts[0];
+      }
+      imageSlots.push(markdownFileLink(restoreCodeSource(raw), path, restoreCodeSource(label)));
       return '\u0003' + (imageSlots.length - 1) + '\u0003';
     });
     t = esc(t);
@@ -1550,12 +1621,7 @@
       })
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       // URL 支持一层配对括号（如维基百科的 Function_(mathematics)），不再截断在第一个 )
-      .replace(/\[([^\]]+)\]\((https?:\/\/(?:[^()\s]|\([^()]*\))+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-      .replace(/\[([^\]]+)\]\((\/api\/knowledge\/attachments\/[1-9]\d*)\)/g, '<a href="$2" data-zq-private-download="$2">$1</a>')
-      .replace(/\[\[([^\]]+)\]\]/g, function (raw, spec) {
-        var parts = spec.split('|');
-        return '<a data-wikilink="' + spec + '">' + (parts[1] || parts[0]) + '</a>';
-      });
+      .replace(/\[([^\]]+)\]\((https?:\/\/(?:[^()\s]|\([^()]*\))+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
     t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
     return t.replace(/\u0001(\d+)\u0001/g, function (m, i) { return '<code>' + esc(codeSlots[+i]) + '</code>'; })
       .replace(/\u0003(\d+)\u0003/g, function (m, i) { return imageSlots[+i]; });
@@ -1715,7 +1781,7 @@
       if (/^\$\$/.test(lt)) { closeBlocks(); inMath = true; var head = lt.slice(2).trim(); if (head) mathBuf.push(head); return; }
       if (/^\|.*\|\s*$/.test(line.trim())) { closeUl(); closeOl(); flushQuote(); tableBuf.push(line.trim()); return; }
       flushTable();
-      var h = line.match(/^(#{1,4})\s+(.+)$/);
+      var h = line.match(/^(#{1,6})\s+(.+)$/);
       var task = line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
       var li = line.match(/^[-*]\s+(.+)$/);
       var ol = line.match(/^\d+[.)]\s+(.+)$/);
@@ -1756,56 +1822,292 @@
     });
   }
   var privateMedia = new Map();
+  var privateViews = new Set();
+  var privatePreviewSerial = 0;
   function revokePrivateMedia() {
-    privateMedia.forEach(function (url, image) {
-      if (image.getAttribute('src') === url) image.removeAttribute('src');
+    privateMedia.forEach(function (url, media) {
+      if (media.getAttribute('src') === url || String(media.getAttribute('src') || '').indexOf(url + '#') === 0) media.removeAttribute('src');
+      if (media.pause) media.pause();
       URL.revokeObjectURL(url);
-      image.removeAttribute('data-zq-loaded');
+      media.removeAttribute('data-zq-loaded');
     });
     privateMedia.clear();
-  }
-  function hydratePrivateMedia(root) {
-    if (!root || !root.querySelectorAll) return;
-    privateMedia.forEach(function (url, image) {
-      if (!image.isConnected) { URL.revokeObjectURL(url); privateMedia.delete(image); }
+    privateViews.forEach(function (view) {
+      view.innerHTML = '<span class="zq-embed-status">登录后查看嵌入内容</span>';
+      delete view.dataset.zqLoaded; delete view.dataset.zqLoading; delete view.dataset.zqPreviewId;
     });
+    privateViews.clear();
+  }
+  function preserveEmbedViewport(view, mutate) {
+    var doc = view.closest && view.closest('#zq-doc');
+    var md = doc && doc.querySelector('.zq-md');
+    var anchor = md && Array.from(md.children || []).find(function (child) {
+      var rect = child.getBoundingClientRect(); return rect.height && rect.bottom > doc.getBoundingClientRect().top;
+    });
+    var before = anchor && anchor.getBoundingClientRect().top;
+    mutate();
+    if (anchor && anchor.isConnected) doc.scrollTop += anchor.getBoundingClientRect().top - before;
+  }
+  function previewIsCurrent(element, auth, serial) {
+    return element.isConnected && token() === auth && !!auth && element.dataset.zqPreviewId === serial;
+  }
+  function canvasPreviewHtml(data) {
+    var originals = data && Array.isArray(data.nodes) ? data.nodes : [];
+    var nodes = originals.slice(0, 50).map(function (node, index) {
+      function finite(value, fallback, min, max) { return typeof value === 'number' && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback; }
+      return { id: String(node.id || index), x: finite(node.x, index * 220, -10000, 10000), y: finite(node.y, 0, -10000, 10000),
+        width: finite(node.width, 200, 80, 2000), height: finite(node.height, 120, 60, 2000),
+        label: String(node.text || node.file || node.label || node.url || node.type || '节点').slice(0, 320), type: node.type };
+    });
+    if (!nodes.length) return '<span class="zq-embed-status">Canvas 暂无节点</span>';
+    var left = Math.min.apply(null, nodes.map(function (n) { return n.x; })) - 24;
+    var top = Math.min.apply(null, nodes.map(function (n) { return n.y; })) - 24;
+    var right = Math.max.apply(null, nodes.map(function (n) { return n.x + n.width; })) + 24;
+    var bottom = Math.max.apply(null, nodes.map(function (n) { return n.y + n.height; })) + 24;
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + left + ' ' + top + ' ' + (right - left) + ' ' + (bottom - top)
+      + '" role="img" aria-label="Canvas 节点与连线预览">';
+    function point(node, side) {
+      if (side === 'top') return [node.x + node.width / 2, node.y];
+      if (side === 'bottom') return [node.x + node.width / 2, node.y + node.height];
+      if (side === 'left') return [node.x, node.y + node.height / 2];
+      return [node.x + node.width, node.y + node.height / 2];
+    }
+    var edges = data && Array.isArray(data.edges) ? data.edges.slice(0, 100) : [];
+    edges.forEach(function (edge) {
+      var from = nodes.find(function (node) { return node.id === String(edge.fromNode); });
+      var to = nodes.find(function (node) { return node.id === String(edge.toNode); });
+      if (!from || !to) return;
+      var a = point(from, edge.fromSide || 'right'), b = point(to, edge.toSide || 'left');
+      svg += '<line class="zq-canvas-edge" x1="' + a[0] + '" y1="' + a[1] + '" x2="' + b[0] + '" y2="' + b[1] + '"></line>';
+      if (edge.toEnd !== 'none') {
+        var dx = b[0] - a[0], dy = b[1] - a[1], length = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+        var vx = dx / length * 10, vy = dy / length * 10;
+        svg += '<polyline class="zq-canvas-edge" points="' + (b[0] - vx - vy / 2) + ',' + (b[1] - vy + vx / 2) + ' '
+          + b[0] + ',' + b[1] + ' ' + (b[0] - vx + vy / 2) + ',' + (b[1] - vy - vx / 2) + '"></polyline>';
+      }
+      if (edge.label) svg += '<text class="zq-canvas-label" x="' + ((a[0] + b[0]) / 2) + '" y="' + ((a[1] + b[1]) / 2 - 8) + '">' + esc(String(edge.label).slice(0, 60)) + '</text>';
+    });
+    nodes.forEach(function (node) {
+      svg += '<g class="zq-canvas-node' + (node.type === 'group' ? ' zq-canvas-group' : '') + '"><rect x="' + node.x + '" y="' + node.y
+        + '" width="' + node.width + '" height="' + node.height + '" rx="8"></rect><text x="' + (node.x + 12) + '" y="' + (node.y + 24) + '">';
+      var characters = Math.max(6, Math.min(60, Math.floor((node.width - 24) / 8)));
+      var label = node.label.replace(/\r/g, '').split('\n').join(' '), rows = Math.min(5, Math.floor((node.height - 16) / 20));
+      for (var i = 0; i < rows && i * characters < label.length; i++) svg += '<tspan x="' + (node.x + 12) + '" dy="' + (i ? 20 : 0) + '">' + esc(label.slice(i * characters, (i + 1) * characters)) + '</tspan>';
+      svg += '</text></g>';
+    });
+    return '<span class="zq-canvas-preview">' + svg + '</svg></span><span class="zq-embed-status">' + originals.length + ' 个节点 · '
+      + (Array.isArray(data.edges) ? data.edges.length : 0) + ' 条连线' + (originals.length > 50 || (Array.isArray(data.edges) && data.edges.length > 100) ? ' · 预览仅显示前 50 个节点和 100 条连线' : '') + '</span>';
+  }
+  function attachmentPreviewHtml(meta, path) {
+    var type = String(meta.previewType || 'FILE').toUpperCase();
+    var title = '<span class="zq-embed-head"><span>' + esc(meta.name || '附件') + '</span><a href="' + esc(path)
+      + '" data-zq-private-download="' + esc(path) + '">下载</a></span>';
+    if (type === 'JSON' || type === 'TEXT' || type === 'CANVAS') {
+      var canvas = '';
+      var originalText = String(meta.text || '').replace(/^\uFEFF/, '');
+      var text = originalText.slice(0, 65536), notice = meta.truncated || originalText.length > 65536 ? '<span class="zq-embed-status">预览已截断，下载可查看完整内容</span>' : '';
+      if (type === 'JSON' || type === 'CANVAS') {
+        try {
+          var data = JSON.parse(originalText.slice(0, 524288));
+          if (type === 'CANVAS' && data && typeof data === 'object' && !Array.isArray(data)) {
+            canvas = canvasPreviewHtml(data);
+            text = JSON.stringify(data, null, 2);
+          } else text = JSON.stringify(data, null, 2);
+        } catch (ignored) { notice += '<span class="zq-embed-status">' + (type === 'CANVAS' ? 'Canvas' : 'JSON') + ' 未通过语法校验，显示原文</span>'; }
+      }
+      if (text.length > 65536) {
+        if (notice.indexOf('预览已截断') < 0) notice += '<span class="zq-embed-status">预览已截断，下载可查看完整内容</span>';
+        text = text.slice(0, 65536);
+      }
+      if (meta.warning) notice += '<span class="zq-embed-status">' + esc(meta.warning) + '</span>';
+      var source = '<span class="zq-embed-text"><pre><code>' + esc(text) + '</code></pre></span>';
+      return title + canvas + (canvas ? '<details class="zq-canvas-source"><summary>查看 Canvas 原文</summary>' + source + '</details>' : source) + notice;
+    }
+    if (['IMAGE', 'PDF', 'AUDIO', 'VIDEO'].indexOf(type) >= 0) return title + '<span class="zq-embed-media"><span class="zq-embed-status">正在加载预览…</span></span>';
+    return title + '<span class="zq-embed-status">此格式暂无内置预览，可下载后打开。</span>';
+  }
+  async function hydrateAttachment(view, context) {
+    if (view.dataset.zqLoaded || view.dataset.zqLoading) return;
+    var path = view.getAttribute('data-zq-attachment');
+    if (!/^\/api\/knowledge\/attachments\/[1-9]\d*$/.test(path || '') || !context.auth) return;
+    var serial = String(++privatePreviewSerial);
+    view.dataset.zqLoading = '1'; view.dataset.zqPreviewId = serial;
+    privateViews.add(view);
+    try {
+      context.metadata = context.metadata || Object.create(null);
+      if (!context.metadata[path]) context.metadata[path] = api.get(path.slice(API.length) + '/preview');
+      var meta = await context.metadata[path];
+      if (!previewIsCurrent(view, context.auth, serial)) return;
+      preserveEmbedViewport(view, function () { view.innerHTML = attachmentPreviewHtml(meta || {}, path); });
+      view.dataset.zqLoaded = '1';
+      view.dispatchEvent(new CustomEvent('zq-wiki-embed-ready', { bubbles: true }));
+      var type = String(meta.previewType || 'FILE').toUpperCase();
+      var mime = { IMAGE: /^(image\/(?:png|jpeg|gif|webp|bmp))$/i, PDF: /^application\/pdf$/i,
+        AUDIO: /^audio\/(?:mpeg|mp4|ogg|wav|x-wav|flac|webm|3gpp)$/i,
+        VIDEO: /^video\/(?:mp4|quicktime|webm|ogg|3gpp)$/i };
+      if (!mime[type]) return;
+      if (!mime[type].test(meta.mimeType || '')) {
+        var unsupported = view.querySelector('.zq-embed-media');
+        if (unsupported) unsupported.innerHTML = '<span class="zq-embed-status">此文件暂无安全内置预览，请下载后查看。</span>';
+        return;
+      }
+      if (Number(meta.byteSize) > 32 * 1024 * 1024) {
+        var large = view.querySelector('.zq-embed-media');
+        if (large) large.innerHTML = '<span class="zq-embed-status">附件较大，请下载后查看完整内容。</span>';
+        return;
+      }
+      var downloaded = await api.download(path.slice(API.length));
+      if (!previewIsCurrent(view, context.auth, serial)) return;
+      // The owned download response deliberately uses octet-stream. Only validated preview metadata determines the Blob's media type.
+      var objectUrl = URL.createObjectURL(new Blob([downloaded.blob], { type: meta.mimeType }));
+      var media = document.createElement(type === 'IMAGE' ? 'img' : type === 'PDF' ? 'iframe' : type.toLowerCase());
+      var fragment = view.getAttribute('data-embed-fragment') || '';
+      if (type === 'PDF') {
+        var page = fragment.match(/(?:^|&)page=([1-9]\d{0,4})(?:&|$)/), height = fragment.match(/(?:^|&)height=([1-9]\d{0,3})(?:&|$)/);
+        media.src = objectUrl + (page ? '#page=' + page[1] : '');
+        media.title = meta.name || 'PDF 预览'; media.height = String(height ? Math.min(1200, Math.max(180, Number(height[1]))) : 480);
+      } else { media.src = objectUrl; if (type === 'IMAGE') media.alt = meta.name || '图片'; else { media.controls = true; media.preload = 'metadata'; } }
+      media.onload = media.onloadedmetadata = function () {
+        if (previewIsCurrent(view, context.auth, serial)) view.dispatchEvent(new CustomEvent('zq-wiki-embed-ready', { bubbles: true }));
+      };
+      media.onerror = function () {
+        if (!previewIsCurrent(view, context.auth, serial)) return;
+        var errorHolder = view.querySelector('.zq-embed-media');
+        if (errorHolder) errorHolder.innerHTML = '<span class="zq-embed-status">当前设备无法显示此媒体，请下载后打开。</span>';
+        URL.revokeObjectURL(objectUrl); privateMedia.delete(media);
+      };
+      privateMedia.set(media, objectUrl);
+      var holder = view.querySelector('.zq-embed-media');
+      if (holder) preserveEmbedViewport(view, function () { holder.textContent = ''; holder.appendChild(media); });
+      view.dispatchEvent(new CustomEvent('zq-wiki-embed-ready', { bubbles: true }));
+    } catch (error) {
+      if (previewIsCurrent(view, context.auth, serial)) view.innerHTML = '<span class="zq-embed-status">附件预览失败</span><a href="' + esc(path) + '" data-zq-private-download="' + esc(path) + '">下载附件</a>';
+    } finally { if (view.dataset.zqPreviewId === serial) delete view.dataset.zqLoading; }
+  }
+  async function hydrateNote(view, context, ancestry, depth) {
+    if (view.dataset.zqLoaded || view.dataset.zqLoading || !context.auth) return;
+    var spec = view.getAttribute('data-zq-note-embed') || '', hash = spec.indexOf('#');
+    var title = (hash < 0 ? spec : spec.slice(0, hash)).replace(/\.md$/i, '').trim();
+    var anchor = hash < 0 ? '' : spec.slice(hash + 1).trim();
+    var candidates = (state.wikiPages || []).filter(function (p) { return String(p.title || '') === title; });
+    var page = title ? (candidates.length === 1 ? candidates[0] : null) : state.wikiCur;
+    if (!page) { view.innerHTML = '<span class="zq-embed-status">知识页未找到：' + esc(title || spec) + '</span>'; return; }
+    var noteKey = String(page.id) + '#' + anchor;
+    if (depth >= 4 || ancestry.indexOf(noteKey) >= 0 || ++context.count > 24) {
+      view.innerHTML = '<span class="zq-embed-status">嵌入已停止：循环引用或超过预览层数</span>'; return;
+    }
+    var serial = String(++privatePreviewSerial);
+    view.dataset.zqLoading = '1'; view.dataset.zqPreviewId = serial; privateViews.add(view);
+    try {
+      var key = String(page.id);
+      if (!context.pages[key]) context.pages[key] = api.get('/knowledge/pages/' + page.id);
+      var detail = await context.pages[key];
+      if (!previewIsCurrent(view, context.auth, serial)) return;
+      var md = wikiEmbedSection(detail.content || '', anchor);
+      if (md == null) { view.innerHTML = '<span class="zq-embed-status">知识页中的标题或段落未找到：' + esc(anchor) + '</span>'; return; }
+      var room = Math.max(0, Math.min(50000, context.remaining));
+      context.remaining -= Math.min(room, md.length);
+      preserveEmbedViewport(view, function () { view.innerHTML = '<span class="zq-embed-head"><a data-wikilink="' + esc(spec) + '">' + esc(detail.title || page.title || '知识页')
+        + '</a></span><span class="zq-embed-content">' + renderMarkdown(md.slice(0, room)) + '</span>'
+        + (md.length > room ? '<span class="zq-embed-status">嵌入预览已截断，打开知识页可查看完整内容。</span>' : ''); });
+      view.dataset.zqLoaded = '1';
+      hydrateEmbedChildren(view, context, ancestry.concat(noteKey), depth + 1);
+      renderMathIn(view, true);
+      view.dispatchEvent(new CustomEvent('zq-wiki-embed-ready', { bubbles: true }));
+    } catch (error) {
+      if (previewIsCurrent(view, context.auth, serial)) view.innerHTML = '<span class="zq-embed-status">知识页预览加载失败，可重新打开页面重试。</span>';
+    } finally { if (view.dataset.zqPreviewId === serial) delete view.dataset.zqLoading; }
+  }
+  async function probeAttachment(link, context) {
+    if (link.dataset.zqLoaded || link.dataset.zqLoading || !context.auth) return;
+    var path = link.getAttribute('data-zq-attachment-probe');
+    if (!/^\/api\/knowledge\/(?:images|attachments)\/[1-9]\d*$/.test(path || '')) return;
+    var previewPath = path.replace('/images/', '/attachments/');
+    var serial = String(++privatePreviewSerial);
+    link.dataset.zqLoading = '1'; link.dataset.zqPreviewId = serial; privateViews.add(link);
+    try {
+      context.metadata = context.metadata || Object.create(null);
+      if (!context.metadata[previewPath]) context.metadata[previewPath] = api.get(previewPath.slice(API.length) + '/preview');
+      var meta = await context.metadata[previewPath];
+      if (!previewIsCurrent(link, context.auth, serial)) return;
+      link.dataset.zqLoaded = '1';
+      // Previous imports turned JSON embeds into ordinary links. Restore their readable preview without rewriting the user's Markdown.
+      if (String(meta.previewType || '').toUpperCase() !== 'JSON'
+          && !(String(meta.previewType || '').toUpperCase() === 'TEXT' && /\.json$/i.test(meta.name || ''))) return;
+      var preview = document.createElement('span');
+      preview.className = 'zq-embed zq-attachment-embed'; preview.setAttribute('data-zq-attachment', previewPath);
+      preserveEmbedViewport(link, function () { link.appendChild(preview); }); hydrateAttachment(preview, context);
+    } catch (ignored) { /* Ordinary links remain usable if preview probing fails. */ }
+    finally { if (link.dataset.zqPreviewId === serial) delete link.dataset.zqLoading; }
+  }
+  function hydrateEmbedChildren(root, context, ancestry, depth) {
+    Array.prototype.forEach.call(root.querySelectorAll('[data-zq-attachment-probe]'), function (link) {
+      context.probes = (context.probes || 0) + 1;
+      if (context.probes <= 32) probeAttachment(link, context);
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-zq-attachment]'), function (view) {
+      context.attachments = (context.attachments || 0) + 1;
+      if (context.attachments <= 32) hydrateAttachment(view, context);
+      else view.innerHTML = '<span class="zq-embed-status">附件预览数量较多，请从附件列表打开。</span>';
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-zq-note-embed]'), function (view) { hydrateNote(view, context, ancestry, depth); });
+  }
+  function openAttachmentPreview(id, name) {
+    if (!/^[1-9]\d*$/.test(String(id || ''))) return;
+    var path = '/api/knowledge/attachments/' + id;
+    return openModal({
+      title: name || '附件预览', width: 820,
+      bodyHtml: '<span class="zq-embed zq-attachment-embed" data-zq-attachment="' + esc(path) + '" contenteditable="false"><span class="zq-embed-status">正在加载附件…</span></span>',
+      onMount: function (body) { renderMathIn(body); }
+    });
+  }
+  function hydratePrivateMedia(root, skipEmbeds) {
+    if (!root || !root.querySelectorAll) return;
+    privateMedia.forEach(function (url, media) {
+      if (!media.isConnected) { if (media.pause) media.pause(); URL.revokeObjectURL(url); privateMedia.delete(media); }
+    });
+    privateViews.forEach(function (view) { if (!view.isConnected) privateViews.delete(view); });
     Array.prototype.forEach.call(root.querySelectorAll('img[data-zq-private-image]'), function (image) {
       if (image.dataset.zqLoaded || image.dataset.zqLoading) return;
       var url = image.getAttribute('data-zq-private-image');
       if (!/^\/api\/knowledge\/images\/[1-9]\d*$/.test(url || '')) return;
-      var authAtStart = token();
+      var authAtStart = token(); if (!authAtStart) return;
       image.dataset.zqLoading = '1';
       api.download(url.slice(API.length)).then(function (result) {
-        if (!/^image\/(png|jpeg|gif|webp)$/i.test(result.blob.type || '')) throw requestError('图片格式无效');
+        if (!/^image\/(png|jpeg|gif|webp|bmp)$/i.test(result.blob.type || '')) throw requestError('图片格式无效');
         if (!image.isConnected || image.getAttribute('data-zq-private-image') !== url || token() !== authAtStart) return;
         var objectUrl = URL.createObjectURL(result.blob);
-        image.src = objectUrl;
-        image.dataset.zqLoaded = '1';
-        privateMedia.set(image, objectUrl);
+        image.onload = function () {
+          if (image.isConnected && token() === authAtStart) image.dispatchEvent(new CustomEvent('zq-wiki-embed-ready', { bubbles: true }));
+        };
+        image.src = objectUrl; image.dataset.zqLoaded = '1'; privateMedia.set(image, objectUrl);
       }).catch(function () {
         if (image.isConnected && token() === authAtStart) image.alt = '图片加载失败：' + (image.alt || '图片');
       }).finally(function () { delete image.dataset.zqLoading; });
     });
+    if (!skipEmbeds) hydrateEmbedChildren(root, { auth: token(), pages: Object.create(null), count: 0, remaining: 200000 },
+      state.wikiCur ? [String(state.wikiCur.id) + '#'] : [], 0);
     if (!root.dataset || root.dataset.zqPrivateLinksWired) return;
     root.dataset.zqPrivateLinksWired = '1';
     root.addEventListener('click', function (event) {
       var link = event.target && event.target.closest ? event.target.closest('a[data-zq-private-download]') : null;
       if (!link || !root.contains(link)) return;
       event.preventDefault(); event.stopPropagation();
-      var path = link.getAttribute('data-zq-private-download');
-      if (!/^\/api\/knowledge\/attachments\/[1-9]\d*$/.test(path || '')) return;
+      var path = link.getAttribute('data-zq-private-download'), auth = token();
+      if (!/^\/api\/knowledge\/(?:attachments|images)\/[1-9]\d*$/.test(path || '') || !auth) return;
+      if (link.getAttribute('data-zq-private-preview') === '1') { openAttachmentPreview(path.split('/').pop(), link.textContent); return; }
       api.download(path.slice(API.length)).then(function (result) {
-        var objectUrl = URL.createObjectURL(result.blob);
-        var a = document.createElement('a');
+        if (!link.isConnected || token() !== auth) return;
+        var objectUrl = URL.createObjectURL(result.blob), a = document.createElement('a');
         a.href = objectUrl; a.download = result.filename || link.textContent || '附件';
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 30000);
-      }).catch(function (e) { toast(e.message || '附件下载失败', 'error'); });
+      }).catch(function (e) { if (token() === auth) toast(e.message || '附件下载失败', 'error'); });
     });
   }
-  function renderMathIn(root) {
+  function renderMathIn(root, skipEmbeds) {
     if (!root) return;
-    hydratePrivateMedia(root);
+    hydratePrivateMedia(root, skipEmbeds);
     var nodes = root.querySelectorAll('[data-tex]');
     if (!nodes.length) return;
     if (katexState === 2 && window.katex) { paintMath(nodes); return; }
@@ -1844,6 +2146,10 @@
           out += (n.classList && n.classList.contains('zq-math')) ? '\n$$\n' + tex + '\n$$\n\n' : ('$' + tex + '$');
           return;
         }
+        if (n.getAttribute && n.getAttribute('data-embed-markdown') !== null) {
+          out += n.getAttribute('data-embed-markdown');
+          return;
+        }
         if (n.getAttribute && n.getAttribute('data-image-markdown') !== null) {
           out += n.getAttribute('data-image-markdown');
           return;
@@ -1858,6 +2164,8 @@
           case 'H2': out += '\n## ' + inner.trim() + '\n\n'; break;
           case 'H3': out += '\n### ' + inner.trim() + '\n\n'; break;
           case 'H4': out += '\n#### ' + inner.trim() + '\n\n'; break;
+          case 'H5': out += '\n##### ' + inner.trim() + '\n\n'; break;
+          case 'H6': out += '\n###### ' + inner.trim() + '\n\n'; break;
           case 'STRONG': case 'B': out += '**' + inner + '**'; break;
           case 'EM': case 'I': out += '*' + inner + '*'; break;
           case 'U': out += '<u>' + inner + '</u>'; break;
@@ -1866,10 +2174,16 @@
           case 'BLOCKQUOTE': out += '\n' + inner.trim().split('\n').map(function (l) { return '> ' + l; }).join('\n') + '\n\n'; break;
           case 'TABLE': {
             var md = '\n';
-            Array.prototype.forEach.call(n.querySelectorAll('tr'), function (tr, ri) {
-              var cells = Array.prototype.map.call(tr.querySelectorAll('th,td'), function (c) { return walk(c).replace(/\n+/g, ' ').trim(); });
+            var rows = Array.prototype.filter.call(n.querySelectorAll('tr'), function (tr) {
+              var parent = tr.parentNode;
+              while (parent && String(parent.tagName || '').toUpperCase() !== 'TABLE') parent = parent.parentNode;
+              return parent === n;
+            });
+            rows.forEach(function (tr, ri) {
+              var ownCells = Array.prototype.filter.call(tr.childNodes, function (c) { return c.nodeType === 1 && /^(TH|TD)$/.test(c.tagName.toUpperCase()); });
+              var cells = ownCells.map(function (c) { return walk(c).replace(/\n+/g, ' ').trim(); });
               md += '| ' + cells.join(' | ') + ' |\n';
-              if (ri === 0 && tr.querySelector('th')) md += '|' + cells.map(function () { return ' --- '; }).join('|') + '|\n';
+              if (ri === 0 && ownCells.some(function (c) { return c.tagName.toUpperCase() === 'TH'; })) md += '|' + cells.map(function () { return ' --- '; }).join('|') + '|\n';
             });
             out += md + '\n';
             break;
@@ -2104,7 +2418,7 @@
     API: API, token: token, popMenu: popMenu, drafts: drafts, renderMarkdown: renderMarkdown, renderMathIn: renderMathIn,
     REQUEST_TIMEOUT_MS: REQUEST_TIMEOUT_MS, role: role, requestError: requestError, redirectToLogin: redirectToLogin, nowMs: nowMs,
     serverTime: serverTime, highlightCode: highlightCode,
-    mathBlockHtml: mathBlockHtml, htmlToMarkdown: htmlToMarkdown, normalizeTask: normalizeTask, qLabel: qLabel, sLabel: sLabel,
+    mathBlockHtml: mathBlockHtml, htmlToMarkdown: htmlToMarkdown, openAttachmentPreview: openAttachmentPreview, normalizeTask: normalizeTask, qLabel: qLabel, sLabel: sLabel,
     REMINDER_FIELDS: REMINDER_FIELDS, currentReminderChannel: currentReminderChannel, reminderChannelReady: reminderChannelReady,
     logout: logout, adoptNewToken: adoptNewToken, icon: icon
   };

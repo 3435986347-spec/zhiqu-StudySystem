@@ -36,6 +36,7 @@ final class KnowledgeImageValidator {
                     case "png" -> "image/png";
                     case "jpeg", "jpg" -> "image/jpeg";
                     case "gif" -> "image/gif";
+                    case "bmp" -> "image/bmp";
                     default -> throw invalid();
                 };
                 reader.setInput(input, true, true);

@@ -92,7 +92,7 @@ public class KnowledgeImageService {
                 attachment.byteSize(), attachment.width(), attachment.height(), attachment.url()), data.bytes());
     }
 
-    /** Vault files that are not known raster images stay opaque and are served only as downloads. */
+    /** Original bytes stay encrypted; bounded previews never serve active document content. */
     @Transactional
     public AttachmentRecord storeOwnedAttachment(Long userId, String name, byte[] bytes, String originalPath) {
         requireUser(userId);
@@ -141,6 +141,11 @@ public class KnowledgeImageService {
             throw new BusinessException("附件数据损坏，请重新上传");
         }
         return new AttachmentData(attachmentMetadata(image), bytes);
+    }
+
+    /** One ownership-checked read supplies preview metadata and an escaped-text payload when supported. */
+    public Map<String, Object> previewOwnedAttachment(Long userId, Long id) {
+        return KnowledgeAttachmentPreview.describe(readOwnedAttachment(userId, id));
     }
 
     /** Metadata only: listing attachments never loads/decrypts the binary columns. */
@@ -210,6 +215,7 @@ public class KnowledgeImageService {
             case "image/jpeg" -> ".jpg";
             case "image/gif" -> ".gif";
             case "image/webp" -> ".webp";
+            case "image/bmp" -> ".bmp";
             default -> ".png";
         };
         if (name.length() > 170) name = name.substring(0, name.offsetByCodePoints(0, Math.min(165, name.codePointCount(0, name.length()))));
@@ -217,7 +223,7 @@ public class KnowledgeImageService {
     }
 
     static boolean isRasterName(String name) {
-        return fileName(name).toLowerCase(Locale.ROOT).matches(".*\\.(png|jpe?g|gif|webp)$");
+        return fileName(name).toLowerCase(Locale.ROOT).matches(".*\\.(png|jpe?g|gif|webp|bmp)$");
     }
 
     private static void requireUser(Long userId) {

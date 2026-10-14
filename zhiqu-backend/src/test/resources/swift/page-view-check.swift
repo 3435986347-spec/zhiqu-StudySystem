@@ -26,6 +26,15 @@ app.setActivationPolicy(.accessory)
 let inbox = Inbox()
 let web = PageView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), persistent: false)
 web.configuration.userContentController.add(inbox, name: "t")
+// 只有 responder chain，不显示窗口、不把检查程序切到前台，也不启动用户的应用。
+let editWindow = NSWindow(contentRect: web.frame, styleMask: [.titled], backing: .buffered, defer: false)
+editWindow.contentView = web
+editWindow.makeFirstResponder(web)
+let applicationMenu = makeZhiquApplicationMenu()
+let nativeEditItems = applicationMenu.items.flatMap { $0.submenu?.items ?? [] }.filter { $0.action != nil && $0.keyEquivalent != "q" }
+// 安装到 NSApp 后 AppKit 会根据 responder chain 更新菜单状态 / target；先验证构造时没有写死 target。
+let menuUsesResponderChain = !nativeEditItems.isEmpty && nativeEditItems.allSatisfy { $0.target == nil }
+app.mainMenu = applicationMenu
 
 // 面板的桩：记下面板怎么配的，按 nextFiles / nextSave 回答
 var nextFiles: [URL]? = nil
@@ -55,7 +64,8 @@ var miniActions: [String] = []
 web.onMini = { miniActions.append($0) }
 
 let html = """
-<html><body><input id=one type=file><input id=many type=file multiple><script>
+<html><body><input id=one type=file><input id=many type=file multiple>
+<div id=native-editor contenteditable=true>原始正文甲乙</div><textarea id=native-textarea>输入框正文丙丁</textarea><script>
 function say(x){ window.webkit.messageHandlers.t.postMessage(String(x)); }
 function watch(id){
   var el = document.getElementById(id);
@@ -252,12 +262,130 @@ step("panel", {
     UserDefaults.standard.removeObject(forKey: "NSWindow Frame " + miniPanelAutosaveName)   // 检查程序不留下记住的位置
 }, until: { true })
 
+// 13. macOS 的 Cmd 编辑键：实际 NSMenu key equivalent -> WKWebView 原生编辑动作。
+// 隐藏窗口不成为 keyWindow，AppKit 无法从 NSApp 找它的 firstResponder；因此仅在检查程序中给菜单指定这个
+// responder。生产菜单保持 target=nil，交给正常的 keyWindow responder chain；Java 另外钉住外壳接线。
+// 不用 execCommand 代替原生快捷键。粘贴板只使用合成正文，完整备份所有类型，做完马上恢复。
+let pasteboard = NSPasteboard.general
+var oldClipboard: [NSPasteboardItem] = []
+var clipboardSaved = false
+func saveClipboard() {
+    oldClipboard = (pasteboard.pasteboardItems ?? []).map { item in
+        let saved = NSPasteboardItem()
+        for type in item.types { if let data = item.data(forType: type) { saved.setData(data, forType: type) } }
+        return saved
+    }
+    clipboardSaved = true
+}
+func restoreClipboard() {
+    guard clipboardSaved else { return }
+    pasteboard.clearContents()
+    if !oldClipboard.isEmpty { pasteboard.writeObjects(oldClipboard) }
+    clipboardSaved = false
+}
+var editState: [String: Any] = [:]
+var editHandled: [String: Bool] = [:]
+func editRead(_ id: String) {
+    editState = [:]
+    web.evaluateJavaScript("""
+      (() => { const e = document.getElementById('\(id)'); return {
+        text: e.tagName === 'TEXTAREA' ? e.value : e.textContent,
+        selected: e.tagName === 'TEXTAREA' ? e.value.slice(e.selectionStart, e.selectionEnd) : window.getSelection().toString(),
+        focused: document.activeElement === e
+      }; })()
+    """) { value, error in
+        if let error { out("edit.jsError", error.localizedDescription) }
+        editState = value as? [String: Any] ?? ["error": true]
+    }
+}
+func editKey(_ label: String, _ letter: String, _ code: UInt16, id: String, flags: NSEvent.ModifierFlags = .command) {
+    editState = [:]
+    // charactersIgnoringModifiers 仍然保留 Shift，真实的 Cmd+Shift+Z 事件给的是大写 Z。
+    let character = flags.contains(.shift) ? letter.uppercased() : letter
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                                windowNumber: editWindow.windowNumber, context: nil, characters: character,
+                                charactersIgnoringModifiers: character, isARepeat: false, keyCode: code)!
+    applicationMenu.update()
+    editHandled[label] = applicationMenu.performKeyEquivalent(with: event)
+    // WebKit 的编辑动作跨进程，等它经过 runloop 后才读正文 / 选区。
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { editRead(id) }
+}
+func editReport(_ label: String) {
+    out("edit.\(label).handled", editHandled[label] ?? false)
+    out("edit.\(label).text", editState["text"] as? String ?? "none")
+    out("edit.\(label).selected", editState["selected"] as? String ?? "none")
+}
+step("edit.setup", {
+    out("edit.responderTargets", menuUsesResponderChain)
+    out("edit.windowHidden", !editWindow.isVisible && !editWindow.isKeyWindow)
+    for item in nativeEditItems {
+        var responder = editWindow.firstResponder
+        while let candidate = responder, let action = item.action, !candidate.responds(to: action) {
+            responder = candidate.nextResponder
+        }
+        item.target = responder
+    }
+    js("""
+      (() => { const e = document.getElementById('native-editor'); e.focus();
+        const range = document.createRange(); range.selectNodeContents(e); range.collapse(true);
+        const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      })()
+    """)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { editRead("native-editor") }
+}, until: { !editState.isEmpty })
+step("edit.select", { editKey("select", "a", 0, id: "native-editor") }, until: { !editState.isEmpty })
+step("edit.select.report", { editReport("select") }, until: { true })
+step("edit.copy", { saveClipboard(); editKey("copy", "c", 8, id: "native-editor") }, until: { !editState.isEmpty })
+step("edit.copy.report", {
+    editReport("copy")
+    out("edit.copy.clipboard", pasteboard.string(forType: .string) == "原始正文甲乙")
+    restoreClipboard()
+}, until: { true })
+step("edit.cut", { saveClipboard(); editKey("cut", "x", 7, id: "native-editor") }, until: { !editState.isEmpty })
+step("edit.cut.report", { editReport("cut"); restoreClipboard() }, until: { true })
+step("edit.undoCut", { editKey("undoCut", "z", 6, id: "native-editor") }, until: { !editState.isEmpty })
+step("edit.undoCut.report", { editReport("undoCut") }, until: { true })
+step("edit.selectForPaste", { editKey("selectForPaste", "a", 0, id: "native-editor") }, until: { !editState.isEmpty })
+step("edit.paste", {
+    saveClipboard(); pasteboard.clearContents(); pasteboard.setString("粘贴新正文甲", forType: .string)
+    editKey("paste", "v", 9, id: "native-editor")
+}, until: { !editState.isEmpty })
+step("edit.paste.report", { editReport("paste"); restoreClipboard() }, until: { true })
+step("edit.undo", { editKey("undo", "z", 6, id: "native-editor") }, until: { !editState.isEmpty })
+step("edit.undo.report", { editReport("undo") }, until: { true })
+step("edit.redo", { editKey("redo", "z", 6, id: "native-editor", flags: [.command, .shift]) }, until: { !editState.isEmpty })
+step("edit.redo.report", { editReport("redo") }, until: { true })
+step("edit.textarea.focus", {
+    editState = [:]
+    js("document.getElementById('native-textarea').focus()")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { editRead("native-textarea") }
+}, until: { !editState.isEmpty })
+step("edit.textarea.select", { editKey("textarea.select", "a", 0, id: "native-textarea") }, until: { !editState.isEmpty })
+step("edit.textarea.select.report", { editReport("textarea.select") }, until: { true })
+step("edit.textarea.copy", { saveClipboard(); editKey("textarea.copy", "c", 8, id: "native-textarea") }, until: { !editState.isEmpty })
+step("edit.textarea.copy.report", {
+    editReport("textarea.copy")
+    out("edit.textarea.copy.clipboard", pasteboard.string(forType: .string) == "输入框正文丙丁")
+    restoreClipboard()
+}, until: { true })
+step("edit.textarea.paste", {
+    saveClipboard(); pasteboard.clearContents(); pasteboard.setString("粘贴新正文", forType: .string)
+    editKey("textarea.paste", "v", 9, id: "native-textarea")
+}, until: { !editState.isEmpty })
+step("edit.textarea.paste.report", { editReport("textarea.paste"); restoreClipboard() }, until: { true })
+step("edit.textarea.undo", { editKey("textarea.undo", "z", 6, id: "native-textarea") }, until: { !editState.isEmpty })
+step("edit.textarea.undo.report", {
+    editReport("textarea.undo")
+    restoreClipboard()
+    out("edit.windowStayedHidden", !editWindow.isVisible && !editWindow.isKeyWindow)
+}, until: { true })
+
 // 一步等不到就记一笔、接着走：后面那些键照样打出来，Java 那边的断言指得到具体是哪件事没做到
 var index = 0
 var started = Date()
 var actionDone = false
 Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
-    guard index < steps.count else { out("done", true); exit(0) }
+    guard index < steps.count else { restoreClipboard(); out("done", true); exit(0) }
     let (name, action, until) = steps[index]
     if !actionDone { action(); actionDone = true; started = Date(); return }
     if until() { index += 1; actionDone = false; return }
