@@ -1572,14 +1572,48 @@
   }
   function markdownFileLink(raw, path, label) {
     return '<span class="zq-file-link" data-embed-markdown="' + esc(raw) + '" data-zq-attachment-probe="' + esc(path) + '"><a href="' + esc(path)
-      + '" data-zq-private-download="' + esc(path) + '" data-zq-private-preview="1">' + mdInline(label) + '</a></span>';
+      + '" data-zq-private-download="' + esc(path) + '" data-zq-private-preview="1">' + mdInline(label, true) + '</a></span>';
   }
-  function mdInline(t) {
+  // Bare links are extracted before formatting so URL stars / underscores cannot become emphasis.
+  // Keep their original source separately: saving an unchanged link must not add [label](url) syntax.
+  function markdownAutolinks(text, protect, noAutolinks, restoreCodeSource) {
+    // Scan formulas and URLs together: $ inside a URL is literal, a URL inside $…$ stays a formula.
+    return text.replace(/\$\$([^$\n]{1,200}?)\$\$|\$([^$\n]{1,200}?)\$|<https?:\/\/[^\s<>"'`\u0000-\u001f]+>|https?:\/\/[^\s<>"'`\u0000-\u001f，。；：！？、（）【】《》“”‘’]+/gi, function (raw, displayTex, inlineTex, offset, original) {
+      var tex = displayTex == null ? inlineTex : displayTex;
+      if (tex != null) return /[\\^_{}a-zA-Z]/.test(tex) ? protect(inlineMathSpan(esc(restoreCodeSource(tex)))) : raw;
+      if (noAutolinks) return raw;
+      var angle = raw.charAt(0) === '<';
+      if (!angle && /[a-z0-9_@]/i.test(original.charAt(offset - 1))) return raw;
+      var target = angle ? raw.slice(1, -1) : raw;
+      if (!angle) {
+        var counts = { '(': 0, ')': 0, '[': 0, ']': 0, '{': 0, '}': 0 }, pairs = { ')': '(', ']': '[', '}': '{' };
+        for (var i = 0; i < target.length; i++) { var ch = target.charAt(i); if (counts[ch] != null) counts[ch]++; }
+        var end = target.length;
+        while (end) {
+          var last = target.charAt(end - 1), opener = pairs[last];
+          if (/[.,:;!?*]/.test(last)) end--;
+          else if (opener && counts[last] > counts[opener]) { counts[last]--; end--; }
+          else break;
+        }
+        target = target.slice(0, end);
+      }
+      try { var url = new URL(target); if (!/^https?:$/.test(url.protocol) || !url.hostname) return raw; } catch (ignored) { return raw; }
+      var source = angle ? raw : target;
+      return protect('<a href="' + esc(target) + '" target="_blank" rel="noopener noreferrer" data-autolink-markdown="' + esc(source) + '">' + esc(target) + '</a>')
+        + (angle ? '' : raw.slice(target.length));
+    });
+  }
+  function mdInline(t, noAutolinks) {
     // 行内代码先抽成占位符：反引号里的 $、*、[ 等都是字面量，不参与公式/加粗/链接解析
     var codeSlots = [];
     var imageSlots = [];
+    var sourceSlots = [];
+    function protect(html, source) { imageSlots.push(html); sourceSlots.push(source); return '\u0003' + (imageSlots.length - 1) + '\u0003'; }
     function restoreCodeSource(value) {
       return value == null ? value : String(value).replace(/\u0001(\d+)\u0001/g, function (_marker, i) { return '`' + codeSlots[+i] + '`'; });
+    }
+    function restoreInlineSource(value) {
+      return restoreCodeSource(String(value).replace(/\u0003(\d+)\u0003/g, function (_marker, i) { return sourceSlots[+i]; }));
     }
     t = String(t == null ? '' : t).replace(/`([^`]+)`/g, function (m, c) { codeSlots.push(c); return '\u0001' + (codeSlots.length - 1) + '\u0001'; });
     t = t.replace(/!\[\[([^\]\n]+)\]\]|!\[([^\]\n]*)\]\((<[^>\n]+>|(?:[^()\n]|\([^()\n]*\))+)\)/g, function (raw, wiki, alt, standardTarget) {
@@ -1588,9 +1622,8 @@
       var target = wiki ? parts[0] : standardTarget;
       var size = wiki && parts.length > 1 && /^[1-9]\d{0,3}(?:x[1-9]\d{0,3})?$/.test(parts[parts.length - 1]) ? parts[parts.length - 1].split('x') : null;
       if (/^<[^<>]+>$/.test(target)) target = target.slice(1, -1);
-      imageSlots.push(markdownImage(raw, target.trim(), wiki && !size ? parts.slice(1).join('|') : alt,
-        size ? Math.min(2400, Number(size[0])) : null, size && size[1] ? Math.min(2400, Number(size[1])) : null, !!wiki));
-      return '\u0003' + (imageSlots.length - 1) + '\u0003';
+      return protect(markdownImage(raw, target.trim(), wiki && !size ? parts.slice(1).join('|') : alt,
+        size ? Math.min(2400, Number(size[0])) : null, size && size[1] ? Math.min(2400, Number(size[1])) : null, !!wiki), raw);
     });
     // Private file wrappers contain original Markdown attributes. Protect them from subsequent italic/link parsing.
     t = t.replace(/\[([^\]]+)\]\((\/api\/knowledge\/attachments\/[1-9]\d*)\)|\[\[([^\]\n]+)\]\]/g, function (raw, label, path, wikiFile) {
@@ -1598,30 +1631,19 @@
         var parts = wikiFile.split('|');
         var match = parts[0].match(/^(\/api\/knowledge\/(?:images|attachments)\/[1-9]\d*)(?:#.*)?$/);
         if (!match) {
-          imageSlots.push('<a data-wikilink="' + esc(restoreCodeSource(wikiFile)) + '">' + mdInline(restoreCodeSource(parts[1] || parts[0])) + '</a>');
-          return '\u0003' + (imageSlots.length - 1) + '\u0003';
+          return protect('<a data-wikilink="' + esc(restoreCodeSource(wikiFile)) + '">' + mdInline(restoreCodeSource(parts[1] || parts[0]), true) + '</a>', restoreCodeSource(raw));
         }
         path = match[1]; label = parts[1] || parts[0];
       }
-      imageSlots.push(markdownFileLink(restoreCodeSource(raw), path, restoreCodeSource(label)));
-      return '\u0003' + (imageSlots.length - 1) + '\u0003';
+      return protect(markdownFileLink(restoreCodeSource(raw), path, restoreCodeSource(label)), restoreCodeSource(raw));
     });
-    t = esc(t);
     t = t
-      .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/g, '<u>$1</u>')
-      .replace(/\$\$([^$\n]{1,200}?)\$\$/g, function (m, tex) {
-        // 行中出现的 $$…$$ 先于单 $ 处理，否则会被拆成 "$ + 行内公式 + $" 留下游离美元符
-        if (!/[\\^_{}a-zA-Z]/.test(tex)) return m;
-        return inlineMathSpan(tex);
-      })
-      .replace(/\$([^$\n]{1,200}?)\$/g, function (m, tex) {
-        // 行内公式：要求含 LaTeX 特征字符，避免把"花了$5和$10"这类金额误判成公式
-        if (!/[\\^_{}a-zA-Z]/.test(tex)) return m;
-        return inlineMathSpan(tex);
-      })
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       // URL 支持一层配对括号（如维基百科的 Function_(mathematics)），不再截断在第一个 )
-      .replace(/\[([^\]]+)\]\((https?:\/\/(?:[^()\s]|\([^()]*\))+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      .replace(/\[([^\]]+)\]\((https?:\/\/(?:[^()\s]|\([^()]*\))+)\)/gi, function (_raw, label, target) {
+        return protect('<a href="' + esc(restoreInlineSource(target)) + '" target="_blank" rel="noopener noreferrer">' + mdInline(restoreInlineSource(label), true) + '</a>', restoreInlineSource(_raw));
+      });
+    t = markdownAutolinks(t, protect, noAutolinks, restoreCodeSource);
+    t = esc(t).replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/g, '<u>$1</u>').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
     return t.replace(/\u0001(\d+)\u0001/g, function (m, i) { return '<code>' + esc(codeSlots[+i]) + '</code>'; })
       .replace(/\u0003(\d+)\u0003/g, function (m, i) { return imageSlots[+i]; });
@@ -2188,7 +2210,15 @@
             out += md + '\n';
             break;
           }
-          case 'A': { var wl = n.getAttribute('data-wikilink'); var href = n.getAttribute('href'); if (wl) out += '[[' + wl + ']]'; else if (href) out += '[' + (inner || href) + '](' + href + ')'; else out += inner; break; }
+          case 'A': {
+            var wl = n.getAttribute('data-wikilink'), href = n.getAttribute('href'), auto = n.getAttribute('data-autolink-markdown');
+            var autoTarget = auto && auto.charAt(0) === '<' && auto.slice(-1) === '>' ? auto.slice(1, -1) : auto;
+            if (wl) out += '[[' + wl + ']]';
+            else if (auto && href === autoTarget && inner === autoTarget) out += auto;
+            else if (href) out += '[' + (inner || href) + '](' + href + ')';
+            else out += inner;
+            break;
+          }
           case 'LI': out += (n.parentNode && n.parentNode.tagName === 'OL' ? '1. ' : '- ') + inner.trim() + '\n'; break;
           case 'UL': case 'OL': out += '\n' + inner + '\n'; break;
           case 'P': case 'DIV': out += inner.trim() + '\n\n'; break;

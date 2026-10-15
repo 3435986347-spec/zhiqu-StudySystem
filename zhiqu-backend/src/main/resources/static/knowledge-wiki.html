@@ -6,11 +6,11 @@
   <title>知识 Wiki - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261014-wiki-embed-previews" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261014-wiki-embed-previews">
-  <link rel="manifest" href="manifest.json?v=20261014-wiki-embed-previews">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261015-wiki-click-links" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261015-wiki-click-links">
+  <link rel="manifest" href="manifest.json?v=20261015-wiki-click-links">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261014-wiki-embed-previews">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261015-wiki-click-links">
 </head>
 <body>
   <div class="zq-app">
@@ -87,12 +87,14 @@
               padding-left 跟 #zq-doc 的 26px 一致 —— 标题和正文落在同一条竖线上。
               改 #zq-doc 的 26px 时这里要跟着改，WikiTabsTest.标题与正文左边缘要对齐 盯着。
             -->
-            <!-- 页名（点了改名）+ 一行工具栏（第五十五轮，界面打磨第 7 步）：原来页名上面一行「文档视图」小字、工具栏前两段说明文字、
+            <!-- 页名（编辑态可改名）+ 一行工具栏（第五十五轮，界面打磨第 7 步）：原来页名上面一行「文档视图」小字、工具栏前两段说明文字、
                  B I U ` 四个字母和「链接 公式 参考 源码」四个字当按钮。现在是一个段落下拉 + 一排图标按钮（悬停有说明） -->
             <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px 14px 26px; border-bottom:1px solid var(--zq-border-soft); flex-wrap:wrap;">
               <h2 id="zq-doc-title" class="zq-wiki-title"></h2>
               <div class="zq-wiki-tools">
-                <select id="zq-wiki-block" class="zq-select" title="段落格式" aria-label="段落格式">
+                <span id="zq-wiki-mode-label" class="zq-wiki-mode-label" aria-live="polite">只读</span>
+                <button type="button" id="zq-wiki-mode" class="zq-btn-ghost" title="编辑当前知识页" aria-pressed="false">编辑</button>
+                <select id="zq-wiki-block" class="zq-select" title="段落格式" aria-label="段落格式" disabled>
                   <option value="P">正文</option>
                 <option value="H1">标题 1</option>
                 <option value="H2">标题 2</option>
@@ -108,15 +110,15 @@
                   <option value="HR">分隔线</option>
                 </select>
                 <div class="zq-toolbar" role="toolbar" aria-label="格式">
-                  <button type="button" data-wiki-cmd="bold" class="zq-tbtn" title="加粗" aria-label="加粗"><span data-zq-icon="bold"></span></button>
-                  <button type="button" data-wiki-cmd="italic" class="zq-tbtn" title="斜体" aria-label="斜体"><span data-zq-icon="italic"></span></button>
-                  <button type="button" data-wiki-cmd="underline" class="zq-tbtn" title="下划线" aria-label="下划线"><span data-zq-icon="underline"></span></button>
-                  <button type="button" data-wiki-cmd="code" class="zq-tbtn" title="行内代码（先选中文字）" aria-label="行内代码"><span data-zq-icon="code"></span></button>
-                  <button type="button" data-wiki-cmd="link" class="zq-tbtn" title="链接" aria-label="链接"><span data-zq-icon="link"></span></button>
-                  <button type="button" data-wiki-cmd="image" class="zq-tbtn" title="插入图片（也可粘贴或拖入）" aria-label="插入图片"><span data-zq-icon="image"></span></button>
-                  <button type="button" data-wiki-cmd="math" class="zq-tbtn" title="公式块（LaTeX）" aria-label="公式块"><span data-zq-icon="sigma"></span></button>
-                  <button type="button" data-wiki-cmd="ref" class="zq-tbtn" title="参考链接（显示标题 + 地址）" aria-label="参考链接"><span data-zq-icon="book-marked"></span></button>
-                  <button type="button" data-wiki-cmd="source" class="zq-tbtn" id="zq-wiki-source" title="看 Markdown 源码 / 回到排版" aria-label="源码" aria-pressed="false"><span data-zq-icon="file-code"></span></button>
+                  <button type="button" data-wiki-cmd="bold" class="zq-tbtn" title="加粗" aria-label="加粗" disabled><span data-zq-icon="bold"></span></button>
+                  <button type="button" data-wiki-cmd="italic" class="zq-tbtn" title="斜体" aria-label="斜体" disabled><span data-zq-icon="italic"></span></button>
+                  <button type="button" data-wiki-cmd="underline" class="zq-tbtn" title="下划线" aria-label="下划线" disabled><span data-zq-icon="underline"></span></button>
+                  <button type="button" data-wiki-cmd="code" class="zq-tbtn" title="行内代码（先选中文字）" aria-label="行内代码" disabled><span data-zq-icon="code"></span></button>
+                  <button type="button" data-wiki-cmd="link" class="zq-tbtn" title="链接" aria-label="链接" disabled><span data-zq-icon="link"></span></button>
+                  <button type="button" data-wiki-cmd="image" class="zq-tbtn" title="插入图片（也可粘贴或拖入）" aria-label="插入图片" disabled><span data-zq-icon="image"></span></button>
+                  <button type="button" data-wiki-cmd="math" class="zq-tbtn" title="公式块（LaTeX）" aria-label="公式块" disabled><span data-zq-icon="sigma"></span></button>
+                  <button type="button" data-wiki-cmd="ref" class="zq-tbtn" title="参考链接（显示标题 + 地址）" aria-label="参考链接" disabled><span data-zq-icon="book-marked"></span></button>
+                  <button type="button" data-wiki-cmd="source" class="zq-tbtn" id="zq-wiki-source" title="看 Markdown 源码 / 回到排版" aria-label="源码" aria-pressed="false" disabled><span data-zq-icon="file-code"></span></button>
                 </div>
               </div>
             </div>
@@ -133,7 +135,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261014-wiki-embed-previews"></script>
-  <script src="assets/zhiqu-api.js?v=20261014-wiki-embed-previews"></script>
+  <script src="assets/zhiqu-ui.js?v=20261015-wiki-click-links"></script>
+  <script src="assets/zhiqu-api.js?v=20261015-wiki-click-links"></script>
 </body>
 </html>

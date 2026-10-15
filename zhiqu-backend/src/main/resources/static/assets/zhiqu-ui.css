@@ -705,8 +705,10 @@ body.zq-modal-open{overflow:hidden;}
 .zq-embed-head>a{flex-shrink:0;}
 .zq-embed-status{display:block;padding:10px 12px;color:var(--zq-text3);font-size:var(--zq-fs-xs);}
 .zq-embed-content{display:block;padding:12px 16px;max-height:560px;overflow:auto;}
-.zq-embed-text{display:block;max-height:460px;overflow:auto;}
-.zq-embed-text pre{margin:0;border:0;border-radius:0;white-space:pre;}
+/* One scroll surface under the pointer: a full-height inner pre with overflow-x:auto
+   becomes a second scroll node in WebKit and prevents reliable vertical wheel targeting. */
+.zq-embed-text{display:block;min-width:0;}
+.zq-embed-text pre,.zq-prose .zq-md .zq-embed-text pre{max-height:460px;margin:0;border:0;border-radius:0;overflow:auto;white-space:pre;}
 .zq-embed-media{display:block;padding:12px;}
 .zq-embed-media img,.zq-embed-media video{display:block;max-width:100%;max-height:640px;height:auto;object-fit:contain;}
 .zq-embed-media audio{display:block;width:100%;}
@@ -761,6 +763,9 @@ body.zq-modal-open{overflow:hidden;}
 /* 页名（点了改名）和工具栏 */
 .zq-wiki-title{margin:0;font-size:var(--zq-fs-xl);font-weight:var(--zq-fw-medium);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .zq-wiki-tools{display:flex;align-items:center;gap:var(--zq-sp-2);flex-wrap:wrap;}
+.zq-wiki-mode-label{min-width:3em;color:var(--zq-text3);font-size:var(--zq-fs-xs);white-space:nowrap;}
+#zq-wiki-mode{min-width:100px;height:30px;flex-shrink:0;white-space:nowrap;}
+.zq-wiki-tools [data-wiki-cmd]:disabled,#zq-wiki-block:disabled{opacity:.45;cursor:default;}
 .zq-wiki-tools .zq-select{height:28px;min-width:92px;padding:0 8px;font-size:var(--zq-fs-xs);}
 .zq-wiki-tools .zq-tbtn{min-width:28px;padding:0 6px;}
 .zq-wiki-tools .zq-tbtn[aria-pressed="true"]{background:var(--zq-card);color:var(--zq-text);box-shadow:var(--zq-sh1);}

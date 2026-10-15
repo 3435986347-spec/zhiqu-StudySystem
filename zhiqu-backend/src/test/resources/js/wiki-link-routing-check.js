@@ -16,7 +16,7 @@ function fixture() {
     getAttribute: name => name === 'data-wikilink' ? 'Target' : attrs[name],
     setAttribute(name, value) { attrs[name] = value; }
   };
-  const doc = { dataset: { editing: '0' } };
+  const doc = { dataset: { editing: '0' }, addEventListener() {} };
   const wire = new Function('state', '$all', 'toast', 'paintWikiDoc', code + '\nreturn wireWikiLinks;')(
     state,
     selector => selector === '[data-wikilink]' ? [link] : [],

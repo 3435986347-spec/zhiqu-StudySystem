@@ -45,10 +45,13 @@ class DesktopWebKitLayoutTest {
         assertTrue(Double.parseDouble(out.get("wideOverflow")) <= 0.5, "宽的日历里日期出了格子 " + out.get("wideOverflow") + "px");
         assertTrue(Double.parseDouble(out.get("tinyOverflow")) <= 0.5, "320 宽的手机上（日历 200）星期 / 日期出了格子 " + out.get("tinyOverflow") + "px");
         assertTrue(Double.parseDouble(out.get("selectOver")) <= 0.5, "番茄钟的「关联任务」下拉框撑出卡片 " + out.get("selectOver") + "px（任务名长的时候）");
-        assertEquals("none", out.get("selectAppearance"), "WebKit 里下拉框还是原生的灰渐变（base-select 只有 Chromium 认）");
-        assertEquals("none", out.get("modelAppearance"), "AI 助手的模型下拉在 WebKit 里还是原生的样子");
-        // 哪天 WebKit 也认 base-select 了，上面那两条照样成立（走的是 base-select 那套）；这里只记下来
-        assertTrue(out.containsKey("baseSelect"));
+        // 新版 WebKit 已支持 base-select；CSS 在支持时采用它，不支持时才显式去掉原生 appearance。
+        // JSONSerialization 把 CSS.supports 的布尔值转成 NSNumber，探针打印为 1 / 0；缺失不能当成不支持。
+        String baseSelect = out.get("baseSelect");
+        assertTrue("1".equals(baseSelect) || "0".equals(baseSelect), "探针没有报告有效的 base-select 支持状态：" + out);
+        String expectedAppearance = "1".equals(baseSelect) ? "base-select" : "none";
+        assertEquals(expectedAppearance, out.get("selectAppearance"), "番茄钟下拉没有采用当前 WebKit 对应的自定义样式");
+        assertEquals(expectedAppearance, out.get("modelAppearance"), "AI 助手的模型下拉没有采用当前 WebKit 对应的自定义样式");
         assertEquals("6", out.get("wikiCases"), "Wiki 阅读和编辑、宽窄三种容器没有全部量到：" + out);
         for (String size : new String[]{"wide", "narrow", "tiny"}) {
             for (String mode : new String[]{"read", "edit"}) {

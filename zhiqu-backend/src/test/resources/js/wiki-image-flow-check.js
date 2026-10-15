@@ -23,12 +23,14 @@ function fixture() {
     createRange() { return { selectNodeContents() {}, collapse() {} }; },
     execCommand() { return true; }
   };
-  const api = new Function('state', 'doc', 'uploaded', 'messages', 'fakeDocument', 'selection', `
+  let auth = 'first-token';
+  const api = new Function('state', 'doc', 'uploaded', 'messages', 'fakeDocument', 'selection', 'getAuth', `
     var wikiEditSession = 0;
     var document = fakeDocument;
     var window = { getSelection: function () { return selection; } };
     var api = { upload: function () { return uploaded; } };
     function $(selector) { return selector === '#zq-doc' ? doc : null; }
+    function token() { return getAuth(); }
     function isWikiImageFile() { return true; }
     function toast(message) { messages.push(message); }
     function safe(_name, fn) { return Promise.resolve().then(fn); }
@@ -38,8 +40,8 @@ function fixture() {
     function renderMathIn() {}
     ${editor}
     return { insertWikiImage, enterWikiEdit };
-  `)(state, doc, uploaded, messages, fakeDocument, selection);
-  return { api, state, doc, page, messages, finishUpload };
+  `)(state, doc, uploaded, messages, fakeDocument, selection, () => auth);
+  return { api, state, doc, page, messages, finishUpload, setAuth(value) { auth=value; } };
 }
 
 async function test(name, fn) { await fn(); console.log('PASS ' + name); }
@@ -47,6 +49,7 @@ async function test(name, fn) { await fn(); console.log('PASS ' + name); }
   let checks = 0;
   await test('upload still inserts into the original live editing session', async () => {
     const f = fixture();
+    f.api.enterWikiEdit();
     const task = f.api.insertWikiImage({ name: 'chart.png', type: 'image/png' });
     f.finishUpload({ url: '/api/knowledge/images/13', name: 'chart.png' });
     await task;
@@ -55,6 +58,7 @@ async function test(name, fn) { await fn(); console.log('PASS ' + name); }
   });
   await test('late upload cannot enter a new edit session of the same page', async () => {
     const f = fixture();
+    f.api.enterWikiEdit();
     const task = f.api.insertWikiImage({ name: 'chart.png', type: 'image/png' });
     f.doc.dataset.editing = '0'; // paintWikiDoc closes the old edit session.
     f.api.enterWikiEdit(); // The user returned to the same page before upload completed.
@@ -64,6 +68,15 @@ async function test(name, fn) { await fn(); console.log('PASS ' + name); }
     assert.ok(!f.messages.some(message => message.includes('已加入当前草稿')));
     checks++;
   });
-  assert.ok(checks >= 2, 'Empty behavior scan');
+  await test('late upload cannot insert an attachment into a different login session', async () => {
+    const f = fixture(); f.api.enterWikiEdit();
+    const task = f.api.insertWikiImage({ name: 'chart.png', type: 'image/png' });
+    f.setAuth('another-token');
+    f.finishUpload({ url: '/api/knowledge/images/13', name: 'chart.png' });
+    await task;
+    assert.ok(!f.messages.some(message => message.includes('已加入当前草稿')));
+    checks++;
+  });
+  assert.ok(checks >= 3, 'Empty behavior scan');
   console.log('ALL-GREEN');
 })().catch(error => { console.error('FAIL ' + error.stack); process.exitCode = 1; });

@@ -108,7 +108,10 @@ class WikiLookTest {
         }
         assertEquals(List.of("bold", "italic", "underline", "code", "link", "image", "math", "ref", "source"), cmds, "工具栏的按钮变了");
         assertTrue(html.contains("data-wiki-cmd=\"source\" class=\"zq-tbtn\" id=\"zq-wiki-source\""), "「源码」按钮没有 id —— setSourcePressed 找不到它");
-        assertTrue(html.contains("aria-pressed=\"false\"><span data-zq-icon=\"file-code\">"), "「源码」按钮没有 aria-pressed（图标看不出现在是源码还是排版）");
+        Matcher source = Pattern.compile("<button([^>]*data-wiki-cmd=\"source\"[^>]*)>(.*?)</button>").matcher(html);
+        assertTrue(source.find(), "缺少「源码」按钮");
+        assertTrue(source.group(1).contains("aria-pressed=\"false\"") && source.group(2).equals("<span data-zq-icon=\"file-code\"></span>"),
+                "「源码」按钮没有初始 aria-pressed=false 或 file-code 图标");
     }
 
     @Test
@@ -129,14 +132,11 @@ class WikiLookTest {
             assertTrue(after.contains("markDuplicateTitle(doc, "), "画完正文没有标重复的页名：\n" + after);
         }
         assertEquals(2, n, "把正文画成排版的地方应当是两处（打开一页、从源码回来）");
-        // 第六十六轮：保持重复页名和按钮区域的高度一致；进入编辑不再添加多余的滚动补偿。
+        // 第六十七轮：只读时不自动编辑；显式进入编辑仍保持重复页名和按钮区域的高度一致。
         String click = SourceText.functionBody(js, "function wireWikiEditor(");
-        int enter = click.indexOf("enterWikiEdit();");
-        assertTrue(enter > 0);
         assertFalse(click.contains("doc.scrollTop += dup.getBoundingClientRect().height"), "重复页名不再露出，却还在补偿它的高度");
         String editor = SourceText.functionBody(js, "function enterWikiEdit(");
         assertTrue(editor.contains("focus({ preventScroll: true })"), "聚焦编辑器会滚动到光标而跳动");
         assertTrue(editor.contains("restoreWikiView(doc, view)"), "进入编辑没有恢复视口锚点");
-        assertTrue(click.indexOf("caretAt(e.clientX, e.clientY);", enter) > enter, "进入编辑之后光标没有放在点的地方");
     }
 }

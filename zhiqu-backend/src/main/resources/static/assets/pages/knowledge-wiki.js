@@ -147,6 +147,14 @@ async function paintWikiDoc(p, opts) {
   removeWikiActionBar();
   var doc = $('#zq-doc'), title = $('#zq-doc-title');
   if (title) title.textContent = p.title || '知识页';
+  // 等待新页正文时先退出旧页的编辑会话，不能把旧 DOM 的输入存成新页草稿。
+  if (doc) {
+    doc.dataset.editing = '0'; doc.dataset.source = '0'; doc.dataset.loading = '1';
+    doc.contentEditable = 'false';
+    doc._wikiSourceView = null; doc._wikiPendingView = null;
+    syncWikiEditMode(doc);
+    if (!p._full && p.id != null) doc.innerHTML = empty('正在加载知识页…');
+  }
   // document-tree 只给了折叠后的 summary，正文要按需拉完整内容
   if (!p._full && p.id != null) {
     var detail = await safe('知识页', function () { return api.get('/knowledge/pages/' + p.id); });
@@ -155,6 +163,7 @@ async function paintWikiDoc(p, opts) {
   if (state.wikiCur !== p || token() !== authAtStart) return;
   if (doc) {
     doc.dataset.editing = '0'; doc.dataset.source = '0';
+    doc.dataset.loading = p.id != null && !p._full ? '1' : '0';
     doc._wikiSourceView = null;
     doc._wikiPendingView = opts.preserveView ? { view: opts.preserveView, page: p, auth: authAtStart, expires: Date.now() + 30000 } : null;
     doc.contentEditable = 'false';
@@ -167,7 +176,7 @@ async function paintWikiDoc(p, opts) {
     if (opts.preserveView) restoreWikiView(doc, opts.preserveView);
   }
   var insp = $('#zq-insp');
-  if (insp) insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">点击正文即可编辑 · [[双链]]可跳转</span></div>';
+  if (insp) insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">默认只读 · 点击「编辑」修改 · [[双链]]可跳转</span></div>';
   paintWikiTree();
   paintWikiTabs();
   offerWikiDraft(p);
@@ -213,7 +222,7 @@ function removeWikiDraftBar() { var b = document.getElementById('zq-wiki-draft')
 function offerWikiDraft(p) {
   removeWikiDraftBar();
   var doc = $('#zq-doc');
-  if (!doc || !p || p.id == null) return;
+  if (!doc || !p || p.id == null || doc.dataset.loading === '1') return;
   var d = drafts.load(wikiDraftKey(p));
   if (!d || d.text === (p.content || '')) return;
   var bar = document.createElement('div');
@@ -311,13 +320,19 @@ function wikiHistoryGo(direction) {
 
 function closeWikiTab(index) {
   if (index < 0 || index >= state.wikiTabs.length) return;
+  if (index === state.wikiTabIdx && state.wikiDirty) saveWikiDraftNow();
   state.wikiTabs.splice(index, 1);
   if (!state.wikiTabs.length) {
     state.wikiTabIdx = -1;
     state.wikiCur = null;
     saveWikiTabs();
     var doc = $('#zq-doc'), title = $('#zq-doc-title');
-    if (doc) doc.innerHTML = empty('没有打开的页面 · 从左侧目录选一页，或点 + 新建标签');
+    if (doc) {
+      doc.dataset.editing = '0'; doc.dataset.source = '0'; doc.dataset.loading = '0';
+      doc.contentEditable = 'false'; state.wikiDirty = false;
+      removeWikiActionBar(); syncWikiEditMode(doc);
+      doc.innerHTML = empty('没有打开的页面 · 从左侧目录选一页，或点 + 新建标签');
+    }
     if (title) title.textContent = '';
     paintWikiTabs();
     paintWikiTree();
@@ -474,6 +489,14 @@ function wireWikiTabShortcuts() {
   });
 }
 
+function wikiExternalUrl(value) {
+  var href = String(value || '').trim();
+  if (!/^https?:\/\//i.test(href) || /[\u0000-\u0020\u007f]/.test(href)) return null;
+  try {
+    var parsed = new URL(href);
+    return /^https?:$/.test(parsed.protocol) && parsed.hostname ? href : null;
+  } catch (ignored) { return null; }
+}
 function wireWikiLinks(doc) {
   async function follow(a, newTab) {
     var spec = (a.getAttribute('data-wikilink') || '').split('|')[0];
@@ -510,27 +533,49 @@ function wireWikiLinks(doc) {
       follow(a, true);
     };
   });
+  // Delegation also covers links inserted by the toolbar and asynchronous note previews.
+  if (doc.dataset.wikiExternalLinksWired) return;
+  doc.dataset.wikiExternalLinksWired = '1';
+  function followExternal(e) {
+    if (e.defaultPrevented || doc.dataset.source === '1') return;
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a || !doc.contains(a) || a.getAttribute('data-zq-private-download') !== null) return;
+    if (e.type === 'keydown' && (e.key !== 'Enter' || e.target !== a || e.repeat || e.isComposing)) return;
+    if (e.type === 'click' && e.button !== 0 || e.type === 'auxclick' && e.button !== 1) return;
+    var raw = a.getAttribute('href') || '';
+    if (/^(?:#|\/(?!\/)|\.\.?\/)/.test(raw)) return;
+    e.preventDefault(); e.stopPropagation();
+    var selection = window.getSelection && window.getSelection();
+    if (e.type !== 'keydown' && selection && !selection.isCollapsed && doc.contains(selection.anchorNode) && doc.contains(selection.focusNode)) return;
+    var href = wikiExternalUrl(raw);
+    if (!href) { toast('链接地址无效，请使用完整的 HTTP(S) 网址', 'error'); return; }
+    // noopener may return null even when the native shell opened the system browser successfully.
+    window.open(href, '_blank', 'noopener,noreferrer');
+  }
+  ['click', 'auxclick', 'keydown'].forEach(function (event) { doc.addEventListener(event, followExternal); });
 }
 function wireWikiEditor() {
   var doc = $('#zq-doc'); if (!doc) return;
   doc.style.cursor = 'text';
   doc.addEventListener('zq-wiki-embed-ready', function () {
     wireWikiLinks(doc);
+    syncWikiEditMode(doc);
     var pending = doc._wikiPendingView;
     if (pending && pending.page === state.wikiCur && pending.auth === token() && Date.now() < pending.expires) restoreWikiView(doc, pending.view);
   });
   ['pointerdown', 'wheel', 'touchstart', 'keydown', 'input'].forEach(function (event) {
     doc.addEventListener(event, function () { doc._wikiPendingView = null; }, { passive: true });
   });
-  // 点正文进入编辑，但链接/勾选框/按钮等正文内控件的点击不算（外链点击、双链跳转不应触发编辑）
-  doc.onclick = function (e) {
-    if (e.target && e.target.closest && e.target.closest('a,input,button,.zq-md-image,.zq-embed')) return;
-    if (!state.wikiCur || doc.dataset.editing === '1') return;
-    // 阅读和编辑保留同一高度，聚焦时保持视口，再把光标放在点击位置。
+  // 阅读态点击只选择文字；进入编辑只走明确的「编辑」按钮或右键菜单。
+  doc.onclick = null;
+  var modeButton = $('#zq-wiki-mode');
+  if (modeButton) modeButton.onclick = function () {
+    if (!state.wikiCur) return;
+    if (doc.dataset.editing === '1') return saveWikiEdit();
     enterWikiEdit();
-    caretAt(e.clientX, e.clientY);
   };
   doc.addEventListener('paste', function (e) {
+    if (doc.dataset.editing !== '1') return;
     var files = Array.from(e.clipboardData && e.clipboardData.files || []);
     var image = files.find(isWikiImageFile);
     if (!image || !state.wikiCur) return;
@@ -541,6 +586,9 @@ function wireWikiEditor() {
     if (Array.from(e.dataTransfer && e.dataTransfer.items || []).some(function (item) { return item.kind === 'file'; })) e.preventDefault();
   });
   doc.addEventListener('drop', function (e) {
+    // 阻止浏览器把文件拖入只读正文解释成离开知识库并打开本地文件。
+    if (Array.from(e.dataTransfer && e.dataTransfer.files || []).length) e.preventDefault();
+    if (doc.dataset.editing !== '1') return;
     var image = Array.from(e.dataTransfer && e.dataTransfer.files || []).find(isWikiImageFile);
     if (!image || !state.wikiCur) return;
     e.preventDefault();
@@ -556,13 +604,14 @@ function wireWikiEditor() {
     if (!isSystemWikiPage(p)) items.push({ label: '删除本页', danger: true, onClick: function () { deleteWikiPage(p); } });
     popMenu(e.clientX, e.clientY, items);
   };
-  // 任务勾选框：勾选即切换删除线样式；未在编辑态则进入编辑态以便保存
+  // 阅读态的任务框禁用；仅明确进入编辑后才能改，脚本触发 change 也不能绕过。
   doc.addEventListener('change', function (e) {
     var cb = e.target;
     if (!cb || cb.type !== 'checkbox') return;
+    if (doc.dataset.editing !== '1' || cb.closest && cb.closest('[data-embed-markdown]')) { cb.checked = cb.defaultChecked; return; }
     var span = cb.nextElementSibling;
     if (span) { span.style.textDecoration = cb.checked ? 'line-through' : 'none'; span.style.color = cb.checked ? 'var(--zq-text3)' : 'var(--zq-text)'; }
-    if (doc.dataset.editing !== '1') enterWikiEdit();
+    doc.dispatchEvent(new Event('input', { bubbles: true }));
   });
   var section = doc.closest('section'); if (!section) return;
   $all('[data-wiki-cmd]', section).forEach(function (b) {
@@ -571,7 +620,7 @@ function wireWikiEditor() {
   });
   var blockSel = $('#zq-wiki-block', section);
   if (blockSel) blockSel.onchange = function () {
-    if (!state.wikiCur) return; ensureWikiEditing();
+    if (!state.wikiCur || !ensureWikiEditing()) return;
     if (doc.dataset.source === '1') return;
     var v = blockSel.value;
     if (v === 'QUOTE') document.execCommand('formatBlock', false, 'BLOCKQUOTE');
@@ -587,28 +636,31 @@ function wireWikiEditor() {
   // 标题点击改名（系统页 index/log/维护规则 除外）
   var titleEl = $('#zq-doc-title');
   if (titleEl) {
-    titleEl.style.cursor = 'pointer';
-    titleEl.title = '点击修改页面名称';
     titleEl.onclick = async function () {
-      var p = state.wikiCur; if (!p) return;
+      var p = state.wikiCur; if (!p || !ensureWikiEditing()) return;
       if (['INDEX', 'LOG', 'SCHEMA'].indexOf(String(p.pageType || '').toUpperCase()) >= 0) return toast('系统页不可改名', 'error');
+      var editContext = wikiEditingContext(doc);
       var name = await askText({ title: '修改页面名称', label: '页面名称', value: p._pendingTitle || p.title || '' });
+      if (!isWikiEditingContext(editContext)) return;
       if (!name || !name.trim()) return;
       if (name.trim() === p.title) { p._pendingTitle = null; titleEl.textContent = p.title; return; }
       p._pendingTitle = name.trim();
       titleEl.textContent = p._pendingTitle;
       safe('修改名称', async function () {
+        if (!isWikiEditingContext(editContext)) return;
         // 改名走的是整页保存，要带着正文 —— 目录树不给正文（只给摘要），正文还没取回来（刚打开、或者取失败了）
         // 就先取一遍。不取的话后端会拒（「内容不能为空」），用户看到的是改名莫名失败。
         if (!p._full) {
           var detail = await api.get('/knowledge/pages/' + p.id);
+          if (!isWikiEditingContext(editContext)) return;
           p.content = detail.content; p.version = detail.version; p._full = true;
         }
         var updated = await api.put('/knowledge/pages/' + p.id, { title: p._pendingTitle, content: p.content, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned, version: p.version });
+        if (token() !== editContext.auth) return;
         p.title = updated && updated.title ? updated.title : p._pendingTitle;
         p._pendingTitle = null;
         if (updated && updated.version != null) p.version = updated.version;
-        titleEl.textContent = p.title;
+        if (state.wikiCur === p) titleEl.textContent = p.title;
         paintWikiTree(); toast('名称已更新');
       });
     };
@@ -628,7 +680,8 @@ function isWikiImageFile(file) {
   return !!file && (/^image\/(png|jpeg|gif|webp)$/i.test(file.type || '') || /\.(png|jpe?g|gif|webp)$/i.test(file.name || ''));
 }
 function chooseWikiImage() {
-  if (!state.wikiCur) return;
+  if (!state.wikiCur || !ensureWikiEditing()) return;
+  var editContext = wikiEditingContext($('#zq-doc'));
   var picker = document.createElement('input');
   picker.type = 'file'; picker.accept = 'image/png,image/jpeg,image/gif,image/webp';
   picker.style.display = 'none';
@@ -636,7 +689,7 @@ function chooseWikiImage() {
   picker.onchange = function () {
     var file = picker.files && picker.files[0];
     picker.remove();
-    if (file) insertWikiImage(file);
+    if (file && isWikiEditingContext(editContext)) insertWikiImage(file);
   };
   picker.oncancel = function () { picker.remove(); };
   picker.click();
@@ -644,10 +697,11 @@ function chooseWikiImage() {
 var wikiEditSession = 0;
 function insertWikiImage(file) {
   var doc = $('#zq-doc'), page = state.wikiCur;
+  if (!ensureWikiEditing()) return;
   if (!doc || !page || !isWikiImageFile(file)) return toast('请选择 PNG、JPG、GIF 或 WebP 图片', 'error');
   if (state.wikiImageUploading) return toast('上一张图片还在上传', 'error');
-  ensureWikiEditing();
   var editSession = doc.dataset.wikiEditSession;
+  var uploadAuth = token();
   var source = doc.dataset.source === '1';
   var ta = source ? $('#zq-src-ta') : null;
   var offset = ta ? { start: ta.selectionStart, end: ta.selectionEnd } : null;
@@ -658,7 +712,7 @@ function insertWikiImage(file) {
   return safe('插入图片', async function () {
     var uploaded = await api.upload('/knowledge/images', file);
     if (!uploaded || !/^\/api\/knowledge\/images\/[1-9]\d*$/.test(uploaded.url || '')) throw new Error('图片上传结果无效');
-    if (state.wikiCur !== page || doc.dataset.editing !== '1' || doc.dataset.wikiEditSession !== editSession
+    if (token() !== uploadAuth || state.wikiCur !== page || doc.dataset.editing !== '1' || doc.dataset.wikiEditSession !== editSession
         || (doc.dataset.source === '1') !== source) {
       toast('图片已上传；当前页面已切换，请回原页重新插入', 'error');
       return;
@@ -691,7 +745,36 @@ function insertWikiImage(file) {
     toast('图片已加入当前草稿，保存页面后生效');
   }).finally(function () { state.wikiImageUploading = false; });
 }
-function ensureWikiEditing() { var doc = $('#zq-doc'); if (doc && doc.dataset.editing !== '1') enterWikiEdit(); }
+function ensureWikiEditing() { var doc = $('#zq-doc'); return !!doc && doc.dataset.editing === '1' && doc.dataset.loading !== '1'; }
+function wikiEditingContext(doc) {
+  return { doc: doc, page: state.wikiCur, session: doc.dataset.wikiEditSession, source: doc.dataset.source, auth: token() };
+}
+function isWikiEditingContext(context) {
+  return !!context && token() === context.auth && state.wikiCur === context.page && context.doc.dataset.editing === '1' && context.doc.dataset.loading !== '1'
+    && context.doc.dataset.wikiEditSession === context.session && context.doc.dataset.source === context.source;
+}
+function syncWikiEditMode(doc) {
+  if (!doc) return;
+  var editing = doc.dataset.editing === '1';
+  doc.setAttribute('aria-readonly', editing ? 'false' : 'true');
+  var modeButton = $('#zq-wiki-mode'), label = $('#zq-wiki-mode-label');
+  if (modeButton) {
+    modeButton.textContent = editing ? '保存并只读' : '编辑';
+    modeButton.disabled = !state.wikiCur || doc.dataset.loading === '1';
+    modeButton.setAttribute('aria-pressed', editing ? 'true' : 'false');
+    modeButton.title = doc.dataset.loading === '1' ? '正文尚未加载，请稍候或刷新后重试' : editing ? '保存当前修改并返回只读模式' : '编辑当前知识页';
+  }
+  if (label) label.textContent = editing ? '编辑中' : '只读';
+  $all('[data-wiki-cmd], #zq-wiki-block', doc.closest('section')).forEach(function (control) { control.disabled = !editing; });
+  $all('input[type="checkbox"]', doc).forEach(function (checkbox) {
+    checkbox.disabled = !editing || !!(checkbox.closest && checkbox.closest('[data-embed-markdown]'));
+  });
+  var title = $('#zq-doc-title');
+  if (title) {
+    title.style.cursor = editing ? 'pointer' : 'default';
+    title.title = editing ? '点击修改页面名称' : '';
+  }
+}
 function captureWikiView(doc) {
   var view = { scrollTop: doc.scrollTop || 0, windowX: window.scrollX || 0, windowY: window.scrollY || 0 };
   var md = doc.querySelector && doc.querySelector('.zq-md');
@@ -726,7 +809,7 @@ function restoreWikiView(doc, view) {
   if (window.scrollTo && (window.scrollX !== view.windowX || window.scrollY !== view.windowY)) window.scrollTo(view.windowX, view.windowY);
 }
 function enterWikiEdit() {
-  var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || doc.dataset.editing === '1') return;
+  var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || doc.dataset.editing === '1' || doc.dataset.loading === '1') return;
   var view = captureWikiView(doc);
   wireWikiDrafts(doc);
   doc.dataset.editing = '1'; doc.dataset.source = '0'; doc.dataset.wikiEditSession = String(++wikiEditSession);
@@ -736,9 +819,10 @@ function enterWikiEdit() {
   restoreWikiView(doc, view);
 }
 function wikiToolbar(cmd) {
+  if (!ensureWikiEditing()) return;
   if (cmd === 'image') { chooseWikiImage(); return; }
-  ensureWikiEditing();
   var doc = $('#zq-doc');
+  var editContext = wikiEditingContext(doc);
   if (doc.dataset.source === '1' && cmd !== 'source') return;
   if (cmd === 'bold') document.execCommand('bold');
   else if (cmd === 'italic') document.execCommand('italic');
@@ -749,16 +833,20 @@ function wikiToolbar(cmd) {
     var sel0 = window.getSelection();
     var savedRange = sel0.rangeCount ? sel0.getRangeAt(0).cloneRange() : null;
     askText({ title: '插入链接', label: '链接地址', placeholder: 'https://…', okText: '插入' }).then(function (url) {
+      if (!isWikiEditingContext(editContext)) return;
       if (!url || !url.trim()) return;
+      var href = wikiExternalUrl(url);
+      if (!href) { toast('链接地址无效，请使用完整的 HTTP(S) 网址', 'error'); return; }
       doc.focus({ preventScroll: true });
       if (savedRange) { var s = window.getSelection(); s.removeAllRanges(); s.addRange(savedRange); }
-      document.execCommand('createLink', false, url.trim());
+      document.execCommand('createLink', false, href);
     });
   }
   else if (cmd === 'math') {
     var selM = window.getSelection();
     var savedM = selM.rangeCount ? selM.getRangeAt(0).cloneRange() : null;
     askText({ title: '插入公式块', label: 'LaTeX 公式', placeholder: '例如：\\int_a^b f(x)\\,dx', hint: '行内公式可直接在正文里写 $...$，保存后自动渲染。', okText: '插入' }).then(function (tex) {
+      if (!isWikiEditingContext(editContext)) return;
       if (!tex || !tex.trim()) return;
       doc.focus({ preventScroll: true });
       if (savedM) { var sm = window.getSelection(); sm.removeAllRanges(); sm.addRange(savedM); }
@@ -778,10 +866,13 @@ function wikiToolbar(cmd) {
       onMount: function (body, handle) {
         body.querySelector('#zq-ref-cancel').onclick = handle.close;
         body.querySelector('#zq-ref-ok').onclick = function () {
+          if (!isWikiEditingContext(editContext)) { handle.close(); return; }
           var t = body.querySelector('#zq-ref-title').value.trim();
           var u = body.querySelector('#zq-ref-url').value.trim();
           if (!u) return toast('请填写链接地址', 'error');
           if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+          u = wikiExternalUrl(u);
+          if (!u) return toast('链接地址无效，请使用完整的 HTTP(S) 网址', 'error');
           handle.close();
           doc.focus({ preventScroll: true });
           if (savedR) { var sr = window.getSelection(); sr.removeAllRanges(); sr.addRange(savedR); }
@@ -806,7 +897,7 @@ function markDuplicateTitle(doc, title) {
   if (first && String(first.textContent || '').trim() === String(title || '').trim()) first.classList.add('zq-dup-title');
 }
 function toggleWikiSource() {
-  var doc = $('#zq-doc'); if (!doc) return;
+  var doc = $('#zq-doc'); if (!doc || !ensureWikiEditing()) return;
   if (doc.dataset.source === '1') {
     var ta = $('#zq-src-ta'); var md = ta ? ta.value : '';
     var view = doc._wikiSourceView;
@@ -814,6 +905,8 @@ function toggleWikiSource() {
     doc._wikiPendingView = view ? { view: view, page: state.wikiCur, auth: token(), expires: Date.now() + 30000 } : null;
     doc.dataset.source = '0'; doc.contentEditable = 'true';
     doc.innerHTML = renderMarkdown(md); markDuplicateTitle(doc, state.wikiCur && state.wikiCur.title); renderMathIn(doc); doc.focus({ preventScroll: true });
+    syncWikiEditMode(doc);
+    wireWikiLinks(doc);
     if (view) restoreWikiView(doc, view);
     setSourcePressed(false);
   } else {
@@ -829,6 +922,7 @@ function toggleWikiSource() {
 function showWikiActionBar() {
   removeWikiActionBar();
   var doc = $('#zq-doc'); if (!doc) return;
+  syncWikiEditMode(doc);
   var bar = document.createElement('div');
   bar.id = 'zq-wiki-actions';
   bar.className = 'zq-wiki-actionbar';
@@ -860,7 +954,8 @@ async function deleteWikiPage(p) {
 }
 function removeWikiActionBar() { var b = document.getElementById('zq-wiki-actions'); if (b) b.remove(); }
 async function saveWikiEdit() {
-  var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p) return;
+  var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || !ensureWikiEditing()) return;
+  var editContext = wikiEditingContext(doc);
   var md = doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
   // 恢复的是一份旧版本上改的草稿，而这一页之后被改过：直接按旧版本存会被乐观锁挡住，而且每次都挡 —— 刷新重试也一样，
   // 草稿永远存不进去（第十五轮真浏览器里走出来的死胡同）。所以先明说，用户点了「替换」才按现在的版本存。
@@ -871,7 +966,7 @@ async function saveWikiEdit() {
       okText: '用我的这一版替换',
       danger: true
     });
-    if (!replace) return;
+    if (!replace || !isWikiEditingContext(editContext)) return;
     p._draftBase = p.version;
   }
   var editSession = doc.dataset.wikiEditSession, saveAuth = token();
@@ -1090,7 +1185,7 @@ function createWikiPage() {
       '<div class="zq-field"><label class="zq-label">页面标题</label><input id="zq-np-title" class="zq-input" placeholder="例如：英语作文素材库"></div>'
       + '<div class="zq-field"><label class="zq-label">类型</label><select id="zq-np-type" class="zq-select">' + typeOptions + '</select></div>'
       + '<div class="zq-field"><label class="zq-label">父节点</label><select id="zq-np-parent" class="zq-select">' + parentOptions + '</select></div>'
-      + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">将按类型生成初始结构（小节 / 任务项），创建后点正文即可继续编辑。</p>'
+      + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">将按类型生成初始结构（小节 / 任务项），创建后点击「编辑」继续填写。</p>'
       + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-np-cancel">取消</button><button type="button" class="zq-btn" id="zq-np-ok">创建</button></div>',
     onMount: function (b, h) {
       $('#zq-np-cancel', b).onclick = h.close;
