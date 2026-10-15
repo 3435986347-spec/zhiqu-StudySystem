@@ -70,7 +70,7 @@ class DraftsTest {
         assertTrue(save.contains("version: baseVersion") && save.contains("var baseVersion = p._draftBase != null ? p._draftBase : p.version;"),
                 "恢复的草稿要按它开始改时的版本保存 —— 否则一份旧草稿能盖掉这之后别人的修改");
         int ask = save.indexOf("askConfirm(");
-        assertTrue(ask >= 0 && ask < save.indexOf("safe('保存知识页'") && save.contains("if (!replace || !isWikiEditingContext(editContext)) return;")
+        assertTrue(ask >= 0 && ask < save.indexOf("safe('保存知识页'") && save.contains("if (!replace || !isWikiEditSession(editContext)) return;")
                         && save.contains("if (p._draftBase != null && p.version != null && Number(p._draftBase) !== Number(p.version))"),
                 "旧版本上的草稿遇到这一页已被改过：保存前要先问（否则要么悄悄盖掉别人的、要么永远存不进去）");
         String paint = between(code, "async function paintWikiDoc(p, opts)", "state.wikiCur = p;");

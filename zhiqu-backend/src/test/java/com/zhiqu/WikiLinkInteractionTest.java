@@ -8,7 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WikiLinkInteractionTest {
     @Test
-    void wikiIsReadOnlyUntilTheUserExplicitlyChoosesToEdit() throws Exception {
+    void asynchronousEmbedsInitializeTheirOwnSubtreesAndCoalesceViewportRestores() throws Exception {
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/wiki-embed-ready-check.js"),
+                Path.of("src/main/resources/static/assets/pages/knowledge-wiki.js")));
+    }
+
+    @Test
+    void wikiKeepsDirectEditingWithAnOptionalReadOnlySwitch() throws Exception {
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/wiki-readonly-check.js"),
                 Path.of("src/main/resources/static/assets/pages/knowledge-wiki.js"),
                 "src/main/resources/static/knowledge-wiki.html"));

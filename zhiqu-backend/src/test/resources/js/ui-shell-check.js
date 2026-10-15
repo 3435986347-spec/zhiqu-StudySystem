@@ -47,12 +47,15 @@ function storage(init) {
 function load(pathname, session, local, panels) {
   const html = el('html');
   const side = el('aside');
-  const docH = {}, winH = {}, timers = [];
+  const docH = {}, docOptions = {}, winH = {}, timers = [];
   const document = {
     readyState: 'complete', documentElement: html, body: el('body'),
     getElementById: (id) => (id === 'zq-side' ? side : null),
     querySelector: () => null, querySelectorAll: (sel) => (sel === '[data-zq-collapse]' && panels ? panels : []), createElement: (t) => el(t),
-    addEventListener: (t, f) => { (docH[t] = docH[t] || []).push(f); },
+    addEventListener: (t, f, options) => {
+      (docH[t] = docH[t] || []).push(f);
+      (docOptions[t] = docOptions[t] || []).push(options);
+    },
   };
   const window = {
     location: { pathname, hash: '', search: '' }, document,
@@ -65,7 +68,7 @@ function load(pathname, session, local, panels) {
   window.window = window;
   const ctx = vm.createContext(Object.assign({ console }, window));
   vm.runInContext(src, ctx, { filename: 'zhiqu-ui.js' });
-  return { html, side, ui: window.ZQUI, session: window.sessionStorage, docH, winH, timers, body: document.body, document };
+  return { html, side, ui: window.ZQUI, session: window.sessionStorage, docH, docOptions, winH, timers, body: document.body, document };
 }
 
 let fail = 0;
@@ -248,6 +251,22 @@ judge('提示：它所在的那一块滚了就收（提示会和它错开）', !
 fire('pointerover', { pointerType: 'mouse', target: hoverable({ title: '联网' }) }); runTimers();
 scrollH.forEach((f) => f({ target: r.document }));
 judge('提示：整页滚了就收', !tipOn());
+
+// 从不取消滚动的公共提示监听必须显式 passive；不能让 WebKit 等待主线程再开始每次滚动。
+const assert = require('node:assert/strict');
+for (const path of ['/knowledge-wiki.html', '/ai-assistant.html', '/tasks.html']) {
+  const shell = load(path);
+  assert.equal(shell.docH.wheel.length, 1, path + ' must install one shared wheel listener');
+  assert.equal(shell.docOptions.wheel[0].passive, true, path + ' shared tooltip wheel listener blocks asynchronous scrolling');
+  assert.equal(shell.docOptions.wheel[0].capture, true, path + ' must still dismiss tips before nested scroll targets');
+}
+fire('pointerover', { pointerType: 'mouse', target: hoverable({ title: '滚动前的提示' }) }); runTimers();
+assert.equal(tipOn(), true);
+let wheelCancelled = false;
+fire('wheel', { preventDefault() { wheelCancelled = true; } });
+assert.equal(tipOn(), false, 'passive wheel must still dismiss the tooltip');
+assert.equal(wheelCancelled, false, 'tooltip must never cancel scrolling');
+judge('提示：Wiki、AI 助手、任务页的滚轮监听不阻塞滚动，仍会关闭提示', true);
 
 // 6. 文件拖到没人接的地方
 function dragEv(types, extra = {}) {

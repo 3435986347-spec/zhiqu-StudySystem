@@ -6,8 +6,7 @@
 ## 这是什么
 
 **知趣·象限 AI 办公助手** —— 以四象限（艾森豪威尔）为骨架的个人 AI 办公助手，带个人知识 Wiki 和可选的语义检索（RAG）。
-2026-10-04 之前是给大学生的学习系统（第二十六轮改的定位）；内部名字 `StudyTask`、`study_record`、`create_study_plan` 故意没改。
-一个后端，三个入口：网页（Spring Boot 带着静态前端，**前端没有构建步骤**）、桌面应用（macOS 原生外壳 / Windows jpackage）、npm 版命令行 `zhiqu`（`zhiqu-cli/`，循环与工具跑在用户电脑上，服务端只做登录、模型网关、存档、远程工具）。
+2026-10-04 之前是给大学生的学习系统（第二十六轮改的定位）；内部名字 `StudyTask`、`study_record`、`create_study_plan` 故意没改。一个后端，三个入口：网页（Spring Boot 带着静态前端，**前端没有构建步骤**）、桌面应用（macOS 原生外壳 / Windows jpackage）、npm 版命令行 `zhiqu`（`zhiqu-cli/`，循环与工具跑在用户电脑上，服务端只做登录、模型网关、存档、远程工具）。
 
 ## 怎么跑
 
@@ -89,7 +88,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261015-wiki-click-links`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261015-wiki-toggle-smooth`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第六十五轮](docs/rounds/round-65.md) macOS ZIP 导入兼容、Wiki 正文宽度与弹窗背景稳定
 - [第六十六轮](docs/rounds/round-66.md) Wiki 类型化嵌入预览、原生编辑快捷键、目录备注与编辑滚动稳定
 - [第六十七轮](docs/rounds/round-67.md) Wiki 只读模式、网址直接点击与 JSON 预览内部滚动
+- [第六十八轮](docs/rounds/round-68.md) 恢复点击编辑、可选只读开关、工具栏靠右与页面流畅度

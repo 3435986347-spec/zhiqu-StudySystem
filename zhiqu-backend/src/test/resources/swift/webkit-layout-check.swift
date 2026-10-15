@@ -8,6 +8,7 @@ let dir = URL(fileURLWithPath: CommandLine.arguments[1])
 func out(_ key: String, _ value: Any) { print("\(key)=\(value)"); fflush(stdout) }
 let week = try! String(contentsOf: dir.appendingPathComponent("week.html"), encoding: .utf8)
 let pomo = try! String(contentsOf: dir.appendingPathComponent("pomo.html"), encoding: .utf8)
+let wikiHeader = try! String(contentsOf: dir.appendingPathComponent("wiki-header.html"), encoding: .utf8)
 // 三种宽度的日历：322 是 960 宽的窗口里日历那张卡片的宽度（内置浏览器里量的），802 是 1440 宽时的，200 是 320 宽的手机上
 let page = """
 <!DOCTYPE html><html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono"><head><meta charset="utf-8"><link rel="stylesheet" href="zhiqu-ui.css"></head>
@@ -17,6 +18,7 @@ let page = """
 <div id="tiny" style="width:200px;margin-top:20px"><div class="zq-week">\(week)</div></div>
 <div id="pomo-host" style="width:260px;margin-top:20px">\(pomo)</div>
 <select class="zq-composer-model" id="model"><option>DeepSeek（我的）</option></select>
+<template id="wiki-header">\(wikiHeader)</template>
 </body></html>
 """
 let pageURL = dir.appendingPathComponent("page.html")
@@ -79,6 +81,21 @@ let measure = """
     });
   });
   result.wikiCases = wikiCases;
+  var wikiToolbarCases = 0;
+  [['short.wide',1120,'工作记录'],['long.wide',1120,'知识库合成的长页面标题'.repeat(20)],['long.narrow',320,'知识库合成的长页面标题'.repeat(20)]].forEach(function(sample){
+    var host = document.createElement('section'); host.style.width = sample[1] + 'px';
+    host.innerHTML = document.getElementById('wiki-header').innerHTML;
+    document.body.appendChild(host);
+    var title = host.querySelector('#zq-doc-title'); title.textContent = sample[2];
+    var header = title.parentElement, tools = host.querySelector('.zq-wiki-tools');
+    var h = header.getBoundingClientRect(), t = tools.getBoundingClientRect(), s = getComputedStyle(header);
+    var key = 'wikiToolbar.' + sample[0];
+    result[key + '.rightGap'] = h.right - parseFloat(s.paddingRight) - t.right;
+    result[key + '.overflow'] = Math.max(0, host.scrollWidth - host.clientWidth);
+    result[key + '.wrapped'] = t.top >= title.getBoundingClientRect().bottom;
+    wikiToolbarCases++;
+  });
+  result.wikiToolbarCases = wikiToolbarCases;
   return JSON.stringify(result);
 })()
 """

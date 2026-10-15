@@ -550,7 +550,9 @@
       if (e.relatedTarget && tipTarget.contains(e.relatedTarget)) return;   // 还在它里面（从按钮挪到里面的图标上）
       hideTip();
     });
-    ['pointerdown', 'keydown', 'wheel'].forEach(function(t){ document.addEventListener(t, hideTip, true); });
+    ['pointerdown', 'keydown'].forEach(function(t){ document.addEventListener(t, hideTip, true); });
+    // 只关闭提示，不取消滚动。显式 passive 让 WebKit 可以先滚动，免得每个页面都等主线程确认。
+    document.addEventListener('wheel', hideTip, { capture: true, passive: true });
     // 只有提示的那个元素跟着滚走了才收（第四十七轮 review：原来页面上哪里一滚就收 —— AI 回答流式输出时对话区一直往下跟，提示一出来就没了）
     window.addEventListener('scroll', function(e){
       if (!tipTarget) return;

@@ -66,6 +66,14 @@ class DesktopWebKitLayoutTest {
                         key + " 的宽表格没有在自己的表格容器里横向滚动");
             }
         }
+        assertEquals("3", out.get("wikiToolbarCases"), "长短标题的工具栏探针没有全部执行：" + out);
+        for (String key : new String[]{"short.wide", "long.wide", "long.narrow"}) {
+            assertTrue(Math.abs(Double.parseDouble(out.get("wikiToolbar." + key + ".rightGap"))) <= 0.5,
+                    key + " 工具栏没有贴在内容区右侧：" + out);
+            assertTrue(Double.parseDouble(out.get("wikiToolbar." + key + ".overflow")) <= 0.5,
+                    key + " 工具栏撑出标题容器：" + out);
+            if (key.startsWith("long")) assertEquals("1", out.get("wikiToolbar." + key + ".wrapped"), "长标题样本没有触发工具栏换行：" + out);
+        }
     }
 
     private Map<String, String> runCheck() throws Exception {
@@ -76,6 +84,7 @@ class DesktopWebKitLayoutTest {
         }
         Path work = Files.createDirectories(tmp.resolve("page"));
         Files.copy(STATIC.resolve("assets/zhiqu-ui.css"), work.resolve("zhiqu-ui.css"));
+        Files.writeString(work.resolve("wiki-header.html"), wikiHeader(Files.readString(STATIC.resolve("knowledge-wiki.html"), StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/week-markup.js"), STATIC.resolve("assets/pages/dashboard.js"), work.resolve("week.html").toString()),
                 "week-markup.js 没画出日历");
         Files.writeString(work.resolve("pomo.html"), pomodoroCard(Files.readString(STATIC.resolve("dashboard.html"), StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
@@ -91,6 +100,21 @@ class DesktopWebKitLayoutTest {
         }
         assertEquals("true", map.get("done"), "检查程序没有走完：\n" + text);
         return map;
+    }
+
+    /** 发布页面的标题和工具栏，按 div 层数截取；探针只替换合成标题。 */
+    static String wikiHeader(String html) {
+        int title = html.indexOf("<h2 id=\"zq-doc-title\"");
+        assertTrue(title >= 0, "knowledge-wiki.html 里找不到知识页标题");
+        int at = html.lastIndexOf("<div", title);
+        Matcher m = Pattern.compile("<div\\b|</div>").matcher(html);
+        int depth = 0, from = at;
+        while (m.find(from)) {
+            depth += m.group().startsWith("</") ? -1 : 1;
+            from = m.end();
+            if (depth == 0) return html.substring(at, m.end());
+        }
+        throw new AssertionError("知识页标题与工具栏的 <div> 没有闭合");
     }
 
     /** dashboard.html 里番茄钟那张卡片，原样截出来（按 div 的层数配对） */

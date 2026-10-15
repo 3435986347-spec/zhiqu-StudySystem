@@ -2476,6 +2476,11 @@
           return;
         }
         if (!token()) await borrowToken();
+        // 当前普通页的代码与登录校验并行下载；业务启动仍等校验成功。
+        // 后台页保持先确认管理员再加载，失败的预载也立即接住，稍后由初始化统一报告。
+        var pageCode = PAGE_MODULES[page] && window.ZQUI && window.ZQUI.isAdminPage && !window.ZQUI.isAdminPage(page)
+          ? loadModule(PAGE_MODULES[page]) : null;
+        if (pageCode) pageCode.catch(function () {});
         await initAuth();
 
         // 非管理员直达后台页 → 劝返。**这一步不改变安全边界**：后端 AdminController 的
@@ -2512,7 +2517,7 @@
         try {
           // 每一页都是 assets/pages/ 下的一个模块（方案第 4 步，第三十一到三十七轮一页一页搬完；原来这里还有一张壳里的 boots 表）
           if (PAGE_MODULES[page]) {
-            var pageModule = await loadModule(PAGE_MODULES[page]);
+            var pageModule = await (pageCode || loadModule(PAGE_MODULES[page]));
             // 页面开着跨过业务日期的零点要重新取什么：页面模块自己说（看板、例行计划的「今天」），见 watchBusinessDay
             if (!dayWatched && pageModule.dayReload && pageModule.dayReload[page]) { dayWatched = true; watchBusinessDay(pageModule.dayReload[page]); }
             await pageModule.boots[page](zqShared);

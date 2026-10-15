@@ -762,9 +762,11 @@ body.zq-modal-open{overflow:hidden;}
 .zq-prose .zq-dup-title{display:none;}
 /* 页名（点了改名）和工具栏 */
 .zq-wiki-title{margin:0;font-size:var(--zq-fs-xl);font-weight:var(--zq-fw-medium);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-.zq-wiki-tools{display:flex;align-items:center;gap:var(--zq-sp-2);flex-wrap:wrap;}
+.zq-wiki-tools{display:flex;align-items:center;justify-content:flex-end;gap:var(--zq-sp-2);flex-wrap:wrap;min-width:0;max-width:100%;margin-left:auto;}
 .zq-wiki-mode-label{min-width:3em;color:var(--zq-text3);font-size:var(--zq-fs-xs);white-space:nowrap;}
-#zq-wiki-mode{min-width:100px;height:30px;flex-shrink:0;white-space:nowrap;}
+#zq-wiki-mode{min-width:100px;height:30px;gap:8px;flex-shrink:0;white-space:nowrap;}
+#zq-wiki-mode::before{content:"";width:26px;height:14px;flex:none;border-radius:999px;background:radial-gradient(circle at 7px 7px,var(--zq-card) 0 4px,transparent 4.5px),var(--zq-border);}
+#zq-wiki-mode[aria-checked="true"]::before{background:radial-gradient(circle at 19px 7px,var(--zq-card) 0 4px,transparent 4.5px),var(--zq-primary);}
 .zq-wiki-tools [data-wiki-cmd]:disabled,#zq-wiki-block:disabled{opacity:.45;cursor:default;}
 .zq-wiki-tools .zq-select{height:28px;min-width:92px;padding:0 8px;font-size:var(--zq-fs-xs);}
 .zq-wiki-tools .zq-tbtn{min-width:28px;padding:0 6px;}

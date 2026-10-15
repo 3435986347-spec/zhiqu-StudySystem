@@ -132,7 +132,7 @@ class WikiLookTest {
             assertTrue(after.contains("markDuplicateTitle(doc, "), "画完正文没有标重复的页名：\n" + after);
         }
         assertEquals(2, n, "把正文画成排版的地方应当是两处（打开一页、从源码回来）");
-        // 第六十七轮：只读时不自动编辑；显式进入编辑仍保持重复页名和按钮区域的高度一致。
+        // 第六十八轮：恢复点正文编辑，打开只读开关才锁定；进入编辑仍保持重复页名和按钮区域的高度一致。
         String click = SourceText.functionBody(js, "function wireWikiEditor(");
         assertFalse(click.contains("doc.scrollTop += dup.getBoundingClientRect().height"), "重复页名不再露出，却还在补偿它的高度");
         String editor = SourceText.functionBody(js, "function enterWikiEdit(");

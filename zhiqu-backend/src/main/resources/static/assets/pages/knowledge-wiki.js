@@ -176,7 +176,7 @@ async function paintWikiDoc(p, opts) {
     if (opts.preserveView) restoreWikiView(doc, opts.preserveView);
   }
   var insp = $('#zq-insp');
-  if (insp) insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">默认只读 · 点击「编辑」修改 · [[双链]]可跳转</span></div>';
+  if (insp) insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">点击正文即可编辑 · 开启「只读」可防止误改 · [[双链]]可跳转</span></div>';
   paintWikiTree();
   paintWikiTabs();
   offerWikiDraft(p);
@@ -204,7 +204,7 @@ function wireWikiDrafts(doc) {
   doc.dataset.draftWired = '1';
   // 源码模式的 textarea 在 doc 里面，它的 input 事件也冒泡到这里
   doc.addEventListener('input', function () {
-    if (doc.dataset.editing !== '1') return;
+    if (doc.dataset.editing !== '1' || wikiReadOnly()) return;
     state.wikiDirty = true;
     if (state.wikiDraftTimer) clearTimeout(state.wikiDraftTimer);
     state.wikiDraftTimer = setTimeout(saveWikiDraftNow, 800);
@@ -235,6 +235,7 @@ function offerWikiDraft(p) {
     + '<button class="zq-btn" data-draft="restore" style="height:28px;">恢复</button><button class="zq-btn-ghost" data-draft="drop" style="height:28px;">丢弃</button>';
   doc.parentNode.insertBefore(bar, doc);
   $('[data-draft="restore"]', bar).onclick = function () {
+    if (wikiReadOnly()) return toast('请先关闭只读开关再恢复草稿');
     removeWikiDraftBar();
     enterWikiEdit();
     if (doc.dataset.source !== '1') toggleWikiSource();
@@ -497,7 +498,8 @@ function wikiExternalUrl(value) {
     return /^https?:$/.test(parsed.protocol) && parsed.hostname ? href : null;
   } catch (ignored) { return null; }
 }
-function wireWikiLinks(doc) {
+function wireWikiLinks(doc, scope) {
+  scope = scope || doc;
   async function follow(a, newTab) {
     var spec = (a.getAttribute('data-wikilink') || '').split('|')[0];
     var hash = spec.indexOf('#');
@@ -512,23 +514,25 @@ function wireWikiLinks(doc) {
       if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
   }
-  $all('[data-wikilink]', doc).forEach(function (a) {
+  var links = $all('[data-wikilink]', scope);
+  if (scope !== doc && scope.matches && scope.matches('[data-wikilink]')) links.unshift(scope);
+  links.forEach(function (a) {
     // Markdown 的 [[双链]] 没有 href；让它能由键盘聚焦、回车打开。
     a.tabIndex = 0;
     a.setAttribute('role', 'link');
     a.onkeydown = function (e) {
-      if (doc.dataset.editing === '1' || e.key !== 'Enter' || e.isComposing || e.repeat) return;
+      if ((doc.dataset.editing === '1' && state.wikiReadOnly !== true) || e.key !== 'Enter' || e.isComposing || e.repeat) return;
       e.preventDefault(); e.stopPropagation();
       follow(a, e.metaKey || e.ctrlKey);
     };
     a.onclick = function (e) {
-      if (doc.dataset.editing === '1') return;
+      if ((doc.dataset.editing === '1' && state.wikiReadOnly !== true)) return;
       e.preventDefault();
       e.stopPropagation(); // 阻止冒泡到正文容器，否则跳转后的目标页会立刻进入编辑态
       follow(a, e.metaKey || e.ctrlKey);
     };
     a.onauxclick = function (e) {
-      if (e.button !== 1 || doc.dataset.editing === '1') return;
+      if (e.button !== 1 || (doc.dataset.editing === '1' && state.wikiReadOnly !== true)) return;
       e.preventDefault(); e.stopPropagation();
       follow(a, true);
     };
@@ -557,25 +561,34 @@ function wireWikiLinks(doc) {
 function wireWikiEditor() {
   var doc = $('#zq-doc'); if (!doc) return;
   doc.style.cursor = 'text';
-  doc.addEventListener('zq-wiki-embed-ready', function () {
-    wireWikiLinks(doc);
-    syncWikiEditMode(doc);
-    var pending = doc._wikiPendingView;
-    if (pending && pending.page === state.wikiCur && pending.auth === token() && Date.now() < pending.expires) restoreWikiView(doc, pending.view);
+  doc.addEventListener('zq-wiki-embed-ready', function (event) {
+    var scope = event.target;
+    if (!scope || scope !== doc && !doc.contains(scope)) return;
+    // Only the new preview needs initialization; document-level delegates remain on the parent.
+    wireWikiLinks(doc, scope);
+    syncWikiTaskControls(doc, scope);
+    if (!doc._wikiPendingView || doc._wikiEmbedFrame) return;
+    doc._wikiEmbedFrame = window.requestAnimationFrame(function () {
+      doc._wikiEmbedFrame = null;
+      // User input and page/auth changes can invalidate the restore while this frame is queued.
+      var pending = doc._wikiPendingView;
+      if (pending && pending.page === state.wikiCur && pending.auth === token() && Date.now() < pending.expires) restoreWikiView(doc, pending.view);
+    });
   });
   ['pointerdown', 'wheel', 'touchstart', 'keydown', 'input'].forEach(function (event) {
     doc.addEventListener(event, function () { doc._wikiPendingView = null; }, { passive: true });
   });
-  // 阅读态点击只选择文字；进入编辑只走明确的「编辑」按钮或右键菜单。
-  doc.onclick = null;
-  var modeButton = $('#zq-wiki-mode');
-  if (modeButton) modeButton.onclick = function () {
-    if (!state.wikiCur) return;
-    if (doc.dataset.editing === '1') return saveWikiEdit();
+  // 保留原来的点正文编辑；只读只是可选的防误改开关，链接和嵌入控件仍按原用途响应。
+  doc.onclick = function (e) {
+    if (e.target && e.target.closest && e.target.closest('a,input,button,.zq-md-image,.zq-embed')) return;
+    if (!state.wikiCur || wikiReadOnly() || doc.dataset.editing === '1' || doc.dataset.loading === '1') return;
     enterWikiEdit();
+    caretAt(e.clientX, e.clientY);
   };
+  var modeButton = $('#zq-wiki-mode');
+  if (modeButton) modeButton.onclick = toggleWikiReadOnly;
   doc.addEventListener('paste', function (e) {
-    if (doc.dataset.editing !== '1') return;
+    if (wikiReadOnly() || doc.dataset.loading === '1') return;
     var files = Array.from(e.clipboardData && e.clipboardData.files || []);
     var image = files.find(isWikiImageFile);
     if (!image || !state.wikiCur) return;
@@ -588,7 +601,7 @@ function wireWikiEditor() {
   doc.addEventListener('drop', function (e) {
     // 阻止浏览器把文件拖入只读正文解释成离开知识库并打开本地文件。
     if (Array.from(e.dataTransfer && e.dataTransfer.files || []).length) e.preventDefault();
-    if (doc.dataset.editing !== '1') return;
+    if (wikiReadOnly() || doc.dataset.loading === '1') return;
     var image = Array.from(e.dataTransfer && e.dataTransfer.files || []).find(isWikiImageFile);
     if (!image || !state.wikiCur) return;
     e.preventDefault();
@@ -597,18 +610,21 @@ function wireWikiEditor() {
   });
   // 右键菜单：编辑本页 / 删除本页；编辑态不拦截（保留浏览器原生菜单做粘贴等操作）
   doc.oncontextmenu = function (e) {
-    if (doc.dataset.editing === '1' || !state.wikiCur) return;
+    if (wikiReadOnly() || doc.dataset.editing === '1' || !state.wikiCur) return;
     e.preventDefault();
     var p = state.wikiCur;
     var items = [{ label: '编辑本页', onClick: function () { enterWikiEdit(); } }];
     if (!isSystemWikiPage(p)) items.push({ label: '删除本页', danger: true, onClick: function () { deleteWikiPage(p); } });
     popMenu(e.clientX, e.clientY, items);
   };
-  // 阅读态的任务框禁用；仅明确进入编辑后才能改，脚本触发 change 也不能绕过。
+  // 任务可直接勾选并进入编辑；只读和嵌入笔记中的任务始终不能改。
   doc.addEventListener('change', function (e) {
     var cb = e.target;
     if (!cb || cb.type !== 'checkbox') return;
-    if (doc.dataset.editing !== '1' || cb.closest && cb.closest('[data-embed-markdown]')) { cb.checked = cb.defaultChecked; return; }
+    if (wikiReadOnly() || doc.dataset.loading === '1' || cb.closest && cb.closest('[data-embed-markdown]')) {
+      cb.checked = typeof cb._wikiLockedChecked === 'boolean' ? cb._wikiLockedChecked : cb.defaultChecked; return;
+    }
+    if (!ensureWikiEditing()) return;
     var span = cb.nextElementSibling;
     if (span) { span.style.textDecoration = cb.checked ? 'line-through' : 'none'; span.style.color = cb.checked ? 'var(--zq-text3)' : 'var(--zq-text)'; }
     doc.dispatchEvent(new Event('input', { bubbles: true }));
@@ -745,35 +761,65 @@ function insertWikiImage(file) {
     toast('图片已加入当前草稿，保存页面后生效');
   }).finally(function () { state.wikiImageUploading = false; });
 }
-function ensureWikiEditing() { var doc = $('#zq-doc'); return !!doc && doc.dataset.editing === '1' && doc.dataset.loading !== '1'; }
+function ensureWikiEditing() {
+  var doc = $('#zq-doc');
+  if (!doc || !state.wikiCur || wikiReadOnly() || doc.dataset.loading === '1') return false;
+  if (doc.dataset.editing !== '1') enterWikiEdit();
+  return doc.dataset.editing === '1';
+}
+function wikiReadOnly() { return state.wikiReadOnly === true; }
+function toggleWikiReadOnly() {
+  var doc = $('#zq-doc');
+  if (!doc || !state.wikiCur || doc.dataset.loading === '1') return;
+  // 冻结原 DOM / textarea，不重绘、不提交。源码的选区、滚动与未保存内容都留下来。
+  if (doc.dataset.editing === '1') saveWikiDraftNow();
+  state.wikiReadOnly = !wikiReadOnly();
+  // 迟到的链接弹窗、改名、图片选择不能穿过一次上锁 / 解锁继续改旧会话。
+  doc.dataset.wikiEditSession = String(++wikiEditSession);
+  syncWikiEditMode(doc);
+}
 function wikiEditingContext(doc) {
   return { doc: doc, page: state.wikiCur, session: doc.dataset.wikiEditSession, source: doc.dataset.source, auth: token() };
 }
-function isWikiEditingContext(context) {
+function isWikiEditSession(context) {
   return !!context && token() === context.auth && state.wikiCur === context.page && context.doc.dataset.editing === '1' && context.doc.dataset.loading !== '1'
     && context.doc.dataset.wikiEditSession === context.session && context.doc.dataset.source === context.source;
 }
+function isWikiEditingContext(context) { return !wikiReadOnly() && isWikiEditSession(context); }
 function syncWikiEditMode(doc) {
   if (!doc) return;
-  var editing = doc.dataset.editing === '1';
-  doc.setAttribute('aria-readonly', editing ? 'false' : 'true');
+  var editing = doc.dataset.editing === '1', locked = wikiReadOnly(), unavailable = !state.wikiCur || doc.dataset.loading === '1';
+  doc.contentEditable = editing && !locked && doc.dataset.source !== '1' ? 'true' : 'false';
+  doc.setAttribute('aria-readonly', locked || unavailable ? 'true' : 'false');
+  doc.style.cursor = locked ? 'default' : 'text';
+  var source = $('#zq-src-ta'); if (source) source.readOnly = locked;
   var modeButton = $('#zq-wiki-mode'), label = $('#zq-wiki-mode-label');
   if (modeButton) {
-    modeButton.textContent = editing ? '保存并只读' : '编辑';
-    modeButton.disabled = !state.wikiCur || doc.dataset.loading === '1';
-    modeButton.setAttribute('aria-pressed', editing ? 'true' : 'false');
-    modeButton.title = doc.dataset.loading === '1' ? '正文尚未加载，请稍候或刷新后重试' : editing ? '保存当前修改并返回只读模式' : '编辑当前知识页';
+    modeButton.textContent = '只读';
+    modeButton.disabled = unavailable;
+    modeButton.setAttribute('aria-checked', locked ? 'true' : 'false');
+    modeButton.setAttribute('aria-pressed', locked ? 'true' : 'false');
+    modeButton.title = unavailable ? '正文尚未加载，请稍候或刷新后重试' : locked ? '关闭只读，恢复直接编辑' : '开启只读，防止误改';
   }
-  if (label) label.textContent = editing ? '编辑中' : '只读';
-  $all('[data-wiki-cmd], #zq-wiki-block', doc.closest('section')).forEach(function (control) { control.disabled = !editing; });
-  $all('input[type="checkbox"]', doc).forEach(function (checkbox) {
-    checkbox.disabled = !editing || !!(checkbox.closest && checkbox.closest('[data-embed-markdown]'));
-  });
+  if (label) label.textContent = locked ? '已开启' : '';
+  $all('[data-wiki-cmd], #zq-wiki-block', doc.closest('section')).forEach(function (control) { control.disabled = locked || unavailable; });
+  syncWikiTaskControls(doc);
   var title = $('#zq-doc-title');
   if (title) {
-    title.style.cursor = editing ? 'pointer' : 'default';
-    title.title = editing ? '点击修改页面名称' : '';
+    title.style.cursor = locked || unavailable ? 'default' : 'pointer';
+    title.title = locked || unavailable ? '' : '点击修改页面名称';
   }
+}
+function syncWikiTaskControls(doc, scope) {
+  scope = scope || doc;
+  var locked = wikiReadOnly(), unavailable = !state.wikiCur || doc.dataset.loading === '1';
+  var checkboxes = $all('input[type="checkbox"]', scope);
+  if (scope !== doc && scope.matches && scope.matches('input[type="checkbox"]')) checkboxes.unshift(scope);
+  checkboxes.forEach(function (checkbox) {
+    if (locked) checkbox._wikiLockedChecked = checkbox.checked;
+    else delete checkbox._wikiLockedChecked;
+    checkbox.disabled = locked || unavailable || !!(checkbox.closest && checkbox.closest('[data-embed-markdown]'));
+  });
 }
 function captureWikiView(doc) {
   var view = { scrollTop: doc.scrollTop || 0, windowX: window.scrollX || 0, windowY: window.scrollY || 0 };
@@ -809,7 +855,7 @@ function restoreWikiView(doc, view) {
   if (window.scrollTo && (window.scrollX !== view.windowX || window.scrollY !== view.windowY)) window.scrollTo(view.windowX, view.windowY);
 }
 function enterWikiEdit() {
-  var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || doc.dataset.editing === '1' || doc.dataset.loading === '1') return;
+  var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || wikiReadOnly() || doc.dataset.editing === '1' || doc.dataset.loading === '1') return;
   var view = captureWikiView(doc);
   wireWikiDrafts(doc);
   doc.dataset.editing = '1'; doc.dataset.source = '0'; doc.dataset.wikiEditSession = String(++wikiEditSession);
@@ -954,7 +1000,7 @@ async function deleteWikiPage(p) {
 }
 function removeWikiActionBar() { var b = document.getElementById('zq-wiki-actions'); if (b) b.remove(); }
 async function saveWikiEdit() {
-  var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || !ensureWikiEditing()) return;
+  var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || doc.dataset.editing !== '1' || doc.dataset.loading === '1') return;
   var editContext = wikiEditingContext(doc);
   var md = doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
   // 恢复的是一份旧版本上改的草稿，而这一页之后被改过：直接按旧版本存会被乐观锁挡住，而且每次都挡 —— 刷新重试也一样，
@@ -966,7 +1012,7 @@ async function saveWikiEdit() {
       okText: '用我的这一版替换',
       danger: true
     });
-    if (!replace || !isWikiEditingContext(editContext)) return;
+    if (!replace || !isWikiEditSession(editContext)) return;
     p._draftBase = p.version;
   }
   var editSession = doc.dataset.wikiEditSession, saveAuth = token();
@@ -983,10 +1029,16 @@ async function saveWikiEdit() {
     if (updated && updated.version != null) p.version = updated.version;
     if (updated && updated.updatedAt) p.updatedAt = updated.updatedAt;
     if (state.wikiCur !== p || doc.dataset.wikiEditSession !== editSession || doc.dataset.editing !== '1') {
-      var newerDraft = drafts.load(wikiDraftKey(p));
-      if (newerDraft && newerDraft.text !== md && Number(newerDraft.base) === Number(baseVersion)) {
-        drafts.save(wikiDraftKey(p), newerDraft.text, { base: p.version, title: p.title });
-      } else drafts.clearIf(wikiDraftKey(p), md);
+      if (state.wikiCur === p && doc.dataset.editing === '1') {
+        // 保存期间切换只读会结束旧会话；回执只更新草稿状态，不能重绘或改变现在的开关。
+        if (currentWikiMarkdown() === md) { state.wikiDirty = false; drafts.clearIf(wikiDraftKey(p), md); }
+        else { state.wikiDirty = true; saveWikiDraftNow(); }
+      } else {
+        var newerDraft = drafts.load(wikiDraftKey(p));
+        if (newerDraft && newerDraft.text !== md && Number(newerDraft.base) === Number(baseVersion)) {
+          drafts.save(wikiDraftKey(p), newerDraft.text, { base: p.version, title: p.title });
+        } else drafts.clearIf(wikiDraftKey(p), md);
+      }
       toast('知识页已保存'); return;
     }
     if (currentWikiMarkdown() !== md) {

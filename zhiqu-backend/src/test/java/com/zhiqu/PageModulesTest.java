@@ -114,7 +114,7 @@ class PageModulesTest {
         String shell = shell();
         assertFalse(shell.contains("DAY_RELOAD"), "壳里又有了 DAY_RELOAD —— 零点重新取数据只该有一套（页面模块导出的 dayReload）");
         String route = fn(shell, "function route() {");
-        int load = route.indexOf("var pageModule = await loadModule(PAGE_MODULES[page]);");
+        int load = route.indexOf("var pageModule = await (pageCode || loadModule(PAGE_MODULES[page]));");
         int watch = route.indexOf("watchBusinessDay(pageModule.dayReload[page]);");
         assertTrue(load >= 0 && watch > load, "页面模块的 dayReload 没有接到 watchBusinessDay 上 —— 页面开着过了零点，「今天」还是昨天");
         Map<String, String> table = pageModules();
@@ -210,8 +210,10 @@ class PageModulesTest {
     void 后台页的门在加载模块之前() throws IOException {
         String route = fn(shell(), "function route() {");
         int gate = route.indexOf("window.ZQUI.isAdminPage(page) && !currentUserIsAdmin()");
-        // 第一处（不管有没有 await）：在门之前「顺手预取」一下，同样是让普通用户下载了后台的代码
-        int load = route.indexOf("loadModule(PAGE_MODULES[page])");
+        // 普通页可在鉴权期间取代码；后台页的预载必须被排除，真正启动仍在管理员门之后。
+        // PageStartupTest 运行 route，覆盖管理员/普通用户的实际加载顺序。
+        assertTrue(route.contains("!window.ZQUI.isAdminPage(page)"), "普通页预载不能包含后台页");
+        int load = route.indexOf("var pageModule = await");
         assertTrue(gate >= 0 && load > gate, "后台页的门要在 loadModule 之前");
         String worker = read(STATIC.resolve("service-worker.js")).replaceAll("(?m)//.*$", "");
         assertFalse(worker.contains("pages/"), "离线缓存预先下载了页面模块 —— 后台那一个普通用户不该下载");

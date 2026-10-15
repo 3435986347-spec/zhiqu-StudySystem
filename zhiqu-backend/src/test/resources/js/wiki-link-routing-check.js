@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const source = fs.readFileSync(process.argv[2], 'utf8');
-const start = source.indexOf('function wireWikiLinks(doc) {');
+const start = source.indexOf('function wireWikiLinks(');
 const end = source.indexOf('function wireWikiEditor() {', start);
 if (start < 0 || end < 0) throw new Error('Cannot find published Wiki link handler');
 const code = source.slice(start, end);
@@ -24,14 +24,14 @@ function fixture() {
     async (target, opts) => { calls.push({ target, opts }); state.wikiCur = target; }
   );
   wire(doc);
-  return { link, doc, page, calls };
+  return { link, doc, page, calls, state };
 }
 function event(props = {}) {
   return { metaKey: false, ctrlKey: false, button: 0, prevented: false, stopped: false,
     preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; }, ...props };
 }
 let checks = 0;
-function check(name, fn) { fn(); checks++; console.log('PASS ' + name); }
+function check(name, fn) { checks++; try { fn(); console.log('PASS ' + name); } catch(error) { console.error('FAIL ' + name + ': ' + error.message); process.exitCode=1; } }
 check('plain double-link click uses the current tab', () => {
   const f = fixture(), e = event();
   f.link.onclick(e);
@@ -77,5 +77,11 @@ check('clicking a double link while editing does not navigate', () => {
   f.link.onclick(event({ metaKey: true }));
   assert.equal(f.calls.length, 0);
 });
-assert.ok(checks >= 7, 'Empty behavior scan');
-console.log('ALL-GREEN');
+for (const [gesture, props] of [['onclick',{}],['onkeydown',{key:'Enter'}],['onauxclick',{button:1}]]) {
+  check('a locked unsaved draft still follows Wiki links via ' + gesture, () => {
+    const f=fixture(); f.doc.dataset.editing='1'; f.state.wikiReadOnly=true; const e=event(props); f.link[gesture](e);
+    assert.equal(f.calls.length,1); assert.ok(e.prevented && e.stopped);
+  });
+}
+assert.ok(checks >= 10, 'Empty behavior scan');
+if (!process.exitCode) console.log('ALL-GREEN');
