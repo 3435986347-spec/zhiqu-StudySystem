@@ -2,7 +2,22 @@
 export function colorEnabled(stream = process.stdout) {
   if (process.env.NO_COLOR) return false;
   if (process.env.FORCE_COLOR) return true;
+  if (dumbTerminal()) return false;
   return Boolean(stream && stream.isTTY);
+}
+
+/**
+ * TERM=dumb：终端说自己不认光标控制（Emacs 的 shell-mode、一些沙箱里的 shell）。Node 的 readline 这时换成一个简易编辑器 ——
+ * 不重画输入行、不认方向键，命令菜单、干活时的状态行、改窗口大小重画都靠不上（第六十九轮：公司电脑的 shell 就是这样）。
+ */
+export function dumbTerminal(env = process.env) {
+  return env.TERM === 'dumb';
+}
+
+/** 一开头要说的终端问题（交互的才说：管道里没有菜单、状态行这回事） */
+export function terminalWarnings({ interactive, env = process.env } = {}) {
+  if (!interactive || !dumbTerminal(env)) return [];
+  return ['这个终端是 TERM=dumb（不认光标控制）：命令菜单、干活时的状态行、改窗口大小都会乱，确认提问时按 Ctrl+C 也可能取消不掉 —— 换一个终端用（Terminal、iTerm、VS Code 的终端都行）'];
 }
 
 export function painter(enabled) {

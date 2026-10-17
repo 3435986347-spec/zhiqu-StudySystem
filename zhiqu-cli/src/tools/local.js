@@ -305,11 +305,19 @@ export class LocalTools {
     const utf8 = kind === 'utf8';
     this.known.set(rel, { hash, full: utf8 && (full || Boolean(prev && prev.hash === hash && prev.full)) });
     const encodingNote = utf8 ? '' : `【这个文件不是 UTF-8，是 ${ENCODING_NAME[kind]}${kind === 'gb18030' ? '，已按它解码' : '，认不出的字节显示成 �'}；不能用 write_file 改它（会把编码改掉）—— 要改先和用户确认要不要转成 UTF-8】\n`;
+    // 开头 / 结尾的空行在这份输出里看不出来：第一行空着和标题下面换的那一行一个样，最后几行空着和文件结尾一个样 ——
+    // 整份重写时就悄悄丢了（第六十九轮：HumanEval 8 题失败里 6 题是「开头的空行没了」，题目明说一个字节都不许改）。标题里说出来
+    const blank = (l) => /^\s*$/.test(l);
+    let lead = 0;
+    if (!longLine && offset === 1) while (lead < slice.length && blank(slice[lead])) lead++;
+    let trail = 0;
+    if (!longLine && end >= total) while (trail < slice.length - lead && blank(slice[slice.length - 1 - trail])) trail++;
+    const blankNote = (lead ? `；开头${lead === 1 ? '第 1 行' : ` ${lead} 行`}是空行` : '') + (trail ? `；最后${trail === 1 ? '一行' : ` ${trail} 行`}是空行` : '');
     const header = longLine
       ? `【${rel} 第 ${offset} 行（共 ${total} 行）：这一行有 ${longLine} 字，只显示了前 ${cap} 字 —— 压缩过的 / 生成的文件不要整份重写，也别对着它改】`
       : full
-        ? `【${rel}，共 ${total} 行】`
-        : `【${rel} 第 ${offset}–${end} 行（共 ${total} 行）${end < total ? `；没读完，用 offset=${end + 1} 接着读` : ''}】`;
+        ? `【${rel}，共 ${total} 行${blankNote}】`
+        : `【${rel} 第 ${offset}–${end} 行（共 ${total} 行）${blankNote}${end < total ? `；没读完，用 offset=${end + 1} 接着读` : ''}】`;
     return { content: `${encodingNote}${header}\n${slice.join('\n')}`, summary: `${full ? `${total} 行` : `第 ${offset}–${end} 行 / 共 ${total} 行`}${utf8 ? '' : `（${ENCODING_NAME[kind]}）`}` };
   }
 

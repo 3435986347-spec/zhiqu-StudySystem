@@ -1,5 +1,6 @@
 // 输入 / 弹出命令菜单：输入行上方列出匹配的命令，↑↓ 选、回车执行、Tab 补全、Esc 关掉、接着打字接着筛。
 // 用迷你终端模拟器（test/vt.js）逐字节回放，判屏幕长什么样、回车交出去的是哪一行。
+import './xterm-env.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';

@@ -194,3 +194,29 @@ test('.zhiqu 的保护绕不过：目录软链（cfg -> .zhiqu）也拦住', () 
   t.readFile({ path: 'cfg/settings.json' });
   assert.match(t.prepareDelete({ path: 'cfg/settings.json' }).error || '', /不能由你来删/);
 });
+
+// 第六十九轮：开头 / 结尾的空行在 read_file 的输出里看不出来（第一行空着和标题下面那一行一个样）——
+// HumanEval 8 题失败里 6 题是整份重写时「开头的空行没了」。标题里要说出来，不然模型没法照原样保留
+test('read_file：开头 / 结尾有空行时标题里说出来（不然看不出来，整份重写就丢了）', () => {
+  const { root, t } = tools();
+  write(root, 'solution.py', '\ndef unique(l):\n    """doc"""\n');
+  const r = t.readFile({ path: 'solution.py' });
+  assert.match(r.content, /^【solution\.py，共 3 行；开头第 1 行是空行】\n\ndef unique/, r.content);
+  write(root, 'two.py', '\n\nx = 1\n');
+  assert.match(t.readFile({ path: 'two.py' }).content, /^【two\.py，共 3 行；开头 2 行是空行】/);
+  write(root, 'tail.md', '# t\n\n\n');
+  assert.match(t.readFile({ path: 'tail.md' }).content, /^【tail\.md，共 3 行；最后 2 行是空行】/);
+  write(root, 'plain.js', 'a\nb\n');
+  assert.match(t.readFile({ path: 'plain.js' }).content, /^【plain\.js，共 2 行】\n/, '没有空行就不说');
+  write(root, 'mid.js', 'a\n\nb\n');
+  assert.match(t.readFile({ path: 'mid.js' }).content, /^【mid\.js，共 3 行】\n/, '中间的空行看得见，不说');
+});
+
+test('read_file：只读中间一段时，开头那条不说（第 1 行不在这段里）；读到结尾时照样说结尾的空行', () => {
+  const { root, t } = tools();
+  write(root, 'big.txt', '\n' + Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n') + '\n\n');
+  const mid = t.readFile({ path: 'big.txt', offset: 5, limit: 3 }).content;
+  assert.match(mid, /^【big\.txt 第 5–7 行（共 32 行）；没读完，用 offset=8 接着读】/, mid);
+  const end = t.readFile({ path: 'big.txt', offset: 30 }).content;
+  assert.match(end, /^【big\.txt 第 30–32 行（共 32 行）；最后一行是空行】/, end);
+});

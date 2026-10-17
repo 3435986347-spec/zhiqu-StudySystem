@@ -1,5 +1,6 @@
 // 输入框一直在：agent 干活时底部固定一块活动区（流式的半行、排队的消息、状态行、输入行），
 // 输出从它上面滚过去，正在打的字不动。用迷你终端模拟器（test/vt.js）逐字节执行输出，判最终屏幕长什么样。
+import './xterm-env.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';

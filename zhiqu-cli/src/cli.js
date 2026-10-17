@@ -24,6 +24,7 @@ import { displayPath, initPrompt, instructionsBlock, loadInstructions } from './
 import { McpManager } from './mcp.js';
 import { BUILTIN_SYSTEM_PROMPT } from './prompt.js';
 import { hunks } from './render/diff.js';
+import { terminalWarnings } from './render/term.js';
 import { SessionStore } from './session.js';
 import { discoverSkills, skillsBlock } from './skills.js';
 import { LocalTools } from './tools/local.js';
@@ -290,6 +291,7 @@ async function runAgent(cwd, flags) {
   // 配置上的问题（坏掉的配置文件、项目设置里的令牌）一开头就说 —— 原来只在交互横幅的末尾说，-p 单发时一句都不说；
   // 而 config.json 坏了的话下一句就是「还没登录」，不先说清原因，用户只会去重新登录
   for (const w of settings.warnings) ui.warn(w);
+  for (const w of terminalWarnings({ interactive: ui.interactive })) ui.warn(w);
   const modeFlag = flags.mode ? normalizeMode(flags.mode) : null;
   if (flags.mode && !modeFlag) throw new Error(`--mode 只接受 plan / ask / auto，收到 ${flags.mode}`);
   if (!settings.token) {

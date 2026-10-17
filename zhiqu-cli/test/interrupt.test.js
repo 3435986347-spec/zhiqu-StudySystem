@@ -1,4 +1,5 @@
 // Ctrl+C / Ctrl+D 的暴力测试（第十三轮）。真终端里连按、在确认提问时按 —— 先在真 pty 里实测出来，再在这里钉住。
+import './xterm-env.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';

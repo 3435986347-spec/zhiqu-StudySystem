@@ -1,5 +1,6 @@
 // 窄终端、改终端宽度（第二十轮）：活动区（流式的半行、排队的消息、状态行、输入行）擦的时候按「占几行」往上挪，
 // 数错一行就是一行残影（每刷一次多一份）或者擦掉上面已经打印好的输出。用迷你终端模拟器（test/vt.js）逐字节执行输出。
+import './xterm-env.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';
