@@ -14,8 +14,8 @@ import { Api } from '../../zhiqu-cli/src/api.js';
 import { RepositoryBroker, MODEL_PATH, OUTPUT_RESERVATION_TOKENS, inputTokenUpperBound, runBrokerMain } from './repository-broker.mjs';
 
 const CAPABILITY = 'episode_capability_'.padEnd(48, 'x');
-const body = () => ({ modelId: 1, messages: [{ role: 'user', content: 'private prompt 汉字' }], tools: [], maxTokens: 1024 });
-const start = (payload, overrides = {}) => ({ model: { id: 1, modelName: 'deepseek-v4-pro' },
+const body = () => ({ modelId: 6, messages: [{ role: 'user', content: 'private prompt 汉字' }], tools: [], maxTokens: 1024 });
+const start = (payload, overrides = {}) => ({ model: { id: 6, modelName: 'deepseek-v4-pro' },
   contextWindow: 1_000_000, maxTokens: payload.maxTokens, ...overrides });
 const done = (payload, usage = { promptTokens: 100, completionTokens: 20, estimated: false }) => ({
   message: { role: 'assistant', content: 'ok' }, finishReason: 'stop', maxTokens: payload.maxTokens, usage });
@@ -117,6 +117,19 @@ test('request bytes and context upper bound are enforced before dispatch', async
   assert.equal((await request(f2.endpoint.server, { payload })).status, 400); assert.equal(f2.calls.length, 0);
 });
 
+test('a ledger is for one approved model: ID 6 or ID 1 (both deepseek-v4-pro / 1M); any other model or window is refused', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-broker-model-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  for (const modelId of [6, 1]) {
+    const broker = new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, `ok-${modelId}.jsonl`), modelId });
+    assert.equal(broker.snapshot().modelId, modelId);
+    broker.releaseLock();
+  }
+  for (const [name, options] of [['id2', { modelId: 2 }], ['name', { modelId: 1, modelName: 'deepseek-chat' }], ['window', { modelId: 1, contextWindow: 64_000 }]]) {
+    assert.throws(() => new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, name + '.jsonl'), ...options }), /6 or 1/);
+  }
+});
+
 test('null, zero, unsafe and larger-than-approved budgets fail closed', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-broker-config-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -151,7 +164,7 @@ test('wrong model/start, missing done metadata, data before start and data after
   for (const mode of ['wrong_model', 'wrong_context', 'start_output_cap', 'done_output_cap', 'missing_done_cap', 'before_start', 'after_done']) {
     const f = await fixture(t, { handler: ({ payload, emit }) => {
       if (mode === 'before_start') { emit('delta', { content: 'x' }); return; }
-      emit('start', start(payload, mode === 'wrong_model' ? { model: { id: 1, modelName: 'another-model' } }
+      emit('start', start(payload, mode === 'wrong_model' ? { model: { id: 6, modelName: 'another-model' } }
         : mode === 'wrong_context' ? { contextWindow: 999_999 }
           : mode === 'start_output_cap' ? { maxTokens: payload.maxTokens + 1 } : {}));
       const completion = done(payload);

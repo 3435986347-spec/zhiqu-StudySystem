@@ -271,12 +271,16 @@ test('bounded escalation cleans detached command groups when a worker ignores SI
   await exerciseWorkerShutdown(t, true);
 });
 
+// The HumanEval sandbox profile is written for the bundled Python runtime (company machine, round 60). Without it the
+// test is reported as skipped with the reason, not failed -- round 69 found it red on every other machine and explained away.
+const BUNDLED_RUNTIME = path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies');
+const BUNDLED_PYTHON = path.join(BUNDLED_RUNTIME, 'python/bin/python3');
 test('the actual macOS profile allows LocalTools to abort a same-sandbox detached command',
-  { skip: process.platform !== 'darwin' }, async (t) => {
+  { skip: process.platform !== 'darwin' ? 'macOS only'
+    : !fs.existsSync(BUNDLED_PYTHON) ? `needs the bundled Python runtime at ${BUNDLED_PYTHON} (HumanEval runner machine)` : false }, async (t) => {
     const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-benchmark-profile-abort-')));
-    const runtime = path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies');
-    const python = path.join(runtime, 'python/bin/python3');
-    assert.ok(fs.existsSync(python), 'This sandbox regression needs the configured bundled Python runtime');
+    const runtime = BUNDLED_RUNTIME;
+    const python = BUNDLED_PYTHON;
     const repo = fileURLToPath(new URL('../../', import.meta.url));
     const profile = renderSandbox(fs.readFileSync(new URL('./macos-agent.sb', import.meta.url), 'utf8'),
       { WORKSPACE: directory, REPO: repo.replace(/\/$/, ''), RUNTIME: runtime,

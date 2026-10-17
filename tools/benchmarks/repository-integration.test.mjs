@@ -19,7 +19,7 @@ test('real worker Api/SSE passes through budget broker to edit and execute only 
     ['run_command', { command: 'node', args: ['check.cjs'] }],
   ];
   let calls = 0;
-  const model = { id: 1, modelName: 'deepseek-v4-pro', label: 'offline fixture', toolCalling: true,
+  const model = { id: 6, modelName: 'deepseek-v4-pro', label: 'offline fixture', toolCalling: true,
     contextWindowTokens: 1_000_000, effectiveContextWindow: 1_000_000 };
   const broker = new RepositoryBroker({ ledgerPath: path.join(folder, 'private/ledger.jsonl'),
     api: { async stream(endpoint, body, event) {

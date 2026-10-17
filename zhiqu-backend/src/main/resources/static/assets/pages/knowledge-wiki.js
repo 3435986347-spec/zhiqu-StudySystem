@@ -49,12 +49,56 @@ async function bootKnowledge() {
   if (state.wikiCur) paintWikiDoc(state.wikiCur);
   else paintWikiTabs();
 }
+/**
+ * 顶上那排查看类按钮（附件、来源记录、待合入变更、健康检查、图谱）和来源详情：点下去当帧就开弹窗、写「正在加载…」，
+ * 数据到了填进同一个弹窗（第六十九轮）。原来先等服务器、回来了才开 —— 桌面应用连的是远程库，这段时间按钮一点反应都没有，
+ * 以为没点上又点，回来就是两个弹窗；「待合入变更」还要连着等两次同样的请求。
+ * 加载失败：关掉这个弹窗、照常提示；数据回来之前弹窗已经关了：数据丢掉、不再填。
+ */
+var WIKI_LOADING_HTML = '<p class="zq-embed-status" role="status">正在加载…</p>';
+var wikiLoadingViews = {};
+function openWikiLoadingModal(options) {
+  var view = { closed: false }, onClose = options.onClose;
+  view.handle = openModal(Object.assign({}, options, { bodyHtml: WIKI_LOADING_HTML,
+    onClose: function () { view.closed = true; if (onClose) onClose(); } }));
+  // 焦点进弹窗：留在背后的按钮上，再按一次回车又会开一个
+  var close = view.handle.mask && view.handle.mask.querySelector('.zq-modal-close');
+  if (close) { try { close.focus({ preventScroll: true }); } catch (e) {} }
+  return view;
+}
+function fillWikiModal(handle, spec) {
+  var title = handle.mask && handle.mask.querySelector('.zq-modal-title');
+  if (title && spec.title) title.textContent = spec.title;
+  handle.body.innerHTML = spec.bodyHtml;
+  if (spec.onMount) spec.onMount(handle.body, handle);
+  var first = handle.body.querySelector && (handle.body.querySelector('[autofocus]') || handle.body.querySelector('input,textarea,select,button'));
+  if (first) { try { first.focus({ preventScroll: true }); } catch (e) {} }
+}
+/** 先开弹窗；load() 回来了，render(data, handle) 给出 { title, bodyHtml, onMount } 填进去（返回空就是不填） */
+async function showWikiLoadingView(name, options, load, render) {
+  var open = wikiLoadingViews[name];
+  if (open && !open.closed) return;
+  var view = wikiLoadingViews[name] = openWikiLoadingModal(options);
+  await safe(name, async function () {
+    var data;
+    try { data = await load(); } catch (e) { view.handle.close(); throw e; }
+    if (view.closed) return;
+    var spec = render(data, view.handle);
+    if (spec && !view.closed) fillWikiModal(view.handle, spec);
+  });
+}
+/** 原来 showInfo 的那个样子（一段话 + 「知道了」），填进已经开着的弹窗 */
+function wikiInfoSpec(spec) {
+  return { title: spec.title, bodyHtml: (spec.html || '<p style="margin:0 0 16px;font-size:13.5px;line-height:1.7;color:var(--zq-text2);white-space:pre-wrap;">' + esc(spec.message || '') + '</p>')
+    + '<div class="zq-modal-actions"><button type="button" class="zq-btn" data-ask="ok">知道了</button></div>',
+  onMount: function (body, h) { $('[data-ask="ok"]', body).onclick = h.close; } };
+}
 async function showWikiAttachments() {
-  var auth = token(), viewToken = ++wikiAttachmentViewToken;
-  var list = await safe('附件列表', function () { return api.get('/knowledge/attachments'); });
-  if (!list || token() !== auth || viewToken !== wikiAttachmentViewToken) return;
-  openModal({
-    title: '知识库附件', width: 720,
+  var auth = token();
+  await showWikiLoadingView('附件列表', { title: '知识库附件', width: '720px' }, function () { return api.get('/knowledge/attachments'); }, function (list, handle) {
+    if (token() !== auth) { handle.close(); return null; }
+    list = list || [];
+    return {
     bodyHtml: '<input class="zq-input" id="zq-attachment-search" placeholder="搜索文件名称" aria-label="搜索附件">'
       + '<div class="zq-attachment-list" id="zq-attachment-list"></div>',
     onMount: function (body) {
@@ -78,9 +122,9 @@ async function showWikiAttachments() {
       }
       input.oninput = paint; paint();
     }
+    };
   });
 }
-var wikiAttachmentViewToken = 0;
 function paintWikiTree() {
   var tree = $('#zq-tree'); if (!tree) return;
   // 目录页数：接真实数据（原“9 页”为静态占位），同时更新收起后的竖条标签
@@ -103,10 +147,14 @@ function paintWikiTree() {
   });
   tree.innerHTML = pages.map(function (p) {
     var active = state.wikiCur && p.id === state.wikiCur.id;
-    return '<a data-wiki="' + p.id + '" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--zq-rs);cursor:pointer;background:' + (active ? 'var(--zq-tint)' : 'transparent') + ';"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:' + (active ? 700 : 500) + ';color:var(--zq-text2);">' + esc(p.title) + '</span></a>';
+    return '<a data-wiki="' + p.id + '" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--zq-rs);cursor:pointer;background:' + (active ? 'var(--zq-tint)' : 'transparent') + ';"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:' + (active ? 'var(--zq-fw-medium)' : 'var(--zq-fw-regular)') + ';color:var(--zq-text2);">' + esc(p.title) + '</span></a>';
   }).join('') || empty('无匹配页面');
   $all('[data-wiki]', tree).forEach(function (a) {
     var pageOf = function () { return (state.wikiPages || []).find(function (x) { return String(x.id) === a.dataset.wiki; }); };
+    // 鼠标停一下、或者按下去（还没松开）就先取正文，见 prefetchWikiPage
+    a.onpointerenter = function () { clearTimeout(a._wikiPrefetch); a._wikiPrefetch = setTimeout(function () { prefetchWikiPage(pageOf()); }, WIKI_PREFETCH_HOVER_MS); };
+    a.onpointerleave = function () { clearTimeout(a._wikiPrefetch); };
+    a.onpointerdown = function () { prefetchWikiPage(pageOf()); };
     // ⌘/Ctrl+点击开新标签，和浏览器里点链接同一个手势
     a.onclick = function (e) { var p = pageOf(); if (p) paintWikiDoc(p, { newTab: e.metaKey || e.ctrlKey }); };
     a.onauxclick = function (e) {
@@ -125,6 +173,26 @@ function paintWikiTree() {
       popMenu(e.clientX, e.clientY, items);
     };
   });
+}
+/**
+ * 鼠标在目录里的一页上停一小会儿（或按下还没松开），就先把它的正文取回来（第六十九轮）。点下去时多半已经到了 ——
+ * 桌面应用连的是远程库，原来第一次打开每一页都要在「正在加载知识页…」上等一次往返。
+ * 只取还没取过全文的页；回来 30 秒内点下去才用（再晚就重新取，不拿旧的冒充新的）；换了登录不用；
+ * 预取失败就当没有 —— 点下去照常取、照常报错。
+ */
+var WIKI_PREFETCH_HOVER_MS = 120, WIKI_PREFETCH_FRESH_MS = 30000;
+function prefetchWikiPage(p) {
+  if (!p || p._full || p.id == null) return;
+  if (p._prefetch && p._prefetch.auth === token() && Date.now() - p._prefetch.at < WIKI_PREFETCH_FRESH_MS) return;
+  var entry = { at: Date.now(), auth: token() };
+  entry.promise = api.get('/knowledge/pages/' + p.id).then(function (detail) { entry.at = Date.now(); return detail; }, function () { return null; });
+  p._prefetch = entry;
+}
+function takeWikiPrefetch(p) {
+  var entry = p._prefetch;
+  p._prefetch = null;
+  if (!entry || entry.auth !== token() || Date.now() - entry.at > WIKI_PREFETCH_FRESH_MS) return null;
+  return entry.promise;
 }
 /**
  * 打开一个知识页。
@@ -157,7 +225,8 @@ async function paintWikiDoc(p, opts) {
   }
   // document-tree 只给了折叠后的 summary，正文要按需拉完整内容
   if (!p._full && p.id != null) {
-    var detail = await safe('知识页', function () { return api.get('/knowledge/pages/' + p.id); });
+    var prefetched = takeWikiPrefetch(p);
+    var detail = (prefetched && await prefetched) || await safe('知识页', function () { return api.get('/knowledge/pages/' + p.id); });
     if (detail) { p.content = detail.content; p.pageType = detail.pageType || p.pageType; p.parentId = detail.parentId; p.sortOrder = detail.sortOrder; p.pinned = detail.pinned; p.version = detail.version; p._full = true; }
   }
   if (state.wikiCur !== p || token() !== authAtStart) return;
@@ -369,7 +438,7 @@ function paintWikiTabs() {
       'border-right:1px solid var(--zq-border-soft);font-size:12.5px;white-space:nowrap;' +
       'background:' + (on ? 'var(--zq-card)' : 'transparent') + ';' +
       'color:' + (on ? 'var(--zq-text)' : 'var(--zq-text2)') + ';' +
-      'font-weight:' + (on ? 600 : 500) + ';' +
+      'font-weight:' + (on ? 'var(--zq-fw-medium)' : 'var(--zq-fw-regular)') + ';' +
       'box-shadow:' + (on ? 'inset 0 2px 0 var(--zq-primary)' : 'none') + ';">' +
       '<span style="overflow:hidden;text-overflow:ellipsis;">' + esc(t.title || '新标签页') + '</span>' +
       '<span data-wiki-tab-close="' + i + '" title="关闭" style="flex:0 0 auto;width:16px;height:16px;' +
@@ -1275,6 +1344,8 @@ function openWikiSourceView(viewToken, options) {
   };
   handle = openModal(options);
   wikiSourceViewModal = handle;
+  var close = handle.mask && handle.mask.querySelector('.zq-modal-close');
+  if (close && options.bodyHtml === WIKI_LOADING_HTML) { try { close.focus({ preventScroll: true }); } catch (e) {} }
   return handle;
 }
 function importWikiSource() {
@@ -1341,15 +1412,16 @@ function importWikiSource() {
 async function showWikiSources(page) {
   page = Math.max(1, Number(page) || 1);
   var viewToken = beginWikiSourceView();
+  var handle = openWikiSourceView(viewToken, { title: '来源记录', width: '640px', bodyHtml: WIKI_LOADING_HTML });
   await safe('来源记录', async function () {
-    var result = (await api.get('/knowledge/sources?page=' + page + '&size=20')) || {};
+    var result;
+    try { result = (await api.get('/knowledge/sources?page=' + page + '&size=20')) || {}; } catch (e) { handle.close(); throw e; }
     if (viewToken !== wikiSourceViewToken) return;
     var rows = Array.isArray(result.records) ? result.records : [];
     var total = Number(result.total) || 0;
     var pages = Math.max(1, Math.ceil(total / 20));
-    openWikiSourceView(viewToken, {
+    fillWikiModal(handle, {
       title: '来源记录 · ' + total + ' 条',
-      width: '640px',
       bodyHtml: '<p style="margin:0 0 12px;font-size:12.5px;color:var(--zq-text2);line-height:1.6;">导入的资料保存在这里。查看正文后，可生成待合入变更；确认合入之后才会成为知识页。</p>'
         + '<div style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow-y:auto;">'
         + (rows.map(function (source) {
@@ -1373,12 +1445,13 @@ async function showWikiSources(page) {
 }
 async function showWikiSource(id, saved) {
   var viewToken = beginWikiSourceView();
+  var handle = openWikiSourceView(viewToken, { title: '来源', width: '720px', bodyHtml: WIKI_LOADING_HTML });
   await safe('查看来源', async function () {
-    var source = await api.get('/knowledge/sources/' + encodeURIComponent(id));
+    var source;
+    try { source = await api.get('/knowledge/sources/' + encodeURIComponent(id)); } catch (e) { handle.close(); throw e; }
     if (viewToken !== wikiSourceViewToken) return;
-    openWikiSourceView(viewToken, {
+    fillWikiModal(handle, {
       title: '来源 · ' + (source.title || '未命名来源'),
-      width: '720px',
       bodyHtml: '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.6;">来源已保存。下方是保存的正文，生成变更后还需确认合入，才会写入知识库。' + esc(truncatedNote(saved)) + '</p>'
         + (source.sourceRef ? '<p style="margin:0 0 10px;font-size:11.5px;color:var(--zq-text3);overflow-wrap:anywhere;">' + esc(source.sourceRef) + '</p>' : '')
         + '<pre style="margin:0;padding:14px;max-height:55vh;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.8 var(--zq-fontBody);border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);">' + esc(source.content || '') + '</pre>'
@@ -1415,40 +1488,58 @@ function truncatedNote(saved) {
   return t ? '（原文 ' + t.total + ' 字，只保存了前 ' + t.kept + ' 字）' : '';
 }
 async function runWikiLint() {
-  await safe('健康检查', async function () {
-    var report = await api.get('/knowledge/lint/report');
-    var issues = (report && (report.issues || report.findings || report.items)) || [];
-    if (!Array.isArray(issues)) issues = [];
-    var count = issues.length || ((report && report.total) || 0);
-    var listHtml = issues.slice(0, 20).map(function (it) {
-      var text = typeof it === 'string' ? it : (it.message || it.title || it.description || JSON.stringify(it));
-      return '<div style="display:flex;gap:8px;padding:7px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:12.5px;line-height:1.55;"><span style="color:var(--zq-warn);flex:none;">⚠</span><span>' + esc(text) + '</span></div>';
+  await showWikiLoadingView('健康检查', { title: '健康检查' }, function () { return api.get('/knowledge/lint/report'); }, function (report) {
+    var issues = wikiLintIssues(report);
+    var count = issues.length;
+    var listHtml = issues.slice(0, 20).map(function (text) {
+      return '<div style="padding:7px 10px;border:1px solid var(--zq-border-soft);border-left:3px solid var(--zq-warn);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:12.5px;line-height:1.55;">' + esc(text) + '</div>';
     }).join('');
-    await showInfo({
-      title: '健康检查',
+    return wikiInfoSpec({
       html: count
-        ? '<p style="margin:0 0 12px;font-size:13px;color:var(--zq-text2);">发现 ' + count + ' 个问题（如悬空链接等）：</p><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-height:280px;overflow-y:auto;">' + listHtml + '</div>'
+        ? '<p style="margin:0 0 12px;font-size:13px;color:var(--zq-text2);">发现 ' + count + ' 个问题' + (count > 20 ? '（先列前 20 个）' : '') + '：</p><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-height:280px;overflow-y:auto;">' + listHtml + '</div>'
         : '<p style="display:flex;align-items:center;gap:6px;margin:0 0 16px;font-size:13.5px;color:var(--zq-ok);font-weight:var(--zq-fw-medium);">' + icon('check') + '未发现问题，知识库链接完好。</p>'
     });
   });
+}
+/**
+ * 后端 buildLintReport 给的是分好类的几组（第六十九轮之前这里读 issues / findings / items —— 一个都不存在，健康检查永远说「未发现问题」）。
+ * 算问题的照维护规则那一页说的：悬空链接、孤立页、重复标题、过期计划；「没有来源」只是说明页面不是从对话来的，不算问题。
+ */
+function wikiLintIssues(report) {
+  report = report || {};
+  var titles = {};
+  (state.wikiPages || []).forEach(function (page) { titles[page.id] = page.title; });
+  var list = function (value) { return Array.isArray(value) ? value : []; };
+  var issues = [];
+  list(report.missingTargets).forEach(function (link) {
+    issues.push('悬空链接：「' + (titles[link.sourcePageId] || '某一页') + '」里的 [[' + (link.targetTitle || '') + ']] 没有对应的页面');
+  });
+  list(report.orphanPages).forEach(function (page) { issues.push('孤立页：「' + (page.title || '') + '」没有链到别的页，也没有页链到它'); });
+  list(report.duplicateTitles).forEach(function (group) {
+    issues.push('重复标题：「' + (group.title || '') + '」有 ' + list(group.pages).length + ' 页同名，双链只会指向其中一页');
+  });
+  list(report.stalePlans).forEach(function (page) { issues.push('过期计划：「' + (page.title || '') + '」超过 90 天没有更新'); });
+  return issues;
 }
 // 待合入变更按钮：显示真实的 PENDING patch-set 数量（预置的 “2” 是静态占位，已移除）
 async function refreshWikiPatchBadge() {
   var b = $('#zq-patch-btn'); if (!b) return;
   try {
-    var list = await api.get('/knowledge/patch-sets?status=PENDING');
-    var n = (list || []).length;
-    b.textContent = n ? ('待合入变更 ' + n) : '待合入变更';
-    b.style.display = '';
+    paintWikiPatchBadge((await api.get('/knowledge/patch-sets?status=PENDING')) || []);
   } catch (e) { b.textContent = '待合入变更'; }
+}
+function paintWikiPatchBadge(list) {
+  var b = $('#zq-patch-btn'); if (!b) return;
+  var n = (list || []).length;
+  b.textContent = n ? ('待合入变更 ' + n) : '待合入变更';
+  b.style.display = '';
 }
 var WIKI_TYPE_COLOR = { GOAL: 'var(--zq-q2)', PROJECT: 'var(--zq-primary)', PREFERENCE: 'var(--zq-q4)', WEAKNESS: 'var(--zq-q1)', RESOURCE: 'var(--zq-q3)', MEMORY: 'var(--zq-accent)', INDEX: 'var(--zq-text3)', SCHEMA: 'var(--zq-text3)', LOG: 'var(--zq-text3)', NOTE: 'var(--zq-text2)' };
 async function showWikiGraph() {
-  await safe('知识图谱', async function () {
-    var g = await api.get('/knowledge/graph');
+  await showWikiLoadingView('知识图谱', { title: '知识图谱', width: '620px' }, function () { return api.get('/knowledge/graph'); }, function (g) {
     var nodes = (g && g.nodes) || [];
     var links = (g && g.links) || [];
-    if (!nodes.length) { await showInfo({ title: '知识图谱', message: '还没有知识页，先创建几页并用 [[双链]] 互相引用吧。' }); return; }
+    if (!nodes.length) return wikiInfoSpec({ message: '还没有知识页，先创建几页并用 [[双链]] 互相引用吧。' });
     // 环形布局：入度高的页放内圈
     var W = 560, H = 420, cx = W / 2, cy = H / 2;
     var sorted = nodes.slice().sort(function (a, b) { return (b.degree || 0) - (a.degree || 0); });
@@ -1484,13 +1575,12 @@ async function showWikiGraph() {
       return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--zq-text2);"><i style="width:9px;height:9px;border-radius:50%;background:' + WIKI_TYPE_COLOR[k] + ';display:inline-block;"></i>' + k + '</span>';
     }).join('');
     var missing = (g && g.missingTargets && g.missingTargets.length) || 0;
-    openModal({
+    return {
       title: '知识图谱 · ' + nodes.length + ' 页 / ' + links.length + ' 链接',
-      width: '620px',
       bodyHtml:
         '<div style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card-soft);overflow:hidden;"><svg viewBox="0 0 ' + W + ' ' + H + '" style="display:block;width:100%;height:auto;">' + edgesSvg + nodesSvg + '</svg></div>'
         + '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">' + legend + '</div>'
-        + (missing ? '<p style="margin:10px 0 0;font-size:12px;color:var(--zq-bad);">⚠ ' + missing + ' 个悬空链接（红色虚线），可运行「健康检查」查看明细。</p>' : '')
+        + (missing ? '<p style="margin:10px 0 0;font-size:12px;color:var(--zq-bad);">' + missing + ' 个悬空链接（红色虚线），可运行「健康检查」查看明细。</p>' : '')
         + '<p style="margin:8px 0 0;font-size:11.5px;color:var(--zq-text3);">节点大小 = 被引用次数 · 点击节点跳转到对应页面</p>',
       onMount: function (b, h) {
         $all('[data-graph-node]', b).forEach(function (gn) {
@@ -1500,7 +1590,7 @@ async function showWikiGraph() {
           };
         });
       }
-    });
+    };
   });
 }
 /**
@@ -1530,13 +1620,12 @@ function patchSetCard(ps) {
     + '</div></div>' + itemHtml + '</section>';
 }
 async function showWikiPatchSets() {
-  await safe('待合入变更', async function () {
-    var list = (await api.get('/knowledge/patch-sets?status=PENDING')) || [];
-    await refreshWikiPatchBadge();
-    if (!list.length) { await showInfo({ title: '待合入变更', message: '当前没有待合入的变更。AI 对知识库的修改建议会先出现在这里，确认后才写入正文。' }); return; }
-    openModal({
+  await showWikiLoadingView('待合入变更', { title: '待合入变更', width: '640px' }, function () { return api.get('/knowledge/patch-sets?status=PENDING'); }, function (list) {
+    list = list || [];
+    paintWikiPatchBadge(list);   // 角标就用这一份，不再为它多等一次同样的请求
+    if (!list.length) return wikiInfoSpec({ message: '当前没有待合入的变更。AI 对知识库的修改建议会先出现在这里，确认后才写入正文。' });
+    return {
       title: '待合入变更 · ' + list.length + ' 组',
-      width: '640px',
       bodyHtml: '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.6;">点开每一页看看要写进去的内容；确认合入之后才会改动知识库，忽略的不会写入。</p>'
         + '<div style="display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow-y:auto;">' + list.map(patchSetCard).join('') + '</div>',
       onMount: function (body, h) {
@@ -1555,7 +1644,7 @@ async function showWikiPatchSets() {
         $all('[data-patch-apply]', body).forEach(function (b) { b.onclick = function () { settle(b.dataset.patchApply, '合入变更', '已合入知识库'); }; });
         $all('[data-patch-reject]', body).forEach(function (b) { b.onclick = function () { settle(b.dataset.patchReject, '忽略变更', '已忽略这组变更'); }; });
       }
-    });
+    };
   });
 }
 function flattenKnowledge(nodes) {

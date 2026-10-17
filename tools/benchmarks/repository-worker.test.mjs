@@ -7,7 +7,7 @@ import { DEFAULT_COMMANDS } from '../../zhiqu-cli/src/tools/execrules.js';
 import { runRepositoryTask, publicRepositoryTask, validateRepositoryPayload, REPOSITORY_LIMITS }
   from './repository-worker.mjs';
 
-const MODEL = { id: 1, modelName: 'deepseek-v4-pro', label: 'DeepSeek fixture', providerType: 'OPENAI_COMPATIBLE',
+const MODEL = { id: 6, modelName: 'deepseek-v4-pro', label: 'DeepSeek fixture', providerType: 'OPENAI_COMPATIBLE',
   toolCalling: true, contextWindowTokens: 1_000_000, effectiveContextWindow: 1_000_000 };
 const TASK = { repo: 'demo/demo', instance_id: 'demo__demo-1', base_commit: 'a'.repeat(40),
   problem_statement: 'The total function must sum every number in the input array, including empty arrays.' };
@@ -123,6 +123,17 @@ test('a different actual model is refused before editing the repository', async 
   assert.equal(result.generation_status, 'model_mismatch');
   assert.equal(result.tool_calls, 0);
   assert.equal(fs.existsSync(path.join(data.base, 'unexpected.txt')), false);
+});
+
+test('only the two approved DeepSeek IDs pass validation; any other ID is refused before a request', async (t) => {
+  for (const id of [6, 1]) {
+    const data = fixture(t, [{ text: 'Finished.' }]);
+    assert.doesNotThrow(() => validateRepositoryPayload({ ...data.payload, model: { ...data.payload.model, id } }), String(id));
+  }
+  for (const id of [2, 3, 0, '6']) {
+    const data = fixture(t, [{ text: 'Finished.' }]);
+    assert.throws(() => validateRepositoryPayload({ ...data.payload, model: { ...data.payload.model, id } }), /ID 6 or 1/, String(id));
+  }
 });
 
 test('a different actual context window is refused even with the correct model ID', async (t) => {

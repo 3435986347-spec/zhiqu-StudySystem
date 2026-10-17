@@ -53,7 +53,7 @@ export function parseArgs(argv) {
 export function readRunConfig(filename) {
   const config = JSON.parse(fs.readFileSync(filename, 'utf8'));
   if (config.dataset?.revision !== 'c104f840cc67f8b6eec6f759ebc8b2693d585d4a'
-      || config.dataset?.size !== 10 || config.model?.id !== 1
+      || config.dataset?.size !== 10 || config.model?.id !== 6
       || config.model?.model_name !== 'deepseek-v4-pro') throw new Error('Wrong frozen dataset/model');
   const budget = config.budget;
   if (!budget || !Number.isFinite(budget.limit_rmb) || budget.limit_rmb <= 0 || budget.limit_rmb > 50) {

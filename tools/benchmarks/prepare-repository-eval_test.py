@@ -170,6 +170,30 @@ class PreparationTest(unittest.TestCase):
         self.assertFalse(first["safe_to_execute_unwrapped"])
         self.assertTrue(first["requires_container_isolation_adapter"])
 
+    def test_venv_interpreter_is_not_resolved_out_of_its_environment(self):
+        venv = self.root / "venv/bin"
+        venv.mkdir(parents=True)
+        link = venv / "python"
+        link.symlink_to(os.path.realpath(os.sys.executable))
+        harness = self.control / ("SWE-bench-" + controller.HARNESS_COMMIT)
+        (harness / "swebench/harness").mkdir(parents=True)
+        (harness / "swebench/harness/run_evaluation.py").write_text("# trusted fixture only\n")
+        controller.write_json(self.control / "harness-source.json", {"commit": controller.HARNESS_COMMIT})
+        command = controller.harness_command(self.control, self.control / "private/noop-predictions.jsonl",
+                                             self.control / "protocol.json", "baseline", str(link))
+        self.assertEqual(command["argv"][0], str(link))
+        seen = []
+        real_run = controller.subprocess.run
+        def fake_run(argv, **kwargs):
+            seen.append(argv)
+            return controller.subprocess.CompletedProcess(argv, 0, json.dumps({"found": True, "statuses": {}}).encode(), b"")
+        controller.subprocess.run = fake_run
+        try:
+            controller.parse_observed_status(self.control, self.rows[0], self.root / "log.txt", str(link))
+        finally:
+            controller.subprocess.run = real_run
+        self.assertEqual(seen[0][0], str(link), "the log parser must run inside the venv, not its resolved base interpreter")
+
     def write_reports(self, resolved):
         directory = self.root / "reports"
         for row in self.rows[:10]:

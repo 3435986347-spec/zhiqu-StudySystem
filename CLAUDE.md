@@ -42,22 +42,21 @@ cd ../zhiqu-cli && npm test
 ```
 
 - 集成测试要 Docker（Testcontainers）。**没有 Docker 时静默跳过**：`Tests run: N, Skipped: N` 不是通过。显式跳过写 `-Dzhiqu.skipDockerTests=true`；开 Docker：`open -a Docker`。
-- 前端行为判据跑在 node 上，直接加载发布的那份实现（不在 Java 里重写一份）。没有 node 显式失败；`-Dzhiqu.nodePath=<绝对路径>` 指位置，`-Dzhiqu.skipNodeTests=true` 显式跳过。
-  node 把超时记成 `cancelled` 而不是 `fail`。
+- 前端行为判据跑在 node 上，直接加载发布的那份实现（不在 Java 里重写一份）。没有 node 显式失败；`-Dzhiqu.nodePath=<绝对路径>` 指位置，`-Dzhiqu.skipNodeTests=true` 显式跳过；node 把超时记成 `cancelled` 而不是 `fail`。
 - 测试用的 Redis 指到 1 号端口（进程内替身，不碰开发机的 6379），定时任务用 `app.scheduling.enabled=false` 关 —— 都在 `src/test/resources/application.properties`。
 - 限流（`RateLimitFilter`：登录 12 次 / 分钟、AI 写操作 40、其它 180）会拦住脚本化的端到端测试；开很多用户时注意。
 
 ### 判据的纪律（每一条都吃过亏，经过见 `docs/notes/testing.md`）
 
 1. **新判据要见过红才算数**：扰动源码、看它红。绿可能是「看了，没毛病」，也可能是「什么都没看到」，代码里两者长得一样。
-2. **确认扰动真的落了**：跑之前 `grep -c` 被删的那句、不是 0 就不跑；`grep -c` 别用 `&&` 串（计数为 0 时退出码是 1）。
+2. **确认扰动真的落了**：跑之前 `grep -c` 被删的那句、不是 0 就不跑；`grep -c` 别用 `&&` 串（计数为 0 时退出码是 1）。shell 是 zsh：`for f in $FILES`、`set -- $pair` 不分词，用数组。
 3. 对源码断言之前去掉注释（`SourceText`）；扫描要有下限（扫空和扫干净长得一样）；计数类判据要求 `== 1` 这样的正数，不要「不超过 1」。
 4. 扰动的备份放在 `src/` 外面（`static/` 下的东西会被打进 JAR）；恢复用 `cp` + `touch`（`cp -p` 带回旧的修改时间，增量编译会留着上一个扰动的 class），最后 `clean` 全量。
 5. 扰动在干净基线全绿之后再跑。一次只动一个变量（对比基线时，两个检出在同一个卷、同一类目录下）。对照组不死的实验不作数。
 6. 一个断言绿着，可能是别的防护替它挡了：两道防护各自要有只有它能照出来的样本。
 7. 搬代码之前拿字面量对一遍 `src/test`，再看哪些判据对源码跑正则；`assertFalse` 一类的判据在代码搬走后会自动变绿。
 8. 扰动推翻了写判据时的那个理由，就改理由。
-9. shell 是 zsh：`for f in $FILES`、`set -- $pair` 不分词，用数组。
+9. **替身照真实回包写，不照前端的假设写**：Wiki 健康检查的替身返回后端从来没有的 `issues`，判据和实现一起错、一起绿了许多轮（第六十九轮）。长期红着、被「解释」过去的判据要么修、要么写明原因显式跳过。
 
 ## 进行中的计划
 
@@ -88,7 +87,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261015-wiki-toggle-smooth`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261017-wiki-open-now-prefetch`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第六十六轮](docs/rounds/round-66.md) Wiki 类型化嵌入预览、原生编辑快捷键、目录备注与编辑滚动稳定
 - [第六十七轮](docs/rounds/round-67.md) Wiki 只读模式、网址直接点击与 JSON 预览内部滚动
 - [第六十八轮](docs/rounds/round-68.md) 恢复点击编辑、可选只读开关、工具栏靠右与页面流畅度
+- [第六十九轮](docs/rounds/round-69.md) 命令行 TERM=dumb 的 15 个失败与 read_file 空行；Wiki 查看类弹窗先开后填、目录预取、健康检查 / 图谱的三个真错；仓库评测的 Docker 编排与不花钱的对照；锐评

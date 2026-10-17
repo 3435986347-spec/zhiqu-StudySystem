@@ -7,18 +7,22 @@ async function moduleUnderTest() {
   const source = fs.readFileSync(process.argv[2], 'utf8');
   const hooks = `\nexport const __sources = { importWikiSource,
     showWikiSources: typeof showWikiSources === 'function' ? showWikiSources : null,
-    showWikiSource: typeof showWikiSource === 'function' ? showWikiSource : null };`;
+    showWikiSource: typeof showWikiSource === 'function' ? showWikiSource : null,
+    showWikiAttachments, runWikiLint, showWikiGraph, showWikiPatchSets };`;
   return import('data:text/javascript;base64,' + Buffer.from(source + hooks).toString('base64'));
 }
 
+// 每个场景是一次新打开的页面：上一个场景留着没关的弹窗先关掉（模块记着哪个查看还开着，开着的不会再开一个）
+const everyDialog = [];
 function fixture(module, options = {}) {
+  everyDialog.splice(0).forEach(dialog => dialog.handle.close());
   const dialogs = [], pending = [], posts = [], gets = [], notifications = [];
   const saved = { id: 77, title: '测试导入资料', sourceType: 'FILE', summary: '摘要', content: '这段解析正文应该立即可见' };
   const badge = { textContent: '', title: '', style: {} };
   let generated = false;
   function element() { return { value: '', style: {}, dataset: {}, files: [], disabled: false }; }
   function $all(selector, body) {
-    if (!body) return [];
+    if (!body || !body.data) return [];
     if (selector === 'button') return [...body.nodes.values()];
     const match = /^\[([a-z-]+)\]$/.exec(selector);
     if (!match) return [];
@@ -27,19 +31,34 @@ function fixture(module, options = {}) {
   }
   function $(selector, body) {
     if (!body) return selector === '#zq-patch-btn' ? badge : null;
+    const data = /^\[data-([a-z-]+)="([^"]+)"\]$/.exec(selector);
+    if (data) {
+      const key = data[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      return body.data.find(node => node.dataset[key] === data[2]) || null;
+    }
     return body.nodes.get(selector.replace(/^#/, '')) || null;
   }
+  // 和真的 openModal 一样：handle.body 开着之后还能整块换内容（第六十九轮：先开弹窗写「正在加载…」，数据到了再填）
   function openModal(spec) {
-    const body = { nodes: new Map(), data: [] };
-    for (const match of spec.bodyHtml.matchAll(/id="([^"]+)"/g)) body.nodes.set(match[1], element());
-    for (const match of spec.bodyHtml.matchAll(/data-([a-z-]+)="([^"]+)"/g)) {
-      const node = element();
-      node.dataset[match[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = match[2];
-      body.data.push(node);
+    const dialog = { ...spec, closed: false };
+    const body = { nodes: new Map(), data: [], querySelector: selector => selector.startsWith('#') ? body.nodes.get(selector.slice(1)) || null : null };
+    function parse(html) {
+      body.nodes = new Map(); body.data = [];
+      for (const match of html.matchAll(/id="([^"]+)"/g)) body.nodes.set(match[1], element());
+      for (const match of html.matchAll(/data-([a-z-]+)="([^"]+)"/g)) {
+        const node = element();
+        node.dataset[match[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = match[2];
+        body.data.push(node);
+      }
+      dialog.bodyHtml = html;
     }
+    Object.defineProperty(body, 'innerHTML', { get: () => dialog.bodyHtml, set: parse });
+    parse(spec.bodyHtml);
     if (body.nodes.has('zq-imp-mode')) body.nodes.get('zq-imp-mode').value = 'TEXT';
-    const dialog = { ...spec, body, closed: false };
-    const handle = { close() { if (!dialog.closed) { dialog.closed = true; if (spec.onClose) spec.onClose(); } } };
+    dialog.body = body;
+    const handle = { body, close() { if (!dialog.closed) { dialog.closed = true; if (spec.onClose) spec.onClose(); } } };
+    dialog.handle = handle;
+    everyDialog.push(dialog);
     dialogs.push(dialog);
     if (spec.onMount) spec.onMount(body, handle);
     return handle;
@@ -54,6 +73,13 @@ function fixture(module, options = {}) {
     },
     async get(path) {
       gets.push(path);
+      if (options.gate) await options.gate(path);
+      if (path === '/knowledge/attachments') return [{ id: 5, name: '合同.pdf', byteSize: 2048 }];
+      // 后端 buildLintReport 的真实形状（第六十九轮之前前端读的是 issues / findings / items —— 一个都没有，永远「未发现问题」）
+      if (path === '/knowledge/lint/report') return options.lint || { missingTargets: [{ id: 1, sourcePageId: 3, targetTitle: '不存在的页' }],
+        orphanPages: [{ id: 4, title: '没人链的页' }], duplicateTitles: [{ title: '周报', pages: [{ id: 5 }, { id: 6 }] }], stalePlans: [],
+        unsourcedPages: [{ id: 3, title: '官网改版' }], pageCount: 6, linkCount: 1, sourceCount: 0 };
+      if (path === '/knowledge/graph') return { nodes: [{ id: 1, title: '官网改版', degree: 1, type: 'TOPIC' }], links: [] };
       if (/^\/knowledge\/sources\/\d+$/.test(path) && options.getSource) return options.getSource(Number(path.split('/').at(-1)), saved);
       if (path === '/knowledge/sources/77') return saved;
       if (path.startsWith('/knowledge/sources?')) {
@@ -69,11 +95,14 @@ function fixture(module, options = {}) {
     safe: (_label, fn) => { const task = Promise.resolve().then(fn); pending.push(task); return task; },
     notice: text => ({ update(value) { notifications.push(value); } }), toast() {},
     keepDraft: () => ({ clear() {} }), fmtDate: () => '2026-10-14',
-    renderMarkdown: text => String(text), renderMathIn() {}, state: { wikiPages: [] }, empty: text => text
+    renderMarkdown: text => String(text), renderMathIn() {}, state: { wikiPages: [{ id: 3, title: '官网改版' }] }, empty: text => text,
+    token: () => 'T', icon: () => ''
   });
   async function settle() { while (pending.length) await Promise.all(pending.splice(0)); }
+  // 用户把开着的弹窗都关掉（模块里记着哪个查看还开着，换下一个场景之前要关）
+  function closeAll() { dialogs.forEach(dialog => dialog.handle.close()); }
   function node(dialog, id) { const result = $(id, dialog.body); assert.ok(result, 'Missing actual markup for ' + id); return result; }
-  return { dialogs, posts, gets, saved, notifications, settle, node, badge };
+  return { dialogs, posts, gets, saved, notifications, settle, node, badge, closeAll };
 }
 
 async function main() {
@@ -212,6 +241,73 @@ async function main() {
     assert.equal(f.posts.filter(item => item.path === '/knowledge/sources/77/patch-set').length, 1);
     assert.equal(f.dialogs.filter(dialog => !dialog.closed).length, 1);
     assert.ok(!button.disabled);
+  });
+  const VIEWS = { showWikiAttachments: ['/knowledge/attachments', '合同.pdf'], showWikiSources: ['/knowledge/sources?page=1&size=20', '测试导入资料'],
+    runWikiLint: ['/knowledge/lint/report', '不存在的页'], showWikiGraph: ['/knowledge/graph', '官网改版'], showWikiPatchSets: ['/knowledge/patch-sets?status=PENDING', '没有待合入的变更'] };
+  function gated() {
+    const waiting = [];
+    return { waiting, gate: () => new Promise((resolve, reject) => waiting.push({ resolve, reject })),
+      release() { waiting.splice(0).forEach(item => item.resolve()); }, fail() { waiting.splice(0).forEach(item => item.reject(new Error('网络断了'))); } };
+  }
+  await test('查看类按钮点下去当场开弹窗写「正在加载…」，数据到了填进同一个弹窗（不再先等服务器）', async () => {
+    for (const [name, [path, shown]] of Object.entries(VIEWS)) {
+      const g = gated(); const f = fixture(module, { gate: g.gate });
+      const done = module.__sources[name]();
+      assert.equal(f.dialogs.length, 1, name + '：点下去之后、服务器回来之前没有弹窗');
+      assert.ok(f.dialogs[0].bodyHtml.includes('正在加载'), name + '：弹窗里没说正在加载');
+      await new Promise(resolve => setImmediate(resolve));
+      assert.ok(f.gets.includes(path), name + '：没发请求');
+      g.release(); await done; await f.settle();
+      assert.equal(f.dialogs.length, 1, name + '：数据到了又开了一个弹窗');
+      // 附件列表画在列表那一格里（搜索时只重画那一格）
+      const filled = name === 'showWikiAttachments' ? f.node(f.dialogs[0], '#zq-attachment-list').innerHTML : f.dialogs[0].bodyHtml;
+      assert.ok(!f.dialogs[0].bodyHtml.includes('正在加载') && filled.includes(shown), name + '：数据没填进开着的那个弹窗');
+      f.closeAll();
+    }
+  });
+  await test('加载失败关掉那个弹窗；数据回来之前关掉的不再填；加载中再点不开第二个', async () => {
+    for (const name of Object.keys(VIEWS)) {
+      const g = gated(); const f = fixture(module, { gate: g.gate });
+      const failed = module.__sources[name]();
+      await new Promise(resolve => setImmediate(resolve));
+      g.fail(); await failed.catch(() => {}); await f.settle().catch(() => {});
+      assert.ok(f.dialogs[0].closed, name + '：加载失败，「正在加载…」的弹窗还开着');
+      const g2 = gated(); const f2 = fixture(module, { gate: g2.gate });
+      const late = module.__sources[name]();
+      await new Promise(resolve => setImmediate(resolve));
+      f2.dialogs.at(-1).handle.close();
+      g2.release(); await late; await f2.settle();
+      assert.ok(f2.dialogs.at(-1).bodyHtml.includes('正在加载'), name + '：关掉之后数据回来又填进去了');
+      assert.equal(f2.dialogs.filter(dialog => !dialog.closed).length, 0, name + '：关掉之后又开了弹窗');
+      if (name === 'showWikiSources') continue;   // 来源记录：再点就是「最后一次意图」（上面那条），换成新的一页
+      const g3 = gated(); const f3 = fixture(module, { gate: g3.gate });
+      const first = module.__sources[name](); const second = module.__sources[name]();
+      await new Promise(resolve => setImmediate(resolve));
+      g3.release(); await first; await second; await f3.settle();
+      assert.equal(f3.dialogs.length, 1, name + '：加载中再点开了第二个弹窗');
+      f3.closeAll();
+    }
+  });
+  await test('健康检查照后端的报告说：悬空链接（哪一页里的哪个链接）、孤立页、重复标题各自列出来；没有来源不算问题；全空才说没问题', async () => {
+    const f = fixture(module);
+    await module.__sources.runWikiLint(); await f.settle();
+    const html = f.dialogs[0].bodyHtml;
+    assert.match(html, /发现 3 个问题/);
+    assert.ok(html.includes('官网改版') && html.includes('不存在的页'), '悬空链接没说是哪一页里的哪个链接：' + html);
+    assert.ok(html.includes('没人链的页') && html.includes('周报'), html);
+    assert.ok(!html.includes('未发现问题'), html);
+    f.closeAll();
+    const clean = fixture(module, { lint: { missingTargets: [], orphanPages: [], duplicateTitles: [], stalePlans: [], unsourcedPages: [{ id: 3, title: '官网改版' }] } });
+    await module.__sources.runWikiLint(); await clean.settle();
+    assert.ok(clean.dialogs[0].bodyHtml.includes('未发现问题'), clean.dialogs[0].bodyHtml);
+    clean.closeAll();
+  });
+  await test('待合入变更：列表和角标用同一次请求', async () => {
+    const f = fixture(module);
+    await module.__sources.showWikiPatchSets(); await f.settle();
+    assert.equal(f.dialogs.length, 1);
+    assert.equal(f.gets.filter(path => path === '/knowledge/patch-sets?status=PENDING').length, 1, '为了角标又发了一次同样的请求');
+    f.closeAll();
   });
   console.log(failures ? 'RED: ' + failures : 'ALL-GREEN');
   if (failures) process.exitCode = 1;

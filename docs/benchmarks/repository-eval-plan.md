@@ -75,7 +75,7 @@ flowchart LR
 
 ### 模型转发的具体方案
 
-task 容器接单题专属 Docker internal network，broker 独立容器同时接该网络与受控网关网络。task 的生产 Api 连接 broker 的固定私有 IP / 端口；broker 只接受 **POST `/api/harness/model/stream`**，固定 model ID 1，拒绝其他路径、方法、模型、重定向和管理请求。真实登录只在 broker 中；worker 得到短期、只属于本题的 capability，通过 stdin 传入，停止时撤销。
+task 容器接单题专属 Docker internal network，broker 独立容器同时接该网络与受控网关网络。task 的生产 Api 连接 broker 的固定私有 IP / 端口；broker 只接受 **POST `/api/harness/model/stream`**，每本账固定一个已批准的模型 ID（ID 6，或补跑时的 ID 1，都是 deepseek-v4-pro），拒绝其他路径、方法、模型、重定向和管理请求。真实登录只在 broker 中；worker 得到短期、只属于本题的 capability，通过 stdin 传入，停止时撤销。
 
 `internal` 网络和宿主机 DOCKER-USER 规则均不能独自保证 task 对宿主机的隔离。task 启动在等待状态，由可信临时 policy 容器在共享的 task 网络 namespace 内设置 **OUTPUT 默认 DROP**：仅允许固定 broker IPv4 / stream 端口、已有连接及公开测试需要的 loopback；先拒绝 TCP / UDP 53（含 Docker 的 `127.0.0.11` DNS），IPv6 OUTPUT 全拒绝。policy 容器只在配置时持有 NET_ADMIN，不挂候选卷，设置后移除；task 自己始终没有 NET_ADMIN。真实 agent 在规则和无模型探针通过后才启动。broker 不发布宿主机端口、管理面只在独立控制通道，关闭 IP forwarding。固定路由、源 / 目标、端口和规则哈希；配置或探针失败时不运行模型。
 
@@ -147,10 +147,10 @@ HumanEval 实际 **¥9.51 / 1,292 API 侧请求 / 4,743,272 tokens** 含校准�
 | 阶段 | 要实现 / 验收 | 完成状态 |
 |---|---|---|
 | P0 固定选择 | pinned parquet 校验、四列投影、10题 ID 和指纹 | 已完成，只读元数据 |
-| P1 准备环境 | 固定 harness / 镜像 / runtime；generation 清除历史和评分材料；empty-red / gold-green | 待实现 / 验收 |
-| P2 worker / broker | 原生产 agent / Api / LocalTools；精确模型、拒绝探针、预算账本、限流与容器清理 | 待实现 / 验收 |
-| P3 patch / grader | 不执行候选的收集器、冻结 diff、唯一 run_id、官方评分、完整性控制 | 待实现 / 验收 |
-| P4 pilot10 | 所有 gate通过且明确执行位置 / 额度后，一次 episode运行固定题集 | 未开始 |
+| P1 准备环境 | 固定 harness / 镜像 / runtime；generation 清除历史和评分材料；empty-red / gold-green | 第六十九轮完成：gold 8/10、基线 6/10（其余写明原因进 controls_exceptions） |
+| P2 worker / broker | 原生产 agent / Api / LocalTools；精确模型、拒绝探针、预算账本、限流与容器清理 | 第六十九轮完成（repository-docker.mjs：隔离 / 生命周期 smoke） |
+| P3 patch / grader | 不执行候选的收集器、冻结 diff、唯一 run_id、官方评分、完整性控制 | 第六十九轮完成（评分器反例 4/4） |
+| P4 pilot10 | 所有 gate通过且明确执行位置 / 额度后，一次 episode运行固定题集 | 第六十九轮：官方 6/10（ID 6 六题 + ID 1 补跑被预算打断的四题） |
 | P5 扩展 | 根据pilot测量给预算；另冻结50题，补充集另定真实任务和平台gate | 未开始 |
 
 运行产物包括完整 manifest、公开任务、base 指纹、镜像与包锁、会话 / 工具日志、broker 请求账本、原始和提交 patch、predictions JSONL、官方 reports、环境控制、错误分类、时间与费用。公开报告只保存必要元数据和汇总；真实 token、凭证、私有办公内容和隐藏测试不入库。

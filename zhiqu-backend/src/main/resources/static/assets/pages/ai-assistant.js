@@ -1149,7 +1149,7 @@ function messageBodyHtml(m, i) {
   // 失败了要说出来，哪怕已经出来了半截（原来有半截正文就把错误原因丢掉，看着像是模型说完了）；
   // 能用但不完整（输出上限、内容审核、太长）也说。两句都存在库里，刷新之后还在。
   if (!me && m.errorMessage) {
-    body += '<div data-msg-error style="margin-top:8px;font-size:12px;color:var(--zq-bad);">⚠ ' + esc(m.errorMessage) + '</div>';
+    body += '<div data-msg-error style="margin-top:8px;font-size:12px;color:var(--zq-bad);">' + esc(m.errorMessage) + '</div>';
   }
   if (!me && m.notice) {
     body += '<div data-msg-notice style="margin-top:8px;font-size:12px;color:var(--zq-warn);">' + esc(m.notice) + '</div>';

@@ -1,151 +1,537 @@
 {
-  "schema_version": 1,
-  "name": "zhiqu-sweverified-pilot10-v1-run-20261014",
-  "status": "waiting_for_personal_machine",
-  "execution_ready": false,
-  "model_calls": 0,
-  "dataset": {
-    "name": "princeton-nlp/SWE-bench_Verified",
-    "revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
-    "split": "test",
-    "full_size": 500,
-    "selection_file": "../repository-pilot-20261013/selection.json",
-    "size": 10,
-    "agent_public_fields": [
-      "repo",
-      "instance_id",
-      "base_commit",
-      "problem_statement"
-    ],
-    "hints_text": false
-  },
-  "harness": {
-    "repository": "https://github.com/SWE-bench/SWE-bench",
-    "commit": "3f01bd622c0a22c00406139f69a234ef08225f22",
-    "grading": "official SWE-bench resolved on frozen patch",
-    "run_id": "unique per protocol fingerprint and prediction patch-set SHA256",
-    "release": "v3.0.17",
-    "design_commit": "02e7a74ffd0b707aab73d203fe87bdc7c76afc8e",
-    "change_reason": "Design HEAD expects image/eval_script/log_parser/eval_type absent from pinned classic Verified data; use compatible official release before model calls"
-  },
-  "agent": {
-    "commit": "86a4a3c16a226c7464b3023d2bb63ad5c3d810d9",
-    "cli_git_tree": "693428159f05c12194fb0090db4c013165fce2ed",
-    "implementation": "shipped runTurn + Api/SSE + BUILTIN_SYSTEM_PROMPT + LocalTools/default guards",
-    "file_sha256": {
-      "zhiqu-cli/src/prompt.js": "8c6be63fe025324196fc1f93162bf150c6c233853dce9d556a24600bf739de96",
-      "zhiqu-cli/src/tools/guard.js": "45ece3b39fa83559bb1f83b1de02fa09291c07fd37dc5def8ec15cd9b1aa229b",
-      "zhiqu-cli/src/tools/execrules.js": "69f3f3dd443370a113dc47e704bf20822e1ca8fcf586d2c3272b3d8358a1b9a4",
-      "conformance/workspace-rules.json": "803321d151ba9238eb7f97fd3caedf07b6b86652afa16be49ffb750459b403b2"
-    },
-    "mode": "auto",
-    "remote_office_tools": false,
-    "mcp": false,
-    "personal_skills": false,
-    "personal_instructions": false,
-    "archive_disabled": true,
-    "repository_public_instructions": true,
-    "production_commands_extended": false,
-    "worker_sha256": "21b9e5155fd4b196b64abc905ed8c729f9fd6c7cdfa6315d0d6185e1b234e820",
-    "broker_sha256": "f5697580df36c71a9cd8e98a3ebaf8dce96f156be9cad07293c6496528dee910",
-    "collector_sha256": "667aebf61e6c7249782d2e2a7fc94766ca3a9ca8f2d22d5266616676ffb7955b"
-  },
-  "model": {
-    "id": 1,
-    "model_name": "deepseek-v4-pro",
-    "thinking": "OFF",
-    "expected_context_window_tokens": 1000000,
-    "max_output_tokens_per_request": 16384,
-    "verify_actual_model_each_stream": true,
-    "fallback_allowed": false
-  },
-  "limits": {
-    "episodes_per_task": 1,
-    "agent_rounds": 60,
-    "episode_seconds": 1800,
-    "local_command_seconds": 180,
-    "official_grader_seconds": 1800,
-    "full_suite_diagnostic_seconds": 1800,
-    "generation_concurrency": 1,
-    "grading_concurrency": 1,
-    "transport_requests_per_minute": 50,
-    "transport_min_start_interval_ms": 1200,
-    "max_transport_requests_per_episode": 200,
-    "retry_attempts_in_budget_and_pacing": true,
-    "container_cpus": 4,
-    "container_memory_bytes": 8589934592,
-    "container_pids": 256,
-    "container_tmp_bytes": 1073741824
-  },
-  "runtime": {
-    "preferred_platform": "linux-x86_64",
-    "node_version": "24.19.0",
-    "node_binary_sha256": null,
-    "python_and_dependencies": "per task pinned official environment, validated with production childEnv",
-    "generation_image_digests": null,
-    "grader_image_digests": null,
-    "generation_images_inherit_grader": false,
-    "generation_git_history": false,
-    "task_source": "exported base_commit only",
-    "docker_socket_in_task_or_grader": false
-  },
-  "relay": {
-    "topology": "one internal network per task; independent dual-network broker",
-    "task_network_policy": "namespace OUTPUT DROP; allow fixed broker IPv4 stream port, established and required loopback; reject TCP/UDP 53 and all IPv6",
-    "policy_installer_removed_before_agent": true,
-    "task_net_admin": false,
-    "task_capabilities": [],
-    "broker_ip_forwarding": false,
-    "only_method": "POST",
-    "only_path": "/api/harness/model/stream",
-    "auth": "revocable episode capability; real gateway login in broker only",
-    "request_ledger": "all broker requests including commands bypassing agent Api",
-    "gateway_reachable_address": null,
-    "network_policy_sha256": null
-  },
-  "budget": {
-    "currency": "CNY",
-    "limit_rmb": 50,
-    "input_token_limit": 4000000,
-    "output_token_limit": 500000,
-    "per_episode_input_token_limit": 2000000,
-    "per_episode_output_token_limit": 131072,
-    "missing_usage": "conservative reservation; never zero",
-    "run_with_missing_limits": false,
-    "hard_billing_cap": "requires verified supplier or gateway budget control",
-    "price_input_micro_cny_per_token": 9,
-    "price_output_micro_cny_per_token": 27,
-    "authorization": "User confirmed CNY50 including calibration, failures and retries on 2026-10-14"
-  },
-  "controls": {
-    "empty_patch_all_tasks_actual_failure": false,
-    "gold_patch_all_tasks_resolved": false,
-    "public_test_localtools_smoke": false,
-    "hidden_read_write_and_network_probes": false,
-    "stream_model_and_rejection_probes": false,
-    "cancel_container_descendant_cleanup": false,
-    "grader_tampering_and_empty_collection_rejection": false
-  },
-  "scoring": {
-    "denominator": 10,
-    "metric": "official resolved / fixed N; protocol integrity shown separately",
-    "human_hidden_test_feedback": false,
-    "regenerate_after_scoring": false,
-    "replace_failed_tasks": false,
-    "infrastructure_errors": "repair environment and regrade same frozen patch; no final rate until all graded",
-    "budget_stop": "incomplete fixed-N run; never shrink denominator",
-    "full_suite_and_build": "separate diagnostic, not official resolved",
-    "supplemental_java_js": "six proposed slots, no IDs/base/controls frozen, separate score"
-  },
-  "blockers_before_execution": [
-    "usable Docker execution machine and reachable existing Zhiqu gateway",
-    "implemented and frozen repository worker, broker, collector and official grading adapter",
-    "pinned Linux runtime, dependency locks, image digests and resource limits",
-    "all ten empty-red / gold-green and isolation/lifecycle controls passed",
-    "explicit paid-run RMB and token budgets configured"
+ "schema_version": 1,
+ "name": "zhiqu-sweverified-pilot10-v1-run-20261014",
+ "status": "ready_personal_machine",
+ "execution_ready": true,
+ "model_calls": 0,
+ "dataset": {
+  "name": "princeton-nlp/SWE-bench_Verified",
+  "revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
+  "split": "test",
+  "full_size": 500,
+  "selection_file": "../repository-pilot-20261013/selection.json",
+  "size": 10,
+  "agent_public_fields": [
+   "repo",
+   "instance_id",
+   "base_commit",
+   "problem_statement"
   ],
-  "cost_so_far_rmb": 0,
-  "execution_location": "personal_machine_only; company machine stopped per user after IT Docker download warning",
-  "real_model_calls": 0,
-  "preparation_entry_sha256": "ba5bd10cd22e0156315d03d0e53db83847049855df12f557e9889a7b284c3c8d"
+  "hints_text": false
+ },
+ "harness": {
+  "repository": "https://github.com/SWE-bench/SWE-bench",
+  "commit": "3f01bd622c0a22c00406139f69a234ef08225f22",
+  "grading": "official SWE-bench resolved on frozen patch",
+  "run_id": "unique per protocol fingerprint and prediction patch-set SHA256",
+  "release": "v3.0.17",
+  "design_commit": "02e7a74ffd0b707aab73d203fe87bdc7c76afc8e",
+  "change_reason": "Design HEAD expects image/eval_script/log_parser/eval_type absent from pinned classic Verified data; use compatible official release before model calls"
+ },
+ "agent": {
+  "commit": "c506721a1159c58fcd1767095fd647fd675f31fc",
+  "cli_git_tree": "bf3fdbc30124e21084ee4230344d865cdea8eff5",
+  "implementation": "shipped runTurn + Api/SSE + BUILTIN_SYSTEM_PROMPT + LocalTools/default guards",
+  "file_sha256": {
+   "zhiqu-cli/src/prompt.js": "8c6be63fe025324196fc1f93162bf150c6c233853dce9d556a24600bf739de96",
+   "zhiqu-cli/src/tools/guard.js": "45ece3b39fa83559bb1f83b1de02fa09291c07fd37dc5def8ec15cd9b1aa229b",
+   "zhiqu-cli/src/tools/execrules.js": "69f3f3dd443370a113dc47e704bf20822e1ca8fcf586d2c3272b3d8358a1b9a4",
+   "conformance/workspace-rules.json": "803321d151ba9238eb7f97fd3caedf07b6b86652afa16be49ffb750459b403b2"
+  },
+  "mode": "auto",
+  "remote_office_tools": false,
+  "mcp": false,
+  "personal_skills": false,
+  "personal_instructions": false,
+  "archive_disabled": true,
+  "repository_public_instructions": true,
+  "production_commands_extended": false,
+  "worker_sha256": "87716bfd0da066d779d319d522c07bd9976ad0ded87dda06f84b7d5973f4e652",
+  "broker_sha256": "230a0eed302c496f5b3b97d9d88d5865c0c8e6c82eff390770aeae6b7b34981d",
+  "collector_sha256": "6e976b053c903144b0604aa0610360227f04bd64ac48cecf1020b36efc4712b5",
+  "change_reason": "2026-10-16/17 before any model call: evaluate the current shipped CLI (round 69 part 1: TERM=dumb notice, read_file reports leading/trailing blank lines) instead of 86a4a3c; worker/broker pins updated for model ID 6. Previous pins: {\"commit\": \"86a4a3c16a226c7464b3023d2bb63ad5c3d810d9\", \"cli_git_tree\": \"693428159f05c12194fb0090db4c013165fce2ed\", \"worker_sha256\": \"21b9e5155fd4b196b64abc905ed8c729f9fd6c7cdfa6315d0d6185e1b234e820\", \"broker_sha256\": \"f5697580df36c71a9cd8e98a3ebaf8dce96f156be9cad07293c6496528dee910\", \"collector_sha256\": \"667aebf61e6c7249782d2e2a7fc94766ca3a9ca8f2d22d5266616676ffb7955b\"}",
+  "collector_change_reason": "2026-10-17 before any model call: interpreter path no longer resolved through the venv symlink (every official log parse had failed, making all integrity checks \"unverified\")",
+  "continuation_change_reason": "2026-10-18 after the ID 6 pilot stopped on its budget, the user asked to continue with the other DeepSeek config: worker and broker now accept exactly ID 6 or ID 1 (both deepseek-v4-pro, 1M); nothing else changed. Previous pins: {\"worker_sha256\": \"352f2f2d0162589487b2613f2b629fb73a25d4ccb035267d67e38b02afecf78f\", \"broker_sha256\": \"d0cdf369451c69e9f19c10ec5d7bb52e2fe85fcb7e3c03d6e919381fcd50d658\"}"
+ },
+ "model": {
+  "id": 6,
+  "model_name": "deepseek-v4-pro",
+  "thinking": "OFF",
+  "expected_context_window_tokens": 1000000,
+  "max_output_tokens_per_request": 16384,
+  "verify_actual_model_each_stream": true,
+  "fallback_allowed": false,
+  "change_reason": "2026-10-16 user chose the dedicated test config 「deepseek测试专用」 (ID 6, same deepseek-v4-pro / 1M context) before any model call; ID 1 is the user's everyday config"
+ },
+ "limits": {
+  "episodes_per_task": 1,
+  "agent_rounds": 60,
+  "episode_seconds": 1800,
+  "local_command_seconds": 180,
+  "official_grader_seconds": 1800,
+  "full_suite_diagnostic_seconds": 1800,
+  "generation_concurrency": 1,
+  "grading_concurrency": 1,
+  "transport_requests_per_minute": 50,
+  "transport_min_start_interval_ms": 1200,
+  "max_transport_requests_per_episode": 200,
+  "retry_attempts_in_budget_and_pacing": true,
+  "container_cpus": 4,
+  "container_memory_bytes": 8589934592,
+  "container_pids": 256,
+  "container_tmp_bytes": 1073741824
+ },
+ "runtime": {
+  "preferred_platform": "linux-x86_64",
+  "node_version": "24.19.0",
+  "node_binary_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+  "python_and_dependencies": "per task pinned official environment, validated with production childEnv",
+  "generation_image_digests": {
+   "django__django-12308": {
+    "image": "zhiqu-eval/gen-django__django-12308:1",
+    "image_id": "sha256:eae176b7334272057313ec3a2457a35a65b7724f12071eca22c67f6adf1ef247",
+    "env_image": "sweb.env.py.x86_64.a18371b03f944585b4f08c:latest",
+    "env_image_id": "sha256:9d7ef18645c1af077ca91df84962f83c2e095b54d0940fded681abb528000fac",
+    "dockerfile_sha256": "ae951bde468c041ca24ef3f57fc8984068ce58f015f4c2e57b739ec27e09cf65",
+    "pretend_version": null,
+    "install_excludes": [],
+    "restricted_copies": []
+   },
+   "django__django-15987": {
+    "image": "zhiqu-eval/gen-django__django-15987:1",
+    "image_id": "sha256:79562eca88a9c66f79dad6b5dec036f095bf35a5ca162bed07b1b038665f29a3",
+    "env_image": "sweb.env.py.x86_64.a33dddf55cdff5d8e23374:latest",
+    "env_image_id": "sha256:bcfcb74591b220b8f99760dcdae4283bf9b57a8958749cd326cc5e3386d8748a",
+    "dockerfile_sha256": "c99ed62266f9f21b7342bbceef5beb5be35aacf1e5e65028ca654e073219f317",
+    "pretend_version": null,
+    "install_excludes": [],
+    "restricted_copies": []
+   },
+   "sympy__sympy-23950": {
+    "image": "zhiqu-eval/gen-sympy__sympy-23950:1",
+    "image_id": "sha256:7d3d481df40764a6e8614189a7114552589c3566bb187ef36bddd3dc94ec1c7e",
+    "env_image": "sweb.env.py.x86_64.c795f4b88616b8462021ed:latest",
+    "env_image_id": "sha256:a1386f95aa337987a0ca2d9e909e4f06930c69d7bc927d7b8983c1032e03bffc",
+    "dockerfile_sha256": "2120be02b317af79e19e1b2d2041b70d956206c6b7bf7121c46663a6bc359353",
+    "pretend_version": null,
+    "install_excludes": [],
+    "restricted_copies": []
+   },
+   "sympy__sympy-20154": {
+    "image": "zhiqu-eval/gen-sympy__sympy-20154:1",
+    "image_id": "sha256:2bf9e3c1122d2c428157a84bab385a098d095890ecdb3633863c7aee87169281",
+    "env_image": "sweb.env.py.x86_64.c795f4b88616b8462021ed:latest",
+    "env_image_id": "sha256:a1386f95aa337987a0ca2d9e909e4f06930c69d7bc927d7b8983c1032e03bffc",
+    "dockerfile_sha256": "2120be02b317af79e19e1b2d2041b70d956206c6b7bf7121c46663a6bc359353",
+    "pretend_version": null,
+    "install_excludes": [],
+    "restricted_copies": []
+   },
+   "pytest-dev__pytest-10356": {
+    "image": "zhiqu-eval/gen-pytest-dev__pytest-10356:1",
+    "image_id": "sha256:d20f3119a9bdc529dd7fd18ae174046433eb7a148661577d13ff544baa3b5e4d",
+    "env_image": "sweb.env.py.x86_64.7f83a0ba1392a745c061ce:latest",
+    "env_image_id": "sha256:816e968949017643a90ee63ca452c33651b2ad850b3baa9edafa56dff1a4caa2",
+    "dockerfile_sha256": "a440ad96e56e65d9a581557085ae699406ae749355dba176bad3ea0151aa0b2b",
+    "pretend_version": "7.2.0.dev312+g3c1534944",
+    "install_excludes": [
+     "src/_pytest/_version.py"
+    ],
+    "restricted_copies": []
+   },
+   "pytest-dev__pytest-5840": {
+    "image": "zhiqu-eval/gen-pytest-dev__pytest-5840:1",
+    "image_id": "sha256:2e4442c45cbed147f0be88f83180fd0df79db6219bdf92e556ae2e32f18621b9",
+    "env_image": "sweb.env.py.x86_64.1c1a6945f732f9391228c5:latest",
+    "env_image_id": "sha256:bc0c8f0e6d173d32d8dea8b63d0c0b31e3609a82312aaaa029458935d748c50e",
+    "dockerfile_sha256": "ff946534eaf912bddac84fd589787638a710a9f028bb6b21b60a4cdd5a1d4699",
+    "pretend_version": "5.1.3.dev14+g73c5b7f4b",
+    "install_excludes": [
+     "src/_pytest/_version.py"
+    ],
+    "restricted_copies": []
+   },
+   "psf__requests-1921": {
+    "image": "zhiqu-eval/gen-psf__requests-1921:1",
+    "image_id": "sha256:1d0a75ce448cff0da3ef70f47f50fd3695691de70f37d074f12a129e1942eeca",
+    "env_image": "sweb.env.py.x86_64.1f92e6d7cef88badc4f744:latest",
+    "env_image_id": "sha256:a488eea85b09efb85678b452fc9be974709cdfc382331c4318873874b74bdee7",
+    "dockerfile_sha256": "8f462f712af86bcf60d0049a13c2400dacafd42ea936ff72ab4b6897256adb2d",
+    "pretend_version": null,
+    "install_excludes": [],
+    "restricted_copies": [
+     "restricted /usr/lib/python3/dist-packages/pip/_vendor/requests",
+     "restricted /opt/miniconda3/lib/python3.11/site-packages/requests",
+     "restricted /opt/miniconda3/lib/python3.11/site-packages/pip/_vendor/requests",
+     "restricted /opt/miniconda3/pkgs/requests-2.31.0-py311h06a4308_0/lib/python3.11/site-packages/requests",
+     "restricted /opt/miniconda3/pkgs/pip-23.3.1-py311h06a4308_0/lib/python3.11/site-packages/pip/_vendor/requests",
+     "restricted /opt/miniconda3/pkgs/pip-26.0.1-pyhc872135_1/site-packages/pip/_vendor/requests",
+     "restricted /opt/miniconda3/envs/testbed/lib/python3.9/site-packages/pip/_vendor/requests",
+     "keep-identical /opt/miniconda3/envs/testbed/lib/python3.9/site-packages/requests"
+    ]
+   },
+   "psf__requests-1724": {
+    "image": "zhiqu-eval/gen-psf__requests-1724:1",
+    "image_id": "sha256:1e1e86c2535bc7b34a77e9d86264be9f5550e751b0efe177a96d98392ee9f362",
+    "env_image": "sweb.env.py.x86_64.1f92e6d7cef88badc4f744:latest",
+    "env_image_id": "sha256:a488eea85b09efb85678b452fc9be974709cdfc382331c4318873874b74bdee7",
+    "dockerfile_sha256": "8f462f712af86bcf60d0049a13c2400dacafd42ea936ff72ab4b6897256adb2d",
+    "pretend_version": null,
+    "install_excludes": [],
+    "restricted_copies": [
+     "restricted /usr/lib/python3/dist-packages/pip/_vendor/requests",
+     "restricted /opt/miniconda3/lib/python3.11/site-packages/requests",
+     "restricted /opt/miniconda3/lib/python3.11/site-packages/pip/_vendor/requests",
+     "restricted /opt/miniconda3/pkgs/requests-2.31.0-py311h06a4308_0/lib/python3.11/site-packages/requests",
+     "restricted /opt/miniconda3/pkgs/pip-23.3.1-py311h06a4308_0/lib/python3.11/site-packages/pip/_vendor/requests",
+     "restricted /opt/miniconda3/pkgs/pip-26.0.1-pyhc872135_1/site-packages/pip/_vendor/requests",
+     "restricted /opt/miniconda3/envs/testbed/lib/python3.9/site-packages/pip/_vendor/requests",
+     "keep-identical /opt/miniconda3/envs/testbed/lib/python3.9/site-packages/requests"
+    ]
+   },
+   "scikit-learn__scikit-learn-10297": {
+    "image": "zhiqu-eval/gen-scikit-learn__scikit-learn-10297:1",
+    "image_id": "sha256:5495599702736e2009b3de2999a4f342a469943ab833908cce02f2728cac0e9d",
+    "env_image": "sweb.env.py.x86_64.aa92880033da20ca313928:latest",
+    "env_image_id": "sha256:1dea4cfcaf15e6006d2d705925fb1f7cb14e06acc724e4c449a4a886112bbdfb",
+    "dockerfile_sha256": "e189200a1832c32ade6c45a7a6da6ce85d44099dc82b86e5a2ee47bf4a0269cb",
+    "pretend_version": null,
+    "install_excludes": [
+     "sklearn/__check_build/_check_build.c",
+     "sklearn/_isotonic.c",
+     "sklearn/cluster/_dbscan_inner.cpp",
+     "sklearn/cluster/_hierarchical.cpp",
+     "sklearn/cluster/_k_means.c",
+     "sklearn/cluster/_k_means_elkan.c",
+     "sklearn/datasets/_svmlight_format.c",
+     "sklearn/decomposition/_online_lda.c",
+     "sklearn/decomposition/cdnmf_fast.c",
+     "sklearn/ensemble/_gradient_boosting.c",
+     "sklearn/feature_extraction/_hashing.c",
+     "sklearn/linear_model/cd_fast.c",
+     "sklearn/linear_model/sag_fast.c",
+     "sklearn/linear_model/sgd_fast.c",
+     "sklearn/manifold/_barnes_hut_tsne.c",
+     "sklearn/manifold/_utils.c",
+     "sklearn/metrics/cluster/expected_mutual_info_fast.c",
+     "sklearn/metrics/pairwise_fast.c",
+     "sklearn/neighbors/ball_tree.c",
+     "sklearn/neighbors/dist_metrics.c",
+     "sklearn/neighbors/kd_tree.c",
+     "sklearn/neighbors/quad_tree.c",
+     "sklearn/neighbors/typedefs.c",
+     "sklearn/svm/liblinear.c",
+     "sklearn/svm/libsvm.c",
+     "sklearn/svm/libsvm_sparse.c",
+     "sklearn/tree/_criterion.c",
+     "sklearn/tree/_splitter.c",
+     "sklearn/tree/_tree.c",
+     "sklearn/tree/_utils.c",
+     "sklearn/utils/_logistic_sigmoid.c",
+     "sklearn/utils/_random.c",
+     "sklearn/utils/arrayfuncs.c",
+     "sklearn/utils/fast_dict.cpp",
+     "sklearn/utils/graph_shortest_path.c",
+     "sklearn/utils/lgamma.c",
+     "sklearn/utils/murmurhash.c",
+     "sklearn/utils/seq_dataset.c",
+     "sklearn/utils/sparsefuncs_fast.c",
+     "sklearn/utils/weight_vector.c"
+    ],
+    "restricted_copies": []
+   },
+   "scikit-learn__scikit-learn-13496": {
+    "image": "zhiqu-eval/gen-scikit-learn__scikit-learn-13496:1",
+    "image_id": "sha256:f8271630994e4031d23838f178ed63dcb5c3198670f4f97f9302a34526cf3953",
+    "env_image": "sweb.env.py.x86_64.aa92880033da20ca313928:latest",
+    "env_image_id": "sha256:1dea4cfcaf15e6006d2d705925fb1f7cb14e06acc724e4c449a4a886112bbdfb",
+    "dockerfile_sha256": "e189200a1832c32ade6c45a7a6da6ce85d44099dc82b86e5a2ee47bf4a0269cb",
+    "pretend_version": null,
+    "install_excludes": [
+     "sklearn/__check_build/_check_build.c",
+     "sklearn/_isotonic.c",
+     "sklearn/cluster/_dbscan_inner.cpp",
+     "sklearn/cluster/_hierarchical.cpp",
+     "sklearn/cluster/_k_means.c",
+     "sklearn/cluster/_k_means_elkan.c",
+     "sklearn/datasets/_svmlight_format.c",
+     "sklearn/decomposition/_online_lda.c",
+     "sklearn/decomposition/cdnmf_fast.c",
+     "sklearn/ensemble/_gradient_boosting.c",
+     "sklearn/feature_extraction/_hashing.c",
+     "sklearn/linear_model/cd_fast.c",
+     "sklearn/linear_model/sag_fast.c",
+     "sklearn/linear_model/sag_fast.pyx",
+     "sklearn/linear_model/sgd_fast.c",
+     "sklearn/manifold/_barnes_hut_tsne.c",
+     "sklearn/manifold/_utils.c",
+     "sklearn/metrics/cluster/expected_mutual_info_fast.c",
+     "sklearn/metrics/pairwise_fast.c",
+     "sklearn/neighbors/ball_tree.c",
+     "sklearn/neighbors/dist_metrics.c",
+     "sklearn/neighbors/kd_tree.c",
+     "sklearn/neighbors/quad_tree.c",
+     "sklearn/neighbors/typedefs.c",
+     "sklearn/preprocessing/_csr_polynomial_expansion.c",
+     "sklearn/svm/liblinear.c",
+     "sklearn/svm/libsvm.c",
+     "sklearn/svm/libsvm_sparse.c",
+     "sklearn/tree/_criterion.c",
+     "sklearn/tree/_splitter.c",
+     "sklearn/tree/_tree.c",
+     "sklearn/tree/_utils.c",
+     "sklearn/utils/_cython_blas.c",
+     "sklearn/utils/_logistic_sigmoid.c",
+     "sklearn/utils/_random.c",
+     "sklearn/utils/arrayfuncs.c",
+     "sklearn/utils/fast_dict.cpp",
+     "sklearn/utils/graph_shortest_path.c",
+     "sklearn/utils/lgamma.c",
+     "sklearn/utils/murmurhash.c",
+     "sklearn/utils/seq_dataset.c",
+     "sklearn/utils/seq_dataset.pxd",
+     "sklearn/utils/seq_dataset.pyx",
+     "sklearn/utils/sparsefuncs_fast.c",
+     "sklearn/utils/weight_vector.c"
+    ],
+    "restricted_copies": []
+   }
+  },
+  "grader_image_digests": {
+   "django__django-12308": {
+    "image": "swebench/sweb.eval.x86_64.django_1776_django-12308:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.django_1776_django-12308@sha256:6250d2a608d52b82cd4eb03eb33082bb9927397c01876025499430b782cce9a6"
+    ]
+   },
+   "django__django-15987": {
+    "image": "swebench/sweb.eval.x86_64.django_1776_django-15987:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.django_1776_django-15987@sha256:fda248d0e8cc266b52a56094cec5e0d71083766805533deaf908bfe6b288c0d9"
+    ]
+   },
+   "sympy__sympy-23950": {
+    "image": "swebench/sweb.eval.x86_64.sympy_1776_sympy-23950:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.sympy_1776_sympy-23950@sha256:3332a07cc5df8ca74a7b48b958155cb8f3ceed2e7ccebde20fcea6930a69562f"
+    ]
+   },
+   "sympy__sympy-20154": {
+    "image": "swebench/sweb.eval.x86_64.sympy_1776_sympy-20154:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.sympy_1776_sympy-20154@sha256:d05bbd76c08f2d5b444f6f304ed6d4621f7e5a20db97f9fd0c602210068b0f80"
+    ]
+   },
+   "pytest-dev__pytest-10356": {
+    "image": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-10356:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-10356@sha256:363458d4698f5d985f6476d189d3f1cf902253cd9518705fd395516cd30138da"
+    ]
+   },
+   "pytest-dev__pytest-5840": {
+    "image": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-5840:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-5840@sha256:21a4deef9114348ab02986927e057d6bc0caf46fceca06414493f91ce4c64283"
+    ]
+   },
+   "psf__requests-1921": {
+    "image": "swebench/sweb.eval.x86_64.psf_1776_requests-1921:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.psf_1776_requests-1921@sha256:2ee0a4c706f04d2926a1622ec51b53d4ce6010b80d3ee10d414ea2a276c26cc9"
+    ]
+   },
+   "psf__requests-1724": {
+    "image": "swebench/sweb.eval.x86_64.psf_1776_requests-1724:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.psf_1776_requests-1724@sha256:e369005d38858ea90f843d853cb8427a2681b7513b846d12a34cb8d52c00763e"
+    ]
+   },
+   "scikit-learn__scikit-learn-10297": {
+    "image": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-10297:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-10297@sha256:58b80e9100f9d107291b5ea37c76583ed4851d8e18ec07aef197f1803a290986"
+    ]
+   },
+   "scikit-learn__scikit-learn-13496": {
+    "image": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13496:latest",
+    "repo_digests": [
+     "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-13496@sha256:adee9f4911a853e64f9ae4ebd7b1bf32615cbf52c3210873e9a752fb5fb975e6"
+    ]
+   }
+  },
+  "generation_images_inherit_grader": false,
+  "generation_git_history": false,
+  "task_source": "exported base_commit only",
+  "docker_socket_in_task_or_grader": false,
+  "node_tarball_sha256": "14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647",
+  "grader_platform": "official x86_64 instance images under Docker Desktop Rosetta (tools/benchmarks/run-official-harness.py); harness unchanged",
+  "generation_env_images": "built locally from the pinned harness Dockerfiles (Docker Hub has no env images); no repository source",
+  "orchestrator": "tools/benchmarks/repository-docker.mjs"
+ },
+ "relay": {
+  "topology": "one internal network per task; independent dual-network broker",
+  "task_network_policy": "namespace OUTPUT DROP; drop 127.0.0.11 and TCP/UDP 53; allow loopback 127.0.0.0/8 and the fixed broker IPv4:8787 only; IPv6 OUTPUT/FORWARD DROP and disabled",
+  "policy_installer_removed_before_agent": true,
+  "task_net_admin": false,
+  "task_capabilities": [],
+  "broker_ip_forwarding": false,
+  "only_method": "POST",
+  "only_path": "/api/harness/model/stream",
+  "auth": "revocable episode capability; real gateway login in broker only",
+  "request_ledger": "all broker requests including commands bypassing agent Api",
+  "gateway_reachable_address": "broker container -> http://host.docker.internal:47615 (desktop gateway, loopback on host)",
+  "network_policy_sha256": "e30fb32baae52617fa89871ef450a2e8bf38792dc8cff130cde8167312dd36bc"
+ },
+ "budget": {
+  "currency": "CNY",
+  "limit_rmb": 50,
+  "input_token_limit": 4000000,
+  "output_token_limit": 500000,
+  "per_episode_input_token_limit": 2000000,
+  "per_episode_output_token_limit": 131072,
+  "missing_usage": "conservative reservation; never zero",
+  "run_with_missing_limits": false,
+  "hard_billing_cap": "requires verified supplier or gateway budget control",
+  "price_input_micro_cny_per_token": 9,
+  "price_output_micro_cny_per_token": 27,
+  "authorization": "User confirmed CNY50 including calibration, failures and retries on 2026-10-14",
+  "ledger_history": [
+   {
+    "ledger": "pilot-20261014.jsonl",
+    "at": "2026-10-17T16:12:45Z",
+    "halted": "wrong_sse_start",
+    "what": "calibration asked maxTokens 16; the gateway raises any request to at least 256 (HarnessModelGateway.maxTokens), so start.maxTokens 256 > requested 16 and the broker halted by protocol before any model output was relayed",
+    "charged_or_reserved_micro_cny": 482535,
+    "input_tokens_reserved": 4463,
+    "output_tokens_reserved": 16384,
+    "carried": "kept as spent: the next ledger pilot-20261014-1.jsonl starts with 49517465 micro-CNY, 3995537 input and 483616 output tokens (total stays within CNY 50)",
+    "fix": "calibration now asks 256"
+   }
+  ]
+ },
+ "controls": {
+  "empty_patch_all_tasks_actual_failure": false,
+  "gold_patch_all_tasks_resolved": false,
+  "public_test_localtools_smoke": true,
+  "hidden_read_write_and_network_probes": true,
+  "stream_model_and_rejection_probes": true,
+  "cancel_container_descendant_cleanup": true,
+  "grader_tampering_and_empty_collection_rejection": true
+ },
+ "scoring": {
+  "denominator": 10,
+  "metric": "official resolved / fixed N; protocol integrity shown separately",
+  "human_hidden_test_feedback": false,
+  "regenerate_after_scoring": false,
+  "replace_failed_tasks": false,
+  "infrastructure_errors": "repair environment and regrade same frozen patch; no final rate until all graded",
+  "budget_stop": "incomplete fixed-N run; never shrink denominator",
+  "full_suite_and_build": "separate diagnostic, not official resolved",
+  "supplemental_java_js": "six proposed slots, no IDs/base/controls frozen, separate score",
+  "network_dependent_tasks": "psf__requests-1921 and psf__requests-1724 are graded and reported, but their official result on this machine depends on httpbin through the Docker Desktop proxy hop; a non-resolved result whose failing tests are network-dependent is regraded unchanged once the network is fixed; no final rate before that."
+ },
+ "blockers_before_execution": [],
+ "cost_so_far_rmb": 0,
+ "execution_location": "personal_machine_only; company machine stopped per user after IT Docker download warning",
+ "real_model_calls": 0,
+ "preparation_entry_sha256": "ba5bd10cd22e0156315d03d0e53db83847049855df12f557e9889a7b284c3c8d",
+ "controls_detail": {
+  "gold": {
+   "passed": 8,
+   "of": 10,
+   "runs": 4,
+   "note": "8/10 in all four runs (two via Docker default network before the interpreter fix were re-summarized with the fixed parser; one with an injected proxy, discarded)",
+   "state": "grade-gold-zhiqu-gold-bb1edd877875-f7bf3561722b-97fc026306.json"
+  },
+  "baseline_noop": {
+   "passed": 6,
+   "of": 10,
+   "runs": 2,
+   "note": "same six pass and same four fail in both runs",
+   "state": "grade-baseline-zhiqu-baseline-bb1edd877875-e052dfdf3cd4-78602b6b6a.json"
+  },
+  "grader_negatives": "skip-all conftest (requests-1724, pytest-5840) and runner exiting 0 (django-12308 runtests.py, sympy-20154 bin/test): all four official resolved=false, expected tests unobserved",
+  "smoke": {
+   "tasks": 10,
+   "probes_per_task": 46,
+   "broker_received": 100,
+   "broker_accepted": 0,
+   "state": "smoke-s20261017T113012.json"
+  },
+  "lifecycle": {
+   "processes_before_cancel": 7,
+   "processes_after_kill": 0,
+   "host_timeout": "host_timeout",
+   "ledger": {
+    "received": 1,
+    "rejected": 1,
+    "accepted": 0,
+    "registered": 1,
+    "revoked": 1
+   },
+   "state": "lifecycle-l20261017T113254.json"
+  }
+ },
+ "controls_exceptions": [
+  {
+   "control": "gold",
+   "instance_id": "psf__requests-1921",
+   "reason": "requests tests call live http://httpbin.org. On this Mac Docker Desktop forwards container traffic through the system proxy; measured 13/300 requests return 502 from that hop (host without proxy 0/60). Each of four gold runs failed 1-3 different httpbin tests; injecting a direct proxy instead changes old requests behaviour (cert checked against proxy host, no proxy_manager) and was discarded.",
+   "evidence": "state/grade-gold-zhiqu-gold-bb1edd877875-f7bf3561722b-97fc026306.json and earlier grade-gold-*; network_symptom_in_log / redirect never happened"
+  },
+  {
+   "control": "gold",
+   "instance_id": "psf__requests-1724",
+   "reason": "requests tests call live http://httpbin.org. On this Mac Docker Desktop forwards container traffic through the system proxy; measured 13/300 requests return 502 from that hop (host without proxy 0/60). Each of four gold runs failed 1-3 different httpbin tests; injecting a direct proxy instead changes old requests behaviour (cert checked against proxy host, no proxy_manager) and was discarded.",
+   "evidence": "state/grade-gold-zhiqu-gold-bb1edd877875-f7bf3561722b-97fc026306.json and earlier grade-gold-*; <Response [502]> in test output"
+  },
+  {
+   "control": "baseline",
+   "instance_id": "psf__requests-1921",
+   "reason": "requests tests call live http://httpbin.org. On this Mac Docker Desktop forwards container traffic through the system proxy; measured 13/300 requests return 502 from that hop (host without proxy 0/60). Each of four gold runs failed 1-3 different httpbin tests; injecting a direct proxy instead changes old requests behaviour (cert checked against proxy host, no proxy_manager) and was discarded.",
+   "evidence": "state/grade-baseline-zhiqu-baseline-bb1edd877875-e052dfdf3cd4-78602b6b6a.json; P2P httpbin tests fail differently per run"
+  },
+  {
+   "control": "baseline",
+   "instance_id": "psf__requests-1724",
+   "reason": "requests tests call live http://httpbin.org. On this Mac Docker Desktop forwards container traffic through the system proxy; measured 13/300 requests return 502 from that hop (host without proxy 0/60). Each of four gold runs failed 1-3 different httpbin tests; injecting a direct proxy instead changes old requests behaviour (cert checked against proxy host, no proxy_manager) and was discarded.",
+   "evidence": "state/grade-baseline-zhiqu-baseline-bb1edd877875-e052dfdf3cd4-78602b6b6a.json; P2P httpbin tests fail differently per run"
+  },
+  {
+   "control": "baseline",
+   "instance_id": "django__django-12308",
+   "reason": "Real assertion failures: test_json_display_for_field fails three subtests (FAIL ... (value=...)); the official Django log parser cannot read the line where a subtest-failing test and the next test share one line, so both F2P tests are \"unobserved\".",
+   "evidence": "state/grade-baseline-zhiqu-baseline-bb1edd877875-e052dfdf3cd4-78602b6b6a.json; test_output.txt lines \"test_json_display_for_field (...) ... test_label_for_field (...) ... ok\" and three \"FAIL: test_json_display_for_field\" tracebacks"
+  },
+  {
+   "control": "baseline",
+   "instance_id": "sympy__sympy-23950",
+   "reason": "The F2P test executes and errors inside its body: Contains(x, FiniteSet(y)).as_set() raises NotImplementedError, which is the missing behaviour the issue asks for -- not an install, collection or import error.",
+   "evidence": "state/grade-baseline-zhiqu-baseline-bb1edd877875-e052dfdf3cd4-78602b6b6a.json; sympy/sets/tests/test_contains.py:test_as_set traceback ends in sympy/sets/contains.py as_set raise NotImplementedError"
+  }
+ ],
+ "execution_ready_reason": "2026-10-17: images audited 10/10, isolation smoke 10/10, lifecycle smoke passed, grader negatives rejected; gold/baseline misses each recorded in controls_exceptions with evidence",
+ "continuation": {
+  "authorized": "2026-10-18 by the user: use ID 1 \"DeepseekV4pro（我的）\" for the four budget-interrupted tasks only, CNY 50 cap (same conservative accounting)",
+  "model": {
+   "id": 1,
+   "label": "DeepseekV4pro（我的）",
+   "model_name": "deepseek-v4-pro",
+   "expected_context_window_tokens": 1000000
+  },
+  "instance_ids": [
+   "psf__requests-1921",
+   "psf__requests-1724",
+   "scikit-learn__scikit-learn-10297",
+   "scikit-learn__scikit-learn-13496"
+  ],
+  "why_these": "the ID 6 pilot ledger reached its 4M conservative input-token cap; the broker refused these four mid-episode with run_budget_exhausted (requests 27 and 7 rounds, scikit-learn 2 rounds each, no patch)",
+  "rule": "one fresh episode each under ID 1; it replaces the interrupted ID 6 episode whatever its outcome; both records are kept and reported; the other six keep their ID 6 episodes",
+  "ledger_prefix": "continuation-id1-20261018",
+  "budget": {
+   "limit_rmb": 50,
+   "input_token_limit": 4000000,
+   "output_token_limit": 500000
+  }
+ }
 }

@@ -382,6 +382,13 @@ def predictions_at(path, ids):
     return rows
 
 
+def interpreter(python=None):
+    """The harness interpreter as given. Round 69: Path.resolve() turned harness-venv/bin/python into the Homebrew base
+    interpreter, which lacks the venv's unidiff/docker, so every official log parse failed and every control and candidate
+    integrity read "unverified" -- indistinguishable from a real failure."""
+    return os.path.abspath(python or sys.executable)
+
+
 def harness_command(control, predictions, protocol_file, kind="candidate", python=None):
     control = Path(control).resolve()
     selection = selection_at(control)
@@ -403,7 +410,8 @@ def harness_command(control, predictions, protocol_file, kind="candidate", pytho
     # because upstream caches by run_id rather than by patch content.
     nonce = os.urandom(5).hex()
     run_id = "zhiqu-" + kind + "-" + protocol_hash[:12] + "-" + prediction_hash[:12] + "-" + nonce
-    command = [str(Path(python or sys.executable).resolve()), "-m", "swebench.harness.run_evaluation",
+    # Absolute but NOT resolved: a venv interpreter is a symlink, and resolving it runs the base Python without the venv's packages.
+    command = [interpreter(python), "-m", "swebench.harness.run_evaluation",
                "--dataset_name", str(snapshot), "--split", "test", "--predictions_path", str(Path(predictions).resolve()),
                "--instance_ids", *ids, "--max_workers", str(protocol["limits"]["grading_concurrency"]),
                "--timeout", str(protocol["limits"]["official_grader_seconds"]), "--run_id", run_id]
@@ -417,7 +425,7 @@ def harness_command(control, predictions, protocol_file, kind="candidate", pytho
 
 def parse_observed_status(control, row, log_path, python=None):
     harness = Path(control).resolve() / ("SWE-bench-" + HARNESS_COMMIT)
-    command = [str(Path(python or sys.executable).resolve()), str(Path(__file__).resolve()),
+    command = [interpreter(python), str(Path(__file__).resolve()),
                "parse-log", "--harness-root", str(harness), "--log", str(Path(log_path).resolve())]
     result = subprocess.run(command, input=json.dumps(row).encode("utf-8"), stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, timeout=120, check=False)

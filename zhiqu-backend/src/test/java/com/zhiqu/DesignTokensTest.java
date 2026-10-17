@@ -184,7 +184,8 @@ class DesignTokensTest {
         assertTrue(files.size() >= 25, "只扫到 " + files.size() + " 个文件");
         List<String> hard = new ArrayList<>();
         int tokens = 0;
-        Pattern raw = Pattern.compile("font-weight\\s*:\\s*(\\d{3}|bold|bolder|lighter)\\b|font\\s*:\\s*\\d{3}\\b");
+        // 拼出来的也算（第六十九轮：Wiki 目录项 'font-weight:' + (active ? 700 : 500) 一直没被扫到 —— 选中的那一项是 700）
+        Pattern raw = Pattern.compile("font-weight\\s*:\\s*(\\d{3}|bold|bolder|lighter)\\b|font\\s*:\\s*\\d{3}\\b|font-weight\\s*:\\s*['\"]\\s*\\+[^;]{0,80}?\\b[1-9]00\\b");
         for (Path f : files) {
             String code = Files.readString(f, StandardCharsets.UTF_8);
             Matcher m = raw.matcher(code);

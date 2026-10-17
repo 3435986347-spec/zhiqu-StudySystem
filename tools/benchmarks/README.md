@@ -104,7 +104,7 @@ python3 tools/benchmarks/build-humaneval-report.py \
 
 官方来源：https://github.com/openai/human-eval 。题目与检查器按上游 MIT License 使用；分享含原始题目的产物时附上上游 `LICENSE`。
 
-## 后续仓库级评测（设计阶段）
+## 仓库级评测（SWE-bench Verified 固定十题）
 
 [仓库级方案](../../docs/benchmarks/repository-eval-plan.md) 采用固定 SWE-bench Verified 10题 pilot，精确清单和未就绪的设计协议在 [repository-pilot-20261013](../../docs/benchmarks/repository-pilot-20261013/selection.json)。仓库 worker、broker 和官方评分集成尚未实现；本目录现有 HumanEval 运行器不能直接拿来跑仓库 issue。
 
@@ -130,4 +130,28 @@ python3 tools/benchmarks/select-sweverified.py \
 `public_index_sha256` 对500行四字段按 instance_id 排序、compact sorted-key UTF-8 JSON + LF 计算；`public_projection_sha256` 对输出10行的实际字节计算。每题另外记录 issue 原始 UTF-8 和选择 hash。选择器源码hash单独保存，变更后不能悄悄沿用旧脚本指纹。
 
 2026-10-14 用户要求开始仓库测试并确认 **¥50** 上限，随后因 IT 不允许下载 Docker，改为推送准备工具后在个人电脑继续。
-实际状态及个人电脑步骤见 [本轮准备记录](../../docs/benchmarks/repository-pilot-20261014/README.md)。真实模型请求与费用为0；worker / broker / 准备器已有离线验证，但 Docker镜像、隔离控制和完整编排仍待完成，未发布任何 SWE-bench 能力分。
+第六十九轮（2026-10-17）在个人电脑上补完 Docker 编排并跑对照，状态见 [试运行记录](../../docs/benchmarks/repository-pilot-20261014/README.md) 和 [第六十九轮](../../docs/rounds/round-69.md)。
+
+### Docker 编排（`repository-docker.mjs`）
+
+宿主机这一侧只做可信的事；候选代码只在 task 容器里跑，真实登录只经 stdin 进 broker 容器。`--eval-dir` 是控制目录（含 `control/`、镜像构建、状态、账本），不放在仓库里。
+
+| 命令 | 做什么 | 花钱 |
+|---|---|---|
+| `runtime` | 冻结的 Node 24.19.0（linux-x64，核 SHA256）、`git archive` 出来的 CLI 树、worker / broker 摆进只读目录，核对 run-config 里的指纹 | 否 |
+| `images` | 生成镜像：本机按固定 harness 的 Dockerfile 建的官方 env 镜像（只有 conda 环境、不含仓库）+ 导出的 base + 官方 install；同一个包的别的版本只留给 root；逐题审计（无 `.git`、无读得到的别版本副本、无评估脚本、`/root` 不可读） | 否 |
+| `smoke` | 每题：单题 internal 网络、policy 容器设 iptables（只通 broker:8787）、46 项无模型探针、真正的 LocalTools 读写 base 并跑一条公开测试、整容器回收 | 否 |
+| `lifecycle` | 后代进程（各自新会话）、输出洪泛、半路的请求、宿主机超时：停整个容器后进程数为 0、能力撤销、账本对得上 | 否 |
+| `grade` | 官方 v3.0.17 harness（`run-official-harness.py` 只把 `platform.machine()` 报成 x86_64，用官方 x86 镜像走 Rosetta）；gold / 基线另按题汇总（`summarize-controls.py`） | 否 |
+| `run` | 开跑前按题查对照（没过的要在 run-config 的 `controls_exceptions` 写明原因和证据）；校准一次；固定十题各一次；冻结补丁；官方评分 | **是**，¥50 内 |
+
+账本在 `<eval-dir>/ledger/`：broker 停过的账不再受理，下一次开新的一本，额度是 ¥50 减去之前每一本花掉 / 留着的（`pilotLedger`）；已经起过 episode 的题不重跑。
+
+```bash
+node tools/benchmarks/repository-docker.mjs runtime --eval-dir /Users/me/zhiqu-repo-eval
+node tools/benchmarks/repository-docker.mjs images  --eval-dir /Users/me/zhiqu-repo-eval
+node tools/benchmarks/repository-docker.mjs smoke   --eval-dir /Users/me/zhiqu-repo-eval
+node tools/benchmarks/repository-docker.mjs grade   --eval-dir /Users/me/zhiqu-repo-eval --kind gold --predictions /Users/me/zhiqu-repo-eval/control/private/gold-predictions.jsonl
+```
+
+这台 Mac 上的已知限制：Docker Desktop 经系统代理替容器转发外网，到 httpbin.org 约 4% 回 502 —— requests 两题的测试连 httpbin，gold 每遍挂几条、每遍不一样；给评分容器设代理变量会改变老版本 requests 的行为（试过、不用）。

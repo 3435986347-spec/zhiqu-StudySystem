@@ -20,7 +20,7 @@ const configCopy = change => {
 const fakeApi = { async get(endpoint) {
   if (endpoint.endsWith('/me')) return { id: 1 };
   assert.equal(endpoint, '/api/harness/models');
-  return { models: [{ id: 1, label: 'DeepSeek', modelName: 'deepseek-v4-pro', toolCalling: true,
+  return { models: [{ id: 6, label: 'DeepSeek', modelName: 'deepseek-v4-pro', toolCalling: true,
     contextWindowTokens: 1_000_000, effectiveContextWindow: 1_000_000 }] };
 } };
 const missingDocker = () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); };

@@ -17,7 +17,7 @@ export const OUTPUT_MICRO_CNY_PER_TOKEN = 27;
 const EVENTS = new Set(['start', 'delta', 'reasoning', 'tool_call', 'tool_progress', 'done']);
 const DEFAULTS = Object.freeze({ limitMicroCny: 50_000_000, inputTokenLimit: 4_000_000, outputTokenLimit: 500_000,
   perEpisodeInputTokenLimit: 2_000_000, perEpisodeOutputTokenLimit: 131_072, maxRequestsPerEpisode: 200,
-  minRequestIntervalMs: 1_200, modelId: 1, modelName: 'deepseek-v4-pro', contextWindow: 1_000_000,
+  minRequestIntervalMs: 1_200, modelId: 6, modelName: 'deepseek-v4-pro', contextWindow: 1_000_000,
   maxBodyBytes: 2_000_000, maxBufferedResponseBytes: 1_000_000, maxStreamBytes: 8_000_000,
   maxActiveRequests: 2, streamTimeoutMs: 300_000 });
 
@@ -112,8 +112,9 @@ export class RepositoryBroker {
   constructor(options = {}) {
     this.config = Object.fromEntries(Object.entries(DEFAULTS).map(([key, value]) => [key, options[key] === undefined ? value : options[key]]));
     for (const key of Object.keys(DEFAULTS).filter((key) => !['modelName', 'modelId'].includes(key))) positive(this.config[key], key);
-    if (this.config.modelId !== 1 || this.config.modelName !== 'deepseek-v4-pro' || this.config.contextWindow !== 1_000_000) {
-      throw new Error('Broker model must be exactly 1/deepseek-v4-pro with 1000000 context');
+    // 一本账一个模型 ID：ID 6（2026-10-16 用户指定）或 ID 1（2026-10-18 用户要求补被预算打断的题），都是 deepseek-v4-pro / 1M
+    if (![6, 1].includes(this.config.modelId) || this.config.modelName !== 'deepseek-v4-pro' || this.config.contextWindow !== 1_000_000) {
+      throw new Error('Broker model must be 6 or 1 / deepseek-v4-pro with 1000000 context');
     }
     if (this.config.minRequestIntervalMs < 1200 || this.config.maxRequestsPerEpisode > 200) throw new Error('Pacing/request limits exceed approved scope');
     if (this.config.limitMicroCny > 50_000_000) throw new Error('Money limit exceeds approved 50 CNY scope');

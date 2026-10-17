@@ -652,14 +652,22 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         List<KnowledgePageLink> links = linkMapper.selectList(new LambdaQueryWrapper<KnowledgePageLink>()
                 .eq(KnowledgePageLink::getUserId, userId));
         Map<String, Object> lint = buildLintReport(userId, pages, links);
+        // 先写的页链向后建的页：写入时目标还不存在，targetPageId 是 null。健康检查按标题认得出来（buildLintReport），
+        // 图谱原来不认 —— 连线画成悬空的红虚线、入度也少算，同一个弹窗里却写着「1 个悬空链接」（第六十九轮）。这里按同一套规范化认回来。
+        Map<String, Long> idsByTitle = new HashMap<>();
+        for (UserKnowledgePage page : pages) idsByTitle.putIfAbsent(normalizeTitle(page.getTitle()), page.getId());
+        Map<Long, Long> targets = new HashMap<>();
+        for (KnowledgePageLink link : links) {
+            Long target = link.getTargetPageId() != null ? link.getTargetPageId() : idsByTitle.get(normalizeTitle(link.getTargetTitle()));
+            if (target != null) targets.put(link.getId(), target);
+        }
         // degree 语义 = 入度（被引用次数）；出链数单独给 outDegree，避免“引用了很多页的索引页”被误判为核心节点
         Map<Long, Integer> inDegree = new LinkedHashMap<>();
         Map<Long, Integer> outDegree = new LinkedHashMap<>();
         for (KnowledgePageLink link : links) {
             outDegree.put(link.getSourcePageId(), outDegree.getOrDefault(link.getSourcePageId(), 0) + 1);
-            if (link.getTargetPageId() != null) {
-                inDegree.put(link.getTargetPageId(), inDegree.getOrDefault(link.getTargetPageId(), 0) + 1);
-            }
+            Long target = targets.get(link.getId());
+            if (target != null) inDegree.put(target, inDegree.getOrDefault(target, 0) + 1);
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("nodes", pages.stream().map(page -> {
@@ -672,7 +680,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             row.put("outDegree", outDegree.getOrDefault(page.getId(), 0));
             return row;
         }).toList());
-        result.put("links", links.stream().map(this::linkRow).toList());
+        result.put("links", links.stream().map(link -> {
+            Map<String, Object> row = linkRow(link);
+            row.put("targetPageId", targets.get(link.getId()));
+            return row;
+        }).toList());
         result.put("hubs", pages.stream()
                 .filter(page -> inDegree.getOrDefault(page.getId(), 0) > 1)
                 .sorted((a, b) -> Integer.compare(inDegree.getOrDefault(b.getId(), 0), inDegree.getOrDefault(a.getId(), 0)))
@@ -1429,12 +1441,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
                 ## 核心原则
                 - Raw Sources 只记录原始来源，不在来源上直接改写。
-                - Wiki Pages 是可维护的综合层，页面之间优先使用 [[双链]] 连接。
+                - Wiki Pages 是可维护的综合层，页面之间优先使用 `[[双链]]` 连接。
                 - AI 只能生成待确认 Patch Set；用户确认后才合入。
 
                 ## 页面约定
                 - 目标、计划、偏好、薄弱点、资料、对话摘要分开建页。
-                - index 仅按类型列出页面 [[双链]]，不复制正文片段、测试账号、内部 URL 或图片地址。
+                - index 仅按类型列出页面 `[[双链]]`，不复制正文片段、测试账号、内部 URL 或图片地址。
                 - 重要结论尽量写来源或链接到相关页面。
                 - 发现矛盾时，新建“冲突/待确认”小节，而不是静默覆盖。
 
