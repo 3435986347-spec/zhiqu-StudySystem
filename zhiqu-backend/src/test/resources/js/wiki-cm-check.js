@@ -252,6 +252,10 @@ function fixture({ flag = 'cm' } = {}) {
     assert.equal(cm.linkMarkdown('官网', 'https://e.com'), '[官网](https://e.com)');
     assert.equal(cm.linkMarkdown('', 'https://e.com'), '[https://e.com](https://e.com)');
     assert.equal(cm.linkMarkdown('a [b]\nc', 'https://e.com'), '[a  b  c](https://e.com)');
+    // 第二遍 review：没选字时网址就是链接文字，网址里的括号不能把链接截断；链接文字结尾的反斜杠不能把 ] 转义掉
+    assert.equal(cm.linkMarkdown('', 'https://x.com/?a[]=1'), '[https://x.com/?a%5B%5D=1](https://x.com/?a%5B%5D=1)');
+    assert.equal(cm.linkMarkdown('看', 'https://e.com/a_(b))'), '[看](https://e.com/a_%28b%29%29)');
+    assert.equal(cm.linkMarkdown('C:\\', 'https://e.com'), '[C:\\ ](https://e.com)');
   });
   await check('接入：插入链接的弹窗回来时还是原来的编辑会话才插（换了页 / 取消了就不插），插的是 handle.link', async () => {
     let answer; const f = fixture();
@@ -310,7 +314,11 @@ function fixture({ flag = 'cm' } = {}) {
     st = st.update({ selection: EditorSelection.cursor(md.indexOf('x^2')) }).state;
     assert.deepEqual(widgets(st, tableField), [md.indexOf('| a |')], '光标离开表格：又画成表格');
     assert.deepEqual(widgets(st, mathField), [], '光标进了块公式：露出原文');
-    st = st.update({ changes: { from: 0, insert: '新' } }).state;
+    let owner = Object.getPrototypeOf(st.doc); while (owner && !Object.prototype.hasOwnProperty.call(owner, 'toString')) owner = Object.getPrototypeOf(owner);
+    const realToString = owner.toString; let copies = 0;
+    owner.toString = function () { copies++; return realToString.call(this); };
+    try { st = st.update({ changes: { from: 0, insert: '新' } }).state; } finally { owner.toString = realToString; }
+    assert.equal(copies, 1, '打一个字把全文复制了 ' + copies + ' 遍（块公式、表格各一遍）');
     assert.notEqual(st.field(tableField).ranges, table0, '改了字要重扫');
     assert.equal(st.field(tableField).ranges[0].from, md.indexOf('| a |') + 1, '重扫之后位置跟着挪');
   });

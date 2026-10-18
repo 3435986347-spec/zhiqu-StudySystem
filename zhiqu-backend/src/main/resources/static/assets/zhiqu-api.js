@@ -1912,8 +1912,25 @@
       if (privateImageBytes > PRIVATE_IMAGE_CACHE_BYTES && key !== url) { privateImageBytes -= entry.blob.size; privateImageBlobs.delete(key); }
     });
   }
+  /** 同一张图、同一个登录只下载一次：有留着的字节就用，正在下载就共用那一趟（同一页上两处一样的图、编辑器在下载途中把图拆了重画） */
+  var privateImageLoads = new Map();
+  function loadPrivateImage(url, auth) {
+    var cached = cachedPrivateImage(url, auth);
+    if (cached) return Promise.resolve(cached);
+    var pending = privateImageLoads.get(url);
+    if (pending && pending.auth === auth) return pending.promise;
+    var promise = api.download(url.slice(API.length)).then(function (result) {
+      if (!/^image\/(png|jpeg|gif|webp|bmp)$/i.test(result.blob.type || '')) throw requestError('图片格式无效');
+      if (token() === auth) keepPrivateImage(url, auth, result.blob);
+      return result.blob;
+    });
+    var entry = { auth: auth, promise: promise };
+    function settled() { if (privateImageLoads.get(url) === entry) privateImageLoads.delete(url); }
+    privateImageLoads.set(url, entry); promise.then(settled, settled);
+    return promise;
+  }
   function revokePrivateMedia() {
-    privateImageBlobs.clear(); privateImageBytes = 0;
+    privateImageBlobs.clear(); privateImageBytes = 0; privateImageLoads.clear();
     privateMedia.forEach(function (url, media) {
       if (media.getAttribute('src') === url || String(media.getAttribute('src') || '').indexOf(url + '#') === 0) media.removeAttribute('src');
       if (media.pause) media.pause();
@@ -2161,13 +2178,10 @@
       var url = image.getAttribute('data-zq-private-image');
       if (!/^\/api\/knowledge\/images\/[1-9]\d*$/.test(url || '')) return;
       var authAtStart = token(); if (!authAtStart) return;
-      var cached = cachedPrivateImage(url, authAtStart);
       image.dataset.zqLoading = '1';
-      (cached ? Promise.resolve({ blob: cached }) : api.download(url.slice(API.length))).then(function (result) {
-        if (!/^image\/(png|jpeg|gif|webp|bmp)$/i.test(result.blob.type || '')) throw requestError('图片格式无效');
-        if (!cached && token() === authAtStart) keepPrivateImage(url, authAtStart, result.blob);
+      loadPrivateImage(url, authAtStart).then(function (blob) {
         if (!image.isConnected || image.getAttribute('data-zq-private-image') !== url || token() !== authAtStart) return;
-        var objectUrl = URL.createObjectURL(result.blob);
+        var objectUrl = URL.createObjectURL(blob);
         image.onload = function () {
           if (image.isConnected && token() === authAtStart) image.dispatchEvent(new CustomEvent('zq-wiki-embed-ready', { bubbles: true }));
         };

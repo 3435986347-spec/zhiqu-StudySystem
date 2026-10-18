@@ -419,8 +419,9 @@ public class WikiToolAgent {
                 }
                 case "create_wiki_patch": {
                     String title = String.valueOf(com.zhiqu.common.Texts.orDefault(args.get("title"), "")).trim();
-                    String content = String.valueOf(com.zhiqu.common.Texts.orDefault(args.get("content"), "")).trim();
-                    if (title.isEmpty() || content.isEmpty()) {
+                    // 不 trim：改已有的页时第一行的缩进（缩进四格的代码块）要留到 cleanKeeping，首尾空行由它去掉（第七十四轮 review）
+                    String content = String.valueOf(com.zhiqu.common.Texts.orDefault(args.get("content"), ""));
+                    if (title.isEmpty() || content.isBlank()) {
                         return WikiToolExecution.read("title 和 content 不能为空。");
                     }
                     if (isReservedWikiTitle(title)) {

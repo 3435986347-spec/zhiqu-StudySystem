@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * 一轮问答的意图判定 —— <b>唯一定义</b>。建图与执行都读它。
@@ -96,9 +97,17 @@ public record AgentPlanDecision(
     private static final List<String> WIKI_WRITE_WORDS = List.of(
             "写进", "写入", "写到", "存入", "存到", "存进", "保存", "收录", "放进", "放到",
             "加入", "整理到", "同步到", "记到", "记进", "记录", "更新", "补充", "新建", "生成", "创建");
-    /** 「生成 / 创建」只在 Wiki 是要生成的东西时才算写（第七十四轮）；知识库是来源时（根据 / 基于 / 用 / 从…）是读 */
-    private static final List<String> GENERATIVE_WRITE_WORDS = List.of("生成", "创建");
-    private static final List<String> WIKI_SOURCE_MARKERS = List.of("根据", "基于", "参考", "结合", "按照", "依据", "利用", "用", "从");
+    /**
+     * 「造 / 改」一类的写词（第七十四轮）：只在 Wiki 是要写的地方时才算写 ——「根据知识库生成…」「读一下我的笔记然后生成…」里的 Wiki 是来源，
+     * 「会议记录」「更新说明」里的记录、更新是名词。「写进 / 存到 / 放进…」这一类自己带着去处，照旧见词就算。
+     */
+    private static final List<String> POSITIONAL_WRITE_WORDS = List.of("生成", "创建", "新建", "记录", "更新", "补充");
+    /** 动词前面提到的 Wiki 是去处：紧跟在「在 / 到 / 给 / 为…」后面（「在知识库里创建」「给wiki创建」）…… */
+    private static final Pattern WIKI_PLACE_BEFORE = Pattern.compile("(?:在|到|往|进|给|为|向)(?:我的|我|这个|那个)?$");
+    /** ……或者后面紧跟「里 / 中 / 上」（「知识库里新建一页」；「知识库里的内容」不算，「从wiki里找」也不算） */
+    private static final Pattern WIKI_PLACE_AFTER = Pattern.compile("^(?:里|中|上|内)(?!的)");
+    /** 紧跟在来源词后面的 Wiki 是来源（「根据知识库」「生成一份基于知识库的计划」）；只看紧挨着的，「用于复习的知识页」「从零开始的笔记」是要写的 */
+    private static final Pattern WIKI_SOURCE_BEFORE = Pattern.compile("(?:根据|基于|参考|结合|按照|依据|利用|使用|用|从|关于)(?:我的|我|这个|那个)?$");
     /**
      * 长期记忆草稿的触发词，从 {@code AiServiceImpl.looksMemoryWorthy} 搬过来 —— 那是第六个
      * 散在实现里的意图门，和合并前的 {@code should*} 家族同一个物种：建图侧要用它决定造不造
@@ -290,19 +299,42 @@ public record AgentPlanDecision(
     public static boolean wikiWriteIntent(String message) {
         String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
         return WIKI_MENTION_WORDS.stream().anyMatch(text::contains)
-                && (WIKI_WRITE_WORDS.stream().filter(w -> !GENERATIVE_WRITE_WORDS.contains(w)).anyMatch(text::contains) || generatesWiki(text))
+                && (WIKI_WRITE_WORDS.stream().filter(w -> !POSITIONAL_WRITE_WORDS.contains(w)).anyMatch(text::contains) || positionalWikiWrite(text))
                 && !wikiWriteStatusQuestion(text);
     }
 
-    /** 同一小句里：生成 / 创建 后面提到 Wiki（「生成一个wiki页」），或者前面提到、但不是当来源（「在知识库里创建一页」，不是「根据知识库生成…」） */
-    private static boolean generatesWiki(String text) {
+    /**
+     * 同一小句里，「生成 / 创建 / 记录…」前面提到的 Wiki 是去处、或者后面提到的 Wiki 不是来源。第一版是「前面有来源词就不算」：
+     * 「在知识库里根据会议记录创建一页」成了不写，「读一下我的笔记然后生成复习计划」「创建一个用于复习的知识页」反过来（review 照出来的）。
+     */
+    private static boolean positionalWikiWrite(String text) {
         for (String clause : text.split("[，,。；;？！!?]+")) {
-            for (String verb : GENERATIVE_WRITE_WORDS) {
+            for (String verb : POSITIONAL_WRITE_WORDS) {
                 for (int at = clause.indexOf(verb); at >= 0; at = clause.indexOf(verb, at + 1)) {
-                    String before = clause.substring(0, at), after = clause.substring(at + verb.length());
-                    if (WIKI_MENTION_WORDS.stream().anyMatch(after::contains)) return true;
-                    if (WIKI_MENTION_WORDS.stream().anyMatch(before::contains) && WIKI_SOURCE_MARKERS.stream().noneMatch(before::contains)) return true;
+                    String after = clause.substring(at + verb.length());
+                    if (after.startsWith("的")) continue;   // 「生成的报告」「创建的知识页」：定语，不是要做的事
+                    if (wikiAsPlace(clause.substring(0, at)) || wikiAsObject(after)) return true;
                 }
+            }
+        }
+        return false;
+    }
+
+    private static boolean wikiAsPlace(String before) {
+        for (String word : WIKI_MENTION_WORDS) {
+            for (int at = before.indexOf(word); at >= 0; at = before.indexOf(word, at + 1)) {
+                String prefix = before.substring(0, at), rest = before.substring(at + word.length());
+                if (WIKI_PLACE_BEFORE.matcher(prefix).find()
+                        || WIKI_PLACE_AFTER.matcher(rest).find() && !WIKI_SOURCE_BEFORE.matcher(prefix).find()) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean wikiAsObject(String after) {
+        for (String word : WIKI_MENTION_WORDS) {
+            for (int at = after.indexOf(word); at >= 0; at = after.indexOf(word, at + 1)) {
+                if (!WIKI_SOURCE_BEFORE.matcher(after.substring(0, at)).find()) return true;
             }
         }
         return false;

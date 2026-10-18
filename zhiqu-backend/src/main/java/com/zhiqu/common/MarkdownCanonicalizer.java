@@ -59,6 +59,9 @@ public final class MarkdownCanonicalizer {
      * AI 改一页已有的页时用（第七十四轮 review）：照 {@link #clean} 去掉模型自己加的东西，但原页里本来就有的行不删、
      * 原页本来就以代码块开头时不剥那道围栏。第七十一轮起用户保存是原样存的 —— 用户写在页里的「我已经把资料整理进知识库了」、
      * 页开头的代码块，过一遍 clean() 就没了。{@code clean} 本身不动（页状态哈希和 RAG 的规范全文靠它逐字节不变）。
+     *
+     * <p>和 clean() 另外两处不同（第二遍 review）：外层围栏只在整页都被包住时才剥（只剥开头那一道的话，留下的那道收尾会把后面整页吞进代码块）；
+     * 首尾只去空行和行尾空白、不 trim 第一行的缩进（缩进四格的代码块开头的页 trim 之后成了一段正文），原页结尾有换行就留着。
      */
     public static String cleanKeeping(String value, String base) {
         if (base == null || base.isBlank()) {
@@ -69,11 +72,10 @@ public final class MarkdownCanonicalizer {
         }
         String baseText = base.replace("\r\n", "\n").replace("\r", "\n");
         java.util.Set<String> baseLines = new java.util.HashSet<>(java.util.Arrays.asList(baseText.split("\n")));
-        String text = value.replace("\r\n", "\n").replace("\r", "\n").trim();
-        if (text.startsWith("```") && !text.split("\n", 2)[0].equals(baseText.trim().split("\n", 2)[0])) {
-            text = text.replaceFirst("^```[A-Za-z0-9_-]*\\s*", "")
-                    .replaceFirst("\\s*```$", "")
-                    .trim();
+        String text = trimBlankLines(value.replace("\r\n", "\n").replace("\r", "\n"));
+        String unwrapped = unwrapWholePage(text, baseText.stripLeading().startsWith("```"));
+        if (unwrapped != null) {
+            text = unwrapped;
         }
         List<String> lines = new ArrayList<>();
         for (String line : text.split("\n")) {
@@ -81,6 +83,27 @@ public final class MarkdownCanonicalizer {
                 lines.add(line);
             }
         }
-        return String.join("\n", lines).trim();
+        String result = trimBlankLines(String.join("\n", lines));
+        return result.isEmpty() || !baseText.endsWith("\n") ? result : result + "\n";
+    }
+
+    /** 去掉开头的空行和结尾的空白，第一行自己的缩进不动 */
+    private static String trimBlankLines(String text) {
+        return text.replaceFirst("^(?:[ \\t]*\\n)+", "").stripTrailing();
+    }
+
+    /**
+     * 整页被包在一个代码块里（模型常回 ```markdown … ```）就剥掉那一层，否则 null。原页本来就以代码块开头时，
+     * 包的里面还得以围栏开头才算包了一层 —— 模型把开头的 ```javascript 写成 ```js、页又恰好以代码块结尾，不是包了一层。
+     */
+    private static String unwrapWholePage(String text, boolean pageStartsWithFence) {
+        int firstBreak = text.indexOf('\n'), lastBreak = text.lastIndexOf('\n');
+        if (!text.startsWith("```") || firstBreak < 0 || !text.substring(lastBreak + 1).trim().equals("```")) {
+            return null;
+        }
+        String opening = text.substring(0, firstBreak).trim();
+        String inner = lastBreak > firstBreak ? text.substring(firstBreak + 1, lastBreak) : "";
+        boolean wrapper = pageStartsWithFence ? inner.stripLeading().startsWith("```") : opening.matches("```(?:markdown|md|text)?");
+        return wrapper ? trimBlankLines(inner) : null;
     }
 }

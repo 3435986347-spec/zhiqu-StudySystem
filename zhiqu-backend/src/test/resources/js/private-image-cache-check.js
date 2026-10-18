@@ -68,13 +68,53 @@ function judge(name, ok, detail) {
   judge('最近的还在', downloads.length === 0, JSON.stringify(downloads));
   await show(100);
   judge('留着的有上限（60 张 1 MiB 的之后，最早的那张已经丢了）', downloads.length === 1, JSON.stringify(downloads));
+  await show(113);                       // 刚用过：挪到最后
+  sizes['/knowledge/images/161'] = 1024 * 1024;
+  await show(161);                       // 再进一张，挤掉的是最久没用的（114），不是刚用过的 113
+  downloads.length = 0;
+  await show(113);
+  judge('丢的是最久没用的那张，不是最早下载的', downloads.length === 0, JSON.stringify(downloads));
+  await show(114);
+  judge('对照：最久没用的那张确实丢了', downloads.length === 1, JSON.stringify(downloads));
+
+  downloads.length = 0;
+  {
+    const a = image(700), b = image(700);
+    mod.hydratePrivateMedia(root(a, b), true);          // 同一页上同一张图两处（或者下载途中编辑器把图拆了重画）
+    const c = image(700); mod.hydratePrivateMedia(root(c), true);
+    await settle();
+    judge('同一张图正在下载时又要一次：共用那一趟，三处都画上', downloads.length === 1 && [a, b, c].every((el) => /^blob:/.test(el.src)),
+      JSON.stringify({ downloads, srcs: [a.src, b.src, c.src] }));
+  }
+  {
+    downloads.length = 0;
+    const realDownload = env.api.download;
+    env.api.download = (p) => { downloads.push(p); return Promise.reject(new Error('断网')); };
+    await show(701);
+    env.api.download = realDownload;
+    const again = await show(701);
+    judge('下载失败的那一趟不留着：下次重新下载', downloads.length === 2 && /^blob:/.test(again.src), JSON.stringify(downloads));
+  }
+
+  {
+    downloads.length = 0;
+    const realDownload = env.api.download;
+    let release;
+    env.api.download = (p) => { downloads.push(p); return new Promise((r) => { release = () => r({ blob: { type: 'image/png', size: 1000 } }); }); };
+    const before = image(702); mod.hydratePrivateMedia(root(before), true);   // 上一个登录发出去、还没回来
+    auth = 'T3';
+    const after = image(702); mod.hydratePrivateMedia(root(after), true);
+    env.api.download = realDownload;
+    release(); await settle(); await settle();
+    judge('换了登录时上一个登录正在下载的那一趟不共用：重新下载', downloads.length === 2, JSON.stringify(downloads));
+  }
 
   sizes['/knowledge/images/900'] = 20 * 1024 * 1024;
   downloads.length = 0;
   await show(900); await show(900);
   judge('一张就占掉上限一大块的不留（不为它挤掉别的）', downloads.length === 2, JSON.stringify(downloads));
 
-  if (count < 7) throw new Error('扫空了');
+  if (count < 12) throw new Error('扫空了');
   if (fail) { console.log(fail + ' 条红'); process.exit(1); }
   console.log('ALL-GREEN');
 })();

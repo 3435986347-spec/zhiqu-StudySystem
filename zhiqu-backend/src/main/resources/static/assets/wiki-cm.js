@@ -64,10 +64,17 @@ export function toggleWrap(text, from, to, open, close = open) {
   return { changes: [{ from, insert: open }, { from: to, insert: close }], anchor: from + open.length, head: to + open.length };
 }
 
-/** 插入链接（第七十四轮 review：原来选中的字被网址整个换掉）：选中了字就拿它做链接文字，没选就用网址；方括号、换行换成空格，链接不断 */
+/**
+ * 插入链接（第七十四轮 review：原来选中的字被网址整个换掉）：选中了字就拿它做链接文字，没选就用网址；方括号、换行换成空格，链接不断。
+ * 网址里的方括号、圆括号写成 %5B / %28 这样（「?a[]=1」原样放进去链接就断了，没选字时它还是链接文字）；
+ * 链接文字以反斜杠结尾时补一个空格（「C:\」后面的 ] 会被当成转义，CodeMirror、Obsidian 都这么认）。
+ */
 export function linkMarkdown(selected, href) {
-  const label = String(selected || '').replace(/[[\]\r\n]/g, ' ');
-  return '[' + (label.trim() ? label : href) + '](' + href + ')';
+  const target = String(href).replace(/[[\]()]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  let label = String(selected || '').replace(/[[\]\r\n]/g, ' ');
+  if (!label.trim()) label = target;
+  if (label.endsWith('\\')) label += ' ';
+  return '[' + label + '](' + target + ')';
 }
 
 /** 加粗 / 斜体 / 下划线的快捷键（第七十三轮：contentEditable 里是浏览器自己做的，CodeMirror 里要自己接；和工具栏同一个 toggleWrap） */
@@ -494,12 +501,20 @@ function inlineDecorations(view, options) {
   return Decoration.set(out, true);
 }
 
+// 块公式、表格两个 StateField 都要全文：同一份文档只取一次（第二遍 review：原来每打一个字两边各复制一遍全文）
+const docTexts = new WeakMap();
+function docText(doc) {
+  let text = docTexts.get(doc);
+  if (text === undefined) { text = doc.toString(); docTexts.set(doc, text); }
+  return text;
+}
+
 // 块公式横跨多行：多行的替换只能放在 StateField 里（ViewPlugin 不许出跨行的块装饰）
 const blockMath = StateField.define({
-  create(state) { const ranges = blockMathRanges(state.doc.toString()); return { ranges, deco: blockMathDecorations(state, ranges) }; },
+  create(state) { const ranges = blockMathRanges(docText(state.doc)); return { ranges, deco: blockMathDecorations(state, ranges) }; },
   update(value, tr) {
     if (!tr.docChanged && !tr.selection) return value;
-    const ranges = tr.docChanged ? blockMathRanges(tr.state.doc.toString()) : value.ranges;
+    const ranges = tr.docChanged ? blockMathRanges(docText(tr.state.doc)) : value.ranges;
     return { ranges, deco: blockMathDecorations(tr.state, ranges) };
   },
   provide: (field) => EditorView.decorations.from(field, (value) => value.deco),
@@ -516,10 +531,10 @@ function blockMathDecorations(state, ranges) {
 // 表格横跨多行，和块公式一样放在 StateField 里：光标不在时画成表格，在里面时原文用等宽字（列对得齐）
 // 只动光标时不重扫全文（第七十四轮 review：原来每按一下方向键都把整篇复制一遍、从头扫），只重算哪张表被光标碰到
 const tablePreview = (options) => StateField.define({
-  create(state) { const ranges = tableRanges(state.doc.toString()); return { ranges, deco: tableDecorations(state, ranges, options) }; },
+  create(state) { const ranges = tableRanges(docText(state.doc)); return { ranges, deco: tableDecorations(state, ranges, options) }; },
   update(value, tr) {
     if (!tr.docChanged && !tr.selection) return value;
-    const ranges = tr.docChanged ? tableRanges(tr.state.doc.toString()) : value.ranges;
+    const ranges = tr.docChanged ? tableRanges(docText(tr.state.doc)) : value.ranges;
     return { ranges, deco: tableDecorations(tr.state, ranges, options) };
   },
   provide: (field) => EditorView.decorations.from(field, (value) => value.deco),

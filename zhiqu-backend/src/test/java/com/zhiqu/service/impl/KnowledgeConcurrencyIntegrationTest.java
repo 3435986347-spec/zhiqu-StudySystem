@@ -366,7 +366,7 @@ class KnowledgeConcurrencyIntegrationTest {
         String merged = String.valueOf(knowledgeService.detail(userId, snapshot.pageId()).get("content"));
         assertTrue(merged.startsWith("```js\nconst a = 1;\n```"), "开头的代码块被剥坏了：" + merged);
         assertTrue(merged.contains("我已经把资料整理进知识库了。"), "用户写的那一行没了：" + merged);
-        assertTrue(merged.endsWith("补充一段"), "模型加的自述行没去掉：" + merged);
+        assertTrue(merged.endsWith("补充一段\n") && !merged.contains("已将以上内容写入知识库"), "模型加的自述行没去掉（或原页结尾的换行丢了）：" + merged);
     }
 
     @Test
