@@ -80,14 +80,20 @@ public final class WikiDrafts {
         java.util.regex.Matcher grapheme = GRAPHEME.matcher(text);
         int end = 0;
         while (grapheme.find() && grapheme.end() <= maxChars) end = grapheme.end();
-        int lineEnd = text.lastIndexOf('\n', end);
-        // 截开的那半行只是围栏符号（截在收尾的 ``` 中间）时也退到整行 —— 上限很小的时候光靠八成那一条接不住（第十遍 review）；
-        // 只认围栏符号：第十遍那版「离换行只差几个字就退」把正常文字的半行也丢了，换行在很前面时几乎什么都不剩（第十一遍 review）
-        String partial = lineEnd < 0 ? "" : text.substring(lineEnd + 1, end).strip();
-        boolean splitFence = !partial.isEmpty() && partial.chars().allMatch(c -> c == '`' || c == '~');
-        if (lineEnd > 0 && (lineEnd >= end * 0.8 || splitFence)) end = lineEnd;
+        if (end < text.length() && text.charAt(end) != '\n') {   // 正好截在行尾就不用退（第十二遍 review：原来这时 substring 越界，整个请求 500）
+            int lineEnd = text.lastIndexOf('\n', end - 1);
+            // 截开的那半行是一行围栏（截在 ``` / ```python / 引用、列表里的 ``` 中间）时退到整行 —— 上限很小的时候光靠八成那一条接不住（第十、十二遍 review）；
+            // 只认围栏的样子：第十遍那版「离换行只差几个字就退」把正文的半行也丢了（第十一遍 review）
+            String partial = lineEnd < 0 ? text.substring(0, end) : text.substring(lineEnd + 1, end);
+            boolean splitFence = SPLIT_FENCE.matcher(partial).matches();
+            if (splitFence) end = Math.max(lineEnd, 0);
+            else if (lineEnd > 0 && lineEnd >= end * 0.8) end = lineEnd;   // 换行在最开头时退过去就什么都不剩了
+        }
         return text.substring(0, end).stripTrailing();
     }
+
+    /** 被截开的半行看起来是一行围栏：前面可以有引用、列表的记号，然后是 ` 或 ~，后面最多跟一个不带空格的语言名 */
+    private static final java.util.regex.Pattern SPLIT_FENCE = java.util.regex.Pattern.compile("\\s*(?:(?:>|[*+-]|\\d+[.)])\\s*)*(?:`+|~+)[^\\s`~]*");
 
     private static long graphemes(String text) {
         return GRAPHEME.matcher(text).results().count();

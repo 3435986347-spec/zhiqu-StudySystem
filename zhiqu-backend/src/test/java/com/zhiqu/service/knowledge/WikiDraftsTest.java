@@ -65,6 +65,21 @@ class WikiDraftsTest {
     }
 
     @Test
+    @DisplayName("第十二遍 review：正好截在行尾不越界；截开的半行是带语言名的、引用 / 列表里的、紧跟开头换行的围栏也退到整行")
+    void cutsAtLineEndsAndOtherFenceShapes() {
+        assertEquals("abcdef\n…", WikiDrafts.excerpt("abcdef\nmore more more", 6), "截在行尾：原来 substring 越界");
+        String withLang = "正文\n```python\nprint(1)\n```\n后文";
+        String lang = WikiDrafts.body(withLang, null, withLang.indexOf("```python") + 6).text();
+        assertTrue(lang.startsWith("正文\n\n> 草稿只存了前"), "截在 ```python 中间：留下了一个空的「pyt」代码块：" + lang);
+        String quoted = "引用\n> ```\n> code\n";
+        String quote = WikiDrafts.body(quoted, null, quoted.indexOf("> ```") + 3).text();
+        assertTrue(quote.startsWith("引用\n\n> 草稿只存了前"), "截在引用里的 ``` 中间：" + quote);
+        assertFalse(WikiDrafts.excerpt("\n```\ncode code code", 3).contains("``"), "紧跟开头换行的半个围栏也去掉");
+        assertTrue(WikiDrafts.body("说明\n`code` 是行内代码，后面还有很长很长的一段说明文字", null, 20).text().startsWith("说明\n`code` 是行内代码"),
+                "以行内代码开头的正文行不是围栏，照常按字截");
+    }
+
+    @Test
     @DisplayName("require：洗完是空的当场说出来；删除草稿的说明洗过照样存（可以是空的），标成 DELETE")
     void requireAndDeletion() {
         RuntimeException empty = assertThrows(RuntimeException.class, () -> WikiDrafts.require("已将以上内容写入知识库。", null, 5000, "某页"));
