@@ -96,6 +96,9 @@ public record AgentPlanDecision(
     private static final List<String> WIKI_WRITE_WORDS = List.of(
             "写进", "写入", "写到", "存入", "存到", "存进", "保存", "收录", "放进", "放到",
             "加入", "整理到", "同步到", "记到", "记进", "记录", "更新", "补充", "新建", "生成", "创建");
+    /** 「生成 / 创建」只在 Wiki 是要生成的东西时才算写（第七十四轮）；知识库是来源时（根据 / 基于 / 用 / 从…）是读 */
+    private static final List<String> GENERATIVE_WRITE_WORDS = List.of("生成", "创建");
+    private static final List<String> WIKI_SOURCE_MARKERS = List.of("根据", "基于", "参考", "结合", "按照", "依据", "利用", "用", "从");
     /**
      * 长期记忆草稿的触发词，从 {@code AiServiceImpl.looksMemoryWorthy} 搬过来 —— 那是第六个
      * 散在实现里的意图门，和合并前的 {@code should*} 家族同一个物种：建图侧要用它决定造不造
@@ -287,8 +290,22 @@ public record AgentPlanDecision(
     public static boolean wikiWriteIntent(String message) {
         String text = message == null ? "" : message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
         return WIKI_MENTION_WORDS.stream().anyMatch(text::contains)
-                && WIKI_WRITE_WORDS.stream().anyMatch(text::contains)
+                && (WIKI_WRITE_WORDS.stream().filter(w -> !GENERATIVE_WRITE_WORDS.contains(w)).anyMatch(text::contains) || generatesWiki(text))
                 && !wikiWriteStatusQuestion(text);
+    }
+
+    /** 同一小句里：生成 / 创建 后面提到 Wiki（「生成一个wiki页」），或者前面提到、但不是当来源（「在知识库里创建一页」，不是「根据知识库生成…」） */
+    private static boolean generatesWiki(String text) {
+        for (String clause : text.split("[，,。；;？！!?]+")) {
+            for (String verb : GENERATIVE_WRITE_WORDS) {
+                for (int at = clause.indexOf(verb); at >= 0; at = clause.indexOf(verb, at + 1)) {
+                    String before = clause.substring(0, at), after = clause.substring(at + verb.length());
+                    if (WIKI_MENTION_WORDS.stream().anyMatch(after::contains)) return true;
+                    if (WIKI_MENTION_WORDS.stream().anyMatch(before::contains) && WIKI_SOURCE_MARKERS.stream().noneMatch(before::contains)) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** A question about a past write must not grant permission to create a new draft. */

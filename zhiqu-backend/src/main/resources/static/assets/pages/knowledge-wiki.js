@@ -673,7 +673,7 @@ function wireWikiEditor() {
   var modeButton = $('#zq-wiki-mode');
   if (modeButton) modeButton.onclick = toggleWikiReadOnly;
   doc.addEventListener('paste', function (e) {
-    if (wikiReadOnly() || doc.dataset.loading === '1' || wikiCmActive(doc)) return;   // 验证版：粘贴交给 CodeMirror（图片还没接）
+    if (wikiReadOnly() || doc.dataset.loading === '1' || wikiCmActive(doc)) return;   // 新编辑器：粘贴交给 CodeMirror（图片走它的 onImage）
     var files = Array.from(e.clipboardData && e.clipboardData.files || []);
     var image = files.find(isWikiImageFile);
     if (!image || !state.wikiCur) return;
@@ -925,6 +925,13 @@ function syncWikiTaskControls(doc, scope) {
 }
 function captureWikiView(doc) {
   var view = { scrollTop: doc.scrollTop || 0, windowX: window.scrollX || 0, windowY: window.scrollY || 0 };
+  // 新编辑器里没有 .zq-md：记下顶上那一行在原文里是哪一段（第七十四轮 review：原来按像素恢复，两种排版差得远，保存 / 取消后跳到别处）
+  if (wikiCmActive(doc) && wikiCmModule && doc.getBoundingClientRect) {
+    var docTop = doc.getBoundingClientRect().top, line = wikiCm.handle.lineAt(docTop + 1);
+    view.cmAnchor = wikiCmModule.sourceAnchorAt(wikiCm.handle.getMarkdown(), line.pos);
+    view.anchorOffset = line.top - docTop;
+    return view;
+  }
   var md = doc.querySelector && doc.querySelector('.zq-md');
   if (!md || !doc.getBoundingClientRect) return view;
   var top = doc.getBoundingClientRect().top;
@@ -941,7 +948,9 @@ function restoreWikiView(doc, view) {
   if (!doc || !view) return;
   doc.scrollTop = view.scrollTop;
   var md = doc.querySelector && doc.querySelector('.zq-md');
-  if (md && doc.getBoundingClientRect && view.anchorKey) {
+  var cmBlock = md && view.cmAnchor && wikiCmModule && doc.getBoundingClientRect ? wikiCmModule.readingBlockFor(md, view.cmAnchor) : null;
+  if (cmBlock) doc.scrollTop += cmBlock.getBoundingClientRect().top - doc.getBoundingClientRect().top - view.anchorOffset;
+  else if (md && doc.getBoundingClientRect && view.anchorKey) {
     var children = Array.from(md.children || []);
     function matches(child) { return child && child.tagName + ':' + String(child.textContent || '').slice(0, 160) === view.anchorKey; }
     var anchor = children[view.anchorIndex];
@@ -1033,9 +1042,13 @@ function wikiCmToolbar(cmd) {
   else if (cmd === 'image') chooseWikiImage();
   else if (cmd === 'math') handle.insert('\n$$\n\n$$\n');
   else if (cmd === 'link' || cmd === 'ref') {
+    // 弹窗回来时还得是同一个编辑会话（第七十四轮 review：原来换了页 / 取消了也往拆掉的编辑器里写）；选中的字做链接文字
+    var editContext = wikiEditingContext($('#zq-doc'));
     askText({ title: '插入链接', label: '链接地址', placeholder: 'https://…', okText: '插入' }).then(function (url) {
-      var href = url && wikiExternalUrl(url.trim());
-      if (href && wikiCm) handle.insert('[' + href + '](' + href + ')');
+      if (!url || !url.trim() || !isWikiEditingContext(editContext)) return;
+      var href = wikiExternalUrl(url.trim());
+      if (!href) { toast('链接地址无效，请使用完整的 HTTP(S) 网址', 'error'); return; }
+      handle.link(href);
     });
   } else toast('验证版还没接这个按钮（' + cmd + '）');
 }

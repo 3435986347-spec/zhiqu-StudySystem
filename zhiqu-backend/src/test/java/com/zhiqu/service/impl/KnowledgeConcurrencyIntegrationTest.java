@@ -333,8 +333,9 @@ class KnowledgeConcurrencyIntegrationTest {
         assertEquals(typed, knowledgeService.detail(userId, id).get("content"), "读一页回来的不是用户写的");
         String stored = jdbcTemplate.queryForObject("SELECT encrypted_content FROM user_knowledge_page WHERE id = ?", String.class, id);
         assertEquals(typed, knowledgeService.decrypt(stored), "库里存的不是用户写的");
-        assertEquals(MarkdownCanonicalizer.clean(typed), knowledgeService.findPageSnapshotByTitle(userId, "原样").content(),
-                "AI 读到的快照要照旧清洗（和页状态哈希同一个口径）");
+        SnapshotView snapshot = knowledgeService.findPageSnapshotByTitle(userId, "原样");
+        assertEquals(typed, snapshot.content(), "AI 读到的也是用户写的原文（第七十四轮：原来是清洗过的，AI 照着改写就把这几行丢了）");
+        assertEquals(sha256Hex("原样\n\n" + MarkdownCanonicalizer.clean(typed)), snapshot.stateHash(), "页状态哈希照旧按清洗过的算（和合入时比的同一个口径）");
 
         String exported = null;
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(knowledgeService.exportMarkdownZip(userId)))) {
@@ -344,6 +345,28 @@ class KnowledgeConcurrencyIntegrationTest {
         }
         assertNotNull(exported, "导出里没有这一页");
         assertTrue(exported.endsWith("---\n\n" + typed), "导出的正文不是用户写的：" + exported);
+    }
+
+    /**
+     * 第七十四轮 review：AI 读一页、整页改写、合入 —— 用户写在页里的「已经…知识库」行和开头的代码块不能在这一路上丢；
+     * 模型自己加的「已将以上内容写入知识库」照样去掉。
+     */
+    @Test
+    void aiEditKeepsTheLinesTheUserWrote() {
+        String typed = "```js\nconst a = 1;\n```\n\n我已经把资料整理进知识库了。\n- 一\n";
+        createPage("AI 改写", typed);
+        SnapshotView snapshot = knowledgeService.findPageSnapshotByTitle(userId, "AI 改写");
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("pageId", snapshot.pageId());
+        item.put("actionType", "UPSERT");
+        item.put("title", snapshot.title());
+        item.put("content", snapshot.content() + "\n补充一段\n已将以上内容写入知识库。");
+        Map<String, Object> patch = knowledgeService.createPatchSet(userId, patchBody("AI 改写", item), Map.of(snapshot.pageId(), snapshot));
+        knowledgeService.applyPatchSet(userId, numberLong(patch.get("id")));
+        String merged = String.valueOf(knowledgeService.detail(userId, snapshot.pageId()).get("content"));
+        assertTrue(merged.startsWith("```js\nconst a = 1;\n```"), "开头的代码块被剥坏了：" + merged);
+        assertTrue(merged.contains("我已经把资料整理进知识库了。"), "用户写的那一行没了：" + merged);
+        assertTrue(merged.endsWith("补充一段"), "模型加的自述行没去掉：" + merged);
     }
 
     @Test
@@ -638,6 +661,10 @@ class KnowledgeConcurrencyIntegrationTest {
         } catch (RuntimeException expected) {
             return "ERROR";
         }
+    }
+
+    private static String sha256Hex(String text) throws Exception {
+        return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));
     }
 
     private Map<String, Object> createPage(String title, String content) {

@@ -12,9 +12,9 @@ import java.util.List;
  * Wiki 钩子会判定"内容变了"、worker 索引完又判定"还是变了"，形成无限重建。
  * 留在私有方法里，第二个调用方只能复制一份，而复制品会漂。
  *
- * <p><b>幂等是承重性质。</b>{@code KnowledgePageSnapshot.content} 已经是清洗过的，
- * 而调用方常常把它直接再传进来（避免二次解密）。若清洗不幂等，同一页会因为"洗了几次"
+ * <p><b>幂等是承重性质。</b>调用方常常把已经清洗过的正文再传进来（避免二次解密）。若清洗不幂等，同一页会因为"洗了几次"
  * 产生不同哈希——故障形态与上面那条一模一样，但更难查，因为每一处代码看起来都对。
+ * （第七十四轮起 {@code KnowledgePageSnapshot.content} 是给模型看的原文，哈希另算；传进来照样安全，因为 clean(原文) 和 clean(clean(原文)) 一样。）
  */
 public final class MarkdownCanonicalizer {
 
@@ -39,11 +39,45 @@ public final class MarkdownCanonicalizer {
         }
         List<String> lines = new ArrayList<>();
         for (String line : text.split("\n")) {
-            String compact = line.replaceAll("\\s+", "");
-            boolean emptyHeading = line.matches("^\\s*#{1,6}\\s*$");
-            boolean wikiConfirmation = (compact.contains("已将") || compact.contains("已经") || compact.contains("已存入") || compact.contains("已写入"))
-                    && (compact.toLowerCase().contains("wiki") || compact.contains("知识库") || compact.contains("知识树"));
-            if (!emptyHeading && !wikiConfirmation) {
+            if (!modelOnlyLine(line)) {
+                lines.add(line);
+            }
+        }
+        return String.join("\n", lines).trim();
+    }
+
+    /** 空标题行、「已写入 Wiki」这类模型自述行 */
+    private static boolean modelOnlyLine(String line) {
+        String compact = line.replaceAll("\\s+", "");
+        boolean emptyHeading = line.matches("^\\s*#{1,6}\\s*$");
+        boolean wikiConfirmation = (compact.contains("已将") || compact.contains("已经") || compact.contains("已存入") || compact.contains("已写入"))
+                && (compact.toLowerCase().contains("wiki") || compact.contains("知识库") || compact.contains("知识树"));
+        return emptyHeading || wikiConfirmation;
+    }
+
+    /**
+     * AI 改一页已有的页时用（第七十四轮 review）：照 {@link #clean} 去掉模型自己加的东西，但原页里本来就有的行不删、
+     * 原页本来就以代码块开头时不剥那道围栏。第七十一轮起用户保存是原样存的 —— 用户写在页里的「我已经把资料整理进知识库了」、
+     * 页开头的代码块，过一遍 clean() 就没了。{@code clean} 本身不动（页状态哈希和 RAG 的规范全文靠它逐字节不变）。
+     */
+    public static String cleanKeeping(String value, String base) {
+        if (base == null || base.isBlank()) {
+            return clean(value);
+        }
+        if (value == null) {
+            return "";
+        }
+        String baseText = base.replace("\r\n", "\n").replace("\r", "\n");
+        java.util.Set<String> baseLines = new java.util.HashSet<>(java.util.Arrays.asList(baseText.split("\n")));
+        String text = value.replace("\r\n", "\n").replace("\r", "\n").trim();
+        if (text.startsWith("```") && !text.split("\n", 2)[0].equals(baseText.trim().split("\n", 2)[0])) {
+            text = text.replaceFirst("^```[A-Za-z0-9_-]*\\s*", "")
+                    .replaceFirst("\\s*```$", "")
+                    .trim();
+        }
+        List<String> lines = new ArrayList<>();
+        for (String line : text.split("\n")) {
+            if (baseLines.contains(line) || !modelOnlyLine(line)) {
                 lines.add(line);
             }
         }

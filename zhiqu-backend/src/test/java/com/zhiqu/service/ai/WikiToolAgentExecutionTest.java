@@ -78,6 +78,22 @@ class WikiToolAgentExecutionTest {
         }
     }
 
+    /**
+     * 第七十四轮 review：「生成 / 创建」加进写词之后，知识库只是来源的说法也成了写 Wiki ——「根据知识库生成一份复习计划」拿到写工具、
+     * 被催着调 create_wiki_patch，没有工具时计划回答还被存成 Wiki 草稿。这两个词只在 Wiki 是要生成的东西时才算写。
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"根据知识库生成一份复习计划", "用笔记里的内容生成一个摘要", "从wiki里找资料创建一个任务", "基于知识库的资料帮我生成周报"})
+    void knowledgeAsTheSourceOfAGenerationIsNotAWikiWrite(String text) {
+        assertFalse(AgentPlanDecision.wikiWriteIntent(text), text);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"在知识库里创建一页会议纪要", "根据会议记录生成一个wiki页", "帮我在wiki中生成本周总结"})
+    void theWikiAsTheThingGeneratedIsStillAWrite(String text) {
+        assertTrue(AgentPlanDecision.wikiWriteIntent(text), text);
+    }
+
     @Test
     void pastTenseAndStatusQuestionsStayReadOnly() {
         for (String text : List.of("你生成了wiki待合入吗", "有没有生成过wiki草稿", "你更新知识页了吗", "wiki草稿有没有保存", "如何创建知识页", "如何生成Wiki")) {

@@ -64,6 +64,12 @@ export function toggleWrap(text, from, to, open, close = open) {
   return { changes: [{ from, insert: open }, { from: to, insert: close }], anchor: from + open.length, head: to + open.length };
 }
 
+/** 插入链接（第七十四轮 review：原来选中的字被网址整个换掉）：选中了字就拿它做链接文字，没选就用网址；方括号、换行换成空格，链接不断 */
+export function linkMarkdown(selected, href) {
+  const label = String(selected || '').replace(/[[\]\r\n]/g, ' ');
+  return '[' + (label.trim() ? label : href) + '](' + href + ')';
+}
+
 /** 加粗 / 斜体 / 下划线的快捷键（第七十三轮：contentEditable 里是浏览器自己做的，CodeMirror 里要自己接；和工具栏同一个 toggleWrap） */
 export const FORMAT_KEYS = [{ key: 'Mod-b', open: '**' }, { key: 'Mod-i', open: '*' }, { key: 'Mod-u', open: '<u>', close: '</u>' }];
 
@@ -275,6 +281,36 @@ export function readingAnchor(root, x, y) {
   return node && root.contains(node) ? anchorFromCaret(root, node, offset) : null;
 }
 
+/** 原文位置所在的那一行（空行、分隔行往下找）第一段看得见的字，和它前面同样的一段出现过几次 —— 回到阅读模式时找同一段用 */
+export function sourceAnchorAt(markdown, pos) {
+  const seen = new Map(); let found = null;
+  eachLine(markdown, (line, linePos, kind) => {
+    const units = kind === 'code' ? [{ text: line }] : visibleText(line);
+    for (const unit of units) {
+      const text = unit.text.trim(); if (!text) continue;
+      const ordinal = seen.get(text) || 0; seen.set(text, ordinal + 1);
+      if (!found && linePos + line.length >= pos) found = { text, ordinal };
+    }
+  });
+  return found;
+}
+
+/** 阅读视图里第 ordinal 次出现、可见文字是 text 的那一段所在的块（没有那么多次就取最后一次） */
+export function readingBlockFor(root, anchor) {
+  if (!root || !anchor || !anchor.text) return null;
+  let last = null, count = 0;
+  const blocks = [];
+  (function walk(el) { for (const c of el.childNodes) if (c.nodeType === 1 && !isOpaque(c)) { if (isBlock(c)) blocks.push(c); walk(c); } })(root);
+  for (const block of blocks) {
+    for (const seg of segmentsOf(block)) {
+      if (seg.text.trim() !== anchor.text) continue;
+      if (count++ === anchor.ordinal) return block;
+      last = block;
+    }
+  }
+  return last;
+}
+
 /** 阅读视图里的那一段 → 原文位置；对不上回 null（交给按坐标找） */
 export function sourcePosition(markdown, anchor) {
   if (!anchor || !anchor.text) return null;
@@ -460,13 +496,17 @@ function inlineDecorations(view, options) {
 
 // 块公式横跨多行：多行的替换只能放在 StateField 里（ViewPlugin 不许出跨行的块装饰）
 const blockMath = StateField.define({
-  create(state) { return blockMathDecorations(state); },
-  update(value, tr) { return tr.docChanged || tr.selection ? blockMathDecorations(tr.state) : value; },
-  provide: (field) => EditorView.decorations.from(field),
+  create(state) { const ranges = blockMathRanges(state.doc.toString()); return { ranges, deco: blockMathDecorations(state, ranges) }; },
+  update(value, tr) {
+    if (!tr.docChanged && !tr.selection) return value;
+    const ranges = tr.docChanged ? blockMathRanges(tr.state.doc.toString()) : value.ranges;
+    return { ranges, deco: blockMathDecorations(tr.state, ranges) };
+  },
+  provide: (field) => EditorView.decorations.from(field, (value) => value.deco),
 });
-function blockMathDecorations(state) {
+function blockMathDecorations(state, ranges) {
   const out = [];
-  for (const block of blockMathRanges(state.doc.toString())) {
+  for (const block of ranges) {
     if (touched(state, block.from, block.to)) continue;
     out.push(Decoration.replace({ widget: new MathWidget(block.tex, true), block: true }).range(block.from, block.to));
   }
@@ -474,14 +514,19 @@ function blockMathDecorations(state) {
 }
 
 // 表格横跨多行，和块公式一样放在 StateField 里：光标不在时画成表格，在里面时原文用等宽字（列对得齐）
+// 只动光标时不重扫全文（第七十四轮 review：原来每按一下方向键都把整篇复制一遍、从头扫），只重算哪张表被光标碰到
 const tablePreview = (options) => StateField.define({
-  create(state) { return tableDecorations(state, options); },
-  update(value, tr) { return tr.docChanged || tr.selection ? tableDecorations(tr.state, options) : value; },
-  provide: (field) => EditorView.decorations.from(field),
+  create(state) { const ranges = tableRanges(state.doc.toString()); return { ranges, deco: tableDecorations(state, ranges, options) }; },
+  update(value, tr) {
+    if (!tr.docChanged && !tr.selection) return value;
+    const ranges = tr.docChanged ? tableRanges(tr.state.doc.toString()) : value.ranges;
+    return { ranges, deco: tableDecorations(tr.state, ranges, options) };
+  },
+  provide: (field) => EditorView.decorations.from(field, (value) => value.deco),
 });
-function tableDecorations(state, options) {
+function tableDecorations(state, ranges, options) {
   const out = [];
-  for (const table of tableRanges(state.doc.toString())) {
+  for (const table of ranges) {
     if (!touched(state, table.from, table.to)) {
       out.push(Decoration.replace({ widget: new RenderedWidget(state.sliceDoc(table.from, table.to), 'table', options), block: true }).range(table.from, table.to));
       continue;
@@ -600,6 +645,18 @@ export function mountWikiEditor(host, options) {
     /** 工具栏：加粗 / 斜体 / 行内代码 / 下划线 */
     wrap(open, close) { wrapSelection(view, open, close || open); view.focus(); },
     insert(text) { view.dispatch(view.state.replaceSelection(text)); view.focus(); },
+    /** 工具栏「插入链接」：选中的字做链接文字 */
+    link(href) {
+      const { from, to } = view.state.selection.main;
+      const text = linkMarkdown(view.state.sliceDoc(from, to), href);
+      view.dispatch({ changes: { from, to, insert: text }, selection: EditorSelection.cursor(from + text.length) });
+      view.focus();
+    },
+    /** 屏幕上 clientY 那一行的原文开头和它的顶边（保存 / 取消前记下看着的位置） */
+    lineAt(clientY) {
+      const block = view.lineBlockAtHeight(clientY - view.documentTop);
+      return { pos: block.from, top: view.documentTop + block.top };
+    },
     focusAt(x, y) {
       const pos = x != null && y != null ? view.posAtCoords({ x, y }) : null;
       view.focus();

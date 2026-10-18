@@ -409,6 +409,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 revision.setPatchSetId(patchSet.getId());
                 Long targetPageId = parseLong(item.get("pageId"));
                 revision.setPageId(targetPageId);
+                String baseContent = null;   // 改已有的页：原页正文，清洗时留着原页里本来就有的行
                 if (targetPageId != null) {
                     if (trustedInternalRequest) {
                         KnowledgePageSnapshot snapshot = trustedSnapshotsByPageId.get(targetPageId);
@@ -417,16 +418,18 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                         }
                         revision.setBaseContentHash(snapshot.stateHash());
                         revision.setBasePageVersion(snapshot.version());
+                        baseContent = snapshot.content();
                     } else {
                         UserKnowledgePage targetPage = ownedPage(userId, targetPageId);
                         assertExpectedVersion(targetPage, requiredBasePageVersion(item));
                         revision.setBaseContentHash(pageStateHash(targetPage));
                         revision.setBasePageVersion(targetPage.getVersion());
+                        baseContent = cryptoService.decrypt(targetPage.getEncryptedContent());
                     }
                 }
                 revision.setActionType(limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20));
                 revision.setTitle(limit(value(item.get("title"), patchSet.getTitle()), 120));
-                revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.clean(value(item.get("content"), ""))));
+                revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.cleanKeeping(value(item.get("content"), ""), baseContent)));
                 revision.setEncryptionVersion("v1");
                 revision.setStatus("PENDING");
                 revisionMapper.insert(revision);
@@ -440,9 +443,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public KnowledgePageSnapshot findPageSnapshotByTitle(Long userId, String title) {
         UserKnowledgePage page = findPageByTitle(userId, title);
         if (page == null) return null;
-        String content = MarkdownCanonicalizer.clean(cryptoService.decrypt(page.getEncryptedContent()));
+        // 给模型看的是原文（第七十四轮：原来是清洗过的，模型照着整页改写，用户留着的「已经…知识库」行、开头的代码块就没了）；
+        // 冲突检测的页状态哈希照旧按 clean(原文) 算，和合入时 pageStateHash(page) 同一个口径
+        String content = userMarkdown(cryptoService.decrypt(page.getEncryptedContent()));
         return new KnowledgePageSnapshot(page.getId(), page.getTitle(), page.getPageType(), content,
-                page.getVersion(), pageStateHash(page.getTitle(), content));
+                page.getVersion(), pageStateHash(page.getTitle(), MarkdownCanonicalizer.clean(content)));
     }
 
     @Override
@@ -1092,7 +1097,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (allowStructure && body.containsKey("parentId")) {
             lockKnowledgeTree(userId);
         }
-        String content = MarkdownCanonicalizer.clean(value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent())));
+        String draft = value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent()));
         String title = limit(value(body.get("title"), value(revision.getTitle(), "AI Wiki 草稿")), 120);
         // 目标页解析：已绑定目标的草稿，合入时 pageId 不可被 body 改指到其它页——否则可传另一本人页面 ID
         // 绕过基准冲突校验、把草稿整页写到一个本轮未读过的页上。无目标草稿才允许 body 指定合并目标。
@@ -1107,6 +1112,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         UserKnowledgePage page = pageId == null ? null : ownedPageForUpdate(userId, pageId);
         if (page != null) assertRevisionTargetUnchanged(revision, page);
+        // 合到已有的页：原页里本来就有的行、本来就以代码块开头的围栏留着（第七十四轮）；新页照旧 clean()
+        String content = page == null ? MarkdownCanonicalizer.clean(draft)
+                : MarkdownCanonicalizer.cleanKeeping(draft, cryptoService.decrypt(page.getEncryptedContent()));
         boolean systemPage = page != null && isSystemKnowledgePage(page);
         if (systemPage && !title.trim().equals(page.getTitle())) {
             throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许改名");

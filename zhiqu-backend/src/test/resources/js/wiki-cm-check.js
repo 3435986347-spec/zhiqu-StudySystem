@@ -54,10 +54,11 @@ function fixture({ flag = 'cm' } = {}) {
     insert(t) { this.calls.push(['insert', t]); }, focusAt(...a) { this.calls.push(['focusAt', ...a]); }, focusPos(...a) { this.calls.push(['focusPos', ...a]); },
     track(from, to) { const m = { from, to }; this.markers.push(m); return m; }, insertAt(m, t) { this.calls.push(['insertAt', m.from, m.to, t]); },
     untrack(m) { this.calls.push(['untrack', m.from]); }, toggleTask(pos) { this.calls.push(['toggleTask', pos]); },
-    setBlock(kind) { this.calls.push(['setBlock', kind]); }, destroy() { this.calls.push(['destroy']); } };
+    lineAt() { return { pos: 0, top: 100 }; }, setBlock(kind) { this.calls.push(['setBlock', kind]); }, link(href) { this.calls.push(['link', href]); }, destroy() { this.calls.push(['destroy']); } };
   const anchor = { value: null };
   const cmModule = { mountWikiEditor(host, options) { mounts.push({ host, options }); return handle; },
-    readingAnchor: () => anchor.value, sourcePosition: (md, a) => (a ? md.indexOf(a.text) + a.offset : null), taskMarkerPositions: () => [2, 30] };
+    readingAnchor: () => anchor.value, sourcePosition: (md, a) => (a ? md.indexOf(a.text) + a.offset : null), taskMarkerPositions: () => [2, 30],
+    sourceAnchorAt: () => null, readingBlockFor: () => null };
   const uploads = [];
   const sh = { state, token: () => 'token', esc: String, $: (s) => elements[s] || null, $all: () => [], empty: String, fmtDate: String,
     toast: (m) => toasts.push(m), safe: (_n, fn) => Promise.resolve().then(fn), askConfirm: async () => true, askText: async () => null,
@@ -244,6 +245,35 @@ function fixture({ flag = 'cm' } = {}) {
     f.blockSelect.value = 'H2'; f.blockSelect.onchange();
     assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'setBlock'), [['setBlock', 'H2']]);
     assert.equal(f.blockSelect.value, 'P');
+  });
+  // ── 第七十四轮 review ──
+  await check('插入链接：选中的字做链接文字（原来被网址换掉），没选就用网址；方括号、换行不让链接断掉', () => {
+    assert.equal(cm.linkMarkdown('官网', 'https://e.com'), '[官网](https://e.com)');
+    assert.equal(cm.linkMarkdown('', 'https://e.com'), '[https://e.com](https://e.com)');
+    assert.equal(cm.linkMarkdown('a [b]\nc', 'https://e.com'), '[a  b  c](https://e.com)');
+  });
+  await check('接入：插入链接的弹窗回来时还是原来的编辑会话才插（换了页 / 取消了就不插），插的是 handle.link', async () => {
+    let answer; const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
+    f.impl.bind(Object.assign({}, f.sh, { askText: () => new Promise((r) => { answer = r; }) }));
+    f.impl.wikiToolbar('link'); answer('https://e.com'); await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'link' || c[0] === 'insert'), [['link', 'https://e.com']]);
+    f.handle.calls.length = 0;
+    f.impl.wikiToolbar('link'); await f.impl.paintWikiDoc(f.page); answer('https://e.com'); await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'link' || c[0] === 'insert'), [], '弹窗期间换了页，不该往拆掉的编辑器里写');
+  });
+  await check('回到阅读模式停在编辑时看着的那一段：原文位置 → 那一行的可见文字和第几次出现 → 阅读视图里同一段的块', () => {
+    const md = '# 标题\n\n重复的一行\n\n- 列表项\n  - 子项\n\n重复的一行\n\n| 指标 | 数值 |\n| --- | --- |\n| 留存 | 41% |\n';
+    const root = parseHtml(renderMarkdown(md));
+    const text = (el) => { let t = ''; (function w(n) { if (n.nodeType === 3) t += n.nodeValue; else n.childNodes.forEach(w); })(el); return t; };
+    const second = md.lastIndexOf('重复的一行');
+    assert.deepEqual(cm.sourceAnchorAt(md, second + 2), { text: '重复的一行', ordinal: 1 });
+    const block = cm.readingBlockFor(root, cm.sourceAnchorAt(md, second));
+    const paragraphs = []; (function w(n) { if (n.nodeType === 1) { if (n.tagName === 'P' && text(n) === '重复的一行') paragraphs.push(n); n.childNodes.forEach(w); } })(root);
+    assert.equal(block, paragraphs[1], '应当是第二个「重复的一行」');
+    assert.equal(text(cm.readingBlockFor(root, cm.sourceAnchorAt(md, md.indexOf('  - 子项')))), '子项');
+    assert.equal(cm.readingBlockFor(root, cm.sourceAnchorAt(md, md.indexOf('| --- |'))).tagName, 'TD', '分隔行往下找到下一行的格');
+    assert.equal(cm.sourceAnchorAt(md, md.indexOf('\n\n重复') + 1).text, '重复的一行', '空行往下找');
   });
   console.log(failed ? 'RED: ' + failed : 'ALL-GREEN');
   if (failed) process.exitCode = 1;
