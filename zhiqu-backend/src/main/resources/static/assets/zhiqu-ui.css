@@ -436,7 +436,10 @@ option:checked{background:var(--zq-tint);color:var(--zq-text);font-weight:var(--
 /* 第六十四轮：宽度连续变化，内容短暂淡出；保留原面板尺寸，不从 auto 或 display:none 瞬间跳变。
    ready 在初始布局完成后才加，首次打开 / 刷新直接呈现记住的状态。 */
 [data-zq-collapse].zq-panel-ready{width:var(--zq-panel-expanded-width);overflow-x:hidden!important;transition:flex-basis .24s cubic-bezier(.22,.61,.36,1),width .24s cubic-bezier(.22,.61,.36,1),padding .24s ease,opacity .18s ease,transform .24s cubic-bezier(.22,.61,.36,1);}
-[data-zq-collapse]>*:not(.zq-rail){opacity:1;transform:translateX(0);transition:opacity .16s ease,transform .24s ease,visibility 0s;}
+[data-zq-collapse]>*:not(.zq-rail){opacity:1;transform:translateX(0);}
+/* 第七十轮：内容和竖条的淡入淡出也只在 ready 之后才有。原来写在「收起」这条上、一直生效：刷新时宽度一下缩到 44px，
+   里面的内容还要 0.12–0.24 秒才藏起来 —— 每次打开 Wiki 都闪一下挤成一条的目录和页面检查（PanelMotionTest） */
+[data-zq-collapse].zq-panel-ready>*:not(.zq-rail){transition:opacity .16s ease,transform .24s ease,visibility 0s;}
 /* 两侧面板的收起 / 展开按钮只是图标（第四十三轮：AI 助手统一成一种底色之后，白底描边的小方块很跳） */
 /* 按钮先排在内容前面，再贴住面板的滚动口；负下边距让它仍浮在标题右侧，不挤动原布局。 */
 .zq-cbtn{position:sticky;top:10px;align-self:flex-end;order:-1;flex:0 0 24px;margin:10px 10px -34px 0;z-index:6;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;line-height:1;cursor:pointer;padding:0;}
@@ -448,10 +451,13 @@ option:checked{background:var(--zq-tint);color:var(--zq-text);font-weight:var(--
 .zq-tip{position:fixed;left:0;top:0;z-index:3000;max-width:280px;padding:5px 9px;border-radius:var(--zq-rs);background:var(--zq-text);color:var(--zq-bg);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);line-height:1.45;overflow-wrap:anywhere;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .1s ease;}
 .zq-tip.is-on{opacity:1;visibility:visible;}
 [data-zq-collapse].zq-collapsed{flex:0 0 44px!important;width:44px!important;min-width:44px!important;padding:10px 0!important;overflow:hidden!important;align-items:center;}
-[data-zq-collapse].zq-collapsed>*:not(.zq-rail){opacity:0;visibility:hidden;pointer-events:none;transform:translateX(-8px);transition:opacity .12s ease,transform .24s ease,visibility 0s .24s;}
+[data-zq-collapse].zq-collapsed>*:not(.zq-rail){opacity:0;visibility:hidden;pointer-events:none;transform:translateX(-8px);}
+[data-zq-collapse].zq-panel-ready.zq-collapsed>*:not(.zq-rail){transition:opacity .12s ease,transform .24s ease,visibility 0s .24s;}
 [data-zq-collapse="right"].zq-collapsed>*:not(.zq-rail){transform:translateX(8px);}
-.zq-rail{position:absolute;left:0;right:0;top:10px;display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:2px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s ease,visibility 0s .12s;}
-.zq-collapsed .zq-rail{opacity:1;visibility:visible;pointer-events:auto;transition:opacity .16s ease .08s,visibility 0s;}
+.zq-rail{position:absolute;left:0;right:0;top:10px;display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:2px;opacity:0;visibility:hidden;pointer-events:none;}
+.zq-panel-ready>.zq-rail{transition:opacity .12s ease,visibility 0s .12s;}
+.zq-collapsed .zq-rail{opacity:1;visibility:visible;pointer-events:auto;}
+.zq-panel-ready.zq-collapsed>.zq-rail{transition:opacity .16s ease .08s,visibility 0s;}
 .zq-rail .zq-xbtn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text3);font-size:13px;cursor:pointer;padding:0;}
 .zq-rail .zq-xbtn:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
 .zq-cbtn:focus-visible,.zq-rail .zq-xbtn:focus-visible{outline:none;box-shadow:var(--zq-focus);}

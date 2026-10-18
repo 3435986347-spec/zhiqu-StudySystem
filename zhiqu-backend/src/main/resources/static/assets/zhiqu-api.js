@@ -2450,7 +2450,8 @@
     serverTime: serverTime, highlightCode: highlightCode,
     mathBlockHtml: mathBlockHtml, htmlToMarkdown: htmlToMarkdown, openAttachmentPreview: openAttachmentPreview, normalizeTask: normalizeTask, qLabel: qLabel, sLabel: sLabel,
     REMINDER_FIELDS: REMINDER_FIELDS, currentReminderChannel: currentReminderChannel, reminderChannelReady: reminderChannelReady,
-    logout: logout, adoptNewToken: adoptNewToken, icon: icon
+    logout: logout, adoptNewToken: adoptNewToken, icon: icon,
+    loadModule: loadModule   // 第七十轮：Wiki 的编辑内核验证版按需加载 assets/wiki-cm.js（带同一个缓存令牌）
   };
 
   var pomoWatched = false;

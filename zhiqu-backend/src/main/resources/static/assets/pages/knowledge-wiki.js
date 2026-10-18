@@ -4,10 +4,10 @@
 // 模块里的函数互相调用、从外面换不掉 —— 所以这一段没改成 import）。
 
 let API, api, token, esc, $, $all, empty, fmtDate, safe, toast, notice, askConfirm, askText, showInfo, openModal, popMenu, state, drafts, keepDraft,
-  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon;
+  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule;
 export function bind(sh) {
   ({ API, api, token, esc, $, $all, empty, fmtDate, safe, toast, notice, askConfirm, askText, showInfo, openModal, popMenu, state, drafts, keepDraft,
-  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon } = sh);
+  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule } = sh);
 }
 
 export const boots = { 'knowledge-wiki.html': (sh) => { bind(sh); return bootKnowledge(); } };
@@ -37,6 +37,7 @@ async function bootKnowledge() {
     if (searchInput) searchInput.oninput = function () { state.wikiFilter.q = searchInput.value.trim(); paintWikiTree(); };
     if (typeSel) typeSel.onchange = function () { state.wikiFilter.type = typeSel.selectedIndex === 0 ? '' : typeSel.options[typeSel.selectedIndex].text; paintWikiTree(); };
   }
+  if (wikiCmEnabled()) loadWikiCm();
   wireWikiEditor();
   wireWikiTabShortcuts();
   paintWikiTree();
@@ -217,6 +218,7 @@ async function paintWikiDoc(p, opts) {
   if (title) title.textContent = p.title || '知识页';
   // 等待新页正文时先退出旧页的编辑会话，不能把旧 DOM 的输入存成新页草稿。
   if (doc) {
+    closeWikiCm(doc);
     doc.dataset.editing = '0'; doc.dataset.source = '0'; doc.dataset.loading = '1';
     doc.contentEditable = 'false';
     doc._wikiSourceView = null; doc._wikiPendingView = null;
@@ -245,7 +247,11 @@ async function paintWikiDoc(p, opts) {
     if (opts.preserveView) restoreWikiView(doc, opts.preserveView);
   }
   var insp = $('#zq-insp');
-  if (insp) insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">点击正文即可编辑 · 开启「只读」可防止误改 · [[双链]]可跳转</span></div>';
+  if (insp) {
+    insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">点击正文即可编辑 · 开启「只读」可防止误改 · [[双链]]可跳转</span>'
+      + wikiEditorSwitchHtml() + '</div>';
+    wireWikiEditorSwitch(insp);
+  }
   paintWikiTree();
   paintWikiTabs();
   offerWikiDraft(p);
@@ -260,6 +266,7 @@ function wikiDraftKey(p) { return 'wiki.' + p.id; }
 function currentWikiMarkdown() {
   var doc = $('#zq-doc');
   if (!doc || doc.dataset.editing !== '1') return null;
+  if (wikiCmActive(doc)) return wikiCm.handle.getMarkdown();
   return doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
 }
 function saveWikiDraftNow() {
@@ -306,9 +313,12 @@ function offerWikiDraft(p) {
   $('[data-draft="restore"]', bar).onclick = function () {
     if (wikiReadOnly()) return toast('请先关闭只读开关再恢复草稿');
     removeWikiDraftBar();
-    enterWikiEdit();
-    if (doc.dataset.source !== '1') toggleWikiSource();
-    var ta = $('#zq-src-ta'); if (ta) ta.value = d.text;
+    if (wikiCmEnabled()) enterWikiCmEdit(doc, p, d.text);
+    else {
+      enterWikiEdit();
+      if (doc.dataset.source !== '1') toggleWikiSource();
+      var ta = $('#zq-src-ta'); if (ta) ta.value = d.text;
+    }
     p._draftBase = d.base != null ? d.base : p.version;
     state.wikiDirty = true;
   };
@@ -652,12 +662,13 @@ function wireWikiEditor() {
     if (e.target && e.target.closest && e.target.closest('a,input,button,.zq-md-image,.zq-embed')) return;
     if (!state.wikiCur || wikiReadOnly() || doc.dataset.editing === '1' || doc.dataset.loading === '1') return;
     enterWikiEdit();
-    caretAt(e.clientX, e.clientY);
+    if (wikiCmActive(doc)) wikiCm.handle.focusAt(e.clientX, e.clientY);
+    else caretAt(e.clientX, e.clientY);
   };
   var modeButton = $('#zq-wiki-mode');
   if (modeButton) modeButton.onclick = toggleWikiReadOnly;
   doc.addEventListener('paste', function (e) {
-    if (wikiReadOnly() || doc.dataset.loading === '1') return;
+    if (wikiReadOnly() || doc.dataset.loading === '1' || wikiCmActive(doc)) return;   // 验证版：粘贴交给 CodeMirror（图片还没接）
     var files = Array.from(e.clipboardData && e.clipboardData.files || []);
     var image = files.find(isWikiImageFile);
     if (!image || !state.wikiCur) return;
@@ -670,7 +681,7 @@ function wireWikiEditor() {
   doc.addEventListener('drop', function (e) {
     // 阻止浏览器把文件拖入只读正文解释成离开知识库并打开本地文件。
     if (Array.from(e.dataTransfer && e.dataTransfer.files || []).length) e.preventDefault();
-    if (wikiReadOnly() || doc.dataset.loading === '1') return;
+    if (wikiReadOnly() || doc.dataset.loading === '1' || wikiCmActive(doc)) return;
     var image = Array.from(e.dataTransfer && e.dataTransfer.files || []).find(isWikiImageFile);
     if (!image || !state.wikiCur) return;
     e.preventDefault();
@@ -689,7 +700,7 @@ function wireWikiEditor() {
   // 任务可直接勾选并进入编辑；只读和嵌入笔记中的任务始终不能改。
   doc.addEventListener('change', function (e) {
     var cb = e.target;
-    if (!cb || cb.type !== 'checkbox') return;
+    if (!cb || cb.type !== 'checkbox' || wikiCmActive(doc)) return;   // 验证版的勾选框自己改原文
     if (wikiReadOnly() || doc.dataset.loading === '1' || cb.closest && cb.closest('[data-embed-markdown]')) {
       cb.checked = typeof cb._wikiLockedChecked === 'boolean' ? cb._wikiLockedChecked : cb.defaultChecked; return;
     }
@@ -858,7 +869,8 @@ function isWikiEditingContext(context) { return !wikiReadOnly() && isWikiEditSes
 function syncWikiEditMode(doc) {
   if (!doc) return;
   var editing = doc.dataset.editing === '1', locked = wikiReadOnly(), unavailable = !state.wikiCur || doc.dataset.loading === '1';
-  doc.contentEditable = editing && !locked && doc.dataset.source !== '1' ? 'true' : 'false';
+  doc.contentEditable = editing && !locked && doc.dataset.source !== '1' && !wikiCmActive(doc) ? 'true' : 'false';
+  if (wikiCmActive(doc)) wikiCm.handle.setReadOnly(locked || unavailable);
   doc.setAttribute('aria-readonly', locked || unavailable ? 'true' : 'false');
   doc.style.cursor = locked ? 'default' : 'text';
   var source = $('#zq-src-ta'); if (source) source.readOnly = locked;
@@ -925,6 +937,7 @@ function restoreWikiView(doc, view) {
 }
 function enterWikiEdit() {
   var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || wikiReadOnly() || doc.dataset.editing === '1' || doc.dataset.loading === '1') return;
+  if (wikiCmEnabled()) { enterWikiCmEdit(doc, p, p.content || ''); return; }
   var view = captureWikiView(doc);
   wireWikiDrafts(doc);
   doc.dataset.editing = '1'; doc.dataset.source = '0'; doc.dataset.wikiEditSession = String(++wikiEditSession);
@@ -933,10 +946,76 @@ function enterWikiEdit() {
   doc.focus({ preventScroll: true });
   restoreWikiView(doc, view);
 }
+// ── 编辑内核验证版（第七十轮，docs/rounds/round-70.md） ─────────────────────────
+// localStorage「zq.wikiEditor」=「cm」时，点进编辑换成 CodeMirror 6 的实时预览（assets/wiki-cm.js）：编辑的就是 Markdown 原文，
+// 保存不经过 htmlToMarkdown（那一步会丢嵌套列表、代码块语言、表格对齐、硬换行）。默认关：每一处接入都是「开着才走」。
+var wikiCmModule = null, wikiCmLoading = null, wikiCm = null;
+function wikiCmEnabled() { try { return localStorage.getItem('zq.wikiEditor') === 'cm'; } catch (e) { return false; } }
+function wikiCmActive(doc) { return !!(wikiCm && doc && doc.dataset.editor === 'cm'); }
+function loadWikiCm() {
+  if (!wikiCmLoading) wikiCmLoading = loadModule('wiki-cm.js').then(function (mod) { wikiCmModule = mod; return mod; }, function (e) { wikiCmLoading = null; throw e; });
+  return wikiCmLoading;
+}
+function closeWikiCm(doc) {
+  if (wikiCm) { try { wikiCm.handle.destroy(); } catch (e) {} wikiCm = null; }
+  if (doc) delete doc.dataset.editor;
+}
+function enterWikiCmEdit(doc, p, markdown) {
+  if (!wikiCmModule) {   // 进页面时就开始加载；还没到就等它到了再进
+    loadWikiCm().then(function () { if (state.wikiCur === p && doc.dataset.editing !== '1') enterWikiCmEdit(doc, p, markdown); }, function (e) { toast(e.message, 'error'); });
+    return;
+  }
+  wireWikiDrafts(doc);
+  var scroll = doc.scrollTop;
+  doc.dataset.editing = '1'; doc.dataset.source = '0'; doc.dataset.editor = 'cm'; doc.dataset.wikiEditSession = String(++wikiEditSession);
+  doc.contentEditable = 'false';
+  doc.innerHTML = '<div class="zq-wiki-cm"></div>';
+  wikiCm = { page: p, handle: wikiCmModule.mountWikiEditor(doc.firstChild, {
+    markdown: markdown, readOnly: wikiReadOnly(),
+    titles: function () { return (state.wikiPages || []).map(function (x) { return x.title; }); },
+    onNavigate: function (title) { var target = (state.wikiPages || []).find(function (x) { return x.title === title; }); if (target) paintWikiDoc(target); else toast('还没有「' + title + '」这一页'); },
+    onChange: function () { doc.dispatchEvent(new Event('input', { bubbles: true })); }
+  }) };
+  showWikiActionBar();
+  doc.scrollTop = scroll;
+}
+/** 页面检查里的切换（桌面应用没有地址栏和开发者工具，要在这里切才试得到中文输入法） */
+function wikiEditorSwitchHtml() {
+  var on = wikiCmEnabled();
+  return '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--zq-border-soft);">编辑器：' + (on ? '验证版（CodeMirror）' : '现在的')
+    + '<br><button type="button" class="zq-btn-ghost" id="zq-wiki-editor-switch" style="height:26px;margin-top:6px;font-size:12px;">'
+    + (on ? '换回现在的编辑器' : '试试新编辑器（验证版）') + '</button></div>';
+}
+function wireWikiEditorSwitch(root) {
+  var button = $('#zq-wiki-editor-switch', root); if (!button) return;
+  button.onclick = function () {
+    var doc = $('#zq-doc');
+    if (doc && doc.dataset.editing === '1') return toast('先保存或取消这一页的编辑，再切换编辑器');
+    var on = !wikiCmEnabled();
+    try { if (on) localStorage.setItem('zq.wikiEditor', 'cm'); else localStorage.removeItem('zq.wikiEditor'); } catch (e) { return toast('这个浏览器不让存设置，切换不了', 'error'); }
+    if (on) loadWikiCm();
+    var box = button.parentNode; box.outerHTML = wikiEditorSwitchHtml(); wireWikiEditorSwitch(root);
+    toast(on ? '已换成验证版编辑器：点正文进入编辑，编辑的就是 Markdown 原文' : '已换回现在的编辑器');
+  };
+}
+function wikiCmToolbar(cmd) {
+  var handle = wikiCm.handle;
+  if (cmd === 'bold') handle.wrap('**');
+  else if (cmd === 'italic') handle.wrap('*');
+  else if (cmd === 'code') handle.wrap('`');
+  else if (cmd === 'math') handle.insert('\n$$\n\n$$\n');
+  else if (cmd === 'link' || cmd === 'ref') {
+    askText({ title: '插入链接', label: '链接地址', placeholder: 'https://…', okText: '插入' }).then(function (url) {
+      var href = url && wikiExternalUrl(url.trim());
+      if (href && wikiCm) handle.insert('[' + href + '](' + href + ')');
+    });
+  } else toast('验证版还没接这个按钮（' + cmd + '）');
+}
 function wikiToolbar(cmd) {
   if (!ensureWikiEditing()) return;
-  if (cmd === 'image') { chooseWikiImage(); return; }
   var doc = $('#zq-doc');
+  if (wikiCmActive(doc)) { wikiCmToolbar(cmd); return; }
+  if (cmd === 'image') { chooseWikiImage(); return; }
   var editContext = wikiEditingContext(doc);
   if (doc.dataset.source === '1' && cmd !== 'source') return;
   if (cmd === 'bold') document.execCommand('bold');
@@ -1013,6 +1092,7 @@ function markDuplicateTitle(doc, title) {
 }
 function toggleWikiSource() {
   var doc = $('#zq-doc'); if (!doc || !ensureWikiEditing()) return;
+  if (wikiCmActive(doc)) { toast('验证版编辑器里显示的就是 Markdown 原文：光标所在的地方露出语法'); return; }
   if (doc.dataset.source === '1') {
     var ta = $('#zq-src-ta'); var md = ta ? ta.value : '';
     var view = doc._wikiSourceView;
@@ -1071,7 +1151,7 @@ function removeWikiActionBar() { var b = document.getElementById('zq-wiki-action
 async function saveWikiEdit() {
   var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || doc.dataset.editing !== '1' || doc.dataset.loading === '1') return;
   var editContext = wikiEditingContext(doc);
-  var md = doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
+  var md = wikiCmActive(doc) ? wikiCm.handle.getMarkdown() : doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
   // 恢复的是一份旧版本上改的草稿，而这一页之后被改过：直接按旧版本存会被乐观锁挡住，而且每次都挡 —— 刷新重试也一样，
   // 草稿永远存不进去（第十五轮真浏览器里走出来的死胡同）。所以先明说，用户点了「替换」才按现在的版本存。
   if (p._draftBase != null && p.version != null && Number(p._draftBase) !== Number(p.version)) {

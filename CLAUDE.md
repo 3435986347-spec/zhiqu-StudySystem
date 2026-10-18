@@ -87,7 +87,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261017-wiki-open-now-prefetch`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261018-wiki-editor-spike`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -109,8 +109,7 @@ cd ../zhiqu-cli && npm test
 
 - **Spring 不认识的配置键不报错**：`spring.task.scheduling.enabled` 写在 27 个测试里，等于没写。写一个属性之前先确认它存在。
 - **有 `@Version` 的表不要「读整行 → 改 → `updateById`」**：中间有人动过这一行就写进 0 行，接口照样回成功；`updateById` 还会跳过 null（清空的字段写不进去）。只改自己那几列，并检查行数。
-- 请求线程里写一行「进行中」、做完再改终态的东西：要么挂心跳（`StreamLiveness`，由 `InterruptedWorkRecovery` 收拾），要么有租约。只看「是不是这个进程启动之前建的」不行（几个后端共用一个库）。
-- `SecurityContext` 不会传到异步线程：工具执行器显式传 `userId`。
+- 请求线程里写一行「进行中」、做完再改终态的东西：要么挂心跳（`StreamLiveness`，由 `InterruptedWorkRecovery` 收拾），要么有租约。只看「是不是这个进程启动之前建的」不行（几个后端共用一个库）。`SecurityContext` 不会传到异步线程：工具执行器显式传 `userId`。
 - **DeepSeek 不说就默认思考**：发给模型的每一处 OpenAI 兼容请求都要 `applyOpenAiReasoningOptions`（干活的轮传 `"OFF"`），新加一处会让 `ModelRequestThinkingTest` 红；写回答的输出上限走 `OutputLimits`（和命令行同一档、不收就降）。
 - 流式请求里的「启动就炸」其实炸在每一次请求里：装配窗口（`beginRun` 之后、各相位之前）要自己 try（记日志、`errorRun`、`failAssistantMessage`）。
 - 搬代码会让判据扫错文件，而扫错文件的判据看起来和通过一模一样：判据要读那条性质现在所在的文件。
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第六十七轮](docs/rounds/round-67.md) Wiki 只读模式、网址直接点击与 JSON 预览内部滚动
 - [第六十八轮](docs/rounds/round-68.md) 恢复点击编辑、可选只读开关、工具栏靠右与页面流畅度
 - [第六十九轮](docs/rounds/round-69.md) 命令行 TERM=dumb 的 15 个失败与 read_file 空行；Wiki 查看类弹窗先开后填、目录预取、健康检查 / 图谱的三个真错；仓库评测的 Docker 编排与不花钱的对照；锐评
+- [第七十轮](docs/rounds/round-70.md) 知识 Wiki 换编辑内核的验证：CodeMirror 6 实时预览（开关后面）——不改内容保存 0/14 → 14/14 逐字节一样、点进编辑快一倍；面板刷新时闪一下挤扁的内容
