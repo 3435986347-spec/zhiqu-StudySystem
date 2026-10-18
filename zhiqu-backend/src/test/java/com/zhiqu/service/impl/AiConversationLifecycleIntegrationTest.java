@@ -95,6 +95,8 @@ class AiConversationLifecycleIntegrationTest {
     private static final String EMPTY_WIKI_MARK = "（只回自述）";
     /** 第八遍 review：带这一句的非流式请求，假模型回两行正文（看草稿预览有没有被压成一行） */
     private static final String TWO_LINES_MARK = "（回两行）";
+    /** 第九遍 review：带这一句的非流式请求，假模型回两万行「已写入」（比存的上限长） */
+    private static final String LONG_CLAIM_MARK = "（回很长的自述）";
     private static final int LONG_REPLY_CHARS = 15_000;
     /** 最后一次改写调用的请求体；null 表示这一轮没有发生重试。 */
     private static volatile String lastRewriteRequestBody;
@@ -199,6 +201,9 @@ class AiConversationLifecycleIntegrationTest {
             }
             if (!streaming && requestBody.contains(TWO_LINES_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
                 content = "第一行正文\\n第二行正文";
+            }
+            if (!streaming && requestBody.contains(LONG_CLAIM_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
+                content = "已将以上内容写入知识库。\\n".repeat(20000);
             }
             String nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}";
             // 抽计划那一步：请求里带着 create_study_plan 工具、而且是 PLAN_REQUEST 那句话时，像真模型一样回一个工具调用（任务 + 例行计划都有）。
@@ -399,6 +404,8 @@ class AiConversationLifecycleIntegrationTest {
         Map<String, Object> curator = jdbcTemplate.queryForMap("SELECT status, public_summary FROM ai_agent_task WHERE run_id = ? AND agent_type = 'WIKI_CURATOR'", run);
         assertEquals("SKIPPED", curator.get("status"));
         assertTrue(String.valueOf(curator.get("public_summary")).contains("没有生成知识 Wiki 草稿"), "执行轨迹里要照实说：" + curator);
+        String notice = jdbcTemplate.queryForObject("SELECT notice FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, userId);
+        assertTrue(String.valueOf(notice).contains("没有生成知识 Wiki 草稿"), "第九遍 review：说明要跟着这条回答存下来（刷新之后也在），不能只弹一下：" + notice);
 
         Long control = createNotebook(userId, "流式有正文");   // 另一个 Notebook：同一个的话历史里带着上一句，假模型又回「已写入」
         Long before2 = latestRunId(userId, control);
@@ -417,6 +424,15 @@ class AiConversationLifecycleIntegrationTest {
         aiService.chat(userId, "把上面的存进知识库" + EMPTY_WIKI_MARK, modelId, false, "OFF", notebookId);
         assertEquals(before, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId),
                 "系统补的那句被当成了草稿正文");
+    }
+
+    /** 第九遍 review：回答很长时补的那句会被存的上限截掉 —— 先给回答让出位置再补 */
+    @Test
+    void theNoDraftNoteSurvivesAVeryLongReply() {
+        Long notebookId = createNotebook(userId, "很长的自述");
+        aiService.chat(userId, "把这次的结论写进知识库" + LONG_CLAIM_MARK, modelId, false, "OFF", notebookId);
+        String saved = jdbcTemplate.queryForObject("SELECT content FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, userId);
+        assertTrue(saved.endsWith(com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE), "补的那句被截掉了：…" + saved.substring(Math.max(0, saved.length() - 80)));
     }
 
     /** 第八遍 review：回答里的「草稿摘要」原来压成一行（多行的正文、开头的代码块都挤在一起） */

@@ -44,7 +44,18 @@ class WikiDraftsTest {
         assertTrue(spaces.startsWith("abc\n\n> 草稿只存了前 3 字"), "说的字数要是去掉结尾空白之后真正留下的：" + spaces);
         String text = "说明\n```js\ncode\n```\n后文后文后文";
         String half = WikiDrafts.body(text, null, text.indexOf("```\n后文") + 2).text();
-        assertTrue(half.startsWith("说明\n```js\ncode\n```\n\n> 草稿只存了前"), "截在收尾那一行中间，留下了半行「``」：" + half);
+        assertTrue(half.startsWith("说明\n```js\ncode\n```\n\n> 草稿只存了前 13 字"), "截在收尾那一行中间，留下了半行「``」、或字数数的不是真正留下的：" + half);
+    }
+
+    @Test
+    @DisplayName("第九遍 review：在整行处截 —— 块里本来就有的一行 ``` 不被当成半个收尾删掉；摘录同一套截法")
+    void cutsAtLineBoundaries() {
+        String doc = "````md\n```js\ncode\n```\nmore more more more";
+        String kept = WikiDrafts.body(doc, null, doc.indexOf("\nmore") + 3).text();
+        assertTrue(kept.startsWith("````md\n```js\ncode\n```\n````\n\n> 草稿只存了前"), "块里那一行 ``` 被删了：" + kept);
+        String excerpt = WikiDrafts.excerpt("第一行\n" + "a".repeat(9) + "👨‍👩‍👧" + "b".repeat(30), 14);
+        assertEquals("第一行\n" + "a".repeat(9) + "\n…", excerpt, "摘录：不切开 emoji、截了另起一行写「…」");
+        assertEquals("短的", WikiDrafts.excerpt("短的", 14));
     }
 
     @Test

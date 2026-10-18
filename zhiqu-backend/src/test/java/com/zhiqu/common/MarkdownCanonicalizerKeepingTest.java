@@ -91,6 +91,8 @@ class MarkdownCanonicalizerKeepingTest {
     void theNoDraftNoteIsNotContent() {
         assertEquals("", MarkdownCanonicalizer.cleanKeeping("已将以上内容写入知识库。\n\n" + MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE, null));
         assertEquals("正文", MarkdownCanonicalizer.cleanKeeping("正文\n" + MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE, null));
+        assertEquals("正文", MarkdownCanonicalizer.cleanKeeping("正文\n> （没有生成知识 Wiki 草稿：这次的回答里没有可以存进...", null),
+                "第九遍 review：被截短的、被引用的那一句也认得");
     }
 
     @Test

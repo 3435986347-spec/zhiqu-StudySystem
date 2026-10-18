@@ -54,20 +54,35 @@ public final class WikiDrafts {
 
     /**
      * 截断要说出来（第七十四轮第七遍 review）：原来 limitRaw 悄悄在后面加「...」，截在代码块中间时后面整页都成了代码、截在 emoji 中间是半个字。
-     * 现在不截半个字、开着的代码块补上收尾、末尾写明只存了多少。
+     * 现在按 {@link #cut} 截、开着的代码块补上收尾、末尾写明只存了多少（按字形数，数的是真正留下的）。
      */
     private static String truncate(String text, int maxChars) {
         if (text.length() <= maxChars) {
             return text;
         }
-        // 按字形切：一个 emoji（含 ZWJ 组合、国旗、肤色、变体选择符）、一个带组合符号的字都不切开（第八遍 review：原来只防了半个代理对）
-        java.util.regex.Matcher grapheme = GRAPHEME.matcher(text);
-        int cut = 0;
-        while (grapheme.find() && grapheme.end() <= maxChars) cut = grapheme.end();
-        String kept = text.substring(0, cut).stripTrailing();
-        // 说的是「字」：按字形数（一面国旗、一个 emoji 是一个字），不按 UTF-16 的长度；而且是去掉结尾空白之后真正留下的
+        String kept = cut(text, maxChars);
         return MarkdownCanonicalizer.closeOpenFence(kept)
                 + "\n\n> 草稿只存了前 " + graphemes(kept) + " 字（原文 " + graphemes(text) + " 字），后面的没有存进来。";
+    }
+
+    /** 给人看的一段摘录（AI 助手回答里的「草稿摘要」）：和草稿同一套截法，截了就在后面另起一行写「…」 */
+    public static String excerpt(String text, int maxChars) {
+        String value = text == null ? "" : text;
+        return value.length() <= maxChars ? value : MarkdownCanonicalizer.closeOpenFence(cut(value, maxChars)) + "\n…";
+    }
+
+    /**
+     * 截到 {@code maxChars} 以内：能在整行处截就在整行处截（最后一个换行不早于上限的八成）—— 半行的表格、半个链接、
+     * 截在收尾那一行中间留下的「``」都不会有（第九遍 review）；一行特别长时按字形截：一个 emoji（含 ZWJ 组合、国旗、肤色）、
+     * 一个带组合符号的字都不切开（第八遍 review）。结尾的空白去掉。
+     */
+    private static String cut(String text, int maxChars) {
+        java.util.regex.Matcher grapheme = GRAPHEME.matcher(text);
+        int end = 0;
+        while (grapheme.find() && grapheme.end() <= maxChars) end = grapheme.end();
+        int lineEnd = text.lastIndexOf('\n', end);
+        if (lineEnd >= 0 && lineEnd >= end * 0.8) end = lineEnd;
+        return text.substring(0, end).stripTrailing();
     }
 
     private static long graphemes(String text) {
