@@ -60,10 +60,21 @@ public final class WikiDrafts {
         if (text.length() <= maxChars) {
             return text;
         }
-        int cut = Character.isHighSurrogate(text.charAt(maxChars - 1)) ? maxChars - 1 : maxChars;
-        return MarkdownCanonicalizer.closeOpenFence(text.substring(0, cut).stripTrailing())
-                + "\n\n> 草稿只存了前 " + cut + " 字（原文 " + text.length() + " 字），后面的没有存进来。";
+        // 按字形切：一个 emoji（含 ZWJ 组合、国旗、肤色、变体选择符）、一个带组合符号的字都不切开（第八遍 review：原来只防了半个代理对）
+        java.util.regex.Matcher grapheme = GRAPHEME.matcher(text);
+        int cut = 0;
+        while (grapheme.find() && grapheme.end() <= maxChars) cut = grapheme.end();
+        String kept = text.substring(0, cut).stripTrailing();
+        // 说的是「字」：按字形数（一面国旗、一个 emoji 是一个字），不按 UTF-16 的长度；而且是去掉结尾空白之后真正留下的
+        return MarkdownCanonicalizer.closeOpenFence(kept)
+                + "\n\n> 草稿只存了前 " + graphemes(kept) + " 字（原文 " + graphemes(text) + " 字），后面的没有存进来。";
     }
+
+    private static long graphemes(String text) {
+        return GRAPHEME.matcher(text).results().count();
+    }
+
+    private static final java.util.regex.Pattern GRAPHEME = java.util.regex.Pattern.compile("\\X");
 
     /** 一条待合入的写入草稿（UPSERT、PENDING、已洗过）；目标页、基线、来源这些由调用方接着设 */
     public static UserKnowledgeRevision pending(Long userId, Long patchSetId, String title, Body body, SensitiveCryptoService crypto) {

@@ -496,7 +496,7 @@ public class AiServiceImpl implements AiService {
                     liveFinalReply = buildWikiDraftReply(revision, cryptoService.decrypt(revision.getEncryptedContent()));
                 } else {
                     // 回答洗完是空的（模型只说了一句「已写入知识库」）：没有建草稿，照实说 —— 不让那句话冒充已经存上了（第七十四轮第七遍 review）
-                    liveFinalReply = reply + "\n\n（没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）";
+                    liveFinalReply = reply + "\n\n" + com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE;
                 }
             }
             AiMessage liveAssistantMessage = saveChatMessage(
@@ -2112,6 +2112,13 @@ public class AiServiceImpl implements AiService {
                 s.trace.skipTask(ctx, ctx.task("WIKI_CURATOR"), "未确认生成待合入变更，请在知识 Wiki 面板核实或补充内容");
                 return;
             }
+            // 回答洗完是空的（模型只说了一句「已写入知识库」）：不造工件 —— 造了确认时也会被拒、工件永远停在草稿；
+            // 照实说：执行轨迹里写明、页面弹一句（第七十四轮第八遍 review：上一遍只改了网页不走的非流式那一路）
+            if (com.zhiqu.service.knowledge.WikiDrafts.body(s.finalReply, null, Integer.MAX_VALUE) == null) {
+                s.trace.skipTask(ctx, ctx.task("WIKI_CURATOR"), com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE);
+                ctx.emit("message.notice", Map.of("level", "warn", "message", com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE));
+                return;
+            }
             Map<String, Object> wikiArtifactContent = new LinkedHashMap<>();
             wikiArtifactContent.put("title", inferWikiDraftTitle(s.limitedMessage, s.finalReply));
             wikiArtifactContent.put("content", s.finalReply);
@@ -3417,7 +3424,8 @@ public class AiServiceImpl implements AiService {
     }
 
     private String buildWikiDraftReply(UserKnowledgeRevision revision, String content) {
-        String preview = limitText(content, 700);   // content 就是存进草稿的那一份，不再过一遍旧的清洗（它会剥掉开头的代码围栏，预览和草稿就不一样了）
+        // content 就是存进草稿的那一份：不再过一遍旧的清洗（它会剥掉开头的代码围栏），也不压成一行（压成一行的 ```js 吞掉整段预览）
+        String preview = com.zhiqu.common.MarkdownCanonicalizer.closeOpenFence(limitRawMarkdown(content, 700));
         return """
                 我已经把这段内容整理成一条知识 Wiki 待确认草稿：「%s」。
 

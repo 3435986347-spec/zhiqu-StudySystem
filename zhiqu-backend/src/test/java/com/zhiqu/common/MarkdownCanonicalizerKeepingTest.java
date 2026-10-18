@@ -87,6 +87,13 @@ class MarkdownCanonicalizerKeepingTest {
     }
 
     @Test
+    @DisplayName("第八遍 review：系统补的「没有生成知识 Wiki 草稿」那一句不是正文")
+    void theNoDraftNoteIsNotContent() {
+        assertEquals("", MarkdownCanonicalizer.cleanKeeping("已将以上内容写入知识库。\n\n" + MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE, null));
+        assertEquals("正文", MarkdownCanonicalizer.cleanKeeping("正文\n" + MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE, null));
+    }
+
+    @Test
     @DisplayName("第五遍 review：成对照 CommonMark —— 更长的反引号、~~~ 都认")
     void fencesFollowCommonMark() {
         assertEquals("正文\n```py\nx\n````", MarkdownCanonicalizer.cleanKeeping("```markdown\n正文\n```py\nx\n````\n```", null), "里面的块用四个反引号收尾");

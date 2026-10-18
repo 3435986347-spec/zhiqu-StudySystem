@@ -93,6 +93,8 @@ class AiConversationLifecycleIntegrationTest {
     private static final String LONG_REPLY_MARK = "请写一篇很长很长的回答";
     /** 第七十四轮第六遍 review：带这一句的非流式请求，假模型只回一句「已写入知识库」 */
     private static final String EMPTY_WIKI_MARK = "（只回自述）";
+    /** 第八遍 review：带这一句的非流式请求，假模型回两行正文（看草稿预览有没有被压成一行） */
+    private static final String TWO_LINES_MARK = "（回两行）";
     private static final int LONG_REPLY_CHARS = 15_000;
     /** 最后一次改写调用的请求体；null 表示这一轮没有发生重试。 */
     private static volatile String lastRewriteRequestBody;
@@ -181,6 +183,9 @@ class AiConversationLifecycleIntegrationTest {
                 lastStreamingRequestBody = requestBody;
             }
             String streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n";
+            if (streaming && requestBody.contains(EMPTY_WIKI_MARK)) {
+                streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"已将以上内容写入知识库。\"}}]}\n\ndata: [DONE]\n\n";
+            }
             // 只有专门的那条判据会发这句话（新建的 Notebook，没有历史会回显它）
             if (streaming && requestBody.contains(LONG_REPLY_MARK)) {
                 StringBuilder sse = new StringBuilder();
@@ -191,6 +196,9 @@ class AiConversationLifecycleIntegrationTest {
             }
             if (!streaming && requestBody.contains(EMPTY_WIKI_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
                 content = "已将以上内容写入知识库。";
+            }
+            if (!streaming && requestBody.contains(TWO_LINES_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
+                content = "第一行正文\\n第二行正文";
             }
             String nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}";
             // 抽计划那一步：请求里带着 create_study_plan 工具、而且是 PLAN_REQUEST 那句话时，像真模型一样回一个工具调用（任务 + 例行计划都有）。
@@ -372,6 +380,51 @@ class AiConversationLifecycleIntegrationTest {
         aiWorkspaceService.confirmArtifact(userId, first, null);
         aiWorkspaceService.confirmArtifact(userId, second, null);   // 原来先查空：这里抛「没有正文」，工件永远停在 DRAFT
         assertEquals("CONFIRMED", jdbcTemplate.queryForObject("SELECT status FROM ai_agent_artifact WHERE id = ?", String.class, second));
+    }
+
+    /** 第八遍 review：上一遍那句「没有生成」只加在网页不走的非流式那一路；流式这一路（WIKI_CURATOR）原来照样拿那句话造工件，确认时被拒、永远停在草稿 */
+    @Test
+    void theStreamingCuratorMakesNoDraftFromAWriteClaimAndSaysSo() throws Exception {
+        // 不支持工具调用的模型（这里用 SENSENOVA，线上格式和 OpenAI 一样）：没有 Wiki 工具循环，兜底的 WIKI_CURATOR 才会拿回答造工件
+        String apiUrl = "http://127.0.0.1:" + fakeModelServer.getAddress().getPort() + "/v1/chat/completions";
+        Long noTools = ((Number) aiService.saveModel(userId, null, Map.of("providerType", "SENSENOVA", "displayName", "no-tools",
+                "apiUrl", apiUrl, "apiKey", "sk-test", "modelName", "fake-model")).get("id")).longValue();
+        Long notebookId = createNotebook(userId, "流式只回自述");
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "把这次的结论写进知识库" + EMPTY_WIKI_MARK, noTools, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        Long run = latestRunId(userId, notebookId);
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'WIKI_DRAFT'", Integer.class, run),
+                "回答只有一句「已写入」，不该造 Wiki 草稿工件");
+        Map<String, Object> curator = jdbcTemplate.queryForMap("SELECT status, public_summary FROM ai_agent_task WHERE run_id = ? AND agent_type = 'WIKI_CURATOR'", run);
+        assertEquals("SKIPPED", curator.get("status"));
+        assertTrue(String.valueOf(curator.get("public_summary")).contains("没有生成知识 Wiki 草稿"), "执行轨迹里要照实说：" + curator);
+
+        Long control = createNotebook(userId, "流式有正文");   // 另一个 Notebook：同一个的话历史里带着上一句，假模型又回「已写入」
+        Long before2 = latestRunId(userId, control);
+        aiService.streamChat(userId, "把这段写进知识库", noTools, false, "OFF", control, "AUTO", Map.of());
+        awaitRunAfter(userId, control, before2);
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'WIKI_DRAFT'", Integer.class,
+                latestRunId(userId, control)), "对照：回答有正文时照常造工件");
+    }
+
+    /** 第八遍 review：上一轮补的「没有生成」那句存进了对话；这一轮再说「存进知识库」、模型又只回一句「已写入」时，不能把那句当草稿正文 */
+    @Test
+    void theNoDraftNoteFromTheLastTurnIsNotTakenAsDraftContent() {
+        Long notebookId = createNotebook(userId, "两轮都只回自述");
+        Integer before = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId);
+        aiService.chat(userId, "把这次的结论写进知识库" + EMPTY_WIKI_MARK, modelId, false, "OFF", notebookId);
+        aiService.chat(userId, "把上面的存进知识库" + EMPTY_WIKI_MARK, modelId, false, "OFF", notebookId);
+        assertEquals(before, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId),
+                "系统补的那句被当成了草稿正文");
+    }
+
+    /** 第八遍 review：回答里的「草稿摘要」原来压成一行（多行的正文、开头的代码块都挤在一起） */
+    @Test
+    void theDraftPreviewInTheReplyKeepsItsLines() {
+        Long notebookId = createNotebook(userId, "两行正文");
+        Map<String, Object> result = aiService.chat(userId, "把这段写进知识库" + TWO_LINES_MARK, modelId, false, "OFF", notebookId);
+        assertTrue(String.valueOf(result).contains("第一行正文\n第二行正文"), "预览被压成了一行：" + result);
     }
 
     @Test

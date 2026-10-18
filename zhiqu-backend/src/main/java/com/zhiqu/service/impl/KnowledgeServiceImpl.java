@@ -1651,10 +1651,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
      */
     private String draftContentToApply(UserKnowledgeRevision revision, UserKnowledgePage page) {
         String stored = cryptoService.decrypt(revision.getEncryptedContent());
-        if (revision.getContentCleaned() != null || "DELETE".equalsIgnoreCase(revision.getActionType())) {
+        if (!legacyDraftToClean(revision)) {
             return stored;
         }
+        // 没绑目标的旧草稿合不到已有页上（assertRevisionTargetUnchanged 先拒了「缺少可靠基准版本」），所以这里的 page 就是草稿自己绑定的那一页
         return MarkdownCanonicalizer.cleanKeeping(stored, page == null ? null : cryptoService.decrypt(page.getEncryptedContent()));
+    }
+
+    /** 要补洗的旧草稿：没有「洗过」标记、还待合入、不是删除（已处理的照存的样子给历史看） */
+    private static boolean legacyDraftToClean(UserKnowledgeRevision revision) {
+        return revision.getContentCleaned() == null && "PENDING".equals(revision.getStatus()) && !"DELETE".equalsIgnoreCase(revision.getActionType());
     }
 
     private Map<String, Object> revisionRow(UserKnowledgeRevision revision) {
@@ -1663,7 +1669,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         row.put("pageId", revision.getPageId());
         row.put("actionType", revision.getActionType());
         row.put("title", revision.getTitle());
-        UserKnowledgePage target = revision.getContentCleaned() != null || revision.getPageId() == null ? null
+        UserKnowledgePage target = !legacyDraftToClean(revision) || revision.getPageId() == null ? null
                 : pageMapper.selectOne(new LambdaQueryWrapper<UserKnowledgePage>()
                         .eq(UserKnowledgePage::getUserId, revision.getUserId()).eq(UserKnowledgePage::getId, revision.getPageId()));
         row.put("content", draftContentToApply(revision, target));

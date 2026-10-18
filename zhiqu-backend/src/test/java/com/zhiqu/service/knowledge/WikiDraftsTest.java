@@ -31,6 +31,23 @@ class WikiDraftsTest {
     }
 
     @Test
+    @DisplayName("第八遍 review：ZWJ 组合的 emoji、国旗不切开；说的字数按码点、按真正留下的；截在收尾那一行中间不留半行")
+    void graphemesCountsAndHalfClosers() {
+        String family = "👨‍👩‍👧";   // 三个人用 ZWJ 连起来，UTF-16 里 8 个单元
+        String cut = WikiDrafts.body("a".repeat(5) + family + "b".repeat(20), null, 8).text();
+        assertTrue(cut.startsWith("aaaaa\n\n> 草稿只存了前 5 字"), "ZWJ 组合被切开了：" + cut);
+        String halfFlag = WikiDrafts.body("a".repeat(5) + "🇨🇳" + "b".repeat(20), null, 8).text();
+        assertTrue(halfFlag.startsWith("aaaaa\n\n> 草稿只存了前 5 字"), "国旗被切开了（放不下整面就不放）：" + halfFlag);
+        String flag = WikiDrafts.body("a".repeat(5) + "🇨🇳" + "b".repeat(20), null, 9).text();
+        assertTrue(flag.startsWith("aaaaa🇨🇳\n\n> 草稿只存了前 6 字（原文 26 字）"), "字数要按字形数（一面国旗是一个字），不按 UTF-16 的长度：" + flag);
+        String spaces = WikiDrafts.body("abc" + " ".repeat(10) + "d".repeat(20), null, 8).text();
+        assertTrue(spaces.startsWith("abc\n\n> 草稿只存了前 3 字"), "说的字数要是去掉结尾空白之后真正留下的：" + spaces);
+        String text = "说明\n```js\ncode\n```\n后文后文后文";
+        String half = WikiDrafts.body(text, null, text.indexOf("```\n后文") + 2).text();
+        assertTrue(half.startsWith("说明\n```js\ncode\n```\n\n> 草稿只存了前"), "截在收尾那一行中间，留下了半行「``」：" + half);
+    }
+
+    @Test
     @DisplayName("require：洗完是空的当场说出来；删除草稿的说明洗过照样存（可以是空的），标成 DELETE")
     void requireAndDeletion() {
         RuntimeException empty = assertThrows(RuntimeException.class, () -> WikiDrafts.require("已将以上内容写入知识库。", null, 5000, "某页"));

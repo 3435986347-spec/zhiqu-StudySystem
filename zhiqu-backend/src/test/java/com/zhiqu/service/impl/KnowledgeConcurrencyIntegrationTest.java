@@ -447,6 +447,11 @@ class KnowledgeConcurrencyIntegrationTest {
         assertEquals("# 旧\n正文 改\n", preview, "第七遍 review：确认框里看到的就是要写进去的（旧草稿的预览原来是没洗过的原文）");
         knowledgeService.applyPatchSet(userId, numberLong(legacy.get("id")));
         assertEquals("# 旧\n正文 改\n", String.valueOf(knowledgeService.detail(userId, seen.pageId()).get("content")), "没有「洗过」标记的旧草稿合入时没补洗");
+        String history = knowledgeService.listRevisions(userId, "APPROVED").stream()
+                .filter(r -> String.valueOf(r.get("pageId")).equals(String.valueOf(seen.pageId())))
+                .map(r -> String.valueOf(r.get("content"))).findFirst().orElse("没找到");
+        assertEquals(raw, history, "第八遍 review：已经处理过的旧草稿照存的样子给历史看，不再拿现在的页去洗");
+
 
         createPage("新草稿", "正文\n");
         SnapshotView fresh = knowledgeService.findPageSnapshotByTitle(userId, "新草稿");
@@ -970,6 +975,11 @@ class KnowledgeConcurrencyIntegrationTest {
         private String decrypt(String stored) throws Exception {
             Object crypto = context.getBean(Class.forName("com.zhiqu.service.privacy.SensitiveCryptoService"));
             return (String) crypto.getClass().getMethod("decrypt", String.class).invoke(crypto, stored);
+        }
+
+        @SuppressWarnings("unchecked")
+        private List<Map<String, Object>> listRevisions(Long userId, String status) {
+            return (List<Map<String, Object>>) invoke("listRevisions", new Class<?>[]{Long.class, String.class}, userId, status);
         }
 
         @SuppressWarnings("unchecked")

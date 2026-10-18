@@ -22,6 +22,12 @@ public final class MarkdownCanonicalizer {
     }
 
     /**
+     * 回答里说「没有生成 Wiki 草稿」的那一句（第七十四轮第七、八遍 review）：是系统补的、不是正文 —— 它会存进对话，
+     * 下一轮「把上面的存进知识库」时不能被当成草稿正文（{@link #cleanKeeping} 去掉它；每一条草稿都过这一道）。
+     */
+    public static final String NO_WIKI_DRAFT_NOTE = "（没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）";
+
+    /**
      * 归一换行、剥离整体代码围栏、丢弃空标题行与「已写入 Wiki」这类模型自述行。
      *
      * <p>丢弃自述行是有意的：模型经常在正文末尾附一句"已将内容写入知识库"，那是对话内容
@@ -83,7 +89,7 @@ public final class MarkdownCanonicalizer {
     private static String withoutModelLines(String text, java.util.Set<String> baseLines) {
         List<String> lines = new ArrayList<>();
         for (String line : text.split("\n")) {
-            if (baseLines.contains(line) || !modelOnlyLine(line)) {
+            if (baseLines.contains(line) || !modelOnlyLine(line) && !line.strip().equals(NO_WIKI_DRAFT_NOTE)) {
                 lines.add(line);
             }
         }
@@ -129,10 +135,20 @@ public final class MarkdownCanonicalizer {
         return openFence(text) == null;
     }
 
-    /** 截断之后还开着的代码块补一道收尾（WikiDrafts 截草稿时用：截在代码块中间的话，后面整页都成了代码） */
+    /**
+     * 截断之后还开着的代码块补一道收尾（WikiDrafts 截草稿时用：截在代码块中间的话，后面整页都成了代码）。
+     * 截在收尾那一行中间（只剩「``」）时先去掉那半行，不然它成了代码块里多出来的一行（第八遍 review）。
+     */
     public static String closeOpenFence(String text) {
         String open = openFence(text);
-        return open == null ? text : text + "\n" + open;
+        if (open == null) {
+            return text;
+        }
+        int lastBreak = text.lastIndexOf('\n');
+        String lastLine = text.substring(lastBreak + 1).strip();
+        boolean partialCloser = !lastLine.isEmpty() && lastLine.length() < open.length() && lastLine.chars().allMatch(c -> c == open.charAt(0));
+        String kept = partialCloser ? text.substring(0, Math.max(lastBreak, 0)) : text;
+        return kept + "\n" + open;
     }
 
     /** 这段文字结尾时还开着的那个代码块的收尾围栏（``` / ~~~ 之类、和开头一样长），没有开着的就是 null */
