@@ -99,6 +99,8 @@ class AiConversationLifecycleIntegrationTest {
     private static final String LENGTH_MARK = "（写到上限）";
     /** 第十三遍 review：带这一句的非流式请求，假模型回第七到十遍那几版存下来的样子 —— 「已写入」后面跟着拼进正文的那句说明（模型转述时加了「> 」） */
     private static final String LEGACY_NOTE_MARK = "（回旧版说明）";
+    /** 第十四遍 review：带这一句的流式请求，假模型回一段真正文、后面跟着旧版那句说明 */
+    private static final String LEGACY_WITH_BODY_MARK = "（正文加旧版说明）";
     private static final int LONG_REPLY_CHARS = 15_000;
     /** 最后一次改写调用的请求体；null 表示这一轮没有发生重试。 */
     private static volatile String lastRewriteRequestBody;
@@ -190,6 +192,12 @@ class AiConversationLifecycleIntegrationTest {
             if (streaming && requestBody.contains(EMPTY_WIKI_MARK)) {
                 streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"已将以上内容写入知识库。\"}" + (requestBody.contains(LENGTH_MARK) ? ",\"finish_reason\":\"length\"" : "")
                         + "}]}\n\ndata: [DONE]\n\n";
+            }
+            if (streaming && requestBody.contains(LEGACY_WITH_BODY_MARK)) {
+                streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"# 周会结论\\n下周三前交初稿。\\n\\n> （没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）\"}}]}\n\ndata: [DONE]\n\n";
+            }
+            if (streaming && requestBody.contains(LEGACY_NOTE_MARK)) {
+                streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"已将以上内容写入知识库。\\n\\n> （没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）\"}}]}\n\ndata: [DONE]\n\n";
             }
             // 只有专门的那条判据会发这句话（新建的 Notebook，没有历史会回显它）
             if (streaming && requestBody.contains(LONG_REPLY_MARK)) {
@@ -402,10 +410,7 @@ class AiConversationLifecycleIntegrationTest {
     /** 第八遍 review：上一遍那句「没有生成」只加在网页不走的非流式那一路；流式这一路（WIKI_CURATOR）原来照样拿那句话造工件，确认时被拒、永远停在草稿 */
     @Test
     void theStreamingCuratorMakesNoDraftFromAWriteClaimAndSaysSo() throws Exception {
-        // 不支持工具调用的模型（这里用 SENSENOVA，线上格式和 OpenAI 一样）：没有 Wiki 工具循环，兜底的 WIKI_CURATOR 才会拿回答造工件
-        String apiUrl = "http://127.0.0.1:" + fakeModelServer.getAddress().getPort() + "/v1/chat/completions";
-        Long noTools = ((Number) aiService.saveModel(userId, null, Map.of("providerType", "SENSENOVA", "displayName", "no-tools",
-                "apiUrl", apiUrl, "apiKey", "sk-test", "modelName", "fake-model")).get("id")).longValue();
+        Long noTools = noToolsModel();
         Long notebookId = createNotebook(userId, "流式只回自述");
         Long before = latestRunId(userId, notebookId);
         aiService.streamChat(userId, "把这次的结论写进知识库" + EMPTY_WIKI_MARK, noTools, false, "OFF", notebookId, "AUTO", Map.of());
@@ -465,6 +470,35 @@ class AiConversationLifecycleIntegrationTest {
         aiService.chat(userId, "把上面的存进知识库" + LEGACY_NOTE_MARK, modelId, false, "OFF", notebookId);
         assertEquals(before, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId),
                 "上一条回答里那句说明被当成了草稿正文");
+    }
+
+    /** 第十四遍 review：上一遍只在非流式那一路去掉旧版那句；网页走的流式那一路（WIKI_CURATOR）拿这一轮的回答造工件，照样把它当了正文 */
+    @Test
+    void theStreamingCuratorDropsTheLegacyNoDraftSentenceToo() throws Exception {
+        Long noTools = noToolsModel();
+        Long notebookId = createNotebook(userId, "流式旧版说明");
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, "把这次的结论写进知识库" + LEGACY_NOTE_MARK, noTools, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        String stored = jdbcTemplate.queryForObject("SELECT content FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, userId);
+        assertTrue(stored.contains("> （没有生成知识 Wiki 草稿"), "这条判据的前提：这一轮的回答带着旧版的那句说明：" + stored);
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'WIKI_DRAFT'", Integer.class,
+                latestRunId(userId, notebookId)), "流式那一路：回答里那句说明被当成了草稿正文，造了 Wiki 草稿工件");
+
+        Long withBody = createNotebook(userId, "流式正文加旧版说明");
+        Long before2 = latestRunId(userId, withBody);
+        aiService.streamChat(userId, "把这次的结论写进知识库" + LEGACY_WITH_BODY_MARK, noTools, false, "OFF", withBody, "AUTO", Map.of());
+        awaitRunAfter(userId, withBody, before2);
+        String artifact = jdbcTemplate.queryForObject("SELECT content_json FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'WIKI_DRAFT'", String.class,
+                latestRunId(userId, withBody));
+        assertTrue(artifact.contains("下周三前交初稿") && !artifact.contains("没有生成知识 Wiki 草稿"), "有正文时造工件，但那句说明不跟着进去：" + artifact);
+    }
+
+    /** 不支持工具调用的模型（SENSENOVA，线上格式和 OpenAI 一样）：没有 Wiki 工具循环，兜底的 WIKI_CURATOR 才会拿回答造工件 */
+    private Long noToolsModel() {
+        String apiUrl = "http://127.0.0.1:" + fakeModelServer.getAddress().getPort() + "/v1/chat/completions";
+        return ((Number) aiService.saveModel(userId, null, Map.of("providerType", "SENSENOVA", "displayName", "no-tools",
+                "apiUrl", apiUrl, "apiKey", "sk-test", "modelName", "fake-model")).get("id")).longValue();
     }
 
     /** 第八遍 review：回答里的「草稿摘要」原来压成一行（多行的正文、开头的代码块都挤在一起） */

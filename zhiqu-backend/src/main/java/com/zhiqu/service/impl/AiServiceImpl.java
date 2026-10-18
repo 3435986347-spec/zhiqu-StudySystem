@@ -136,7 +136,7 @@ public class AiServiceImpl implements AiService {
     static final String NO_WIKI_DRAFT_NOTICE = "没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。";
     /**
      * 这条分支上第七到十遍的几版把上面那句（带全角括号）拼进了回答正文，存下来的消息里还有它，模型转述时还可能加上「> 」（第十二、十三遍 review）：
-     * 下一轮「把上面的存进知识库」从那条消息里取草稿正文时先去掉这一行。只在取正文这一处去 —— 放进共用的清洗时，
+     * 下一轮「把上面的存进知识库」从那条消息里取草稿正文时先去掉这一行（两条路都去：非流式取这一轮和上一条回答，流式的 WIKI_CURATOR 取这一轮的）。只在取正文这一处去 —— 放进共用的清洗时，
      * 别的草稿里写着这句话的正文也被删了（第十二遍那版），只认一字不差的又漏了被转述、被截短的。
      */
     private static final java.util.regex.Pattern LEGACY_NO_DRAFT_LINE = java.util.regex.Pattern.compile("(?m)^[>\\s]*（没有生成知识 Wiki 草稿.*$\\n?");
@@ -2136,7 +2136,8 @@ public class AiServiceImpl implements AiService {
             }
             // 回答洗完是空的（模型只说了一句「已写入知识库」）：不造工件 —— 造了确认时也会被拒、工件永远停在草稿；
             // 照实说：执行轨迹里写明、页面弹一句（第七十四轮第八遍 review：上一遍只改了网页不走的非流式那一路）
-            if (com.zhiqu.service.knowledge.WikiDrafts.body(s.finalReply, null, Integer.MAX_VALUE) == null) {
+            String draftSource = withoutLegacyNoDraftLine(s.finalReply);   // 和非流式那一路取正文同一个规矩（第十四遍 review）
+            if (com.zhiqu.service.knowledge.WikiDrafts.body(draftSource, null, Integer.MAX_VALUE) == null) {
                 String note = NO_WIKI_DRAFT_NOTICE;
                 s.trace.skipTask(ctx, ctx.task("WIKI_CURATOR"), note);
                 // 跟着这条回答存下来（第九遍 review：上一版只弹一下提示，刷新之后那句「已写入」照样站着）：回答底下的说明，done 事件也带着
@@ -2153,7 +2154,7 @@ public class AiServiceImpl implements AiService {
             }
             Map<String, Object> wikiArtifactContent = new LinkedHashMap<>();
             wikiArtifactContent.put("title", inferWikiDraftTitle(s.limitedMessage, s.finalReply));
-            wikiArtifactContent.put("content", s.finalReply);
+            wikiArtifactContent.put("content", draftSource);
             AiAgentStep wikiStep = s.plannerStep != null ? s.plannerStep : s.finalWriterStep;
             AiAgentTask wikiTask = ctx.task("WIKI_CURATOR");
             if (wikiTask != null && !"DONE".equals(wikiTask.getStatus())) {
