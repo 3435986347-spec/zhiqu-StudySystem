@@ -87,10 +87,10 @@ class MarkdownCanonicalizerKeepingTest {
     }
 
     @Test
-    @DisplayName("第十二遍 review：前几版拼进回答正文的那一句（库里可能还有）不当草稿正文；只是提到这几个字的正文照留")
-    void theLegacyNoDraftLineIsNotContent() {
-        assertEquals("", MarkdownCanonicalizer.cleanKeeping("已将以上内容写入知识库。\n\n（没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）", null));
-        assertEquals("# 为什么提示没有生成知识 Wiki 草稿", MarkdownCanonicalizer.cleanKeeping("# 为什么提示没有生成知识 Wiki 草稿", null));
+    @DisplayName("第十三遍 review：共用的清洗不认「没有生成知识 Wiki 草稿」那一句 —— 别的草稿里写着这句话是正文（旧消息里的那一行由 AI 助手取正文时去掉）")
+    void thatSentenceElsewhereIsKept() {
+        String page = "# 排查记录\n\n用户看到的提示：\n\n（没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）\n\n原因是模型只回了一句确认。";
+        assertEquals(page, MarkdownCanonicalizer.cleanKeeping(page, null));
     }
 
     @Test

@@ -22,12 +22,6 @@ public final class MarkdownCanonicalizer {
     }
 
     /**
-     * 这条分支上第七十四轮第七到十遍的几版曾把这句拼进回答正文（第十一遍改成写进 notice）。那几版存下来的消息里还有它：
-     * 下一轮「把上面的存进知识库」时不能被当成草稿正文。只认一字不差的那一行（第十二遍 review）。
-     */
-    private static final String LEGACY_NO_DRAFT_LINE = "（没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）";
-
-    /**
      * 归一换行、剥离整体代码围栏、丢弃空标题行与「已写入 Wiki」这类模型自述行。
      *
      * <p>丢弃自述行是有意的：模型经常在正文末尾附一句"已将内容写入知识库"，那是对话内容
@@ -89,7 +83,7 @@ public final class MarkdownCanonicalizer {
     private static String withoutModelLines(String text, java.util.Set<String> baseLines) {
         List<String> lines = new ArrayList<>();
         for (String line : text.split("\n")) {
-            if (baseLines.contains(line) || !modelOnlyLine(line) && !line.strip().equals(LEGACY_NO_DRAFT_LINE)) {
+            if (baseLines.contains(line) || !modelOnlyLine(line)) {
                 lines.add(line);
             }
         }

@@ -97,6 +97,8 @@ class AiConversationLifecycleIntegrationTest {
     private static final String TWO_LINES_MARK = "（回两行）";
     /** 第十遍 review：带这一句的流式请求，假模型在流的最后报 finish_reason=length（回答底下本来就有一条说明） */
     private static final String LENGTH_MARK = "（写到上限）";
+    /** 第十三遍 review：带这一句的非流式请求，假模型回第七到十遍那几版存下来的样子 —— 「已写入」后面跟着拼进正文的那句说明（模型转述时加了「> 」） */
+    private static final String LEGACY_NOTE_MARK = "（回旧版说明）";
     private static final int LONG_REPLY_CHARS = 15_000;
     /** 最后一次改写调用的请求体；null 表示这一轮没有发生重试。 */
     private static volatile String lastRewriteRequestBody;
@@ -202,6 +204,9 @@ class AiConversationLifecycleIntegrationTest {
             }
             if (!streaming && requestBody.contains(TWO_LINES_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
                 content = "第一行正文\\n第二行正文";
+            }
+            if (!streaming && requestBody.contains(LEGACY_NOTE_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
+                content = "已将以上内容写入知识库。\\n\\n> （没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）";
             }
             String nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}";
             // 抽计划那一步：请求里带着 create_study_plan 工具、而且是 PLAN_REQUEST 那句话时，像真模型一样回一个工具调用（任务 + 例行计划都有）。
@@ -441,6 +446,25 @@ class AiConversationLifecycleIntegrationTest {
         aiService.chat(userId, "把上面的存进知识库" + EMPTY_WIKI_MARK, modelId, false, "OFF", notebookId);
         assertEquals(before, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId),
                 "系统补的那句被当成了草稿正文");
+    }
+
+    /**
+     * 第十三遍 review：第七到十遍那几版把「没有生成知识 Wiki 草稿」拼进了回答正文，库里存着这样的消息。
+     * 第十二遍那版在共用的清洗里只认一字不差的那一行 —— 被转述成「> （…）」就认不出，那句说明成了一条草稿的全部正文；
+     * 现在由 AI 助手取正文时去掉（这一轮的回答、上一条回答都去）。
+     */
+    @Test
+    void theLegacyNoDraftSentenceInARepliedMessageIsNotDraftContent() {
+        Long notebookId = createNotebook(userId, "旧版说明");
+        Integer before = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId);
+        aiService.chat(userId, "把这次的结论写进知识库" + LEGACY_NOTE_MARK, modelId, false, "OFF", notebookId);
+        String stored = jdbcTemplate.queryForObject("SELECT content FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, userId);
+        assertTrue(stored.contains("> （没有生成知识 Wiki 草稿"), "这条判据的前提：库里那条回答带着旧版的那句说明：" + stored);
+        assertEquals(before, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId),
+                "这一轮的回答里那句说明被当成了草稿正文");
+        aiService.chat(userId, "把上面的存进知识库" + LEGACY_NOTE_MARK, modelId, false, "OFF", notebookId);
+        assertEquals(before, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId),
+                "上一条回答里那句说明被当成了草稿正文");
     }
 
     /** 第八遍 review：回答里的「草稿摘要」原来压成一行（多行的正文、开头的代码块都挤在一起） */

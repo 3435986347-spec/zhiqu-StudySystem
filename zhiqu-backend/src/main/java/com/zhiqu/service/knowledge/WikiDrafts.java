@@ -72,9 +72,12 @@ public final class WikiDrafts {
     }
 
     /**
-     * 截到 {@code maxChars} 以内：能在整行处截就在整行处截（最后一个换行不早于上限的八成）—— 半行的表格、半个链接、
-     * 截在收尾那一行中间留下的「``」都不会有（第九遍 review）；一行特别长时按字形截：一个 emoji（含 ZWJ 组合、国旗、肤色）、
+     * 截到 {@code maxChars} 以内：能在整行处截就在整行处截（最后一个换行不早于上限的一半）—— 半行的表格、半个链接、
+     * 截在围栏那一行中间留下的「``」「```pyt」都不会有（第九、十三遍 review）；一行特别长时按字形截：一个 emoji（含 ZWJ 组合、国旗、肤色）、
      * 一个带组合符号的字都不切开（第八遍 review）。结尾的空白去掉。
+     * <p>第十、十二遍那两版是「认出截开的半行是围栏就退」：认不全（{@code ```python title=…}、引用里的围栏），
+     * 又把「~3天」「~~原计划」「`AgentPosition`」开头的正文当成围栏，退到第 0 个字时整篇草稿都没了（第十三遍 review）。
+     * 只看换行的位置不看内容：草稿的上限是几千字，退到一半以内的换行丢的最多是一行。
      */
     private static String cut(String text, int maxChars) {
         java.util.regex.Matcher grapheme = GRAPHEME.matcher(text);
@@ -82,18 +85,10 @@ public final class WikiDrafts {
         while (grapheme.find() && grapheme.end() <= maxChars) end = grapheme.end();
         if (end < text.length() && text.charAt(end) != '\n') {   // 正好截在行尾就不用退（第十二遍 review：原来这时 substring 越界，整个请求 500）
             int lineEnd = text.lastIndexOf('\n', end - 1);
-            // 截开的那半行是一行围栏（截在 ``` / ```python / 引用、列表里的 ``` 中间）时退到整行 —— 上限很小的时候光靠八成那一条接不住（第十、十二遍 review）；
-            // 只认围栏的样子：第十遍那版「离换行只差几个字就退」把正文的半行也丢了（第十一遍 review）
-            String partial = lineEnd < 0 ? text.substring(0, end) : text.substring(lineEnd + 1, end);
-            boolean splitFence = SPLIT_FENCE.matcher(partial).matches();
-            if (splitFence) end = Math.max(lineEnd, 0);
-            else if (lineEnd > 0 && lineEnd >= end * 0.8) end = lineEnd;   // 换行在最开头时退过去就什么都不剩了
+            if (lineEnd > 0 && lineEnd * 2 >= end) end = lineEnd;   // 换行在最开头时退过去就什么都不剩了
         }
         return text.substring(0, end).stripTrailing();
     }
-
-    /** 被截开的半行看起来是一行围栏：前面可以有引用、列表的记号，然后是 ` 或 ~，后面最多跟一个不带空格的语言名 */
-    private static final java.util.regex.Pattern SPLIT_FENCE = java.util.regex.Pattern.compile("\\s*(?:(?:>|[*+-]|\\d+[.)])\\s*)*(?:`+|~+)[^\\s`~]*");
 
     private static long graphemes(String text) {
         return GRAPHEME.matcher(text).results().count();

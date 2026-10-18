@@ -134,6 +134,12 @@ public class AiServiceImpl implements AiService {
      * 写进 ai_message.notice、不拼进回答正文 —— 拼进正文的那几版，下一轮「把上面的存进知识库」时得认出它、给它让位置、防它混进草稿，一圈一圈出问题。
      */
     static final String NO_WIKI_DRAFT_NOTICE = "没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。";
+    /**
+     * 这条分支上第七到十遍的几版把上面那句（带全角括号）拼进了回答正文，存下来的消息里还有它，模型转述时还可能加上「> 」（第十二、十三遍 review）：
+     * 下一轮「把上面的存进知识库」从那条消息里取草稿正文时先去掉这一行。只在取正文这一处去 —— 放进共用的清洗时，
+     * 别的草稿里写着这句话的正文也被删了（第十二遍那版），只认一字不差的又漏了被转述、被截短的。
+     */
+    private static final java.util.regex.Pattern LEGACY_NO_DRAFT_LINE = java.util.regex.Pattern.compile("(?m)^[>\\s]*（没有生成知识 Wiki 草稿.*$\\n?");
     private static final long SYSTEM_MODEL_ID = -1L;
     // 64x64 纯红 PNG。探测图必须足够大——1x1 退化图会被上游图片管线拒绝
     // （返回 400 "Could not process image"），导致视觉探测恒被误判为“不支持”。
@@ -3345,6 +3351,8 @@ public class AiServiceImpl implements AiService {
     }
 
     private String extractWikiDraftContent(String userMessage, String assistantReply, String previousAssistant) {
+        assistantReply = withoutLegacyNoDraftLine(assistantReply);
+        previousAssistant = withoutLegacyNoDraftLine(previousAssistant);
         String content = extractAfterWikiSummaryMarker(assistantReply);
         if (!hasText(content) || (isProbablyOnlyWikiConfirmation(content) && hasText(previousAssistant))) {
             content = previousAssistant;
@@ -3356,6 +3364,10 @@ public class AiServiceImpl implements AiService {
             content = userMessage;
         }
         return cleanWikiDraftContent(content);
+    }
+
+    private static String withoutLegacyNoDraftLine(String text) {
+        return text == null ? null : LEGACY_NO_DRAFT_LINE.matcher(text).replaceAll("");
     }
 
     private String extractAfterWikiSummaryMarker(String text) {

@@ -65,18 +65,25 @@ class WikiDraftsTest {
     }
 
     @Test
-    @DisplayName("第十二遍 review：正好截在行尾不越界；截开的半行是带语言名的、引用 / 列表里的、紧跟开头换行的围栏也退到整行")
-    void cutsAtLineEndsAndOtherFenceShapes() {
+    @DisplayName("第十二、十三遍 review：正好截在行尾不越界；截在任何样子的围栏行中间都退到整行；以 ~、~~、` 开头的正文不被当成围栏、不退到一个字不剩")
+    void cutsAtLineEndsWhateverTheLineLooksLike() {
         assertEquals("abcdef\n…", WikiDrafts.excerpt("abcdef\nmore more more", 6), "截在行尾：原来 substring 越界");
-        String withLang = "正文\n```python\nprint(1)\n```\n后文";
-        String lang = WikiDrafts.body(withLang, null, withLang.indexOf("```python") + 6).text();
-        assertTrue(lang.startsWith("正文\n\n> 草稿只存了前"), "截在 ```python 中间：留下了一个空的「pyt」代码块：" + lang);
-        String quoted = "引用\n> ```\n> code\n";
+        String before = "正文".repeat(20) + "\n";
+        String expected = "正文".repeat(20) + "\n\n> 草稿只存了前 40 字";
+        String withInfo = before + "```python title=\"a.py\"\nprint(1)\n```\n后文";
+        String info = WikiDrafts.body(withInfo, null, withInfo.indexOf("```python") + 12).text();
+        assertTrue(info.startsWith(expected), "截在带属性（有空格）的围栏行中间：留下了半行「```python ti」：" + info);
+        String quoted = before + "> ```js\n> code\n> ```\n后文";
         String quote = WikiDrafts.body(quoted, null, quoted.indexOf("> ```") + 3).text();
-        assertTrue(quote.startsWith("引用\n\n> 草稿只存了前"), "截在引用里的 ``` 中间：" + quote);
-        assertFalse(WikiDrafts.excerpt("\n```\ncode code code", 3).contains("``"), "紧跟开头换行的半个围栏也去掉");
+        assertTrue(quote.startsWith(expected), "截在引用里的 ``` 中间：" + quote);
+        String tilde = "说明\n~3天左右完成，接着写文档、再改两遍，最后交给组长审核";
+        assertTrue(WikiDrafts.body(tilde, null, 20).text().startsWith("说明\n~3天左右完成"), "第十三遍 review：「~3天」开头的正文行不是围栏，照常按字截");
+        String strike = "~~原计划周三交初稿~~，后来改到周五，因为数据还没齐";
+        assertTrue(WikiDrafts.body(strike, null, 10).text().startsWith("~~原计划周三交初稿"), "第十三遍 review：删除线开头的第一行被当成围栏，退到第 0 个字，整篇没了");
+        String code = "`AgentPosition`是执行顺序的唯一出处，图里的优先级都是推导出来的";
+        assertTrue(WikiDrafts.excerpt(code, 10).startsWith("`AgentPosi"), "第十三遍 review：行内代码开头的第一行被当成围栏，摘录成了空的");
         assertTrue(WikiDrafts.body("说明\n`code` 是行内代码，后面还有很长很长的一段说明文字", null, 20).text().startsWith("说明\n`code` 是行内代码"),
-                "以行内代码开头的正文行不是围栏，照常按字截");
+                "换行离得远（不到上限的一半）时照常按字截");
     }
 
     @Test
