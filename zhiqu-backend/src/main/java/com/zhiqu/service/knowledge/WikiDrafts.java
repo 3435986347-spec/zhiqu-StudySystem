@@ -81,8 +81,11 @@ public final class WikiDrafts {
         int end = 0;
         while (grapheme.find() && grapheme.end() <= maxChars) end = grapheme.end();
         int lineEnd = text.lastIndexOf('\n', end);
-        // 离上一个换行只差几个字（截在一行收尾的 ``` 中间就是这样）也退到整行 —— 上限很小的时候光靠八成那一条接不住（第十遍 review）
-        if (lineEnd >= 0 && (lineEnd >= end * 0.8 || end - lineEnd <= 8)) end = lineEnd;
+        // 截开的那半行只是围栏符号（截在收尾的 ``` 中间）时也退到整行 —— 上限很小的时候光靠八成那一条接不住（第十遍 review）；
+        // 只认围栏符号：第十遍那版「离换行只差几个字就退」把正常文字的半行也丢了，换行在很前面时几乎什么都不剩（第十一遍 review）
+        String partial = lineEnd < 0 ? "" : text.substring(lineEnd + 1, end).strip();
+        boolean splitFence = !partial.isEmpty() && partial.chars().allMatch(c -> c == '`' || c == '~');
+        if (lineEnd > 0 && (lineEnd >= end * 0.8 || splitFence)) end = lineEnd;
         return text.substring(0, end).stripTrailing();
     }
 

@@ -58,6 +58,10 @@ class WikiDraftsTest {
         assertEquals("短的", WikiDrafts.excerpt("短的", 14));
         String tiny = WikiDrafts.body("```\nabcd\n```\nmore more", null, 11).text();
         assertTrue(tiny.startsWith("```\nabcd\n```\n\n> 草稿只存了前"), "第十遍 review：上限很小、截在收尾那一行中间，也退到整行：" + tiny);
+        String leading = WikiDrafts.body("x\n" + "长".repeat(40), null, 6).text();
+        assertTrue(leading.startsWith("x\n长长长长\n\n> 草稿只存了前 6 字"), "第十一遍 review：截开的半行是正文时照留，不退到只剩一点：" + leading);
+        assertEquals("…", WikiDrafts.excerpt("\n" + "长".repeat(40), 6).substring(WikiDrafts.excerpt("\n" + "长".repeat(40), 6).length() - 1));
+        assertTrue(WikiDrafts.excerpt("\n" + "长".repeat(40), 6).contains("长"), "换行在最开头时退过去就什么都不剩了");
     }
 
     @Test

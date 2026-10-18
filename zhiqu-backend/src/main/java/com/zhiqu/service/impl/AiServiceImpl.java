@@ -129,6 +129,11 @@ public class AiServiceImpl implements AiService {
      * 列是 MEDIUMTEXT（16MB），这个数只是防一个失控的模型把库写爆。用户消息的上限见 {@link UserMessageFit}。
      */
     private static final int REPLY_MAX_LENGTH = 200_000;
+    /**
+     * 要写进知识库、回答洗完却没有可存的正文（模型只说了一句「已写入知识库」）时，回答底下的说明（第七十四轮第七到十一遍 review）。
+     * 写进 ai_message.notice、不拼进回答正文 —— 拼进正文的那几版，下一轮「把上面的存进知识库」时得认出它、给它让位置、防它混进草稿，一圈一圈出问题。
+     */
+    static final String NO_WIKI_DRAFT_NOTICE = "没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。";
     private static final long SYSTEM_MODEL_ID = -1L;
     // 64x64 纯红 PNG。探测图必须足够大——1x1 退化图会被上游图片管线拒绝
     // （返回 400 "Could not process image"），导致视觉探测恒被误判为“不支持”。
@@ -481,6 +486,7 @@ public class AiServiceImpl implements AiService {
             AiMessage liveUserMessage = saveChatMessage(userId, live.getId(), "user", limitedMessage);
             Map<String, Object> liveWikiRevision = null;
             String liveFinalReply = reply;
+            String liveNotice = null;
             if (wikiWriteRequested) {
                 // 纯 DB + 加密,无模型调用,可安全留在锁内事务里
                 UserKnowledgeRevision revision = createWikiDraftRevision(
@@ -496,9 +502,7 @@ public class AiServiceImpl implements AiService {
                     liveFinalReply = buildWikiDraftReply(revision, cryptoService.decrypt(revision.getEncryptedContent()));
                 } else {
                     // 回答洗完是空的（模型只说了一句「已写入知识库」）：没有建草稿，照实说 —— 不让那句话冒充已经存上了（第七十四轮第七遍 review）
-                    // 先给回答让出位置再补（第九遍 review：存的时候按 REPLY_MAX_LENGTH 截，补在很长的回答后面会被截掉）
-                    String note = com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE;
-                    liveFinalReply = com.zhiqu.service.knowledge.WikiDrafts.excerpt(reply, REPLY_MAX_LENGTH - note.length() - 10) + "\n\n" + note;   // 截在代码块里也收尾，那句才不被画成代码
+                    liveNotice = NO_WIKI_DRAFT_NOTICE;
                 }
             }
             AiMessage liveAssistantMessage = saveChatMessage(
@@ -513,6 +517,13 @@ public class AiServiceImpl implements AiService {
                     normalizedReasoningMode,
                     Boolean.TRUE.equals(enableWebSearch)
             );
+            if (liveNotice != null) {
+                AiMessage withNotice = new AiMessage();
+                withNotice.setId(liveAssistantMessage.getId());
+                withNotice.setNotice(liveNotice);
+                messageMapper.updateById(withNotice);   // 只动 notice 这一列（ai_message 没有 @Version）
+                liveAssistantMessage.setNotice(liveNotice);
+            }
             return new NonStreamChatSave(liveUserMessage, liveAssistantMessage, liveWikiRevision, liveFinalReply);
         }));
         AiMessage userMessage = saved.userMessage();
@@ -521,6 +532,9 @@ public class AiServiceImpl implements AiService {
         String finalReply = saved.finalReply();
         Map<String, Object> result = new HashMap<>();
         result.put("reply", finalReply);
+        if (assistantMessage.getNotice() != null) {
+            result.put("notice", assistantMessage.getNotice());
+        }
         result.put("userMessageId", userMessage.getId());
         result.put("assistantMessageId", assistantMessage.getId());
         result.put("citations", RetrievalPresentation.citationRows(citations));
@@ -2117,7 +2131,7 @@ public class AiServiceImpl implements AiService {
             // 回答洗完是空的（模型只说了一句「已写入知识库」）：不造工件 —— 造了确认时也会被拒、工件永远停在草稿；
             // 照实说：执行轨迹里写明、页面弹一句（第七十四轮第八遍 review：上一遍只改了网页不走的非流式那一路）
             if (com.zhiqu.service.knowledge.WikiDrafts.body(s.finalReply, null, Integer.MAX_VALUE) == null) {
-                String note = com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE;
+                String note = NO_WIKI_DRAFT_NOTICE;
                 s.trace.skipTask(ctx, ctx.task("WIKI_CURATOR"), note);
                 // 跟着这条回答存下来（第九遍 review：上一版只弹一下提示，刷新之后那句「已写入」照样站着）：回答底下的说明，done 事件也带着
                 s.finalNotice = s.finalNotice == null ? note : s.finalNotice + " " + note;   // 页面上的说明不换行，用空格连

@@ -95,8 +95,6 @@ class AiConversationLifecycleIntegrationTest {
     private static final String EMPTY_WIKI_MARK = "（只回自述）";
     /** 第八遍 review：带这一句的非流式请求，假模型回两行正文（看草稿预览有没有被压成一行） */
     private static final String TWO_LINES_MARK = "（回两行）";
-    /** 第九遍 review：带这一句的非流式请求，假模型回两万行「已写入」（比存的上限长） */
-    private static final String LONG_CLAIM_MARK = "（回很长的自述）";
     /** 第十遍 review：带这一句的流式请求，假模型在流的最后报 finish_reason=length（回答底下本来就有一条说明） */
     private static final String LENGTH_MARK = "（写到上限）";
     private static final int LONG_REPLY_CHARS = 15_000;
@@ -204,9 +202,6 @@ class AiConversationLifecycleIntegrationTest {
             }
             if (!streaming && requestBody.contains(TWO_LINES_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
                 content = "第一行正文\\n第二行正文";
-            }
-            if (!streaming && requestBody.contains(LONG_CLAIM_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
-                content = "```\\n" + "已将以上内容写入知识库。\\n".repeat(20000);   // 还开着一个代码块
             }
             String nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}";
             // 抽计划那一步：请求里带着 create_study_plan 工具、而且是 PLAN_REQUEST 那句话时，像真模型一样回一个工具调用（任务 + 例行计划都有）。
@@ -347,8 +342,12 @@ class AiConversationLifecycleIntegrationTest {
         Map<String, Object> result = aiService.chat(userId, "把这次的结论写进知识库" + EMPTY_WIKI_MARK, modelId, false, "OFF", notebookId);
         Integer after = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId);
         assertEquals(before, after, "洗完是空的草稿不该建");
-        assertTrue(String.valueOf(result).contains("已将以上内容写入知识库"), "回答照常回：" + result);
-        assertTrue(String.valueOf(result).contains("没有生成知识 Wiki 草稿"), "第七遍 review：没建草稿要照实说，不让那句「已写入」冒充存上了：" + result);
+        assertTrue(String.valueOf(result.get("reply")).contains("已将以上内容写入知识库"), "回答照常回：" + result);
+        assertTrue(String.valueOf(result.get("notice")).contains("没有生成知识 Wiki 草稿"), "第七遍 review：没建草稿要照实说，不让那句「已写入」冒充存上了：" + result);
+        Map<String, Object> saved = jdbcTemplate.queryForMap("SELECT content, notice FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", userId);
+        assertTrue(String.valueOf(saved.get("notice")).contains("没有生成知识 Wiki 草稿"), "说明要跟着这条回答存下来（刷新之后也在）：" + saved);
+        assertFalse(String.valueOf(saved.get("content")).contains("没有生成知识 Wiki 草稿"),
+                "第十一遍 review：说明不拼进回答正文（拼进去的那几版，下一轮得认出它、给它让位置、防它混进草稿）：" + saved);
     }
 
     /** 第七十四轮第六遍 review：工作区的 Wiki 草稿工件洗完是空的 —— 确认时当场说，不建一条空草稿（原来要到合入时才报错） */
@@ -433,7 +432,7 @@ class AiConversationLifecycleIntegrationTest {
                 latestRunId(userId, control)), "对照：回答有正文时照常造工件");
     }
 
-    /** 第八遍 review：上一轮补的「没有生成」那句存进了对话；这一轮再说「存进知识库」、模型又只回一句「已写入」时，不能把那句当草稿正文 */
+    /** 第八遍 review：上一轮没建草稿；这一轮再说「存进知识库」、模型又只回一句「已写入」时，也不建（上一轮的回答里没有可以当正文的东西） */
     @Test
     void theNoDraftNoteFromTheLastTurnIsNotTakenAsDraftContent() {
         Long notebookId = createNotebook(userId, "两轮都只回自述");
@@ -442,16 +441,6 @@ class AiConversationLifecycleIntegrationTest {
         aiService.chat(userId, "把上面的存进知识库" + EMPTY_WIKI_MARK, modelId, false, "OFF", notebookId);
         assertEquals(before, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId),
                 "系统补的那句被当成了草稿正文");
-    }
-
-    /** 第九遍 review：回答很长时补的那句会被存的上限截掉 —— 先给回答让出位置再补 */
-    @Test
-    void theNoDraftNoteSurvivesAVeryLongReply() {
-        Long notebookId = createNotebook(userId, "很长的自述");
-        aiService.chat(userId, "把这次的结论写进知识库" + LONG_CLAIM_MARK, modelId, false, "OFF", notebookId);
-        String saved = jdbcTemplate.queryForObject("SELECT content FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, userId);
-        assertTrue(saved.endsWith(com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE), "补的那句被截掉了：…" + saved.substring(Math.max(0, saved.length() - 80)));
-        assertTrue(saved.contains("\n```\n…\n\n" + com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE), "第十遍 review：截在代码块里要先收尾，那句才不被画成代码：…" + saved.substring(Math.max(0, saved.length() - 120)));
     }
 
     /** 第八遍 review：回答里的「草稿摘要」原来压成一行（多行的正文、开头的代码块都挤在一起） */
