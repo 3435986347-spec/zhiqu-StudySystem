@@ -60,6 +60,9 @@ const SAMPLE = [
   '',
   '- [ ] 没做',
   '- [x] 做完',
+  '  - 子项',
+  '',
+  '3. 从三开始',
   '',
   '| a | b |',
   '|---|---|',
@@ -86,6 +89,7 @@ const ALLOWED = {
   div: ['class', 'data-tex', 'contenteditable'],
   span: ['class', 'data-tex', 'contenteditable'],
   input: ['type', 'checked', 'contenteditable'],
+  ol: ['start'],
   a: ['href', 'target', 'rel', 'data-wikilink']
 };
 const tags = [...outsidePre.matchAll(/<([a-z][a-z0-9]*)(\s[^>]*)?>/g)];
@@ -109,6 +113,7 @@ const EXPECT = [
   '<ul><li>无序</li></ul>', '<ol><li>有序</li></ol>', '<blockquote>引用</blockquote>',
   '<div class="zq-task-row"><input type="checkbox" contenteditable="false"><span>没做</span></div>',
   '<div class="zq-task-row"><input type="checkbox" checked contenteditable="false"><span>做完</span></div>',
+  '<div class="zq-task-children"><ul><li>子项</li></ul></div>', '<ol start="3"><li>从三开始</li></ol>',
   '<div class="zq-md-table"><table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table></div>',
   '<pre><code class="zq-mono">', '<div class="zq-math" data-tex="\\int_0^1 x" contenteditable="false">', '<hr>', '<p>最后一段。</p>'
 ];
@@ -133,7 +138,7 @@ for (const tag of ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'b
 
 // ── 判据 3 ──
 console.log('── 判据 3：别的地方不往页面里放 Markdown 的类 ──');
-const MD_CLASSES = ['zq-md', 'zq-md-table', 'zq-task-row', 'zq-math', 'zq-math-i'];
+const MD_CLASSES = ['zq-md', 'zq-md-table', 'zq-task-row', 'zq-task-children', 'zq-math', 'zq-math-i'];
 // 和渲染出来的勾选项一模一样的结构：Wiki 编辑器的「插入待办」，同一个东西，不算撞名
 const SAME_THING = '<div class="zq-task-row"><input type="checkbox"';
 function files(dir, out) {

@@ -179,7 +179,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             page.setUserId(userId);
         }
         String title = required(body.get("title"), "标题不能为空");
-        String content = MarkdownCanonicalizer.clean(required(body.get("content"), "内容不能为空"));
+        // 只查空不 trim：required() 会去掉首尾空白（结尾的换行、开头的缩进都是正文）
+        Object rawContent = body.get("content");
+        if (rawContent == null || rawContent.toString().isBlank()) throw new BusinessException("内容不能为空");
+        String content = userMarkdown(rawContent.toString());
         // 系统页按标题维护（ensureSystemPage 以标题查找），改名会导致重复建页，后端强制拦截
         boolean systemPage = page.getId() != null && isSystemKnowledgePage(page);
         if (systemPage && !title.trim().equals(page.getTitle())) {
@@ -206,7 +209,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             page.setPinned(body.containsKey("pinned") ? (booleanValue(body.get("pinned")) ? 1 : 0) : keepPinned);
         }
         page.setEncryptedContent(cryptoService.encrypt(content));
-        page.setContentSummary(limit(content.replaceAll("\\s+", " "), 500));
+        page.setContentSummary(limit(content.replaceAll("\\s+", " ").trim(), 500));
         page.setEncryptionVersion("v1");
         if (page.getId() == null) {
             pageMapper.insert(page);
@@ -1478,7 +1481,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private String markdownExportContent(UserKnowledgePage page) {
-        String content = MarkdownCanonicalizer.clean(cryptoService.decrypt(page.getEncryptedContent()));
+        // 正文原样写、以换行结尾（第七十一轮：原来清洗再 trim，导出一次就改字节）
+        String content = userMarkdown(cryptoService.decrypt(page.getEncryptedContent()));
         // 标题必须加引号转义，否则「阶段: 复习」这类含冒号的标题会生成无效 YAML
         String yamlTitle = String.valueOf(page.getTitle()).replace("\\", "\\\\").replace("\"", "\\\"");
         return """
@@ -1488,8 +1492,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 updated: %s
                 ---
 
-                %s
-                """.formatted(yamlTitle, page.getPageType(), page.getUpdatedAt(), content).trim();
+                """.formatted(yamlTitle, page.getPageType(), page.getUpdatedAt()) + content + (content.endsWith("\n") ? "" : "\n");
+    }
+
+    /**
+     * 用户自己写的正文：原样，只把 CRLF / CR 统一成 LF（第七十一轮）。{@link MarkdownCanonicalizer#clean} 是给 AI 写的内容准备的 ——
+     * 用在用户保存上会去掉结尾换行、剥掉开头的代码围栏、删掉「已经…知识库」这样的整行。页状态哈希和 RAG 的规范全文照旧是 clean(解密)。
+     */
+    private static String userMarkdown(String content) {
+        return content == null ? "" : content.replace("\r\n", "\n").replace('\r', '\n');
     }
 
     private String safeMarkdownFileName(String title) {
@@ -1549,7 +1560,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         row.put("sortOrder", page.getSortOrder());
         row.put("pinned", page.getPinned() != null && page.getPinned() == 1);
         row.put("title", page.getTitle());
-        row.put("content", MarkdownCanonicalizer.clean(cryptoService.decrypt(page.getEncryptedContent())));
+        row.put("content", userMarkdown(cryptoService.decrypt(page.getEncryptedContent())));
         row.put("summary", page.getContentSummary());
         row.put("sourceMessageId", page.getSourceMessageId());
         row.put("sourceConversationId", page.getSourceConversationId());

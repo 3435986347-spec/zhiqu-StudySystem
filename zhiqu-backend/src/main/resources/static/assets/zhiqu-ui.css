@@ -738,6 +738,9 @@ body.zq-modal-open{overflow:hidden;}
 .zq-task-row{display:flex;align-items:flex-start;gap:9px;margin:7px 0;}
 .zq-task-row>input[type="checkbox"]{flex:none;margin-top:5px;accent-color:var(--zq-primary);}
 .zq-task-row>input:checked+span{color:var(--zq-text3);text-decoration:line-through;}
+/* 嵌套列表（第七十一轮）：任务项下面的子项缩到勾选项文字的位置；列表项里的子列表贴着上一行，不用整段列表的上下留白 */
+.zq-task-children{padding-left:22px;}
+.zq-md li>ul,.zq-md li>ol,.zq-prose .zq-md li>ul,.zq-prose .zq-md li>ol{margin:4px 0 0;}
 .zq-math{margin:12px 0;padding:13px 16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);text-align:center;font-size:var(--zq-fs-md);overflow-x:auto;}
 .zq-math>.zq-mono{color:var(--zq-text2);font-size:12.5px;}
 .zq-math-i{padding:0 2px;}

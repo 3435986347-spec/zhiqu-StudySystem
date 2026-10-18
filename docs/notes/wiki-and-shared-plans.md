@@ -19,6 +19,11 @@ the single guarded entry point `upsertRevisionPage`. Two independent protections
 Structure fields (`parentId`/`sortOrder`/`pinned`) are only modified when the request body actually
 contains that key — so applying a patch with an empty body never moves a child page to the root.
 
+**正文的两种口径（第七十一轮）**：用户自己保存的正文原样存、原样读回（`savePage` / `pageRow` 只把 CRLF 统一成 LF，旧的 Markdown 导出也写原文、以换行结尾）。
+`MarkdownCanonicalizer.clean()`（剥开头的代码围栏、删「已经…知识库」那样的模型自述行、去首尾空白）只用在 AI 写的内容（修订、待合入变更）和比对上：
+页状态哈希、给模型的快照（`findPageSnapshotByTitle`）、RAG 的规范全文都是 `clean(解密)`，两边同一个口径，所以存量不用重算。
+第七十一轮之前用户保存也过 `clean()`：Obsidian 文件结尾的换行没了、一页以代码块开头时代码块被剥坏、「我已经把资料整理进知识库了」这一行被删。
+
 ### Shared plans
 
 Submissions go `PENDING` → `APPROVED` / `REJECTED` / `OFFLINE`. The rejection reason is stored

@@ -1754,9 +1754,48 @@
     segs.push({ code: fenced, text: segBuf.join('\n') });
     var src = segs.map(function (s) { return s.code ? s.text : normalizeMathDelims(s.text); }).join('\n');
     var lines = src.split('\n');
-    var html = '', inUl = false, inOl = false, inCode = false, inMath = false, codeBuf = [], codeLang = '', mathBuf = [], quoteBuf = [], tableBuf = [];
-    function closeUl() { if (inUl) { html += '</ul>'; inUl = false; } }
-    function closeOl() { if (inOl) { html += '</ol>'; inOl = false; } }
+    var html = '', inCode = false, inMath = false, codeBuf = [], codeLang = '', mathBuf = [], quoteBuf = [], tableBuf = [];
+    // 列表是一摞（第七十一轮认嵌套；原来只认顶格的，缩进的子项显示成文字「- 子项」）：每层记缩进和种类（ul / ol / task）。
+    // 比上一层多缩进两格以上是嵌套，退到父项那一档才收掉更深的层；任务项照旧画成 .zq-task-row，它下面的子项放进 .zq-task-children。
+    // 空行之后不缩进的行收掉整摞（顶层隔空行照旧是两段 —— 旧编辑器保存时靠它写回空行），编号从几开始写在 start 上。
+    var lists = [], listBlank = false;
+    function indentOf(text) {
+      var n = 0;
+      for (var i = 0; i < text.length; i++) {
+        var c = text.charAt(i);
+        if (c === ' ') n++; else if (c === '\t') n += 4 - n % 4; else break;
+      }
+      return n;
+    }
+    function closeList() {
+      var top = lists.pop();
+      if (top.kind !== 'task') html += '</li></' + top.kind + '>';
+      else if (top.children) html += '</div>';
+    }
+    function closeLists() { while (lists.length) closeList(); listBlank = false; }
+    function taskChildren(top) { if (!top.children) { html += '<div class="zq-task-children">'; top.children = true; } }
+    function listItem(indent, kind, itemHtml, start) {
+      listBlank = false;
+      // 缩进比这一层浅、但还在父项下面（比父项多两格以上）：缩进不齐的同一层，不另起；顶层的项不管缩进多少都是同一段
+      while (lists.length > 1 && indent < lists[lists.length - 1].indent && indent < lists[lists.length - 2].indent + 2) closeList();
+      var top = lists[lists.length - 1];
+      if (top && indent < top.indent + 2) {
+        if (top.kind === kind && kind !== 'task') { html += '</li><li>' + itemHtml; return; }
+        indent = top.indent; closeList(); top = lists[lists.length - 1];
+      }
+      if (top && top.kind === 'task') taskChildren(top);
+      if (kind === 'task') html += itemHtml;
+      else html += '<' + kind + (kind === 'ol' && start !== 1 ? ' start="' + start + '"' : '') + '><li>' + itemHtml;
+      lists.push({ kind: kind, indent: indent });
+    }
+    function listText(indent, text) {
+      var popped = false;
+      while (lists.length > 1 && indent < lists[lists.length - 1].indent + 2) { closeList(); popped = true; }
+      var top = lists[lists.length - 1];
+      if (top.kind === 'task') { taskChildren(top); html += '<p>' + mdInline(text) + '</p>'; }
+      else html += listBlank || popped ? '<p>' + mdInline(text) + '</p>' : '<br>' + mdInline(text);
+      listBlank = false;
+    }
     function flushQuote() {
       if (!quoteBuf.length) return;
       html += '<blockquote>' + quoteBuf.join('<br>') + '</blockquote>';
@@ -1778,7 +1817,7 @@
       html += out;
       tableBuf = [];
     }
-    function closeBlocks() { closeUl(); closeOl(); flushQuote(); flushTable(); }
+    function closeBlocks() { closeLists(); flushQuote(); flushTable(); }
     lines.forEach(function (line) {
       if (/^```/.test(line.trim())) {
         if (inCode) {
@@ -1801,25 +1840,28 @@
       }
       if (/^\$\$(.+)\$\$$/.test(lt)) { closeBlocks(); html += mathBlockHtml(lt.slice(2, -2).trim()); return; }
       if (/^\$\$/.test(lt)) { closeBlocks(); inMath = true; var head = lt.slice(2).trim(); if (head) mathBuf.push(head); return; }
-      if (/^\|.*\|\s*$/.test(line.trim())) { closeUl(); closeOl(); flushQuote(); tableBuf.push(line.trim()); return; }
+      if (/^\|.*\|\s*$/.test(line.trim())) { closeLists(); flushQuote(); tableBuf.push(line.trim()); return; }
       flushTable();
+      var indent = indentOf(line);
+      if (listBlank && lt !== '' && indent < lists[0].indent + 2) closeLists();
       var h = line.match(/^(#{1,6})\s+(.+)$/);
-      var task = line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
-      var li = line.match(/^[-*]\s+(.+)$/);
-      var ol = line.match(/^\d+[.)]\s+(.+)$/);
+      var task = line.match(/^(\s*)[-*]\s+\[([ xX])\]\s+(.+)$/);
+      var li = line.match(/^(\s*)[-*]\s+(.+)$/);
+      var ol = line.match(/^(\s*)(\d+)[.)]\s+(.+)$/);
       var q = line.match(/^>\s?(.*)$/);
       if (h) { closeBlocks(); var lvl = h[1].length; html += '<h' + lvl + '>' + mdInline(h[2]) + '</h' + lvl + '>'; }
       else if (task) {
-        closeBlocks();
-        var done = task[1].toLowerCase() === 'x';
+        flushQuote();
+        var done = task[2].toLowerCase() === 'x';
         // 勾上了的划掉、变淡：样式表按 input:checked 画（第五十五轮；原来渲染时写死在 span 上，点一下勾选框样子不跟着变）
-        html += '<div class="zq-task-row"><input type="checkbox" ' + (done ? 'checked ' : '') + 'contenteditable="false"><span>' + mdInline(task[2]) + '</span></div>';
+        listItem(indent, 'task', '<div class="zq-task-row"><input type="checkbox" ' + (done ? 'checked ' : '') + 'contenteditable="false"><span>' + mdInline(task[3]) + '</span></div>');
       }
-      else if (li) { closeOl(); flushQuote(); if (!inUl) { html += '<ul>'; inUl = true; } html += '<li>' + mdInline(li[1]) + '</li>'; }
-      else if (ol) { closeUl(); flushQuote(); if (!inOl) { html += '<ol>'; inOl = true; } html += '<li>' + mdInline(ol[1]) + '</li>'; }
-      else if (q) { closeUl(); closeOl(); quoteBuf.push(mdInline(q[1])); }
+      else if (li) { flushQuote(); listItem(indent, 'ul', mdInline(li[2])); }
+      else if (ol) { flushQuote(); listItem(indent, 'ol', mdInline(ol[3]), parseInt(ol[2], 10)); }
+      else if (q) { closeLists(); quoteBuf.push(mdInline(q[1])); }
       else if (/^(-{3,}|\*{3,})$/.test(line.trim())) { closeBlocks(); html += '<hr>'; }
-      else if (line.trim() === '') { closeBlocks(); }
+      else if (lt === '') { if (lists.length) listBlank = true; else closeBlocks(); }
+      else if (lists.length && indent >= lists[0].indent + 2) listText(indent, lt);
       else { closeBlocks(); html += '<p>' + mdInline(line) + '</p>'; }
     });
     if (inCode) { html += '<pre><code class="zq-mono">' + highlightCode(codeBuf.join('\n'), codeLang) + '</code></pre>'; }
@@ -2157,6 +2199,16 @@
     document.head.appendChild(s);
   }
   function htmlToMarkdown(root) {
+    function indentBlock(text, width) {
+      var pad = new Array(width + 1).join(' ');
+      return text.split('\n').filter(function (l) { return l.trim() !== ''; }).map(function (l, i) { return i ? pad + l : l; }).join('\n');
+    }
+    function prevBlock(n) {
+      var p = n.previousSibling;
+      while (p && p.nodeType === 3 && !p.nodeValue.trim()) p = p.previousSibling;
+      return p && p.nodeType === 1 ? p : null;
+    }
+    function isTaskBlock(el) { return !!el && /(^|\s)zq-task-(row|children)(\s|$)/.test(el.getAttribute('class') || ''); }
     function walk(node) {
       var out = '';
       Array.prototype.forEach.call(node.childNodes, function (n) {
@@ -2219,9 +2271,26 @@
             else out += inner;
             break;
           }
-          case 'LI': out += (n.parentNode && n.parentNode.tagName === 'OL' ? '1. ' : '- ') + inner.trim() + '\n'; break;
-          case 'UL': case 'OL': out += '\n' + inner + '\n'; break;
-          case 'P': case 'DIV': out += inner.trim() + '\n\n'; break;
+          case 'LI': {
+            // 嵌套写回缩进、编号照原样（第七十一轮；原来一律「1.」、子项压成一层）：子项的每一行缩到这一项的文字下面
+            var parentList = n.parentNode && String(n.parentNode.tagName || '').toUpperCase() === 'OL' ? n.parentNode : null, number = 0;
+            if (parentList) {
+              number = parseInt(parentList.getAttribute('start'), 10) || 1;
+              for (var sib = n.previousSibling; sib; sib = sib.previousSibling) if (sib.nodeType === 1 && String(sib.tagName).toUpperCase() === 'LI') number++;
+            }
+            var marker = parentList ? number + '. ' : '- ';
+            out += marker + indentBlock(inner.trim(), marker.length).replace(/^\s+/, '') + '\n';
+            break;
+          }
+          // 勾选项一行一个、和普通列表项挨着也不插空行（原来每条后面都空一行，保存一次待办清单就散开）
+          case 'UL': case 'OL': out += (isTaskBlock(prevBlock(n)) ? '' : '\n') + inner + '\n'; break;
+          case 'P': case 'DIV': {
+            if (/(^|\s)zq-task-children(\s|$)/.test(n.getAttribute('class') || '')) { out = out.replace(/\n+$/, '\n') + '  ' + indentBlock(inner.trim(), 2) + '\n'; break; }
+            var taskRow = /(^|\s)zq-task-row(\s|$)/.test(n.getAttribute('class') || ''), before = prevBlock(n);
+            if (taskRow && before && /^(UL|OL)$/.test(String(before.tagName).toUpperCase())) out = out.replace(/\n+$/, '\n');
+            else if (out && !/\n$/.test(out)) out += '\n';   // 列表项里文字后面跟着的段落 / 勾选项另起一行
+            out += inner.trim() + (taskRow ? '\n' : '\n\n'); break;
+          }
           default: out += inner;
         }
       });

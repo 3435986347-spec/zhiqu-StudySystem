@@ -1,5 +1,6 @@
 package com.zhiqu.service.impl;
 
+import com.zhiqu.common.MarkdownCanonicalizer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
@@ -14,6 +15,8 @@ import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +26,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import javax.sql.DataSource;
@@ -312,6 +317,33 @@ class KnowledgeConcurrencyIntegrationTest {
 
         knowledgeService.applyPatchSet(userId, numberLong(patch.get("id")));
         assertTrue(String.valueOf(knowledgeService.detail(userId, snapshot.pageId()).get("content")).endsWith("补充"));
+    }
+
+    /**
+     * 第七十一轮：用户自己保存的正文原样存、原样读回，只把 CRLF 统一成 LF。MarkdownCanonicalizer.clean() 是给 AI 写的内容准备的 ——
+     * 用在用户保存上，一页以代码块开头时代码块被剥坏、「我已经把资料整理进知识库了」这一行被删、结尾的换行没了（Obsidian 的文件都以换行结尾）。
+     * AI 读到的快照照旧是清洗过的：冲突检测的页状态哈希和它同一个口径，上面那条（存的是带围栏的原文）照样合得进去。
+     */
+    @Test
+    void userSaveKeepsTheTextAsTyped() throws Exception {
+        String typed = "```js\nconst a = 1;\n```\n\n我已经把资料整理进知识库了。\n#\n- 一\n  - 二\n";
+        Map<String, Object> page = createPage("原样", typed.replace("\n", "\r\n"));
+        Long id = numberLong(page.get("id"));
+        assertEquals(typed, page.get("content"), "保存回来的不是用户写的");
+        assertEquals(typed, knowledgeService.detail(userId, id).get("content"), "读一页回来的不是用户写的");
+        String stored = jdbcTemplate.queryForObject("SELECT encrypted_content FROM user_knowledge_page WHERE id = ?", String.class, id);
+        assertEquals(typed, knowledgeService.decrypt(stored), "库里存的不是用户写的");
+        assertEquals(MarkdownCanonicalizer.clean(typed), knowledgeService.findPageSnapshotByTitle(userId, "原样").content(),
+                "AI 读到的快照要照旧清洗（和页状态哈希同一个口径）");
+
+        String exported = null;
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(knowledgeService.exportMarkdownZip(userId)))) {
+            for (ZipEntry entry; (entry = zip.getNextEntry()) != null; ) {
+                if (entry.getName().equals("wiki/原样.md")) exported = new String(zip.readAllBytes(), StandardCharsets.UTF_8);
+            }
+        }
+        assertNotNull(exported, "导出里没有这一页");
+        assertTrue(exported.endsWith("---\n\n" + typed), "导出的正文不是用户写的：" + exported);
     }
 
     @Test
@@ -706,8 +738,10 @@ class KnowledgeConcurrencyIntegrationTest {
     private static final class KnowledgeApi {
         private final Object target;
         private final Class<?> contract;
+        private final ApplicationContext context;
 
         private KnowledgeApi(ApplicationContext context) {
+            this.context = context;
             try {
                 contract = Class.forName("com.zhiqu.service.KnowledgeService");
                 target = context.getBean(contract);
@@ -775,6 +809,15 @@ class KnowledgeConcurrencyIntegrationTest {
 
         private void rejectPatchSet(Long userId, Long patchSetId) {
             invoke("rejectPatchSet", new Class<?>[]{Long.class, Long.class}, userId, patchSetId);
+        }
+
+        private byte[] exportMarkdownZip(Long userId) {
+            return (byte[]) invoke("exportMarkdownZip", new Class<?>[]{Long.class}, userId);
+        }
+
+        private String decrypt(String stored) throws Exception {
+            Object crypto = context.getBean(Class.forName("com.zhiqu.service.privacy.SensitiveCryptoService"));
+            return (String) crypto.getClass().getMethod("decrypt", String.class).invoke(crypto, stored);
         }
 
         private SnapshotView findPageSnapshotByTitle(Long userId, String title) {

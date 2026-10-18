@@ -66,6 +66,12 @@ class WikiLookTest {
     }
 
     @Test
+    @DisplayName("嵌套列表（第七十一轮，node 里真跑 renderMarkdown / htmlToMarkdown）：缩进的子项、任务项的子项、续行、编号从几开始；旧编辑器保存时写回缩进、编号照原样")
+    void 嵌套列表() throws Exception {
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/markdown-lists-check.js"), NodeRunner.API_JS), "markdown-lists-check.js 没有全绿");
+    }
+
+    @Test
     @DisplayName("读长文的排版：正文使用可用宽度、窄容器可以收缩、正文比聊天大、行距 ≥ 1.8；标题一级比一级小、最小的不小于正文、节前留白比节后多；三级标题不带下划线")
     void 排版() throws IOException {
         String css = css();
