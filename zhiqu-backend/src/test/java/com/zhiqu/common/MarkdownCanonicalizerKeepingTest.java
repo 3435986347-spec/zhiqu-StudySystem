@@ -93,6 +93,9 @@ class MarkdownCanonicalizerKeepingTest {
         assertEquals("正文", MarkdownCanonicalizer.cleanKeeping("正文\n" + MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE, null));
         assertEquals("正文", MarkdownCanonicalizer.cleanKeeping("正文\n> （没有生成知识 Wiki 草稿：这次的回答里没有可以存进...", null),
                 "第九遍 review：被截短的、被引用的那一句也认得");
+        assertEquals("# 为什么提示没有生成知识 Wiki 草稿\n回答里只有一句「已写入」时会这样。",
+                MarkdownCanonicalizer.cleanKeeping("# 为什么提示没有生成知识 Wiki 草稿\n回答里只有一句「已写入」时会这样。", null),
+                "第十遍 review：只是提到这几个字的正文照留（第九遍那版见字就删）");
     }
 
     @Test

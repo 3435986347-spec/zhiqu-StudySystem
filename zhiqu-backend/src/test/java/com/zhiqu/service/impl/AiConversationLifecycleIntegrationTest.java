@@ -97,6 +97,8 @@ class AiConversationLifecycleIntegrationTest {
     private static final String TWO_LINES_MARK = "（回两行）";
     /** 第九遍 review：带这一句的非流式请求，假模型回两万行「已写入」（比存的上限长） */
     private static final String LONG_CLAIM_MARK = "（回很长的自述）";
+    /** 第十遍 review：带这一句的流式请求，假模型在流的最后报 finish_reason=length（回答底下本来就有一条说明） */
+    private static final String LENGTH_MARK = "（写到上限）";
     private static final int LONG_REPLY_CHARS = 15_000;
     /** 最后一次改写调用的请求体；null 表示这一轮没有发生重试。 */
     private static volatile String lastRewriteRequestBody;
@@ -186,7 +188,8 @@ class AiConversationLifecycleIntegrationTest {
             }
             String streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n";
             if (streaming && requestBody.contains(EMPTY_WIKI_MARK)) {
-                streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"已将以上内容写入知识库。\"}}]}\n\ndata: [DONE]\n\n";
+                streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"已将以上内容写入知识库。\"}" + (requestBody.contains(LENGTH_MARK) ? ",\"finish_reason\":\"length\"" : "")
+                        + "}]}\n\ndata: [DONE]\n\n";
             }
             // 只有专门的那条判据会发这句话（新建的 Notebook，没有历史会回显它）
             if (streaming && requestBody.contains(LONG_REPLY_MARK)) {
@@ -203,7 +206,7 @@ class AiConversationLifecycleIntegrationTest {
                 content = "第一行正文\\n第二行正文";
             }
             if (!streaming && requestBody.contains(LONG_CLAIM_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
-                content = "已将以上内容写入知识库。\\n".repeat(20000);
+                content = "```\\n" + "已将以上内容写入知识库。\\n".repeat(20000);   // 还开着一个代码块
             }
             String nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}";
             // 抽计划那一步：请求里带着 create_study_plan 工具、而且是 PLAN_REQUEST 那句话时，像真模型一样回一个工具调用（任务 + 例行计划都有）。
@@ -225,6 +228,11 @@ class AiConversationLifecycleIntegrationTest {
             if (!streaming && !planTool && requestBody.contains("用户刚才的请求：\\n帮我看看下周的计划合不合理")) {
                 nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":"
                         + "\"{\\\"tasks\\\":[{\\\"title\\\":\\\"硬抽出来的任务\\\",\\\"deadline\\\":\\\"2026-12-02 18:00:00\\\"}],\\\"routines\\\":[]}\"}}]}";
+            }
+            // 不支持工具调用的模型走结构化输出抽计划：对 PLAN_REQUEST 照样给一份（第十遍 review 的判据要一份真的计划，才走得到写回建议计划那一步）
+            if (!streaming && !planTool && requestBody.contains("用户刚才的请求：\\n" + PLAN_REQUEST)) {
+                nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":"
+                        + "\"{\\\"tasks\\\":[{\\\"title\\\":\\\"结构化抽出来的任务\\\",\\\"deadline\\\":\\\"2026-12-02 18:00:00\\\"}],\\\"routines\\\":[]}\"}}]}";
             }
             if (askModel && !userAsked) {
                 nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"不需要\"},\"finish_reason\":\"stop\"}]}";
@@ -407,6 +415,16 @@ class AiConversationLifecycleIntegrationTest {
         String notice = jdbcTemplate.queryForObject("SELECT notice FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, userId);
         assertTrue(String.valueOf(notice).contains("没有生成知识 Wiki 草稿"), "第九遍 review：说明要跟着这条回答存下来（刷新之后也在），不能只弹一下：" + notice);
 
+        // 第十遍 review：这一轮还出了计划（之后要整行写回建议计划）、回答本来就带着一条说明 —— 那句不能被写回去的旧说明盖掉；两条用空格连（页面上不换行）
+        Long withPlan = createNotebook(userId, "流式自述加计划");
+        Long before3 = latestRunId(userId, withPlan);
+        aiService.streamChat(userId, PLAN_REQUEST + "，写进知识库" + EMPTY_WIKI_MARK + LENGTH_MARK, noTools, false, "OFF", withPlan, "AUTO", Map.of());
+        awaitRunAfter(userId, withPlan, before3);
+        Map<String, Object> last = jdbcTemplate.queryForMap("SELECT notice, suggested_plan_json FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", userId);
+        assertNotNull(last.get("suggested_plan_json"), "这条判据要走到写回建议计划那一步：" + last);
+        String both = String.valueOf(last.get("notice"));
+        assertTrue(both.contains("单次输出的上限") && both.contains("没有生成知识 Wiki 草稿") && !both.contains("\n"), "两条说明都要在、用空格连：" + both);
+
         Long control = createNotebook(userId, "流式有正文");   // 另一个 Notebook：同一个的话历史里带着上一句，假模型又回「已写入」
         Long before2 = latestRunId(userId, control);
         aiService.streamChat(userId, "把这段写进知识库", noTools, false, "OFF", control, "AUTO", Map.of());
@@ -433,6 +451,7 @@ class AiConversationLifecycleIntegrationTest {
         aiService.chat(userId, "把这次的结论写进知识库" + LONG_CLAIM_MARK, modelId, false, "OFF", notebookId);
         String saved = jdbcTemplate.queryForObject("SELECT content FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, userId);
         assertTrue(saved.endsWith(com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE), "补的那句被截掉了：…" + saved.substring(Math.max(0, saved.length() - 80)));
+        assertTrue(saved.contains("\n```\n…\n\n" + com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE), "第十遍 review：截在代码块里要先收尾，那句才不被画成代码：…" + saved.substring(Math.max(0, saved.length() - 120)));
     }
 
     /** 第八遍 review：回答里的「草稿摘要」原来压成一行（多行的正文、开头的代码块都挤在一起） */

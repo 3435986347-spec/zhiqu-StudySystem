@@ -498,7 +498,7 @@ public class AiServiceImpl implements AiService {
                     // 回答洗完是空的（模型只说了一句「已写入知识库」）：没有建草稿，照实说 —— 不让那句话冒充已经存上了（第七十四轮第七遍 review）
                     // 先给回答让出位置再补（第九遍 review：存的时候按 REPLY_MAX_LENGTH 截，补在很长的回答后面会被截掉）
                     String note = com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE;
-                    liveFinalReply = limitRawMarkdown(reply, REPLY_MAX_LENGTH - note.length() - 5) + "\n\n" + note;
+                    liveFinalReply = com.zhiqu.service.knowledge.WikiDrafts.excerpt(reply, REPLY_MAX_LENGTH - note.length() - 10) + "\n\n" + note;   // 截在代码块里也收尾，那句才不被画成代码
                 }
             }
             AiMessage liveAssistantMessage = saveChatMessage(
@@ -2120,8 +2120,10 @@ public class AiServiceImpl implements AiService {
                 String note = com.zhiqu.common.MarkdownCanonicalizer.NO_WIKI_DRAFT_NOTE;
                 s.trace.skipTask(ctx, ctx.task("WIKI_CURATOR"), note);
                 // 跟着这条回答存下来（第九遍 review：上一版只弹一下提示，刷新之后那句「已写入」照样站着）：回答底下的说明，done 事件也带着
-                s.finalNotice = s.finalNotice == null ? note : s.finalNotice + "\n" + note;
+                s.finalNotice = s.finalNotice == null ? note : s.finalNotice + " " + note;   // 页面上的说明不换行，用空格连
                 if (s.liveAssistant != null && s.liveAssistant.getId() != null) {
+                    // 内存里那份也改：之后 persistSuggestedPlan 拿它整行 updateById，不改就把旧的说明写回去（第十遍 review）
+                    s.liveAssistant.setNotice(s.finalNotice);
                     AiMessage withNotice = new AiMessage();
                     withNotice.setId(s.liveAssistant.getId());
                     withNotice.setNotice(s.finalNotice);

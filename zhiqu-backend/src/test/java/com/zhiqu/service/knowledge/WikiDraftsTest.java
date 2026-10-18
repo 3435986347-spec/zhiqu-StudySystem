@@ -56,6 +56,8 @@ class WikiDraftsTest {
         String excerpt = WikiDrafts.excerpt("第一行\n" + "a".repeat(9) + "👨‍👩‍👧" + "b".repeat(30), 14);
         assertEquals("第一行\n" + "a".repeat(9) + "\n…", excerpt, "摘录：不切开 emoji、截了另起一行写「…」");
         assertEquals("短的", WikiDrafts.excerpt("短的", 14));
+        String tiny = WikiDrafts.body("```\nabcd\n```\nmore more", null, 11).text();
+        assertTrue(tiny.startsWith("```\nabcd\n```\n\n> 草稿只存了前"), "第十遍 review：上限很小、截在收尾那一行中间，也退到整行：" + tiny);
     }
 
     @Test

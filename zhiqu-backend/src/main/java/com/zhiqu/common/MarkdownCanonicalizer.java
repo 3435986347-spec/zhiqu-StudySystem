@@ -26,8 +26,11 @@ public final class MarkdownCanonicalizer {
      * 下一轮「把上面的存进知识库」时不能被当成草稿正文（{@link #cleanKeeping} 去掉它；每一条草稿都过这一道）。
      */
     public static final String NO_WIKI_DRAFT_NOTE = "（没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）";
-    /** 认那一句看的是这几个字：被截短、被模型引用（「> （没有生成…」）、混在一行里也认得（第九遍 review） */
-    private static final String NO_WIKI_DRAFT_MARK = "没有生成知识 Wiki 草稿";
+    /**
+     * 认那一句：以「（没有生成知识 Wiki 草稿」开头的一行，前面可以带引用符号 —— 被截短、被模型引用（「> （没有生成…」）也认得（第九遍 review）；
+     * 只是提到这几个字的正文（「# 为什么提示没有生成知识 Wiki 草稿」）不算（第十遍 review：第九遍那版见字就删）
+     */
+    private static final java.util.regex.Pattern NO_WIKI_DRAFT_LINE = java.util.regex.Pattern.compile("^[>\\s]*（没有生成知识 Wiki 草稿");
 
     /**
      * 归一换行、剥离整体代码围栏、丢弃空标题行与「已写入 Wiki」这类模型自述行。
@@ -91,7 +94,7 @@ public final class MarkdownCanonicalizer {
     private static String withoutModelLines(String text, java.util.Set<String> baseLines) {
         List<String> lines = new ArrayList<>();
         for (String line : text.split("\n")) {
-            if (baseLines.contains(line) || !modelOnlyLine(line) && !line.contains(NO_WIKI_DRAFT_MARK)) {
+            if (baseLines.contains(line) || !modelOnlyLine(line) && !NO_WIKI_DRAFT_LINE.matcher(line).find()) {
                 lines.add(line);
             }
         }

@@ -81,7 +81,8 @@ public final class WikiDrafts {
         int end = 0;
         while (grapheme.find() && grapheme.end() <= maxChars) end = grapheme.end();
         int lineEnd = text.lastIndexOf('\n', end);
-        if (lineEnd >= 0 && lineEnd >= end * 0.8) end = lineEnd;
+        // 离上一个换行只差几个字（截在一行收尾的 ``` 中间就是这样）也退到整行 —— 上限很小的时候光靠八成那一条接不住（第十遍 review）
+        if (lineEnd >= 0 && (lineEnd >= end * 0.8 || end - lineEnd <= 8)) end = lineEnd;
         return text.substring(0, end).stripTrailing();
     }
 
