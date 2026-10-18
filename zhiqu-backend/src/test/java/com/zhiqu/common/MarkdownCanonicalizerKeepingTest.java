@@ -66,15 +66,24 @@ class MarkdownCanonicalizerKeepingTest {
         assertEquals(output + "\n", MarkdownCanonicalizer.cleanKeeping(output, plain), "以 ```text 输出块开头、以代码块结尾的页不是包了一层");
         String edited = "```text\n输出\n```\n正文\n```js\nb\n```";
         assertEquals(edited + "\n", MarkdownCanonicalizer.cleanKeeping(edited, "```js\na\n```\n正文\n"), "原页以代码块开头、模型把第一块改成了 ```text 输出块");
-        String outputThenCode = "```text\n输出\n```\n解释\n```\nmore\n```";
-        assertEquals(outputThenCode + "\n", MarkdownCanonicalizer.cleanKeeping(outputThenCode, plain),
-                "```text 开头、里面成对：照样不是包（```text 是输出块，不是包法）");
         String innerLangLine = "```markdown\n```\na\n```js\nb\n```";
         assertEquals(innerLangLine + "\n", MarkdownCanonicalizer.cleanKeeping(innerLangLine, plain),
                 "打开的块里带语言名的 ``` 行是内容、不是收尾：最后那个 ``` 收的是里面的块，不是包");
         String declaredButOpen = "```markdown\n# 标题\n```js\nx\n```";
         assertEquals(declaredButOpen + "\n", MarkdownCanonicalizer.cleanKeeping(declaredButOpen, plain),
                 "写着 ```markdown、可里面的围栏不成对（最后那个 ``` 是 js 块的收尾）：不是包了一层");
+    }
+
+    @Test
+    @DisplayName("第六遍 review：包的后面跟着一句「已写入知识库」也剥；```text 包也剥；包里有一行行内代码、缩进代码块里有 ``` 照样成对")
+    void moreWrapperShapes() {
+        assertEquals("# 页\n正文", MarkdownCanonicalizer.cleanKeeping("```markdown\n# 页\n正文\n```\n\n已将以上内容写入知识库。", null),
+                "自述行跟在收尾的围栏后面：先去掉它再看是不是包了一层");
+        assertEquals("纯文本的总结", MarkdownCanonicalizer.cleanKeeping("```text\n纯文本的总结\n```", null), "```text 包的回答");
+        assertEquals("正文\n```x``` 是行内代码", MarkdownCanonicalizer.cleanKeeping("```markdown\n正文\n```x``` 是行内代码\n```", null),
+                "反引号后面还有反引号的那一行是行内代码，不是围栏");
+        assertEquals("- 列表\n\n        ```\n        缩进代码", MarkdownCanonicalizer.cleanKeeping("```markdown\n- 列表\n\n        ```\n        缩进代码\n```", null),
+                "缩进四格以上的 ``` 是缩进代码块的内容，不是围栏");
     }
 
     @Test
@@ -94,6 +103,8 @@ class MarkdownCanonicalizerKeepingTest {
     @Test
     void aNewPageStartingWithAMarkdownExampleAndEndingWithCodeIsReadAsWrapped() {
         assertEquals("# 示例\n```\n正文\n```\nx\n", MarkdownCanonicalizer.cleanKeeping("```markdown\n# 示例\n```\n正文\n```\nx\n```", "正文\n"));
+        // 同一类（第六遍 review 让 ```text 包又算包之后）：以 ```text 输出块开头、以光秃秃的代码块结尾、里面成对的页
+        assertEquals("输出\n```\n解释\n```\nmore\n", MarkdownCanonicalizer.cleanKeeping("```text\n输出\n```\n解释\n```\nmore\n```", "正文\n"));
     }
 
     /**

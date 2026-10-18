@@ -423,15 +423,54 @@ class KnowledgeConcurrencyIntegrationTest {
                 "确认框里用户自己加的一行被当成模型的自述行删了");
     }
 
+    /**
+     * 第七十四轮第六遍 review：这一轮之前存的草稿没有「洗过」标记，其中两条路径存的时候从没洗过、原来靠合入时那一遍 —— 没标记的补洗一遍；
+     * 标记洗过的原样落（不洗第二遍）。
+     */
+    @Test
+    void draftsStoredBeforeThisRoundAreCleanedOnceWhenApplied() throws Exception {
+        String raw = "```markdown\n# 旧\n正文 改\n```\n已将以上内容写入知识库。";
+        createPage("旧草稿", "正文\n");
+        SnapshotView seen = knowledgeService.findPageSnapshotByTitle(userId, "旧草稿");
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("pageId", seen.pageId()); item.put("actionType", "UPSERT"); item.put("title", seen.title()); item.put("content", "占位");
+        Map<String, Object> legacy = knowledgeService.createPatchSet(userId, patchBody("旧草稿", item), Map.of(seen.pageId(), seen));
+        jdbcTemplate.update("UPDATE user_knowledge_revision SET encrypted_content = ?, content_cleaned = NULL WHERE patch_set_id = ?",
+                knowledgeService.encrypt(raw), legacy.get("id"));
+        knowledgeService.applyPatchSet(userId, numberLong(legacy.get("id")));
+        assertEquals("# 旧\n正文 改\n", String.valueOf(knowledgeService.detail(userId, seen.pageId()).get("content")), "没有「洗过」标记的旧草稿合入时没补洗");
+
+        createPage("新草稿", "正文\n");
+        SnapshotView fresh = knowledgeService.findPageSnapshotByTitle(userId, "新草稿");
+        Map<String, Object> freshItem = new LinkedHashMap<>(item);
+        freshItem.put("pageId", fresh.pageId()); freshItem.put("title", fresh.title());
+        Map<String, Object> marked = knowledgeService.createPatchSet(userId, patchBody("新草稿", freshItem), Map.of(fresh.pageId(), fresh));
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT content_cleaned FROM user_knowledge_revision WHERE patch_set_id = ?", Integer.class, marked.get("id")));
+        String alreadyClean = "```text\n# 这是页自己的\n```";   // 洗过的草稿里要是有这种样子（比如用户本来就这么写），合入时不再当成包剥掉
+        jdbcTemplate.update("UPDATE user_knowledge_revision SET encrypted_content = ? WHERE patch_set_id = ?", knowledgeService.encrypt(alreadyClean), marked.get("id"));
+        knowledgeService.applyPatchSet(userId, numberLong(marked.get("id")));
+        assertEquals(alreadyClean, String.valueOf(knowledgeService.detail(userId, fresh.pageId()).get("content")), "标记洗过的草稿合入时又洗了一遍");
+    }
+
     /** 第五遍 review：合入不再洗之后也没有了「内容不能为空」—— 空草稿会把一页盖成空的；确认框里清空正文原来被当成「没给」，悄悄合入 AI 的那一版 */
     @Test
-    void emptyDraftsAndClearedConfirmBodiesAreRefused() {
+    void emptyDraftsAndClearedConfirmBodiesAreRefused() throws Exception {
         createPage("不许盖空", "原来的正文\n");
         SnapshotView seen = knowledgeService.findPageSnapshotByTitle(userId, "不许盖空");
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("pageId", seen.pageId()); item.put("actionType", "UPSERT"); item.put("title", seen.title());
         item.put("content", "已将以上内容写入知识库。");                        // 洗完只剩空的
-        Map<String, Object> patch = knowledgeService.createPatchSet(userId, patchBody("不许盖空", item), Map.of(seen.pageId(), seen));
+        // 第六遍 review：空的在建草稿时就说出来（要到合入时才报错的话，同一批里别的草稿也跟着合不进去）
+        RuntimeException empty = assertThrows(RuntimeException.class,
+                () -> knowledgeService.createPatchSet(userId, patchBody("不许盖空", item), Map.of(seen.pageId(), seen)));
+        assertTrue(empty.getMessage().contains("没有正文"), empty.getMessage());
+        assertEquals("原来的正文\n", String.valueOf(knowledgeService.detail(userId, seen.pageId()).get("content")), "空草稿把一页盖成了空的");
+        // 合入时那一道照样在：库里已经有的空草稿（这一轮之前存的）不拿来盖页
+        Map<String, Object> filler = new LinkedHashMap<>(item);
+        filler.put("content", "占位");
+        Map<String, Object> patch = knowledgeService.createPatchSet(userId, patchBody("不许盖空", filler), Map.of(seen.pageId(), seen));
+        jdbcTemplate.update("UPDATE user_knowledge_revision SET encrypted_content = ?, content_cleaned = NULL WHERE patch_set_id = ?",
+                knowledgeService.encrypt("已将以上内容写入知识库。"), patch.get("id"));
         assertThrows(RuntimeException.class, () -> knowledgeService.applyPatchSet(userId, numberLong(patch.get("id"))));
         assertEquals("原来的正文\n", String.valueOf(knowledgeService.detail(userId, seen.pageId()).get("content")), "空草稿把一页盖成了空的");
 
@@ -923,6 +962,11 @@ class KnowledgeConcurrencyIntegrationTest {
         private String decrypt(String stored) throws Exception {
             Object crypto = context.getBean(Class.forName("com.zhiqu.service.privacy.SensitiveCryptoService"));
             return (String) crypto.getClass().getMethod("decrypt", String.class).invoke(crypto, stored);
+        }
+
+        private String encrypt(String plain) throws Exception {
+            Object crypto = context.getBean(Class.forName("com.zhiqu.service.privacy.SensitiveCryptoService"));
+            return (String) crypto.getClass().getMethod("encrypt", String.class).invoke(crypto, plain);
         }
 
         private SnapshotView findPageSnapshotByTitle(Long userId, String title) {

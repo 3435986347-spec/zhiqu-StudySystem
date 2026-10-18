@@ -491,8 +491,10 @@ public class AiServiceImpl implements AiService {
                         reply,
                         history
                 );
-                liveWikiRevision = chatWikiRevisionRow(revision);
-                liveFinalReply = buildWikiDraftReply(revision, cryptoService.decrypt(revision.getEncryptedContent()));
+                if (revision != null) {   // null：回答洗完是空的，没有可存的草稿
+                    liveWikiRevision = chatWikiRevisionRow(revision);
+                    liveFinalReply = buildWikiDraftReply(revision, cryptoService.decrypt(revision.getEncryptedContent()));
+                }
             }
             AiMessage liveAssistantMessage = saveChatMessage(
                     userId,
@@ -3243,6 +3245,11 @@ public class AiServiceImpl implements AiService {
                                                           List<AiMessage> history) {
         String previousAssistant = latestAssistantContent(history);
         String content = extractWikiDraftContent(userMessage, assistantReply, previousAssistant);
+        // 先洗再截；洗完是空的（回答只有一句「已写入知识库」）不建草稿 —— 原来照样建、草稿摘要是空的，要到合入时才报错（第七十四轮第六遍 review）
+        com.zhiqu.service.knowledge.WikiDrafts.Body draft = com.zhiqu.service.knowledge.WikiDrafts.body(content, null, 5000);
+        if (draft == null) {
+            return null;
+        }
         String title = inferWikiDraftTitle(userMessage, content);
         KnowledgeSource source = new KnowledgeSource();
         source.setUserId(userId);
@@ -3267,14 +3274,7 @@ public class AiServiceImpl implements AiService {
         patchSet.setSourceConversationId(conversationId);
         knowledgePatchSetMapper.insert(patchSet);
 
-        UserKnowledgeRevision revision = new UserKnowledgeRevision();
-        revision.setUserId(userId);
-        revision.setPatchSetId(patchSet.getId());
-        revision.setActionType("UPSERT");
-        revision.setTitle(patchSet.getTitle());
-        revision.setEncryptedContent(cryptoService.encrypt(com.zhiqu.common.MarkdownCanonicalizer.cleanKeeping(limitRawMarkdown(content, 5000), null)));
-        revision.setEncryptionVersion("v1");
-        revision.setStatus("PENDING");
+        UserKnowledgeRevision revision = com.zhiqu.service.knowledge.WikiDrafts.pending(userId, patchSet.getId(), patchSet.getTitle(), draft, cryptoService);
         revision.setSourceMessageId(sourceMessageId);
         revision.setSourceConversationId(conversationId);
         knowledgeRevisionMapper.insert(revision);

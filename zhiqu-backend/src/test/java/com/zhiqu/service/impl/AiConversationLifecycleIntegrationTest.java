@@ -91,6 +91,8 @@ class AiConversationLifecycleIntegrationTest {
     private static final String REWRITE_PROMPT_MARK = "你是检索查询改写器";
     /** 用户消息里带着它，假模型就流式回一段 {@link #LONG_REPLY_CHARS} 字的回答（验证长回答整段入库）。 */
     private static final String LONG_REPLY_MARK = "请写一篇很长很长的回答";
+    /** 第七十四轮第六遍 review：带这一句的非流式请求，假模型只回一句「已写入知识库」 */
+    private static final String EMPTY_WIKI_MARK = "（只回自述）";
     private static final int LONG_REPLY_CHARS = 15_000;
     /** 最后一次改写调用的请求体；null 表示这一轮没有发生重试。 */
     private static volatile String lastRewriteRequestBody;
@@ -186,6 +188,9 @@ class AiConversationLifecycleIntegrationTest {
                     sse.append("data: {\"choices\":[{\"delta\":{\"content\":\"").append("长".repeat(500)).append("\"}}]}\n\n");
                 }
                 streamed = sse.append("data: [DONE]\n\n").toString();
+            }
+            if (!streaming && requestBody.contains(EMPTY_WIKI_MARK) && !requestBody.contains(MEMORY_PROMPT_MARK) && !requestBody.contains(REWRITE_PROMPT_MARK)) {
+                content = "已将以上内容写入知识库。";
             }
             String nonStreamed = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}";
             // 抽计划那一步：请求里带着 create_study_plan 工具、而且是 PLAN_REQUEST 那句话时，像真模型一样回一个工具调用（任务 + 例行计划都有）。
@@ -308,6 +313,42 @@ class AiConversationLifecycleIntegrationTest {
         return jdbcTemplate.queryForMap(
                 "SELECT id, deleted FROM ai_conversation WHERE user_id = ? AND conversation_key = ?",
                 ownerId, AiConversation.notebookKey(notebookId));
+    }
+
+    /**
+     * 第七十四轮第六遍 review：用户要写进知识库、模型只回一句「已将以上内容写入知识库」—— 洗完草稿是空的。
+     * 原来照样建一条空草稿（摘要是空的），要到合入时才报错；现在不建，回答照常存。
+     */
+    @Test
+    void aReplyThatIsOnlyAWriteClaimCreatesNoEmptyDraft() {
+        Long notebookId = createNotebook(userId, "只回自述");
+        Integer before = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId);
+        Map<String, Object> result = aiService.chat(userId, "把这次的结论写进知识库" + EMPTY_WIKI_MARK, modelId, false, "OFF", notebookId);
+        Integer after = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId);
+        assertEquals(before, after, "洗完是空的草稿不该建");
+        assertTrue(String.valueOf(result).contains("已将以上内容写入知识库"), "回答照常回：" + result);
+    }
+
+    /** 第七十四轮第六遍 review：工作区的 Wiki 草稿工件洗完是空的 —— 确认时当场说，不建一条空草稿（原来要到合入时才报错） */
+    @Test
+    void confirmingAWikiArtifactThatIsOnlyAWriteClaimIsRefused() {
+        jdbcTemplate.update("INSERT INTO ai_agent_run(user_id, status, agent_mode) VALUES (?, 'DONE', 'AUTO')", userId);
+        long run = jdbcTemplate.queryForObject("SELECT MAX(id) FROM ai_agent_run WHERE user_id = ?", Long.class, userId);
+        jdbcTemplate.update("INSERT INTO ai_agent_artifact(run_id, artifact_type, title, content_json, status) VALUES (?, 'WIKI_DRAFT', '只有自述', ?, 'DRAFT')",
+                run, "{\"title\":\"只有自述\",\"content\":\"已将以上内容写入知识库。\"}");
+        long artifact = jdbcTemplate.queryForObject("SELECT MAX(id) FROM ai_agent_artifact WHERE run_id = ?", Long.class, run);
+        Integer before = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId);
+        RuntimeException refused = assertThrows(RuntimeException.class, () -> aiWorkspaceService.confirmArtifact(userId, artifact, null));
+        assertTrue(refused.getMessage().contains("没有正文"), refused.getMessage());
+        assertEquals(before, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId),
+                "空的 Wiki 草稿不该建");
+
+        jdbcTemplate.update("INSERT INTO ai_agent_artifact(run_id, artifact_type, title, content_json, status) VALUES (?, 'WIKI_DRAFT', '有正文', ?, 'DRAFT')",
+                run, "{\"title\":\"有正文\",\"content\":\"```markdown\\n# 有正文\\n```\\n已将以上内容写入知识库。\"}");
+        long good = jdbcTemplate.queryForObject("SELECT MAX(id) FROM ai_agent_artifact WHERE run_id = ?", Long.class, run);
+        aiWorkspaceService.confirmArtifact(userId, good, null);
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT content_cleaned FROM user_knowledge_revision WHERE user_id = ? ORDER BY id DESC LIMIT 1", Integer.class, userId),
+                "对照：有正文的照常建，标记洗过");
     }
 
     @Test

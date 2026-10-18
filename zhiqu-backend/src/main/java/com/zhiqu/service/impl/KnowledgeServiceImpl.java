@@ -18,6 +18,7 @@ import com.zhiqu.mapper.UserKnowledgePageMapper;
 import com.zhiqu.mapper.UserKnowledgeRevisionMapper;
 import com.zhiqu.service.KnowledgePageSnapshot;
 import com.zhiqu.service.KnowledgeService;
+import com.zhiqu.service.knowledge.WikiDrafts;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.util.FileParseUtil;
 import org.springframework.stereotype.Service;
@@ -393,45 +394,41 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 ? (List<Map<String, Object>>) (List<?>) list
                 : List.of();
         if (items.isEmpty()) {
-            UserKnowledgeRevision revision = new UserKnowledgeRevision();
-            revision.setUserId(userId);
-            revision.setPatchSetId(patchSet.getId());
-            revision.setActionType("UPSERT");
-            revision.setTitle(limit(value(body.get("pageTitle"), patchSet.getTitle()), 120));
-            revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.cleanKeeping(markdownValue(body.get("content"), patchSet.getSummary()), null)));
-            revision.setEncryptionVersion("v1");
-            revision.setStatus("PENDING");
-            revisionMapper.insert(revision);
+            String pageTitle = limit(value(body.get("pageTitle"), patchSet.getTitle()), 120);
+            revisionMapper.insert(WikiDrafts.pending(userId, patchSet.getId(), pageTitle,
+                    draftBody(markdownValue(body.get("content"), patchSet.getSummary()), null, pageTitle), cryptoService));
         } else {
             for (Map<String, Object> item : items) {
-                UserKnowledgeRevision revision = new UserKnowledgeRevision();
-                revision.setUserId(userId);
-                revision.setPatchSetId(patchSet.getId());
                 Long targetPageId = parseLong(item.get("pageId"));
-                revision.setPageId(targetPageId);
                 String baseContent = null;   // 改已有的页：原页正文，清洗时留着原页里本来就有的行
+                String baseHash = null;
+                Integer baseVersion = null;
                 if (targetPageId != null) {
                     if (trustedInternalRequest) {
                         KnowledgePageSnapshot snapshot = trustedSnapshotsByPageId.get(targetPageId);
                         if (snapshot == null || !targetPageId.equals(snapshot.pageId())) {
                             throw new BusinessException("目标知识页缺少可信读取快照，请重新读取后再生成草稿");
                         }
-                        revision.setBaseContentHash(snapshot.stateHash());
-                        revision.setBasePageVersion(snapshot.version());
+                        baseHash = snapshot.stateHash();
+                        baseVersion = snapshot.version();
                         baseContent = snapshot.content();
                     } else {
                         UserKnowledgePage targetPage = ownedPage(userId, targetPageId);
                         assertExpectedVersion(targetPage, requiredBasePageVersion(item));
-                        revision.setBaseContentHash(pageStateHash(targetPage));
-                        revision.setBasePageVersion(targetPage.getVersion());
+                        baseHash = pageStateHash(targetPage);
+                        baseVersion = targetPage.getVersion();
                         baseContent = cryptoService.decrypt(targetPage.getEncryptedContent());
                     }
                 }
-                revision.setActionType(limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20));
-                revision.setTitle(limit(value(item.get("title"), patchSet.getTitle()), 120));
-                revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.cleanKeeping(markdownValue(item.get("content"), ""), baseContent)));
-                revision.setEncryptionVersion("v1");
-                revision.setStatus("PENDING");
+                String itemTitle = limit(value(item.get("title"), patchSet.getTitle()), 120);
+                String actionType = limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20);
+                UserKnowledgeRevision revision = WikiDrafts.pending(userId, patchSet.getId(), itemTitle,
+                        "DELETE".equals(actionType) ? WikiDrafts.forDelete() : draftBody(markdownValue(item.get("content"), ""), baseContent, itemTitle),
+                        cryptoService);
+                revision.setPageId(targetPageId);
+                revision.setBaseContentHash(baseHash);
+                revision.setBasePageVersion(baseVersion);
+                revision.setActionType(actionType);
                 revisionMapper.insert(revision);
             }
         }
@@ -555,14 +552,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         patchSet.setSourceMessageId(source.getMessageId());
         patchSetMapper.insert(patchSet);
 
-        UserKnowledgeRevision revision = new UserKnowledgeRevision();
-        revision.setUserId(userId);
-        revision.setPatchSetId(patchSet.getId());
-        revision.setActionType("UPSERT");
-        revision.setTitle(limit(source.getTitle(), 120));
-        revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.cleanKeeping(cryptoService.decrypt(source.getEncryptedContent()), null)));
-        revision.setEncryptionVersion("v1");
-        revision.setStatus("PENDING");
+        String sourceTitle = limit(source.getTitle(), 120);
+        UserKnowledgeRevision revision = WikiDrafts.pending(userId, patchSet.getId(), sourceTitle,
+                draftBody(cryptoService.decrypt(source.getEncryptedContent()), null, sourceTitle), cryptoService);
         revision.setSourceConversationId(source.getConversationId());
         revision.setSourceMessageId(source.getMessageId());
         revisionMapper.insert(revision);
@@ -1110,7 +1102,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         UserKnowledgePage page = pageId == null ? null : ownedPageForUpdate(userId, pageId);
         if (page != null) assertRevisionTargetUnchanged(revision, page);
-        // 草稿建的时候已经洗过一遍（createPatchSet 里的 cleanKeeping / clean），合入时不再洗（第七十四轮第四遍 review：原来合入时又洗一遍，
+        // 草稿建的时候已经洗过一遍（WikiDrafts），合入时不再洗（第七十四轮第四遍 review：原来合入时又洗一遍，
         // 每洗一遍就多一次把真内容当成模型包的那层剥掉的机会 —— 前几遍 review 照出来的「第二遍又剥了」都是从这里来的）。
         // 确认框里改过的正文是用户自己写的，照第七十一轮的规矩原样存，只统一换行。
         if (body.containsKey("content") && !given(body.get("content"))) {
@@ -1118,6 +1110,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         String content = given(body.get("content")) ? userMarkdown(body.get("content").toString())
                 : cryptoService.decrypt(revision.getEncryptedContent());
+        if (!given(body.get("content")) && revision.getContentCleaned() == null) {
+            // 第七十四轮之前存的草稿：有两条路径存的时候从没洗过，原来靠合入时这一遍 —— 没有「洗过」标记的补洗一遍（只洗这一遍）
+            content = MarkdownCanonicalizer.cleanKeeping(content, page == null ? null : cryptoService.decrypt(page.getEncryptedContent()));
+        }
         if (content.isBlank()) {
             throw new BusinessException("这条草稿没有正文，没有合入");   // 不拿空正文盖掉一页
         }
@@ -1725,6 +1721,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private BusinessException knowledgePageConflict() {
         return new BusinessException("知识页已被其他窗口修改，请刷新后重试");
+    }
+
+    /** 洗完是空的（只有模型的自述）不建草稿、当场说出来 —— 要到合入时才报错的话，同一批里别的草稿也跟着合不进去（第七十四轮第六遍 review） */
+    private static WikiDrafts.Body draftBody(String raw, String base, String title) {
+        WikiDrafts.Body body = WikiDrafts.body(raw, base, Integer.MAX_VALUE);
+        if (body == null) {
+            throw new BusinessException("「" + title + "」的草稿没有正文（只有「已写入知识库」这类说明），没有生成");
+        }
+        return body;
     }
 
     /** 请求里给了这一项：null、只有空白都算没给（value() 和 markdownValue() 共用这一条） */

@@ -23,6 +23,8 @@ public class UserKnowledgeRevision {
     /** 草稿生成时目标页正文的哈希；合入前比对当前页哈希，检测“草稿生成后原页已被改动”的冲突。为空表示无基准（老数据/新建页）。 */
     private String baseContentHash;
     private Integer basePageVersion;
+    /** 1 = 入库前洗过（WikiDrafts），合入时原样落；null = 第七十四轮之前存的，合入时补洗一遍 */
+    private Integer contentCleaned;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

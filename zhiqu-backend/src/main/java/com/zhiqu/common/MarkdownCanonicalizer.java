@@ -70,19 +70,24 @@ public final class MarkdownCanonicalizer {
         // 新页也走这里，不走 clean()：clean() 见开头是代码块就剥掉那一道，页只是以代码块开头时留下的收尾会吞掉后面整页（第五遍 review）
         String baseText = base == null ? "" : base.replace("\r\n", "\n").replace("\r", "\n");
         java.util.Set<String> baseLines = new java.util.HashSet<>(java.util.Arrays.asList(baseText.split("\n")));
-        String text = trimBlankLines(value.replace("\r\n", "\n").replace("\r", "\n"));
+        // 先去掉模型的自述行再看是不是包了一层：「```markdown … ```」后面常跟一句「已将以上内容写入知识库」，最后一行就不是围栏了（第六遍 review）
+        String text = withoutModelLines(value.replace("\r\n", "\n").replace("\r", "\n"), baseLines);
         String unwrapped = unwrapWholePage(text, baseText.stripLeading().split("\n", 2)[0].trim());
         if (unwrapped != null) {
-            text = unwrapped;
+            text = withoutModelLines(unwrapped, baseLines);
         }
+        return text.isEmpty() || !baseText.endsWith("\n") ? text : text + "\n";
+    }
+
+    /** 去掉原页里没有的模型自述行、首尾空行 */
+    private static String withoutModelLines(String text, java.util.Set<String> baseLines) {
         List<String> lines = new ArrayList<>();
         for (String line : text.split("\n")) {
             if (baseLines.contains(line) || !modelOnlyLine(line)) {
                 lines.add(line);
             }
         }
-        String result = trimBlankLines(String.join("\n", lines));
-        return result.isEmpty() || !baseText.endsWith("\n") ? result : result + "\n";
+        return trimBlankLines(String.join("\n", lines));
     }
 
     /** 去掉开头的空行和结尾的空白，第一行自己的缩进不动 */
@@ -93,8 +98,8 @@ public final class MarkdownCanonicalizer {
     /**
      * 整页被包在一个代码块里（模型常回 ```markdown … ```）就剥掉那一层，否则 null（第七十四轮第二、三、四遍 review）：
      * <ul>
-     *   <li>开头写明 ```markdown / ```md（不分大小写，又不是原页自己的第一行），而且里面的围栏成对：是包了一层。
-     *       ```text 不算 —— 那是常见的「输出」块，页以它开头、以代码块结尾时会被当成包；</li>
+     *   <li>开头写明 ```markdown / ```md / ```text（不分大小写，又不是原页自己的第一行），而且里面的围栏成对：是包了一层
+     *       （第六遍 review：合入时的 clean() 原来什么语言名的包都剥，```text 包的回答这一轮差点成了整页代码块）；</li>
      *   <li>原页以代码块开头时，包的里面以围栏开头、围栏成对：是包了一层（模型把 ```javascript 写成 ```js、页又恰好以代码块结尾，不算）；</li>
      *   <li>原页不以代码块开头时，光秃秃的 ``` 只在里面再没有围栏时才算 —— 以光秃秃的代码块开头、结尾的页和光秃秃的包分不开，宁可不剥
      *       （没剥的包在确认框的预览里看得见；剥错了是整页的围栏错位）。</li>
@@ -108,7 +113,7 @@ public final class MarkdownCanonicalizer {
         }
         String opening = text.substring(0, firstBreak).trim();
         String inner = lastBreak > firstBreak ? text.substring(firstBreak + 1, lastBreak) : "";
-        boolean declared = opening.matches("(?i)```(?:markdown|md)") && !opening.equals(baseFirstLine) && fencesBalanced(inner);
+        boolean declared = opening.matches("(?i)```(?:markdown|md|text|txt|plaintext)") && !opening.equals(baseFirstLine) && fencesBalanced(inner);
         boolean wrapper = declared || (baseFirstLine.startsWith("```")
                 ? inner.stripLeading().startsWith("```") && fencesBalanced(inner)
                 : opening.equals("```") && inner.lines().noneMatch(line -> line.stripLeading().startsWith("```")));
@@ -117,18 +122,28 @@ public final class MarkdownCanonicalizer {
 
     /**
      * 每一个打开的代码块都在这段里关上，照 CommonMark：``` 或 ~~~ 开头（三个以上），收尾是同一种字符、不比开头短、后面没有语言名；
-     * 块里面带语言名的 ``` 行是内容（第五遍 review：原来只认正好三个反引号，```` 收的块被当成没收）
+     * 块里面带语言名的 ``` 行是内容（第五遍 review：原来只认正好三个反引号，```` 收的块被当成没收）。
+     * 缩进四格以上的是缩进代码块的内容、反引号后面还有反引号的是一行行内代码，都不是围栏（第六遍 review）。
      */
     private static boolean fencesBalanced(String text) {
         char fence = 0;
         int length = 0;
         for (String line : text.split("\n", -1)) {
-            String trimmed = line.strip();
+            int indent = 0;
+            while (indent < line.length() && line.charAt(indent) == ' ') indent++;
+            if (indent >= 4 || indent < line.length() && line.charAt(indent) == '\t') continue;
+            String trimmed = line.substring(indent).stripTrailing();
             int run = 0;
             while (run < trimmed.length() && (trimmed.charAt(run) == '`' || trimmed.charAt(run) == '~') && trimmed.charAt(run) == trimmed.charAt(0)) run++;
             if (run < 3) continue;
-            if (fence == 0) { fence = trimmed.charAt(0); length = run; }
-            else if (trimmed.charAt(0) == fence && run >= length && trimmed.substring(run).isBlank()) fence = 0;
+            String rest = trimmed.substring(run);
+            if (fence == 0) {
+                if (trimmed.charAt(0) == '`' && rest.indexOf('`') >= 0) continue;
+                fence = trimmed.charAt(0);
+                length = run;
+            } else if (trimmed.charAt(0) == fence && run >= length && rest.isBlank()) {
+                fence = 0;
+            }
         }
         return fence == 0;
     }

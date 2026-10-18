@@ -64,13 +64,15 @@ export function toggleWrap(text, from, to, open, close = open) {
   return { changes: [{ from, insert: open }, { from: to, insert: close }], anchor: from + open.length, head: to + open.length };
 }
 
+/** 百分号编码一个字符（插入链接用） */
+const percent = (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase();
+
 /**
  * 插入链接（第七十四轮 review：原来选中的字被网址整个换掉）：选中了字就拿它做链接文字，没选就用网址；方括号、换行换成空格，链接不断。
  * 网址照浏览器的规范写法（new URL：路径里的反斜杠就是 /、中文转码；IPv6 的 [::1] 和查询里的 a[]=1 原样，方括号在网址里不断链接），
  * 再把圆括号写成 %28 / %29（不成对的 ) 会提前把链接收尾）、查询和锚点里剩下的反斜杠写成 %5C（结尾的 \ 会把 ) 转义掉）。
  * 没选字时网址做链接文字，里面的方括号写成 %5B / %5D（链接文字里的 ] 会把文字提前收尾）；链接文字以反斜杠结尾时补一个空格。
  */
-const percent = (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase();
 export function linkMarkdown(selected, href) {
   let url;
   try { url = new URL(String(href)).href; } catch (e) { url = String(href); }

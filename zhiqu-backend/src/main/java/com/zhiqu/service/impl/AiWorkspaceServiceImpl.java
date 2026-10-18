@@ -1250,7 +1250,13 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         }
         Map<String, Object> content = parseMap(artifact.getContentJson());
         String title = limit(text(content.get("title"), artifact.getTitle()), 120);
-        String body = limit(text(content.get("content"), text(content.get("markdown"), artifact.getTitle())), 5000);
+        String raw = text(content.get("content"), text(content.get("markdown"), artifact.getTitle()));
+        String body = limit(raw, 5000);
+        // 先洗再截（第七十四轮第六遍 review：先截到 5000 字会截掉收尾的围栏，包的那层就剥不掉了）；洗完是空的不建
+        com.zhiqu.service.knowledge.WikiDrafts.Body draft = com.zhiqu.service.knowledge.WikiDrafts.body(raw, null, 5000);
+        if (draft == null) {
+            throw new BusinessException("这条 Wiki 草稿没有正文（只有「已写入知识库」这类说明），没有生成待合入变更");
+        }
         Long sourceMessageId = artifact.getSourceMessageId();
         KnowledgePatchSet pending = null;
         if (sourceMessageId != null) {
@@ -1286,14 +1292,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         patchSet.setSourceMessageId(sourceMessageId);
         knowledgePatchSetMapper.insert(patchSet);
 
-        UserKnowledgeRevision revision = new UserKnowledgeRevision();
-        revision.setUserId(userId);
-        revision.setPatchSetId(patchSet.getId());
-        revision.setActionType("UPSERT");
-        revision.setTitle(title);
-        revision.setEncryptedContent(cryptoService.encrypt(com.zhiqu.common.MarkdownCanonicalizer.cleanKeeping(body, null)));
-        revision.setEncryptionVersion("v1");
-        revision.setStatus("PENDING");
+        UserKnowledgeRevision revision = com.zhiqu.service.knowledge.WikiDrafts.pending(userId, patchSet.getId(), title, draft, cryptoService);
         revision.setSourceMessageId(sourceMessageId);
         knowledgeRevisionMapper.insert(revision);
         return patchSet;
