@@ -103,10 +103,10 @@ public record AgentPlanDecision(
      * 「把这页笔记补充完整」这些最常见的说法就不算写了（第三遍 review 照出来，退回）。名词的「会议记录」因此照旧算写，见判据里钉着的取舍。
      */
     private static final List<String> POSITIONAL_WRITE_WORDS = List.of("生成", "创建");
-    /** 动词前面提到的 Wiki 是去处：紧跟在「在 / 到 / 给 / 为…」后面（「在知识库里创建」「给wiki创建」；「看到」「因为」里的到、为不算）…… */
-    private static final Pattern WIKI_PLACE_BEFORE = Pattern.compile("(?:在|(?<![看读找用提得听想遇收])到|往|进|给|(?<![因作成认以])为|向)(?:我的|我|这个|那个)?$");
-    /** ……或者后面紧跟「里 / 中」（「知识库里新建一页」；「知识库里的内容」「知识库内容」不算，「从wiki里找」也不算） */
-    private static final Pattern WIKI_PLACE_AFTER = Pattern.compile("^(?:里|中)(?!的)");
+    /** 动词前面提到的 Wiki 是去处：紧跟在「在 / 到 / 给 / 为 / 作为…」后面（「在知识库里创建」「给wiki创建」；「看到」「因为」里的到、为不算）…… */
+    private static final Pattern WIKI_PLACE_BEFORE = Pattern.compile("(?:在|(?<![看读找用提得听想遇收])到|往|进|给|(?<![因认以])为|向)(?:我的|我|这个|那个)?$");
+    /** ……或者后面紧跟「里 / 中 / 内 / 上」（「知识库里新建一页」「wiki上创建」；「知识库里的」「知识库内容」「笔记上次」不算，「从wiki里找」也不算） */
+    private static final Pattern WIKI_PLACE_AFTER = Pattern.compile("^(?:里|中|内(?!容)|上(?![次周个月午回]))(?!的)");
     /**
      * 动词后面提到的 Wiki 是来源：紧跟在来源词后面（「根据知识库」「生成一份基于知识库的计划」；只看紧挨着的，「用于复习的知识页」「从零开始的笔记」是要写的），
      * 或者后面跟着「的」（「生成一份笔记的总结」是笔记的总结）

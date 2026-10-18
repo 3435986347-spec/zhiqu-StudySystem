@@ -1097,7 +1097,6 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (allowStructure && body.containsKey("parentId")) {
             lockKnowledgeTree(userId);
         }
-        String draft = markdownValue(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent()));
         String title = limit(value(body.get("title"), value(revision.getTitle(), "AI Wiki 草稿")), 120);
         // 目标页解析：已绑定目标的草稿，合入时 pageId 不可被 body 改指到其它页——否则可传另一本人页面 ID
         // 绕过基准冲突校验、把草稿整页写到一个本轮未读过的页上。无目标草稿才允许 body 指定合并目标。
@@ -1112,9 +1111,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         UserKnowledgePage page = pageId == null ? null : ownedPageForUpdate(userId, pageId);
         if (page != null) assertRevisionTargetUnchanged(revision, page);
-        // 合到已有的页：原页里本来就有的行、本来就以代码块开头的围栏留着（第七十四轮）；新页照旧 clean()
-        String content = page == null ? MarkdownCanonicalizer.clean(draft)
-                : MarkdownCanonicalizer.cleanKeeping(draft, cryptoService.decrypt(page.getEncryptedContent()));
+        // 草稿建的时候已经洗过一遍（createPatchSet 里的 cleanKeeping / clean），合入时不再洗（第七十四轮第四遍 review：原来合入时又洗一遍，
+        // 每洗一遍就多一次把真内容当成模型包的那层剥掉的机会 —— 前几遍 review 照出来的「第二遍又剥了」都是从这里来的）。
+        // 确认框里改过的正文是用户自己写的，照第七十一轮的规矩原样存，只统一换行。
+        String content = given(body.get("content")) ? userMarkdown(body.get("content").toString())
+                : cryptoService.decrypt(revision.getEncryptedContent());
         boolean systemPage = page != null && isSystemKnowledgePage(page);
         if (systemPage && !title.trim().equals(page.getTitle())) {
             throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许改名");
@@ -1721,16 +1722,18 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return new BusinessException("知识页已被其他窗口修改，请刷新后重试");
     }
 
-    /** 正文：和 value() 一样空白算没给，但不 trim —— 改已有的页时第一行的缩进（缩进四格的代码块）要留给 cleanKeeping（第七十四轮第三遍 review） */
+    /** 请求里给了这一项：null、只有空白都算没给（value() 和 markdownValue() 共用这一条） */
+    private static boolean given(Object value) {
+        return value != null && !value.toString().trim().isBlank();
+    }
+
+    /** 正文：和 value() 一样，但不 trim —— 改已有的页时第一行的缩进（缩进四格的代码块）要留给 cleanKeeping（第七十四轮第三遍 review） */
     private static String markdownValue(Object value, String fallback) {
-        return value == null || value.toString().isBlank() ? fallback : value.toString();
+        return given(value) ? value.toString() : fallback;
     }
 
     private String value(Object value, String fallback) {
-        if (value == null || value.toString().trim().isBlank()) {
-            return fallback;
-        }
-        return value.toString().trim();
+        return given(value) ? value.toString().trim() : fallback;
     }
 
     private boolean hasText(String value) {

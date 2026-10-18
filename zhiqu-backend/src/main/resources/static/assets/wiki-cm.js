@@ -66,13 +66,16 @@ export function toggleWrap(text, from, to, open, close = open) {
 
 /**
  * 插入链接（第七十四轮 review：原来选中的字被网址整个换掉）：选中了字就拿它做链接文字，没选就用网址；方括号、换行换成空格，链接不断。
- * 网址里的方括号、圆括号、反斜杠写成 %5B / %28 / %5C 这样（「?a[]=1」原样放进去链接就断了，没选字时它还是链接文字；结尾的 \\ 会把 ) 转义掉）；
- * 链接文字以反斜杠结尾时补一个空格（「C:\」后面的 ] 会被当成转义，CodeMirror、Obsidian 都这么认）。
+ * 网址照浏览器的规范写法（new URL：反斜杠就是 /、中文转码；IPv6 的 [::1] 和查询里的 a[]=1 原样，括号在网址里不断链接），
+ * 只把圆括号写成 %28 / %29（不成对的 ) 会提前把链接收尾）—— 第三遍 review 时把方括号、反斜杠也百分号编码了，那会改掉网址本身。
+ * 没选字时网址做链接文字，里面的方括号写成 %5B / %5D（链接文字里的 ] 会把文字提前收尾）；链接文字以反斜杠结尾时补一个空格。
  */
 export function linkMarkdown(selected, href) {
-  const target = String(href).replace(/[[\]()\\]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  let url;
+  try { url = new URL(String(href)).href; } catch (e) { url = String(href); }
+  const target = url.replace(/[()]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
   let label = String(selected || '').replace(/[[\]\r\n]/g, ' ');
-  if (!label.trim()) label = target;
+  if (!label.trim()) label = String(href).replace(/[[\]]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
   if (label.endsWith('\\')) label += ' ';
   return '[' + label + '](' + target + ')';
 }

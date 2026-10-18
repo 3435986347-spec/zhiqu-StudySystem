@@ -249,14 +249,17 @@ function fixture({ flag = 'cm' } = {}) {
   });
   // ── 第七十四轮 review ──
   await check('插入链接：选中的字做链接文字（原来被网址换掉），没选就用网址；方括号、换行不让链接断掉', () => {
-    assert.equal(cm.linkMarkdown('官网', 'https://e.com'), '[官网](https://e.com)');
-    assert.equal(cm.linkMarkdown('', 'https://e.com'), '[https://e.com](https://e.com)');
-    assert.equal(cm.linkMarkdown('a [b]\nc', 'https://e.com'), '[a  b  c](https://e.com)');
+    assert.equal(cm.linkMarkdown('官网', 'https://e.com'), '[官网](https://e.com/)');
+    assert.equal(cm.linkMarkdown('', 'https://e.com'), '[https://e.com](https://e.com/)');
+    assert.equal(cm.linkMarkdown('a [b]\nc', 'https://e.com'), '[a  b  c](https://e.com/)');
     // 第二遍 review：没选字时网址就是链接文字，网址里的括号不能把链接截断；链接文字结尾的反斜杠不能把 ] 转义掉
-    assert.equal(cm.linkMarkdown('', 'https://x.com/?a[]=1'), '[https://x.com/?a%5B%5D=1](https://x.com/?a%5B%5D=1)');
+    assert.equal(cm.linkMarkdown('', 'https://x.com/?a[]=1'), '[https://x.com/?a%5B%5D=1](https://x.com/?a[]=1)', '链接文字里的方括号会把文字提前收尾；网址里的照原样');
     assert.equal(cm.linkMarkdown('看', 'https://e.com/a_(b))'), '[看](https://e.com/a_%28b%29%29)');
-    assert.equal(cm.linkMarkdown('C:\\', 'https://e.com'), '[C:\\ ](https://e.com)');
-    assert.equal(cm.linkMarkdown('看', 'https://a.com/x\\'), '[看](https://a.com/x%5C)', '网址结尾的反斜杠会把 ) 转义掉');
+    assert.equal(cm.linkMarkdown('C:\\', 'https://e.com'), '[C:\\ ](https://e.com/)');
+    assert.equal(cm.linkMarkdown('看', 'https://a.com/x\\'), '[看](https://a.com/x/)', '网址结尾的反斜杠会把 ) 转义掉 —— 照浏览器的写法它就是 /');
+    // 第四遍 review：百分号编码会改掉网址本身 —— IPv6 的主机、路径里的反斜杠（浏览器当成 /）
+    assert.equal(cm.linkMarkdown('看', 'http://[::1]:8080/'), '[看](http://[::1]:8080/)');
+    assert.equal(cm.linkMarkdown('看', 'https://a.com\\docs'), '[看](https://a.com/docs)');
   });
   await check('接入：插入链接的弹窗回来时还是原来的编辑会话才插（换了页 / 取消了就不插），插的是 handle.link', async () => {
     let answer; const f = fixture();

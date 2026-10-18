@@ -88,7 +88,8 @@ class WikiToolAgentExecutionTest {
             "读一下我的笔记然后生成复习计划", "看看知识库后生成一份计划", "把知识库里的内容生成思维导图",
             "帮我看看之前创建的知识页", "生成一份关于知识库的使用说明", "根据知识库生成复习计划，再看看之前创建的知识页",
             "把知识库内容生成思维导图", "笔记内容帮我生成复习计划", "看到知识库中的错题帮我生成练习", "读到笔记里的内容生成总结",
-            "帮我生成一份笔记的总结", "因为笔记太多帮我生成一份整理建议"})
+            "帮我生成一份笔记的总结", "因为笔记太多帮我生成一份整理建议",
+            "笔记上周的内容帮我生成复习计划"})
     void knowledgeAsTheSourceOfAGenerationIsNotAWikiWrite(String text) {
         assertFalse(AgentPlanDecision.wikiWriteIntent(text), text);
     }
@@ -99,7 +100,8 @@ class WikiToolAgentExecutionTest {
             "根据讲义生成一个wiki页", "帮我创建一个用于复习的知识页", "创建一个用来记错题的笔记", "生成一页常用公式笔记",
             "帮我生成一份从零开始的笔记", "创建一个结合例题的wiki页", "根据课堂讲义给知识库生成一页总结", "从今天开始给wiki创建一页打卡",
             "知识库里新建一页周报", "把这次讨论记录到知识库",
-            "把这页笔记补充完整", "将笔记更新为最新版本", "把笔记更新一下", "笔记需要更新", "帮我把知识页里的内容更新一下", "我记的笔记需要更新"})
+            "把这页笔记补充完整", "将笔记更新为最新版本", "把笔记更新一下", "笔记需要更新", "帮我把知识页里的内容更新一下", "我记的笔记需要更新",
+            "把这段总结作为笔记生成出来", "知识库内生成一个目录", "wiki上创建一页周报"})
     void theWikiAsTheThingGeneratedIsStillAWrite(String text) {
         assertTrue(AgentPlanDecision.wikiWriteIntent(text), text);
     }

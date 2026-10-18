@@ -394,6 +394,35 @@ class KnowledgeConcurrencyIntegrationTest {
                 "确认框里改过的正文合入时第一行的缩进丢了");
     }
 
+    /**
+     * 第七十四轮第四遍 review：草稿建的时候洗过一遍，合入时原来又洗一遍 —— 每多洗一遍，就多一次把真内容当成模型包的那层剥掉的机会；
+     * 确认框里用户自己写的字也被当成模型的话来洗。现在合入不再洗：草稿原样落、确认框里改过的原样落。
+     */
+    @Test
+    void applyingADraftDoesNotCleanItASecondTime() {
+        createPage("只洗一遍", "正文\n");
+        SnapshotView seen = knowledgeService.findPageSnapshotByTitle(userId, "只洗一遍");
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("pageId", seen.pageId()); item.put("actionType", "UPSERT"); item.put("title", seen.title());
+        item.put("content", "```markdown\n```\nint a;\n```\n```");          // 模型用 ```markdown 包了一个只有代码块的页
+        Map<String, Object> patch = knowledgeService.createPatchSet(userId, patchBody("只洗一遍", item), Map.of(seen.pageId(), seen));
+        knowledgeService.applyPatchSet(userId, numberLong(patch.get("id")));
+        assertEquals("```\nint a;\n```\n", String.valueOf(knowledgeService.detail(userId, seen.pageId()).get("content")),
+                "合入时又洗了一遍，把页自己的代码块围栏也剥了");
+
+        createPage("确认框里写的", "正文\n");
+        SnapshotView other = knowledgeService.findPageSnapshotByTitle(userId, "确认框里写的");
+        Map<String, Object> draft = new LinkedHashMap<>();
+        draft.put("pageId", other.pageId()); draft.put("actionType", "UPSERT"); draft.put("title", other.title());
+        draft.put("content", "正文\nAI 加的\n");
+        Map<String, Object> draftPatch = knowledgeService.createPatchSet(userId, patchBody("确认框里写的", draft), Map.of(other.pageId(), other));
+        Long revisionId = jdbcTemplate.queryForObject("SELECT id FROM user_knowledge_revision WHERE patch_set_id = ?", Long.class, draftPatch.get("id"));
+        jdbcTemplate.update("UPDATE user_knowledge_revision SET patch_set_id = NULL WHERE id = ?", revisionId);
+        knowledgeService.applyRevision(userId, revisionId, new LinkedHashMap<>(Map.of("content", "正文\nAI 加的\n我已将这些写入知识库\n")));
+        assertEquals("正文\nAI 加的\n我已将这些写入知识库\n", String.valueOf(knowledgeService.detail(userId, other.pageId()).get("content")),
+                "确认框里用户自己加的一行被当成模型的自述行删了");
+    }
+
     @Test
     void concurrentApplyOfANewPageDraftCreatesOnePage() throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();

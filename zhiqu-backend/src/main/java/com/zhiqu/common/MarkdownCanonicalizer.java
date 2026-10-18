@@ -93,13 +93,15 @@ public final class MarkdownCanonicalizer {
     }
 
     /**
-     * 整页被包在一个代码块里（模型常回 ```markdown … ```）就剥掉那一层，否则 null。这个函数在建草稿、合入时各跑一遍，
-     * 第二遍不能再剥（第三遍 review：```markdown 里面以光秃秃的代码块开头、结尾的，第二遍把页自己的围栏也剥了）：
+     * 整页被包在一个代码块里（模型常回 ```markdown … ```）就剥掉那一层，否则 null（第七十四轮第二、三、四遍 review）：
      * <ul>
-     *   <li>开头写明 ```markdown / ```md / ```text（不分大小写，又不是原页自己的第一行）：是包了一层；</li>
-     *   <li>原页以代码块开头时，包的里面还以围栏开头：是包了一层（模型把 ```javascript 写成 ```js、页又恰好以代码块结尾，不算）；</li>
-     *   <li>原页不以代码块开头时，光秃秃的 ``` 只在里面再没有围栏时才算（以代码块开头、也以代码块结尾的页，不是包了一层）。</li>
+     *   <li>开头写明 ```markdown / ```md（不分大小写，又不是原页自己的第一行），而且里面的围栏成对：是包了一层。
+     *       ```text 不算 —— 那是常见的「输出」块，页以它开头、以代码块结尾时会被当成包；</li>
+     *   <li>原页以代码块开头时，包的里面以围栏开头、围栏成对：是包了一层（模型把 ```javascript 写成 ```js、页又恰好以代码块结尾，不算）；</li>
+     *   <li>原页不以代码块开头时，光秃秃的 ``` 只在里面再没有围栏时才算 —— 以光秃秃的代码块开头、结尾的页和光秃秃的包分不开，宁可不剥
+     *       （没剥的包在确认框的预览里看得见；剥错了是整页的围栏错位）。</li>
      * </ul>
+     * 合入时不再洗第二遍（{@code KnowledgeServiceImpl.upsertRevisionPage}），所以这里只跑一遍。
      */
     private static String unwrapWholePage(String text, String baseFirstLine) {
         int firstBreak = text.indexOf('\n'), lastBreak = text.lastIndexOf('\n');
@@ -108,10 +110,21 @@ public final class MarkdownCanonicalizer {
         }
         String opening = text.substring(0, firstBreak).trim();
         String inner = lastBreak > firstBreak ? text.substring(firstBreak + 1, lastBreak) : "";
-        boolean declared = opening.matches("(?i)```(?:markdown|md|text)") && !opening.equals(baseFirstLine);
-        boolean wrapper = baseFirstLine.startsWith("```")
-                ? declared || inner.stripLeading().startsWith("```")
-                : declared || opening.equals("```") && inner.lines().noneMatch(line -> line.stripLeading().startsWith("```"));
+        boolean declared = opening.matches("(?i)```(?:markdown|md)") && !opening.equals(baseFirstLine) && fencesBalanced(inner);
+        boolean wrapper = declared || (baseFirstLine.startsWith("```")
+                ? inner.stripLeading().startsWith("```") && fencesBalanced(inner)
+                : opening.equals("```") && inner.lines().noneMatch(line -> line.stripLeading().startsWith("```")));
         return wrapper ? trimBlankLines(inner) : null;
+    }
+
+    /** 每一个打开的代码块都在这段里关上（关的那一行只有 ```；块里面带语言名的 ``` 行是内容，照 CommonMark） */
+    private static boolean fencesBalanced(String text) {
+        boolean open = false;
+        for (String line : text.split("\n", -1)) {
+            String trimmed = line.strip();
+            if (!open && trimmed.startsWith("```")) open = true;
+            else if (open && trimmed.equals("```")) open = false;
+        }
+        return !open;
     }
 }
