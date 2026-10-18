@@ -102,12 +102,14 @@ class WebPageFetchSsrfGuardTest {
      * 公网地址不得被误拦 —— 上面所有拒绝判据的反例。
      *
      * <p>没有它，把 assertPublicHost 写成「一律抛」也能让上面全绿，而抓网页功能整个废掉。
-     * 用 example.com（RFC 2606 保留域，解析得出但不保证可连）：这里只断言<b>没有被防护拒绝</b>，
-     * 连不连得上不是本判据的事 —— 那取决于跑测试的机器有没有外网。
+     * 这里只断言<b>没有被防护拒绝</b>，连不连得上不是本判据的事 —— 那取决于跑测试的机器有没有外网。
+     * <p>用公网的字面 IP，不用域名（第七十四轮）：原来是 example.com，可解析域名本身也要外网 ——
+     * 没有外网 DNS 的机器（云端容器）上它先在解析那一步被拒（「无法解析网页域名」），这条就红了。
+     * 字面 IP 走的是同一段 {@code getAllByName} + 地址判断，只是不用 DNS。
      */
     @Test
     void 公网地址不得被防护拒绝() {
-        WebSearchProvider.SearchResult result = guarded().fetch("http://example.com/");
+        WebSearchProvider.SearchResult result = guarded().fetch("http://93.184.215.14/");
         assertTrue(result != null && !String.valueOf(result.snippet()).contains("不允许抓取"),
                 "公网地址不得被 SSRF 防护拒绝，实际：" + result);
     }

@@ -1,7 +1,6 @@
 # CLAUDE.md
 
-给在这个仓库里干活的 Claude Code 看的规矩：怎么跑、怎么测、不能碰的地方、几条踩过就会再踩的坑。
-来龙去脉和各部分的细节在 `docs/`：各部分的说明在 `docs/notes/`，每一轮一份 `docs/rounds/round-NN.md`。（第三十八轮从 1529 行压到这里，原来的内容一字不改地挪进了那两处；`ClaudeMdTest` 管着这份不超过 200 行。）
+给在这个仓库里干活的 Claude Code 看的规矩：怎么跑、怎么测、不能碰的地方、几条踩过就会再踩的坑。来龙去脉和各部分的细节在 `docs/`：各部分的说明在 `docs/notes/`，每一轮一份 `docs/rounds/round-NN.md`。（第三十八轮从 1529 行压到这里，原来的内容一字不改地挪进了那两处；`ClaudeMdTest` 管着这份不超过 200 行。）
 
 ## 这是什么
 
@@ -10,7 +9,7 @@
 
 ## 怎么跑
 
-库结构由 Flyway 管（`zhiqu-backend/src/main/resources/db/migration`，现在到 `V44`），启动时自动迁移，**不要手动执行 `schema.sql`**。只需要库存在：
+库结构由 Flyway 管（`zhiqu-backend/src/main/resources/db/migration`，现在到 `V45`），启动时自动迁移，**不要手动执行 `schema.sql`**。只需要库存在：
 
 ```sql
 CREATE DATABASE zhiqu_db DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_general_ci;
@@ -87,7 +86,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261018-editor-step2`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261018-review74`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第七十一轮](docs/rounds/round-71.md) 换编辑器第 1 步：阅读认嵌套列表（缩进、任务子项、续行、编号）、旧编辑器写回缩进；用户保存的 Wiki 正文原样存、原样读回
 - [第七十二轮](docs/rounds/round-72.md) 换上新的应用图标（知字图标设计方案）：网页四张 PNG 原样换、favicon.ico 原来是 6 字节的文本、macOS / Windows 图标从设计稿生成
 - [第七十三轮](docs/rounds/round-73.md) 换编辑器第 2 步：新编辑器补齐图片、下划线、表格、代码着色、段落格式和快捷键，阅读模式里点哪个字光标就落在原文那个字上
+- [第七十四轮](docs/rounds/round-74.md) review 第五十九到七十三轮（9 条 + 十六遍复查）：AI 改页不删用户的字、「根据知识库生成」不算写 Wiki、新编辑器回原处 / 插链接留字；Wiki 草稿只在 `WikiDrafts` 造（先洗再截、空的不造、合入不再洗）
