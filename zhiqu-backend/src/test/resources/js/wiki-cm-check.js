@@ -256,6 +256,7 @@ function fixture({ flag = 'cm' } = {}) {
     assert.equal(cm.linkMarkdown('', 'https://x.com/?a[]=1'), '[https://x.com/?a%5B%5D=1](https://x.com/?a%5B%5D=1)');
     assert.equal(cm.linkMarkdown('看', 'https://e.com/a_(b))'), '[看](https://e.com/a_%28b%29%29)');
     assert.equal(cm.linkMarkdown('C:\\', 'https://e.com'), '[C:\\ ](https://e.com)');
+    assert.equal(cm.linkMarkdown('看', 'https://a.com/x\\'), '[看](https://a.com/x%5C)', '网址结尾的反斜杠会把 ) 转义掉');
   });
   await check('接入：插入链接的弹窗回来时还是原来的编辑会话才插（换了页 / 取消了就不插），插的是 handle.link', async () => {
     let answer; const f = fixture();

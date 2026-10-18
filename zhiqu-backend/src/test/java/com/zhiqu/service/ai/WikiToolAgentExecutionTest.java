@@ -85,9 +85,10 @@ class WikiToolAgentExecutionTest {
     @ParameterizedTest
     @ValueSource(strings = {"根据知识库生成一份复习计划", "用笔记里的内容生成一个摘要", "从wiki里找资料创建一个任务", "基于知识库的资料帮我生成周报",
             "生成一份基于知识库的复习计划", "根据我上周在会议上记的笔记生成一份总结", "使用笔记生成周报", "知识库里那篇我看过了，帮我生成一份总结",
-            "读一下我的笔记然后生成复习计划", "看看知识库后生成一份计划", "把知识库里的内容生成思维导图", "根据知识库里的会议记录生成复习计划",
-            "根据笔记里的学习记录生成一份周报", "帮我看看之前创建的知识页", "根据知识库补充一下你的回答", "生成一份关于知识库的使用说明",
-            "根据知识库生成复习计划，再看看之前创建的知识页"})
+            "读一下我的笔记然后生成复习计划", "看看知识库后生成一份计划", "把知识库里的内容生成思维导图",
+            "帮我看看之前创建的知识页", "生成一份关于知识库的使用说明", "根据知识库生成复习计划，再看看之前创建的知识页",
+            "把知识库内容生成思维导图", "笔记内容帮我生成复习计划", "看到知识库中的错题帮我生成练习", "读到笔记里的内容生成总结",
+            "帮我生成一份笔记的总结", "因为笔记太多帮我生成一份整理建议"})
     void knowledgeAsTheSourceOfAGenerationIsNotAWikiWrite(String text) {
         assertFalse(AgentPlanDecision.wikiWriteIntent(text), text);
     }
@@ -97,9 +98,27 @@ class WikiToolAgentExecutionTest {
             "在知识库里根据会议记录创建一页纪要", "在知识库里为用户访谈创建一页", "根据知识库在wiki里创建一页总结", "从今天开始在知识库里创建一页打卡记录",
             "根据讲义生成一个wiki页", "帮我创建一个用于复习的知识页", "创建一个用来记错题的笔记", "生成一页常用公式笔记",
             "帮我生成一份从零开始的笔记", "创建一个结合例题的wiki页", "根据课堂讲义给知识库生成一页总结", "从今天开始给wiki创建一页打卡",
-            "知识库里新建一页周报", "把这次讨论记录到知识库"})
+            "知识库里新建一页周报", "把这次讨论记录到知识库",
+            "把这页笔记补充完整", "将笔记更新为最新版本", "把笔记更新一下", "笔记需要更新", "帮我把知识页里的内容更新一下", "我记的笔记需要更新"})
     void theWikiAsTheThingGeneratedIsStillAWrite(String text) {
         assertTrue(AgentPlanDecision.wikiWriteIntent(text), text);
+    }
+
+    /**
+     * 明示的取舍（第七十四轮第三遍 review）：这几句判错了，而且是故意留着的。写意图只看这一句话的字面，接不住的不往词表里塞词 ——
+     * 第二遍为了「会议记录」把记录 / 更新也按位置判，「把笔记更新一下」就不算写了。改它们之前先想清楚另一边会坏掉哪些说法。
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"根据知识库里的会议记录生成复习计划", "根据笔记里的学习记录生成一份周报", "根据知识库补充一下你的回答",
+            "在笔记里找一下错题生成复习计划", "生成我的笔记摘要"})
+    void knownOverTriggersArePinnedAsExplicitTradeoffs(String text) {
+        assertTrue(AgentPlanDecision.wikiWriteIntent(text), "这一句原来是过触发的取舍；不再触发了就把它挪到不写的那一组：" + text);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"生成知识库的目录页"})
+    void knownUnderTriggersArePinnedAsExplicitTradeoffs(String text) {
+        assertFalse(AgentPlanDecision.wikiWriteIntent(text), "这一句原来是接不住的取舍；接住了就把它挪到写的那一组：" + text);
     }
 
     @Test

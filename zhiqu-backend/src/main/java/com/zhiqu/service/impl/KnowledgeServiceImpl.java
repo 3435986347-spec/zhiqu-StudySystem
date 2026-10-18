@@ -429,7 +429,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 }
                 revision.setActionType(limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20));
                 revision.setTitle(limit(value(item.get("title"), patchSet.getTitle()), 120));
-                revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.cleanKeeping(value(item.get("content"), ""), baseContent)));
+                revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.cleanKeeping(markdownValue(item.get("content"), ""), baseContent)));
                 revision.setEncryptionVersion("v1");
                 revision.setStatus("PENDING");
                 revisionMapper.insert(revision);
@@ -1097,7 +1097,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (allowStructure && body.containsKey("parentId")) {
             lockKnowledgeTree(userId);
         }
-        String draft = value(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent()));
+        String draft = markdownValue(body.get("content"), cryptoService.decrypt(revision.getEncryptedContent()));
         String title = limit(value(body.get("title"), value(revision.getTitle(), "AI Wiki 草稿")), 120);
         // 目标页解析：已绑定目标的草稿，合入时 pageId 不可被 body 改指到其它页——否则可传另一本人页面 ID
         // 绕过基准冲突校验、把草稿整页写到一个本轮未读过的页上。无目标草稿才允许 body 指定合并目标。
@@ -1719,6 +1719,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private BusinessException knowledgePageConflict() {
         return new BusinessException("知识页已被其他窗口修改，请刷新后重试");
+    }
+
+    /** 正文：和 value() 一样空白算没给，但不 trim —— 改已有的页时第一行的缩进（缩进四格的代码块）要留给 cleanKeeping（第七十四轮第三遍 review） */
+    private static String markdownValue(Object value, String fallback) {
+        return value == null || value.toString().isBlank() ? fallback : value.toString();
     }
 
     private String value(Object value, String fallback) {

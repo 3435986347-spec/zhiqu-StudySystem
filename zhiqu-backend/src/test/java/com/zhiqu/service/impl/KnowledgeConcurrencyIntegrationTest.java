@@ -367,6 +367,31 @@ class KnowledgeConcurrencyIntegrationTest {
         assertTrue(merged.startsWith("```js\nconst a = 1;\n```"), "开头的代码块被剥坏了：" + merged);
         assertTrue(merged.contains("我已经把资料整理进知识库了。"), "用户写的那一行没了：" + merged);
         assertTrue(merged.endsWith("补充一段\n") && !merged.contains("已将以上内容写入知识库"), "模型加的自述行没去掉（或原页结尾的换行丢了）：" + merged);
+
+        // 第三遍 review：缩进四格的代码块开头的页 —— 建草稿、合入两处原来都 trim 正文，第一行成了一段正文
+        String indented = "    int x = 1;\n    int y;\n\n说明\n";
+        createPage("缩进开头", indented);
+        SnapshotView code = knowledgeService.findPageSnapshotByTitle(userId, "缩进开头");
+        Map<String, Object> edit = new LinkedHashMap<>();
+        edit.put("pageId", code.pageId()); edit.put("actionType", "UPSERT"); edit.put("title", code.title());
+        edit.put("content", code.content() + "补充\n");
+        Map<String, Object> codePatch = knowledgeService.createPatchSet(userId, patchBody("缩进开头", edit), Map.of(code.pageId(), code));
+        knowledgeService.applyPatchSet(userId, numberLong(codePatch.get("id")));
+        assertEquals(indented + "补充\n", String.valueOf(knowledgeService.detail(userId, code.pageId()).get("content")));
+
+        // 确认框里改过正文再合入（body 里带 content）：合入那一处原来也 trim
+        String other = "    a = 1\n\n备注\n";
+        createPage("确认框里改", other);
+        SnapshotView seen = knowledgeService.findPageSnapshotByTitle(userId, "确认框里改");
+        Map<String, Object> draftItem = new LinkedHashMap<>();
+        draftItem.put("pageId", seen.pageId()); draftItem.put("actionType", "UPSERT"); draftItem.put("title", seen.title());
+        draftItem.put("content", seen.content() + "AI 加的\n");
+        Map<String, Object> draftPatch = knowledgeService.createPatchSet(userId, patchBody("确认框里改", draftItem), Map.of(seen.pageId(), seen));
+        Long revisionId = jdbcTemplate.queryForObject("SELECT id FROM user_knowledge_revision WHERE patch_set_id = ?", Long.class, draftPatch.get("id"));
+        jdbcTemplate.update("UPDATE user_knowledge_revision SET patch_set_id = NULL WHERE id = ?", revisionId);
+        knowledgeService.applyRevision(userId, revisionId, new LinkedHashMap<>(Map.of("content", "    a = 2\n\n备注\n用户改的\n")));
+        assertEquals("    a = 2\n\n备注\n用户改的\n", String.valueOf(knowledgeService.detail(userId, seen.pageId()).get("content")),
+                "确认框里改过的正文合入时第一行的缩进丢了");
     }
 
     @Test

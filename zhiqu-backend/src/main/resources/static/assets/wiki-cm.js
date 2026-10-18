@@ -66,11 +66,11 @@ export function toggleWrap(text, from, to, open, close = open) {
 
 /**
  * 插入链接（第七十四轮 review：原来选中的字被网址整个换掉）：选中了字就拿它做链接文字，没选就用网址；方括号、换行换成空格，链接不断。
- * 网址里的方括号、圆括号写成 %5B / %28 这样（「?a[]=1」原样放进去链接就断了，没选字时它还是链接文字）；
+ * 网址里的方括号、圆括号、反斜杠写成 %5B / %28 / %5C 这样（「?a[]=1」原样放进去链接就断了，没选字时它还是链接文字；结尾的 \\ 会把 ) 转义掉）；
  * 链接文字以反斜杠结尾时补一个空格（「C:\」后面的 ] 会被当成转义，CodeMirror、Obsidian 都这么认）。
  */
 export function linkMarkdown(selected, href) {
-  const target = String(href).replace(/[[\]()]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  const target = String(href).replace(/[[\]()\\]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
   let label = String(selected || '').replace(/[[\]\r\n]/g, ' ');
   if (!label.trim()) label = target;
   if (label.endsWith('\\')) label += ' ';

@@ -45,4 +45,22 @@ class MarkdownCanonicalizerKeepingTest {
         assertEquals("```js\na\n```\n正文\n补\n", once, "模型用 ```markdown 包了整页（页本身以代码块开头）");
         assertEquals(once, MarkdownCanonicalizer.cleanKeeping(once, base), "建草稿、合入各洗一遍：第二遍不能再剥");
     }
+
+    @Test
+    @DisplayName("第三遍 review：原页不以代码块开头时，```markdown 里面以代码块开头、结尾的页第二遍不再剥；光秃秃的 ``` 只在里面没有别的围栏时才算包了一层；大写的 ```Markdown 和标题在前的包法也认")
+    void secondPassAndOtherWrapperShapes() {
+        String plain = "正文\n";
+        String once = MarkdownCanonicalizer.cleanKeeping("```markdown\n```\nc1\n```\n正文\n```\nc2\n```\n```", plain);
+        assertEquals("```\nc1\n```\n正文\n```\nc2\n```\n", once);
+        assertEquals(once, MarkdownCanonicalizer.cleanKeeping(once, plain), "合入时第二遍把页自己的围栏也剥了");
+        String codeAround = "```\ncode1\n```\ntext\n```\ncode2\n```";
+        assertEquals(codeAround + "\n", MarkdownCanonicalizer.cleanKeeping(codeAround, plain), "以光秃秃的代码块开头、结尾的页不是包了一层");
+        assertEquals("# 标题\n正文 改\n", MarkdownCanonicalizer.cleanKeeping("```\n# 标题\n正文 改\n```", plain), "光秃秃的 ``` 包了整页、里面没有别的围栏：剥");
+        assertEquals("正文 改\n", MarkdownCanonicalizer.cleanKeeping("```Markdown\n正文 改\n```", plain), "大写的 ```Markdown");
+        assertEquals("# 新标题\n```js\na\n```\n正文\n", MarkdownCanonicalizer.cleanKeeping("```markdown\n# 新标题\n```js\na\n```\n正文\n```", "```js\na\n```\n正文\n"),
+                "原页以代码块开头、模型在前面加了标题再用 ```markdown 包起来");
+        String example = "```markdown\n示例\n```\n正文 改\n```js\nx\n```";
+        assertEquals(example + "\n", MarkdownCanonicalizer.cleanKeeping(example, "```markdown\n示例\n```\n正文\n```js\nx\n```\n"),
+                "原页自己就以一个 ```markdown 示例块开头、又以代码块结尾：模型原样改了一处，不是包了一层");
+    }
 }

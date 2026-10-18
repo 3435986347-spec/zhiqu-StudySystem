@@ -73,7 +73,7 @@ public final class MarkdownCanonicalizer {
         String baseText = base.replace("\r\n", "\n").replace("\r", "\n");
         java.util.Set<String> baseLines = new java.util.HashSet<>(java.util.Arrays.asList(baseText.split("\n")));
         String text = trimBlankLines(value.replace("\r\n", "\n").replace("\r", "\n"));
-        String unwrapped = unwrapWholePage(text, baseText.stripLeading().startsWith("```"));
+        String unwrapped = unwrapWholePage(text, baseText.stripLeading().split("\n", 2)[0].trim());
         if (unwrapped != null) {
             text = unwrapped;
         }
@@ -93,17 +93,25 @@ public final class MarkdownCanonicalizer {
     }
 
     /**
-     * 整页被包在一个代码块里（模型常回 ```markdown … ```）就剥掉那一层，否则 null。原页本来就以代码块开头时，
-     * 包的里面还得以围栏开头才算包了一层 —— 模型把开头的 ```javascript 写成 ```js、页又恰好以代码块结尾，不是包了一层。
+     * 整页被包在一个代码块里（模型常回 ```markdown … ```）就剥掉那一层，否则 null。这个函数在建草稿、合入时各跑一遍，
+     * 第二遍不能再剥（第三遍 review：```markdown 里面以光秃秃的代码块开头、结尾的，第二遍把页自己的围栏也剥了）：
+     * <ul>
+     *   <li>开头写明 ```markdown / ```md / ```text（不分大小写，又不是原页自己的第一行）：是包了一层；</li>
+     *   <li>原页以代码块开头时，包的里面还以围栏开头：是包了一层（模型把 ```javascript 写成 ```js、页又恰好以代码块结尾，不算）；</li>
+     *   <li>原页不以代码块开头时，光秃秃的 ``` 只在里面再没有围栏时才算（以代码块开头、也以代码块结尾的页，不是包了一层）。</li>
+     * </ul>
      */
-    private static String unwrapWholePage(String text, boolean pageStartsWithFence) {
+    private static String unwrapWholePage(String text, String baseFirstLine) {
         int firstBreak = text.indexOf('\n'), lastBreak = text.lastIndexOf('\n');
         if (!text.startsWith("```") || firstBreak < 0 || !text.substring(lastBreak + 1).trim().equals("```")) {
             return null;
         }
         String opening = text.substring(0, firstBreak).trim();
         String inner = lastBreak > firstBreak ? text.substring(firstBreak + 1, lastBreak) : "";
-        boolean wrapper = pageStartsWithFence ? inner.stripLeading().startsWith("```") : opening.matches("```(?:markdown|md|text)?");
+        boolean declared = opening.matches("(?i)```(?:markdown|md|text)") && !opening.equals(baseFirstLine);
+        boolean wrapper = baseFirstLine.startsWith("```")
+                ? declared || inner.stripLeading().startsWith("```")
+                : declared || opening.equals("```") && inner.lines().noneMatch(line -> line.stripLeading().startsWith("```"));
         return wrapper ? trimBlankLines(inner) : null;
     }
 }
