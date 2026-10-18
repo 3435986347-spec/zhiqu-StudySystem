@@ -138,8 +138,9 @@ public class AiServiceImpl implements AiService {
      * 这条分支上第七到十遍的几版把上面那句（带全角括号）拼进了回答正文，存下来的消息里还有它，模型转述时还可能加上「> 」（第十二、十三遍 review）：
      * 下一轮「把上面的存进知识库」从那条消息里取草稿正文时先去掉这一行（两条路都去：非流式取这一轮和上一条回答，流式的 WIKI_CURATOR 取这一轮的）。只在取正文这一处去 —— 放进共用的清洗时，
      * 别的草稿里写着这句话的正文也被删了（第十二遍那版），只认一字不差的又漏了被转述、被截短的。
+     * 行首只跳过引用符号和同一行的空白（{@code \h}）：{@code \s} 会跨行把前面的空行一起吃掉，前后两段并成一段（第十五遍 review）。
      */
-    private static final java.util.regex.Pattern LEGACY_NO_DRAFT_LINE = java.util.regex.Pattern.compile("(?m)^[>\\s]*（没有生成知识 Wiki 草稿.*$\\n?");
+    private static final java.util.regex.Pattern LEGACY_NO_DRAFT_LINE = java.util.regex.Pattern.compile("(?m)^[>\\h]*（没有生成知识 Wiki 草稿.*$\\n?");
     private static final long SYSTEM_MODEL_ID = -1L;
     // 64x64 纯红 PNG。探测图必须足够大——1x1 退化图会被上游图片管线拒绝
     // （返回 400 "Could not process image"），导致视觉探测恒被误判为“不支持”。

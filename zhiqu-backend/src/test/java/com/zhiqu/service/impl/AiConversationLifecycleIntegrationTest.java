@@ -194,7 +194,7 @@ class AiConversationLifecycleIntegrationTest {
                         + "}]}\n\ndata: [DONE]\n\n";
             }
             if (streaming && requestBody.contains(LEGACY_WITH_BODY_MARK)) {
-                streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"# 周会结论\\n下周三前交初稿。\\n\\n> （没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）\"}}]}\n\ndata: [DONE]\n\n";
+                streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"# 周会结论\\n下周三前交初稿。\\n\\n> （没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）\\n另：周五复盘。\"}}]}\n\ndata: [DONE]\n\n";
             }
             if (streaming && requestBody.contains(LEGACY_NOTE_MARK)) {
                 streamed = "data: {\"choices\":[{\"delta\":{\"content\":\"已将以上内容写入知识库。\\n\\n> （没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）\"}}]}\n\ndata: [DONE]\n\n";
@@ -492,6 +492,7 @@ class AiConversationLifecycleIntegrationTest {
         String artifact = jdbcTemplate.queryForObject("SELECT content_json FROM ai_agent_artifact WHERE run_id = ? AND artifact_type = 'WIKI_DRAFT'", String.class,
                 latestRunId(userId, withBody));
         assertTrue(artifact.contains("下周三前交初稿") && !artifact.contains("没有生成知识 Wiki 草稿"), "有正文时造工件，但那句说明不跟着进去：" + artifact);
+        assertTrue(artifact.contains("下周三前交初稿。\\n\\n另：周五复盘。"), "第十五遍 review：去那一行时不连带前面的空行（两段并成一段）：" + artifact);
     }
 
     /** 不支持工具调用的模型（SENSENOVA，线上格式和 OpenAI 一样）：没有 Wiki 工具循环，兜底的 WIKI_CURATOR 才会拿回答造工件 */
