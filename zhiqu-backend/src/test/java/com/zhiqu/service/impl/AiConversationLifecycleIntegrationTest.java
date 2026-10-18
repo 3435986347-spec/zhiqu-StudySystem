@@ -327,6 +327,7 @@ class AiConversationLifecycleIntegrationTest {
         Integer after = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_knowledge_revision WHERE user_id = ?", Integer.class, userId);
         assertEquals(before, after, "洗完是空的草稿不该建");
         assertTrue(String.valueOf(result).contains("已将以上内容写入知识库"), "回答照常回：" + result);
+        assertTrue(String.valueOf(result).contains("没有生成知识 Wiki 草稿"), "第七遍 review：没建草稿要照实说，不让那句「已写入」冒充存上了：" + result);
     }
 
     /** 第七十四轮第六遍 review：工作区的 Wiki 草稿工件洗完是空的 —— 确认时当场说，不建一条空草稿（原来要到合入时才报错） */
@@ -349,6 +350,28 @@ class AiConversationLifecycleIntegrationTest {
         aiWorkspaceService.confirmArtifact(userId, good, null);
         assertEquals(1, jdbcTemplate.queryForObject("SELECT content_cleaned FROM user_knowledge_revision WHERE user_id = ? ORDER BY id DESC LIMIT 1", Integer.class, userId),
                 "对照：有正文的照常建，标记洗过");
+        assertEquals("# 有正文", jdbcTemplate.queryForObject(
+                "SELECT summary FROM knowledge_patch_set WHERE user_id = ? ORDER BY id DESC LIMIT 1", String.class, userId),
+                "第七遍 review：待合入变更的摘要照洗过的草稿写（原来是原文：包的那层、自述行都在）");
+    }
+
+    /** 第七遍 review：同一条消息已经有待合入的批次时复用它 —— 查空放在复用之后，能复用的不再被拒 */
+    @Test
+    void aSecondEmptyWikiArtifactOfTheSameMessageReusesThePendingPatchSet() {
+        Long notebookId = createNotebook(userId, "同一条消息两个 Wiki 工件");
+        chat(userId, notebookId, "随便聊一句");
+        long message = jdbcTemplate.queryForObject("SELECT MAX(id) FROM ai_message WHERE user_id = ?", Long.class, userId);
+        jdbcTemplate.update("INSERT INTO ai_agent_run(user_id, status, agent_mode) VALUES (?, 'DONE', 'AUTO')", userId);
+        long run = jdbcTemplate.queryForObject("SELECT MAX(id) FROM ai_agent_run WHERE user_id = ?", Long.class, userId);
+        jdbcTemplate.update("INSERT INTO ai_agent_artifact(run_id, artifact_type, title, content_json, status, source_message_id) VALUES (?, 'WIKI_DRAFT', '第一个', ?, 'DRAFT', ?)",
+                run, "{\"title\":\"第一个\",\"content\":\"有正文\"}", message);
+        long first = jdbcTemplate.queryForObject("SELECT MAX(id) FROM ai_agent_artifact WHERE run_id = ?", Long.class, run);
+        jdbcTemplate.update("INSERT INTO ai_agent_artifact(run_id, artifact_type, title, content_json, status, source_message_id) VALUES (?, 'WIKI_DRAFT', '第二个', ?, 'DRAFT', ?)",
+                run, "{\"title\":\"第二个\",\"content\":\"已将以上内容写入知识库。\"}", message);
+        long second = jdbcTemplate.queryForObject("SELECT MAX(id) FROM ai_agent_artifact WHERE run_id = ?", Long.class, run);
+        aiWorkspaceService.confirmArtifact(userId, first, null);
+        aiWorkspaceService.confirmArtifact(userId, second, null);   // 原来先查空：这里抛「没有正文」，工件永远停在 DRAFT
+        assertEquals("CONFIRMED", jdbcTemplate.queryForObject("SELECT status FROM ai_agent_artifact WHERE id = ?", String.class, second));
     }
 
     @Test

@@ -12,12 +12,33 @@ class WikiDraftsTest {
     private final SensitiveCryptoService crypto = new SensitiveCryptoService("0123456789abcdef0123456789abcdef");
 
     @Test
-    @DisplayName("先洗再截：很长的 ```markdown 包着的回答，截到上限之前先把包的那层剥掉（先截的话收尾的围栏没了，就剥不掉）")
+    @DisplayName("先洗再截：很长的 ```markdown 包着的回答，截到上限之前先把包的那层剥掉（先截的话收尾的围栏没了，就剥不掉）；截了要说")
     void cleansBeforeTruncating() {
         WikiDrafts.Body body = WikiDrafts.body("```markdown\n" + "字".repeat(6000) + "\n```", null, 5000);
         assertNotNull(body);
         assertTrue(body.text().startsWith("字"), "包的那层没剥掉：" + body.text().substring(0, 20));
-        assertEquals(5003, body.text().length(), "截到 5000 字（加上 ...）");
+        assertTrue(body.text().startsWith("字".repeat(5000) + "\n\n> 草稿只存了前 5000 字（原文 6000 字）"), "截了没说，或者截的地方不对：" + body.text().substring(4990));
+    }
+
+    @Test
+    @DisplayName("第七遍 review：截在代码块中间补上收尾（后面不会整页成了代码）、不截半个 emoji")
+    void truncationKeepsMarkdownWellFormed() {
+        String inCode = WikiDrafts.body("说明\n````js\n" + "x".repeat(100), null, 50).text();
+        assertTrue(inCode.contains("x\n````\n\n> 草稿只存了前"), "开着的代码块没补收尾（要和开头一样是四个反引号）：" + inCode);
+        String emoji = WikiDrafts.body("a".repeat(9) + "😀" + "b".repeat(20), null, 10).text();
+        assertTrue(emoji.startsWith("a".repeat(9) + "\n\n> 草稿只存了前 9 字"), "截在了 emoji 中间：" + emoji);
+        assertEquals("不用截", WikiDrafts.body("不用截", null, 50).text(), "没超就原样");
+    }
+
+    @Test
+    @DisplayName("require：洗完是空的当场说出来；删除草稿的说明洗过照样存（可以是空的），标成 DELETE")
+    void requireAndDeletion() {
+        RuntimeException empty = assertThrows(RuntimeException.class, () -> WikiDrafts.require("已将以上内容写入知识库。", null, 5000, "某页"));
+        assertTrue(empty.getMessage().contains("「某页」的草稿没有正文"), empty.getMessage());
+        UserKnowledgeRevision deletion = WikiDrafts.deletion(7L, 9L, "旧页", "这页和《X》重复，合并后删除\n已将以上内容写入知识库。", crypto);
+        assertEquals("DELETE", deletion.getActionType());
+        assertEquals("这页和《X》重复，合并后删除", crypto.decrypt(deletion.getEncryptedContent()));
+        assertEquals("", crypto.decrypt(WikiDrafts.deletion(7L, 9L, "旧页", "", crypto).getEncryptedContent()));
     }
 
     @Test

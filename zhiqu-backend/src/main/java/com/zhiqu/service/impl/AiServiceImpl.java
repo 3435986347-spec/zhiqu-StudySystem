@@ -491,9 +491,12 @@ public class AiServiceImpl implements AiService {
                         reply,
                         history
                 );
-                if (revision != null) {   // null：回答洗完是空的，没有可存的草稿
+                if (revision != null) {
                     liveWikiRevision = chatWikiRevisionRow(revision);
                     liveFinalReply = buildWikiDraftReply(revision, cryptoService.decrypt(revision.getEncryptedContent()));
+                } else {
+                    // 回答洗完是空的（模型只说了一句「已写入知识库」）：没有建草稿，照实说 —— 不让那句话冒充已经存上了（第七十四轮第七遍 review）
+                    liveFinalReply = reply + "\n\n（没有生成知识 Wiki 草稿：这次的回答里没有可以存进知识库的正文，知识库里什么也没有写。）";
                 }
             }
             AiMessage liveAssistantMessage = saveChatMessage(
@@ -3258,7 +3261,7 @@ public class AiServiceImpl implements AiService {
         source.setSourceRef("conversation:" + conversationId + "/message:" + sourceMessageId);
         source.setEncryptedContent(cryptoService.encrypt(limitRawMarkdown("用户：\n" + userMessage + "\n\n助手：\n" + assistantReply, 12000)));
         source.setEncryptionVersion("v1");
-        source.setContentSummary(limitText(cleanWikiDraftContent(content).replaceAll("\\s+", " "), 780));
+        source.setContentSummary(limitText(draft.text().replaceAll("\\s+", " "), 780));   // 摘要照存进草稿的那一份写
         source.setConversationId(conversationId);
         source.setMessageId(sourceMessageId);
         source.setImmutableHash(sha256(source.getSourceRef() + "\n" + userMessage + "\n" + assistantReply));
@@ -3267,7 +3270,7 @@ public class AiServiceImpl implements AiService {
         KnowledgePatchSet patchSet = new KnowledgePatchSet();
         patchSet.setUserId(userId);
         patchSet.setTitle(title);
-        patchSet.setSummary(limitText(cleanWikiDraftContent(content).replaceAll("\\s+", " "), 900));
+        patchSet.setSummary(limitText(draft.text().replaceAll("\\s+", " "), 900));
         patchSet.setStatus("PENDING");
         patchSet.setTriggerType("CHAT");
         patchSet.setSourceMessageId(sourceMessageId);
@@ -3414,7 +3417,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private String buildWikiDraftReply(UserKnowledgeRevision revision, String content) {
-        String preview = limitText(cleanWikiDraftContent(content), 700);
+        String preview = limitText(content, 700);   // content 就是存进草稿的那一份，不再过一遍旧的清洗（它会剥掉开头的代码围栏，预览和草稿就不一样了）
         return """
                 我已经把这段内容整理成一条知识 Wiki 待确认草稿：「%s」。
 

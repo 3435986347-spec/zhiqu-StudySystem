@@ -396,7 +396,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (items.isEmpty()) {
             String pageTitle = limit(value(body.get("pageTitle"), patchSet.getTitle()), 120);
             revisionMapper.insert(WikiDrafts.pending(userId, patchSet.getId(), pageTitle,
-                    draftBody(markdownValue(body.get("content"), patchSet.getSummary()), null, pageTitle), cryptoService));
+                    WikiDrafts.require(markdownValue(body.get("content"), patchSet.getSummary()), null, Integer.MAX_VALUE, pageTitle), cryptoService));
         } else {
             for (Map<String, Object> item : items) {
                 Long targetPageId = parseLong(item.get("pageId"));
@@ -422,13 +422,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 }
                 String itemTitle = limit(value(item.get("title"), patchSet.getTitle()), 120);
                 String actionType = limit(value(item.get("actionType"), "UPSERT").toUpperCase(), 20);
-                UserKnowledgeRevision revision = WikiDrafts.pending(userId, patchSet.getId(), itemTitle,
-                        "DELETE".equals(actionType) ? WikiDrafts.forDelete() : draftBody(markdownValue(item.get("content"), ""), baseContent, itemTitle),
-                        cryptoService);
+                UserKnowledgeRevision revision = "DELETE".equals(actionType)
+                        ? WikiDrafts.deletion(userId, patchSet.getId(), itemTitle, markdownValue(item.get("content"), ""), cryptoService)
+                        : WikiDrafts.pending(userId, patchSet.getId(), itemTitle,
+                                WikiDrafts.require(markdownValue(item.get("content"), ""), baseContent, Integer.MAX_VALUE, itemTitle), cryptoService);
+                if (!"DELETE".equals(actionType)) revision.setActionType(actionType);   // 认得的只有 UPSERT / DELETE，别的原样记下（和原来一样）
                 revision.setPageId(targetPageId);
                 revision.setBaseContentHash(baseHash);
                 revision.setBasePageVersion(baseVersion);
-                revision.setActionType(actionType);
                 revisionMapper.insert(revision);
             }
         }
@@ -554,7 +555,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
         String sourceTitle = limit(source.getTitle(), 120);
         UserKnowledgeRevision revision = WikiDrafts.pending(userId, patchSet.getId(), sourceTitle,
-                draftBody(cryptoService.decrypt(source.getEncryptedContent()), null, sourceTitle), cryptoService);
+                WikiDrafts.require(cryptoService.decrypt(source.getEncryptedContent()), null, Integer.MAX_VALUE, sourceTitle), cryptoService);
         revision.setSourceConversationId(source.getConversationId());
         revision.setSourceMessageId(source.getMessageId());
         revisionMapper.insert(revision);
@@ -1108,12 +1109,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (body.containsKey("content") && !given(body.get("content"))) {
             throw new BusinessException("正文不能为空；不想合入就驳回这条草稿");   // 原来把清空当成「没给」，悄悄合入了 AI 的那一版（第五遍 review）
         }
-        String content = given(body.get("content")) ? userMarkdown(body.get("content").toString())
-                : cryptoService.decrypt(revision.getEncryptedContent());
-        if (!given(body.get("content")) && revision.getContentCleaned() == null) {
-            // 第七十四轮之前存的草稿：有两条路径存的时候从没洗过，原来靠合入时这一遍 —— 没有「洗过」标记的补洗一遍（只洗这一遍）
-            content = MarkdownCanonicalizer.cleanKeeping(content, page == null ? null : cryptoService.decrypt(page.getEncryptedContent()));
-        }
+        String content = given(body.get("content")) ? userMarkdown(body.get("content").toString()) : draftContentToApply(revision, page);
         if (content.isBlank()) {
             throw new BusinessException("这条草稿没有正文，没有合入");   // 不拿空正文盖掉一页
         }
@@ -1649,13 +1645,28 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return "MEMORY";
     }
 
+    /**
+     * 草稿要落到页上的正文：入库时洗过的原样；这一轮之前存的（没有「洗过」标记，有两条路径存的时候从没洗过）补洗一遍。
+     * 预览（revisionRow）和合入用同一个 —— 确认框里看到的就是要写进去的（第七十四轮第七遍 review）。
+     */
+    private String draftContentToApply(UserKnowledgeRevision revision, UserKnowledgePage page) {
+        String stored = cryptoService.decrypt(revision.getEncryptedContent());
+        if (revision.getContentCleaned() != null || "DELETE".equalsIgnoreCase(revision.getActionType())) {
+            return stored;
+        }
+        return MarkdownCanonicalizer.cleanKeeping(stored, page == null ? null : cryptoService.decrypt(page.getEncryptedContent()));
+    }
+
     private Map<String, Object> revisionRow(UserKnowledgeRevision revision) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", revision.getId());
         row.put("pageId", revision.getPageId());
         row.put("actionType", revision.getActionType());
         row.put("title", revision.getTitle());
-        row.put("content", cryptoService.decrypt(revision.getEncryptedContent()));
+        UserKnowledgePage target = revision.getContentCleaned() != null || revision.getPageId() == null ? null
+                : pageMapper.selectOne(new LambdaQueryWrapper<UserKnowledgePage>()
+                        .eq(UserKnowledgePage::getUserId, revision.getUserId()).eq(UserKnowledgePage::getId, revision.getPageId()));
+        row.put("content", draftContentToApply(revision, target));
         row.put("status", revision.getStatus());
         row.put("sourceMessageId", revision.getSourceMessageId());
         row.put("sourceConversationId", revision.getSourceConversationId());
@@ -1721,15 +1732,6 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private BusinessException knowledgePageConflict() {
         return new BusinessException("知识页已被其他窗口修改，请刷新后重试");
-    }
-
-    /** 洗完是空的（只有模型的自述）不建草稿、当场说出来 —— 要到合入时才报错的话，同一批里别的草稿也跟着合不进去（第七十四轮第六遍 review） */
-    private static WikiDrafts.Body draftBody(String raw, String base, String title) {
-        WikiDrafts.Body body = WikiDrafts.body(raw, base, Integer.MAX_VALUE);
-        if (body == null) {
-            throw new BusinessException("「" + title + "」的草稿没有正文（只有「已写入知识库」这类说明），没有生成");
-        }
-        return body;
     }
 
     /** 请求里给了这一项：null、只有空白都算没给（value() 和 markdownValue() 共用这一条） */

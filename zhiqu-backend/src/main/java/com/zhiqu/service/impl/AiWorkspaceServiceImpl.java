@@ -1252,11 +1252,6 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         String title = limit(text(content.get("title"), artifact.getTitle()), 120);
         String raw = text(content.get("content"), text(content.get("markdown"), artifact.getTitle()));
         String body = limit(raw, 5000);
-        // 先洗再截（第七十四轮第六遍 review：先截到 5000 字会截掉收尾的围栏，包的那层就剥不掉了）；洗完是空的不建
-        com.zhiqu.service.knowledge.WikiDrafts.Body draft = com.zhiqu.service.knowledge.WikiDrafts.body(raw, null, 5000);
-        if (draft == null) {
-            throw new BusinessException("这条 Wiki 草稿没有正文（只有「已写入知识库」这类说明），没有生成待合入变更");
-        }
         Long sourceMessageId = artifact.getSourceMessageId();
         KnowledgePatchSet pending = null;
         if (sourceMessageId != null) {
@@ -1270,6 +1265,9 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         if (pending != null) {
             return pending;
         }
+        // 先洗再截（第七十四轮第六遍 review：先截到 5000 字会截掉收尾的围栏，包的那层就剥不掉了）；洗完是空的当场说。
+        // 放在「同一条消息已经有待合入的批次就复用」之后（第七遍：放在前面的话，能复用的也被拒了）
+        com.zhiqu.service.knowledge.WikiDrafts.Body draft = com.zhiqu.service.knowledge.WikiDrafts.require(raw, null, 5000, title);
 
         KnowledgeSource source = new KnowledgeSource();
         source.setUserId(userId);
@@ -1278,7 +1276,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         source.setSourceRef("agent-run:" + run.getId() + "/artifact:" + artifact.getId());
         source.setEncryptedContent(cryptoService.encrypt(body));
         source.setEncryptionVersion("v1");
-        source.setContentSummary(limit(body.replaceAll("\\s+", " "), 780));
+        source.setContentSummary(limit(draft.text().replaceAll("\\s+", " "), 780));   // 摘要照洗过的草稿写，和确认框里看到的一样
         source.setMessageId(sourceMessageId);
         source.setImmutableHash(sha256(source.getSourceRef() + "\n" + body));
         knowledgeSourceMapper.insert(source);
@@ -1286,7 +1284,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         KnowledgePatchSet patchSet = new KnowledgePatchSet();
         patchSet.setUserId(userId);
         patchSet.setTitle(title);
-        patchSet.setSummary(limit(body.replaceAll("\\s+", " "), 900));
+        patchSet.setSummary(limit(draft.text().replaceAll("\\s+", " "), 900));
         patchSet.setStatus("PENDING");
         patchSet.setTriggerType("AGENT");
         patchSet.setSourceMessageId(sourceMessageId);

@@ -206,12 +206,15 @@ class KnowledgeConcurrencyIntegrationTest {
     }
 
     @Test
-    void staleDeleteRevisionCannotDeleteThePage() {
+    void staleDeleteRevisionCannotDeleteThePage() throws Exception {
         Map<String, Object> page = createPage("删除保护", "保留我");
         int version = number(page.get("version"));
-        Map<String, Object> deleteItem = patchItem(page, "", version);
+        Map<String, Object> deleteItem = patchItem(page, "这页和《X》重复，合并后删除", version);
         deleteItem.put("actionType", "DELETE");
         Map<String, Object> patch = knowledgeService.createPatchSet(userId, patchBody("删除保护", deleteItem));
+        assertEquals("这页和《X》重复，合并后删除", knowledgeService.decrypt(jdbcTemplate.queryForObject(
+                "SELECT encrypted_content FROM user_knowledge_revision WHERE patch_set_id = ?", String.class, patch.get("id"))),
+                "第七遍 review：删除草稿附带的说明原样存着给确认框看");
 
         knowledgeService.savePage(userId, numberLong(page.get("id")), updateBody(page, "用户后来修改", version));
         assertThrows(RuntimeException.class,
@@ -428,6 +431,7 @@ class KnowledgeConcurrencyIntegrationTest {
      * 标记洗过的原样落（不洗第二遍）。
      */
     @Test
+    @SuppressWarnings("unchecked")
     void draftsStoredBeforeThisRoundAreCleanedOnceWhenApplied() throws Exception {
         String raw = "```markdown\n# 旧\n正文 改\n```\n已将以上内容写入知识库。";
         createPage("旧草稿", "正文\n");
@@ -437,6 +441,10 @@ class KnowledgeConcurrencyIntegrationTest {
         Map<String, Object> legacy = knowledgeService.createPatchSet(userId, patchBody("旧草稿", item), Map.of(seen.pageId(), seen));
         jdbcTemplate.update("UPDATE user_knowledge_revision SET encrypted_content = ?, content_cleaned = NULL WHERE patch_set_id = ?",
                 knowledgeService.encrypt(raw), legacy.get("id"));
+        String preview = knowledgeService.listPatchSets(userId, "PENDING").stream()
+                .filter(ps -> String.valueOf(ps.get("id")).equals(String.valueOf(legacy.get("id"))))
+                .map(ps -> String.valueOf(((List<Map<String, Object>>) ps.get("items")).get(0).get("content"))).findFirst().orElse("没找到");
+        assertEquals("# 旧\n正文 改\n", preview, "第七遍 review：确认框里看到的就是要写进去的（旧草稿的预览原来是没洗过的原文）");
         knowledgeService.applyPatchSet(userId, numberLong(legacy.get("id")));
         assertEquals("# 旧\n正文 改\n", String.valueOf(knowledgeService.detail(userId, seen.pageId()).get("content")), "没有「洗过」标记的旧草稿合入时没补洗");
 
@@ -962,6 +970,11 @@ class KnowledgeConcurrencyIntegrationTest {
         private String decrypt(String stored) throws Exception {
             Object crypto = context.getBean(Class.forName("com.zhiqu.service.privacy.SensitiveCryptoService"));
             return (String) crypto.getClass().getMethod("decrypt", String.class).invoke(crypto, stored);
+        }
+
+        @SuppressWarnings("unchecked")
+        private List<Map<String, Object>> listPatchSets(Long userId, String status) {
+            return (List<Map<String, Object>>) invoke("listPatchSets", new Class<?>[]{Long.class, String.class}, userId, status);
         }
 
         private String encrypt(String plain) throws Exception {

@@ -126,6 +126,17 @@ public final class MarkdownCanonicalizer {
      * 缩进四格以上的是缩进代码块的内容、反引号后面还有反引号的是一行行内代码，都不是围栏（第六遍 review）。
      */
     private static boolean fencesBalanced(String text) {
+        return openFence(text) == null;
+    }
+
+    /** 截断之后还开着的代码块补一道收尾（WikiDrafts 截草稿时用：截在代码块中间的话，后面整页都成了代码） */
+    public static String closeOpenFence(String text) {
+        String open = openFence(text);
+        return open == null ? text : text + "\n" + open;
+    }
+
+    /** 这段文字结尾时还开着的那个代码块的收尾围栏（``` / ~~~ 之类、和开头一样长），没有开着的就是 null */
+    private static String openFence(String text) {
         char fence = 0;
         int length = 0;
         for (String line : text.split("\n", -1)) {
@@ -145,6 +156,6 @@ public final class MarkdownCanonicalizer {
                 fence = 0;
             }
         }
-        return fence == 0;
+        return fence == 0 ? null : String.valueOf(fence).repeat(length);
     }
 }
