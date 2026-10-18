@@ -75,12 +75,13 @@ rm -f "$APP/Contents/Resources/runtime/Contents/Home/lib/server/classes_nocoops.
 echo "    runtime  $(du -sh "$APP/Contents/Resources/runtime" | cut -f1)"
 
 echo "==> 4/6 生成应用图标"
-# 图标从「知」字现画，不是一张存在仓库里的设计稿 —— 界面里那个标识本来就是 CSS
-# 画的（.zq-mark），改品牌色时这样才不会出现「界面新色、图标旧色」。
+# 图标是设计稿（第七十二轮：知字图标设计方案）：网页用的 icon-512.png 就是它，这里按 macOS 图标的版式四周留白做成 iconset。
+# 第七十二轮之前是从「知」字现画的蓝底图标，第四十轮换了中性配色之后一直没跟上。
 ICON_TOOL="$OUT/MakeIcon"
 swiftc -O -target arm64-apple-macos13.0 -framework AppKit \
   -o "$ICON_TOOL" "$ROOT/deploy/desktop/icon/MakeIcon.swift"
-"$ICON_TOOL" "$OUT/icons" > /dev/null
+"$ICON_TOOL" "$ROOT/zhiqu-backend/src/main/resources/static/assets/icons/icon-512.png" \
+  "$ROOT/deploy/desktop/icon/favicon-16.png" "$ROOT/deploy/desktop/icon/favicon-32.png" "$OUT/icons" > /dev/null
 iconutil -c icns "$OUT/icons/zhiqu.iconset" -o "$APP/Contents/Resources/$NAME.icns"
 rm -f "$ICON_TOOL"
 echo "    $NAME.icns  $(du -h "$APP/Contents/Resources/$NAME.icns" | cut -f1)"

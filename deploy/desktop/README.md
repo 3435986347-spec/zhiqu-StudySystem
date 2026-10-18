@@ -21,7 +21,7 @@
 ## 打包
 
 **macOS —— 原生应用（推荐）**：Swift + WKWebView 外壳，无边框窗口铺满，不弹浏览器、不弹跳
-Dock 图标、带「知」字图标。产出 `.app` 和拖拽安装的 `.dmg`（约 126MB / 103MB）。
+Dock 图标、带应用图标（设计稿在 `assets/icons/`，`deploy/desktop/icon/MakeIcon.swift` 做成 iconset 和 ICO）。产出 `.app` 和拖拽安装的 `.dmg`（约 126MB / 103MB）。
 
 ```bash
 deploy/desktop/package-macos-native.sh          # → build/desktop-native/{知趣象限.app, 知趣象限-1.0.0.dmg}

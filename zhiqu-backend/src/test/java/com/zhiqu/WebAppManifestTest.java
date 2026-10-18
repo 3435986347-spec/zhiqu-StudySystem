@@ -115,6 +115,60 @@ class WebAppManifestTest {
         assertTrue(drift.isEmpty(), "这些页面的 theme-color 和底色（浅 " + lightBg + "、深 " + darkBg + "）对不上：" + drift);
     }
 
+    @Test
+    @DisplayName("favicon.ico 和 Windows 的 zhiqu.ico 是真的图标：ICO 头、每一张都是解得开的 PNG、要的尺寸都在")
+    void 图标文件是真的图标() throws IOException {
+        // 第七十二轮之前网页的 favicon.ico 是 6 个字节的文本「zhiqu」（9 月 2 日的占位）：
+        // 每一页的第一个 rel="icon" 都指着它，文件在、引用也在 —— 上面两条都照不出来，只能看文件本身。
+        assertIco(STATIC.resolve("favicon.ico"), List.of(16, 32, 48));
+        assertIco(Path.of("..", "deploy", "desktop", "icon", "zhiqu.ico"), List.of(16, 32, 48, 64, 128, 256));
+    }
+
+    @Test
+    @DisplayName("清单和页面里写的图标尺寸就是文件的实际像素（换设计稿时放错一张会对不上）")
+    void 图标尺寸和写的一致() throws IOException {
+        JsonNode manifest = new ObjectMapper()
+                .readTree(Files.readString(STATIC.resolve("manifest.json"), StandardCharsets.UTF_8));
+        List<String> wrong = new ArrayList<>();
+        int checked = 0;
+        for (JsonNode icon : manifest.get("icons")) {
+            String size = pngSize(Files.readAllBytes(STATIC.resolve(icon.path("src").asText()))), declared = icon.path("sizes").asText();
+            checked++;
+            if (!size.equals(declared)) wrong.add(icon.path("src").asText() + " 写的 " + declared + "、实际 " + size);
+        }
+        String touch = pngSize(Files.readAllBytes(STATIC.resolve("assets/icons/apple-touch-icon.png")));
+        if (!touch.equals("180x180")) wrong.add("apple-touch-icon.png 实际 " + touch + "（iOS 要 180x180）");
+        assertTrue(checked >= 3, "清单里只有 " + checked + " 张图标");
+        assertTrue(wrong.isEmpty(), "图标尺寸对不上：" + wrong);
+    }
+
+    private static void assertIco(Path file, List<Integer> required) throws IOException {
+        byte[] b = Files.readAllBytes(file);
+        assertTrue(b.length >= 22 && b[0] == 0 && b[1] == 0 && b[2] == 1 && b[3] == 0,
+                file + " 不是 ICO（开头不是 00 00 01 00，一共 " + b.length + " 字节）");
+        int count = (b[4] & 0xff) | (b[5] & 0xff) << 8;
+        List<Integer> sizes = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            int at = 6 + 16 * i;
+            int w = b[at] & 0xff;
+            int length = java.nio.ByteBuffer.wrap(b, at + 8, 8).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+            int offset = java.nio.ByteBuffer.wrap(b, at + 12, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+            assertTrue(offset > 0 && offset + length <= b.length, file + " 第 " + (i + 1) + " 张超出文件");
+            byte[] image = java.util.Arrays.copyOfRange(b, offset, offset + length);
+            int px = w == 0 ? 256 : w;
+            assertTrue(pngSize(image).equals(px + "x" + px), file + " 第 " + (i + 1) + " 张写的 " + px + "，图是 " + pngSize(image));
+            sizes.add(px);
+        }
+        assertTrue(sizes.containsAll(required), file + " 里的尺寸 " + sizes + " 缺了 " + required);
+    }
+
+    /** PNG 的宽 x 高（IHDR 在固定位置）；不是 PNG 就回「不是 PNG」。 */
+    private static String pngSize(byte[] png) {
+        if (png.length < 24 || (png[0] & 0xff) != 0x89 || png[1] != 'P' || png[2] != 'N' || png[3] != 'G') return "不是 PNG";
+        java.nio.ByteBuffer ihdr = java.nio.ByteBuffer.wrap(png, 16, 8);
+        return ihdr.getInt() + "x" + ihdr.getInt();
+    }
+
     private static String token(String css, String selector, String name) {
         java.util.regex.Matcher block = java.util.regex.Pattern.compile("(?m)^" + java.util.regex.Pattern.quote(selector) + "\\{([^}]*)\\}").matcher(css);
         assertTrue(block.find(), "找不到 " + selector + " 那一块");

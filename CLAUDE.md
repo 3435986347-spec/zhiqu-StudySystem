@@ -87,7 +87,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261018-nested-lists`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261018-new-app-icon`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -99,8 +99,7 @@ cd ../zhiqu-cli && npm test
   第二十六轮的四张在改版后一直没换，直到用户自己发现（第四十六轮，`HomeCarouselTest`）。
 - **桌面应用是 WebKit（WKWebView），内置浏览器是 Chromium**：样式能力随系统版本变化，下拉框按 `CSS.supports` 选择 `base-select` / `none`，不固定假定 WebKit 不支持；样子要在 WebKit 里量（`DesktopWebKitLayoutTest`，不开窗口）。
 - 设计令牌只在 `assets/zhiqu-ui.css` 的 `:root` 定义一次：引用不存在的 `var(--x)` 不报错，整条声明作废（`FrontendTokenAndDateTest`）。手机样式只有一段 `@media (max-width: 760px)`，必须在 `zhiqu-ui.css` 最后。
-- 业务错误是 HTTP 200 + `code != 200`，前端判 `result.code === 200`。写请求走 `request()`（去重、幂等键、重来、照实说「不确定」），不要直接 `fetch`（`RequestResilienceTest`）。
-- 页面不带示例数据、静态 HTML 里不写死数字（`InitErrorReplacesDemoContentTest`）。细节：`docs/notes/frontend.md`。
+- 业务错误是 HTTP 200 + `code != 200`，前端判 `result.code === 200`。写请求走 `request()`（去重、幂等键、重来、照实说「不确定」），不要直接 `fetch`（`RequestResilienceTest`）。页面不带示例数据、静态 HTML 里不写死数字（`InitErrorReplacesDemoContentTest`）。细节：`docs/notes/frontend.md`。
 - 新加一个 HTML 页面：`SecurityConfig` 的放行清单、`service-worker.js` 的核心资源、`PAGE_MODULES` 都要加 —— 漏了放行，没登录时打开是一片空白的 403（第五十轮，`MiniPomodoroTest` 钉着）。
 - **页面一打开就露出自己的骨架**，数据到了填进去；只有后台页和旧地址的跳转页先遮着（`zhiqu-ui.js` 的 `holdsUntilBoot`）。页面之间用 `@view-transition` 交叉淡化、侧栏不动。
   文字一律系统无衬线字体，**不从外网取字体 / 样式表**（挡渲染也挡脚本，网络慢时整页等着）；数字用 `.zq-num`（等宽数位），等宽字体只给代码。见 `PageSwitchSmoothnessTest`、第三十九轮。
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第六十九轮](docs/rounds/round-69.md) 命令行 TERM=dumb 的 15 个失败与 read_file 空行；Wiki 查看类弹窗先开后填、目录预取、健康检查 / 图谱的三个真错；仓库评测的 Docker 编排与不花钱的对照；锐评
 - [第七十轮](docs/rounds/round-70.md) 知识 Wiki 换编辑内核的验证：CodeMirror 6 实时预览（开关后面）——不改内容保存 0/14 → 14/14 逐字节一样、点进编辑快一倍；面板刷新时闪一下挤扁的内容
 - [第七十一轮](docs/rounds/round-71.md) 换编辑器第 1 步：阅读认嵌套列表（缩进、任务子项、续行、编号）、旧编辑器写回缩进；用户保存的 Wiki 正文原样存、原样读回
+- [第七十二轮](docs/rounds/round-72.md) 换上新的应用图标（知字图标设计方案）：网页四张 PNG 原样换、favicon.ico 原来是 6 字节的文本、macOS / Windows 图标从设计稿生成
