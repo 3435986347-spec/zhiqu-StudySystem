@@ -223,31 +223,46 @@ public final class KnowledgeVaultCodec {
         } catch (IOException e) { throw failure("导出标题无法编码"); }
     }
 
-    public static String resolve(String fromPath, String target, Set<String> candidates) {
-        if (target == null || target.isBlank() || target.matches("^[A-Za-z][A-Za-z0-9+.-]*:.*") || target.startsWith("//")) return null;
-        String decoded;
-        try { decoded = java.net.URLDecoder.decode(target.replace("+", "%2B"), StandardCharsets.UTF_8); }
-        catch (IllegalArgumentException e) { return null; }
-        decoded = decoded.replace('\\', '/');
-        // Reject after decoding too: encoded traversal or a URI must not fall back to
-        // Obsidian's shortest-filename lookup inside this archive.
-        if (decoded.matches("^[A-Za-z][A-Za-z0-9+.-]*:.*") || decoded.startsWith("//")) return null;
-        String relative = normalizeRelative(directory(fromPath), decoded);
-        if (relative == null) return null;
-        String match = casePath(candidates, relative);
-        if (match == null && !relative.toLowerCase(Locale.ROOT).endsWith(".md")) match = casePath(candidates, relative + ".md");
-        if (match == null) match = casePath(candidates, decoded.startsWith("/") ? decoded.substring(1) : decoded);
-        if (match == null && !decoded.toLowerCase(Locale.ROOT).endsWith(".md")) match = casePath(candidates, decoded + ".md");
-        if (match != null) return match;
-        // Obsidian's shortest unique filename syntax applies only to bare names.
-        // An explicit directory that does not exist must not silently bind to an unrelated file.
-        if (decoded.contains("/")) return null;
-        String base = decoded.substring(decoded.lastIndexOf('/') + 1);
-        List<String> matches = candidates.stream().filter(path -> {
-            String filename = path.substring(path.lastIndexOf('/') + 1);
-            return fold(filename).equals(fold(base)) || fold(filename).equals(fold(base + ".md"));
-        }).toList();
-        return matches.size() == 1 ? matches.get(0) : null;
+    /**
+     * 一份路径（笔记或附件）上的查找，建一次、查很多次（第七十四轮 review：原来每条链接都把全部路径 fold 一遍、按四种写法各扫一遍，
+     * 再按文件名扫一遍 —— 2 万条链接、4000 个路径要一分钟，确认导入时还持着目录锁）。按 fold 后的路径对上；同一个 fold 只认先出现的那个
+     *（ZIP 里本来就不许有大小写冲突的路径）。
+     */
+    public static final class PathIndex {
+        private final Map<String, String> byPath = new HashMap<>();
+        private final Map<String, List<String>> byFileName = new HashMap<>();
+
+        public PathIndex(Collection<String> paths) {
+            for (String path : paths) {
+                byPath.putIfAbsent(fold(path), path);
+                byFileName.computeIfAbsent(fold(path.substring(path.lastIndexOf('/') + 1)), k -> new ArrayList<>()).add(path);
+            }
+        }
+
+        public String resolve(String fromPath, String target) {
+            if (target == null || target.isBlank() || target.matches("^[A-Za-z][A-Za-z0-9+.-]*:.*") || target.startsWith("//")) return null;
+            String decoded;
+            try { decoded = java.net.URLDecoder.decode(target.replace("+", "%2B"), StandardCharsets.UTF_8); }
+            catch (IllegalArgumentException e) { return null; }
+            decoded = decoded.replace('\\', '/');
+            // Reject after decoding too: encoded traversal or a URI must not fall back to
+            // Obsidian's shortest-filename lookup inside this archive.
+            if (decoded.matches("^[A-Za-z][A-Za-z0-9+.-]*:.*") || decoded.startsWith("//")) return null;
+            String relative = normalizeRelative(directory(fromPath), decoded);
+            if (relative == null) return null;
+            String match = byPath.get(fold(relative));
+            if (match == null && !relative.toLowerCase(Locale.ROOT).endsWith(".md")) match = byPath.get(fold(relative + ".md"));
+            if (match == null) match = byPath.get(fold(decoded.startsWith("/") ? decoded.substring(1) : decoded));
+            if (match == null && !decoded.toLowerCase(Locale.ROOT).endsWith(".md")) match = byPath.get(fold(decoded + ".md"));
+            if (match != null) return match;
+            // Obsidian's shortest unique filename syntax applies only to bare names.
+            // An explicit directory that does not exist must not silently bind to an unrelated file.
+            if (decoded.contains("/")) return null;
+            List<String> bare = byFileName.getOrDefault(fold(decoded), List.of());
+            List<String> withMd = byFileName.getOrDefault(fold(decoded + ".md"), List.of());
+            if (bare.size() + withMd.size() != 1) return null;
+            return bare.isEmpty() ? withMd.get(0) : bare.get(0);
+        }
     }
 
     private static String normalizeRelative(String directory, String target) {

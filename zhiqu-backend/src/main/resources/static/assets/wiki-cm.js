@@ -536,6 +536,9 @@ function tableDecorations(state, ranges, options) {
   return Decoration.set(out, true);
 }
 
+/** 跨行的两种预览（块公式、表格）：StateField 不要 DOM，node 里的判据直接拿 EditorState 跑同一份 */
+export function blockPreviews(options) { return [blockMath, tablePreview(options)]; }
+
 const livePreview = (options) => ViewPlugin.fromClass(class {
   constructor(view) { this.decorations = inlineDecorations(view, options); }
   update(update) {
@@ -608,7 +611,7 @@ export function mountWikiEditor(host, options) {
           ...FORMAT_KEYS.map((k) => ({ key: k.key, run: (v) => wrapSelection(v, k.open, k.close || k.open) })),
           ...completionKeymap, ...historyKeymap, indentWithTab, ...defaultKeymap]),
         autocompletion({ override: [completeTitles], icons: false }),
-        livePreview(options), blockMath, tablePreview(options), theme,
+        livePreview(options), ...blockPreviews(options), theme,
         EditorView.domEventHandlers({
           paste(event, view) {
             const image = files(event.clipboardData && event.clipboardData.files).find((f) => /^image\//i.test(f.type || ''));

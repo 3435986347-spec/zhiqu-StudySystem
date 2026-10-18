@@ -41,7 +41,7 @@ public class KnowledgeVaultService {
     }
 
     public Map<String, Object> preview(Long userId, MultipartFile file, Long parentId, Integer parentVersion) {
-        ImportPlan plan = plan(userId, codec.decode(upload(file)), parentId, parentVersion);
+        ImportPlan plan = plan(userId, prepare(codec.decode(upload(file))), parentId, parentVersion);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("previewToken", plan.token());
         result.put("pageCount", plan.archive().notes().size());
@@ -66,9 +66,11 @@ public class KnowledgeVaultService {
     @Transactional
     public Map<String, Object> confirm(Long userId, MultipartFile file, String previewToken, Long parentId, Integer parentVersion) {
         if (previewToken == null || previewToken.isBlank()) throw new BusinessException("请先预览 ZIP 内容再确认导入");
-        // Reparse and recheck all ownership/collisions while the user's structural-write lock is held.
+        // 解 ZIP、验图、解析链接只看上传的字节，放在锁外面（第七十四轮 review：原来都在用户那一行的锁里做）；
+        // 归属、重名这些看库的，锁住之后再判一遍。
+        Prepared prepared = prepare(codec.decode(upload(file)));
         if (users.lockKnowledgeTreeOwner(userId) == null) throw new BusinessException("用户不存在或无权修改知识目录");
-        ImportPlan plan = plan(userId, codec.decode(upload(file)), parentId, parentVersion);
+        ImportPlan plan = plan(userId, prepared, parentId, parentVersion);
         if (!java.security.MessageDigest.isEqual(plan.token().getBytes(StandardCharsets.US_ASCII), previewToken.getBytes(StandardCharsets.US_ASCII)))
             throw new BusinessException("ZIP 或知识目录已变化，请重新预览后再导入");
         Map<String, String> attachmentUrls = new LinkedHashMap<>();
@@ -209,7 +211,8 @@ public class KnowledgeVaultService {
         return result;
     }
 
-    private ImportPlan plan(Long userId, KnowledgeVaultCodec.Archive archive, Long parentId, Integer parentVersion) {
+    /** 只看 ZIP 本身的那部分：验图、建路径索引、数链接（不碰库，确认时在锁外面做） */
+    private Prepared prepare(KnowledgeVaultCodec.Archive archive) {
         // A preview must catch the same unsupported/corrupt raster files that confirmation
         // would reject; otherwise an apparently valid plan fails only after the user confirms.
         for (var entry : archive.attachments().entrySet()) {
@@ -218,6 +221,31 @@ public class KnowledgeVaultService {
                 catch (BusinessException e) { throw new BusinessException("ZIP 图片无效：" + entry.getKey() + "；" + e.getMessage()); }
             }
         }
+        List<String> notePaths = new ArrayList<>();
+        Map<String, List<String>> byTitle = new HashMap<>();
+        for (var note : archive.notes()) {
+            notePaths.add(note.path());
+            byTitle.computeIfAbsent(titleKey(note.title()), k -> new ArrayList<>()).add(note.path());
+        }
+        var notes = new KnowledgeVaultCodec.PathIndex(notePaths);
+        var files = new KnowledgeVaultCodec.PathIndex(archive.attachments().keySet());
+        List<String> linkWarnings = new ArrayList<>();
+        int relationCount = 0;
+        int scannedLinks = 0;
+        for (var note : archive.notes()) for (var link : VaultMarkdownLinks.read(note.content())) {
+            if (++scannedLinks > 20000) throw new BusinessException("ZIP 引用超过 20000 条，请拆分导入");
+            if (link.target().isBlank() || link.target().matches("^[A-Za-z][A-Za-z0-9+.-]*:.*")) continue;
+            String notePath = resolveNote(notes, byTitle, note.path(), link.target());
+            String filePath = files.resolve(note.path(), link.target());
+            if (notePath != null) relationCount++;
+            else if (filePath == null && (link.wiki() || link.image() || link.target().toLowerCase(Locale.ROOT).endsWith(".md")))
+                linkWarnings.add("未解析的引用保留原文：" + note.path() + " → " + link.target());
+        }
+        return new Prepared(archive, notes, files, byTitle, linkWarnings, relationCount);
+    }
+
+    private ImportPlan plan(Long userId, Prepared prepared, Long parentId, Integer parentVersion) {
+        KnowledgeVaultCodec.Archive archive = prepared.archive();
         List<UserKnowledgePage> existing = ownedPages(userId);
         if (parentId != null) {
             UserKnowledgePage parent = existing.stream().filter(p -> parentId.equals(p.getId())).findFirst()
@@ -239,44 +267,33 @@ public class KnowledgeVaultService {
             titles.put(note.path(), title);
             if (!title.equals(note.title())) warnings.add("重名笔记将新增为「" + title + "」：" + note.path());
         }
-        int relationCount = 0;
-        int scannedLinks = 0;
-        for (var note : archive.notes()) for (var link : VaultMarkdownLinks.read(note.content())) {
-            if (++scannedLinks > 20000) throw new BusinessException("ZIP 引用超过 20000 条，请拆分导入");
-            if (link.target().isBlank() || link.target().matches("^[A-Za-z][A-Za-z0-9+.-]*:.*")) continue;
-            String notePath = resolveNote(archive, note.path(), link.target());
-            String filePath = KnowledgeVaultCodec.resolve(note.path(), link.target(), archive.attachments().keySet());
-            if (notePath != null) relationCount++;
-            else if (filePath == null && (link.wiki() || link.image() || link.target().toLowerCase(Locale.ROOT).endsWith(".md")))
-                warnings.add("未解析的引用保留原文：" + note.path() + " → " + link.target());
-        }
+        warnings.addAll(prepared.linkWarnings());
         StringBuilder tokenData = new StringBuilder(archive.hash()).append('\n').append(userId).append('\n').append(parentId).append('\n').append(parentVersion);
         titles.forEach((path, title) -> tokenData.append('\n').append(path).append('\0').append(title));
-        return new ImportPlan(archive, titles, warnings, relationCount, KnowledgeVaultCodec.sha256(tokenData.toString().getBytes(StandardCharsets.UTF_8)));
+        return new ImportPlan(prepared, titles, warnings, prepared.relationCount(), KnowledgeVaultCodec.sha256(tokenData.toString().getBytes(StandardCharsets.UTF_8)));
     }
 
     private String importContent(KnowledgeVaultCodec.Note note, ImportPlan plan, Map<String, String> attachmentUrls) {
         return VaultMarkdownLinks.rewrite(note.content(), link -> {
-            String file = KnowledgeVaultCodec.resolve(note.path(), link.target(), attachmentUrls.keySet());
+            String file = plan.prepared().files().resolve(note.path(), link.target());
             if (file != null) {
                 String url = attachmentUrls.get(file);
                 if (link.wiki()) return (link.image() ? "!" : "") + "[[" + url + link.anchor()
                         + (link.label() == null ? "" : "|" + link.label()) + "]]";
                 return (link.image() ? "!" : "") + "[" + safeLabel(link.label(), link.target()) + "](" + url + link.anchor() + ")";
             }
-            String target = resolveNote(plan.archive(), note.path(), link.target());
+            String target = resolveNote(plan.prepared().notes(), plan.prepared().byTitle(), note.path(), link.target());
             return target == null ? link.original() : (link.image() ? "!" : "") + "[[" + plan.titles().get(target) + link.anchor()
                     + (link.label() == null ? "" : "|" + safeLabel(link.label(), link.target())) + "]]";
         });
     }
 
-    private static String resolveNote(KnowledgeVaultCodec.Archive archive, String from, String target) {
-        Set<String> paths = new LinkedHashSet<>(); archive.notes().forEach(n -> paths.add(n.path()));
-        String path = KnowledgeVaultCodec.resolve(from, target, paths);
+    private static String resolveNote(KnowledgeVaultCodec.PathIndex notes, Map<String, List<String>> byTitle, String from, String target) {
+        String path = notes.resolve(from, target);
         if (path != null) return path;
         if (target.contains("/") || target.contains(":") || target.isBlank()) return null;
-        var matches = archive.notes().stream().filter(n -> titleKey(n.title()).equals(titleKey(target))).toList();
-        return matches.size() == 1 ? matches.get(0).path() : null;
+        List<String> matches = byTitle.getOrDefault(titleKey(target), List.of());
+        return matches.size() == 1 ? matches.get(0) : null;
     }
     private List<UserKnowledgePage> ownedPages(Long userId) {
         return pages.selectList(new LambdaQueryWrapper<UserKnowledgePage>().eq(UserKnowledgePage::getUserId, userId).orderByAsc(UserKnowledgePage::getId));
@@ -316,5 +333,9 @@ public class KnowledgeVaultService {
         KnowledgeOperationLog row = new KnowledgeOperationLog(); row.setUserId(userId); row.setOperationType(operation); row.setTitle(title); row.setDetail(detail);
         if (logs.insert(row) != 1) throw new BusinessException("知识库操作记录保存失败，请重试");
     }
-    private record ImportPlan(KnowledgeVaultCodec.Archive archive, Map<String, String> titles, List<String> warnings, int relationshipCount, String token) { }
+    private record Prepared(KnowledgeVaultCodec.Archive archive, KnowledgeVaultCodec.PathIndex notes, KnowledgeVaultCodec.PathIndex files,
+                            Map<String, List<String>> byTitle, List<String> linkWarnings, int relationCount) { }
+    private record ImportPlan(Prepared prepared, Map<String, String> titles, List<String> warnings, int relationshipCount, String token) {
+        KnowledgeVaultCodec.Archive archive() { return prepared.archive(); }
+    }
 }

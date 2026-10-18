@@ -1893,7 +1893,27 @@
   var privateMedia = new Map();
   var privateViews = new Set();
   var privatePreviewSerial = 0;
+  // 私有图片下载回来的字节留一份（第七十四轮 review：新编辑器里图片滚出可视区，CodeMirror 把那块 DOM 拆了，滚回来是一个新的 img，
+  // 原来每次都重新下载一遍）。按登录分开，最多 48 MiB、最久没用的先丢；换登录、退出时清空。
+  var PRIVATE_IMAGE_CACHE_BYTES = 48 * 1024 * 1024;
+  var privateImageBlobs = new Map(), privateImageBytes = 0;
+  function cachedPrivateImage(url, auth) {
+    var hit = privateImageBlobs.get(url);
+    if (!hit || hit.auth !== auth) return null;
+    privateImageBlobs.delete(url); privateImageBlobs.set(url, hit);
+    return hit.blob;
+  }
+  function keepPrivateImage(url, auth, blob) {
+    var old = privateImageBlobs.get(url);
+    if (old) { privateImageBytes -= old.blob.size; privateImageBlobs.delete(url); }
+    if (!(blob.size > 0) || blob.size > PRIVATE_IMAGE_CACHE_BYTES / 4) return;
+    privateImageBlobs.set(url, { auth: auth, blob: blob }); privateImageBytes += blob.size;
+    privateImageBlobs.forEach(function (entry, key) {
+      if (privateImageBytes > PRIVATE_IMAGE_CACHE_BYTES && key !== url) { privateImageBytes -= entry.blob.size; privateImageBlobs.delete(key); }
+    });
+  }
   function revokePrivateMedia() {
+    privateImageBlobs.clear(); privateImageBytes = 0;
     privateMedia.forEach(function (url, media) {
       if (media.getAttribute('src') === url || String(media.getAttribute('src') || '').indexOf(url + '#') === 0) media.removeAttribute('src');
       if (media.pause) media.pause();
@@ -2141,9 +2161,11 @@
       var url = image.getAttribute('data-zq-private-image');
       if (!/^\/api\/knowledge\/images\/[1-9]\d*$/.test(url || '')) return;
       var authAtStart = token(); if (!authAtStart) return;
+      var cached = cachedPrivateImage(url, authAtStart);
       image.dataset.zqLoading = '1';
-      api.download(url.slice(API.length)).then(function (result) {
+      (cached ? Promise.resolve({ blob: cached }) : api.download(url.slice(API.length))).then(function (result) {
         if (!/^image\/(png|jpeg|gif|webp|bmp)$/i.test(result.blob.type || '')) throw requestError('图片格式无效');
+        if (!cached && token() === authAtStart) keepPrivateImage(url, authAtStart, result.blob);
         if (!image.isConnected || image.getAttribute('data-zq-private-image') !== url || token() !== authAtStart) return;
         var objectUrl = URL.createObjectURL(result.blob);
         image.onload = function () {

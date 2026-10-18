@@ -69,14 +69,15 @@ function fixture({ flag = 'cm' } = {}) {
     codeTokens: () => [] };
   const impl = new Function('document', 'window', 'localStorage', `
     ${source}
+    var realRestoreWikiView = restoreWikiView;
     trackWikiNavigation = removeWikiDraftBar = removeWikiActionBar = showWikiActionBar = markDuplicateTitle = wireWikiLinks
       = paintWikiTabs = paintWikiTree = offerWikiDraft = restoreWikiView = function () {};
     return { bind, enterWikiEdit, saveWikiEdit, paintWikiDoc, wikiToolbar, toggleWikiSource, toggleWikiReadOnly, loadWikiCm, currentWikiMarkdown, wireWikiEditor,
-      insertWikiImage, setChooser(fn) { chooseWikiImage = fn; } };`)(
+      insertWikiImage, setChooser(fn) { chooseWikiImage = fn; }, captureWikiView, restoreWikiView: realRestoreWikiView };`)(
     { getElementById: () => null, execCommand() { throw new Error('验证版编辑器不该用 execCommand'); }, createElement: () => ({ style: {} }), body: { appendChild() {} } },
     { addEventListener() {}, getSelection: () => ({ rangeCount: 0 }) }, localStorage);
   impl.bind(sh);
-  return { impl, page, doc, handle, mounts, writes, toasts, state, store, uploads, anchor, events, sh, blockSelect };
+  return { impl, page, doc, handle, mounts, writes, toasts, state, store, uploads, anchor, events, sh, blockSelect, cmModule };
 }
 
 (async () => {
@@ -274,6 +275,44 @@ function fixture({ flag = 'cm' } = {}) {
     assert.equal(text(cm.readingBlockFor(root, cm.sourceAnchorAt(md, md.indexOf('  - 子项')))), '子项');
     assert.equal(cm.readingBlockFor(root, cm.sourceAnchorAt(md, md.indexOf('| --- |'))).tagName, 'TD', '分隔行往下找到下一行的格');
     assert.equal(cm.sourceAnchorAt(md, md.indexOf('\n\n重复') + 1).text, '重复的一行', '空行往下找');
+  });
+  await check('接入：新编辑器里保存 / 取消前记下顶上那一行是原文的哪一段，回到阅读模式滚到同一段（第七十四轮 review：原来按像素恢复，跳到别处）', async () => {
+    const f = fixture(); await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
+    const seen = [];
+    f.handle.lineAt = (y) => { seen.push(['lineAt', y]); return { pos: 42, top: 140 }; };
+    f.cmModule.sourceAnchorAt = (md, pos) => { seen.push(['anchorAt', md, pos]); return { text: '那一段', ordinal: 1 }; };
+    f.doc.scrollTop = 300;
+    const view = f.impl.captureWikiView(f.doc);
+    assert.deepEqual(seen, [['lineAt', 101], ['anchorAt', f.handle.text, 42]], '记的是编辑器顶上那一行在原文里的位置');
+    assert.deepEqual(view.cmAnchor, { text: '那一段', ordinal: 1 });
+    assert.equal(view.anchorOffset, 40);
+    const md = { children: [] }, block = { getBoundingClientRect: () => ({ top: 500 }) };
+    f.doc.querySelector = (q) => (q === '.zq-md' ? md : null);
+    f.cmModule.readingBlockFor = (root, a) => { seen.push(['blockFor', root === md, a]); return block; };
+    f.doc.scrollTop = 0;
+    f.impl.restoreWikiView(f.doc, view);
+    assert.deepEqual(seen[2], ['blockFor', true, { text: '那一段', ordinal: 1 }], '阅读视图里按记下的那一段找');
+    assert.equal(f.doc.scrollTop, 300 + 500 - 100 - 40, '那一段停在原来离顶上 40px 的地方');
+  });
+  await check('表格 / 块公式：只动光标不重扫全文（第七十四轮 review），光标进出照样在成品和原文之间换；改了字才重扫', async () => {
+    const { EditorState, EditorSelection } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    const md = '开头\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n$$\nx^2\n$$\n\n结尾';
+    const [mathField, tableField] = cm.blockPreviews({});
+    const widgets = (st, field) => { const out = []; st.field(field).deco.between(0, st.doc.length, (from, to, d) => { if (d.spec.widget) out.push(from); }); return out; };
+    let st = EditorState.create({ doc: md, extensions: [mathField, tableField] });
+    const table0 = st.field(tableField).ranges, math0 = st.field(mathField).ranges;
+    assert.equal(table0.length, 1); assert.equal(math0.length, 1);
+    assert.deepEqual(widgets(st, tableField), [md.indexOf('| a |')], '光标不在表格里：画成表格');
+    st = st.update({ selection: EditorSelection.cursor(md.indexOf('| 1 |') + 2) }).state;
+    assert.equal(st.field(tableField).ranges, table0, '只动光标就把全文重扫了一遍（表格）');
+    assert.equal(st.field(mathField).ranges, math0, '只动光标就把全文重扫了一遍（块公式）');
+    assert.deepEqual(widgets(st, tableField), [], '光标进了表格：露出原文');
+    st = st.update({ selection: EditorSelection.cursor(md.indexOf('x^2')) }).state;
+    assert.deepEqual(widgets(st, tableField), [md.indexOf('| a |')], '光标离开表格：又画成表格');
+    assert.deepEqual(widgets(st, mathField), [], '光标进了块公式：露出原文');
+    st = st.update({ changes: { from: 0, insert: '新' } }).state;
+    assert.notEqual(st.field(tableField).ranges, table0, '改了字要重扫');
+    assert.equal(st.field(tableField).ranges[0].from, md.indexOf('| a |') + 1, '重扫之后位置跟着挪');
   });
   console.log(failed ? 'RED: ' + failed : 'ALL-GREEN');
   if (failed) process.exitCode = 1;

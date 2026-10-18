@@ -123,18 +123,18 @@ class KnowledgeVaultCodecTest {
     }
 
     @Test void relativeWikilinksMarkdownLinksAndUniqueFilenameResolveButAmbiguousOnesDoNot() {
-        Set<String> paths = Set.of("A/Note.md", "B/Note.md", "Root.md", "assets/pic one.png");
-        assertEquals("Root.md", KnowledgeVaultCodec.resolve("A/Note.md", "../Root", paths));
-        assertEquals("B/Note.md", KnowledgeVaultCodec.resolve("A/Note.md", "B/Note", paths));
-        assertEquals("assets/pic one.png", KnowledgeVaultCodec.resolve("A/Note.md", "../assets/pic%20one.png", paths));
-        assertEquals("assets/pic one.png", KnowledgeVaultCodec.resolve("A/Note.md", "pic one.png", paths));
-        assertNull(KnowledgeVaultCodec.resolve("A/Note.md", "missing/pic one.png", paths));
-        assertNull(KnowledgeVaultCodec.resolve("A/Note.md", "missing/Root", paths));
-        assertNull(KnowledgeVaultCodec.resolve("Root.md", "Note", paths));
-        assertNull(KnowledgeVaultCodec.resolve("Root.md", "https://example.com/Note.md", paths));
-        assertNull(KnowledgeVaultCodec.resolve("Root.md", "../../Root.md", paths));
-        assertNull(KnowledgeVaultCodec.resolve("Root.md", "%2e%2e/Root.md", paths));
-        assertNull(KnowledgeVaultCodec.resolve("Root.md", "%68ttps%3A//example.com/Root.md", paths));
+        var paths = new KnowledgeVaultCodec.PathIndex(List.of("A/Note.md", "B/Note.md", "Root.md", "assets/pic one.png"));
+        assertEquals("Root.md", paths.resolve("A/Note.md", "../Root"));
+        assertEquals("B/Note.md", paths.resolve("A/Note.md", "B/Note"));
+        assertEquals("assets/pic one.png", paths.resolve("A/Note.md", "../assets/pic%20one.png"));
+        assertEquals("assets/pic one.png", paths.resolve("A/Note.md", "pic one.png"));
+        assertNull(paths.resolve("A/Note.md", "missing/pic one.png"));
+        assertNull(paths.resolve("A/Note.md", "missing/Root"));
+        assertNull(paths.resolve("Root.md", "Note"));
+        assertNull(paths.resolve("Root.md", "https://example.com/Note.md"));
+        assertNull(paths.resolve("Root.md", "../../Root.md"));
+        assertNull(paths.resolve("Root.md", "%2e%2e/Root.md"));
+        assertNull(paths.resolve("Root.md", "%68ttps%3A//example.com/Root.md"));
     }
 
     @Test void codeFencesInlineCodeAndEscapedLinksRemainLiteral() {

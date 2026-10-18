@@ -73,8 +73,9 @@ class KnowledgeVaultServiceTest {
         if (method.equals("insert")) { operations.add((KnowledgeOperationLog) args[0]); return 1; }
         throw new UnsupportedOperationException(method);
     });
+    private int treeLocks;
     private final SysUserMapper userMapper = proxy(SysUserMapper.class, (method, args) -> {
-        if (method.equals("lockKnowledgeTreeOwner")) return args[0];
+        if (method.equals("lockKnowledgeTreeOwner")) { treeLocks++; return args[0]; }
         throw new UnsupportedOperationException(method);
     });
     private final KnowledgeImageService images = new KnowledgeImageService(fileMapper, crypto);
@@ -161,6 +162,53 @@ class KnowledgeVaultServiceTest {
         assertTrue(pages.isEmpty());
         assertTrue(files.isEmpty());
         assertTrue(operations.isEmpty());
+    }
+
+    /**
+     * 第七十四轮 review：每条链接原来都把全部笔记、全部附件的路径 fold 一遍、按几种写法各扫一遍，再按标题扫一遍 ——
+     * 允许的上限（1000 页、两千个附件、两万条链接）一遍要五十多秒，确认导入时还要做两遍、持着目录锁。
+     */
+    @Test void linkResolutionAtTheAllowedLimitsIsFast() {
+        Map<String, byte[]> archive = new LinkedHashMap<>();
+        for (int f = 0; f < 1999; f++) archive.put("vault/assets/附件" + f + ".txt", ("f" + f).getBytes(StandardCharsets.UTF_8));
+        int expected = 0;
+        for (int d = 0; d < 50; d++) for (int n = 0; n < 19; n++) {
+            int id = d * 19 + n;
+            StringBuilder body = new StringBuilder("# 笔记" + id + "\n");
+            for (int k = 0; k < 7; k++) { body.append("[[笔记").append((id * 7 + k * 131) % 950).append("]] "); expected++; }
+            for (int k = 0; k < 7; k++) { body.append("[看](../目录").append((d + k) % 50).append("/笔记").append((d + k) % 50 * 19).append(".md) "); expected++; }
+            for (int k = 0; k < 6; k++) body.append("![[附件").append((id * 6 + k) % 1999).append(".txt]] ");
+            body.append("[[没有这一页").append(id).append("]]\n");
+            archive.put("vault/目录" + d + "/笔记" + id + ".md", body.toString().getBytes(StandardCharsets.UTF_8));
+        }
+        MockMultipartFile zip = new MockMultipartFile("file", "big.zip", "application/zip", KnowledgeVaultCodecTest.zipBytes(archive));
+        long started = System.nanoTime();
+        Map<String, Object> preview = service.preview(7L, zip, null, null);
+        long ms = (System.nanoTime() - started) / 1_000_000;
+        assertEquals(1000, preview.get("pageCount"), "950 页笔记 + 50 个目录页");
+        assertEquals(expected, preview.get("relationshipCount"), "双链和相对路径的笔记链接都要解析到（扫到了才算数）");
+        assertEquals(950, preview.get("warningCount"), "每页一条找不到的");
+        assertTrue(ms < 3000, "预览 1000 页、1999 个附件、19950 条链接用了 " + ms + "ms");
+    }
+
+    /** 第七十四轮 review：ZIP 本身的毛病（坏图、链接太多）在拿目录锁之前就报，不为它们锁住用户那一行 */
+    @Test void problemsInTheZipItselfAreFoundBeforeTakingTheTreeLock() {
+        Map<String, byte[]> badImage = new LinkedHashMap<>();
+        badImage.put("Note.md", "![[fake.png]]".getBytes(StandardCharsets.UTF_8));
+        badImage.put("fake.png", "not a PNG".getBytes(StandardCharsets.UTF_8));
+        MockMultipartFile first = new MockMultipartFile("file", "a.zip", "application/zip", KnowledgeVaultCodecTest.zipBytes(badImage));
+        assertThrows(BusinessException.class, () -> service.confirm(7L, first, "token", null, null));
+        assertEquals(0, treeLocks, "坏图在锁里才报");
+
+        MockMultipartFile second = new MockMultipartFile("file", "b.zip", "application/zip",
+                KnowledgeVaultCodecTest.zip(Map.of("Note.md", "[[x]] ".repeat(20001))));
+        BusinessException tooMany = assertThrows(BusinessException.class, () -> service.confirm(7L, second, "token", null, null));
+        assertTrue(tooMany.getMessage().contains("20000"), tooMany.getMessage());
+        assertEquals(0, treeLocks, "数链接在锁里才做");
+
+        MockMultipartFile fine = new MockMultipartFile("file", "c.zip", "application/zip", KnowledgeVaultCodecTest.zip(Map.of("Note.md", "body")));
+        service.confirm(7L, fine, String.valueOf(service.preview(7L, fine, null, null).get("previewToken")), null, null);
+        assertEquals(1, treeLocks, "对照：正常的导入要拿锁");
     }
 
     @Test void exportRejectsAttachmentBudgetBeforeReadingBinaryRows() {
