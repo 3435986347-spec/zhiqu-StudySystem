@@ -6,6 +6,35 @@ const assert = require('node:assert/strict');
 const { pathToFileURL } = require('node:url');
 const source = fs.readFileSync(process.argv[2], 'utf8').replace(/^export /gm, '');
 const cmPath = process.argv[3];
+// 第七十三轮：阅读视图 → 原文位置的映射要拿真的 renderMarkdown 画出来的标记来量
+const apiSource = fs.readFileSync(process.argv[4], 'utf8');
+const apiSlice = (a, b) => { const i = apiSource.indexOf(a), j = apiSource.indexOf(b, i); if (i < 0 || j < 0) throw Error('抠不到 ' + a); return apiSource.slice(i, j); };
+const { renderMarkdown } = new Function('state', apiSlice('  function esc(v) {', '  function maintainShellCache') + apiSlice('  function mathBlockHtml(', '  // KaTeX 懒加载')
+  + '\nreturn {renderMarkdown};')({ wikiPages: [] });
+function decode(v) { return v.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'); }
+/** 只认这些标签的小解析器：节点有 nodeType / nodeValue / tagName / childNodes / parentNode / getAttribute，够 anchorFromCaret 走 */
+function parseHtml(html) {
+  const root = { nodeType: 1, tagName: 'DIV', childNodes: [], parentNode: null, getAttribute: () => null };
+  const stack = [root];
+  for (const m of html.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:\s+[a-zA-Z-]+(?:="[^"]*")?)*)\s*>|([^<]+)/g)) {
+    const parent = stack[stack.length - 1];
+    if (m[4] != null) { parent.childNodes.push({ nodeType: 3, nodeValue: decode(m[4]), parentNode: parent }); continue; }
+    const tag = m[2].toUpperCase();
+    if (m[1]) { while (stack.length > 1 && stack.pop().tagName !== tag) { /* 收到同名的开标签 */ } continue; }
+    const attrs = Object.fromEntries([...m[3].matchAll(/([a-zA-Z-]+)(?:="([^"]*)")?/g)].map((a) => [a[1], a[2] == null ? '' : decode(a[2])]));
+    const el = { nodeType: 1, tagName: tag, childNodes: [], parentNode: parent, getAttribute: (k) => (k in attrs ? attrs[k] : null) };
+    parent.childNodes.push(el);
+    if (!/^(BR|HR|INPUT|IMG)$/.test(tag)) stack.push(el);
+  }
+  return root;
+}
+/** 第 nth 个含 word 的文字节点，光标在 word 的第 k 个字前面 */
+function caretIn(root, word, k = 0, nth = 0) {
+  const found = [];
+  (function walk(n) { if (n.nodeType === 3) { if (n.nodeValue.includes(word)) found.push(n); } else n.childNodes.forEach(walk); })(root);
+  const node = found[nth]; if (!node) throw new Error('阅读视图里找不到「' + word + '」');
+  return { node, offset: node.nodeValue.indexOf(word) + k };
+}
 
 function fixture({ flag = 'cm' } = {}) {
   const store = new Map(flag ? [['zq.wikiEditor', flag]] : []);
@@ -17,25 +46,36 @@ function fixture({ flag = 'cm' } = {}) {
     set innerHTML(v) { this._html = v; this.firstChild = { host: true }; }, get innerHTML() { return this._html; },
     addEventListener(t, f) { (events[t] ||= []).push(f); }, closest() { return {}; }, dispatchEvent(e) { (events[e.type] || []).forEach((f) => f(e)); },
     focus() {}, contains() { return false; }, setAttribute(k, v) { this[k] = v; } };
-  const elements = { '#zq-doc': doc, '#zq-doc-title': { textContent: '', style: {} }, '#zq-wiki-mode': { setAttribute() {} }, '#zq-wiki-mode-label': {} };
-  const handle = { calls: [], text: page.content,
-    getMarkdown() { return this.text; }, setReadOnly(v) { this.calls.push(['readOnly', v]); }, wrap(m) { this.calls.push(['wrap', m]); },
-    insert(t) { this.calls.push(['insert', t]); }, focusAt() {}, destroy() { this.calls.push(['destroy']); } };
-  const cmModule = { mountWikiEditor(host, options) { mounts.push({ host, options }); return handle; } };
+  doc.getBoundingClientRect = () => ({ top: 100 });
+  const blockSelect = { value: 'P' };
+  const elements = { '#zq-wiki-block': blockSelect, '#zq-doc': doc, '#zq-doc-title': { textContent: '', style: {} }, '#zq-wiki-mode': { setAttribute() {} }, '#zq-wiki-mode-label': {} };
+  const handle = { calls: [], text: page.content, markers: [],
+    getMarkdown() { return this.text; }, setReadOnly(v) { this.calls.push(['readOnly', v]); }, wrap(...m) { this.calls.push(['wrap', ...m]); },
+    insert(t) { this.calls.push(['insert', t]); }, focusAt(...a) { this.calls.push(['focusAt', ...a]); }, focusPos(...a) { this.calls.push(['focusPos', ...a]); },
+    track(from, to) { const m = { from, to }; this.markers.push(m); return m; }, insertAt(m, t) { this.calls.push(['insertAt', m.from, m.to, t]); },
+    untrack(m) { this.calls.push(['untrack', m.from]); }, toggleTask(pos) { this.calls.push(['toggleTask', pos]); },
+    setBlock(kind) { this.calls.push(['setBlock', kind]); }, destroy() { this.calls.push(['destroy']); } };
+  const anchor = { value: null };
+  const cmModule = { mountWikiEditor(host, options) { mounts.push({ host, options }); return handle; },
+    readingAnchor: () => anchor.value, sourcePosition: (md, a) => (a ? md.indexOf(a.text) + a.offset : null), taskMarkerPositions: () => [2, 30] };
+  const uploads = [];
   const sh = { state, token: () => 'token', esc: String, $: (s) => elements[s] || null, $all: () => [], empty: String, fmtDate: String,
     toast: (m) => toasts.push(m), safe: (_n, fn) => Promise.resolve().then(fn), askConfirm: async () => true, askText: async () => null,
     htmlToMarkdown: () => { throw new Error('验证版编辑器不该走 htmlToMarkdown'); }, renderMarkdown: (t) => t, renderMathIn() {},
     drafts: { load() {}, save() {}, clear() {}, clearIf() {} }, loadModule: (rel) => { assert.equal(rel, 'wiki-cm.js'); return Promise.resolve(cmModule); },
-    api: { get: () => new Promise(() => {}), put(_p, body) { writes.push(body); return Promise.resolve({ content: body.content, version: 4 }); } } };
+    api: { get: () => new Promise(() => {}), put(_p, body) { writes.push(body); return Promise.resolve({ content: body.content, version: 4 }); },
+      upload(path, file) { uploads.push(file); return new Promise((resolve) => { uploads.resolve = () => resolve({ url: '/api/knowledge/images/9', name: file.name }); }); } },
+    codeTokens: () => [] };
   const impl = new Function('document', 'window', 'localStorage', `
     ${source}
     trackWikiNavigation = removeWikiDraftBar = removeWikiActionBar = showWikiActionBar = markDuplicateTitle = wireWikiLinks
       = paintWikiTabs = paintWikiTree = offerWikiDraft = restoreWikiView = function () {};
-    return { bind, enterWikiEdit, saveWikiEdit, paintWikiDoc, wikiToolbar, toggleWikiSource, toggleWikiReadOnly, loadWikiCm, currentWikiMarkdown };`)(
-    { getElementById: () => null, execCommand() { throw new Error('验证版编辑器不该用 execCommand'); } },
+    return { bind, enterWikiEdit, saveWikiEdit, paintWikiDoc, wikiToolbar, toggleWikiSource, toggleWikiReadOnly, loadWikiCm, currentWikiMarkdown, wireWikiEditor,
+      insertWikiImage, setChooser(fn) { chooseWikiImage = fn; } };`)(
+    { getElementById: () => null, execCommand() { throw new Error('验证版编辑器不该用 execCommand'); }, createElement: () => ({ style: {} }), body: { appendChild() {} } },
     { addEventListener() {}, getSelection: () => ({ rangeCount: 0 }) }, localStorage);
   impl.bind(sh);
-  return { impl, page, doc, handle, mounts, writes, toasts, state, store };
+  return { impl, page, doc, handle, mounts, writes, toasts, state, store, uploads, anchor, events, sh, blockSelect };
 }
 
 (async () => {
@@ -97,6 +137,113 @@ function fixture({ flag = 'cm' } = {}) {
     assert.equal(f.mounts.length, 0);
     assert.equal(f.doc.dataset.editor, undefined);
     assert.equal(f.doc.contentEditable, 'true');
+  });
+  // ── 第七十三轮：第 2 步补齐 ──
+  await check('下划线：工具栏包 <u>…</u>，已经包着就去掉；扫描认 <u>，代码里的不算', () => {
+    assert.deepEqual(cm.toggleWrap('a b c', 2, 3, '<u>', '</u>'), { changes: [{ from: 2, insert: '<u>' }, { from: 3, insert: '</u>' }], anchor: 5, head: 6 });
+    assert.deepEqual(cm.toggleWrap('a <u>b</u> c', 5, 6, '<u>', '</u>'), { changes: [{ from: 2, to: 5, insert: '' }, { from: 6, to: 10, insert: '' }], anchor: 2, head: 3 });
+    assert.deepEqual(cm.underlineRanges('x <u>下划线</u> y `<u>不算</u>`', 10).map((r) => [r.from, r.openTo, r.closeFrom, r.to]), [[12, 15, 18, 22]]);
+  });
+  await check('表格：连续的 | … | 行是一张表（和阅读模式一样认），代码块里的不算', () => {
+    const text = '前\n| a | b |\n| --- | --- |\n| 1 | 2 |\n后\n```\n| 不是 | 表 |\n```\n| 单 |';
+    assert.deepEqual(cm.tableRanges(text).map((r) => text.slice(r.from, r.to)), ['| a | b |\n| --- | --- |\n| 1 | 2 |', '| 单 |']);
+  });
+  await check('看得见的字：去掉列表 / 任务 / 标题 / 引用符号、强调符号、链接地址、<u>；[[目标|显示]] 只留显示的字，公式和图片各算一个字', () => {
+    const v = cm.visibleText('  - [ ] 带**加粗**和 [[官网改版|官网]]、[链接](https://e.com)、<u>下</u>、$x^2$、`a*b` 与 3*4、![[/api/knowledge/images/2|图]]');
+    assert.equal(v[0].text, '带加粗和 官网、链接、下、￼、a*b 与 3*4、￼', '不成对的 * 照样看得见（和 mdInline 一样）');
+    assert.equal(v[0].cols[1], '  - [ ] 带**'.length, '「加」应当对着 ** 后面那一列');
+    assert.deepEqual(cm.visibleText('| 指标 | 数值 |').map((u) => u.text.trim()), ['指标', '数值'], '表格一格一段');
+    assert.deepEqual(cm.visibleText('| --- | :---: |'), [], '分隔行看不见');
+    assert.equal(cm.visibleText('## 二级 **标题**')[0].text, '二级 标题');
+  });
+  await check('点哪儿光标落哪儿：阅读视图里点的字（renderMarkdown 画的真标记）映射回原文的那个位置', () => {
+    const md = '# 标题\n\n- 第一项 **加粗**文字\n  - 子项 [[官网改版|官网]] 后面\n- 公式 $x^2$ 之后\n\n| 指标 | 数值 |\n| --- | --- |\n| 留存 | 41% |\n\n> 引用一\n> 引用二\n\n```js\nconst a = 1;\n```\n\n重复的一行\n\n重复的一行\n';
+    const root = parseHtml(renderMarkdown(md));
+    const at = (word, k, nth = 0) => { const c = caretIn(root, word, k, nth); return cm.sourcePosition(md, cm.anchorFromCaret(root, c.node, c.offset)); };
+    assert.equal(at('文字', 1), md.indexOf('文字') + 1, '加粗后面的字');
+    assert.equal(at('后面', 1), md.indexOf('后面') + 1, '嵌套项里、双链后面的字');
+    assert.equal(at('之后', 1), md.indexOf('之后') + 1, '公式后面的字');
+    assert.equal(at('41%', 2), md.indexOf('41%') + 2, '表格里的一格');
+    assert.equal(at('引用二', 1), md.indexOf('引用二') + 1, '引用的第二行');
+    assert.equal(at('a = ', 2), md.indexOf('a = 1') + 2, '代码块里的字（着色把一行拆成好几个节点）');
+    assert.equal(at('重复的一行', 2, 1), md.lastIndexOf('重复的一行') + 2, '同样的一行出现两次，点的是第二次');
+    assert.equal(cm.sourcePosition(md, { text: '原文里没有的字', ordinal: 0, offset: 0 }), null, '对不上就交给按坐标找');
+  });
+  await check('勾选框的位置：按顺序列出原文里每个任务的 [ ]，代码块里的不算', () => {
+    const md = '- [ ] 一\n```\n- [ ] 代码里\n```\n  - [x] 二\n* [ ] 三';
+    assert.deepEqual(cm.taskMarkerPositions(md).map((p) => md.slice(p, p + 3)), ['[ ]', '[x]', '[ ]']);
+    assert.deepEqual(cm.taskMarkerPositions(md), [2, md.indexOf('[x]'), md.lastIndexOf('[ ]')]);
+  });
+  await check('接入：点正文进编辑，光标按阅读视图里点的字落到原文（落不上才按坐标）；那一行停在点的高度', async () => {
+    const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.wireWikiEditor();
+    f.anchor.value = { text: '二', ordinal: 0, offset: 0 };
+    f.doc.onclick({ target: {}, clientX: 30, clientY: 160 });
+    assert.equal(f.mounts.length, 1);
+    assert.deepEqual(f.handle.calls.find((c) => c[0] === 'focusPos' || c[0] === 'focusAt'), ['focusPos', f.page.content.indexOf('二'), 60]);
+    const g = fixture();
+    await g.impl.loadWikiCm(); g.impl.wireWikiEditor();
+    g.doc.onclick({ target: {}, clientX: 30, clientY: 160 });
+    assert.deepEqual(g.handle.calls.find((c) => c[0] === 'focusPos' || c[0] === 'focusAt'), ['focusAt', 30, 160]);
+  });
+  await check('接入：阅读模式里点勾选框，进编辑后改的就是原文里那一个任务（原来只进了编辑、勾选丢了）', async () => {
+    const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.wireWikiEditor();
+    const boxes = [{ type: 'checkbox', closest: () => null }, { type: 'checkbox', closest: () => null }];
+    f.impl.bind(Object.assign({}, f.sh, { $all: (sel) => (/checkbox/.test(sel) ? boxes : []) }));
+    f.events.change.forEach((fn) => fn({ target: boxes[1] }));
+    assert.equal(f.mounts.length, 1, '要进编辑');
+    assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'toggleTask'), [['toggleTask', 30]], '第二个勾选框对着原文里第二个任务');
+  });
+  await check('接入：工具栏下划线包 <u>，「插入图片」走选图片；编辑器拿到图片 / 表格 / 代码着色要用的东西', async () => {
+    const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
+    let chose = 0; f.impl.setChooser(() => { chose++; });
+    f.impl.wikiToolbar('underline'); f.impl.wikiToolbar('image');
+    assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'wrap'), [['wrap', '<u>', '</u>']]);
+    assert.equal(chose, 1);
+    const o = f.mounts[0].options;
+    for (const k of ['onImage', 'renderBlock', 'hydrate', 'codeTokens']) assert.equal(typeof o[k], 'function', '没给编辑器 ' + k);
+  });
+  await check('接入：粘贴 / 拖进的图片上传完插到当时的位置（跟着编辑移动）；上传期间换了页就不插', async () => {
+    const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
+    f.mounts[0].options.onImage({ name: '图.png', type: 'image/png' }, 3, 3);
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(f.uploads.length, 1);
+    f.handle.markers[0].from = 5; f.handle.markers[0].to = 5;   // 上传期间前面又打了两个字
+    f.uploads.resolve(); await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'insertAt'), [['insertAt', 5, 5, '![[/api/knowledge/images/9|图.png]]']]);
+    const g = fixture();
+    await g.impl.loadWikiCm(); g.impl.enterWikiEdit();
+    g.mounts[0].options.onImage({ name: '图.png', type: 'image/png' }, 3, 3);
+    await new Promise((r) => setTimeout(r, 0));
+    await g.impl.paintWikiDoc(g.page);
+    g.uploads.resolve(); await new Promise((r) => setTimeout(r, 10));
+    assert.equal(g.handle.calls.filter((c) => c[0] === 'insertAt').length, 0, '换页之后不该插');
+    assert.ok(g.toasts.some((t) => /已上传/.test(t)), '要说一声图片传上去了但没插');
+  });
+  await check('快捷键：⌘B / ⌘I / ⌘U 和工具栏一样包 ** / * / <u>（旧编辑器是浏览器自己做的，新编辑器要自己接）', () => {
+    assert.deepEqual(cm.FORMAT_KEYS.map((k) => [k.key, k.open, k.close || k.open]), [['Mod-b', '**', '**'], ['Mod-i', '*', '*'], ['Mod-u', '<u>', '</u>']]);
+  });
+  await check('段落格式：选中的几行换成标题 / 引用 / 列表 / 有序 / 任务 / 正文（换掉原来的符号、留着缩进），代码块上下加围栏，分隔线另起一行', () => {
+    const apply = (text, from, to, kind) => { let out = text; for (const c of [...cm.setBlock(text, from, to, kind)].sort((x, y) => y.from - x.from)) out = out.slice(0, c.from) + c.insert + out.slice(c.to == null ? c.from : c.to); return out; };
+    assert.equal(apply('一\n二', 0, 3, 'H2'), '## 一\n## 二');
+    assert.equal(apply('- [ ] 待办', 0, 0, 'P'), '待办');
+    assert.equal(apply('  - 子', 3, 3, 'OL'), '  1. 子');
+    assert.equal(apply('甲\n乙\n丙', 0, 3, 'OL'), '1. 甲\n2. 乙\n丙');
+    assert.equal(apply('> 引用', 0, 0, 'TASK'), '- [ ] 引用');
+    assert.equal(apply('## 标题', 0, 0, 'QUOTE'), '> 标题');
+    assert.equal(apply('  - 子项', 0, 0, 'H3'), '### 子项', '缩进的列表项换成标题要顶格（缩进的 # 不是标题）');
+    assert.equal(apply('甲\n乙', 0, 3, 'CODE'), '```\n甲\n乙\n```');
+    assert.equal(apply('甲\n乙', 0, 0, 'HR'), '甲\n\n---\n乙');
+  });
+  await check('接入：新编辑器里段落格式下拉改的是 Markdown（不走 execCommand），选完回到「正文」', async () => {
+    const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.wireWikiEditor(); f.impl.enterWikiEdit();
+    f.blockSelect.value = 'H2'; f.blockSelect.onchange();
+    assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'setBlock'), [['setBlock', 'H2']]);
+    assert.equal(f.blockSelect.value, 'P');
   });
   console.log(failed ? 'RED: ' + failed : 'ALL-GREEN');
   if (failed) process.exitCode = 1;

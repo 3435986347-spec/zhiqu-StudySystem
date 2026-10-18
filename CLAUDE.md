@@ -63,7 +63,7 @@ cd ../zhiqu-cli && npm test
 - zhiqu harness（P0–P7）：[`docs/zhiqu-harness-plan.md`](docs/zhiqu-harness-plan.md)，严格按表执行、不擅自增删，做完一项更新「进度」列。**npm 发布（P7）之前单独问用户**；`zhiqu-cli/package.json` 的 `"private": true` 留着。
 - 界面打磨（2026-10-06）：[`docs/ui-plan.md`](docs/ui-plan.md)，「要你定」的三件用户已定（见那份末尾）；每一步做完给用户截图。
 - 迷你番茄钟（2026-10-09 用户定了）：[`docs/mini-pomodoro-plan.md`](docs/mini-pomodoro-plan.md)，只做 macOS 桌面应用，三步一步一轮（第四十九到五十一轮做完；面板还没在屏幕上开过，看之前问用户）；宠物形态是后话。
-- Wiki 换编辑器（2026-10-18 用户试过验证版）：CodeMirror 6，分三步、每步一轮（[`docs/rounds/round-70.md`](docs/rounds/round-70.md) 末尾）；第 1 步第七十一轮做完（阅读认嵌套列表；用户保存的正文原样存，`MarkdownCanonicalizer.clean()` 只给 AI 写的和哈希）。
+- Wiki 换编辑器（2026-10-18 用户试过验证版）：CodeMirror 6，分三步、每步一轮（[`docs/rounds/round-70.md`](docs/rounds/round-70.md) 末尾）；第 1 步第七十一轮（阅读认嵌套列表；用户保存的正文原样存，`MarkdownCanonicalizer.clean()` 只给 AI 写的和哈希）、第 2 步第七十三轮做完；第 3 步换默认之前问用户。
 - 一轮接一轮：每轮的计划开工时存进 `docs/rounds/round-NN.md`，收口时补结果，随那一轮一起提交，并在 `docs/rounds/README.md` 和本文件末尾各加一行。每轮带一段真浏览器里的暴力测试。
 
 ## 不能碰、不能绕的地方
@@ -87,7 +87,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261018-new-app-icon`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261018-editor-step2`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -120,8 +120,7 @@ cd ../zhiqu-cli && npm test
 
 - 后端的包（`common/`、`security/`、`config/`、`controller/ → service/ → mapper/`、`entity/`、`rag/`）、权限、登录、RAG：`docs/notes/backend.md`；配置项：`docs/notes/configuration.md`。
 - AI 助手（流式、多 agent 的执行图、计划草稿、记忆、校验，拆 `AiServiceImpl` 的经过）：`docs/notes/ai-assistant.md`。知识 Wiki（乐观锁、草稿基线）与参考计划（审核、驳回原因存两份）：`docs/notes/wiki-and-shared-plans.md`。
-- 代码工作区与限额边界：`docs/notes/code-workspace.md`。命令行与服务端网关：`docs/notes/cli.md`。桌面应用：`docs/notes/desktop.md`。
-- 前端：`docs/notes/frontend.md`。测试的故事：`docs/notes/testing.md`。开发环境（含 iCloud 那段历史）：`docs/notes/dev-environment.md`。
+- 代码工作区与限额边界：`docs/notes/code-workspace.md`。命令行与服务端网关：`docs/notes/cli.md`。桌面应用：`docs/notes/desktop.md`。前端：`docs/notes/frontend.md`。测试的故事：`docs/notes/testing.md`。开发环境（含 iCloud 那段历史）：`docs/notes/dev-environment.md`。
 - RAG 旁路的启动与验证：`rag-service/README.md`（连不上时后端自己退回关键词检索）。领域文档：`CONTEXT.md` + `docs/adr/`。
 - issue 在 GitHub `3435986347-spec/zhiqu-StudySystem`，用 `gh` 操作；分诊标签、领域文档的约定见 `docs/agents/`。
 
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第七十轮](docs/rounds/round-70.md) 知识 Wiki 换编辑内核的验证：CodeMirror 6 实时预览（开关后面）——不改内容保存 0/14 → 14/14 逐字节一样、点进编辑快一倍；面板刷新时闪一下挤扁的内容
 - [第七十一轮](docs/rounds/round-71.md) 换编辑器第 1 步：阅读认嵌套列表（缩进、任务子项、续行、编号）、旧编辑器写回缩进；用户保存的 Wiki 正文原样存、原样读回
 - [第七十二轮](docs/rounds/round-72.md) 换上新的应用图标（知字图标设计方案）：网页四张 PNG 原样换、favicon.ico 原来是 6 字节的文本、macOS / Windows 图标从设计稿生成
+- [第七十三轮](docs/rounds/round-73.md) 换编辑器第 2 步：新编辑器补齐图片、下划线、表格、代码着色、段落格式和快捷键，阅读模式里点哪个字光标就落在原文那个字上

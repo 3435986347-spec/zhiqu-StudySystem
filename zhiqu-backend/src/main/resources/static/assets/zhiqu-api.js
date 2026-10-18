@@ -1730,6 +1730,11 @@
     }).join('');
   }
 
+  /** 着色的分段（第七十三轮：知识 Wiki 新编辑器里的代码块用同一套颜色）：[{ text, color }]，color 为 null 的不着色 */
+  function codeTokens(src, lang) {
+    return tokenizeCode(String(src == null ? '' : src), lang).map(function (t) { return { text: t[1], color: CODE_COLORS[t[0]] || null }; });
+  }
+
   function renderMarkdown(md) {
     // 归一化 LaTeX 定界符：模型输出常用 \(...\) / \[...\]，统一转成 $ / $$ 再走块解析。
     // 必须绕开 ``` 围栏代码段，否则代码里的字面 \[..\] 会被改写，编辑保存后造成永久破坏
@@ -2516,7 +2521,7 @@
     weekRange: weekRange, zoneNote: zoneNote, updatePomoCount: updatePomoCount, pomo: pomo, miniBridge: miniBridge,
     API: API, token: token, popMenu: popMenu, drafts: drafts, renderMarkdown: renderMarkdown, renderMathIn: renderMathIn,
     REQUEST_TIMEOUT_MS: REQUEST_TIMEOUT_MS, role: role, requestError: requestError, redirectToLogin: redirectToLogin, nowMs: nowMs,
-    serverTime: serverTime, highlightCode: highlightCode,
+    serverTime: serverTime, highlightCode: highlightCode, codeTokens: codeTokens,
     mathBlockHtml: mathBlockHtml, htmlToMarkdown: htmlToMarkdown, openAttachmentPreview: openAttachmentPreview, normalizeTask: normalizeTask, qLabel: qLabel, sLabel: sLabel,
     REMINDER_FIELDS: REMINDER_FIELDS, currentReminderChannel: currentReminderChannel, reminderChannelReady: reminderChannelReady,
     logout: logout, adoptNewToken: adoptNewToken, icon: icon,

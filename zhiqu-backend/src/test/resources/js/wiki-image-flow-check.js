@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const source = fs.readFileSync(process.argv[2], 'utf8');
-const start = source.indexOf('function insertWikiImage(file) {');
+const start = source.indexOf('function insertWikiImage(file, at) {');
 const end = source.indexOf('function wikiToolbar(cmd) {', start);
 if (start < 0 || end < 0) throw new Error('Cannot find published image editor functions');
 const editor = source.slice(start, end);

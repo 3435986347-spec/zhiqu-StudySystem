@@ -4,10 +4,10 @@
 // 模块里的函数互相调用、从外面换不掉 —— 所以这一段没改成 import）。
 
 let API, api, token, esc, $, $all, empty, fmtDate, safe, toast, notice, askConfirm, askText, showInfo, openModal, popMenu, state, drafts, keepDraft,
-  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule;
+  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule, codeTokens;
 export function bind(sh) {
   ({ API, api, token, esc, $, $all, empty, fmtDate, safe, toast, notice, askConfirm, askText, showInfo, openModal, popMenu, state, drafts, keepDraft,
-  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule } = sh);
+  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule, codeTokens } = sh);
 }
 
 export const boots = { 'knowledge-wiki.html': (sh) => { bind(sh); return bootKnowledge(); } };
@@ -661,9 +661,14 @@ function wireWikiEditor() {
   doc.onclick = function (e) {
     if (e.target && e.target.closest && e.target.closest('a,input,button,.zq-md-image,.zq-embed')) return;
     if (!state.wikiCur || wikiReadOnly() || doc.dataset.editing === '1' || doc.dataset.loading === '1') return;
+    // 新编辑器：进编辑之前先在阅读视图里记下点的是哪一段的第几个字（进了编辑阅读视图就没了），进去后光标落到原文里那个字、那一行停在点的高度
+    var anchor = wikiCmEnabled() && wikiCmModule ? wikiCmModule.readingAnchor(doc, e.clientX, e.clientY) : null;
+    var top = doc.getBoundingClientRect ? e.clientY - doc.getBoundingClientRect().top : null;
     enterWikiEdit();
-    if (wikiCmActive(doc)) wikiCm.handle.focusAt(e.clientX, e.clientY);
-    else caretAt(e.clientX, e.clientY);
+    if (wikiCmActive(doc)) {
+      var pos = anchor ? wikiCmModule.sourcePosition(wikiCm.handle.getMarkdown(), anchor) : null;
+      if (pos != null) wikiCm.handle.focusPos(pos, top); else wikiCm.handle.focusAt(e.clientX, e.clientY);
+    } else caretAt(e.clientX, e.clientY);
   };
   var modeButton = $('#zq-wiki-mode');
   if (modeButton) modeButton.onclick = toggleWikiReadOnly;
@@ -704,6 +709,15 @@ function wireWikiEditor() {
     if (wikiReadOnly() || doc.dataset.loading === '1' || cb.closest && cb.closest('[data-embed-markdown]')) {
       cb.checked = typeof cb._wikiLockedChecked === 'boolean' ? cb._wikiLockedChecked : cb.defaultChecked; return;
     }
+    if (wikiCmEnabled()) {
+      // 新编辑器：阅读视图里第几个勾选框就是原文里第几个任务；进编辑后只改那一个方括号（原来只进了编辑，勾选丢了）
+      var boxes = $all('input[type="checkbox"]', doc).filter(function (x) { return !(x.closest && x.closest('[data-embed-markdown]')); });
+      var index = boxes.indexOf(cb);
+      if (!ensureWikiEditing() || !wikiCmActive(doc)) { cb.checked = !cb.checked; return; }   // 编辑器还没加载好：没改原文，框也别显示成改了
+      var marks = wikiCmModule.taskMarkerPositions(wikiCm.handle.getMarkdown());
+      if (index >= 0 && index < marks.length) wikiCm.handle.toggleTask(marks[index]);
+      return;
+    }
     if (!ensureWikiEditing()) return;
     var span = cb.nextElementSibling;
     if (span) { span.style.textDecoration = cb.checked ? 'line-through' : 'none'; span.style.color = cb.checked ? 'var(--zq-text3)' : 'var(--zq-text)'; }
@@ -718,6 +732,8 @@ function wireWikiEditor() {
   if (blockSel) blockSel.onchange = function () {
     if (!state.wikiCur || !ensureWikiEditing()) return;
     if (doc.dataset.source === '1') return;
+    // 新编辑器改的是 Markdown 原文（execCommand 是给 contentEditable 的，用在 CodeMirror 上会直接改它的 DOM）
+    if (wikiCmActive(doc)) { wikiCm.handle.setBlock(blockSel.value); blockSel.value = 'P'; return; }
     var v = blockSel.value;
     if (v === 'QUOTE') document.execCommand('formatBlock', false, 'BLOCKQUOTE');
     else if (v === 'CODE') document.execCommand('formatBlock', false, 'PRE');
@@ -791,11 +807,14 @@ function chooseWikiImage() {
   picker.click();
 }
 var wikiEditSession = 0;
-function insertWikiImage(file) {
+function insertWikiImage(file, at) {
   var doc = $('#zq-doc'), page = state.wikiCur;
   if (!ensureWikiEditing()) return;
   if (!doc || !page || !isWikiImageFile(file)) return toast('请选择 PNG、JPG、GIF 或 WebP 图片', 'error');
   if (state.wikiImageUploading) return toast('上一张图片还在上传', 'error');
+  // 新编辑器：记住插到哪儿（粘贴时的光标、拖放的位置），上传期间接着打字也跟着挪
+  var cmHandle = wikiCmActive(doc) ? wikiCm.handle : null;
+  var cmMarker = cmHandle ? cmHandle.track(at ? at.from : null, at ? at.to : null) : null;
   var editSession = doc.dataset.wikiEditSession;
   var uploadAuth = token();
   var source = doc.dataset.source === '1';
@@ -809,13 +828,15 @@ function insertWikiImage(file) {
     var uploaded = await api.upload('/knowledge/images', file);
     if (!uploaded || !/^\/api\/knowledge\/images\/[1-9]\d*$/.test(uploaded.url || '')) throw new Error('图片上传结果无效');
     if (token() !== uploadAuth || state.wikiCur !== page || doc.dataset.editing !== '1' || doc.dataset.wikiEditSession !== editSession
-        || (doc.dataset.source === '1') !== source) {
+        || (doc.dataset.source === '1') !== source) {   // 新编辑器每次挂上都换编辑会话号，换页 / 取消后回来的上传在这里拦下
       toast('图片已上传；当前页面已切换，请回原页重新插入', 'error');
       return;
     }
     var name = String(uploaded.name || file.name || '图片').replace(/[|\]\r\n]/g, ' ');
     var markdown = '![[' + uploaded.url + '|' + name + ']]';
-    if (source && ta && ta.isConnected) {
+    if (cmHandle) {
+      cmHandle.insertAt(cmMarker, markdown);
+    } else if (source && ta && ta.isConnected) {
       ta.setRangeText(markdown, offset.start, offset.end, 'end');
       ta.focus();
     } else {
@@ -839,7 +860,7 @@ function insertWikiImage(file) {
     }
     doc.dispatchEvent(new Event('input', { bubbles: true }));
     toast('图片已加入当前草稿，保存页面后生效');
-  }).finally(function () { state.wikiImageUploading = false; });
+  }).finally(function () { state.wikiImageUploading = false; if (cmMarker) cmHandle.untrack(cmMarker); });
 }
 function ensureWikiEditing() {
   var doc = $('#zq-doc');
@@ -974,7 +995,12 @@ function enterWikiCmEdit(doc, p, markdown) {
     markdown: markdown, readOnly: wikiReadOnly(),
     titles: function () { return (state.wikiPages || []).map(function (x) { return x.title; }); },
     onNavigate: function (title) { var target = (state.wikiPages || []).find(function (x) { return x.title === title; }); if (target) paintWikiDoc(target); else toast('还没有「' + title + '」这一页'); },
-    onChange: function () { doc.dispatchEvent(new Event('input', { bubbles: true })); }
+    onChange: function () { doc.dispatchEvent(new Event('input', { bubbles: true })); },
+    // 第七十三轮：粘贴 / 拖进的图片走同一个上传；图片、表格用阅读模式同一个渲染画；代码块用同一套颜色
+    onImage: function (file, from, to) { insertWikiImage(file, { from: from, to: to }); },
+    renderBlock: renderMarkdown,
+    hydrate: function (el) { renderMathIn(el, true); },
+    codeTokens: function (code, lang) { return codeTokens ? codeTokens(code, lang) : []; }
   }) };
   showWikiActionBar();
   doc.scrollTop = scroll;
@@ -1002,7 +1028,9 @@ function wikiCmToolbar(cmd) {
   var handle = wikiCm.handle;
   if (cmd === 'bold') handle.wrap('**');
   else if (cmd === 'italic') handle.wrap('*');
+  else if (cmd === 'underline') handle.wrap('<u>', '</u>');
   else if (cmd === 'code') handle.wrap('`');
+  else if (cmd === 'image') chooseWikiImage();
   else if (cmd === 'math') handle.insert('\n$$\n\n$$\n');
   else if (cmd === 'link' || cmd === 'ref') {
     askText({ title: '插入链接', label: '链接地址', placeholder: 'https://…', okText: '插入' }).then(function (url) {

@@ -23,11 +23,12 @@ class WikiEditorSpikeTest {
     private static final Path VENDOR = Path.of("src/main/resources/static/assets/vendor/codemirror");
 
     @Test
-    @DisplayName("接入（node 里跑发布的 knowledge-wiki.js / wiki-cm.js）：开着才挂、保存发原文不经过 htmlToMarkdown、换页拆掉、只读和工具栏接上、关着一点不碰；扫描双链 / 公式")
+    @DisplayName("接入（node 里跑发布的 knowledge-wiki.js / wiki-cm.js）：开着才挂、保存发原文不经过 htmlToMarkdown、换页拆掉、只读和工具栏接上、关着一点不碰；扫描双链 / 公式；"
+            + "第七十三轮：下划线、表格、图片插入跟着编辑走、阅读视图点的字映射回原文、勾选框、段落格式、快捷键")
     void 接入() throws Exception {
         NodeRunner.run(Path.of("src/test/resources/js/wiki-cm-check.js"),
                 Path.of("src/main/resources/static/assets/pages/knowledge-wiki.js"),
-                "src/main/resources/static/assets/wiki-cm.js");
+                "src/main/resources/static/assets/wiki-cm.js", NodeRunner.API_JS.toString());
     }
 
     @Test
