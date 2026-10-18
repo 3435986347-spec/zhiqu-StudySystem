@@ -56,21 +56,19 @@ public final class MarkdownCanonicalizer {
     }
 
     /**
-     * AI 改一页已有的页时用（第七十四轮 review）：照 {@link #clean} 去掉模型自己加的东西，但原页里本来就有的行不删、
-     * 原页本来就以代码块开头时不剥那道围栏。第七十一轮起用户保存是原样存的 —— 用户写在页里的「我已经把资料整理进知识库了」、
+     * Wiki 草稿入库前都过这一道（第七十四轮 review；新页 {@code base} 为 null）：照 {@link #clean} 去掉模型自己加的东西，但原页里本来就有的行不删、
+     * 原页本来就以代码块开头时不剥那道围栏。合入时不再洗（第四遍 review），所以五处建草稿的地方都得经过这里（{@code WikiDraftCleaningTest} 扫着）。第七十一轮起用户保存是原样存的 —— 用户写在页里的「我已经把资料整理进知识库了」、
      * 页开头的代码块，过一遍 clean() 就没了。{@code clean} 本身不动（页状态哈希和 RAG 的规范全文靠它逐字节不变）。
      *
      * <p>和 clean() 另外两处不同（第二遍 review）：外层围栏只在整页都被包住时才剥（只剥开头那一道的话，留下的那道收尾会把后面整页吞进代码块）；
      * 首尾只去空行和行尾空白、不 trim 第一行的缩进（缩进四格的代码块开头的页 trim 之后成了一段正文），原页结尾有换行就留着。
      */
     public static String cleanKeeping(String value, String base) {
-        if (base == null || base.isBlank()) {
-            return clean(value);
-        }
         if (value == null) {
             return "";
         }
-        String baseText = base.replace("\r\n", "\n").replace("\r", "\n");
+        // 新页也走这里，不走 clean()：clean() 见开头是代码块就剥掉那一道，页只是以代码块开头时留下的收尾会吞掉后面整页（第五遍 review）
+        String baseText = base == null ? "" : base.replace("\r\n", "\n").replace("\r", "\n");
         java.util.Set<String> baseLines = new java.util.HashSet<>(java.util.Arrays.asList(baseText.split("\n")));
         String text = trimBlankLines(value.replace("\r\n", "\n").replace("\r", "\n"));
         String unwrapped = unwrapWholePage(text, baseText.stripLeading().split("\n", 2)[0].trim());
@@ -117,14 +115,21 @@ public final class MarkdownCanonicalizer {
         return wrapper ? trimBlankLines(inner) : null;
     }
 
-    /** 每一个打开的代码块都在这段里关上（关的那一行只有 ```；块里面带语言名的 ``` 行是内容，照 CommonMark） */
+    /**
+     * 每一个打开的代码块都在这段里关上，照 CommonMark：``` 或 ~~~ 开头（三个以上），收尾是同一种字符、不比开头短、后面没有语言名；
+     * 块里面带语言名的 ``` 行是内容（第五遍 review：原来只认正好三个反引号，```` 收的块被当成没收）
+     */
     private static boolean fencesBalanced(String text) {
-        boolean open = false;
+        char fence = 0;
+        int length = 0;
         for (String line : text.split("\n", -1)) {
             String trimmed = line.strip();
-            if (!open && trimmed.startsWith("```")) open = true;
-            else if (open && trimmed.equals("```")) open = false;
+            int run = 0;
+            while (run < trimmed.length() && (trimmed.charAt(run) == '`' || trimmed.charAt(run) == '~') && trimmed.charAt(run) == trimmed.charAt(0)) run++;
+            if (run < 3) continue;
+            if (fence == 0) { fence = trimmed.charAt(0); length = run; }
+            else if (trimmed.charAt(0) == fence && run >= length && trimmed.substring(run).isBlank()) fence = 0;
         }
-        return !open;
+        return fence == 0;
     }
 }

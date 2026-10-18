@@ -423,6 +423,30 @@ class KnowledgeConcurrencyIntegrationTest {
                 "确认框里用户自己加的一行被当成模型的自述行删了");
     }
 
+    /** 第五遍 review：合入不再洗之后也没有了「内容不能为空」—— 空草稿会把一页盖成空的；确认框里清空正文原来被当成「没给」，悄悄合入 AI 的那一版 */
+    @Test
+    void emptyDraftsAndClearedConfirmBodiesAreRefused() {
+        createPage("不许盖空", "原来的正文\n");
+        SnapshotView seen = knowledgeService.findPageSnapshotByTitle(userId, "不许盖空");
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("pageId", seen.pageId()); item.put("actionType", "UPSERT"); item.put("title", seen.title());
+        item.put("content", "已将以上内容写入知识库。");                        // 洗完只剩空的
+        Map<String, Object> patch = knowledgeService.createPatchSet(userId, patchBody("不许盖空", item), Map.of(seen.pageId(), seen));
+        assertThrows(RuntimeException.class, () -> knowledgeService.applyPatchSet(userId, numberLong(patch.get("id"))));
+        assertEquals("原来的正文\n", String.valueOf(knowledgeService.detail(userId, seen.pageId()).get("content")), "空草稿把一页盖成了空的");
+
+        createPage("清空了正文", "正文\n");
+        SnapshotView other = knowledgeService.findPageSnapshotByTitle(userId, "清空了正文");
+        Map<String, Object> draft = new LinkedHashMap<>();
+        draft.put("pageId", other.pageId()); draft.put("actionType", "UPSERT"); draft.put("title", other.title());
+        draft.put("content", "正文\nAI 加的\n");
+        Map<String, Object> draftPatch = knowledgeService.createPatchSet(userId, patchBody("清空了正文", draft), Map.of(other.pageId(), other));
+        Long revisionId = jdbcTemplate.queryForObject("SELECT id FROM user_knowledge_revision WHERE patch_set_id = ?", Long.class, draftPatch.get("id"));
+        jdbcTemplate.update("UPDATE user_knowledge_revision SET patch_set_id = NULL WHERE id = ?", revisionId);
+        assertThrows(RuntimeException.class, () -> knowledgeService.applyRevision(userId, revisionId, new LinkedHashMap<>(Map.of("content", "  "))));
+        assertEquals("正文\n", String.valueOf(knowledgeService.detail(userId, other.pageId()).get("content")), "清空的正文被当成「没给」，合入了 AI 的那一版");
+    }
+
     @Test
     void concurrentApplyOfANewPageDraftCreatesOnePage() throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();

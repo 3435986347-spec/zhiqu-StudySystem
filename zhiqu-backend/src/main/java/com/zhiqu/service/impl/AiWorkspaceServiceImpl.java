@@ -1291,7 +1291,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         revision.setPatchSetId(patchSet.getId());
         revision.setActionType("UPSERT");
         revision.setTitle(title);
-        revision.setEncryptedContent(cryptoService.encrypt(body));
+        revision.setEncryptedContent(cryptoService.encrypt(com.zhiqu.common.MarkdownCanonicalizer.cleanKeeping(body, null)));
         revision.setEncryptionVersion("v1");
         revision.setStatus("PENDING");
         revision.setSourceMessageId(sourceMessageId);

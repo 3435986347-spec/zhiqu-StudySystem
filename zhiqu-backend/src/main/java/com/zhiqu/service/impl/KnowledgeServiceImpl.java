@@ -398,7 +398,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             revision.setPatchSetId(patchSet.getId());
             revision.setActionType("UPSERT");
             revision.setTitle(limit(value(body.get("pageTitle"), patchSet.getTitle()), 120));
-            revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.clean(value(body.get("content"), patchSet.getSummary()))));
+            revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.cleanKeeping(markdownValue(body.get("content"), patchSet.getSummary()), null)));
             revision.setEncryptionVersion("v1");
             revision.setStatus("PENDING");
             revisionMapper.insert(revision);
@@ -545,7 +545,6 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public Map<String, Object> createPatchSetFromSource(Long userId, Long sourceId) {
         KnowledgeSource source = ownedSource(userId, sourceId);
-        String content = MarkdownCanonicalizer.clean(cryptoService.decrypt(source.getEncryptedContent()));
         KnowledgePatchSet patchSet = new KnowledgePatchSet();
         patchSet.setUserId(userId);
         patchSet.setTitle(limit("整理来源：" + source.getTitle(), 180));
@@ -561,7 +560,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         revision.setPatchSetId(patchSet.getId());
         revision.setActionType("UPSERT");
         revision.setTitle(limit(source.getTitle(), 120));
-        revision.setEncryptedContent(cryptoService.encrypt(content));
+        revision.setEncryptedContent(cryptoService.encrypt(MarkdownCanonicalizer.cleanKeeping(cryptoService.decrypt(source.getEncryptedContent()), null)));
         revision.setEncryptionVersion("v1");
         revision.setStatus("PENDING");
         revision.setSourceConversationId(source.getConversationId());
@@ -1114,8 +1113,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         // 草稿建的时候已经洗过一遍（createPatchSet 里的 cleanKeeping / clean），合入时不再洗（第七十四轮第四遍 review：原来合入时又洗一遍，
         // 每洗一遍就多一次把真内容当成模型包的那层剥掉的机会 —— 前几遍 review 照出来的「第二遍又剥了」都是从这里来的）。
         // 确认框里改过的正文是用户自己写的，照第七十一轮的规矩原样存，只统一换行。
+        if (body.containsKey("content") && !given(body.get("content"))) {
+            throw new BusinessException("正文不能为空；不想合入就驳回这条草稿");   // 原来把清空当成「没给」，悄悄合入了 AI 的那一版（第五遍 review）
+        }
         String content = given(body.get("content")) ? userMarkdown(body.get("content").toString())
                 : cryptoService.decrypt(revision.getEncryptedContent());
+        if (content.isBlank()) {
+            throw new BusinessException("这条草稿没有正文，没有合入");   // 不拿空正文盖掉一页
+        }
         boolean systemPage = page != null && isSystemKnowledgePage(page);
         if (systemPage && !title.trim().equals(page.getTitle())) {
             throw new BusinessException("系统页（index / log / Wiki 维护规则）不允许改名");

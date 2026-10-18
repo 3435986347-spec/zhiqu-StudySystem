@@ -260,6 +260,7 @@ function fixture({ flag = 'cm' } = {}) {
     // 第四遍 review：百分号编码会改掉网址本身 —— IPv6 的主机、路径里的反斜杠（浏览器当成 /）
     assert.equal(cm.linkMarkdown('看', 'http://[::1]:8080/'), '[看](http://[::1]:8080/)');
     assert.equal(cm.linkMarkdown('看', 'https://a.com\\docs'), '[看](https://a.com/docs)');
+    assert.equal(cm.linkMarkdown('看', 'https://a.com/?q=C:\\'), '[看](https://a.com/?q=C:%5C)', '查询里的反斜杠浏览器不换成 /：结尾那个会把 ) 转义掉');
   });
   await check('接入：插入链接的弹窗回来时还是原来的编辑会话才插（换了页 / 取消了就不插），插的是 handle.link', async () => {
     let answer; const f = fixture();

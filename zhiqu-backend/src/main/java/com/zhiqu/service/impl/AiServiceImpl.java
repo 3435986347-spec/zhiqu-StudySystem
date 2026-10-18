@@ -3272,7 +3272,7 @@ public class AiServiceImpl implements AiService {
         revision.setPatchSetId(patchSet.getId());
         revision.setActionType("UPSERT");
         revision.setTitle(patchSet.getTitle());
-        revision.setEncryptedContent(cryptoService.encrypt(limitRawMarkdown(content, 5000)));
+        revision.setEncryptedContent(cryptoService.encrypt(com.zhiqu.common.MarkdownCanonicalizer.cleanKeeping(limitRawMarkdown(content, 5000), null)));
         revision.setEncryptionVersion("v1");
         revision.setStatus("PENDING");
         revision.setSourceMessageId(sourceMessageId);

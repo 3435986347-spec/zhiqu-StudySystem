@@ -20,7 +20,9 @@ class MarkdownCanonicalizerKeepingTest {
         assertEquals("```js\nconst a = 1;\n```\n\n我已经把资料整理进知识库了。\n- 一\n\n补充一段\n", MarkdownCanonicalizer.cleanKeeping(edited, base),
                 "原页结尾的换行也留着");
         assertEquals("正文\n补充", MarkdownCanonicalizer.cleanKeeping("```markdown\n正文\n补充\n```", "正文"), "模型包了一层 ```markdown 照样剥");
-        assertEquals(MarkdownCanonicalizer.clean("```\n新页\n已写入 wiki\n```"), MarkdownCanonicalizer.cleanKeeping("```\n新页\n已写入 wiki\n```", null), "没有原页就是 clean()");
+        assertEquals("新页", MarkdownCanonicalizer.cleanKeeping("```\n新页\n已写入 wiki\n```", null), "新页：包的那层、自述行照样去掉");
+        assertEquals("```js\ncode\n```\n正文", MarkdownCanonicalizer.cleanKeeping("```js\ncode\n```\n正文", null),
+                "新页只是以代码块开头（第五遍 review：原来走 clean()，剥掉开头那一道、留下的收尾吞掉后面整页）");
     }
 
     @Test
@@ -73,6 +75,25 @@ class MarkdownCanonicalizerKeepingTest {
         String declaredButOpen = "```markdown\n# 标题\n```js\nx\n```";
         assertEquals(declaredButOpen + "\n", MarkdownCanonicalizer.cleanKeeping(declaredButOpen, plain),
                 "写着 ```markdown、可里面的围栏不成对（最后那个 ``` 是 js 块的收尾）：不是包了一层");
+    }
+
+    @Test
+    @DisplayName("第五遍 review：成对照 CommonMark —— 更长的反引号、~~~ 都认")
+    void fencesFollowCommonMark() {
+        assertEquals("正文\n```py\nx\n````", MarkdownCanonicalizer.cleanKeeping("```markdown\n正文\n```py\nx\n````\n```", null), "里面的块用四个反引号收尾");
+        assertEquals("~~~\na\n~~~", MarkdownCanonicalizer.cleanKeeping("```markdown\n~~~\na\n~~~\n```", null), "里面是 ~~~ 块");
+        assertEquals("~~~\n```\n~~~", MarkdownCanonicalizer.cleanKeeping("```markdown\n~~~\n```\n~~~\n```", null), "~~~ 块里的 ``` 行是内容：里面成对，是包");
+        String tildeOpen = "```markdown\n~~~\na\n```\nb\n```";
+        assertEquals(tildeOpen, MarkdownCanonicalizer.cleanKeeping(tildeOpen, null), "~~~ 打开的块不能被 ``` 收尾：里面没成对，不是包");
+    }
+
+    /**
+     * 明示的取舍：一页新以 ```markdown 示例块开头、又以光秃秃的代码块结尾 —— 和「```markdown 包了一页带代码块的页」一模一样，
+     * 按包了一层剥（模型这样包远比页这样开头常见）。原页本来就以这个示例块开头时不受影响（开头一样，不算包）。
+     */
+    @Test
+    void aNewPageStartingWithAMarkdownExampleAndEndingWithCodeIsReadAsWrapped() {
+        assertEquals("# 示例\n```\n正文\n```\nx\n", MarkdownCanonicalizer.cleanKeeping("```markdown\n# 示例\n```\n正文\n```\nx\n```", "正文\n"));
     }
 
     /**
