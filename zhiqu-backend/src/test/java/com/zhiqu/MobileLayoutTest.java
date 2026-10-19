@@ -169,7 +169,8 @@ class MobileLayoutTest {
         // 第五十六轮例行计划页的 5 处（两栏的表单、上下两块）挪进了弹窗（.zq-form-grid）和 .zq-rt-cols（auto-fit，窄了自己一上一下）
         // 第五十七轮专注统计的两处（四个数字、两张卡）挪进 .zq-stat-grid / .zq-stats-cols（手机上怎么排写在 zq-phone-2col / zq-phone-1col 上），参考计划的两栏换成 auto-fill
         // 第七十七轮后台四页的 5 处（六个数、两栏、RAG 的四格、账号的列、共享计划的两列）挪进 .zq-admin-* / .zq-acct-row / .zq-reviews（手机上怎么排由 AdminLookTest 认）
-        assertTrue(seen >= 4 && distinct.size() >= 3,
+        // 第七十八轮 AI 助手「上传资料 / 添加 URL」的 1fr 1fr 挪进 .zq-ai-src-actions：手机上面板浮在对话上、300 宽，两个按钮并排放得下，不再按 style 被压成一上一下
+        assertTrue(seen >= 3 && distinct.size() >= 3,
                 "只扫到 " + seen + " 处 / " + distinct.size() + " 种 grid-template-columns —— 扫描扫空了（style 的写法变了？），这时下面的判据全是空转");
         assertTrue(undecided.isEmpty(), "新的 grid-template-columns，还没决定它在手机上怎么排：" + undecided
                 + "\n—— 在 MobileLayoutTest.DECISIONS 里写下一栏 / 两个一排 / 不动（不动的话它得本来就窄、或者在会横向滚动的框里），"
@@ -261,22 +262,25 @@ class MobileLayoutTest {
     }
 
     @Test
-    @DisplayName("AI 助手、Wiki 的定高容器：有下限（200% 放大时 AI 对话区原来 40px、Wiki 正文区 52px），并且和手机样式认的是同一个字面")
+    @DisplayName("AI 助手、Wiki 的定高容器（.zq-fill-page）：有下限（200% 放大时 AI 对话区原来 40px、Wiki 正文区 52px），手机样式认的是同一个类")
     void 定高容器有下限() throws IOException {
+        // 第七十八轮起两页的包裹是同一个类 .zq-fill-page（原来是两页各自的内联，手机段按 [style*="calc(100vh - 110px)"] 认）
         int pages = 0;
         for (String page : new String[]{"ai-assistant.html", "knowledge-wiki.html"}) {
             String html = stripHtmlComments(Files.readString(STATIC.resolve(page), StandardCharsets.UTF_8));
-            Matcher m = Pattern.compile("style=\"([^\"]*height:calc\\(100vh[^\"]*)\"").matcher(html);
-            assertTrue(m.find(), page + " 找不到定高容器");
-            String style = m.group(1);
-            assertTrue(style.contains("calc(100vh - 110px)"),
-                    page + " 的定高不是 calc(100vh - 110px) 了 —— zhiqu-ui.css 手机段按这个字面把它换成 100dvh - 82px，字面一变那条就不生效");
-            assertTrue(Pattern.compile("min-height:\\s*\\d{3}px").matcher(style).find(),
-                    page + " 的定高容器没有下限：视口矮（放大 200%、手机横屏）时对话区 / 正文区会被压到几十像素");
+            assertTrue(html.matches("(?s).*<main class=\"zq-main\">\\s*<div class=\"zq-fill-page\">.*"),
+                    page + " 的定高容器不是 .zq-main 下面第一层的 .zq-fill-page —— 手机段那条（.zq-main>.zq-fill-page）认不出它");
+            assertFalse(html.contains("calc(100vh"), page + " 又在内联里写了定高");
             pages++;
         }
         assertEquals(2, pages);
-        assertTrue(phoneBlock(css()).body().contains("[style*=\"calc(100vh - 110px)\"]{height:calc(100dvh - 82px)"),
+        Matcher fill = Pattern.compile("\\n\\.zq-fill-page\\{([^}]*)\\}").matcher(css());
+        assertTrue(fill.find(), "样式表里没有 .zq-fill-page");
+        String style = fill.group(1);
+        assertTrue(style.contains("height:calc(100vh - 110px)"), ".zq-fill-page 的定高不是 calc(100vh - 110px) 了：" + style);
+        assertTrue(Pattern.compile("min-height:\\s*\\d{3}px").matcher(style).find(),
+                ".zq-fill-page 没有下限：视口矮（放大 200%、手机横屏）时对话区 / 正文区会被压到几十像素");
+        assertTrue(phoneBlock(css()).body().contains(".zq-main>.zq-fill-page{height:calc(100dvh - 82px)"),
                 "手机段里没有按实际 padding 重算定高");
     }
 

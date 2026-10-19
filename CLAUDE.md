@@ -86,9 +86,9 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261019-admin77`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261019-ai78`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
-  浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；
+  浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；**内联样式、写死的字号按文件只许降**（`InlineStyleRatchetTest`，`==` 钉着，少了就改小）；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
   图标只用 `zhiqu-ui.js` 的 `ICONS`（`ZQUI.icon` / `data-zq-icon` / `zqShared.icon`），不用 Unicode 符号当图标（`IconSetTest`）。界面打磨的步骤见 `docs/ui-plan.md`。
   页面头部一律 `<header class="zq-page-head">`：标题 + 一行 `.zq-page-sub` 在左、`.zq-page-actions` 在右，标题上面不加小字（`PageHeadTest`）。
@@ -160,8 +160,7 @@ cd ../zhiqu-cli && npm test
 - [第三十五轮](docs/rounds/round-35.md) 看板、[第三十六轮](docs/rounds/round-36.md) 知识 Wiki 拆成模块
 - [第三十七轮](docs/rounds/round-37.md) AI 助手拆成模块（方案第 4 步做完）、[第三十八轮](docs/rounds/round-38.md) CLAUDE.md 瘦身（方案第 5 步）
 - [第三十九轮](docs/rounds/round-39.md) 页面切换流畅：骨架先露、互不依赖的请求一起发、文字一律系统无衬线字体
-- [第四十轮](docs/rounds/round-40.md) 界面打磨第 1 步：设计令牌、白天白晚上黑（跟随系统）、金色 / 黑白强调
-- [第四十一轮](docs/rounds/round-41.md) 第 1 步的调整：默认黑白、字更细（像 Claude）、内联字重收成令牌
+- [第四十轮](docs/rounds/round-40.md) 界面打磨第 1 步：设计令牌、白天白晚上黑（跟随系统）、金色 / 黑白强调；[第四十一轮](docs/rounds/round-41.md) 调整：默认黑白、字更细（像 Claude）、内联字重收成令牌
 - [第四十二轮](docs/rounds/round-42.md) 界面打磨第 2 步：Unicode 符号换成一套线性图标
 - [第四十三轮](docs/rounds/round-43.md) 界面打磨第 3 步：页面头部一种写法、侧栏收起按钮做小；AI 助手一种底色
 - [第四十四轮](docs/rounds/round-44.md) 界面打磨第 4 步：AI 助手的输入框、两侧面板的图标开关、消息排版
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第七十五轮](docs/rounds/round-75.md) 界面打磨第 8 步（三）：设置、成就弹窗的样子进样式表（开关看 `aria-checked`、分栏能用方向键、打开时焦点在选中的那栏），模型卡片不重复「我的」，遮罩盖住滚动条的槽
 - [第七十六轮](docs/rounds/round-76.md) 图标的 1024 母版和矢量稿：macOS 图标最大那一档不再从 512 放大（`MakeIcon` 读 `deploy/desktop/icon/icon-1024.png`）
 - [第七十七轮](docs/rounds/round-77.md) 界面打磨第 8 步（四）：后台四页和落地页（三个数原来读接口没有的字段、分钟的桶补 0、账号的操作列不盖日期、手机上叠起来、连点只算一次；标题不再「可控」一个人一行）
+- [第七十八轮](docs/rounds/round-78.md) 界面打磨第 9 步（一）：AI 助手 121 处内联样式进样式表（剩数据 1 处）、字号收成令牌（加 `--zq-fs-2xs`）、内联样式和字号的棘轮；工作区设置的档位看 `aria-pressed`、选文件夹的一项是按钮

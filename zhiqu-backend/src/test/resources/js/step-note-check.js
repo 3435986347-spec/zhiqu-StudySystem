@@ -73,6 +73,19 @@ const modPath = require('path').join(require('path').dirname(require('path').res
     judge('没截就不加「…」', !short.includes('…'), short);
   }
 
+  // 判据 5（第七十八轮）：颜色看 data-state、样子在样式表 —— 出错红、预算黄、叙述不上色；命令输出是 .zq-step-out；不拼内联样式
+  {
+    const err = mod.stepNoteHtml({ phase: 'error', message: 'x' });
+    const budget = mod.stepNoteHtml({ phase: 'budget', message: 'x' });
+    const call = mod.stepNoteHtml({ phase: 'call', message: 'x' });
+    const out = mod.stepNoteHtml({ phase: 'result', message: 'x' });
+    judge('出错的叙述 data-state=bad', err.includes('class="zq-mono zq-step-note" data-state="bad"'), err);
+    judge('预算的叙述 data-state=warn', budget.includes('data-state="warn"'), budget);
+    judge('一般的叙述不上色', call.includes('data-state=""'), call);
+    judge('命令输出是 .zq-step-out', out.startsWith('<pre class="zq-mono zq-step-out">'), out);
+    judge('四种都不拼内联样式', ![err, budget, call, out].some((h) => h.includes('style=')), [err, budget, call, out].join(' | '));
+  }
+
   // 与其它判据脚本同一个约定：自报 ALL-GREEN 且退出码 0 才算过（NodeRunner 两样都查）
   console.log(fail === 0 ? '\nALL-GREEN' : '\nRED: ' + fail + ' 条');
   process.exit(fail === 0 ? 0 : 1);

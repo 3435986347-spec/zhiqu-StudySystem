@@ -119,7 +119,9 @@ class AiComposerTest {
         int col = html.indexOf("<div id=\"zq-chat-col\"");
         assertTrue(col > 0, "找不到对话这一栏 #zq-chat-col");
         String column = PageHeadTest.elementAt(html, col, "div");
-        assertTrue(column.substring(0, column.indexOf('>')).contains("position:relative"), "对话这一栏要是定位容器（那一层按它铺满）");
+        // 第七十八轮起这一栏的样子在样式表的 .zq-ai-chat-col（原来是内联）
+        assertTrue(column.substring(0, column.indexOf('>')).contains("class=\"zq-ai-chat-col\""), "对话这一栏不是 .zq-ai-chat-col 了");
+        assertTrue(rule(css, ".zq-ai-chat-col").contains("position:relative"), "对话这一栏要是定位容器（那一层按它铺满）");
         assertTrue(column.contains("id=\"zq-drop-overlay\""), "那一层不在对话这一栏里");
     }
 

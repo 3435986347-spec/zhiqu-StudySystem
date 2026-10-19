@@ -28,6 +28,14 @@
   CJK serif after it: font fallback is **per character**, and JetBrains Mono / Consolas have no
   CJK glyphs, so Latin stays monospaced while Chinese matches the rest of the page.
   `FrontendTokenAndDateTest` fails the build on any dangling `var(--zq-*)`.
+- **Inline styles and literal font sizes only go down** (UI plan step 9, round 78). `InlineStyleRatchetTest` pins, per file,
+  how many `style=` attributes and JS style writes (`.style.x =`, `cssText`) there are, with `==`: one more means someone
+  wrote an inline style again (put it in a `zhiqu-ui.css` class); one fewer means lower the number in the test. It also pins
+  the set of literal font sizes (anything not `var(--zq-fs-*)`), so a new size fails the build. What legitimately stays
+  inline is data: `--v` for bar heights, `--srcc` for a source tile's type color, the composer's `style.height`. Since round
+  78 the scale has `--zq-fs-2xs: 11px` for the densest text (side-panel metadata, diff rows). Moving an inline style can
+  silently disarm a test that matched on it: phone rules used to select `[style*="calc(100vh - 110px)"]`, and a diff check
+  counted `<div style="display:flex` rows — after the move those counted 0 and would have stayed green.
 - **Settings and achievements are dialogs, and the first ES module** (round 30, `docs/rounds/round-30.md`). The avatar at the
   bottom of the sidebar opens a menu (`openUserMenu` in `zhiqu-ui.js`); 设置 / 成就 are links to `#settings/<tab>` and
   `#achievements`, which the shell opens on any page (`watchDialogs` / `syncDialog`) — refresh keeps the tab, Back closes a

@@ -6,11 +6,11 @@
   <title>AI 助手 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261019-admin77" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261019-admin77">
-  <link rel="manifest" href="manifest.json?v=20261019-admin77">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261019-ai78" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261019-ai78">
+  <link rel="manifest" href="manifest.json?v=20261019-ai78">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261019-admin77">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261019-ai78">
 </head>
 <body>
   <div class="zq-app">
@@ -18,14 +18,14 @@
     <main class="zq-main">
       <!--
         height（不是 min-height）—— zhiqu-ui.css 让内层等于视口减去 .zq-main 的顶部 padding，
-        底部空间由输入区单独控制；这里的 110px 保留作旧浏览器回退。
+        底部空间由输入区单独控制；.zq-fill-page 里的 calc(100vh - 110px) 留作不认 :has 的旧浏览器的回退。
         于是**整页不产生外层滚动**，长内容在对话区内部滚。
         这一条不只是观感：面板收起后，展开箭头在竖条顶端，是收起状态下唯一的展开入口。
         外层一滚它就跑出视野，人只能先滚回去才能展开 —— 用 min-height 时就是这样。
         但定高要有下限（第二十轮）：浏览器放大到 200%、手机横屏时视口只有三四百像素高，定高之后对话区只剩 40px。
         低于 520px 时宁可整页滚一点，对话区和输入框得先能用。手机上的高度见 zhiqu-ui.css 的 @media。
       -->
-      <div style="display:flex;flex-direction:column;gap:12px;height:calc(100vh - 110px);min-height:520px;">
+      <div class="zq-fill-page">
         <header class="zq-page-head">
           <div>
             <h1 class="zq-h1">AI 助手</h1>
@@ -33,55 +33,53 @@
           </div>
         </header>
 
-        <section style="flex:1;min-height:0;border-top:1px solid var(--zq-border-soft);overflow:hidden;display:flex;flex-direction:column;">
-          <div style="flex:1;display:flex;gap:0;min-height:0;align-items:stretch;">
-            <aside data-zq-collapse="left" data-zq-label="Notebook · 资料" style="flex:0 0 218px;border-right:1px solid var(--zq-border-soft);background:var(--zq-bg);display:flex;flex-direction:column;min-width:0;overflow-y:auto;">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--zq-border-soft);">
-                <div><strong style="display:block;font-size:12.5px;font-weight:var(--zq-fw-medium);">Notebook</strong><span style="font-size:11px;color:var(--zq-text3);">资料工作区</span></div>
-                <button id="zq-new-notebook" class="zq-btn-ghost" style="height:26px;padding:0 10px;font-size:11.5px;white-space:nowrap;"><span data-zq-icon="plus"></span>新建</button>
+        <section class="zq-ai-work">
+          <div class="zq-ai-cols">
+            <aside data-zq-collapse="left" data-zq-label="Notebook · 资料" class="zq-ai-side">
+              <div class="zq-ai-side-head">
+                <div><strong class="zq-ai-side-title">Notebook</strong><span class="zq-ai-side-sub">资料工作区</span></div>
+                <button id="zq-new-notebook" class="zq-btn-ghost"><span data-zq-icon="plus"></span>新建</button>
               </div>
-              <div id="zq-notebooks" style="padding:10px 12px;display:flex;flex-direction:column;gap:6px;border-bottom:1px solid var(--zq-border-soft);"></div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:10px 12px;">
-                <button id="zq-source-upload" class="zq-btn-ghost" style="height:28px;border-style:dashed;font-size:11.5px;">上传资料</button>
-                <button id="zq-add-url" class="zq-btn-ghost" style="height:28px;border-style:dashed;font-size:11.5px;">添加 URL</button>
+              <div id="zq-notebooks" class="zq-ai-notebooks"></div>
+              <div class="zq-ai-src-actions">
+                <button id="zq-source-upload" class="zq-btn-ghost">上传资料</button>
+                <button id="zq-add-url" class="zq-btn-ghost">添加 URL</button>
               </div>
-              <div id="zq-sources" style="padding:2px 12px 14px;display:flex;flex-direction:column;gap:6px;"></div>
+              <div id="zq-sources" class="zq-ai-sources"></div>
 
               <!-- 代码工作区。整块默认 hidden：工作区没开时（绝大多数部署）连标题都不出现，
                    由 zhiqu-api.js 根据 /api/workspace/status 决定显不显示。
                    非管理员拿不到那个接口，这一块同样不显示。 -->
-              <section id="zq-ws" hidden style="border-top:1px solid var(--zq-border-soft);">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;">
+              <section id="zq-ws" class="zq-ai-ws" hidden>
+                <div class="zq-ai-side-head">
                   <div>
-                    <strong style="display:block;font-size:12.5px;font-weight:var(--zq-fw-medium);">代码工作区</strong>
-                    <span id="zq-ws-sub" style="font-size:11px;color:var(--zq-text3);"></span>
+                    <strong class="zq-ai-side-title">代码工作区</strong>
+                    <span id="zq-ws-sub" class="zq-ai-side-sub"></span>
                   </div>
-                  <div style="display:flex;align-items:center;gap:6px;flex:0 0 auto;">
-                    <button id="zq-ws-up" class="zq-btn-ghost" hidden style="height:24px;padding:0 8px;font-size:11px;white-space:nowrap;">上一层</button>
+                  <div class="zq-ai-ws-tools">
+                    <button id="zq-ws-up" class="zq-btn-ghost" hidden>上一层</button>
                     <!-- 齿轮：打开工作区设置（选文件夹 + 切档位）。管理员总能看到，哪怕工作区当前是 OFF。 -->
-                    <button id="zq-ws-settings" class="zq-btn-ghost" title="工作区设置：选文件夹、切档位" style="height:24px;width:24px;padding:0;font-size:13px;line-height:1;white-space:nowrap;"><span data-zq-icon="settings"></span></button>
+                    <button id="zq-ws-settings" class="zq-btn-ghost" title="工作区设置：选文件夹、切档位" aria-label="工作区设置"><span data-zq-icon="settings"></span></button>
                   </div>
                 </div>
-                <div id="zq-ws-search-row" hidden style="display:flex;gap:6px;padding:0 14px 8px;">
-                  <input id="zq-ws-q" type="search" placeholder="搜索工作区（回车）" autocomplete="off"
-                         style="flex:1;min-width:0;height:26px;padding:0 8px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);color:var(--zq-text2);font-size:11.5px;" />
-                  <button id="zq-ws-back" class="zq-btn-ghost" hidden style="height:26px;padding:0 8px;font-size:11px;white-space:nowrap;">返回目录</button>
+                <div id="zq-ws-search-row" class="zq-ai-ws-search" hidden>
+                  <input id="zq-ws-q" type="search" placeholder="搜索工作区（回车）" aria-label="搜索工作区" autocomplete="off" />
+                  <button id="zq-ws-back" class="zq-btn-ghost" hidden>返回目录</button>
                 </div>
-                <div id="zq-ws-path" class="zq-mono" style="padding:0 14px 6px;font-size:11px;color:var(--zq-text3);word-break:break-all;"></div>
-                <div id="zq-ws-tree" style="padding:0 12px 14px;display:flex;flex-direction:column;gap:3px;"></div>
+                <div id="zq-ws-path" class="zq-mono zq-ai-ws-path"></div>
+                <div id="zq-ws-tree" class="zq-ai-ws-tree"></div>
               </section>
             </aside>
 
-            <!-- 对话这一栏。拖文件进来时整栏盖一层「松开即可上传」（#zq-drop-overlay，第四十四轮），所以它是定位容器 -->
-            <div id="zq-chat-col" style="flex:1;display:flex;flex-direction:column;min-width:0;position:relative;">
+            <!-- 对话这一栏。拖文件进来时整栏盖一层「松开即可上传」（#zq-drop-overlay，第四十四轮），所以它是定位容器（样式表的 .zq-ai-chat-col） -->
+            <div id="zq-chat-col" class="zq-ai-chat-col">
               <!-- 定位容器：按钮要贴着聊天区的右下角，而不是整栏的右下角（那里是输入框）。
                    所以这一层只包住 #zq-chat，高度随它。 -->
-              <div style="position:relative;display:flex;flex-direction:column;flex:1;min-height:0;">
-                <div id="zq-chat" style="flex:1;overflow-y:auto;padding:24px 22px;display:flex;flex-direction:column;gap:22px;"></div>
+              <div class="zq-ai-chat-wrap">
+                <div id="zq-chat"></div>
                 <!-- 用户往上翻着读时，流式新内容不再把他拽回底部；这个按钮是回去的入口。
                      默认 hidden，由 zhiqu-api.js 按「是否在底部」切换。 -->
-                <button id="zq-chat-jump" type="button" hidden aria-label="回到最新内容"
-                        style="position:absolute;right:20px;bottom:14px;z-index:3;height:30px;padding:0 13px;border:1px solid var(--zq-border);border-radius:999px;background:var(--zq-card);color:var(--zq-text2);font-size:12px;font-weight:var(--zq-fw-medium);cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.14);display:inline-flex;align-items:center;gap:4px;"><span data-zq-icon="arrow-down"></span>新内容</button>
+                <button id="zq-chat-jump" type="button" hidden aria-label="回到最新内容"><span data-zq-icon="arrow-down"></span>新内容</button>
               </div>
               <!-- 输入区（第四十四轮）：一个大圆角框 —— 附件在上、输入在中、工具一条在下，和消息一栏同宽、居中。
                    原来是一条常驻的虚线拖拽框 + 一排六个小按钮，像表单。拖拽框（#zq-drop-zone）现在只在上传中 / 出错时出现，当一条状态。 -->
@@ -109,16 +107,16 @@
               <div id="zq-drop-overlay" class="zq-drop-overlay" aria-hidden="true"><span data-zq-icon="paperclip"></span>松开即可上传到当前 Notebook · 支持图片、PDF、Excel、文本</div>
             </div>
 
-            <aside data-zq-collapse="right" data-zq-label="执行轨迹 · 产物" style="flex:0 0 262px;border-left:1px solid var(--zq-border-soft);background:var(--zq-bg);display:flex;flex-direction:column;min-width:0;overflow-y:auto;">
-              <div style="padding:12px 14px;border-bottom:1px solid var(--zq-border-soft);">
-                <strong style="display:block;font-size:12.5px;font-weight:var(--zq-fw-medium);">执行轨迹</strong>
-                <span style="font-size:11px;color:var(--zq-text3);">Agent Pipeline</span>
-                <div id="zq-steps" style="display:flex;flex-direction:column;margin-top:10px;"></div>
+            <aside data-zq-collapse="right" data-zq-label="执行轨迹 · 产物" class="zq-ai-side">
+              <div class="zq-ai-trace">
+                <strong class="zq-ai-side-title">执行轨迹</strong>
+                <span class="zq-ai-side-sub">Agent Pipeline</span>
+                <div id="zq-steps" class="zq-ai-steps"></div>
               </div>
-              <div style="padding:12px 14px;">
-                <strong style="display:block;font-size:12.5px;font-weight:var(--zq-fw-medium);">产物</strong>
-                <span style="font-size:11px;color:var(--zq-text3);">来源、草稿与确认结果</span>
-                <div id="zq-artifacts" style="display:flex;flex-direction:column;gap:7px;margin-top:10px;"></div>
+              <div class="zq-ai-products">
+                <strong class="zq-ai-side-title">产物</strong>
+                <span class="zq-ai-side-sub">来源、草稿与确认结果</span>
+                <div id="zq-artifacts" class="zq-ai-artifacts"></div>
               </div>
             </aside>
           </div>
@@ -127,7 +125,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261019-admin77"></script>
-  <script src="assets/zhiqu-api.js?v=20261019-admin77"></script>
+  <script src="assets/zhiqu-ui.js?v=20261019-ai78"></script>
+  <script src="assets/zhiqu-api.js?v=20261019-ai78"></script>
 </body>
 </html>

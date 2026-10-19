@@ -2,7 +2,11 @@ package com.zhiqu;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 代码草稿确认弹窗里的 diff。
@@ -28,5 +32,15 @@ class CodeDiffJudgmentTest {
     @Test
     void diff的行为判据必须全绿() throws Exception {
         NodeRunner.run(HARNESS, NodeRunner.API_JS);
+    }
+
+    /** 第七十八轮起删除 / 新增的颜色在样式表（原来拼在每一行的内联里，diff-check.js 在 HTML 里找颜色）；行上只有 data-op。 */
+    @Test
+    void 删除和新增的颜色在样式表里() throws Exception {
+        String css = Files.readString(Path.of("src/main/resources/static/assets/zhiqu-ui.css"), StandardCharsets.UTF_8);
+        assertTrue(css.contains(".zq-diff-row[data-op=\"del\"]{background:color-mix(in srgb, var(--zq-bad) 12%, transparent);color:var(--zq-bad);}"),
+                "删除的行不是红的（--zq-bad）—— 用户看不出哪一行会消失");
+        assertTrue(css.contains(".zq-diff-row[data-op=\"add\"]{background:color-mix(in srgb, var(--zq-q2) 12%, transparent);color:var(--zq-q2);}"),
+                "新增的行不是 --zq-q2");
     }
 }

@@ -121,26 +121,31 @@ class PageHeadTest {
         int at = html.indexOf("<section", main);
         assertTrue(main > 0 && at > main, "找不到 AI 助手的工作区 <section>");
         String sectionTag = html.substring(at, html.indexOf('>', at) + 1);
+        // 第七十八轮起 AI 助手的样子都在样式表（原来是内联）：标签上不许再有 style，样子看 .zq-ai-work / .zq-ai-side 这两条规则
+        assertEquals("<section class=\"zq-ai-work\">", sectionTag, "AI 助手的工作区不是 .zq-ai-work 了");
+        String css = css();
+        Matcher work = Pattern.compile("\\n\\.zq-ai-work\\{([^}]*)\\}").matcher(css);
+        assertTrue(work.find(), "样式表里没有 .zq-ai-work");
         for (String no : List.of("background", "box-shadow", "border-radius", "border:")) {
-            assertFalse(sectionTag.contains(no), "工作区又成了一张卡片（" + no + "）：" + sectionTag);
+            assertFalse(work.group(1).contains(no), "工作区又成了一张卡片（" + no + "）：" + work.group(1));
         }
-        Matcher aside = Pattern.compile("<aside data-zq-collapse=\"(left|right)\"[^>]*style=\"([^\"]*)\"").matcher(html);
+        Matcher aside = Pattern.compile("<aside data-zq-collapse=\"(left|right)\"[^>]*class=\"zq-ai-side\">").matcher(html);
         int asides = 0;
-        while (aside.find()) {
-            asides++;
-            // 手机上展开的面板浮在对话区上面，所以要有不透明的底色 —— 和页面一样的那一个
-            assertTrue(aside.group(2).contains("background:var(--zq-bg);"), aside.group(1) + " 面板的底色不是页面底色：" + aside.group(2));
-        }
-        assertEquals(2, asides, "AI 助手应该有左右两个可收起的面板");
+        while (aside.find()) asides++;
+        assertEquals(2, asides, "AI 助手应该有左右两个可收起的面板（.zq-ai-side）");
+        Matcher side = Pattern.compile("\\n\\.zq-ai-side\\{([^}]*)\\}").matcher(css);
+        // 手机上展开的面板浮在对话区上面，所以要有不透明的底色 —— 和页面一样的那一个
+        assertTrue(side.find() && side.group(1).contains("background:var(--zq-bg);"), "两侧面板的底色不是页面底色");
         String section = elementAt(html, at, "section");
-        assertFalse(section.contains("background:var(--zq-card-soft);\">"), "工作区里又有一条浅灰的头部条");
+        assertFalse(section.contains("style="), "AI 助手的工作区里又写了内联样式");
+        Matcher sideHead = Pattern.compile("\\n\\.zq-ai-side-head\\{([^}]*)\\}").matcher(css);
+        assertTrue(sideHead.find() && !sideHead.group(1).contains("--zq-card-soft"), "工作区里又有一条浅灰的头部条");
         assertEquals(1, html.split(">AI 助手<", -1).length - 1, "「AI 助手」在页面上应该只写一次（页面标题）");
         String head = pageHeads().stream().filter(h -> h[0].equals("ai-assistant.html")).findFirst().orElseThrow()[1];
         // 同步状态（「已同步 50 条历史消息」）第四十四轮当调试信息去掉了，见 AiComposerTest
         assertTrue(head.contains("id=\"zq-current-notebook\""), "当前 Notebook 要在页面头部（原来那条头部条去掉了）");
 
         // 两侧面板的收起 / 展开按钮只是图标：白底描边的小方块在一种底色上很跳
-        String css = css();
         for (String sel : List.of(".zq-cbtn{", ".zq-rail .zq-xbtn{")) {
             Matcher m = Pattern.compile(Pattern.quote(sel) + "([^}]*)\\}").matcher(css);
             assertTrue(m.find(), "找不到 " + sel);

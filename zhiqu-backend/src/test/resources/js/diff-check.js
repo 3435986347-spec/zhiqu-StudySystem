@@ -77,8 +77,11 @@ const modPath = require('path').join(require('path').dirname(require('path').res
     judge('有一行删除', rows.filter(r => r[0] === '-').length === 1, JSON.stringify(rows));
     judge('有一行新增', rows.filter(r => r[0] === '+').length === 1, JSON.stringify(rows));
     const html = mod.diffHtml(rows);
-    judge('HTML 里出现了删除色', html.includes('--zq-bad'));
-    judge('HTML 里出现了新增色', html.includes('--zq-q2'));
+    // 第七十八轮起颜色在样式表（.zq-diff-row[data-op="del"] 是 --zq-bad、[data-op="add"] 是 --zq-q2，CodeDiffJudgmentTest 认那两条规则）；这里认行上的标记
+    const ops = (html.match(/class="zq-diff-row" data-op="(add|del|same)"/g) || []).map((t) => t.slice(t.lastIndexOf('=') + 2, -1));
+    judge('删除的那一行标成 del', ops.filter((o) => o === 'del').length === 1, JSON.stringify(ops));
+    judge('新增的那一行标成 add', ops.filter((o) => o === 'add').length === 1, JSON.stringify(ops));
+    judge('没改的两行标成 same', ops.filter((o) => o === 'same').length === 2, JSON.stringify(ops));
   }
 
   // 判据 5：大文件不做 O(n·m)，而且要明说没比对
@@ -100,7 +103,9 @@ const modPath = require('path').join(require('path').dirname(require('path').res
     const b = a.replace('L100', 'CHANGED');
     const html = mod.diffHtml(mod.diffLines(a, b));
     judge('出现了省略提示', html.includes('省略'), html.slice(0, 120));
-    judge('没有把 200 行全渲染', (html.match(/<div style="display:flex/g) || []).length < 30);
+    // 数的是画出来的行（第七十八轮之前数的是内联的 <div style="display:flex —— 挪进样式表之后那样数恒为 0，这条会白绿）
+    const shown = (html.match(/class="zq-diff-row"/g) || []).length;
+    judge('只画了改动附近的几行（不是 0、也不是 200）', shown > 0 && shown < 30, String(shown));
   }
 
   console.log(fail === 0 ? '\nALL-GREEN' : '\nRED: ' + fail + ' 条');

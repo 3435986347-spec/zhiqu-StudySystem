@@ -6,24 +6,24 @@
   <title>知识 Wiki - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261019-admin77" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261019-admin77">
-  <link rel="manifest" href="manifest.json?v=20261019-admin77">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261019-ai78" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261019-ai78">
+  <link rel="manifest" href="manifest.json?v=20261019-ai78">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261019-admin77">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261019-ai78">
 </head>
 <body>
   <div class="zq-app">
     <nav id="zq-side"></nav>
     <main class="zq-main">
       <!--
-        height（不是 min-height）—— 内层正好等于视口减去 .zq-main 的上下 padding（110px），
+        height（不是 min-height，样式表的 .zq-fill-page，和 AI 助手同一个）—— 内层正好等于视口减去 .zq-main 的上下 padding（110px），
         整页不产生外层滚动，正文在 #zq-doc 内部滚。目录收起后那个展开箭头在竖条顶端，
         外层一滚就够不到，所以这里必须是定高。
         但定高要有下限（第二十轮）：浏览器放大到 200%（1366×768 → 683×384）时定高之后正文区只剩 52px（标题和工具栏占满）。
         低于 520px 时宁可整页滚一点，正文得先看得见。手机上的高度见 zhiqu-ui.css 的 @media。
       -->
-      <div style="display:flex; flex-direction:column; gap:12px; height:calc(100vh - 110px); min-height:520px;">
+      <div class="zq-fill-page">
         <header class="zq-page-head">
           <div><h1 class="zq-h1">知识 Wiki</h1></div>
           <div class="zq-page-actions">
@@ -135,7 +135,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261019-admin77"></script>
-  <script src="assets/zhiqu-api.js?v=20261019-admin77"></script>
+  <script src="assets/zhiqu-ui.js?v=20261019-ai78"></script>
+  <script src="assets/zhiqu-api.js?v=20261019-ai78"></script>
 </body>
 </html>

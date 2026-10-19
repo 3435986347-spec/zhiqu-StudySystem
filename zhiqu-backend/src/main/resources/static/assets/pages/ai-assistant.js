@@ -63,7 +63,7 @@ async function bootAiAssistant() {
       title: '新建 Notebook',
       bodyHtml:
         '<div class="zq-field"><label class="zq-label">名称</label><input id="zq-nb-name" class="zq-input" placeholder="例如：项目资料" value="新资料本"></div>'
-        + '<div class="zq-field"><label class="zq-label">说明（可选）</label><textarea id="zq-nb-desc" class="zq-textarea" style="min-height:70px;" placeholder="这个资料本用来收集什么"></textarea></div>'
+        + '<div class="zq-field"><label class="zq-label">说明（可选）</label><textarea id="zq-nb-desc" class="zq-textarea" placeholder="这个资料本用来收集什么"></textarea></div>'
         + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-nb-cancel">取消</button><button type="button" class="zq-btn" id="zq-nb-ok">创建</button></div>',
       onMount: function (b, h) {
         var name = $('#zq-nb-name', b); try { name.select(); } catch (e) {}
@@ -344,27 +344,28 @@ async function loadAiModelSelect() {
 var AI_EXAMPLES = ['总结一下我上传的资料，列出要点', '根据这些资料，帮我制定下周的工作计划', '把刚才的结论整理到知识库里'];
 function aiEmptyState() {
   if (state.aiNoModel) {
-    return '<div data-ai-empty style="max-width:420px;margin:56px auto 0;text-align:center;color:var(--zq-text2);font-size:13px;line-height:1.75;">'
-      + '<div style="font-size:15px;font-weight:var(--zq-fw-medium);color:var(--zq-text);margin-bottom:6px;">还没有可用的 AI 模型</div>'
+    return '<div data-ai-empty class="zq-ai-empty">'
+      + '<div class="zq-ai-empty-title">还没有可用的 AI 模型</div>'
       + '到「设置 → AI 模型」里填一个（OpenAI 兼容、Anthropic、本地 Ollama 都行），回来就能用。'
-      + '<div style="margin-top:14px;"><a class="zq-btn" href="#settings/models" style="display:inline-flex;">去配置模型 →</a></div></div>';
+      + '<div class="zq-ai-empty-actions"><a class="zq-btn" href="#settings/models">去配置模型 →</a></div></div>';
   }
-  return '<div data-ai-empty style="max-width:460px;margin:48px auto 0;text-align:center;color:var(--zq-text2);font-size:13px;line-height:1.7;">'
-    + '<div style="font-size:15px;font-weight:var(--zq-fw-medium);color:var(--zq-text);margin-bottom:6px;">可以这样开始</div>'
+  return '<div data-ai-empty class="zq-ai-empty">'
+    + '<div class="zq-ai-empty-title">可以这样开始</div>'
     + '左边新建 Notebook、上传资料，它就会照着你的资料回答；计划和知识库的改动都先给你确认。'
-    + '<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">' + AI_EXAMPLES.map(function (t) {
-      return '<button type="button" class="zq-btn-ghost" data-ai-example="' + esc(t) + '" style="justify-content:flex-start;height:auto;min-height:34px;white-space:normal;text-align:left;">' + esc(t) + '</button>';
+    + '<div class="zq-ai-empty-actions is-examples">' + AI_EXAMPLES.map(function (t) {
+      return '<button type="button" class="zq-btn-ghost" data-ai-example="' + esc(t) + '">' + esc(t) + '</button>';
     }).join('') + '</div></div>';
 }
 function renderSteps(steps) {
   var host = $('#zq-steps'); if (!host) return;
   host.innerHTML = steps.length ? steps.map(function (s, i) {
     var status = (s.status || 'DONE').toUpperCase();
-    var color = status === 'DONE' || status === 'COMPLETED' ? 'var(--zq-ok)' : status === 'FAILED' ? 'var(--zq-bad)' : 'var(--zq-text3)';
+    var tone = status === 'DONE' || status === 'COMPLETED' ? 'ok' : status === 'FAILED' ? 'bad' : '';
     var last = i === steps.length - 1;
     var stepName = s.publicSummary || s.title || s.name || s.agentType || ('步骤 ' + (i + 1));
     var metaLine = (s.agentType && s.publicSummary ? s.agentType + ' · ' : '') + status;
-    return '<div style="display:flex;gap:9px;padding:5px 0;"><div style="display:flex;flex-direction:column;align-items:center;flex:none;width:10px;"><span style="width:8px;height:8px;border-radius:50%;background:' + color + ';margin-top:4px;"></span>' + (last ? '' : '<span style="flex:1;width:1px;background:var(--zq-border-soft);margin-top:2px;"></span>') + '</div><div style="min-width:0;padding-bottom:6px;"><div style="font-size:11.5px;font-weight:var(--zq-fw-medium);line-height:1.45;">' + esc(stepName) + '</div><div class="zq-mono" style="font-size:10px;color:' + color + ';margin-top:1px;">' + esc(metaLine) + '</div>' + (s.notes || []).map(stepNoteHtml).join('') + '</div></div>';
+    return '<div class="zq-step" data-state="' + tone + '"><div class="zq-step-rail"><span class="zq-step-dot"></span>' + (last ? '' : '<span class="zq-step-line"></span>') + '</div>'
+      + '<div class="zq-step-body"><div class="zq-step-name">' + esc(stepName) + '</div><div class="zq-mono zq-step-meta">' + esc(metaLine) + '</div>' + (s.notes || []).map(stepNoteHtml).join('') + '</div></div>';
   }).join('') : empty('暂无执行记录');
 }
 
@@ -704,7 +705,7 @@ function diffLines(oldText, newText) {
 /** 只显示改动附近的行，中间大段未改动的折起来 —— 否则一个长文件里几行改动根本找不到。 */
 function diffHtml(rows) {
   if (!rows) {
-    return '<div style="padding:8px;font-size:11.5px;color:var(--zq-text3);">'
+    return '<div class="zq-diff-note">'
       + '文件太大，没有逐行比对（那会把浏览器卡住）。请确认后自行用 git 查看改动。</div>';
   }
   var CONTEXT = 3;
@@ -714,28 +715,21 @@ function diffHtml(rows) {
     for (var k = Math.max(0, i - CONTEXT); k <= Math.min(rows.length - 1, i + CONTEXT); k++) keep[k] = true;
   });
   var html = '', skipped = 0;
-  var color = { '+': 'var(--zq-q2)', '-': 'var(--zq-bad)', ' ': 'var(--zq-text3)' };
-  var bg = { '+': 'color-mix(in srgb, var(--zq-q2) 12%, transparent)',
-             '-': 'color-mix(in srgb, var(--zq-bad) 12%, transparent)', ' ': 'transparent' };
+  // 颜色在样式表（.zq-diff-row[data-op]：新增 --zq-q2、删除 --zq-bad，底色是同色 12%）
+  var op = { '+': 'add', '-': 'del', ' ': 'same' };
   rows.forEach(function (r, i) {
     if (!keep[i]) { skipped++; return; }
     if (skipped) {
-      html += '<div style="padding:2px 8px;font-size:10.5px;color:var(--zq-text3);">⋯ 省略 '
-        + skipped + ' 行未改动 ⋯</div>';
+      html += '<div class="zq-diff-gap">⋯ 省略 ' + skipped + ' 行未改动 ⋯</div>';
       skipped = 0;
     }
-    html += '<div style="display:flex;background:' + bg[r[0]] + ';">'
-      + '<span style="flex:none;width:16px;text-align:center;color:' + color[r[0]] + ';">' + r[0] + '</span>'
-      + '<span style="flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;color:'
-      + (r[0] === ' ' ? 'var(--zq-text2)' : color[r[0]]) + ';">' + esc(r[1]) + '</span></div>';
+    html += '<div class="zq-diff-row" data-op="' + op[r[0]] + '"><span class="zq-diff-mark">' + r[0] + '</span>'
+      + '<span class="zq-diff-text">' + esc(r[1]) + '</span></div>';
   });
   if (skipped) {
-    html += '<div style="padding:2px 8px;font-size:10.5px;color:var(--zq-text3);">⋯ 省略 '
-      + skipped + ' 行未改动 ⋯</div>';
+    html += '<div class="zq-diff-gap">⋯ 省略 ' + skipped + ' 行未改动 ⋯</div>';
   }
-  return '<div class="zq-mono" style="font-size:11.5px;line-height:1.55;max-height:46vh;overflow:auto;'
-    + 'border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);">'
-    + (html || '<div style="padding:8px;color:var(--zq-text3);">没有差异</div>') + '</div>';
+  return '<div class="zq-mono zq-diff">' + (html || '<div class="zq-diff-note">没有差异</div>') + '</div>';
 }
 
 function openCodeConfirmModal(artifact) {
@@ -762,14 +756,14 @@ function openCodeConfirmModal(artifact) {
       files.forEach(function (f, i) {
         var current = currents[i];
         var unreadable = current === null;
-        html += '<div class="zq-plan-group" style="margin-bottom:10px;">'
-          + '<label class="zq-plan-row" style="align-items:center;">'
+        html += '<div class="zq-plan-group is-code">'
+          + '<label class="zq-plan-row">'
           + '<input type="checkbox" data-pick="' + i + '"' + (picked[i] ? ' checked' : '') + '>'
           + '<div class="zq-plan-row-body"><div class="zq-plan-name zq-mono">' + esc(f.path)
-          + (f.creating ? '<span style="margin-left:6px;font-size:10.5px;color:var(--zq-q2);">新建</span>' : '')
-          + (f.newDirectories.length ? '<span style="margin-left:6px;font-size:10.5px;color:var(--zq-q2);">连同新建目录 '
+          + (f.creating ? '<span class="zq-plan-tag">新建</span>' : '')
+          + (f.newDirectories.length ? '<span class="zq-plan-tag">连同新建目录 '
               + esc(f.newDirectories.join('、')) + '</span>' : '')
-          + (unreadable ? '<span style="margin-left:6px;font-size:10.5px;color:var(--zq-bad);">读不到当前内容</span>' : '')
+          + (unreadable ? '<span class="zq-plan-tag" data-state="bad">读不到当前内容</span>' : '')
           + '</div></div></label>'
           + (unreadable ? '' : diffHtml(diffLines(current, f.content)))
           + '</div>';
@@ -1139,20 +1133,20 @@ function messageBodyHtml(m, i) {
     ? '<details class="zq-ai-reasoning" data-reason-key="' + esc(reasonKey) + '"' + (state.reasoningExpanded[reasonKey] ? ' open' : '') + '><summary>思考摘要</summary><span>' + esc(reasoningText) + '</span></details>'
     : '';
   // 流式中的内容换行完好且可能只收到半截,跳过压平回填,防止启发式误触
-  var body = m.content ? renderMarkdown((me || m.status === 'STREAMING') ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span style="color:var(--zq-text3);" data-wait-since="' + waitSince(m) + '">' + waitText(waitSince(m)) + '</span>' : '');
+  var body = m.content ? renderMarkdown((me || m.status === 'STREAMING') ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span class="zq-msg-wait" data-wait-since="' + waitSince(m) + '">' + waitText(waitSince(m)) + '</span>' : '');
   // 刷新之后那条消息会带着「已经生成的一半」回来（后端阶段性落库）。
   // 光有半截正文看不出它是写完了还是还在写 —— 补一个尾巴说清楚，
   // 否则用户会以为回答就到这里为止。
   if (!me && m.content && String(m.status || '').toUpperCase() === 'STREAMING') {
-    body += '<div style="margin-top:6px;font-size:11.5px;color:var(--zq-text3);">' + esc(m._processing || '仍在生成…') + '</div>';
+    body += '<div class="zq-msg-note">' + esc(m._processing || '仍在生成…') + '</div>';
   }
   // 失败了要说出来，哪怕已经出来了半截（原来有半截正文就把错误原因丢掉，看着像是模型说完了）；
   // 能用但不完整（输出上限、内容审核、太长）也说。两句都存在库里，刷新之后还在。
   if (!me && m.errorMessage) {
-    body += '<div data-msg-error style="margin-top:8px;font-size:12px;color:var(--zq-bad);">' + esc(m.errorMessage) + '</div>';
+    body += '<div data-msg-error class="zq-msg-note" data-state="bad">' + esc(m.errorMessage) + '</div>';
   }
   if (!me && m.notice) {
-    body += '<div data-msg-notice style="margin-top:8px;font-size:12px;color:var(--zq-warn);">' + esc(m.notice) + '</div>';
+    body += '<div data-msg-notice class="zq-msg-note" data-state="warn">' + esc(m.notice) + '</div>';
   }
   return reason + body;
 }
@@ -1283,10 +1277,8 @@ function renderAiMessages(opts) {
     state.reasoningExpanded[details.dataset.reasonKey] = details.open;
   });
   var moreRow = state.chatHasMore
-    ? '<div style="display:flex;justify-content:center;padding:2px 0 6px;">'
-      + '<button type="button" data-load-older="1"' + (state.chatLoadingMore ? ' disabled' : '')
-      + ' style="display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 12px;border:1px solid var(--zq-border);border-radius:999px;'
-      + 'background:var(--zq-card-soft);color:var(--zq-text2);font-size:11.5px;cursor:pointer;">'
+    ? '<div class="zq-chat-more">'
+      + '<button type="button" data-load-older="1"' + (state.chatLoadingMore ? ' disabled' : '') + '>'
       + (state.chatLoadingMore ? '加载中…' : icon('arrow-up') + '加载更早的消息') + '</button></div>'
     : '';
   // 用户的话是右边一个浅灰的气泡，AI 的回答不套气泡、不要头像，直接排在页面上（第四十四轮，像 Claude）；样子都在样式表的 .zq-msg
@@ -1420,7 +1412,7 @@ function renderNotebooks() {
   renderCurrentNotebookLabel();
   host.innerHTML = (state.notebooks || []).map(function (nb) {
     var active = nb.id === state.notebookId;
-    return '<div data-notebook="' + nb.id + '" style="padding:9px 11px;border:1px solid ' + (active ? 'var(--zq-tint-strong)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rs);background:' + (active ? 'var(--zq-tint)' : 'var(--zq-card)') + ';cursor:pointer;"><div data-nb-name="' + nb.id + '" title="' + esc(nb.title || 'Notebook') + (active ? ' · 点击重命名' : '') + '" style="font-size:12.5px;font-weight:var(--zq-fw-medium);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(nb.title || 'Notebook') + '</div><div style="font-size:11px;color:var(--zq-text3);margin-top:2px;">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
+    return '<div data-notebook="' + nb.id + '" class="zq-nb"' + (active ? ' aria-current="true"' : '') + '><div data-nb-name="' + nb.id + '" class="zq-nb-name" title="' + esc(nb.title || 'Notebook') + (active ? ' · 点击重命名' : '') + '">' + esc(nb.title || 'Notebook') + '</div><div class="zq-nb-meta">' + esc(nb.sourceCount != null ? nb.sourceCount + ' 份资料' : '资料工作区') + '</div></div>';
   }).join('') || '<div class="zq-ai-empty-notebook"><strong>暂无 Notebook</strong><span>普通聊天仍可使用；上传资料前请先新建。</span></div>';
   $all('[data-notebook]', host).forEach(function (d) {
     var id = Number(d.dataset.notebook);
@@ -1569,8 +1561,8 @@ async function loadAiSources() {
       + '<span class="zq-src-dl">' + icon('download') + '</span>'
       + '<div class="zq-src-glass">'
       + '<div class="zq-src-title">' + esc(title) + '</div>'
-      + '<div class="zq-src-meta"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (status === 'READY' ? 'var(--zq-ok)' : status === 'ERROR' ? 'var(--zq-bad)' : 'var(--zq-text3)') + ';"></span><span>' + esc(srcStatusLabel(status, s.sourceType)) + '</span></div>'
-      + (indexText ? '<div class="zq-src-meta" style="margin-top:4px;"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:' + (String(s.indexStatus || '').toUpperCase() === 'INDEXED' ? 'var(--zq-primary)' : String(s.indexStatus || '').toUpperCase() === 'ERROR' ? 'var(--zq-warn)' : 'var(--zq-text3)') + ';"></span><span>' + esc(indexText) + '</span></div>' : '')
+      + '<div class="zq-src-meta"><span class="zq-src-dot" data-state="' + (status === 'READY' ? 'ok' : status === 'ERROR' ? 'bad' : '') + '"></span><span>' + esc(srcStatusLabel(status, s.sourceType)) + '</span></div>'
+      + (indexText ? '<div class="zq-src-meta"><span class="zq-src-dot" data-state="' + (String(s.indexStatus || '').toUpperCase() === 'INDEXED' ? 'indexed' : String(s.indexStatus || '').toUpperCase() === 'ERROR' ? 'warn' : '') + '"></span><span>' + esc(indexText) + '</span></div>' : '')
       + '</div></div>';
   }).join('') + '</div>' : empty('暂无资料');
   $all('[data-source]', host).forEach(function (d) {
@@ -1709,10 +1701,9 @@ function stepNoteHtml(n) {
   if (n.phase === 'result') {
     var lines = n.message.split('\n');
     var shown = lines.slice(0, 6).join('\n') + (lines.length > 6 ? '\n…' : '');
-    return '<pre class="zq-mono" style="margin:2px 0 3px 12px;padding:4px 6px;font-size:10px;line-height:1.4;white-space:pre-wrap;word-break:break-all;background:var(--zq-card-soft);border-radius:4px;color:var(--zq-text2);">' + esc(shown) + '</pre>';
+    return '<pre class="zq-mono zq-step-out">' + esc(shown) + '</pre>';
   }
-  return '<div class="zq-mono" style="font-size:10.5px;color:' + (n.phase === 'error' ? 'var(--zq-bad)' : n.phase === 'budget' ? 'var(--zq-warn)' : 'var(--zq-text2)')
-    + ';margin-top:2px;word-break:break-all;">⎿ ' + esc(n.message) + '</div>';
+  return '<div class="zq-mono zq-step-note" data-state="' + (n.phase === 'error' ? 'bad' : n.phase === 'budget' ? 'warn' : '') + '">⎿ ' + esc(n.message) + '</div>';
 }
 /** 单行时的高度，与同排按钮对齐；也是清空后要回到的高度。 */
 var DRAFT_BASE_HEIGHT = 44;   // 两行（输入框行高 22px，第四十四轮起没有上下内边距和边框 —— 框是外面那一层 .zq-composer）
@@ -1992,38 +1983,35 @@ function openWorkspaceSettings(settings) {
     width: 520,
     bodyHtml:
       (loopback ? '' :
-        '<div style="margin-bottom:12px;padding:9px 11px;border-radius:var(--zq-rs);background:var(--zq-tint);' +
-        'font-size:12px;color:var(--zq-text2);line-height:1.6;">当前不是本机回环地址（多半是服务器 / 网页版）。' +
+        '<div class="zq-wss-warn">当前不是本机回环地址（多半是服务器 / 网页版）。' +
         '出于安全，工作区只能在<b>本机桌面应用</b>里开启，这里改了也不会生效。</div>') +
-      '<div style="font-size:12px;font-weight:var(--zq-fw-medium);margin-bottom:6px;">工作文件夹</div>' +
-      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">' +
-        '<input id="zq-wss-root" class="zq-input" readonly placeholder="（未选择）" style="flex:1;height:32px;font-size:12px;" />' +
-        '<button id="zq-wss-browse" class="zq-btn-ghost" style="height:32px;font-size:12px;white-space:nowrap;">浏览…</button>' +
+      '<div class="zq-wss-label">工作文件夹</div>' +
+      '<div class="zq-wss-row">' +
+        '<input id="zq-wss-root" class="zq-input" readonly placeholder="（未选择）" aria-label="工作文件夹" />' +
+        '<button id="zq-wss-browse" class="zq-btn-ghost">浏览…</button>' +
       '</div>' +
-      '<div style="font-size:11px;color:var(--zq-text3);margin-bottom:16px;">AI 只能读/改/运行这一个文件夹里的东西，范围越小越安全。</div>' +
-      '<div style="font-size:12px;font-weight:var(--zq-fw-medium);margin-bottom:6px;">访问档位</div>' +
-      '<div id="zq-wss-modes" style="display:flex;gap:6px;margin-bottom:8px;">' +
+      '<div class="zq-wss-hint">AI 只能读/改/运行这一个文件夹里的东西，范围越小越安全。</div>' +
+      '<div class="zq-wss-label" id="zq-wss-modes-label">访问档位</div>' +
+      '<div id="zq-wss-modes" class="zq-wss-modes" role="group" aria-labelledby="zq-wss-modes-label">' +
         modes.map(function (m) {
-          return '<button type="button" data-mode="' + m + '" class="zq-btn-ghost" style="flex:1;height:32px;font-size:12px;">' +
+          return '<button type="button" data-mode="' + m + '" class="zq-btn-ghost" aria-pressed="false">' +
             (WS_MODE_LABEL[m] || m) + '</button>';
         }).join('') +
       '</div>' +
-      '<div id="zq-wss-desc" style="font-size:11.5px;color:var(--zq-text2);line-height:1.6;min-height:34px;"></div>' +
-      '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">' +
-        '<button id="zq-wss-cancel" class="zq-btn-ghost" style="height:34px;font-size:12.5px;">取消</button>' +
-        '<button id="zq-wss-save" class="zq-btn" style="height:34px;font-size:12.5px;">保存并生效</button>' +
+      '<div id="zq-wss-desc" class="zq-wss-desc"></div>' +
+      '<div class="zq-wss-actions">' +
+        '<button id="zq-wss-cancel" class="zq-btn-ghost">取消</button>' +
+        '<button id="zq-wss-save" class="zq-btn">保存并生效</button>' +
       '</div>',
     onMount: function (body) {
       var rootInput = $('#zq-wss-root', body);
       rootInput.value = chosenRoot;
       var descEl = $('#zq-wss-desc', body);
 
+      // 按下的样子在样式表（.zq-wss-modes [aria-pressed="true"]），这里只管 aria-pressed
       function paintModes() {
         $all('[data-mode]', body).forEach(function (btn) {
-          var on = btn.getAttribute('data-mode') === chosen;
-          btn.style.background = on ? 'var(--zq-primary)' : '';
-          btn.style.color = on ? 'var(--zq-on-primary)' : '';
-          btn.style.borderColor = on ? 'var(--zq-primary)' : '';
+          btn.setAttribute('aria-pressed', String(btn.getAttribute('data-mode') === chosen));
         });
         descEl.textContent = desc[chosen] || '';
       }
@@ -2062,12 +2050,12 @@ function openWorkspaceFolderPicker(startPath, onPick) {
     title: '选择工作文件夹',
     width: 480,
     bodyHtml:
-      '<div id="zq-fp-cur" class="zq-mono" style="font-size:11.5px;color:var(--zq-text2);word-break:break-all;margin-bottom:8px;">读取中…</div>' +
-      '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
-        '<button id="zq-fp-up" class="zq-btn-ghost" style="height:28px;font-size:12px;">' + icon('arrow-up') + '上一层</button>' +
-        '<button id="zq-fp-pick" class="zq-btn" style="height:28px;font-size:12px;margin-left:auto;">选定当前文件夹</button>' +
+      '<div id="zq-fp-cur" class="zq-mono zq-fp-cur">读取中…</div>' +
+      '<div class="zq-fp-bar">' +
+        '<button id="zq-fp-up" class="zq-btn-ghost">' + icon('arrow-up') + '上一层</button>' +
+        '<button id="zq-fp-pick" class="zq-btn">选定当前文件夹</button>' +
       '</div>' +
-      '<div id="zq-fp-list" style="max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:1px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);padding:6px;"></div>',
+      '<div id="zq-fp-list" class="zq-fp-list"></div>',
     onMount: function (body) {
       async function go(path) {
         var res;
@@ -2076,23 +2064,22 @@ function openWorkspaceFolderPicker(startPath, onPick) {
         } catch (e) { toast('读不了这个目录', 'error'); return; }
         cur.path = res.path; cur.parent = res.parent;
         $('#zq-fp-cur', body).textContent = res.path;
-        $('#zq-fp-up', body).disabled = !res.parent;
-        $('#zq-fp-up', body).style.opacity = res.parent ? '1' : '.4';
+        $('#zq-fp-up', body).disabled = !res.parent;   // 灰掉的样子在样式表（.zq-fp-bar .zq-btn-ghost:disabled）
         var list = $('#zq-fp-list', body);
         var dirs = res.dirs || [];
-        list.innerHTML = dirs.length ? '' : '<div style="padding:10px;font-size:12px;color:var(--zq-text3);">（没有子文件夹）</div>';
+        list.innerHTML = dirs.length ? '' : '<div class="zq-fp-note">（没有子文件夹）</div>';
+        // 一项是一个按钮（原来是没有 href 的 <a>，键盘 Tab 不到）；悬停的底色在样式表
         dirs.forEach(function (d) {
-          var a = document.createElement('a');
-          a.style.cssText = 'display:flex;align-items:center;gap:7px;padding:7px 9px;border-radius:var(--zq-rs);cursor:pointer;font-size:12.5px;color:var(--zq-text2);';
-          a.innerHTML = '<span>📁</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.name) + '</span>';
-          a.onmouseenter = function () { a.style.background = 'var(--zq-card-soft)'; };
-          a.onmouseleave = function () { a.style.background = ''; };
+          var a = document.createElement('button');
+          a.type = 'button';
+          a.className = 'zq-fp-item';
+          a.innerHTML = icon('folder') + '<span class="zq-fp-name">' + esc(d.name) + '</span>';
           a.onclick = function () { go(d.path); };
           list.appendChild(a);
         });
         if (res.truncated) {
           var more = document.createElement('div');
-          more.style.cssText = 'padding:8px 9px;font-size:11px;color:var(--zq-text3);';
+          more.className = 'zq-fp-note';
           more.textContent = '子文件夹太多，只显示了前 500 个';
           list.appendChild(more);
         }
@@ -2171,7 +2158,7 @@ async function loadWorkspace() {
  * 工作区路径那一行：明确画成<b>文件夹</b>。
  *
  * <p>原来只印一行 {@code /Users/.../test}，没有图标、结尾没有斜杠，下面紧跟「这个目录是空的」——
- * 用户看成了「工作区是一个具体的文件」。现在：📁 + 文件夹名 + 「/」，完整路径放在第二行、字小一号。
+ * 用户看成了「工作区是一个具体的文件」。现在：文件夹图标 + 文件夹名 + 「/」，完整路径放在第二行、字小一号。
  */
 function paintWorkspacePath() {
   var el = $('#zq-ws-path'); if (!el) return;
@@ -2180,9 +2167,8 @@ function paintWorkspacePath() {
   var sep = root.indexOf('\\') >= 0 && root.indexOf('/') < 0 ? '\\' : '/';
   var rootName = root ? root.slice(Math.max(root.lastIndexOf('/'), root.lastIndexOf('\\')) + 1) : '工作区';
   var shown = rootName + '/' + (wsState.path ? wsState.path.replace(/\/+$/, '') + '/' : '');
-  el.innerHTML = '<div style="display:flex;align-items:center;gap:5px;color:var(--zq-text2);font-size:12px;font-weight:var(--zq-fw-medium);">'
-    + '<span style="flex:none;">📁</span><span style="min-width:0;word-break:break-all;">' + esc(shown) + '</span></div>'
-    + (root ? '<div style="margin-top:2px;font-size:10.5px;color:var(--zq-text3);word-break:break-all;" title="工作文件夹的完整路径">'
+  el.innerHTML = '<div class="zq-ws-here">' + icon('folder') + '<span>' + esc(shown) + '</span></div>'
+    + (root ? '<div class="zq-ws-full" title="工作文件夹的完整路径">'
       + esc(root + sep + (wsState.path ? wsState.path.split('/').join(sep) + sep : '')) + '</div>' : '');
 }
 
@@ -2196,7 +2182,7 @@ async function paintWorkspace(path) {
     entries = (res && res.entries) || [];
     listTruncated = !!(res && res.truncated);
   } catch (e) {
-    tree.innerHTML = '<div style="font-size:11.5px;color:var(--zq-bad);">' + esc(e.message || '读取失败') + '</div>';
+    tree.innerHTML = '<div class="zq-ws-note" data-state="bad">' + esc(e.message || '读取失败') + '</div>';
     return;
   }
   wsState.path = path || '';
@@ -2209,19 +2195,17 @@ async function paintWorkspace(path) {
     // 不可读的文件也列出来但置灰 —— 让用户知道它在那儿、而且知道系统刻意没读它，
     // 比干脆不显示诚实
     var dim = !e.directory && !e.readable;
-    return '<button type="button" data-ws-entry="' + esc(e.path) + '" data-ws-dir="' + (e.directory ? '1' : '0')
-      + '" data-ws-readable="' + (e.readable ? '1' : '0')
-      + '" style="display:flex;align-items:center;gap:6px;width:100%;padding:4px 6px;border:none;border-radius:var(--zq-rs);'
-      + 'background:transparent;color:' + (dim ? 'var(--zq-text3)' : 'var(--zq-text2)') + ';font-size:11.5px;'
-      + 'text-align:left;cursor:' + (dim ? 'not-allowed' : 'pointer') + ';">'
-      + '<span style="flex:none;">' + (e.directory ? '📁' : '📄') + '</span>'
-      + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(name) + '</span>'
-      + (dim ? '<span style="flex:none;font-size:10px;">不可读</span>' : '')
+    // 置灰（.zq-ws-entry.is-dim）、悬停的底色都在样式表
+    return '<button type="button" class="zq-ws-entry' + (dim ? ' is-dim' : '') + '" data-ws-entry="' + esc(e.path) + '" data-ws-dir="' + (e.directory ? '1' : '0')
+      + '" data-ws-readable="' + (e.readable ? '1' : '0') + '">'
+      + icon(e.directory ? 'folder' : 'file')
+      + '<span class="zq-ws-name">' + esc(name) + '</span>'
+      + (dim ? '<span class="zq-ws-tag">不可读</span>' : '')
       + '</button>';
-  }).join('') || '<div style="font-size:11.5px;color:var(--zq-text3);padding:4px 6px;">这个文件夹还是空的'
+  }).join('') || '<div class="zq-ws-note">这个文件夹还是空的'
     + (wsState.path ? '' : ' —— 按下输入框旁的「代码」，让 AI 在这里新建文件') + '</div>';
   if (listTruncated) {
-    tree.innerHTML += '<div style="font-size:10.5px;color:var(--zq-warn);padding:6px;">'
+    tree.innerHTML += '<div class="zq-ws-note" data-state="warn">'
       + '条目过多，只列出了前 ' + (entries || []).length + ' 条 —— 这不是全部</div>';
   }
 
@@ -2243,7 +2227,7 @@ async function paintWorkspace(path) {
  */
 function searchWorkspace(query) {
   var tree = $('#zq-ws-tree'); if (!tree) return;
-  tree.innerHTML = '<div style="font-size:11.5px;color:var(--zq-text3);padding:4px 6px;">搜索中…</div>';
+  tree.innerHTML = '<div class="zq-ws-note">搜索中…</div>';
   var back = $('#zq-ws-back');
   if (back) { back.hidden = false; }
   $('#zq-ws-up').hidden = true;
@@ -2255,23 +2239,17 @@ function searchWorkspace(query) {
       + (wsState.path ? '&path=' + encodeURIComponent(wsState.path) : ''));
     var hits = (res && res.hits) || [];
     if (!hits.length) {
-      tree.innerHTML = '<div style="font-size:11.5px;color:var(--zq-text3);padding:4px 6px;">'
+      tree.innerHTML = '<div class="zq-ws-note">'
         + '没找到。扫了 ' + ((res && res.filesScanned) || 0) + ' 个文件。</div>';
       return;
     }
     tree.innerHTML = hits.map(function (h) {
-      return '<button type="button" data-ws-hit="' + esc(h.path) + '"'
-        + ' style="display:block;width:100%;padding:5px 6px;border:none;border-radius:var(--zq-rs);'
-        + 'background:transparent;text-align:left;cursor:pointer;">'
-        + '<span class="zq-mono" style="display:block;font-size:10.5px;color:var(--zq-text3);'
-        + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
-        + esc(h.path) + ':' + esc(String(h.line)) + '</span>'
-        + '<span class="zq-mono" style="display:block;font-size:11px;color:var(--zq-text2);'
-        + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(h.text) + '</span>'
+      return '<button type="button" class="zq-ws-hit" data-ws-hit="' + esc(h.path) + '">'
+        + '<span class="zq-mono zq-ws-hit-where">' + esc(h.path) + ':' + esc(String(h.line)) + '</span>'
+        + '<span class="zq-mono zq-ws-hit-text">' + esc(h.text) + '</span>'
         + '</button>';
     }).join('')
-      + '<div style="font-size:10.5px;color:' + (res.truncated ? 'var(--zq-warn)' : 'var(--zq-text3)')
-      + ';padding:6px;">'
+      + '<div class="zq-ws-note" data-state="' + (res.truncated ? 'warn' : '') + '">'
       + (res.truncated
         ? '还有更多 —— 只显示了前 ' + hits.length + ' 条，换个更具体的关键词'
         : '共 ' + hits.length + ' 条，扫了 ' + (res.filesScanned || 0) + ' 个文件')
@@ -2295,9 +2273,7 @@ function openWorkspaceFile(path) {
     openModal({
       title: path,
       width: 860,
-      bodyHtml: '<pre style="margin:0;max-height:62vh;overflow:auto;padding:12px 14px;border:1px solid var(--zq-border-soft);'
-        + 'border-radius:var(--zq-rs);background:var(--zq-card-soft);"><code class="zq-mono" style="font-size:12.5px;'
-        + 'line-height:1.6;white-space:pre;">' + highlightCode(file.content || '', langOfPath(path)) + '</code></pre>'
+      bodyHtml: '<pre class="zq-ws-file"><code class="zq-mono">' + highlightCode(file.content || '', langOfPath(path)) + '</code></pre>'
     });
   });
 }
