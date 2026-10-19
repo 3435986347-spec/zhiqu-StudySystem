@@ -75,9 +75,15 @@ public class InMemoryTrafficMonitorService implements TrafficMonitorService {
         Map<Integer, Long> statusMap = new LinkedHashMap<>();
         copy.forEach(e -> statusMap.merge(statusBucket(e.status), 1L, Long::sum));
 
+        // 近 15 分钟一分钟一个桶，没有请求的分钟也在（记 0），按时间先后：原来只给有请求的那几分钟，
+        // 后台的柱状图只画出两三根挨在一起的柱子，时间轴是断的（第七十七轮）。最后一个桶是现在这一分钟。
         Map<String, Long> minuteMap = new LinkedHashMap<>();
+        long firstMinute = now / 60_000 * 60_000 - 14 * 60_000;
+        for (long minute = firstMinute; minute <= now; minute += 60_000) {
+            minuteMap.put(formatMinute(minute), 0L);
+        }
         copy.stream()
-                .filter(e -> e.timestamp >= fifteenMinutesAgo)
+                .filter(e -> e.timestamp >= firstMinute)
                 .forEach(e -> minuteMap.merge(formatMinute(e.timestamp), 1L, Long::sum));
 
         Map<String, Long> pathMap = new HashMap<>();

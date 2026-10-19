@@ -1102,7 +1102,118 @@ html.zq-signed-out .zq-mini-out{display:block;}
    这一段必须留在文件最后：@media 不加优先级，同优先级的规则谁在后谁赢。它原来夹在文件中间，
    后面的 .zq-main{margin-left:188px; padding:30px 34px 80px} 压过了它 —— 手机上一展开侧栏，正文就被推到 188px、换回桌面 padding
    （收起时 .zq-main.is-side-collapsed 优先级更高，所以平时看不出来）。MobileLayoutTest 钉着「最后」。 */
+/* ── 后台四页（第七十七轮，界面打磨第 8 步的最后一段：原来 admin.js 40 处、四页 HTML 21 处内联样式；数字、状态的颜色看数据（data-state）） ── */
+.zq-admin{display:flex;flex-direction:column;gap:var(--zq-sp-4);}
+.zq-admin-metrics{grid-template-columns:repeat(6,minmax(0,1fr));}
+.zq-admin-stat{padding:14px 16px;}
+.zq-admin-stat .zq-stat-num{margin-top:7px;font-size:var(--zq-fs-xl);line-height:1;}
+.zq-admin-stat[data-state="attention"] .zq-stat-num{color:var(--zq-primary);}
+.zq-admin-stat[data-state="bad"] .zq-stat-num{color:var(--zq-bad);}
+.zq-admin-stat-note{display:block;margin-top:5px;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-admin-cols{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr);gap:var(--zq-sp-4);align-items:start;}
+.zq-admin-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--zq-sp-3);margin-bottom:var(--zq-sp-4);}
+.zq-admin-card-head>span{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-admin-card-head p{margin:5px 0 0;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-admin-card-title{margin-bottom:var(--zq-sp-3);}
+.zq-admin-health{display:flex;flex-direction:column;max-height:340px;overflow-y:auto;}
+.zq-admin-issue{padding:9px 0;border-bottom:1px solid var(--zq-border-soft);}
+.zq-admin-issue-head{display:flex;justify-content:space-between;gap:10px;}
+.zq-admin-issue-head>strong{font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);}
+.zq-admin-issue-head>span{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-admin-issue>p{margin:4px 0 0;font-size:var(--zq-fs-xs);color:var(--zq-text2);line-height:1.45;}
+.zq-admin-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;}
+.zq-admin-tile{min-width:0;padding:10px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);}
+.zq-admin-tile>span{display:block;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-admin-tile>strong{display:block;margin-top:5px;font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);overflow-wrap:anywhere;}
+.zq-admin-tile>strong[data-state="ok"]{color:var(--zq-ok);}
+.zq-admin-tile>strong[data-state="warn"]{color:var(--zq-warn);}
+.zq-admin-tile>strong[data-state="bad"]{color:var(--zq-bad);}
+.zq-admin-tile>strong[data-state="primary"]{color:var(--zq-primary);}
+.zq-admin-facts{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:var(--zq-fs-xs);color:var(--zq-text2);}
+.zq-admin-list{margin-top:14px;border-top:1px solid var(--zq-border-soft);}
+.zq-admin-line{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--zq-border-soft);font-size:var(--zq-fs-xs);}
+.zq-admin-line-id{width:32px;color:var(--zq-text3);}
+.zq-admin-line>strong{min-width:76px;font-weight:var(--zq-fw-medium);}
+.zq-admin-line-text{flex:1;min-width:0;overflow-wrap:anywhere;color:var(--zq-text2);}
+.zq-admin-dead{margin-top:12px;}
+.zq-admin-dead>summary{cursor:pointer;font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-medium);color:var(--zq-bad);}
+.zq-admin-btns{display:flex;gap:var(--zq-sp-2);margin-top:14px;}
+.zq-admin-note{margin:0 0 10px;font-size:var(--zq-fs-sm);color:var(--zq-text2);}
+.zq-admin-secret{margin:0 0 16px;padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:var(--zq-fs-md);font-weight:var(--zq-fw-medium);user-select:all;}
+.zq-admin-count{font-size:var(--zq-fs-sm);color:var(--zq-text3);}
+/* 次要按钮的语气：通过 / 重新发布、下架、删除 / 驳回 / 丢弃 */
+.zq-btn-ghost.is-ok{color:var(--zq-ok);}
+.zq-btn-ghost.is-warn{color:var(--zq-warn);}
+.zq-btn-ghost.is-danger{color:var(--zq-bad);}
+/* 账号管理：列宽只写这一处（表头和行同一个类）；操作那一列按内容宽 —— 原来 128px 放不下三个按钮，往左溢出盖住了日期 */
+.zq-acct-row{display:grid;grid-template-columns:minmax(120px,1.1fr) minmax(150px,1.3fr) 76px 62px 76px 92px 176px;gap:8px;align-items:center;padding:10px 16px;}
+.zq-acct-row:not(.zq-thead){border-bottom:1px solid var(--zq-border-soft);}
+.zq-acct-row.is-off{opacity:.6;}
+.zq-acct-who{display:flex;align-items:center;gap:9px;min-width:0;}
+.zq-acct-avatar{width:28px;height:28px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--zq-tint);color:var(--zq-primary);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-medium);}
+.zq-acct-name{font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-acct-mail{min-width:0;font-size:var(--zq-fs-xs);color:var(--zq-text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-acct-row .zq-badge[data-state="admin"]{background:var(--zq-tint);color:var(--zq-primary);}
+.zq-acct-row .zq-badge[data-state="user"]{background:var(--zq-card-soft);color:var(--zq-text2);}
+.zq-acct-status{font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-medium);}
+.zq-acct-status[data-state="on"]{color:var(--zq-ok);}
+.zq-acct-status[data-state="off"]{color:var(--zq-bad);}
+.zq-acct-meta{font-size:var(--zq-fs-xs);color:var(--zq-text2);}
+.zq-acct-acts{display:flex;justify-content:flex-end;gap:6px;}
+.zq-acct-foot{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 16px;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+/* 全局有一条 input:not([type=checkbox]):not([type=radio]){width:100%}（权重 0,2,1），这里得压过它（页头的操作区按 PageHeadTest 只许是一个干净的 .zq-page-actions，所以按 id） */
+#zq-acct-search{width:200px;}
+/* 反馈管理 */
+.zq-feedback-list{display:flex;flex-direction:column;gap:10px;}
+.zq-feedback-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
+.zq-feedback-head>strong{font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);}
+.zq-feedback-head>.zq-num{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-feedback-head>button{margin-left:auto;}
+.zq-feedback>p{margin:0;font-size:var(--zq-fs-sm);line-height:1.6;}
+.zq-feedback .zq-badge[data-state="open"]{background:var(--zq-bad-tint);color:var(--zq-bad);}
+.zq-feedback .zq-badge[data-state="closed"]{background:var(--zq-ok-tint);color:var(--zq-ok);}
+.zq-seg-count{color:var(--zq-text3);}
+/* 共享计划审核：两列、卡片按自己的高度（原来同一行的被拉成一样高，矮的那张下面空一大块） */
+.zq-reviews{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start;}
+.zq-review-section{grid-column:1 / -1;margin:8px 2px 0;font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);color:var(--zq-text2);}
+.zq-review.is-dim{opacity:.72;}
+.zq-review-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;}
+.zq-review-head .zq-badge{background:var(--zq-tint);color:var(--zq-primary);}
+.zq-review-head .zq-num{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-review h3{margin:0 0 5px;font-size:var(--zq-fs-md);font-weight:var(--zq-fw-medium);}
+/* 标题是按钮（键盘点得到）：全局给按钮的 white-space:nowrap 要解开，不然一串没有空格的长标题把卡片和整页撑宽 */
+.zq-review-title{max-width:100%;padding:0;border:none;background:none;color:inherit;font:inherit;text-align:left;white-space:normal;overflow-wrap:anywhere;cursor:pointer;}
+.zq-review-title>span{display:inline-flex;align-items:center;gap:2px;margin-left:6px;vertical-align:middle;font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);color:var(--zq-primary);}
+.zq-review>p{margin:0 0 10px;font-size:var(--zq-fs-sm);color:var(--zq-text2);line-height:1.55;}
+.zq-review-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:10px;border-top:1px solid var(--zq-border-soft);font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-review-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;}
+.zq-review-desc{margin:0 0 4px;font-size:var(--zq-fs-sm);color:var(--zq-text2);line-height:1.7;}
+.zq-review-meta{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-review-sec{margin:14px 0 7px;font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);}
+.zq-review-items{display:flex;flex-direction:column;gap:6px;}
+.zq-review-item{padding:8px 11px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);}
+.zq-review-item>strong{display:block;font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);}
+.zq-review-item>p{margin:2px 0 0;font-size:var(--zq-fs-xs);color:var(--zq-text2);line-height:1.5;}
+.zq-review-item>span{display:block;margin-top:3px;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-review-log{font-size:var(--zq-fs-xs);color:var(--zq-text2);line-height:1.6;}
+.zq-review-log .zq-num{color:var(--zq-text3);}
+.zq-review-textarea{min-height:100px;}
+
 @media (max-width: 760px){
+  /* 后台四页（第七十七轮）：六个数两个一排、两栏变一栏；账号一行叠成几行（不横着滚）；共享计划一列 */
+  .zq-admin-metrics{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .zq-admin-cols,.zq-reviews{grid-template-columns:minmax(0,1fr);}
+  #zq-acct-search{flex:1 1 100%;width:auto;}
+  .zq-acct .zq-thead{display:none;}
+  .zq-acct-row:not(.zq-thead){display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:12px 14px;}
+  .zq-acct-who{flex:1 1 auto;}
+  .zq-acct-row>:nth-child(3){order:1;}
+  .zq-acct-status{order:2;}
+  .zq-acct-mail{order:3;flex:1 1 100%;}
+  .zq-acct-row>.zq-acct-meta{order:4;}
+  .zq-acct-joined::before{content:"注册于 ";}
+  .zq-acct-acts{order:5;flex:1 1 100%;justify-content:flex-start;}
+
   .zq-main,.zq-main.is-side-collapsed{margin-left:56px;padding:18px 12px 64px;}
   .zq-side:not(.is-collapsed){box-shadow:0 0 0 100vmax rgba(0,0,0,.35);}
   .zq-main [style*="grid-template-columns"]:not([style*="grid-template-columns:52px"]):not([style*="grid-template-columns:36px"]):not([style*="auto-fit"]):not([style*="repeat(7"]):not([style*="minmax(200px,2.2fr)"]):not([style*="minmax(120px,1.1fr)"]):not([style*="repeat(4"]):not([style*="repeat(5"]):not([style*="repeat(6"]){grid-template-columns:minmax(0,1fr)!important;}

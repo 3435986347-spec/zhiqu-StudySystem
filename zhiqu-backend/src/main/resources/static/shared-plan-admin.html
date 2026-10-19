@@ -6,30 +6,30 @@
   <title>共享计划审核 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261018-settings75" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261018-settings75">
-  <link rel="manifest" href="manifest.json?v=20261018-settings75">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261019-admin77" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261019-admin77">
+  <link rel="manifest" href="manifest.json?v=20261019-admin77">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261018-settings75">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261019-admin77">
 </head>
 <body>
   <div class="zq-app">
     <nav id="zq-side"></nav>
     <main class="zq-main">
-      <div style="display:flex; flex-direction:column; gap:16px;">
+      <div class="zq-admin">
         <header class="zq-page-head">
           <div>
             <h1 class="zq-h1">共享计划审核</h1>
             <span class="zq-page-sub">通过后进入「参考计划」库，所有用户可套用。</span>
           </div>
-          <div class="zq-page-actions"><span id="zq-pending" style="font-size:var(--zq-fs-sm); color:var(--zq-text3);"></span></div>
+          <div class="zq-page-actions"><span id="zq-pending" class="zq-admin-count"></span></div>
         </header>
-        <div id="zq-reviews" style="display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px;"></div>
+        <div id="zq-reviews" class="zq-reviews"></div>
       </div>
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261018-settings75"></script>
-  <script src="assets/zhiqu-api.js?v=20261018-settings75"></script>
+  <script src="assets/zhiqu-ui.js?v=20261019-admin77"></script>
+  <script src="assets/zhiqu-api.js?v=20261019-admin77"></script>
 </body>
 </html>

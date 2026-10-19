@@ -194,8 +194,8 @@ class DesignTokensTest {
             while (t.find()) tokens++;
         }
         // 下限跟着内联样式挪进样式表往下走：第五十五轮 renderMarkdown、知识 Wiki 的头挪走一批（80 → 75 处），第五十六轮例行计划页又一批（→ 65），第五十七轮参考计划、专注统计（→ 54），
-        // 第七十五轮设置、成就弹窗（→ 41）。第 9 步把内联样式降下来之后，这条换成棘轮（只许降、不许升），见 docs/ui-plan.md
-        assertTrue(tokens >= 35, "内联字重只扫到 " + tokens + " 处用令牌 —— 扫空了？");
+        // 第七十五轮设置、成就弹窗（→ 41），第七十七轮后台四页（→ 28）。第 9 步把内联样式降下来之后，这条换成棘轮（只许降、不许升），见 docs/ui-plan.md
+        assertTrue(tokens >= 25, "内联字重只扫到 " + tokens + " 处用令牌 —— 扫空了？");
         assertEquals(List.of(), hard, "这些地方又写死了字重 —— 用 var(--zq-fw-regular / medium / semibold)");
     }
 
