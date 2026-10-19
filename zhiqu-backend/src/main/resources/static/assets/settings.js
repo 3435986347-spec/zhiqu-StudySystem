@@ -8,7 +8,7 @@
 // 原来的注释（为什么脱敏值不填进输入框、为什么令牌要刷几次……）都跟着，那些是踩过的坑。
 // 原来按位置找元素（「第 2 个 input」「含『基本资料』的 section」）的地方改成了 id：模板现在就在这个文件里，不用再猜页面长什么样。
 // 弹窗不在 .zq-main 里，正文那两条手机规则（按 style 属性认的）管不到这里：多栏的地方带 zq-phone-1col / zq-phone-2col，
-// 手机上怎么排写在类名上（MobileLayoutTest 核对它和 DECISIONS 一致）。
+// 手机上怎么排写在类名上（MobileLayoutTest 核对它和样式表一致）。第七十五轮起这里不写内联样式，样子都在 zhiqu-ui.css（SettingsLookTest）。
 
 /** 设置的分栏：[地址里的名字, 显示的名字]。 */
 export const SETTINGS_TABS = [
@@ -68,104 +68,144 @@ export function shortUA(ua) {
 
 // 后端实际取值：VERIFIED / FAILED / UNSUPPORTED / UNTESTED。注意先判 UNSUPPORT，否则会被 SUPPORT 误吞
 export function probeText(s) { s = String(s || '').toUpperCase(); if (!s || s === 'UNTESTED') return '未测试'; if (/UNSUPPORT|NOT_SUPPORT|\bNO\b|FALSE/.test(s)) return '不支持'; if (/VERIFIED|PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return '通过'; if (/FAIL|ERROR/.test(s)) return '失败'; if (/PROB|TESTING|RUNNING/.test(s)) return '测试中'; return s; }
-function probeColor(s) { s = String(s || '').toUpperCase(); if (/UNSUPPORT|NOT_SUPPORT/.test(s)) return 'var(--zq-text3)'; if (/VERIFIED|PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return 'var(--zq-ok)'; if (/FAIL|ERROR/.test(s)) return 'var(--zq-bad)'; return 'var(--zq-text3)'; }
+/** 探测状态的颜色交给样式表（data-state）：通过 ok、失败 bad，其余（不支持、未测试、测试中）淡色 */
+export function probeState(s) { s = String(s || '').toUpperCase(); if (/UNSUPPORT|NOT_SUPPORT/.test(s)) return 'muted'; if (/VERIFIED|PASS|OK|SUCCESS|SUPPORT|YES|TRUE/.test(s)) return 'ok'; if (/FAIL|ERROR/.test(s)) return 'bad'; return 'muted'; }
 
-/** 开关的样子（原来叫 setMorningToggle：提醒推送、让 AI 读我的任务共用）。 */
-function setToggle(btn, on) {
-  btn.dataset.on = on ? '1' : '0';
-  var knob = btn.firstElementChild;
-  if (knob) knob.style.left = on ? '21px' : '3px';
-  btn.style.background = on ? 'var(--zq-primary)' : 'var(--zq-border)';
+/**
+ * 开关（原来叫 setMorningToggle：提醒推送、让 AI 读我的任务共用）。只设 aria-checked，样子在样式表（.zq-switch）——
+ * 原来 JS 改滑块的 left 和底色，深色下打开时是白底配白钮，看不出开没开（第七十五轮）。
+ */
+export function setToggle(btn, on) {
+  btn.setAttribute('aria-checked', on ? 'true' : 'false');
 }
+/** 开关现在是不是开着（点了之后要切到的是它的反面） */
+function toggleOn(btn) { return btn.getAttribute('aria-checked') === 'true'; }
 
 // ── 各栏的样子（原来个人中心页里的那几块，设计稿的示例值去掉了） ──────────────
 
-const TOGGLE = (id, label) => '<button id="' + id + '" type="button"' + (label ? ' aria-label="' + label + '"' : '')
-  + ' style="flex:none; width:42px; height:24px; border:none; border-radius:999px; background:var(--zq-border); cursor:pointer; position:relative; transition:background .2s;">'
-  + '<i style="position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s;"></i></button>';
-const H3 = (t) => '<h3 style="margin:0 0 12px; font-size:14px; font-weight:var(--zq-fw-medium);">' + t + '</h3>';
-const FIELD = (label, input, wide) => '<div class="zq-field" style="gap:5px;' + (wide ? ' grid-column:1 / -1;' : '') + '"><label class="zq-label" style="font-size:11.5px;">' + label + '</label>' + input + '</div>';
-const ROW = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; font-size:12.5px;';
+// 第七十五轮起各栏的样子都在样式表（.zq-set-* / .zq-switch，zhiqu-ui.css 的「设置弹窗」那一段）：原来 76 处内联样式，开关和状态的颜色是 JS 改 style。
+const TOGGLE = (id, label) => '<button id="' + id + '" type="button" role="switch" aria-checked="false" class="zq-switch"' + (label ? ' aria-label="' + label + '"' : '') + '><i></i></button>';
+const H3 = (t) => '<h3 class="zq-set-h3">' + t + '</h3>';
+/** 一个字段：标签用 for 指向输入框（从输入框的 id 取），wide 时占满一行 */
+const FIELD = (label, input, wide) => {
+  const id = /\bid="([^"]+)"/.exec(input);
+  return '<div class="zq-field' + (wide ? ' is-wide' : '') + '"><label class="zq-label"' + (id ? ' for="' + id[1] + '"' : '') + '>' + label + '</label>' + input + '</div>';
+};
+/** 模型的 Provider：[接口里的代码, 给人看的名字]。表单的下拉和卡片上那一格用同一份（原来卡片上写的是代码 OPENAI_COMPATIBLE） */
+export const MODEL_PROVIDERS = [['OPENAI_COMPATIBLE', 'OpenAI 兼容'], ['ANTHROPIC', 'Anthropic Claude'], ['OLLAMA', 'Ollama 本地模型'], ['VLLM', 'vLLM'], ['GEMINI', 'Google Gemini']];
+export function providerName(code) {
+  const hit = MODEL_PROVIDERS.find((p) => p[0] === String(code || '').toUpperCase());
+  return hit ? hit[1] : (code || '—');
+}
+
+/** 一张模型卡片：名字本身（label 带着「（我的）」，右边的徽章已经说了）、Provider 写人话、四格探测状态、Key */
+export function modelCard(sh, m) {
+  const mine = m.ownerType !== 'SYSTEM';
+  const tile = (k, v, state) => '<div class="zq-set-tile"><span>' + sh.esc(k) + '</span><strong' + (state ? ' data-state="' + state + '"' : '') + '>' + sh.esc(v) + '</strong></div>';
+  const key = m.apiKeyMasked || m.maskedApiKey;
+  const id = sh.esc(m.id);
+  return '<article class="zq-set-model"><div class="zq-set-model-head"><div class="zq-set-model-who">'
+    + '<div class="zq-set-model-name">' + sh.esc(m.displayName || m.label || m.name || m.modelName || '模型') + '</div>'
+    + '<div class="zq-set-model-id zq-mono">' + sh.esc(m.modelName || '') + '</div></div>'
+    + '<span class="zq-badge">' + (mine ? '我的' : '系统') + '</span></div>'
+    + '<div class="zq-set-tiles zq-phone-2col">'
+    + tile('Provider', providerName(m.providerType), '')
+    + tile('连通性', probeText(m.capabilityProbeStatus), probeState(m.capabilityProbeStatus))
+    + tile('视觉', probeText(m.visionStatus), probeState(m.visionStatus))
+    + tile('深度思考', probeText(m.reasoningStatus), probeState(m.reasoningStatus))
+    + '</div>'
+    + '<div class="zq-set-model-meta">' + (key ? 'Key：' + sh.esc(key) : '没有保存 Key') + (m.lastProbeAt ? ' · 上次探测 ' + sh.esc(sh.fmtDate(m.lastProbeAt)) : '') + '</div>'
+    + '<div class="zq-set-model-acts">' + (mine ? '<button type="button" class="zq-btn-ghost zq-sm" data-model-edit="' + id + '">编辑</button>' : '')
+    + '<button type="button" class="zq-btn-ghost zq-sm" data-model-test="' + id + '">测试连通</button>'
+    + '<button type="button" class="zq-btn-ghost zq-sm" data-model-probe="' + id + '">能力测试</button>'
+    + (mine ? '<button type="button" class="zq-btn-ghost zq-sm" data-model-del="' + id + '">删除</button>' : '') + '</div></article>';
+}
+
+/** 模型表单在添加还是在改哪一个：标题、保存按钮的字、「取消编辑」出不出现（原来改的时候只弹一下提示，「新建模型」按钮其实是「不改了」） */
+export function paintFormMode(els, m) {
+  els.title.textContent = m ? '编辑：' + (m.displayName || m.label || m.modelName || '模型') : '添加模型';
+  els.save.textContent = m ? '保存修改' : '保存模型';
+  els.cancel.hidden = !m;
+}
 
 const PANES = {
   profile: () => ''
-    + '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-bottom:16px; margin-bottom:16px; border-bottom:1px solid var(--zq-border-soft);">'
-    + '<div id="zq-set-avatar" title="点击更换头像" style="width:64px; height:64px; flex:none; border-radius:50%; background:var(--zq-tint-strong); color:var(--zq-primary); display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:var(--zq-fw-medium); cursor:pointer; overflow:hidden;"></div>'
-    + '<div style="min-width:0; flex:1;"><h2 id="zq-set-name" class="zq-h2" style="font-size:17px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></h2>'
-    + '<span id="zq-set-role" class="zq-badge" style="margin-top:6px; background:var(--zq-tint); color:var(--zq-primary); font-weight:var(--zq-fw-medium);"></span></div>'
-    + '<div style="display:flex; gap:20px; text-align:center;">'
-    + '<div><strong id="zq-set-days" class="zq-num" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">连续天数</span></div>'
-    + '<div><strong id="zq-set-done" class="zq-num" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">完成任务</span></div>'
+    + '<div class="zq-set-profile">'
+    + '<button id="zq-set-avatar" type="button" class="zq-set-avatar" title="点击更换头像" aria-label="更换头像"></button>'
+    + '<div class="zq-set-who"><h2 id="zq-set-name" class="zq-h2"></h2><span id="zq-set-role" class="zq-badge"></span></div>'
+    + '<div class="zq-set-nums">'
+    + '<div><strong id="zq-set-days" class="zq-num">—</strong><span>连续天数</span></div>'
+    + '<div><strong id="zq-set-done" class="zq-num">—</strong><span>完成任务</span></div>'
     // 原来写着「本月时长」，显示的却是 totalStudyMinutes（全部的累计）
-    + '<div><strong id="zq-set-hours" class="zq-num" style="display:block; font-size:18px;">—</strong><span style="font-size:11px; color:var(--zq-text3);">累计专注</span></div>'
+    + '<div><strong id="zq-set-hours" class="zq-num">—</strong><span>累计专注</span></div>'
     + '</div></div>'
-    + '<div class="zq-phone-1col" style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px;">'
-    + FIELD('用户名', '<input id="zq-set-username" class="zq-input" readonly style="background:var(--zq-card-soft); color:var(--zq-text3);">')
+    + '<div class="zq-set-grid zq-phone-1col">'
+    + FIELD('用户名', '<input id="zq-set-username" class="zq-input" readonly>')
     + FIELD('昵称', '<input id="zq-set-nickname" class="zq-input">')
     + FIELD('单位 / 学校', '<input id="zq-set-school" class="zq-input">')
     + FIELD('部门 / 职位', '<input id="zq-set-major" class="zq-input">')
     + FIELD('邮箱', '<input id="zq-set-email" class="zq-input" type="email">', true)
-    + '</div><div style="display:flex; justify-content:flex-end; margin-top:14px;"><button id="zq-set-save" class="zq-btn">保存资料</button></div>',
+    + '</div><div class="zq-set-actions"><button id="zq-set-save" class="zq-btn">保存资料</button></div>',
 
   models: () => ''
-    + '<p style="margin:0 0 12px; padding:8px 12px; border-radius:var(--zq-rs); background:var(--zq-tint); font-size:12px; color:var(--zq-text2); line-height:1.55;">API Key 加密存储；监管后台不会显示你的完整 Key、知识库正文或任务正文。</p>'
+    + '<p class="zq-set-callout">API Key 加密存储；监管后台不会显示你的完整 Key、知识库正文或任务正文。</p>'
     // 第二十七轮：AI 读不读得到你的任务（用户定的「让它读，给一个开关」；默认开）。说清楚打开时什么会发给谁。
-    + '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 14px;">'
-    + '<span style="font-size:12.5px; color:var(--zq-text2); line-height:1.55;"><b style="color:var(--zq-text);">让 AI 读我的任务</b>：问到今天、这周怎么安排时，AI 先看一眼你没完成的任务（标题、时间、象限）再回答。打开时，这些内容会发给你配置的模型供应商。</span>'
+    + '<div class="zq-set-row"><span class="zq-set-row-text"><b>让 AI 读我的任务</b>：问到今天、这周怎么安排时，AI 先看一眼你没完成的任务（标题、时间、象限）再回答。打开时，这些内容会发给你配置的模型供应商。</span>'
     + TOGGLE('zq-ai-read-tasks', '让 AI 读我的任务') + '</div>'
-    + '<div id="zq-models" style="display:flex; flex-direction:column; gap:10px; margin-bottom:18px;"></div>'
-    + '<div id="zq-model-form" style="display:flex; flex-direction:column; gap:12px; padding-top:16px; border-top:1px solid var(--zq-border-soft);">'
+    + '<div id="zq-models" class="zq-set-models"></div>'
+    + '<div id="zq-model-form" class="zq-set-form">'
+    // 表单在新建还是在改哪一个，写在标题上（原来只弹一下提示，表单本身看不出来）
+    + '<h3 id="zq-model-form-title" class="zq-set-h3">添加模型</h3>'
     + FIELD('显示名称', '<input id="zq-model-display" class="zq-input" placeholder="例如 Claude Sonnet / DeepSeek / 本地 Ollama">')
-    + '<div class="zq-phone-1col" style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px;">'
-    + FIELD('Provider', '<select id="zq-model-provider" class="zq-select"><option>OpenAI-compatible</option><option>Anthropic Claude</option><option>Ollama 本地模型</option><option>vLLM</option><option>Google Gemini</option></select>')
+    + '<div class="zq-set-grid zq-phone-1col">'
+    + FIELD('Provider', '<select id="zq-model-provider" class="zq-select">' + MODEL_PROVIDERS.map((p) => '<option value="' + p[0] + '">' + p[1] + '</option>').join('') + '</select>')
     + FIELD('模型名称', '<input id="zq-model-name" class="zq-input" placeholder="gpt-4o-mini / claude-3-5-sonnet">')
     + '</div>'
-    + FIELD('API 接口地址', '<input id="zq-model-url" class="zq-input" placeholder="https://api.openai.com/v1/chat/completions"><span style="font-size:11.5px; color:var(--zq-text3);">Anthropic 用 /v1/messages；Ollama 默认 http://localhost:11434/v1/chat/completions。</span>')
+    + FIELD('API 接口地址', '<input id="zq-model-url" class="zq-input" placeholder="https://api.openai.com/v1/chat/completions"><span class="zq-set-hint">Anthropic 用 /v1/messages；Ollama 默认 http://localhost:11434/v1/chat/completions。</span>')
     + FIELD('API Key', '<input id="zq-model-key" class="zq-input" type="password" placeholder="留空则不修改已保存 Key">')
-    + FIELD('上下文窗口（token，可选）', '<input id="zq-model-context" class="zq-input" type="number" min="8000" max="1000000" step="1000" placeholder="按模型实际能力填，例如 128000；最多 1000000。留空用保守默认值"><span style="font-size:11.5px; color:var(--zq-text3); line-height:1.5;">填了之后，对话历史、代码和 Wiki 资料都按它放大。填得越大，长对话每一轮带给模型的内容越多 —— 也越耗 token、越慢；超过模型真实上限，请求会被服务商拒绝。</span>')
-    + '<div style="padding:10px 12px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card-soft);"><strong style="display:block; font-size:12px;">模型能力由系统测试确认</strong><span style="display:block; margin-top:3px; font-size:11.5px; color:var(--zq-text2); line-height:1.55;">保存后可进行连通性、图像识别（多模态）、深度思考探测，会消耗少量 token。</span></div>'
-    + '<div style="display:flex; gap:8px;"><button id="zq-model-save" class="zq-btn">保存模型</button><button id="zq-model-new" class="zq-btn-ghost">新建模型</button></div>'
+    + FIELD('上下文窗口（token，可选）', '<input id="zq-model-context" class="zq-input" type="number" min="8000" max="1000000" step="1000" placeholder="按模型实际能力填，例如 128000；最多 1000000。留空用保守默认值"><span class="zq-set-hint">填了之后，对话历史、代码和 Wiki 资料都按它放大。填得越大，长对话每一轮带给模型的内容越多 —— 也越耗 token、越慢；超过模型真实上限，请求会被服务商拒绝。</span>')
+    + '<div class="zq-set-box"><strong>模型能力由系统测试确认</strong><span>保存后可进行连通性、图像识别（多模态）、深度思考探测，会消耗少量 token。</span></div>'
+    + '<div class="zq-set-btns"><button id="zq-model-save" class="zq-btn">保存模型</button><button id="zq-model-cancel" type="button" class="zq-btn-ghost" hidden>取消编辑</button></div>'
     + '</div>',
 
   reminders: () => ''
-    + '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">'
-    + '<span style="font-size:12.5px; color:var(--zq-text2); line-height:1.5;"><b style="color:var(--zq-text);">提醒推送</b>：打开后，任务的提醒时间、截止前提醒和每天 08:00 的待办汇总都推送到下面的渠道</span>'
+    + '<div class="zq-set-row"><span class="zq-set-row-text"><b>提醒推送</b>：打开后，任务的提醒时间、截止前提醒和每天 08:00 的待办汇总都推送到下面的渠道</span>'
     + TOGGLE('zq-morning', '提醒推送') + '</div>'
     // 渠道配置。原来这里写死着一行「渠道：PushPlus · 已绑定」，而用户没有任何途径填凭据（见 bindReminders 的注释）
-    + '<div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--zq-border-soft); display:flex; flex-direction:column; gap:9px; max-width:520px;">'
-    + '<div style="display:flex; align-items:center; gap:9px;"><label class="zq-label" style="font-size:11.5px; flex:none;">推送渠道</label>'
-    + '<select id="zq-rm-channel" class="zq-select" style="height:30px; font-size:12.5px; flex:1;"><option value="PUSHPLUS">PushPlus</option><option value="WECOM">企业微信机器人</option><option value="QQ">QQ 机器人</option></select></div>'
-    // display 由 JS 控制：写成内联 display:flex 会压掉 hidden 属性（UA 的 display:none 优先级更低），三个渠道的字段会同时显示出来
-    + '<div data-rm-group="PUSHPLUS" style="flex-direction:column; gap:6px;"><input id="zq-rm-pushplus" class="zq-input" type="password" autocomplete="off" placeholder="PushPlus token" style="height:30px; font-size:12.5px;"></div>'
-    + '<div data-rm-group="WECOM" style="display:none; flex-direction:column; gap:6px;"><input id="zq-rm-webhook" class="zq-input" type="password" autocomplete="off" placeholder="企业微信机器人 Webhook 地址" style="height:30px; font-size:12.5px;"></div>'
-    + '<div data-rm-group="QQ" style="display:none; flex-direction:column; gap:6px;"><input id="zq-rm-qq-appid" class="zq-input" autocomplete="off" placeholder="QQ 机器人 AppID" style="height:30px; font-size:12.5px;">'
-    + '<input id="zq-rm-qq-secret" class="zq-input" type="password" autocomplete="off" placeholder="AppSecret" style="height:30px; font-size:12.5px;">'
-    + '<input id="zq-rm-qq-group" class="zq-input" autocomplete="off" placeholder="群 openid" style="height:30px; font-size:12.5px;"></div>'
-    + '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><button id="zq-rm-save" class="zq-btn" style="height:30px; padding:0 14px; font-size:12.5px;">保存渠道</button>'
-    + '<button id="zq-rm-test" class="zq-btn-ghost" style="height:30px; padding:0 12px; font-size:12.5px;">发送测试</button><span id="zq-rm-status" style="font-size:11.5px; color:var(--zq-text3);"></span></div>'
+    + '<div class="zq-set-channel">'
+    + '<div class="zq-set-inline"><label class="zq-label" for="zq-rm-channel">推送渠道</label>'
+    + '<select id="zq-rm-channel" class="zq-select"><option value="PUSHPLUS">PushPlus</option><option value="WECOM">企业微信机器人</option><option value="QQ">QQ 机器人</option></select></div>'
+    // 只显示选中的那个渠道的字段：用 hidden（第七十五轮之前内联着 display，只能 JS 改 style.display）
+    + '<div data-rm-group="PUSHPLUS" class="zq-set-group"><input id="zq-rm-pushplus" class="zq-input" type="password" autocomplete="off" placeholder="PushPlus token" aria-label="PushPlus token"></div>'
+    + '<div data-rm-group="WECOM" class="zq-set-group" hidden><input id="zq-rm-webhook" class="zq-input" type="password" autocomplete="off" placeholder="企业微信机器人 Webhook 地址" aria-label="企业微信机器人 Webhook 地址"></div>'
+    + '<div data-rm-group="QQ" class="zq-set-group" hidden><input id="zq-rm-qq-appid" class="zq-input" autocomplete="off" placeholder="QQ 机器人 AppID" aria-label="QQ 机器人 AppID">'
+    + '<input id="zq-rm-qq-secret" class="zq-input" type="password" autocomplete="off" placeholder="AppSecret" aria-label="QQ 机器人 AppSecret">'
+    + '<input id="zq-rm-qq-group" class="zq-input" autocomplete="off" placeholder="群 openid" aria-label="QQ 群 openid"></div>'
+    + '<div class="zq-set-btns"><button id="zq-rm-save" class="zq-btn zq-sm">保存渠道</button>'
+    + '<button id="zq-rm-test" class="zq-btn-ghost zq-sm">发送测试</button><span id="zq-rm-status" class="zq-set-status" role="status"></span></div>'
     + '</div>',
 
   cli: () => ''
     + H3('命令行登录')
-    + '<p style="margin:-4px 0 10px; font-size:12px; color:var(--zq-text3); line-height:1.6;">在终端运行 <span class="zq-mono">zhiqu login</span>，把它显示的 8 位设备码填在这里。命令行不会拿到你的密码，只拿到一张可随时撤销的令牌。'
+    + '<p class="zq-set-note">在终端运行 <span class="zq-mono">zhiqu login</span>，把它显示的 8 位设备码填在这里。命令行不会拿到你的密码，只拿到一张可随时撤销的令牌。'
     + '登录之后，<span class="zq-mono">zhiqu mcp</span> 还能让 Claude Code、Cursor 这些 MCP 客户端读写你的知识 Wiki 和任务。</p>'
-    + '<div style="display:flex; gap:8px; max-width:420px;"><input id="zq-cli-code" class="zq-input" autocomplete="off" placeholder="设备码，如 ABCD-EFGH" style="height:30px; font-size:12.5px; flex:1; text-transform:uppercase;">'
-    + '<button id="zq-cli-check" class="zq-btn-ghost" style="height:30px; padding:0 12px; font-size:12.5px;">查看</button></div>'
-    + '<div id="zq-cli-device" style="margin-top:8px;"></div>'
-    + '<div style="margin-top:18px;">' + H3('已登录的命令行') + '<div id="zq-cli-tokens" style="display:flex; flex-direction:column; gap:6px;"></div></div>',
+    + '<div class="zq-set-code"><input id="zq-cli-code" class="zq-input" autocomplete="off" placeholder="设备码，如 ABCD-EFGH" aria-label="设备码">'
+    + '<button id="zq-cli-check" class="zq-btn-ghost zq-sm">查看</button></div>'
+    + '<div id="zq-cli-device" class="zq-set-device"></div>'
+    + '<section class="zq-set-section">' + H3('已登录的命令行') + '<div id="zq-cli-tokens" class="zq-set-list"></div></section>',
 
   security: () => ''
     + H3('修改密码')
-    + '<div style="display:flex; flex-direction:column; gap:10px; max-width:360px;">'
-    + '<input id="zq-pw-old" class="zq-input" type="password" autocomplete="current-password" placeholder="当前密码">'
-    + '<input id="zq-pw-new" class="zq-input" type="password" autocomplete="new-password" placeholder="新密码（至少 6 位）">'
-    + '<input id="zq-pw-again" class="zq-input" type="password" autocomplete="new-password" placeholder="确认新密码">'
-    + '<button id="zq-pw-save" class="zq-btn" style="align-self:flex-start;">更新密码</button></div>'
-    + '<div style="margin-top:22px;">' + H3('最近登录') + '<div style="display:flex; flex-direction:column;">'
-    + '<div style="' + ROW + ' border-bottom:1px solid var(--zq-border-soft);"><span style="color:var(--zq-text2); flex:none;">时间与地址</span><span id="zq-sec-latest" style="font-weight:var(--zq-fw-medium); text-align:right;">—</span></div>'
-    + '<div style="' + ROW + ' border-bottom:1px solid var(--zq-border-soft);"><span style="color:var(--zq-text2); flex:none;">登录设备</span><span id="zq-sec-device" style="font-weight:var(--zq-fw-medium); text-align:right;">—</span></div>'
-    + '<div style="' + ROW + '"><span style="color:var(--zq-text2); flex:none;">退出登录</span><button id="zq-sec-logout" type="button" class="zq-btn-ghost" style="height:26px; padding:0 12px; font-size:12px;">退出</button></div>'
-    + '</div></div>'
+    + '<div class="zq-set-stack">'
+    + '<input id="zq-pw-old" class="zq-input" type="password" autocomplete="current-password" placeholder="当前密码" aria-label="当前密码">'
+    + '<input id="zq-pw-new" class="zq-input" type="password" autocomplete="new-password" placeholder="新密码（至少 6 位）" aria-label="新密码">'
+    + '<input id="zq-pw-again" class="zq-input" type="password" autocomplete="new-password" placeholder="确认新密码" aria-label="确认新密码">'
+    + '<button id="zq-pw-save" class="zq-btn">更新密码</button></div>'
+    + '<section class="zq-set-section">' + H3('最近登录') + '<div class="zq-set-kv">'
+    + '<div><span>时间与地址</span><span id="zq-sec-latest">—</span></div>'
+    + '<div><span>登录设备</span><span id="zq-sec-device">—</span></div>'
+    + '<div><span>退出登录</span><button id="zq-sec-logout" type="button" class="zq-btn-ghost zq-btn-xs">退出</button></div>'
+    + '</div></section>'
 };
 
 // ── 各栏接上数据 ──────────────────────────────────────────────
@@ -177,7 +217,7 @@ function bindProfile(sh, root) {
   var paintAvatar = function () {
     // 与侧边栏保持一致：有头像显示头像，否则显示昵称首字
     av.innerHTML = sh.state.user && sh.state.user.avatar
-      ? '<img src="' + sh.esc(sh.state.user.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
+      ? '<img src="' + sh.esc(sh.state.user.avatar) + '" alt="">'
       : sh.esc((u.nickname || u.username || '知').slice(0, 1));
   };
   paintAvatar();
@@ -212,8 +252,6 @@ function bindProfile(sh, root) {
   };
 }
 
-var MODEL_PROVIDERS = ['OPENAI_COMPATIBLE', 'ANTHROPIC', 'OLLAMA', 'VLLM', 'GEMINI'];
-
 function bindModels(sh, root) {
   var $ = (s) => root.querySelector(s);
   var $all = (s) => Array.from(root.querySelectorAll(s));
@@ -222,7 +260,7 @@ function bindModels(sh, root) {
   var readTasks = $('#zq-ai-read-tasks');
   setToggle(readTasks, u.aiReadTasks !== false);
   readTasks.onclick = function () {
-    var next = readTasks.dataset.on !== '1';
+    var next = !toggleOn(readTasks);
     sh.safe('保存设置', async function () {
       await sh.api.put('/user/ai-read-tasks?enabled=' + next);
       sh.state.user.aiReadTasks = next;
@@ -232,53 +270,45 @@ function bindModels(sh, root) {
   };
 
   var els = { display: $('#zq-model-display'), modelName: $('#zq-model-name'), apiUrl: $('#zq-model-url'), apiKey: $('#zq-model-key'),
-    provider: $('#zq-model-provider'), contextWindow: $('#zq-model-context') };
+    provider: $('#zq-model-provider'), contextWindow: $('#zq-model-context'), title: $('#zq-model-form-title'), save: $('#zq-model-save'), cancel: $('#zq-model-cancel') };
   var editingModelId = null;
-  function modelTile(k, v, c) { return '<div style="min-width:0;"><span style="display:block;font-size:10.5px;color:var(--zq-text3);">' + sh.esc(k) + '</span><strong style="display:block;margin-top:3px;font-size:11.5px;font-weight:var(--zq-fw-medium);color:' + c + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + sh.esc(v) + '</strong></div>'; }
   var models = [];
   async function loadModels() {
     var host = $('#zq-models');
     var modelData = await sh.api.get('/ai/models');
     models = sh.normalizeModelList(modelData);
-    host.innerHTML = models.map(function (m) {
-      var mine = m.ownerType !== 'SYSTEM';
-      return '<article style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);padding:12px 14px;"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;"><div style="font-size:13.5px;font-weight:var(--zq-fw-medium);">' + sh.esc(m.label || m.displayName || m.name) + '</div><div class="zq-mono" style="font-size:11.5px;color:var(--zq-text3);margin-top:2px;">' + sh.esc(m.modelName || '') + '</div></div><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);font-weight:var(--zq-fw-medium);">' + sh.esc(mine ? '我的' : '系统') + '</span></div>'
-        + '<div class="zq-phone-2col" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:11px;padding-top:11px;border-top:1px solid var(--zq-border-soft);">'
-        + modelTile('Provider', m.providerType || '—', 'var(--zq-text2)')
-        + modelTile('连通性', probeText(m.capabilityProbeStatus), probeColor(m.capabilityProbeStatus))
-        + modelTile('视觉', probeText(m.visionStatus), probeColor(m.visionStatus))
-        + modelTile('深度思考', probeText(m.reasoningStatus), probeColor(m.reasoningStatus))
-        + '</div>'
-        + '<div style="margin-top:9px;font-size:11.5px;color:var(--zq-text3);">Key：' + sh.esc(m.apiKeyMasked || m.maskedApiKey || '—') + (m.lastProbeAt ? ' · 上次探测 ' + sh.esc(sh.fmtDate(m.lastProbeAt)) : '') + '</div>'
-        + '<div style="display:flex;gap:6px;margin-top:11px;flex-wrap:wrap;">' + (mine ? '<button class="zq-btn-ghost" data-model-edit="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">编辑</button>' : '') + '<button class="zq-btn-ghost" data-model-test="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">测试连通</button><button class="zq-btn-ghost" data-model-probe="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">能力测试</button>' + (mine ? '<button class="zq-btn-ghost" data-model-del="' + m.id + '" style="height:26px;padding:0 11px;font-size:12px;">删除</button>' : '') + '</div></article>';
-    }).join('') || sh.empty('暂无模型配置');
+    host.innerHTML = models.map(function (m) { return modelCard(sh, m); }).join('') || sh.empty('暂无模型配置');
     $all('[data-model-edit]').forEach(function (b) { b.onclick = function () { editModel(Number(b.dataset.modelEdit)); }; });
     $all('[data-model-test]').forEach(function (b) { b.onclick = async function () { var n = sh.notice('正在测试连通性…'); try { var r = await sh.api.post('/ai/models/' + b.dataset.modelTest + '/test', {}); n.update('连通性测试完成：' + (r && (r.message || r.status || (r.ok ? '通过' : '完成')) || '完成'), { done: true }); await loadModels(); } catch (e) { n.update('连通性测试失败：' + (e.message || '未知错误'), { error: true }); } }; });
     $all('[data-model-probe]').forEach(function (b) { b.onclick = async function () { var n = sh.notice('正在进行能力测试…'); try { await sh.api.post('/ai/models/' + b.dataset.modelProbe + '/probe', {}); n.update('能力测试完成', { done: true }); await loadModels(); } catch (e) { n.update('能力测试失败：' + (e.message || '未知错误'), { error: true }); } }; });
-    $all('[data-model-del]').forEach(function (b) { b.onclick = async function () { if (await sh.askConfirm({ title: '删除模型', message: '删除该模型配置？已保存的 API Key 会一并移除。', okText: '删除', danger: true })) sh.safe('删除模型', async function () { await sh.api.del('/ai/models/' + b.dataset.modelDel); await loadModels(); }); }; });
+    $all('[data-model-del]').forEach(function (b) { b.onclick = async function () { if (await sh.askConfirm({ title: '删除模型', message: '删除该模型配置？已保存的 API Key 会一并移除。', okText: '删除', danger: true })) sh.safe('删除模型', async function () { await sh.api.del('/ai/models/' + b.dataset.modelDel); if (Number(b.dataset.modelDel) === editingModelId) stopEditing(); await loadModels(); }); }; });
   }
-  function clearModelForm() {
+  /** 表单回到「添加模型」：清空、标题和按钮跟着换 */
+  function stopEditing() {
+    editingModelId = null;
     ['display', 'modelName', 'apiUrl', 'apiKey', 'contextWindow'].forEach(function (k) { els[k].value = ''; });
-    els.provider.selectedIndex = 0;
+    els.provider.value = MODEL_PROVIDERS[0][0];
+    paintFormMode(els, null);
   }
   function editModel(id) {
     var m = models.find(function (x) { return x.id === id; }); if (!m) return;
     editingModelId = id;
-    els.display.value = m.label || m.displayName || '';
+    // 名字框里是名字本身：label 是「名字（我的）」（模型选择器用的），原来编辑时整个填进来
+    els.display.value = m.displayName || m.label || '';
     els.modelName.value = m.modelName || '';
     els.apiUrl.value = m.apiUrl || m.baseUrl || '';
     els.apiKey.value = '';
     els.contextWindow.value = m.contextWindowTokens || '';
-    var idx = MODEL_PROVIDERS.indexOf(m.providerType);
-    els.provider.selectedIndex = idx >= 0 ? idx : 0;
-    $('#zq-model-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
-    sh.toast('正在编辑：' + (m.label || m.displayName || m.modelName || '模型'));
+    els.provider.value = MODEL_PROVIDERS.some(function (p) { return p[0] === m.providerType; }) ? m.providerType : MODEL_PROVIDERS[0][0];
+    paintFormMode(els, m);
+    $('#zq-model-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    try { els.display.focus({ preventScroll: true }); } catch (e) {}
   }
-  $('#zq-model-new').onclick = function () { editingModelId = null; clearModelForm(); sh.toast('已切换到新建模型'); };
-  $('#zq-model-save').onclick = function () {
+  els.cancel.onclick = stopEditing;
+  els.save.onclick = function () {
     var body = {
       displayName: els.display.value.trim(),
-      providerType: MODEL_PROVIDERS[els.provider.selectedIndex] || 'OPENAI_COMPATIBLE',
+      providerType: els.provider.value || MODEL_PROVIDERS[0][0],
       modelName: els.modelName.value.trim(),
       apiUrl: els.apiUrl.value.trim()
     };
@@ -286,10 +316,11 @@ function bindModels(sh, root) {
     // 总是带上这个键：空串 = 清掉（回到保守默认）。后端只在请求体里有这个键时才改它
     body.contextWindowTokens = els.contextWindow.value.trim();
     if (!body.modelName) return sh.toast('请填写模型名称', 'error');
+    var editing = editingModelId;
     sh.safe('保存模型', async function () {
-      if (editingModelId) await sh.api.put('/ai/models/' + editingModelId, body);
+      if (editing) await sh.api.put('/ai/models/' + editing, body);
       else await sh.api.post('/ai/models', body);
-      sh.toast('模型已保存'); editingModelId = null; clearModelForm(); await loadModels();
+      sh.toast('模型已保存'); stopEditing(); await loadModels();
     });
   };
   return sh.safe('模型列表', loadModels);
@@ -314,10 +345,9 @@ async function bindReminders(sh, root) {
   setToggle(morning, settings.enabled);
   function paint() {
     var channel = sh.currentReminderChannel(settings, root);
-    // 用 style.display 而不是 hidden 属性：这些 div 带着内联样式，
-    // 而内联 display 的优先级高于 [hidden] 的 UA 规则 —— 设 hidden 不会让它们消失
+    // 只露出选中的那个渠道的字段（第七十五轮起用 hidden：样子在样式表，全局那条 [hidden] 带 !important）
     root.querySelectorAll('[data-rm-group]').forEach(function (group) {
-      group.style.display = group.dataset.rmGroup === channel ? 'flex' : 'none';
+      group.hidden = group.dataset.rmGroup !== channel;
     });
     Object.keys(sh.REMINDER_FIELDS).forEach(function (key) {
       sh.REMINDER_FIELDS[key].forEach(function (pair) {
@@ -331,7 +361,7 @@ async function bindReminders(sh, root) {
     });
     var status = $('#zq-rm-status');
     status.textContent = ready() ? '凭据已配置' : '尚未配置凭据，提醒发不出去';
-    status.style.color = ready() ? 'var(--zq-q2)' : 'var(--zq-q1)';
+    status.dataset.state = ready() ? 'ok' : 'bad';
   }
   // 记下原始占位符，后面要在「已保存」与「未保存」之间切换
   Object.keys(sh.REMINDER_FIELDS).forEach(function (key) {
@@ -341,7 +371,7 @@ async function bindReminders(sh, root) {
   paint();
   sel.onchange = paint;
   morning.onclick = function () {
-    var next = morning.dataset.on !== '1';
+    var next = !toggleOn(morning);
     // 开启之前先确认渠道真的配得起来：后端 isEnabled 要求对应凭据非空，
     // 否则每天早八都会把提醒标成 FAILED，而用户只看到开关是绿的。
     if (next && !ready()) {
@@ -397,13 +427,11 @@ function bindCli(sh, root, params) {
     rows = Array.isArray(rows) ? rows : [];
     list.innerHTML = rows.length
       ? rows.map(function (t) {
-          return '<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px;'
-            + ' padding:6px 8px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs);">'
-            + '<div style="min-width:0;"><div style="font-weight:var(--zq-fw-medium);">' + sh.esc(t.name) + ' <span class="zq-mono" style="color:var(--zq-text3); font-weight:var(--zq-fw-regular);">' + sh.esc(t.hint) + '</span></div>'
-            + '<div style="color:var(--zq-text3); font-size:11px;">' + (t.lastUsedAt ? '最近使用 ' + sh.esc(String(t.lastUsedAt).replace('T', ' ').slice(0, 16)) : '还没用过')
-            + '</div></div><button class="zq-btn-ghost" data-revoke="' + sh.esc(t.id) + '" style="height:24px; padding:0 10px; font-size:11.5px;">撤销</button></div>';
+          return '<div class="zq-set-token"><div class="zq-set-token-who"><div><strong>' + sh.esc(t.name) + '</strong> <span class="zq-mono">' + sh.esc(t.hint) + '</span></div>'
+            + '<div class="zq-set-token-used">' + (t.lastUsedAt ? '最近使用 ' + sh.esc(String(t.lastUsedAt).replace('T', ' ').slice(0, 16)) : '还没用过')
+            + '</div></div><button type="button" class="zq-btn-ghost zq-btn-xs" data-revoke="' + sh.esc(t.id) + '">撤销</button></div>';
         }).join('')
-      : '<div style="font-size:11.5px; color:var(--zq-text3);">还没有命令行登录过。</div>';
+      : '<p class="zq-set-note">还没有命令行登录过。</p>';
     list.querySelectorAll('[data-revoke]').forEach(function (b) {
       b.onclick = function () {
         sh.safe('撤销令牌', async function () {
@@ -419,16 +447,16 @@ function bindCli(sh, root, params) {
     if (!code) { device.innerHTML = ''; return; }
     var info = await sh.safe('查看设备码', function () { return sh.api.get('/access-tokens/device/' + encodeURIComponent(code)); });
     if (!info) { device.innerHTML = ''; return; }
-    device.innerHTML = '<div style="padding:10px 12px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rs); background:var(--zq-card-soft); font-size:12px; line-height:1.6;">'
+    device.innerHTML = '<div class="zq-set-box">'
       + '<div><strong>' + sh.esc(info.clientName || '命令行') + '</strong> 请求登录你的账号</div>'
-      + '<div style="color:var(--zq-text3);">来自 ' + sh.esc(info.clientIp || '未知地址') + ' · ' + sh.esc(String(info.createdAt || '').replace('T', ' ').slice(0, 16)) + ' · 设备码 ' + sh.esc(info.userCode) + '</div>'
-      + '<div style="color:var(--zq-text2); margin-top:4px;">只在这是你自己刚刚在终端里发起的时候才允许。</div>'
-      + '<div style="display:flex; gap:8px; margin-top:8px;"><button class="zq-btn" id="zq-cli-approve" style="height:28px; padding:0 14px; font-size:12px;">允许</button>'
-      + '<button class="zq-btn-ghost" id="zq-cli-deny" style="height:28px; padding:0 12px; font-size:12px;">拒绝</button></div></div>';
+      + '<span>来自 ' + sh.esc(info.clientIp || '未知地址') + ' · ' + sh.esc(String(info.createdAt || '').replace('T', ' ').slice(0, 16)) + ' · 设备码 ' + sh.esc(info.userCode) + '</span>'
+      + '<p class="zq-set-box-warn">只在这是你自己刚刚在终端里发起的时候才允许。</p>'
+      + '<div class="zq-set-btns"><button type="button" class="zq-btn zq-sm" id="zq-cli-approve">允许</button>'
+      + '<button type="button" class="zq-btn-ghost zq-sm" id="zq-cli-deny">拒绝</button></div></div>';
     $('#zq-cli-approve').onclick = function () {
       sh.safe('允许命令行登录', async function () {
         await sh.api.post('/access-tokens/device/' + encodeURIComponent(info.userCode) + '/approve', {});
-        device.innerHTML = '<div style="font-size:12px; color:var(--zq-q2);">已允许。回到终端，命令行会自动完成登录。</div>';
+        device.innerHTML = '<p class="zq-set-status" data-state="ok" role="status">已允许。回到终端，命令行会自动完成登录。</p>';
         input.value = '';
         // 令牌在命令行来取（轮询）的那一刻才签出，时间点不固定 —— 刷几次，直到列表里多出一张；弹窗关了就不刷了
         var before = list.querySelectorAll('[data-revoke]').length, tries = 0;
@@ -444,7 +472,7 @@ function bindCli(sh, root, params) {
     $('#zq-cli-deny').onclick = function () {
       sh.safe('拒绝命令行登录', async function () {
         await sh.api.post('/access-tokens/device/' + encodeURIComponent(info.userCode) + '/deny', {});
-        device.innerHTML = '<div style="font-size:12px; color:var(--zq-text3);">已拒绝。</div>';
+        device.innerHTML = '<p class="zq-set-status" role="status">已拒绝。</p>';
         input.value = '';
       });
     };
@@ -493,12 +521,19 @@ var BINDERS = { profile: bindProfile, models: bindModels, reminders: bindReminde
  */
 export function openSettings(sh, opts) {
   opts = opts || {};
+  var first = PANES[opts.tab] ? opts.tab : SETTINGS_TABS[0][0];
+  // 分栏照 tabs 的规矩（第七十五轮）：选中的那栏能 Tab 到、别的用方向键；打开时焦点落在选中的那一栏 ——
+  // 原来 openModal 把焦点给第一个按钮（「个人资料」），从「AI 模型」进来时两栏一个有焦点框、一个是选中的样子，看着像都选上了
   var handle = sh.openModal({
     title: '设置',
     width: '880px',
     bodyHtml: '<div class="zq-settings"><nav class="zq-settings-tabs" role="tablist" aria-label="设置">'
-      + SETTINGS_TABS.map(function (t) { return '<button type="button" role="tab" data-set-tab="' + t[0] + '">' + t[1] + '</button>'; }).join('')
-      + '</nav><section class="zq-settings-pane" role="tabpanel"></section></div>',
+      + SETTINGS_TABS.map(function (t) {
+        var on = t[0] === first;
+        return '<button type="button" role="tab" id="zq-set-tab-' + t[0] + '" aria-controls="zq-set-pane" data-set-tab="' + t[0] + '"'
+          + ' aria-selected="' + on + '" tabindex="' + (on ? 0 : -1) + '"' + (on ? ' class="on" autofocus' : '') + '>' + t[1] + '</button>';
+      }).join('')
+      + '</nav><section id="zq-set-pane" class="zq-settings-pane" role="tabpanel" aria-labelledby="zq-set-tab-' + first + '"></section></div>',
     onClose: opts.onClose
   });
   handle.mask.querySelector('.zq-modal').classList.add('zq-modal-wide');
@@ -507,11 +542,16 @@ export function openSettings(sh, opts) {
   function show(name, params) {
     if (!PANES[name]) name = SETTINGS_TABS[0][0];
     current = name;
+    // 焦点在分栏上时跟着换过去（方向键换栏；地址换栏 —— 浏览器的前进后退 —— 也一样，不然焦点框留在上一栏）
+    var focusTab = handle.body.contains(document.activeElement) && document.activeElement.getAttribute('role') === 'tab';
     handle.body.querySelectorAll('[data-set-tab]').forEach(function (b) {
       var on = b.dataset.setTab === name;
       b.classList.toggle('on', on);
       b.setAttribute('aria-selected', on ? 'true' : 'false');
+      b.tabIndex = on ? 0 : -1;
+      if (on && focusTab) b.focus();
     });
+    pane.setAttribute('aria-labelledby', 'zq-set-tab-' + name);
     // 换一栏 = 换一块全新的 DOM：上一栏还在路上的请求回来时写的是已经摘下来的那块，不会串到这一栏
     var fresh = document.createElement('div');
     fresh.innerHTML = PANES[name]();
@@ -519,15 +559,43 @@ export function openSettings(sh, opts) {
     pane.scrollTop = 0;
     BINDERS[name](sh, fresh, params || {});
   }
+  function pick(name) {
+    if (name === current) return;
+    show(name);
+    if (opts.onTab) opts.onTab(name);
+  }
   handle.body.querySelectorAll('[data-set-tab]').forEach(function (b) {
-    b.onclick = function () {
-      if (b.dataset.setTab === current) return;
-      show(b.dataset.setTab);
-      if (opts.onTab) opts.onTab(b.dataset.setTab);
-    };
+    b.onclick = function () { pick(b.dataset.setTab); };
   });
-  show(opts.tab, opts.params);
+  handle.body.querySelector('[role="tablist"]').onkeydown = function (e) {
+    var next = tabAfterKey(e.key, current);
+    if (!next) return;
+    e.preventDefault();
+    pick(next);
+  };
+  show(first, opts.params);
   return { close: handle.close, show: show };
+}
+
+/** 分栏的键盘：← ↑ 上一栏、→ ↓ 下一栏（到头绕回去）、Home / End 第一栏 / 最后一栏；别的键回 null（不归分栏管） */
+export function tabAfterKey(key, current) {
+  var names = SETTINGS_TABS.map(function (t) { return t[0]; });
+  var i = Math.max(0, names.indexOf(current)), n = names.length;
+  if (key === 'ArrowRight' || key === 'ArrowDown') return names[(i + 1) % n];
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return names[(i - 1 + n) % n];
+  if (key === 'Home') return names[0];
+  if (key === 'End') return names[n - 1];
+  return null;
+}
+
+/** 一张成就卡片。没解锁的写「未解锁」（和筛选的说法一样；原来写「进行中」），样子在样式表（.zq-ach / .is-on） */
+export function achievementCard(sh, a) {
+  var on = !!(a.unlocked || a.unlockedAt);
+  var name = a.name || a.title || a.achievementName || '成就';
+  var points = a.points || a.score || 0;
+  return '<article class="zq-ach' + (on ? ' is-on' : '') + '"><div class="zq-ach-head"><div class="zq-ach-badge">' + sh.icon('award') + '</div>'
+    + '<div class="zq-ach-who"><h3>' + sh.esc(name) + '</h3><span>' + (on ? '已解锁' : '未解锁') + '</span></div></div>'
+    + '<p>' + sh.esc(a.description || '') + '</p><div class="zq-ach-points"><span class="zq-num">+' + sh.esc(points) + ' 点</span></div></article>';
 }
 
 /**
@@ -536,44 +604,37 @@ export function openSettings(sh, opts) {
  */
 export function openAchievements(sh, opts) {
   opts = opts || {};
-  var filterBtn = function (k, label) { return '<button type="button" data-k="' + k + '" style="height:30px; padding:0 16px; border:none; cursor:pointer; font-size:12.5px; font-weight:var(--zq-fw-medium); background:var(--zq-card); color:var(--zq-text2);">' + label + '</button>'; };
+  var filterBtn = function (k, label) { return '<button type="button" data-k="' + k + '" aria-pressed="' + (k === 'all') + '">' + label + '</button>'; };
   var handle = sh.openModal({
     title: '成就',
     width: '880px',
-    bodyHtml: '<div style="display:flex; flex-direction:column; gap:14px;">'
-      + '<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">'
-      + '<span style="color:var(--zq-text2); font-size:12.5px;">按期完成、连续专注，都会沉淀成这里的里程碑。</span>'
-      + '<div data-ach-filters style="display:inline-flex; border:1px solid var(--zq-border); border-radius:var(--zq-rs); overflow:hidden;">' + filterBtn('all', '全部') + filterBtn('on', '已解锁') + filterBtn('off', '未解锁') + '</div></div>'
-      + '<section class="zq-grid zq-phone-2col" style="grid-template-columns:repeat(4, minmax(0,1fr));">'
-      + '<article class="zq-stat"><span class="zq-stat-label">已解锁</span><strong class="zq-stat-num" style="color:var(--zq-primary);">—</strong></article>'
+    bodyHtml: '<div class="zq-ach-view">'
+      + '<div class="zq-ach-bar"><span>按期完成、连续专注，都会沉淀成这里的里程碑。</span>'
+      + '<div class="zq-seg" data-ach-filters role="group" aria-label="筛选成就">' + filterBtn('all', '全部') + filterBtn('on', '已解锁') + filterBtn('off', '未解锁') + '</div></div>'
+      + '<section class="zq-grid zq-stat-grid zq-phone-2col">'
+      + '<article class="zq-stat is-primary"><span class="zq-stat-label">已解锁</span><strong class="zq-stat-num">—</strong></article>'
       + '<article class="zq-stat"><span class="zq-stat-label">全部成就</span><strong class="zq-stat-num">—</strong></article>'
       + '<article class="zq-stat"><span class="zq-stat-label">成就点数</span><strong class="zq-stat-num">—</strong></article>'
-      + '<article class="zq-stat" data-ach-recent><span class="zq-stat-label">最近解锁</span><strong style="display:block; margin-top:10px; font-size:14px; line-height:1.3;">—</strong><span style="display:block; margin-top:4px; font-size:11.5px; color:var(--zq-text3);"></span></article>'
+      + '<article class="zq-stat zq-ach-recent" data-ach-recent><span class="zq-stat-label">最近解锁</span><strong>—</strong><span></span></article>'
       + '</section>'
-      + '<div data-ach-list class="zq-phone-1col" style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:14px;"></div></div>',
+      // 一行几张按宽度来（auto-fill）：原来固定三列，手机上靠 zq-phone-1col 改成一列
+      + '<div data-ach-list class="zq-ach-list"></div></div>',
     onClose: opts.onClose
   });
   handle.mask.querySelector('.zq-modal').classList.add('zq-modal-wide');
   var root = handle.body;
   var list = null;   // 还没回来时是 null：列表区先空着，不说「暂无成就」
   function renderAchList(filter) {
+    // 按下的样子在样式表（.zq-seg 的 aria-pressed）：原来 JS 改背景色和字的颜色
     root.querySelectorAll('[data-ach-filters] button').forEach(function (b) {
-      var on = b.dataset.k === filter;
-      b.style.background = on ? 'var(--zq-primary)' : 'var(--zq-card)';
-      b.style.color = on ? 'var(--zq-on-primary)' : 'var(--zq-text2)';
+      b.setAttribute('aria-pressed', b.dataset.k === filter ? 'true' : 'false');
     });
     if (!list) return;
     var shown = list.filter(function (a) {
       var on = !!(a.unlocked || a.unlockedAt);
       return filter === 'all' ? true : (filter === 'on' ? on : !on);
     });
-    root.querySelector('[data-ach-list]').innerHTML = shown.map(function (a) {
-      var on = !!(a.unlocked || a.unlockedAt);
-      var name = a.name || a.title || a.achievementName || '成就';
-      var desc = a.description || '';
-      var points = a.points || a.score || 0;
-      return '<article style="padding:16px;border:1px solid ' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-border-soft)') + ';border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);opacity:' + (on ? 1 : .82) + ';"><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;"><div style="width:42px;height:42px;flex:none;border-radius:50%;background:' + (on ? 'var(--zq-ok-tint)' : 'var(--zq-card-soft)') + ';color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';display:flex;align-items:center;justify-content:center;">' + sh.icon('award') + '</div><div style="min-width:0;"><h3 style="margin:0;font-size:14.5px;font-weight:var(--zq-fw-medium);">' + sh.esc(name) + '</h3><span style="font-size:11.5px;color:' + (on ? 'var(--zq-ok)' : 'var(--zq-text3)') + ';font-weight:var(--zq-fw-medium);">' + (on ? '已解锁' : '进行中') + '</span></div></div><p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.55;min-height:38px;">' + sh.esc(desc) + '</p><div style="display:flex;justify-content:flex-end;font-size:11.5px;color:var(--zq-text3);"><span class="zq-num">+' + sh.esc(points) + ' 点</span></div></article>';
-    }).join('') || sh.empty('暂无成就');
+    root.querySelector('[data-ach-list]').innerHTML = shown.map(function (a) { return achievementCard(sh, a); }).join('') || sh.empty('暂无成就');
   }
   var filter = 'all';
   root.querySelectorAll('[data-ach-filters] button[data-k]').forEach(function (b) { b.onclick = function () { filter = b.dataset.k; renderAchList(filter); }; });

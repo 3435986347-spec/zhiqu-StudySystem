@@ -17,6 +17,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -176,32 +177,36 @@ class MobileLayoutTest {
     }
 
     @Test
-    @DisplayName("设置 / 成就弹窗里的网格（不在 .zq-main 里，正文那两条按 style 认的规则管不到）：手机上怎么排写在类名上，并且和 DECISIONS 一致")
+    @DisplayName("设置 / 成就弹窗里的网格（第七十五轮起都是样式表里的类）：settings.js 不再内联网格；每一种在手机上怎么排写在类名上，和样式表一致")
     void 弹窗里的网格() throws IOException {
         String js = SourceText.stripComments(Files.readString(STATIC.resolve("assets/settings.js"), StandardCharsets.UTF_8));
-        Matcher tag = Pattern.compile("<(?:div|section)\\b([^>]*grid-template-columns[^>]*)>").matcher(js);
-        Pattern valuePat = Pattern.compile("grid-template-columns:\\s*([^;\"']+)");
-        Pattern classPat = Pattern.compile("class=\"([^\"]*)\"");
+        // 弹窗不在 .zq-main 里，正文那两条按 style 认的手机规则管不到这里；第七十五轮之前这条判扫的是内联的 grid-template-columns
+        assertFalse(js.contains("grid-template-columns"), "settings.js 又内联了网格 —— 写进样式表的类，手机上怎么排写在类名上（zq-phone-1col / zq-phone-2col）");
+        String css = css().replace(" ", "");
+        // [网格的类, 样式表里那个类的列, 手机上：zq-phone-1col / zq-phone-2col / 空 = 自己按宽度排（auto-fill）]
+        String[][] grids = {
+                {"zq-set-grid", "grid-template-columns:repeat(2,minmax(0,1fr))", "zq-phone-1col"},
+                {"zq-set-tiles", "grid-template-columns:repeat(4,minmax(0,1fr))", "zq-phone-2col"},
+                {"zq-stat-grid", "grid-template-columns:repeat(4,minmax(0,1fr))", "zq-phone-2col"},
+                {"zq-ach-list", "grid-template-columns:repeat(auto-fill,minmax(240px,1fr))", ""},
+        };
+        Pattern classAttr = Pattern.compile("class=\"([^\"]*)\"");
         List<String> wrong = new ArrayList<>();
-        int seen = 0;
-        while (tag.find()) {
-            String attrs = tag.group(1);
-            Matcher vm = valuePat.matcher(attrs);
-            if (!vm.find()) continue;
-            seen++;
-            String value = vm.group(1).trim();
-            Phone want = DECISIONS.get(value.replaceAll("\\s+", ""));
-            Matcher cm = classPat.matcher(attrs);
-            List<String> classes = cm.find() ? List.of(cm.group(1).trim().split("\\s+")) : List.of();
-            if (want == null) {
-                wrong.add("「" + value + "」还没决定手机上怎么排（写进 DECISIONS）");
-                continue;
+        for (String[] g : grids) {
+            Matcher rule = Pattern.compile("\\n\\." + g[0] + "\\{([^}]*)\\}").matcher(css);
+            if (!rule.find() || !rule.group(1).contains(g[1])) wrong.add("样式表里 ." + g[0] + " 不是「" + g[1] + "」");
+            int used = 0;
+            Matcher cm = classAttr.matcher(js);
+            while (cm.find()) {
+                List<String> classes = List.of(cm.group(1).trim().split("\\s+"));
+                if (!classes.contains(g[0])) continue;
+                used++;
+                boolean one = classes.contains("zq-phone-1col"), two = classes.contains("zq-phone-2col");
+                boolean ok = g[2].isEmpty() ? !one && !two : classes.contains(g[2]) && !(one && two);
+                if (!ok) wrong.add("." + g[0] + " 手机上应当" + (g[2].isEmpty() ? "自己按宽度排（不带 zq-phone-*）" : "带 " + g[2]) + "，类名是 " + classes);
             }
-            boolean one = classes.contains("zq-phone-1col"), two = classes.contains("zq-phone-2col");
-            Phone got = one && !two ? Phone.ONE_COLUMN : two && !one ? Phone.TWO_COLUMNS : !one && !two ? Phone.KEEP : null;
-            if (got != want) wrong.add("「" + value + "」应当 " + want + "，类名是 " + classes);
+            if (used == 0) wrong.add("settings.js 里没扫到 ." + g[0] + " —— 改名了？这条判据就空转了");
         }
-        assertTrue(seen >= 5, "settings.js 里只扫到 " + seen + " 处网格 —— 扫空了（写法变了？）");
         assertTrue(wrong.isEmpty(), String.join("\n", wrong));
         String block = phoneBlock(css()).body().replace(" ", "");
         assertTrue(block.contains(".zq-phone-1col{grid-template-columns:minmax(0,1fr)!important;}")

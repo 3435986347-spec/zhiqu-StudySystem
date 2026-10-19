@@ -481,7 +481,9 @@ html.zq-booting .zq-main{opacity:0;}
 @media (prefers-reduced-motion:reduce){::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none !important;}}
 
 /* ── Claude 风格弹窗（可复用；随主题切换） ── */
-.zq-modal-mask{position:fixed;inset:0;z-index:8000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(12,15,20,.46);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:zqMaskIn .16s ease both;}
+/* width:100vw —— 连滚动条的槽一起盖住（第七十五轮）：html 上的 scrollbar-gutter:stable 留着槽，固定定位的 inset:0 不算它，
+   在占位滚动条的平台（Windows 上的浏览器、手机宽的 Chromium）右边漏一条没变暗的边 */
+.zq-modal-mask{position:fixed;inset:0;width:100vw;z-index:8000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(12,15,20,.46);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:zqMaskIn .16s ease both;}
 .zq-modal{width:440px;max-width:100%;max-height:calc(100vh - 48px);display:flex;flex-direction:column;background:var(--zq-card);color:var(--zq-text);border:1px solid var(--zq-border);border-radius:var(--zq-rl);box-shadow:0 24px 64px rgba(0,0,0,.24);overflow:hidden;animation:zqModalIn .2s cubic-bezier(.2,.8,.2,1) both;}
 .zq-modal-head{display:flex;align-items:center;justify-content:space-between;gap:var(--zq-sp-3);padding:var(--zq-sp-4) var(--zq-sp-5);border-bottom:1px solid var(--zq-border-soft);}
 .zq-modal-title{margin:0;font-size:var(--zq-fs-md);font-weight:var(--zq-fw-medium);letter-spacing:-.01em;}
@@ -520,6 +522,102 @@ body.zq-modal-open{overflow:hidden;}
 .zq-settings-tabs button.on{background:var(--zq-card);color:var(--zq-text);font-weight:var(--zq-fw-medium);box-shadow:0 0 0 1px var(--zq-border);}
 .zq-settings-pane{flex:1;min-width:0;overflow-y:auto;padding:20px 24px 26px;}
 .zq-modal-wide .zq-field{margin-bottom:0;}
+/* 各栏的样子（第七十五轮：原来 settings.js 里 76 处内联样式，开关、状态的颜色、提醒渠道的显隐都是 JS 改 style） */
+.zq-set-h3{margin:0 0 var(--zq-sp-3);font-size:var(--zq-fs-base);font-weight:var(--zq-fw-medium);}
+.zq-set-section{margin-top:var(--zq-sp-6);}
+.zq-set-note{margin:0 0 var(--zq-sp-3);font-size:var(--zq-fs-xs);color:var(--zq-text3);line-height:1.6;}
+.zq-set-hint{font-size:var(--zq-fs-xs);color:var(--zq-text3);line-height:1.5;}
+.zq-set-callout{margin:0 0 var(--zq-sp-3);padding:var(--zq-sp-2) var(--zq-sp-3);border-radius:var(--zq-rs);background:var(--zq-tint);font-size:var(--zq-fs-xs);color:var(--zq-text2);line-height:1.55;}
+.zq-set-box{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:var(--zq-fs-xs);line-height:1.6;}
+.zq-set-box>strong{font-weight:var(--zq-fw-medium);}
+.zq-set-box>span{color:var(--zq-text3);}
+.zq-set-box-warn{margin:2px 0 0;color:var(--zq-text2);}
+.zq-set-row{display:flex;align-items:center;justify-content:space-between;gap:var(--zq-sp-3);margin-bottom:var(--zq-sp-4);}
+.zq-set-row-text{font-size:var(--zq-fs-sm);color:var(--zq-text2);line-height:1.55;}
+.zq-set-row-text b{color:var(--zq-text);}
+.zq-set-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--zq-sp-3);}
+.zq-set-grid>.is-wide{grid-column:1 / -1;}
+.zq-settings-pane .zq-field{gap:6px;}
+.zq-settings-pane .zq-input[readonly]{background:var(--zq-card-soft);color:var(--zq-text3);}
+.zq-set-actions{display:flex;justify-content:flex-end;margin-top:14px;}
+.zq-set-btns{display:flex;align-items:center;gap:var(--zq-sp-2);flex-wrap:wrap;}
+.zq-set-status{margin:0;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-set-status[data-state="ok"]{color:var(--zq-ok);}
+.zq-set-status[data-state="bad"]{color:var(--zq-bad);}
+/* 个人资料：头像（按钮，键盘也换得了）、名字和身份、三个数 */
+.zq-set-profile{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-bottom:var(--zq-sp-4);margin-bottom:var(--zq-sp-4);border-bottom:1px solid var(--zq-border-soft);}
+.zq-set-avatar{width:64px;height:64px;flex:none;display:flex;align-items:center;justify-content:center;padding:0;border:none;border-radius:50%;background:var(--zq-tint-strong);color:var(--zq-primary);font:var(--zq-fw-medium) 24px/1 var(--zq-fontBody);cursor:pointer;overflow:hidden;}
+.zq-set-avatar img{width:100%;height:100%;object-fit:cover;}
+.zq-set-who{flex:1;min-width:0;}
+.zq-set-who .zq-h2{font-size:var(--zq-fs-lg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-set-who .zq-badge{margin-top:6px;background:var(--zq-tint);color:var(--zq-primary);}
+.zq-set-nums{display:flex;gap:20px;text-align:center;}
+.zq-set-nums strong{display:block;font-size:var(--zq-fs-lg);font-weight:var(--zq-fw-medium);}
+.zq-set-nums span{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+/* AI 模型：卡片、四格探测状态（颜色按 data-state）、表单 */
+.zq-set-models{display:flex;flex-direction:column;gap:10px;margin-bottom:18px;}
+.zq-set-model{padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);}
+.zq-set-model-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.zq-set-model-who{min-width:0;}
+.zq-set-model-name{font-size:var(--zq-fs-base);font-weight:var(--zq-fw-medium);}
+.zq-set-model-id{margin-top:2px;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-set-model .zq-badge{background:var(--zq-tint);color:var(--zq-primary);}
+.zq-set-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--zq-sp-2);margin-top:11px;padding-top:11px;border-top:1px solid var(--zq-border-soft);}
+.zq-set-tile{min-width:0;}
+.zq-set-tile>span{display:block;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-set-tile>strong{display:block;margin-top:2px;font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-medium);color:var(--zq-text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-set-tile>strong[data-state="ok"]{color:var(--zq-ok);}
+.zq-set-tile>strong[data-state="bad"]{color:var(--zq-bad);}
+.zq-set-tile>strong[data-state="muted"]{color:var(--zq-text3);}
+.zq-set-model-meta{margin-top:9px;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-set-model-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:11px;}
+.zq-set-form{display:flex;flex-direction:column;gap:var(--zq-sp-3);padding-top:var(--zq-sp-4);border-top:1px solid var(--zq-border-soft);}
+.zq-set-form>.zq-set-h3{margin:0;}
+/* 提醒：渠道一块（选中的那个渠道的字段才露出来：hidden），命令行：设备码一行、已登录的列表；账号：一列输入框、一张两列的表 */
+.zq-set-channel{display:flex;flex-direction:column;gap:9px;padding-top:14px;border-top:1px solid var(--zq-border-soft);}
+.zq-set-channel>*{max-width:520px;}
+.zq-set-channel .zq-input,.zq-set-channel .zq-select,.zq-set-code .zq-input{height:30px;font-size:var(--zq-fs-sm);}
+.zq-set-inline{display:flex;align-items:center;gap:9px;}
+.zq-set-inline>.zq-label{flex:none;}
+.zq-set-inline>.zq-select{flex:1;}
+.zq-set-group{display:flex;flex-direction:column;gap:6px;}
+.zq-set-code{display:flex;gap:var(--zq-sp-2);max-width:420px;}
+.zq-set-code .zq-input{flex:1;text-transform:uppercase;}
+.zq-set-device{margin-top:var(--zq-sp-2);}
+.zq-set-list{display:flex;flex-direction:column;gap:6px;}
+.zq-set-token{display:flex;align-items:center;justify-content:space-between;gap:var(--zq-sp-2);padding:6px 8px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);font-size:var(--zq-fs-xs);}
+.zq-set-token-who{min-width:0;}
+.zq-set-token-who strong{font-weight:var(--zq-fw-medium);}
+.zq-set-token-who .zq-mono,.zq-set-token-used{color:var(--zq-text3);}
+.zq-set-stack{display:flex;flex-direction:column;gap:10px;max-width:360px;}
+.zq-set-stack>.zq-btn{align-self:flex-start;}
+.zq-set-kv>div{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;font-size:var(--zq-fs-sm);}
+.zq-set-kv>div+div{border-top:1px solid var(--zq-border-soft);}
+.zq-set-kv>div>span:first-child{flex:none;color:var(--zq-text2);}
+.zq-set-kv>div>span:last-child{font-weight:var(--zq-fw-medium);text-align:right;}
+/* 开关（提醒推送、让 AI 读我的任务）：只看 aria-checked。打开时滑块用「主色上的字」那个颜色 —— 深色下主色是浅的，白钮就看不见了 */
+.zq-switch{position:relative;flex:none;width:42px;height:24px;padding:0;border:none;border-radius:999px;background:var(--zq-border);cursor:pointer;transition:background .2s;}
+.zq-switch>i{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:left .2s,background .2s;}
+.zq-switch[aria-checked="true"]{background:var(--zq-primary);}
+.zq-switch[aria-checked="true"]>i{left:21px;background:var(--zq-on-primary);}
+/* 成就弹窗：一行说明 + 筛选（.zq-seg）、四个数、卡片（一行几张按宽度来） */
+.zq-ach-view{display:flex;flex-direction:column;gap:14px;}
+.zq-ach-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:var(--zq-fs-sm);color:var(--zq-text2);}
+.zq-stat.is-primary .zq-stat-num{color:var(--zq-primary);}
+.zq-ach-recent>strong{display:block;margin-top:10px;font-size:var(--zq-fs-base);font-weight:var(--zq-fw-medium);line-height:1.3;}
+.zq-ach-recent>span:last-child{display:block;margin-top:4px;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-ach-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}
+.zq-ach{display:flex;flex-direction:column;padding:16px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);}
+.zq-ach-head{display:flex;align-items:center;gap:12px;margin-bottom:10px;}
+.zq-ach-badge{width:42px;height:42px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--zq-card-soft);color:var(--zq-text3);}
+.zq-ach-who{min-width:0;}
+.zq-ach-who h3{margin:0;font-size:var(--zq-fs-base);font-weight:var(--zq-fw-medium);}
+.zq-ach-who span{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-ach p{flex:1;margin:0 0 10px;font-size:var(--zq-fs-sm);color:var(--zq-text2);line-height:1.55;}
+.zq-ach-points{display:flex;justify-content:flex-end;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-ach.is-on{border-color:var(--zq-ok-tint);}
+.zq-ach.is-on .zq-ach-badge{background:var(--zq-ok-tint);color:var(--zq-ok);}
+.zq-ach.is-on .zq-ach-who span{color:var(--zq-ok);}
 
 /* ── Wiki 文档工具栏（圆角、随主题；替换旧方框内联样式） ── */
 .zq-toolbar{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px;padding:2px;border-radius:var(--zq-rs);background:var(--zq-card-soft);}
