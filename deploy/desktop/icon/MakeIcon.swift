@@ -5,11 +5,12 @@
 // 这里只做两件设计稿里没有的事：
 //   1. macOS 的 iconset：按 macOS 图标的版式四周留白（1024 的画布里图标占 824），不然在 Dock 里比别的应用大一圈；
 //   2. 两个 ICO：网页的 favicon.ico（16 / 32 / 48）、Windows 安装包的 zhiqu.ico（16 到 256 六档）。
-//      16、32 用设计稿给小尺寸专门出的两张（线条做过取舍），更大的从 512 缩。
+//      16、32 用设计稿给小尺寸专门出的两张（线条做过取舍），更大的从 1024 母版缩。
 //
-// 设计稿最大只有 512：iconset 最大那一档（512@2x，1024 像素）只能放大，最大的预览会有点软。
+// 母版是设计稿的 icon-1024.png（第七十六轮：用户补来了 1024 和矢量稿 icon.svg，都在这个目录）。第七十二轮时设计稿最大只有 512，
+// iconset 最大那一档（512@2x，1024 像素）只能放大，最大的预览有点软；现在每一档都是从 1024 缩下来的。
 //
-// 用法：MakeIcon <icon-512.png> <favicon-16.png> <favicon-32.png> <输出目录>
+// 用法：MakeIcon <icon-1024.png> <favicon-16.png> <favicon-32.png> <输出目录>
 //   打包脚本每次只用 zhiqu.iconset；两个 ICO 换设计稿时手动拷回仓库：
 //   cp <输出目录>/favicon.ico zhiqu-backend/src/main/resources/static/favicon.ico
 //   cp <输出目录>/zhiqu.ico deploy/desktop/icon/zhiqu.ico
@@ -18,7 +19,7 @@ import AppKit
 
 let args = CommandLine.arguments
 guard args.count >= 5 else {
-    FileHandle.standardError.write("用法: MakeIcon <icon-512.png> <favicon-16.png> <favicon-32.png> <outDir>\n".data(using: .utf8)!)
+    FileHandle.standardError.write("用法: MakeIcon <icon-1024.png> <favicon-16.png> <favicon-32.png> <outDir>\n".data(using: .utf8)!)
     exit(2)
 }
 
@@ -34,8 +35,8 @@ func load(_ path: String) -> (CGImage, Data) {
 let (master, _) = load(args[1])
 let (_, favicon16) = load(args[2])
 let (_, favicon32) = load(args[3])
-guard master.width == 512 && master.height == 512 else {
-    FileHandle.standardError.write("icon-512.png 应当是 512×512，实际 \(master.width)×\(master.height)\n".data(using: .utf8)!)
+guard master.width == 1024 && master.height == 1024 else {
+    FileHandle.standardError.write("母版应当是 1024×1024（icon-1024.png），实际 \(master.width)×\(master.height)\n".data(using: .utf8)!)
     exit(1)
 }
 let outDir = URL(fileURLWithPath: args[4], isDirectory: true)

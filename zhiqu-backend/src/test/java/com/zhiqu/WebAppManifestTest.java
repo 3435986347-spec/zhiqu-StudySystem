@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -140,6 +141,52 @@ class WebAppManifestTest {
         if (!touch.equals("180x180")) wrong.add("apple-touch-icon.png 实际 " + touch + "（iOS 要 180x180）");
         assertTrue(checked >= 3, "清单里只有 " + checked + " 张图标");
         assertTrue(wrong.isEmpty(), "图标尺寸对不上：" + wrong);
+    }
+
+    private static final Path DESKTOP_ICON = Path.of("..", "deploy", "desktop", "icon");
+
+    @Test
+    @DisplayName("桌面应用的图标母版（第七十六轮）：icon-1024.png 是 1024×1024、缩一半就是网页用的 icon-512.png；打包脚本把它交给 MakeIcon，MakeIcon 认 1024")
+    void 图标母版是1024() throws IOException {
+        // 第七十二轮设计稿最大只有 512，macOS 图标最大那一档（512@2x，1024 像素）只能从 512 放大；用户补来了 1024 和矢量稿
+        byte[] master = Files.readAllBytes(DESKTOP_ICON.resolve("icon-1024.png"));
+        assertEquals("1024x1024", pngSize(master), "icon-1024.png 不是 1024×1024");
+        java.awt.image.BufferedImage big = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(master));
+        java.awt.image.BufferedImage small = javax.imageio.ImageIO.read(STATIC.resolve("assets/icons/icon-512.png").toFile());
+        double diff = halfScaleDiff(big, small);
+        // 同一张图缩一半再比，差在线条的抗锯齿边上（实测 0.48 / 255）；换了设计 / 放错了图会差几十
+        assertTrue(diff < 2.0, "icon-1024.png 缩一半和网页的 icon-512.png 平均差 " + diff + " / 255 —— 不是同一张图（放错了设计稿？）");
+        String pack = Files.readString(Path.of("..", "deploy", "desktop", "package-macos-native.sh"), StandardCharsets.UTF_8);
+        assertTrue(pack.contains("\"$ICON_TOOL\" \"$ROOT/deploy/desktop/icon/icon-1024.png\" \\"), "打包脚本没把 1024 的母版交给 MakeIcon（又拿 512 放大了）");
+        String tool = SourceText.stripComments(Files.readString(DESKTOP_ICON.resolve("MakeIcon.swift"), StandardCharsets.UTF_8));
+        assertTrue(tool.contains("guard master.width == 1024 && master.height == 1024 else {"), "MakeIcon 不认 1024 的母版");
+    }
+
+    @Test
+    @DisplayName("矢量稿 icon.svg（第七十六轮，留档的设计稿）：是 SVG、底色和母版一样、没有脚本 / 事件 / 外链")
+    void 矢量稿是干净的SVG() throws IOException {
+        String svg = Files.readString(DESKTOP_ICON.resolve("icon.svg"), StandardCharsets.UTF_8);
+        assertTrue(svg.startsWith("<svg ") && svg.contains("viewBox=\"0 0 100 100\""), "icon.svg 不是那张 100×100 画布的 SVG");
+        assertTrue(svg.contains("<rect width=\"100\" height=\"100\" rx=\"22\" fill=\"#18181B\">"), "矢量稿的底不是母版那个近黑圆角方块（#18181B）");
+        java.util.regex.Matcher bad = java.util.regex.Pattern.compile("(?i)<script|\\son[a-z]+\\s*=|href\\s*=\\s*[\"'](?!#)").matcher(svg);
+        assertFalse(bad.find(), "矢量稿里有脚本 / 事件 / 外链：" + (bad.find(0) ? bad.group() : ""));
+    }
+
+    /** 大图按 2×2 取平均缩一半，和小图逐像素（四个通道）比，回平均差（0–255） */
+    private static double halfScaleDiff(java.awt.image.BufferedImage big, java.awt.image.BufferedImage small) {
+        assertEquals(big.getWidth(), small.getWidth() * 2, "大图不是小图的两倍宽");
+        double sum = 0;
+        for (int y = 0; y < small.getHeight(); y++) {
+            for (int x = 0; x < small.getWidth(); x++) {
+                int q = small.getRGB(x, y);
+                for (int shift = 0; shift < 32; shift += 8) {
+                    int acc = 0;
+                    for (int d = 0; d < 4; d++) acc += big.getRGB(x * 2 + d % 2, y * 2 + d / 2) >>> shift & 255;
+                    sum += Math.abs(acc / 4 - (q >>> shift & 255));
+                }
+            }
+        }
+        return sum / (small.getWidth() * small.getHeight() * 4.0);
     }
 
     private static void assertIco(Path file, List<Integer> required) throws IOException {

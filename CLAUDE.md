@@ -157,8 +157,7 @@ cd ../zhiqu-cli && npm test
 - [第三十一轮](docs/rounds/round-31.md) 后台四页拆成模块，立起页面模块的形状
 - [第三十二轮](docs/rounds/round-32.md) 例行计划、专注统计拆成模块
 - [第三十三轮](docs/rounds/round-33.md) 参考计划、[第三十四轮](docs/rounds/round-34.md) 任务页拆成模块
-- [第三十五轮](docs/rounds/round-35.md) 看板拆成模块
-- [第三十六轮](docs/rounds/round-36.md) 知识 Wiki 拆成模块
+- [第三十五轮](docs/rounds/round-35.md) 看板、[第三十六轮](docs/rounds/round-36.md) 知识 Wiki 拆成模块
 - [第三十七轮](docs/rounds/round-37.md) AI 助手拆成模块（方案第 4 步做完）
 - [第三十八轮](docs/rounds/round-38.md) CLAUDE.md 瘦身（方案第 5 步）
 - [第三十九轮](docs/rounds/round-39.md) 页面切换流畅：骨架先露、互不依赖的请求一起发、文字一律系统无衬线字体
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第七十三轮](docs/rounds/round-73.md) 换编辑器第 2 步：新编辑器补齐图片、下划线、表格、代码着色、段落格式和快捷键，阅读模式里点哪个字光标就落在原文那个字上
 - [第七十四轮](docs/rounds/round-74.md) review 第五十九到七十三轮（9 条 + 十六遍复查）：AI 改页不删用户的字、「根据知识库生成」不算写 Wiki、新编辑器回原处 / 插链接留字；Wiki 草稿只在 `WikiDrafts` 造（先洗再截、空的不造、合入不再洗）
 - [第七十五轮](docs/rounds/round-75.md) 界面打磨第 8 步（三）：设置、成就弹窗的样子进样式表（开关看 `aria-checked`、分栏能用方向键、打开时焦点在选中的那栏），模型卡片不重复「我的」，遮罩盖住滚动条的槽
+- [第七十六轮](docs/rounds/round-76.md) 图标的 1024 母版和矢量稿：macOS 图标最大那一档不再从 512 放大（`MakeIcon` 读 `deploy/desktop/icon/icon-1024.png`）
