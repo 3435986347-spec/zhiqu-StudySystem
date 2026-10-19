@@ -90,7 +90,7 @@ async function showWikiLoadingView(name, options, load, render) {
 }
 /** 原来 showInfo 的那个样子（一段话 + 「知道了」），填进已经开着的弹窗 */
 function wikiInfoSpec(spec) {
-  return { title: spec.title, bodyHtml: (spec.html || '<p style="margin:0 0 16px;font-size:13.5px;line-height:1.7;color:var(--zq-text2);white-space:pre-wrap;">' + esc(spec.message || '') + '</p>')
+  return { title: spec.title, bodyHtml: (spec.html || '<p class="zq-wiki-note is-message">' + esc(spec.message || '') + '</p>')
     + '<div class="zq-modal-actions"><button type="button" class="zq-btn" data-ask="ok">知道了</button></div>',
   onMount: function (body, h) { $('[data-ask="ok"]', body).onclick = h.close; } };
 }
@@ -148,7 +148,8 @@ function paintWikiTree() {
   });
   tree.innerHTML = pages.map(function (p) {
     var active = state.wikiCur && p.id === state.wikiCur.id;
-    return '<a data-wiki="' + p.id + '" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--zq-rs);cursor:pointer;background:' + (active ? 'var(--zq-tint)' : 'transparent') + ';"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:' + (active ? 'var(--zq-fw-medium)' : 'var(--zq-fw-regular)') + ';color:var(--zq-text2);">' + esc(p.title) + '</span></a>';
+    // 选中的那一页是 aria-current（底色、字重在样式表的 .zq-wiki-item）
+    return '<a data-wiki="' + p.id + '" class="zq-wiki-item"' + (active ? ' aria-current="page"' : '') + '><span>' + esc(p.title) + '</span></a>';
   }).join('') || empty('无匹配页面');
   $all('[data-wiki]', tree).forEach(function (a) {
     var pageOf = function () { return (state.wikiPages || []).find(function (x) { return String(x.id) === a.dataset.wiki; }); };
@@ -248,7 +249,7 @@ async function paintWikiDoc(p, opts) {
   }
   var insp = $('#zq-insp');
   if (insp) {
-    insp.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--zq-text2);line-height:1.6;">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span style="color:var(--zq-text3);">点击正文即可编辑 · 开启「只读」可防止误改 · [[双链]]可跳转</span>'
+    insp.innerHTML = '<div class="zq-wiki-insp">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span class="zq-wiki-insp-tip">点击正文即可编辑 · 开启「只读」可防止误改 · [[双链]]可跳转</span>'
       + wikiEditorSwitchHtml() + '</div>';
     wireWikiEditorSwitch(insp);
   }
@@ -302,13 +303,12 @@ function offerWikiDraft(p) {
   var d = drafts.load(wikiDraftKey(p));
   if (!d || d.text === (p.content || '')) return;
   var bar = document.createElement('div');
-  bar.id = 'zq-wiki-draft';
-  bar.style.cssText = 'display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:9px 12px;border:1px solid var(--zq-tint-strong);border-radius:var(--zq-rs);background:var(--zq-tint);font-size:12.5px;color:var(--zq-text);';
+  bar.id = 'zq-wiki-draft';   // 样子在样式表的 #zq-wiki-draft
   var when = new Date(d.at);
   var moved = d.base != null && p.version != null && Number(d.base) !== Number(p.version);
-  bar.innerHTML = '<span style="flex:1;">这一页有没保存的修改（' + esc((when.getMonth() + 1) + '/' + when.getDate() + ' ' + String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0'))
+  bar.innerHTML = '<span>这一页有没保存的修改（' + esc((when.getMonth() + 1) + '/' + when.getDate() + ' ' + String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0'))
     + '）' + (moved ? '。之后这一页被改过，恢复后保存时会先问你' : '') + '</span>'
-    + '<button class="zq-btn" data-draft="restore" style="height:28px;">恢复</button><button class="zq-btn-ghost" data-draft="drop" style="height:28px;">丢弃</button>';
+    + '<button class="zq-btn" data-draft="restore">恢复</button><button class="zq-btn-ghost" data-draft="drop">丢弃</button>';
   doc.parentNode.insertBefore(bar, doc);
   $('[data-draft="restore"]', bar).onclick = function () {
     if (wikiReadOnly()) return toast('请先关闭只读开关再恢复草稿');
@@ -443,20 +443,12 @@ function paintWikiTabs() {
   var tabs = state.wikiTabs || [];
   bar.innerHTML = tabs.map(function (t, i) {
     var on = i === state.wikiTabIdx;
-    return '<div data-wiki-tab="' + i + '" title="' + esc(t.title || '') + '" style="' +
-      'display:flex;align-items:center;gap:6px;max-width:190px;padding:7px 8px 7px 12px;cursor:pointer;' +
-      'border-right:1px solid var(--zq-border-soft);font-size:12.5px;white-space:nowrap;' +
-      'background:' + (on ? 'var(--zq-card)' : 'transparent') + ';' +
-      'color:' + (on ? 'var(--zq-text)' : 'var(--zq-text2)') + ';' +
-      'font-weight:' + (on ? 'var(--zq-fw-medium)' : 'var(--zq-fw-regular)') + ';' +
-      'box-shadow:' + (on ? 'inset 0 2px 0 var(--zq-primary)' : 'none') + ';">' +
-      '<span style="overflow:hidden;text-overflow:ellipsis;">' + esc(t.title || '新标签页') + '</span>' +
-      '<span data-wiki-tab-close="' + i + '" title="关闭" style="flex:0 0 auto;width:16px;height:16px;' +
-      'display:flex;align-items:center;justify-content:center;border-radius:4px;' +
-      'color:var(--zq-text3);font-size:13px;line-height:1;">' + icon('x') + '</span></div>';
+    // 当前标签是 aria-current（底色、上沿那条强调色、字重在样式表的 .zq-wiki-tab）
+    return '<div data-wiki-tab="' + i + '" class="zq-wiki-tab"' + (on ? ' aria-current="page"' : '') + ' title="' + esc(t.title || '') + '">' +
+      '<span class="zq-wiki-tab-name">' + esc(t.title || '新标签页') + '</span>' +
+      '<span data-wiki-tab-close="' + i + '" class="zq-wiki-tab-x" title="关闭">' + icon('x') + '</span></div>';
   }).join('') +
-    '<div data-wiki-tab-new="1" title="新标签页" style="display:flex;align-items:center;justify-content:center;' +
-    'width:30px;flex:0 0 auto;cursor:pointer;color:var(--zq-text3);font-size:15px;">+</div>';
+    '<div data-wiki-tab-new="1" class="zq-wiki-tab-new" title="新标签页" aria-label="新标签页">' + icon('plus') + '</div>';
 
   $all('[data-wiki-tab]', bar).forEach(function (el) {
     el.onclick = function (e) {
@@ -477,9 +469,9 @@ function paintWikiTabs() {
   if (plus) plus.onclick = openWikiQuickSwitch;
 
   var back = $('#zq-wiki-back'), fwd = $('#zq-wiki-fwd'), tab = activeWikiTab();
-  // 没有历史时置灰而不是隐藏：按钮位置固定，标题才不会左右跳。
-  if (back) { back.disabled = !(tab && tab.back.length); back.style.opacity = back.disabled ? '.35' : '1'; }
-  if (fwd) { fwd.disabled = !(tab && tab.fwd.length); fwd.style.opacity = fwd.disabled ? '.35' : '1'; }
+  // 没有历史时置灰而不是隐藏：按钮位置固定，标题才不会左右跳。灰的样子在样式表（.zq-wiki-nav .zq-btn-ghost:disabled）
+  if (back) back.disabled = !(tab && tab.back.length);
+  if (fwd) fwd.disabled = !(tab && tab.fwd.length);
 }
 
 /** + 按钮：列出所有页面让用户挑一个，选中后在新标签打开。 */
@@ -488,16 +480,15 @@ function openWikiQuickSwitch() {
   var h = openModal({
     title: '在新标签页打开',
     width: 460,
-    bodyHtml: '<input id="zq-qs-input" class="zq-input" placeholder="输入标题筛选…" style="width:100%;margin-bottom:10px;">' +
-      '<div id="zq-qs-list" style="max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:2px;"></div>',
+    bodyHtml: '<input id="zq-qs-input" class="zq-input" placeholder="输入标题筛选…" aria-label="输入标题筛选">' +
+      '<div id="zq-qs-list" class="zq-wiki-qs"></div>',
     onMount: function (body) {
       var input = $('#zq-qs-input', body), list = $('#zq-qs-list', body);
       function paint() {
         var q = (input.value || '').trim().toLowerCase();
         var hit = pages.filter(function (p) { return !q || (p.title || '').toLowerCase().indexOf(q) >= 0; });
         list.innerHTML = hit.map(function (p) {
-          return '<a data-qs="' + p.id + '" style="display:block;padding:8px 10px;border-radius:var(--zq-rs);' +
-            'cursor:pointer;font-size:13px;color:var(--zq-text2);">' + esc(p.title) + '</a>';
+          return '<a data-qs="' + p.id + '" class="zq-wiki-qs-item">' + esc(p.title) + '</a>';
         }).join('') || empty('没有匹配的页面');
         $all('[data-qs]', list).forEach(function (a) {
           a.onclick = function () {
@@ -639,7 +630,6 @@ function wireWikiLinks(doc, scope) {
 }
 function wireWikiEditor() {
   var doc = $('#zq-doc'); if (!doc) return;
-  doc.style.cursor = 'text';
   doc.addEventListener('zq-wiki-embed-ready', function (event) {
     var scope = event.target;
     if (!scope || scope !== doc && !doc.contains(scope)) return;
@@ -719,8 +709,7 @@ function wireWikiEditor() {
       return;
     }
     if (!ensureWikiEditing()) return;
-    var span = cb.nextElementSibling;
-    if (span) { span.style.textDecoration = cb.checked ? 'line-through' : 'none'; span.style.color = cb.checked ? 'var(--zq-text3)' : 'var(--zq-text)'; }
+    // 勾上的划线变灰在样式表（.zq-task-row>input:checked+span），不再在这里写
     doc.dispatchEvent(new Event('input', { bubbles: true }));
   });
   var section = doc.closest('section'); if (!section) return;
@@ -796,7 +785,7 @@ function chooseWikiImage() {
   var editContext = wikiEditingContext($('#zq-doc'));
   var picker = document.createElement('input');
   picker.type = 'file'; picker.accept = 'image/png,image/jpeg,image/gif,image/webp';
-  picker.style.display = 'none';
+  picker.hidden = true;
   document.body.appendChild(picker);
   picker.onchange = function () {
     var file = picker.files && picker.files[0];
@@ -892,8 +881,7 @@ function syncWikiEditMode(doc) {
   var editing = doc.dataset.editing === '1', locked = wikiReadOnly(), unavailable = !state.wikiCur || doc.dataset.loading === '1';
   doc.contentEditable = editing && !locked && doc.dataset.source !== '1' && !wikiCmActive(doc) ? 'true' : 'false';
   if (wikiCmActive(doc)) wikiCm.handle.setReadOnly(locked || unavailable);
-  doc.setAttribute('aria-readonly', locked || unavailable ? 'true' : 'false');
-  doc.style.cursor = locked ? 'default' : 'text';
+  doc.setAttribute('aria-readonly', locked || unavailable ? 'true' : 'false');   // 光标跟着它（样式表的 #zq-doc[aria-readonly="true"]）
   var source = $('#zq-src-ta'); if (source) source.readOnly = locked;
   var modeButton = $('#zq-wiki-mode'), label = $('#zq-wiki-mode-label');
   if (modeButton) {
@@ -908,8 +896,7 @@ function syncWikiEditMode(doc) {
   syncWikiTaskControls(doc);
   var title = $('#zq-doc-title');
   if (title) {
-    title.style.cursor = locked || unavailable ? 'default' : 'pointer';
-    title.title = locked || unavailable ? '' : '点击修改页面名称';
+    title.title = locked || unavailable ? '' : '点击修改页面名称';   // 能改名时才是手指光标：样式表按 title 认（#zq-doc-title[title]:not([title=""])）
   }
 }
 function syncWikiTaskControls(doc, scope) {
@@ -971,7 +958,7 @@ function enterWikiEdit() {
   var view = captureWikiView(doc);
   wireWikiDrafts(doc);
   doc.dataset.editing = '1'; doc.dataset.source = '0'; doc.dataset.wikiEditSession = String(++wikiEditSession);
-  doc.contentEditable = 'true'; doc.style.outline = 'none';
+  doc.contentEditable = 'true';
   showWikiActionBar();
   doc.focus({ preventScroll: true });
   restoreWikiView(doc, view);
@@ -1017,8 +1004,8 @@ function enterWikiCmEdit(doc, p, markdown) {
 /** 页面检查里的切换（桌面应用没有地址栏和开发者工具，要在这里切才试得到中文输入法） */
 function wikiEditorSwitchHtml() {
   var on = wikiCmEnabled();
-  return '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--zq-border-soft);">编辑器：' + (on ? '验证版（CodeMirror）' : '现在的')
-    + '<br><button type="button" class="zq-btn-ghost" id="zq-wiki-editor-switch" style="height:26px;margin-top:6px;font-size:12px;">'
+  return '<div class="zq-wiki-insp-editor">编辑器：' + (on ? '验证版（CodeMirror）' : '现在的')
+    + '<br><button type="button" class="zq-btn-ghost" id="zq-wiki-editor-switch">'
     + (on ? '换回现在的编辑器' : '试试新编辑器（验证版）') + '</button></div>';
 }
 function wireWikiEditorSwitch(root) {
@@ -1096,8 +1083,8 @@ function wikiToolbar(cmd) {
       title: '插入参考链接',
       bodyHtml:
         '<div class="zq-field"><label class="zq-label">显示标题</label><input id="zq-ref-title" class="zq-input" placeholder="例如：公司内部知识库"></div>'
-        + '<div class="zq-field" style="margin-top:12px;"><label class="zq-label">链接地址</label><input id="zq-ref-url" class="zq-input" placeholder="https://…"></div>'
-        + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;"><button class="zq-btn-ghost" id="zq-ref-cancel" style="height:32px;">取消</button><button class="zq-btn" id="zq-ref-ok" style="height:32px;">插入</button></div>',
+        + '<div class="zq-field"><label class="zq-label">链接地址</label><input id="zq-ref-url" class="zq-input" placeholder="https://…"></div>'
+        + '<div class="zq-modal-actions"><button class="zq-btn-ghost" id="zq-ref-cancel">取消</button><button class="zq-btn" id="zq-ref-ok">插入</button></div>',
       onMount: function (body, handle) {
         body.querySelector('#zq-ref-cancel').onclick = handle.close;
         body.querySelector('#zq-ref-ok').onclick = function () {
@@ -1150,7 +1137,7 @@ function toggleWikiSource() {
     var md2 = htmlToMarkdown(doc);
     doc.dataset.source = '1'; doc.contentEditable = 'false';
     setSourcePressed(true);
-    doc.innerHTML = '<textarea id="zq-src-ta" style="width:100%;min-height:360px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);padding:12px;font-size:13px;line-height:1.7;font-family:var(--zq-fontM);background:var(--zq-input-bg);color:var(--zq-text);resize:vertical;box-sizing:border-box;"></textarea>';
+    doc.innerHTML = '<textarea id="zq-src-ta" aria-label="Markdown 源码"></textarea>';   // 样子在样式表的 #zq-src-ta
     $('#zq-src-ta').value = md2;
     $('#zq-src-ta').focus({ preventScroll: true });
   }
@@ -1165,7 +1152,7 @@ function showWikiActionBar() {
   bar.dataset.editing = doc.dataset.editing === '1' ? '1' : '0';
   // 系统页（index/log/维护规则）不给删除入口，后端也会拦截
   var isSysPage = state.wikiCur && ['INDEX', 'LOG', 'SCHEMA'].indexOf(String(state.wikiCur.pageType || '').toUpperCase()) >= 0;
-  bar.innerHTML = '<button class="zq-btn" id="zq-wiki-save" style="height:30px;">保存</button><button class="zq-btn-ghost" id="zq-wiki-cancel" style="height:30px;">取消</button>' + (isSysPage ? '' : '<button class="zq-btn-ghost" id="zq-wiki-del" style="height:30px;margin-left:auto;color:var(--zq-bad);">删除本页</button>');
+  bar.innerHTML = '<button class="zq-btn" id="zq-wiki-save">保存</button><button class="zq-btn-ghost" id="zq-wiki-cancel">取消</button>' + (isSysPage ? '' : '<button class="zq-btn-ghost is-danger" id="zq-wiki-del">删除本页</button>');
   doc.parentNode.appendChild(bar);
   $('#zq-wiki-save').onclick = saveWikiEdit;
   // history:true —— 取消编辑是重绘当前页，不是一次跳转，不该压进返回栈
@@ -1250,7 +1237,7 @@ async function exportWikiMarkdown() {
     var done = false;
     openModal({
       title: '导出知识库 ZIP',
-      bodyHtml: '<p style="margin:0 0 14px;font-size:13px;line-height:1.6;color:var(--zq-text2);">Markdown 笔记、目录、图片与附件会放进同一个 wiki 文件夹。</p>'
+      bodyHtml: '<p class="zq-wiki-note">Markdown 笔记、目录、图片与附件会放进同一个 wiki 文件夹。</p>'
         + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" data-vault-export="cancel">取消</button>'
         + (currentAtOpen ? '<button type="button" class="zq-btn-ghost" data-vault-export="current">当前页及子页</button>' : '')
         + '<button type="button" class="zq-btn" data-vault-export="all">整个知识库</button></div>',
@@ -1302,7 +1289,7 @@ function importWikiVault() {
   openModal({
     title: '导入知识库 ZIP',
     width: '620px',
-    bodyHtml: '<p style="margin:0 0 14px;font-size:13px;line-height:1.6;color:var(--zq-text2);">选择 Obsidian 风格 ZIP。先预览目录、双链、图片和重名处理，确认后才新增页面；现有页面不会被覆盖。</p>'
+    bodyHtml: '<p class="zq-wiki-note">选择 Obsidian 风格 ZIP。先预览目录、双链、图片和重名处理，确认后才新增页面；现有页面不会被覆盖。</p>'
       + '<div class="zq-field"><label class="zq-label" for="zq-vault-pick">ZIP 文件</label>'
       + '<div class="zq-vault-file"><input id="zq-vault-file" type="file" accept=".zip,application/zip" hidden>'
       + '<button type="button" class="zq-btn-ghost" id="zq-vault-pick" aria-describedby="zq-vault-selected">' + icon('paperclip') + ' 选择 ZIP 文件</button>'
@@ -1310,7 +1297,7 @@ function importWikiVault() {
       + '<div class="zq-field"><label class="zq-label" for="zq-vault-parent">导入位置</label><select id="zq-vault-parent" class="zq-select"><option value="root">知识库根目录</option>'
       + (current && !isSystemWikiPage(current) ? '<option value="current">当前页「' + esc(current.title) + '」下面</option>' : '')
       + '</select></div>'
-      + '<div id="zq-vault-preview" style="max-height:38vh;overflow:auto;margin:12px 0;font-size:12.5px;line-height:1.6;color:var(--zq-text2);"></div>'
+      + '<div id="zq-vault-preview"></div>'
       + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-vault-cancel">取消</button>'
       + '<button type="button" class="zq-btn-ghost" id="zq-vault-check">预览 ZIP</button>'
       + '<button type="button" class="zq-btn" id="zq-vault-confirm" disabled>确认导入</button></div>',
@@ -1359,11 +1346,11 @@ function importWikiVault() {
           var warnings = (result.warnings || []).slice(0, 20).map(function (warning) {
             return '<li>' + esc(warning) + '</li>';
           }).join('');
-          output.innerHTML = '<p style="margin:0 0 8px;">将新增 ' + Number(result.pageCount || 0) + ' 页、'
+          output.innerHTML = '<p>将新增 ' + Number(result.pageCount || 0) + ' 页、'
             + Number(result.attachmentCount || 0) + ' 个附件、' + Number(result.relationshipCount || 0)
-            + ' 条双链。</p><ul style="margin:0 0 10px;padding-left:20px;">' + items + '</ul>'
+            + ' 条双链。</p><ul>' + items + '</ul>'
             + (Number(result.pageCount || 0) > 30 ? '<p>其余页面未在此处展开。</p>' : '')
-            + (warnings ? '<p>需要留意：</p><ul style="padding-left:20px;">' + warnings + '</ul>' : '');
+            + (warnings ? '<p>需要留意：</p><ul>' + warnings + '</ul>' : '');
           confirm.disabled = !result.previewToken;
         }).finally(function () { busy = false; if (!closed) check.disabled = false; });
       };
@@ -1427,7 +1414,7 @@ function createWikiPage() {
       '<div class="zq-field"><label class="zq-label">页面标题</label><input id="zq-np-title" class="zq-input" placeholder="例如：英语作文素材库"></div>'
       + '<div class="zq-field"><label class="zq-label">类型</label><select id="zq-np-type" class="zq-select">' + typeOptions + '</select></div>'
       + '<div class="zq-field"><label class="zq-label">父节点</label><select id="zq-np-parent" class="zq-select">' + parentOptions + '</select></div>'
-      + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">将按类型生成初始结构（小节 / 任务项），创建后点击「编辑」继续填写。</p>'
+      + '<p class="zq-wiki-hint">将按类型生成初始结构（小节 / 任务项），创建后点击「编辑」继续填写。</p>'
       + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-np-cancel">取消</button><button type="button" class="zq-btn" id="zq-np-ok">创建</button></div>',
     onMount: function (b, h) {
       $('#zq-np-cancel', b).onclick = h.close;
@@ -1478,19 +1465,19 @@ function importWikiSource() {
       + '<div class="zq-field"><label class="zq-label">导入方式</label><select id="zq-imp-mode" class="zq-select"><option value="TEXT">粘贴文本 / 链接</option><option value="UPLOAD">上传文件解析</option></select></div>'
       + '<div id="zq-imp-text-box">'
       + '<div class="zq-field"><label class="zq-label">类型</label><select id="zq-imp-type" class="zq-select"><option value="NOTE">笔记 / 文本</option><option value="URL">网址链接</option><option value="FILE">资料摘录</option></select></div>'
-      + '<div class="zq-field"><label class="zq-label">内容 / 链接</label><textarea id="zq-imp-content" class="zq-textarea" style="min-height:110px;" placeholder="粘贴文本，或填入 http/https 链接"></textarea></div>'
+      + '<div class="zq-field"><label class="zq-label">内容 / 链接</label><textarea id="zq-imp-content" class="zq-textarea" placeholder="粘贴文本，或填入 http/https 链接"></textarea></div>'
       + '</div>'
-      + '<div id="zq-imp-file-box" style="display:none;">'
-      + '<div class="zq-field"><label class="zq-label" for="zq-imp-file">选择文件</label><input id="zq-imp-file" type="file" class="zq-input" style="height:auto;padding:7px 12px;" accept=".pdf,.xlsx,.xls,.txt,.md,.csv,.json,.xml,.png,.jpg,.jpeg,.webp"></div>'
-      + '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">pdf / xlsx / txt / md / csv / json / xml 会自动解析正文；图片仅记录文件信息，暂不做内容识别。</p>'
+      + '<div id="zq-imp-file-box" hidden>'
+      + '<div class="zq-field"><label class="zq-label" for="zq-imp-file">选择文件</label><input id="zq-imp-file" type="file" class="zq-input" accept=".pdf,.xlsx,.xls,.txt,.md,.csv,.json,.xml,.png,.jpg,.jpeg,.webp"></div>'
+      + '<p class="zq-wiki-hint">pdf / xlsx / txt / md / csv / json / xml 会自动解析正文；图片仅记录文件信息，暂不做内容识别。</p>'
       + '</div>'
       + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-imp-cancel">取消</button><button type="button" class="zq-btn" id="zq-imp-ok">导入</button></div>',
     onMount: function (b, h) {
       var modeSel = $('#zq-imp-mode', b);
       modeSel.onchange = function () {
         var up = modeSel.value === 'UPLOAD';
-        $('#zq-imp-text-box', b).style.display = up ? 'none' : '';
-        $('#zq-imp-file-box', b).style.display = up ? '' : 'none';
+        $('#zq-imp-text-box', b).hidden = up;
+        $('#zq-imp-file-box', b).hidden = !up;
       };
       // 粘贴的一大段原文：弹窗被遮罩点掉、刷新、登录过期都还在（第十五轮）；导入成功才删
       var contentDraft = keepDraft($('#zq-imp-content', b), 'wiki.import.content');
@@ -1543,16 +1530,16 @@ async function showWikiSources(page) {
     var pages = Math.max(1, Math.ceil(total / 20));
     fillWikiModal(handle, {
       title: '来源记录 · ' + total + ' 条',
-      bodyHtml: '<p style="margin:0 0 12px;font-size:12.5px;color:var(--zq-text2);line-height:1.6;">导入的资料保存在这里。查看正文后，可生成待合入变更；确认合入之后才会成为知识页。</p>'
-        + '<div style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow-y:auto;">'
+      bodyHtml: '<p class="zq-wiki-note">导入的资料保存在这里。查看正文后，可生成待合入变更；确认合入之后才会成为知识页。</p>'
+        + '<div class="zq-wiki-list">'
         + (rows.map(function (source) {
-          return '<button type="button" class="zq-btn-ghost" data-source="' + esc(source.id) + '" style="display:block;text-align:left;height:auto;white-space:normal;padding:12px;border:1px solid var(--zq-border-soft);">'
-            + '<strong style="display:block;font-size:13.5px;">' + esc(source.title || '未命名来源') + '</strong>'
-            + (source.createdAt ? '<span style="display:block;margin-top:3px;font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(source.createdAt)) + '</span>' : '')
-            + (source.summary ? '<span style="display:block;margin-top:5px;font-size:12px;line-height:1.6;color:var(--zq-text2);">' + esc(source.summary) + '</span>' : '') + '</button>';
+          return '<button type="button" class="zq-btn-ghost zq-wiki-source" data-source="' + esc(source.id) + '">'
+            + '<strong>' + esc(source.title || '未命名来源') + '</strong>'
+            + (source.createdAt ? '<span class="zq-wiki-source-when">' + esc(fmtDate(source.createdAt)) + '</span>' : '')
+            + (source.summary ? '<span class="zq-wiki-source-sum">' + esc(source.summary) + '</span>' : '') + '</button>';
         }).join('') || empty('还没有来源记录，点「导入来源」添加资料。')) + '</div>'
         + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-sources-prev"' + (page <= 1 ? ' disabled' : '') + '>上一页</button>'
-        + '<span style="font-size:12px;color:var(--zq-text3);">第 ' + page + ' / ' + pages + ' 页 · 每页 20 条</span>'
+        + '<span class="zq-wiki-pager">第 ' + page + ' / ' + pages + ' 页 · 每页 20 条</span>'
         + '<button type="button" class="zq-btn-ghost" id="zq-sources-next"' + (page >= pages ? ' disabled' : '') + '>下一页</button></div>',
       onMount: function (b, h) {
         $all('[data-source]', b).forEach(function (button) {
@@ -1573,9 +1560,9 @@ async function showWikiSource(id, saved) {
     if (viewToken !== wikiSourceViewToken) return;
     fillWikiModal(handle, {
       title: '来源 · ' + (source.title || '未命名来源'),
-      bodyHtml: '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.6;">来源已保存。下方是保存的正文，生成变更后还需确认合入，才会写入知识库。' + esc(truncatedNote(saved)) + '</p>'
-        + (source.sourceRef ? '<p style="margin:0 0 10px;font-size:11.5px;color:var(--zq-text3);overflow-wrap:anywhere;">' + esc(source.sourceRef) + '</p>' : '')
-        + '<pre style="margin:0;padding:14px;max-height:55vh;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.8 var(--zq-fontBody);border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);">' + esc(source.content || '') + '</pre>'
+      bodyHtml: '<p class="zq-wiki-note">来源已保存。下方是保存的正文，生成变更后还需确认合入，才会写入知识库。' + esc(truncatedNote(saved)) + '</p>'
+        + (source.sourceRef ? '<p class="zq-wiki-hint zq-wiki-ref">' + esc(source.sourceRef) + '</p>' : '')
+        + '<pre class="zq-wiki-source-text">' + esc(source.content || '') + '</pre>'
         + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-source-list">来源记录</button><button type="button" class="zq-btn" id="zq-source-draft">生成待合入变更</button></div>',
       onMount: function (b, h) {
         $('#zq-source-list', b).onclick = function () { h.close(); return showWikiSources(); };
@@ -1613,12 +1600,12 @@ async function runWikiLint() {
     var issues = wikiLintIssues(report);
     var count = issues.length;
     var listHtml = issues.slice(0, 20).map(function (text) {
-      return '<div style="padding:7px 10px;border:1px solid var(--zq-border-soft);border-left:3px solid var(--zq-warn);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:12.5px;line-height:1.55;">' + esc(text) + '</div>';
+      return '<div class="zq-wiki-issue">' + esc(text) + '</div>';
     }).join('');
     return wikiInfoSpec({
       html: count
-        ? '<p style="margin:0 0 12px;font-size:13px;color:var(--zq-text2);">发现 ' + count + ' 个问题' + (count > 20 ? '（先列前 20 个）' : '') + '：</p><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-height:280px;overflow-y:auto;">' + listHtml + '</div>'
-        : '<p style="display:flex;align-items:center;gap:6px;margin:0 0 16px;font-size:13.5px;color:var(--zq-ok);font-weight:var(--zq-fw-medium);">' + icon('check') + '未发现问题，知识库链接完好。</p>'
+        ? '<p class="zq-wiki-note">发现 ' + count + ' 个问题' + (count > 20 ? '（先列前 20 个）' : '') + '：</p><div class="zq-wiki-issues">' + listHtml + '</div>'
+        : '<p class="zq-wiki-ok">' + icon('check') + '未发现问题，知识库链接完好。</p>'
     });
   });
 }
@@ -1653,7 +1640,6 @@ function paintWikiPatchBadge(list) {
   var b = $('#zq-patch-btn'); if (!b) return;
   var n = (list || []).length;
   b.textContent = n ? ('待合入变更 ' + n) : '待合入变更';
-  b.style.display = '';
 }
 var WIKI_TYPE_COLOR = { GOAL: 'var(--zq-q2)', PROJECT: 'var(--zq-primary)', PREFERENCE: 'var(--zq-q4)', WEAKNESS: 'var(--zq-q1)', RESOURCE: 'var(--zq-q3)', MEMORY: 'var(--zq-accent)', INDEX: 'var(--zq-text3)', SCHEMA: 'var(--zq-text3)', LOG: 'var(--zq-text3)', NOTE: 'var(--zq-text2)' };
 async function showWikiGraph() {
@@ -1686,23 +1672,24 @@ async function showWikiGraph() {
       var r = Math.min(16, 7 + (n.degree || 0) * 2);
       var color = WIKI_TYPE_COLOR[String(n.type || 'NOTE').toUpperCase()] || 'var(--zq-text2)';
       var label = String(n.title || '').length > 9 ? String(n.title).slice(0, 8) + '…' : String(n.title || '');
-      return '<g data-graph-node="' + n.id + '" style="cursor:pointer;">'
+      return '<g data-graph-node="' + n.id + '" class="zq-graph-node">'
         + '<circle cx="' + p.x + '" cy="' + p.y + '" r="' + r + '" fill="' + color + '" opacity=".88"><title>' + esc(n.title || '') + '</title></circle>'
-        + '<text x="' + p.x + '" y="' + (p.y + r + 13) + '" text-anchor="middle" style="font-size:10.5px;fill:var(--zq-text2);">' + esc(label) + '</text></g>';
+        + '<text x="' + p.x + '" y="' + (p.y + r + 13) + '" text-anchor="middle" class="zq-graph-label">' + esc(label) + '</text></g>';
     }).join('');
     var legend = Object.keys(WIKI_TYPE_COLOR).filter(function (k) {
       return nodes.some(function (n) { return String(n.type || 'NOTE').toUpperCase() === k; });
     }).map(function (k) {
-      return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--zq-text2);"><i style="width:9px;height:9px;border-radius:50%;background:' + WIKI_TYPE_COLOR[k] + ';display:inline-block;"></i>' + k + '</span>';
+      // 类型色是数据（--c），点和字的样子在样式表的 .zq-graph-key
+      return '<span class="zq-graph-key"><i style="--c:' + WIKI_TYPE_COLOR[k] + '"></i>' + k + '</span>';
     }).join('');
     var missing = (g && g.missingTargets && g.missingTargets.length) || 0;
     return {
       title: '知识图谱 · ' + nodes.length + ' 页 / ' + links.length + ' 链接',
       bodyHtml:
-        '<div style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card-soft);overflow:hidden;"><svg viewBox="0 0 ' + W + ' ' + H + '" style="display:block;width:100%;height:auto;">' + edgesSvg + nodesSvg + '</svg></div>'
-        + '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">' + legend + '</div>'
-        + (missing ? '<p style="margin:10px 0 0;font-size:12px;color:var(--zq-bad);">' + missing + ' 个悬空链接（红色虚线），可运行「健康检查」查看明细。</p>' : '')
-        + '<p style="margin:8px 0 0;font-size:11.5px;color:var(--zq-text3);">节点大小 = 被引用次数 · 点击节点跳转到对应页面</p>',
+        '<div class="zq-graph"><svg viewBox="0 0 ' + W + ' ' + H + '">' + edgesSvg + nodesSvg + '</svg></div>'
+        + '<div class="zq-graph-legend">' + legend + '</div>'
+        + (missing ? '<p class="zq-graph-note" data-state="bad">' + missing + ' 个悬空链接（红色虚线），可运行「健康检查」查看明细。</p>' : '')
+        + '<p class="zq-graph-note">节点大小 = 被引用次数 · 点击节点跳转到对应页面</p>',
       onMount: function (b, h) {
         $all('[data-graph-node]', b).forEach(function (gn) {
           gn.onclick = function () {
@@ -1725,19 +1712,19 @@ function patchSetCard(ps) {
   var items = Array.isArray(ps.items) ? ps.items : [];
   var itemHtml = items.map(function (it) {
     var action = PATCH_ACTION_LABEL[String(it.actionType || 'UPSERT').toUpperCase()] || it.actionType;
-    return '<details style="border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);margin-top:6px;">'
-      + '<summary style="cursor:pointer;padding:7px 10px;font-size:12.5px;"><span class="zq-badge" style="background:var(--zq-tint);color:var(--zq-primary);margin-right:6px;">' + esc(action) + '</span>'
+    return '<details class="zq-patch-item">'
+      + '<summary><span class="zq-badge">' + esc(action) + '</span>'
       + '<strong>' + esc(it.title || '未命名页面') + '</strong></summary>'
-      + '<div class="zq-rev-body" style="padding:4px 12px 10px;font-size:13px;line-height:1.7;max-height:260px;overflow-y:auto;">' + renderMarkdown(String(it.content || '')) + '</div></details>';
-  }).join('') || '<p style="margin:6px 0 0;font-size:12px;color:var(--zq-text3);">这组变更里没有页面。</p>';
-  return '<section data-patch-set="' + esc(ps.id) + '" style="padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card-soft);">'
-    + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;">'
-    + '<strong style="font-size:13.5px;">' + esc(ps.title || ('变更 #' + ps.id)) + '</strong>'
-    + (ps.createdAt ? '<span class="zq-num" style="margin-left:8px;font-size:11px;color:var(--zq-text3);">' + esc(fmtDate(ps.createdAt)) + '</span>' : '')
-    + (ps.summary ? '<p style="margin:4px 0 0;font-size:12px;color:var(--zq-text2);line-height:1.6;">' + esc(ps.summary) + '</p>' : '')
-    + '</div><div style="display:flex;gap:6px;flex:none;">'
-    + '<button type="button" class="zq-btn-ghost" data-patch-reject="' + esc(ps.id) + '" style="height:28px;padding:0 11px;font-size:12px;">忽略</button>'
-    + '<button type="button" class="zq-btn" data-patch-apply="' + esc(ps.id) + '" style="height:28px;padding:0 11px;font-size:12px;">确认合入</button>'
+      + '<div class="zq-rev-body">' + renderMarkdown(String(it.content || '')) + '</div></details>';
+  }).join('') || '<p class="zq-wiki-hint">这组变更里没有页面。</p>';
+  return '<section data-patch-set="' + esc(ps.id) + '" class="zq-patch">'
+    + '<div class="zq-patch-head"><div class="zq-patch-what">'
+    + '<strong>' + esc(ps.title || ('变更 #' + ps.id)) + '</strong>'
+    + (ps.createdAt ? '<span class="zq-num zq-patch-when">' + esc(fmtDate(ps.createdAt)) + '</span>' : '')
+    + (ps.summary ? '<p>' + esc(ps.summary) + '</p>' : '')
+    + '</div><div class="zq-patch-acts">'
+    + '<button type="button" class="zq-btn-ghost" data-patch-reject="' + esc(ps.id) + '">忽略</button>'
+    + '<button type="button" class="zq-btn" data-patch-apply="' + esc(ps.id) + '">确认合入</button>'
     + '</div></div>' + itemHtml + '</section>';
 }
 async function showWikiPatchSets() {
@@ -1747,8 +1734,8 @@ async function showWikiPatchSets() {
     if (!list.length) return wikiInfoSpec({ message: '当前没有待合入的变更。AI 对知识库的修改建议会先出现在这里，确认后才写入正文。' });
     return {
       title: '待合入变更 · ' + list.length + ' 组',
-      bodyHtml: '<p style="margin:0 0 10px;font-size:12.5px;color:var(--zq-text2);line-height:1.6;">点开每一页看看要写进去的内容；确认合入之后才会改动知识库，忽略的不会写入。</p>'
-        + '<div style="display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow-y:auto;">' + list.map(patchSetCard).join('') + '</div>',
+      bodyHtml: '<p class="zq-wiki-note">点开每一页看看要写进去的内容；确认合入之后才会改动知识库，忽略的不会写入。</p>'
+        + '<div class="zq-wiki-list is-patches">' + list.map(patchSetCard).join('') + '</div>',
       onMount: function (body, h) {
         function settle(id, verb, done) {
           var card = $('[data-patch-set="' + id + '"]', body);

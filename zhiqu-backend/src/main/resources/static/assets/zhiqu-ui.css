@@ -961,7 +961,6 @@ body.zq-modal-open{overflow:hidden;}
 .zq-attachment-row:hover{background:var(--zq-tint);}
 .zq-attachment-row>span:first-child{min-width:0;overflow-wrap:anywhere;}
 .zq-attachment-size{flex-shrink:0;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
-#zq-doc{overflow-anchor:none;}
 .zq-wiki-actionbar{display:flex;gap:8px;padding:10px 26px 18px;border-top:1px solid var(--zq-border-soft);background:var(--zq-card);flex-shrink:0;}
 .zq-wiki-actionbar[data-editing="0"]{visibility:hidden;}
 /* 勾选项：勾上了就划掉、变淡 —— 按 input:checked 画（原来渲染时写死在文字上，点一下勾选框样子不跟着变） */
@@ -999,6 +998,112 @@ body.zq-modal-open{overflow:hidden;}
 .zq-prose .zq-task-row>input[type="checkbox"]{margin-top:6px;}
 /* 重复页名在阅读与排版编辑中保持隐藏；源码模式仍可修改，切换编辑不会插入额外高度。 */
 .zq-prose .zq-dup-title{display:none;}
+/* ── 知识 Wiki 的骨架（第七十九轮从 knowledge-wiki.html 的内联挪进来）：目录、正文卡片、页面检查三栏 ── */
+.zq-wiki-pending{border-color:var(--zq-tint-strong);background:var(--zq-tint);color:var(--zq-primary);font-weight:var(--zq-fw-medium);}
+.zq-wiki-cols{display:flex;gap:12px;align-items:stretch;margin:0 -8px;flex:1;min-height:0;}
+/* 两侧面板：展开的宽度只写在这里（setupPanels 读算出来的 flex-basis） */
+.zq-wiki-side{flex:0 0 210px;align-self:stretch;overflow:hidden;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);}
+.zq-wiki-side[data-zq-collapse="right"]{flex-basis:250px;}
+.zq-wiki-side-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--zq-border-soft);}
+.zq-wiki-side[data-zq-collapse="right"] .zq-wiki-side-head{background:var(--zq-card-soft);}
+.zq-wiki-side-head h2{margin:0;font-size:var(--zq-fs-base);font-weight:var(--zq-fw-medium);}
+#zq-tree-count{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-wiki-filter{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-bottom:1px solid var(--zq-border-soft);}
+.zq-wiki-filter .zq-input,.zq-wiki-filter .zq-select{height:28px;font-size:var(--zq-fs-xs);}
+#zq-tree{display:flex;flex-direction:column;gap:2px;padding:8px;}
+/* 正文卡片：flex 列 + min-height:0，#zq-doc 在里面滚，不把整页撑长 */
+.zq-wiki-doc{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;overflow:hidden;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);}
+.zq-wiki-tabbar{display:flex;align-items:stretch;border-bottom:1px solid var(--zq-border-soft);background:var(--zq-card-soft);}
+/* 标签栏左内边距 = 0：第一个标签贴着卡片的左边缘（WikiTabsTest.第一个标签贴卡片左边缘） */
+#zq-wiki-tabs{display:flex;align-items:stretch;flex:1;min-width:0;padding-left:0;overflow-x:auto;scrollbar-width:thin;}
+.zq-wiki-nav{display:flex;align-items:center;gap:2px;flex:none;padding:0 12px 0 6px;}
+.zq-wiki-nav .zq-btn-ghost{width:24px;height:26px;padding:0;line-height:1;}
+.zq-wiki-nav .zq-btn-ghost:disabled{opacity:.35;cursor:default;}
+/* 标题行的左内边距和 #zq-doc 的一样是 26px：页名和正文落在同一条竖线上（WikiTabsTest.标题与正文左边缘要对齐） */
+.zq-wiki-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 20px 14px 26px;border-bottom:1px solid var(--zq-border-soft);}
+/* overflow-anchor:none：嵌入预览长高时浏览器不替人挪滚动位置（第六十六轮）；只读 / 加载中光标是箭头（aria-readonly 由 syncWikiEditMode 写） */
+#zq-doc{flex:1;min-height:0;overflow-y:auto;padding:22px 26px 30px;overflow-anchor:none;outline:none;cursor:text;}
+#zq-doc[aria-readonly="true"]{cursor:default;}
+/* 目录的一项、标签页（第七十九轮从 pages/knowledge-wiki.js 的内联挪进来）：选中的是 aria-current */
+.zq-wiki-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--zq-rs);cursor:pointer;}
+.zq-wiki-item>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--zq-text2);font-size:var(--zq-fs-sm);}
+.zq-wiki-item:hover{background:var(--zq-card-soft);}
+.zq-wiki-item[aria-current="page"]{background:var(--zq-tint);}
+.zq-wiki-item[aria-current="page"]>span{font-weight:var(--zq-fw-medium);}
+.zq-wiki-tab{display:flex;align-items:center;gap:6px;max-width:190px;padding:7px 8px 7px 12px;border-right:1px solid var(--zq-border-soft);color:var(--zq-text2);font-size:var(--zq-fs-sm);white-space:nowrap;cursor:pointer;}
+.zq-wiki-tab[aria-current="page"]{background:var(--zq-card);color:var(--zq-text);font-weight:var(--zq-fw-medium);box-shadow:inset 0 2px 0 var(--zq-primary);}
+.zq-wiki-tab-name{overflow:hidden;text-overflow:ellipsis;}
+.zq-wiki-tab-x{flex:none;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--zq-text3);}
+.zq-wiki-tab-x:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
+.zq-wiki-tab-x .zq-icon{width:12px;height:12px;}
+.zq-wiki-tab-new{display:flex;align-items:center;justify-content:center;flex:none;width:30px;color:var(--zq-text3);cursor:pointer;}
+.zq-wiki-tab-new:hover{color:var(--zq-text);}
+.zq-wiki-tab-new .zq-icon{width:14px;height:14px;}
+/* 页名能改时是手指光标：syncWikiEditMode 在只读 / 加载中时把 title 清空 */
+#zq-doc-title{cursor:default;}
+#zq-doc-title[title]:not([title=""]){cursor:pointer;}
+/* 页面检查 */
+.zq-wiki-insp{padding:12px 14px;color:var(--zq-text2);font-size:var(--zq-fs-xs);line-height:1.6;}
+.zq-wiki-insp-tip{color:var(--zq-text3);}
+.zq-wiki-insp-editor{margin-top:10px;padding-top:10px;border-top:1px solid var(--zq-border-soft);}
+#zq-wiki-editor-switch{height:26px;margin-top:6px;font-size:var(--zq-fs-xs);}
+/* 这一页有没保存的修改：正文上面一条 */
+#zq-wiki-draft{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:9px 12px;border:1px solid var(--zq-tint-strong);border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-text);font-size:var(--zq-fs-sm);}
+#zq-wiki-draft>span{flex:1;}
+#zq-wiki-draft .zq-btn,#zq-wiki-draft .zq-btn-ghost{height:28px;}
+/* 源码编辑框；编辑时底下那一条按钮 */
+#zq-src-ta{display:block;width:100%;min-height:360px;padding:12px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-input-bg);color:var(--zq-text);font-family:var(--zq-fontM);font-size:var(--zq-fs-sm);line-height:1.7;resize:vertical;box-sizing:border-box;}
+.zq-wiki-actionbar .zq-btn,.zq-wiki-actionbar .zq-btn-ghost{height:30px;}
+#zq-wiki-del{margin-left:auto;}
+/* Wiki 的弹窗：说明、提示、列表 */
+.zq-wiki-note{margin:0 0 12px;color:var(--zq-text2);font-size:var(--zq-fs-sm);line-height:1.6;}
+.zq-wiki-note.is-message{margin-bottom:16px;line-height:1.7;white-space:pre-wrap;}
+.zq-wiki-hint{margin:0 0 12px;color:var(--zq-text3);font-size:var(--zq-fs-xs);line-height:1.6;}
+.zq-wiki-ref{overflow-wrap:anywhere;}
+.zq-wiki-qs{max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:2px;margin-top:10px;}
+.zq-wiki-qs-item{display:block;padding:8px 10px;border-radius:var(--zq-rs);color:var(--zq-text2);font-size:var(--zq-fs-sm);cursor:pointer;}
+.zq-wiki-qs-item:hover{background:var(--zq-card-soft);color:var(--zq-text);}
+#zq-imp-content{min-height:110px;}
+#zq-imp-file{height:auto;padding:7px 12px;}
+#zq-vault-preview{max-height:38vh;overflow:auto;margin:12px 0;color:var(--zq-text2);font-size:var(--zq-fs-sm);line-height:1.6;}
+#zq-vault-preview p{margin:0 0 8px;}
+#zq-vault-preview ul{margin:0 0 10px;padding-left:20px;}
+.zq-wiki-list{display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow-y:auto;}
+.zq-wiki-list.is-patches{gap:10px;max-height:62vh;}
+.zq-wiki-source{display:block;height:auto;padding:12px;border-color:var(--zq-border-soft);text-align:left;white-space:normal;}
+.zq-wiki-source strong{display:block;font-size:var(--zq-fs-base);}
+.zq-wiki-source-when{display:block;margin-top:3px;color:var(--zq-text3);font-size:var(--zq-fs-2xs);}
+.zq-wiki-source-sum{display:block;margin-top:5px;color:var(--zq-text2);font-size:var(--zq-fs-xs);line-height:1.6;}
+.zq-wiki-pager{color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+.zq-wiki-source-text{margin:0;padding:14px;max-height:55vh;overflow-y:auto;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-family:var(--zq-fontBody);font-size:var(--zq-fs-sm);line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;}
+/* 健康检查 */
+.zq-wiki-issues{display:flex;flex-direction:column;gap:6px;max-height:280px;margin-bottom:16px;overflow-y:auto;}
+.zq-wiki-issue{padding:7px 10px;border:1px solid var(--zq-border-soft);border-left:3px solid var(--zq-warn);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:var(--zq-fs-sm);line-height:1.55;}
+.zq-wiki-ok{display:flex;align-items:center;gap:6px;margin:0 0 16px;color:var(--zq-ok);font-size:var(--zq-fs-base);font-weight:var(--zq-fw-medium);}
+/* 图谱：节点的颜色是 SVG 的 fill（数据），图例的点是 --c */
+.zq-graph{overflow:hidden;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card-soft);}
+.zq-graph svg{display:block;width:100%;height:auto;}
+.zq-graph-node{cursor:pointer;}
+.zq-graph-label{font-size:var(--zq-fs-2xs);fill:var(--zq-text2);}
+.zq-graph-legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;}
+.zq-graph-key{display:inline-flex;align-items:center;gap:5px;color:var(--zq-text2);font-size:var(--zq-fs-2xs);}
+.zq-graph-key i{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--c, var(--zq-text3));}
+.zq-graph-note{margin:8px 0 0;color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+.zq-graph-note[data-state="bad"]{margin-top:10px;color:var(--zq-bad);}
+/* 待合入变更：一组一张卡片，里面每一页可以点开看 */
+.zq-patch{padding:11px 13px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card-soft);}
+.zq-patch-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.zq-patch-what{min-width:0;}
+.zq-patch-what strong{font-size:var(--zq-fs-base);}
+.zq-patch-what p{margin:4px 0 0;color:var(--zq-text2);font-size:var(--zq-fs-xs);line-height:1.6;}
+.zq-patch-when{margin-left:8px;color:var(--zq-text3);font-size:var(--zq-fs-2xs);}
+.zq-patch-acts{display:flex;gap:6px;flex:none;}
+.zq-patch-acts .zq-btn,.zq-patch-acts .zq-btn-ghost{height:28px;padding:0 11px;font-size:var(--zq-fs-xs);}
+.zq-patch-item{margin-top:6px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card);}
+.zq-patch-item summary{padding:7px 10px;font-size:var(--zq-fs-sm);cursor:pointer;}
+.zq-patch-item .zq-badge{margin-right:6px;background:var(--zq-tint);color:var(--zq-primary);}
+.zq-patch .zq-wiki-hint{margin:6px 0 0;}
+.zq-rev-body{max-height:260px;padding:4px 12px 10px;overflow-y:auto;font-size:var(--zq-fs-sm);line-height:1.7;}
 /* 页名（点了改名）和工具栏 */
 .zq-wiki-title{margin:0;font-size:var(--zq-fs-xl);font-weight:var(--zq-fw-medium);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .zq-wiki-tools{display:flex;align-items:center;justify-content:flex-end;gap:var(--zq-sp-2);flex-wrap:wrap;min-width:0;max-width:100%;margin-left:auto;}

@@ -32,7 +32,8 @@
   how many `style=` attributes and JS style writes (`.style.x =`, `cssText`) there are, with `==`: one more means someone
   wrote an inline style again (put it in a `zhiqu-ui.css` class); one fewer means lower the number in the test. It also pins
   the set of literal font sizes (anything not `var(--zq-fs-*)`), so a new size fails the build. What legitimately stays
-  inline is data: `--v` for bar heights, `--srcc` for a source tile's type color, the composer's `style.height`. Since round
+  inline is data: `--v` for bar heights, `--srcc` for a source tile's type color, `--c` for a Wiki graph legend dot, the
+  composer's `style.height`. Round 79 brought the total to 81, under the plan's 100, and the test now also asserts that. Since round
   78 the scale has `--zq-fs-2xs: 11px` for the densest text (side-panel metadata, diff rows). Moving an inline style can
   silently disarm a test that matched on it: phone rules used to select `[style*="calc(100vh - 110px)"]`, and a diff check
   counted `<div style="display:flex` rows — after the move those counted 0 and would have stayed green.

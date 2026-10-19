@@ -33,26 +33,27 @@ class InlineStyleRatchetTest {
 
     private static final Path STATIC = Path.of("src/main/resources/static");
 
-    /** 每个文件里的 {@code style=}（HTML 的属性、JS 拼的标记）。第七十八轮：AI 助手 121 → 1（资料卡片的 --srcc），Wiki 的定高包裹 1 处挪进 .zq-fill-page。 */
+    /**
+     * 每个文件里的 {@code style=}（HTML 的属性、JS 拼的标记）。第七十八轮：AI 助手 121 → 1（资料卡片的 --srcc），Wiki 的定高包裹 1 处挪进 .zq-fill-page；
+     * 第七十九轮：知识 Wiki 96 → 1（图谱图例的类型色 --c）。
+     */
     private static final Map<String, Integer> STYLE_ATTRS = new TreeMap<>(Map.ofEntries(
             Map.entry("achievement.html", 1),
             Map.entry("dashboard.html", 30),
-            Map.entry("knowledge-wiki.html", 21),
             Map.entry("profile.html", 1),
             Map.entry("tasks.html", 1),
             Map.entry("assets/pages/admin.js", 1),
             Map.entry("assets/pages/ai-assistant.js", 1),
             Map.entry("assets/pages/dashboard.js", 8),
-            Map.entry("assets/pages/knowledge-wiki.js", 75),
+            Map.entry("assets/pages/knowledge-wiki.js", 1),
             Map.entry("assets/pages/statistics.js", 1),
             Map.entry("assets/zhiqu-api.js", 28),
             Map.entry("assets/zhiqu-ui.js", 8)));
 
-    /** 每个脚本里在 JS 里改样子的地方（{@code .style.x = …}、{@code .style[…]}、{@code cssText}）。AI 助手只剩输入框长高的 3 处。 */
+    /** 每个脚本里在 JS 里改样子的地方（{@code .style.x = …}、{@code .style[…]}、{@code cssText}）。AI 助手只剩输入框长高的 3 处；知识 Wiki 14 → 0（第七十九轮）。 */
     private static final Map<String, Integer> STYLE_WRITES = new TreeMap<>(Map.ofEntries(
             Map.entry("assets/pages/ai-assistant.js", 3),
             Map.entry("assets/pages/dashboard.js", 1),
-            Map.entry("assets/pages/knowledge-wiki.js", 14),
             Map.entry("assets/zhiqu-api.js", 19),
             Map.entry("assets/zhiqu-ui.js", 11)));
 
@@ -102,7 +103,8 @@ class InlineStyleRatchetTest {
         assertEquals(STYLE_ATTRS, attrs, "内联 style= 的数变了：多了就是又写了内联样式（写进 zhiqu-ui.css 的类）；少了就把 STYLE_ATTRS 里的数改小");
         assertEquals(STYLE_WRITES, writes, "JS 里改样子的地方变了：按下 / 选中 / 悬停这类样子靠类和 aria-*，在样式表里画；少了就把 STYLE_WRITES 里的数改小");
         int total = attrs.values().stream().mapToInt(Integer::intValue).sum();
-        assertTrue(total > 0 && total <= 176, "内联样式一共 " + total + " 处");
+        // 界面打磨第 9 步的目标（docs/ui-plan.md）：817 处降到 100 以内。第七十九轮到了 81；上面按文件的 == 让它只能往下走
+        assertTrue(total > 0 && total <= 100, "内联样式一共 " + total + " 处，第 9 步的目标是 100 以内");
     }
 
     @Test

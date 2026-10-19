@@ -145,4 +145,55 @@ class WikiLookTest {
         assertTrue(editor.contains("focus({ preventScroll: true })"), "聚焦编辑器会滚动到光标而跳动");
         assertTrue(editor.contains("restoreWikiView(doc, view)"), "进入编辑没有恢复视口锚点");
     }
+
+    @Test
+    @DisplayName("界面打磨第 9 步（第七十九轮）：页面没有内联样式；模块里只剩图谱图例的类型色（--c），不在 JS 里改样子")
+    void 样子都在样式表() throws IOException {
+        String html = Files.readString(STATIC.resolve("knowledge-wiki.html"), StandardCharsets.UTF_8).replaceAll("(?s)<!--.*?-->", "");
+        assertFalse(html.contains("style="), "knowledge-wiki.html 又写了内联样式");
+        String js = SourceText.pageModule("knowledge-wiki.js");
+        assertTrue(js.length() > 50000, "knowledge-wiki.js 只读到 " + js.length() + " 字 —— 读错文件了？");
+        Matcher inline = Pattern.compile("style=\\\\?\"([^\"]{0,30})").matcher(js);
+        List<String> found = new ArrayList<>();
+        while (inline.find()) found.add(inline.group(1));
+        assertEquals(1, found.size(), "knowledge-wiki.js 的内联样式：" + found);
+        assertTrue(found.get(0).startsWith("--c:"), "唯一的内联不是图谱图例的类型色：" + found);
+        Matcher write = Pattern.compile("\\.style\\.\\w+|\\.style\\[|cssText").matcher(js);
+        assertFalse(write.find(), "knowledge-wiki.js 又在 JS 里改样子了：" + (write.find(0) ? js.substring(write.start(), Math.min(js.length(), write.start() + 50)) : ""));
+    }
+
+    @Test
+    @DisplayName("选中 / 可点的样子跟着状态走：目录和标签页的当前项是 aria-current，正文的光标看 aria-readonly，页名的手指看 title，勾上的任务项划线在样式表")
+    void 状态的样子() throws IOException {
+        String js = SourceText.pageModule("knowledge-wiki.js");
+        assertTrue(js.contains("class=\"zq-wiki-item\"' + (active ? ' aria-current=\"page\"' : '')"), "目录的当前页不是 aria-current");
+        assertTrue(js.contains("class=\"zq-wiki-tab\"' + (on ? ' aria-current=\"page\"' : '')"), "当前标签不是 aria-current");
+        assertTrue(js.contains("doc.setAttribute('aria-readonly', locked || unavailable ? 'true' : 'false')"), "正文不再写 aria-readonly —— 光标跟不上只读");
+        String css = css();
+        assertTrue(rule(css, ".zq-wiki-item[aria-current=\"page\"]").contains("background:var(--zq-tint)"), "目录的当前页没有底色");
+        assertTrue(rule(css, ".zq-wiki-tab[aria-current=\"page\"]").contains("box-shadow:inset 0 2px 0 var(--zq-primary)"), "当前标签上沿没有那条强调色");
+        assertEquals("default", prop(rule(css, "#zq-doc[aria-readonly=\"true\"]"), "cursor"), "只读时正文还是文字光标");
+        assertEquals("pointer", prop(rule(css, "#zq-doc-title[title]:not([title=\"\"])"), "cursor"), "能改名时页名不是手指");
+        assertTrue(css.contains(".zq-task-row>input:checked+span{color:var(--zq-text3);text-decoration:line-through;}"), "勾上的任务项没有划线（原来在 JS 里写）");
+        assertTrue(rule(css, ".zq-wiki-nav .zq-btn-ghost:disabled").contains("opacity:.35"), "没有历史时前进 / 返回不灰（原来在 JS 里改 opacity）");
+    }
+
+    @Test
+    @DisplayName("Wiki 的规则里字号都是令牌")
+    void 字号都是令牌() throws IOException {
+        String css = css();
+        Matcher rule = Pattern.compile("([^{}]*)\\{([^{}]*)\\}").matcher(css);
+        Pattern wiki = Pattern.compile("\\.zq-wiki-|#zq-wiki-|#zq-doc|#zq-tree|#zq-src-ta|#zq-imp-|#zq-vault-preview|\\.zq-graph|\\.zq-patch|\\.zq-rev-body");
+        int rules = 0;
+        List<String> literal = new ArrayList<>();
+        while (rule.find()) {
+            String selector = rule.group(1).trim();
+            if (!wiki.matcher(selector).find() || selector.contains(".zq-md")) continue;
+            rules++;
+            Matcher fs = Pattern.compile("font-size:\\s*[0-9.]+px").matcher(rule.group(2));
+            if (fs.find()) literal.add(selector + " → " + fs.group());
+        }
+        assertTrue(rules >= 60, "只扫到 " + rules + " 条 Wiki 的规则 —— 扫空了？");
+        assertEquals(List.of(), literal, "Wiki 的规则里又写死了字号");
+    }
 }

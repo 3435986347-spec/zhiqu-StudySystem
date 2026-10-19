@@ -6,11 +6,11 @@
   <title>知识 Wiki - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261019-ai78" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261019-ai78">
-  <link rel="manifest" href="manifest.json?v=20261019-ai78">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261019-wiki79" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261019-wiki79">
+  <link rel="manifest" href="manifest.json?v=20261019-wiki79">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261019-ai78">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261019-wiki79">
 </head>
 <body>
   <div class="zq-app">
@@ -31,7 +31,7 @@
             <button class="zq-btn-ghost">导入知识库</button>
             <button class="zq-btn-ghost">来源记录</button>
             <button id="zq-wiki-attachments" class="zq-btn-ghost">附件</button>
-            <button style="height:32px; padding:0 14px; border:1px solid var(--zq-tint-strong); border-radius:var(--zq-rs); background:var(--zq-tint); color:var(--zq-primary); font-size:var(--zq-fs-sm); font-weight:var(--zq-fw-medium); cursor:pointer;">待合入变更</button>
+            <button class="zq-btn-ghost zq-wiki-pending">待合入变更</button>
             <button class="zq-btn-ghost">健康检查</button>
             <button class="zq-btn-ghost">图谱</button>
             <button class="zq-btn-ghost">导出 ZIP</button>
@@ -39,19 +39,19 @@
           </div>
         </header>
 
-        <div style="display:flex; gap:12px; align-items:stretch; margin:0 -8px; flex:1; min-height:0;">
+        <div class="zq-wiki-cols">
           <!-- 目录（默认收起） -->
-          <aside id="zq-wiki-toc" data-zq-collapse="left" data-zq-label="目录" style="flex:0 0 210px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh1); overflow:hidden; align-self:stretch;">
-            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft);"><h2 style="margin:0; font-size:14px; font-weight:var(--zq-fw-medium);">目录</h2><span id="zq-tree-count" style="font-size:11.5px; color:var(--zq-text3);"></span></div>
-            <div style="padding:10px 12px; display:flex; flex-direction:column; gap:8px; border-bottom:1px solid var(--zq-border-soft);">
-              <input class="zq-input" placeholder="搜索页面 / [[双链]]" style="height:28px; font-size:12px;">
-              <select class="zq-select" style="height:28px; font-size:12px;"><option>全部类型</option><option>目标</option><option>计划</option><option>偏好</option><option>薄弱点</option><option>资料</option><option>对话摘要</option><option>index</option><option>规则</option><option>log</option></select>
+          <aside id="zq-wiki-toc" data-zq-collapse="left" data-zq-label="目录" class="zq-wiki-side">
+            <div class="zq-wiki-side-head"><h2>目录</h2><span id="zq-tree-count"></span></div>
+            <div class="zq-wiki-filter">
+              <input class="zq-input" placeholder="搜索页面 / [[双链]]" aria-label="搜索页面">
+              <select class="zq-select" aria-label="页面类型"><option>全部类型</option><option>目标</option><option>计划</option><option>偏好</option><option>薄弱点</option><option>资料</option><option>对话摘要</option><option>index</option><option>规则</option><option>log</option></select>
             </div>
-            <nav id="zq-tree" style="padding:8px; display:flex; flex-direction:column; gap:2px;"></nav>
+            <nav id="zq-tree"></nav>
           </aside>
 
           <!-- 文档视图。flex 列 + min-height:0 让 #zq-doc 能在内部滚动而不是把整页撑长。 -->
-          <section style="flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh2); overflow:hidden;">
+          <section class="zq-wiki-doc">
             <!--
               标签页栏（Obsidian 式）。由 zhiqu-api.js 的 paintWikiTabs() 填充；
               这里只留容器，因为标签是随打开的页面变的，写死在 HTML 里没有意义。
@@ -61,9 +61,9 @@
               它们原本放在下面的标题行里，结果把标题往右推了 76px，
               「文档视图 / log」比正文缩进得明显更多。导航按钮属于工具条，不属于标题。
             -->
-            <div style="display:flex; align-items:stretch; border-bottom:1px solid var(--zq-border-soft); background:var(--zq-card-soft);">
+            <div class="zq-wiki-tabbar">
               <!--
-                标签栏左内边距 = 0：第一个标签的方框直接从知识页卡片的左边缘开始，
+                标签栏左内边距 = 0（样式表的 #zq-wiki-tabs）：第一个标签的方框直接从知识页卡片的左边缘开始，
                 和浏览器标签坐在页面上一样。正文与标题仍各自内缩 26px。
 
                 这里返工了两次，每次都对齐错了对象 ——
@@ -74,22 +74,20 @@
                 这次是先拿浏览器实拍前后对照（436 → 437 = 卡片内边缘）才改的，不是改完才看。
                 导航按钮放右端 —— 放左端就把第一个标签从卡片边缘挤开了。
               -->
-              <div id="zq-wiki-tabs" style="display:flex; align-items:stretch; gap:0; flex:1; min-width:0; padding-left:0; overflow-x:auto; scrollbar-width:thin;"></div>
-              <div style="display:flex; align-items:center; gap:2px; padding:0 12px 0 6px; flex:0 0 auto;">
+              <div id="zq-wiki-tabs"></div>
+              <div class="zq-wiki-nav">
                 <!-- 走当前标签页自己的浏览历史，和浏览器那对按钮同义 -->
-                <button type="button" id="zq-wiki-back" class="zq-btn-ghost" title="返回上一页（⌘[）"
-                  style="height:26px; width:24px; padding:0; line-height:1;"><span data-zq-icon="chevron-left"></span></button>
-                <button type="button" id="zq-wiki-fwd" class="zq-btn-ghost" title="前进（⌘]）"
-                  style="height:26px; width:24px; padding:0; line-height:1;"><span data-zq-icon="chevron-right"></span></button>
+                <button type="button" id="zq-wiki-back" class="zq-btn-ghost" title="返回上一页（⌘[）" aria-label="返回上一页"><span data-zq-icon="chevron-left"></span></button>
+                <button type="button" id="zq-wiki-fwd" class="zq-btn-ghost" title="前进（⌘]）" aria-label="前进"><span data-zq-icon="chevron-right"></span></button>
               </div>
             </div>
             <!--
-              padding-left 跟 #zq-doc 的 26px 一致 —— 标题和正文落在同一条竖线上。
+              padding-left 跟 #zq-doc 的 26px 一致 —— 标题和正文落在同一条竖线上（两个都在样式表：.zq-wiki-head、#zq-doc）。
               改 #zq-doc 的 26px 时这里要跟着改，WikiTabsTest.标题与正文左边缘要对齐 盯着。
             -->
             <!-- 页名（关闭只读时可改名）+ 一行工具栏（第五十五轮，界面打磨第 7 步）：原来页名上面一行「文档视图」小字、工具栏前两段说明文字、
                  B I U ` 四个字母和「链接 公式 参考 源码」四个字当按钮。现在是一个段落下拉 + 一排图标按钮（悬停有说明） -->
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px 14px 26px; border-bottom:1px solid var(--zq-border-soft); flex-wrap:wrap;">
+            <div class="zq-wiki-head">
               <h2 id="zq-doc-title" class="zq-wiki-title"></h2>
               <div class="zq-wiki-tools">
                 <span id="zq-wiki-mode-label" class="zq-wiki-mode-label" aria-live="polite"></span>
@@ -122,12 +120,12 @@
                 </div>
               </div>
             </div>
-            <div id="zq-doc" class="zq-prose" style="padding:22px 26px 30px; flex:1; min-height:0; overflow-y:auto;"></div>
+            <div id="zq-doc" class="zq-prose"></div>
           </section>
 
           <!-- 页面检查（默认收起） -->
-          <aside data-zq-collapse="right" data-zq-label="页面检查" style="flex:0 0 250px; border:1px solid var(--zq-border-soft); border-radius:var(--zq-rm); background:var(--zq-card); box-shadow:var(--zq-sh1); overflow:hidden; align-self:stretch;">
-            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--zq-border-soft); background:var(--zq-card-soft);"><h2 style="margin:0; font-size:14px; font-weight:var(--zq-fw-medium);">页面检查</h2></div>
+          <aside data-zq-collapse="right" data-zq-label="页面检查" class="zq-wiki-side">
+            <div class="zq-wiki-side-head"><h2>页面检查</h2></div>
             <div id="zq-insp"></div>
           </aside>
         </div>
@@ -135,7 +133,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261019-ai78"></script>
-  <script src="assets/zhiqu-api.js?v=20261019-ai78"></script>
+  <script src="assets/zhiqu-ui.js?v=20261019-wiki79"></script>
+  <script src="assets/zhiqu-api.js?v=20261019-wiki79"></script>
 </body>
 </html>

@@ -25,6 +25,7 @@ class WikiTabsTest {
 
     private static final Path HARNESS = Path.of("src/test/resources/js/wiki-tabs-check.js");
     private static final Path WIKI_HTML = Path.of("src/main/resources/static/knowledge-wiki.html");
+    private static final Path CSS = Path.of("src/main/resources/static/assets/zhiqu-ui.css");
     /** 第三十六轮起知识 Wiki 是模块：标签页那一段住在这里（wiki-tabs-check.js 也从这里抠）。 */
     private static final Path WIKI_JS = Path.of("src/main/resources/static/assets/pages/knowledge-wiki.js");
 
@@ -114,10 +115,14 @@ class WikiTabsTest {
     @Test
     @DisplayName("文档标题与正文的左边缘要对齐")
     void 标题与正文左边缘要对齐() throws Exception {
+        // 第七十九轮起两个数都在样式表里（原来在 knowledge-wiki.html 的内联）：标题行是 .zq-wiki-head，正文是 #zq-doc
         String html = Files.readString(WIKI_HTML, StandardCharsets.UTF_8);
-
-        int headerLeft = pxAfter(html, "id=\"zq-wiki-tabs\"", "padding:14px 20px 14px ");
-        int docLeft = pxAfter(html, "id=\"zq-doc\"", "padding:22px ");
+        assertTrue(html.contains("<div class=\"zq-wiki-head\">") && html.indexOf("id=\"zq-doc-title\"") > html.indexOf("<div class=\"zq-wiki-head\">"),
+                "标题不在 .zq-wiki-head 那一行里了");
+        assertTrue(html.contains("<div id=\"zq-doc\" class=\"zq-prose\"></div>"), "#zq-doc 又写了内联样式（左内边距要和标题行一起在样式表里改）");
+        String css = Files.readString(CSS, StandardCharsets.UTF_8);
+        int headerLeft = paddingSide(rule(css, ".zq-wiki-head"), 3);
+        int docLeft = paddingSide(rule(css, "#zq-doc"), 3);
 
         assertEquals(docLeft, headerLeft,
                 "标题行的左内边距是 " + headerLeft + "px，正文是 " + docLeft
@@ -140,7 +145,8 @@ class WikiTabsTest {
     @DisplayName("第一个标签贴着知识页卡片的左边缘（标签栏 padding-left 为 0）")
     void 第一个标签贴卡片左边缘() throws Exception {
         String html = Files.readString(WIKI_HTML, StandardCharsets.UTF_8);
-        int barLeft = pxAfter(html, "id=\"zq-wiki-tabs\"", "padding-left:");
+        assertTrue(html.contains("<div id=\"zq-wiki-tabs\"></div>"), "标签栏又写了内联样式");
+        int barLeft = pxAfter(rule(Files.readString(CSS, StandardCharsets.UTF_8), "#zq-wiki-tabs"), "", "padding-left:");
         assertEquals(0, barLeft,
                 "标签栏左内边距是 " + barLeft + "px —— 卡片边缘和第一个标签之间会空出一截灰带。"
                         + "用户要的是标签贴着知识页卡片的左边，不是对齐卡片里的正文（这条已经返工两次）。");
@@ -159,7 +165,7 @@ class WikiTabsTest {
     @DisplayName("前进/返回按钮要留在工具条里，不能挤进标题行")
     void 导航按钮不得挤在标题前() throws Exception {
         String html = Files.readString(WIKI_HTML, StandardCharsets.UTF_8);
-        int titleRow = html.indexOf("padding:14px 20px 14px ");
+        int titleRow = html.indexOf("<div class=\"zq-wiki-head\">");
         int title = html.indexOf("id=\"zq-doc-title\"");
         assertTrue(titleRow >= 0 && title > titleRow, "定位不到标题行 —— 判据扫空了");
         assertTrue(html.contains("id=\"zq-wiki-back\"") && html.contains("id=\"zq-wiki-fwd\""),
@@ -191,6 +197,29 @@ class WikiTabsTest {
      * <p>要求两段都能找到 —— 找不到就是结构变了，此时必须红，而不是拿一个默认值糊过去：
      * 「没找到」和「找到了且对齐」在断言里长得一样，这正是空扫假绿的来源。
      */
+    /** 样式表里某个选择器（整条、只有它自己）的声明 */
+    private static String rule(String css, String selector) {
+        Matcher m = Pattern.compile("(?m)^" + Pattern.quote(selector) + "\\{([^}]*)\\}").matcher(css);
+        assertTrue(m.find(), "样式表里没有 " + selector);
+        String body = m.group(1);
+        assertFalse(m.find(), selector + " 在样式表里写了不止一处 —— 只读第一处会漏掉后面那条");
+        return body;
+    }
+
+    /** padding 简写里某一边的像素数（0 上、1 右、2 下、3 左；按 CSS 的一到四个值展开） */
+    private static int paddingSide(String declarations, int side) {
+        Matcher m = Pattern.compile("(?:^|;)padding:([^;]+)").matcher(declarations);
+        assertTrue(m.find(), "没有 padding 简写：" + declarations);
+        String[] v = m.group(1).trim().split("\\s+");
+        String[] four = switch (v.length) {
+            case 1 -> new String[]{v[0], v[0], v[0], v[0]};
+            case 2 -> new String[]{v[0], v[1], v[0], v[1]};
+            case 3 -> new String[]{v[0], v[1], v[2], v[1]};
+            default -> v;
+        };
+        return Integer.parseInt(four[side].replace("px", ""));
+    }
+
     private static int pxAfter(String text, String anchor, String prefix) {
         int at = text.indexOf(anchor);
         assertTrue(at >= 0, "找不到锚点「" + anchor + "」—— 判据扫空了");
