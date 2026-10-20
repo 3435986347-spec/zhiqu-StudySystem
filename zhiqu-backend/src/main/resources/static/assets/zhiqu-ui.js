@@ -32,6 +32,36 @@
   function resolvedMode(){ var t=readTheme(); return t==='auto' ? (systemDark()?'dark':'light') : t; }
   function apply(){ var h=document.documentElement; h.setAttribute('data-zq-mode',resolvedMode()); h.setAttribute('data-zq-accent',readAccent()); }
   apply();
+  // 桌面应用（macOS 外壳的 WKWebView，第八十轮）：窗口是全尺寸内容 + 透明标题栏，红黄绿按钮和外壳 28px 高的拖拽条都压在页面最上面 ——
+  // 侧栏的「知」标记和收起按钮原来有一截在它们底下（按钮上沿点下去是在拖窗口）。外壳注册了 zqNotify 这座桥，有它就是在桌面应用里
+  try { if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.zqNotify) document.documentElement.classList.add('zq-desktop'); } catch(e){}
+  // 空的日期 / 时间框（第八十轮）：WebKit（桌面应用）把空的 datetime-local 画成「2026/10/20 12:30」这样一个具体的日期时间，颜色和填了值的一样 ——
+  // 新建任务里三个「（可留空）」的时间看着像都被填上了（库里确实是空的）。空着时打一个标记，样式表把它画成占位的灰色。
+  // 值也可能是脚本填的（编辑任务时先开弹框、数据回来再填），所以连设值一起盯着，否则填了值的框会被画成灰的
+  var DATE_TYPES = /^(date|datetime-local|time|month|week)$/;
+  var DATE_INPUTS = 'input[type="date"],input[type="datetime-local"],input[type="time"],input[type="month"],input[type="week"]';
+  function markEmptyDate(el){
+    if (!el || el.tagName !== 'INPUT' || !DATE_TYPES.test(el.type)) return;
+    if (el.value) el.removeAttribute('data-zq-empty'); else el.setAttribute('data-zq-empty', '');
+  }
+  function markEmptyDatesIn(node){
+    if (!node || node.nodeType !== 1) return;
+    if (node.tagName === 'INPUT') markEmptyDate(node);
+    else if (node.querySelectorAll) Array.prototype.forEach.call(node.querySelectorAll(DATE_INPUTS), markEmptyDate);   // 只找日期类的框：AI 回答流式插进来的节点很密
+  }
+  ['input', 'change'].forEach(function(t){ document.addEventListener(t, function(e){ markEmptyDate(e.target); }, true); });
+  document.addEventListener('reset', function(e){ var form = e.target; setTimeout(function(){ markEmptyDatesIn(form); }, 0); }, true);
+  try {
+    var valueProp = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    if (valueProp && valueProp.set && valueProp.configurable) {
+      Object.defineProperty(HTMLInputElement.prototype, 'value', { configurable: true, enumerable: valueProp.enumerable, get: valueProp.get,
+        set: function(v){ valueProp.set.call(this, v); markEmptyDate(this); } });
+    }
+    new MutationObserver(function(list){ list.forEach(function(m){ Array.prototype.forEach.call(m.addedNodes, markEmptyDatesIn); }); })
+      .observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e){}
+  if (document.readyState !== 'loading') markEmptyDatesIn(document.body);
+  else document.addEventListener('DOMContentLoaded', function(){ markEmptyDatesIn(document.body); });
   // 跟随系统时，系统外观一变（日落、日出、手动切）页面当场跟着变；固定了浅 / 深色的不受影响（apply 读的是存下的选择）
   if (darkQuery) {
     if (darkQuery.addEventListener) darkQuery.addEventListener('change', apply);

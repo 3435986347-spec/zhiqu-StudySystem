@@ -54,7 +54,7 @@ class InlineStyleRatchetTest {
     private static final Map<String, Integer> STYLE_WRITES = new TreeMap<>(Map.ofEntries(
             Map.entry("assets/pages/ai-assistant.js", 3),
             Map.entry("assets/pages/dashboard.js", 1),
-            Map.entry("assets/zhiqu-api.js", 19),
+            Map.entry("assets/zhiqu-api.js", 17),
             Map.entry("assets/zhiqu-ui.js", 11)));
 
     /** 写死的字号（不是 var(--zq-fs-*)）一共这几种。第七十八轮：AI 助手的 10 / 10.5 / 11 / 11.5 / 12.5 收进了令牌，但别的页还在用，所以种数没少。 */

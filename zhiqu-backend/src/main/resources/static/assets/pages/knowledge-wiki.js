@@ -37,7 +37,7 @@ async function bootKnowledge() {
     if (searchInput) searchInput.oninput = function () { state.wikiFilter.q = searchInput.value.trim(); paintWikiTree(); };
     if (typeSel) typeSel.onchange = function () { state.wikiFilter.type = typeSel.selectedIndex === 0 ? '' : typeSel.options[typeSel.selectedIndex].text; paintWikiTree(); };
   }
-  if (wikiCmEnabled()) loadWikiCm();
+  if (wikiCmEnabled()) loadWikiCm().catch(function () {});   // 进页面时先取；没取到的话点进编辑时再取一次
   wireWikiEditor();
   wireWikiTabShortcuts();
   paintWikiTree();
@@ -242,6 +242,7 @@ async function paintWikiDoc(p, opts) {
     setSourcePressed(false);
     doc.innerHTML = renderMarkdown(p.content || p.summary || '');
     markDuplicateTitle(doc, p.title);
+    markEmptyWikiPage(doc);
     renderMathIn(doc);
     wireWikiLinks(doc);
     showWikiActionBar();
@@ -249,9 +250,7 @@ async function paintWikiDoc(p, opts) {
   }
   var insp = $('#zq-insp');
   if (insp) {
-    insp.innerHTML = '<div class="zq-wiki-insp">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span class="zq-wiki-insp-tip">点击正文即可编辑 · 开启「只读」可防止误改 · [[双链]]可跳转</span>'
-      + wikiEditorSwitchHtml() + '</div>';
-    wireWikiEditorSwitch(insp);
+    insp.innerHTML = '<div class="zq-wiki-insp">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span class="zq-wiki-insp-tip">点击正文即可编辑 · 开启「只读」可防止误改 · [[双链]]可跳转</span></div>';
   }
   paintWikiTree();
   paintWikiTabs();
@@ -651,14 +650,9 @@ function wireWikiEditor() {
   doc.onclick = function (e) {
     if (e.target && e.target.closest && e.target.closest('a,input,button,.zq-md-image,.zq-embed')) return;
     if (!state.wikiCur || wikiReadOnly() || doc.dataset.editing === '1' || doc.dataset.loading === '1') return;
-    // 新编辑器：进编辑之前先在阅读视图里记下点的是哪一段的第几个字（进了编辑阅读视图就没了），进去后光标落到原文里那个字、那一行停在点的高度
-    var anchor = wikiCmEnabled() && wikiCmModule ? wikiCmModule.readingAnchor(doc, e.clientX, e.clientY) : null;
-    var top = doc.getBoundingClientRect ? e.clientY - doc.getBoundingClientRect().top : null;
-    enterWikiEdit();
-    if (wikiCmActive(doc)) {
-      var pos = anchor ? wikiCmModule.sourcePosition(wikiCm.handle.getMarkdown(), anchor) : null;
-      if (pos != null) wikiCm.handle.focusPos(pos, top); else wikiCm.handle.focusAt(e.clientX, e.clientY);
-    } else caretAt(e.clientX, e.clientY);
+    // 新编辑器：光标落到原文里点的那个字、那个字停在点的高度（enterWikiCmEdit 在换掉阅读视图之前记下）；简易编辑照旧按坐标放光标
+    enterWikiEdit({ focus: { x: e.clientX, y: e.clientY } });
+    if (doc.dataset.editing === '1' && !wikiCmActive(doc)) caretAt(e.clientX, e.clientY);
   };
   var modeButton = $('#zq-wiki-mode');
   if (modeButton) modeButton.onclick = toggleWikiReadOnly;
@@ -695,7 +689,7 @@ function wireWikiEditor() {
   // 任务可直接勾选并进入编辑；只读和嵌入笔记中的任务始终不能改。
   doc.addEventListener('change', function (e) {
     var cb = e.target;
-    if (!cb || cb.type !== 'checkbox' || wikiCmActive(doc)) return;   // 验证版的勾选框自己改原文
+    if (!cb || cb.type !== 'checkbox' || wikiCmActive(doc)) return;   // 编辑器里的勾选框自己改原文
     if (wikiReadOnly() || doc.dataset.loading === '1' || cb.closest && cb.closest('[data-embed-markdown]')) {
       cb.checked = typeof cb._wikiLockedChecked === 'boolean' ? cb._wikiLockedChecked : cb.defaultChecked; return;
     }
@@ -883,6 +877,7 @@ function syncWikiEditMode(doc) {
   if (wikiCmActive(doc)) wikiCm.handle.setReadOnly(locked || unavailable);
   doc.setAttribute('aria-readonly', locked || unavailable ? 'true' : 'false');   // 光标跟着它（样式表的 #zq-doc[aria-readonly="true"]）
   var source = $('#zq-src-ta'); if (source) source.readOnly = locked;
+  var emptyHint = doc.querySelector && doc.querySelector('.zq-wiki-empty'); if (emptyHint) emptyHint.textContent = wikiEmptyHint();
   var modeButton = $('#zq-wiki-mode'), label = $('#zq-wiki-mode-label');
   if (modeButton) {
     modeButton.textContent = '只读';
@@ -914,9 +909,11 @@ function captureWikiView(doc) {
   var view = { scrollTop: doc.scrollTop || 0, windowX: window.scrollX || 0, windowY: window.scrollY || 0 };
   // 新编辑器里没有 .zq-md：记下顶上那一行在原文里是哪一段（第七十四轮 review：原来按像素恢复，两种排版差得远，保存 / 取消后跳到别处）
   if (wikiCmActive(doc) && wikiCmModule && doc.getBoundingClientRect) {
-    var docTop = doc.getBoundingClientRect().top, line = wikiCm.handle.lineAt(docTop + 1);
-    view.cmAnchor = wikiCmModule.sourceAnchorAt(wikiCm.handle.getMarkdown(), line.pos);
-    view.anchorOffset = line.top - docTop;
+    var docTop = doc.getBoundingClientRect().top, line = wikiCm.handle.lineAt(docTop + 1), markdown = wikiCm.handle.getMarkdown();
+    view.cmAnchor = wikiCmModule.sourceAnchorAt(markdown, line.pos);
+    // 第八十轮：量那一段第一个字的顶边，回到阅读时对的也是那个字 —— 顶上那一行可能是代码块的结束行、空行，那一段在下面几行（原来差出 30px）
+    var at = view.cmAnchor ? wikiCmModule.sourcePosition(markdown, { text: view.cmAnchor.text, ordinal: view.cmAnchor.ordinal, offset: 0 }) : null;
+    view.anchorOffset = (at != null ? wikiCm.handle.charTop(at, view.cmAnchor.text) : line.top) - docTop;
     return view;
   }
   var md = doc.querySelector && doc.querySelector('.zq-md');
@@ -935,8 +932,8 @@ function restoreWikiView(doc, view) {
   if (!doc || !view) return;
   doc.scrollTop = view.scrollTop;
   var md = doc.querySelector && doc.querySelector('.zq-md');
-  var cmBlock = md && view.cmAnchor && wikiCmModule && doc.getBoundingClientRect ? wikiCmModule.readingBlockFor(md, view.cmAnchor) : null;
-  if (cmBlock) doc.scrollTop += cmBlock.getBoundingClientRect().top - doc.getBoundingClientRect().top - view.anchorOffset;
+  var cmTop = md && view.cmAnchor && wikiCmModule && doc.getBoundingClientRect ? wikiCmModule.readingAnchorTop(md, view.cmAnchor) : null;
+  if (cmTop != null) doc.scrollTop += cmTop - doc.getBoundingClientRect().top - view.anchorOffset;
   else if (md && doc.getBoundingClientRect && view.anchorKey) {
     var children = Array.from(md.children || []);
     function matches(child) { return child && child.tagName + ':' + String(child.textContent || '').slice(0, 160) === view.anchorKey; }
@@ -952,22 +949,27 @@ function restoreWikiView(doc, view) {
   }
   if (window.scrollTo && (window.scrollX !== view.windowX || window.scrollY !== view.windowY)) window.scrollTo(view.windowX, view.windowY);
 }
-function enterWikiEdit() {
+/** opts.focus = { x, y }：点正文进来的，光标落在点的那个字上、那个字不动（第八十轮） */
+function enterWikiEdit(opts) {
   var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || wikiReadOnly() || doc.dataset.editing === '1' || doc.dataset.loading === '1') return;
-  if (wikiCmEnabled()) { enterWikiCmEdit(doc, p, p.content || ''); return; }
+  if (wikiCmEnabled()) { enterWikiCmEdit(doc, p, p.content || '', opts); return; }
   var view = captureWikiView(doc);
   wireWikiDrafts(doc);
+  var emptyHint = doc.querySelector && doc.querySelector('.zq-wiki-empty');   // 空页的那句提示不是正文，简易编辑会把 DOM 存回去
+  if (emptyHint) emptyHint.remove();
   doc.dataset.editing = '1'; doc.dataset.source = '0'; doc.dataset.wikiEditSession = String(++wikiEditSession);
   doc.contentEditable = 'true';
   showWikiActionBar();
   doc.focus({ preventScroll: true });
   restoreWikiView(doc, view);
 }
-// ── 编辑内核验证版（第七十轮，docs/rounds/round-70.md） ─────────────────────────
-// localStorage「zq.wikiEditor」=「cm」时，点进编辑换成 CodeMirror 6 的实时预览（assets/wiki-cm.js）：编辑的就是 Markdown 原文，
-// 保存不经过 htmlToMarkdown（那一步会丢嵌套列表、代码块语言、表格对齐、硬换行）。默认关：每一处接入都是「开着才走」。
+// ── 编辑内核：CodeMirror 6（第七十轮验证，第八十轮成为默认，docs/rounds/round-80.md） ─────────────────
+// 点进编辑是 CodeMirror 6 的实时预览（assets/wiki-cm.js）：编辑的就是 Markdown 原文，
+// 保存不经过 htmlToMarkdown（那一步会丢嵌套列表、代码块语言、表格对齐、硬换行）。每一处接入都是「新编辑器在才走」，加载不上就退回原来的。
 var wikiCmModule = null, wikiCmLoading = null, wikiCm = null;
-function wikiCmEnabled() { try { return localStorage.getItem('zq.wikiEditor') === 'cm'; } catch (e) { return false; } }
+// 第八十轮：试用开关（页面检查里的「试试新编辑器 / 换回现在的编辑器」）去掉了，新编辑器是默认；只有它加载不上时这一页退回原来的 contentEditable
+var wikiCmFailed = false;
+function wikiCmEnabled() { return !wikiCmFailed; }
 function wikiCmActive(doc) { return !!(wikiCm && doc && doc.dataset.editor === 'cm'); }
 function loadWikiCm() {
   if (!wikiCmLoading) wikiCmLoading = loadModule('wiki-cm.js').then(function (mod) { wikiCmModule = mod; return mod; }, function (e) { wikiCmLoading = null; throw e; });
@@ -977,19 +979,53 @@ function closeWikiCm(doc) {
   if (wikiCm) { try { wikiCm.handle.destroy(); } catch (e) {} wikiCm = null; }
   if (doc) delete doc.dataset.editor;
 }
-function enterWikiCmEdit(doc, p, markdown) {
+/** 阅读视图顶上第一个看得见的字：它在原文里是哪一段、屏幕上多高（从工具栏 / 菜单进编辑时让它不动） */
+function wikiReadingTop(doc) {
+  if (!doc.getBoundingClientRect || typeof getComputedStyle !== 'function') return null;
+  var r = doc.getBoundingClientRect(), left = r.left + (parseFloat(getComputedStyle(doc).paddingLeft) || 0);
+  for (var y = r.top + 2; y < r.top + Math.min(r.height, 240); y += 6) {
+    for (var i = 0; i < 2; i++) {
+      var x = left + (i ? 32 : 2), anchor = wikiCmModule.readingAnchor(doc, x, y), top = anchor ? wikiCmModule.readingCharTop(doc, x, y) : null;
+      if (top != null && top >= r.top) return { anchor: anchor, top: top };
+    }
+  }
+  return null;
+}
+function enterWikiCmEdit(doc, p, markdown, opts) {
   if (!wikiCmModule) {   // 进页面时就开始加载；还没到就等它到了再进
-    loadWikiCm().then(function () { if (state.wikiCur === p && doc.dataset.editing !== '1') enterWikiCmEdit(doc, p, markdown); }, function (e) { toast(e.message, 'error'); });
+    loadWikiCm().then(function () { if (state.wikiCur === p && doc.dataset.editing !== '1') enterWikiCmEdit(doc, p, markdown, opts); }, function () {
+      wikiCmFailed = true;
+      toast('编辑器没加载上，先用简易编辑（刷新页面会再试一次）', 'error');
+      if (state.wikiCur === p && doc.dataset.editing !== '1') enterWikiEdit();
+    });
     return;
   }
   wireWikiDrafts(doc);
   var scroll = doc.scrollTop;
+  // 换掉阅读视图之前记下：点的那个字（或者顶上第一个字）在原文里是哪儿、屏幕上多高。进去以后让同一个字停在同一个高度 ——
+  // 只按像素抄 scrollTop 不行：编辑器上面没画出来的行高度是估的，长页中间点进去整页偏一截（第八十轮，32px）
+  var focus = opts && opts.focus, keep = null;
+  if (focus) {
+    var charTop = wikiCmModule.readingCharTop(doc, focus.x, focus.y);
+    keep = { anchor: wikiCmModule.readingAnchor(doc, focus.x, focus.y), top: charTop != null ? charTop : focus.y - 10 };
+  } else keep = wikiReadingTop(doc);
   doc.dataset.editing = '1'; doc.dataset.source = '0'; doc.dataset.editor = 'cm'; doc.dataset.wikiEditSession = String(++wikiEditSession);
   doc.contentEditable = 'false';
+  // 点下去时浏览器在阅读视图里放了一个原生的选区；阅读视图换掉后，WebKit（桌面应用）把它挪到新内容里的某处，编辑器读到它，
+  // 光标就从点的那个字跑到了别的行（第八十轮：点正文第二行，光标落在上面的标题上）。换之前先清掉
+  try { var nativeSel = window.getSelection && window.getSelection(); if (nativeSel && nativeSel.rangeCount) nativeSel.removeAllRanges(); } catch (e) {}
   doc.innerHTML = '<div class="zq-wiki-cm"></div>';
   wikiCm = { page: p, handle: wikiCmModule.mountWikiEditor(doc.firstChild, {
     markdown: markdown, readOnly: wikiReadOnly(),
     titles: function () { return (state.wikiPages || []).map(function (x) { return x.title; }); },
+    // 第八十轮：和页名重复的第一行标题在编辑器里也藏起来（阅读时本来就藏）；单击渲染出来的链接打开它（原来只放光标，一点正文就进编辑，链接全都点不动）
+    title: function () { return (state.wikiCur === p ? state.wikiCur : p).title; },
+    onOpenUrl: function (raw) {
+      var href = wikiExternalUrl(raw);
+      if (!href) { toast('链接地址无效，请使用完整的 HTTP(S) 网址', 'error'); return; }
+      window.open(href, '_blank', 'noopener,noreferrer');
+    },
+    bottomInset: function () { var bar = document.getElementById('zq-wiki-actions'); return bar && bar.dataset.editing === '1' ? bar.offsetHeight + 12 : 0; },
     onNavigate: function (title) { var target = (state.wikiPages || []).find(function (x) { return x.title === title; }); if (target) paintWikiDoc(target); else toast('还没有「' + title + '」这一页'); },
     onChange: function () { doc.dispatchEvent(new Event('input', { bubbles: true })); },
     // 第七十三轮：粘贴 / 拖进的图片走同一个上传；图片、表格用阅读模式同一个渲染画；代码块用同一套颜色
@@ -1000,25 +1036,9 @@ function enterWikiCmEdit(doc, p, markdown) {
   }) };
   showWikiActionBar();
   doc.scrollTop = scroll;
-}
-/** 页面检查里的切换（桌面应用没有地址栏和开发者工具，要在这里切才试得到中文输入法） */
-function wikiEditorSwitchHtml() {
-  var on = wikiCmEnabled();
-  return '<div class="zq-wiki-insp-editor">编辑器：' + (on ? '验证版（CodeMirror）' : '现在的')
-    + '<br><button type="button" class="zq-btn-ghost" id="zq-wiki-editor-switch">'
-    + (on ? '换回现在的编辑器' : '试试新编辑器（验证版）') + '</button></div>';
-}
-function wireWikiEditorSwitch(root) {
-  var button = $('#zq-wiki-editor-switch', root); if (!button) return;
-  button.onclick = function () {
-    var doc = $('#zq-doc');
-    if (doc && doc.dataset.editing === '1') return toast('先保存或取消这一页的编辑，再切换编辑器');
-    var on = !wikiCmEnabled();
-    try { if (on) localStorage.setItem('zq.wikiEditor', 'cm'); else localStorage.removeItem('zq.wikiEditor'); } catch (e) { return toast('这个浏览器不让存设置，切换不了', 'error'); }
-    if (on) loadWikiCm();
-    var box = button.parentNode; box.outerHTML = wikiEditorSwitchHtml(); wireWikiEditorSwitch(root);
-    toast(on ? '已换成验证版编辑器：点正文进入编辑，编辑的就是 Markdown 原文' : '已换回现在的编辑器');
-  };
+  var at = keep && keep.anchor ? wikiCmModule.sourcePosition(markdown, keep.anchor) : null;
+  if (focus) { if (at != null) wikiCm.handle.focusPos(at, keep.top, doc); else wikiCm.handle.focusAt(focus.x, focus.y); }
+  else if (at != null) wikiCm.handle.alignPos(at, keep.top, doc, keep.anchor.text);
 }
 function wikiCmToolbar(cmd) {
   var handle = wikiCm.handle;
@@ -1028,6 +1048,7 @@ function wikiCmToolbar(cmd) {
   else if (cmd === 'code') handle.wrap('`');
   else if (cmd === 'image') chooseWikiImage();
   else if (cmd === 'math') handle.insert('\n$$\n\n$$\n');
+  else if (cmd === 'source') toggleWikiSource();   // 说一句编辑器里就是原文（第八十轮：原来漏了，点「源码」说「编辑器还没接这个按钮」）
   else if (cmd === 'link' || cmd === 'ref') {
     // 弹窗回来时还得是同一个编辑会话（第七十四轮 review：原来换了页 / 取消了也往拆掉的编辑器里写）；选中的字做链接文字
     var editContext = wikiEditingContext($('#zq-doc'));
@@ -1037,7 +1058,7 @@ function wikiCmToolbar(cmd) {
       if (!href) { toast('链接地址无效，请使用完整的 HTTP(S) 网址', 'error'); return; }
       handle.link(href);
     });
-  } else toast('验证版还没接这个按钮（' + cmd + '）');
+  } else toast('编辑器还没接这个按钮（' + cmd + '）');
 }
 function wikiToolbar(cmd) {
   if (!ensureWikiEditing()) return;
@@ -1118,9 +1139,25 @@ function markDuplicateTitle(doc, title) {
   var first = doc && doc.querySelector('.zq-md > h1:first-child');
   if (first && String(first.textContent || '').trim() === String(title || '').trim()) first.classList.add('zq-dup-title');
 }
+/**
+ * 新建的页只有一行和页名重复的标题（第八十轮）：读的时候藏起来之后一片空白，看不出这是一页、也看不出能写。
+ * 说一句；它不是正文 —— 点它就是点正文（进编辑），新编辑器编辑的是原文、简易编辑进编辑前先拿掉它，都不会被存进去。
+ */
+function wikiEmptyHint() { return wikiReadOnly() ? '这一页还是空的' : '这一页还是空的，点这里开始写'; }   // 只读时点了不会进编辑，不说「点这里」
+function markEmptyWikiPage(doc) {
+  if (!doc) return;
+  var dup = doc.querySelector('.zq-dup-title');
+  var text = String(doc.textContent || '');
+  if (dup) text = text.replace(dup.textContent || '', '');
+  if (text.trim() || doc.querySelector('img, table, input, .zq-embed, .katex')) return;
+  var hint = document.createElement('p');
+  hint.className = 'zq-wiki-empty';
+  hint.textContent = wikiEmptyHint();
+  (doc.querySelector('.zq-md') || doc).appendChild(hint);
+}
 function toggleWikiSource() {
   var doc = $('#zq-doc'); if (!doc || !ensureWikiEditing()) return;
-  if (wikiCmActive(doc)) { toast('验证版编辑器里显示的就是 Markdown 原文：光标所在的地方露出语法'); return; }
+  if (wikiCmActive(doc)) { toast('编辑器里显示的就是 Markdown 原文：光标所在的地方露出语法'); return; }
   if (doc.dataset.source === '1') {
     var ta = $('#zq-src-ta'); var md = ta ? ta.value : '';
     var view = doc._wikiSourceView;
@@ -1414,7 +1451,7 @@ function createWikiPage() {
       '<div class="zq-field"><label class="zq-label">页面标题</label><input id="zq-np-title" class="zq-input" placeholder="例如：英语作文素材库"></div>'
       + '<div class="zq-field"><label class="zq-label">类型</label><select id="zq-np-type" class="zq-select">' + typeOptions + '</select></div>'
       + '<div class="zq-field"><label class="zq-label">父节点</label><select id="zq-np-parent" class="zq-select">' + parentOptions + '</select></div>'
-      + '<p class="zq-wiki-hint">将按类型生成初始结构（小节 / 任务项），创建后点击「编辑」继续填写。</p>'
+      + '<p class="zq-wiki-hint">将按类型生成初始结构（小节 / 任务项），创建后直接打开、可以接着写。</p>'
       + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-np-cancel">取消</button><button type="button" class="zq-btn" id="zq-np-ok">创建</button></div>',
     onMount: function (b, h) {
       $('#zq-np-cancel', b).onclick = h.close;
@@ -1425,8 +1462,12 @@ function createWikiPage() {
         safe('新建知识页', async function () {
           var body = { title: title, content: wikiSkeleton(type, title), pageType: type };
           if (parentId) body.parentId = Number(parentId);
-          await api.post('/knowledge/pages', body);
-          h.close(); await bootKnowledge(); toast('已创建');
+          var created = await api.post('/knowledge/pages', body);
+          h.close(); await bootKnowledge();
+          // 建完直接打开、进编辑（第八十轮：原来只说「已创建」，正文还停在原来那一页，要自己去目录里找）
+          var page = created && (state.wikiPages || []).find(function (x) { return String(x.id) === String(created.id); });
+          if (page) { await paintWikiDoc(page, { newTab: true }); enterWikiEdit(); }
+          toast('已创建');
         });
       };
     }

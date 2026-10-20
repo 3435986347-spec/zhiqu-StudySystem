@@ -29,7 +29,7 @@ function fixture() {
   const setTimeoutFake = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
   const impl = new Function('document', 'window', 'Date', 'setTimeout', 'clearTimeout', `
     ${source}
-    trackWikiNavigation = removeWikiDraftBar = removeWikiActionBar = syncWikiEditMode = setSourcePressed = markDuplicateTitle
+    trackWikiNavigation = removeWikiDraftBar = removeWikiActionBar = syncWikiEditMode = setSourcePressed = markDuplicateTitle = markEmptyWikiPage
       = wireWikiLinks = showWikiActionBar = restoreWikiView = paintWikiTabs = offerWikiDraft = function () {};
     return { bind, prefetchWikiPage, paintWikiDoc, paintWikiTree };`)(
     { getElementById: () => null }, { addEventListener() {} }, fakeDate, setTimeoutFake, () => {});

@@ -486,7 +486,9 @@
   function toast(msg, kind, ms) {
     var el = document.createElement('div');
     el.textContent = msg;
-    el.style.cssText = 'position:fixed;right:22px;top:22px;z-index:99999;max-width:360px;padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);box-shadow:var(--zq-sh2);color:' + (kind === 'error' ? 'var(--zq-bad)' : 'var(--zq-text)') + ';font-size:13px;font-weight:var(--zq-fw-medium);';
+    // 样子在样式表（.zq-toast，第八十轮：原来内联、贴在 top:22px，正好盖住每页右上角的按钮）
+    el.className = kind === 'error' ? 'zq-toast is-error' : 'zq-toast';
+    el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
     document.body.appendChild(el);
     setTimeout(function () { el.remove(); }, ms || 2600);
   }
@@ -505,7 +507,7 @@
     return true;
   }
   window.addEventListener('unhandledrejection', function (e) { reportUnhandled(e.reason); });
-  // 右上角持久通知（Claude 弹窗风格）：notice('正在测试…') → {update(msg,{done}), close()}
+  // 持久通知（底部中间，提示的上面；Claude 弹窗风格）：notice('正在测试…') → {update(msg,{done}), close()}
   // update 传 {done:true} 时切换为完成态并在 2s 后自动消失
   function notice(msg) {
     var el = document.createElement('div');

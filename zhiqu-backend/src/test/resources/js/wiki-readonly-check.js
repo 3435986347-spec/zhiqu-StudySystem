@@ -33,6 +33,7 @@ function fixture() {
     drafts: { load: k => drafts.get(k), save(k, text, extra) { drafts.set(k, { text, ...extra }); }, clear: k => drafts.delete(k), clearIf(k, text) { if (drafts.get(k)?.text === text) drafts.delete(k); } } };
   const impl = new Function('document', 'window', `
     ${source}
+    wikiCmFailed = true;   // 第八十轮起新编辑器是默认；这里测的是它加载不上时退回的简易编辑（contentEditable）
     // Rendering substitutes keep this fixture focused on the published mode and event handlers.
     var originalPaintWikiDoc = paintWikiDoc;
     trackWikiNavigation = function () {};

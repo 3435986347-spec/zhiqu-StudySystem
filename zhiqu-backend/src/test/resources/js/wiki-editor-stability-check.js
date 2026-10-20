@@ -29,6 +29,7 @@ function fixture(){
  function toast(){} function paintWikiDoc(p,opts){paints.push({p,opts});}
  var api={put(){return request;}};
  ${editCode}\n${sourceCode}\n${cancelCode}\n${saveCode}
+ wikiCmFailed = true;   // 第八十轮起新编辑器是默认；这里测的是它加载不上时退回的简易编辑（contentEditable）
  return {enterWikiEdit,saveWikiEdit,toggleWikiSource,captureWikiView,restoreWikiView,cancelWikiEdit:typeof cancelWikiEdit==='function'?cancelWikiEdit:null};`)(state,doc,page,request,drafts,paints,tasks,()=>markdown);
  return {state,doc,page,paints,tasks,script,draftValues,finish:pendingResolve,setMarkdown(value){markdown=value;}};
 }

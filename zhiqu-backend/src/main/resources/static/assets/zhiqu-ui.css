@@ -256,6 +256,11 @@ input::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer;}
 /* 折叠后靠 title 出名称 —— 第四十五轮起由 zhiqu-ui.js 的 setupTips 画（.zq-tip）：原来说「原生的在所有平台都对」，
    可桌面应用的 WKWebView 根本不显示原生的 title 提示（用户：「鼠标悬停的时候也没有显示名字」）。 */
 .zq-side{position:fixed;inset:0 auto 0 0;width:188px;background:var(--zq-sb-bg);border-right:1px solid var(--zq-sb-border);display:flex;flex-direction:column;padding:var(--zq-sp-5) var(--zq-sp-3) var(--zq-sp-4);z-index:100;}
+/* 桌面应用：红黄绿按钮（y 8–24）和外壳的拖拽条（0–28）在最上面，侧栏的内容从它们下面开始（第八十轮） */
+html.zq-desktop .zq-side{padding-top:38px;}
+/* 空的日期 / 时间框画成占位的灰色（第八十轮：WebKit 把空框画成一个具体的日期时间，看着像填了；标记由 zhiqu-ui.js 打） */
+input[data-zq-empty],input[data-zq-empty]::-webkit-datetime-edit{color:var(--zq-text3);}
+input[data-zq-empty]::-webkit-datetime-edit-text{color:var(--zq-text3);}   /* 「/」「:」分隔符在单独的伪元素上，不跟着上一条变灰 */
 .zq-brand{display:flex;align-items:center;gap:var(--zq-sp-2);padding:0 0 var(--zq-sp-4) 8px;margin-bottom:var(--zq-sp-2);}
 .zq-brand-badge{width:26px;height:26px;flex:none;border-radius:var(--zq-rs);background:var(--zq-text);color:var(--zq-card);display:flex;align-items:center;justify-content:center;font-weight:var(--zq-fw-semibold);font-size:var(--zq-fs-sm);}
 .zq-brand-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;font-weight:var(--zq-fw-medium);font-size:var(--zq-fs-sm);color:var(--zq-sb-active-text);line-height:1.3;}
@@ -649,8 +654,13 @@ body.zq-modal-open{overflow:hidden;}
 .zq-src-tile .zq-src-dl{position:absolute;top:7px;right:7px;width:22px;height:22px;display:none;align-items:center;justify-content:center;border-radius:6px;background:color-mix(in srgb, var(--zq-card) 78%, transparent);backdrop-filter:blur(4px);color:var(--zq-text);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-medium);}
 .zq-src-tile:hover .zq-src-dl{display:flex;}
 
-/* ── 右上角持久通知（测试进行中/完成；Claude 弹窗同风格） ── */
-.zq-notice{position:fixed;top:22px;right:22px;z-index:9000;display:flex;align-items:center;gap:var(--zq-sp-2);max-width:340px;padding:var(--zq-sp-3) var(--zq-sp-4);border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);color:var(--zq-text);box-shadow:var(--zq-sh2);font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-regular);transition:opacity .2s ease;animation:zqModalIn .22s cubic-bezier(.2,.8,.2,1) both;}
+/* ── 持久通知（测试进行中/完成；Claude 弹窗同风格） ── */
+/* 提示和持久通知（第八十轮）：原来贴在右上角 top:22px，正好压在每页标题行右边的按钮上（「新建知识页」「新增任务」…）。
+   挪到标题行下面也不行 —— 窗口窄时标题行的按钮折成两排（知识 Wiki 1024 宽时到 128px），照样压住。放到底部中间：提示离底 24px，
+   通知叠在它上面（同时出现不互相盖）；不接鼠标，叠在什么上面点击都穿过去。居中不用 transform（通知的入场动画会盖掉它） */
+.zq-toast{position:fixed;left:0;right:0;bottom:24px;margin:0 auto;width:fit-content;z-index:99999;max-width:min(360px,calc(100vw - 32px));padding:10px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-card);box-shadow:var(--zq-sh2);color:var(--zq-text);font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);pointer-events:none;}
+.zq-toast.is-error{color:var(--zq-bad);}
+.zq-notice{position:fixed;left:0;right:0;bottom:76px;margin:0 auto;width:fit-content;z-index:9000;pointer-events:none;display:flex;align-items:center;gap:var(--zq-sp-2);max-width:min(340px,calc(100vw - 32px));padding:var(--zq-sp-3) var(--zq-sp-4);border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);color:var(--zq-text);box-shadow:var(--zq-sh2);font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-regular);transition:opacity .2s ease;animation:zqModalIn .22s cubic-bezier(.2,.8,.2,1) both;}
 .zq-notice .zq-notice-dot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--zq-primary);animation:zqPulse 1.1s ease infinite;}
 .zq-notice.zq-notice-done .zq-notice-dot{background:var(--zq-ok);animation:none;}
 .zq-notice.zq-notice-error .zq-notice-dot{background:var(--zq-bad);animation:none;}
@@ -961,8 +971,11 @@ body.zq-modal-open{overflow:hidden;}
 .zq-attachment-row:hover{background:var(--zq-tint);}
 .zq-attachment-row>span:first-child{min-width:0;overflow-wrap:anywhere;}
 .zq-attachment-size{flex-shrink:0;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
-.zq-wiki-actionbar{display:flex;gap:8px;padding:10px 26px 18px;border-top:1px solid var(--zq-border-soft);background:var(--zq-card);flex-shrink:0;}
-.zq-wiki-actionbar[data-editing="0"]{visibility:hidden;}
+/* 「保存 / 取消」浮在正文卡片底上（第八十轮）：原来排在 #zq-doc 下面、阅读时 visibility:hidden 照样占着 59px，
+   正文没到卡片底就被齐刷刷切掉。现在阅读时不显示也不占地方；编辑时盖在正文底上（正文区不变矮，进编辑不跳），
+   #zq-doc 底下多留出它的高度、编辑器滚光标时让开它（wiki-cm.js 的 scrollMargins） */
+.zq-wiki-actionbar{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;gap:8px;padding:10px 26px 18px;border-top:1px solid var(--zq-border-soft);background:var(--zq-card);}
+.zq-wiki-actionbar[data-editing="0"]{display:none;}
 /* 勾选项：勾上了就划掉、变淡 —— 按 input:checked 画（原来渲染时写死在文字上，点一下勾选框样子不跟着变） */
 .zq-task-row{display:flex;align-items:flex-start;gap:9px;margin:7px 0;}
 .zq-task-row>input[type="checkbox"]{flex:none;margin-top:5px;accent-color:var(--zq-primary);}
@@ -998,6 +1011,7 @@ body.zq-modal-open{overflow:hidden;}
 .zq-prose .zq-task-row>input[type="checkbox"]{margin-top:6px;}
 /* 重复页名在阅读与排版编辑中保持隐藏；源码模式仍可修改，切换编辑不会插入额外高度。 */
 .zq-prose .zq-dup-title{display:none;}
+.zq-prose .zq-wiki-empty{color:var(--zq-text3);}
 /* ── 知识 Wiki 的骨架（第七十九轮从 knowledge-wiki.html 的内联挪进来）：目录、正文卡片、页面检查三栏 ── */
 .zq-wiki-pending{border-color:var(--zq-tint-strong);background:var(--zq-tint);color:var(--zq-primary);font-weight:var(--zq-fw-medium);}
 .zq-wiki-cols{display:flex;gap:12px;align-items:stretch;margin:0 -8px;flex:1;min-height:0;}
@@ -1012,7 +1026,7 @@ body.zq-modal-open{overflow:hidden;}
 .zq-wiki-filter .zq-input,.zq-wiki-filter .zq-select{height:28px;font-size:var(--zq-fs-xs);}
 #zq-tree{display:flex;flex-direction:column;gap:2px;padding:8px;}
 /* 正文卡片：flex 列 + min-height:0，#zq-doc 在里面滚，不把整页撑长 */
-.zq-wiki-doc{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;overflow:hidden;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);}
+.zq-wiki-doc{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;overflow:hidden;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);}
 .zq-wiki-tabbar{display:flex;align-items:stretch;border-bottom:1px solid var(--zq-border-soft);background:var(--zq-card-soft);}
 /* 标签栏左内边距 = 0：第一个标签贴着卡片的左边缘（WikiTabsTest.第一个标签贴卡片左边缘） */
 #zq-wiki-tabs{display:flex;align-items:stretch;flex:1;min-width:0;padding-left:0;overflow-x:auto;scrollbar-width:thin;}
@@ -1024,6 +1038,7 @@ body.zq-modal-open{overflow:hidden;}
 /* overflow-anchor:none：嵌入预览长高时浏览器不替人挪滚动位置（第六十六轮）；只读 / 加载中光标是箭头（aria-readonly 由 syncWikiEditMode 写） */
 #zq-doc{flex:1;min-height:0;overflow-y:auto;padding:22px 26px 30px;overflow-anchor:none;outline:none;cursor:text;}
 #zq-doc[aria-readonly="true"]{cursor:default;}
+#zq-doc[data-editing="1"]{padding-bottom:90px;}
 /* 目录的一项、标签页（第七十九轮从 pages/knowledge-wiki.js 的内联挪进来）：选中的是 aria-current */
 .zq-wiki-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--zq-rs);cursor:pointer;}
 .zq-wiki-item>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--zq-text2);font-size:var(--zq-fs-sm);}
@@ -1045,8 +1060,6 @@ body.zq-modal-open{overflow:hidden;}
 /* 页面检查 */
 .zq-wiki-insp{padding:12px 14px;color:var(--zq-text2);font-size:var(--zq-fs-xs);line-height:1.6;}
 .zq-wiki-insp-tip{color:var(--zq-text3);}
-.zq-wiki-insp-editor{margin-top:10px;padding-top:10px;border-top:1px solid var(--zq-border-soft);}
-#zq-wiki-editor-switch{height:26px;margin-top:6px;font-size:var(--zq-fs-xs);}
 /* 这一页有没保存的修改：正文上面一条 */
 #zq-wiki-draft{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:9px 12px;border:1px solid var(--zq-tint-strong);border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-text);font-size:var(--zq-fs-sm);}
 #zq-wiki-draft>span{flex:1;}

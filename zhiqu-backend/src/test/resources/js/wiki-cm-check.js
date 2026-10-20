@@ -36,8 +36,8 @@ function caretIn(root, word, k = 0, nth = 0) {
   return { node, offset: node.nodeValue.indexOf(word) + k };
 }
 
-function fixture({ flag = 'cm' } = {}) {
-  const store = new Map(flag ? [['zq.wikiEditor', flag]] : []);
+function fixture({ failLoad = false } = {}) {
+  const store = new Map();
   const localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
   const page = { id: 7, title: '嵌套', content: '- 一\n  - 二\n\n```js\nx\n```', version: 3, _full: true };
   const state = { wikiCur: page, wikiDirty: false, wikiPages: [page] };
@@ -52,32 +52,34 @@ function fixture({ flag = 'cm' } = {}) {
   const handle = { calls: [], text: page.content, markers: [],
     getMarkdown() { return this.text; }, setReadOnly(v) { this.calls.push(['readOnly', v]); }, wrap(...m) { this.calls.push(['wrap', ...m]); },
     insert(t) { this.calls.push(['insert', t]); }, focusAt(...a) { this.calls.push(['focusAt', ...a]); }, focusPos(...a) { this.calls.push(['focusPos', ...a]); },
+    alignPos(...a) { this.calls.push(['alignPos', ...a]); }, charTop: () => 100,
     track(from, to) { const m = { from, to }; this.markers.push(m); return m; }, insertAt(m, t) { this.calls.push(['insertAt', m.from, m.to, t]); },
     untrack(m) { this.calls.push(['untrack', m.from]); }, toggleTask(pos) { this.calls.push(['toggleTask', pos]); },
     lineAt() { return { pos: 0, top: 100 }; }, setBlock(kind) { this.calls.push(['setBlock', kind]); }, link(href) { this.calls.push(['link', href]); }, destroy() { this.calls.push(['destroy']); } };
-  const anchor = { value: null };
+  const anchor = { value: null }, charTop = { value: null };
   const cmModule = { mountWikiEditor(host, options) { mounts.push({ host, options }); return handle; },
-    readingAnchor: () => anchor.value, sourcePosition: (md, a) => (a ? md.indexOf(a.text) + a.offset : null), taskMarkerPositions: () => [2, 30],
-    sourceAnchorAt: () => null, readingBlockFor: () => null };
-  const uploads = [];
+    readingAnchor: () => anchor.value, readingCharTop: () => charTop.value, sourcePosition: (md, a) => (a ? md.indexOf(a.text) + a.offset : null), taskMarkerPositions: () => [2, 30],
+    sourceAnchorAt: () => null, readingBlockFor: () => null, readingAnchorTop: () => null };
+  const uploads = [], opened = [];
   const sh = { state, token: () => 'token', esc: String, $: (s) => elements[s] || null, $all: () => [], empty: String, fmtDate: String,
     toast: (m) => toasts.push(m), safe: (_n, fn) => Promise.resolve().then(fn), askConfirm: async () => true, askText: async () => null,
     htmlToMarkdown: () => { throw new Error('验证版编辑器不该走 htmlToMarkdown'); }, renderMarkdown: (t) => t, renderMathIn() {},
-    drafts: { load() {}, save() {}, clear() {}, clearIf() {} }, loadModule: (rel) => { assert.equal(rel, 'wiki-cm.js'); return Promise.resolve(cmModule); },
+    drafts: { load() {}, save() {}, clear() {}, clearIf() {} },
+    loadModule: (rel) => { assert.equal(rel, 'wiki-cm.js'); return failLoad ? Promise.reject(new Error('网络断了')) : Promise.resolve(cmModule); },
     api: { get: () => new Promise(() => {}), put(_p, body) { writes.push(body); return Promise.resolve({ content: body.content, version: 4 }); },
       upload(path, file) { uploads.push(file); return new Promise((resolve) => { uploads.resolve = () => resolve({ url: '/api/knowledge/images/9', name: file.name }); }); } },
     codeTokens: () => [] };
-  const impl = new Function('document', 'window', 'localStorage', `
+  const impl = new Function('document', 'window', 'localStorage', 'getComputedStyle', `
     ${source}
-    var realRestoreWikiView = restoreWikiView;
-    trackWikiNavigation = removeWikiDraftBar = removeWikiActionBar = showWikiActionBar = markDuplicateTitle = wireWikiLinks
+    var realRestoreWikiView = restoreWikiView, realMarkEmptyWikiPage = markEmptyWikiPage;
+    trackWikiNavigation = removeWikiDraftBar = removeWikiActionBar = showWikiActionBar = markDuplicateTitle = markEmptyWikiPage = wireWikiLinks
       = paintWikiTabs = paintWikiTree = offerWikiDraft = restoreWikiView = function () {};
-    return { bind, enterWikiEdit, saveWikiEdit, paintWikiDoc, wikiToolbar, toggleWikiSource, toggleWikiReadOnly, loadWikiCm, currentWikiMarkdown, wireWikiEditor,
+    return { bind, enterWikiEdit, saveWikiEdit, paintWikiDoc, wikiToolbar, toggleWikiSource, toggleWikiReadOnly, loadWikiCm, currentWikiMarkdown, wireWikiEditor, markEmptyWikiPage: realMarkEmptyWikiPage,
       insertWikiImage, setChooser(fn) { chooseWikiImage = fn; }, captureWikiView, restoreWikiView: realRestoreWikiView };`)(
     { getElementById: () => null, execCommand() { throw new Error('验证版编辑器不该用 execCommand'); }, createElement: () => ({ style: {} }), body: { appendChild() {} } },
-    { addEventListener() {}, getSelection: () => ({ rangeCount: 0 }) }, localStorage);
+    { addEventListener() {}, getSelection: () => ({ rangeCount: 0 }), open(...a) { opened.push(a); return null; } }, localStorage, () => ({ paddingLeft: '26px' }));
   impl.bind(sh);
-  return { impl, page, doc, handle, mounts, writes, toasts, state, store, uploads, anchor, events, sh, blockSelect, cmModule };
+  return { impl, page, doc, handle, mounts, writes, toasts, state, store, uploads, anchor, charTop, events, sh, blockSelect, cmModule, opened };
 }
 
 (async () => {
@@ -127,18 +129,72 @@ function fixture({ flag = 'cm' } = {}) {
     const f = fixture();
     await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
     f.impl.wikiToolbar('bold'); f.impl.wikiToolbar('italic'); f.impl.wikiToolbar('code');
-    f.impl.toggleWikiSource();
+    f.impl.wikiToolbar('source');   // 走真的按钮（第八十轮：原来直接调 toggleWikiSource，按钮那条路漏了、说「还没接这个按钮」也绿着）
     f.impl.toggleWikiReadOnly();
     assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'wrap'), [['wrap', '**'], ['wrap', '*'], ['wrap', '`']]);
     assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'readOnly').at(-1), ['readOnly', true]);
-    assert.ok(f.toasts.some((t) => /Markdown 原文/.test(t)), '「源码」应当说明验证版里就是原文');
+    assert.ok(f.toasts.some((t) => /Markdown 原文/.test(t)), '「源码」应当说明编辑器里就是原文');
   });
-  await check('开关关着：一点不碰验证版（不加载、不挂载，照旧是 contentEditable）', async () => {
-    const f = fixture({ flag: null });
+  await check('工具栏上的每个按钮（读 knowledge-wiki.html）在新编辑器里都有着落，没有一个说「还没接这个按钮」', async () => {
+    const html = fs.readFileSync(path.resolve(path.dirname(cmPath), '../knowledge-wiki.html'), 'utf8');
+    const cmds = [...html.matchAll(/data-wiki-cmd="([a-z]+)"/g)].map((m) => m[1]);
+    assert.ok(cmds.length >= 9, '只扫到 ' + cmds.length + ' 个按钮 —— 扫空了？');
+    const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.enterWikiEdit(); f.impl.setChooser(() => {});
+    for (const cmd of cmds) f.impl.wikiToolbar(cmd);
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(f.toasts.filter((t) => /还没接/.test(t)), []);
+  });
+  // ── 第八十轮：试用开关去掉，新编辑器是默认 ──
+  await check('默认就是新编辑器：本机什么设置都没存也挂上它（第八十轮去掉了「试试新编辑器 / 换回现在的编辑器」）', async () => {
+    const f = fixture();
+    assert.equal(f.store.size, 0);
+    await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
+    assert.equal(f.mounts.length, 1);
+    assert.equal(f.doc.dataset.editor, 'cm');
+  });
+  await check('新编辑器加载不上：说出来，这一次退回简易编辑（contentEditable），不是一点反应都没有', async () => {
+    const f = fixture({ failLoad: true });
     f.impl.enterWikiEdit();
+    await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
     assert.equal(f.mounts.length, 0);
-    assert.equal(f.doc.dataset.editor, undefined);
+    assert.ok(f.toasts.some((t) => /没加载上/.test(t)), '要说出来：' + JSON.stringify(f.toasts));
+    assert.equal(f.doc.dataset.editing, '1', '退回简易编辑之后应当在编辑');
     assert.equal(f.doc.contentEditable, 'true');
+  });
+  await check('挂编辑器时给它页名（重复的那一行标题要藏）和打开链接的办法：http(s) 打开，别的不开、说出来', async () => {
+    const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
+    const options = f.mounts[0].options;
+    assert.equal(options.title(), f.page.title);
+    options.onOpenUrl('https://example.com/zhiqu');
+    assert.deepEqual(f.opened, [['https://example.com/zhiqu', '_blank', 'noopener,noreferrer']]);
+    options.onOpenUrl('javascript:alert(1)');
+    assert.equal(f.opened.length, 1, 'javascript: 不能打开');
+    assert.ok(f.toasts.some((t) => /链接地址无效/.test(t)));
+  });
+  await check('空页（只有和页名重复的标题）读的时候说一句「点这里开始写」（只读时只说空）；有正文的不说', () => {
+    const f = fixture();
+    const make = (text, dupText) => {
+      const md = { children: [], appendChild(el) { this.children.push(el); } };
+      return { md, doc: { textContent: text, querySelector: (sel) => (sel === '.zq-dup-title' ? (dupText ? { textContent: dupText } : null) : sel === '.zq-md' ? md : null) } };
+    };
+    const created = [];
+    globalThis.document = { createElement: () => { const el = { className: '', textContent: '' }; created.push(el); return el; } };
+    try {
+      const empty = make('周报草稿', '周报草稿');
+      f.impl.markEmptyWikiPage(empty.doc);
+      assert.equal(empty.md.children.length, 1);
+      assert.equal(empty.md.children[0].className, 'zq-wiki-empty');
+      assert.match(empty.md.children[0].textContent, /点这里开始写/);
+      const full = make('周报草稿第一行内容', '周报草稿');
+      f.impl.markEmptyWikiPage(full.doc);
+      assert.equal(full.md.children.length, 0, '有正文的页不该说空');
+      f.state.wikiReadOnly = true;
+      const locked = make('周报草稿', '周报草稿');
+      f.impl.markEmptyWikiPage(locked.doc);
+      assert.equal(locked.md.children[0].textContent, '这一页还是空的', '只读时点了不会进编辑，不说「点这里开始写」');
+    } finally { delete globalThis.document; }
   });
   // ── 第七十三轮：第 2 步补齐 ──
   await check('下划线：工具栏包 <u>…</u>，已经包着就去掉；扫描认 <u>，代码里的不算', () => {
@@ -176,17 +232,42 @@ function fixture({ flag = 'cm' } = {}) {
     assert.deepEqual(cm.taskMarkerPositions(md).map((p) => md.slice(p, p + 3)), ['[ ]', '[x]', '[ ]']);
     assert.deepEqual(cm.taskMarkerPositions(md), [2, md.indexOf('[x]'), md.lastIndexOf('[ ]')]);
   });
-  await check('接入：点正文进编辑，光标按阅读视图里点的字落到原文（落不上才按坐标）；那一行停在点的高度', async () => {
+  await check('接入：点正文进编辑，光标按阅读视图里点的字落到原文（落不上才按坐标）；那个字停在阅读时它在屏幕上的高度，挪的是外面滚动的那一层', async () => {
+    const placed = (f) => f.handle.calls.filter((c) => c[0] === 'focusPos' || c[0] === 'focusAt' || c[0] === 'alignPos');
     const f = fixture();
     await f.impl.loadWikiCm(); f.impl.wireWikiEditor();
-    f.anchor.value = { text: '二', ordinal: 0, offset: 0 };
+    f.anchor.value = { text: '二', ordinal: 0, offset: 0 }; f.charTop.value = 147;
     f.doc.onclick({ target: {}, clientX: 30, clientY: 160 });
     assert.equal(f.mounts.length, 1);
-    assert.deepEqual(f.handle.calls.find((c) => c[0] === 'focusPos' || c[0] === 'focusAt'), ['focusPos', f.page.content.indexOf('二'), 60]);
+    assert.deepEqual(placed(f), [['focusPos', f.page.content.indexOf('二'), 147, f.doc]], '那个字在阅读视图里的顶边（不是点的那一点到正文区顶上的距离）');
+    const h = fixture();
+    await h.impl.loadWikiCm(); h.impl.wireWikiEditor();
+    h.anchor.value = { text: '二', ordinal: 0, offset: 0 };
+    h.doc.onclick({ target: {}, clientX: 30, clientY: 160 });
+    assert.deepEqual(placed(h), [['focusPos', h.page.content.indexOf('二'), 150, h.doc]], '点在字缝里量不出字的顶边：按点的高度估');
     const g = fixture();
     await g.impl.loadWikiCm(); g.impl.wireWikiEditor();
     g.doc.onclick({ target: {}, clientX: 30, clientY: 160 });
-    assert.deepEqual(g.handle.calls.find((c) => c[0] === 'focusPos' || c[0] === 'focusAt'), ['focusAt', 30, 160]);
+    assert.deepEqual(placed(g), [['focusAt', 30, 160]]);
+  });
+  await check('接入：从菜单 / 工具栏进编辑（不是点正文）：阅读时顶上第一个看得见的字，进去以后停在原来的高度，光标不动', async () => {
+    const idx = (f) => f.page.content.indexOf('二');
+    const f = fixture();
+    await f.impl.loadWikiCm();
+    f.doc.getBoundingClientRect = () => ({ top: 100, left: 200, height: 400 });
+    const probes = [];
+    f.cmModule.readingAnchor = (root, x, y) => { probes.push([x, y]); return y >= 120 && x === 228 ? { text: '二', ordinal: 0, offset: 0 } : null; };
+    f.charTop.value = 121;
+    f.impl.enterWikiEdit();
+    assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'alignPos' || c[0] === 'focusPos' || c[0] === 'focusAt'), [['alignPos', idx(f), 121, f.doc, '二']], '带上那段字：落在表格 / 公式预览里时在预览里找它');
+    assert.deepEqual(probes[0], [228, 102], '从正文区左上角（内边距里面）往下找');
+    const g = fixture();
+    await g.impl.loadWikiCm();
+    g.doc.getBoundingClientRect = () => ({ top: 100, left: 200, height: 400 });
+    g.cmModule.readingAnchor = () => ({ text: '二', ordinal: 0, offset: 0 });
+    g.cmModule.readingCharTop = (root, x, y) => (y < 130 ? 90 : 131);
+    g.impl.enterWikiEdit();
+    assert.deepEqual(g.handle.calls.filter((c) => c[0] === 'alignPos'), [['alignPos', idx(g), 131, g.doc, '二']], '顶边已经滚出正文区的那一行不算');
   });
   await check('接入：阅读模式里点勾选框，进编辑后改的就是原文里那一个任务（原来只进了编辑、勾选丢了）', async () => {
     const f = fixture();
@@ -285,23 +366,28 @@ function fixture({ flag = 'cm' } = {}) {
     assert.equal(cm.readingBlockFor(root, cm.sourceAnchorAt(md, md.indexOf('| --- |'))).tagName, 'TD', '分隔行往下找到下一行的格');
     assert.equal(cm.sourceAnchorAt(md, md.indexOf('\n\n重复') + 1).text, '重复的一行', '空行往下找');
   });
-  await check('接入：新编辑器里保存 / 取消前记下顶上那一行是原文的哪一段，回到阅读模式滚到同一段（第七十四轮 review：原来按像素恢复，跳到别处）', async () => {
+  await check('接入：新编辑器里保存 / 取消前记下顶上那一段是原文的哪一段、它第一个字多高，回到阅读模式让同一个字停在同一个高度（第七十四轮按块、第八十轮按字）', async () => {
     const f = fixture(); await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
     const seen = [];
     f.handle.lineAt = (y) => { seen.push(['lineAt', y]); return { pos: 42, top: 140 }; };
     f.cmModule.sourceAnchorAt = (md, pos) => { seen.push(['anchorAt', md, pos]); return { text: '那一段', ordinal: 1 }; };
+    f.cmModule.sourcePosition = (md, a) => { seen.push(['posOf', a]); return 77; };
+    f.handle.charTop = (pos, text) => { seen.push(['charTop', pos, text]); return 170; };
     f.doc.scrollTop = 300;
     const view = f.impl.captureWikiView(f.doc);
-    assert.deepEqual(seen, [['lineAt', 101], ['anchorAt', f.handle.text, 42]], '记的是编辑器顶上那一行在原文里的位置');
+    assert.deepEqual(seen, [['lineAt', 101], ['anchorAt', f.handle.text, 42], ['posOf', { text: '那一段', ordinal: 1, offset: 0 }], ['charTop', 77, '那一段']],
+      '记的是编辑器顶上那一行往下第一段字在原文里的位置，量的是那一段第一个字（顶上那一行可能是代码块的结束行、空行）');
     assert.deepEqual(view.cmAnchor, { text: '那一段', ordinal: 1 });
-    assert.equal(view.anchorOffset, 40);
-    const md = { children: [] }, block = { getBoundingClientRect: () => ({ top: 500 }) };
+    assert.equal(view.anchorOffset, 70, '那个字离正文区顶上 70px（不是顶上那一行的 40px）');
+    f.cmModule.sourcePosition = () => null;
+    assert.equal(f.impl.captureWikiView(f.doc).anchorOffset, 40, '原文里对不上那一段：退回那一行的顶边');
+    const md = { children: [] };
     f.doc.querySelector = (q) => (q === '.zq-md' ? md : null);
-    f.cmModule.readingBlockFor = (root, a) => { seen.push(['blockFor', root === md, a]); return block; };
+    f.cmModule.readingAnchorTop = (root, a) => { seen.push(['topOf', root === md, a]); return 500; };
     f.doc.scrollTop = 0;
     f.impl.restoreWikiView(f.doc, view);
-    assert.deepEqual(seen[2], ['blockFor', true, { text: '那一段', ordinal: 1 }], '阅读视图里按记下的那一段找');
-    assert.equal(f.doc.scrollTop, 300 + 500 - 100 - 40, '那一段停在原来离顶上 40px 的地方');
+    assert.deepEqual(seen[seen.length - 1], ['topOf', true, { text: '那一段', ordinal: 1 }], '阅读视图里按记下的那一段找');
+    assert.equal(f.doc.scrollTop, 300 + 500 - 100 - 70, '那个字停在原来离顶上 70px 的地方');
   });
   await check('表格 / 块公式：只动光标不重扫全文（第七十四轮 review），光标进出照样在成品和原文之间换；改了字才重扫', async () => {
     const { EditorState, EditorSelection } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
@@ -326,6 +412,118 @@ function fixture({ flag = 'cm' } = {}) {
     assert.equal(copies, 1, '打一个字把全文复制了 ' + copies + ' 遍（块公式、表格各一遍）');
     assert.notEqual(st.field(tableField).ranges, table0, '改了字要重扫');
     assert.equal(st.field(tableField).ranges[0].from, md.indexOf('| a |') + 1, '重扫之后位置跟着挪');
+  });
+  // ── 第八十轮：编辑器的排版和阅读一致、链接单击打开、重复页名藏起来 ──
+  await check('块间距的表和阅读模式的样式表一致（改了阅读的边距，这里就红 —— 两边不能各写一份各自对）', () => {
+    const css = fs.readFileSync(path.resolve(path.dirname(cmPath), 'zhiqu-ui.css'), 'utf8');
+    const margin = (sel) => {
+      const m = new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\{[^}]*?margin:([^;}]+)').exec(css);
+      if (!m) throw new Error('样式表里找不到 ' + sel);
+      const v = m[1].trim().split(/\s+/).map((x) => parseFloat(x) || 0);
+      return [v[0], v.length >= 3 ? v[2] : v[0]];
+    };
+    const want = { p: margin('.zq-prose .zq-md p'), h1: margin('.zq-prose .zq-md h1'), h2: margin('.zq-prose .zq-md h2'), h3: margin('.zq-prose .zq-md h3'),
+      h4: margin('.zq-prose .zq-md h4'), h5: margin('.zq-prose .zq-md h5'), h6: margin('.zq-prose .zq-md h6'), li: margin('.zq-prose .zq-md ul,.zq-prose .zq-md ol'),
+      quote: margin('.zq-prose .zq-md blockquote'), pre: margin('.zq-prose .zq-md pre'), hr: margin('.zq-prose .zq-md hr'), table: margin('.zq-md-table'),
+      task: margin('.zq-prose .zq-task-row') };
+    for (const [kind, m] of Object.entries(want)) assert.deepEqual(cm.BLOCK_MARGINS[kind], m, kind + ' 的上下边距和阅读模式对不上');
+    assert.equal(cm.LIST_ITEM_GAP, margin('.zq-prose .zq-md li')[0], '列表项之间');
+    for (const [, [top, bottom]] of Object.entries(cm.BLOCK_MARGINS)) for (const n of [top, bottom, cm.LIST_ITEM_GAP]) assert.ok(cm.LAYOUT_SIZES.includes(n), n + 'px 没有对应的样式');
+  });
+  await check('任务项是列表外单独的一行（阅读模式画成 .zq-task-row）：顶格的接在列表后面隔列表的下边距、套在列表项里的只隔自己的上边距，任务接任务、任务接列表项都是它的边距', () => {
+    const rows = (t) => cm.layoutLines(t).map((x) => (x.blank ? 'gap' + x.gap : x.pad ? x.kind + '+' + x.pad : x.kind));
+    const [, taskBottom] = cm.BLOCK_MARGINS.task, [taskTop] = cm.BLOCK_MARGINS.task, listBottom = cm.BLOCK_MARGINS.li[1];
+    assert.deepEqual(rows('- a\n- b\n  - c\n- [ ] t1\n- [x] t2\n- d'), ['li', 'li+' + cm.LIST_ITEM_GAP, 'li+' + cm.LIST_ITEM_GAP, 'task+' + Math.max(listBottom, taskTop), 'task+' + Math.max(taskBottom, taskTop), 'li+' + taskBottom],
+      '原来任务项当成同一个列表的下一项（隔 5），比阅读少 7px');
+    assert.deepEqual(rows('- a\n  - [ ] t\n- b'), ['li', 'task+' + taskTop, 'li+' + taskBottom], '套在列表项里的任务行跟在父项的字后面');
+    assert.deepEqual(rows('- a\n\n- [ ] b'), ['li', 'gap' + Math.max(listBottom, taskTop), 'task']);
+    assert.deepEqual(rows('- [ ] a\n续行'), ['task', 'p'], '任务项的续行不另起一块');
+  });
+  await check('段落之间的空行只占 12px（阅读时的段距），一串空行只有第一行占；开头结尾的空行不占；代码块里的空行是内容', () => {
+    const rows = (t, title = -1) => cm.layoutLines(t, title).map((x) => (x.blank ? 'gap' + x.gap : x.pad ? x.kind + '+' + x.pad : x.kind));
+    assert.deepEqual(rows('一\n\n二\n\n三'), ['p', 'gap12', 'p', 'gap12', 'p']);
+    assert.deepEqual(rows('一\n\n\n\n二'), ['p', 'gap12', 'gap0', 'gap0', 'p']);
+    assert.deepEqual(rows('\n\n一\n\n'), ['gap0', 'gap0', 'p', 'gap0', 'gap0']);
+    assert.deepEqual(rows('# 甲\n\n正文\n\n## 乙\n\n正文'), ['h1', 'gap14', 'p', 'gap30', 'h2', 'gap10', 'p']);
+    assert.deepEqual(rows('- a\n- b\n  续\n\n正文'), ['li', 'li+5', 'p', 'gap12', 'p']);
+    assert.deepEqual(rows('正文\n## 乙'), ['p', 'h2+30'], '标题紧挨着段落：带上阅读时的上边距');
+    assert.deepEqual(rows('```\na\n\nb\n```\n\n后'), ['pre', 'pre', 'pre', 'pre', 'pre', 'gap16', 'p'], '代码块里的空行不能被压扁');
+  });
+  await check('和页名重复的第一行标题：认得出（只认第一行、一字不差），藏起来之后下一块照阅读时的上边距', () => {
+    assert.equal(cm.duplicateTitleLine('# 周报\n\n正文', '周报'), 0);
+    assert.equal(cm.duplicateTitleLine('# 周报 \n正文', ' 周报'), 0);
+    assert.equal(cm.duplicateTitleLine('# 周报草稿\n', '周报'), -1);
+    assert.equal(cm.duplicateTitleLine('正文\n# 周报', '周报'), -1);
+    assert.equal(cm.duplicateTitleLine('## 周报', '周报'), -1);
+    const rows = (t) => cm.layoutLines(t, cm.duplicateTitleLine(t, '页')).map((x) => (x.blank ? 'gap' + x.gap : x.kind));
+    assert.deepEqual(rows('# 页\n\n正文'), ['p', 'gap0', 'p']);
+    assert.deepEqual(rows('# 页\n\n## 小节'), ['p', 'gap30', 'h2']);
+  });
+  await check('挂上编辑器时光标先放在藏起来的重复标题后面（不然一挂上就露出来又藏回去，跳一下）；没有重复标题时在开头', () => {
+    assert.equal(cm.startCursor('# 周报\n\n正文', '周报'), 5);
+    assert.equal(cm.startCursor('# 周报', '周报'), 4);
+    assert.equal(cm.startCursor('# 别的\n正文', '周报'), 0);
+    assert.equal(cm.startCursor('', '周报'), 0);
+  });
+  await check('编辑器里藏起重复页名：光标不在它上面时整行藏起来；光标走上去（⌘↑）才露出来；页名对不上不藏', async () => {
+    const { EditorState, EditorSelection } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    const md = '# 周报\n\n正文';
+    const field = (title) => cm.blockPreviews({ title: () => title })[2];
+    const hidden = (st, f) => { const out = []; st.field(f).between(0, st.doc.length, (from, to, d) => { if (d.spec.block) out.push([from, to]); }); return out; };
+    let f = field('周报');
+    let st = EditorState.create({ doc: md, selection: EditorSelection.cursor(md.indexOf('正文')), extensions: [f] });
+    assert.deepEqual(hidden(st, f), [[0, 4]]);
+    st = st.update({ selection: EditorSelection.cursor(0) }).state;
+    assert.deepEqual(hidden(st, f), [], '光标在标题上：露出来，能改');
+    f = field('别的');
+    st = EditorState.create({ doc: md, selection: EditorSelection.cursor(md.length), extensions: [f] });
+    assert.deepEqual(hidden(st, f), []);
+  });
+  await check('渲染出来的链接带着地址（单击就能打开）：[文字](网址)、裸网址；光标在上面时露出原文、不带（点了只放光标，照旧能改）；空行带上块间距', async () => {
+    const { EditorState, EditorSelection, LanguageSupport, markdownLanguage } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    const md = '外部：[官网](https://example.com/zhiqu) 和 https://example.org/x?q=1\n\n结尾';
+    const view = (cursor) => {
+      const state = EditorState.create({ doc: md, selection: EditorSelection.cursor(cursor), extensions: [new LanguageSupport(markdownLanguage)] });
+      return { state, visibleRanges: [{ from: 0, to: md.length }] };
+    };
+    const links = (v) => { const out = []; cm.inlineDecorations(v, {}).between(0, md.length, (from, to, d) => { const h = d.spec.attributes && d.spec.attributes['data-href']; if (h) out.push([md.slice(from, to), h]); }); return out; };
+    const lines = (v) => { const out = []; cm.inlineDecorations(v, {}).between(0, md.length, (from, to, d) => { if (d.spec.class && /cm-zq-gap-/.test(d.spec.class)) out.push(d.spec.class); }); return out; };
+    const far = view(md.length);
+    assert.deepEqual(links(far), [['官网', 'https://example.com/zhiqu'], ['https://example.org/x?q=1', 'https://example.org/x?q=1']]);
+    assert.deepEqual(lines(far), ['cm-zq-gap-12']);
+    const inLink = view(md.indexOf('官网') + 1);
+    assert.deepEqual(links(inLink).map((x) => x[1]), ['https://example.org/x?q=1'], '光标在链接里：那一个露出原文、不带地址');
+  });
+  await check('块里面的尺寸和阅读模式的样式表一致：代码框一行是正文的行高（pre 的那一行，13px 的 code 是行内的、撑不矮它）、首尾 ``` 行 = 上下内边距 + 边框、引用上下的内边距', () => {
+    const css = fs.readFileSync(path.resolve(path.dirname(cmPath), 'zhiqu-ui.css'), 'utf8');
+    const rule = (sel) => {
+      const m = new RegExp('^' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(css);
+      if (!m) throw new Error('样式表里找不到 ' + sel);
+      return m[1];
+    };
+    const prop = (body, name) => { const m = new RegExp('(?:^|;)' + name + ':([^;]+)').exec(body); return m ? m[1].trim() : null; };
+    const prose = rule('.zq-prose .zq-md');
+    assert.equal(cm.READING_BOX.codeLineHeight, 'calc(' + prop(prose, 'font-size') + ' * ' + prop(prose, 'line-height') + ')', '代码框一行 = 正文的字号 × 行高');
+    assert.equal(prop(rule('.zq-md pre'), 'line-height'), null, 'pre 自己改了行高：编辑器里代码行的高度要跟着算');
+    assert.equal(prop(rule('.zq-prose .zq-md pre'), 'line-height'), null, 'pre 自己改了行高：编辑器里代码行的高度要跟着算');
+    const pre = rule('.zq-md pre'), pad = prop(pre, 'padding').split(/\s+/).map(parseFloat), border = parseFloat(prop(pre, 'border'));
+    assert.equal(cm.READING_BOX.fence, pad[0] + border, '``` 行 = 代码框的上内边距 + 边框');
+    assert.equal(pad.length >= 3 ? pad[2] : pad[0], pad[0], '代码框上下内边距不一样：首尾两行要分开算');
+    const quote = prop(rule('.zq-prose .zq-md blockquote'), 'padding').split(/\s+/).map(parseFloat);
+    assert.equal(cm.READING_BOX.quotePad, quote[0], '引用的上内边距');
+    assert.equal(quote.length >= 3 ? quote[2] : quote[0], quote[0], '引用上下内边距不一样：首尾两行要分开算');
+  });
+  await check('引用的第一行、最后一行带上阅读时的上 / 下内边距（一行的引用两个都带）；表格预览里那层不带外边距', async () => {
+    const { EditorState, EditorSelection, LanguageSupport, markdownLanguage } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    const md = '一\n\n> 甲\n> 乙\n> 丙\n\n二\n\n> 单行\n\n三';
+    const state = EditorState.create({ doc: md, selection: EditorSelection.cursor(md.length), extensions: [new LanguageSupport(markdownLanguage)] });
+    const got = [];
+    cm.inlineDecorations({ state, visibleRanges: [{ from: 0, to: md.length }] }, {}).between(0, md.length, (from, to, d) => {
+      const c = d.spec.class || ''; if (/cm-zq-quote-(top|bottom)/.test(c)) got.push(state.doc.lineAt(from).text + ':' + c.replace('cm-zq-quote-', ''));
+    });
+    assert.deepEqual(got.sort(), ['> 丙:bottom', '> 单行:bottom', '> 单行:top', '> 甲:top'].sort());
+    const src = fs.readFileSync(cmPath, 'utf8');
+    assert.ok(src.includes("'.cm-zq-table .zq-md-table': { margin: '0' }"), '表格预览里那层的上下 12px 会漏出来，把下一行顶下去');
   });
   console.log(failed ? 'RED: ' + failed : 'ALL-GREEN');
   if (failed) process.exitCode = 1;

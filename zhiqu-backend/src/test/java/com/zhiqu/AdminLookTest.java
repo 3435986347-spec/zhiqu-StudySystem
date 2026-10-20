@@ -118,5 +118,7 @@ class AdminLookTest {
         assertTrue(home.contains("@media (min-width:561px){ .zq-hero h1{word-break:keep-all;} }"), "keep-all 不是只给宽屏");
         Matcher h1 = Pattern.compile("\\.zq-hero h1\\{([^}]*)\\}").matcher(home);
         assertTrue(h1.find() && !h1.group(1).contains("keep-all"), "手机上也 keep-all 了：320 宽时一行放不下，被强行断开，「，」跑到行首");
+        // 第八十轮（桌面应用里看到的）：WebKit 在 keep-all 下不在全角逗号后面断，整句「帮你把每一天的事，排得清晰可控」连成一块，「让 AI」一个人一行
+        assertTrue(home.contains("<h1>让 AI 帮你把每一天的事，<wbr>排得清晰可控</h1>"), "逗号后面要给一个能断的地方（<wbr>）");
     }
 }

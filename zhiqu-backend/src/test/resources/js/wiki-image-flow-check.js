@@ -39,6 +39,7 @@ function fixture() {
     function renderMarkdown() { return '<span>image</span>'; }
     function renderMathIn() {}
     ${editor}
+    wikiCmFailed = true;   // 第八十轮起新编辑器是默认；这里测的是它加载不上时退回的简易编辑（contentEditable）
     return { insertWikiImage, enterWikiEdit };
   `)(state, doc, uploaded, messages, fakeDocument, selection, () => auth);
   return { api, state, doc, page, messages, finishUpload, setAuth(value) { auth=value; } };
