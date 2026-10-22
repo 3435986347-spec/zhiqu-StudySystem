@@ -700,6 +700,22 @@ curl.exe -X POST "https://你的域名/api/admin/rag/generations/<代次id>/acti
 `RAG_INDEX_VERSION`，最后重新启用上一代次（它在 24 小时内仍是 `RETIRED` 而未被清理）。
 **排空队列这一步不能省**：新格式作业会被旧 worker 领走并失败。
 
+### 十三之三、网页版「下载桌面版」的安装包（第八十二轮）
+
+落地页和头像菜单里的「下载桌面版」从 `C:\zhiqu\downloads` 拿每个平台最新的安装包（macOS `.dmg`，Windows `.exe` / `.msi` / `.zip`）。
+**要第八十二轮以后的 JAR**：老版本没有这个接口，按钮也不在。安装包不进 git、不进 JAR（dmg 一百多 MB），要单独拷上来：
+
+1. 远程桌面里把 Mac 上的 `build/desktop-native/知趣象限-1.0.0.dmg` 拷到服务器（比如桌面）。
+2. 把仓库里的 `deploy/windows/install-desktop-download.ps1` 放到 `C:\zhiqu\`，运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\zhiqu\install-desktop-download.ps1 -Installer "C:\Users\Administrator\Desktop\知趣象限-1.0.0.dmg"
+```
+
+它先拷成点开头的 `.part` 再改名（拷到一半时后端不认它，不会有人下到半个包），`application-prod.yml` 里没有
+`app.desktop-downloads-dir` 就补一行（旧文件留一份 `.bak-时间`），打印文件的 SHA-256 —— 和弹窗里「校验值」对得上就对了。
+它不重启服务：配置是部署新 JAR 时随重启生效的；之后再换安装包不用重启。
+
 ## 十四、备份
 
 建议启用自动备份，尤其是只有系统盘的服务器。

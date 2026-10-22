@@ -148,6 +148,29 @@ class DesktopDownloadTest {
     }
 
     @Test
+    @DisplayName("服务器上放安装包的脚本（install-desktop-download.ps1）：只有 ASCII（PowerShell 5.1 按 ANSI 读没 BOM 的脚本）、先拷成点开头的再改名、配置按 UTF-8 读写、键名和后端认的一样")
+    void 服务器上放安装包的脚本() throws Exception {
+        Path script = Path.of("../deploy/windows/install-desktop-download.ps1");
+        byte[] raw = Files.readAllBytes(script);
+        for (int i = 0; i < raw.length; i++) {
+            assertTrue(raw[i] >= 0, "脚本里有非 ASCII 字符（第 " + i + " 个字节）：Windows PowerShell 5.1 会按 ANSI 读成乱码");
+        }
+        String code = String.join("\n", Files.readAllLines(script).stream().map(String::strip).filter(l -> !l.startsWith("#")).toList());
+        int partial = code.indexOf("$partial = Join-Path $downloads (\".\" + $name + \".part\")");
+        int copy = code.indexOf("Copy-Item -LiteralPath $Installer -Destination $partial -Force");
+        int move = code.indexOf("Move-Item -LiteralPath $partial -Destination $final -Force");
+        assertTrue(partial >= 0 && copy > partial && move > copy, "要先拷成点开头的 .part、拷完再改名（拷到一半时后端不认它）");
+        assertFalse(code.contains("-Destination $final") && code.indexOf("-Destination $final") < move, "直接拷成最终的名字了");
+        assertTrue(code.contains("[System.IO.File]::ReadAllText($config, $utf8)") && code.contains("[System.IO.File]::WriteAllText($config,"),
+                "application-prod.yml 要按 UTF-8 读写");
+        assertFalse(code.contains("Get-Content") || code.contains("Set-Content") || code.contains("Out-File"),
+                "5.1 的 Get-Content / Set-Content 按 ANSI 读写，配置里的中文注释会坏");
+        assertTrue(code.contains("\"desktop-downloads-dir: \""), "脚本写进配置的键名不对");
+        String svc = Files.readString(Path.of("src/main/java/com/zhiqu/service/desktop/DesktopDownloads.java"), StandardCharsets.UTF_8);
+        assertTrue(svc.contains("@Value(\"${app.desktop-downloads-dir:"), "后端认的键名变了，脚本写的那个就不起作用");
+    }
+
+    @Test
     @DisplayName("入口：落地页一个按钮、头像菜单一项，都打开同一个弹窗；桌面应用里两处都不出现；安装包不进 git、不进 JAR")
     void 入口() throws Exception {
         String index = Files.readString(STATIC.resolve("index.html"), StandardCharsets.UTF_8).replaceAll("(?s)<!--.*?-->", " ");

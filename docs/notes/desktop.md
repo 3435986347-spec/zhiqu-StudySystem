@@ -69,7 +69,7 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 ## 从网页版下载（第八十二轮）
 
 网页版的落地页和头像菜单里有「下载桌面版」，安装包从后端的下载目录拿（`app.desktop-downloads-dir`，服务器上是 `C:/zhiqu/downloads`）：
-打完包把 `知趣象限-<版本>.dmg` 拷进去就出现，不用重启（一百多 MB 要拷一会儿：先用点开头的名字拷、拷完再改名，拷到一半时不会被当成最新的发出去）；Windows 的 `.exe` / 免安装目录打成的 `.zip` 也放这里。
+打完包把 `知趣象限-<版本>.dmg` 拷进去就出现，不用重启 —— 服务器上用 `deploy/windows/install-desktop-download.ps1`（见 `deploy/windows/README.md` 十三之三）（一百多 MB 要拷一会儿：先用点开头的名字拷、拷完再改名，拷到一半时不会被当成最新的发出去）；Windows 的 `.exe` / 免安装目录打成的 `.zip` 也放这里。
 dmg 一百多 MB，超过 GitHub 单个文件的上限，也不能进 `static/`（会打进 JAR，桌面包里再装一份安装包）。
 
 这个包只能装在 Apple 芯片、macOS 13 以上的 Mac 上；只是临时签名、没有公证：`spctl` 对下载来的（带隔离属性的）副本判 rejected，
