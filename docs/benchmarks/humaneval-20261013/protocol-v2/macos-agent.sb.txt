@@ -1,0 +1,35 @@
+(version 1)
+(import "dyld-support.sb")
+(deny default)
+
+; The shipped agent and all commands it launches inherit this task-only profile.
+; Authentication is supplied over stdin; user configuration is outside this allowlist.
+(allow process*)
+(allow sysctl-read)
+(allow mach-lookup)
+(allow ipc-posix-shm)
+(allow file-read-metadata)
+
+(allow file-read* file-map-executable
+  (subpath "/System")
+  (subpath "/usr")
+  (subpath "/bin")
+  (subpath "/sbin")
+  (subpath "/dev")
+  (subpath "/private/etc")
+  (subpath "/private/var/db")
+  (subpath "/opt/homebrew")
+  (subpath "{{RUNTIME}}")
+  (subpath "{{REPO}}/zhiqu-cli/src")
+  (literal "{{REPO}}/zhiqu-cli/package.json")
+  (subpath "{{REPO}}/tools/benchmarks")
+  (subpath "{{WORKSPACE}}"))
+
+(allow file-write*
+  (subpath "{{WORKSPACE}}")
+  (literal "/dev/null")
+  (literal "/dev/tty"))
+
+; Model traffic goes through the existing Zhiqu gateway only.
+(allow network-outbound
+  (remote ip "localhost:{{SERVER_PORT}}"))

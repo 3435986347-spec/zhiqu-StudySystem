@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 助手 - 知趣·象限 AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261022-r82" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261022-r82">
+  <link rel="manifest" href="manifest.json?v=20261022-r82">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261022-r82">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <!--
+        height（不是 min-height）—— zhiqu-ui.css 让内层等于视口减去 .zq-main 的顶部 padding，
+        底部空间由输入区单独控制；.zq-fill-page 里的 calc(100vh - 110px) 留作不认 :has 的旧浏览器的回退。
+        于是**整页不产生外层滚动**，长内容在对话区内部滚。
+        这一条不只是观感：面板收起后，展开箭头在竖条顶端，是收起状态下唯一的展开入口。
+        外层一滚它就跑出视野，人只能先滚回去才能展开 —— 用 min-height 时就是这样。
+        但定高要有下限（第二十轮）：浏览器放大到 200%、手机横屏时视口只有三四百像素高，定高之后对话区只剩 40px。
+        低于 520px 时宁可整页滚一点，对话区和输入框得先能用。手机上的高度见 zhiqu-ui.css 的 @media。
+      -->
+      <div class="zq-fill-page">
+        <header class="zq-page-head">
+          <div>
+            <h1 class="zq-h1">AI 助手</h1>
+            <span id="zq-current-notebook" class="zq-page-sub zq-clip">普通聊天（未选择 Notebook）</span>
+          </div>
+        </header>
+
+        <section class="zq-ai-work">
+          <div class="zq-ai-cols">
+            <aside data-zq-collapse="left" data-zq-label="Notebook · 资料" class="zq-ai-side">
+              <div class="zq-ai-side-head">
+                <div><strong class="zq-ai-side-title">Notebook</strong><span class="zq-ai-side-sub">资料工作区</span></div>
+                <button id="zq-new-notebook" class="zq-btn-ghost"><span data-zq-icon="plus"></span>新建</button>
+              </div>
+              <div id="zq-notebooks" class="zq-ai-notebooks"></div>
+              <div class="zq-ai-src-actions">
+                <button id="zq-source-upload" class="zq-btn-ghost">上传资料</button>
+                <button id="zq-add-url" class="zq-btn-ghost">添加 URL</button>
+              </div>
+              <div id="zq-sources" class="zq-ai-sources"></div>
+
+              <!-- 代码工作区。整块默认 hidden：工作区没开时（绝大多数部署）连标题都不出现，
+                   由 zhiqu-api.js 根据 /api/workspace/status 决定显不显示。
+                   非管理员拿不到那个接口，这一块同样不显示。 -->
+              <section id="zq-ws" class="zq-ai-ws" hidden>
+                <div class="zq-ai-side-head">
+                  <div>
+                    <strong class="zq-ai-side-title">代码工作区</strong>
+                    <span id="zq-ws-sub" class="zq-ai-side-sub"></span>
+                  </div>
+                  <div class="zq-ai-ws-tools">
+                    <button id="zq-ws-up" class="zq-btn-ghost" hidden>上一层</button>
+                    <!-- 齿轮：打开工作区设置（选文件夹 + 切档位）。管理员总能看到，哪怕工作区当前是 OFF。 -->
+                    <button id="zq-ws-settings" class="zq-btn-ghost" title="工作区设置：选文件夹、切档位" aria-label="工作区设置"><span data-zq-icon="settings"></span></button>
+                  </div>
+                </div>
+                <div id="zq-ws-search-row" class="zq-ai-ws-search" hidden>
+                  <input id="zq-ws-q" type="search" placeholder="搜索工作区（回车）" aria-label="搜索工作区" autocomplete="off" />
+                  <button id="zq-ws-back" class="zq-btn-ghost" hidden>返回目录</button>
+                </div>
+                <div id="zq-ws-path" class="zq-mono zq-ai-ws-path"></div>
+                <div id="zq-ws-tree" class="zq-ai-ws-tree"></div>
+              </section>
+            </aside>
+
+            <!-- 对话这一栏。拖文件进来时整栏盖一层「松开即可上传」（#zq-drop-overlay，第四十四轮），所以它是定位容器（样式表的 .zq-ai-chat-col） -->
+            <div id="zq-chat-col" class="zq-ai-chat-col">
+              <!-- 定位容器：按钮要贴着聊天区的右下角，而不是整栏的右下角（那里是输入框）。
+                   所以这一层只包住 #zq-chat，高度随它。 -->
+              <div class="zq-ai-chat-wrap">
+                <div id="zq-chat"></div>
+                <!-- 用户往上翻着读时，流式新内容不再把他拽回底部；这个按钮是回去的入口。
+                     默认 hidden，由 zhiqu-api.js 按「是否在底部」切换。 -->
+                <button id="zq-chat-jump" type="button" hidden aria-label="回到最新内容"><span data-zq-icon="arrow-down"></span>新内容</button>
+              </div>
+              <!-- 输入区（第四十四轮）：一个大圆角框 —— 附件在上、输入在中、工具一条在下，和消息一栏同宽、居中。
+                   原来是一条常驻的虚线拖拽框 + 一排六个小按钮，像表单。拖拽框（#zq-drop-zone）现在只在上传中 / 出错时出现，当一条状态。 -->
+              <div class="zq-composer-wrap">
+                <div id="zq-drop-zone" class="zq-ai-drop-zone" role="button" tabindex="0" aria-label="选择文件上传到当前 Notebook">
+                  <span class="zq-ai-drop-icon" data-zq-icon="paperclip"></span>
+                  <span id="zq-drop-status">拖拽文件到此处 · 支持图片、PDF、Excel、文本（csv / txt / md / json）</span>
+                </div>
+                <div id="zq-composer" class="zq-composer">
+                  <div id="zq-attachments" class="zq-ai-attachments" hidden></div>
+                  <!-- textarea 而不是 input：单独回车要能换行，而 input 装不下换行符。两行起，输入变长由 JS 自适应到 200px 封顶。 -->
+                  <textarea id="zq-draft" rows="2" aria-label="给 AI 发消息" placeholder="给 AI 发消息（⌘/Ctrl + 回车发送，回车换行）"></textarea>
+                  <div class="zq-composer-bar">
+                    <button id="zq-chat-upload" type="button" class="zq-composer-icon" title="上传文件（也可以拖进来、直接粘贴）" aria-label="上传文件"><span data-zq-icon="paperclip"></span></button>
+                    <!-- 「代码」：显式让 coding agent 在工作区里干活（读、写草稿、运行）。只在工作区生效时出现，
+                         由 zhiqu-api.js 的 loadWorkspace 决定。按下后这一轮不再靠关键词猜 —— 见 ContextOptionKeys.CODE_MODE。 -->
+                    <button id="zq-code" type="button" class="zq-chip" aria-pressed="false" hidden aria-label="代码" title="让 AI 直接在代码工作区里读、写（草稿确认后落盘）、运行"><span data-zq-icon="code"></span><span class="zq-chip-label">代码</span></button>
+                    <button id="zq-web" type="button" class="zq-chip" aria-pressed="false" aria-label="联网" title="允许 AI 联网搜索"><span data-zq-icon="globe"></span><span class="zq-chip-label">联网</span></button>
+                    <button id="zq-think" type="button" class="zq-chip" aria-pressed="false" aria-label="深度思考" title="让模型先想清楚再回答（更慢）"><span data-zq-icon="lightbulb"></span><span class="zq-chip-label">深度思考</span></button>
+                    <select id="zq-model" class="zq-select zq-composer-model" aria-label="模型"><option value="">默认模型</option></select>
+                    <button id="zq-send" type="button" class="zq-send" aria-label="发送（⌘/Ctrl + 回车）" title="发送（⌘/Ctrl + 回车）"><span data-zq-icon="arrow-up"></span></button>
+                  </div>
+                </div>
+              </div>
+              <div id="zq-drop-overlay" class="zq-drop-overlay" aria-hidden="true"><span data-zq-icon="paperclip"></span>松开即可上传到当前 Notebook · 支持图片、PDF、Excel、文本</div>
+            </div>
+
+            <aside data-zq-collapse="right" data-zq-label="执行轨迹 · 产物" class="zq-ai-side">
+              <div class="zq-ai-trace">
+                <strong class="zq-ai-side-title">执行轨迹</strong>
+                <span class="zq-ai-side-sub">Agent Pipeline</span>
+                <div id="zq-steps" class="zq-ai-steps"></div>
+              </div>
+              <div class="zq-ai-products">
+                <strong class="zq-ai-side-title">产物</strong>
+                <span class="zq-ai-side-sub">来源、草稿与确认结果</span>
+                <div id="zq-artifacts" class="zq-ai-artifacts"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20261022-r82"></script>
+  <script src="assets/zhiqu-api.js?v=20261022-r82"></script>
+</body>
+</html>

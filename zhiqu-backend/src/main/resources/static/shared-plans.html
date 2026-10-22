@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>参考计划 - 知趣·象限 AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261022-r82" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261022-r82">
+  <link rel="manifest" href="manifest.json?v=20261022-r82">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261022-r82">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div class="zq-page-stack">
+        <header class="zq-page-head">
+          <div>
+            <h1 class="zq-h1">参考计划</h1>
+            <span class="zq-page-sub">把经过审核的计划模板套用到自己的日历里，任务和例行计划会按开始日期自动展开。</span>
+          </div>
+          <div class="zq-page-actions"><button type="button" class="zq-btn" id="zq-plan-submit">分享我的计划</button></div>
+        </header>
+
+        <div class="zq-plan-bar">
+          <select class="zq-select" id="zq-plan-cat" aria-label="分类"><option value="">全部分类</option></select>
+          <select class="zq-select" id="zq-plan-sort" aria-label="排序"><option value="time:desc">最新发布</option><option value="time:asc">最早发布</option><option value="likeCount:desc">赞最多</option></select>
+          <span id="zq-plan-count" class="zq-card-note">已审核模板</span>
+        </div>
+
+        <div class="zq-plan-grid" id="zq-plans"></div>
+
+        <!-- 我的投稿：后台驳回弹窗写着「驳回原因将展示给提交者」，这里是它唯一的出口。
+             没有投稿时整块隐藏，由 pages/shared-plans.js 控制。 -->
+        <section id="zq-my-submissions" class="zq-plan-mine" hidden>
+          <h2 class="zq-h2">我的投稿</h2>
+          <div id="zq-my-sub-list" class="zq-plan-subs"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20261022-r82"></script>
+  <script src="assets/zhiqu-api.js?v=20261022-r82"></script>
+</body>
+</html>

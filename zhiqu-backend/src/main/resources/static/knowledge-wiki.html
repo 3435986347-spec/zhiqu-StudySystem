@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>知识 Wiki - 知趣·象限 AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261022-r82" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261022-r82">
+  <link rel="manifest" href="manifest.json?v=20261022-r82">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261022-r82">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <!--
+        height（不是 min-height，样式表的 .zq-fill-page，和 AI 助手同一个）—— 内层正好等于视口减去 .zq-main 的上下 padding（110px），
+        整页不产生外层滚动，正文在 #zq-doc 内部滚。目录收起后那个展开箭头在竖条顶端，
+        外层一滚就够不到，所以这里必须是定高。
+        但定高要有下限（第二十轮）：浏览器放大到 200%（1366×768 → 683×384）时定高之后正文区只剩 52px（标题和工具栏占满）。
+        低于 520px 时宁可整页滚一点，正文得先看得见。手机上的高度见 zhiqu-ui.css 的 @media。
+      -->
+      <div class="zq-fill-page">
+        <header class="zq-page-head">
+          <div><h1 class="zq-h1">知识 Wiki</h1></div>
+          <div class="zq-page-actions">
+            <button class="zq-btn-ghost">导入来源</button>
+            <button class="zq-btn-ghost">导入知识库</button>
+            <button class="zq-btn-ghost">来源记录</button>
+            <button id="zq-wiki-attachments" class="zq-btn-ghost">附件</button>
+            <button class="zq-btn-ghost zq-wiki-pending">待合入变更</button>
+            <button class="zq-btn-ghost">健康检查</button>
+            <button class="zq-btn-ghost">图谱</button>
+            <button class="zq-btn-ghost">导出 ZIP</button>
+            <button class="zq-btn">新建知识页</button>
+          </div>
+        </header>
+
+        <div class="zq-wiki-cols">
+          <!-- 目录（默认收起） -->
+          <aside id="zq-wiki-toc" data-zq-collapse="left" data-zq-label="目录" class="zq-wiki-side">
+            <div class="zq-wiki-side-head"><h2>目录</h2><span id="zq-tree-count"></span></div>
+            <div class="zq-wiki-filter">
+              <input class="zq-input" placeholder="搜索页面 / [[双链]]" aria-label="搜索页面">
+              <select class="zq-select" aria-label="页面类型"><option>全部类型</option><option>目标</option><option>计划</option><option>偏好</option><option>薄弱点</option><option>资料</option><option>对话摘要</option><option>index</option><option>规则</option><option>log</option></select>
+            </div>
+            <nav id="zq-tree"></nav>
+          </aside>
+
+          <!-- 文档视图。flex 列 + min-height:0 让 #zq-doc 能在内部滚动而不是把整页撑长。 -->
+          <section class="zq-wiki-doc">
+            <!--
+              标签页栏（Obsidian 式）。由 zhiqu-api.js 的 paintWikiTabs() 填充；
+              这里只留容器，因为标签是随打开的页面变的，写死在 HTML 里没有意义。
+            -->
+            <!--
+              工具条：前进/返回 + 标签页，都在这一行 —— 和浏览器一样。
+              它们原本放在下面的标题行里，结果把标题往右推了 76px，
+              「文档视图 / log」比正文缩进得明显更多。导航按钮属于工具条，不属于标题。
+            -->
+            <div class="zq-wiki-tabbar">
+              <!--
+                标签栏左内边距 = 0（样式表的 #zq-wiki-tabs）：第一个标签的方框直接从知识页卡片的左边缘开始，
+                和浏览器标签坐在页面上一样。正文与标题仍各自内缩 26px。
+
+                这里返工了两次，每次都对齐错了对象 ——
+                  1. 14px：让标签里的「文字」和正文文字同线；
+                  2. 26px：让标签「方框」和正文文字同线。
+                两次对齐的都是卡片<b>里面</b>的正文，而用户说的「下面的知识页」是那张卡片本身。
+                26px 时实测卡片边缘 436、第一个标签 463，中间 27px 灰带就是那条「没对齐」。
+                这次是先拿浏览器实拍前后对照（436 → 437 = 卡片内边缘）才改的，不是改完才看。
+                导航按钮放右端 —— 放左端就把第一个标签从卡片边缘挤开了。
+              -->
+              <div id="zq-wiki-tabs"></div>
+              <div class="zq-wiki-nav">
+                <!-- 走当前标签页自己的浏览历史，和浏览器那对按钮同义 -->
+                <button type="button" id="zq-wiki-back" class="zq-btn-ghost" title="返回上一页（⌘[）" aria-label="返回上一页"><span data-zq-icon="chevron-left"></span></button>
+                <button type="button" id="zq-wiki-fwd" class="zq-btn-ghost" title="前进（⌘]）" aria-label="前进"><span data-zq-icon="chevron-right"></span></button>
+              </div>
+            </div>
+            <!--
+              padding-left 跟 #zq-doc 的 26px 一致 —— 标题和正文落在同一条竖线上（两个都在样式表：.zq-wiki-head、#zq-doc）。
+              改 #zq-doc 的 26px 时这里要跟着改，WikiTabsTest.标题与正文左边缘要对齐 盯着。
+            -->
+            <!-- 页名（关闭只读时可改名）+ 一行工具栏（第五十五轮，界面打磨第 7 步）：原来页名上面一行「文档视图」小字、工具栏前两段说明文字、
+                 B I U ` 四个字母和「链接 公式 参考 源码」四个字当按钮。现在是一个段落下拉 + 一排图标按钮（悬停有说明） -->
+            <div class="zq-wiki-head">
+              <h2 id="zq-doc-title" class="zq-wiki-title"></h2>
+              <div class="zq-wiki-tools">
+                <span id="zq-wiki-mode-label" class="zq-wiki-mode-label" aria-live="polite"></span>
+                <button type="button" id="zq-wiki-mode" class="zq-btn-ghost" role="switch" title="开启只读，防止误改" aria-checked="false" aria-pressed="false">只读</button>
+                <select id="zq-wiki-block" class="zq-select" title="段落格式" aria-label="段落格式">
+                  <option value="P">正文</option>
+                <option value="H1">标题 1</option>
+                <option value="H2">标题 2</option>
+                <option value="H3">标题 3</option>
+                <option value="H4">标题 4</option>
+                <option value="H5">标题 5</option>
+                <option value="H6">标题 6</option>
+                  <option value="QUOTE">引用</option>
+                  <option value="CODE">代码块</option>
+                  <option value="UL">无序列表</option>
+                  <option value="OL">有序列表</option>
+                  <option value="TASK">任务项</option>
+                  <option value="HR">分隔线</option>
+                </select>
+                <div class="zq-toolbar" role="toolbar" aria-label="格式">
+                  <button type="button" data-wiki-cmd="bold" class="zq-tbtn" title="加粗" aria-label="加粗"><span data-zq-icon="bold"></span></button>
+                  <button type="button" data-wiki-cmd="italic" class="zq-tbtn" title="斜体" aria-label="斜体"><span data-zq-icon="italic"></span></button>
+                  <button type="button" data-wiki-cmd="underline" class="zq-tbtn" title="下划线" aria-label="下划线"><span data-zq-icon="underline"></span></button>
+                  <button type="button" data-wiki-cmd="code" class="zq-tbtn" title="行内代码（先选中文字）" aria-label="行内代码"><span data-zq-icon="code"></span></button>
+                  <button type="button" data-wiki-cmd="link" class="zq-tbtn" title="链接" aria-label="链接"><span data-zq-icon="link"></span></button>
+                  <button type="button" data-wiki-cmd="image" class="zq-tbtn" title="插入图片（也可粘贴或拖入）" aria-label="插入图片"><span data-zq-icon="image"></span></button>
+                  <button type="button" data-wiki-cmd="math" class="zq-tbtn" title="公式块（LaTeX）" aria-label="公式块"><span data-zq-icon="sigma"></span></button>
+                  <button type="button" data-wiki-cmd="ref" class="zq-tbtn" title="参考链接（显示标题 + 地址）" aria-label="参考链接"><span data-zq-icon="book-marked"></span></button>
+                  <button type="button" data-wiki-cmd="source" class="zq-tbtn" id="zq-wiki-source" title="看 Markdown 源码 / 回到排版" aria-label="源码" aria-pressed="false"><span data-zq-icon="file-code"></span></button>
+                </div>
+              </div>
+            </div>
+            <div id="zq-doc" class="zq-prose"></div>
+          </section>
+
+          <!-- 页面检查（默认收起） -->
+          <aside data-zq-collapse="right" data-zq-label="页面检查" class="zq-wiki-side">
+            <div class="zq-wiki-side-head"><h2>页面检查</h2></div>
+            <div id="zq-insp"></div>
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20261022-r82"></script>
+  <script src="assets/zhiqu-api.js?v=20261022-r82"></script>
+</body>
+</html>

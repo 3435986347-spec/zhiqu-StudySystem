@@ -1,32 +1,28 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>成就系统 - 知趣·象限学习系统</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/common.css">
-    <link rel="stylesheet" href="/css/achievement.css">
-    <link rel="stylesheet" href="/css/pixel-theme.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>成就 - 知趣·象限 AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261022-r82" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261022-r82">
+  <link rel="manifest" href="manifest.json?v=20261022-r82">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261022-r82">
 </head>
 <body>
-    <div id="navbar"></div>
-    <div class="main-content">
-        <h1 style="margin-top:0">🏆 成就系统</h1>
-        <div class="ach-head">
-            <div class="ach-meta" id="ach-summary"></div>
-            <button type="button" class="btn btn-primary" id="btn-check">🔍 检测成就</button>
-        </div>
-        <div class="ach-filters" id="ach-filters">
-            <button type="button" data-f="all" class="active">全部</button>
-            <button type="button" data-f="unlocked">✅ 已解锁</button>
-            <button type="button" data-f="locked">🔒 未解锁</button>
-        </div>
-        <div class="ach-grid" id="ach-grid"></div>
-    </div>
-    <script src="/js/common.js"></script>
-    <script src="/js/achievement.js"></script>
+  <!-- 第三十轮起设置、成就是弹窗（头像菜单里点开）。这一页只为旧地址留着：书签、历史记录、命令行打印过的
+       profile.html#harness=XXXX-XXXX —— zhiqu-api.js 的 route() 把它换到首页并打开对应的弹窗（assets/settings.js 的 legacyHash）。 -->
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <p class="zq-page-loading">正在打开成就…</p>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20261022-r82"></script>
+  <script src="assets/zhiqu-api.js?v=20261022-r82"></script>
 </body>
 </html>

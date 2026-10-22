@@ -1,6 +1,7 @@
 package com.zhiqu.service;
 
 import com.zhiqu.entity.UserAiConfig;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
@@ -19,5 +20,82 @@ public interface AiService {
     List<Map<String, Object>> analyzeImage(Long userId, String base64Image, String mediaType, String fileName);
 
     /** 普通对话 */
-    String chat(Long userId, String message);
+    Map<String, Object> chat(Long userId, String message);
+
+    /** 指定模型普通对话 */
+    Map<String, Object> chat(Long userId, String message, Long modelConfigId);
+
+    Map<String, Object> chat(Long userId, String message, Long modelConfigId,
+                             Boolean enableWebSearch, String reasoningMode, Long notebookId);
+
+    SseEmitter streamChat(Long userId, String message, Long modelConfigId,
+                          Boolean enableWebSearch, String reasoningMode);
+
+    SseEmitter streamChat(Long userId, String message, Long modelConfigId,
+                          Boolean enableWebSearch, String reasoningMode,
+                          Long notebookId, String agentMode, Map<String, Object> contextOptions);
+
+    /** 模型列表，包含系统模型和个人模型 */
+    Map<String, Object> listModels(Long userId);
+
+    /**
+     * 给自己的模型设上下文窗口（命令行 /window，第十二轮）。只改这一列、只能改自己的（USER、没删的），
+     * 范围与网页那一处同一个 {@link com.zhiqu.service.ai.ContextBudget#validate}。返回设好的窗口。
+     */
+    Integer setContextWindow(Long userId, Long modelId, Object tokens);
+
+    /**
+     * 按用户解析一个可用的模型（id 为空 = 用户的默认模型，再退到系统模型）。
+     * 与聊天用的是同一个判定：没启用、没 API Key 都会抛出同样的提示。命令行的模型网关用它。
+     */
+    com.zhiqu.entity.AiModelConfig resolveModel(Long userId, Long modelConfigId);
+
+    /**
+     * 把一段对话追加到某个 Notebook 的会话里（命令行会话的存档）。只收 user / assistant 两种角色，
+     * 与网页聊天走同一把用户锁、同一个写入路径 —— 清空记忆、删 Notebook 与它串行。
+     *
+     * @return 新写入的消息 id
+     */
+    List<Long> appendArchivedMessages(Long userId, Long notebookId, List<Map<String, Object>> messages);
+
+    /** 新增或更新个人模型 */
+    Map<String, Object> saveModel(Long userId, Long id, Map<String, Object> body);
+
+    /** 删除个人模型 */
+    void deleteModel(Long userId, Long id);
+
+    /** 测试模型连通性 */
+    Map<String, Object> testModel(Long userId, Long id);
+
+    Map<String, Object> probeModel(Long userId, Long id);
+
+    /** 获取长期记忆与最近对话摘要 */
+    Map<String, Object> getMemory(Long userId);
+
+    /** 获取最近聊天记录（会话按 notebook 隔离，notebookId 为空时读历史默认会话） */
+    default List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit) {
+        return getRecentChatMessages(userId, notebookId, limit, null);
+    }
+
+    /**
+     * 同上，但可以往<b>更早</b>翻：只返回 id 小于 {@code before} 的消息。
+     *
+     * <p>在此之前没有游标，前端固定要最近 50 条，服务端封顶 100 条 ——
+     * 比这更早的消息在界面上<b>永远看不到</b>。它们没被删，滚动摘要也仍在用它们，
+     * 但用户翻不回去，而界面还写着「已同步 N 条历史消息」，看起来像是只剩这些了。
+     *
+     * <p>用 id 而不是时间戳作游标：id 严格递增且唯一，同一毫秒内的两条消息不会互相遮住。
+     *
+     * @param before 只取 id 小于它的消息；为空表示从最新开始
+     */
+    List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit, Long before);
+
+    /** 删除单条聊天消息 */
+    void deleteChatMessage(Long userId, Long messageId);
+
+    /** 手动保存长期记忆 */
+    void saveMemory(Long userId, String memoryText);
+
+    /** 清空长期记忆和短期对话历史 */
+    void clearMemory(Long userId);
 }

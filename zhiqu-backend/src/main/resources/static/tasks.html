@@ -1,207 +1,57 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>任务列表 - 知趣·象限学习系统</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Poppins:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/common.css">
-    <link rel="stylesheet" href="/css/tasks.css">
-    <link rel="stylesheet" href="/css/pixel-theme.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>任务 - 知趣·象限 AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261022-r82" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261022-r82">
+  <link rel="manifest" href="manifest.json?v=20261022-r82">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261022-r82">
 </head>
 <body>
-    <div id="navbar"></div>
-    <div class="main-content">
-        <div class="page-title-row">
-            <h1>📋 任务列表</h1>
-            <a href="/dashboard.html" style="font-size:14px">← 返回看板</a>
-        </div>
-        <div class="filter-bar">
-            <div class="form-group">
-                <label for="f-quadrant">象限</label>
-                <select id="f-quadrant">
-                    <option value="">全部</option>
-                    <option value="1">🔥 重要且紧急</option>
-                    <option value="2">⭐ 重要不紧急</option>
-                    <option value="3">⚡ 紧急不重要</option>
-                    <option value="4">💤 不重要不紧急</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="f-status">状态</label>
-                <select id="f-status">
-                    <option value="">全部</option>
-                    <option value="0">待办</option>
-                    <option value="1">进行中</option>
-                    <option value="2">已完成</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="f-priority">优先级</label>
-                <select id="f-priority">
-                    <option value="">全部</option>
-                    <option value="0">低</option>
-                    <option value="1">中</option>
-                    <option value="2">高</option>
-                    <option value="3">紧急</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="f-sortBy">排序</label>
-                <select id="f-sortBy">
-                    <option value="updatedAt">更新时间</option>
-                    <option value="deadline">截止时间</option>
-                    <option value="priority">优先级</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="f-sortOrder">方向</label>
-                <select id="f-sortOrder">
-                    <option value="desc">降序</option>
-                    <option value="asc">升序</option>
-                </select>
-            </div>
-            <button type="button" class="btn btn-primary" id="btn-query">查询</button>
-            <button type="button" class="btn btn-success" id="btn-new">＋ 新建任务</button>
-        </div>
-        <div class="table-wrap">
-            <table class="data-table">
-                <thead>
-                    <tr>
-                        <th>标题</th>
-                        <th>象限</th>
-                        <th>优先级</th>
-                        <th>状态</th>
-                        <th>截止时间</th>
-                        <th>提醒时间</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody id="task-tbody"></tbody>
-            </table>
-        </div>
-    </div>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div class="zq-tasks-page">
 
-    <div id="edit-modal" class="modal hidden">
-        <div class="modal-backdrop"></div>
-        <div class="modal-panel">
-            <div class="modal-header">
-                <h2 class="modal-title">编辑任务</h2>
-                <button type="button" class="modal-close" id="edit-modal-close">&times;</button>
-            </div>
-            <form id="form-edit-task">
-                <input type="hidden" id="et-id">
-                <div class="form-group">
-                    <label for="et-title">任务标题</label>
-                    <input id="et-title" required>
-                </div>
-                <div class="form-group">
-                    <label for="et-desc">任务描述</label>
-                    <textarea id="et-desc"></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="et-quadrant">象限</label>
-                        <select id="et-quadrant" required>
-                            <option value="1">🔥 重要且紧急</option>
-                            <option value="2">⭐ 重要不紧急</option>
-                            <option value="3">⚡ 紧急不重要</option>
-                            <option value="4">💤 不重要不紧急</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="et-priority">优先级</label>
-                        <select id="et-priority">
-                            <option value="0">低</option>
-                            <option value="1">中</option>
-                            <option value="2">高</option>
-                            <option value="3">紧急</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="et-status">状态</label>
-                    <select id="et-status">
-                        <option value="0">待办</option>
-                        <option value="1">进行中</option>
-                        <option value="2">已完成</option>
-                    </select>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="et-deadline">截止时间</label>
-                        <input type="datetime-local" id="et-deadline">
-                    </div>
-                    <div class="form-group">
-                        <label for="et-reminder">提醒时间</label>
-                        <input type="datetime-local" id="et-reminder">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-default" id="edit-cancel">取消</button>
-                    <button type="submit" class="btn btn-primary">保存</button>
-                </div>
-            </form>
-        </div>
-    </div>
+        <header class="zq-page-head">
+          <div><h1 class="zq-h1">任务</h1><span class="zq-page-sub" id="zq-task-count">—</span></div>
+          <div class="zq-page-actions"><button type="button" class="zq-btn" id="zq-task-new"><span class="zq-ic" data-zq-icon="plus"></span>新建任务</button></div>
+        </header>
 
-    <div id="create-modal" class="modal hidden">
-        <div class="modal-backdrop"></div>
-        <div class="modal-panel">
-            <div class="modal-header">
-                <h2 class="modal-title">新建任务</h2>
-                <button type="button" class="modal-close" id="create-modal-close">&times;</button>
-            </div>
-            <form id="form-create-task">
-                <div class="form-group">
-                    <label for="ct-title">任务标题</label>
-                    <input id="ct-title" required placeholder="输入任务标题">
-                </div>
-                <div class="form-group">
-                    <label for="ct-desc">任务描述</label>
-                    <textarea id="ct-desc" placeholder="详细描述..."></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="ct-quadrant">象限</label>
-                        <select id="ct-quadrant" required>
-                            <option value="1">🔥 重要且紧急</option>
-                            <option value="2">⭐ 重要不紧急</option>
-                            <option value="3">⚡ 紧急不重要</option>
-                            <option value="4">💤 不重要不紧急</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="ct-priority">优先级</label>
-                        <select id="ct-priority">
-                            <option value="0">低</option>
-                            <option value="1" selected>中</option>
-                            <option value="2">高</option>
-                            <option value="3">紧急</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="ct-deadline">截止时间</label>
-                        <input type="datetime-local" id="ct-deadline">
-                    </div>
-                    <div class="form-group">
-                        <label for="ct-reminder">提醒时间</label>
-                        <input type="datetime-local" id="ct-reminder">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-default" id="create-cancel">取消</button>
-                    <button type="submit" class="btn btn-primary">创建</button>
-                </div>
-            </form>
+        <!-- 一行工具条（第五十二轮，界面打磨第 6 步）：搜索、状态分段、「筛选」展开第二行。改了就查（原来五个下拉 + 一个「查询」） -->
+        <div class="zq-task-tools">
+          <label class="zq-search"><span class="zq-ic" data-zq-icon="search"></span><input type="search" id="zq-task-q" placeholder="搜索标题和说明" aria-label="搜索任务" autocomplete="off"></label>
+          <div class="zq-seg" role="group" aria-label="按状态">
+            <button type="button" data-status="" aria-pressed="true">全部</button><button type="button" data-status="0" aria-pressed="false">待办</button><button type="button" data-status="1" aria-pressed="false">进行中</button><button type="button" data-status="2" aria-pressed="false">已完成</button>
+          </div>
+          <button type="button" class="zq-btn-ghost zq-task-more" id="zq-task-more" aria-expanded="false" aria-controls="zq-task-filters"><span class="zq-ic" data-zq-icon="sliders-horizontal"></span><span id="zq-task-more-label">筛选</span></button>
         </div>
-    </div>
+        <div class="zq-task-filters" id="zq-task-filters" hidden>
+          <label class="zq-task-filter">象限<select class="zq-select" id="zq-task-quadrant"><option value="">全部</option><option value="1">重要且紧急</option><option value="2">重要不紧急</option><option value="3">紧急不重要</option><option value="4">不重要不紧急</option></select></label>
+          <label class="zq-task-filter">优先级<select class="zq-select" id="zq-task-priority"><option value="">全部</option><option value="3">紧急</option><option value="2">高</option><option value="1">中</option><option value="0">低</option></select></label>
+          <label class="zq-task-filter">排序<select class="zq-select" id="zq-task-sort"><option value="updatedAt:desc">最近改过的在前</option><option value="deadline:asc">截止早的在前</option><option value="deadline:desc">截止晚的在前</option><option value="priority:desc">优先级高的在前</option></select></label>
+          <button type="button" class="zq-btn-ghost" id="zq-task-clear">清除筛选</button>
+        </div>
 
-    <script src="/js/common.js"></script>
-    <script src="/js/tasks.js"></script>
+        <!-- 表格：列宽只在样式表里写一处（.zq-task-grid）；编辑 / 删除悬停或键盘移到这一行时才出现 -->
+        <div class="zq-table zq-task-table">
+          <div class="zq-scroll-x"><div class="zq-task-scroll">
+            <div class="zq-thead zq-task-grid">
+              <span>标题</span><span>象限</span><span>优先级</span><span>状态</span><span>截止 / 提醒</span><span class="zq-sr">操作</span>
+            </div>
+            <div id="zq-rows"></div>
+          </div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20261022-r82"></script>
+  <script src="assets/zhiqu-api.js?v=20261022-r82"></script>
 </body>
 </html>

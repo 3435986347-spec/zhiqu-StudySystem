@@ -1,0 +1,132 @@
+{
+  "dataset": "princeton-nlp/SWE-bench_Verified",
+  "revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
+  "split": "test",
+  "dataset_rows": 500,
+  "repository_counts": {
+    "astropy/astropy": 22,
+    "django/django": 231,
+    "matplotlib/matplotlib": 34,
+    "mwaskom/seaborn": 2,
+    "pallets/flask": 1,
+    "psf/requests": 8,
+    "pydata/xarray": 22,
+    "pylint-dev/pylint": 10,
+    "pytest-dev/pytest": 19,
+    "scikit-learn/scikit-learn": 32,
+    "sphinx-doc/sphinx": 44,
+    "sympy/sympy": 75
+  },
+  "selection": {
+    "version": "zhiqu-sweverified-v1",
+    "tasks": 10,
+    "per_repository": 2,
+    "repositories_in_order": [
+      "django/django",
+      "sympy/sympy",
+      "pytest-dev/pytest",
+      "psf/requests",
+      "scikit-learn/scikit-learn"
+    ],
+    "hash_input_prefix": "zhiqu-sweverified-v1\n",
+    "encoding": "UTF-8",
+    "sort": "SHA256(hash_input_prefix + instance_id) ascending within each repository; instance_id breaks ties"
+  },
+  "source": {
+    "url": "https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified/resolve/c104f840cc67f8b6eec6f759ebc8b2693d585d4a/data/test-00000-of-00001.parquet",
+    "parquet_sha256": "a45b1fe4e2f0c8390b2b2938ac83e92ed5979000856808f3679c07812e9e6dcd",
+    "parquet_bytes": 2096679,
+    "official_lfs_oid": "a45b1fe4e2f0c8390b2b2938ac83e92ed5979000856808f3679c07812e9e6dcd",
+    "dataset_metadata_sha256": "ba96ecd724236f8b5302b4870b542cfa177bea30a16f083bbbe9fec3f22545d2",
+    "official_data_tree_sha256": "2bcb8e198739d45a2a829c427650a58a7a6689e94e8228096039a8a90d8d1365"
+  },
+  "parser": {
+    "name": "pyarrow",
+    "version": "20.0.0",
+    "dependency_install": "isolated temporary target; no global installation",
+    "decoded_columns": [
+      "repo",
+      "instance_id",
+      "base_commit",
+      "problem_statement"
+    ]
+  },
+  "public_projection_sha256": "4fceea4e35d1e74e917cce9295b9a8d5660534310c00caee9dea854583ecfbb5",
+  "public_index_sha256": "9116deb4b3b24346a278373cf1551bd8cee4e0677776105f62b4474ca50dfaba",
+  "public_index_hash_format": "500 public rows sorted by instance_id; compact sorted-key UTF-8 JSON + LF per row",
+  "selector_sha256": "2dfd3b5369f64c90bfea1bf1abf1b0c60c82ced856fcb74b5e6f0c5c09130cdb",
+  "tasks": [
+    {
+      "repo": "django/django",
+      "instance_id": "django__django-12308",
+      "base_commit": "2e0f04507b17362239ba49830d26fec504d46978",
+      "problem_statement_sha256": "3a5c42ef1352e5d34855a9b6efc54b08f2e6122a861306f8f47e323775851784",
+      "selection_sha256": "0094b6c8dfc018142964fcc7069974d6b13f9169bb3a1d090c1530df1f91e129"
+    },
+    {
+      "repo": "django/django",
+      "instance_id": "django__django-15987",
+      "base_commit": "7e6b537f5b92be152779fc492bb908d27fe7c52a",
+      "problem_statement_sha256": "74fc422f95f0cc73e0782cafc65260bc6805ce03753bea993d58c0641edc8a5d",
+      "selection_sha256": "0153ec0ef24c9396140a568531cc467916b1df9ffa4ca66816f4589092a3b545"
+    },
+    {
+      "repo": "sympy/sympy",
+      "instance_id": "sympy__sympy-23950",
+      "base_commit": "88664e6e0b781d0a8b5347896af74b555e92891e",
+      "problem_statement_sha256": "b56221e6a6bb28b09a09c076fdba0cbf1cb9d256956c52345ec825ccd52f61db",
+      "selection_sha256": "0325cb20af79ebdea49a1ac823f7352821e92c9a4edeaf1785537e69f4b0a5bd"
+    },
+    {
+      "repo": "sympy/sympy",
+      "instance_id": "sympy__sympy-20154",
+      "base_commit": "bdb49c4abfb35554a3c8ce761696ffff3bb837fe",
+      "problem_statement_sha256": "16cda9e1dbc96941a98fa2f54a1545709b1a3aefe133b20841f69d6391bef6dd",
+      "selection_sha256": "042a77773e0e0e19f830913638a3c3dedaffdf4ec2be0b44e2ba350c1ddbadeb"
+    },
+    {
+      "repo": "pytest-dev/pytest",
+      "instance_id": "pytest-dev__pytest-10356",
+      "base_commit": "3c1534944cbd34e8a41bc9e76818018fadefc9a1",
+      "problem_statement_sha256": "04324b4ba13d4d4a7c28e790561dc0927851fc39eb3d245b2e688bb6a0de3174",
+      "selection_sha256": "0e3ae6659cef717a8837811982ccc3237310653edd9126029d06b86fa998d126"
+    },
+    {
+      "repo": "pytest-dev/pytest",
+      "instance_id": "pytest-dev__pytest-5840",
+      "base_commit": "73c5b7f4b11a81e971f7d1bb18072e06a87060f4",
+      "problem_statement_sha256": "20d9cc3dd4114c8bc9f5eb76bb16d3c50ff8826b8c106119be6c3cf4ed01f398",
+      "selection_sha256": "17da6f9d16a242000b131e968b3f87e1ed2237a2967f781e7affa4b1d296a97a"
+    },
+    {
+      "repo": "psf/requests",
+      "instance_id": "psf__requests-1921",
+      "base_commit": "3c88e520da24ae6f736929a750876e7654accc3d",
+      "problem_statement_sha256": "3f7bdcd805645db3f6bbfa3476d3207f878afdfa4a91f8c8d56705d9aaf48e8d",
+      "selection_sha256": "36d1e710e794dd27c91584fafa3439d309a44e299f7f48842e6683bdaf53e4b0"
+    },
+    {
+      "repo": "psf/requests",
+      "instance_id": "psf__requests-1724",
+      "base_commit": "1ba83c47ce7b177efe90d5f51f7760680f72eda0",
+      "problem_statement_sha256": "eacde5d201658474274cce4558b5d2b8ae74d9fcc2ad6ddc76aaf003b2160b8a",
+      "selection_sha256": "7658402906f31f7fb147c6f56c4a40d64a50eddebcc77b1646eb745a812b44b7"
+    },
+    {
+      "repo": "scikit-learn/scikit-learn",
+      "instance_id": "scikit-learn__scikit-learn-10297",
+      "base_commit": "b90661d6a46aa3619d3eec94d5281f5888add501",
+      "problem_statement_sha256": "80b289fedf3bc996489e3ce2ce6f575ea7c8153524ea8736ccd7e0dad0c29a41",
+      "selection_sha256": "011e5e29f71829ebe9ad39cfe5f9c822bdcf3638a455a453d7745559dee42dad"
+    },
+    {
+      "repo": "scikit-learn/scikit-learn",
+      "instance_id": "scikit-learn__scikit-learn-13496",
+      "base_commit": "3aefc834dce72e850bff48689bea3c7dff5f3fad",
+      "problem_statement_sha256": "c31f09492b24bb94b8cf334d1de9ab6984ec81b9020a18ea4a738a88012cbaa9",
+      "selection_sha256": "01655a0807e64da6066a68b5f2cd784efa044c8b6c1083897cc4270b3f00005f"
+    }
+  ],
+  "model_calls": 0,
+  "docker_used": false
+}

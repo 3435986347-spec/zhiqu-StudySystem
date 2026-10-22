@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>账号管理 - 知趣·象限 AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261022-r82" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261022-r82">
+  <link rel="manifest" href="manifest.json?v=20261022-r82">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261022-r82">
+</head>
+<body>
+  <div class="zq-app">
+    <nav id="zq-side"></nav>
+    <main class="zq-main">
+      <div class="zq-admin">
+        <header class="zq-page-head">
+          <div><h1 class="zq-h1">账号管理</h1></div>
+          <div class="zq-page-actions">
+            <input id="zq-acct-search" class="zq-input" placeholder="搜索用户名 / 邮箱" aria-label="搜索用户名或邮箱">
+            <select id="zq-acct-role" class="zq-select" aria-label="角色"><option value="">全部角色</option><option value="ADMIN">管理员</option><option value="USER">普通用户</option></select>
+            <button type="button" class="zq-btn" id="zq-acct-query">查询</button>
+          </div>
+        </header>
+
+        <div class="zq-table zq-acct">
+          <div class="zq-thead zq-acct-row">
+            <span>用户</span><span>邮箱</span><span>角色</span><span>状态</span><span>成就点数</span><span>注册于</span><span class="zq-acct-acts">操作</span>
+          </div>
+          <div id="zq-rows"></div>
+          <div class="zq-acct-foot"><span id="zq-acct-count"></span><span>禁用后该账号无法登录，数据保留</span></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/zhiqu-ui.js?v=20261022-r82"></script>
+  <script src="assets/zhiqu-api.js?v=20261022-r82"></script>
+</body>
+</html>

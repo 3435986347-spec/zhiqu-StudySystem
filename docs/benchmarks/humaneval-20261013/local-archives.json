@@ -1,0 +1,14 @@
+[
+  {
+    "path": "build/benchmarks/humaneval-deepseek-v4-pro-20261013.zip",
+    "bytes": 1363839,
+    "sha256": "8f89a798915cc8cfd97e3859ec9ef0a88a09117bc363b2a09db0d49b32111bf3",
+    "included_in_score": true
+  },
+  {
+    "path": "build/benchmarks/humaneval-deepseek-v4-pro-20261013-invalid-calibration.zip",
+    "bytes": 351569,
+    "sha256": "36a40d7a4f23145230240e74836f7bcc95580a7c50d4496b5a6036a69d9bfdd3",
+    "included_in_score": false
+  }
+]

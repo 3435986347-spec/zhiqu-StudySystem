@@ -1,0 +1,62 @@
+{
+  "version": 2,
+  "benchmark": "HumanEval",
+  "official_tasks": 164,
+  "tasks": 164,
+  "subset": false,
+  "dataset_sha256": "b796127e635a67f93fb35c04f4cb03cf06f38c8072ee7cee8833d7bee06979ef",
+  "dataset_uncompressed_sha256": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2",
+  "source": {
+    "commit": "a0fc5e2cd48e5f1ed1446ea4a4ff171d6dd6304a",
+    "dirty": false,
+    "source_sha256": "f9311d562f60661a85221cf8ae85cb50d8ce2d33dc6dffcec2ef2f34d2b03772",
+    "adapter_sha256": "9f02aa25d48a040ba7429b80f30ebfde0f7ac3bbbe50ecc8044cbbfd2f595eae",
+    "system_prompt_sha256": "cf8ecf74202afa4fee6beba42f578b1dcac521f70a58e2e3a56c592bf9758c95",
+    "source_files": 36,
+    "node": "v24.19.0",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "model": {
+    "id": 1,
+    "label": "DeepSeek（我的）",
+    "modelName": "deepseek-v4-pro",
+    "providerType": "OPENAI_COMPATIBLE",
+    "toolCalling": true,
+    "contextWindowTokens": 1000000,
+    "effectiveContextWindow": 1000000
+  },
+  "server": "http://127.0.0.1:47615",
+  "concurrency": 2,
+  "max_rounds": 20,
+  "timeout_seconds": 300,
+  "requests_per_minute": 50,
+  "min_request_interval_ms": 2400,
+  "sandbox_profile_sha256": "f1b8d9dff5ef690a691151a01f394f64286ba8bdc6889ba226001c3e57eb9a8c",
+  "runtime_root": "/Users/mingzhang.huang/.cache/codex-runtimes/codex-primary-runtime/dependencies",
+  "permissions": "auto with shipped LocalTools guard; OS sandbox; local tools only",
+  "prompt_protocol": "solution.py exact official prompt prefix; implementation appended; no hidden test feedback",
+  "office_tools": false,
+  "mcp": false,
+  "personal_instructions": false,
+  "personal_skills": false,
+  "remote_archive": false,
+  "thinking": "production gateway OFF",
+  "temperature": "production gateway configuration",
+  "samples_per_task": 1,
+  "fingerprint": "e19cde42d2c0387c2c4fb2c5e1dc32bf86c2bc05126ad8aeba21415aa859bc78",
+  "started_at": "2026-10-13T09:10:07.098Z",
+  "output": "/private/tmp/zhiqu-humaneval-deepseek-v4-pro-20261013-paced",
+  "finished_at": "2026-10-13T09:41:32.433Z",
+  "generation_counts": {
+    "completed": 158,
+    "protocol_error": 5,
+    "round_limit": 1
+  },
+  "model_requests": 1232,
+  "usage": {
+    "prompt_tokens": 4396616,
+    "completion_tokens": 146684,
+    "estimated": false
+  }
+}

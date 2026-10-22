@@ -1,0 +1,12 @@
+{
+  "purpose": "Historical formal-run protocol v2 before post-run review fixes",
+  "adapter_sha256": "9f02aa25d48a040ba7429b80f30ebfde0f7ac3bbbe50ecc8044cbbfd2f595eae",
+  "files": {
+    "agent-worker.mjs": "bd08dbc8506a85687b8686315c1cd6bdd115f4e25762659b170b1d9109733219",
+    "macos-agent.sb": "f1b8d9dff5ef690a691151a01f394f64286ba8bdc6889ba226001c3e57eb9a8c",
+    "README.md": "b5febd8fb4ecdba04b3947327f05497f5def05b9bcaca3e7c68635dd0176a485",
+    "score_humaneval.py": "4e166eebb87b74d16c6f14cda5e7c918992d604375e6d18d99b36412932ff738",
+    "agent-worker.test.mjs": "1d1259eda9c3c51a3355e81de7b0a5ccd88b15041f90bd0a51105b6b1dd52fd8",
+    "run-humaneval.mjs": "d0de31ee77b0e14ae061d679118a8d91007c0a4166b64e0144f49e8b03d685e9"
+  }
+}

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono" class="zq-mini-page">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>迷你番茄钟 - 知趣·象限 AI 办公助手</title>
+  <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261022-r82" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261022-r82">
+  <link rel="manifest" href="manifest.json?v=20261022-r82">
+  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261022-r82">
+</head>
+<body>
+  <!-- 迷你番茄钟（第五十轮，docs/mini-pomodoro-plan.md 第 2 步）：第 3 步 macOS 外壳把这一页装进一个悬浮面板。
+       没有侧栏、没有页面头部 —— 一个胶囊：开始 / 暂停（外圈是进度）、倒计时、关联的任务和今天第几轮、展开。画法在 assets/pages/mini.js -->
+  <main class="zq-main" aria-label="迷你番茄钟">
+    <button type="button" class="zq-mini-go" id="zq-mini-go" aria-label="开始专注" title="开始专注">
+      <svg class="zq-mini-dial" viewBox="0 0 40 40" aria-hidden="true">
+        <circle class="zq-mini-track" cx="20" cy="20" r="18"></circle>
+        <circle class="zq-mini-arc" id="zq-mini-ring" cx="20" cy="20" r="18" stroke-dasharray="0 113.1" transform="rotate(-90 20 20)"></circle>
+      </svg>
+      <span class="zq-ic" data-zq-icon="play"></span>
+    </button>
+    <div class="zq-mini-body">
+      <div id="zq-mini-time" class="zq-mini-time zq-num">25:00</div>
+      <div class="zq-mini-sub"><span id="zq-mini-note" class="zq-mini-note">开始专注</span><span id="zq-pomo-round" class="zq-mini-round"></span></div>
+      <div class="zq-mini-out">在主窗口登录后再用</div>
+    </div>
+    <button type="button" class="zq-mini-expand" id="zq-mini-expand" aria-label="展开" title="展开：回到主窗口"><span class="zq-ic" data-zq-icon="maximize-2"></span></button>
+  </main>
+
+  <script src="assets/zhiqu-ui.js?v=20261022-r82"></script>
+  <script src="assets/zhiqu-api.js?v=20261022-r82"></script>
+</body>
+</html>

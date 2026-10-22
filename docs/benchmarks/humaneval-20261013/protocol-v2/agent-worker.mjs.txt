@@ -1,0 +1,255 @@
+// One isolated HumanEval episode using the shipped zhiqu agent, not a completion-only proxy.
+// Credentials and the public task arrive on stdin; hidden tests never enter this process.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { PassThrough, Writable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
+import { performance } from 'node:perf_hooks';
+import { Api } from '../../zhiqu-cli/src/api.js';
+import { sleep } from '../../zhiqu-cli/src/http.js';
+import { runTurn } from '../../zhiqu-cli/src/agent.js';
+import { BUILTIN_SYSTEM_PROMPT } from '../../zhiqu-cli/src/prompt.js';
+import { LocalTools } from '../../zhiqu-cli/src/tools/local.js';
+import { SessionStore } from '../../zhiqu-cli/src/session.js';
+import { Ui } from '../../zhiqu-cli/src/ui.js';
+
+export const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+export function redact(text, token) {
+  let safe = String(text ?? '');
+  if (token) safe = safe.split(token).join('[REDACTED]');
+  return safe.replace(/\b(?:zqp_[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._~+\/-]+=*)/g, '[REDACTED]');
+}
+
+/** Reuse the shipped transport sleep without retaining listeners on a long-lived run signal. */
+export async function signalAwareSleep(ms, signal) {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) {
+    const error = new Error('Transport wait aborted');
+    error.name = 'AbortError';
+    throw error;
+  }
+  const waitController = new AbortController();
+  const abort = () => waitController.abort();
+  signal.addEventListener('abort', abort, { once: true });
+  try { await sleep(ms, waitController.signal); }
+  finally { signal.removeEventListener('abort', abort); }
+}
+
+export function publicTask(task) {
+  if (!task || typeof task.task_id !== 'string' || typeof task.prompt !== 'string'
+      || typeof task.entry_point !== 'string') throw new Error('Task requires task_id, prompt and entry_point');
+  return { task_id: task.task_id, prompt: task.prompt, entry_point: task.entry_point };
+}
+
+export function taskInstruction(task) {
+  return `Implement the Python function described in solution.py for ${task.task_id}.\n`
+    + `The required entry point is ${task.entry_point}. Read solution.py before editing it.\n`
+    + 'Keep every byte already in solution.py unchanged; append only the implementation after the existing prompt. '
+    + 'The final file must remain a valid standalone Python module. Use the actual file tools to make the change.\n'
+    + 'You may create and run your own small checks using examples from the public docstring. '
+    + 'No hidden tests or reference solution are available. Finish after implementing and checking the function.';
+}
+
+function validatePayload(payload) {
+  const task = publicTask(payload.task);
+  if (Object.keys(payload.task).some((key) => !['task_id', 'prompt', 'entry_point'].includes(key))) {
+    throw new Error('Worker accepts public task fields only');
+  }
+  if (!payload.auth || !payload.auth.server || !payload.auth.token) throw new Error('Missing authenticated gateway');
+  if (!payload.model || !Number.isSafeInteger(payload.model.id) || !payload.model.toolCalling) {
+    throw new Error('Worker requires an exact tool-calling model ID');
+  }
+  if (!/deepseek/i.test(payload.model.modelName || '')) throw new Error('Selected model is not DeepSeek');
+  const workspace = fs.realpathSync(payload.workspace);
+  const actual = fs.readFileSync(path.join(workspace, 'solution.py'));
+  if (!actual.equals(Buffer.from(task.prompt, 'utf8'))) throw new Error('Initial solution.py is not the exact official prompt');
+  const maxRounds = payload.limits?.maxRounds ?? 20;
+  const timeoutMs = payload.limits?.timeoutMs ?? 300_000;
+  const minRequestIntervalMs = payload.limits?.minRequestIntervalMs ?? 0;
+  if (!Number.isSafeInteger(maxRounds) || maxRounds < 1 || maxRounds > 100) throw new Error('Invalid maxRounds');
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 3_600_000) throw new Error('Invalid timeoutMs');
+  if (!Number.isSafeInteger(minRequestIntervalMs) || minRequestIntervalMs < 0 || minRequestIntervalMs > 480_000) {
+    throw new Error('Invalid minRequestIntervalMs');
+  }
+  return { task, workspace, maxRounds, timeoutMs, minRequestIntervalMs };
+}
+
+/** api injection is used solely by local protocol tests; normal execution always constructs the real Api. */
+export async function runTask(payload, { api: suppliedApi } = {}) {
+  const { task, workspace, maxRounds, timeoutMs, minRequestIntervalMs } = validatePayload(payload);
+  const started = performance.now();
+  const controller = new AbortController();
+  const requests = [];
+  let modelMismatch = null;
+  let protocolError = null;
+  let timedOut = false;
+  let interrupted = false;
+  let log = '';
+  const output = new Writable({ write(chunk, _encoding, done) {
+    if (log.length < 2_000_000) log += chunk.toString().slice(0, 2_000_000 - log.length);
+    done();
+  } });
+  const input = new PassThrough();
+  input.end();
+  const ui = new Ui({ input, output, interactive: false, color: false });
+  const api = suppliedApi || new Api({ server: payload.auth.server, token: payload.auth.token });
+  const stream = api.stream.bind(api);
+  let lastRequestStarted = -Infinity;
+  let totalPacingWaitMs = 0;
+  api.stream = async (pathname, body, onEvent, options) => {
+    const waitMs = Math.max(0, Math.ceil(lastRequestStarted + minRequestIntervalMs - performance.now()));
+    const waitStarted = performance.now();
+    if (waitMs > 0) {
+      try { await signalAwareSleep(waitMs, options?.signal || controller.signal); }
+      finally { totalPacingWaitMs += performance.now() - waitStarted; }
+    }
+    const requestStarted = performance.now();
+    const pacingWaitMs = waitMs > 0 ? Math.round(requestStarted - waitStarted) : 0;
+    lastRequestStarted = requestStarted;
+    const item = { index: requests.length + 1, agent_round: body.tools.length > 0,
+      requested_model_id: body.modelId, started_ms: Math.round(requestStarted - started),
+      pacing_wait_ms: pacingWaitMs,
+      messages: body.messages.length, tools: body.tools.map((tool) => tool.function.name),
+      requested_max_tokens: body.maxTokens };
+    requests.push(item);
+    try {
+      await stream(pathname, body, (name, data) => {
+        if (name === 'start') {
+          if (data.model?.id == null) {
+            protocolError = 'Gateway start event omitted the actual model ID';
+            controller.abort();
+            throw new Error(protocolError);
+          }
+          item.actual_model = { id: data.model.id, label: data.model.label,
+            modelName: data.model.modelName, providerType: data.model.providerType };
+          item.context_window = data.contextWindow;
+          item.max_tokens = data.maxTokens;
+          item.dropped_messages = data.droppedMessages || 0;
+          item.elided_tool_outputs = data.elidedToolOutputs || 0;
+          if (String(data.model.id) !== String(payload.model.id)
+              || data.model.modelName !== payload.model.modelName) {
+            modelMismatch = `Expected model ${payload.model.id}/${payload.model.modelName}; gateway returned `
+              + `${data.model.id}/${data.model.modelName}`;
+            controller.abort();
+            throw new Error(modelMismatch);
+          }
+        }
+        if (name === 'done') {
+          item.finish_reason = data.finishReason;
+          item.max_tokens = data.maxTokens;
+          item.usage = { promptTokens: data.usage?.promptTokens ?? null,
+            completionTokens: data.usage?.completionTokens ?? null,
+            estimated: data.usage?.estimated ?? true };
+        }
+        onEvent(name, data);
+      }, options);
+    } catch (error) {
+      item.error = redact(error.message, payload.auth.token);
+      throw error;
+    } finally {
+      item.duration_ms = Math.round(performance.now() - requestStarted);
+    }
+  };
+  const store = new SessionStore(workspace);
+  const ctx = {
+    api, ui, root: workspace, mode: 'auto', maxRounds,
+    local: new LocalTools({ root: workspace, execTimeoutMs: Math.min(120_000, timeoutMs) }),
+    store, session: store.create({ model: payload.model.label }), messages: [],
+    allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
+    usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
+    system: { text: BUILTIN_SYSTEM_PROMPT }, instructionsText: '', skillsText: '',
+    skills: [], remoteTools: [], todos: [], model: payload.model,
+    verbose: false, archiveDisabled: true,
+  };
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const interrupt = () => { interrupted = true; controller.abort(); };
+  process.once('SIGTERM', interrupt);
+  process.once('SIGINT', interrupt);
+  let status = 'completed';
+  let error = null;
+  let result = null;
+  try {
+    result = await runTurn(ctx, taskInstruction(task), { signal: controller.signal });
+    if (timedOut) status = 'timeout';
+    else if (interrupted) status = 'interrupted';
+    else if (ctx.messages.at(-1)?.role === 'tool' && requests.filter((r) => r.agent_round).length >= maxRounds) {
+      status = 'round_limit';
+    }
+  } catch (caught) {
+    status = modelMismatch ? 'model_mismatch' : protocolError ? 'protocol_error'
+      : timedOut ? 'timeout' : interrupted ? 'interrupted' : 'gateway_error';
+    error = redact(modelMismatch || protocolError || caught.message, payload.auth.token);
+  } finally {
+    clearTimeout(timer);
+    process.removeListener('SIGTERM', interrupt);
+    process.removeListener('SIGINT', interrupt);
+    api.stream = stream;
+    ui.close();
+  }
+  let completion = '';
+  let solution = null;
+  let solutionSha = null;
+  try {
+    solution = fs.readFileSync(path.join(workspace, 'solution.py'));
+    solutionSha = sha256(solution);
+    const prefix = Buffer.from(task.prompt, 'utf8');
+    if (!solution.subarray(0, prefix.length).equals(prefix)) {
+      if (status === 'completed') status = 'protocol_error';
+      error ||= 'Final solution.py changed the official prompt prefix';
+    } else if (status === 'completed') {
+      completion = new TextDecoder('utf-8', { fatal: true }).decode(solution.subarray(prefix.length));
+      if (!completion.trim()) {
+        status = 'protocol_error';
+        error = 'Agent did not append an implementation';
+        completion = '';
+      }
+    }
+  } catch (caught) {
+    if (status === 'completed') status = 'protocol_error';
+    error ||= redact(caught.message, payload.auth.token);
+  }
+  const byName = {};
+  for (const message of ctx.messages) for (const call of message.tool_calls || []) {
+    const name = call.function?.name || 'unknown';
+    byName[name] = (byName[name] || 0) + 1;
+  }
+  return {
+    task_id: task.task_id, completion, generation_status: status,
+    prompt_sha256: sha256(task.prompt), solution_sha256: solutionSha,
+    model: payload.model, duration_ms: Math.round(performance.now() - started),
+    min_request_interval_ms: minRequestIntervalMs, transport_wait_ms: Math.round(totalPacingWaitMs),
+    session: path.relative(workspace, store.file(ctx.session.id)),
+    rounds: requests.filter((r) => r.agent_round).length, model_requests: requests.length,
+    tool_calls: Object.values(byName).reduce((a, b) => a + b, 0), tools_by_name: byName,
+    tool_results: ctx.messages.filter((message) => message.role === 'tool').length,
+    usage: { prompt_tokens: ctx.usage.prompt, completion_tokens: ctx.usage.completion,
+      estimated: requests.some((request) => request.usage?.estimated !== false),
+      missing_usage: requests.filter((request) => !request.usage).length },
+    requests, final_answer: redact(result?.finalText || '', payload.auth.token),
+    changed_files: result?.changedFiles || [...ctx.changedFiles],
+    ...(error ? { error } : {}), terminal_log: redact(log, payload.auth.token),
+  };
+}
+
+async function main() {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of process.stdin) {
+    size += chunk.length;
+    if (size > 1_000_000) throw new Error('Worker input exceeded one megabyte');
+    chunks.push(chunk);
+  }
+  const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const result = await runTask(payload);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  process.exitCode = result.generation_status === 'completed' ? 0 : 2;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main().catch(() => {
+    // Do not print malformed stdin: it contains credentials.
+    process.stderr.write('HumanEval worker could not initialize; check the public payload and workspace.\n');
+    process.exitCode = 1;
+  });
+}

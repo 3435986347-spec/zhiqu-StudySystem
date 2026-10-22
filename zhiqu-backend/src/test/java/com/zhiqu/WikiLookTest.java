@@ -1,0 +1,199 @@
+package com.zhiqu;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * 界面打磨第 7 步（第五十五轮，docs/ui-plan.md）：知识 Wiki 的正文和工具栏。
+ *
+ * <p>原来 Wiki 的正文和 AI 助手的聊天气泡一个样（13.5px、行距 1.75、段距 8px）；
+ * 三级标题带下划线，比二级还显眼；样子写死在 renderMarkdown 的内联样式里，编辑器插进去的标题、勾选项和渲染出来的不一样。
+ * 标题上面压着一行「文档视图」小字，工具栏是「B」「I」「U」「代码」「公式」「源码」一排字按钮；正文第一行往往又是一遍页名。
+ *
+ * <p>renderMarkdown 的标记在 markdown-check.js 里真跑；这里管样式表里那套读长文的排版、页面的头和工具栏、重复的页名。
+ */
+class WikiLookTest {
+
+    private static final Path STATIC = Path.of("src/main/resources/static");
+
+    private static String css() throws IOException {
+        return Files.readString(STATIC.resolve("assets/zhiqu-ui.css"), StandardCharsets.UTF_8).replaceAll("(?s)/\\*.*?\\*/", "");
+    }
+
+    /** 选择器恰好是 selector 的那一条规则的声明（只认一条） */
+    private static String rule(String css, String selector) {
+        Matcher m = Pattern.compile("(?m)(?:^|})\\s*" + Pattern.quote(selector) + "\\{([^}]*)}").matcher(css);
+        assertTrue(m.find(), "样式表里没有 " + selector + " 这一条");
+        String decl = m.group(1);
+        assertFalse(m.find(), selector + " 写了不止一条，判据不知道看哪条");
+        return decl;
+    }
+
+    private static String prop(String decl, String name) {
+        Matcher m = Pattern.compile("(?:^|;)\\s*" + Pattern.quote(name) + ":([^;]+)").matcher(decl);
+        assertTrue(m.find(), "「" + decl + "」里没有 " + name);
+        return m.group(1).trim();
+    }
+
+    /** 12px / 1.85 / var(--zq-fs-md)（到 :root 里找） → 数 */
+    private static double px(String css, String value) {
+        Matcher var = Pattern.compile("var\\((--[\\w-]+)\\)").matcher(value);
+        if (var.matches()) {
+            Matcher def = Pattern.compile(Pattern.quote(var.group(1)) + ":\\s*([\\d.]+)px").matcher(css);
+            assertTrue(def.find(), ":root 里没有 " + var.group(1));
+            return Double.parseDouble(def.group(1));
+        }
+        return Double.parseDouble(value.replaceAll("(px|em)$", ""));
+    }
+
+    @Test
+    @DisplayName("Markdown 的标记（node 里真跑 renderMarkdown）：没有内联样式、每种块的样子、类和标签在样式表里有规则、别处不借用它的类")
+    void 标记() throws Exception {
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/markdown-check.js"), NodeRunner.API_JS), "markdown-check.js 没有全绿");
+    }
+
+    @Test
+    @DisplayName("嵌套列表（第七十一轮，node 里真跑 renderMarkdown / htmlToMarkdown）：缩进的子项、任务项的子项、续行、编号从几开始；旧编辑器保存时写回缩进、编号照原样")
+    void 嵌套列表() throws Exception {
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/markdown-lists-check.js"), NodeRunner.API_JS), "markdown-lists-check.js 没有全绿");
+    }
+
+    @Test
+    @DisplayName("读长文的排版：正文使用可用宽度、窄容器可以收缩、正文比聊天大、行距 ≥ 1.8；标题一级比一级小、最小的不小于正文、节前留白比节后多；三级标题不带下划线")
+    void 排版() throws IOException {
+        String css = css();
+        String prose = rule(css, ".zq-prose .zq-md");
+        assertEquals("100%", prop(prose, "width"), "正文没有使用 Wiki 卡片的可用宽度");
+        assertEquals("none", prop(prose, "max-width"), "正文仍被固定行宽截断，宽窗口右侧会留下大片空白");
+        assertEquals("0", prop(prose, "min-width"), "正文在窄窗口里不能缩小");
+        double body = px(css, prop(prose, "font-size"));
+        assertTrue(body > px(css, prop(rule(css, ".zq-md"), "font-size")), "Wiki 正文没有比聊天气泡里的字大");
+        assertTrue(Double.parseDouble(prop(prose, "line-height")) >= 1.8, "行距太密");
+
+        double above = Double.MAX_VALUE;
+        for (int lvl = 1; lvl <= 4; lvl++) {
+            String h = rule(css, ".zq-prose .zq-md h" + lvl);
+            double size = px(css, prop(h, "font-size"));
+            assertTrue(size < above, "h" + lvl + "（" + size + "px）不比上一级小");
+            assertTrue(size >= body, "h" + lvl + "（" + size + "px）比正文（" + body + "px）还小");
+            above = size;
+            String[] margin = prop(h, "margin").split("\\s+");
+            assertTrue(px(css, margin[0]) > px(css, margin[2]), "h" + lvl + " 节前的留白不比节后多 —— 标题会贴着上一节、离自己那节反而远");
+        }
+        assertEquals("none", prop(rule(css, ".zq-prose .zq-md h3"), "border-bottom"), "三级标题又带下划线了（比二级还显眼）");
+    }
+
+    @Test
+    @DisplayName("页面：标题上面不压「文档视图」、没有「点击正文或标题即可编辑」；工具栏是一排图标按钮（各有 title 和 aria-label），「源码」按下时 aria-pressed；正文是 .zq-prose")
+    void 页面() throws IOException {
+        String html = Files.readString(STATIC.resolve("knowledge-wiki.html"), StandardCharsets.UTF_8).replaceAll("(?s)<!--.*?-->", "");
+        assertFalse(html.contains("文档视图"), "标题上面又压着「文档视图」");
+        assertFalse(html.contains("点击正文或标题即可编辑"), "又有「点击正文或标题即可编辑」那行提示");
+        assertTrue(html.contains("<div id=\"zq-doc\" class=\"zq-prose\""), "正文容器没有 .zq-prose —— 读长文的那套排版不生效");
+        assertTrue(html.contains("<h2 id=\"zq-doc-title\" class=\"zq-wiki-title\">"), "页名不是 .zq-wiki-title");
+
+        Matcher b = Pattern.compile("<button([^>]*data-wiki-cmd=\"(\\w+)\"[^>]*)>(.*?)</button>").matcher(html);
+        List<String> cmds = new ArrayList<>();
+        while (b.find()) {
+            cmds.add(b.group(2));
+            assertTrue(b.group(1).contains(" title=\"") && b.group(1).contains(" aria-label=\""), b.group(2) + " 没有 title 或 aria-label（只有图标的按钮）");
+            assertTrue(b.group(3).matches("<span data-zq-icon=\"[\\w-]+\"></span>"), b.group(2) + " 不是只有一个图标：" + b.group(3));
+        }
+        assertEquals(List.of("bold", "italic", "underline", "code", "link", "image", "math", "ref", "source"), cmds, "工具栏的按钮变了");
+        assertTrue(html.contains("data-wiki-cmd=\"source\" class=\"zq-tbtn\" id=\"zq-wiki-source\""), "「源码」按钮没有 id —— setSourcePressed 找不到它");
+        Matcher source = Pattern.compile("<button([^>]*data-wiki-cmd=\"source\"[^>]*)>(.*?)</button>").matcher(html);
+        assertTrue(source.find(), "缺少「源码」按钮");
+        assertTrue(source.group(1).contains("aria-pressed=\"false\"") && source.group(2).equals("<span data-zq-icon=\"file-code\"></span>"),
+                "「源码」按钮没有初始 aria-pressed=false 或 file-code 图标");
+    }
+
+    @Test
+    @DisplayName("和页名一样的一级标题：阅读和排版编辑均藏起来（只挂类，不删 —— 保存时原样写回去），源码仍可修改；每次把正文画成排版之后都要标")
+    void 重复的页名() throws IOException {
+        assertTrue(css().contains(".zq-prose .zq-dup-title{display:none;}"), "阅读和排版编辑中没有持续隐藏重复页名，切换时会改变正文高度");
+        String js = SourceText.pageModule("knowledge-wiki.js");
+        String mark = SourceText.functionBody(js, "function markDuplicateTitle(");
+        assertTrue(mark.contains("classList.add('zq-dup-title')"), "markDuplicateTitle 没有挂类：\n" + mark);
+        assertFalse(mark.contains("remove(") || mark.contains("removeChild") || mark.contains("innerHTML") || mark.contains("outerHTML"),
+                "markDuplicateTitle 动了内容 —— 保存时页名那一行就没了：\n" + mark);
+        // 把正文画成排版的每一处（打开一页、从源码回到排版）后面都紧跟着标一次
+        Matcher paint = Pattern.compile("doc\\.innerHTML = renderMarkdown\\(").matcher(js);
+        int n = 0;
+        while (paint.find()) {
+            n++;
+            String after = js.substring(paint.end(), Math.min(js.length(), paint.end() + 160));
+            assertTrue(after.contains("markDuplicateTitle(doc, "), "画完正文没有标重复的页名：\n" + after);
+        }
+        assertEquals(2, n, "把正文画成排版的地方应当是两处（打开一页、从源码回来）");
+        // 第六十八轮：恢复点正文编辑，打开只读开关才锁定；进入编辑仍保持重复页名和按钮区域的高度一致。
+        String click = SourceText.functionBody(js, "function wireWikiEditor(");
+        assertFalse(click.contains("doc.scrollTop += dup.getBoundingClientRect().height"), "重复页名不再露出，却还在补偿它的高度");
+        String editor = SourceText.functionBody(js, "function enterWikiEdit(");
+        assertTrue(editor.contains("focus({ preventScroll: true })"), "聚焦编辑器会滚动到光标而跳动");
+        assertTrue(editor.contains("restoreWikiView(doc, view)"), "进入编辑没有恢复视口锚点");
+    }
+
+    @Test
+    @DisplayName("界面打磨第 9 步（第七十九轮）：页面没有内联样式；模块里只剩图谱图例的类型色（--c），不在 JS 里改样子")
+    void 样子都在样式表() throws IOException {
+        String html = Files.readString(STATIC.resolve("knowledge-wiki.html"), StandardCharsets.UTF_8).replaceAll("(?s)<!--.*?-->", "");
+        assertFalse(html.contains("style="), "knowledge-wiki.html 又写了内联样式");
+        String js = SourceText.pageModule("knowledge-wiki.js");
+        assertTrue(js.length() > 50000, "knowledge-wiki.js 只读到 " + js.length() + " 字 —— 读错文件了？");
+        Matcher inline = Pattern.compile("style=\\\\?\"([^\"]{0,30})").matcher(js);
+        List<String> found = new ArrayList<>();
+        while (inline.find()) found.add(inline.group(1));
+        assertEquals(1, found.size(), "knowledge-wiki.js 的内联样式：" + found);
+        assertTrue(found.get(0).startsWith("--c:"), "唯一的内联不是图谱图例的类型色：" + found);
+        Matcher write = Pattern.compile("\\.style\\.\\w+|\\.style\\[|cssText").matcher(js);
+        assertFalse(write.find(), "knowledge-wiki.js 又在 JS 里改样子了：" + (write.find(0) ? js.substring(write.start(), Math.min(js.length(), write.start() + 50)) : ""));
+    }
+
+    @Test
+    @DisplayName("选中 / 可点的样子跟着状态走：目录和标签页的当前项是 aria-current，正文的光标看 aria-readonly，页名的手指看 title，勾上的任务项划线在样式表")
+    void 状态的样子() throws IOException {
+        String js = SourceText.pageModule("knowledge-wiki.js");
+        assertTrue(js.contains("class=\"zq-wiki-item\"' + (active ? ' aria-current=\"page\"' : '')"), "目录的当前页不是 aria-current");
+        assertTrue(js.contains("class=\"zq-wiki-tab\"' + (on ? ' aria-current=\"page\"' : '')"), "当前标签不是 aria-current");
+        assertTrue(js.contains("doc.setAttribute('aria-readonly', locked || unavailable ? 'true' : 'false')"), "正文不再写 aria-readonly —— 光标跟不上只读");
+        String css = css();
+        assertTrue(rule(css, ".zq-wiki-item[aria-current=\"page\"]").contains("background:var(--zq-tint)"), "目录的当前页没有底色");
+        assertTrue(rule(css, ".zq-wiki-tab[aria-current=\"page\"]").contains("box-shadow:inset 0 2px 0 var(--zq-primary)"), "当前标签上沿没有那条强调色");
+        assertEquals("default", prop(rule(css, "#zq-doc[aria-readonly=\"true\"]"), "cursor"), "只读时正文还是文字光标");
+        assertEquals("pointer", prop(rule(css, "#zq-doc-title[title]:not([title=\"\"])"), "cursor"), "能改名时页名不是手指");
+        assertTrue(css.contains(".zq-task-row>input:checked+span{color:var(--zq-text3);text-decoration:line-through;}"), "勾上的任务项没有划线（原来在 JS 里写）");
+        assertTrue(rule(css, ".zq-wiki-nav .zq-btn-ghost:disabled").contains("opacity:.35"), "没有历史时前进 / 返回不灰（原来在 JS 里改 opacity）");
+    }
+
+    @Test
+    @DisplayName("Wiki 的规则里字号都是令牌")
+    void 字号都是令牌() throws IOException {
+        String css = css();
+        Matcher rule = Pattern.compile("([^{}]*)\\{([^{}]*)\\}").matcher(css);
+        Pattern wiki = Pattern.compile("\\.zq-wiki-|#zq-wiki-|#zq-doc|#zq-tree|#zq-src-ta|#zq-imp-|#zq-vault-preview|\\.zq-graph|\\.zq-patch|\\.zq-rev-body");
+        int rules = 0;
+        List<String> literal = new ArrayList<>();
+        while (rule.find()) {
+            String selector = rule.group(1).trim();
+            if (!wiki.matcher(selector).find() || selector.contains(".zq-md")) continue;
+            rules++;
+            Matcher fs = Pattern.compile("font-size:\\s*[0-9.]+px").matcher(rule.group(2));
+            if (fs.find()) literal.add(selector + " → " + fs.group());
+        }
+        assertTrue(rules >= 60, "只扫到 " + rules + " 条 Wiki 的规则 —— 扫空了？");
+        assertEquals(List.of(), literal, "Wiki 的规则里又写死了字号");
+    }
+}

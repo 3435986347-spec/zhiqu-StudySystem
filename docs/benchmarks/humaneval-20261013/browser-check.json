@@ -1,0 +1,22 @@
+{
+  "browser": "Chromium in-app browser",
+  "scope": "static report only; no model calls or writes to Zhiqu business data",
+  "status": "passed",
+  "filter_cycles": 5,
+  "filter_changes": 20,
+  "filter_counts": {
+    "passed": 156,
+    "failed": 8,
+    "generation": 6,
+    "checker": 2
+  },
+  "search_task": "HumanEval/132",
+  "search_result_count": 1,
+  "unmatched_search_count": 0,
+  "detail_toggles": 10,
+  "details_collapsed_after_toggles": true,
+  "reloads": 5,
+  "rows_after_each_reload": 164,
+  "console_errors": 0,
+  "console_warnings": 0
+}
