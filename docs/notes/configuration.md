@@ -12,6 +12,7 @@
 - Redis — `spring.data.redis.*` (rate limiting, locks)
 - JWT — `jwt.secret`, `jwt.expiration`
 - Uploads — `app.upload-dir`
+- Desktop installers — `app.desktop-downloads-dir` (default `downloads`, relative to the working directory; round 82). The web "下载桌面版" dialog offers the newest `.dmg` (macOS) and `.exe/.msi/.zip` (Windows) found there; not in git, not in the JAR. `package-macos-native.sh` copies the dmg in when `ZHIQU_DOWNLOADS_DIR` is set.
 - Timezone — `app.timezone` (default `Asia/Shanghai`). **"Which calendar day is it" is decided in
   exactly one place**, `BusinessClock.today()`. Before 2026-09-21 there were two: the AI prompts
   used `LocalDate.now(ZoneId.of("Asia/Shanghai"))` ("今天是 %s，时区是 Asia/Shanghai", and the

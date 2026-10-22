@@ -9,6 +9,9 @@ zhiqu-backend/target/
 # 用户上传文件（运行时生成）
 uploads/
 
+# 桌面版安装包（网页版「下载桌面版」从这里拿；dmg 一百多 MB，超过 GitHub 单个文件的上限，第八十二轮）
+downloads/
+
 # 系统文件
 .DS_Store
 Thumbs.db

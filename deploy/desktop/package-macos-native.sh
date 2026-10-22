@@ -139,6 +139,15 @@ rm -f "$DMG"
 hdiutil create -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"
 echo "    $(basename "$DMG")  $(du -h "$DMG" | cut -f1)"
+# 网页版的「下载桌面版」从后端的下载目录（app.desktop-downloads-dir）拿最新的 dmg：设了 ZHIQU_DOWNLOADS_DIR 就顺手拷进去。
+# 服务器上那份要自己拷过去（dmg 不进 git，也不进 JAR）。
+if [ -n "${ZHIQU_DOWNLOADS_DIR:-}" ]; then
+  mkdir -p "$ZHIQU_DOWNLOADS_DIR"
+  # 先拷成点开头的名字再改名：拷到一半时后端不认它（DesktopDownloads 跳过点开头的），不会把半个包发出去
+  cp "$DMG" "$ZHIQU_DOWNLOADS_DIR/.$(basename "$DMG").part"
+  mv -f "$ZHIQU_DOWNLOADS_DIR/.$(basename "$DMG").part" "$ZHIQU_DOWNLOADS_DIR/$(basename "$DMG")"
+  echo "    已拷到下载目录：$ZHIQU_DOWNLOADS_DIR/$(basename "$DMG")"
+fi
 
 echo
 echo "完成："

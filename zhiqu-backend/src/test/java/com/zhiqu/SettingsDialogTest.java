@@ -146,7 +146,11 @@ class SettingsDialogTest {
         String paint = fn(ui, "function paintUser(box, u){");
         assertTrue(paint.contains("box.dataset.name = name;") && paint.contains("box.dataset.account = u.account || '';"),
                 "paintUser 没把名字、账号记到按钮上 —— 头像菜单顶上那一行是从这里读的");
-        assertTrue(shell.contains("askNotifyPermission: askNotifyPermission, logout: logout };"), "壳没把 logout 交给 zhiqu-ui.js 的菜单");
+        // 第八十二轮在后面又交了 openDesktopDownload（头像菜单的「下载桌面版」）：看的是交出去的那一个对象里有没有 logout，不看它排第几
+        int ex = shell.indexOf("window.zqApi = {");
+        assertTrue(ex >= 0 && shell.indexOf("};", ex) > ex, "找不到壳交出去的 window.zqApi");
+        String exported = shell.substring(ex, shell.indexOf("};", ex) + 2);
+        assertTrue(exported.contains(" logout: logout,") || exported.contains(" logout: logout };"), "壳没把 logout 交给 zhiqu-ui.js 的菜单");
     }
 
     @Test

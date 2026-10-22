@@ -335,7 +335,9 @@
     var h='<div class="zq-user-menu-head"><strong>'+escHtml(btn.dataset.name||'')+'</strong><span>'+escHtml(btn.dataset.account||'')+'</span></div>'
       + menuLink('#settings/profile','settings','设置') + menuLink('#achievements','award','成就')
       + menuLink(NAV.data[0][0], NAV.data[0][2], NAV.data[0][1], cur===NAV.data[0][0])
-      + '<button type="button" role="menuitem" data-zq-theme><span class="zq-ic">'+icon('contrast')+'</span><span>界面风格</span><span class="zq-user-menu-note">'+nameOf(THEMES,readTheme())+' · '+nameOf(ACCENTS,readAccent())+'</span></button>';
+      + '<button type="button" role="menuitem" data-zq-theme><span class="zq-ic">'+icon('contrast')+'</span><span>界面风格</span><span class="zq-user-menu-note">'+nameOf(THEMES,readTheme())+' · '+nameOf(ACCENTS,readAccent())+'</span></button>'
+      // 下载桌面版（第八十二轮）：已经在桌面应用里就不给
+      + (document.documentElement.classList.contains('zq-desktop') ? '' : '<button type="button" role="menuitem" data-zq-download><span class="zq-ic">'+icon('download')+'</span><span>下载桌面版</span></button>');
     if(adminView){
       h += '<div class="zq-user-menu-sep"></div><div class="zq-user-menu-group">管理</div>'
         + NAV.admin.map(function(it){ return menuLink(it[0], it[2], it[1], cur===it[0]); }).join('');
@@ -355,6 +357,7 @@
     menu.addEventListener('click',function(e){
       if(e.target.closest('a')){ closeMenu(); return; }   // 链接照常走（hash 的由 zhiqu-api.js 打开弹窗）
       if(e.target.closest('[data-zq-theme]')){ closeMenu(); openPop(btn); return; }
+      if(e.target.closest('[data-zq-download]')){ closeMenu(); if(window.zqApi && window.zqApi.openDesktopDownload) window.zqApi.openDesktopDownload(); return; }
       if(e.target.closest('[data-zq-logout]')){
         closeMenu();
         if(window.zqApi && window.zqApi.logout) window.zqApi.logout(); else location.href='index.html';

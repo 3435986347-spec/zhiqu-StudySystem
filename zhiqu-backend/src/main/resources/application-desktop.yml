@@ -38,6 +38,8 @@ app:
   # 第一版只改了 upload-dir，头像修好了，贴图照样写不进去。
   upload-dir: ${user.home}/.zhiqu/uploads
   private-upload-dir: ${user.home}/.zhiqu/private-uploads
+  # 网页版「下载桌面版」的安装包目录（第八十二轮）。桌面应用里不给这个入口，但相对的 downloads 照样会解析到 / 下：和上面两个一样写成绝对的
+  desktop-downloads-dir: ${user.home}/.zhiqu/downloads
   workspace:
     # 仍然默认关闭 —— 默认值本身就是安全边界。用户在 ~/.zhiqu/application.yml 里
     # 填 mode 和 root 才会打开。

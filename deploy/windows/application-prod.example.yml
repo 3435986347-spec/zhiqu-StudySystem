@@ -58,6 +58,10 @@ jwt:
 
 app:
   upload-dir: C:/zhiqu/uploads
+  # Desktop installers offered by the web "download desktop app" dialog: the newest .dmg (macOS) and .exe/.msi/.zip (Windows) here.
+  # Copy 知趣象限-<version>.dmg into this folder after packaging (copy it as .something.part first, then rename:
+  # files starting with a dot are ignored, so a half-copied installer is never offered). Nothing is listed until a file is there.
+  desktop-downloads-dir: C:/zhiqu/downloads
   cookie:
     secure: true
   proxy:

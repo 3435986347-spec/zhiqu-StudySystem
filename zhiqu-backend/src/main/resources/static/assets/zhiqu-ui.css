@@ -1539,6 +1539,29 @@ html.zq-signed-out .zq-mini-out{display:block;}
 .zq-review-log .zq-num{color:var(--zq-text3);}
 .zq-review-textarea{min-height:100px;}
 
+/* ── 下载桌面版（第八十二轮）：共用层的弹窗（zhiqu-api.js 的 openDesktopDownload），落地页的按钮和头像菜单都打开它。
+   这台电脑那一项排在前面、边框深一点、标「你的电脑」；桌面应用里入口不出现（头像菜单那项不画，落地页的按钮靠下面这条藏起来）。 */
+html.zq-desktop [data-zq-download]{display:none !important;}
+.zq-dl{display:flex;flex-direction:column;gap:var(--zq-sp-3);}
+.zq-dl-lead{margin:0;font-size:var(--zq-fs-sm);color:var(--zq-text2);line-height:1.6;}
+.zq-dl-item{display:flex;flex-direction:column;gap:var(--zq-sp-3);padding:var(--zq-sp-4);border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);}
+.zq-dl-item[data-mine="true"]{border-color:var(--zq-text3);}
+.zq-dl-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--zq-sp-3);}
+.zq-dl-name{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.zq-dl-name>strong{font-size:var(--zq-fs-md);font-weight:var(--zq-fw-medium);}
+.zq-dl-name>span{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-dl-mine{flex:none;padding:2px 8px;border-radius:999px;background:var(--zq-tint);font-size:var(--zq-fs-xs);color:var(--zq-text2);}
+.zq-dl-get{display:flex;align-items:center;flex-wrap:wrap;gap:var(--zq-sp-3);}
+.zq-dl-meta{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-dl-steps{margin:0;padding-left:1.3em;font-size:var(--zq-fs-sm);color:var(--zq-text2);line-height:1.65;}
+.zq-dl-steps code,.zq-dl-note code{padding:1px 5px;border-radius:var(--zq-rs);background:var(--zq-card-soft);font-family:var(--zq-fontM);font-size:var(--zq-fs-xs);overflow-wrap:anywhere;}
+.zq-dl-none{margin:0;font-size:var(--zq-fs-sm);color:var(--zq-text3);}
+.zq-dl-warn{margin:0;padding:8px 10px;border-radius:var(--zq-rs);background:var(--zq-warn-tint);color:var(--zq-warn);font-size:var(--zq-fs-sm);line-height:1.55;}
+.zq-dl-sum{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-dl-sum>summary{width:max-content;cursor:pointer;}
+.zq-dl-sum>code{display:block;margin-top:4px;font-family:var(--zq-fontM);overflow-wrap:anywhere;user-select:all;}
+.zq-dl-note{margin:0;font-size:var(--zq-fs-xs);color:var(--zq-text3);line-height:1.6;}
+
 @media (max-width: 760px){
   /* 后台四页（第七十七轮）：六个数两个一排、两栏变一栏；账号一行叠成几行（不横着滚）；共享计划一列 */
   .zq-admin-metrics{grid-template-columns:repeat(2,minmax(0,1fr));}

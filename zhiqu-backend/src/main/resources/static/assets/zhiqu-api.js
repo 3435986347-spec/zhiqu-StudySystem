@@ -975,9 +975,103 @@
   function bootIndex() {
     if (token()) { location.href = safeNext(new URLSearchParams(location.search).get('next')); return; }
     $all('[data-auth]').forEach(function (b) { b.onclick = function () { openAuthModal(b.getAttribute('data-auth')); }; });
+    $all('[data-zq-download]').forEach(function (b) { b.onclick = function () { openDesktopDownload(); }; });
     var q = new URLSearchParams(location.search);
     if (q.get('login') != null) openAuthModal(q.get('login') === 'register' ? 'register' : 'login');
   }
+
+  // ── 下载桌面版（第八十二轮）── src/test/resources/js/desktop-download-check.js 从这里抠出来在 node 里真跑。
+  // 落地页的按钮、头像菜单的一项都打开它（桌面应用里两处都不出现）。安装包放在服务器的下载目录里（DesktopDownloads），
+  // 这里只问「各平台有没有、什么版本、多大」；下载本身是一个普通链接 —— 一百多 MB 交给浏览器自己的下载（有进度、断了能续），不用 fetch 读进内存。
+  // 认这台电脑：Mac / Windows 放前面、标「你的电脑」。Chromium 给得出芯片架构：认出是 Intel 的 Mac 就直说装不上
+  //（只是提醒，按钮照给 —— 也可能是替别的电脑下）。iPad 的 Safari 自称 MacIntel，靠触点数分出来。
+  var DESKTOP_PLATFORMS = {
+    macos: { name: 'macOS', need: 'Apple 芯片（M1 及以后）· macOS 13 或更新' },
+    windows: { name: 'Windows', need: 'Windows 10 / 11（64 位）' }
+  };
+  function desktopOsOf(nav) {
+    nav = nav || {};
+    // 先信平台字段（userAgentData.platform、navigator.platform），两个都没有才看 UA：UA 是能被改的那一个
+    var uad = nav.userAgentData, plat = String((uad && uad.platform) || nav.platform || ''), ua = String(nav.userAgent || '');
+    var mac = plat ? /^mac/i.test(plat) : /Macintosh/.test(ua);
+    if (mac) return nav.maxTouchPoints > 1 ? 'other' : 'macos';
+    return (plat ? /^win/i.test(plat) : /Windows NT/.test(ua)) ? 'windows' : 'other';
+  }
+  async function desktopArchOf(nav) {
+    try {
+      var uad = nav && nav.userAgentData;
+      if (!uad || typeof uad.getHighEntropyValues !== 'function') return null;
+      var v = await uad.getHighEntropyValues(['architecture']);
+      return v && (v.architecture === 'arm' || v.architecture === 'x86') ? v.architecture : null;
+    } catch (e) { return null; }
+  }
+  function desktopSize(bytes) {
+    var mb = Number(bytes) / 1e6;
+    return (mb >= 100 ? Math.round(mb) : Math.round(mb * 10) / 10) + ' MB';
+  }
+  function desktopSteps(key, ext) {
+    if (key === 'macos') {
+      return ['打开下载的 .dmg，把「知趣象限」拖进「应用程序」。',
+        '第一次打开时 macOS 会拦下来（这个版本没有经过苹果公证）：到「系统设置 → 隐私与安全性」，在下面点「仍要打开」。'
+          + '如果说「已损坏，无法打开」，在「终端」里运行 <code>xattr -dr com.apple.quarantine /Applications/知趣象限.app</code> 再打开。'];
+    }
+    return [ext === 'zip' ? '解压到一个文件夹，双击里面的「知趣象限.exe」（免安装）。' : '双击安装，装好后在「开始」菜单里打开「知趣象限」。',
+      'Windows 可能提示「Windows 已保护你的电脑」（这个版本没有代码签名）：点「更多信息」→「仍要运行」。'];
+  }
+  function desktopDownloadHtml(listing, os, arch) {
+    listing = listing || {};
+    var order = os === 'windows' ? ['windows', 'macos'] : ['macos', 'windows'];
+    var h = '<div class="zq-dl"><p class="zq-dl-lead">桌面版和网页版功能一样，多了系统通知和缩到桌面上的迷你番茄钟。</p>';
+    if (os === 'other') h += '<p class="zq-dl-note">这台设备不是 Mac 也不是 Windows 电脑：桌面版只有这两种，手机、平板直接用网页版就好。</p>';
+    order.forEach(function (key) {
+      var p = DESKTOP_PLATFORMS[key], it = listing[key], mine = os === key;
+      h += '<section class="zq-dl-item" data-platform="' + key + '"' + (mine ? ' data-mine="true"' : '') + '>'
+        + '<div class="zq-dl-head"><div class="zq-dl-name"><strong>' + p.name + '</strong><span>' + p.need + '</span></div>'
+        + (mine ? '<span class="zq-dl-mine">你的电脑</span>' : '') + '</div>';
+      if (mine && key === 'macos' && arch === 'x86') {
+        h += '<p class="zq-dl-warn" role="note">这台 Mac 看起来是 Intel 芯片：现在的安装包只能装在 Apple 芯片的 Mac 上。</p>';
+      }
+      if (!it) {
+        h += '<p class="zq-dl-none">' + p.name + ' 版还在准备，放上来以后这里会出现下载按钮。</p></section>';
+        return;
+      }
+      var name = String(it.fileName || ''), ext = (name.split('.').pop() || '').toLowerCase();
+      h += '<div class="zq-dl-get"><a class="' + (mine || os === 'other' ? 'zq-btn' : 'zq-btn-ghost') + '" href="' + API + '/desktop/downloads/' + key + '" download>'
+        + icon('download') + '下载 .' + esc(ext) + '</a>'
+        + '<span class="zq-dl-meta">' + (it.version ? '版本 <span class="zq-num">' + esc(it.version) + '</span> · ' : '')
+        + '<span class="zq-num">' + desktopSize(it.size) + '</span></span></div>'
+        + '<ol class="zq-dl-steps">' + desktopSteps(key, ext).map(function (s) { return '<li>' + s + '</li>'; }).join('') + '</ol>'
+        + (it.sha256 ? '<details class="zq-dl-sum"><summary>校验值（SHA-256）</summary><code>' + esc(it.sha256) + '</code></details>' : '')
+        + '</section>';
+    });
+    return h + '<p class="zq-dl-note">桌面版自带后端，要连一个 MySQL 数据库才能用：地址和账号填在用户目录下的 <code>.zhiqu/application.yml</code>；'
+      + '连网页版用的同一个库，就是同一份数据。</p></div>';
+  }
+  var desktopDownload = null;   // 开着的那个弹窗：连点只开一个
+  function openDesktopDownload() {
+    if (desktopDownload) return desktopDownload;
+    var os = desktopOsOf(window.navigator);
+    var handle = openModal({ title: '下载桌面版', width: '520px', bodyHtml: '<p class="zq-dl-note" role="status">正在看有哪些安装包…</p>',
+      onClose: function () { if (desktopDownload === handle) desktopDownload = null; } });
+    desktopDownload = handle;
+    // 先只有一行「正在看…」，没有能聚焦的东西：焦点放到关闭按钮上（不然留在弹窗后面的按钮上，回车又开一次）
+    try { handle.mask.querySelector('.zq-modal-close').focus({ preventScroll: true }); } catch (e) {}
+    function loadListing() {
+      handle.body.innerHTML = '<p class="zq-dl-note" role="status">正在看有哪些安装包…</p>';
+      Promise.all([api.get('/desktop/downloads'), desktopArchOf(window.navigator)]).then(function (r) {
+        if (desktopDownload !== handle) return;
+        handle.body.innerHTML = desktopDownloadHtml(r[0], os, r[1]);
+      }, function (e) {
+        if (desktopDownload !== handle) return;
+        handle.body.innerHTML = '<p class="zq-dl-none" role="alert">没取到安装包列表：' + esc(e && e.message || '请稍后再试') + '</p>'
+          + '<button type="button" class="zq-btn-ghost" data-zq-dl-retry>再试一次</button>';
+        handle.body.querySelector('[data-zq-dl-retry]').onclick = loadListing;
+      });
+    }
+    loadListing();
+    return handle;
+  }
+  // ── 下载桌面版到此
 
   async function updatePomoCount() {
     // 看板有「今日：N 个」和「今天第 N 轮」两块，迷你番茄钟（第五十轮）只有后一块：各自有就各自填
@@ -2649,6 +2743,6 @@
   // localDate 一并暴露：页面内联脚本要算「今天」时用同一份定义，而不是各写一个 toISOString
   // （原来用它的是看板番茄钟那段内联脚本；第四十九轮番茄钟挪进了壳，现在没有内联脚本在用）
   window.zqApi = { api: api, reload: route, today: today, localDate: localDate, now: nowMs, serverTime: serverTime, businessDate: businessDate, toast: toast, recordPomodoro: recordPomodoro,
-    notify: pageNotify, askNotifyPermission: askNotifyPermission, logout: logout };
+    notify: pageNotify, askNotifyPermission: askNotifyPermission, logout: logout, openDesktopDownload: openDesktopDownload };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', route); else route();
 })();

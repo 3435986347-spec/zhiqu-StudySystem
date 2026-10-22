@@ -38,6 +38,9 @@ public class SecurityConfig {
                                 "/api/harness/device/poll",
                                 // 服务器版本 / 命令行最低版本 —— 新版本提示在登录前也要能读
                                 "/api/harness/meta",
+                                // 下载桌面版（第八十二轮）：落地页上没登录也要能下；只认平台名，文件名不从请求里来
+                                "/api/desktop/downloads",
+                                "/api/desktop/downloads/*",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/uploads/**",
