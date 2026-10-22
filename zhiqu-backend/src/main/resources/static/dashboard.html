@@ -6,17 +6,17 @@
   <title>看板 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261020-mouse80d" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261020-mouse80d">
-  <link rel="manifest" href="manifest.json?v=20261020-mouse80d">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261022-r81" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261022-r81">
+  <link rel="manifest" href="manifest.json?v=20261022-r81">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261020-mouse80d">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261022-r81">
 </head>
 <body>
   <div class="zq-app">
     <nav id="zq-side"></nav>
     <main class="zq-main">
-      <div style="display:flex; flex-direction:column; gap:18px;">
+      <div class="zq-dash">
 
         <header class="zq-page-head">
           <div>
@@ -30,27 +30,27 @@
         </header>
 
         <!-- 概览卡 -->
-        <section class="zq-grid" style="grid-template-columns:repeat(4, minmax(0,1fr));">
+        <section class="zq-grid zq-stat-grid zq-phone-2col">
           <article class="zq-stat"><span class="zq-stat-label">今日待办</span><strong class="zq-stat-num">—</strong></article>
           <!-- 逾期：不再写死大红字（0 也红），大于 0 时标签旁边一个红点（dashboard.js 加 is-alert） -->
           <article class="zq-stat" id="zq-stat-overdue"><span class="zq-stat-label">逾期未完</span><strong class="zq-stat-num">—</strong></article>
           <article class="zq-stat"><span class="zq-stat-label">早间提醒</span><strong class="zq-stat-num">—</strong></article>
           <article class="zq-stat"><span class="zq-stat-label">例行完成</span><strong class="zq-stat-num">—</strong>
-            <div style="height:5px; margin-top:10px; overflow:hidden; border-radius:999px; background:var(--zq-tint);"><i id="zq-routine-bar" style="display:block; width:0%; height:100%; border-radius:inherit; background:var(--zq-primary);"></i></div>
+            <div class="zq-dash-progress"><i id="zq-routine-bar"></i></div>
           </article>
         </section>
 
-        <div style="display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:18px; align-items:start;">
-          <main style="display:flex; flex-direction:column; gap:18px; min-width:0;">
+        <div class="zq-dash-cols zq-phone-1col">
+          <div class="zq-dash-main">
 
             <!-- 本周日历 -->
             <section class="zq-card zq-card-lg">
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px;">
+              <div class="zq-card-head">
                 <h2 class="zq-h2">本周</h2>
-                <div style="display:inline-flex; align-items:center; gap:6px;">
-                  <button class="zq-btn-ghost" data-week-nav="prev" aria-label="上一周" style="width:30px; padding:0;"><span data-zq-icon="chevron-left"></span></button>
-                  <button class="zq-btn-ghost" data-week-nav="today" style="height:30px;">本周</button>
-                  <button class="zq-btn-ghost" data-week-nav="next" aria-label="下一周" style="width:30px; padding:0;"><span data-zq-icon="chevron-right"></span></button>
+                <div class="zq-week-nav">
+                  <button class="zq-btn-ghost is-icon" data-week-nav="prev" aria-label="上一周"><span data-zq-icon="chevron-left"></span></button>
+                  <button class="zq-btn-ghost" data-week-nav="today">本周</button>
+                  <button class="zq-btn-ghost is-icon" data-week-nav="next" aria-label="下一周"><span data-zq-icon="chevron-right"></span></button>
                 </div>
               </div>
               <!-- 一排七个「日子」：点一天，下面的清单换成那一天的（dashboard.js 的 renderWeek / showDay，第四十八轮） -->
@@ -59,22 +59,22 @@
 
             <!-- 今日行动清单 -->
             <section class="zq-card zq-card-lg">
-              <h2 class="zq-h2" id="zq-today-title" style="margin-bottom:6px;">今天</h2>
+              <h2 class="zq-h2" id="zq-today-title">今天</h2>
               <div id="zq-today" class="zq-agenda"></div>
             </section>
 
             <!-- 象限摘要 -->
             <section class="zq-card zq-card-lg">
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px;">
+              <div class="zq-card-head">
                 <h2 class="zq-h2">四象限</h2>
-                <a href="tasks.html" class="zq-btn-ghost" style="height:30px;">进入任务页</a>
+                <a href="tasks.html" class="zq-btn-ghost">进入任务页</a>
               </div>
               <div id="zq-quad" class="zq-quads"></div>
             </section>
-          </main>
+          </div>
 
           <!-- 侧栏 -->
-          <aside style="display:flex; flex-direction:column; gap:18px; position:sticky; top:24px;">
+          <aside class="zq-dash-aside">
             <div class="zq-card zq-card-lg zq-pomo">
               <div class="zq-pomo-head">
                 <h2 class="zq-h2">番茄钟</h2>
@@ -83,28 +83,28 @@
               <div class="zq-pomo-dial">
                 <svg width="160" height="160" viewBox="0 0 200 200" aria-hidden="true">
                   <circle cx="100" cy="100" r="80" fill="none" stroke="var(--zq-card-soft)" stroke-width="9"></circle>
-                  <circle id="zq-pomo-ring" cx="100" cy="100" r="80" fill="none" stroke="var(--zq-primary)" stroke-width="9" stroke-linecap="round" stroke-dasharray="0 502.4" transform="rotate(-90 100 100)" style="transition:stroke-dasharray .4s linear;"></circle>
+                  <circle id="zq-pomo-ring" cx="100" cy="100" r="80" fill="none" stroke="var(--zq-primary)" stroke-width="9" stroke-linecap="round" stroke-dasharray="0 502.4" transform="rotate(-90 100 100)"></circle>
                 </svg>
-                <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                  <div id="zq-pomo-time" class="zq-num" style="font-size:30px; font-weight:var(--zq-fw-medium); line-height:1;">25:00</div>
-                  <div id="zq-pomo-phase" style="font-size:11.5px; color:var(--zq-text2); margin-top:6px;">待开始</div>
+                <div class="zq-pomo-center">
+                  <div id="zq-pomo-time" class="zq-num zq-pomo-time">25:00</div>
+                  <div id="zq-pomo-phase" class="zq-pomo-phase">待开始</div>
                 </div>
               </div>
               <div class="zq-pomo-fields">
-                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">专注时长</label><select class="zq-select" id="zq-pomo-min"><option value="25">25 分钟</option><option value="45">45 分钟</option><option value="60">60 分钟</option></select></div>
-                <div class="zq-field" style="gap:5px;"><label class="zq-label" style="font-size:11.5px;">关联任务</label><select class="zq-select" id="zq-pomo-task"><option value="">（不指定任务）</option></select></div>
+                <div class="zq-field"><label class="zq-label">专注时长</label><select class="zq-select" id="zq-pomo-min"><option value="25">25 分钟</option><option value="45">45 分钟</option><option value="60">60 分钟</option></select></div>
+                <div class="zq-field"><label class="zq-label">关联任务</label><select class="zq-select" id="zq-pomo-task"><option value="">（不指定任务）</option></select></div>
               </div>
-              <div style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap;">
-                <button class="zq-btn" id="zq-pomo-start" style="height:30px;">开始</button>
-                <button class="zq-btn-ghost" id="zq-pomo-reset" style="height:30px;">重置</button>
-                <button class="zq-btn-ghost" id="zq-pomo-mini" style="height:30px;" title="主窗口藏起来，桌面上只留一个总在最前的小番茄钟" hidden>缩小到桌面</button>
+              <div class="zq-pomo-acts">
+                <button class="zq-btn" id="zq-pomo-start">开始</button>
+                <button class="zq-btn-ghost" id="zq-pomo-reset">重置</button>
+                <button class="zq-btn-ghost" id="zq-pomo-mini" title="主窗口藏起来，桌面上只留一个总在最前的小番茄钟" hidden>缩小到桌面</button>
               </div>
-              <div id="zq-pomo-count" style="font-size:12px; color:var(--zq-text2); margin-top:12px; padding-top:10px; border-top:1px solid var(--zq-border-soft);">今日：—</div>
+              <div id="zq-pomo-count" class="zq-pomo-count">今日：—</div>
             </div>
 
-            <section class="zq-card zq-card-lg">
-              <h2 class="zq-h2" style="margin-bottom:4px;">临近截止</h2>
-              <div id="zq-ddl" style="display:flex; flex-direction:column;"></div>
+            <section class="zq-card zq-card-lg zq-dash-ddl">
+              <h2 class="zq-h2">临近截止</h2>
+              <div id="zq-ddl"></div>
             </section>
           </aside>
         </div>
@@ -112,7 +112,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261020-mouse80d"></script>
-  <script src="assets/zhiqu-api.js?v=20261020-mouse80d"></script>
+  <script src="assets/zhiqu-ui.js?v=20261022-r81"></script>
+  <script src="assets/zhiqu-api.js?v=20261022-r81"></script>
 </body>
 </html>

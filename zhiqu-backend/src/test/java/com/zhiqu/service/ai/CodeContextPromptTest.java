@@ -46,10 +46,24 @@ class CodeContextPromptTest {
     @DisplayName("写工具下发过却没产出草稿：不许贴整份文件，如实说没写成")
     void 能写却没写成不许贴整份文件() {
         String text = CodeContextPrompt.dataBlock("(读到的内容)", List.of(), true);
-        assertTrue(text.contains("不要在回答里贴出整份文件"), "能写却没写成时没拦住整份贴代码：" + text);
+        assertTrue(text.contains("一般情况下不要拿整份文件的代码凑数"), "能写却没写成时没拦住整份贴代码：" + text);
+        assertTrue(text.contains("不要说成已经写好了"), "没写成却可能说成写好了：" + text);
         assertFalse(text.contains("需要改动就把改法写出来"), "又在鼓励它把改法（整份代码）写出来：" + text);
         String withDrafts = CodeContextPrompt.dataBlock("x", List.of(Map.of("path", "game.html")), true);
         assertTrue(withDrafts.contains("不要在回答里再贴一遍文件内容"), "有草稿时没拦住重复贴内容：" + withDrafts);
+    }
+
+    /**
+     * 第八十一轮（用户在 AI 助手里看到的）：让它画一张 SVG，写 crocodile_bike.svg 因为类型不在白名单被拒了两次；
+     * 用户说「我自己保存」「你在对话里给出完整代码」，回答还是「按这一轮的要求不在对话里贴整份」—— 两头都堵死。
+     */
+    @Test
+    @DisplayName("没写成但用户明说要完整内容、或者写入是被类型 / 位置拒掉的（再试也一样）：整份放进代码块给他自己存")
+    void 用户要整份或者再试也没用时给整份() {
+        String text = CodeContextPrompt.dataBlock("(读到的内容)", List.of(), true);
+        assertTrue(text.contains("用户这条消息明确要你把完整内容放在对话里"), "用户明说要完整代码时还是不给：" + text);
+        assertTrue(text.contains("文件类型、位置不被允许而被拒"), "写入被类型拒掉、再试也没用时还是让他再说「写进去」：" + text);
+        assertTrue(text.contains("把完整内容放进一个代码块，告诉他存成哪个文件名"), text);
     }
 
     @Test

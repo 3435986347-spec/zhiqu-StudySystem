@@ -404,6 +404,49 @@ button[aria-busy="true"]{opacity:.62;cursor:progress;}
    （WebKit 里量过：多出 331px）。minmax(0,1fr) 这一条就够了：格子可以比内容窄，下拉框跟着格子拉伸 */
 .zq-pomo-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0;text-align:left;}
 .zq-pomo-fields .zq-select{height:30px;}
+/* ── 看板（第八十一轮从 dashboard.html / pages/dashboard.js 的内联挪进来）：上下一列；四个数是 .zq-stat-grid（手机两个一排，zq-phone-2col）；
+   左右两栏（手机一栏，zq-phone-1col），右栏粘在顶上 ── */
+.zq-dash{display:flex;flex-direction:column;gap:18px;}
+.zq-dash-cols{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start;}
+.zq-dash-main{display:flex;flex-direction:column;gap:18px;min-width:0;}
+.zq-dash-aside{display:flex;flex-direction:column;gap:18px;position:sticky;top:24px;}
+/* 卡片头（本周、四象限）用例行计划、统计两页同一条 .zq-card-head（原来看板自己写的下边距是 14，这里跟着它们是 12）；看板里的按钮 30 高 */
+.zq-dash .zq-card-head .zq-btn-ghost{height:30px;}
+/* 本周的翻页：三个一样高（原来左右两个没写高、是 32，「本周」30，差出 1px） */
+.zq-week-nav{display:inline-flex;align-items:center;gap:6px;}
+.zq-week-nav .is-icon{width:30px;padding:0;}
+#zq-today-title{margin-bottom:6px;}
+.zq-dash-ddl>.zq-h2{margin-bottom:4px;}
+#zq-ddl{display:flex;flex-direction:column;}
+/* 例行完成的进度：宽度是数据（dashboard.js 写 width） */
+.zq-dash-progress{height:5px;margin-top:10px;overflow:hidden;border-radius:999px;background:var(--zq-tint);}
+.zq-dash-progress>i{display:block;width:0;height:100%;border-radius:inherit;background:var(--zq-primary);}
+/* 「今天」的一行、四象限的一条、临近截止的一条：标题最多两行 */
+.zq-agenda-main,.zq-ddl-main{min-width:0;}
+.zq-agenda-title{line-height:1.45;}
+.zq-ddl-title{line-height:1.4;font-weight:var(--zq-fw-medium);}
+.zq-agenda-title,.zq-quad-item,.zq-ddl-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.zq-agenda-desc{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* 象限色的小圆点：四个象限 + 例行，按 data-q 上色（原来 JS 拼 style="background:…"） */
+.zq-qdot[data-q="q1"]{background:var(--zq-q1);}
+.zq-qdot[data-q="q2"]{background:var(--zq-q2);}
+.zq-qdot[data-q="q3"]{background:var(--zq-q3);}
+.zq-qdot[data-q="q4"]{background:var(--zq-q4);}
+.zq-qdot[data-q="routine"]{background:var(--zq-text3);}
+/* 番茄钟：表盘中间的时间和状态、两个下拉的标签、一排按钮、底下一行今天的数 */
+.zq-pomo-dial #zq-pomo-ring{transition:stroke-dasharray .4s linear;}
+.zq-pomo-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.zq-pomo-time{font-size:30px;font-weight:var(--zq-fw-medium);line-height:1;}
+.zq-pomo-phase{margin-top:6px;color:var(--zq-text2);font-size:var(--zq-fs-xs);}
+.zq-pomo-fields .zq-field{gap:5px;}
+.zq-pomo-fields .zq-label{font-size:var(--zq-fs-xs);}
+.zq-pomo-acts{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;}
+.zq-pomo-acts .zq-btn,.zq-pomo-acts .zq-btn-ghost{height:30px;}
+.zq-pomo-count{margin-top:12px;padding-top:10px;border-top:1px solid var(--zq-border-soft);color:var(--zq-text2);font-size:var(--zq-fs-xs);}
+/* 任务页的上下一列（第八十一轮从 tasks.html 的内联挪进来） */
+.zq-tasks-page{display:flex;flex-direction:column;gap:16px;}
+/* 成就 / 设置两页打开弹窗之前那一句 */
+.zq-page-loading{color:var(--zq-text3);font-size:var(--zq-fs-sm);}
 .zq-row{display:flex;align-items:center;gap:12px;}
 .zq-table{border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);overflow:hidden;}
 .zq-table .zq-thead{background:var(--zq-card-soft);border-bottom:1px solid var(--zq-border);font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);color:var(--zq-text3);padding:10px var(--zq-sp-4);}
@@ -664,6 +707,53 @@ body.zq-modal-open{overflow:hidden;}
 .zq-notice .zq-notice-dot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--zq-primary);animation:zqPulse 1.1s ease infinite;}
 .zq-notice.zq-notice-done .zq-notice-dot{background:var(--zq-ok);animation:none;}
 .zq-notice.zq-notice-error .zq-notice-dot{background:var(--zq-bad);animation:none;}
+/* 关掉时淡出（第八十一轮）：入场动画停在最后一帧（both）会压过普通声明，原来 JS 写的 opacity:0 不起作用、220ms 后直接消失；
+   撤掉动画再改 opacity 也不行（浏览器不起过渡，当场就没了）—— 换成一个淡出动画，JS 等它播完再拿掉 */
+.zq-notice.is-closing{animation:zqNoticeOut .2s ease both;}
+@keyframes zqNoticeOut{from{opacity:1;}to{opacity:0;}}
+/* ── 共用层的小件（第八十一轮从 zhiqu-api.js / zhiqu-ui.js 的内联挪进来） ── */
+/* 询问框 / 确认框 / 说明框：正文一段、输入框下面的提示；多行输入框 */
+.zq-ask-msg{margin:0 0 16px;color:var(--zq-text2);font-size:var(--zq-fs-sm);line-height:1.7;white-space:pre-wrap;}
+.zq-ask-hint{margin:0 0 12px;color:var(--zq-text3);font-size:var(--zq-fs-xs);line-height:1.6;}
+textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id：只给多行的 */
+/* 列表空着时的一句（empty()） */
+.zq-empty-line{padding:18px;color:var(--zq-text3);font-size:var(--zq-fs-sm);text-align:center;}
+/* 页面接口暂时不可用（renderInitError） */
+.zq-init-error{max-width:720px;margin:40px auto;padding:24px;}
+.zq-init-error .zq-h1{margin-bottom:10px;}
+.zq-init-error-msg{margin:0 0 16px;color:var(--zq-text2);font-size:var(--zq-fs-sm);line-height:1.8;}
+/* 登录 / 注册：两个页签（选中的看 aria-selected，原来 JS 改 fontWeight / color / borderBottomColor，选中时还写成 700）、两张表（hidden 切换） */
+.zq-auth-tabs{display:grid;grid-template-columns:1fr 1fr;margin-bottom:18px;border-bottom:1px solid var(--zq-border-soft);}
+.zq-auth-tab{height:38px;border:none;border-bottom:2px solid transparent;background:none;color:var(--zq-text2);font-size:var(--zq-fs-base);font-weight:var(--zq-fw-regular);cursor:pointer;}
+.zq-auth-tab[aria-selected="true"]{border-bottom-color:var(--zq-primary);color:var(--zq-primary);font-weight:var(--zq-fw-medium);}
+.zq-auth-form{display:flex;flex-direction:column;gap:14px;}
+.zq-auth-form .zq-btn{height:38px;}
+.zq-auth-remember{display:flex;align-items:center;gap:8px;color:var(--zq-text2);font-size:var(--zq-fs-sm);cursor:pointer;}
+.zq-auth-remember input{accent-color:var(--zq-primary);}
+/* 任务表单：说明框、截止前提醒一行（下拉 + 天数）、下面的说明、提醒发不出去的警告条 */
+#zq-tf-desc{min-height:60px;}
+.zq-tf-remind{display:flex;gap:8px;}
+#zq-tf-mode{flex:none;}
+#zq-tf-days{flex:1;min-width:0;}
+.zq-tf-note{margin:-4px 0 13px;color:var(--zq-text3);font-size:var(--zq-fs-xs);line-height:1.6;}
+#zq-tf-remind-warn{margin:-6px 0 13px;padding:8px 10px;border-radius:var(--zq-rs);background:var(--zq-q1-bg);color:var(--zq-q1);font-size:var(--zq-fs-xs);line-height:1.6;}
+#zq-tf-remind-warn a{color:inherit;font-weight:var(--zq-fw-medium);}
+/* 代码着色（阅读和新编辑器同一套）：注释、字符串、关键字、数字（原来每一段拼 style="color:…"） */
+.zq-tok-c{color:var(--zq-text3);}
+.zq-tok-s{color:var(--zq-q4);}
+.zq-tok-k{color:var(--zq-q2);}
+.zq-tok-n{color:var(--zq-q3);}
+/* 右键浮出菜单（popMenu）：位置是数据（JS 写 left / top），样子在这里；悬停原来靠 onmouseenter / onmouseleave 写底色 */
+#zq-popmenu{position:fixed;z-index:9500;min-width:120px;padding:5px;border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);}
+.zq-popmenu-item{display:block;width:100%;padding:8px 12px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text);font-size:var(--zq-fs-sm);text-align:left;cursor:pointer;}
+.zq-popmenu-item:hover,.zq-popmenu-item:focus-visible{background:var(--zq-tint);outline:none;}
+.zq-popmenu-item.is-danger{color:var(--zq-bad);}
+/* 侧栏左下角：名字、身份（zhiqu-ui.js 的 paintUser）；外观弹层里第二个小标题和上面隔开 */
+.zq-user-text{min-width:0;}
+.zq-user-name{overflow:hidden;color:var(--zq-sb-active-text);font-size:var(--zq-fs-sm);font-weight:var(--zq-fw-medium);text-overflow:ellipsis;white-space:nowrap;}
+.zq-user-role{color:var(--zq-text3);font-size:var(--zq-fs-2xs);}
+.zq-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%;}
+.zq-modes+.zq-pop-t{padding-top:12px;}
 
 /* ── AI 工作区：真实上传、附件、思考摘要与结构化产物 ── */
 .zq-ai-drop-zone{border:1px solid var(--zq-border);border-radius:var(--zq-rm);padding:7px 12px;display:flex;align-items:center;gap:8px;color:var(--zq-text3);background:var(--zq-card);font-size:var(--zq-fs-xs);cursor:pointer;transition:border-color .15s ease,background .15s ease,color .15s ease;}
@@ -1466,9 +1556,8 @@ html.zq-signed-out .zq-mini-out{display:block;}
 
   .zq-main,.zq-main.is-side-collapsed{margin-left:56px;padding:18px 12px 64px;}
   .zq-side:not(.is-collapsed){box-shadow:0 0 0 100vmax rgba(0,0,0,.35);}
-  .zq-main [style*="grid-template-columns"]:not([style*="grid-template-columns:52px"]):not([style*="grid-template-columns:36px"]):not([style*="auto-fit"]):not([style*="repeat(7"]):not([style*="minmax(200px,2.2fr)"]):not([style*="minmax(120px,1.1fr)"]):not([style*="repeat(4"]):not([style*="repeat(5"]):not([style*="repeat(6"]){grid-template-columns:minmax(0,1fr)!important;}
-  /* 两条规则认的是互不相交的两批 —— 上面那条要是不排除这三种，它的 :not 叠得更多、优先级更高，数字卡会被它压成一栏 */
-  .zq-main [style*="repeat(4"],.zq-main [style*="repeat(5"],.zq-main [style*="repeat(6"]{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+  /* 原来这里有两条按内联 style 认网格的规则（[style*="grid-template-columns"] 压成一栏、[style*="repeat(4"]… 两个一排）：
+     第八十一轮看板的最后两处内联网格挪进了类（.zq-stat-grid + zq-phone-2col、.zq-dash-cols + zq-phone-1col），它们没人用了，删掉 */
   /* 页头：标题一侧和按钮一侧放不下就上下排（原来按钮被挤成两行、或者把标题挤成一个字一行） */
   .zq-main header{flex-wrap:wrap;}
   .zq-form-grid{grid-template-columns:minmax(0,1fr);}

@@ -61,7 +61,7 @@ cd ../zhiqu-cli && npm test
 - 产品方案（2026-10-03）：[`docs/product-plan.md`](docs/product-plan.md)，五步按顺序做，标「要你定」的先问用户。
 - zhiqu harness（P0–P7）：[`docs/zhiqu-harness-plan.md`](docs/zhiqu-harness-plan.md)，严格按表执行、不擅自增删，做完一项更新「进度」列。**npm 发布（P7）之前单独问用户**；`zhiqu-cli/package.json` 的 `"private": true` 留着。
 - 界面打磨（2026-10-06）：[`docs/ui-plan.md`](docs/ui-plan.md)，「要你定」的三件用户已定（见那份末尾）；每一步做完给用户截图。
-- 迷你番茄钟（2026-10-09 用户定了）：[`docs/mini-pomodoro-plan.md`](docs/mini-pomodoro-plan.md)，只做 macOS 桌面应用，三步一步一轮（第四十九到五十一轮做完；面板还没在屏幕上开过，看之前问用户）；宠物形态是后话。
+- 迷你番茄钟（2026-10-09 用户定了）：[`docs/mini-pomodoro-plan.md`](docs/mini-pomodoro-plan.md)，只做 macOS 桌面应用，三步一步一轮（第四十九到五十一轮做完；第八十一轮修了「一缩小整个应用就退出」，面板在屏幕上开过）；宠物形态是后话。
 - Wiki 换编辑器（2026-10-18 用户试过验证版）：CodeMirror 6，分三步、每步一轮（[`docs/rounds/round-70.md`](docs/rounds/round-70.md) 末尾）；第 1 步第七十一轮（阅读认嵌套列表；用户保存的正文原样存，`MarkdownCanonicalizer.clean()` 只给 AI 写的和哈希）、第 2 步第七十三轮做完；第八十轮去掉试用开关（用户说那个提示不该还在），新编辑器成默认、旧编辑器只做加载不上时的退路 —— 删旧编辑器之前问用户。
 - 一轮接一轮：每轮的计划开工时存进 `docs/rounds/round-NN.md`，收口时补结果，随那一轮一起提交，并在 `docs/rounds/README.md` 和本文件末尾各加一行。每轮带一段真浏览器里的暴力测试。
 
@@ -86,7 +86,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261020-mouse80d`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261022-r81`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；**内联样式、写死的字号按文件只许降**（`InlineStyleRatchetTest`，`==` 钉着，少了就改小）；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -193,8 +193,8 @@ cd ../zhiqu-cli && npm test
 - [第七十二轮](docs/rounds/round-72.md) 换上新的应用图标（知字图标设计方案）：网页四张 PNG 原样换、favicon.ico 原来是 6 字节的文本、macOS / Windows 图标从设计稿生成
 - [第七十三轮](docs/rounds/round-73.md) 换编辑器第 2 步：新编辑器补齐图片、下划线、表格、代码着色、段落格式和快捷键，阅读模式里点哪个字光标就落在原文那个字上
 - [第七十四轮](docs/rounds/round-74.md) review 第五十九到七十三轮（9 条 + 十六遍复查）：AI 改页不删用户的字、「根据知识库生成」不算写 Wiki、新编辑器回原处 / 插链接留字；Wiki 草稿只在 `WikiDrafts` 造（先洗再截、空的不造、合入不再洗）
-- [第七十五轮](docs/rounds/round-75.md) 界面打磨第 8 步（三）：设置、成就弹窗的样子进样式表（开关看 `aria-checked`、分栏能用方向键、打开时焦点在选中的那栏），模型卡片不重复「我的」，遮罩盖住滚动条的槽
-- [第七十六轮](docs/rounds/round-76.md) 图标的 1024 母版和矢量稿：macOS 图标最大那一档不再从 512 放大（`MakeIcon` 读 `deploy/desktop/icon/icon-1024.png`）
+- [第七十五轮](docs/rounds/round-75.md) 界面打磨第 8 步（三）：设置、成就弹窗的样子进样式表（开关看 `aria-checked`、分栏能用方向键、打开时焦点在选中的那栏），模型卡片不重复「我的」，遮罩盖住滚动条的槽；[第七十六轮](docs/rounds/round-76.md) 图标的 1024 母版和矢量稿：macOS 图标最大那一档不再从 512 放大（`MakeIcon` 读 `deploy/desktop/icon/icon-1024.png`）
 - [第七十七轮](docs/rounds/round-77.md) 界面打磨第 8 步（四）：后台四页和落地页（三个数原来读接口没有的字段、分钟的桶补 0、账号的操作列不盖日期、手机上叠起来、连点只算一次；标题不再「可控」一个人一行）
 - [第七十八轮](docs/rounds/round-78.md) 界面打磨第 9 步（一）：AI 助手 121 处内联样式进样式表（剩数据 1 处）、字号收成令牌（加 `--zq-fs-2xs`）、内联样式和字号的棘轮；工作区设置的档位看 `aria-pressed`、选文件夹的一项是按钮；[第七十九轮](docs/rounds/round-79.md) 第 9 步（二）：知识 Wiki 96 处内联样式进样式表（剩数据 1 处），全站内联样式 81 处（目标 100 以内）；当前项看 `aria-current`、光标看 `aria-readonly`
 - [第八十轮](docs/rounds/round-80.md) 用户开了电脑操控，在重打的桌面应用里用鼠标点：编辑器里单击链接打开、进出编辑不跳（排版照阅读、对准同一个字）、试用开关去掉（新编辑器成默认）、保存条不占阅读的地方、侧栏让过红黄绿、提示放到底部、空日期是灰的
+- [第八十一轮](docs/rounds/round-81.md) 界面打磨收尾：看板和共用层的样子进样式表，内联样式 81 → 6（只剩按数据变的）；「缩小到桌面」一点就退出、AI 助手存不了 .svg 也不肯给整份代码

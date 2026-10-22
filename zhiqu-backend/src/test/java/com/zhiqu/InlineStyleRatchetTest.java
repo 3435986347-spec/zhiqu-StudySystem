@@ -35,31 +35,41 @@ class InlineStyleRatchetTest {
 
     /**
      * 每个文件里的 {@code style=}（HTML 的属性、JS 拼的标记）。第七十八轮：AI 助手 121 → 1（资料卡片的 --srcc），Wiki 的定高包裹 1 处挪进 .zq-fill-page；
-     * 第七十九轮：知识 Wiki 96 → 1（图谱图例的类型色 --c）。
+     * 第七十九轮：知识 Wiki 96 → 1（图谱图例的类型色 --c）；第八十一轮：看板 38 → 0、共用层 36 → 2、成就 / 设置 / 任务三页各 1 → 0。
+     * 剩下的每一处都是按数据变的，理由写在 {@link #DATA_ONLY} 里。
      */
     private static final Map<String, Integer> STYLE_ATTRS = new TreeMap<>(Map.ofEntries(
-            Map.entry("achievement.html", 1),
-            Map.entry("dashboard.html", 30),
-            Map.entry("profile.html", 1),
-            Map.entry("tasks.html", 1),
             Map.entry("assets/pages/admin.js", 1),
             Map.entry("assets/pages/ai-assistant.js", 1),
-            Map.entry("assets/pages/dashboard.js", 8),
             Map.entry("assets/pages/knowledge-wiki.js", 1),
             Map.entry("assets/pages/statistics.js", 1),
-            Map.entry("assets/zhiqu-api.js", 28),
-            Map.entry("assets/zhiqu-ui.js", 8)));
+            Map.entry("assets/zhiqu-api.js", 2)));
 
-    /** 每个脚本里在 JS 里改样子的地方（{@code .style.x = …}、{@code .style[…]}、{@code cssText}）。AI 助手只剩输入框长高的 3 处；知识 Wiki 14 → 0（第七十九轮）。 */
+    /**
+     * 剩下的内联样式各是什么（第八十一轮，全站 81 → 6）：每一处的那一段源码里必须有这几个字，对不上就是又写了不按数据变的内联样式。
+     */
+    private static final Map<String, List<String>> DATA_ONLY = new TreeMap<>(Map.ofEntries(
+            Map.entry("assets/pages/admin.js", List.of("style=\"--v:' + (v / max)")),               // 流量柱子的高
+            Map.entry("assets/pages/statistics.js", List.of("style=\"--v:' + (v / max)")),          // 专注柱子的高
+            Map.entry("assets/pages/knowledge-wiki.js", List.of("style=\"--c:' + WIKI_TYPE_COLOR[k]")), // 图谱图例的类型色
+            Map.entry("assets/pages/ai-assistant.js", List.of("style=\"--srcc:' +")),               // 资料卡片的类型色
+            Map.entry("assets/zhiqu-api.js", List.of("style=\"' + w + '\"",                         // openModal 调用方给的宽度
+                    "' style=\"max-width:min(100%,' + width + 'px)'"))));                          // Markdown 图片写的尺寸
+
+    /**
+     * 每个脚本里在 JS 里改样子的地方（{@code .style.x = …}、{@code .style[…]}、{@code cssText}）。AI 助手只剩输入框长高的 3 处；知识 Wiki 14 → 0（第七十九轮）；
+     * 第八十一轮共用层 17 → 5（弹窗锁滚动时补的右内边距 3 处、右键菜单的位置 2 处；登录页签、右键菜单的样子和悬停、通知的淡出挪进样式表），
+     * zhiqu-ui.js 的 11 处都是定位 / 面板宽度（数据），看板 1 处是例行进度条的宽度（数据）。
+     */
     private static final Map<String, Integer> STYLE_WRITES = new TreeMap<>(Map.ofEntries(
             Map.entry("assets/pages/ai-assistant.js", 3),
             Map.entry("assets/pages/dashboard.js", 1),
-            Map.entry("assets/zhiqu-api.js", 17),
+            Map.entry("assets/zhiqu-api.js", 5),
             Map.entry("assets/zhiqu-ui.js", 11)));
 
-    /** 写死的字号（不是 var(--zq-fs-*)）一共这几种。第七十八轮：AI 助手的 10 / 10.5 / 11 / 11.5 / 12.5 收进了令牌，但别的页还在用，所以种数没少。 */
+    /** 写死的字号（不是 var(--zq-fs-*)）一共这几种。第七十八轮：AI 助手的 10 / 10.5 / 11 / 11.5 / 12.5 收进了令牌，但别的页还在用，所以种数没少；第八十一轮 11.5、14 没人用了。 */
     private static final Set<String> LITERAL_FONT_SIZES = new TreeSet<>(Set.of(
-            ".92em", "10px", "10.5px", "11px", "11.5px", "12px", "12.5px", "13px", "13.5px", "14px", "14.5px",
+            ".92em", "10px", "10.5px", "11px", "12px", "12.5px", "13px", "13.5px", "14.5px",
             "15px", "15.5px", "16px", "17px", "19px", "20px", "24px", "30px", "38px"));
 
     private static final Pattern STYLE_ATTR = Pattern.compile("style=");
@@ -103,8 +113,16 @@ class InlineStyleRatchetTest {
         assertEquals(STYLE_ATTRS, attrs, "内联 style= 的数变了：多了就是又写了内联样式（写进 zhiqu-ui.css 的类）；少了就把 STYLE_ATTRS 里的数改小");
         assertEquals(STYLE_WRITES, writes, "JS 里改样子的地方变了：按下 / 选中 / 悬停这类样子靠类和 aria-*，在样式表里画；少了就把 STYLE_WRITES 里的数改小");
         int total = attrs.values().stream().mapToInt(Integer::intValue).sum();
-        // 界面打磨第 9 步的目标（docs/ui-plan.md）：817 处降到 100 以内。第七十九轮到了 81；上面按文件的 == 让它只能往下走
-        assertTrue(total > 0 && total <= 100, "内联样式一共 " + total + " 处，第 9 步的目标是 100 以内");
+        // 界面打磨第 9 步的目标（docs/ui-plan.md）：817 处降到 100 以内。第七十九轮到了 81；第八十一轮只剩按数据变的 6 处 ——
+        // 每一处是什么写在 DATA_ONLY 里，那一段源码真的在、条数对得上；多一处不是数据的内联样式，这里和上面一起红
+        assertEquals(STYLE_ATTRS.keySet(), DATA_ONLY.keySet(), "DATA_ONLY 和 STYLE_ATTRS 管的不是同一批文件");
+        int listed = 0;
+        for (Map.Entry<String, List<String>> e : DATA_ONLY.entrySet()) {
+            assertEquals(STYLE_ATTRS.get(e.getKey()).intValue(), e.getValue().size(), e.getKey() + " 剩下的内联样式和 DATA_ONLY 里写的条数不一样");
+            for (String snippet : e.getValue()) assertTrue(src.get(e.getKey()).contains(snippet), e.getKey() + " 里找不到按数据变的那一处：" + snippet);
+            listed += e.getValue().size();
+        }
+        assertEquals(listed, total, "全站的内联样式应当正好是 DATA_ONLY 里那几处（按数据变的）");
     }
 
     @Test

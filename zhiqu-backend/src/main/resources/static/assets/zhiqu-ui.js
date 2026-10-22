@@ -264,7 +264,7 @@
     pop=document.createElement('div'); pop.className='zq-pop';
     var h='<div class="zq-pop-t">外观</div><div class="zq-modes">';
     THEMES.forEach(function(t){ h+='<button type="button" class="zq-m'+(t.id===theme?' on':'')+'" data-theme="'+t.id+'">'+t.name+'</button>'; });
-    h+='</div><div class="zq-pop-t" style="padding-top:12px;">强调色</div><div class="zq-modes">';
+    h+='</div><div class="zq-pop-t">强调色</div><div class="zq-modes">';   // 和上面隔开的那 12px 在样式表（.zq-modes+.zq-pop-t）
     ACCENTS.forEach(function(a){ h+='<button type="button" class="zq-m'+(a.id===accent?' on':'')+'" data-accent="'+a.id+'">'+a.name+'</button>'; });
     h+='</div>';
     pop.innerHTML=h; document.body.appendChild(pop);
@@ -291,13 +291,14 @@
   function currentToken(){ try { return sessionStorage.getItem('token') || localStorage.getItem('token') || ''; } catch(e){ return ''; } }
   function paintUser(box, u){
     if (!box) return;
-    if (!u) { box.innerHTML = '<div class="zq-avatar"></div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:var(--zq-fw-medium);color:var(--zq-sb-active-text);">&nbsp;</div><div style="font-size:11px;color:var(--zq-text3);">&nbsp;</div></div>'; return; }
+    // 样子在样式表（.zq-user-text / -name / -role，第八十一轮）
+    if (!u) { box.innerHTML = '<div class="zq-avatar"></div><div class="zq-user-text"><div class="zq-user-name">&nbsp;</div><div class="zq-user-role">&nbsp;</div></div>'; return; }
     var name = u.name || '知趣用户';
-    var avatar = u.avatar ? '<img src="' + escHtml(u.avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">' : escHtml(name.slice(0, 1));
+    var avatar = u.avatar ? '<img src="' + escHtml(u.avatar) + '" alt="">' : escHtml(name.slice(0, 1));
     // 头像菜单的顶上一行（openUserMenu）从这里读
     box.dataset.name = name;
     box.dataset.account = u.account || '';
-    box.innerHTML = '<div class="zq-avatar">' + avatar + '</div><div style="min-width:0;"><div style="font-size:12.5px;font-weight:var(--zq-fw-medium);color:var(--zq-sb-active-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(name) + '</div><div style="font-size:11px;color:var(--zq-text3);">' + escHtml(u.admin ? '管理员' : '普通用户') + '</div></div>';
+    box.innerHTML = '<div class="zq-avatar">' + avatar + '</div><div class="zq-user-text"><div class="zq-user-name">' + escHtml(name) + '</div><div class="zq-user-role">' + escHtml(u.admin ? '管理员' : '普通用户') + '</div></div>';
   }
   function rememberUser(u){
     var t = currentToken();

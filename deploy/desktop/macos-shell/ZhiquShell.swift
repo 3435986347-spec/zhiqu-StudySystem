@@ -172,6 +172,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 迷你番茄钟的悬浮面板（MiniPanel.swift）：第一次「缩小到桌面」时才建，之后藏起来再拿出来（页面一直开着、一直跟着那个钟）
     private var miniPanel: NSPanel?
     private var miniPage: PageView?
+    /// 迷你模式：主窗口藏着、桌面上只有胶囊。这时系统问「最后一个窗口关了，要不要退出」一律不退（第八十一轮）——
+    /// 胶囊是面板，不算普通窗口；原来一点「缩小到桌面」主窗口一藏，整个应用连同后端就退出了（用户：「点击缩小到桌面会直接卡退」）
+    private var inMiniMode = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 应用在前台时系统默认不弹横幅 —— 页面里已经有提示和声音了，这里仍然弹横幅、进通知中心（不带声音，见 PageView.deliverNotification）
@@ -271,12 +274,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // 胶囊自己看不出来：退出再登录之后它一直写「在主窗口登录后再用」，换了账号还在看上一个人的钟
             miniPage?.reload()
         }
-        window.orderOut(nil)
+        // 先把胶囊放出来、记下在迷你模式，再藏主窗口：反过来的话主窗口一藏，屏幕上一个窗口都没有
+        inMiniMode = true
         miniPanel?.orderFrontRegardless()
+        window.orderOut(nil)
     }
 
     /// 胶囊收起、主窗口回来并到最前（点「展开」、点 Dock 图标、点通知）
     private func showMain() {
+        inMiniMode = false
         miniPanel?.orderOut(nil)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
@@ -311,8 +317,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         completionHandler()
     }
 
+    /// 点红色按钮关掉主窗口就退出（后端跟着停）；迷你模式下主窗口只是藏起来，不退
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return true
+        return !inMiniMode
     }
 
     func applicationWillTerminate(_ notification: Notification) {

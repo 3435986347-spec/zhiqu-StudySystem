@@ -48,7 +48,10 @@ public class WorkspaceProperties {
             "sql", "sh", "bat", "ps1",
             "html", "css", "scss", "less", "vue", "svelte",
             "json", "yml", "yaml", "toml", "xml", "properties",
-            "md", "txt", "csv", "gradle", "makefile", "dockerfile");
+            "md", "txt", "csv", "gradle", "makefile", "dockerfile",
+            // 第八十一轮和命令行（zhiqu-cli/src/tools/guard.js 的 DEFAULT_EXTENSIONS）对齐：都是不含密钥的文本。
+            // 原来网页 / 桌面应用这边没有 svg —— 用户让 AI 助手「画一张鳄鱼骑自行车」，写 crocodile_bike.svg 两次都被拒
+            "mjs", "cjs", "gitignore", "lock", "env.example", "svg", "ini", "cfg", "kts", "dart", "lua", "r", "ipynb");
 
     /** 执行超时。到点 destroyForcibly —— 一个死循环不该把这台机器占住。 */
 

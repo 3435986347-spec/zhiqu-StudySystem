@@ -516,7 +516,7 @@
     el.querySelector('.zq-notice-text').textContent = msg;
     document.body.appendChild(el);
     var closed = false;
-    function close() { if (closed) return; closed = true; el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 220); }
+    function close() { if (closed) return; closed = true; el.classList.add('is-closing'); setTimeout(function () { el.remove(); }, 220); }   // 淡出在样式表（.zq-notice.is-closing）
     return {
       update: function (m, opts) {
         if (closed) return;
@@ -594,13 +594,13 @@
     return new Promise(function (resolve) {
       var done = false;
       var field = opts.textarea
-        ? '<textarea id="zq-ask-input" class="zq-textarea" style="min-height:100px;" placeholder="' + esc(opts.placeholder || '') + '">' + esc(opts.value || '') + '</textarea>'
+        ? '<textarea id="zq-ask-input" class="zq-textarea" placeholder="' + esc(opts.placeholder || '') + '">' + esc(opts.value || '') + '</textarea>'
         : '<input id="zq-ask-input" class="zq-input" placeholder="' + esc(opts.placeholder || '') + '" value="' + esc(opts.value || '') + '">';
       openModal({
         title: opts.title || '请输入',
         bodyHtml:
           '<div class="zq-field">' + (opts.label ? '<label class="zq-label">' + esc(opts.label) + '</label>' : '') + field + '</div>'
-          + (opts.hint ? '<p style="margin:0 0 12px;font-size:12px;color:var(--zq-text3);line-height:1.6;">' + esc(opts.hint) + '</p>' : '')
+          + (opts.hint ? '<p class="zq-ask-hint">' + esc(opts.hint) + '</p>' : '')
           + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" data-ask="cancel">取消</button><button type="button" class="zq-btn" data-ask="ok">' + esc(opts.okText || '确定') + '</button></div>',
         onMount: function (b, h) {
           var input = $('#zq-ask-input', b);
@@ -622,8 +622,8 @@
       openModal({
         title: opts.title || '确认操作',
         bodyHtml:
-          '<p style="margin:0 0 16px;font-size:13.5px;line-height:1.7;color:var(--zq-text2);white-space:pre-wrap;">' + esc(opts.message || '确定继续吗？') + '</p>'
-          + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" data-ask="cancel">取消</button><button type="button" class="zq-btn" data-ask="ok"' + (opts.danger ? ' style="background:var(--zq-bad);"' : '') + '>' + esc(opts.okText || '确定') + '</button></div>',
+          '<p class="zq-ask-msg">' + esc(opts.message || '确定继续吗？') + '</p>'
+          + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" data-ask="cancel">取消</button><button type="button" class="' + (opts.danger ? 'zq-btn-danger' : 'zq-btn') + '" data-ask="ok">' + esc(opts.okText || '确定') + '</button></div>',
         onMount: function (b, h) {
           function finish(v) { if (done) return; done = true; h.close(); resolve(v); }
           $('[data-ask="cancel"]', b).onclick = function () { finish(false); };
@@ -641,7 +641,7 @@
       openModal({
         title: opts.title || '提示',
         bodyHtml:
-          (opts.html || '<p style="margin:0 0 16px;font-size:13.5px;line-height:1.7;color:var(--zq-text2);white-space:pre-wrap;">' + esc(opts.message || '') + '</p>')
+          (opts.html || '<p class="zq-ask-msg">' + esc(opts.message || '') + '</p>')
           + '<div class="zq-modal-actions"><button type="button" class="zq-btn" data-ask="ok">知道了</button></div>',
         onMount: function (b, h) {
           $('[data-ask="ok"]', b).onclick = function () { if (done) return; done = true; h.close(); resolve(); };
@@ -650,7 +650,7 @@
       });
     });
   }
-  function empty(msg) { return '<div style="padding:18px;text-align:center;color:var(--zq-text3);font-size:12.5px;">' + esc(msg || '暂无数据') + '</div>'; }
+  function empty(msg) { return '<div class="zq-empty-line">' + esc(msg || '暂无数据') + '</div>'; }
   function fmtDate(v) { return v ? String(v).replace('T', ' ').slice(0, 16) : '—'; }
   function d10(v) { return v ? String(v).slice(0, 10) : ''; }
   function hm(v) { return v ? String(v).replace('T', ' ').slice(11, 16) : ''; }
@@ -748,10 +748,10 @@
     var main = $('.zq-main') || $('main') || document.body;
     if (!main) return;
     var message = err && err.message ? err.message : '页面数据加载失败';
-    main.innerHTML = '<section class="zq-card" style="max-width:720px;margin:40px auto;padding:24px;">'
+    main.innerHTML = '<section class="zq-card zq-init-error">'
       + '<p class="zq-eyebrow">加载失败</p>'
-      + '<h1 class="zq-h1" style="margin-bottom:10px;">页面接口暂时不可用</h1>'
-      + '<p style="margin:0 0 16px;color:var(--zq-text2);font-size:13px;line-height:1.8;">'
+      + '<h1 class="zq-h1">页面接口暂时不可用</h1>'
+      + '<p class="zq-init-error-msg">'
       + esc(message)
       + '</p><button class="zq-btn" onclick="location.reload()">重新加载</button>'
       + '</section>';
@@ -904,32 +904,30 @@
   }
 
   var AUTH_FORM_HTML =
-    '<div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--zq-border-soft);margin-bottom:18px;">'
-    + '<button type="button" data-authtab="login" style="height:38px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:var(--zq-fw-medium);color:var(--zq-primary);border-bottom:2px solid var(--zq-primary);">登录</button>'
-    + '<button type="button" data-authtab="register" style="height:38px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:var(--zq-fw-regular);color:var(--zq-text2);border-bottom:2px solid transparent;">注册</button>'
+    // 样子在样式表（.zq-auth-*，第八十一轮）：选中的页签看 aria-selected，两张表用 hidden 切
+    '<div class="zq-auth-tabs" role="tablist">'
+    + '<button type="button" class="zq-auth-tab" role="tab" aria-selected="true" data-authtab="login">登录</button>'
+    + '<button type="button" class="zq-auth-tab" role="tab" aria-selected="false" data-authtab="register">注册</button>'
     + '</div>'
-    + '<form id="form-login" style="display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">'
+    + '<form id="form-login" class="zq-auth-form" onsubmit="return false;">'
     + '<div class="zq-field"><label class="zq-label">用户名</label><input class="zq-input" placeholder="请输入用户名"></div>'
     + '<div class="zq-field"><label class="zq-label">密码</label><input class="zq-input" type="password" placeholder="请输入密码"></div>'
-    + '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--zq-text2);cursor:pointer;"><input type="checkbox" style="accent-color:var(--zq-primary);"><span>记住登录状态</span></label>'
-    + '<button class="zq-btn" style="height:38px;">登 录</button>'
+    + '<label class="zq-auth-remember"><input type="checkbox"><span>记住登录状态</span></label>'
+    + '<button class="zq-btn">登 录</button>'
     + '</form>'
-    + '<form id="form-reg" style="display:none;flex-direction:column;gap:14px;" onsubmit="return false;">'
+    + '<form id="form-reg" class="zq-auth-form" hidden onsubmit="return false;">'
     + '<div class="zq-field"><label class="zq-label">用户名</label><input class="zq-input" placeholder="请输入用户名"></div>'
     + '<div class="zq-field"><label class="zq-label">密码</label><input class="zq-input" type="password" placeholder="至少 6 位密码"></div>'
     + '<div class="zq-field"><label class="zq-label">确认密码</label><input class="zq-input" type="password" placeholder="再次输入密码"></div>'
-    + '<button class="zq-btn" style="height:38px;">注 册</button>'
+    + '<button class="zq-btn">注 册</button>'
     + '</form>';
   function switchAuthTab(root, tab) {
     var lg = tab !== 'register';
     var fl = $('#form-login', root), fr = $('#form-reg', root);
-    if (fl) fl.style.display = lg ? 'flex' : 'none';
-    if (fr) fr.style.display = lg ? 'none' : 'flex';
+    if (fl) fl.hidden = !lg;
+    if (fr) fr.hidden = lg;
     $all('[data-authtab]', root).forEach(function (t) {
-      var on = t.getAttribute('data-authtab') === (lg ? 'login' : 'register');
-      t.style.fontWeight = on ? '700' : '500';
-      t.style.color = on ? 'var(--zq-primary)' : 'var(--zq-text2)';
-      t.style.borderBottomColor = on ? 'var(--zq-primary)' : 'transparent';
+      t.setAttribute('aria-selected', t.getAttribute('data-authtab') === (lg ? 'login' : 'register') ? 'true' : 'false');
     });
   }
   function wireAuthForms(root) {
@@ -1388,7 +1386,7 @@
     function field(id, label, control) { return '<div class="zq-field"><label class="zq-label" for="' + id + '">' + label + '</label>' + control + '</div>'; }
     function dt(id, v) { return '<input id="' + id + '" type="datetime-local" class="zq-input" value="' + esc(toLocalInput(v)) + '">'; }
     return field('zq-tf-title', '任务标题', '<input id="zq-tf-title" class="zq-input" maxlength="200" placeholder="例如：数学二轮 · 重积分专题" value="' + esc(t.title || '') + '">')
-      + field('zq-tf-desc', '说明（可留空）', '<textarea id="zq-tf-desc" class="zq-textarea" style="min-height:60px;">' + esc(t.description || '') + '</textarea>')
+      + field('zq-tf-desc', '说明（可留空）', '<textarea id="zq-tf-desc" class="zq-textarea">' + esc(t.description || '') + '</textarea>')
       + '<div class="zq-form-grid">'
       + field('zq-tf-q', '象限', '<select id="zq-tf-q" class="zq-select">' + opts(['重要且紧急', '重要不紧急', '紧急不重要', '不重要不紧急'], Number(t.quadrant || 2), 1) + '</select>')
       + field('zq-tf-p', '优先级', '<select id="zq-tf-p" class="zq-select">' + opts(['低', '中', '高', '紧急'], Number(t.priority == null ? 1 : t.priority), 0) + '</select>')
@@ -1397,13 +1395,13 @@
       + field('zq-tf-deadline', '截止时间（可留空）', dt('zq-tf-deadline', t.deadline))
       + field('zq-tf-remind', '提醒时间（可留空）', dt('zq-tf-remind', t.reminderTime))
       + '</div>'
-      + field('zq-tf-mode', '截止前提醒', '<div style="display:flex;gap:8px;"><select id="zq-tf-mode" class="zq-select" style="flex:none;">'
+      + field('zq-tf-mode', '截止前提醒', '<div class="zq-tf-remind"><select id="zq-tf-mode" class="zq-select">'
         + '<option value="' + TASK_REMIND.DEFAULT + '"' + (remind.mode === TASK_REMIND.DEFAULT ? ' selected' : '') + '>默认</option>'
         + '<option value="' + TASK_REMIND.CUSTOM + '"' + (remind.mode === TASK_REMIND.CUSTOM ? ' selected' : '') + '>自定义天数</option>'
         + '<option value="' + TASK_REMIND.NONE + '"' + (remind.mode === TASK_REMIND.NONE ? ' selected' : '') + '>不提醒</option></select>'
-        + '<input id="zq-tf-days" class="zq-input" style="flex:1;min-width:0;" placeholder="提前几天，例如 7,3,1" value="' + esc(remind.days || '') + '"' + (remind.mode === TASK_REMIND.CUSTOM ? '' : ' hidden') + '></div>')
-      + '<p style="margin:-4px 0 13px;font-size:12px;color:var(--zq-text3);line-height:1.6;">「提醒时间」到点提醒一次；「截止前提醒」在截止前那几天的早上 8 点提醒（默认按任务难度提前几天，0 是截止当天）。都发到「设置 → 提醒」里的推送渠道。</p>'
-      + '<p id="zq-tf-remind-warn" hidden style="margin:-6px 0 13px;padding:8px 10px;border-radius:var(--zq-rs);background:var(--zq-q1-bg);color:var(--zq-q1);font-size:12px;line-height:1.6;"></p>'
+        + '<input id="zq-tf-days" class="zq-input" placeholder="提前几天，例如 7,3,1" value="' + esc(remind.days || '') + '"' + (remind.mode === TASK_REMIND.CUSTOM ? '' : ' hidden') + '></div>')
+      + '<p class="zq-tf-note">「提醒时间」到点提醒一次；「截止前提醒」在截止前那几天的早上 8 点提醒（默认按任务难度提前几天，0 是截止当天）。都发到「设置 → 提醒」里的推送渠道。</p>'
+      + '<p id="zq-tf-remind-warn" hidden></p>'
       + (isNew ? field('zq-tf-weeks', '每周重复（周，可留空）', '<input id="zq-tf-weeks" type="number" min="1" max="52" step="1" class="zq-input" placeholder="填 2 以上：从开始时间起每周建一条，最多 52 周">') : '')
       + '<div class="zq-modal-actions"><button type="button" class="zq-btn-ghost" id="zq-tf-cancel">取消</button><button type="button" class="zq-btn" id="zq-tf-ok">' + (isNew ? '创建' : '保存') + '</button></div>';
   }
@@ -1449,7 +1447,7 @@
         reminderBlocker().then(function (why) {
           var warn = $('#zq-tf-remind-warn', b);
           if (!why || !warn) return;
-          warn.innerHTML = '提醒现在还发不出去：' + esc(why) + '。<a href="#settings/reminders" style="color:inherit;font-weight:var(--zq-fw-medium);">去设置 →</a>';
+          warn.innerHTML = '提醒现在还发不出去：' + esc(why) + '。<a href="#settings/reminders">去设置 →</a>';
           warn.hidden = false;
         });
         // 新建时打的字：弹窗被遮罩点掉、刷新、登录过期都还在（第十五轮）；建好了才删
@@ -1721,20 +1719,21 @@
     return out;
   }
 
-  var CODE_COLORS = { c: 'var(--zq-text3)', s: 'var(--zq-q4)', k: 'var(--zq-q2)', n: 'var(--zq-q3)' };
+  // 四种着色各一个类，颜色在样式表（.zq-tok-c / -s / -k / -n，第八十一轮：原来每一段拼 style="color:…"）
+  var CODE_CLASSES = { c: 'zq-tok-c', s: 'zq-tok-s', k: 'zq-tok-k', n: 'zq-tok-n' };
 
   /** 着色后的 HTML。每段单独 esc()，见上面关于顺序的说明。 */
   function highlightCode(src, lang) {
     return tokenizeCode(String(src == null ? '' : src), lang).map(function (t) {
       var safe = esc(t[1]);
-      var color = CODE_COLORS[t[0]];
-      return color ? '<span style="color:' + color + ';">' + safe + '</span>' : safe;
+      var cls = CODE_CLASSES[t[0]];
+      return cls ? '<span class="' + cls + '">' + safe + '</span>' : safe;
     }).join('');
   }
 
-  /** 着色的分段（第七十三轮：知识 Wiki 新编辑器里的代码块用同一套颜色）：[{ text, color }]，color 为 null 的不着色 */
+  /** 着色的分段（第七十三轮：知识 Wiki 新编辑器里的代码块用同一套颜色）：[{ text, cls }]，cls 为 null 的不着色 */
   function codeTokens(src, lang) {
-    return tokenizeCode(String(src == null ? '' : src), lang).map(function (t) { return { text: t[1], color: CODE_COLORS[t[0]] || null }; });
+    return tokenizeCode(String(src == null ? '' : src), lang).map(function (t) { return { text: t[1], cls: CODE_CLASSES[t[0]] || null }; });
   }
 
   function renderMarkdown(md) {
@@ -2353,14 +2352,13 @@
     var old = document.getElementById('zq-popmenu'); if (old) old.remove();
     var menu = document.createElement('div');
     menu.id = 'zq-popmenu';
-    menu.style.cssText = 'position:fixed;z-index:9500;min-width:120px;padding:5px;background:var(--zq-card);border:1px solid var(--zq-border);border-radius:var(--zq-rm);box-shadow:0 12px 36px rgba(0,0,0,.2);';
+    menu.setAttribute('role', 'menu');   // 样子在样式表（#zq-popmenu、.zq-popmenu-item，第八十一轮）；位置是数据，下面写 left / top
     items.forEach(function (it) {
       var b = document.createElement('button');
       b.type = 'button';
+      b.className = it.danger ? 'zq-popmenu-item is-danger' : 'zq-popmenu-item';
+      b.setAttribute('role', 'menuitem');
       b.textContent = it.label;
-      b.style.cssText = 'display:block;width:100%;padding:8px 12px;border:none;border-radius:var(--zq-rs);background:transparent;color:' + (it.danger ? 'var(--zq-bad)' : 'var(--zq-text)') + ';font-size:12.5px;text-align:left;cursor:pointer;';
-      b.onmouseenter = function () { b.style.background = 'var(--zq-tint)'; };
-      b.onmouseleave = function () { b.style.background = 'transparent'; };
       b.onclick = function () { menu.remove(); it.onClick(); };
       menu.appendChild(b);
     });

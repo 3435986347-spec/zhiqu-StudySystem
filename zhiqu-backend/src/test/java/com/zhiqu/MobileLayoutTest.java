@@ -8,10 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -30,34 +27,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MobileLayoutTest {
 
     private static final Path STATIC = Path.of("src", "main", "resources", "static");
-
-    enum Phone { ONE_COLUMN, TWO_COLUMNS, KEEP }
-
-    /**
-     * 每一种内联 grid-template-columns 在手机上怎么排 —— 人决定过的。键是去掉空白的值。
-     * KEEP 的那些要么本来就窄（「时间 + 标题」一行），要么放在自己会横向滚动的框里（一周日历、任务表），要么 auto-fit 自己会换行。
-     */
-    private static final Map<String, Phone> DECISIONS = new LinkedHashMap<>();
-    static {
-        // 并排的两栏 / 三栏卡片：手机上一栏
-        for (String v : new String[]{"1fr", "1fr1fr", "repeat(2,minmax(0,1fr))", "minmax(0,1fr)minmax(0,1fr)",
-                "repeat(3,minmax(0,1fr))", "minmax(300px,1fr)minmax(0,1.5fr)", "minmax(0,1fr)300px", "300pxminmax(0,1fr)",
-                "minmax(0,1.7fr)minmax(280px,1fr)", "minmax(0,1.6fr)minmax(300px,1fr)", "minmax(0,1.2fr)minmax(280px,1fr)"}) {
-            DECISIONS.put(v, Phone.ONE_COLUMN);
-        }
-        // 四到六个一排的数字卡：两个一排
-        for (String v : new String[]{"repeat(4,minmax(0,1fr))", "repeat(5,minmax(0,1fr))", "repeat(6,minmax(0,1fr))"}) {
-            DECISIONS.put(v, Phone.TWO_COLUMNS);
-        }
-        // 不动
-        DECISIONS.put("52pxminmax(0,1fr)auto", Phone.KEEP);            // 看板「今天」一行：时间 + 标题 + 按钮
-        DECISIONS.put("36pxminmax(0,1fr)", Phone.KEEP);                 // 一周日历里的一条：时间 + 标题
-        DECISIONS.put("repeat(7,minmax(108px,1fr))", Phone.KEEP);       // 一周日历：在自己的框里横向滚动
-        DECISIONS.put("minmax(200px,2.2fr)104px64px78px118px118px108px", Phone.KEEP);        // 任务表一行
-        DECISIONS.put("minmax(120px,1.1fr)minmax(150px,1.3fr)74px62px102px104px128px", Phone.KEEP); // 账号管理表一行
-        DECISIONS.put("repeat(auto-fit,minmax(140px,1fr))", Phone.KEEP);
-        DECISIONS.put("repeat(auto-fit,minmax(178px,1fr))", Phone.KEEP);
-    }
 
     private static String css() throws IOException {
         return SourceText.stripComments(Files.readString(STATIC.resolve("assets/zhiqu-ui.css"), StandardCharsets.UTF_8));
@@ -90,92 +59,34 @@ class MobileLayoutTest {
         return new MediaBlock(css.substring(m.end(), i - 1), i);
     }
 
-    /** 一条规则里所有 [style*="…"] 的字面。 */
-    private static List<String> styleNeedles(String selector) {
-        List<String> out = new ArrayList<>();
-        Matcher m = Pattern.compile("\\[style\\*=\"([^\"]+)\"\\]").matcher(selector);
-        while (m.find()) out.add(m.group(1));
-        return out;
-    }
-
-    /** 手机样式真的会把这个内联 style 排成什么 —— 读的是 zhiqu-ui.css 里那两条规则本身，不是这里的一份抄写。 */
-    private static Phone outcome(String block, String style) {
-        String oneRule = null, twoRule = null;
-        Matcher rule = Pattern.compile("([^{}]+)\\{([^{}]*)\\}").matcher(block);
-        while (rule.find()) {
-            String sel = rule.group(1), decl = rule.group(2).replace(" ", "");
-            if (!sel.contains("[style*=")) continue;
-            if (decl.contains("grid-template-columns:minmax(0,1fr)")) oneRule = sel;
-            if (decl.contains("grid-template-columns:repeat(2,minmax(0,1fr))")) twoRule = sel;
-        }
-        assertTrue(oneRule != null && twoRule != null, "手机样式里找不到「压成一栏」或「两个一排」那条规则");
-        for (String alt : twoRule.split(",")) {
-            for (String needle : styleNeedles(alt)) if (style.contains(needle)) return Phone.TWO_COLUMNS;
-        }
-        String positive = oneRule.substring(0, oneRule.indexOf(":not("));
-        List<String> must = styleNeedles(positive);
-        List<String> mustNot = styleNeedles(oneRule.substring(positive.length()));
-        assertTrue(!must.isEmpty() && mustNot.size() >= 5, "「压成一栏」那条规则解析不出来（扫空了）：" + oneRule);
-        boolean applies = must.stream().allMatch(style::contains) && mustNot.stream().noneMatch(style::contains);
-        return applies ? Phone.ONE_COLUMN : Phone.KEEP;
-    }
-
     @Test
-    @DisplayName("每一种内联 grid-template-columns 在手机上怎么排都有人决定过，而且 zhiqu-ui.css 真的那样排")
-    void 每种网格在手机上怎么排都决定过() throws IOException {
-        String block = phoneBlock(css()).body();
+    @DisplayName("网格一处都不内联（第八十一轮看板的最后两处挪进了类），手机样式里也不再有按 style 字面认元素的规则；看板的网格在手机上怎么排写在类名上")
+    void 网格都在样式表里() throws IOException {
+        // 第八十一轮之前这条是「每一种内联 grid-template-columns 在手机上怎么排都有人决定过」：手机段有两条按 [style*="…"] 认网格的规则
+        // （一般的压成一栏、repeat(4..6 两个一排），这里一种一种对。最后两处（看板的四个数、左右两栏）挪进类以后它们没人用了，删掉；
+        // 再内联一个网格，手机上就没人管它 —— 所以现在是一处都不许有
         List<Path> files = new ArrayList<>();
         try (Stream<Path> s = Files.list(STATIC)) {
             s.filter(p -> p.toString().endsWith(".html")).sorted().forEach(files::add);
         }
-        files.add(STATIC.resolve("assets/zhiqu-api.js"));
-        files.add(STATIC.resolve("assets/zhiqu-ui.js"));
-        // 页面模块（第三十一轮起，方案第 4 步）画在 .zq-main 里，和壳里的页面代码同一个规矩；设置弹窗另有一条（弹窗里的网格）
-        try (Stream<Path> s = Files.list(STATIC.resolve("assets/pages"))) {
-            s.filter(p -> p.toString().endsWith(".js")).sorted().forEach(files::add);
+        try (Stream<Path> s = Files.walk(STATIC.resolve("assets"))) {
+            s.filter(p -> p.toString().endsWith(".js") && !p.toString().contains("/vendor/")).sorted().forEach(files::add);
         }
-
-        Pattern stylePat = Pattern.compile("style=\"([^\"]*grid-template-columns[^\"]*)\"");
-        Pattern valuePat = Pattern.compile("grid-template-columns:\\s*([^;\"']+)");
-        Map<String, String> undecided = new TreeMap<>();
-        List<String> wrong = new ArrayList<>();
-        int seen = 0;
-        java.util.Set<String> distinct = new java.util.HashSet<>();
+        assertTrue(files.size() >= 25, "只扫到 " + files.size() + " 个文件 —— 扫空了？");
+        Pattern inlineGrid = Pattern.compile("style=\\\\?[\"'][^\"']*grid-template-columns");
+        List<String> found = new ArrayList<>();
         for (Path f : files) {
             String src = Files.readString(f, StandardCharsets.UTF_8);
             src = f.toString().endsWith(".js") ? SourceText.stripComments(src) : stripHtmlComments(src);
-            Matcher sm = stylePat.matcher(src);
-            while (sm.find()) {
-                String style = sm.group(1);
-                Matcher vm = valuePat.matcher(style);
-                if (!vm.find()) continue;
-                String value = vm.group(1).trim();
-                String key = value.replaceAll("\\s+", "");
-                seen++;
-                distinct.add(key);
-                Phone want = DECISIONS.get(key);
-                if (want == null) {
-                    undecided.put(value, f.getFileName().toString());
-                    continue;
-                }
-                Phone got = outcome(block, style);
-                if (got != want) wrong.add(f.getFileName() + "「" + value + "」应当 " + want + "，zhiqu-ui.css 实际 " + got);
-            }
+            if (inlineGrid.matcher(src).find()) found.add(STATIC.relativize(f).toString());
         }
-        // 第三十轮个人中心、成就页的 6 处挪进了设置弹窗（assets/settings.js，由「弹窗里的网格」那条判），这里少了它们；
-        // 第四十八轮看板的 4 种（一周日历、日历里的一条、「今天」一行、象限摘要）挪进了 zhiqu-ui.css 的类（.zq-week / .zq-agenda-row / .zq-quads），
-        // 手机上怎么排写在 @media 里 —— 内联的网格少了是方向（界面打磨第 9 步要把内联样式降下来），下限跟着降。
-        // 第五十二轮任务页的表头挪进 .zq-task-grid、第五十三轮番茄钟的两栏挪进 .zq-pomo-fields（内联的 1fr 1fr 正是撑出卡片的那个）
-        // 第五十六轮例行计划页的 5 处（两栏的表单、上下两块）挪进了弹窗（.zq-form-grid）和 .zq-rt-cols（auto-fit，窄了自己一上一下）
-        // 第五十七轮专注统计的两处（四个数字、两张卡）挪进 .zq-stat-grid / .zq-stats-cols（手机上怎么排写在 zq-phone-2col / zq-phone-1col 上），参考计划的两栏换成 auto-fill
-        // 第七十七轮后台四页的 5 处（六个数、两栏、RAG 的四格、账号的列、共享计划的两列）挪进 .zq-admin-* / .zq-acct-row / .zq-reviews（手机上怎么排由 AdminLookTest 认）
-        // 第七十八轮 AI 助手「上传资料 / 添加 URL」的 1fr 1fr 挪进 .zq-ai-src-actions：手机上面板浮在对话上、300 宽，两个按钮并排放得下，不再按 style 被压成一上一下
-        assertTrue(seen >= 3 && distinct.size() >= 3,
-                "只扫到 " + seen + " 处 / " + distinct.size() + " 种 grid-template-columns —— 扫描扫空了（style 的写法变了？），这时下面的判据全是空转");
-        assertTrue(undecided.isEmpty(), "新的 grid-template-columns，还没决定它在手机上怎么排：" + undecided
-                + "\n—— 在 MobileLayoutTest.DECISIONS 里写下一栏 / 两个一排 / 不动（不动的话它得本来就窄、或者在会横向滚动的框里），"
-                + "再让 zhiqu-ui.css 的 @media (max-width: 760px) 真的那样排");
-        assertTrue(wrong.isEmpty(), String.join("\n", wrong));
+        assertTrue(found.isEmpty(), "又内联了网格：" + found + " —— 写进 zhiqu-ui.css 的类，手机上怎么排写在类名上（zq-phone-1col / zq-phone-2col）");
+        String block = phoneBlock(css()).body();
+        assertFalse(block.contains("[style*="), "手机样式里又有按 style 字面认元素的规则 —— 内联的写法一改它就悄悄失效，改成认类");
+        String dash = stripHtmlComments(Files.readString(STATIC.resolve("dashboard.html"), StandardCharsets.UTF_8));
+        assertTrue(dash.contains("<section class=\"zq-grid zq-stat-grid zq-phone-2col\">"), "看板的四个数：手机上两个一排");
+        assertTrue(dash.contains("<div class=\"zq-dash-cols zq-phone-1col\">"), "看板的左右两栏：手机上一栏");
+        assertTrue(css().replace(" ", "").contains(".zq-dash-cols{display:grid;grid-template-columns:minmax(0,1fr)300px;"), "样式表里看板的两栏不是「正文 + 300 的右栏」");
     }
 
     @Test
@@ -290,13 +201,19 @@ class MobileLayoutTest {
         assertTrue(css().contains(".katex{position:relative;}"), "zhiqu-ui.css 没有 .katex{position:relative}");
     }
 
-    /** needle 前面最近的那个 style=" 里写了什么。 */
-    private static String styleBefore(String code, String needle) {
+    /** needle 前面最近的那个 class=" 里的类，和样式表里这些类的声明（第八十一轮起看板的样子都在类上）。 */
+    private static String rulesBefore(String code, String needle) throws IOException {
         int at = code.indexOf(needle);
         assertTrue(at >= 0, "找不到 " + needle);
-        int s = code.lastIndexOf("style=\"", at);
-        assertTrue(s >= 0, needle + " 前面没有 style");
-        return code.substring(s, at);
+        int c = code.lastIndexOf("class=\"", at);
+        assertTrue(c >= 0, needle + " 前面没有 class");
+        String css = css();
+        StringBuilder out = new StringBuilder();
+        for (String cls : code.substring(c + 7, code.indexOf('"', c + 7)).trim().split("\\s+")) {
+            Matcher m = Pattern.compile("(?:^|[},])\\s*[^{}]*\\." + Pattern.quote(cls) + "(?![\\w-])[^{}]*\\{([^}]*)\\}", Pattern.MULTILINE).matcher(css);
+            while (m.find()) out.append(m.group(1)).append(';');
+        }
+        return out.toString();
     }
 
     private static String fn(String code, String signature) {
@@ -309,14 +226,14 @@ class MobileLayoutTest {
     @Test
     @DisplayName("看板列表里的用户原文要收住（原来整段说明原样摊开：5462 字的说明在 375px 上 5000px 高，桌面上也有 1140px）")
     void 看板列表收住原文() throws IOException {
-        // 第三十五轮起看板是模块（pages/dashboard.js）
+        // 第三十五轮起看板是模块（pages/dashboard.js）；第八十一轮起收住的样子在类上（原来是每处内联的 -webkit-line-clamp）
         String api = SourceText.pageModule("dashboard.js");
         String today = SourceText.functionBody(api, "function renderToday(");
-        assertTrue(styleBefore(today, "esc(x.title)").contains("-webkit-line-clamp"), "「今天」的标题没有限行");
-        String desc = styleBefore(today, "esc(x.description");
+        assertTrue(rulesBefore(today, "esc(x.title)").contains("-webkit-line-clamp:2"), "「今天」的标题没有限行");
+        String desc = rulesBefore(today, "esc(x.description");
         assertTrue(desc.contains("text-overflow:ellipsis") && desc.contains("white-space:nowrap"), "「今天」的说明没有收成一行");
-        assertTrue(styleBefore(SourceText.functionBody(api, "function renderQuadrants("), "esc(x.title)").contains("-webkit-line-clamp"), "象限摘要的标题没有限行");
-        assertTrue(styleBefore(SourceText.functionBody(api, "function renderDeadlines("), "esc(d.title)").contains("-webkit-line-clamp"), "临近 DDL 的标题没有限行");
+        assertTrue(rulesBefore(SourceText.functionBody(api, "function renderQuadrants("), "esc(x.title)").contains("-webkit-line-clamp:2"), "象限摘要的标题没有限行");
+        assertTrue(rulesBefore(SourceText.functionBody(api, "function renderDeadlines("), "esc(d.title)").contains("-webkit-line-clamp:2"), "临近 DDL 的标题没有限行");
     }
 
     @Test

@@ -184,12 +184,12 @@ function renderToday(items, date) {
   host.innerHTML = items.length ? items.map(function (x) {
     var routine = x.kind === 'ROUTINE';
     var done = x.status === 2 || x.completed;
-    var color = routine ? 'var(--zq-text3)' : 'var(--zq-' + qKey(x.quadrant) + ')';
+    var dot = routine ? 'routine' : qKey(x.quadrant);   // 小圆点的颜色在样式表（.zq-qdot[data-q]）
     // 一条一行、行间一道细线（第四十八轮；原来一条一张带底色的小卡片，例行计划另一种底色）
     return '<div class="zq-agenda-row' + (done ? ' is-done' : '') + '"><span class="zq-agenda-time zq-num">' + esc(x.time || hm(x.deadline) || '') + '</span>'
-      + '<div style="min-width:0;"><div style="line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(x.title) + '</div>'
-      + '<div class="zq-agenda-meta"><span class="zq-agenda-tag"><i style="background:' + color + ';"></i>' + esc(routine ? '例行' : qLabel(x.quadrant)) + '</span>'
-      + '<span style="flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(x.description || fmtDate(x.deadline)) + '</span></div></div>'
+      + '<div class="zq-agenda-main"><div class="zq-agenda-title">' + esc(x.title) + '</div>'
+      + '<div class="zq-agenda-meta"><span class="zq-agenda-tag"><i class="zq-qdot" data-q="' + dot + '"></i>' + esc(routine ? '例行' : qLabel(x.quadrant)) + '</span>'
+      + '<span class="zq-agenda-desc">' + esc(x.description || fmtDate(x.deadline)) + '</span></div></div>'
       + (future ? '<span></span>' : '<button class="zq-btn-ghost zq-agenda-btn" data-task-done="' + esc(x.id || '') + '" data-kind="' + esc(x.kind || '') + '" data-date="' + esc(date || '') + '">' + (done ? '已完成' : '完成') + '</button>')
       + '</div>';
   }).join('') : empty(isToday ? '今天暂时没有安排' : '这一天没有安排');
@@ -212,9 +212,9 @@ function renderQuadrants(rows) {
   // 一张卡里四格（第四十八轮）：象限色只留在名字前的一个小点上，任务一条一行；原来四张卡、顶上一道 3px 彩边、每条一块彩色底
   host.innerHTML = rows.map(function (row) {
     var q = qKey(row.quadrant);
-    var items = (row.items || []).map(function (x) { return '<div class="zq-quad-item" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(x.title) + '</div>'; }).join('')
+    var items = (row.items || []).map(function (x) { return '<div class="zq-quad-item">' + esc(x.title) + '</div>'; }).join('')
       || '<div class="zq-quad-empty">没有待办</div>';
-    return '<div class="zq-quad"><div class="zq-quad-head"><span class="zq-quad-name"><i style="background:var(--zq-' + q + ');"></i>' + qLabel(row.quadrant) + '</span>'
+    return '<div class="zq-quad"><div class="zq-quad-head"><span class="zq-quad-name"><i class="zq-qdot" data-q="' + q + '"></i>' + qLabel(row.quadrant) + '</span>'
       + '<span class="zq-num zq-quad-count">' + (row.total || 0) + ' 项</span></div>' + items + '</div>';
   }).join('');
 }
@@ -234,7 +234,7 @@ function renderDeadlines(list) {
   // 右边原来是每条一模一样的「DDL」徽标，什么也没说 —— 换成还有几天，今天和逾期的标红（第四十八轮）
   host.innerHTML = list.length ? list.map(function (d) {
     var n = daysUntil(d.deadline);
-    return '<div class="zq-ddl-row"><div style="min-width:0;"><strong style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4;font-weight:var(--zq-fw-medium);">' + esc(d.title) + '</strong>'
+    return '<div class="zq-ddl-row"><div class="zq-ddl-main"><strong class="zq-ddl-title">' + esc(d.title) + '</strong>'
       + '<span class="zq-ddl-when zq-num">' + esc(fmtDate(d.deadline)) + '</span></div>'
       + '<span class="zq-ddl-due zq-num' + (n != null && n <= 0 ? ' is-near' : '') + '">' + esc(dueLabel(n)) + '</span></div>';
   }).join('') : empty('暂无临近截止的事');

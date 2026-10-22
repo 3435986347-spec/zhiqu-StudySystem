@@ -121,6 +121,12 @@ class DesktopPageViewTest {
         String showMini = shell.substring(shell.indexOf("private func showMini()"), shell.indexOf("private func showMain()"));
         assertTrue(showMini.contains("window.orderOut(nil)") && showMini.contains("miniPanel?.orderFrontRegardless()"),
                 "缩小时要主窗口藏起来、面板出来（不抢焦点地出来）：\n" + showMini);
+        // 第八十一轮（用户：「点击缩小到桌面会直接卡退」）：主窗口一藏，系统当成最后一个窗口关了，applicationShouldTerminateAfterLastWindowClosed
+        // 返回 true，整个应用连同后端退出（胶囊是面板，不算普通窗口）。迷你模式下不许退，而且先出胶囊、再藏主窗口
+        int mode = showMini.indexOf("inMiniMode = true"), front = showMini.indexOf("miniPanel?.orderFrontRegardless()"), hide = showMini.indexOf("window.orderOut(nil)");
+        assertTrue(mode >= 0 && mode < hide && front < hide, "要先记下迷你模式、把胶囊放出来，再藏主窗口：\n" + showMini);
+        assertTrue(shell.contains("func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {\n        return !inMiniMode"),
+                "迷你模式下主窗口藏起来时，应用会当成「最后一个窗口关了」退出");
         // 第五十八轮 review：面板只建一次，之后藏起来再拿出来 —— 主窗口退出再登录、换了账号，胶囊看不出来（两个 WKWebView 之间不传 storage 事件），
         // 一直写「在主窗口登录后再用」。再缩小时重新载入胶囊
         int built = showMini.indexOf("miniPanel = makeMiniPanel(page: page)");
@@ -128,6 +134,7 @@ class DesktopPageViewTest {
                 "面板已经建过时，再缩小没有重新载入胶囊（退出再登录之后它一直是「在主窗口登录后再用」）：\n" + showMini);
         String showMain = shell.substring(shell.indexOf("private func showMain()"), shell.indexOf("func applicationShouldHandleReopen"));
         assertTrue(showMain.contains("miniPanel?.orderOut(nil)") && showMain.contains("window.makeKeyAndOrderFront(nil)"), "展开时面板没收、主窗口没回来：\n" + showMain);
+        assertTrue(showMain.contains("inMiniMode = false"), "展开之后还当自己在迷你模式：点红色按钮关主窗口不退出、后端一直跑着");
         assertTrue(shell.contains("func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {\n        showMain()"),
                 "迷你模式下点 Dock 图标，主窗口不出来");
         assertTrue(shell.contains("func applicationDidBecomeActive(_ notification: Notification) {\n        if miniPanel?.isVisible == true && !window.isVisible { showMain() }"),

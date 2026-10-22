@@ -114,7 +114,8 @@ judge('临近截止：今天和逾期的标红（is-near），以后的不标', 
 
 fns.renderQuadrants([{ quadrant: 1, total: 3, items: [{ title: '季度汇报' }] }, { quadrant: 2, total: 0, items: [] }]);
 const quad = hosts['#zq-quad'].innerHTML;
-judge('四象限：象限色只在名字前的小点上，不再整片彩色底、顶上彩边', quad.includes('<i style="background:var(--zq-q1);"></i>') && !/-bg\)|border-top:3px/.test(quad));
+// 第八十一轮：小点的颜色在样式表（.zq-qdot[data-q]），这里认 data-q；整段 HTML 里不许再有内联的样子
+judge('四象限：象限色只在名字前的小点上，不再整片彩色底、顶上彩边', quad.includes('<i class="zq-qdot" data-q="q1"></i>') && !/-bg\)|border-top:3px|style=/.test(quad));
 judge('四象限：写件数；空的说没有待办', quad.includes('>3 项<') && quad.includes('没有待办'));
 
 console.log(fail === 0 ? '\nALL-GREEN' : '\nRED: ' + fail + ' 条');

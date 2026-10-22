@@ -556,8 +556,9 @@ function layoutFor(state, options) {
   layoutCache.set(state.doc, value);
   return value;
 }
-const colorMarks = new Map();
-const colored = (color) => { if (!colorMarks.has(color)) colorMarks.set(color, Decoration.mark({ attributes: { style: 'color:' + color } })); return colorMarks.get(color); };
+// 代码着色：和阅读模式同一套类（.zq-tok-*，颜色在样式表；第八十一轮之前是一段一个 style="color:…"）
+const tokenMarks = new Map();
+const tokenMark = (cls) => { if (!tokenMarks.has(cls)) tokenMarks.set(cls, Decoration.mark({ class: cls })); return tokenMarks.get(cls); };
 
 /** 光标不在的地方怎么显示（链接、标题、强调…）和每一行的高度。只用 view.state 和 view.visibleRanges —— node 里的判据拿一个假视图跑同一份 */
 export function inlineDecorations(view, options) {
@@ -592,7 +593,7 @@ export function inlineDecorations(view, options) {
         if (code && options.codeTokens) {
           let at = code.from;
           for (const token of options.codeTokens(state.sliceDoc(code.from, code.to), info ? state.sliceDoc(info.from, info.to) : '')) {
-            if (token.color && token.text) out.push(colored(token.color).range(at, at + token.text.length));
+            if (token.cls && token.text) out.push(tokenMark(token.cls).range(at, at + token.text.length));
             at += token.text.length;
           }
         }

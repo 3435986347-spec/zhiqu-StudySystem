@@ -40,11 +40,12 @@ function judge(name, cond, detail) {
   else { console.log('  FAIL  ' + name + (detail ? '  →  ' + detail : '')); fail++; }
 }
 
-// 判据 1：任何输入产出的 HTML 里，除了我们自己加的 <span style="color:…"> 与 </span>，
+// 判据 1：任何输入产出的 HTML 里，除了我们自己加的 <span class="zq-tok-…"> 与 </span>，
 // 不得出现任何其他标签。这是「转义顺序写反」唯一会表现出来的症状。
+// （第八十一轮之前着色是 <span style="color:…">，颜色挪进了样式表的 .zq-tok-c / -s / -k / -n）
 function strayTags(html) {
   return html
-    .replace(/<span style="color:[a-z0-9(),\- ]+;">/g, '')
+    .replace(/<span class="zq-tok-[cskn]">/g, '')
     .replace(/<\/span>/g, '')
     .match(/<[^>]*>/g) || [];
 }
@@ -82,7 +83,7 @@ const samples = [
 for (const s of samples) {
   for (const lang of ['java', 'python', '']) {
     const stripped = mod.highlightCode(s, lang)
-      .replace(/<span style="color:[^"]*">/g, '').replace(/<\/span>/g, '');
+      .replace(/<span class="zq-tok-[cskn]">/g, '').replace(/<\/span>/g, '');
     judge('逐字一致 lang=' + (lang || '无') + ' ' + JSON.stringify(s.slice(0, 28)),
       stripped === mod.esc(s), '得到 ' + JSON.stringify(stripped.slice(0, 80)));
   }
@@ -98,9 +99,13 @@ judge('Python 里 # 是注释', pyTok.some(t => t[0] === 'c'), JSON.stringify(py
 // 判据 4：着色真的发生了（否则以上全部会因为「什么都没做」而空过）
 console.log('── 判据 4：着色必须真的发生（防空过）──');
 const rich = mod.highlightCode('public int n = 0; // c\nString s = "x";', 'java');
+const css = require('fs').readFileSync(require('path').resolve(require('path').dirname(process.argv[2]), 'zhiqu-ui.css'), 'utf8');
 for (const kind of ['c', 's', 'k', 'n']) {
   const color = { c: '--zq-text3', s: '--zq-q4', k: '--zq-q2', n: '--zq-q3' }[kind];
-  judge('出现了 ' + kind + ' 类着色', rich.includes(color), '没找到 ' + color);
+  judge('出现了 ' + kind + ' 类着色', rich.includes('<span class="zq-tok-' + kind + '">'), '没找到 zq-tok-' + kind);
+  // 颜色在样式表：每个类正好一条，颜色还是原来那一个（改了一边另一边红）
+  const rules = css.match(new RegExp('\\.zq-tok-' + kind + '\\{([^}]*)\\}', 'g')) || [];
+  judge('样式表里 .zq-tok-' + kind + ' 是 ' + color, rules.length === 1 && rules[0].includes('color:var(' + color + ')'), JSON.stringify(rules));
 }
 
 console.log(fail === 0 ? '\nALL-GREEN' : '\nRED: ' + fail + ' 条');

@@ -525,6 +525,18 @@ function fixture({ failLoad = false } = {}) {
     const src = fs.readFileSync(cmPath, 'utf8');
     assert.ok(src.includes("'.cm-zq-table .zq-md-table': { margin: '0' }"), '表格预览里那层的上下 12px 会漏出来，把下一行顶下去');
   });
+  await check('代码块着色：编辑器挂的是阅读模式同一套类（.zq-tok-*，颜色在样式表），不是一段一个内联的颜色（第八十一轮）', async () => {
+    const { EditorState, EditorSelection, LanguageSupport, markdownLanguage } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    const md = '开头\n\n```js\nconst x = 1;\n```\n\n结尾';
+    const state = EditorState.create({ doc: md, selection: EditorSelection.cursor(0), extensions: [new LanguageSupport(markdownLanguage)] });
+    const codeTokens = (code) => [{ text: 'const', cls: 'zq-tok-k' }, { text: ' x = ', cls: null }, { text: '1', cls: 'zq-tok-n' }, { text: code.slice(10), cls: null }];
+    const marks = [];
+    cm.inlineDecorations({ state, visibleRanges: [{ from: 0, to: md.length }] }, { codeTokens }).between(0, md.length, (from, to, d) => {
+      if (d.spec.attributes && d.spec.attributes.style) marks.push('style:' + d.spec.attributes.style);
+      if (/zq-tok-/.test(d.spec.class || '')) marks.push(md.slice(from, to) + ':' + d.spec.class);
+    });
+    assert.deepEqual(marks, ['const:zq-tok-k', '1:zq-tok-n']);
+  });
   console.log(failed ? 'RED: ' + failed : 'ALL-GREEN');
   if (failed) process.exitCode = 1;
 })();
