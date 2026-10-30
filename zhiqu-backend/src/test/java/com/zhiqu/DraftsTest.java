@@ -63,20 +63,21 @@ class DraftsTest {
     void Wiki接线() throws Exception {
         // 第三十六轮起知识 Wiki 是模块（pages/knowledge-wiki.js）
         String code = SourceText.pageModule("knowledge-wiki.js");
-        String save = SourceText.functionBody(code, "async function saveWikiEdit()");
-        int put = save.indexOf("await api.put('/knowledge/pages/'");
-        int clear = save.indexOf("drafts.clear(wikiDraftKey(p))");
-        assertTrue(put > 0 && clear > put, "草稿要在保存成功之后才删（被乐观锁挡住时还得在）");
-        assertTrue(save.contains("version: baseVersion") && save.contains("var baseVersion = p._draftBase != null ? p._draftBase : p.version;"),
+        // 第八十三轮起是自动保存（saveWikiContent），没有「保存 / 取消」按钮了；草稿的几条性质照旧钉着
+        String save = SourceText.functionBody(code, "function saveWikiContent(p, md)");
+        int put = save.indexOf("api.put('/knowledge/pages/'");
+        int settle = save.indexOf("settleWikiSaved(p, md, base)");
+        assertTrue(put > 0 && settle > put, "草稿要在保存成功之后才删（被乐观锁挡住时还得在）");
+        assertTrue(SourceText.functionBody(code, "function settleWikiSaved(p, md, base)").contains("drafts.clearIf(wikiDraftKey(p), md)"), "存上了没删草稿（只删和存上的一样的那份）");
+        assertTrue(save.contains("version: base") && save.contains("var base = p._draftBase != null ? p._draftBase : p.version"),
                 "恢复的草稿要按它开始改时的版本保存 —— 否则一份旧草稿能盖掉这之后别人的修改");
-        int ask = save.indexOf("askConfirm(");
-        assertTrue(ask >= 0 && ask < save.indexOf("safe('保存知识页'") && save.contains("if (!replace || !isWikiEditSession(editContext)) return;")
-                        && save.contains("if (p._draftBase != null && p.version != null && Number(p._draftBase) !== Number(p.version))"),
-                "旧版本上的草稿遇到这一页已被改过：保存前要先问（否则要么悄悄盖掉别人的、要么永远存不进去）");
+        String offer = SourceText.functionBody(code, "function offerWikiDraft(p)");
+        assertTrue(offer.contains("if (moved) p._saveConflict = true;"), "旧版本上的草稿恢复回来、这一页已被改过：不能自动存（要么悄悄盖掉别人的、要么永远存不进去），先停下让人选");
+        String mine = SourceText.functionBody(code, "async function resolveWikiConflictMine(p)");
+        int ask = mine.indexOf("askConfirm(");
+        assertTrue(ask >= 0 && ask < mine.indexOf("api.get(") && mine.contains("if (!ok || state.wikiCur !== p) return;"), "「用我的覆盖」要先问，问完人走了就不存");
         String paint = between(code, "async function paintWikiDoc(p, opts)", "state.wikiCur = p;");
-        assertTrue(paint.contains("if (state.wikiDirty) saveWikiDraftNow();"), "换页之前没先把正在改的存成草稿");
-        assertTrue(code.contains("$('#zq-wiki-cancel').onclick = cancelWikiEdit;"), "取消按钮没接取消编辑");
-        assertTrue(SourceText.functionBody(code, "function cancelWikiEdit()").contains("drafts.clear(wikiDraftKey(cur))"), "取消编辑要丢掉草稿");
+        assertTrue(paint.contains("if (state.wikiDirty) { saveWikiDraftNow(); flushWikiSave(); }"), "换页之前没先把正在改的存成草稿、存上服务器");
         assertTrue(code.contains("wireWikiDrafts(doc);"), "编辑区没接草稿");
     }
 }

@@ -8,7 +8,7 @@
 import {
   EditorState, EditorSelection, StateField, Compartment, EditorView, Decoration, ViewPlugin, WidgetType, keymap, drawSelection,
   defaultKeymap, history, historyKeymap, indentWithTab, syntaxTree, syntaxHighlighting, HighlightStyle, LanguageSupport,
-  markdownLanguage, insertNewlineContinueMarkup, deleteMarkupBackward, autocompletion, completionKeymap, tags
+  markdownLanguage, insertNewlineContinueMarkup, deleteMarkupBackward, autocompletion, completionKeymap, tags, placeholder
 } from './vendor/codemirror/codemirror.js';
 
 // ── 纯文本扫描（node 里能跑的部分） ─────────────────────────────────────
@@ -377,21 +377,24 @@ export function sourcePosition(markdown, anchor) {
   return hit.pos + (ends.length ? ends[ends.length - 1] : 0);
 }
 
-// ── 排版和阅读一致（第八十轮） ─────────────────────────────────────────
-// 用户在桌面应用里点进编辑，正文整个跳一下：阅读时段落之间 12px，编辑器里段落之间的空行占一整行（53 对 39px），
-// 标题自带上内边距，阅读时藏起来的重复页名在编辑器里露出来。这里照阅读模式（.zq-prose .zq-md）的上下外边距，
-// 算出编辑器里每一行该有多高：空行只占两块之间该空的那么高，紧挨着上一块的行带上该有的上内边距。
+// ── 排版（第八十轮；第八十三轮改了空行） ─────────────────────────────────
+// 第八十轮为了「点进编辑不跳」，照阅读模式（.zq-prose .zq-md）的上下外边距排编辑器：空行只占两块之间该空的那么高，
+// 一串空行里只有第一行占、开头结尾的空行不占（行高 0）—— 结果连按回车，字换了行、光标却不动（用户：「不能连续换行」，第八十三轮真键盘复现）。
+// 第八十三轮编辑器一直开着、不再和阅读视图来回换（像 Obsidian），用不着为对位压扁空行：每个空行都是一整行。
+// 紧挨着上一块（中间没有空行）的行仍然带上阅读时该有的上内边距，标题、列表、代码框和正文之间照样分得开。
 
 /** 阅读模式各块的上 / 下外边距（zhiqu-ui.css 的 .zq-prose .zq-md 那几条）。相邻两块之间空多高 = 两边取大（外边距折叠） */
 export const BLOCK_MARGINS = { p: [0, 12], h1: [28, 14], h2: [30, 10], h3: [24, 8], h4: [20, 6], h5: [18, 6], h6: [16, 6],
   li: [0, 12], task: [6, 6], quote: [16, 16], pre: [16, 16], hr: [28, 28], table: [12, 12], math: [12, 12] };
 /** 同一个列表里两项之间（.zq-prose .zq-md li{margin:5px 0}，折叠后 5px） */
 export const LIST_ITEM_GAP = 5;
-/** 编辑器里会用到的所有空行高度 / 上内边距（样式只能事先写好） */
-export const LAYOUT_SIZES = [0, 5, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 30];
+/** 编辑器里会用到的所有上内边距（样式只能事先写好） */
+export const LAYOUT_SIZES = [5, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 30];
 /** 块里面的尺寸照阅读模式（第八十轮）：阅读时代码框里一行是正文的行高（pre 是 15px × 1.85 的行，里面 13px 的 code 是行内的，撑不矮它）；
  *  代码框上下各是 12px 内边距 + 1px 边框；引用上下各 2px 内边距。判据从样式表读出来对照 */
-export const READING_BOX = { codeLineHeight: 'calc(var(--zq-fs-md) * 1.85)', fence: 13, quotePad: 2 };
+/** 光标闪一次的周期（亮、灭各一半）：照 macOS 的插入点（Obsidian 用的是系统光标，也是这个节奏）。0 就不闪 */
+export const CURSOR_BLINK_MS = 1060;
+export const READING_BOX = { codeLineHeight: 'calc(var(--zq-fs-md) * 1.85)', quotePad: 2 };
 
 /** 挂上编辑器时光标先放在哪：藏起来的重复标题后面（第八十轮）。放在 0 的话它一挂上就算「碰到了」，露出来又藏回去 */
 export function startCursor(text, title) {
@@ -427,35 +430,24 @@ const gapBetween = (prev, next, nested = false) => {
 const indentOf = (s) => /^\s*/.exec(s)[0].replace(/\t/g, '    ').length;
 
 /**
- * 每一行该怎么排：[{ blank, kind, gap, pad }]。空行的 gap 是它该占的高度（一串空行只有第一行占，开头和结尾的空行不占）；
+ * 每一行该怎么排：[{ blank, kind, pad }]。空行（blank）照常是一整行（第八十三轮）；
  * 一块紧挨着上一块（中间没有空行）时，它的第一行 pad 是该有的上内边距。代码块、块公式里的空行是内容，照常排。
- * titleLine 是藏起来的重复页名那一行（-1 表示没有）：它后面那一块和阅读时一样带着自己的上边距。
+ * titleLine 是藏起来的重复页名那一行（-1 表示没有）。
  */
 export function layoutLines(text, titleLine = -1) {
   const lines = String(text || '').split('\n');
-  const out = lines.map(() => ({ blank: false, kind: 'p', gap: null, pad: 0 }));
-  let fence = null, math = false, prev = null, prevLine = -1, run = null;
-  const closeRun = (next) => {
-    if (!run) return;
-    out[run.first].gap = !next || !run.prev ? 0 : run.prev === 'title' ? BLOCK_MARGINS[next][0] : gapBetween(run.prev, next);
-    for (let k = run.first + 1; k <= run.last; k++) out[k].gap = 0;
-    run = null;
-  };
+  const out = lines.map(() => ({ blank: false, kind: 'p', pad: 0 }));
+  let fence = null, math = false, prev = null, prevLine = -1;
   for (let i = 0; i < lines.length; i++) {
     const s = lines[i];
     if (fence) { out[i].kind = 'pre'; if (new RegExp('^\\s*' + fence[0] + '{' + fence.length + ',}\\s*$').test(s)) fence = null; prevLine = i; continue; }
     if (math) { out[i].kind = 'math'; if (/^\s*\$\$\s*$/.test(s)) math = false; prevLine = i; continue; }
-    if (i === titleLine) { closeRun(null); prev = 'title'; prevLine = i; continue; }
-    if (/^\s*$/.test(s)) {
-      out[i].blank = true;
-      if (run) run.last = i; else run = { first: i, last: i, prev };
-      continue;
-    }
+    if (i === titleLine) { prev = 'title'; prevLine = i; continue; }
+    if (/^\s*$/.test(s)) { out[i].blank = true; continue; }
     const open = /^\s*(`{3,}|~{3,})/.exec(s);
     const kind = open ? 'pre' : /^\s*\$\$/.test(s) ? 'math' : lineKind(s);
     out[i].kind = kind;
-    if (run) closeRun(kind);
-    else if (prevLine === i - 1 && prev && prev !== 'title') {
+    if (prevLine === i - 1 && prev && prev !== 'title') {
       // 紧挨着上一行：同一块的续行不加；新的一块（标题、分隔线、列表的下一项、换了种类）照阅读模式空出来
       const continues = kind === prev && !/^h\d$|^hr$|^li$|^task$/.test(kind) || kind === 'p' && /^(li|task|quote)$/.test(prev);
       if (!continues) out[i].pad = gapBetween(prev, kind, indentOf(s) > indentOf(lines[prevLine]));
@@ -465,13 +457,56 @@ export function layoutLines(text, titleLine = -1) {
     prev = kind === 'p' && /^(li|task|quote)$/.test(prev) && prevLine === i - 1 ? prev : kind;
     prevLine = i;
   }
-  closeRun(null);
   return out;
 }
 
 // ── 实时预览 ───────────────────────────────────────────────────────────
 
-const touched = (state, from, to) => state.selection.ranges.some((r) => r.from <= to && r.to >= from);
+const touchedSel = (state, from, to) => state.selection.ranges.some((r) => r.from <= to && r.to >= from);
+// 块级的（表格、公式、藏起来的页名）在 StateField 里，看不到焦点：只看光标
+const touched = touchedSel;
+
+// ── 点进画出来的块（第八十三轮）──────────────────────────────────────────
+// 表格、图片、公式没被光标碰到时画成阅读的样子，点进去换回原文 —— 高度跟着变，原来点下去下面整块挪走（表格 −16px），
+// 光标还落在块的开头（表格第一行的第一个字），不在点的地方。用户：「点不准」。
+// 现在：表格按点的那一格算出原文里的位置；换回原文以后把光标那一行挪回点下去时的高度，点的地方不动。
+
+/** 表格预览里点了第 row 行（表头是 0）、第 col 格、格子里第 offset 个字：原文里那个字的位置（相对这张表的开头） */
+export function tableCellOffset(source, row, col, offset = 0) {
+  const lines = String(source || '').split('\n');
+  const li = row <= 0 ? 0 : row + 1;   // 原文第 1 行是 | --- | 分隔线，不是一行表格
+  if (li >= lines.length) return String(source || '').length;
+  let start = 0;
+  for (let i = 0; i < li; i++) start += lines[i].length + 1;
+  const line = lines[li], pipes = [];
+  for (let i = 0; i < line.length; i++) if (line[i] === '|' && line[i - 1] !== '\\') pipes.push(i);
+  const lead = /^\s*\|/.test(line);   // 开头有 |：第 0 格在第一、二个 | 之间
+  const left = lead ? pipes[col] : col === 0 ? -1 : pipes[col - 1];
+  if (left === undefined) return start + line.length;
+  const right = (lead ? pipes[col + 1] : pipes[col]) ?? line.length;
+  let from = left + 1; while (from < right && line[from] === ' ') from++;
+  let to = right; while (to > from && line[to - 1] === ' ') to--;
+  return start + Math.min(from + Math.max(0, offset), to);
+}
+/** 外面滚动的那一层（知识 Wiki 里是 #zq-doc：编辑器自己不滚，跟着内容长高） */
+function scrollerOf(el) {
+  for (let n = el && el.parentElement; n; n = n.parentElement) {
+    const y = getComputedStyle(n).overflowY;
+    if ((y === 'auto' || y === 'scroll') && n.scrollHeight > n.clientHeight) return n;
+  }
+  return null;
+}
+/** 光标放到 pos，再把光标那一行挪回 clientTop（点下去时那一块的顶边）：块换成原文、高度变了，点的地方也不挪 */
+function placeKeepingPointer(view, pos, clientTop) {
+  view.dispatch({ selection: EditorSelection.cursor(pos) });
+  view.focus();
+  const scroller = scrollerOf(view.dom);
+  if (!scroller || clientTop == null) return;
+  view.requestMeasure({
+    read: () => { const c = view.coordsAtPos(view.state.selection.main.head, 1); return c ? c.top - clientTop : 0; },
+    write: (delta) => { if (Math.abs(delta) >= 1) scroller.scrollTop += delta; },
+  });
+}
 
 const TextWidget = class extends WidgetType {
   constructor(text, className, onClick) { super(); this.text = text; this.className = className; this.onClick = onClick; }
@@ -487,14 +522,23 @@ const TextWidget = class extends WidgetType {
 const MathWidget = class extends WidgetType {
   constructor(tex, display) { super(); this.tex = tex; this.display = display; }
   eq(other) { return other.tex === this.tex && other.display === this.display; }
-  toDOM() {
+  toDOM(view) {
     const el = document.createElement(this.display ? 'div' : 'span');
     el.className = this.display ? 'cm-zq-math-block' : 'cm-zq-math';
     const katex = typeof window !== 'undefined' && window.katex;
-    if (katex) { try { katex.render(this.tex, el, { displayMode: this.display, throwOnError: false }); return el; } catch (e) { /* 照原文显示 */ } }
-    el.textContent = this.display ? `$$\n${this.tex}\n$$` : `$${this.tex}$`;
+    let drawn = false;
+    if (katex) { try { katex.render(this.tex, el, { displayMode: this.display, throwOnError: false }); drawn = true; } catch (e) { /* 照原文显示 */ } }
+    if (!drawn) el.textContent = this.display ? `$$\n${this.tex}\n$$` : `$${this.tex}$`;
+    // 点得进去（第八十三轮：原来点画出来的公式什么都不发生）：光标放到原文里公式开头，那一行留在点下去的高度
+    if (view) el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      let at; try { at = view.posAtDOM(el); } catch (err) { return; }
+      placeKeepingPointer(view, at + (this.display ? 3 : 1), el.getBoundingClientRect().top);
+    });
     return el;
   }
+  ignoreEvent() { return false; }
 };
 
 const CheckboxWidget = class extends WidgetType {
@@ -531,9 +575,20 @@ const RenderedWidget = class extends WidgetType {
     if (this.options.hydrate) this.options.hydrate(el);
     el.addEventListener('load', () => view.requestMeasure(), true);   // 图片到了，高度变了
     el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
       e.preventDefault();
       const pos = view.posAtDOM(el);
-      view.dispatch({ selection: EditorSelection.cursor(this.kind === 'table' ? pos : pos + this.source.length) }); view.focus();
+      // 表格：点了哪一格，光标就进原文里那一格、那个字（第八十三轮；原来一律放到表格开头）；图片：放到原文后面
+      const cell = this.kind === 'table' && e.target && e.target.closest ? e.target.closest('td,th') : null;
+      if (cell && el.contains(cell)) {
+        const tr = cell.parentElement, row = Array.prototype.indexOf.call(el.querySelectorAll('tr'), tr), col = Array.prototype.indexOf.call(tr.children, cell);
+        let offset = 0;
+        const hit = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+        if (hit && cell.contains(hit.startContainer)) { const r = document.createRange(); r.setStart(cell, 0); r.setEnd(hit.startContainer, hit.startOffset); offset = r.toString().length; }
+        placeKeepingPointer(view, pos + tableCellOffset(this.source, row, col, offset), tr.getBoundingClientRect().top);
+        return;
+      }
+      placeKeepingPointer(view, this.kind === 'table' ? pos : pos + this.source.length, el.getBoundingClientRect().top);
     });
     return el;
   }
@@ -562,6 +617,9 @@ const tokenMark = (cls) => { if (!tokenMarks.has(cls)) tokenMarks.set(cls, Decor
 
 /** 光标不在的地方怎么显示（链接、标题、强调…）和每一行的高度。只用 view.state 和 view.visibleRanges —— node 里的判据拿一个假视图跑同一份 */
 export function inlineDecorations(view, options) {
+  // 光标碰到才露出原文符号（# ** []() 这些）—— 编辑器没焦点时一律不露（第八十三轮，照 Obsidian）：
+  // 原来一打开页面光标在开头，第一行标题就露着 ##，人还没点进正文
+  const touched = (st, from, to) => view.hasFocus !== false && touchedSel(st, from, to);
   const { state } = view; const out = [];
   const codeRanges = [];
   for (const { from, to } of view.visibleRanges) {
@@ -577,7 +635,7 @@ export function inlineDecorations(view, options) {
         return;
       }
       if (name === 'FencedCode' || name === 'CodeBlock') {
-        // 光标不在时，围栏那两行（```js、```）只占阅读时代码框的上 / 下内边距那么高、字藏起来 —— 和阅读模式一样高（第八十轮）
+        // 光标不在时，围栏那两行（```js、```）的字藏起来；行高照旧是整行（第八十三轮：原来压成阅读时代码框的内边距那么高，光标一进去变高，下面整块挪）
         const folded = name === 'FencedCode' && !touched(state, node.from, node.to);
         const firstLine = state.doc.lineAt(node.from), lastLine = state.doc.lineAt(node.to);
         for (let pos = node.from; pos <= node.to;) {
@@ -659,14 +717,13 @@ export function inlineDecorations(view, options) {
       if (!touched(state, u.from, u.to)) { out.push(hide.range(u.from, u.openTo)); out.push(hide.range(u.closeFrom, u.to)); }
     }
   }
-  // 每一行的高度照阅读模式：空行只占两块之间该空的那么高，紧挨着上一块的行带上上内边距（第八十轮）
+  // 紧挨着上一块的行带上阅读时该有的上内边距（第八十轮）；空行是一整行，不再压（第八十三轮）
   const layout = layoutFor(state, options);
   for (const { from, to } of view.visibleRanges) {
     for (let pos = from; pos <= to;) {
       const l = state.doc.lineAt(pos), info = layout.lines[l.number - 1];
       if (info) {
-        if (info.blank && info.gap != null) out.push(line('cm-zq-gap-' + info.gap).range(l.from));
-        else if (info.pad) out.push(line('cm-zq-pad-' + info.pad).range(l.from));
+        if (info.pad) out.push(line('cm-zq-pad-' + info.pad).range(l.from));
         if (info.kind === 'quote') {   // 一段引用的第一行、最后一行带上阅读时的上 / 下内边距
           const quote = (k) => layout.lines[k] && !layout.lines[k].blank && layout.lines[k].kind === 'quote';
           if (!quote(l.number - 2) && !info.pad) out.push(line('cm-zq-quote-top').range(l.from));
@@ -766,6 +823,11 @@ const theme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': { overflow: 'visible', fontFamily: 'inherit', lineHeight: '1.85' },
   '.cm-content': { padding: '0', caretColor: 'var(--zq-text)' },
+  // 光标（第八十三轮）：drawSelection 自己画光标、把系统的藏起来，它默认是 1.2px 的黑线 —— 深色模式下黑的画在深色底上，根本看不见。
+  // 用户：「点的时候有时候没反应」「光标停留的时候可以自动闪烁，就像 obsidian 那样」—— 光标其实到了，只是看不见。
+  // 颜色跟正文走；一闪一闪的节奏照 macOS（cursorBlinkRate）；选中的底色和全站的 ::selection 同一个
+  '.cm-cursor, .cm-dropCursor': { borderLeft: '1.5px solid var(--zq-text)', marginLeft: '-0.75px' },
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': { background: 'var(--zq-tint-strong)' },
   '.cm-line': { padding: '0' },
   // 标题上下空多少由前后的空行 / 上内边距给（照阅读模式），标题行自己不再带（第八十轮）
   '.cm-zq-h1': { fontSize: '24px', lineHeight: '1.35' },
@@ -778,7 +840,8 @@ const theme = EditorView.theme({
   '.cm-zq-code': { fontFamily: 'var(--zq-fontM)', fontSize: '0.92em', background: 'var(--zq-card-soft)', borderRadius: '4px' },
   '.cm-zq-codeblock': { fontFamily: 'var(--zq-fontM)', fontSize: '13px', lineHeight: READING_BOX.codeLineHeight, background: 'var(--zq-card-soft)', paddingLeft: '14px' },
   // 首尾的 ``` 行（光标不在时字藏起来）正好是阅读时代码框的上 / 下内边距 + 边框；定高，藏字留下的占位撑不高它
-  '.cm-zq-fence': { lineHeight: READING_BOX.fence + 'px', height: READING_BOX.fence + 'px', overflow: 'hidden' },
+  // ``` 那两行一直是整行高（第八十三轮）：原来没碰到时压成 13px、光标一进代码框就露出来变成整行，下面整块挪 29px。现在碰到时只是露出字
+  '.cm-zq-fence': { color: 'var(--zq-text3)' },
   '.cm-zq-quote-top': { paddingTop: READING_BOX.quotePad + 'px' },
   '.cm-zq-quote-bottom': { paddingBottom: READING_BOX.quotePad + 'px' },
   '.cm-zq-link, .cm-zq-wikilink': { color: 'var(--zq-primary)', textDecoration: 'underline', textUnderlineOffset: '3px', cursor: 'pointer' },
@@ -791,8 +854,7 @@ const theme = EditorView.theme({
   '.cm-zq-table': { cursor: 'text' },
   // 表格预览里画的是阅读模式那一份（.zq-md-table 带着上下 12px）：块之间空多少由前后的空行给，里面这层不再带（第八十轮：原来下面多漏出 12px）
   '.cm-zq-table .zq-md-table': { margin: '0' },
-  ...Object.fromEntries(LAYOUT_SIZES.map((n) => ['.cm-zq-gap-' + n, { lineHeight: n + 'px' }])),
-  ...Object.fromEntries(LAYOUT_SIZES.filter((n) => n).map((n) => ['.cm-zq-pad-' + n, { paddingTop: n + 'px' }])),
+  ...Object.fromEntries(LAYOUT_SIZES.map((n) => ['.cm-zq-pad-' + n, { paddingTop: n + 'px' }])),
   '.cm-zq-image': { display: 'inline-block', maxWidth: '100%', cursor: 'text', verticalAlign: 'top' },
 });
 
@@ -853,13 +915,15 @@ export function mountWikiEditor(host, options) {
       doc: startText,
       selection: EditorSelection.cursor(startAt),
       extensions: [
-        history(), drawSelection(), EditorView.lineWrapping,
+        history(), drawSelection({ cursorBlinkRate: CURSOR_BLINK_MS }), EditorView.lineWrapping,
         new LanguageSupport(markdownLanguage), syntaxHighlighting(highlight),
         keymap.of([{ key: 'Enter', run: insertNewlineContinueMarkup }, { key: 'Backspace', run: deleteMarkupBackward },
           ...FORMAT_KEYS.map((k) => ({ key: k.key, run: (v) => wrapSelection(v, k.open, k.close || k.open) })),
           ...completionKeymap, ...historyKeymap, indentWithTab, ...defaultKeymap]),
         autocompletion({ override: [completeTitles], icons: false }),
         livePreview(options), ...blockPreviews(options), theme,
+        // 空页：编辑器一直开着（第八十三轮），空着的时候说一句能直接写
+        ...(options.placeholder ? [placeholder(options.placeholder)] : []),
         // 页面底上浮着「保存 / 取消」：把光标滚进视野时让开它（第八十轮）
         EditorView.scrollMargins.of(() => ({ bottom: options.bottomInset ? options.bottomInset() : 0 })),
         EditorView.domEventHandlers({
@@ -901,6 +965,10 @@ export function mountWikiEditor(host, options) {
   return {
     view,
     getMarkdown: () => view.state.doc.toString(),
+    /** 整篇换掉（恢复浏览器里存的草稿）：留在撤销历史里，Cmd+Z 回得去；光标放到开头 */
+    setMarkdown(text) {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: String(text || '') }, selection: EditorSelection.cursor(0) });
+    },
     setReadOnly(locked) {
       view.dispatch({ effects: readOnly.reconfigure([EditorState.readOnly.of(locked), EditorView.editable.of(!locked)]) });
     },

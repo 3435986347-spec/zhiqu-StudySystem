@@ -11,6 +11,16 @@ the single guarded entry point `upsertRevisionPage`. Two independent protections
 - **Optimistic lock** — `user_knowledge_page.version` (`@Version`). Write APIs require the client's
   `version`; `reparentByVersion` / `softDeleteByVersion` carry it in the `WHERE`, and
   `updateById(...) != 1` raises `知识页已被其他窗口修改，请刷新后重试`.
+  Since round 83 that is a `VersionConflictException` answered with **code 412** (409 already means
+  "the same Idempotency-Key is still running"), so the page's autosave can tell "changed elsewhere —
+  stop and ask" from "not saved — retry later".
+- **Autosave (round 83)** — the editor (CodeMirror live preview) is always open; typing saves after
+  1 s idle (at most every 5 s while typing) and immediately on page switch / tab close / read-only /
+  focus leaving / page hidden. One save per page in flight; a 412 stops autosave and offers
+  "use mine" (fetch the current version, then save) or "load theirs"; transient failures retry,
+  an uncertain one first resends the identical body (same idempotency key). Rename goes through the
+  same queue. Consecutive `page.update` operation logs of one page within 10 minutes are merged into
+  one row (`writeUpdateLog`), so the log page isn't flooded.
 - **Draft baseline** — a revision stores `base_content_hash` (title + body) and `base_page_version`
   captured **when the agent read the page**, in memory, from the same text handed to the model.
   Apply is refused if the page changed since, if the draft has no baseline, or if the request tries

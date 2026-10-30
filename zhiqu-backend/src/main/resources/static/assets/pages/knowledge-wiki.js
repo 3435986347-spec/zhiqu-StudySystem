@@ -208,13 +208,14 @@ function takeWikiPrefetch(p) {
 async function paintWikiDoc(p, opts) {
   opts = opts || {};
   var authAtStart = token();
-  // 正在编辑时点了目录里的别的页：原来改的字直接被新页面冲掉，一声不吭。先存成草稿，回到这一页时能恢复
-  if (state.wikiDirty) saveWikiDraftNow();
+  // 正在编辑时点了目录里的别的页：原来改的字直接被新页面冲掉，一声不吭。先存成草稿，回到这一页时能恢复；
+  // 第八十三轮起同时马上存上服务器（自动保存），换页不等那一秒
+  if (state.wikiDirty) { saveWikiDraftNow(); flushWikiSave(); }
+  else { clearTimeout(wikiSaveTimer); wikiSaveTimer = 0; wikiSaveSince = 0; }
   state.wikiDirty = false;
   removeWikiDraftBar();
   trackWikiNavigation(p, opts);
   state.wikiCur = p;
-  removeWikiActionBar();
   var doc = $('#zq-doc'), title = $('#zq-doc-title');
   if (title) title.textContent = p.title || '知识页';
   // 等待新页正文时先退出旧页的编辑会话，不能把旧 DOM 的输入存成新页草稿。
@@ -240,17 +241,18 @@ async function paintWikiDoc(p, opts) {
     doc._wikiPendingView = opts.preserveView ? { view: opts.preserveView, page: p, auth: authAtStart, expires: Date.now() + 30000 } : null;
     doc.contentEditable = 'false';
     setSourcePressed(false);
-    doc.innerHTML = renderMarkdown(p.content || p.summary || '');
-    markDuplicateTitle(doc, p.title);
-    markEmptyWikiPage(doc);
-    renderMathIn(doc);
-    wireWikiLinks(doc);
+    // 第八十三轮：没开只读就直接是编辑器（像 Obsidian）—— 不再先画阅读视图、点了再拆掉换编辑器（每点一下都要拆、建、量、对位：卡和跳都在这儿）。
+    // 编辑器的代码还没到（第一次打开）就先画阅读视图，到了 enterWikiCmEdit 自己换上
+    if (doc.dataset.loading !== '1' && !wikiReadOnly() && wikiCmEnabled() && wikiCmModule) enterWikiCmEdit(doc, p, p.content || '', { fresh: true, view: opts.preserveView });
+    else {
+      showWikiReading(doc, p, opts.preserveView);
+      if (doc.dataset.loading !== '1' && !wikiReadOnly() && wikiCmEnabled()) enterWikiCmEdit(doc, p, p.content || '', {});
+    }
     showWikiActionBar();
-    if (opts.preserveView) restoreWikiView(doc, opts.preserveView);
   }
   var insp = $('#zq-insp');
   if (insp) {
-    insp.innerHTML = '<div class="zq-wiki-insp">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span class="zq-wiki-insp-tip">点击正文即可编辑 · 开启「只读」可防止误改 · [[双链]]可跳转</span></div>';
+    insp.innerHTML = '<div class="zq-wiki-insp">类型：' + esc(p.pageType || p.type || 'NOTE') + '<br>更新：' + esc(fmtDate(p.updatedAt)) + '<br><span class="zq-wiki-insp-tip">直接写，自动保存 · 开启「只读」看排好版的阅读视图 · [[双链]]可跳转</span></div>';
   }
   paintWikiTree();
   paintWikiTabs();
@@ -282,10 +284,15 @@ function wireWikiDrafts(doc) {
   doc.addEventListener('input', function () {
     if (doc.dataset.editing !== '1' || wikiReadOnly()) return;
     state.wikiDirty = true;
+    if (state.wikiCur) state.wikiCur._everEdited = true;
     if (state.wikiDraftTimer) clearTimeout(state.wikiDraftTimer);
     state.wikiDraftTimer = setTimeout(saveWikiDraftNow, 800);
+    scheduleWikiSave();
   });
-  window.addEventListener('pagehide', function () { if (state.wikiDirty) saveWikiDraftNow(); });
+  // 焦点离开正文（点了目录、别的按钮、切到别的应用）、页面藏到后台：马上存，不等那一秒（第八十三轮）
+  doc.addEventListener('focusout', function (e) { if (state.wikiDirty && !(e.relatedTarget && doc.contains(e.relatedTarget))) flushWikiSave(); });
+  document.addEventListener('visibilitychange', function () { if (document.hidden && state.wikiDirty) { saveWikiDraftNow(); flushWikiSave(); } });
+  window.addEventListener('pagehide', function () { if (state.wikiDirty) { saveWikiDraftNow(); flushWikiSave(); } });
   // 编辑了还没保存就要走：草稿先存下，浏览器再问一句
   window.addEventListener('beforeunload', function (e) {
     if (!state.wikiDirty) return;
@@ -312,14 +319,18 @@ function offerWikiDraft(p) {
   $('[data-draft="restore"]', bar).onclick = function () {
     if (wikiReadOnly()) return toast('请先关闭只读开关再恢复草稿');
     removeWikiDraftBar();
-    if (wikiCmEnabled()) enterWikiCmEdit(doc, p, d.text);
+    p._draftBase = d.base != null ? d.base : p.version;
+    // 草稿是在旧版本上改的、这一页之后又被改过：不自动存（会被乐观锁挡住），直接亮出「用我的覆盖 / 载入别处的版本」
+    if (moved) p._saveConflict = true;
+    if (wikiCmActive(doc)) wikiCm.handle.setMarkdown(d.text);   // 编辑器一直开着（第八十三轮）：整篇换成草稿，Cmd+Z 回得去
+    else if (wikiCmEnabled()) enterWikiCmEdit(doc, p, d.text, { fresh: true });
     else {
       enterWikiEdit();
       if (doc.dataset.source !== '1') toggleWikiSource();
       var ta = $('#zq-src-ta'); if (ta) ta.value = d.text;
     }
-    p._draftBase = d.base != null ? d.base : p.version;
-    state.wikiDirty = true;
+    state.wikiDirty = true; p._everEdited = true;
+    if (moved) paintWikiSaveState(p); else scheduleWikiSave();
   };
   $('[data-draft="drop"]', bar).onclick = function () { drafts.clear(wikiDraftKey(p)); removeWikiDraftBar(); };
 }
@@ -399,7 +410,7 @@ function wikiHistoryGo(direction) {
 
 function closeWikiTab(index) {
   if (index < 0 || index >= state.wikiTabs.length) return;
-  if (index === state.wikiTabIdx && state.wikiDirty) saveWikiDraftNow();
+  if (index === state.wikiTabIdx && state.wikiDirty) { saveWikiDraftNow(); flushWikiSave(); }
   state.wikiTabs.splice(index, 1);
   if (!state.wikiTabs.length) {
     state.wikiTabIdx = -1;
@@ -408,8 +419,9 @@ function closeWikiTab(index) {
     var doc = $('#zq-doc'), title = $('#zq-doc-title');
     if (doc) {
       doc.dataset.editing = '0'; doc.dataset.source = '0'; doc.dataset.loading = '0';
+      closeWikiCm(doc);
       doc.contentEditable = 'false'; state.wikiDirty = false;
-      removeWikiActionBar(); syncWikiEditMode(doc);
+      syncWikiEditMode(doc); paintWikiSaveState(null);
       doc.innerHTML = empty('没有打开的页面 · 从左侧目录选一页，或点 + 新建标签');
     }
     if (title) title.textContent = '';
@@ -550,11 +562,11 @@ function wireWikiTabShortcuts() {
   document.addEventListener('keydown', function (e) {
     if (!$('#zq-wiki-tabs')) return;
     var doc = $('#zq-doc');
-    // 编辑正文时 ⌘[ 是缩进之类的编辑操作，不抢
-    if (doc && doc.dataset.editing === '1') return;
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
-    if (e.key === '[') { e.preventDefault(); wikiHistoryGo(-1); }
-    else if (e.key === ']') { e.preventDefault(); wikiHistoryGo(1); }
+    // 光标在正文里时 ⌘[ ⌘] 是缩进（编辑器的），不抢；第八十三轮编辑器一直开着，原来「在编辑就全不管」等于 ⌘W 也永远不关标签
+    var typing = doc && doc.contains(document.activeElement);
+    if (e.key === '[' && !typing) { e.preventDefault(); wikiHistoryGo(-1); }
+    else if (e.key === ']' && !typing) { e.preventDefault(); wikiHistoryGo(1); }
     else if (e.key === 'w' && state.wikiTabs.length) { e.preventDefault(); closeWikiTab(state.wikiTabIdx); }
   });
 }
@@ -708,7 +720,8 @@ function wireWikiEditor() {
   });
   var section = doc.closest('section'); if (!section) return;
   $all('[data-wiki-cmd]', section).forEach(function (b) {
-    if (b.getAttribute('data-wiki-cmd') === 'image') b.onmousedown = function (e) { e.preventDefault(); };
+    // 按下去不抢正文的焦点（第八十三轮：原来只有「图片」这样）—— 焦点一离开编辑器，光标那一行露出的 ## ** 就藏起来，点完又露出来，闪一下；选区也保得住
+    b.onmousedown = function (e) { e.preventDefault(); };
     b.onclick = function (e) { e.preventDefault(); wikiToolbar(b.getAttribute('data-wiki-cmd')); };
   });
   var blockSel = $('#zq-wiki-block', section);
@@ -750,13 +763,9 @@ function wireWikiEditor() {
           if (!isWikiEditingContext(editContext)) return;
           p.content = detail.content; p.version = detail.version; p._full = true;
         }
-        var updated = await api.put('/knowledge/pages/' + p.id, { title: p._pendingTitle, content: p.content, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned, version: p.version });
-        if (token() !== editContext.auth) return;
-        p.title = updated && updated.title ? updated.title : p._pendingTitle;
-        p._pendingTitle = null;
-        if (updated && updated.version != null) p.version = updated.version;
-        if (state.wikiCur === p) titleEl.textContent = p.title;
-        paintWikiTree(); toast('名称已更新');
+        // 第八十三轮：和自动保存排同一队（标题和编辑器里的正文一起存）—— 两个各发各的会撞版本号，后到的那个被当成「别处改过」
+        var md = currentWikiMarkdown();
+        await saveWikiContent(p, md != null ? md : p.content || '');
       });
     };
   }
@@ -853,14 +862,38 @@ function ensureWikiEditing() {
 }
 function wikiReadOnly() { return state.wikiReadOnly === true; }
 function toggleWikiReadOnly() {
-  var doc = $('#zq-doc');
-  if (!doc || !state.wikiCur || doc.dataset.loading === '1') return;
-  // 冻结原 DOM / textarea，不重绘、不提交。源码的选区、滚动与未保存内容都留下来。
-  if (doc.dataset.editing === '1') saveWikiDraftNow();
+  var doc = $('#zq-doc'), p = state.wikiCur;
+  if (!doc || !p || doc.dataset.loading === '1') return;
+  // 上锁前先存：浏览器里的草稿一直存（第十五轮），改过的马上上服务器（第八十三轮自动保存）
+  if (doc.dataset.editing === '1') { saveWikiDraftNow(); if (state.wikiDirty) flushWikiSave(); }
   state.wikiReadOnly = !wikiReadOnly();
   // 迟到的链接弹窗、改名、图片选择不能穿过一次上锁 / 解锁继续改旧会话。
   doc.dataset.wikiEditSession = String(++wikiEditSession);
+  // 第八十三轮：像 Obsidian —— 开只读是排好版的阅读视图（嵌入预览、附件都在那儿），关只读回到编辑器。顶上那一段不动
+  if (wikiCmEnabled() && (wikiCmActive(doc) || !wikiReadOnly())) {
+    if (wikiReadOnly()) {
+      var md = currentWikiMarkdown();
+      showWikiReading(doc, p, captureWikiView(doc), md != null ? md : p.content);
+    } else enterWikiCmEdit(doc, p, doc._wikiReadingMarkdown != null ? doc._wikiReadingMarkdown : p.content || '', {});
+    showWikiActionBar();
+    return;
+  }
+  // 编辑器没加载上（简易编辑）：照旧冻结原 DOM / textarea，不重绘、不提交。源码的选区、滚动与未保存内容都留下来。
   syncWikiEditMode(doc);
+}
+/** 阅读视图（开着只读、或者编辑器的代码还没到）：markdown 不给就是这一页存着的正文 */
+function showWikiReading(doc, p, view, markdown) {
+  closeWikiCm(doc);
+  doc.dataset.editing = '0'; doc.dataset.source = '0';
+  doc.contentEditable = 'false';
+  doc._wikiReadingMarkdown = markdown != null ? markdown : null;
+  doc.innerHTML = renderMarkdown(markdown != null ? markdown : p.content || p.summary || '');
+  markDuplicateTitle(doc, p.title);
+  markEmptyWikiPage(doc);
+  renderMathIn(doc);
+  wireWikiLinks(doc);
+  syncWikiEditMode(doc);
+  if (view) restoreWikiView(doc, view);
 }
 function wikiEditingContext(doc) {
   return { doc: doc, page: state.wikiCur, session: doc.dataset.wikiEditSession, source: doc.dataset.source, auth: token() };
@@ -888,6 +921,8 @@ function syncWikiEditMode(doc) {
   }
   if (label) label.textContent = locked ? '已开启' : '';
   $all('[data-wiki-cmd], #zq-wiki-block', doc.closest('section')).forEach(function (control) { control.disabled = locked || unavailable; });
+  var del = $('[data-wiki-cmd="delete"]', doc.closest('section'));
+  if (del) del.hidden = !state.wikiCur || isSystemWikiPage(state.wikiCur);
   syncWikiTaskControls(doc);
   var title = $('#zq-doc-title');
   if (title) {
@@ -993,19 +1028,22 @@ function wikiReadingTop(doc) {
 }
 function enterWikiCmEdit(doc, p, markdown, opts) {
   if (!wikiCmModule) {   // 进页面时就开始加载；还没到就等它到了再进
-    loadWikiCm().then(function () { if (state.wikiCur === p && doc.dataset.editing !== '1') enterWikiCmEdit(doc, p, markdown, opts); }, function () {
+    loadWikiCm().then(function () { if (state.wikiCur === p && doc.dataset.editing !== '1' && !wikiReadOnly()) enterWikiCmEdit(doc, p, markdown, opts); }, function () {
       wikiCmFailed = true;
       toast('编辑器没加载上，先用简易编辑（刷新页面会再试一次）', 'error');
-      if (state.wikiCur === p && doc.dataset.editing !== '1') enterWikiEdit();
+      if (state.wikiCur === p && doc.dataset.editing !== '1' && !wikiReadOnly()) enterWikiEdit();
     });
     return;
   }
   wireWikiDrafts(doc);
-  var scroll = doc.scrollTop;
+  closeWikiCm(doc);
+  var fresh = !!(opts && opts.fresh);   // 刚打开这一页（第八十三轮）：没有阅读视图可量，从顶上开始、或者回到记下的位置
+  var scroll = fresh ? 0 : doc.scrollTop;
   // 换掉阅读视图之前记下：点的那个字（或者顶上第一个字）在原文里是哪儿、屏幕上多高。进去以后让同一个字停在同一个高度 ——
   // 只按像素抄 scrollTop 不行：编辑器上面没画出来的行高度是估的，长页中间点进去整页偏一截（第八十轮，32px）
   var focus = opts && opts.focus, keep = null;
-  if (focus) {
+  if (fresh) keep = null;
+  else if (focus) {
     var charTop = wikiCmModule.readingCharTop(doc, focus.x, focus.y);
     keep = { anchor: wikiCmModule.readingAnchor(doc, focus.x, focus.y), top: charTop != null ? charTop : focus.y - 10 };
   } else keep = wikiReadingTop(doc);
@@ -1025,7 +1063,7 @@ function enterWikiCmEdit(doc, p, markdown, opts) {
       if (!href) { toast('链接地址无效，请使用完整的 HTTP(S) 网址', 'error'); return; }
       window.open(href, '_blank', 'noopener,noreferrer');
     },
-    bottomInset: function () { var bar = document.getElementById('zq-wiki-actions'); return bar && bar.dataset.editing === '1' ? bar.offsetHeight + 12 : 0; },
+    placeholder: '空白页，直接开始写',
     onNavigate: function (title) { var target = (state.wikiPages || []).find(function (x) { return x.title === title; }); if (target) paintWikiDoc(target); else toast('还没有「' + title + '」这一页'); },
     onChange: function () { doc.dispatchEvent(new Event('input', { bubbles: true })); },
     // 第七十三轮：粘贴 / 拖进的图片走同一个上传；图片、表格用阅读模式同一个渲染画；代码块用同一套颜色
@@ -1036,6 +1074,11 @@ function enterWikiCmEdit(doc, p, markdown, opts) {
   }) };
   showWikiActionBar();
   doc.scrollTop = scroll;
+  var back = fresh && opts.view;
+  if (back && back.cmAnchor && doc.getBoundingClientRect) {
+    var pos = wikiCmModule.sourcePosition(markdown, back.cmAnchor);
+    if (pos != null) wikiCm.handle.alignPos(pos, doc.getBoundingClientRect().top + (back.anchorOffset || 0), doc, back.cmAnchor.text);
+  } else if (back) doc.scrollTop = back.scrollTop || 0;
   var at = keep && keep.anchor ? wikiCmModule.sourcePosition(markdown, keep.anchor) : null;
   if (focus) { if (at != null) wikiCm.handle.focusPos(at, keep.top, doc); else wikiCm.handle.focusAt(focus.x, focus.y); }
   else if (at != null) wikiCm.handle.alignPos(at, keep.top, doc, keep.anchor.text);
@@ -1061,6 +1104,8 @@ function wikiCmToolbar(cmd) {
   } else toast('编辑器还没接这个按钮（' + cmd + '）');
 }
 function wikiToolbar(cmd) {
+  // 删除本页（第八十三轮从原来底上那一条挪到工具栏；系统页不给，syncWikiEditMode 藏起来，后端也拦）
+  if (cmd === 'delete') { if (state.wikiCur && !isSystemWikiPage(state.wikiCur)) deleteWikiPage(state.wikiCur); return; }
   if (!ensureWikiEditing()) return;
   var doc = $('#zq-doc');
   if (wikiCmActive(doc)) { wikiCmToolbar(cmd); return; }
@@ -1179,30 +1224,150 @@ function toggleWikiSource() {
     $('#zq-src-ta').focus({ preventScroll: true });
   }
 }
+// ── 自动保存（第八十三轮）────────────────────────────────────────────
+// 像 Obsidian：打字停下 1 秒存一次，一直在打最多 5 秒存一次；切页、关标签、开只读、焦点离开正文、页面藏到后台时马上存。
+// 存的时候不重画、不动光标和滚动（原来点「保存」把编辑器拆掉、重画阅读视图，正在改的那段往上跳 33px，第八十三轮量的）。
+// 一页同时只有一个保存在路上：回来以后接着存最新的（版本号是上一次回来的那个）。版本号对不上（412，别处改过）就停下、照实说，不拿旧版本盖掉；
+// 没存上（断网、服务器忙）说原因、过一会儿自己再试 —— 先原样重发上一次（同一个幂等键：那一次其实存上了的话服务器交回上次的结果，版本号对得上）。
+// 打的字照旧先存在浏览器里（drafts，第十五轮）：刷新、断网、关页都还在。
+var WIKI_SAVE_IDLE_MS = 1000, WIKI_SAVE_MAX_MS = 5000, WIKI_SAVE_RETRY_MS = 10000;
+var wikiSaveTimer = 0, wikiSaveSince = 0, wikiRetryTimer = 0;
+function scheduleWikiSave() {
+  var p = state.wikiCur;
+  if (!p || p.id == null || wikiReadOnly()) return;
+  if (p._saveConflict) { paintWikiSaveState(p); return; }
+  var now = Date.now();
+  if (!wikiSaveSince) wikiSaveSince = now;
+  clearTimeout(wikiSaveTimer);
+  wikiSaveTimer = setTimeout(flushWikiSave, Math.max(0, Math.min(WIKI_SAVE_IDLE_MS, wikiSaveSince + WIKI_SAVE_MAX_MS - now)));
+  paintWikiSaveState(p);
+}
+/** 马上存当前页（有没存的话）。返回这一次保存的 Promise */
+function flushWikiSave() {
+  clearTimeout(wikiSaveTimer); wikiSaveTimer = 0; wikiSaveSince = 0;
+  var p = state.wikiCur, md = currentWikiMarkdown();
+  if (!p || p.id == null || md == null) return Promise.resolve();
+  return saveWikiContent(p, md);
+}
+function isWikiConflict(e) { return !!e && Number(e.code) === 412; }
+function saveWikiContent(p, md) {
+  if (p._saving) { p._saveNext = md; return p._saving; }
+  if (p._saveConflict) { paintWikiSaveState(p); return Promise.resolve(); }
+  if (p._retryMd != null && p._retryMd !== md) {
+    // 上一次没收到回应：先原样重发那一次，再存现在的
+    var later = md; md = p._retryMd; p._saveNext = later;
+  }
+  if (md === (p.content || '') && !p._pendingTitle && p._draftBase == null) { settleWikiSaved(p, md); return Promise.resolve(); }
+  if (!String(md).trim()) { p._saveEmpty = true; paintWikiSaveState(p); return Promise.resolve(); }   // 后端不收空正文：删整页用工具栏的「删除本页」
+  p._saveEmpty = false;
+  var base = p._draftBase != null ? p._draftBase : p.version, auth = token(), title = p._pendingTitle || p.title;
+  clearTimeout(wikiRetryTimer); wikiRetryTimer = 0;
+  p._retryMd = md;
+  p._saving = api.put('/knowledge/pages/' + p.id, { title: title, content: md, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned, version: base })
+    .then(function (updated) {
+      if (token() !== auth) return;
+      p._retryMd = null; p._saveError = null; p._draftBase = null;
+      p.content = updated && updated.content != null ? updated.content : md;
+      if (updated && updated.version != null) p.version = updated.version;
+      if (updated && updated.updatedAt) p.updatedAt = updated.updatedAt;
+      if (p._pendingTitle && (!updated || !updated.title || updated.title === p._pendingTitle)) {
+        p.title = p._pendingTitle; p._pendingTitle = null;
+        if (state.wikiCur === p) { var titleEl = $('#zq-doc-title'); if (titleEl) titleEl.textContent = p.title; }
+        paintWikiTree(); paintWikiTabs(); toast('名称已更新');
+      }
+      settleWikiSaved(p, md, base);
+    }, function (e) {
+      if (token() !== auth) return;
+      if (state.wikiCur === p && state.wikiDirty) saveWikiDraftNow();
+      if (isWikiConflict(e)) {
+        p._retryMd = null; p._saveConflict = true; p._saveNext = null;
+        if (p._pendingTitle && state.wikiCur === p) { var t = $('#zq-doc-title'); if (t) t.textContent = p.title; }
+        p._pendingTitle = null;
+      } else {
+        p._saveError = (e && e.message) || '没存上';
+        if (!e || !e.uncertain) p._retryMd = null;   // 确定没做的：下一次直接存最新的
+        // 断网、服务器忙、回应丢了才过一会儿自己再试；业务上拒了的（原样再发还是拒）等人改了再存、或者点「再试一次」
+        if (e && (e.retryable || e.uncertain || e.network)) {
+          clearTimeout(wikiRetryTimer);
+          wikiRetryTimer = setTimeout(function () { if (state.wikiCur === p && !p._saving) flushWikiSave(); }, WIKI_SAVE_RETRY_MS);
+        }
+      }
+      paintWikiSaveState(p);
+    })
+    .finally(function () {
+      p._saving = null;
+      var next = p._saveNext; p._saveNext = null;
+      if (next != null && !p._saveConflict && !p._saveError) saveWikiContent(p, next);
+      else paintWikiSaveState(p);
+    });
+  paintWikiSaveState(p);
+  return p._saving;
+}
+/** 存上了：编辑器里还是这一份就不再「没保存」、浏览器里的草稿也清掉；保存期间又改了就留着，等下一次。
+ *  留着的草稿是在刚存上的那个版本上改的：版本号跟着换成新的 —— 不然回到这一页时草稿的版本对不上，被当成「别处改过」 */
+function settleWikiSaved(p, md, base) {
+  var current = state.wikiCur === p ? currentWikiMarkdown() : null;
+  if (current == null || current === md) {
+    if (state.wikiCur === p) state.wikiDirty = false;
+    drafts.clearIf(wikiDraftKey(p), md);
+  } else saveWikiDraftNow();   // 保存期间又改了：新的那份马上进浏览器的草稿（版本号已经是刚存上的），下一次自动保存再上服务器
+  var left = drafts.load(wikiDraftKey(p));
+  if (left && left.text !== md && base != null && Number(left.base) === Number(base)) drafts.save(wikiDraftKey(p), left.text, { base: p.version, title: p.title });
+  paintWikiSaveState(p);
+}
+/** 页名旁边一小行：正在保存… / 已保存 / 没存上（原因，会自己再试）/ 别处改过（停下了，给两个办法） */
+function paintWikiSaveState(p) {
+  var el = $('#zq-wiki-save-state'); if (!el) return;
+  if (!p || state.wikiCur !== p || p.id == null) { el.textContent = ''; el.dataset.state = ''; return; }
+  var html = '', kind = '';
+  if (p._saveConflict) {
+    kind = 'conflict';
+    html = '<span>这一页在别处被改过，没有自动保存</span><button type="button" class="zq-btn-ghost zq-sm" data-save-act="mine">用我的覆盖</button>'
+      + '<button type="button" class="zq-btn-ghost zq-sm" data-save-act="theirs">载入别处的版本</button>';
+  } else if (p._saveEmpty) { kind = 'empty'; html = '正文是空的，没有保存'; }
+  else if (p._saving) { kind = 'saving'; html = '正在保存…'; }
+  else if (p._saveError) { kind = 'error'; html = '<span>没存上：' + esc(p._saveError) + '，会自己再试</span><button type="button" class="zq-btn-ghost zq-sm" data-save-act="retry">再试一次</button>'; }
+  else if (state.wikiDirty) { kind = 'dirty'; html = ''; }
+  else if (p.version != null && p._everEdited) { kind = 'saved'; html = '已保存'; }
+  if (el.dataset.state === kind && el._html === html) return;
+  el.dataset.state = kind; el._html = html; el.innerHTML = html;
+  $all('[data-save-act]', el).forEach(function (b) {
+    b.onclick = function () {
+      var act = b.getAttribute('data-save-act');
+      if (act === 'retry') { p._saveError = null; flushWikiSave(); }
+      else if (act === 'mine') resolveWikiConflictMine(p);
+      else if (act === 'theirs') resolveWikiConflictTheirs(p);
+    };
+  });
+}
+/** 「用我的覆盖」：先问一句，取回现在的版本号，用编辑器里的这一份存上去 */
+async function resolveWikiConflictMine(p) {
+  var ok = await askConfirm({
+    title: '用你的这一版覆盖',
+    message: '这一页在别处（另一个窗口、另一台设备或 AI）被改过。覆盖会用编辑器里的这一版替换现在的内容 —— 别处后来加的会没了。\n\n想先对照的话点「取消」，在另一个标签页打开这一页看看现在是什么样。',
+    okText: '用我的这一版覆盖', danger: true
+  });
+  if (!ok || state.wikiCur !== p) return;
+  safe('覆盖知识页', async function () {
+    var latest = await api.get('/knowledge/pages/' + p.id);
+    if (state.wikiCur !== p) return;
+    p.version = latest.version; p._draftBase = null; p._saveConflict = false; p.content = latest.content;
+    var md = currentWikiMarkdown();
+    if (md != null) await saveWikiContent(p, md);
+  });
+}
+/** 「载入别处的版本」：编辑器里的这一份先留在浏览器的草稿里（顶上那条「恢复 / 丢弃」还找得回来），重新取这一页 */
+function resolveWikiConflictTheirs(p) {
+  if (state.wikiDirty) saveWikiDraftNow();
+  p._saveConflict = false; p._draftBase = null; p._full = false; p._retryMd = null; p._saveNext = null;
+  state.wikiDirty = false;
+  paintWikiDoc(p, { history: true });
+}
+/** 原来底上浮着的「保存 / 取消 / 删除本页」那一条（第八十三轮去掉：自动保存；删除在工具栏）。只剩同步开关和状态 */
 function showWikiActionBar() {
-  removeWikiActionBar();
   var doc = $('#zq-doc'); if (!doc) return;
   syncWikiEditMode(doc);
-  var bar = document.createElement('div');
-  bar.id = 'zq-wiki-actions';
-  bar.className = 'zq-wiki-actionbar';
-  bar.dataset.editing = doc.dataset.editing === '1' ? '1' : '0';
-  // 系统页（index/log/维护规则）不给删除入口，后端也会拦截
-  var isSysPage = state.wikiCur && ['INDEX', 'LOG', 'SCHEMA'].indexOf(String(state.wikiCur.pageType || '').toUpperCase()) >= 0;
-  bar.innerHTML = '<button class="zq-btn" id="zq-wiki-save">保存</button><button class="zq-btn-ghost" id="zq-wiki-cancel">取消</button>' + (isSysPage ? '' : '<button class="zq-btn-ghost is-danger" id="zq-wiki-del">删除本页</button>');
-  doc.parentNode.appendChild(bar);
-  $('#zq-wiki-save').onclick = saveWikiEdit;
-  // history:true —— 取消编辑是重绘当前页，不是一次跳转，不该压进返回栈
-  $('#zq-wiki-cancel').onclick = cancelWikiEdit;
-  if ($('#zq-wiki-del')) $('#zq-wiki-del').onclick = function () { deleteWikiPage(state.wikiCur); };
-}
-function cancelWikiEdit() {
-  var doc = $('#zq-doc'), cur = state.wikiCur;
-  if (!doc || !cur) return;
-  var view = doc.dataset.source === '1' && doc._wikiSourceView ? doc._wikiSourceView : captureWikiView(doc);
-  state.wikiDirty = false;
-  drafts.clear(wikiDraftKey(cur)); cur._draftBase = null;
-  paintWikiDoc(cur, { history: true, preserveView: view });
+  paintWikiSaveState(state.wikiCur);
 }
 function isSystemWikiPage(p) { return !!p && ['INDEX', 'LOG', 'SCHEMA'].indexOf(String(p.pageType || '').toUpperCase()) >= 0; }
 // 删除知识页：action bar 按钮与右键菜单共用（系统页由调用方隐藏入口，后端也会拦截）
@@ -1211,61 +1376,6 @@ async function deleteWikiPage(p) {
   if (await askConfirm({ title: '删除知识页', message: '删除「' + (p.title || '') + '」？它的直接子页会自动迁移到上级目录，指向它的双链会变成悬空链接。', okText: '删除', danger: true })) {
     safe('删除知识页', async function () { await api.del('/knowledge/pages/' + p.id + '?version=' + encodeURIComponent(p.version)); await bootKnowledge(); toast('已删除'); });
   }
-}
-function removeWikiActionBar() { var b = document.getElementById('zq-wiki-actions'); if (b) b.remove(); }
-async function saveWikiEdit() {
-  var doc = $('#zq-doc'), p = state.wikiCur; if (!doc || !p || doc.dataset.editing !== '1' || doc.dataset.loading === '1') return;
-  var editContext = wikiEditingContext(doc);
-  var md = wikiCmActive(doc) ? wikiCm.handle.getMarkdown() : doc.dataset.source === '1' ? ($('#zq-src-ta') ? $('#zq-src-ta').value : '') : htmlToMarkdown(doc);
-  // 恢复的是一份旧版本上改的草稿，而这一页之后被改过：直接按旧版本存会被乐观锁挡住，而且每次都挡 —— 刷新重试也一样，
-  // 草稿永远存不进去（第十五轮真浏览器里走出来的死胡同）。所以先明说，用户点了「替换」才按现在的版本存。
-  if (p._draftBase != null && p.version != null && Number(p._draftBase) !== Number(p.version)) {
-    var replace = await askConfirm({
-      title: '这一页在你离开之后被改过',
-      message: '编辑框里是你当时没保存的那一版。直接保存会用它替换现在的内容 —— 别处后来加的会没了。\n\n想先对照的话点「取消」，在另一个标签页打开这一页看看现在是什么样。',
-      okText: '用我的这一版替换',
-      danger: true
-    });
-    if (!replace || !isWikiEditSession(editContext)) return;
-    p._draftBase = p.version;
-  }
-  var editSession = doc.dataset.wikiEditSession, saveAuth = token();
-  var saveButton = $('#zq-wiki-save');
-  if (saveButton && saveButton.disabled) return;
-  if (saveButton) saveButton.disabled = true;
-  return safe('保存知识页', async function () {
-    var baseVersion = p._draftBase != null ? p._draftBase : p.version;
-    var updated = await api.put('/knowledge/pages/' + p.id, { title: p.title, content: md, pageType: p.pageType, parentId: p.parentId, sortOrder: p.sortOrder, pinned: p.pinned, version: baseVersion });
-    if (token() !== saveAuth) return;
-    // Saving an old page must not redraw a new page, and typing during the request must not be discarded.
-    p._draftBase = null;
-    p.content = updated && updated.content != null ? updated.content : md;
-    if (updated && updated.version != null) p.version = updated.version;
-    if (updated && updated.updatedAt) p.updatedAt = updated.updatedAt;
-    if (state.wikiCur !== p || doc.dataset.wikiEditSession !== editSession || doc.dataset.editing !== '1') {
-      if (state.wikiCur === p && doc.dataset.editing === '1') {
-        // 保存期间切换只读会结束旧会话；回执只更新草稿状态，不能重绘或改变现在的开关。
-        if (currentWikiMarkdown() === md) { state.wikiDirty = false; drafts.clearIf(wikiDraftKey(p), md); }
-        else { state.wikiDirty = true; saveWikiDraftNow(); }
-      } else {
-        var newerDraft = drafts.load(wikiDraftKey(p));
-        if (newerDraft && newerDraft.text !== md && Number(newerDraft.base) === Number(baseVersion)) {
-          drafts.save(wikiDraftKey(p), newerDraft.text, { base: p.version, title: p.title });
-        } else drafts.clearIf(wikiDraftKey(p), md);
-      }
-      toast('知识页已保存'); return;
-    }
-    if (currentWikiMarkdown() !== md) {
-      state.wikiDirty = true;
-      saveWikiDraftNow();
-      toast('已保存提交的内容，后续修改仍留在当前草稿'); return;
-    }
-    drafts.clear(wikiDraftKey(p));
-    state.wikiDirty = false;
-    var view = doc.dataset.source === '1' && doc._wikiSourceView ? doc._wikiSourceView : captureWikiView(doc);
-    await paintWikiDoc(p, { history: true, preserveView: view });
-    toast('已保存');
-  }).finally(function () { if (saveButton && saveButton.isConnected) saveButton.disabled = false; });
 }
 // 一个 ZIP 根目录下放笔记、子目录和原始附件；导入时能还原关系。
 async function exportWikiMarkdown() {
@@ -1404,7 +1514,7 @@ function importWikiVault() {
             + Number(result && result.attachmentCount || 0) + ' 个附件';
           handle.close();
           try {
-            if (state.wikiDirty) saveWikiDraftNow();
+            if (state.wikiDirty) { saveWikiDraftNow(); flushWikiSave(); }
             state.wikiPages = flattenKnowledge((await api.get('/knowledge/document-tree')) || []);
             paintWikiTree();
             var firstId = result && result.pageIds && result.pageIds[0];

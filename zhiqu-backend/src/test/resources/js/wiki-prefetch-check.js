@@ -24,7 +24,9 @@ function fixture() {
   } };
   const sh = { state, api, token: () => auth, esc: String, empty: (text) => `<empty>${text}</empty>`, fmtDate: String,
     $: (selector) => elements[selector] || null, $all: (selector, target) => selector === '[data-wiki]' && target === tree ? [anchor] : [],
-    safe: (_name, fn) => Promise.resolve().then(fn).catch(() => null), toast() {}, renderMarkdown: (text) => `<md>${text}</md>`, renderMathIn() {} };
+    safe: (_name, fn) => Promise.resolve().then(fn).catch(() => null), toast() {}, renderMarkdown: (text) => `<md>${text}</md>`, renderMathIn() {},
+    // 第八十三轮：取到正文就去挂编辑器；这里只看预取，编辑器的代码一直在路上，页面停在阅读视图
+    loadModule: () => new Promise(() => {}) };
   const fakeDate = { now: () => now };
   const setTimeoutFake = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
   const impl = new Function('document', 'window', 'Date', 'setTimeout', 'clearTimeout', `

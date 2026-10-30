@@ -299,7 +299,8 @@
     if (json.code !== 200) {
       var authFailed = isAuthFailure(json);
       if (authFailed) redirectToLogin();
-      throw requestError(json.message || '请求失败', authFailed ? { auth: true } : null);
+      // code 带出去：知识 Wiki 的自动保存要分得清 412（别处改过这一页，停下、照实说）和别的失败（第八十三轮）
+      throw requestError(json.message || '请求失败', authFailed ? { auth: true, code: json.code } : { code: json.code });
     }
     return json.data;
   }

@@ -74,9 +74,9 @@ function fixture({ failLoad = false } = {}) {
     var realRestoreWikiView = restoreWikiView, realMarkEmptyWikiPage = markEmptyWikiPage;
     trackWikiNavigation = removeWikiDraftBar = removeWikiActionBar = showWikiActionBar = markDuplicateTitle = markEmptyWikiPage = wireWikiLinks
       = paintWikiTabs = paintWikiTree = offerWikiDraft = restoreWikiView = function () {};
-    return { bind, enterWikiEdit, saveWikiEdit, paintWikiDoc, wikiToolbar, toggleWikiSource, toggleWikiReadOnly, loadWikiCm, currentWikiMarkdown, wireWikiEditor, markEmptyWikiPage: realMarkEmptyWikiPage,
+    return { bind, enterWikiEdit, flushWikiSave, paintWikiDoc, wikiToolbar, toggleWikiSource, toggleWikiReadOnly, loadWikiCm, currentWikiMarkdown, wireWikiEditor, markEmptyWikiPage: realMarkEmptyWikiPage,
       insertWikiImage, setChooser(fn) { chooseWikiImage = fn; }, captureWikiView, restoreWikiView: realRestoreWikiView };`)(
-    { getElementById: () => null, execCommand() { throw new Error('验证版编辑器不该用 execCommand'); }, createElement: () => ({ style: {} }), body: { appendChild() {} } },
+    { getElementById: () => null, execCommand() { throw new Error('验证版编辑器不该用 execCommand'); }, createElement: () => ({ style: {} }), body: { appendChild() {} }, addEventListener() {} },
     { addEventListener() {}, getSelection: () => ({ rangeCount: 0 }), open(...a) { opened.push(a); return null; } }, localStorage, () => ({ paddingLeft: '26px' }));
   impl.bind(sh);
   return { impl, page, doc, handle, mounts, writes, toasts, state, store, uploads, anchor, charTop, events, sh, blockSelect, cmModule, opened };
@@ -109,31 +109,45 @@ function fixture({ failLoad = false } = {}) {
     assert.equal(f.doc.dataset.editing, '1');
     assert.equal(f.doc.contentEditable, 'false');
   });
-  await check('保存发的就是编辑器里的原文（不经过 htmlToMarkdown，嵌套和代码块语言原样）', async () => {
+  await check('保存发的就是编辑器里的原文（不经过 htmlToMarkdown，嵌套和代码块语言原样）；存完编辑器还在，不拆、不重画', async () => {
     const f = fixture();
     await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
     f.handle.text = f.page.content + '\n\n新加一行';
     assert.equal(f.impl.currentWikiMarkdown(), f.handle.text, '草稿也要存编辑器里的原文');
-    await f.impl.saveWikiEdit();
+    await f.impl.flushWikiSave();
     assert.equal(f.writes.length, 1);
     assert.equal(f.writes[0].content, '- 一\n  - 二\n\n```js\nx\n```\n\n新加一行');
+    assert.equal(f.handle.calls.some((c) => c[0] === 'destroy'), false, '存完把编辑器拆了（原来存完重画阅读视图，正在改的那段跳 33px）');
+    assert.equal(f.doc.dataset.editor, 'cm');
+    assert.equal(f.mounts.length, 1, '存完又挂了一个编辑器');
   });
-  await check('换页 / 取消：编辑器先拆掉再画正文', async () => {
+  await check('换页：旧页的编辑器拆掉，新页直接挂上编辑器（第八十三轮：不先画阅读视图、等人点）', async () => {
     const f = fixture();
     await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
+    let rendered = 0; const render = f.sh.renderMarkdown; f.sh.renderMarkdown = (t) => { rendered++; return render(t); }; f.impl.bind(f.sh);
     await f.impl.paintWikiDoc(f.page);
-    assert.deepEqual(f.handle.calls.at(-1), ['destroy']);
-    assert.equal(f.doc.dataset.editor, undefined);
+    assert.equal(rendered, 0, '编辑器的代码已经在了，还先画了一遍阅读视图再换（多画一遍，还要对位）');
+    assert.ok(f.handle.calls.some((c) => c[0] === 'destroy'), '旧的编辑器没拆');
+    assert.equal(f.mounts.length, 2, '新页没直接挂编辑器');
+    assert.equal(f.doc.dataset.editor, 'cm');
+    assert.equal(f.doc.dataset.editing, '1');
   });
-  await check('只读开关传到编辑器；工具栏的加粗 / 斜体 / 代码变成 Markdown 标记；「源码」不切换', async () => {
+  await check('工具栏的加粗 / 斜体 / 代码变成 Markdown 标记；「源码」不切换；开只读是阅读视图（拿编辑器里的这一份画），关掉回到编辑器、字还在', async () => {
     const f = fixture();
     await f.impl.loadWikiCm(); f.impl.enterWikiEdit();
     f.impl.wikiToolbar('bold'); f.impl.wikiToolbar('italic'); f.impl.wikiToolbar('code');
     f.impl.wikiToolbar('source');   // 走真的按钮（第八十轮：原来直接调 toggleWikiSource，按钮那条路漏了、说「还没接这个按钮」也绿着）
-    f.impl.toggleWikiReadOnly();
     assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'wrap'), [['wrap', '**'], ['wrap', '*'], ['wrap', '`']]);
-    assert.deepEqual(f.handle.calls.filter((c) => c[0] === 'readOnly').at(-1), ['readOnly', true]);
     assert.ok(f.toasts.some((t) => /Markdown 原文/.test(t)), '「源码」应当说明编辑器里就是原文');
+    f.handle.text = '改了还没存的字';
+    f.impl.toggleWikiReadOnly();
+    assert.ok(f.handle.calls.some((c) => c[0] === 'destroy'), '开只读要换成阅读视图（第八十三轮，像 Obsidian）');
+    assert.equal(f.doc.dataset.editing, '0');
+    assert.equal(f.doc.innerHTML, '改了还没存的字', '阅读视图画的要是编辑器里的这一份，不是上次存的');
+    f.impl.toggleWikiReadOnly();
+    assert.equal(f.mounts.length, 2);
+    assert.equal(f.mounts[1].options.markdown, '改了还没存的字', '关掉只读，编辑器里还是那一份');
+    assert.equal(f.doc.dataset.editor, 'cm');
   });
   await check('工具栏上的每个按钮（读 knowledge-wiki.html）在新编辑器里都有着落，没有一个说「还没接这个按钮」', async () => {
     const html = fs.readFileSync(path.resolve(path.dirname(cmPath), '../knowledge-wiki.html'), 'utf8');
@@ -141,9 +155,19 @@ function fixture({ failLoad = false } = {}) {
     assert.ok(cmds.length >= 9, '只扫到 ' + cmds.length + ' 个按钮 —— 扫空了？');
     const f = fixture();
     await f.impl.loadWikiCm(); f.impl.enterWikiEdit(); f.impl.setChooser(() => {});
-    for (const cmd of cmds) f.impl.wikiToolbar(cmd);
+    // 「删除本页」（第八十三轮从底上那一条挪进工具栏）会真删：单独测，问了、拒了就不删
+    for (const cmd of cmds.filter((c) => c !== 'delete')) f.impl.wikiToolbar(cmd);
     await new Promise((r) => setTimeout(r, 0));
     assert.deepEqual(f.toasts.filter((t) => /还没接/.test(t)), []);
+    assert.ok(cmds.includes('delete'), '工具栏上没有「删除本页」—— 原来底上那一条去掉了，删除只剩这里');
+    const asked = [], deleted = [];
+    f.sh.askConfirm = async (o) => { asked.push(o.title); return false; };
+    f.sh.api.del = (p) => { deleted.push(p); return Promise.resolve(); };
+    f.impl.bind(f.sh);
+    f.impl.wikiToolbar('delete');
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(asked, ['删除知识页'], '删除要先问');
+    assert.deepEqual(deleted, [], '没确认就删了');
   });
   // ── 第八十轮：试用开关去掉，新编辑器是默认 ──
   await check('默认就是新编辑器：本机什么设置都没存也挂上它（第八十轮去掉了「试试新编辑器 / 换回现在的编辑器」）', async () => {
@@ -413,6 +437,40 @@ function fixture({ failLoad = false } = {}) {
     assert.notEqual(st.field(tableField).ranges, table0, '改了字要重扫');
     assert.equal(st.field(tableField).ranges[0].from, md.indexOf('| a |') + 1, '重扫之后位置跟着挪');
   });
+  // ── 第八十三轮：像 Obsidian ──
+  await check('没焦点时不露原文符号（一打开页面光标在开头，第一行标题原来就露着 ##）；有焦点、光标在那一行才露', async () => {
+    const { EditorState, EditorSelection, LanguageSupport, markdownLanguage } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    const md = '## 第 1 部分\n\n正文';
+    const hidden = (hasFocus) => {
+      const state = EditorState.create({ doc: md, selection: EditorSelection.cursor(0), extensions: [new LanguageSupport(markdownLanguage)] });
+      const out = []; cm.inlineDecorations({ state, visibleRanges: [{ from: 0, to: md.length }], hasFocus }, {}).between(0, md.length, (from, to, d) => { if (Object.keys(d.spec).length === 0) out.push(md.slice(from, to)); });
+      return out;
+    };
+    assert.deepEqual(hidden(false), ['## '], '编辑器没焦点：光标虽然在标题上，## 也要藏着');
+    assert.deepEqual(hidden(true), [], '有焦点、光标在标题上：露出 ## 能改');
+  });
+  await check('光标看得见、会闪（用户：「点的时候有时候没反应」「光标停留的时候可以自动闪烁，就像 obsidian 那样」）：drawSelection 自己画的光标默认是黑的，深色模式下看不见', () => {
+    const cmSource = fs.readFileSync(path.resolve(cmPath), 'utf8').replace(/\/\/.*$/gm, '');
+    const cursor = /'\.cm-cursor, \.cm-dropCursor':\s*\{([^}]*)\}/.exec(cmSource);
+    assert.ok(cursor, '主题里没给光标定颜色（默认黑色，深色模式看不见）');
+    assert.match(cursor[1], /borderLeft:\s*'[\d.]+px solid var\(--zq-text\)'/, '光标颜色要跟正文走');
+    assert.ok(cmSource.includes('drawSelection({ cursorBlinkRate: CURSOR_BLINK_MS })'), '光标的闪烁节奏没接上');
+    assert.ok(cm.CURSOR_BLINK_MS >= 800 && cm.CURSOR_BLINK_MS <= 1400, '闪一次的周期不像系统光标：' + cm.CURSOR_BLINK_MS);
+    assert.ok(/'&\.cm-focused > \.cm-scroller > \.cm-selectionLayer \.cm-selectionBackground[^']*':\s*\{\s*background:\s*'var\(--zq-tint-strong\)'/.test(cmSource), '选中的底色还是浅色主题的默认值');
+  });
+  await check('点表格预览里的一格：光标进原文里那一格、那个字（原来一律放到表格开头）', () => {
+    const t = '| 项目 | 负责人 | 状态 |\n| --- | --- | --- |\n| 复盘 | 张三 | 进行中 |\n| 周报 | 李四 | 已完成 |';
+    const at = (row, col, off) => t.slice(cm.tableCellOffset(t, row, col, off), cm.tableCellOffset(t, row, col, off) + 1);
+    assert.equal(at(0, 0, 0), '项', '表头第一格');
+    assert.equal(at(0, 1, 1), '责', '表头第二格第二个字');
+    assert.equal(at(1, 2, 0), '进', '第一行数据（原文第 3 行，跳过 | --- |）');
+    assert.equal(at(2, 1, 1), '四');
+    const end = cm.tableCellOffset(t, 2, 1, 99);
+    assert.equal(t.slice(end - 2, end), '李四', '格子里的字数超了：停在这一格字的末尾（不跑进下一格）');
+    const bare = 'a | b\n-|-\nc | d';
+    assert.equal(bare[cm.tableCellOffset(bare, 1, 1, 0)], 'd', '两边没有竖线的表格');
+    assert.equal(cm.tableCellOffset(t, 9, 0, 0), t.length, '没有这一行：放到表格末尾，不报错');
+  });
   // ── 第八十轮：编辑器的排版和阅读一致、链接单击打开、重复页名藏起来 ──
   await check('块间距的表和阅读模式的样式表一致（改了阅读的边距，这里就红 —— 两边不能各写一份各自对）', () => {
     const css = fs.readFileSync(path.resolve(path.dirname(cmPath), 'zhiqu-ui.css'), 'utf8');
@@ -428,26 +486,28 @@ function fixture({ failLoad = false } = {}) {
       task: margin('.zq-prose .zq-task-row') };
     for (const [kind, m] of Object.entries(want)) assert.deepEqual(cm.BLOCK_MARGINS[kind], m, kind + ' 的上下边距和阅读模式对不上');
     assert.equal(cm.LIST_ITEM_GAP, margin('.zq-prose .zq-md li')[0], '列表项之间');
-    for (const [, [top, bottom]] of Object.entries(cm.BLOCK_MARGINS)) for (const n of [top, bottom, cm.LIST_ITEM_GAP]) assert.ok(cm.LAYOUT_SIZES.includes(n), n + 'px 没有对应的样式');
+    for (const [, [top, bottom]] of Object.entries(cm.BLOCK_MARGINS)) for (const n of [top, bottom, cm.LIST_ITEM_GAP]) assert.ok(n === 0 || cm.LAYOUT_SIZES.includes(n), n + 'px 没有对应的样式');
   });
   await check('任务项是列表外单独的一行（阅读模式画成 .zq-task-row）：顶格的接在列表后面隔列表的下边距、套在列表项里的只隔自己的上边距，任务接任务、任务接列表项都是它的边距', () => {
-    const rows = (t) => cm.layoutLines(t).map((x) => (x.blank ? 'gap' + x.gap : x.pad ? x.kind + '+' + x.pad : x.kind));
+    const rows = (t) => cm.layoutLines(t).map((x) => (x.blank ? 'blank' : x.pad ? x.kind + '+' + x.pad : x.kind));
     const [, taskBottom] = cm.BLOCK_MARGINS.task, [taskTop] = cm.BLOCK_MARGINS.task, listBottom = cm.BLOCK_MARGINS.li[1];
     assert.deepEqual(rows('- a\n- b\n  - c\n- [ ] t1\n- [x] t2\n- d'), ['li', 'li+' + cm.LIST_ITEM_GAP, 'li+' + cm.LIST_ITEM_GAP, 'task+' + Math.max(listBottom, taskTop), 'task+' + Math.max(taskBottom, taskTop), 'li+' + taskBottom],
       '原来任务项当成同一个列表的下一项（隔 5），比阅读少 7px');
     assert.deepEqual(rows('- a\n  - [ ] t\n- b'), ['li', 'task+' + taskTop, 'li+' + taskBottom], '套在列表项里的任务行跟在父项的字后面');
-    assert.deepEqual(rows('- a\n\n- [ ] b'), ['li', 'gap' + Math.max(listBottom, taskTop), 'task']);
+    assert.deepEqual(rows('- a\n\n- [ ] b'), ['li', 'blank', 'task']);
     assert.deepEqual(rows('- [ ] a\n续行'), ['task', 'p'], '任务项的续行不另起一块');
   });
-  await check('段落之间的空行只占 12px（阅读时的段距），一串空行只有第一行占；开头结尾的空行不占；代码块里的空行是内容', () => {
-    const rows = (t, title = -1) => cm.layoutLines(t, title).map((x) => (x.blank ? 'gap' + x.gap : x.pad ? x.kind + '+' + x.pad : x.kind));
-    assert.deepEqual(rows('一\n\n二\n\n三'), ['p', 'gap12', 'p', 'gap12', 'p']);
-    assert.deepEqual(rows('一\n\n\n\n二'), ['p', 'gap12', 'gap0', 'gap0', 'p']);
-    assert.deepEqual(rows('\n\n一\n\n'), ['gap0', 'gap0', 'p', 'gap0', 'gap0']);
-    assert.deepEqual(rows('# 甲\n\n正文\n\n## 乙\n\n正文'), ['h1', 'gap14', 'p', 'gap30', 'h2', 'gap10', 'p']);
-    assert.deepEqual(rows('- a\n- b\n  续\n\n正文'), ['li', 'li+5', 'p', 'gap12', 'p']);
+  // 第八十三轮：空行是一整行。第八十轮为了「进出编辑不跳」把一串空行压成只有第一行占（其余、开头结尾的行高 0）——
+  // 用户：「不能连续换行」（连按回车，字换了行、光标不动，真键盘复现）。编辑器一直开着以后不用为对位压空行
+  await check('空行是一整行（第八十三轮）：连着几个空行、开头结尾的空行都不压；紧挨着上一块的行照样带上阅读时的上边距；代码块里的空行是内容', () => {
+    const rows = (t, title = -1) => cm.layoutLines(t, title).map((x) => (x.blank ? 'blank' : x.pad ? x.kind + '+' + x.pad : x.kind));
+    assert.deepEqual(rows('一\n\n二\n\n三'), ['p', 'blank', 'p', 'blank', 'p']);
+    assert.deepEqual(rows('一\n\n\n\n二'), ['p', 'blank', 'blank', 'blank', 'p']);
+    assert.deepEqual(rows('\n\n一\n\n'), ['blank', 'blank', 'p', 'blank', 'blank']);
+    assert.deepEqual(rows('- a\n- b\n  续\n\n正文'), ['li', 'li+5', 'p', 'blank', 'p']);
     assert.deepEqual(rows('正文\n## 乙'), ['p', 'h2+30'], '标题紧挨着段落：带上阅读时的上边距');
-    assert.deepEqual(rows('```\na\n\nb\n```\n\n后'), ['pre', 'pre', 'pre', 'pre', 'pre', 'gap16', 'p'], '代码块里的空行不能被压扁');
+    assert.deepEqual(rows('```\na\n\nb\n```\n\n后'), ['pre', 'pre', 'pre', 'pre', 'pre', 'blank', 'p']);
+    assert.ok(cm.layoutLines('一\n\n\n二').every((x) => !('gap' in x)), '还在算空行该压成多高');
   });
   await check('和页名重复的第一行标题：认得出（只认第一行、一字不差），藏起来之后下一块照阅读时的上边距', () => {
     assert.equal(cm.duplicateTitleLine('# 周报\n\n正文', '周报'), 0);
@@ -455,9 +515,9 @@ function fixture({ failLoad = false } = {}) {
     assert.equal(cm.duplicateTitleLine('# 周报草稿\n', '周报'), -1);
     assert.equal(cm.duplicateTitleLine('正文\n# 周报', '周报'), -1);
     assert.equal(cm.duplicateTitleLine('## 周报', '周报'), -1);
-    const rows = (t) => cm.layoutLines(t, cm.duplicateTitleLine(t, '页')).map((x) => (x.blank ? 'gap' + x.gap : x.kind));
-    assert.deepEqual(rows('# 页\n\n正文'), ['p', 'gap0', 'p']);
-    assert.deepEqual(rows('# 页\n\n## 小节'), ['p', 'gap30', 'h2']);
+    const rows = (t) => cm.layoutLines(t, cm.duplicateTitleLine(t, '页')).map((x) => (x.blank ? 'blank' : x.pad ? x.kind + '+' + x.pad : x.kind));
+    assert.deepEqual(rows('# 页\n\n正文'), ['p', 'blank', 'p']);
+    assert.deepEqual(rows('# 页\n## 小节'), ['p', 'h2'], '藏起来的标题后面紧挨着的那一块不带上边距');
   });
   await check('挂上编辑器时光标先放在藏起来的重复标题后面（不然一挂上就露出来又藏回去，跳一下）；没有重复标题时在开头', () => {
     assert.equal(cm.startCursor('# 周报\n\n正文', '周报'), 5);
@@ -479,7 +539,7 @@ function fixture({ failLoad = false } = {}) {
     st = EditorState.create({ doc: md, selection: EditorSelection.cursor(md.length), extensions: [f] });
     assert.deepEqual(hidden(st, f), []);
   });
-  await check('渲染出来的链接带着地址（单击就能打开）：[文字](网址)、裸网址；光标在上面时露出原文、不带（点了只放光标，照旧能改）；空行带上块间距', async () => {
+  await check('渲染出来的链接带着地址（单击就能打开）：[文字](网址)、裸网址；光标在上面时露出原文、不带（点了只放光标，照旧能改）；空行不再压（没有 cm-zq-gap）', async () => {
     const { EditorState, EditorSelection, LanguageSupport, markdownLanguage } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
     const md = '外部：[官网](https://example.com/zhiqu) 和 https://example.org/x?q=1\n\n结尾';
     const view = (cursor) => {
@@ -490,11 +550,11 @@ function fixture({ failLoad = false } = {}) {
     const lines = (v) => { const out = []; cm.inlineDecorations(v, {}).between(0, md.length, (from, to, d) => { if (d.spec.class && /cm-zq-gap-/.test(d.spec.class)) out.push(d.spec.class); }); return out; };
     const far = view(md.length);
     assert.deepEqual(links(far), [['官网', 'https://example.com/zhiqu'], ['https://example.org/x?q=1', 'https://example.org/x?q=1']]);
-    assert.deepEqual(lines(far), ['cm-zq-gap-12']);
+    assert.deepEqual(lines(far), [], '空行又被压成块间距了（第八十三轮：连按回车光标不动）');
     const inLink = view(md.indexOf('官网') + 1);
     assert.deepEqual(links(inLink).map((x) => x[1]), ['https://example.org/x?q=1'], '光标在链接里：那一个露出原文、不带地址');
   });
-  await check('块里面的尺寸和阅读模式的样式表一致：代码框一行是正文的行高（pre 的那一行，13px 的 code 是行内的、撑不矮它）、首尾 ``` 行 = 上下内边距 + 边框、引用上下的内边距', () => {
+  await check('块里面的尺寸和阅读模式的样式表一致：代码框一行是正文的行高（pre 的那一行，13px 的 code 是行内的、撑不矮它）、引用上下的内边距；首尾 ``` 行和代码行一样高（第八十三轮）', () => {
     const css = fs.readFileSync(path.resolve(path.dirname(cmPath), 'zhiqu-ui.css'), 'utf8');
     const rule = (sel) => {
       const m = new RegExp('^' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\{([^}]*)\\}', 'm').exec(css);
@@ -506,9 +566,12 @@ function fixture({ failLoad = false } = {}) {
     assert.equal(cm.READING_BOX.codeLineHeight, 'calc(' + prop(prose, 'font-size') + ' * ' + prop(prose, 'line-height') + ')', '代码框一行 = 正文的字号 × 行高');
     assert.equal(prop(rule('.zq-md pre'), 'line-height'), null, 'pre 自己改了行高：编辑器里代码行的高度要跟着算');
     assert.equal(prop(rule('.zq-prose .zq-md pre'), 'line-height'), null, 'pre 自己改了行高：编辑器里代码行的高度要跟着算');
-    const pre = rule('.zq-md pre'), pad = prop(pre, 'padding').split(/\s+/).map(parseFloat), border = parseFloat(prop(pre, 'border'));
-    assert.equal(cm.READING_BOX.fence, pad[0] + border, '``` 行 = 代码框的上内边距 + 边框');
-    assert.equal(pad.length >= 3 ? pad[2] : pad[0], pad[0], '代码框上下内边距不一样：首尾两行要分开算');
+    // 第八十三轮：``` 那两行原来压成 13px（= 阅读时代码框的上内边距 + 边框），光标一进代码框露出来变成整行，下面整块挪 29px（真鼠标量的）。
+    // 现在一直是整行高，碰到时只露出字：主题里 .cm-zq-fence 不许再定高度
+    const cmSource = fs.readFileSync(path.resolve(cmPath), 'utf8').replace(/\/\/.*$/gm, '');
+    const fenceRule = /'\.cm-zq-fence':\s*\{([^}]*)\}/.exec(cmSource);
+    assert.ok(fenceRule, '主题里找不到 .cm-zq-fence');
+    assert.ok(!/height|lineHeight|overflow/i.test(fenceRule[1]), '``` 行又定了高度：没碰到时矮、碰到时高，点进代码框下面整块挪：' + fenceRule[1]);
     const quote = prop(rule('.zq-prose .zq-md blockquote'), 'padding').split(/\s+/).map(parseFloat);
     assert.equal(cm.READING_BOX.quotePad, quote[0], '引用的上内边距');
     assert.equal(quote.length >= 3 ? quote[2] : quote[0], quote[0], '引用上下内边距不一样：首尾两行要分开算');

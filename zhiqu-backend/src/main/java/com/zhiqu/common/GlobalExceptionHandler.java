@@ -50,6 +50,11 @@ public class GlobalExceptionHandler {
         return new Result<>(409, e.getMessage(), null);
     }
 
+    @ExceptionHandler(VersionConflictException.class)
+    public Result<Void> handleVersionConflict(VersionConflictException e) {
+        return new Result<>(412, e.getMessage(), null);
+    }
+
     @ExceptionHandler(BusinessException.class)
     public Result<Void> handleBusiness(BusinessException e) {
         return Result.fail(e.getMessage());

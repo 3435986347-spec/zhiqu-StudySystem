@@ -112,7 +112,7 @@ class WikiLookTest {
             assertTrue(b.group(1).contains(" title=\"") && b.group(1).contains(" aria-label=\""), b.group(2) + " 没有 title 或 aria-label（只有图标的按钮）");
             assertTrue(b.group(3).matches("<span data-zq-icon=\"[\\w-]+\"></span>"), b.group(2) + " 不是只有一个图标：" + b.group(3));
         }
-        assertEquals(List.of("bold", "italic", "underline", "code", "link", "image", "math", "ref", "source"), cmds, "工具栏的按钮变了");
+        assertEquals(List.of("bold", "italic", "underline", "code", "link", "image", "math", "ref", "source", "delete"), cmds, "工具栏的按钮变了（第八十三轮加了「删除本页」：原来在底上的保存条里）");
         assertTrue(html.contains("data-wiki-cmd=\"source\" class=\"zq-tbtn\" id=\"zq-wiki-source\""), "「源码」按钮没有 id —— setSourcePressed 找不到它");
         Matcher source = Pattern.compile("<button([^>]*data-wiki-cmd=\"source\"[^>]*)>(.*?)</button>").matcher(html);
         assertTrue(source.find(), "缺少「源码」按钮");

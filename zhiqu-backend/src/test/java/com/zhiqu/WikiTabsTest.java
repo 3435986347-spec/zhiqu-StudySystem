@@ -73,21 +73,11 @@ class WikiTabsTest {
         // 两处重绘，各自的形状不一样，所以分开断言 —— 写一个「就近找最近的
         // paintWikiDoc」的通用检查看着更聪明，实际会抓到隔壁那次调用（第一版就是这样红的）。
 
-        assertTrue(SourceText.functionBody(js, "function cancelWikiEdit()").contains("paintWikiDoc(cur, { history: true, preserveView: view })"),
-                "取消编辑那次重绘没带 history:true。它重绘的是当前页，压进返回栈"
-                        + "会让「返回」原地打转 —— 不报错，只是按钮看起来坏了。");
-
-        // 锚点必须是 saveWikiEdit 这个函数本身。第一版锚在 toast('已保存') 上，
-        // 而那句话在文件里出现好几次 —— 抓到的是共享计划后台那一处，报错里贴出来的
-        // 上下文全是 /admin/shared-plans。锚点不唯一的判据，红绿都不可信。
-        int fn = js.indexOf("function saveWikiEdit()");
-        assertTrue(fn >= 0, "找不到 saveWikiEdit —— 判据扫空了");
-        String saveBody = SourceText.functionBody(js, "function saveWikiEdit()");
-        assertTrue(saveBody.contains("paintWikiDoc("),
-                "saveWikiEdit 里没有 paintWikiDoc 调用 —— 抠错范围了：" + saveBody);
-        assertTrue(saveBody.contains("paintWikiDoc(p, { history: true, preserveView: view })"),
-                "保存后那次重绘没带 history:true。保存前后是同一页，"
-                        + "压栈会让返回栈里堆满重复项。函数体：" + saveBody);
+        // 第八十三轮：自动保存不重画（原来存完重画阅读视图，正在改的那段跳 33px）；「取消」没了。
+        // 剩下的同一页重绘是「载入别处的版本」：重绘的是当前页，不能压进返回栈（压了「返回」原地打转 —— 不报错，只是按钮看起来坏了）
+        assertFalse(SourceText.functionBody(js, "function saveWikiContent(p, md)").contains("paintWikiDoc("), "自动保存又重画了整页");
+        assertTrue(SourceText.functionBody(js, "function resolveWikiConflictTheirs(p)").contains("paintWikiDoc(p, { history: true })"),
+                "「载入别处的版本」那次重绘没带 history:true，同一页会压进返回栈");
     }
 
     @Test

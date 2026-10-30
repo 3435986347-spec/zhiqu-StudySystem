@@ -90,6 +90,38 @@ class KnowledgeConcurrencyIntegrationTest {
         assertEquals("版本 1", knowledgeService.detail(userId, numberLong(page.get("id"))).get("content"));
     }
 
+    /**
+     * 第八十三轮：知识 Wiki 打字就自动保存，一页改半小时能存几百次 —— 每次一条「更新知识页」的话 log 页（列最近 80 条）全是它。
+     * 同一个人接着改同一页、10 分钟内，合成一条；中间改了别的页、或者隔久了，照常新起一条。
+     */
+    @Test
+    void autosavesOfOnePageShareOneUpdateLogRow() {
+        Map<String, Object> page = createPage("自动保存", "版本 0");
+        Map<String, Object> other = createPage("别的页", "别的");
+        Long pageId = numberLong(page.get("id"));
+        int version = number(page.get("version"));
+        for (int i = 1; i <= 5; i++) {
+            knowledgeService.savePage(userId, pageId, updateBody(page, "版本 " + i, version));
+            version++;
+        }
+        assertEquals(1, updateLogs(pageId), "同一页连着存了 5 次，日志里应当只有 1 条「更新知识页」");
+        Map<String, Object> merged = jdbcTemplate.queryForMap("SELECT detail FROM knowledge_operation_log WHERE page_id = ? AND operation_type = 'page.update'", pageId);
+        assertTrue(String.valueOf(merged.get("detail")).contains("版本 5"), "合成的那条要是最后一次的摘要：" + merged.get("detail"));
+
+        knowledgeService.savePage(userId, numberLong(other.get("id")), updateBody(other, "别的改了", number(other.get("version"))));
+        knowledgeService.savePage(userId, pageId, updateBody(page, "版本 6", version++));
+        assertEquals(2, updateLogs(pageId), "中间改了别的页：回来再改这一页是新的一条");
+
+        jdbcTemplate.update("UPDATE knowledge_operation_log SET created_at = DATE_SUB(created_at, INTERVAL 11 MINUTE) WHERE page_id = ?", pageId);
+        knowledgeService.savePage(userId, pageId, updateBody(page, "版本 7", version));
+        assertEquals(3, updateLogs(pageId), "隔了 10 分钟以上：新的一条");
+    }
+
+    private int updateLogs(Long pageId) {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM knowledge_operation_log WHERE page_id = ? AND operation_type = 'page.update' AND deleted = 0",
+                Integer.class, pageId);
+    }
+
     @Test
     void publicPatchSetRequiresTheVersionThatWasRead() {
         Map<String, Object> page = createPage("公共草稿", "原内容");
@@ -735,7 +767,8 @@ class KnowledgeConcurrencyIntegrationTest {
         }
         ApplyAttempt failure = firstAttempt.success() ? secondAttempt : firstAttempt;
         assertNotNull(failure.error());
-        assertEquals("com.zhiqu.common.BusinessException", failure.error().getClass().getName());
+        // 第八十三轮起版本冲突单独一类（回 code 412，自动保存认得出「别处改过」）；仍是业务错误，不是死锁 / SQL 异常
+        assertEquals("com.zhiqu.common.VersionConflictException", failure.error().getClass().getName());
         assertTrue(failure.error().getMessage().contains("其他窗口修改"));
         String failureText = String.valueOf(failure.error().getMessage()).toLowerCase();
         assertTrue(!failureText.contains("deadlock")

@@ -29,6 +29,15 @@ class GlobalExceptionHandlerTest {
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler(issues);
 
     @Test
+    @DisplayName("版本冲突（乐观锁对不上）回 code 412，原话照给")
+    void 版本冲突回412() {
+        // 第八十三轮：知识 Wiki 的自动保存靠 code 分清「别处改过」（停下、照实说）和别的失败（过一会儿再试）；409 是「同一个幂等键还在处理」
+        Result<Void> r = handler.handleVersionConflict(new VersionConflictException("知识页已被其他窗口修改，请刷新后重试"));
+        assertEquals(412, r.getCode());
+        assertEquals("知识页已被其他窗口修改，请刷新后重试", r.getMessage());
+    }
+
+    @Test
     @DisplayName("真正的意外：记成运行问题；回给用户的是一句话加编号，不含异常原文（SQL、表名、类名）")
     void 意外不泄露原文() {
         when(issues.reportServerIssue(any(), any())).thenReturn(42L);

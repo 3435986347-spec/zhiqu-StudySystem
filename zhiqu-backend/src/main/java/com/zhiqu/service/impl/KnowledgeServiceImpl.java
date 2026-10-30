@@ -2,6 +2,7 @@ package com.zhiqu.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.zhiqu.common.BusinessException;
+import com.zhiqu.common.VersionConflictException;
 import com.zhiqu.common.MarkdownCanonicalizer;
 import com.zhiqu.entity.KnowledgeOperationLog;
 import com.zhiqu.entity.KnowledgePageLink;
@@ -46,6 +47,8 @@ import java.util.zip.ZipOutputStream;
 public class KnowledgeServiceImpl implements KnowledgeService {
     private static final Pattern WIKI_LINK_PATTERN = Pattern.compile("\\[\\[([^\\]\\n]{1,120})]]");
     private static final long MAX_SOURCE_UPLOAD_BYTES = 20L * 1024L * 1024L;
+    /** 同一页接着改，10 分钟内的「更新知识页」合成一条（writeUpdateLog） */
+    private static final long UPDATE_LOG_MERGE_MINUTES = 10;
     /**
      * Raw Source 原文最多存多少字。原来粘贴 12000、上传 20000 —— 两个数字，而且截了一个字都不说：
      * 两百页的 PDF 导进来只剩前几页，用户以为整份都在自己的 Wiki 里。现在一个上限，截了就在回包里说出来。
@@ -217,7 +220,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             writeLog(userId, "page.create", page.getId(), null, null, "创建知识页：" + page.getTitle(), page.getContentSummary());
         } else {
             updatePageOrThrow(page);
-            writeLog(userId, "page.update", page.getId(), null, null, "更新知识页：" + page.getTitle(), page.getContentSummary());
+            writeUpdateLog(userId, page);
         }
         syncPageLinks(userId, page.getId(), content);
         enqueueRagUnitSync(userId, page);
@@ -1265,6 +1268,30 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return id == null ? null : pageMapper.selectById(id);
     }
 
+    /**
+     * 「更新知识页」的操作日志：同一个人接着改同一页（上一条也是这一页的 page.update、10 分钟内）就改那一条，不再新加（第八十三轮）。
+     * Wiki 改成打字就自动保存以后，一页改半小时能存几百次 —— 每次一条的话 log 页（列最近 80 条）全是同一页的「更新知识页」，别的操作被挤出去。
+     */
+    private void writeUpdateLog(Long userId, UserKnowledgePage page) {
+        String title = limit("更新知识页：" + page.getTitle(), 180);
+        KnowledgeOperationLog last = operationLogMapper.selectOne(new LambdaQueryWrapper<KnowledgeOperationLog>()
+                .eq(KnowledgeOperationLog::getUserId, userId)
+                .orderByDesc(KnowledgeOperationLog::getId)
+                .last("LIMIT 1"));
+        LocalDateTime now = LocalDateTime.now();
+        if (last != null && "page.update".equals(last.getOperationType()) && page.getId().equals(last.getPageId())
+                && last.getCreatedAt() != null && !last.getCreatedAt().isBefore(now.minusMinutes(UPDATE_LOG_MERGE_MINUTES))) {
+            KnowledgeOperationLog merged = new KnowledgeOperationLog();
+            merged.setId(last.getId());
+            merged.setTitle(title);
+            merged.setDetail(limit(page.getContentSummary(), 1200));
+            merged.setCreatedAt(now);
+            operationLogMapper.updateById(merged);
+            return;
+        }
+        writeLog(userId, "page.update", page.getId(), null, null, title, page.getContentSummary());
+    }
+
     private void writeLog(Long userId, String type, Long pageId, Long patchSetId, Long sourceId, String title, String detail) {
         KnowledgeOperationLog log = new KnowledgeOperationLog();
         log.setUserId(userId);
@@ -1737,7 +1764,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private BusinessException knowledgePageConflict() {
-        return new BusinessException("知识页已被其他窗口修改，请刷新后重试");
+        return new VersionConflictException("知识页已被其他窗口修改，请刷新后重试");
     }
 
     /** 请求里给了这一项：null、只有空白都算没给（value() 和 markdownValue() 共用这一条） */

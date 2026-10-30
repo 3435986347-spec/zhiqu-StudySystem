@@ -1061,11 +1061,12 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-attachment-row:hover{background:var(--zq-tint);}
 .zq-attachment-row>span:first-child{min-width:0;overflow-wrap:anywhere;}
 .zq-attachment-size{flex-shrink:0;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
-/* 「保存 / 取消」浮在正文卡片底上（第八十轮）：原来排在 #zq-doc 下面、阅读时 visibility:hidden 照样占着 59px，
-   正文没到卡片底就被齐刷刷切掉。现在阅读时不显示也不占地方；编辑时盖在正文底上（正文区不变矮，进编辑不跳），
-   #zq-doc 底下多留出它的高度、编辑器滚光标时让开它（wiki-cm.js 的 scrollMargins） */
-.zq-wiki-actionbar{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;gap:8px;padding:10px 26px 18px;border-top:1px solid var(--zq-border-soft);background:var(--zq-card);}
-.zq-wiki-actionbar[data-editing="0"]{display:none;}
+/* 自动保存的状态（第八十三轮，代替原来浮在底上的「保存 / 取消」）：浮在正文卡片右下角的一小块，不占排版（出现、消失时正文不挪）；
+   没存上、别处改过时带按钮 */
+.zq-wiki-save-state{position:absolute;right:18px;bottom:12px;z-index:2;display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;max-width:calc(100% - 36px);
+  padding:4px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);color:var(--zq-text3);font-size:var(--zq-fs-xs);}
+.zq-wiki-save-state:empty{display:none;}
+.zq-wiki-save-state[data-state="error"],.zq-wiki-save-state[data-state="conflict"],.zq-wiki-save-state[data-state="empty"]{color:var(--zq-warn);}
 /* 勾选项：勾上了就划掉、变淡 —— 按 input:checked 画（原来渲染时写死在文字上，点一下勾选框样子不跟着变） */
 .zq-task-row{display:flex;align-items:flex-start;gap:9px;margin:7px 0;}
 .zq-task-row>input[type="checkbox"]{flex:none;margin-top:5px;accent-color:var(--zq-primary);}
@@ -1156,7 +1157,6 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 #zq-wiki-draft .zq-btn,#zq-wiki-draft .zq-btn-ghost{height:28px;}
 /* 源码编辑框；编辑时底下那一条按钮 */
 #zq-src-ta{display:block;width:100%;min-height:360px;padding:12px;border:1px solid var(--zq-border);border-radius:var(--zq-rs);background:var(--zq-input-bg);color:var(--zq-text);font-family:var(--zq-fontM);font-size:var(--zq-fs-sm);line-height:1.7;resize:vertical;box-sizing:border-box;}
-.zq-wiki-actionbar .zq-btn,.zq-wiki-actionbar .zq-btn-ghost{height:30px;}
 #zq-wiki-del{margin-left:auto;}
 /* Wiki 的弹窗：说明、提示、列表 */
 .zq-wiki-note{margin:0 0 12px;color:var(--zq-text2);font-size:var(--zq-fs-sm);line-height:1.6;}

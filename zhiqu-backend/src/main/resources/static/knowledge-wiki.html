@@ -6,11 +6,11 @@
   <title>知识 Wiki - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261022-r82" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261022-r82">
-  <link rel="manifest" href="manifest.json?v=20261022-r82">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261031-r83" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261031-r83">
+  <link rel="manifest" href="manifest.json?v=20261031-r83">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261022-r82">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261031-r83">
 </head>
 <body>
   <div class="zq-app">
@@ -117,10 +117,14 @@
                   <button type="button" data-wiki-cmd="math" class="zq-tbtn" title="公式块（LaTeX）" aria-label="公式块"><span data-zq-icon="sigma"></span></button>
                   <button type="button" data-wiki-cmd="ref" class="zq-tbtn" title="参考链接（显示标题 + 地址）" aria-label="参考链接"><span data-zq-icon="book-marked"></span></button>
                   <button type="button" data-wiki-cmd="source" class="zq-tbtn" id="zq-wiki-source" title="看 Markdown 源码 / 回到排版" aria-label="源码" aria-pressed="false"><span data-zq-icon="file-code"></span></button>
+                  <button type="button" data-wiki-cmd="delete" class="zq-tbtn" title="删除本页" aria-label="删除本页" hidden><span data-zq-icon="trash-2"></span></button>
                 </div>
               </div>
             </div>
             <div id="zq-doc" class="zq-prose"></div>
+            <!-- 自动保存的状态（第八十三轮）：正在保存… / 已保存 / 没存上 / 别处改过。浮在正文卡片右下角、不占排版：
+                 放在页名那一行的话，它一出一没，窄窗口里工具栏跟着换行、正文整块上下挪 —— 点下去的时候字正好挪走 -->
+            <span id="zq-wiki-save-state" class="zq-wiki-save-state" role="status" aria-live="polite"></span>
           </section>
 
           <!-- 页面检查（默认收起） -->
@@ -133,7 +137,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261022-r82"></script>
-  <script src="assets/zhiqu-api.js?v=20261022-r82"></script>
+  <script src="assets/zhiqu-ui.js?v=20261031-r83"></script>
+  <script src="assets/zhiqu-api.js?v=20261031-r83"></script>
 </body>
 </html>

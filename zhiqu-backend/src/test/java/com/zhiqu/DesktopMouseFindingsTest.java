@@ -110,23 +110,20 @@ class DesktopMouseFindingsTest {
     }
 
     @Test
-    @DisplayName("「保存 / 取消」那一条浮在正文卡片底上：阅读时不占地方（原来 visibility:hidden 照样占着，正文没到卡片底就被齐刷刷切掉），编辑时正文底下留出它的高度、光标滚动也让开它")
-    void 保存条浮在底上() throws Exception {
+    @DisplayName("第八十三轮：「保存 / 取消」那一条去掉了（自动保存）；保存的状态浮在正文卡片右下角、不占排版 —— 放在页名那一行的话，它一出一没，窄窗口里工具栏跟着换行、正文整块上下挪，点下去时字正好挪走")
+    void 保存的状态不占排版() throws Exception {
         String css = css();
-        String bar = rule(css, ".zq-wiki-actionbar");
-        assertTrue(bar.contains("position:absolute") && bar.contains("bottom:0"), "保存条要浮在卡片底上，不在正文下面排一行");
-        assertTrue(rule(css, ".zq-wiki-doc").contains("position:relative"), "保存条按正文卡片定位");
-        String reading = rule(css, ".zq-wiki-actionbar[data-editing=\"0\"]");
-        assertTrue(reading.contains("display:none") && !reading.contains("visibility:hidden"), "阅读时保存条不能占地方");
-        Matcher padding = Pattern.compile("padding:(\\d+)px \\d+px (\\d+)px").matcher(bar);
-        Matcher button = Pattern.compile("height:(\\d+)px").matcher(rule(css, ".zq-wiki-actionbar .zq-btn,.zq-wiki-actionbar .zq-btn-ghost"));
-        assertTrue(padding.find() && button.find(), "算不出保存条有多高");
-        int barHeight = Integer.parseInt(padding.group(1)) + Integer.parseInt(padding.group(2)) + Integer.parseInt(button.group(1)) + 1;
+        String badge = rule(css, ".zq-wiki-save-state");
+        assertTrue(badge.contains("position:absolute") && badge.contains("bottom:") && badge.contains("right:"), "保存的状态要浮在卡片角上，不在排版里占一块");
+        assertTrue(rule(css, ".zq-wiki-doc").contains("position:relative"), "状态按正文卡片定位");
+        assertTrue(rule(css, ".zq-wiki-save-state:empty").contains("display:none"), "没状态时不显示");
+        assertFalse(css.contains(".zq-wiki-actionbar"), "原来底上的保存条还在样式表里");
+        String html = Files.readString(Path.of("src/main/resources/static/knowledge-wiki.html"), java.nio.charset.StandardCharsets.UTF_8).replaceAll("(?s)<!--.*?-->", " ");
+        int head = html.indexOf("<div class=\"zq-wiki-head\">"), doc = html.indexOf("<div id=\"zq-doc\""), state = html.indexOf("id=\"zq-wiki-save-state\"");
+        assertTrue(head >= 0 && doc > head && state > doc, "保存的状态要放在正文后面（卡片里浮着），不能放进页名那一行");
+        assertFalse(code("pages/knowledge-wiki.js").contains("zq-wiki-actions"), "页面还在建原来那条「保存 / 取消」");
         Matcher room = Pattern.compile("padding-bottom:(\\d+)px").matcher(rule(css, "#zq-doc[data-editing=\"1\"]"));
-        assertTrue(room.find() && Integer.parseInt(room.group(1)) >= barHeight + 12, "编辑时正文底下要留出保存条的高度（" + barHeight + "px），最后几行才滚得出来");
-        assertTrue(code("wiki-cm.js").contains("EditorView.scrollMargins.of(() => ({ bottom: options.bottomInset ? options.bottomInset() : 0 }))"),
-                "编辑器把光标滚进视野时要让开底上的保存条（否则在最后一行打字，字在保存条底下）");
-        assertTrue(code("pages/knowledge-wiki.js").contains("bottomInset: function () {"), "页面要把保存条的高度告诉编辑器");
+        assertTrue(room.find() && Integer.parseInt(room.group(1)) >= 40, "编辑时正文底下要留一段空：最后几行不贴着卡片底、也不被右下角的状态盖住");
     }
 
     @Test
