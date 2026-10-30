@@ -1157,7 +1157,10 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
    回车 / 点别处就存、Esc 放弃。原来在工具栏那一行、点了弹窗改 */
 .zq-wiki-inline-title{margin:0 0 18px;font-size:var(--zq-fs-prose-h1);font-weight:var(--zq-fw-semibold);line-height:1.3;outline:none;overflow-wrap:anywhere;cursor:default;}
 .zq-wiki-inline-title[contenteditable="plaintext-only"],.zq-wiki-inline-title[contenteditable="true"]{cursor:text;}
-.zq-wiki-inline-title:empty{display:none;}
+/* 没打开页面时页名是空的、改不了：藏起来。能改的删空了不藏，给个「无标题」（review：原来一删空就整个不见，光标跟着没了，再打的字没地方去）。
+   看的是能不能改、不是 :focus —— 窗口没有焦点时 :focus 不成立，正在改的页名会被藏掉，藏的时候不发 blur，原名回不来 */
+.zq-wiki-inline-title[contenteditable="false"]:empty,.zq-wiki-inline-title:not([contenteditable]):empty{display:none;}
+.zq-wiki-inline-title[contenteditable="plaintext-only"]:empty::before,.zq-wiki-inline-title[contenteditable="true"]:empty::before{content:"无标题";color:var(--zq-text3);}
 /* 页面检查 */
 .zq-wiki-insp{padding:12px 14px;color:var(--zq-text2);font-size:var(--zq-fs-xs);line-height:1.6;}
 .zq-wiki-insp-tip{color:var(--zq-text3);}

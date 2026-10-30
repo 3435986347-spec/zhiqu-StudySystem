@@ -539,6 +539,25 @@ function placeKeepingPointer(view, pos, clientTop) {
   });
 }
 
+/** 列表的圆点（第八十四轮）。点它：光标放到这一项的字前面（第八十五轮之后的 review：原来是不管点击的小块，点圆点光标落到别处去了） */
+const BulletWidget = class extends WidgetType {
+  constructor() { super(); this.text = '•'; }
+  eq() { return true; }
+  toDOM(view) {
+    const el = document.createElement('span'); el.className = 'cm-zq-bullet'; el.textContent = this.text;
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      let at; try { at = view.posAtDOM(el); } catch (err) { return; }
+      const line = view.state.doc.lineAt(at);
+      view.focus();
+      view.dispatch({ selection: EditorSelection.cursor(Math.min(line.to, at + 2)) });   // 「- 」后面
+    });
+    return el;
+  }
+  ignoreEvent() { return false; }
+};
+
 const TextWidget = class extends WidgetType {
   constructor(text, className, onClick) { super(); this.text = text; this.className = className; this.onClick = onClick; }
   eq(other) { return other.text === this.text && other.className === this.className; }
@@ -825,7 +844,7 @@ export function inlineDecorations(view, options) {
         const l = state.doc.lineAt(node.from), task = node.node.parent && node.node.parent.getChild('Task');
         if (/^[-*+]$/.test(state.sliceDoc(node.from, node.to)) && !touched(state, l.from, l.to)) {
           if (task) out.push(hide.range(node.from, Math.min(task.from, l.to)));
-          else out.push(Decoration.replace({ widget: new TextWidget('•', 'cm-zq-bullet') }).range(node.from, node.to));
+          else out.push(Decoration.replace({ widget: new BulletWidget() }).range(node.from, node.to));
         } else out.push(mark('cm-zq-list-mark').range(node.from, node.to));
       }
     } });

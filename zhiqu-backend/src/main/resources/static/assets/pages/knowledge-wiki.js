@@ -752,6 +752,8 @@ function wireWikiEditor() {
       else if (e.key === 'Escape') { e.preventDefault(); var p = state.wikiCur; titleEl.textContent = p ? (p._pendingTitle || p.title || '') : ''; titleEl.blur(); }
     });
     titleEl.addEventListener('blur', function () { commitWikiTitle(false); });
+    // 删空以后浏览器在里面留一个 <br>：:empty 不成立，「无标题」出不来 —— 清掉（review）
+    titleEl.addEventListener('input', function () { if (!titleEl.textContent && titleEl.firstChild) titleEl.textContent = ''; });
     // 页名是一行字：贴进来的换行变空格、带格式的只取纯文字
     titleEl.addEventListener('paste', function (e) {
       var text = e.clipboardData && e.clipboardData.getData('text/plain');
@@ -787,7 +789,15 @@ function commitWikiTitle(enter) {
 }
 /** 页名那个节点：#zq-doc 每次重画都整个换掉，这个节点留在这里（事件也在它身上），画完放回最上面 */
 var wikiTitleNode = null;
-function wikiTitleEl() { return wikiTitleNode || (wikiTitleNode = $('#zq-doc-title')); }
+function wikiTitleEl() {
+  if (!wikiTitleNode) wikiTitleNode = $('#zq-doc-title');
+  // 第一次找的时候正文区已经被整个换掉了（页面里没有它）：自己建一个，不然这一页从此没有页名（review）
+  if (!wikiTitleNode && typeof document !== 'undefined' && document.createElement && $('#zq-doc')) {
+    wikiTitleNode = document.createElement('h1');
+    wikiTitleNode.id = 'zq-doc-title'; wikiTitleNode.className = 'zq-wiki-inline-title'; wikiTitleNode.spellcheck = false;
+  }
+  return wikiTitleNode;
+}
 function placeWikiTitle(doc) {
   var t = wikiTitleEl();
   if (t && doc && doc.insertBefore && doc.firstChild !== t) doc.insertBefore(t, doc.firstChild);

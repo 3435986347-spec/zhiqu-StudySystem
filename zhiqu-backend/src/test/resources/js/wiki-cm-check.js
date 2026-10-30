@@ -506,6 +506,10 @@ function fixture({ failLoad = false } = {}) {
     assert.deepEqual(look(far).filter((x) => /bullet|hide:"- "/.test(x)), ['bullet@0', 'hide:"- "']);
     assert.deepEqual(look(1).filter((x) => /bullet@0/.test(x)), [], '光标在第一项上：露出 - 能改');
     assert.ok(!look(far).some((x) => x.includes('1.')), '有序列表的 1. 不该藏、不该换成圆点');
+    // review（第八十五轮之后）：圆点原来是不管点击的小块，点圆点光标落到别处去 —— 现在点它光标进这一项「- 」后面
+    const src = fs.readFileSync(path.resolve(cmPath), 'utf8').replace(/\/\/.*$/gm, '');
+    const bullet = src.slice(src.indexOf('const BulletWidget'), src.indexOf('const TextWidget'));
+    assert.ok(bullet.includes('ignoreEvent() { return false; }') && bullet.includes('view.dispatch({ selection: EditorSelection.cursor(Math.min(line.to, at + 2)) });'), '点圆点又放不进光标了');
   });
   await check('页名在正文顶上直接改，回车改完：存（和自动保存排一队），光标进正文开头', async () => {
     const f = fixture();
@@ -520,6 +524,19 @@ function fixture({ failLoad = false } = {}) {
     f.titleNode.fire('keydown', { key: 'Enter', isComposing: true });
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(f.writes.length, 1, '输入法选字时的回车也当成改完了');
+  });
+  await check('页名删空以后清掉浏览器留下的 <br>（review：不然 :empty 不成立，「无标题」出不来）；还有字时不动', async () => {
+    const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.enterWikiEdit(); f.impl.wireWikiEditor();
+    let kids = [{ nodeName: 'BR', text: '' }];
+    Object.defineProperty(f.titleNode, 'textContent', { configurable: true, get: () => kids.map((k) => k.text).join(''), set: (v) => { kids = v ? [{ nodeName: '#text', text: v }] : []; } });
+    Object.defineProperty(f.titleNode, 'firstChild', { configurable: true, get: () => kids[0] || null });
+    f.titleNode.fire('input');
+    assert.equal(kids.length, 0, '删空的页名里还留着 <br>');
+    kids = [{ nodeName: '#text', text: '嵌' }];
+    const before = kids;
+    f.titleNode.fire('input');
+    assert.equal(kids, before, '页名里还有字，被重写了一遍（光标会跳到开头）');
   });
   await check('编辑器的字号行高和阅读视图一套（第八十四轮照 Obsidian：16px、行高 1.6）—— 两边各写一份会各自走样', () => {
     const css = fs.readFileSync(path.resolve(path.dirname(cmPath), 'zhiqu-ui.css'), 'utf8');

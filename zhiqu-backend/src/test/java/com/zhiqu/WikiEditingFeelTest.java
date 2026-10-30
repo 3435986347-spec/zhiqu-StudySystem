@@ -79,5 +79,8 @@ class WikiEditingFeelTest {
         }
         assertTrue(writes >= 5, "只扫到 " + writes + " 处 doc.innerHTML —— 扫空了？");
         assertTrue(wiki.contains("wikiCmModule.mountWikiEditor(doc.querySelector('.zq-wiki-cm'),"), "编辑器又挂在 doc.firstChild 上（第一个是页名）");
+        // review：页名节点第一次用到时才找；那时正文区要是已经被整个换掉了（页面里没有它），这一页从此没有页名 —— 找不到就自己建一个
+        String find = wiki.substring(wiki.indexOf("function wikiTitleEl() {"), wiki.indexOf("function placeWikiTitle("));
+        assertTrue(find.contains("wikiTitleNode = document.createElement('h1');") && find.contains("wikiTitleNode.className = 'zq-wiki-inline-title';"), "页名节点找不到时没有自己建一个");
     }
 }

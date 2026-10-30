@@ -180,6 +180,10 @@ class WikiLookTest {
         assertEquals("default", prop(rule(css, "#zq-doc[aria-readonly=\"true\"]"), "cursor"), "只读时正文还是文字光标");
         assertEquals("text", prop(rule(css, ".zq-wiki-inline-title[contenteditable=\"plaintext-only\"],.zq-wiki-inline-title[contenteditable=\"true\"]"), "cursor"), "能改名时页名不是文字光标（第八十四轮：在页名上直接改）");
         assertEquals("default", prop(rule(css, ".zq-wiki-inline-title"), "cursor"), "不能改名时（只读、系统页）页名还是文字光标");
+        // review：「页名为空就藏」原来不管能不能改 —— 改名时删空了整个不见，光标跟着没了；也不能看 :focus（窗口没焦点时不成立，藏的时候不发 blur）
+        assertEquals("none", prop(rule(css, ".zq-wiki-inline-title[contenteditable=\"false\"]:empty,.zq-wiki-inline-title:not([contenteditable]):empty"), "display"), "页名为空时只藏改不了的");
+        assertFalse(css.contains(".zq-wiki-inline-title:empty{") || css.contains(".zq-wiki-inline-title:empty:not(:focus)"), "能改的页名一删空（或者窗口失焦）就整个不见");
+        assertEquals("\"无标题\"", prop(rule(css, ".zq-wiki-inline-title[contenteditable=\"plaintext-only\"]:empty::before,.zq-wiki-inline-title[contenteditable=\"true\"]:empty::before"), "content"), "删空的页名没有「无标题」");
         assertTrue(css.contains(".zq-task-row>input:checked+span{color:var(--zq-text3);text-decoration:line-through;}"), "勾上的任务项没有划线（原来在 JS 里写）");
         assertTrue(rule(css, ".zq-wiki-nav .zq-btn-ghost:disabled").contains("opacity:.35"), "没有历史时前进 / 返回不灰（原来在 JS 里改 opacity）");
     }
