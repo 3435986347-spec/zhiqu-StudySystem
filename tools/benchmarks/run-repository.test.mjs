@@ -42,8 +42,17 @@ test('mismatched task revision is refused before gateway access', () => {
   const temp = configCopy(config => { config.dataset.revision = 'latest'; });
   try { assert.throws(() => readRunConfig(temp.file), /frozen dataset/); } finally { temp.close(); }
 });
+// The frozen pilot config pins the agent evaluated in round 69; the agent has changed since (round 86), so the real
+// config refuses to load. These Docker / gateway checks don't depend on which agent is pinned: read it without that check.
+const frozenIgnoringAgent = file => readRunConfig(file, { verifyAgent: false });
+test('a frozen pilot refuses an agent that changed after the freeze (and a missing fingerprint)', () => {
+  const changed = configCopy(config => { config.agent.file_sha256['zhiqu-cli/src/tools/guard.js'] = '0'.repeat(64); });
+  try { assert.throws(() => readRunConfig(changed.file), /Shipped agent changed: zhiqu-cli\/src\/tools\/guard\.js/); } finally { changed.close(); }
+  const missing = configCopy(config => { delete config.agent.file_sha256['zhiqu-cli/src/prompt.js']; });
+  try { assert.throws(() => readRunConfig(missing.file, { verifyAgent: false }), /Missing shipped source fingerprints/); } finally { missing.close(); }
+});
 test('missing Docker is an explicit not-ready result even with a valid gateway', async () => {
-  const result = await preflight({ config: actual }, { runDocker: missingDocker, api: fakeApi });
+  const result = await preflight({ config: actual }, { runDocker: missingDocker, api: fakeApi, readConfig: frozenIgnoringAgent });
   assert.equal(result.ready, false);
   assert.equal(result.gateway.ready, true);
   assert.equal(result.tasks.length, 10);
@@ -59,7 +68,7 @@ test('Docker version alone does not prove a usable server', () => {
   assert.equal(info.experimental_architecture, true);
 });
 test('gateway failures do not print internal transport secrets', async () => {
-  const result = await preflight({ config: actual }, { runDocker: missingDocker,
+  const result = await preflight({ config: actual }, { runDocker: missingDocker, readConfig: frozenIgnoringAgent,
     api: { async get() { throw new Error('fixture-secret-gateway-address'); } } });
   assert.equal(result.gateway.ready, false);
   assert.equal(JSON.stringify(result).includes('fixture-secret'), false);

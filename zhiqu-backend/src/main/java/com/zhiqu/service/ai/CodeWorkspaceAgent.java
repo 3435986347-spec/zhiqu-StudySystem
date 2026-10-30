@@ -416,6 +416,7 @@ public class CodeWorkspaceAgent {
             tools.add(ToolSchemas.functionTool("write_workspace_file",
                     "把对一个文件的修改写成<b>草稿</b>。两种用法选一种：给 content 是整份写入（新建文件，或重写一个读过全文的文件）；"
                             + "给 old_string 和 new_string 是只替换其中一段 —— 改一个已存在的文件时优先用它，不要把整个文件重写一遍。"
+                            + "替换时换成的文字放 new_string，不要放 content；要删掉一段就给 new_string=\"\"。"
                             + "同一个文件多次替换会叠在同一份草稿上。"
                             + "注意：这不会改动磁盘上的文件，只是生成一份待用户确认的草稿，用户在界面上看过 diff、点了确认才会落盘。"
                             + "所以不要说「我已经改好了」，要说「改动已生成草稿，确认后生效」。"
@@ -541,6 +542,10 @@ public class CodeWorkspaceAgent {
                 int replaced = 0;
                 String content;
                 String baseline = loop.baselines.get(path);
+                if (args.get("old_string") != null && args.get("content") != null) {
+                    // 分不清要整份写还是替换：原来按替换做、new_string 缺了当成空 —— 一声不响删代码（第八十六轮，见 TextEdit）
+                    return TextEdit.describe(TextEdit.withContent(), path);
+                }
                 if (args.get("old_string") != null) {
                     // 替换一段（第十轮）：在这个文件的草稿上接着改（同一个文件改两处叠在一起），没有草稿就在读到的那一份上改
                     String base;
@@ -556,8 +561,9 @@ public class CodeWorkspaceAgent {
                         }
                         base = workspaceService.read(path);
                     }
+                    // 没给 new_string 传 null（TextEdit 拒绝），不能变成 ""：那等于「删掉这一段」
                     TextEdit.Result edit = TextEdit.apply(base, String.valueOf(args.get("old_string")),
-                            args.get("new_string") == null ? "" : String.valueOf(args.get("new_string")),
+                            args.get("new_string") == null ? null : String.valueOf(args.get("new_string")),
                             Boolean.TRUE.equals(args.get("replace_all")));
                     if (!edit.ok()) {
                         return TextEdit.describe(edit.error(), path);

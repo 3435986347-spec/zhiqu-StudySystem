@@ -57,6 +57,47 @@ test('替换：没找到、出现不止一次都拒；追加接在末尾', () =>
   assert.ok(!again.error, again.error);
 });
 
+test('替换：只给 old_string、没给 new_string —— 拒绝，文件一个字不动；新旧一样也拒；明写 new_string 为空才是删（第八十六轮：pytest-5840 原来被一声不响删了 32 行）', () => {
+  const { root, t } = tools();
+  const src = 'def a():\n    return 1\n\ndef b():\n    return 2\n';
+  write(root, 'm.py', src);
+  t.readFile({ path: 'm.py' });
+  // 照评测记录里模型发的样子：替换后的文字放进了 content，没有 new_string
+  const r = t.prepareWrite({ path: 'm.py', old_string: 'def a():\n    return 1\n', content: 'def a():\n    return 10\n' });
+  assert.ok(r.error, `应当拒绝，却准备写成：${JSON.stringify(r.newText)}`);
+  assert.match(r.error, /old_string 和 content 不能一起给/);
+  assert.match(r.error, /content 只用于整份写入/);
+  // 三项全给（new_string 也合法）：分不清要整份写还是替换 —— 只有「不能一起给」这道关拦得住（缺 new_string 那道管不到）
+  const all = t.prepareWrite({ path: 'm.py', old_string: 'return 1', new_string: 'return 10', content: 'def a():\n    return 10\n' });
+  assert.ok(all.error, `三项全给应当拒绝，却准备写成：${JSON.stringify(all.newText)}`);
+  assert.match(all.error, /不能一起给/);
+  const only = t.prepareWrite({ path: 'm.py', old_string: 'def a():\n    return 1\n' });
+  assert.ok(only.error, `只给 old_string 应当拒绝，却准备写成：${JSON.stringify(only.newText)}`);
+  assert.match(only.error, /new_string: ""/);
+  const same = t.prepareWrite({ path: 'm.py', old_string: 'return 1', new_string: 'return 1' });
+  assert.ok(same.error, '新旧一样应当拒绝（原来回「已修改 +0 -0」，模型以为改上了）');
+  assert.match(same.error, /什么都没改/);
+  assert.equal(fs.readFileSync(path.join(root, 'm.py'), 'utf8'), src);
+  const del = t.prepareWrite({ path: 'm.py', old_string: '\ndef b():\n    return 2\n', new_string: '' });
+  assert.equal(del.kind, 'replace');
+  t.commitWrite(del);
+  assert.equal(fs.readFileSync(path.join(root, 'm.py'), 'utf8'), 'def a():\n    return 1\n');
+});
+
+test('Python 项目常见的 .rst / .pyi / MANIFEST.in 能读能写；列目录时读不了的不再一律说「可能含密钥」、拒绝时说清去哪加（第八十六轮：pytest-10356 在 .rst 上白花约 10 轮）', () => {
+  const { root, t } = tools();
+  write(root, 'changelog/10150.bugfix.rst', 'Fixed.\n');
+  write(root, 'pkg/__init__.pyi', 'x: int\n');
+  write(root, 'MANIFEST.in', 'include README.rst\n');
+  write(root, 'cert.pem', 'x');
+  for (const f of ['changelog/10150.bugfix.rst', 'pkg/__init__.pyi', 'MANIFEST.in']) assert.ok(!t.readFile({ path: f }).error, f);
+  assert.equal(t.prepareWrite({ path: 'changelog/10356.bugfix.rst', content: 'Fix MRO.\n' }).kind, 'create');
+  const list = t.listFiles({ depth: 2 }).content;
+  assert.ok(!list.includes('可能含密钥'), list);
+  assert.match(list, /cert\.pem {2}（这类文件读不了：不在能读的清单里）/);
+  assert.match(t.readFile({ path: 'cert.pem' }).error, /\.zhiqu\/settings\.json 的 extensions/);
+});
+
 test('确认期间文件被改过：commit 不写（用户在编辑器里的改动不能被旧草稿覆盖）', () => {
   const { root, t } = tools();
   write(root, 'a.js', 'v1\n');

@@ -1,5 +1,5 @@
 {
-  "_说明": "「按原文替换一段」的一致性用例（第十轮）。npm 版 zhiqu 的 write_file 替换用法（zhiqu-cli/src/tools/edit.js）与网页 code agent 的 write_workspace_file 替换用法（TextEdit.java）跑同一份：两边各自绿不算数，对同一份输入给出同样的结论才算数。expect 里有 text 就是应当成功、结果一字不差；有 error 就是应当拒绝，并核对种类与行号（提示文字两边可以不同）。",
+  "_说明": "「按原文替换一段」的一致性用例（第十轮）。npm 版 zhiqu 的 write_file 替换用法（zhiqu-cli/src/tools/edit.js）与网页 code agent 的 write_workspace_file 替换用法（TextEdit.java）跑同一份：两边各自绿不算数，对同一份输入给出同样的结论才算数。expect 里有 text 就是应当成功、结果一字不差；有 error 就是应当拒绝，并核对种类与行号（提示文字两边可以不同）。没有 new 这一项（或是 null）= 模型没给 new_string：拒绝，不当成「换成空」—— 要删一段得明写 new 为空字符串（第八十六轮）。",
   "cases": [
     { "name": "一处，照原文换", "text": "a = 1\nb = 2\n", "old": "a = 1", "new": "a = 3", "expect": { "text": "a = 3\nb = 2\n", "replaced": 1 } },
     { "name": "多行一段", "text": "function f() {\n  return 1;\n}\n", "old": "  return 1;\n}", "new": "  return 2;\n}", "expect": { "text": "function f() {\n  return 2;\n}\n", "replaced": 1 } },
@@ -20,6 +20,11 @@
     { "name": "第一行太短（< 8 字）不做包含匹配", "text": "xx ab yy\n", "old": "ab\ncd", "new": "x", "expect": { "error": "not_found", "hint": null } },
     { "name": "第一行够长时按包含匹配", "text": "const answer = compute(a, b);\nnext\n", "old": "answer = compute(a, b)\nother", "new": "x", "expect": { "error": "not_found", "hint": "first_line", "at": 1 } },
     { "name": "完全没有", "text": "abc\n", "old": "zzz", "new": "x", "expect": { "error": "not_found", "hint": null } },
-    { "name": "old 为空：拒绝", "text": "abc\n", "old": "", "new": "x", "expect": { "error": "empty_old" } }
+    { "name": "old 为空：拒绝", "text": "abc\n", "old": "", "new": "x", "expect": { "error": "empty_old" } },
+    { "name": "只给 old、没给 new：拒绝，不当成删掉（第八十六轮：pytest-5840 就这样一声不响被删了 32 行）", "text": "a = 1\nb = 2\n", "old": "a = 1", "expect": { "error": "missing_new" } },
+    { "name": "new 是 null 也算没给", "text": "a = 1\nb = 2\n", "old": "a = 1", "new": null, "expect": { "error": "missing_new" } },
+    { "name": "新旧一模一样：拒绝，不说「改了」", "text": "a = 1\nb = 2\n", "old": "a = 1", "new": "a = 1", "expect": { "error": "no_change" } },
+    { "name": "replace_all 时新旧一样也拒", "text": "x\nx\n", "old": "x", "new": "x", "replaceAll": true, "expect": { "error": "no_change" } },
+    { "name": "新旧一样、原文里也没有：先说没找到", "text": "abc\n", "old": "zzz", "new": "zzz", "expect": { "error": "not_found", "hint": null } }
   ]
 }

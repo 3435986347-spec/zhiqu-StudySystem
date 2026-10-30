@@ -7,6 +7,9 @@
 //     混着两种换行的不动它，照原样一字不差地比；
 //   - 没找到时给线索：先按「忽略空白」找同样的几行（缩进、行尾空白、全角空格不一样），找到就说在第几行、原文是什么；
 //     找不到再看第一行在哪（那段多半被改过了）。原来只回「没找到」，模型凭记忆再拼、又错，几轮之后放弃替换、整份重写。
+//   - 没给 new_string 不等于「换成空」，拒绝；要删一段得明写 new_string: ""。新旧一模一样也拒（第八十六轮）——
+//     仓库评测里模型把替换后的文字放进了 content、没给 new_string，原来当成换成空，一声不响删了 32 行、回「已修改 +0 -32」；
+//     新旧一样时回「已修改 +0 -0」，模型以为改上了。
 
 // 两边一样的空白集合：写死，不用 \s —— JS 的 \s 与 Java 的 \s 范围不同，一致性用例会分叉
 const WS = /[ \t\n\r\f\v\u00a0\u3000]+/g;
@@ -41,18 +44,21 @@ function hintFor(text, needle) {
 }
 
 /**
- * 在 text 里把 oldStr 换成 newStr。
- * 成功：{ text, replaced }；拒绝：{ error: { kind: 'empty_old' | 'not_found' | 'ambiguous', … } }。
+ * 在 text 里把 oldStr 换成 newStr（newStr 没给 = null / undefined，不是空字符串）。
+ * 成功：{ text, replaced }；拒绝：{ error: { kind: 'empty_old' | 'missing_new' | 'not_found' | 'no_change' | 'ambiguous', … } }。
+ * 'with_content'（old_string 和 content 一起给）由调用的工具判，说法也在 describeEditError 里。
  */
 export function applyEdit(text, oldStr, newStr, { replaceAll = false } = {}) {
   const old = String(oldStr ?? '');
   if (!old) return { error: { kind: 'empty_old' } };
+  if (newStr == null) return { error: { kind: 'missing_new' } };
   const crlf = text.includes('\r\n') && !/(^|[^\r])\n/.test(text);
   const hay = crlf ? text.replace(/\r\n/g, '\n') : text;
   const needle = crlf ? old.replace(/\r\n/g, '\n') : old;
-  const replacement = crlf ? String(newStr ?? '').replace(/\r\n/g, '\n') : String(newStr ?? '');
+  const replacement = crlf ? String(newStr).replace(/\r\n/g, '\n') : String(newStr);
   const at = occurrences(hay, needle);
   if (!at.length) return { error: { kind: 'not_found', hint: hintFor(hay, needle) } };
+  if (replacement === needle) return { error: { kind: 'no_change' } };
   if (at.length > 1 && !replaceAll) return { error: { kind: 'ambiguous', count: at.length, lines: at.map((i) => lineAt(hay, i)) } };
   const next = at.length > 1 ? hay.split(needle).join(replacement) : hay.slice(0, at[0]) + replacement + hay.slice(at[0] + needle.length);
   return { text: crlf ? next.replace(/\n/g, '\r\n') : next, replaced: at.length };
@@ -61,6 +67,16 @@ export function applyEdit(text, oldStr, newStr, { replaceAll = false } = {}) {
 /** 拒绝的原因说给模型听：说清在哪、原文是什么、该怎么改。 */
 export function describeEditError(error, rel) {
   if (error.kind === 'empty_old') return 'old_string 不能为空';
+  if (error.kind === 'missing_new') {
+    return `只给了 old_string，没给 new_string —— 不知道要换成什么，这次没改 ${rel}。`
+      + '把改完的样子放进 new_string（content 只用于整份写入 / 追加）；真要删掉这一段，就明写 new_string: ""。';
+  }
+  if (error.kind === 'no_change') {
+    return `new_string 和 old_string 一模一样，这次 ${rel} 什么都没改。把 new_string 写成改完的样子；要是那里已经是对的，就不用再改。`;
+  }
+  if (error.kind === 'with_content') {
+    return `old_string 和 content 不能一起给，这次没改 ${rel}：替换一段时，换成的文字放 new_string；content 只用于整份写入 / 追加。`;
+  }
   if (error.kind === 'ambiguous') {
     const where = error.lines.slice(0, 12).join('、');
     return `old_string 在 ${rel} 里出现了 ${error.count} 处（第 ${where}${error.lines.length > 12 ? ' …' : ''} 行）。`

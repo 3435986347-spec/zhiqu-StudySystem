@@ -19,6 +19,7 @@
   两边一起收紧。
 - **没读过不许改、只读一部分不许整份重写、确认期间被改过不写**（`local.js` 的 prepare / commit 两步）。
   `write_file` 一个工具三种用法（整份 / append / old_string 替换）—— 长文件分几次写，就是为了不撞单次输出上限。
+  替换缺 `new_string` 不当成「换成空」、新旧一样不说「已修改」、`old_string` 和 `content` 不能一起给（第八十六轮：仓库评测里模型把替换后的字放进 `content`，原来一声不响删了代码；网页 code agent 的 `TextEdit` 同一套，用例在 `conformance/text-edit.json`）。
 - **截断不是说完了**：`finish_reason=length` 时截断的调用不执行，历史里的参数换成小而合法的 JSON（带 path），
   回模型「分几次写」。单条工具输出按模型窗口截断（窗口 × 0.35 字）—— 否则小窗口模型一轮就超，两边的压缩都救不了。
 - **子进程与 MCP 服务器都不继承命令行的环境**（那里有 `ZHIQU_TOKEN`）。超时杀整个进程组（`detached` + `kill(-pid)`）：

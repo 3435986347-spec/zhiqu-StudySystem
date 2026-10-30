@@ -18,8 +18,11 @@ export const Reason = Object.freeze({
 export const DEFAULT_EXTENSIONS = ['java', 'kt', 'py', 'js', 'ts', 'jsx', 'tsx', 'go', 'rs', 'rb', 'php', 'c', 'h', 'cpp',
   'hpp', 'cc', 'cs', 'swift', 'm', 'scala', 'sql', 'sh', 'bat', 'ps1', 'html', 'css', 'scss', 'less', 'vue', 'svelte',
   'json', 'yml', 'yaml', 'toml', 'xml', 'properties', 'md', 'txt', 'csv', 'gradle', 'makefile', 'dockerfile',
-  // 以下几种服务器端没有：命令行面对的是真实项目，这几种很常见且不含密钥
-  'mjs', 'cjs', 'gitignore', 'lock', 'env.example', 'svg', 'ini', 'cfg', 'kts', 'dart', 'lua', 'r', 'ipynb'];
+  // 以下几种原来只有命令行有，第八十一轮起服务器端（WorkspaceProperties.allowedExtensions）也有 —— 两边一份，WorkspaceExtensionsTest 钉着
+  'mjs', 'cjs', 'gitignore', 'lock', 'env.example', 'svg', 'ini', 'cfg', 'kts', 'dart', 'lua', 'r', 'ipynb',
+  // 第八十六轮：Python 项目的 README / changelog 是 .rst，类型桩 .pyi、Cython、MANIFEST.in / requirements.in 都常见 ——
+  // 原来读不了，仓库评测里模型写脚本绕过去读写 .rst（这道关什么都没拦住，白花约 10 轮）；服务器端同一份
+  'rst', 'pyi', 'pyx', 'pxd', 'in', 'tex', 'adoc', 'proto', 'graphql', 'tsv', 'cmake'];
 export const DEFAULT_MAX_FILE_BYTES = 256 * 1024;
 
 function lexists(p) {
@@ -157,7 +160,8 @@ export function describe(reason, p, maxFileBytes = DEFAULT_MAX_FILE_BYTES) {
     case Reason.OUTSIDE_ROOT: return `路径超出了工作区范围（只接受相对路径，且不能用 ../ 或软链跳出去）：${p}`;
     case Reason.SYMLINK: return `这是一个符号链接，工作区不跟随链接：${p}`;
     case Reason.NOT_REGULAR_FILE: return `不是一个普通文件（可能不存在，或者是目录）：${p}`;
-    case Reason.EXTENSION_NOT_ALLOWED: return `这个类型的文件不在允许清单里（避免把密钥、证书这类内容读进上下文）：${p}`;
+    case Reason.EXTENSION_NOT_ALLOWED: return `这个类型的文件不在允许清单里（避免把密钥、证书这类内容读进上下文）：${p}。`
+      + '确实要读写它，请用户在 .zhiqu/settings.json 的 extensions 里列上这个扩展名（这一项会整个替换默认清单）；不要写脚本绕过去读';
     case Reason.TOO_LARGE: return `文件超过了 ${maxFileBytes} 字节的上限：${p}`;
     case Reason.PARENT_NOT_FOUND: return `上级路径被一个文件占着，没法在它下面建文件：${p}`;
     default: return '';

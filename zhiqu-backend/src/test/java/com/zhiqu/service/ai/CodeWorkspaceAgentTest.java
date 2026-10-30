@@ -406,6 +406,32 @@ class CodeWorkspaceAgentTest {
     }
 
     @Test
+    @DisplayName("替换缺 new_string（换成的字放进了 content）、只给 old_string、新旧一样：都不出草稿、说清怎么改 —— 原来当成「换成空」，一声不响删代码（第八十六轮）")
+    void 替换缺新文字不当成删掉() throws Exception {
+        String src = "def a():\n    return 1\n\ndef b():\n    return 2\n";
+        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        when(rig.workspace.read("m.py")).thenReturn(src);
+        when(rig.workspace.baselineOf("m.py")).thenReturn("h1");
+        rig.modelSays(
+                toolCall("read_workspace_file", args(Map.of("path", "m.py"))),
+                // 照仓库评测记录里模型发的样子（pytest-5840）：替换后的文字放在 content，没有 new_string
+                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "def a():\n    return 1\n",
+                        "content", "def a():\n    return 10\n"))),
+                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "def a():\n    return 1\n"))),
+                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "return 1", "new_string", "return 1"))),
+                // 三项全给（new_string 也合法）：只有「不能一起给」这道关拦得住，不拦就照替换出了草稿
+                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "return 2", "new_string", "return 20",
+                        "content", "def b():\n    return 20\n"))));
+        CodeWorkspaceAgent.Result r = rig.run("改 m.py", CODE_MODE);
+        assertTrue(r.drafts().isEmpty(), "缺 new_string 的替换出了草稿（删掉了那一段）：" + r.drafts());
+        String results = r.context();   // 拒绝写在给模型的上下文里（和「替换的前提」一样），执行轨迹里只有读那一下
+        assertTrue(results.contains("old_string 和 content 不能一起给"), results);
+        assertTrue(results.contains("content 只用于整份写入"), results);
+        assertTrue(results.contains("明写 new_string: \"\""), results);
+        assertTrue(results.contains("什么都没改"), results);
+    }
+
+    @Test
     @DisplayName("同一个文件改两处：两次替换叠在同一份草稿上（不是第二次把第一次冲掉）")
     void 两次替换叠加() throws Exception {
         Rig rig = new Rig(WorkspaceMode.WRITE, true);

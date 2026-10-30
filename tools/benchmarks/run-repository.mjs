@@ -50,7 +50,9 @@ export function parseArgs(argv) {
   return opts;
 }
 
-export function readRunConfig(filename) {
+// verifyAgent=false only for tests of the Docker / gateway checks: the frozen pilot pins the agent that was evaluated
+// (round 69), so any later agent change makes the real config refuse to load — by design (round 86).
+export function readRunConfig(filename, { verifyAgent = true } = {}) {
   const config = JSON.parse(fs.readFileSync(filename, 'utf8'));
   if (config.dataset?.revision !== 'c104f840cc67f8b6eec6f759ebc8b2693d585d4a'
       || config.dataset?.size !== 10 || config.model?.id !== 6
@@ -69,13 +71,15 @@ export function readRunConfig(filename) {
   const selection = JSON.parse(fs.readFileSync(selectionPath, 'utf8'));
   if (selection.revision !== config.dataset.revision || selection.tasks?.length !== 10
       || new Set(selection.tasks.map(t => t.instance_id)).size !== 10) throw new Error('Invalid frozen selection');
-  for (const [file, expected] of Object.entries(config.agent?.file_sha256 || {})) {
-    if (sha(fs.readFileSync(path.join(REPO, file))) !== expected) throw new Error(`Shipped agent changed: ${file}`);
-  }
   if (Object.keys(config.agent?.file_sha256 || {}).length !== 4) throw new Error('Missing shipped source fingerprints');
-  const currentTree = execFileSync('git', ['rev-parse', 'HEAD:zhiqu-cli'], { cwd: REPO, encoding: 'utf8' }).trim();
-  const dirty = execFileSync('git', ['status', '--porcelain', '--', 'zhiqu-cli'], { cwd: REPO, encoding: 'utf8' }).trim();
-  if (currentTree !== config.agent.cli_git_tree || dirty) throw new Error('Frozen CLI tree changed or has local modifications');
+  if (verifyAgent) {
+    for (const [file, expected] of Object.entries(config.agent.file_sha256)) {
+      if (sha(fs.readFileSync(path.join(REPO, file))) !== expected) throw new Error(`Shipped agent changed: ${file}`);
+    }
+    const currentTree = execFileSync('git', ['rev-parse', 'HEAD:zhiqu-cli'], { cwd: REPO, encoding: 'utf8' }).trim();
+    const dirty = execFileSync('git', ['status', '--porcelain', '--', 'zhiqu-cli'], { cwd: REPO, encoding: 'utf8' }).trim();
+    if (currentTree !== config.agent.cli_git_tree || dirty) throw new Error('Frozen CLI tree changed or has local modifications');
+  }
   return { config, selection, selectionPath, configSha256: sha(fs.readFileSync(filename)) };
 }
 
@@ -96,8 +100,8 @@ export function inspectDocker(run = execFileSync) {
   }
 }
 
-export async function preflight(opts, { runDocker = execFileSync, api: suppliedApi } = {}) {
-  const { config, selection, configSha256 } = readRunConfig(opts.config);
+export async function preflight(opts, { runDocker = execFileSync, api: suppliedApi, readConfig = readRunConfig } = {}) {
+  const { config, selection, configSha256 } = readConfig(opts.config);
   const docker = inspectDocker(runDocker);
   let gateway;
   try {

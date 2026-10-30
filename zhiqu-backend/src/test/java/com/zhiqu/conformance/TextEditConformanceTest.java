@@ -53,7 +53,9 @@ class TextEditConformanceTest {
     }
 
     private static void check(JsonNode c) {
-        TextEdit.Result r = TextEdit.apply(c.path("text").asText(), c.path("old").asText(), c.path("new").asText(),
+        // 没有 new 这一项（或是 null）就是模型没给 new_string —— 传 null，不能用 asText() 变成 ""（那正是第八十六轮查出的「当成删掉」）
+        String newStr = c.hasNonNull("new") ? c.get("new").asText() : null;
+        TextEdit.Result r = TextEdit.apply(c.path("text").asText(), c.path("old").asText(), newStr,
                 c.path("replaceAll").asBoolean(false));
         JsonNode e = c.path("expect");
         if (e.has("text")) {

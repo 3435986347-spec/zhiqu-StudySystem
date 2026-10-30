@@ -19,6 +19,8 @@ import java.util.regex.Pattern;
  *   <li>old 必须一字不差、只出现一次；出现几处时说出行号，{@code replaceAll} 才全换；</li>
  *   <li>全是 {@code \r\n} 的文件在统一成 {@code \n} 的文本里比、换，写回去变回 {@code \r\n}；混着两种换行的照原样比；</li>
  *   <li>没找到时给线索：先按「忽略空白」找同样的几行，找到就说第几行、原文是什么；找不到再看第一行在哪。</li>
+ *   <li>没给 new（{@code null}）不等于「换成空」，拒绝；要删一段得明写空字符串。新旧一模一样也拒（第八十六轮）——
+ *       仓库评测里模型把替换后的文字放进了 content、没给 new_string，原来当成换成空，一声不响删了 32 行。</li>
  * </ul>
  */
 public final class TextEdit {
@@ -31,7 +33,13 @@ public final class TextEdit {
     private static final Pattern LONE_LF = Pattern.compile("(^|[^\\r])\\n");
     private static final int SHOW_CHARS = 2000;
 
-    public enum Kind { EMPTY_OLD, NOT_FOUND, AMBIGUOUS }
+    /** {@code WITH_CONTENT}（old_string 和 content 一起给）由调用的工具判，说法在 {@link #describe} 里，两边一样。 */
+    public enum Kind { EMPTY_OLD, MISSING_NEW, NOT_FOUND, NO_CHANGE, AMBIGUOUS, WITH_CONTENT }
+
+    /** old_string 和 content 一起给：分不清要整份写还是替换。 */
+    public static Error withContent() {
+        return new Error(Kind.WITH_CONTENT, null, 0, List.of());
+    }
 
     /** 没找到时的线索。{@code kind} 是 {@code whitespace}（只差空白，{@code from..to} 行）或 {@code first_line}（第一行在 {@code at}）。 */
     public record Hint(String kind, int from, int to, int at, String text) {
@@ -52,16 +60,22 @@ public final class TextEdit {
         if (old.isEmpty()) {
             return new Result(null, 0, new Error(Kind.EMPTY_OLD, null, 0, List.of()));
         }
+        if (newStr == null) {
+            return new Result(null, 0, new Error(Kind.MISSING_NEW, null, 0, List.of()));
+        }
         boolean crlf = text.contains("\r\n") && !LONE_LF.matcher(text).find();
         String hay = crlf ? text.replace("\r\n", "\n") : text;
         String needle = crlf ? old.replace("\r\n", "\n") : old;
-        String replacement = newStr == null ? "" : (crlf ? newStr.replace("\r\n", "\n") : newStr);
+        String replacement = crlf ? newStr.replace("\r\n", "\n") : newStr;
         List<Integer> at = new ArrayList<>();
         for (int i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + needle.length())) {
             at.add(i);
         }
         if (at.isEmpty()) {
             return new Result(null, 0, new Error(Kind.NOT_FOUND, hintFor(hay, needle), 0, List.of()));
+        }
+        if (replacement.equals(needle)) {
+            return new Result(null, 0, new Error(Kind.NO_CHANGE, null, 0, List.of()));
         }
         if (at.size() > 1 && !replaceAll) {
             List<Integer> lines = at.stream().map(i -> lineAt(hay, i)).toList();
@@ -82,6 +96,12 @@ public final class TextEdit {
     public static String describe(Error error, String path) {
         return switch (error.kind()) {
             case EMPTY_OLD -> "old_string 不能为空";
+            case MISSING_NEW -> "只给了 old_string，没给 new_string —— 不知道要换成什么，这次没改 " + path + "。"
+                    + "把改完的样子放进 new_string（content 只用于整份写入）；真要删掉这一段，就明写 new_string: \"\"。";
+            case NO_CHANGE -> "new_string 和 old_string 一模一样，这次 " + path + " 什么都没改。"
+                    + "把 new_string 写成改完的样子；要是那里已经是对的，就不用再改。";
+            case WITH_CONTENT -> "old_string 和 content 不能一起给，这次没改 " + path + "：替换一段时，换成的文字放 new_string；"
+                    + "content 只用于整份写入。";
             case AMBIGUOUS -> {
                 List<Integer> shown = error.lines().subList(0, Math.min(12, error.lines().size()));
                 yield "old_string 在 " + path + " 里出现了 " + error.count() + " 处（第 "

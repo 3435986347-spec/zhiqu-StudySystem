@@ -185,8 +185,7 @@ cd ../zhiqu-cli && npm test
 - [第六十七轮](docs/rounds/round-67.md) Wiki 只读模式、网址直接点击与 JSON 预览内部滚动；[第六十八轮](docs/rounds/round-68.md) 恢复点击编辑、可选只读开关、工具栏靠右与页面流畅度
 - [第六十九轮](docs/rounds/round-69.md) 命令行 TERM=dumb 的 15 个失败与 read_file 空行；Wiki 查看类弹窗先开后填、目录预取、健康检查 / 图谱的三个真错；仓库评测的 Docker 编排与不花钱的对照；锐评
 - [第七十轮](docs/rounds/round-70.md) 知识 Wiki 换编辑内核的验证：CodeMirror 6 实时预览（开关后面）——不改内容保存 0/14 → 14/14 逐字节一样、点进编辑快一倍；面板刷新时闪一下挤扁的内容
-- [第七十一轮](docs/rounds/round-71.md) 换编辑器第 1 步：阅读认嵌套列表（缩进、任务子项、续行、编号）、旧编辑器写回缩进；用户保存的 Wiki 正文原样存、原样读回
-- [第七十二轮](docs/rounds/round-72.md) 换上新的应用图标（知字图标设计方案）：网页四张 PNG 原样换、favicon.ico 原来是 6 字节的文本、macOS / Windows 图标从设计稿生成
+- [第七十一轮](docs/rounds/round-71.md) 换编辑器第 1 步：阅读认嵌套列表（缩进、任务子项、续行、编号）、旧编辑器写回缩进；用户保存的 Wiki 正文原样存、原样读回；[第七十二轮](docs/rounds/round-72.md) 换上新的应用图标（知字图标设计方案）：网页四张 PNG 原样换、favicon.ico 原来是 6 字节的文本、macOS / Windows 图标从设计稿生成
 - [第七十三轮](docs/rounds/round-73.md) 换编辑器第 2 步：新编辑器补齐图片、下划线、表格、代码着色、段落格式和快捷键，阅读模式里点哪个字光标就落在原文那个字上
 - [第七十四轮](docs/rounds/round-74.md) review 第五十九到七十三轮（9 条 + 十六遍复查）：AI 改页不删用户的字、「根据知识库生成」不算写 Wiki、新编辑器回原处 / 插链接留字；Wiki 草稿只在 `WikiDrafts` 造（先洗再截、空的不造、合入不再洗）
 - [第七十五轮](docs/rounds/round-75.md) 界面打磨第 8 步（三）：设置、成就弹窗的样子进样式表（开关看 `aria-checked`、分栏能用方向键、打开时焦点在选中的那栏），模型卡片不重复「我的」，遮罩盖住滚动条的槽；[第七十六轮](docs/rounds/round-76.md) 图标的 1024 母版和矢量稿：macOS 图标最大那一档不再从 512 放大（`MakeIcon` 读 `deploy/desktop/icon/icon-1024.png`）
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第八十三轮](docs/rounds/round-83.md) 知识 Wiki 像 Obsidian：编辑器一直开着、打字自动保存（412 = 别处改过）、空行整行（连按回车）、光标看得见会闪（原来黑光标画在深色底上）、点进块不挪；和 Obsidian 并排比过
 - [第八十四轮](docs/rounds/round-84.md) Wiki 继续照 Obsidian：正文 16px / 行高 1.6 / 标题加粗（`--zq-fs-prose*`）、括号自动配对和选中字包起来（重打 CodeMirror，只多导出 closeBrackets）、页名放进正文顶上直接改、列表画成圆点
 - [第八十五轮](docs/rounds/round-85.md) Wiki 表格在格子里直接改（照 Obsidian）：点进一格露出原文、打字同步写回（| 转义）、Tab / 回车 / Esc 走格子、⌘Z 走整篇历史；自己改的那一下不重画；之后 review 修了四处（点圆点放光标、页名删空显示「无标题」不藏）
+- [第八十六轮](docs/rounds/round-86.md) coding agent：仓库评测里 `write_file` 只给 old_string + content 被当成「换成空」、一声不响删代码（pytest-5840 / sympy-23950，命令行和网页 code agent 同一个错）、新旧一样说「已修改」、`.rst` 读不了还标「可能含密钥」；回放 14 段真实记录 19 次静默删代码全拒

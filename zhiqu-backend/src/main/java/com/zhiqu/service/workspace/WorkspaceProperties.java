@@ -51,7 +51,10 @@ public class WorkspaceProperties {
             "md", "txt", "csv", "gradle", "makefile", "dockerfile",
             // 第八十一轮和命令行（zhiqu-cli/src/tools/guard.js 的 DEFAULT_EXTENSIONS）对齐：都是不含密钥的文本。
             // 原来网页 / 桌面应用这边没有 svg —— 用户让 AI 助手「画一张鳄鱼骑自行车」，写 crocodile_bike.svg 两次都被拒
-            "mjs", "cjs", "gitignore", "lock", "env.example", "svg", "ini", "cfg", "kts", "dart", "lua", "r", "ipynb");
+            "mjs", "cjs", "gitignore", "lock", "env.example", "svg", "ini", "cfg", "kts", "dart", "lua", "r", "ipynb",
+            // 第八十六轮：Python 项目的 README / changelog 是 .rst，类型桩、Cython、MANIFEST.in 都常见 —— 仓库评测里命令行
+            // 读写不了 .rst，模型写脚本绕过去（这道关什么都没拦住，白花约 10 轮）。两边照旧一份（WorkspaceExtensionsTest）
+            "rst", "pyi", "pyx", "pxd", "in", "tex", "adoc", "proto", "graphql", "tsv", "cmake");
 
     /** 执行超时。到点 destroyForcibly —— 一个死循环不该把这台机器占住。 */
 

@@ -152,6 +152,7 @@ export function localSchemas() {
       '1）整份写入：给 content —— 新建文件，或者整份重写一个读过全文的文件；',
       '2）追加：给 content 并且 append=true —— 长文件分几次写，就先写开头再一段段追加；',
       '3）替换一段：给 old_string 和 new_string —— old_string 必须和文件里的原文一字不差（缩进也算）、且只出现一次；同样的一段要全部替换就加 replace_all=true。改一小段就用它，不要整份重写。',
+      '   换成的文字放 new_string，不要放 content（content 只用于 1、2）；要删掉一段就给 new_string=""。',
       '上级目录不存在会自动建。',
     ].join('\n'), {
       path: { type: 'string', description: '相对工作区根的路径' },
@@ -247,7 +248,8 @@ export class LocalTools {
         let size = 0;
         try { size = fs.statSync(child).size; } catch { /* 读不到大小就算 0 */ }
         const readable = this.guard.extensionAllowed(child);
-        lines.push(`${indent}${d.name}  ${readable ? formatBytes(size) : '（这类文件读不了：可能含密钥）'}`);
+        // 不在清单里的不一定是密钥（.rst 原来也标成「可能含密钥」，第八十六轮），只说读不了、为什么
+        lines.push(`${indent}${d.name}  ${readable ? formatBytes(size) : '（这类文件读不了：不在能读的清单里）'}`);
         count++;
       }
     };
@@ -464,6 +466,8 @@ export class LocalTools {
     const currentText = current ? current.toString('utf8') : '';
     const known = this.known.get(rel);
     const replacing = args.old_string != null;
+    // 分不清要整份写还是替换：原来按替换做、new_string 缺了当成空 —— 一声不响删代码（第八十六轮，见 edit.js）
+    if (replacing && args.content != null) return { error: describeEditError({ kind: 'with_content' }, rel) };
     const appending = !replacing && Boolean(args.append);
     if (exists) {
       if (!known) {
