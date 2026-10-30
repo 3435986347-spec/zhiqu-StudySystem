@@ -93,3 +93,15 @@
 - 全量（`mvn -o clean test`）：1309 条，0 失败、0 跳过。
 - Windows 安装包要在 Windows 上打（`package-windows.ps1`），打好放同一个目录就出现。
 - 下载的人要有 MySQL 才能用桌面版 —— 要不要把桌面版改成「连网页版的服务器」等用户定。
+
+## 收尾（2026-10-30）：胶囊拖不动
+
+- 用户：「缩小后的胶囊怎么不能移动」。用真鼠标（computer use 全屏操控）复现：按住胶囊中间拖到屏幕中间，胶囊不动，事件漏到了桌面上。
+- 原因：拖动区（`MiniDragZone`）靠 `mouseDownCanMoveWindow` + `isMovableByWindowBackground` 让 AppKit 自己拖 —— 在这个无边框、不激活的面板上不起作用。
+  第五十一轮做的时候没用真鼠标拖过；判据钉的正是 `mouseDownCanMoveWindow` 为真，和实现一起错、一起绿了三十轮。
+- 改成拖动区自己接 `mouseDown` 交给 `performDrag`，`acceptsFirstMouse` 为真（面板不是键窗口时第一下也收），`mouseDownCanMoveWindow` 为假。
+  判据（`DesktopPageViewTest#迷你番茄钟` + `page-view-check.swift`）改钉这三样，扰动 3 处全红（退回原来的写法、不收第一下、mouseDown 不交给 performDrag）。
+- 重打桌面包（下载目录里的 dmg 一起换了），真鼠标验：从右上角拖到屏幕中下方跟着走；胶囊上的开始按钮按下去变「专注中」、倒计时走、主窗口没被叫回来；
+  暂停、展开、再缩小，胶囊出现在刚拖到的地方（记住了位置），和主窗口是同一个钟。
+- 同一天用户要「把当前的分支设置成master，用于存放最新的代码」：origin/master 原在 4 月的 ce28d1c（这条分支的祖先），快进推到 f2e6388，以后提交、推送都到 master。
+

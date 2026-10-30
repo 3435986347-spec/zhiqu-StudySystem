@@ -107,7 +107,12 @@ class DesktopPageViewTest {
         assertEquals("true", out.get("panel.canBecomeKey"), "无边框面板当不了键窗口：胶囊上的按钮用键盘按不到");
         assertEquals("300x68", out.get("panel.size"));
         assertEquals("ZhiquMiniPanel", out.get("panel.autosave"), "面板不记位置");
-        assertEquals("true", out.get("panel.dragMiddle"), "胶囊中间拖不动（WKWebView 把鼠标事件吃了）");
+        // 原来这里钉的是 mouseDownCanMoveWindow 为真 —— 正是拖不动的那条路：判据和实现一起错、一起绿了三十轮（第五十一轮做的时候没用真鼠标拖过，
+        // 2026-10-23 用户报「胶囊拖不动」，真鼠标复现）。现在钉：拖动区自己接 mouseDown 交给 performDrag，面板不是键窗口时第一下也收
+        assertEquals("true", out.get("panel.dragMiddle"), "胶囊中间的拖动区还在靠 mouseDownCanMoveWindow，或者第一下不收（acceptsFirstMouse）");
+        String panelSrc = SourceText.stripComments(Files.readString(Path.of("../deploy/desktop/macos-shell/MiniPanel.swift"), StandardCharsets.UTF_8));
+        assertTrue(panelSrc.contains("override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }"),
+                "拖动区的 mouseDown 没交给 performDrag —— 按住中间拖，胶囊不动");
         assertEquals("true", out.get("panel.buttonsClickable"), "拖动区域盖住了开始 / 暂停或展开按钮");
     }
 

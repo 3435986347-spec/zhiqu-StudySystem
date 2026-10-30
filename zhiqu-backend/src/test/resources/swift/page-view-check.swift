@@ -256,7 +256,8 @@ step("panel", {
     let middle = content.hitTest(NSPoint(x: 150, y: 34))
     let goButton = content.hitTest(NSPoint(x: 35, y: 34))
     let expand = content.hitTest(NSPoint(x: miniPanelSize.width - 31, y: 34))
-    out("panel.dragMiddle", middle is MiniDragZone && (middle?.mouseDownCanMoveWindow ?? false))
+    // 不靠 mouseDownCanMoveWindow（无边框、不激活的面板上 AppKit 根本不拖，2026-10-23 真鼠标复现）：自己接 mouseDown → performDrag，第一下也收
+    out("panel.dragMiddle", middle is MiniDragZone && !(middle?.mouseDownCanMoveWindow ?? true) && (middle?.acceptsFirstMouse(for: nil) ?? false))
     out("panel.buttonsClickable", !(goButton is MiniDragZone) && (goButton?.isDescendant(of: page) ?? false)
         && !(expand is MiniDragZone) && (expand?.isDescendant(of: page) ?? false))
     UserDefaults.standard.removeObject(forKey: "NSWindow Frame " + miniPanelAutosaveName)   // 检查程序不留下记住的位置

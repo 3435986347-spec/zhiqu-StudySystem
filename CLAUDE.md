@@ -61,7 +61,7 @@ cd ../zhiqu-cli && npm test
 - 产品方案（2026-10-03）：[`docs/product-plan.md`](docs/product-plan.md)，五步按顺序做，标「要你定」的先问用户。
 - zhiqu harness（P0–P7）：[`docs/zhiqu-harness-plan.md`](docs/zhiqu-harness-plan.md)，严格按表执行、不擅自增删，做完一项更新「进度」列。**npm 发布（P7）之前单独问用户**；`zhiqu-cli/package.json` 的 `"private": true` 留着。
 - 界面打磨（2026-10-06）：[`docs/ui-plan.md`](docs/ui-plan.md)，「要你定」的三件用户已定（见那份末尾）；每一步做完给用户截图。
-- 迷你番茄钟（2026-10-09 用户定了）：[`docs/mini-pomodoro-plan.md`](docs/mini-pomodoro-plan.md)，只做 macOS 桌面应用，三步一步一轮（第四十九到五十一轮做完；第八十一轮修了「一缩小整个应用就退出」，面板在屏幕上开过）；宠物形态是后话。
+- 迷你番茄钟（2026-10-09 用户定了）：[`docs/mini-pomodoro-plan.md`](docs/mini-pomodoro-plan.md)，只做 macOS 桌面应用，三步一步一轮（第四十九到五十一轮做完；第八十一轮修了「一缩小整个应用就退出」；第八十二轮收尾修了「胶囊拖不动」，拖动、开始按钮、记位置都用真鼠标验过）；宠物形态是后话。
 - Wiki 换编辑器（2026-10-18 用户试过验证版）：CodeMirror 6，分三步、每步一轮（[`docs/rounds/round-70.md`](docs/rounds/round-70.md) 末尾）；第 1 步第七十一轮（阅读认嵌套列表；用户保存的正文原样存，`MarkdownCanonicalizer.clean()` 只给 AI 写的和哈希）、第 2 步第七十三轮做完；第八十轮去掉试用开关（用户说那个提示不该还在），新编辑器成默认、旧编辑器只做加载不上时的退路 —— 删旧编辑器之前问用户。
 - 一轮接一轮：每轮的计划开工时存进 `docs/rounds/round-NN.md`，收口时补结果，随那一轮一起提交，并在 `docs/rounds/README.md` 和本文件末尾各加一行。每轮带一段真浏览器里的暴力测试。
 

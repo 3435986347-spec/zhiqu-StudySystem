@@ -14,8 +14,14 @@ import WebKit
 ///
 /// WKWebView 把鼠标事件全吃了，`isMovableByWindowBackground` 对它盖住的地方不起作用（主窗口顶上的 DragStrip 是同一个道理）。
 /// 两边的按钮（开始 / 暂停、展开）不盖，照常点得到。
+///
+/// 原来靠 `mouseDownCanMoveWindow` + `isMovableByWindowBackground` 让 AppKit 自己拖：在这个无边框、不激活的面板上根本不起作用
+///（2026-10-23 用户报「胶囊拖不动」，真鼠标复现：按住中间拖到屏幕中间，胶囊没动，事件漏到了桌面上）。
+/// 改成自己接 mouseDown 交给 performDrag；面板不是键窗口时第一下也要收（acceptsFirstMouse），不然第一下只用来让它变成键窗口。
 final class MiniDragZone: NSView {
-    override var mouseDownCanMoveWindow: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
     override func hitTest(_ point: NSPoint) -> NSView? {
         return bounds.contains(convert(point, from: superview)) ? self : nil
     }
