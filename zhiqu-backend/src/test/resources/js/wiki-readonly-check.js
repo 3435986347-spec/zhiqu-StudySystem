@@ -12,7 +12,11 @@ function fixture() {
   const embeddedCheckbox = { type: 'checkbox', disabled: false, closest() { return {}; } };
   const mode = { textContent: '', disabled: false, setAttribute(name, value) { this[name] = value; } };
   const status = { textContent: '' };
-  const title = { textContent: 'Example', style: {}, title: '' };
+  // 第八十四轮：页名在正文顶上直接改（contenteditable），不再点了弹窗；fire 把事件交给页面模块挂的监听
+  const titleEvents = {};
+  const title = { textContent: 'Example', style: {}, title: '', dataset: {}, contentEditable: 'false',
+    addEventListener(type, fn) { (titleEvents[type] ||= []).push(fn); }, blur() {},
+    fire(type, props = {}) { const e = { preventDefault() {}, ...props }; (titleEvents[type] || []).forEach((fn) => fn(e)); } };
   const section = {};
   const doc = { dataset: { editing: '0', source: '0' }, style: {}, contentEditable: 'false', scrollTop: 90,
     addEventListener(type, fn) { (events[type] ||= []).push(fn); }, closest() { return section; },
@@ -61,10 +65,11 @@ function fixture() {
   await check('clicking ordinary document text directly enters editing', () => { const f=fixture(); f.dispatch('click'); assert.equal(f.doc.dataset.editing,'1'); assert.equal(f.doc.contentEditable,'true'); });
   await check('clicking embedded content or links does not enter editing', () => { const f=fixture(); f.dispatch('click',{target:{closest(){return {};}}}); assert.equal(f.doc.dataset.editing,'0'); });
   await check('formatting directly enters editing without a separate edit action', () => { const f=fixture(); f.impl.wikiToolbar('bold'); assert.equal(f.doc.dataset.editing,'1'); assert.equal(f.commands[0][0],'bold'); });
-  await check('title can rename directly while the read-only switch is off', async () => { const f=fixture(); await f.title.onclick(); await Promise.resolve(); await Promise.resolve(); assert.equal(f.askCount(),1); assert.equal(f.writes[0].title,'Changed'); });
+  await check('title can rename directly in place while the read-only switch is off', async () => { const f=fixture(); assert.notEqual(f.title.contentEditable,'false','the page name is not editable'); f.title.textContent='Changed'; f.title.fire('blur'); await new Promise(r=>setTimeout(r,0)); await new Promise(r=>setTimeout(r,0)); assert.equal(f.askCount(),0,'renaming asked in a dialog again'); assert.equal(f.writes[0].title,'Changed'); });
   await check('a task can change directly and leaves a saveable draft', () => { const f=fixture(); f.checkbox.checked=true; f.dispatch('change',{target:f.checkbox}); assert.equal(f.doc.dataset.editing,'1'); assert.equal(f.checkbox.checked,true); assert.equal(f.state.wikiDirty,true); });
   await check('switching on read-only prevents all editing entry points', async () => {
-    const f=fixture(); f.mode.onclick(); f.dispatch('click'); f.impl.enterWikiEdit(); f.impl.wikiToolbar('bold'); f.impl.toggleWikiSource(); await f.title.onclick();
+    const f=fixture(); f.mode.onclick(); f.dispatch('click'); f.impl.enterWikiEdit(); f.impl.wikiToolbar('bold'); f.impl.toggleWikiSource();
+    assert.equal(f.title.contentEditable,'false','the page name is still editable while read-only'); f.title.textContent='Locked rename'; f.title.fire('blur'); await Promise.resolve(); assert.equal(f.writes.length,0);
     assert.equal(f.doc.dataset.editing,'0'); assert.equal(f.doc.contentEditable,'false'); assert.equal(f.mode['aria-checked'],'true'); assert.equal(f.askCount(),0); assert.equal(f.commands.length,0);
     assert.ok(f.controls.every(control=>control.disabled)); assert.ok(f.checkbox.disabled);
   });
@@ -94,7 +99,7 @@ function fixture() {
   await check('editing parent notes never enables embedded-note task controls', () => { const f=fixture(); f.impl.enterWikiEdit(); assert.equal(f.checkbox.disabled,false); assert.equal(f.embeddedCheckbox.disabled,true); });
   await check('a task change dispatched while locked preserves its current unsaved value', () => { const f=fixture(); f.impl.enterWikiEdit(); f.checkbox.checked=true; f.mode.onclick(); f.checkbox.checked=false; f.dispatch('change',{target:f.checkbox}); assert.equal(f.checkbox.checked,true); });
   await check('late insert-link response cannot mutate the document after lock then unlock', async () => { const f=fixture(); f.impl.enterWikiEdit(); let resolve; f.setAskReply(new Promise(r=>resolve=r)); f.impl.wikiToolbar('link'); f.mode.onclick(); f.mode.onclick(); resolve('https://example.test/'); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); assert.equal(f.commands.length,0); });
-  await check('late rename response cannot mutate after lock then unlock', async () => { const f=fixture(); f.impl.enterWikiEdit(); let resolve; f.setAskReply(new Promise(r=>resolve=r)); const rename=f.title.onclick(); f.mode.onclick(); f.mode.onclick(); resolve('Late title'); await rename; assert.equal(f.writes.length,0); assert.equal(f.title.textContent,'Example'); });
+  await check('Escape gives up a half-typed page name; an emptied name is not saved', async () => { const f=fixture(); f.title.textContent='Typo'; f.title.fire('keydown',{key:'Escape'}); assert.equal(f.title.textContent,'Example'); f.title.fire('blur'); f.title.textContent='   '; f.title.fire('blur'); await Promise.resolve(); assert.equal(f.writes.length,0); assert.equal(f.title.textContent,'Example'); });
   // 第八十三轮：版本对不上（412）停下自动保存、不重发；「用我的覆盖」问过之后用户已经去了别的页，就不存
   await check('a version conflict stops autosave and an overwrite confirmed after leaving the page saves nothing', async () => {
     const f=fixture(); f.impl.enterWikiEdit(); f.setMarkdown('mine'); f.setPending(()=>Promise.reject(Object.assign(Error('知识页已被其他窗口修改，请刷新后重试'),{userFacing:true,code:412})));

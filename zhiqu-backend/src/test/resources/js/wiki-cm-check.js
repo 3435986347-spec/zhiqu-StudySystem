@@ -45,17 +45,21 @@ function fixture({ failLoad = false } = {}) {
   const doc = { dataset: { editing: '0', source: '0' }, style: {}, contentEditable: 'false', scrollTop: 0, firstChild: null,
     set innerHTML(v) { this._html = v; this.firstChild = { host: true }; }, get innerHTML() { return this._html; },
     addEventListener(t, f) { (events[t] ||= []).push(f); }, closest() { return {}; }, dispatchEvent(e) { (events[e.type] || []).forEach((f) => f(e)); },
-    focus() {}, contains() { return false; }, setAttribute(k, v) { this[k] = v; } };
+    focus() {}, contains() { return false; }, setAttribute(k, v) { this[k] = v; },
+    querySelector(sel) { return sel === '.zq-wiki-cm' ? this.firstChild : null; } };   // 第八十四轮：页名放回正文顶上以后，编辑器挂在 .zq-wiki-cm 上，不再是 firstChild
   doc.getBoundingClientRect = () => ({ top: 100 });
   const blockSelect = { value: 'P' };
-  const elements = { '#zq-wiki-block': blockSelect, '#zq-doc': doc, '#zq-doc-title': { textContent: '', style: {} }, '#zq-wiki-mode': { setAttribute() {} }, '#zq-wiki-mode-label': {} };
+  const titleEvents = {};
+  const titleNode = { textContent: '嵌套', style: {}, dataset: {}, contentEditable: 'false', blur() {}, addEventListener(t, fn) { (titleEvents[t] ||= []).push(fn); },
+    fire(type, props = {}) { const e = { preventDefault() {}, ...props }; (titleEvents[type] || []).forEach((fn) => fn(e)); } };
+  const elements = { '#zq-wiki-block': blockSelect, '#zq-doc': doc, '#zq-doc-title': titleNode, '#zq-wiki-mode': { setAttribute() {} }, '#zq-wiki-mode-label': {} };
   const handle = { calls: [], text: page.content, markers: [],
     getMarkdown() { return this.text; }, setReadOnly(v) { this.calls.push(['readOnly', v]); }, wrap(...m) { this.calls.push(['wrap', ...m]); },
     insert(t) { this.calls.push(['insert', t]); }, focusAt(...a) { this.calls.push(['focusAt', ...a]); }, focusPos(...a) { this.calls.push(['focusPos', ...a]); },
     alignPos(...a) { this.calls.push(['alignPos', ...a]); }, charTop: () => 100,
     track(from, to) { const m = { from, to }; this.markers.push(m); return m; }, insertAt(m, t) { this.calls.push(['insertAt', m.from, m.to, t]); },
     untrack(m) { this.calls.push(['untrack', m.from]); }, toggleTask(pos) { this.calls.push(['toggleTask', pos]); },
-    lineAt() { return { pos: 0, top: 100 }; }, setBlock(kind) { this.calls.push(['setBlock', kind]); }, link(href) { this.calls.push(['link', href]); }, destroy() { this.calls.push(['destroy']); } };
+    lineAt() { return { pos: 0, top: 100 }; }, focusStart() { this.calls.push(['focusStart']); }, setBlock(kind) { this.calls.push(['setBlock', kind]); }, link(href) { this.calls.push(['link', href]); }, destroy() { this.calls.push(['destroy']); } };
   const anchor = { value: null }, charTop = { value: null };
   const cmModule = { mountWikiEditor(host, options) { mounts.push({ host, options }); return handle; },
     readingAnchor: () => anchor.value, readingCharTop: () => charTop.value, sourcePosition: (md, a) => (a ? md.indexOf(a.text) + a.offset : null), taskMarkerPositions: () => [2, 30],
@@ -79,7 +83,7 @@ function fixture({ failLoad = false } = {}) {
     { getElementById: () => null, execCommand() { throw new Error('验证版编辑器不该用 execCommand'); }, createElement: () => ({ style: {} }), body: { appendChild() {} }, addEventListener() {} },
     { addEventListener() {}, getSelection: () => ({ rangeCount: 0 }), open(...a) { opened.push(a); return null; } }, localStorage, () => ({ paddingLeft: '26px' }));
   impl.bind(sh);
-  return { impl, page, doc, handle, mounts, writes, toasts, state, store, uploads, anchor, charTop, events, sh, blockSelect, cmModule, opened };
+  return { impl, page, doc, handle, mounts, writes, toasts, state, store, uploads, anchor, charTop, events, sh, blockSelect, cmModule, opened, titleNode };
 }
 
 (async () => {
@@ -436,6 +440,96 @@ function fixture({ failLoad = false } = {}) {
     assert.equal(copies, 1, '打一个字把全文复制了 ' + copies + ' 遍（块公式、表格各一遍）');
     assert.notEqual(st.field(tableField).ranges, table0, '改了字要重扫');
     assert.equal(st.field(tableField).ranges[0].from, md.indexOf('| a |') + 1, '重扫之后位置跟着挪');
+  });
+  // ── 第八十五轮：表格在格子里直接改 ──
+  await check('格子在原文里的范围：去掉两边空格；空格子给一个空范围（写进去是「| 字 |」）；没有这一格是 null', () => {
+    const t = '| 项目 | 负责人 |\n| --- | --- |\n| 复盘 |  |\n| a\\|b | x |';
+    const cell = (row, col) => { const r = cm.tableCellRange(t, row, col); return r && [t.slice(r.from, r.to), r.from === r.to]; };
+    assert.deepEqual(cell(0, 1), ['负责人', false]);
+    assert.deepEqual(cell(1, 0), ['复盘', false], '第一行数据（跳过 | --- |）');
+    assert.deepEqual(cell(1, 1), ['', true], '空格子');
+    const empty = cm.tableCellRange(t, 1, 1);
+    assert.equal(t.slice(empty.from - 2, empty.from), '| ', '空格子写进去要隔一个空格');
+    assert.deepEqual(cell(2, 0), ['a\\|b', false], '转义的 \\| 不是格子边界');
+    assert.equal(cm.tableCellRange(t, 5, 0), null);
+    assert.equal(cm.tableCellRange(t, 0, 9), null);
+  });
+  await check('格子里打的字写回原文：换行变空格（一格只能一行），没转义的 | 转义（不然切成两格），已经转义的不重复转义', () => {
+    assert.equal(cm.tableCellSource('a|b'), 'a\\|b');
+    assert.equal(cm.tableCellSource('||'), '\\|\\|', '连着两个 | 都要转义');
+    assert.equal(cm.tableCellSource('已\\|转义'), '已\\|转义');
+    assert.equal(cm.tableCellSource('第一行\n  第二行'), '第一行 第二行');
+    assert.equal(cm.tableCellSource(null), '');
+  });
+  await check('表格是 TableWidget：格子能直接改（contenteditable）、格子里的事件编辑器不管、自己改的那一下不重画；Tab / 回车 / Esc / ⌘Z 都接上', () => {
+    const src = fs.readFileSync(path.resolve(cmPath), 'utf8').replace(/\/\/.*$/gm, '');
+    assert.ok(src.includes("widget: new TableWidget(state.sliceDoc(table.from, table.to), options), block: true"), '表格还是整张画死的块');
+    assert.ok(src.includes("ignoreEvent(event) { const t = event.target; return !!(t && t.closest && t.closest('td,th')); }"), '格子里的事件编辑器还在管（回车被列表续行吃掉、选区一进来整张表换回原文）');
+    assert.ok(src.includes("if (dom._zqSelfEdit) { dom._zqSelfEdit = false; dom._zqSource = this.source; return true; }"), '每打一个字整张表重画（焦点丢了）');
+    assert.ok(src.includes("cell.contentEditable = 'plaintext-only'") && src.includes("if (view.state.readOnly) cell.contentEditable = 'false';"), '格子不能改，或者只读时也能改');
+    for (const k of ["e.key === 'Tab'", "e.key === 'Enter'", "e.key === 'Escape'", "(e.key === 'y' || e.shiftKey ? redo : undo)(view)"]) assert.ok(src.includes(k), '键没接上：' + k);
+    assert.ok(src.includes("view.dispatch({ changes: { from: at + r.from, to: at + r.to, insert: text }, userEvent: 'input.type' });") && src.includes('const text = tableCellSource(cell.textContent);'), '格子里的字没同步写回原文');
+  });
+  // ── 第八十四轮：继续往 Obsidian 靠 ──
+  await check('自动配对：括号、引号、反引号都配（closeBrackets 的 Backspace / 跳过在最前面）；选中字打 * _ ~ = 包起来（再打一次就是 **加粗**），空光标照常插字', async () => {
+    const { EditorState, EditorSelection } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    assert.deepEqual(cm.PAIRED, ['(', '[', '{', '"', "'", '`']);
+    const cmSource = fs.readFileSync(path.resolve(cmPath), 'utf8').replace(/\/\/.*$/gm, '');
+    assert.ok(cmSource.includes('closeBrackets(), markdownLanguage.data.of({ closeBrackets: { brackets: PAIRED } })'), '编辑器没接上自动配对');
+    assert.ok(cmSource.includes('keymap.of([...closeBracketsKeymap,'), '配对的 Backspace（删 ( 连带删 )）要排在最前面，不然被列表的 Backspace 先吃掉');
+    let st = EditorState.create({ doc: '重点词 其他', selection: EditorSelection.range(0, 3) });
+    st = st.update(cm.wrapRanges(st, '*')).state;
+    assert.equal(st.doc.toString(), '*重点词* 其他'); assert.deepEqual([st.selection.main.from, st.selection.main.to], [1, 4], '包完选区还是那几个字');
+    st = st.update(cm.wrapRanges(st, '*')).state;
+    assert.equal(st.doc.toString(), '**重点词** 其他', '再打一次 * 就是加粗');
+    assert.equal(cm.wrapRanges(EditorState.create({ doc: 'abc', selection: EditorSelection.cursor(1) }), '*'), null, '没选中字：不归它管，照常插 *');
+    assert.equal(cm.wrapRanges(EditorState.create({ doc: 'abc', selection: EditorSelection.range(0, 3) }), '#'), null, '别的字不包');
+  });
+  await check('[[ 补全：后面已经有自动配上的 ]] 就不再加（原来变成 [[页名]]]]），光标落在 ]] 后面；没有 ]] 时补上', async () => {
+    const { EditorState, EditorSelection } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    const run = (doc, at) => { const st = EditorState.create({ doc, selection: EditorSelection.cursor(at) }); const tr = st.update(cm.wikiLinkInsert(st, '短页', 2, at)); return [tr.state.doc.toString(), tr.state.selection.main.head]; };
+    assert.deepEqual(run('[[短]]', 3), ['[[短页]]', 6]);
+    assert.deepEqual(run('[[短', 3), ['[[短页]]', 6]);
+  });
+  await check('列表：光标不在那一行时 - 画成圆点、任务项只留勾选框（藏起「- 」）、有序的 1. 照原样；光标在那一行（有焦点）露出原文', async () => {
+    const { EditorState, EditorSelection, LanguageSupport, markdownLanguage } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    const md = '- 一\n- [ ] 待办\n1. 有序\n\n正文';
+    const look = (cursor, hasFocus = true) => {
+      const state = EditorState.create({ doc: md, selection: EditorSelection.cursor(cursor), extensions: [new LanguageSupport(markdownLanguage)] });
+      const out = []; cm.inlineDecorations({ state, visibleRanges: [{ from: 0, to: md.length }], hasFocus }, {}).between(0, md.length, (from, to, d) => {
+        if (d.spec.widget && d.spec.widget.text === '•') out.push('bullet@' + from);
+        else if (Object.keys(d.spec).length === 0) out.push('hide:' + JSON.stringify(md.slice(from, to)));
+      });
+      return out;
+    };
+    const far = md.length;
+    assert.deepEqual(look(far).filter((x) => /bullet|hide:"- "/.test(x)), ['bullet@0', 'hide:"- "']);
+    assert.deepEqual(look(1).filter((x) => /bullet@0/.test(x)), [], '光标在第一项上：露出 - 能改');
+    assert.ok(!look(far).some((x) => x.includes('1.')), '有序列表的 1. 不该藏、不该换成圆点');
+  });
+  await check('页名在正文顶上直接改，回车改完：存（和自动保存排一队），光标进正文开头', async () => {
+    const f = fixture();
+    await f.impl.loadWikiCm(); f.impl.enterWikiEdit(); f.impl.wireWikiEditor();
+    f.titleNode.contentEditable = 'plaintext-only';   // 能不能改由 syncWikiEditMode 管（这个替身把它换成了空函数），wiki-readonly-check.js 测；这里只测回车
+    f.titleNode.textContent = '嵌套（改）';
+    f.titleNode.fire('keydown', { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
+    assert.equal(f.writes.length, 1); assert.equal(f.writes[0].title, '嵌套（改）');
+    assert.ok(f.handle.calls.some((c) => c[0] === 'focusStart'), '回车以后光标没进正文');
+    f.titleNode.textContent = '嵌套（再改）';   // 页名变了：误当成改完就会发一次
+    f.titleNode.fire('keydown', { key: 'Enter', isComposing: true });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(f.writes.length, 1, '输入法选字时的回车也当成改完了');
+  });
+  await check('编辑器的字号行高和阅读视图一套（第八十四轮照 Obsidian：16px、行高 1.6）—— 两边各写一份会各自走样', () => {
+    const css = fs.readFileSync(path.resolve(path.dirname(cmPath), 'zhiqu-ui.css'), 'utf8');
+    const prose = /(?:^|})\s*\.zq-prose \.zq-md\{([^}]*)\}/m.exec(css)[1];
+    const cmSource = fs.readFileSync(path.resolve(cmPath), 'utf8');
+    assert.match(prose, /font-size:var\(--zq-fs-prose\)/);
+    assert.ok(cmSource.includes("'&': { height: 'auto', fontSize: 'var(--zq-fs-prose)'"), '编辑器的字号不是 Wiki 正文那个令牌');
+    const lh = /line-height:([\d.]+)/.exec(prose)[1];
+    assert.ok(cmSource.includes("'.cm-scroller': { overflow: 'visible', fontFamily: 'inherit', lineHeight: '" + lh + "' }"), '编辑器的行高和阅读视图（' + lh + '）不一样');
+    for (const n of [1, 2, 3, 4]) assert.ok(cmSource.includes("'.cm-zq-h" + n + "': { fontSize: 'var(--zq-fs-prose-h" + n + ")'"), 'h' + n + ' 不是和阅读视图同一个令牌');
   });
   // ── 第八十三轮：像 Obsidian ──
   await check('没焦点时不露原文符号（一打开页面光标在开头，第一行标题原来就露着 ##）；有焦点、光标在那一行才露', async () => {

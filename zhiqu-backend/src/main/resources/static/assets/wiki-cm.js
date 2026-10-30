@@ -8,8 +8,28 @@
 import {
   EditorState, EditorSelection, StateField, Compartment, EditorView, Decoration, ViewPlugin, WidgetType, keymap, drawSelection,
   defaultKeymap, history, historyKeymap, indentWithTab, syntaxTree, syntaxHighlighting, HighlightStyle, LanguageSupport,
-  markdownLanguage, insertNewlineContinueMarkup, deleteMarkupBackward, autocompletion, completionKeymap, tags, placeholder
+  markdownLanguage, insertNewlineContinueMarkup, deleteMarkupBackward, autocompletion, completionKeymap, tags, placeholder,
+  closeBrackets, closeBracketsKeymap, undo, redo
 } from './vendor/codemirror/codemirror.js';
+
+// ── 自动配对（第八十四轮，照 Obsidian）────────────────────────────────────
+// 打「(」出「()」、在「)」前面打「)」只是跳过、删「(」连带删「)」（CodeMirror 的 closeBrackets）；反引号也配（行内代码）。
+// 引号紧跟在字后面不配（don't 的那一撇），这是 closeBrackets 自己的规矩
+export const PAIRED = ['(', '[', '{', '"', "'", '`'];
+/** 选中了字再打这几个：把选中的包起来（** 就是打两次），不是替换掉。Obsidian 的「自动配对 Markdown 语法」 */
+export const WRAPPERS = ['*', '_', '~', '='];
+/** 选区里每一段包上 ch；空的光标照常插字。返回 null 表示不归它管 */
+export function wrapRanges(state, ch) {
+  if (!WRAPPERS.includes(ch) || state.selection.ranges.every((r) => r.empty)) return null;
+  return state.changeByRange((r) => (r.empty
+    ? { changes: { from: r.from, insert: ch }, range: EditorSelection.cursor(r.from + 1) }
+    : { changes: [{ from: r.from, insert: ch }, { from: r.to, insert: ch }], range: EditorSelection.range(r.from + 1, r.to + 1) }));
+}
+/** [[ 补全选中一个页名：后面已经有自动配上的 ]] 就不再加，光标落到 ]] 后面 */
+export function wikiLinkInsert(state, title, from, to) {
+  const closed = state.sliceDoc(to, to + 2) === ']]';
+  return { changes: { from, to, insert: closed ? title : title + ']]' }, selection: EditorSelection.cursor(from + title.length + 2) };
+}
 
 // ── 纯文本扫描（node 里能跑的部分） ─────────────────────────────────────
 
@@ -390,11 +410,11 @@ export const BLOCK_MARGINS = { p: [0, 12], h1: [28, 14], h2: [30, 10], h3: [24, 
 export const LIST_ITEM_GAP = 5;
 /** 编辑器里会用到的所有上内边距（样式只能事先写好） */
 export const LAYOUT_SIZES = [5, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 30];
-/** 块里面的尺寸照阅读模式（第八十轮）：阅读时代码框里一行是正文的行高（pre 是 15px × 1.85 的行，里面 13px 的 code 是行内的，撑不矮它）；
+/** 块里面的尺寸照阅读模式（第八十轮）：阅读时代码框里一行是正文的行高（pre 是正文 16px × 1.6 的行（第八十四轮；原来 15px × 1.85），里面 13px 的 code 是行内的，撑不矮它）；
  *  代码框上下各是 12px 内边距 + 1px 边框；引用上下各 2px 内边距。判据从样式表读出来对照 */
 /** 光标闪一次的周期（亮、灭各一半）：照 macOS 的插入点（Obsidian 用的是系统光标，也是这个节奏）。0 就不闪 */
 export const CURSOR_BLINK_MS = 1060;
-export const READING_BOX = { codeLineHeight: 'calc(var(--zq-fs-md) * 1.85)', quotePad: 2 };
+export const READING_BOX = { codeLineHeight: 'calc(var(--zq-fs-prose) * 1.6)', quotePad: 2 };
 
 /** 挂上编辑器时光标先放在哪：藏起来的重复标题后面（第八十轮）。放在 0 的话它一挂上就算「碰到了」，露出来又藏回去 */
 export function startCursor(text, title) {
@@ -471,22 +491,33 @@ const touched = touchedSel;
 // 光标还落在块的开头（表格第一行的第一个字），不在点的地方。用户：「点不准」。
 // 现在：表格按点的那一格算出原文里的位置；换回原文以后把光标那一行挪回点下去时的高度，点的地方不动。
 
-/** 表格预览里点了第 row 行（表头是 0）、第 col 格、格子里第 offset 个字：原文里那个字的位置（相对这张表的开头） */
-export function tableCellOffset(source, row, col, offset = 0) {
+/** 表格原文里第 row 行（表头是 0）、第 col 格里那几个字的范围（相对这张表的开头，去掉两边的空格）；没有这一格是 null。
+ *  空格子（| |）给一个空范围，落在左边竖线后面隔一个空格的地方 —— 往里写字就是「| 字 |」 */
+export function tableCellRange(source, row, col) {
   const lines = String(source || '').split('\n');
   const li = row <= 0 ? 0 : row + 1;   // 原文第 1 行是 | --- | 分隔线，不是一行表格
-  if (li >= lines.length) return String(source || '').length;
+  if (li >= lines.length) return null;
   let start = 0;
   for (let i = 0; i < li; i++) start += lines[i].length + 1;
   const line = lines[li], pipes = [];
   for (let i = 0; i < line.length; i++) if (line[i] === '|' && line[i - 1] !== '\\') pipes.push(i);
   const lead = /^\s*\|/.test(line);   // 开头有 |：第 0 格在第一、二个 | 之间
   const left = lead ? pipes[col] : col === 0 ? -1 : pipes[col - 1];
-  if (left === undefined) return start + line.length;
+  if (left === undefined) return null;
   const right = (lead ? pipes[col + 1] : pipes[col]) ?? line.length;
   let from = left + 1; while (from < right && line[from] === ' ') from++;
   let to = right; while (to > from && line[to - 1] === ' ') to--;
-  return start + Math.min(from + Math.max(0, offset), to);
+  if (from >= right) from = to = Math.min(left + 2, right);
+  return { from: start + from, to: start + to };
+}
+/** 表格预览里点了第 row 行、第 col 格、格子里第 offset 个字：原文里那个字的位置（相对这张表的开头） */
+export function tableCellOffset(source, row, col, offset = 0) {
+  const r = tableCellRange(source, row, col);
+  return r ? Math.min(r.from + Math.max(0, offset), r.to) : String(source || '').length;
+}
+/** 格子里打的字写回原文：一格只能一行（换行变空格），没转义的 | 转义（不然把一格切成两格） */
+export function tableCellSource(typed) {
+  return String(typed == null ? '' : typed).replace(/\s*[\r\n]+\s*/g, ' ').replace(/(^|[^\\])\|/g, '$1\\|').replace(/(^|[^\\])\|/g, '$1\\|');
 }
 /** 外面滚动的那一层（知识 Wiki 里是 #zq-doc：编辑器自己不滚，跟着内容长高） */
 function scrollerOf(el) {
@@ -557,38 +588,135 @@ const CheckboxWidget = class extends WidgetType {
   ignoreEvent() { return false; }
 };
 
+// ── 表格在格子里直接改（第八十五轮，照 Obsidian）──────────────────────────
+// 原来点表格就整张换回原文（一堆竖线横线）。现在格子本身能编辑：点进一格，那一格换成它的原文（**加粗** 这些符号露出来）；
+// 打字同步改原文里那一格（| 自动转义、换行变空格）；Tab / Shift+Tab 下一格 / 上一格，回车到下一行同一格（最后一行再回车：光标出到表格下面），
+// Esc 出到表格下面；⌘Z 撤的是整篇的历史。点表格边上（不在格子里）照旧换回原文改。
+// 格子里的键盘、输入、选区编辑器都不管（ignoreEvent）—— 不然回车被列表续行吃掉、选区一进来整张表就换回原文。
+const cellsOf = (el) => Array.prototype.slice.call(el.querySelectorAll('th,td'));
+const caretTo = (cell, at) => {
+  const sel = cell.ownerDocument.getSelection(), range = cell.ownerDocument.createRange(), text = cell.firstChild;
+  if (text && text.nodeType === 3) range.setStart(text, Math.min(at == null ? text.length : at, text.length)); else range.selectNodeContents(cell);
+  range.collapse(true); sel.removeAllRanges(); sel.addRange(range);
+};
+const TableWidget = class extends WidgetType {
+  constructor(source, options) { super(); this.source = source; this.options = options; }
+  eq(other) { return other.source === this.source; }
+  toDOM(view) {
+    const el = document.createElement('div');
+    el.className = 'cm-zq-table';   // .zq-md 是 renderMarkdown 自己包的那一层（别处不借用它的类，markdown-check.js 盯着）
+    this.paint(el, view);
+    wireTable(el, view, this.options);
+    return el;
+  }
+  paint(el, view) {
+    el._zqSource = this.source;
+    el.innerHTML = this.options.renderBlock ? this.options.renderBlock(this.source) : '';
+    if (!el.innerHTML) el.textContent = this.source;
+    if (this.options.hydrate) this.options.hydrate(el);
+    const rows = el.querySelectorAll('tr');
+    Array.prototype.forEach.call(rows, (tr, r) => Array.prototype.forEach.call(tr.children, (cell, c) => {
+      cell.dataset.row = r; cell.dataset.col = c;
+      if (view.state.readOnly) cell.contentEditable = 'false';
+      else { try { cell.contentEditable = 'plaintext-only'; } catch (e) { cell.contentEditable = 'true'; } }
+    }));
+  }
+  updateDOM(dom, view) {
+    // 自己打字改的那一下：DOM 不动（不然每打一个字整张表重画、焦点丢了）；别的（撤销、别处改了这张表）：重画，正在改的那一格接着改
+    if (dom._zqSelfEdit) { dom._zqSelfEdit = false; dom._zqSource = this.source; return true; }
+    const active = dom.ownerDocument.activeElement, cell = active && dom.contains(active) && active.dataset ? active : null;
+    const at = cell ? { row: cell.dataset.row, col: cell.dataset.col } : null;
+    this.paint(dom, view);
+    if (at) { const again = dom.querySelector('[data-row="' + at.row + '"][data-col="' + at.col + '"]'); if (again) { again.focus(); } }
+    return true;
+  }
+  ignoreEvent(event) { const t = event.target; return !!(t && t.closest && t.closest('td,th')); }
+};
+function wireTable(el, view, options) {
+  const tableStart = () => { try { return view.posAtDOM(el); } catch (e) { return -1; } };
+  const exitBelow = () => {
+    const at = tableStart();
+    if (at < 0) return;
+    const end = Math.min(view.state.doc.length, at + el._zqSource.length);
+    const line = view.state.doc.lineAt(end), next = line.number < view.state.doc.lines ? view.state.doc.line(line.number + 1).from : line.to;
+    view.focus(); view.dispatch({ selection: EditorSelection.cursor(next), scrollIntoView: true });
+  };
+  const rawOf = (cell) => { const r = tableCellRange(el._zqSource, +cell.dataset.row, +cell.dataset.col); return r ? el._zqSource.slice(r.from, r.to) : ''; };
+  el.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || view.state.readOnly) return;
+    if (e.target && e.target.closest && e.target.closest('td,th')) return;   // 格子里：浏览器自己把光标放进那一格
+    e.preventDefault();   // 表格边上：照旧换回原文改，点的那一行不挪
+    const at = tableStart(); if (at >= 0) placeKeepingPointer(view, at, el.getBoundingClientRect().top);
+  });
+  el.addEventListener('focusin', (e) => {
+    const cell = e.target;
+    if (!cell || !cell.dataset || cell.dataset.row == null || cell._zqEditing) return;
+    // 点进来：这一格换成原文（符号露出来），光标照点的地方放（这一格没有符号时一个字不差）
+    let at = null;
+    const sel = cell.ownerDocument.getSelection();
+    if (sel && sel.rangeCount && cell.contains(sel.anchorNode)) { const r = cell.ownerDocument.createRange(); r.setStart(cell, 0); r.setEnd(sel.anchorNode, sel.anchorOffset); at = r.toString().length; }
+    cell._zqEditing = true;
+    const raw = rawOf(cell);
+    if (cell.textContent !== raw) { cell.textContent = raw; caretTo(cell, at); }
+  });
+  el.addEventListener('focusout', (e) => {
+    const cell = e.target;
+    if (!cell || !cell._zqEditing) return;
+    cell._zqEditing = false;
+    // 离开这一格：照阅读的样子画回去（单独画这一格）
+    const html = options.renderBlock ? options.renderBlock('| ' + rawOf(cell) + ' |\n| --- |') : '';
+    const holder = document.createElement('div'); holder.innerHTML = html;
+    const drawn = holder.querySelector('th,td');
+    if (drawn) cell.innerHTML = drawn.innerHTML; else cell.textContent = rawOf(cell);
+  });
+  el.addEventListener('input', (e) => {
+    const cell = e.target;
+    if (!cell || !cell.dataset || cell.dataset.row == null || view.state.readOnly) return;
+    const at = tableStart(), r = tableCellRange(el._zqSource, +cell.dataset.row, +cell.dataset.col);
+    if (at < 0 || !r) return;
+    const text = tableCellSource(cell.textContent);
+    el._zqSource = el._zqSource.slice(0, r.from) + text + el._zqSource.slice(r.to);
+    el._zqSelfEdit = true;
+    view.dispatch({ changes: { from: at + r.from, to: at + r.to, insert: text }, userEvent: 'input.type' });
+  });
+  el.addEventListener('keydown', (e) => {
+    const cell = e.target;
+    if (!cell || !cell.dataset || cell.dataset.row == null || e.isComposing || e.keyCode === 229) return;
+    const mod = e.metaKey || e.ctrlKey, cells = cellsOf(el), i = cells.indexOf(cell);
+    if (mod && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'y')) {   // 撤销 / 重做走整篇的历史
+      e.preventDefault(); (e.key === 'y' || e.shiftKey ? redo : undo)(view); return;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const next = cells[i + (e.shiftKey ? -1 : 1)];
+      if (next) { next.focus(); caretTo(next, null); } else if (!e.shiftKey) exitBelow();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const below = el.querySelector('[data-row="' + (+cell.dataset.row + 1) + '"][data-col="' + cell.dataset.col + '"]');
+      if (below) { below.focus(); caretTo(below, null); } else exitBelow();
+    } else if (e.key === 'Escape') { e.preventDefault(); exitBelow(); }
+  });
+}
+
 /** 图片 / 表格：光标不在时用阅读模式同一个渲染画出来（私有图片照旧带登录去取）；按下去把光标放进原文 */
 const RenderedWidget = class extends WidgetType {
+  // 图片（表格第八十五轮起是 TableWidget，格子里直接改）
   constructor(source, kind, options) { super(); this.source = source; this.kind = kind; this.options = options; }
   eq(other) { return other.source === this.source && other.kind === this.kind; }   // 不比位置：前面打字不该让图片重新下载
   toDOM(view) {
-    const el = document.createElement(this.kind === 'table' ? 'div' : 'span');
-    el.className = this.kind === 'table' ? 'cm-zq-table zq-md' : 'cm-zq-image';
+    const el = document.createElement('span');
+    el.className = 'cm-zq-image';
     const html = this.options.renderBlock ? this.options.renderBlock(this.source) : '';
-    if (this.kind === 'table') el.innerHTML = html;
-    else {
-      const holder = document.createElement('div'); holder.innerHTML = html;
-      const image = holder.querySelector('.zq-md-image');
-      if (image) el.appendChild(image); else el.textContent = this.source;
-    }
-    if (!html) el.textContent = this.source;
+    const holder = document.createElement('div'); holder.innerHTML = html;
+    const image = holder.querySelector('.zq-md-image');
+    if (image) el.appendChild(image); else el.textContent = this.source;
     if (this.options.hydrate) this.options.hydrate(el);
     el.addEventListener('load', () => view.requestMeasure(), true);   // 图片到了，高度变了
     el.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
-      const pos = view.posAtDOM(el);
-      // 表格：点了哪一格，光标就进原文里那一格、那个字（第八十三轮；原来一律放到表格开头）；图片：放到原文后面
-      const cell = this.kind === 'table' && e.target && e.target.closest ? e.target.closest('td,th') : null;
-      if (cell && el.contains(cell)) {
-        const tr = cell.parentElement, row = Array.prototype.indexOf.call(el.querySelectorAll('tr'), tr), col = Array.prototype.indexOf.call(tr.children, cell);
-        let offset = 0;
-        const hit = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
-        if (hit && cell.contains(hit.startContainer)) { const r = document.createRange(); r.setStart(cell, 0); r.setEnd(hit.startContainer, hit.startOffset); offset = r.toString().length; }
-        placeKeepingPointer(view, pos + tableCellOffset(this.source, row, col, offset), tr.getBoundingClientRect().top);
-        return;
-      }
-      placeKeepingPointer(view, this.kind === 'table' ? pos : pos + this.source.length, el.getBoundingClientRect().top);
+      // 光标放到原文后面；换回原文以后那一行留在点下去的高度（第八十三轮）
+      placeKeepingPointer(view, view.posAtDOM(el) + this.source.length, el.getBoundingClientRect().top);
     });
     return el;
   }
@@ -692,7 +820,14 @@ export function inlineDecorations(view, options) {
         out.push(Decoration.replace({ widget: new CheckboxWidget(/x/i.test(state.sliceDoc(node.from, node.to)), node.from) }).range(node.from, node.to));
       }
       if (name === 'QuoteMark') out.push(mark('cm-zq-quote-mark').range(node.from, node.to));
-      if (name === 'ListMark') out.push(mark('cm-zq-list-mark').range(node.from, node.to));
+      if (name === 'ListMark') {
+        // 第八十四轮照 Obsidian：光标不在这一行时，无序列表的 - * + 画成圆点；任务项只留勾选框（前面的「- 」藏起来）；有序的 1. 照原样
+        const l = state.doc.lineAt(node.from), task = node.node.parent && node.node.parent.getChild('Task');
+        if (/^[-*+]$/.test(state.sliceDoc(node.from, node.to)) && !touched(state, l.from, l.to)) {
+          if (task) out.push(hide.range(node.from, Math.min(task.from, l.to)));
+          else out.push(Decoration.replace({ widget: new TextWidget('•', 'cm-zq-bullet') }).range(node.from, node.to));
+        } else out.push(mark('cm-zq-list-mark').range(node.from, node.to));
+      }
     } });
     // [[双链]] 和行内公式不在 Markdown 语法树里：按行扫，代码里的不算
     const inCode = (a, b) => codeRanges.some(([x, y]) => a < y && b > x);
@@ -778,7 +913,7 @@ function tableDecorations(state, ranges, options) {
   const out = [];
   for (const table of ranges) {
     if (!touched(state, table.from, table.to)) {
-      out.push(Decoration.replace({ widget: new RenderedWidget(state.sliceDoc(table.from, table.to), 'table', options), block: true }).range(table.from, table.to));
+      out.push(Decoration.replace({ widget: new TableWidget(state.sliceDoc(table.from, table.to), options), block: true }).range(table.from, table.to));
       continue;
     }
     for (let pos = table.from; pos <= table.to;) { const l = state.doc.lineAt(pos); out.push(line('cm-zq-table-src').range(l.from)); pos = l.to + 1; }
@@ -812,16 +947,17 @@ const livePreview = (options) => ViewPlugin.fromClass(class {
 }, { decorations: (plugin) => plugin.decorations });
 
 const highlight = HighlightStyle.define([
-  { tag: tags.heading, fontWeight: 'var(--zq-fw-medium)' },
+  { tag: tags.heading, fontWeight: 'var(--zq-fw-semibold)' },   // 第八十四轮照 Obsidian 加粗（和阅读视图的 .zq-prose .zq-md h1–h6 一样）
   { tag: tags.url, color: 'var(--zq-text3)' },
   { tag: tags.processingInstruction, color: 'var(--zq-text3)' },
 ]);
 
 const theme = EditorView.theme({
   // 高度跟内容走、自己不出滚动条：Wiki 正文（#zq-doc）还是唯一的滚动容器，CodeMirror 照样只画看得见的那几屏
-  '&': { height: 'auto', fontSize: 'var(--zq-fs-md)', color: 'var(--zq-text)', backgroundColor: 'transparent' },
+  // 字号行距和阅读视图一套（第八十四轮照 Obsidian：16px、行高 1.6；原来 15px、1.85）
+  '&': { height: 'auto', fontSize: 'var(--zq-fs-prose)', color: 'var(--zq-text)', backgroundColor: 'transparent' },
   '&.cm-focused': { outline: 'none' },
-  '.cm-scroller': { overflow: 'visible', fontFamily: 'inherit', lineHeight: '1.85' },
+  '.cm-scroller': { overflow: 'visible', fontFamily: 'inherit', lineHeight: '1.6' },
   '.cm-content': { padding: '0', caretColor: 'var(--zq-text)' },
   // 光标（第八十三轮）：drawSelection 自己画光标、把系统的藏起来，它默认是 1.2px 的黑线 —— 深色模式下黑的画在深色底上，根本看不见。
   // 用户：「点的时候有时候没反应」「光标停留的时候可以自动闪烁，就像 obsidian 那样」—— 光标其实到了，只是看不见。
@@ -830,10 +966,11 @@ const theme = EditorView.theme({
   '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': { background: 'var(--zq-tint-strong)' },
   '.cm-line': { padding: '0' },
   // 标题上下空多少由前后的空行 / 上内边距给（照阅读模式），标题行自己不再带（第八十轮）
-  '.cm-zq-h1': { fontSize: '24px', lineHeight: '1.35' },
-  '.cm-zq-h2': { fontSize: '19px', lineHeight: '1.4' },
-  '.cm-zq-h3': { fontSize: '16px', lineHeight: '1.45' },
-  '.cm-zq-h4, .cm-zq-h6': { color: 'var(--zq-text2)' },
+  '.cm-zq-h1': { fontSize: 'var(--zq-fs-prose-h1)', lineHeight: '1.3' },
+  '.cm-zq-h2': { fontSize: 'var(--zq-fs-prose-h2)', lineHeight: '1.35' },
+  '.cm-zq-h3': { fontSize: 'var(--zq-fs-prose-h3)', lineHeight: '1.4' },
+  '.cm-zq-h4': { fontSize: 'var(--zq-fs-prose-h4)' },
+  '.cm-zq-h6': { color: 'var(--zq-text2)' },
   '.cm-zq-strong': { fontWeight: 'var(--zq-fw-semibold)' },
   '.cm-zq-em': { fontStyle: 'italic' },
   '.cm-zq-del': { textDecoration: 'line-through', color: 'var(--zq-text3)' },
@@ -847,11 +984,15 @@ const theme = EditorView.theme({
   '.cm-zq-link, .cm-zq-wikilink': { color: 'var(--zq-primary)', textDecoration: 'underline', textUnderlineOffset: '3px', cursor: 'pointer' },
   '.cm-zq-embed': { display: 'inline-block', padding: '0 8px', borderLeft: '2px solid var(--zq-border)' },
   '.cm-zq-wikilink-src, .cm-zq-quote-mark, .cm-zq-list-mark': { color: 'var(--zq-text3)' },
+  '.cm-zq-bullet': { color: 'var(--zq-text3)', display: 'inline-block', minWidth: '0.6em' },
   '.cm-zq-task': { margin: '0 6px 0 0', verticalAlign: 'middle' },
   '.cm-zq-math-block': { textAlign: 'center', padding: '6px 0' },
   '.cm-zq-u': { textDecoration: 'underline', textUnderlineOffset: '3px' },
   '.cm-zq-table-src': { fontFamily: 'var(--zq-fontM)', fontSize: '13px' },
   '.cm-zq-table': { cursor: 'text' },
+  // 格子能直接改（第八十五轮）：点进去的那一格有一圈淡框，看得出在改哪一格
+  '.cm-zq-table td, .cm-zq-table th': { outline: 'none' },
+  '.cm-zq-table td:focus, .cm-zq-table th:focus': { boxShadow: 'inset 0 0 0 1.5px var(--zq-tint-strong)' },
   // 表格预览里画的是阅读模式那一份（.zq-md-table 带着上下 12px）：块之间空多少由前后的空行给，里面这层不再带（第八十轮：原来下面多漏出 12px）
   '.cm-zq-table .zq-md-table': { margin: '0' },
   ...Object.fromEntries(LAYOUT_SIZES.map((n) => ['.cm-zq-pad-' + n, { paddingTop: n + 'px' }])),
@@ -878,7 +1019,8 @@ export function mountWikiEditor(host, options) {
   const completeTitles = (context) => {
     const before = context.matchBefore(/\[\[[^\]\n|]*/);
     if (!before) return null;
-    return { from: before.from + 2, options: (options.titles ? options.titles() : []).map((title) => ({ label: title, apply: `${title}]]` })), validFor: /^[^\]\n|]*$/ };
+    return { from: before.from + 2, options: (options.titles ? options.titles() : []).map((title) => ({ label: title,
+      apply: (v, _c, from, to) => v.dispatch(wikiLinkInsert(v.state, title, from, to)) })), validFor: /^[^\]\n|]*$/ };
   };
   const startText = options.markdown || '';
   const startAt = startCursor(startText, options.title ? options.title() : '');
@@ -917,7 +1059,14 @@ export function mountWikiEditor(host, options) {
       extensions: [
         history(), drawSelection({ cursorBlinkRate: CURSOR_BLINK_MS }), EditorView.lineWrapping,
         new LanguageSupport(markdownLanguage), syntaxHighlighting(highlight),
-        keymap.of([{ key: 'Enter', run: insertNewlineContinueMarkup }, { key: 'Backspace', run: deleteMarkupBackward },
+        closeBrackets(), markdownLanguage.data.of({ closeBrackets: { brackets: PAIRED } }),
+        EditorView.inputHandler.of((v, _from, _to, text) => {
+          const tr = v.state.readOnly ? null : wrapRanges(v.state, text);
+          if (!tr) return false;
+          v.dispatch(tr, { userEvent: 'input.type' });
+          return true;
+        }),
+        keymap.of([...closeBracketsKeymap, { key: 'Enter', run: insertNewlineContinueMarkup }, { key: 'Backspace', run: deleteMarkupBackward },
           ...FORMAT_KEYS.map((k) => ({ key: k.key, run: (v) => wrapSelection(v, k.open, k.close || k.open) })),
           ...completionKeymap, ...historyKeymap, indentWithTab, ...defaultKeymap]),
         autocompletion({ override: [completeTitles], icons: false }),
@@ -991,6 +1140,11 @@ export function mountWikiEditor(host, options) {
       while (l.number < doc.lines && skip(l.number)) l = doc.line(l.number + 1);
       const info = layout.lines[l.number - 1];
       return { pos: l.from, top: view.documentTop + view.lineBlockAt(l.from).top + (info && info.pad || 0) };
+    },
+    /** 光标放到正文开头（藏起来的重复页名后面）：页名那一行回车改完，接着写正文（第八十四轮） */
+    focusStart() {
+      view.focus();
+      view.dispatch({ selection: EditorSelection.cursor(startCursor(view.state.doc.toString(), options.title ? options.title() : '')), scrollIntoView: true });
     },
     focusAt(x, y) {
       const pos = x != null && y != null ? view.posAtCoords({ x, y }) : null;

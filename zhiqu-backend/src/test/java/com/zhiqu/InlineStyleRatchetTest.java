@@ -70,7 +70,7 @@ class InlineStyleRatchetTest {
     /** 写死的字号（不是 var(--zq-fs-*)）一共这几种。第七十八轮：AI 助手的 10 / 10.5 / 11 / 11.5 / 12.5 收进了令牌，但别的页还在用，所以种数没少；第八十一轮 11.5、14 没人用了。 */
     private static final Set<String> LITERAL_FONT_SIZES = new TreeSet<>(Set.of(
             ".92em", "10px", "10.5px", "11px", "12px", "12.5px", "13px", "13.5px", "14.5px",
-            "15px", "15.5px", "16px", "17px", "19px", "20px", "24px", "30px", "38px"));
+            "15px", "15.5px", "16px", "17px", "19px", "20px", "30px", "38px"));   // 第八十四轮 24px 没人用了（Wiki 标题改用 --zq-fs-prose-*）
 
     private static final Pattern STYLE_ATTR = Pattern.compile("style=");
     private static final Pattern STYLE_WRITE = Pattern.compile("\\.style\\.|\\.style\\[|cssText");

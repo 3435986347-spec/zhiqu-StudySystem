@@ -1,7 +1,7 @@
 {
-  "purpose": "Knowledge Wiki editor spike (round 70): CodeMirror 6 bundled once, served as a static ES module; no frontend build step at runtime",
-  "sha256": "a259a8c8f314728a2876d10dfd994e19e6aed2248d01a97bc65e050360d891e1",
-  "bytes": 359130,
+  "purpose": "Knowledge Wiki editor spike (round 70): CodeMirror 6 bundled once, served as a static ES module; no frontend build step at runtime; round 84 re-bundled with the same pinned versions to also export closeBrackets / closeBracketsKeymap (Obsidian-style auto-pairing)",
+  "sha256": "4a5b8094e61e4dfcfb9cc9238e477ee9fe1631408279edc7304b2ef901d05d26",
+  "bytes": 363382,
   "bundler": "esbuild@0.28.2 entry.mjs --bundle --format=esm --minify --target=es2020,safari15 --legal-comments=none",
   "source": "registry.npmjs.org, versions published on or before 2026-10-04 (overrides: @lezer/css 1.3.8)",
   "packages": [

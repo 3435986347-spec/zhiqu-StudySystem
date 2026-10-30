@@ -164,7 +164,9 @@ class DesignTokensTest {
             if (body.contains("var(--zq-fw-semibold)")) semibold.add(selector);
             if (body.contains("var(--zq-fw-medium)")) medium.add(selector);
         }
-        assertEquals(new TreeSet<>(Set.of("b,strong", ".zq-brand-badge")), semibold,
+        // 第八十四轮用户定：知识 Wiki 的正文标题和页名照 Obsidian 加粗（「都做」）—— 只是 Wiki 正文，全站别处照旧
+        assertEquals(new TreeSet<>(Set.of("b,strong", ".zq-brand-badge", ".zq-wiki-inline-title",
+                        ".zq-prose .zq-md h1,.zq-prose .zq-md h2,.zq-prose .zq-md h3,.zq-prose .zq-md h4,.zq-prose .zq-md h5,.zq-prose .zq-md h6")), semibold,
                 "半粗（600）又用到了别处 —— 用户要的是像 Claude 那样细一点的字；标题、按钮用中等（500），其余用常规（400）");
         assertTrue(medium.containsAll(Set.of(".zq-btn", ".zq-nav a.active", ".zq-h1", ".zq-h2")), "主按钮、选中的导航、标题应当是中等字重：" + medium);
         // 行首：「.zq-side.is-collapsed .zq-nav a{…}」里也有「.zq-nav a{」，而且排在前面

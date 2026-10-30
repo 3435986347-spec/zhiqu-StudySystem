@@ -20,6 +20,7 @@ function fixture(){
  function token(){return 'first-token';}
  function $(id){return id==='#zq-doc'?doc:id==='#zq-src-ta'?textarea:null;}
  function wireWikiDrafts(){} function showWikiActionBar(){} function saveWikiDraftNow(){}
+ function placeWikiTitle(){} function wikiTitleEl(){return null;}   // 第八十四轮：页名在正文顶上，这里只看正文
  function setSourcePressed(){} function renderMarkdown(){return '<div class="zq-md">text</div>';} function markDuplicateTitle(){} function renderMathIn(){}
  function htmlToMarkdown(){return getMd();} function currentWikiMarkdown(){return getMd();}
  function wikiDraftKey(p){return 'wiki.'+p.id;}

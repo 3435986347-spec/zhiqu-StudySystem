@@ -37,10 +37,12 @@ class WikiEditingFeelTest {
         String cm = code("wiki-cm.js");
         int widget = cm.indexOf("const RenderedWidget = class extends WidgetType {");
         String rendered = cm.substring(widget, cm.indexOf("};", cm.indexOf("ignoreEvent()", widget)));
-        assertTrue(rendered.contains("placeKeepingPointer(view, pos + tableCellOffset(this.source, row, col, offset), tr.getBoundingClientRect().top);"),
-                "点表格没按那一格放光标、或者没留在鼠标底下");
-        assertTrue(rendered.contains("placeKeepingPointer(view, this.kind === 'table' ? pos : pos + this.source.length, el.getBoundingClientRect().top);"),
+        assertTrue(rendered.contains("placeKeepingPointer(view, view.posAtDOM(el) + this.source.length, el.getBoundingClientRect().top);"),
                 "点图片换回原文以后没留在鼠标底下");
+        // 第八十五轮起表格在格子里直接改；点表格边上（不在格子里）照旧换回原文，点的那一行留在鼠标底下
+        String table = cm.substring(cm.indexOf("function wireTable("), cm.indexOf("const RenderedWidget = class extends WidgetType {"));
+        assertTrue(table.contains("const at = tableStart(); if (at >= 0) placeKeepingPointer(view, at, el.getBoundingClientRect().top);"),
+                "点表格边上换回原文以后没留在鼠标底下");
         int math = cm.indexOf("const MathWidget = class extends WidgetType {");
         String mathBody = cm.substring(math, cm.indexOf("const CheckboxWidget", math));
         assertTrue(mathBody.contains("placeKeepingPointer(view, at + (this.display ? 3 : 1), el.getBoundingClientRect().top);") && mathBody.contains("ignoreEvent() { return false; }"),
@@ -58,5 +60,24 @@ class WikiEditingFeelTest {
         assertTrue(keys.contains("var typing = doc && doc.contains(document.activeElement);")
                 && keys.contains("if (e.key === '[' && !typing)") && keys.contains("else if (e.key === ']' && !typing)"), "⌘[ ⌘] 光标在正文里时要留给编辑器");
         assertTrue(keys.contains("else if (e.key === 'w' && state.wikiTabs.length)"), "⌘W 关标签不见了");
+    }
+
+    @Test
+    @DisplayName("第八十四轮：页名在正文顶上 —— #zq-doc 每次整个换掉以后都要把页名放回去（漏一处，那种情况下页名就没了）；编辑器挂在 .zq-wiki-cm 上，不是 firstChild")
+    void 页名跟着正文() throws Exception {
+        String wiki = code("pages/knowledge-wiki.js");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("doc\\.innerHTML = ").matcher(wiki);
+        int writes = 0;
+        while (m.find()) {
+            writes++;
+            int lineEnd = wiki.indexOf('\n', wiki.indexOf('\n', m.end()) + 1);   // 这一行和下一行
+            String after = wiki.substring(m.end(), lineEnd < 0 ? wiki.length() : lineEnd);
+            int stmt = wiki.indexOf("placeWikiTitle(doc)", m.end());
+            boolean near = after.contains("placeWikiTitle(doc)")
+                    || (stmt > 0 && !wiki.substring(m.end(), stmt).contains("doc.innerHTML = ") && wiki.substring(m.end(), stmt).split("\n").length <= 4);
+            assertTrue(near, "这一处换掉了正文却没把页名放回去：" + wiki.substring(m.start(), Math.min(wiki.length(), m.start() + 120)));
+        }
+        assertTrue(writes >= 5, "只扫到 " + writes + " 处 doc.innerHTML —— 扫空了？");
+        assertTrue(wiki.contains("wikiCmModule.mountWikiEditor(doc.querySelector('.zq-wiki-cm'),"), "编辑器又挂在 doc.firstChild 上（第一个是页名）");
     }
 }

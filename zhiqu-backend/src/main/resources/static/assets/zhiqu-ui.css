@@ -79,6 +79,12 @@
   --zq-fs-lg: 18px;
   --zq-fs-xl: 20px;
   --zq-fs-2xl: 26px;
+  /* 知识 Wiki 的正文（第八十四轮，用户要照 Obsidian：正文 16px、标题加粗、按比例递减）—— 只给 Wiki 正文和它的编辑器，全站别处不动 */
+  --zq-fs-prose: 16px;
+  --zq-fs-prose-h1: 28px;
+  --zq-fs-prose-h2: 24px;
+  --zq-fs-prose-h3: 20px;
+  --zq-fs-prose-h4: 18px;
   --zq-sp-1: 4px;
   --zq-sp-2: 8px;
   --zq-sp-3: 12px;
@@ -1082,14 +1088,16 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 /* ── 知识 Wiki 的正文（第五十五轮起）：正文 15px、行距 1.85，标题节前留白比节后多。
    第六十五轮：阅读与编辑均使用卡片可用宽度，取消 42em 的上限，宽窗口不再到一半就换行。
    长网址沿用 body 的 anywhere 换行，代码和表格继续在自己的容器里横向滚动。 */
-.zq-prose .zq-md{width:100%;max-width:none;min-width:0;font-size:var(--zq-fs-md);line-height:1.85;}
+/* 第八十四轮：字号行距照 Obsidian（原来 15px、行高 1.85、标题 500 —— 第四十一轮「字要细」）；行高比 Obsidian 的 1.5 多一点，中文挤 */
+.zq-prose .zq-md{width:100%;max-width:none;min-width:0;font-size:var(--zq-fs-prose);line-height:1.6;}
+.zq-prose .zq-md h1,.zq-prose .zq-md h2,.zq-prose .zq-md h3,.zq-prose .zq-md h4,.zq-prose .zq-md h5,.zq-prose .zq-md h6{font-weight:var(--zq-fw-semibold);}
 .zq-prose .zq-md>:first-child{margin-top:0;}
-.zq-prose .zq-md h1{margin:28px 0 14px;font-size:24px;line-height:1.35;}
-.zq-prose .zq-md h2{margin:30px 0 10px;font-size:19px;line-height:1.4;}
-.zq-prose .zq-md h3{margin:24px 0 8px;padding-bottom:0;border-bottom:none;font-size:16px;line-height:1.45;}
-.zq-prose .zq-md h4{margin:20px 0 6px;color:var(--zq-text2);font-size:var(--zq-fs-md);}
-.zq-prose .zq-md h5{margin:18px 0 6px;font-size:var(--zq-fs-md);}
-.zq-prose .zq-md h6{margin:16px 0 6px;font-size:var(--zq-fs-base);color:var(--zq-text2);}
+.zq-prose .zq-md h1{margin:28px 0 14px;font-size:var(--zq-fs-prose-h1);line-height:1.3;}
+.zq-prose .zq-md h2{margin:30px 0 10px;font-size:var(--zq-fs-prose-h2);line-height:1.35;}
+.zq-prose .zq-md h3{margin:24px 0 8px;padding-bottom:0;border-bottom:none;font-size:var(--zq-fs-prose-h3);line-height:1.4;}
+.zq-prose .zq-md h4{margin:20px 0 6px;font-size:var(--zq-fs-prose-h4);}
+.zq-prose .zq-md h5{margin:18px 0 6px;font-size:var(--zq-fs-prose);}
+.zq-prose .zq-md h6{margin:16px 0 6px;font-size:var(--zq-fs-prose);color:var(--zq-text2);}
 .zq-prose .zq-md p{margin:0 0 12px;}
 .zq-prose .zq-md ul,.zq-prose .zq-md ol{margin:0 0 12px;padding-left:24px;}
 .zq-prose .zq-md li{margin:5px 0;}
@@ -1125,7 +1133,7 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-wiki-nav .zq-btn-ghost{width:24px;height:26px;padding:0;line-height:1;}
 .zq-wiki-nav .zq-btn-ghost:disabled{opacity:.35;cursor:default;}
 /* 标题行的左内边距和 #zq-doc 的一样是 26px：页名和正文落在同一条竖线上（WikiTabsTest.标题与正文左边缘要对齐） */
-.zq-wiki-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 20px 14px 26px;border-bottom:1px solid var(--zq-border-soft);}
+.zq-wiki-head{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap;padding:14px 20px 14px 26px;border-bottom:1px solid var(--zq-border-soft);}
 /* overflow-anchor:none：嵌入预览长高时浏览器不替人挪滚动位置（第六十六轮）；只读 / 加载中光标是箭头（aria-readonly 由 syncWikiEditMode 写） */
 #zq-doc{flex:1;min-height:0;overflow-y:auto;padding:22px 26px 30px;overflow-anchor:none;outline:none;cursor:text;}
 #zq-doc[aria-readonly="true"]{cursor:default;}
@@ -1145,9 +1153,11 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-wiki-tab-new{display:flex;align-items:center;justify-content:center;flex:none;width:30px;color:var(--zq-text3);cursor:pointer;}
 .zq-wiki-tab-new:hover{color:var(--zq-text);}
 .zq-wiki-tab-new .zq-icon{width:14px;height:14px;}
-/* 页名能改时是手指光标：syncWikiEditMode 在只读 / 加载中时把 title 清空 */
-#zq-doc-title{cursor:default;}
-#zq-doc-title[title]:not([title=""]){cursor:pointer;}
+/* 页名在正文顶上（第八十四轮，照 Obsidian 的 inline title）：跟着正文滚，大小和一级标题一样；没开只读时直接点进去改（syncWikiEditMode 开关 contenteditable），
+   回车 / 点别处就存、Esc 放弃。原来在工具栏那一行、点了弹窗改 */
+.zq-wiki-inline-title{margin:0 0 18px;font-size:var(--zq-fs-prose-h1);font-weight:var(--zq-fw-semibold);line-height:1.3;outline:none;overflow-wrap:anywhere;cursor:default;}
+.zq-wiki-inline-title[contenteditable="plaintext-only"],.zq-wiki-inline-title[contenteditable="true"]{cursor:text;}
+.zq-wiki-inline-title:empty{display:none;}
 /* 页面检查 */
 .zq-wiki-insp{padding:12px 14px;color:var(--zq-text2);font-size:var(--zq-fs-xs);line-height:1.6;}
 .zq-wiki-insp-tip{color:var(--zq-text3);}
@@ -1208,7 +1218,6 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-patch .zq-wiki-hint{margin:6px 0 0;}
 .zq-rev-body{max-height:260px;padding:4px 12px 10px;overflow-y:auto;font-size:var(--zq-fs-sm);line-height:1.7;}
 /* 页名（点了改名）和工具栏 */
-.zq-wiki-title{margin:0;font-size:var(--zq-fs-xl);font-weight:var(--zq-fw-medium);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .zq-wiki-tools{display:flex;align-items:center;justify-content:flex-end;gap:var(--zq-sp-2);flex-wrap:wrap;min-width:0;max-width:100%;margin-left:auto;}
 .zq-wiki-mode-label{min-width:3em;color:var(--zq-text3);font-size:var(--zq-fs-xs);white-space:nowrap;}
 #zq-wiki-mode{min-width:100px;height:30px;gap:8px;flex-shrink:0;white-space:nowrap;}

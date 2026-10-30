@@ -216,7 +216,7 @@ async function paintWikiDoc(p, opts) {
   removeWikiDraftBar();
   trackWikiNavigation(p, opts);
   state.wikiCur = p;
-  var doc = $('#zq-doc'), title = $('#zq-doc-title');
+  var doc = $('#zq-doc'), title = wikiTitleEl();
   if (title) title.textContent = p.title || '知识页';
   // 等待新页正文时先退出旧页的编辑会话，不能把旧 DOM 的输入存成新页草稿。
   if (doc) {
@@ -225,7 +225,7 @@ async function paintWikiDoc(p, opts) {
     doc.contentEditable = 'false';
     doc._wikiSourceView = null; doc._wikiPendingView = null;
     syncWikiEditMode(doc);
-    if (!p._full && p.id != null) doc.innerHTML = empty('正在加载知识页…');
+    if (!p._full && p.id != null) { doc.innerHTML = empty('正在加载知识页…'); placeWikiTitle(doc); }
   }
   // document-tree 只给了折叠后的 summary，正文要按需拉完整内容
   if (!p._full && p.id != null) {
@@ -416,7 +416,7 @@ function closeWikiTab(index) {
     state.wikiTabIdx = -1;
     state.wikiCur = null;
     saveWikiTabs();
-    var doc = $('#zq-doc'), title = $('#zq-doc-title');
+    var doc = $('#zq-doc'), title = wikiTitleEl();
     if (doc) {
       doc.dataset.editing = '0'; doc.dataset.source = '0'; doc.dataset.loading = '0';
       closeWikiCm(doc);
@@ -425,6 +425,7 @@ function closeWikiTab(index) {
       doc.innerHTML = empty('没有打开的页面 · 从左侧目录选一页，或点 + 新建标签');
     }
     if (title) title.textContent = '';
+    if (doc) placeWikiTitle(doc);
     paintWikiTabs();
     paintWikiTree();
     return;
@@ -741,34 +742,55 @@ function wireWikiEditor() {
     else document.execCommand('formatBlock', false, v);
     blockSel.value = 'P';
   };
-  // 标题点击改名（系统页 index/log/维护规则 除外）
-  var titleEl = $('#zq-doc-title');
-  if (titleEl) {
-    titleEl.onclick = async function () {
-      var p = state.wikiCur; if (!p || !ensureWikiEditing()) return;
-      if (['INDEX', 'LOG', 'SCHEMA'].indexOf(String(p.pageType || '').toUpperCase()) >= 0) return toast('系统页不可改名', 'error');
-      var editContext = wikiEditingContext(doc);
-      var name = await askText({ title: '修改页面名称', label: '页面名称', value: p._pendingTitle || p.title || '' });
-      if (!isWikiEditingContext(editContext)) return;
-      if (!name || !name.trim()) return;
-      if (name.trim() === p.title) { p._pendingTitle = null; titleEl.textContent = p.title; return; }
-      p._pendingTitle = name.trim();
-      titleEl.textContent = p._pendingTitle;
-      safe('修改名称', async function () {
-        if (!isWikiEditingContext(editContext)) return;
-        // 改名走的是整页保存，要带着正文 —— 目录树不给正文（只给摘要），正文还没取回来（刚打开、或者取失败了）
-        // 就先取一遍。不取的话后端会拒（「内容不能为空」），用户看到的是改名莫名失败。
-        if (!p._full) {
-          var detail = await api.get('/knowledge/pages/' + p.id);
-          if (!isWikiEditingContext(editContext)) return;
-          p.content = detail.content; p.version = detail.version; p._full = true;
-        }
-        // 第八十三轮：和自动保存排同一队（标题和编辑器里的正文一起存）—— 两个各发各的会撞版本号，后到的那个被当成「别处改过」
-        var md = currentWikiMarkdown();
-        await saveWikiContent(p, md != null ? md : p.content || '');
-      });
-    };
+  // 页名在正文顶上直接改（第八十四轮，照 Obsidian；原来点工具栏那一行的页名弹窗改）：回车 / 点别处就存、Esc 放弃，回车以后光标进正文开头
+  var titleEl = wikiTitleEl();
+  if (titleEl && !titleEl.dataset.renameWired) {
+    titleEl.dataset.renameWired = '1';
+    titleEl.addEventListener('keydown', function (e) {
+      if (e.isComposing || e.keyCode === 229) return;   // 输入法正在选字：回车是选字，不是改完
+      if (e.key === 'Enter') { e.preventDefault(); commitWikiTitle(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); var p = state.wikiCur; titleEl.textContent = p ? (p._pendingTitle || p.title || '') : ''; titleEl.blur(); }
+    });
+    titleEl.addEventListener('blur', function () { commitWikiTitle(false); });
+    // 页名是一行字：贴进来的换行变空格、带格式的只取纯文字
+    titleEl.addEventListener('paste', function (e) {
+      var text = e.clipboardData && e.clipboardData.getData('text/plain');
+      if (text == null) return;
+      e.preventDefault();
+      document.execCommand('insertText', false, text.replace(/\s*[\r\n]+\s*/g, ' '));
+    });
   }
+}
+/** 页名改完了：和原来一样（空的、没变的不存）；改名和自动保存排同一队（第八十三轮）。enter：回车改完的，光标进正文开头 */
+function commitWikiTitle(enter) {
+  var titleEl = wikiTitleEl(), p = state.wikiCur, doc = $('#zq-doc');
+  if (!titleEl || !p || !doc || p.id == null || titleEl.contentEditable === 'false') return;
+  var name = String(titleEl.textContent || '').replace(/\s+/g, ' ').trim(), current = p._pendingTitle || p.title || '';
+  if (!name || name === current) titleEl.textContent = current;
+  else {
+    titleEl.textContent = name;
+    p._pendingTitle = name;
+    safe('修改名称', async function () {
+      // 改名走的是整页保存，要带着正文 —— 目录树不给正文（只给摘要），正文还没取回来（刚打开、或者取失败了）就先取一遍
+      if (!p._full) {
+        var detail = await api.get('/knowledge/pages/' + p.id);
+        p.content = detail.content; p.version = detail.version; p._full = true;
+      }
+      var md = state.wikiCur === p ? currentWikiMarkdown() : null;
+      await saveWikiContent(p, md != null ? md : p.content || '');
+    });
+  }
+  if (enter) {
+    titleEl.blur();
+    if (wikiCmActive(doc)) wikiCm.handle.focusStart();
+  }
+}
+/** 页名那个节点：#zq-doc 每次重画都整个换掉，这个节点留在这里（事件也在它身上），画完放回最上面 */
+var wikiTitleNode = null;
+function wikiTitleEl() { return wikiTitleNode || (wikiTitleNode = $('#zq-doc-title')); }
+function placeWikiTitle(doc) {
+  var t = wikiTitleEl();
+  if (t && doc && doc.insertBefore && doc.firstChild !== t) doc.insertBefore(t, doc.firstChild);
 }
 /** 光标放到窗口坐标 (x, y) 处的字前面 */
 function caretAt(x, y) {
@@ -889,7 +911,8 @@ function showWikiReading(doc, p, view, markdown) {
   doc._wikiReadingMarkdown = markdown != null ? markdown : null;
   doc.innerHTML = renderMarkdown(markdown != null ? markdown : p.content || p.summary || '');
   markDuplicateTitle(doc, p.title);
-  markEmptyWikiPage(doc);
+  markEmptyWikiPage(doc);   // 它读整个正文区的字：页名放回去之前读
+  placeWikiTitle(doc);
   renderMathIn(doc);
   wireWikiLinks(doc);
   syncWikiEditMode(doc);
@@ -924,9 +947,13 @@ function syncWikiEditMode(doc) {
   var del = $('[data-wiki-cmd="delete"]', doc.closest('section'));
   if (del) del.hidden = !state.wikiCur || isSystemWikiPage(state.wikiCur);
   syncWikiTaskControls(doc);
-  var title = $('#zq-doc-title');
+  var title = wikiTitleEl();
   if (title) {
-    title.title = locked || unavailable ? '' : '点击修改页面名称';   // 能改名时才是手指光标：样式表按 title 认（#zq-doc-title[title]:not([title=""])）
+    // 页名在正文顶上，没开只读就直接改（第八十四轮，照 Obsidian）；系统页（index / log / 维护规则）不能改名，后端也拦
+    var renamable = !locked && !unavailable && !!state.wikiCur && !isSystemWikiPage(state.wikiCur);
+    if (!renamable) title.contentEditable = 'false';
+    else { try { title.contentEditable = 'plaintext-only'; } catch (e) { title.contentEditable = 'true'; } }   // 不认 plaintext-only 的浏览器退回 true（贴进来的照样只取纯文字）
+    title.title = renamable ? '点击修改页面名称' : '';
   }
 }
 function syncWikiTaskControls(doc, scope) {
@@ -1053,7 +1080,8 @@ function enterWikiCmEdit(doc, p, markdown, opts) {
   // 光标就从点的那个字跑到了别的行（第八十轮：点正文第二行，光标落在上面的标题上）。换之前先清掉
   try { var nativeSel = window.getSelection && window.getSelection(); if (nativeSel && nativeSel.rangeCount) nativeSel.removeAllRanges(); } catch (e) {}
   doc.innerHTML = '<div class="zq-wiki-cm"></div>';
-  wikiCm = { page: p, handle: wikiCmModule.mountWikiEditor(doc.firstChild, {
+  placeWikiTitle(doc);
+  wikiCm = { page: p, handle: wikiCmModule.mountWikiEditor(doc.querySelector('.zq-wiki-cm'), {
     markdown: markdown, readOnly: wikiReadOnly(),
     titles: function () { return (state.wikiPages || []).map(function (x) { return x.title; }); },
     // 第八十轮：和页名重复的第一行标题在编辑器里也藏起来（阅读时本来就藏）；单击渲染出来的链接打开它（原来只放光标，一点正文就进编辑，链接全都点不动）
@@ -1209,7 +1237,7 @@ function toggleWikiSource() {
     doc._wikiSourceView = null;
     doc._wikiPendingView = view ? { view: view, page: state.wikiCur, auth: token(), expires: Date.now() + 30000 } : null;
     doc.dataset.source = '0'; doc.contentEditable = 'true';
-    doc.innerHTML = renderMarkdown(md); markDuplicateTitle(doc, state.wikiCur && state.wikiCur.title); renderMathIn(doc); doc.focus({ preventScroll: true });
+    doc.innerHTML = renderMarkdown(md); markDuplicateTitle(doc, state.wikiCur && state.wikiCur.title); placeWikiTitle(doc); renderMathIn(doc); doc.focus({ preventScroll: true });
     syncWikiEditMode(doc);
     wireWikiLinks(doc);
     if (view) restoreWikiView(doc, view);
@@ -1220,6 +1248,7 @@ function toggleWikiSource() {
     doc.dataset.source = '1'; doc.contentEditable = 'false';
     setSourcePressed(true);
     doc.innerHTML = '<textarea id="zq-src-ta" aria-label="Markdown 源码"></textarea>';   // 样子在样式表的 #zq-src-ta
+    placeWikiTitle(doc);
     $('#zq-src-ta').value = md2;
     $('#zq-src-ta').focus({ preventScroll: true });
   }
@@ -1272,7 +1301,7 @@ function saveWikiContent(p, md) {
       if (updated && updated.updatedAt) p.updatedAt = updated.updatedAt;
       if (p._pendingTitle && (!updated || !updated.title || updated.title === p._pendingTitle)) {
         p.title = p._pendingTitle; p._pendingTitle = null;
-        if (state.wikiCur === p) { var titleEl = $('#zq-doc-title'); if (titleEl) titleEl.textContent = p.title; }
+        if (state.wikiCur === p) { var titleEl = wikiTitleEl(); if (titleEl) titleEl.textContent = p.title; }
         paintWikiTree(); paintWikiTabs(); toast('名称已更新');
       }
       settleWikiSaved(p, md, base);
@@ -1281,7 +1310,7 @@ function saveWikiContent(p, md) {
       if (state.wikiCur === p && state.wikiDirty) saveWikiDraftNow();
       if (isWikiConflict(e)) {
         p._retryMd = null; p._saveConflict = true; p._saveNext = null;
-        if (p._pendingTitle && state.wikiCur === p) { var t = $('#zq-doc-title'); if (t) t.textContent = p.title; }
+        if (p._pendingTitle && state.wikiCur === p) { var t = wikiTitleEl(); if (t) t.textContent = p.title; }
         p._pendingTitle = null;
       } else {
         p._saveError = (e && e.message) || '没存上';

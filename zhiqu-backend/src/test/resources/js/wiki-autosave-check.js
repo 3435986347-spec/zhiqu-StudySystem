@@ -13,9 +13,12 @@ function fixture() {
   const doc = { dataset: { editing: '0', source: '0' }, style: {}, contentEditable: 'false', scrollTop: 0, firstChild: null,
     set innerHTML(v) { this._html = v; this.firstChild = { host: true }; }, get innerHTML() { return this._html; },
     addEventListener(t, f) { (events[t] ||= []).push(f); }, closest() { return {}; }, dispatchEvent(e) { (events[e.type] || []).forEach((f) => f(e)); },
-    focus() {}, contains() { return false; }, setAttribute(k, v) { this[k] = v; }, getBoundingClientRect: () => ({ top: 100 }) };
+    focus() {}, contains() { return false; }, setAttribute(k, v) { this[k] = v; }, getBoundingClientRect: () => ({ top: 100 }),
+    querySelector(sel) { return sel === '.zq-wiki-cm' ? this.firstChild : null; } };
   const status = { dataset: {}, set innerHTML(v) { this._html = v; }, get innerHTML() { return this._html || ''; }, textContent: '' };
-  const title = { textContent: '周报', style: {}, title: '' };
+  const titleEvents = {};
+  const title = { textContent: '周报', style: {}, title: '', dataset: {}, contentEditable: 'false', blur() {},
+    addEventListener(type, fn) { (titleEvents[type] ||= []).push(fn); }, fire(type, props = {}) { const e = { preventDefault() {}, ...props }; (titleEvents[type] || []).forEach((fn) => fn(e)); } };
   const elements = { '#zq-doc': doc, '#zq-doc-title': title, '#zq-wiki-mode': { setAttribute() {} }, '#zq-wiki-mode-label': {}, '#zq-wiki-save-state': status, '#zq-wiki-block': { value: 'P' } };
   const handle = { text: page.content, calls: [], getMarkdown() { return this.text; }, setReadOnly() {}, setMarkdown(t) { this.text = t; }, destroy() { this.calls.push('destroy'); },
     focusAt() {}, focusPos() {}, alignPos() {}, lineAt: () => ({ pos: 0, top: 100 }), charTop: () => 100 };
@@ -120,8 +123,7 @@ async function editing() { const f = fixture(); await f.impl.loadWikiCm(); f.imp
     let release; f.replies.push((body) => new Promise((r) => { release = () => r({ content: body.content, title: body.title, version: 4 }); }));
     f.type('正文改了'); await wait(60);
     assert.equal(f.writes.length, 1);
-    f.setAsk('周报（新）');
-    f.title.onclick(); await wait(10);
+    f.title.textContent = '周报（新）'; f.title.fire('blur'); await wait(10);   // 第八十四轮：页名在正文顶上直接改，点别处就存
     assert.equal(f.writes.length, 1, '保存还在路上，改名又发了一个（两个撞版本号，后到的被当成「别处改过」）');
     release(); await wait(20);
     assert.equal(f.writes.length, 2);

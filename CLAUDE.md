@@ -86,7 +86,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261031-r83`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261031-r85`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；**内联样式、写死的字号按文件只许降**（`InlineStyleRatchetTest`，`==` 钉着，少了就改小）；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -179,10 +179,8 @@ cd ../zhiqu-cli && npm test
 - [第五十八轮](docs/rounds/round-58.md) review 推送前的 9 个提交：点正文编辑时字不跳、迷你窗再缩小重新载入、「参数不认」不降着重试、搜索上限照服务端说
 - [第五十九轮](docs/rounds/round-59.md) 模型 API 地址可指向本机、内网和内部域名，保留 HTTP(S) URL 格式校验
 - [第六十轮](docs/rounds/round-60.md) 知趣 CLI + DeepSeek 全量 HumanEval：156/164（95.12%），固定协议、隔离执行与逐题报告
-- [第六十一轮](docs/rounds/round-61.md) 仓库级评测设计：固定 SWE-bench Verified 10 题、真实 CLI 与独立官方评分，Java / JS 补充集单列；未开始付费运行
-- [第六十二轮](docs/rounds/round-62.md) 仓库评测准备工具与 ¥50 配置；公司禁止下载 Docker，转个人电脑继续，真实模型0次 / ¥0，隔离与官方评分尚待验收
-- [第六十三轮](docs/rounds/round-63.md) 计划完整草稿到达即确认、来源记录与正文预览、Wiki 写入以真实 PENDING 回执汇报；连点与乱序请求防重
-- [第六十四轮](docs/rounds/round-64.md) Wiki 的 Obsidian 风格 ZIP 导入导出、私有图片与附件、AI 助手和 Wiki 侧栏动画
+- [第六十一轮](docs/rounds/round-61.md) 仓库级评测设计：固定 SWE-bench Verified 10 题、真实 CLI 与独立官方评分，Java / JS 补充集单列；未开始付费运行；[第六十二轮](docs/rounds/round-62.md) 仓库评测准备工具与 ¥50 配置；公司禁止下载 Docker，转个人电脑继续，真实模型0次 / ¥0，隔离与官方评分尚待验收
+- [第六十三轮](docs/rounds/round-63.md) 计划完整草稿到达即确认、来源记录与正文预览、Wiki 写入以真实 PENDING 回执汇报；连点与乱序请求防重；[第六十四轮](docs/rounds/round-64.md) Wiki 的 Obsidian 风格 ZIP 导入导出、私有图片与附件、AI 助手和 Wiki 侧栏动画
 - [第六十五轮](docs/rounds/round-65.md) macOS ZIP 导入兼容、Wiki 正文宽度与弹窗背景稳定；[第六十六轮](docs/rounds/round-66.md) Wiki 类型化嵌入预览、原生编辑快捷键、目录备注与编辑滚动稳定
 - [第六十七轮](docs/rounds/round-67.md) Wiki 只读模式、网址直接点击与 JSON 预览内部滚动；[第六十八轮](docs/rounds/round-68.md) 恢复点击编辑、可选只读开关、工具栏靠右与页面流畅度
 - [第六十九轮](docs/rounds/round-69.md) 命令行 TERM=dumb 的 15 个失败与 read_file 空行；Wiki 查看类弹窗先开后填、目录预取、健康检查 / 图谱的三个真错；仓库评测的 Docker 编排与不花钱的对照；锐评
@@ -198,3 +196,5 @@ cd ../zhiqu-cli && npm test
 - [第八十一轮](docs/rounds/round-81.md) 界面打磨收尾：看板和共用层的样子进样式表，内联样式 81 → 6（只剩按数据变的）；「缩小到桌面」一点就退出、AI 助手存不了 .svg 也不肯给整份代码
 - [第八十二轮](docs/rounds/round-82.md) 网页版里下载桌面版：落地页按钮 + 头像菜单一项，认出 Mac / Windows（Apple 芯片、Intel 直说）；安装包放服务器的下载目录（`app.desktop-downloads-dir`，不进 git / JAR），不登录能下、能续传
 - [第八十三轮](docs/rounds/round-83.md) 知识 Wiki 像 Obsidian：编辑器一直开着、打字自动保存（412 = 别处改过）、空行整行（连按回车）、光标看得见会闪（原来黑光标画在深色底上）、点进块不挪；和 Obsidian 并排比过
+- [第八十四轮](docs/rounds/round-84.md) Wiki 继续照 Obsidian：正文 16px / 行高 1.6 / 标题加粗（`--zq-fs-prose*`）、括号自动配对和选中字包起来（重打 CodeMirror，只多导出 closeBrackets）、页名放进正文顶上直接改、列表画成圆点
+- [第八十五轮](docs/rounds/round-85.md) Wiki 表格在格子里直接改（照 Obsidian）：点进一格露出原文、打字同步写回（| 转义）、Tab / 回车 / Esc 走格子、⌘Z 走整篇历史；自己改的那一下不重画

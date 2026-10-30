@@ -82,19 +82,23 @@ let measure = """
   });
   result.wikiCases = wikiCases;
   var wikiToolbarCases = 0;
-  [['short.wide',1120,'工作记录'],['long.wide',1120,'知识库合成的长页面标题'.repeat(20)],['long.narrow',320,'知识库合成的长页面标题'.repeat(20)]].forEach(function(sample){
+  // 第八十四轮：页名搬到正文顶上（照 Obsidian），工具栏那一行只剩工具：宽、窄都贴右、不撑出去；很长的页名在窄窗口里折行、不撑出正文
+  [['wide',1120],['narrow',320]].forEach(function(sample){
     var host = document.createElement('section'); host.style.width = sample[1] + 'px';
     host.innerHTML = document.getElementById('wiki-header').innerHTML;
     document.body.appendChild(host);
-    var title = host.querySelector('#zq-doc-title'); title.textContent = sample[2];
-    var header = title.parentElement, tools = host.querySelector('.zq-wiki-tools');
+    var header = host.querySelector('.zq-wiki-head'), tools = host.querySelector('.zq-wiki-tools');
     var h = header.getBoundingClientRect(), t = tools.getBoundingClientRect(), s = getComputedStyle(header);
     var key = 'wikiToolbar.' + sample[0];
     result[key + '.rightGap'] = h.right - parseFloat(s.paddingRight) - t.right;
     result[key + '.overflow'] = Math.max(0, host.scrollWidth - host.clientWidth);
-    result[key + '.wrapped'] = t.top >= title.getBoundingClientRect().bottom;
     wikiToolbarCases++;
   });
+  var titleHost = document.createElement('div'); titleHost.id = 'zq-doc'; titleHost.className = 'zq-prose'; titleHost.style.width = '320px';
+  titleHost.innerHTML = '<h1 class="zq-wiki-inline-title">' + '知识库合成的长页面标题'.repeat(8) + 'averyveryverylongwordwithoutanybreaksatallinsidethepagename</h1>';
+  document.body.appendChild(titleHost);
+  result['inlineTitle.overflow'] = Math.max(0, titleHost.scrollWidth - titleHost.clientWidth);
+  result['inlineTitle.lines'] = Math.round(titleHost.firstChild.getBoundingClientRect().height / parseFloat(getComputedStyle(titleHost.firstChild).lineHeight));
   result.wikiToolbarCases = wikiToolbarCases;
   return JSON.stringify(result);
 })()

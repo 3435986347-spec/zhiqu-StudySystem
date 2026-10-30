@@ -107,9 +107,10 @@ class WikiTabsTest {
     void 标题与正文左边缘要对齐() throws Exception {
         // 第七十九轮起两个数都在样式表里（原来在 knowledge-wiki.html 的内联）：标题行是 .zq-wiki-head，正文是 #zq-doc
         String html = Files.readString(WIKI_HTML, StandardCharsets.UTF_8);
-        assertTrue(html.contains("<div class=\"zq-wiki-head\">") && html.indexOf("id=\"zq-doc-title\"") > html.indexOf("<div class=\"zq-wiki-head\">"),
-                "标题不在 .zq-wiki-head 那一行里了");
-        assertTrue(html.contains("<div id=\"zq-doc\" class=\"zq-prose\"></div>"), "#zq-doc 又写了内联样式（左内边距要和标题行一起在样式表里改）");
+        // 第八十四轮起页名在正文顶上（#zq-doc 里第一个，照 Obsidian 的 inline title）：和正文同一个左内边距，天然对齐；
+        // 工具栏那一行（.zq-wiki-head）的左内边距照旧和正文一样
+        assertTrue(html.contains("<div id=\"zq-doc\" class=\"zq-prose\"><h1 id=\"zq-doc-title\""), "页名不在正文里第一个（左边缘就不跟正文走了）");
+        assertFalse(html.contains("<div id=\"zq-doc\" class=\"zq-prose\" style="), "#zq-doc 又写了内联样式（左内边距要和标题行一起在样式表里改）");
         String css = Files.readString(CSS, StandardCharsets.UTF_8);
         int headerLeft = paddingSide(rule(css, ".zq-wiki-head"), 3);
         int docLeft = paddingSide(rule(css, "#zq-doc"), 3);

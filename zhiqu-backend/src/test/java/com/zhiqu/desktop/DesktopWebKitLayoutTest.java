@@ -66,14 +66,16 @@ class DesktopWebKitLayoutTest {
                         key + " 的宽表格没有在自己的表格容器里横向滚动");
             }
         }
-        assertEquals("3", out.get("wikiToolbarCases"), "长短标题的工具栏探针没有全部执行：" + out);
-        for (String key : new String[]{"short.wide", "long.wide", "long.narrow"}) {
+        // 第八十四轮：页名搬到正文顶上，工具栏那一行只剩工具
+        assertEquals("2", out.get("wikiToolbarCases"), "宽窄两种工具栏探针没有全部执行：" + out);
+        for (String key : new String[]{"wide", "narrow"}) {
             assertTrue(Math.abs(Double.parseDouble(out.get("wikiToolbar." + key + ".rightGap"))) <= 0.5,
                     key + " 工具栏没有贴在内容区右侧：" + out);
             assertTrue(Double.parseDouble(out.get("wikiToolbar." + key + ".overflow")) <= 0.5,
-                    key + " 工具栏撑出标题容器：" + out);
-            if (key.startsWith("long")) assertEquals("1", out.get("wikiToolbar." + key + ".wrapped"), "长标题样本没有触发工具栏换行：" + out);
+                    key + " 工具栏撑出那一行：" + out);
         }
+        assertTrue(Double.parseDouble(out.get("inlineTitle.overflow")) <= 0.5, "很长的页名在窄窗口里撑出正文：" + out);
+        assertTrue(Integer.parseInt(out.get("inlineTitle.lines")) >= 2, "很长的页名没有折行：" + out);
     }
 
     private Map<String, String> runCheck() throws Exception {
@@ -102,11 +104,10 @@ class DesktopWebKitLayoutTest {
         return map;
     }
 
-    /** 发布页面的标题和工具栏，按 div 层数截取；探针只替换合成标题。 */
+    /** 发布页面的工具栏那一行（.zq-wiki-head，第八十四轮起不含页名），按 div 层数截取 */
     static String wikiHeader(String html) {
-        int title = html.indexOf("<h2 id=\"zq-doc-title\"");
-        assertTrue(title >= 0, "knowledge-wiki.html 里找不到知识页标题");
-        int at = html.lastIndexOf("<div", title);
+        int at = html.indexOf("<div class=\"zq-wiki-head\">");
+        assertTrue(at >= 0, "knowledge-wiki.html 里找不到工具栏那一行（.zq-wiki-head）");
         Matcher m = Pattern.compile("<div\\b|</div>").matcher(html);
         int depth = 0, from = at;
         while (m.find(from)) {

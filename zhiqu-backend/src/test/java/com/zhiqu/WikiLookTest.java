@@ -72,7 +72,7 @@ class WikiLookTest {
     }
 
     @Test
-    @DisplayName("读长文的排版：正文使用可用宽度、窄容器可以收缩、正文比聊天大、行距 ≥ 1.8；标题一级比一级小、最小的不小于正文、节前留白比节后多；三级标题不带下划线")
+    @DisplayName("读长文的排版：正文使用可用宽度、窄容器可以收缩、正文比聊天大、行距照 Obsidian（1.5–1.7，第八十四轮；原来 ≥ 1.8）；标题一级比一级小、最小的不小于正文、节前留白比节后多；三级标题不带下划线")
     void 排版() throws IOException {
         String css = css();
         String prose = rule(css, ".zq-prose .zq-md");
@@ -81,7 +81,10 @@ class WikiLookTest {
         assertEquals("0", prop(prose, "min-width"), "正文在窄窗口里不能缩小");
         double body = px(css, prop(prose, "font-size"));
         assertTrue(body > px(css, prop(rule(css, ".zq-md"), "font-size")), "Wiki 正文没有比聊天气泡里的字大");
-        assertTrue(Double.parseDouble(prop(prose, "line-height")) >= 1.8, "行距太密");
+        // 第八十四轮：用户要照 Obsidian（正文 16px、行高 1.5），中文比拉丁字母挤，多给一点；原来 1.85（第四十一轮「字要细」那一套）
+        double lh = Double.parseDouble(prop(prose, "line-height"));
+        assertTrue(lh >= 1.5 && lh <= 1.7, "行距不像 Obsidian 了：" + lh);
+        assertEquals(16.0, body, "Wiki 正文不是 Obsidian 的 16px");
 
         double above = Double.MAX_VALUE;
         for (int lvl = 1; lvl <= 4; lvl++) {
@@ -103,7 +106,9 @@ class WikiLookTest {
         assertFalse(html.contains("文档视图"), "标题上面又压着「文档视图」");
         assertFalse(html.contains("点击正文或标题即可编辑"), "又有「点击正文或标题即可编辑」那行提示");
         assertTrue(html.contains("<div id=\"zq-doc\" class=\"zq-prose\""), "正文容器没有 .zq-prose —— 读长文的那套排版不生效");
-        assertTrue(html.contains("<h2 id=\"zq-doc-title\" class=\"zq-wiki-title\">"), "页名不是 .zq-wiki-title");
+        // 第八十四轮：页名在正文顶上（照 Obsidian 的 inline title），跟着正文滚、直接改；原来在工具栏那一行
+        assertTrue(html.contains("<div id=\"zq-doc\" class=\"zq-prose\"><h1 id=\"zq-doc-title\" class=\"zq-wiki-inline-title\""), "页名不在正文顶上");
+        assertFalse(html.substring(html.indexOf("<div class=\"zq-wiki-head\">"), html.indexOf("<div id=\"zq-doc\"")).contains("zq-doc-title"), "工具栏那一行又放了页名");
 
         Matcher b = Pattern.compile("<button([^>]*data-wiki-cmd=\"(\\w+)\"[^>]*)>(.*?)</button>").matcher(html);
         List<String> cmds = new ArrayList<>();
@@ -173,7 +178,8 @@ class WikiLookTest {
         assertTrue(rule(css, ".zq-wiki-item[aria-current=\"page\"]").contains("background:var(--zq-tint)"), "目录的当前页没有底色");
         assertTrue(rule(css, ".zq-wiki-tab[aria-current=\"page\"]").contains("box-shadow:inset 0 2px 0 var(--zq-primary)"), "当前标签上沿没有那条强调色");
         assertEquals("default", prop(rule(css, "#zq-doc[aria-readonly=\"true\"]"), "cursor"), "只读时正文还是文字光标");
-        assertEquals("pointer", prop(rule(css, "#zq-doc-title[title]:not([title=\"\"])"), "cursor"), "能改名时页名不是手指");
+        assertEquals("text", prop(rule(css, ".zq-wiki-inline-title[contenteditable=\"plaintext-only\"],.zq-wiki-inline-title[contenteditable=\"true\"]"), "cursor"), "能改名时页名不是文字光标（第八十四轮：在页名上直接改）");
+        assertEquals("default", prop(rule(css, ".zq-wiki-inline-title"), "cursor"), "不能改名时（只读、系统页）页名还是文字光标");
         assertTrue(css.contains(".zq-task-row>input:checked+span{color:var(--zq-text3);text-decoration:line-through;}"), "勾上的任务项没有划线（原来在 JS 里写）");
         assertTrue(rule(css, ".zq-wiki-nav .zq-btn-ghost:disabled").contains("opacity:.35"), "没有历史时前进 / 返回不灰（原来在 JS 里改 opacity）");
     }
