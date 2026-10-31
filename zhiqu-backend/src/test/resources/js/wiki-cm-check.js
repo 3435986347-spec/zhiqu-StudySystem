@@ -461,6 +461,19 @@ function fixture({ failLoad = false } = {}) {
     assert.equal(cm.tableCellSource('第一行\n  第二行'), '第一行 第二行');
     assert.equal(cm.tableCellSource(null), '');
   });
+  // 第八十五轮 review（桌面应用里用鼠标点出来的）：格子里打「0|1」写回成「30\|1」，阅读模式按 | 一刀切 —— 那一格变成「30\」、「1」挤到表头外面不见了
+  await check('格子里打的字写回原文以后，阅读模式里还是那一格、一字不差（\\| 画成 |，不切成两格）；看得见的字也认 \\|', () => {
+    const cellsOf = (md) => [...renderMarkdown(md).matchAll(/<td>(.*?)<\/td>/g)].map((m) => decode(m[1]));
+    for (const typed of ['30|1', 'a||b', '|开头', '结尾|', '中 | 间']) {
+      const md = '| 名称 | 数量 |\n| --- | --- |\n| ' + cm.tableCellSource(typed) + ' | x |\n';
+      assert.deepEqual(cellsOf(md), [typed, 'x'], '打的是「' + typed + '」，原文 ' + JSON.stringify(md));
+    }
+    assert.deepEqual(cellsOf('| a | b |\n| --- | --- |\n| [[页\\|别名]] | 2 |'), ['<a data-wikilink="页|别名">别名</a>', '2'], '格子里的双链别名照 Obsidian 写成 \\|');
+    const line = '| 30\\|1 | x |', v = cm.visibleText(line);
+    assert.deepEqual(v.map((u) => u.text.trim()), ['30|1', 'x'], '看得见的字和阅读模式对不上');
+    const one = v[0].text.indexOf('1');
+    assert.equal(v[0].cols[one], line.indexOf('1'), '「1」应当对着原文里那个 1');
+  });
   await check('表格是 TableWidget：格子能直接改（contenteditable）、格子里的事件编辑器不管、自己改的那一下不重画；Tab / 回车 / Esc / ⌘Z 都接上', () => {
     const src = fs.readFileSync(path.resolve(cmPath), 'utf8').replace(/\/\/.*$/gm, '');
     assert.ok(src.includes("widget: new TableWidget(state.sliceDoc(table.from, table.to), options), block: true"), '表格还是整张画死的块');

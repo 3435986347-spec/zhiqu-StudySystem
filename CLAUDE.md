@@ -86,7 +86,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261031-r85b`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261031-r85e`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；**内联样式、写死的字号按文件只许降**（`InlineStyleRatchetTest`，`==` 钉着，少了就改小）；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -196,5 +196,5 @@ cd ../zhiqu-cli && npm test
 - [第八十二轮](docs/rounds/round-82.md) 网页版里下载桌面版：落地页按钮 + 头像菜单一项，认出 Mac / Windows（Apple 芯片、Intel 直说）；安装包放服务器的下载目录（`app.desktop-downloads-dir`，不进 git / JAR），不登录能下、能续传
 - [第八十三轮](docs/rounds/round-83.md) 知识 Wiki 像 Obsidian：编辑器一直开着、打字自动保存（412 = 别处改过）、空行整行（连按回车）、光标看得见会闪（原来黑光标画在深色底上）、点进块不挪；和 Obsidian 并排比过
 - [第八十四轮](docs/rounds/round-84.md) Wiki 继续照 Obsidian：正文 16px / 行高 1.6 / 标题加粗（`--zq-fs-prose*`）、括号自动配对和选中字包起来（重打 CodeMirror，只多导出 closeBrackets）、页名放进正文顶上直接改、列表画成圆点
-- [第八十五轮](docs/rounds/round-85.md) Wiki 表格在格子里直接改（照 Obsidian）：点进一格露出原文、打字同步写回（| 转义）、Tab / 回车 / Esc 走格子、⌘Z 走整篇历史；自己改的那一下不重画；之后 review 修了四处（点圆点放光标、页名删空显示「无标题」不藏）
+- [第八十五轮](docs/rounds/round-85.md) Wiki 表格在格子里直接改（照 Obsidian）：点进一格露出原文、打字同步写回（| 转义）、Tab / 回车 / Esc 走格子、⌘Z 走整篇历史；自己改的那一下不重画；之后 review 修了四处（点圆点放光标、页名删空显示「无标题」不藏），桌面应用里鼠标点又修了三处（格子里的 | 读回来、整页高 2px、标签跟着改名）
 - [第八十六轮](docs/rounds/round-86.md) coding agent：仓库评测里 `write_file` 只给 old_string + content 被当成「换成空」、一声不响删代码（pytest-5840 / sympy-23950，命令行和网页 code agent 同一个错）、新旧一样说「已修改」、`.rst` 读不了还标「可能含密钥」；回放 14 段真实记录 19 次静默删代码全拒

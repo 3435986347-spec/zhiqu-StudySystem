@@ -188,7 +188,12 @@ class MobileLayoutTest {
         Matcher fill = Pattern.compile("\\n\\.zq-fill-page\\{([^}]*)\\}").matcher(css());
         assertTrue(fill.find(), "样式表里没有 .zq-fill-page");
         String style = fill.group(1);
-        assertTrue(style.contains("height:calc(100vh - 110px)"), ".zq-fill-page 的定高不是 calc(100vh - 110px) 了：" + style);
+        // 减的就是 .zq-main 桌面上的上下 padding（照样子写同一个令牌）：原来写死 110px（上 30 + 下 80），上边距换成 --zq-sp-7（32px）以后
+        // 整页比窗口高 2px，点进表格的一格整页往上跳 2px（第八十五轮 review，桌面应用里）
+        Matcher main = Pattern.compile("\\n\\.zq-main\\{[^}]*padding:(var\\([^)]*\\)|\\S+) (?:var\\([^)]*\\)|\\S+) ([^;]+);").matcher(css());
+        assertTrue(main.find(), "样式表里找不到 .zq-main 的 padding");
+        String expected = "height:calc(100vh - " + main.group(1) + " - " + main.group(2) + ")";
+        assertTrue(style.contains(expected), ".zq-fill-page 的定高没减 .zq-main 的上下 padding（应当是 " + expected + "）：" + style);
         assertTrue(Pattern.compile("min-height:\\s*\\d{3}px").matcher(style).find(),
                 ".zq-fill-page 没有下限：视口矮（放大 200%、手机横屏）时对话区 / 正文区会被压到几十像素");
         assertTrue(phoneBlock(css()).body().contains(".zq-main>.zq-fill-page{height:calc(100dvh - 82px)"),

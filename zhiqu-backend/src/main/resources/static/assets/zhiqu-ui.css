@@ -283,8 +283,9 @@ input[data-zq-empty]::-webkit-datetime-edit-text{color:var(--zq-text3);}   /* �
 .zq-main{flex:1;margin-left:188px;min-width:0;padding:var(--zq-sp-7) var(--zq-sp-8) 80px;max-width:1420px;}
 /* AI 是定高的对话页：底部留白交给输入区，外层不再叠加普通页面的 80px 页脚空间。 */
 .zq-main:has(#zq-chat-col){padding-bottom:0;}
-/* AI 助手、Wiki 的定高容器（第七十八轮从两页的内联挪来）：100vh - 110px 是旧浏览器的回退，AI 助手在认 :has 的浏览器里由下一条重算 */
-.zq-fill-page{display:flex;flex-direction:column;gap:12px;height:calc(100vh - 110px);min-height:520px;}
+/* AI 助手、Wiki 的定高容器（第七十八轮从两页的内联挪来）：减的是 .zq-main 的上下 padding（AI 助手在认 :has 的浏览器里由下一条重算）。
+   原来写死 110px（上 30 + 下 80），上边距换成 --zq-sp-7（32px）以后整页比窗口高 2px，点进表格的一格整页往上跳 2px（第八十五轮 review，桌面应用里） */
+.zq-fill-page{display:flex;flex-direction:column;gap:12px;height:calc(100vh - var(--zq-sp-7) - 80px);min-height:520px;}
 .zq-main>div:has(#zq-chat-col){height:calc(100vh - var(--zq-sp-7))!important;height:calc(100dvh - var(--zq-sp-7))!important;}
 .zq-user{display:flex;align-items:center;gap:9px;padding:8px;margin-top:8px;border-radius:var(--zq-rs);cursor:pointer;}
 .zq-user:hover{background:var(--zq-sb-active-bg);}
@@ -1650,8 +1651,8 @@ html.zq-desktop [data-zq-download]{display:none !important;}
   .zq-chip-label{display:none;}
   .zq-composer-model{max-width:120px;}
   #zq-chat{padding:14px 12px!important;}
-  /* AI 助手、Wiki 的定高容器：桌面上减的 110px 是 .zq-main 的上下 padding，手机上 padding 是 18+64=82px，
-     照减 110px 底下白空 28px。dvh 跟着手机浏览器地址栏的收放走；不支持 dvh 的浏览器丢掉这一条，退回 .zq-fill-page 的 100vh。
+  /* AI 助手、Wiki 的定高容器：桌面上减的是 .zq-main 的上下 padding（32 + 80），手机上 padding 是 18+64=82px，
+     照减桌面那份底下白空 30px。dvh 跟着手机浏览器地址栏的收放走；不支持 dvh 的浏览器丢掉这一条，退回 .zq-fill-page 的 100vh。
      （第七十八轮之前定高写在两页的内联里，这里按 [style*="calc(100vh - 110px)"] 认、带 !important） */
   .zq-main>.zq-fill-page{height:calc(100dvh - 82px);}
   .zq-main>div:has(#zq-chat-col){height:calc(100vh - 18px)!important;height:calc(100dvh - 18px)!important;}

@@ -455,9 +455,11 @@ function paintWikiTabs() {
   var tabs = state.wikiTabs || [];
   bar.innerHTML = tabs.map(function (t, i) {
     var on = i === state.wikiTabIdx;
+    // 标签上的名字照这一页现在的名字（第八十五轮 review：页名在正文顶上改完，目录换了、标签还是旧名字 —— tab.title 只在换页时记）
+    var page = wikiPageById(t.id), name = (page && page.title) || t.title;
     // 当前标签是 aria-current（底色、上沿那条强调色、字重在样式表的 .zq-wiki-tab）
-    return '<div data-wiki-tab="' + i + '" class="zq-wiki-tab"' + (on ? ' aria-current="page"' : '') + ' title="' + esc(t.title || '') + '">' +
-      '<span class="zq-wiki-tab-name">' + esc(t.title || '新标签页') + '</span>' +
+    return '<div data-wiki-tab="' + i + '" class="zq-wiki-tab"' + (on ? ' aria-current="page"' : '') + ' title="' + esc(name || '') + '">' +
+      '<span class="zq-wiki-tab-name">' + esc(name || '新标签页') + '</span>' +
       '<span data-wiki-tab-close="' + i + '" class="zq-wiki-tab-x" title="关闭">' + icon('x') + '</span></div>';
   }).join('') +
     '<div data-wiki-tab-new="1" class="zq-wiki-tab-new" title="新标签页" aria-label="新标签页">' + icon('plus') + '</div>';

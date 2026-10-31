@@ -63,14 +63,15 @@ function harness(pages) {
       if (p) state.wikiCur = p;
     }
     function paintWikiTree() {}
-    function $() { return null; }
+    function $(sel) { return __env.dollar ? __env.dollar(sel) : null; }
+    function icon() { return ''; }
     function $all() { return []; }
     function esc(x) { return String(x); }
     function empty() { return ''; }
     function openModal() { return { close: function () {} }; }
   `;
   const api = new Function('__env', prelude + tabsSrc +
-    '\nreturn { trackWikiNavigation, wikiHistoryGo, closeWikiTab, activateWikiTab, loadWikiTabs, saveWikiTabs, activeWikiTab, wikiPageById };')(env);
+    '\nreturn { trackWikiNavigation, wikiHistoryGo, closeWikiTab, activateWikiTab, loadWikiTabs, saveWikiTabs, activeWikiTab, wikiPageById, paintWikiTabs };')(env);
   return { env, api };
 }
 
@@ -261,6 +262,23 @@ function open(api, env, id, opts) {
   let threw = null;
   try { open(api, env, 1); api.loadWikiTabs(); } catch (e) { threw = e; }
   judge('localStorage 抛异常也不影响使用', threw === null, threw && threw.message);
+}
+
+// ── 10. 页名改了，标签上跟着改（第八十五轮 review：在正文顶上改完页名，目录换了、标签还是旧名字）──
+{
+  const pages = [{ id: 1, title: '旧名' }, { id: 2, title: 'B' }];
+  const { env, api } = harness(pages);
+  const bar = { innerHTML: '' };
+  env.dollar = (sel) => (sel === '#zq-wiki-tabs' ? bar : null);
+  api.trackWikiNavigation(pages[0], {}); env.state.wikiCur = pages[0];
+  api.paintWikiTabs();
+  judge('标签画出来了（扫空了就是假绿）', bar.innerHTML.includes('旧名'), bar.innerHTML);
+  pages[0].title = '新名';
+  api.paintWikiTabs();
+  judge('改名以后标签上是新名字', bar.innerHTML.includes('>新名<') && !bar.innerHTML.includes('旧名'), bar.innerHTML);
+  env.state.wikiPages = [];
+  api.paintWikiTabs();
+  judge('页面列表还没取回来时照记下的名字画', bar.innerHTML.includes('>旧名<'), bar.innerHTML);
 }
 
 // ALL-GREEN 是 NodeRunner 认的标记：只看退出码不够，脚本在加载阶段挂掉也可能是 0。

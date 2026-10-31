@@ -233,9 +233,14 @@ export function visibleText(line) {
   if (/^\|.*\|\s*$/.test(t)) {
     const first = line.indexOf('|'), last = line.lastIndexOf('|');
     const cells = []; let start = first + 1;
-    for (let i = first + 1; i <= last; i++) if (line[i] === '|') { cells.push([start, i]); start = i + 1; }
+    for (let i = first + 1; i <= last; i++) if (line[i] === '|' && line[i - 1] !== '\\') { cells.push([start, i]); start = i + 1; }
     if (cells.every(([a, b]) => /^(:?-{2,}:?)?$/.test(line.slice(a, b).trim())) && cells.some(([a, b]) => /-{2,}/.test(line.slice(a, b)))) return [];
-    return cells.map(([a, b]) => scanInline(line.slice(a, b), a));
+    // 格子里的 \| 阅读时是一个 |（和 renderMarkdown 一样）：那个 \ 看不见
+    return cells.map(([a, b]) => {
+      const u = scanInline(line.slice(a, b), a), keep = [];
+      for (let k = 0; k < u.text.length; k++) if (!(u.text[k] === '\\' && u.text[k + 1] === '|' && u.cols[k + 1] === u.cols[k] + 1)) keep.push(k);
+      return { text: keep.map((k) => u.text[k]).join(''), cols: keep.map((k) => u.cols[k]), ends: keep.map((k) => u.ends[k]) };
+    });
   }
   let start = 0;
   if ((m = /^#{1,6}\s+(?=\S)/.exec(line))) start = m[0].length;

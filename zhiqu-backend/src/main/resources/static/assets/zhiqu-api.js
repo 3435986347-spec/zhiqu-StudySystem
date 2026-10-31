@@ -1904,8 +1904,10 @@
     }
     function flushTable() {
       if (!tableBuf.length) return;
+      // 格子里的 \| 是字面的竖线（GFM；Wiki 表格在格子里打 | 时就写成这样）：只按没转义的 | 分格，分完再把 \| 换回 |。
+      // 原来一律按 | 切：「30\|1」切成「30\」和「1」，后面那一格超出表头的列数、不见了（第八十五轮 review，桌面应用里打出来的）
       var rows = tableBuf.map(function (l) {
-        return l.replace(/^\|/, '').replace(/\|\s*$/, '').split('|').map(function (c) { return c.trim(); });
+        return l.replace(/^\|/, '').replace(/(^|[^\\])\|\s*$/, '$1').split(/(?<!\\)\|/).map(function (c) { return c.replace(/\\\|/g, '|').trim(); });
       });
       // 只有横线（第四十四轮；原来每一格四面描边、表头灰底，一张表像一张格子纸），表头的线深一档 —— 样子在 zhiqu-ui.css 的 .zq-md table
       var hasHeader = rows.length > 1 && rows[1].length && rows[1].every(function (c) { return c === '' || /^:?-{2,}:?$/.test(c); }) && rows[1].some(function (c) { return /-{2,}/.test(c); });
