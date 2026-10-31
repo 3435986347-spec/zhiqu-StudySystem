@@ -29,7 +29,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -177,18 +176,13 @@ public class HarnessModelGateway {
     }
 
     /** 输出上限：客户端要多少给多少，但不超过硬上限、也不超过窗口的一半（要给输入留地方）。 */
-    static Double parseTemperature(String value) {
+    public static Double parseTemperature(String value) {
         if (value == null || value.isBlank()) return null;
         try {
             return Double.parseDouble(value.trim());
         } catch (NumberFormatException e) {
             return null;
         }
-    }
-
-    /** 供应商不认 temperature（OpenAI 的推理模型、新一代 Claude 会回 400，里面提到 temperature）：去掉它重试一次 */
-    static boolean rejectsTemperature(int status, String body) {
-        return (status == 400 || status == 422) && body != null && body.toLowerCase(Locale.ROOT).contains("temperature");
     }
 
     static int maxTokens(Object requested, int window) {
@@ -241,7 +235,7 @@ public class HarnessModelGateway {
                 break;
             } catch (RestClientResponseException e) {
                 String detail = provider.extractAiErrorDetail(e.getResponseBodyAsString());
-                if (temperature != null && rejectsTemperature(e.getStatusCode().value(), e.getResponseBodyAsString()) && acc.outputChars() == 0) {
+                if (temperature != null && ModelProviderClient.rejectsTemperature(e.getStatusCode().value(), e.getResponseBodyAsString()) && acc.outputChars() == 0) {
                     log.info("模型不认 temperature，去掉它重试：{}", detail);
                     temperature = null;
                     i--;

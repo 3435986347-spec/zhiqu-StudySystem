@@ -65,8 +65,9 @@ test('real file tools edit repository bytes and execute a public Node check with
   fs.writeFileSync(path.join(data.base, 'ZHIQU.md'), 'PUBLIC_REPOSITORY_RULE: keep the edit focused.\n');
   const result = await runRepositoryTask(data.payload, { api: data.api });
   assert.equal(result.generation_status, 'completed');
-  assert.equal(result.model_requests, 5);
-  assert.equal(result.rounds, 5);
+  // 第 6 次是第八十九轮的交活核对（改过文件、要交活时推一次；替身对它回的还是最后那句）
+  assert.equal(result.model_requests, 6);
+  assert.equal(result.rounds, 6);
   assert.equal(result.tool_calls, 4);
   assert.equal(result.tool_results, 4);
   assert.equal(result.command_results.length, 1);
@@ -77,8 +78,8 @@ test('real file tools edit repository bytes and execute a public Node check with
   assert.ok(events.some((event) => event.type === 'message' && event.message.role === 'tool'
     && event.message.content.startsWith('$ node check.cjs') && event.message.content.includes('PUBLIC_CHECK_PASSED')
     && event.message.content.includes('退出码 0')));
-  assert.equal(result.usage.prompt_tokens, 50);
-  assert.equal(result.usage.completion_tokens, 25);
+  assert.equal(result.usage.prompt_tokens, 60);
+  assert.equal(result.usage.completion_tokens, 30);
   assert.equal(result.usage.estimated, false);
   assert.deepEqual(result.public_instruction_files, ['ZHIQU.md']);
   const system = data.requests[0].body.messages[0].content;

@@ -283,3 +283,20 @@ test('要推收尾核对的那条回复先不当结论打出来，只打核对�
   assert.equal(last.api.requests.length, 2, '最后一轮不推（推了也没轮数再答）');
   assert.ok(last.ui.text().includes('最后一轮的结论'), '最后一轮的结论要照常打出来');
 });
+
+// 第九十轮：命令输出原来只给最后 8 行、也不说前面还有 —— git diff 只看得到最后一段
+test('命令输出多了：终端里给开头 3 行 + 结尾 5 行，中间说省掉几行；少的照常全给', async () => {
+  const root = tmpdir();
+  const ctx = makeCtx({ root, replies: [
+    { calls: [{ name: 'run_command', args: { command: 'node', args: ['-e', 'for (let i = 1; i <= 20; i++) console.log("line" + i)'] } }] },
+    { calls: [{ name: 'run_command', args: { command: 'node', args: ['-e', 'console.log("a"); console.log("b")'] } }] },
+    { text: '好' }] });
+  await runTurn(ctx, '跑一下');
+  const out = ctx.ui.text();
+  for (const n of [1, 2, 3, 16, 17, 18, 19, 20]) assert.match(out, new RegExp(`line${n}\\b`), `第 ${n} 行该显示`);
+  for (const n of [4, 10, 15]) assert.ok(!new RegExp(`line${n}\\b`).test(out), `第 ${n} 行该省掉`);
+  assert.match(out, /…（中间省掉 12 行）/);
+  assert.match(out, /\ba\b[\s\S]*\bb\b/, '只有两行的照常全给');
+  const { shownOutput } = await import('../src/agent.js');
+  assert.deepEqual(shownOutput(['1', '2', '3', '4', '5', '6', '7', '8', '9']), ['1', '2', '3', '4', '5', '6', '7', '8', '9'], '9 行以内全给（省一行不如不省）');
+});

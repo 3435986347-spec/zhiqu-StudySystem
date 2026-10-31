@@ -13,6 +13,16 @@ server:
   # 桌面版把它写死在这里，而不是交给用户配 —— 配错的后果是把你的磁盘开到局域网。
   address: 127.0.0.1
 
+# 后端的日志写进文件（第九十轮）：外壳起后端时不接 stdout，原来日志哪儿都不落 —— 评测时网关回了一次 upstream_error，
+# 到底是 DeepSeek 回了什么，没处查。按大小滚动，最多留 5 份。
+logging:
+  file:
+    name: ${user.home}/.zhiqu/logs/backend.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 5
+
 spring:
   # 注意：java.awt.headless 不能在这里配。
   # SpringApplication.run() 里 configureHeadlessProperty() 跑在 bindToSpringApplication()

@@ -507,6 +507,14 @@ function pendingNudge(ctx, text, { nudged, verified, lastRound }) {
   if (!verified && ctx.turnWrites > 0) return 'verify';
   return null;
 }
+/**
+ * 命令输出在终端里显示哪几行：多了就开头几行 + 结尾几行，中间说省掉了多少（第九十轮）。
+ * 原来只给最后 8 行、也不说前面还有：git diff 只看得到最后一段，git status 看不到在哪个分支；测试的汇总在结尾，开头是命令自己的头。
+ */
+export function shownOutput(lines, head = 3, tail = 5) {
+  if (lines.length <= head + tail + 1) return lines;
+  return [...lines.slice(0, head), `…（中间省掉 ${lines.length - head - tail} 行）`, ...lines.slice(-tail)];
+}
 const wrapUpReminder = (left, max) => `再过 ${left} 轮就到这一次的上限（${max} 轮）。开始收尾：改到一半的先改完、跑一次验证，然后用几句话说做到哪了、还差什么。`;
 /** 同一个文件接着上一次读到的地方往下读（offset 正好接上，前后差几行也算）：一个文件只提醒一次 */
 function readWindowHint(ctx, call) {
@@ -624,8 +632,7 @@ async function executeTool(ctx, call, offered, signal) {
       }
       let tail = '';
       const r = await local.commitRun(prep, { signal, onOutput: (s) => { tail = (tail + s).slice(-4000); } });
-      const lastLines = r.output.split('\n').filter((l) => l.trim()).slice(-8);
-      for (const l of lastLines) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
+      for (const l of shownOutput(r.output.split('\n').filter((x) => x.trim()))) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
       ui.result(r.summary, r.exitCode === 0);
       if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content; }
       return failed(ctx, spinKey, r.content, runReminder(line));

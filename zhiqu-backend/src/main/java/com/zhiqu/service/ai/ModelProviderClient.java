@@ -67,8 +67,30 @@ public class ModelProviderClient {
      * 整个 HTML，25 秒读超时把它掐断（日志里是 69 秒后的 I/O error），就算不超时，4096 token 也写不完
      * 一整个文件 —— 参数会被截成半截 JSON。显式「代码」模式因此要另一档，见 {@code CodeLoopBudget}。
      */
-    public record ToolTurnLimits(int maxTokens, int readTimeoutMillis) {
+    public record ToolTurnLimits(int maxTokens, int readTimeoutMillis, Double temperature) {
         public static final ToolTurnLimits QUICK = new ToolTurnLimits(MODEL_MAX_TOKENS, 25_000);
+
+        public ToolTurnLimits(int maxTokens, int readTimeoutMillis) {
+            this(maxTokens, readTimeoutMillis, null);
+        }
+
+        /** 这一档的采样温度（code agent 干活的轮用 app.ai.harness-temperature，第八十九轮）；null = 跟 app.ai.temperature */
+        public ToolTurnLimits withTemperature(Double value) {
+            return new ToolTurnLimits(maxTokens, readTimeoutMillis, value);
+        }
+    }
+
+    /** 供应商不认 temperature（OpenAI 的推理模型、新一代 Claude 会回 400，里面提到 temperature）：调用方去掉它重试一次 */
+    public static boolean rejectsTemperature(int status, String body) {
+        return (status == 400 || status == 422) && body != null && body.toLowerCase(Locale.ROOT).contains("temperature");
+    }
+
+    private void putTemperature(Map<String, Object> body, ToolTurnLimits limits) {
+        if (limits.temperature() != null) {
+            body.put("temperature", limits.temperature());
+        } else {
+            applyTemperature(body);
+        }
     }
 
     /**
@@ -270,7 +292,7 @@ public class ModelProviderClient {
         Map<String, Object> body = new HashMap<>();
         body.put("model", config.getModelName());
         body.put("messages", messages);
-        applyTemperature(body);
+        putTemperature(body, limits);
         body.put("max_tokens", limits.maxTokens());
         body.put("tools", tools);
         body.put("tool_choice", "auto"); // 由模型自行决定调用哪个工具或直接作答
@@ -285,6 +307,9 @@ public class ModelProviderClient {
         } catch (ToolTurnTruncatedException e) {
             throw e;   // 原样抛给调用方 —— 它要区分「被截断」和「调用失败」
         } catch (RestClientResponseException e) {
+            if (limits.temperature() != null && rejectsTemperature(e.getStatusCode().value(), e.getResponseBodyAsString())) {
+                return callOpenAiToolTurn(config, messages, tools, limits.withTemperature(null));
+            }
             throw new BusinessException(formatAiHttpError(e, config));
         } catch (Exception e) {
             // 原来写的是「Wiki 工具调用失败」—— code agent 也走这里，那条日志把人往 Wiki 那边引
@@ -323,7 +348,7 @@ public class ModelProviderClient {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
         body.put("max_tokens", limits.maxTokens());
-        applyTemperature(body);
+        putTemperature(body, limits);
         if (hasText(system)) {
             body.put("system", system);
         }
@@ -338,6 +363,9 @@ public class ModelProviderClient {
         } catch (ToolTurnTruncatedException e) {
             throw e;
         } catch (RestClientResponseException e) {
+            if (limits.temperature() != null && rejectsTemperature(e.getStatusCode().value(), e.getResponseBodyAsString())) {
+                return callAnthropicToolTurn(config, system, messages, tools, limits.withTemperature(null));
+            }
             throw new BusinessException(formatAiHttpError(e, config));
         } catch (Exception e) {
             throw new BusinessException("工具调用失败：" + describeIoFailure(e));

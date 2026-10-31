@@ -54,6 +54,18 @@ export function planLaunch({ command, binary, args, platform = process.platform,
   return { error: `${command} 在 Windows 上是一个 .cmd / .bat 包装脚本，要经过 cmd.exe 才能跑 —— 那会把参数交给 shell 解析，这里不支持。` };
 }
 
+let privateHome = null;
+/**
+ * 子进程的 HOME：这个进程自己的一个空目录（mkdtemp，只有自己能进；第九十轮）。原来是工作区 ——
+ * 仓库里带的东西就被当成「用户自己的配置」读进去：.gitconfig 让 git 叫起任意程序（第八十七轮），
+ * Python 的用户 site（macOS 上是 Library/Python/X.Y/lib/python/site-packages，Linux 上是 .local/lib/pythonX.Y/site-packages）
+ * 里放一个 sitecustomize.py，任何一句 python3（哪怕 python3 -c "print(1)"）都会先执行它（这台机器上试出来的）。
+ */
+export function childHome() {
+  if (!privateHome || !fs.existsSync(privateHome)) privateHome = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-home-'));
+  return privateHome;
+}
+
 /** 子进程的最小环境：PATH 是固定的几段 + 命令自己所在的目录（npm 要能找到同目录下的 node）。 */
 export function childEnv(binary, cwd, platform = process.platform) {
   const sys = platform === 'win32'
@@ -61,7 +73,7 @@ export function childEnv(binary, cwd, platform = process.platform) {
     : ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
   const env = {
     PATH: [path.dirname(binary), ...sys].join(path.delimiter),
-    HOME: cwd,
+    HOME: childHome(),
     LANG: 'en_US.UTF-8',
     TERM: 'dumb',
     CI: '1',                                            // 让工具别等交互输入

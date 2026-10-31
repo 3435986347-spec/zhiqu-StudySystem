@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -101,6 +102,26 @@ class CodeWorkspaceAgentTest {
     }
 
     private static final Map<String, Object> CODE_MODE = Map.of(ContextOptionKeys.CODE_MODE, true);
+
+    /** 第八十九轮：网页 code agent 干活的轮和命令行一样带温度 0（不设时 DeepSeek 默认 1.0）；配置留空就跟 app.ai.temperature */
+    @Test
+    @DisplayName("干活的轮带 app.ai.harness-temperature（默认 0）；留空就不带（跟全局）")
+    void 干活的轮带温度() throws Exception {
+        Rig rig = new Rig(WorkspaceMode.EXEC, true);
+        rig.modelSays();
+        rig.run("帮我看看 Main.java", CODE_MODE);
+        org.mockito.ArgumentCaptor<ModelProviderClient.ToolTurnLimits> limits = org.mockito.ArgumentCaptor.forClass(ModelProviderClient.ToolTurnLimits.class);
+        verify(rig.provider).callToolTurn(any(), any(), any(), limits.capture());
+        assertEquals(0.0, limits.getValue().temperature());
+
+        Rig blank = new Rig(WorkspaceMode.EXEC, true);
+        blank.agent.setCodingTemperature("");
+        blank.modelSays();
+        blank.run("帮我看看 Main.java", CODE_MODE);
+        org.mockito.ArgumentCaptor<ModelProviderClient.ToolTurnLimits> none = org.mockito.ArgumentCaptor.forClass(ModelProviderClient.ToolTurnLimits.class);
+        verify(blank.provider).callToolTurn(any(), any(), any(), none.capture());
+        assertNull(none.getValue().temperature());
+    }
 
     /** 不是管理员就一次模型调用都不发 —— 否则普通用户一句话就能让服务器去读自己的磁盘。 */
     @Test

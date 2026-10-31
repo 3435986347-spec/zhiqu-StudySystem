@@ -30,7 +30,7 @@
   替换缺 `new_string` 不当成「换成空」、新旧一样不说「已修改」、`old_string` 和 `content` 不能一起给（第八十六轮：仓库评测里模型把替换后的字放进 `content`，原来一声不响删了代码；网页 code agent 的 `TextEdit` 同一套，用例在 `conformance/text-edit.json`）。
 - **截断不是说完了**：`finish_reason=length` 时截断的调用不执行，历史里的参数换成小而合法的 JSON（带 path），
   回模型「分几次写」。单条工具输出按模型窗口截断（窗口 × 0.35 字）—— 否则小窗口模型一轮就超，两边的压缩都救不了。
-- **子进程与 MCP 服务器都不继承命令行的环境**（那里有 `ZHIQU_TOKEN`）。超时杀整个进程组（`detached` + `kill(-pid)`）：
+- **子进程与 MCP 服务器都不继承命令行的环境**（那里有 `ZHIQU_TOKEN`）。子进程的 HOME 是这个进程自己的空目录（`childHome`，第九十轮；原来是工作区，仓库里带的 `.gitconfig`、Python 用户 site 里的 `sitecustomize.py` 会被当成用户自己的配置执行）。超时杀整个进程组（`detached` + `kill(-pid)`）：
   只杀父进程的话孙子进程攥着管道，close 永远等不到 —— 这条判据因此自带 15 秒时限。
 - **配置在 `.zhiqu/`**：`~/.zhiqu/config.json`（600）、`system.md`（第一次写一份内置系统提示，没改过的跟着内置更新，
   改过的不动）；项目 `.zhiqu/settings.json` **不收令牌**。项目说明文件是 `ZHIQU.md`（同目录没有才读 `CLAUDE.md`，

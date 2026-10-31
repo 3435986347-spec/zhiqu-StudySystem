@@ -98,6 +98,13 @@ public class CodeWorkspaceAgent {
     private final AdminGuard adminGuard;
     private final ObjectMapper objectMapper;
     private final StudyPlanTool studyPlanTool;
+    /** 干活的轮用的采样温度：和命令行一样（app.ai.harness-temperature，默认 0，第八十九轮）；null = 跟 app.ai.temperature */
+    private Double codingTemperature = 0.0;
+
+    @org.springframework.beans.factory.annotation.Value("${app.ai.harness-temperature:0}")
+    void setCodingTemperature(String value) {
+        this.codingTemperature = com.zhiqu.service.harness.HarnessModelGateway.parseTemperature(value);
+    }
 
     public CodeWorkspaceAgent(ModelProviderClient provider, WorkspaceService workspaceService,
                               WorkspaceExecutor workspaceExecutor, WikiToolAgent wikiToolAgent,
@@ -239,7 +246,7 @@ public class CodeWorkspaceAgent {
                 JsonNode message;
                 try {
                     message = provider.callToolTurn(config, messages, tools,
-                            budget.turnLimits(System.currentTimeMillis() - loopStart));
+                            budget.turnLimits(System.currentTimeMillis() - loopStart).withTemperature(codingTemperature));
                 } catch (ModelProviderClient.ToolTurnTruncatedException truncated) {
                     // 被截断不是「说完了」：说出来，并让模型换个写法再来一轮，而不是静默结束
                     narrate(onStep, Map.of("phase", "budget", "message",

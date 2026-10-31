@@ -1,0 +1,1 @@
+{"run": ["python3", "-m", "unittest", "-v", "test_hidden_weeks"], "visible": ["python3", "-m", "unittest", "test_weeks"]}

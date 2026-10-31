@@ -77,3 +77,4 @@ dmg 一百多 MB，超过 GitHub 单个文件的上限，也不能进 `static/`�
 下载的人还要有一个 MySQL：桌面版自带后端，默认连本机的 `zhiqu_db`，地址在 `~/.zhiqu/application.yml` 里改（见 `deploy/desktop/remote-database.md`）——
 连不上时后端起不来，外壳报「后端没有在 60 秒内就绪。请检查数据库是否可连接」（第八十二轮量过：数据库连不上，后端重试 48 秒后退出，外壳当场报）。
 
+- **后端的日志写进 `~/.zhiqu/logs/backend.log`**（第九十轮，`application-desktop.yml`，10MB 滚动、留 5 份）：外壳起后端时不接 stdout，原来日志哪儿都不落，网关回 `upstream_error` 时没处查原因。

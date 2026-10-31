@@ -100,7 +100,8 @@ export function checkLocalCommand(allowedCommands, command, args) {
 }
 
 /**
- * git 真正跑的参数和环境：不读工作区里的 .gitconfig（子进程的 HOME 是工作区，克隆下来的仓库里可以带一个）；
+ * git 真正跑的参数和环境：不读 HOME 下的 .gitconfig（第八十七轮时子进程的 HOME 还是工作区，克隆下来的仓库里可以带一个；
+ * 第九十轮起 HOME 是这个进程自己的空目录，这一层留着：HOME 以后再变也不至于又开一个口子）；
  * 不起分页器、不叫 fsmonitor、不验签名、diff / log 不用外部 diff 和 textconv —— 这些都能按配置叫起别的程序。
  * fsmonitor、外部 diff、textconv 写在仓库自己的 .git/config 里也关掉了；剩下的只有那里面的过滤器（filter.*.clean）——
  * 克隆不带 .git/config，能改它的人本来就能让你下一次 git 命令跑任何东西。

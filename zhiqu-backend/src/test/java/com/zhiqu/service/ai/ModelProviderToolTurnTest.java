@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -52,6 +53,69 @@ class ModelProviderToolTurnTest {
         });
         server.start();
         return "http://127.0.0.1:" + server.getAddress().getPort();
+    }
+
+    /** 请求里带 temperature 就回 400（像 OpenAI 的推理模型那样），不带就回 reply */
+    private String fakeRejectingTemperature(String reply) throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", ex -> {
+            JsonNode body = JSON.readTree(ex.getRequestBody().readAllBytes());
+            bodies.add(body);
+            boolean reject = body.has("temperature");
+            byte[] bytes = (reject ? "{\"error\":{\"message\":\"Unsupported value: 'temperature' does not support 0 with this model.\"}}" : reply)
+                    .getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "application/json");
+            ex.sendResponseHeaders(reject ? 400 : 200, bytes.length);
+            try (OutputStream out = ex.getResponseBody()) {
+                out.write(bytes);
+            }
+        });
+        server.start();
+        return "http://127.0.0.1:" + server.getAddress().getPort();
+    }
+
+    private static AiModelConfig config(String type, String url) {
+        AiModelConfig c = new AiModelConfig();
+        c.setProviderType(type);
+        c.setApiUrl(url);
+        c.setModelName("m");
+        c.setEncryptedApiKey("e");
+        return c;
+    }
+
+    @Test
+    @DisplayName("第八十九轮：code agent 干活的轮带温度（limits.withTemperature）—— OpenAI 兼容和 Anthropic 都发；默认那一档（QUICK）照旧跟 app.ai.temperature（空 = 不发）")
+    void 干活的轮带温度() throws Exception {
+        String url = fake("{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"好\"}}]}");
+        client().callToolTurn(config("OPENAI_COMPATIBLE", url), MESSAGES, TOOLS, ModelProviderClient.ToolTurnLimits.QUICK.withTemperature(0.0));
+        assertEquals(0.0, bodies.get(0).path("temperature").asDouble(-1));
+        client().callToolTurn(config("OPENAI_COMPATIBLE", url), MESSAGES, TOOLS, ModelProviderClient.ToolTurnLimits.QUICK);
+        assertFalse(bodies.get(1).has("temperature"), "没给温度的那一档不该带");
+        server.stop(0);
+        String anthropic = fake("{\"content\":[{\"type\":\"text\",\"text\":\"好\"}],\"stop_reason\":\"end_turn\"}");
+        client().callToolTurn(config("ANTHROPIC", anthropic), MESSAGES, TOOLS, ModelProviderClient.ToolTurnLimits.QUICK.withTemperature(0.0));
+        assertEquals(0.0, bodies.get(2).path("temperature").asDouble(-1));
+    }
+
+    @Test
+    @DisplayName("第八十九轮：供应商不认 temperature（400 里提到它）—— 去掉它重试一次，这次成功就照常返回")
+    void 温度不认就去掉() throws Exception {
+        String url = fakeRejectingTemperature("{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"好\"}}]}");
+        JsonNode msg = client().callToolTurn(config("OPENAI_COMPATIBLE", url), MESSAGES, TOOLS, ModelProviderClient.ToolTurnLimits.QUICK.withTemperature(0.0));
+        assertEquals("好", msg.path("content").asText());
+        assertEquals(2, bodies.size());
+        assertTrue(bodies.get(0).has("temperature"));
+        assertFalse(bodies.get(1).has("temperature"));
+    }
+
+    @Test
+    @DisplayName("第八十九轮：Anthropic 那条同样 —— 不认 temperature 就去掉它重试一次")
+    void 温度不认就去掉_anthropic() throws Exception {
+        String url = fakeRejectingTemperature("{\"content\":[{\"type\":\"text\",\"text\":\"好\"}],\"stop_reason\":\"end_turn\"}");
+        client().callToolTurn(config("ANTHROPIC", url), MESSAGES, TOOLS, ModelProviderClient.ToolTurnLimits.QUICK.withTemperature(0.0));
+        assertEquals(2, bodies.size());
+        assertTrue(bodies.get(0).has("temperature"));
+        assertFalse(bodies.get(1).has("temperature"));
     }
 
     private ModelProviderClient client() {

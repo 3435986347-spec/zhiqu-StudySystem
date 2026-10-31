@@ -1,7 +1,10 @@
 // 起子进程的那一层：不继承环境变量、超时杀进程组、输出上限（正好等于不算截断；超了继续排空）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { childEnv, resolveOnPath, runProcess } from '../src/tools/exec.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { childEnv, childHome, resolveOnPath, runProcess } from '../src/tools/exec.js';
 import { tmpdir, write } from './helpers.js';
 
 const node = resolveOnPath('node');
@@ -16,7 +19,10 @@ test('子进程拿不到父进程的环境变量（ZHIQU_TOKEN、云凭据），
   assert.equal(env.ZHIQU_TOKEN, undefined);
   assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined);
   assert.equal(env.PATH, childEnv(node, root).PATH);
-  assert.equal(env.HOME, root);
+  assert.notEqual(env.HOME, root, '第九十轮：HOME 不再是工作区（仓库里带的配置会被当成用户自己的）');
+  assert.equal(env.HOME, childHome());
+  assert.equal(fs.readdirSync(env.HOME).length, 0, 'HOME 是个空目录');
+  if (process.platform !== 'win32') assert.equal(fs.statSync(env.HOME).mode & 0o777, 0o700, '只有自己能进');
   delete process.env.ZHIQU_TOKEN;
   delete process.env.AWS_SECRET_ACCESS_KEY;
 });
@@ -43,4 +49,20 @@ test('输出正好等于上限：不算截断；多一个字节：截断、标�
   assert.match(over.output, /已截断/);
   assert.equal(over.exitCode, 3, '到上限就不读的话，子进程卡在 write 上，会被报成超时');
   assert.equal(over.timedOut, false);
+});
+
+// 第九十轮（这台机器上试出来的）：HOME 是工作区时，仓库里带的 sitecustomize.py 放在 Python 的用户 site 下，任何一句 python3 都会先执行它
+test('子进程的 HOME 不是工作区：仓库里带的 Python 用户 site（sitecustomize.py）叫不起来', async (ctx) => {
+  const python = resolveOnPath('python3');
+  if (!python) return ctx.skip('这台机器上没有 python3');
+  const root = tmpdir();
+  // 用户 site 的位置按「HOME 是工作区」算（原来的样子），把 sitecustomize.py 放进工作区里那个位置
+  const userSite = execFileSync(python, ['-m', 'site', '--user-site'], { env: { PATH: process.env.PATH, HOME: root }, encoding: 'utf8' }).trim();
+  assert.ok(userSite.startsWith(root), userSite);
+  fs.mkdirSync(userSite, { recursive: true });
+  const mark = path.join(root, 'MARK');
+  fs.writeFileSync(path.join(userSite, 'sitecustomize.py'), `open(${JSON.stringify(mark)}, 'a').write('x')\n`);
+  const r = await runProcess({ binary: python, args: ['-c', 'print(1)'], cwd: root, timeoutMs: 20_000 });
+  assert.equal(r.exitCode, 0, r.output);
+  assert.ok(!fs.existsSync(mark), '仓库里带的 sitecustomize.py 被执行了');
 });
