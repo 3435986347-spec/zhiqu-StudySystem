@@ -502,6 +502,14 @@
     "ledger_prefix": "rerun-20261031",
     "why": "2026-10-31 the user asked to rerun the same ten tasks with the agent after rounds 86-87 (write_file no longer silently deletes code; .rst readable; inline code and read-only git allowed in the CLI), using the test config ID 6, cap CNY 100 (conservative accounting).",
     "compared_with": "../repository-pilot-20261014/run-config.json (round 69: official 6/10 across ID 6 and the ID 1 continuation); that record stays unchanged.",
-    "environment_unchanged": "same images, isolation, grader and limits as round 69; generation containers still have no .git, so git only answers \"not a git repository\" here (allowed for real use, not for this score)."
+    "environment_unchanged": "same images, isolation, grader and limits as round 69; generation containers still have no .git, so git only answers \"not a git repository\" here (allowed for real use, not for this score).",
+    "infrastructure_retry": {
+      "instance_ids": [
+        "django__django-15987"
+      ],
+      "why": "In rerun-20261031-20261031T021233 the first model request of django__django-15987 failed on the gateway side 0.5 s after acceptance (broker: upstream_error; 0 rounds, no model output reached the agent), leaving an empty patch. Decided before that run was graded; written here before the retry call.",
+      "rule": "one fresh episode for a listed task whose earlier episode in this rerun is gateway_error with 0 rounds; if the retry fails the same way it counts (no further retries). Both records are kept; the graded prediction uses the retry.",
+      "authorized": "2026-10-31 by the user: 「继续，评分完补跑 django-15987 再对比」"
+    }
   }
 }
