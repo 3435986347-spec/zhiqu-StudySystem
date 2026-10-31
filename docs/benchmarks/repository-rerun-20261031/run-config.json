@@ -3,7 +3,7 @@
   "name": "zhiqu-sweverified-pilot10-v1-rerun-20261031",
   "status": "ready_personal_machine",
   "execution_ready": true,
-  "model_calls": 0,
+  "model_calls": 246,
   "dataset": {
     "name": "princeton-nlp/SWE-bench_Verified",
     "revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
@@ -419,9 +419,9 @@
     "network_dependent_tasks": "psf__requests-1921 and psf__requests-1724 are graded and reported, but their official result on this machine depends on httpbin through the Docker Desktop proxy hop; a non-resolved result whose failing tests are network-dependent is regraded unchanged once the network is fixed; no final rate before that."
   },
   "blockers_before_execution": [],
-  "cost_so_far_rmb": 0,
+  "cost_so_far_rmb": 33.13,
   "execution_location": "personal_machine_only; company machine stopped per user after IT Docker download warning",
-  "real_model_calls": 0,
+  "real_model_calls": 246,
   "preparation_entry_sha256": "ba5bd10cd22e0156315d03d0e53db83847049855df12f557e9889a7b284c3c8d",
   "controls_detail": {
     "gold": {
@@ -511,5 +511,22 @@
       "rule": "one fresh episode for a listed task whose earlier episode in this rerun is gateway_error with 0 rounds; if the retry fails the same way it counts (no further retries). Both records are kept; the graded prediction uses the retry.",
       "authorized": "2026-10-31 by the user: 「继续，评分完补跑 django-15987 再对比」"
     }
+  },
+  "result": {
+    "official_resolved": 6,
+    "denominator": 10,
+    "status": "graded",
+    "grade_run_id": "zhiqu-candidate-556e27e32524-1c8fafac7198-e6a930a5d9",
+    "predictions_sha256_prefix": "1c8fafac7198",
+    "runs": [
+      "rerun-20261031-20261031T021233",
+      "rerun-20261031-20261031T024137"
+    ],
+    "network_affected": [
+      "psf__requests-1921",
+      "psf__requests-1724"
+    ],
+    "note": "all FAIL_TO_PASS tests pass for both requests tasks; the failing PASS_TO_PASS tests call httpbin and fail with ProxyError on this Mac. Regrade the same frozen patches once the network works; no repeated local regrading.",
+    "regrade_reason": "the grade after the retry failed in harness setup (raw.githubusercontent.com SSL EOF, no reports); the same predictions file was regraded once after the network recovered"
   }
 }
