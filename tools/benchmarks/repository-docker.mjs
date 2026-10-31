@@ -844,7 +844,8 @@ export function rerunPlan(config) {
   const again = config.rerun;
   if (!again) return null;
   const budget = config.budget || {};
-  if (!/^rerun-\d{8}-$/.test(again.run_prefix || '') || !/^rerun-\d{8}$/.test(again.ledger_prefix || '') || again.run_prefix !== `${again.ledger_prefix}-`
+  // rerun-20261031（第八十七轮）、rerun88-20261031（第八十八轮之后：同一天第二次重跑，前缀带轮次，不和前一次的账本、记录混）
+  if (!/^rerun(\d{2,3})?-\d{8}-$/.test(again.run_prefix || '') || !/^rerun(\d{2,3})?-\d{8}$/.test(again.ledger_prefix || '') || again.run_prefix !== `${again.ledger_prefix}-`
       || !(budget.limit_rmb > 0 && budget.limit_rmb <= RERUN_MAX_RMB) || !Number.isSafeInteger(budget.input_token_limit) || !Number.isSafeInteger(budget.output_token_limit)
       || budget.input_token_limit * 9 + budget.output_token_limit * 27 > Math.round(budget.limit_rmb * 1_000_000)) throw new Error('run-config rerun is missing or inconsistent');
   return { ...again, limits: { limitMicroCny: Math.round(budget.limit_rmb * 1_000_000), inputTokenLimit: budget.input_token_limit, outputTokenLimit: budget.output_token_limit } };

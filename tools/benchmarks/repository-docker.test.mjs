@@ -198,10 +198,11 @@ test('重跑的计划要在 run-config 里写全：前缀对得上、¥100 以�
     budget: { limit_rmb: 100, input_token_limit: 8_000_000, output_token_limit: 1_000_000 } };
   assert.deepEqual(rerunPlan(config).limits, { limitMicroCny: 100_000_000, inputTokenLimit: 8_000_000, outputTokenLimit: 1_000_000 });
   assert.equal(rerunPlan({ budget: config.budget }), null, '没有 rerun 一节就是原来的 pilot');
+  assert.equal(rerunPlan({ ...config, rerun: { run_prefix: 'rerun88-20261031-', ledger_prefix: 'rerun88-20261031' } }).ledger_prefix, 'rerun88-20261031', '同一天第二次重跑：前缀带轮次');
   for (const [name, patch] of [['over 100', { budget: { ...config.budget, limit_rmb: 101 } }],
     ['tokens cost more than the money', { budget: { ...config.budget, input_token_limit: 9_000_000 } }],
     ['prefixes differ', { rerun: { ...config.rerun, run_prefix: 'rerun-20261101-' } }], ['pilot prefix', { rerun: { run_prefix: 'pilot-', ledger_prefix: 'pilot-20261014' } }],
-    ['path in prefix', { rerun: { run_prefix: '../x-', ledger_prefix: '../x' } }]]) {
+    ['path in prefix', { rerun: { run_prefix: '../x-', ledger_prefix: '../x' } }], ['letters after rerun', { rerun: { run_prefix: 'rerunx-20261031-', ledger_prefix: 'rerunx-20261031' } }]]) {
     assert.throws(() => rerunPlan({ ...config, ...patch }), /rerun/, name);
   }
 });
