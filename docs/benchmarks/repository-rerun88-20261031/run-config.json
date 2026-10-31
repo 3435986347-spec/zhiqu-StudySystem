@@ -3,7 +3,7 @@
   "name": "zhiqu-sweverified-pilot10-v1-rerun88-20261031",
   "status": "ready_personal_machine",
   "execution_ready": true,
-  "model_calls": 0,
+  "model_calls": 270,
   "dataset": {
     "name": "princeton-nlp/SWE-bench_Verified",
     "revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
@@ -418,9 +418,9 @@
     "network_dependent_tasks": "psf__requests-1921 and psf__requests-1724 are graded and reported, but their official result on this machine depends on httpbin through the Docker Desktop proxy hop; a non-resolved result whose failing tests are network-dependent is regraded unchanged once the network is fixed; no final rate before that."
   },
   "blockers_before_execution": [],
-  "cost_so_far_rmb": 0,
+  "cost_so_far_rmb": 30.44,
   "execution_location": "personal_machine_only; company machine stopped per user after IT Docker download warning",
-  "real_model_calls": 0,
+  "real_model_calls": 270,
   "preparation_entry_sha256": "ba5bd10cd22e0156315d03d0e53db83847049855df12f557e9889a7b284c3c8d",
   "controls_detail": {
     "gold": {
@@ -437,7 +437,15 @@
       "note": "same six pass and same four fail in both runs",
       "state": "grade-baseline-zhiqu-baseline-bb1edd877875-e052dfdf3cd4-78602b6b6a.json"
     },
-    "grader_negatives": "skip-all conftest (requests-1724, pytest-5840) and runner exiting 0 (django-12308 runtests.py, sympy-20154 bin/test): all four official resolved=false, expected tests unobserved"
+    "grader_negatives": "skip-all conftest (requests-1724, pytest-5840) and runner exiting 0 (django-12308 runtests.py, sympy-20154 bin/test): all four official resolved=false, expected tests unobserved",
+    "smoke": {
+      "tasks": 10,
+      "state": "smoke-s20261031T074737.json",
+      "runtime_commit": "d3cce0fb75a2380193272c9d3bdeb86093b35c5a"
+    },
+    "lifecycle": {
+      "state": "lifecycle-l20261031T074833.json"
+    }
   },
   "controls_exceptions": [
     {
@@ -487,5 +495,17 @@
       "../repository-rerun-20261031/run-config.json (round 87: 6/10, all integrity passed)"
     ],
     "environment_unchanged": "same images, isolation, grader and limits as rounds 69 and 87."
+  },
+  "result": {
+    "official_resolved": 4,
+    "denominator": 10,
+    "status": "integrity_unverified",
+    "run": "rerun88-20261031-20261031T074934",
+    "integrity_note": "django__django-12308 expected_tests_unobserved (official Django parser, as in round 69); it is unresolved either way (FAIL_TO_PASS error: keys must be a string)",
+    "network_affected": [
+      "psf__requests-1921",
+      "psf__requests-1724"
+    ],
+    "note": "lost vs round 87: django-12308 and sympy-23950 (wrong fixes this time); single run per task, within run-to-run variance"
   }
 }
