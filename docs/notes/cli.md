@@ -17,6 +17,11 @@
   `HarnessCliNodeSuiteTest` 把 JS 那一侧接进 Maven 全量 —— 两边各自绿不算数，结论一致才算。
   写这份用例时查出「禁行内代码」只做精确匹配：`--eval=…`、`node -pe`、`python3 -Bc` 都能绕过，`npm exec` 会跑没看过的包；
   两边一起收紧。
+  命令行在这一套外面多放开两件（第八十七轮，用户 2026-10-31 定的；服务器端照旧）：行内代码（`python3 -c` / `node -e`，跑之前整条命令连同代码都摆在终端里）、
+  `git` 的只读 `status / diff / log`（`execrules.js` 的 `checkLocalCommand`：第一个参数就得是这三个之一，`--output` / `--ext-diff` / `--textconv` / `--show-signature` 不认）。
+  git 真正跑时再关一层（`gitLaunch`）：子进程的 HOME 是工作区，仓库里带一个 `.gitconfig` 就被当成全局配置 —— 不隔离时 `git status` 叫起 fsmonitor、
+  `git diff` 叫起 clean 过滤器和外部 diff（这台机器上试出来的）。所以 `GIT_CONFIG_GLOBAL` 指到空设备、`--no-pager`、`core.fsmonitor=false`、`log.showSignature=false`，
+  diff / log 加 `--no-ext-diff --no-textconv`，`GIT_OPTIONAL_LOCKS=0`（status 不顺手重写 index）。剩下的只有仓库自己 `.git/config` 里的过滤器（克隆不带它）。
 - **没读过不许改、只读一部分不许整份重写、确认期间被改过不写**（`local.js` 的 prepare / commit 两步）。
   `write_file` 一个工具三种用法（整份 / append / old_string 替换）—— 长文件分几次写，就是为了不撞单次输出上限。
   替换缺 `new_string` 不当成「换成空」、新旧一样不说「已修改」、`old_string` 和 `content` 不能一起给（第八十六轮：仓库评测里模型把替换后的字放进 `content`，原来一声不响删了代码；网页 code agent 的 `TextEdit` 同一套，用例在 `conformance/text-edit.json`）。

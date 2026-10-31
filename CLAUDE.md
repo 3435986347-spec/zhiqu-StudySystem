@@ -194,7 +194,7 @@ cd ../zhiqu-cli && npm test
 - [第八十轮](docs/rounds/round-80.md) 用户开了电脑操控，在重打的桌面应用里用鼠标点：编辑器里单击链接打开、进出编辑不跳（排版照阅读、对准同一个字）、试用开关去掉（新编辑器成默认）、保存条不占阅读的地方、侧栏让过红黄绿、提示放到底部、空日期是灰的
 - [第八十一轮](docs/rounds/round-81.md) 界面打磨收尾：看板和共用层的样子进样式表，内联样式 81 → 6（只剩按数据变的）；「缩小到桌面」一点就退出、AI 助手存不了 .svg 也不肯给整份代码
 - [第八十二轮](docs/rounds/round-82.md) 网页版里下载桌面版：落地页按钮 + 头像菜单一项，认出 Mac / Windows（Apple 芯片、Intel 直说）；安装包放服务器的下载目录（`app.desktop-downloads-dir`，不进 git / JAR），不登录能下、能续传
-- [第八十三轮](docs/rounds/round-83.md) 知识 Wiki 像 Obsidian：编辑器一直开着、打字自动保存（412 = 别处改过）、空行整行（连按回车）、光标看得见会闪（原来黑光标画在深色底上）、点进块不挪；和 Obsidian 并排比过
-- [第八十四轮](docs/rounds/round-84.md) Wiki 继续照 Obsidian：正文 16px / 行高 1.6 / 标题加粗（`--zq-fs-prose*`）、括号自动配对和选中字包起来（重打 CodeMirror，只多导出 closeBrackets）、页名放进正文顶上直接改、列表画成圆点
+- [第八十三轮](docs/rounds/round-83.md) 知识 Wiki 像 Obsidian：编辑器一直开着、打字自动保存（412 = 别处改过）、空行整行（连按回车）、光标看得见会闪（原来黑光标画在深色底上）、点进块不挪；和 Obsidian 并排比过；[第八十四轮](docs/rounds/round-84.md) Wiki 继续照 Obsidian：正文 16px / 行高 1.6 / 标题加粗（`--zq-fs-prose*`）、括号自动配对和选中字包起来（重打 CodeMirror，只多导出 closeBrackets）、页名放进正文顶上直接改、列表画成圆点
 - [第八十五轮](docs/rounds/round-85.md) Wiki 表格在格子里直接改（照 Obsidian）：点进一格露出原文、打字同步写回（| 转义）、Tab / 回车 / Esc 走格子、⌘Z 走整篇历史；自己改的那一下不重画；之后 review 修了四处（点圆点放光标、页名删空显示「无标题」不藏），桌面应用里鼠标点又修了三处（格子里的 | 读回来、整页高 2px、标签跟着改名）
 - [第八十六轮](docs/rounds/round-86.md) coding agent：仓库评测里 `write_file` 只给 old_string + content 被当成「换成空」、一声不响删代码（pytest-5840 / sympy-23950，命令行和网页 code agent 同一个错）、新旧一样说「已修改」、`.rst` 读不了还标「可能含密钥」；回放 14 段真实记录 19 次静默删代码全拒
+- [第八十七轮](docs/rounds/round-87.md) 命令行放开行内代码（`python3 -c`）和 git 的 status / diff / log：仓库里带的 `.gitconfig` 原来能让 git 叫起 fsmonitor / 过滤器 / 外部 diff，跑时隔离；用新 agent 重跑仓库评测十题（ID 6，上限 ¥100）

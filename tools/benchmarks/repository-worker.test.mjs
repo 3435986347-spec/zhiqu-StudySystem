@@ -179,14 +179,15 @@ test('the worker request ceiling stops the next call before the broker sees it',
   assert.equal(data.requests.length, 1);
 });
 
-test('production command guards still refuse git without executing it', async (t) => {
-  const data = fixture(t, [{ calls: [{ name: 'run_command', args: { command: 'git', args: ['status'] } }] },
+// 第八十七轮（用户 2026-10-31）：命令行默认允许 git 的只读子命令 —— 评测用的就是发布的这一套；写的子命令照旧不跑就拒
+test('production command guards refuse git writes without executing them (read-only status / diff / log are the shipped default)', async (t) => {
+  const data = fixture(t, [{ calls: [{ name: 'run_command', args: { command: 'git', args: ['stash'] } }] },
     { text: 'The command is unavailable.' }]);
   const result = await runRepositoryTask(data.payload, { api: data.api });
   assert.equal(result.command_results[0].refused, true);
   assert.equal(result.command_results[0].exit_code, null);
   const transcript = fs.readFileSync(path.join(data.workspace, result.session), 'utf8');
-  assert.ok(transcript.includes('命令不在允许清单里：git'));
+  assert.ok(transcript.includes('只能跑 git 的 status / diff / log'));
 });
 
 test('normal episode defaults match the frozen repository design without expanding commands', (t) => {

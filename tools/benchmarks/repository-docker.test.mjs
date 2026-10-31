@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { auditScript, BROKER_PORT, compareTrees, continuationPlan, controlProblems, pilotLedger, replayLedger, fnmatchEscape, GENERATED_EXCLUDES, generationDockerfile, globMatch,
+import { auditScript, BROKER_PORT, compareTrees, continuationPlan, controlProblems, pilotLedger, replayLedger, rerunPlan, parseArgs, fnmatchEscape, GENERATED_EXCLUDES, generationDockerfile, globMatch,
   harnessArgv, installExcludes, parseAudit, policyFingerprint, policyScript, REPO_SPECS, workerPayload } from './repository-docker.mjs';
 
 test('网络规则：默认丢弃、先挡 Docker DNS 和 53 端口、只放行 loopback 和 broker 的那一个端口、IPv6 全丢', () => {
@@ -190,4 +190,32 @@ test('补跑用自己的账本前缀，和 pilot 那几本分开记', () => {
   const plan = pilotLedger(dir, 'continuation-id1-20261018', { limitMicroCny: 50_000_000, inputTokenLimit: 4_000_000, outputTokenLimit: 500_000 });
   assert.equal(plan.ledgerName, 'continuation-id1-20261018.jsonl');
   assert.deepEqual(plan.limits, { limitMicroCny: 50_000_000, inputTokenLimit: 4_000_000, outputTokenLimit: 500_000 }, 'pilot 的账不扣补跑的额度');
+});
+
+// 第八十七轮：同样十题换一版 agent 重跑 —— 另一份 run-config、自己的 run 前缀和账本，额度是用户定的 ¥100 以内
+test('重跑的计划要在 run-config 里写全：前缀对得上、¥100 以内、token 上限按价算不超过钱数；缺一项就不跑', () => {
+  const config = { rerun: { run_prefix: 'rerun-20261031-', ledger_prefix: 'rerun-20261031' },
+    budget: { limit_rmb: 100, input_token_limit: 8_000_000, output_token_limit: 1_000_000 } };
+  assert.deepEqual(rerunPlan(config).limits, { limitMicroCny: 100_000_000, inputTokenLimit: 8_000_000, outputTokenLimit: 1_000_000 });
+  assert.equal(rerunPlan({ budget: config.budget }), null, '没有 rerun 一节就是原来的 pilot');
+  for (const [name, patch] of [['over 100', { budget: { ...config.budget, limit_rmb: 101 } }],
+    ['tokens cost more than the money', { budget: { ...config.budget, input_token_limit: 9_000_000 } }],
+    ['prefixes differ', { rerun: { ...config.rerun, run_prefix: 'rerun-20261101-' } }], ['pilot prefix', { rerun: { run_prefix: 'pilot-', ledger_prefix: 'pilot-20261014' } }],
+    ['path in prefix', { rerun: { run_prefix: '../x-', ledger_prefix: '../x' } }]]) {
+    assert.throws(() => rerunPlan({ ...config, ...patch }), /rerun/, name);
+  }
+});
+
+test('重跑用自己的账本：第六十九轮那几本花掉的不扣这一次的额度', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zq-ledger-r-'));
+  fs.writeFileSync(path.join(dir, 'pilot-20261014-1.jsonl'), JSON.stringify({ event: 'accepted', requestId: 'a', inputUpperTokens: 3_000_000, reservedOutputTokens: 1 }) + '\n');
+  const plan = rerunPlan({ rerun: { run_prefix: 'rerun-20261031-', ledger_prefix: 'rerun-20261031' }, budget: { limit_rmb: 100, input_token_limit: 8_000_000, output_token_limit: 1_000_000 } });
+  const ledger = pilotLedger(dir, plan.ledger_prefix, plan.limits);
+  assert.equal(ledger.ledgerName, 'rerun-20261031.jsonl');
+  assert.deepEqual(ledger.limits, plan.limits);
+});
+
+test('--config 选哪份 run-config（默认第六十九轮那份）', () => {
+  assert.equal(parseArgs(['run', '--eval-dir', '/x', '--config', 'docs/b.json']).config, 'docs/b.json');
+  assert.equal(parseArgs(['run', '--eval-dir', '/x']).config, undefined);
 });

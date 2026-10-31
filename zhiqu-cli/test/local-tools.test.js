@@ -3,7 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { LocalTools } from '../src/tools/local.js';
+import { resolveOnPath } from '../src/tools/exec.js';
 import { tmpdir, write } from './helpers.js';
 
 function tools() {
@@ -142,9 +145,8 @@ test('搜索：字面量（不是正则）、跳过读不了的文件、命中�
   assert.match(t.search({ query: 'hit' }).content, /只列出了前 80 条 —— 这不是全部/);
 });
 
-test('运行：规则在起进程之前判（行内代码、不在清单里、找不到命令）', () => {
+test('运行：规则在起进程之前判（不在清单里、参数不是数组、工作目录跳出去）', () => {
   const { t } = tools();
-  assert.match(t.prepareRun({ command: 'node', args: ['-e', '1'] }).error, /行内代码/);
   assert.match(t.prepareRun({ command: 'bash', args: ['x.sh'] }).error, /不在允许清单里/);
   assert.match(t.prepareRun({ command: 'node', args: 'a.js b.js' }).error, /必须是数组/);
   assert.match(t.prepareRun({ command: 'node', args: ['a.js'], cwd: '../' }).error, /工作目录不可用/);
@@ -260,4 +262,71 @@ test('read_file：只读中间一段时，开头那条不说（第 1 行不在�
   assert.match(mid, /^【big\.txt 第 5–7 行（共 32 行）；没读完，用 offset=8 接着读】/, mid);
   const end = t.readFile({ path: 'big.txt', offset: 30 }).content;
   assert.match(end, /^【big\.txt 第 30–32 行（共 32 行）；最后一行是空行】/, end);
+});
+
+// 第八十七轮（用户 2026-10-31：「还有第二、第三点也都能用」）：命令行放开行内代码和 git 的只读子命令
+test('运行：行内代码放开（python3 -c、node -e —— 整条命令照样摆在终端里），git 只认 status / diff / log', () => {
+  const { t } = tools();
+  for (const [command, args] of [['node', ['-e', 'console.log(1)']], ['python3', ['-c', 'print(1)']], ['node', ['-pe', '1+1']], ['python3', ['-Bc', 'print(1)']]]) {
+    const prep = t.prepareRun({ command, args });
+    if (prep.error && /找不到命令/.test(prep.error)) continue;   // 这台机器上没装的跳过（规则在找命令之前判）
+    assert.equal(prep.error, undefined, `${command} ${args.join(' ')}：${prep.error}`);
+  }
+  assert.ok(t.commands.includes('git'), '默认清单里没有 git');
+  for (const sub of ['status', 'diff', 'log']) assert.equal(t.prepareRun({ command: 'git', args: [sub] }).error, undefined, 'git ' + sub);
+  const refused = [
+    [['push'], /只能跑 git 的 status \/ diff \/ log/], [['stash'], /只能跑/], [['checkout', '.'], /只能跑/], [[], /只能跑/],
+    [['-c', 'core.pager=x', 'log'], /只能跑/], [['-C', 'sub', 'status'], /只能跑/], [['--git-dir=x', 'status'], /只能跑/],
+    [['diff', '--output=patch.txt'], /--output/], [['diff', '--output', 'patch.txt'], /--output/], [['log', '--ext-diff'], /--ext-diff/],
+    [['diff', '--textconv'], /--textconv/], [['log', '--show-signature'], /--show-signature/],
+    [['diff', '/etc/passwd'], /绝对路径/], [['log', '../x'], /跳出工作区/],
+  ];
+  for (const [args, re] of refused) assert.match(t.prepareRun({ command: 'git', args }).error || '（没拒）', re, 'git ' + args.join(' '));
+  assert.equal(t.prepareRun({ command: 'git', args: ['diff', '--output-indicator-new=+'] }).error, undefined, '--output-indicator-new 是正经参数');
+  assert.match(t.prepareRun({ command: 'npm', args: ['exec', 'x'] }).error, /下载并运行别人的包/, 'npm exec 照旧拒');
+});
+
+test('git 真的跑：工作区里带的 .gitconfig、.gitattributes 叫不起别的程序（fsmonitor / clean 过滤器 / 外部 diff）；status / diff / log 照常出结果', async (ctx) => {
+  if (!resolveOnPath('git')) return ctx.skip('这台机器上没有 git');
+  const { root, t } = tools();
+  const git = (...a) => execFileSync('git', ['-c', 'user.email=a@b', '-c', 'user.name=t', '-c', 'core.fsmonitor=false', ...a], { cwd: root, env: { PATH: process.env.PATH, HOME: root, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull } });
+  git('init', '-q', '.');
+  write(root, 'f.txt', 'a\n');
+  write(root, 'g.txt', 'same\n');
+  git('add', '-A'); git('commit', '-qm', 'base');
+  // 子进程的 HOME 是工作区：克隆下来的仓库里放一个 .gitconfig，git 就当成全局配置读（第八十七轮在这台机器上试出来的：status 叫起 fsmonitor，diff 叫起 clean 过滤器和外部 diff）
+  const evil = path.join(root, 'evil.sh');
+  fs.writeFileSync(evil, '#!/bin/sh\necho x >> "$(dirname "$0")/MARK-$1"\n[ "$1" = clean ] && cat\nexit 0\n', { mode: 0o755 });
+  write(root, '.gitconfig', `[core]\n\tfsmonitor = ${evil} fsmon\n\tpager = ${evil} pager\n[diff]\n\texternal = ${evil} extdiff\n[filter "x"]\n\tclean = ${evil} clean\n\tsmudge = cat\n`);
+  write(root, '.gitattributes', '*.txt filter=x diff=t\n');
+  // 仓库自己的 .git/config 里的 fsmonitor、外部 diff、textconv：靠真正跑时加的参数关掉（环境隔离管不到这一份）
+  git('config', 'core.fsmonitor', `${evil} lfsmon`);
+  git('config', 'diff.external', `${evil} lextdiff`);
+  git('config', 'diff.t.textconv', `${evil} ltextconv`);
+  // 带签名的提交 + log.showSignature：git log 会叫 gpg.program 去验（签名是假的，叫起来就算）
+  const tree = git('rev-parse', 'HEAD^{tree}').toString().trim(), parent = git('rev-parse', 'HEAD').toString().trim();
+  const signed = `tree ${tree}\nparent ${parent}\nauthor t <a@b> 1700000000 +0000\ncommitter t <a@b> 1700000000 +0000\n`
+    + 'gpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n -----END PGP SIGNATURE-----\n\nsigned\n';
+  const sha = execFileSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], { cwd: root, input: signed }).toString().trim();
+  git('update-ref', 'HEAD', sha);
+  git('config', 'log.showSignature', 'true');
+  git('config', 'gpg.program', `${evil}`);
+  write(root, 'f.txt', 'a\nb\n');
+  fs.utimesSync(path.join(root, 'g.txt'), new Date(2030, 0, 1), new Date(2030, 0, 1));   // 内容没变、时间变了：status 想顺手把新时间写回 .git/index
+  const index = fs.readFileSync(path.join(root, '.git', 'index'));
+  const outputs = {};
+  for (const args of [['status'], ['diff'], ['log', '-p', '-1']]) {
+    const prep = t.prepareRun({ command: 'git', args });
+    assert.equal(prep.error, undefined);
+    const r = await t.commitRun(prep);
+    outputs[args[0]] = r;
+    assert.equal(r.exitCode, 0, `git ${args.join(' ')}：${r.output}`);
+    // status 不顺手重写 .git/index（GIT_OPTIONAL_LOCKS）；git diff 自己会刷新 index 里的时间戳（内容不动，git 的老规矩，管不到）
+    if (args[0] === 'status') assert.ok(fs.readFileSync(path.join(root, '.git', 'index')).equals(index), 'git status 重写了 .git/index（不是只读）');
+  }
+  assert.deepEqual(fs.readdirSync(root).filter((n) => n.startsWith('MARK-')), [], '工作区里的配置叫起了别的程序');
+  assert.match(outputs.status.output, /f\.txt/);
+  assert.match(outputs.diff.output, /\+b/);
+  assert.match(outputs.log.output, /signed/);
+  assert.match(outputs.status.content, /^\$ git status\n/, '终端里摆出来的是模型给的那条命令');
 });

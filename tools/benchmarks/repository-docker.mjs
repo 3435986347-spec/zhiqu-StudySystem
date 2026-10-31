@@ -230,11 +230,11 @@ export function globMatch(pattern, name) {
 
 // ── 上下文 ──────────────────────────────────────────────────────────────
 
-function context(evalDir) {
+function context(evalDir, configPath = CONFIG) {
   const root = path.resolve(evalDir);
   const control = path.join(root, 'control');
   const selection = readJson(path.join(control, 'selection.json'));
-  const config = readJson(CONFIG);
+  const config = readJson(configPath);
   const python = path.join(root, 'harness-venv/bin/python');
   const tasks = selection.tasks.map((entry, index) => {
     const task = readJson(path.join(control, 'tasks', entry.instance_id, 'public-task.json'));
@@ -242,7 +242,7 @@ function context(evalDir) {
     if (!spec) throw new Error(`No repository spec for ${task.repo}`);
     return { ...task, index: index + 1, spec, image: imageName(task.instance_id) };
   });
-  return { root, control, config, python, tasks, state: path.join(root, 'state'), runtime: path.join(root, 'runtime') };
+  return { root, control, config, configPath, python, tasks, state: path.join(root, 'state'), runtime: path.join(root, 'runtime') };
 }
 
 function pick(ctx, only) {
@@ -665,7 +665,7 @@ function runEpisodeProcess(env, argv, input, timeoutMs) {
 async function grade(ctx, kind, predictions) {
   const python = ctx.python;
   const command = JSON.parse((await run(python, ['-I', PREPARER, 'harness-command', '--control-dir', ctx.control, '--predictions', path.resolve(predictions),
-    '--protocol', CONFIG, '--kind', kind, '--python', python])).stdout);
+    '--protocol', ctx.configPath, '--kind', kind, '--python', python])).stdout);
   const argv = harnessArgv(command, python);
   const env = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'en_US.UTF-8', PYTHONPATH: command.env_overrides.PYTHONPATH,
     ...(process.env.DOCKER_HOST ? { DOCKER_HOST: process.env.DOCKER_HOST } : {}) };
@@ -827,24 +827,40 @@ export function continuationPlan(config) {
     outputTokenLimit: plan.budget.output_token_limit } };
 }
 
+/**
+ * 重跑（第八十七轮，用户 2026-10-31）：同样十题、同一模型，换一版 agent 另跑一遍 —— 另一份 run-config（`rerun` 一节）、
+ * 另一个 run 前缀和账本前缀（不把第六十九轮起过的题当成「已经跑过」、不扣那几本账的额度），额度照这份配置的 budget（用户定的上限）。
+ */
+export function rerunPlan(config) {
+  const again = config.rerun;
+  if (!again) return null;
+  const budget = config.budget || {};
+  if (!/^rerun-\d{8}-$/.test(again.run_prefix || '') || !/^rerun-\d{8}$/.test(again.ledger_prefix || '') || again.run_prefix !== `${again.ledger_prefix}-`
+      || !(budget.limit_rmb > 0 && budget.limit_rmb <= RERUN_MAX_RMB) || !Number.isSafeInteger(budget.input_token_limit) || !Number.isSafeInteger(budget.output_token_limit)
+      || budget.input_token_limit * 9 + budget.output_token_limit * 27 > Math.round(budget.limit_rmb * 1_000_000)) throw new Error('run-config rerun is missing or inconsistent');
+  return { ...again, limits: { limitMicroCny: Math.round(budget.limit_rmb * 1_000_000), inputTokenLimit: budget.input_token_limit, outputTokenLimit: budget.output_token_limit } };
+}
+export const RERUN_MAX_RMB = 100;   // 用户 2026-10-31 定的上限（保守口径），broker 那边同一个数
+
 async function formalRun(ctx, { continuation = false } = {}) {
   requireRuntime(ctx);
   const { images, smoke: smokeRun } = requireControls(ctx);
   const plan = continuation ? continuationPlan(ctx.config) : null;
   if (plan && !plan.instance_ids.every((id) => ctx.tasks.some((task) => task.instance_id === id))) throw new Error('continuation lists an unknown task');
+  const again = plan ? null : rerunPlan(ctx.config);
   const modelId = plan ? plan.model.id : ctx.config.model.id;
-  const kind = plan ? 'continuation-' : 'pilot-';
+  const kind = plan ? 'continuation-' : again ? again.run_prefix : 'pilot-';
   const { model, token, upstream } = await gatewayModel(ctx.config, modelId);
   const runId = `${kind}${stamp()}`;
   const dir = path.join(ctx.root, 'runs', runId); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // 账本固定在 <eval>/ledger：中途停了再跑，broker 从账里恢复已花的；账停过就开下一本、额度扣掉之前的（pilotLedger）
-  const ledger = plan ? pilotLedger(path.join(ctx.root, 'ledger'), plan.ledger_prefix, plan.limits) : pilotLedger(path.join(ctx.root, 'ledger'));
+  const ledger = plan || again ? pilotLedger(path.join(ctx.root, 'ledger'), (plan || again).ledger_prefix, (plan || again).limits) : pilotLedger(path.join(ctx.root, 'ledger'));
   writeJson(path.join(dir, 'ledger-choice.json'), ledger);
   const broker = new BrokerContainer({ name: `zq-eval-broker-${runId}`, runtime: ctx.runtime, ledgerDir: path.join(ctx.root, 'ledger'), logFile: path.join(dir, 'broker.log') });
   await broker.start({ server: upstream, token, ledgerName: ledger.ledgerName, limits: { ...ledger.limits, modelId } });
   const results = {};
   let hostGatewayIp = null;
-  const manifest = { run_id: runId, started_at: new Date().toISOString(), model, continuation: plan, config_sha256: sha(fs.readFileSync(CONFIG)),
+  const manifest = { run_id: runId, started_at: new Date().toISOString(), model, continuation: plan, config_sha256: sha(fs.readFileSync(ctx.configPath)),
     runtime: readJson(path.join(ctx.state, 'runtime.json')), smoke_tag: smokeRun.tag, policy_sha256: smokeRun.policy_sha256, images };
   writeJson(path.join(dir, 'manifest.json'), manifest);
   try {
@@ -914,7 +930,7 @@ async function formalRun(ctx, { continuation = false } = {}) {
   // 预测：固定十行；没生成出补丁的题也在分母里（空补丁），状态另记。补跑时：补跑的题用补跑的那次，其余用 pilot 那次
   const sourceRun = (task) => {
     if (results[task.instance_id]?.status === 'already_run') return path.join(ctx.root, 'runs', results[task.instance_id].run);
-    if (results[task.instance_id]) return dir;
+    if (results[task.instance_id] || again) return dir;   // 重跑：每一题都是这一次的，不拿第六十九轮的补
     const pilot = previousEpisode(ctx, task.instance_id, 'pilot-');
     return pilot ? path.join(ctx.root, 'runs', pilot) : dir;
   };
@@ -938,7 +954,7 @@ export function parseArgs(argv) {
   const opts = { command };
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--continuation') { opts.continuation = true; continue; }
-    const key = { '--eval-dir': 'evalDir', '--only': 'only', '--kind': 'kind', '--predictions': 'predictions' }[rest[i]];
+    const key = { '--eval-dir': 'evalDir', '--only': 'only', '--kind': 'kind', '--predictions': 'predictions', '--config': 'config' }[rest[i]];
     if (!key || !rest[i + 1]) throw new Error(`Unknown or incomplete option: ${rest[i]}`);
     opts[key] = rest[++i];
   }
@@ -950,7 +966,7 @@ export function parseArgs(argv) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const ctx = context(opts.evalDir);
+  const ctx = context(opts.evalDir, opts.config ? path.resolve(opts.config) : CONFIG);
   fs.mkdirSync(ctx.state, { recursive: true, mode: 0o700 }); fs.mkdirSync(path.join(ctx.root, 'logs'), { recursive: true });
   const result = opts.command === 'runtime' ? await stageRuntime(ctx)
     : opts.command === 'images' ? await buildImages(ctx, opts.only)

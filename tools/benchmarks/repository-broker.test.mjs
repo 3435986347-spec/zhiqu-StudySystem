@@ -134,9 +134,11 @@ test('null, zero, unsafe and larger-than-approved budgets fail closed', async (t
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-broker-config-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   for (const [key, value] of [['limitMicroCny', null], ['inputTokenLimit', null], ['outputTokenLimit', 0],
-    ['inputTokenLimit', Number.MAX_SAFE_INTEGER + 1], ['limitMicroCny', 50_000_001], ['minRequestIntervalMs', 1199], ['maxRequestsPerEpisode', 201]]) {
+    ['inputTokenLimit', Number.MAX_SAFE_INTEGER + 1], ['limitMicroCny', 100_000_001], ['minRequestIntervalMs', 1199], ['maxRequestsPerEpisode', 201]]) {
     assert.throws(() => new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, key + '.jsonl'), [key]: value }));
   }
+  // 第八十七轮：用户把重跑的上限定到 ¥100（保守口径）—— 正好 ¥100 收，多一分不收（上面那条）
+  assert.doesNotThrow(() => new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, 'cap100.jsonl'), limitMicroCny: 100_000_000 }));
   const f = await fixture(t);
   assert.throws(() => f.broker.registerEpisode({ episodeId: 'bigger-input', inputTokenLimit: 2_000_001 }));
   assert.throws(() => f.broker.registerEpisode({ episodeId: 'bigger-output', outputTokenLimit: 131_073 }));

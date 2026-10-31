@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -46,10 +47,24 @@ test('mismatched task revision is refused before gateway access', () => {
 // config refuses to load. These Docker / gateway checks don't depend on which agent is pinned: read it without that check.
 const frozenIgnoringAgent = file => readRunConfig(file, { verifyAgent: false });
 test('a frozen pilot refuses an agent that changed after the freeze (and a missing fingerprint)', () => {
-  const changed = configCopy(config => { config.agent.file_sha256['zhiqu-cli/src/tools/guard.js'] = '0'.repeat(64); });
+  // 其余几个指纹先对上现在的文件（agent 之后每一轮都可能改，不然报的是先查到的那个、不是这里改的这个）
+  const changed = configCopy(config => {
+    for (const file of Object.keys(config.agent.file_sha256)) {
+      config.agent.file_sha256[file] = crypto.createHash('sha256').update(fs.readFileSync(path.join(repo, file))).digest('hex');
+    }
+    config.agent.file_sha256['zhiqu-cli/src/tools/guard.js'] = '0'.repeat(64);
+  });
   try { assert.throws(() => readRunConfig(changed.file), /Shipped agent changed: zhiqu-cli\/src\/tools\/guard\.js/); } finally { changed.close(); }
   const missing = configCopy(config => { delete config.agent.file_sha256['zhiqu-cli/src/prompt.js']; });
   try { assert.throws(() => readRunConfig(missing.file, { verifyAgent: false }), /Missing shipped source fingerprints/); } finally { missing.close(); }
+});
+test('the rerun (round 87) may use the user-approved CNY 100; the round-69 pilot stays at CNY 50', () => {
+  const rerun = configCopy(config => { config.rerun = { run_prefix: 'rerun-20261031-', ledger_prefix: 'rerun-20261031' }; config.budget.limit_rmb = 100; });
+  try { assert.equal(readRunConfig(rerun.file, { verifyAgent: false }).config.budget.limit_rmb, 100); } finally { rerun.close(); }
+  const over = configCopy(config => { config.rerun = { run_prefix: 'rerun-20261031-', ledger_prefix: 'rerun-20261031' }; config.budget.limit_rmb = 101; });
+  try { assert.throws(() => readRunConfig(over.file, { verifyAgent: false }), /\(0, 100\]/); } finally { over.close(); }
+  const pilot = configCopy(config => { config.budget.limit_rmb = 100; });
+  try { assert.throws(() => readRunConfig(pilot.file, { verifyAgent: false }), /\(0, 50\]/); } finally { pilot.close(); }
 });
 test('missing Docker is an explicit not-ready result even with a valid gateway', async () => {
   const result = await preflight({ config: actual }, { runDocker: missingDocker, api: fakeApi, readConfig: frozenIgnoringAgent });

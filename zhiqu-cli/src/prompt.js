@@ -56,7 +56,8 @@ export function environmentBlock({ root, workspaceName, mode, commands, platform
     `- 系统：${os}；今天：${today}`,
     `- 当前档位：${MODE_TEXT[mode] || mode}`,
     `- run_command 能跑的命令：${commands.join('、')}。只接受命令名 + 参数数组，不接受 shell 语句（没有管道、重定向、&&）；`
-      + '不接受 -c / -e / --eval 这类行内代码 —— 要跑的代码先写成文件。',
+      + '一两行的小检查直接用 python3 -c / node -e 跑（整条命令用户看得见），长的、要留下的写成文件'
+      + (commands.includes('git') ? '；git 只能跑 status / diff / log（只读）。' : '。'),
   ].join('\n');
 }
 

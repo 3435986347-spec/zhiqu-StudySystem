@@ -77,14 +77,15 @@ export function childEnv(binary, cwd, platform = process.platform) {
   return env;
 }
 
-export function runProcess({ binary, args, cwd, timeoutMs, outputLimit = DEFAULT_OUTPUT_LIMIT, signal, onOutput }) {
+/** env：在最小环境（childEnv）上再加的几项，不是整个替换（git 用它关掉配置里能叫起的程序） */
+export function runProcess({ binary, args, cwd, env, timeoutMs, outputLimit = DEFAULT_OUTPUT_LIMIT, signal, onOutput }) {
   return new Promise((resolve) => {
     const started = monotonic();
     const posix = process.platform !== 'win32';
     let child;
     try {
       child = spawn(binary, args, {
-        cwd, env: childEnv(binary, cwd), stdio: ['ignore', 'pipe', 'pipe'], detached: posix, windowsHide: true,
+        cwd, env: { ...childEnv(binary, cwd), ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: posix, windowsHide: true,
         shell: false,
       });
     } catch (e) {

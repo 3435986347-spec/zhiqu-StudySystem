@@ -7,10 +7,11 @@
 // 整份重写还要求读的是全文 —— 只读了前 2000 行就整份重写，会把没读到的部分冲掉。
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import { StringDecoder } from 'node:string_decoder';
 import path from 'node:path';
 import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_BYTES } from './guard.js';
-import { checkCommand, describeRefusal, DEFAULT_COMMANDS, ExecRefusal } from './execrules.js';
+import { checkLocalCommand, describeRefusal, LOCAL_DEFAULT_COMMANDS, ExecRefusal, gitLaunch } from './execrules.js';
 import { planLaunch, resolveOnPath, runProcess } from './exec.js';
 import { applyEdit, describeEditError } from './edit.js';
 import { syntaxProblem } from './syntax.js';
@@ -206,7 +207,7 @@ export class LocalTools {
       extensions: extensions || DEFAULT_EXTENSIONS, maxFileBytes: maxFileBytes || DEFAULT_MAX_FILE_BYTES,
     });
     this.root = this.guard.root;
-    this.commands = commands || DEFAULT_COMMANDS;
+    this.commands = commands || LOCAL_DEFAULT_COMMANDS;
     this.execTimeoutMs = execTimeoutMs;
     /** rel → { hash, full }：这段会话里读过 / 写过的文件，以及当时的内容指纹。 */
     this.known = new Map();
@@ -572,7 +573,7 @@ export class LocalTools {
     if (args.args != null && !Array.isArray(args.args)) {
       return { error: 'args 必须是数组，一项一个参数（不接受一整条 shell 命令）' };
     }
-    const check = checkCommand(this.commands, args.command, argv);
+    const check = checkLocalCommand(this.commands, args.command, argv);
     if (check.refusal !== ExecRefusal.OK) {
       const deleting = /^(rm|del|erase|rmdir|unlink)$/i.test(String(args.command || '').trim());
       return { error: describeRefusal(check, this.commands) + (deleting ? '删除文件用 delete_file（一次一个，删掉的挪进 .zhiqu/trash/，能恢复）。' : '') };
@@ -582,13 +583,15 @@ export class LocalTools {
     const command = String(args.command).trim();
     const binary = resolveOnPath(command);
     if (!binary) return { error: `这台机器上找不到命令：${command}` };
-    const launch = planLaunch({ command, binary, args: argv });
+    // git：终端里摆的是模型给的那条，真正跑的多几个关掉外部程序的参数和环境（gitLaunch）
+    const git = command === 'git' ? gitLaunch(argv, os.devNull) : null;
+    const launch = planLaunch({ command, binary, args: git ? git.args : argv });
     if (launch.error) return { error: launch.error };
-    return { command, args: argv, binary: launch.binary, launchArgs: launch.args, cwd: dir.path, cwdRel: this.guard.display(dir.path) };
+    return { command, args: argv, binary: launch.binary, launchArgs: launch.args, env: git ? git.env : undefined, cwd: dir.path, cwdRel: this.guard.display(dir.path) };
   }
 
   async commitRun(prep, { signal, onOutput } = {}) {
-    const r = await runProcess({ binary: prep.binary, args: prep.launchArgs || prep.args, cwd: prep.cwd, timeoutMs: this.execTimeoutMs, signal, onOutput });
+    const r = await runProcess({ binary: prep.binary, args: prep.launchArgs || prep.args, cwd: prep.cwd, env: prep.env, timeoutMs: this.execTimeoutMs, signal, onOutput });
     const line = [prep.command, ...prep.args].join(' ');
     const secs = (r.millis / 1000).toFixed(1);
     return {

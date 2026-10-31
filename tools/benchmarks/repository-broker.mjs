@@ -117,7 +117,8 @@ export class RepositoryBroker {
       throw new Error('Broker model must be 6 or 1 / deepseek-v4-pro with 1000000 context');
     }
     if (this.config.minRequestIntervalMs < 1200 || this.config.maxRequestsPerEpisode > 200) throw new Error('Pacing/request limits exceed approved scope');
-    if (this.config.limitMicroCny > 50_000_000) throw new Error('Money limit exceeds approved 50 CNY scope');
+    // 一本账的钱数上限：第六十九轮用户批的 ¥50；第八十七轮重跑用户定 ¥100（2026-10-31，同样的保守口径）
+    if (this.config.limitMicroCny > 100_000_000) throw new Error('Money limit exceeds approved 100 CNY scope');
     if (!options.ledgerPath) throw new Error('ledgerPath is required');
     this.api = options.api || new Api({ server: options.server, token: options.token });
     if (typeof this.api.stream !== 'function') throw new Error('Production-compatible api.stream required');

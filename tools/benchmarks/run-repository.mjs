@@ -58,8 +58,10 @@ export function readRunConfig(filename, { verifyAgent = true } = {}) {
       || config.dataset?.size !== 10 || config.model?.id !== 6
       || config.model?.model_name !== 'deepseek-v4-pro') throw new Error('Wrong frozen dataset/model');
   const budget = config.budget;
-  if (!budget || !Number.isFinite(budget.limit_rmb) || budget.limit_rmb <= 0 || budget.limit_rmb > 50) {
-    throw new Error('This authorized pilot requires a CNY budget in (0, 50]');
+  // 第六十九轮的 pilot 用户批的 ¥50；第八十七轮的重跑（有 rerun 一节）用户定 ¥100（2026-10-31）
+  const cap = config.rerun ? 100 : 50;
+  if (!budget || !Number.isFinite(budget.limit_rmb) || budget.limit_rmb <= 0 || budget.limit_rmb > cap) {
+    throw new Error(`This authorized run requires a CNY budget in (0, ${cap}]`);
   }
   for (const key of ['input_token_limit', 'output_token_limit', 'per_episode_input_token_limit', 'per_episode_output_token_limit']) {
     if (!Number.isSafeInteger(budget[key]) || budget[key] <= 0) throw new Error(`Missing positive ${key}`);
