@@ -803,12 +803,21 @@ function limitsAfter(books, base = PILOT_LIMITS) {
 }
 
 /** 这一题在之前同一类（pilot- / continuation-）的正式运行里已经起过 episode（不管结果）：返回那次的 runId */
-function previousEpisode(ctx, instanceId, kind = 'pilot-') {
+export function previousEpisode(ctx, instanceId, kind = 'pilot-') {
   const runs = path.join(ctx.root, 'runs');
   if (!fs.existsSync(runs)) return null;
+  // 基础设施补跑（第八十七轮）：run-config 的 rerun.infrastructure_retry 列了这一题，那一次是网关那一侧的错、0 轮（模型一个字都没回）——
+  // 不算起过，补跑一次；补跑那次再这样就算数了（不无限重试）
+  const retry = ctx.config?.rerun?.infrastructure_retry;
+  const retryable = Array.isArray(retry?.instance_ids) && retry.instance_ids.includes(instanceId);
+  let infraFailures = 0;
   return fs.readdirSync(runs).filter((run) => run.startsWith(kind)).sort().find((run) => {
     const file = path.join(runs, run, instanceId, 'result.json');
-    return fs.existsSync(file) && readJson(file).status !== 'budget_stopped';
+    if (!fs.existsSync(file)) return false;
+    const record = readJson(file);
+    if (record.status === 'budget_stopped') return false;
+    if (retryable && record.generation_status === 'gateway_error' && !record.rounds) return ++infraFailures > 1;
+    return true;
   }) || null;
 }
 

@@ -49,3 +49,6 @@
 - preflight：网关、模型、Docker 都对；唯一的 blocker `docker_controls_not_verified` 和第六十九轮一样（gold 有两题因为本机网络过不了，按题的例外写在 `controls_exceptions` 里，正式开跑的门按题判）。
 - runtime 按 518ee5c 重摆（Node 24.19.0、worker / broker 指纹对上）。
 - 不花钱的对照重跑：smoke 10/10（每题单题网络、只通 broker、真的 LocalTools 读写 base、跑一条公开测试；网络策略指纹和第六十九轮一样）、lifecycle 通过（取消前 7 个进程、停掉后 0，账本收 1 拒 1、能力撤销）。
+- 开跑（2026-10-31 10:12 起）：校准过（ID 6 / deepseek-v4-pro / 1M）。第 2 题 django-15987 第一个请求在网关那一侧失败（broker 记 `upstream_error`，0.5 秒，0 轮、模型一个字都没回），这一题空补丁。
+  桌面后端不写日志文件，看不到网关回了什么；网关给 harness 的限流是每分钟 60 次、broker 至少隔 1.2 秒发一次，不是限流。后面的题照常在跑。
+  **决定（在这一次评分之前）**：这一题按基础设施故障单独补跑一次 —— 只认「0 轮、没有任何模型输出」的 `gateway_error`；规则在补跑的调用之前写进 run-config，两次记录都留。

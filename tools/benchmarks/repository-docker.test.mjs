@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { auditScript, BROKER_PORT, compareTrees, continuationPlan, controlProblems, pilotLedger, replayLedger, rerunPlan, parseArgs, fnmatchEscape, GENERATED_EXCLUDES, generationDockerfile, globMatch,
+import { auditScript, BROKER_PORT, compareTrees, continuationPlan, controlProblems, pilotLedger, previousEpisode, replayLedger, rerunPlan, parseArgs, fnmatchEscape, GENERATED_EXCLUDES, generationDockerfile, globMatch,
   harnessArgv, installExcludes, parseAudit, policyFingerprint, policyScript, REPO_SPECS, workerPayload } from './repository-docker.mjs';
 
 test('网络规则：默认丢弃、先挡 Docker DNS 和 53 端口、只放行 loopback 和 broker 的那一个端口、IPv6 全丢', () => {
@@ -218,4 +218,21 @@ test('重跑用自己的账本：第六十九轮那几本花掉的不扣这一�
 test('--config 选哪份 run-config（默认第六十九轮那份）', () => {
   assert.equal(parseArgs(['run', '--eval-dir', '/x', '--config', 'docs/b.json']).config, 'docs/b.json');
   assert.equal(parseArgs(['run', '--eval-dir', '/x']).config, undefined);
+});
+
+// 第八十七轮：重跑时 django-15987 第一个请求在网关那一侧失败（0 轮、模型没回一个字）—— 列进 run-config 的才补跑，而且只补一次
+test('基础设施补跑：列了的题、网关错且 0 轮的那次不算起过；补跑那次再失败就算数；没列的、跑过几轮的照旧算', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zq-retry-'));
+  const put = (run, id, record) => { fs.mkdirSync(path.join(root, 'runs', run, id), { recursive: true }); fs.writeFileSync(path.join(root, 'runs', run, id, 'result.json'), JSON.stringify(record)); };
+  const failed = { generation_status: 'gateway_error', rounds: 0 };
+  put('rerun-20261031-a', 'x', failed);
+  put('rerun-20261031-a', 'y', { generation_status: 'gateway_error', rounds: 7 });
+  put('rerun-20261031-a', 'z', failed);
+  const ctx = { root, config: { rerun: { infrastructure_retry: { instance_ids: ['x', 'y'] } } } };
+  assert.equal(previousEpisode(ctx, 'x', 'rerun-20261031-'), null, '列了、0 轮的网关错：补跑');
+  assert.equal(previousEpisode(ctx, 'y', 'rerun-20261031-'), 'rerun-20261031-a', '跑过 7 轮才失败的不补（模型已经回过话）');
+  assert.equal(previousEpisode(ctx, 'z', 'rerun-20261031-'), 'rerun-20261031-a', '没列进 run-config 的不补');
+  assert.equal(previousEpisode({ root, config: {} }, 'x', 'rerun-20261031-'), 'rerun-20261031-a', '没有补跑一节就照旧算');
+  put('rerun-20261031-b', 'x', failed);
+  assert.equal(previousEpisode(ctx, 'x', 'rerun-20261031-'), 'rerun-20261031-b', '补跑那次又这样：算数，不再补');
 });
