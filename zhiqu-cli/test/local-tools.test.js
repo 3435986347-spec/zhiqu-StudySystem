@@ -330,3 +330,32 @@ test('git 真的跑：工作区里带的 .gitconfig、.gitattributes 叫不起�
   assert.match(outputs.log.output, /signed/);
   assert.match(outputs.status.content, /^\$ git status\n/, '终端里摆出来的是模型给的那条命令');
 });
+
+// 第八十八轮：评测里模型三次把工作区根（/work/base_repo）当 cwd 传进来，被当成「超出工作区」拒掉
+test('工作区里面的绝对路径照收（文件、目录、cwd、工作区根本身）；外面的、软链跳出去的照旧拒', () => {
+  const { root, t } = tools();
+  write(root, 'src/a.js', 'x\n');
+  const abs = (rel) => path.join(root, rel);
+  assert.match(t.readFile({ path: abs('src/a.js') }).content, /x/);
+  assert.equal(t.prepareWrite({ path: abs('src/a.js'), old_string: 'x', new_string: 'y' }).rel, 'src/a.js');
+  assert.match(t.listFiles({ path: abs('src') }).content, /a\.js/);
+  assert.match(t.search({ query: 'x', path: abs('src') }).content, /a\.js:1/);
+  assert.equal(t.prepareRun({ command: 'node', args: ['-e', '1'], cwd: root }).cwdRel, '.');
+  assert.equal(t.prepareRun({ command: 'node', args: ['-e', '1'], cwd: abs('src') }).cwdRel, 'src');
+  assert.equal(t.prepareDelete({ path: abs('src/a.js') }).rel, 'src/a.js');
+  // 外面
+  assert.match(t.readFile({ path: '/etc/hosts' }).error, /超出了工作区范围/);
+  assert.match(t.prepareRun({ command: 'node', args: ['-e', '1'], cwd: path.dirname(root) }).error, /工作目录不可用/);
+  const sibling = root + '-sibling/x.js';
+  assert.ok(t.readFile({ path: sibling }).error.includes(sibling), '前缀相同的兄弟目录不算在里面：照旧拒，报错里是模型给的那条原路径');
+  // 根是经过软链给的（macOS 上 /tmp 就是 /private/tmp）：按给的写法传绝对路径也认
+  const viaLink = path.join(tmpdir(), 'ws-link');
+  fs.symlinkSync(root, viaLink);
+  const linked = new LocalTools({ root: viaLink });
+  assert.match(linked.readFile({ path: path.join(viaLink, 'src/a.js') }).content, /x/);
+  // 软链跳出去：换成相对路径以后照样由原来的检查拦
+  const outside = tmpdir();
+  write(outside, 'secret.js', 's\n');
+  fs.symlinkSync(outside, path.join(root, 'link'));
+  assert.ok(t.readFile({ path: abs('link/secret.js') }).error, '工作区里的软链指到外面：照旧拒');
+});

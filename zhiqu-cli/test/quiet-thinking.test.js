@@ -218,3 +218,45 @@ test('模型连着调 200 次读文件：屏幕上不刷屏（安静模式下读
   assert.ok(lines.length < 10, `打了 ${lines.length} 行`);
   assert.equal(r.stats.read, 200);
 });
+
+// 第八十八轮：评测重跑里 83 次 read_file 有 55 次只读 ≤ 80 行（一个文件从 170 行起分 6 次往下挪），234 次带工具的回复 209 次只发一个调用；
+// sympy-23950 到 60 轮停下时最后的回答是空的
+test('接着上一次往下读同一个文件：附一句「直接读大一点」，一个文件只提醒一次；跳着读、换个文件、从头读都不提醒', async () => {
+  const root = tmpdir();
+  write(root, 'a.js', 'x\n'.repeat(400));
+  write(root, 'b.js', 'y\n'.repeat(400));
+  const read = (path, offset, limit) => ({ calls: [{ name: 'read_file', args: { path, offset, limit } }] });
+  const ctx = makeCtx({ root, replies: [read('a.js', 1, 40), read('a.js', 41, 40), read('a.js', 81, 40), read('b.js', 1, 40), read('b.js', 300, 40),
+    read('./b.js', 1, 40), { text: '好' }] });
+  await runTurn(ctx, '看看');
+  const tools = ctx.messages.filter((m) => m.role === 'tool').map((m) => m.content);
+  assert.equal(tools.length, 6);
+  assert.ok(!/接着上一次往下读/.test(tools[0]));
+  assert.match(tools[1], /你在接着上一次往下读 a\.js（第 41 行起）。直接读大一点/);
+  assert.ok(!/接着上一次往下读/.test(tools[2]), '同一个文件只提醒一次');
+  assert.ok(!tools.slice(3).some((t) => /接着上一次往下读/.test(t)), '换文件、跳着读、从头读都不算接着读');
+});
+
+test('快到轮数上限：剩 3 轮的那一轮附一句「开始收尾」（只附在这一轮最后一个调用上）；上限太小不附', async () => {
+  const root = tmpdir();
+  write(root, 'a.js', 'x\n');
+  const two = { calls: [{ name: 'list_files', args: {} }, { name: 'read_file', args: { path: 'a.js' } }] };
+  const ctx = makeCtx({ root, replies: Array.from({ length: 12 }, () => two) });
+  await runTurn(ctx, '看看');
+  const tools = ctx.messages.filter((m) => m.role === 'tool').map((m) => m.content);
+  assert.equal(tools.length, 24, '12 轮、每轮两个调用');
+  const wrapped = tools.map((t, i) => (/开始收尾/.test(t) ? i : -1)).filter((i) => i >= 0);
+  assert.deepEqual(wrapped, [17], '第 9 轮（再过 3 轮到 12）的第二个调用');
+  assert.match(tools[17], /再过 3 轮就到这一次的上限（12 轮）。开始收尾：改到一半的先改完、跑一次验证，然后用几句话说做到哪了、还差什么/);
+
+  const small = makeCtx({ root, replies: Array.from({ length: 6 }, () => two) });
+  small.maxRounds = 6;
+  await runTurn(small, '看看');
+  assert.ok(!small.messages.some((m) => m.role === 'tool' && /开始收尾/.test(m.content)), '上限只有 6 轮时不附');
+});
+
+test('系统提示里说清：互相不依赖的读 / 搜一次发几个，读文件读成段（第八十八轮）', async () => {
+  const { BUILTIN_SYSTEM_PROMPT } = await import('../src/prompt.js');
+  assert.match(BUILTIN_SYSTEM_PROMPT, /互相不依赖的读、搜、列目录放在同一次回复里一起发/);
+  assert.match(BUILTIN_SYSTEM_PROMPT, /读文件读成段：不知道要哪几行就整份读/);
+});

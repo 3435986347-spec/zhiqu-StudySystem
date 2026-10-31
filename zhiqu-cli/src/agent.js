@@ -486,6 +486,30 @@ export const READ_STREAK = 8;
 const thinkingReminder = (n) => `上面那段分析有 ${n} 字。别在回复里长篇推测：已知的够就直接改；拿不准就写一个最小的复现脚本跑一下，用输出判断。`;
 const streakReminder = (n) => `你已经连续查看了 ${n} 次还没动手。已知的够就直接改；拿不准就写一个最小的复现脚本跑一下，用结果说话，不要继续猜。`;
 
+// 第八十八轮（评测重跑的十段记录）：83 次 read_file 有 55 次只读 ≤ 80 行，sympy-23950 把一个文件从 170 行起分 6 次往下挪；
+// 234 次带工具的回复里 209 次只发一个调用。每多一轮，整段对话都要重发一遍；到了轮数上限还没有结论（那一题最后的回答是空的）。
+// 和上面两条一样，只在工具结果后面附一句，不拦。
+export const WRAP_UP_ROUNDS = 3;
+const windowReminder = (p, offset) => `你在接着上一次往下读 ${p}（第 ${offset} 行起）。直接读大一点：limit 省掉就是一次最多 2000 行，把要看的那一段一次读完；互相不依赖的读、搜放在同一次回复里一起发。`;
+const wrapUpReminder = (left, max) => `再过 ${left} 轮就到这一次的上限（${max} 轮）。开始收尾：改到一半的先改完、跑一次验证，然后用几句话说做到哪了、还差什么。`;
+/** 同一个文件接着上一次读到的地方往下读（offset 正好接上，前后差几行也算）：一个文件只提醒一次 */
+function readWindowHint(ctx, call) {
+  if (!call.function || call.function.name !== 'read_file') return null;
+  const args = parseArgs(call.function.arguments);
+  if (!args.ok || typeof args.value.path !== 'string') return null;
+  const file = args.value.path.replace(/^\.\//, '');
+  const offset = Number(args.value.offset) || 1;
+  const limit = Number(args.value.limit) || 2000;
+  const windows = ctx.readWindows || (ctx.readWindows = new Map());
+  const end = windows.get(file);
+  windows.set(file, offset > 0 ? offset + limit : Infinity);
+  if (end == null || !(offset > 1) || Math.abs(offset - end) > 5) return null;
+  const hinted = ctx.readHinted || (ctx.readHinted = new Set());
+  if (hinted.has(file)) return null;
+  hinted.add(file);
+  return windowReminder(file, offset);
+}
+
 /**
  * 省上下文：较早几轮「调工具的那几条回复」里的长篇思考，发给模型时只留开头（最近 keep 条原样）。
  * 结论另有不调工具的那条回复；会话记录里是原话（记录是 record 时写的），省略的只是 ctx.messages 这一份。
@@ -723,6 +747,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   let nudged = false;
   ctx.turnStats = { read: 0, search: 0, list: 0 };
   ctx.readStreak = 0;
+  ctx.readWindows = new Map(); ctx.readHinted = new Set();
   if (quiet(ctx)) ctx.ui.startThinking();
   try {
   const maxRounds = ctx.maxRounds || 60;
@@ -784,6 +809,9 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       const name = call.function && call.function.name;
       ctx.readStreak = QUIET_TOOLS.has(name) ? (ctx.readStreak || 0) + 1 : 0;
       if (ctx.readStreak > 0 && ctx.readStreak % READ_STREAK === 0) reminders.push(streakReminder(ctx.readStreak));
+      const windowHint = readWindowHint(ctx, call);
+      if (windowHint) reminders.push(windowHint);
+      if (i === calls.length - 1 && maxRounds > WRAP_UP_ROUNDS * 3 && maxRounds - round - 1 === WRAP_UP_ROUNDS) reminders.push(wrapUpReminder(WRAP_UP_ROUNDS, maxRounds));
       if (reminders.length) content += reminders.map((r) => `\n\n【提醒】${r}`).join('');
       record(ctx, { role: 'tool', tool_call_id: call.id, content });
     }

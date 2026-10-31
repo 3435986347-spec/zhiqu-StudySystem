@@ -207,6 +207,7 @@ export class LocalTools {
       extensions: extensions || DEFAULT_EXTENSIONS, maxFileBytes: maxFileBytes || DEFAULT_MAX_FILE_BYTES,
     });
     this.root = this.guard.root;
+    this.givenRoot = path.resolve(root);   // 给的那个写法（macOS 上 /tmp 和 /private/tmp 是同一处）：判绝对路径在不在工作区里两种都认
     this.commands = commands || LOCAL_DEFAULT_COMMANDS;
     this.execTimeoutMs = execTimeoutMs;
     /** rel → { hash, full }：这段会话里读过 / 写过的文件，以及当时的内容指纹。 */
@@ -215,7 +216,23 @@ export class LocalTools {
 
   // ── 读 ────────────────────────────────────────────────────────────────
 
+  /**
+   * 落在工作区里面的绝对路径换成相对路径，再交给原来的检查（第八十八轮：评测里模型三次把工作区根 /work/base_repo 当 cwd 传进来，
+   * 被当成「超出工作区」拒掉，每次白花一轮）。外面的、相对的原样往下走，照旧由 guard 判（软链跳出去也还是它拦）。
+   * 只在命令行这一层：服务器端的工作区和一致性用例照旧只认相对路径。
+   */
+  inWorkspace(args, key) {
+    const value = args && args[key];
+    if (typeof value !== 'string' || !path.isAbsolute(value)) return args;
+    for (const base of [this.givenRoot, this.root]) {
+      const rel = path.relative(base, path.normalize(value));   // 工作区根本身是 ''，往下当根处理
+      if (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) return { ...args, [key]: rel.split(path.sep).join('/') };
+    }
+    return args;
+  }
+
   listFiles(args = {}) {
+    args = this.inWorkspace(args, 'path');
     const dir = this.guard.resolveDirectory(args.path);
     if (dir.reason !== Reason.OK) return { error: describe(dir.reason, args.path || '.') };
     const depth = Math.max(1, Math.min(3, Number(args.depth) || 2));
@@ -270,6 +287,7 @@ export class LocalTools {
    * 头部写着「共 300 行」、`full` 也记成读全了，模型实际只看到前一段，却被允许整份重写，没看到的部分就被冲掉了。
    */
   readFile(args = {}, { maxChars } = {}) {
+    args = this.inWorkspace(args, 'path');
     const r = this.guard.resolveReadable(args.path);
     if (r.reason === Reason.TOO_LARGE && r.path) return this.readLargeFile(r, args, maxChars);
     if (r.reason !== Reason.OK) return { error: describe(r.reason, args.path, this.guard.maxFileBytes) };
@@ -351,6 +369,7 @@ export class LocalTools {
   }
 
   search(args = {}) {
+    args = this.inWorkspace(args, 'path');
     const query = args.query == null ? '' : String(args.query);
     if (!query) return { error: '没有给出要搜索的文字' };
     // path 可以是目录，也可以是一个文件（第十二轮：原来给文件报「不是一个普通文件」，模型以为搜索坏了、改成一段段读）
@@ -449,6 +468,7 @@ export class LocalTools {
   }
 
   prepareWrite(args = {}) {
+    args = this.inWorkspace(args, 'path');
     const w = this.guard.resolveWritable(args.path);
     if (w.reason !== Reason.OK) return { error: describe(w.reason, args.path, this.guard.maxFileBytes) };
     const rel = this.guard.display(w.path);
@@ -540,6 +560,7 @@ export class LocalTools {
    * 路径的判定就是写入那一套（工作区内、不跟软链、只许普通文件、扩展名白名单），外加 .git / .zhiqu 里的不许删。
    */
   prepareDelete(args = {}) {
+    args = this.inWorkspace(args, 'path');
     const w = this.guard.resolveWritable(args.path);
     if (w.reason !== Reason.OK) return { error: describe(w.reason, args.path, this.guard.maxFileBytes) };
     const rel = this.guard.display(w.path);
@@ -569,6 +590,7 @@ export class LocalTools {
   // ── 运行 ──────────────────────────────────────────────────────────────
 
   prepareRun(args = {}) {
+    args = this.inWorkspace(args, 'cwd');
     const argv = Array.isArray(args.args) ? args.args.map((a) => (a == null ? a : String(a))) : [];
     if (args.args != null && !Array.isArray(args.args)) {
       return { error: 'args 必须是数组，一项一个参数（不接受一整条 shell 命令）' };

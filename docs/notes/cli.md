@@ -22,6 +22,7 @@
   git 真正跑时再关一层（`gitLaunch`）：子进程的 HOME 是工作区，仓库里带一个 `.gitconfig` 就被当成全局配置 —— 不隔离时 `git status` 叫起 fsmonitor、
   `git diff` 叫起 clean 过滤器和外部 diff（这台机器上试出来的）。所以 `GIT_CONFIG_GLOBAL` 指到空设备、`--no-pager`、`core.fsmonitor=false`、`log.showSignature=false`，
   diff / log 加 `--no-ext-diff --no-textconv`，`GIT_OPTIONAL_LOCKS=0`（status 不顺手重写 index）。剩下的只有仓库自己 `.git/config` 里的过滤器（克隆不带它）。
+  路径参数（文件、目录、`cwd`）落在工作区里面的绝对路径，命令行先换成相对路径再交给这套检查（`LocalTools.inWorkspace`，第八十八轮）；服务器端照旧只认相对路径。
 - **没读过不许改、只读一部分不许整份重写、确认期间被改过不写**（`local.js` 的 prepare / commit 两步）。
   `write_file` 一个工具三种用法（整份 / append / old_string 替换）—— 长文件分几次写，就是为了不撞单次输出上限。
   替换缺 `new_string` 不当成「换成空」、新旧一样不说「已修改」、`old_string` 和 `content` 不能一起给（第八十六轮：仓库评测里模型把替换后的字放进 `content`，原来一声不响删了代码；网页 code agent 的 `TextEdit` 同一套，用例在 `conformance/text-edit.json`）。
