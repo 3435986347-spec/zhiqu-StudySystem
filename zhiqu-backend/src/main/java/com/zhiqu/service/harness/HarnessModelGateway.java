@@ -106,10 +106,14 @@ public class HarnessModelGateway {
     private final ObjectMapper json;
     private final String anthropicVersion;
     private final RestTemplate restTemplate;
+    /** 命令行干活的请求用的采样温度（app.ai.harness-temperature，默认 0）；null = 跟 app.ai.temperature 一样 */
+    private final Double harnessTemperature;
 
     public HarnessModelGateway(AiService aiService, ModelProviderClient provider, ModelStreamAdapterFactory adapters,
                                HarnessUsageMapper usageMapper, ObjectMapper json,
-                               @Value("${app.ai.anthropic-version:2023-06-01}") String anthropicVersion) {
+                               @Value("${app.ai.anthropic-version:2023-06-01}") String anthropicVersion,
+                               @Value("${app.ai.harness-temperature:0}") String harnessTemperature) {
+        this.harnessTemperature = parseTemperature(harnessTemperature);
         this.aiService = aiService;
         this.provider = provider;
         this.adapters = adapters;
@@ -173,6 +177,20 @@ public class HarnessModelGateway {
     }
 
     /** 输出上限：客户端要多少给多少，但不超过硬上限、也不超过窗口的一半（要给输入留地方）。 */
+    static Double parseTemperature(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return Double.parseDouble(value.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** 供应商不认 temperature（OpenAI 的推理模型、新一代 Claude 会回 400，里面提到 temperature）：去掉它重试一次 */
+    static boolean rejectsTemperature(int status, String body) {
+        return (status == 400 || status == 422) && body != null && body.toLowerCase(Locale.ROOT).contains("temperature");
+    }
+
     static int maxTokens(Object requested, int window) {
         int want = requested instanceof Number n ? n.intValue() : DEFAULT_MAX_TOKENS;
         want = Math.max(256, Math.min(want, MAX_MAX_TOKENS));
@@ -211,14 +229,24 @@ public class HarnessModelGateway {
         ToolStreamAccumulator acc = new ToolStreamAccumulator(new Forwarder(sink));
         int usedMaxTokens = maxTokens;
         RuntimeException last = null;
-        for (int limit : OutputLimits.fallbackLimits(maxTokens)) {
+        // 第八十九轮：写代码要稳 —— 不设温度时 DeepSeek 默认 1.0，同一题每次走不同的路
+        Double temperature = harnessTemperature != null ? harnessTemperature : provider.configuredTemperature();
+        List<Integer> limits = OutputLimits.fallbackLimits(maxTokens);
+        for (int i = 0; i < limits.size(); i++) {
+            int limit = limits.get(i);
             try {
                 usedMaxTokens = limit;
-                call(config, type, trimmed.messages(), tools, limit, acc);
+                call(config, type, trimmed.messages(), tools, limit, temperature, acc);
                 last = null;
                 break;
             } catch (RestClientResponseException e) {
                 String detail = provider.extractAiErrorDetail(e.getResponseBodyAsString());
+                if (temperature != null && rejectsTemperature(e.getStatusCode().value(), e.getResponseBodyAsString()) && acc.outputChars() == 0) {
+                    log.info("模型不认 temperature，去掉它重试：{}", detail);
+                    temperature = null;
+                    i--;
+                    continue;
+                }
                 if (OutputLimits.rejectsMaxTokens(e.getStatusCode().value(), e.getResponseBodyAsString()) && acc.outputChars() == 0) {
                     log.info("模型拒绝了输出上限 {}，降一档重试：{}", limit, detail);
                     last = new BusinessException("模型拒绝了输出上限：" + detail);
@@ -266,13 +294,13 @@ public class HarnessModelGateway {
     }
 
     private void call(AiModelConfig config, String type, List<Map<String, Object>> messages,
-                      List<Map<String, Object>> tools, int maxTokens, ToolStreamAccumulator acc) {
+                      List<Map<String, Object>> tools, int maxTokens, Double temperature, ToolStreamAccumulator acc) {
         // URL 格式校验：API URL 是用户自己填的。与其它出站请求一样，校验放在真正发请求的这一层
         provider.validateProviderRequestUrl(config.getApiUrl());
         if ("ANTHROPIC".equals(type)) {
-            streamAnthropic(config, messages, tools, maxTokens, acc);
+            streamAnthropic(config, messages, tools, maxTokens, temperature, acc);
         } else if ("OPENAI_COMPATIBLE".equals(type) || "VLLM_OPENAI_COMPATIBLE".equals(type) || "OLLAMA".equals(type)) {
-            streamOpenAi(config, messages, tools, maxTokens, acc);
+            streamOpenAi(config, messages, tools, maxTokens, temperature, acc);
         } else {
             // 其余协议（Gemini、Responses…）只走纯文本：上面已经保证了这里 tools 为空
             adapters.getAdapter(type).stream(
@@ -284,7 +312,7 @@ public class HarnessModelGateway {
     }
 
     private void streamOpenAi(AiModelConfig config, List<Map<String, Object>> messages,
-                              List<Map<String, Object>> tools, int maxTokens, ToolStreamAccumulator acc) {
+                              List<Map<String, Object>> tools, int maxTokens, Double temperature, ToolStreamAccumulator acc) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
         body.put("messages", messages);
@@ -294,7 +322,7 @@ public class HarnessModelGateway {
             body.put("tools", tools);
             body.put("tool_choice", "auto");
         }
-        provider.applyTemperature(body);
+        if (temperature != null) body.put("temperature", temperature);
         AiStreamAdapterSupport.applyOpenAiReasoningOptions(config, body, "OFF");
         String apiKey = provider.decryptedApiKey(config);
         restTemplate.execute(provider.resolveChatCompletionsUrl(config.getApiUrl()), HttpMethod.POST, request -> {
@@ -310,7 +338,7 @@ public class HarnessModelGateway {
     }
 
     private void streamAnthropic(AiModelConfig config, List<Map<String, Object>> messages,
-                                 List<Map<String, Object>> tools, int maxTokens, ToolStreamAccumulator acc) {
+                                 List<Map<String, Object>> tools, int maxTokens, Double temperature, ToolStreamAccumulator acc) {
         AnthropicFormat.Request converted = AnthropicFormat.fromOpenAi(messages, json);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
@@ -324,7 +352,7 @@ public class HarnessModelGateway {
             body.put("tool_choice", Map.of("type", "auto"));
         }
         body.put("stream", true);
-        provider.applyTemperature(body);
+        if (temperature != null) body.put("temperature", temperature);
         restTemplate.execute(provider.resolveAnthropicMessagesUrl(config.getApiUrl()), HttpMethod.POST, request -> {
             request.getHeaders().putAll(provider.anthropicHeaders(config));
             json.writeValue(request.getBody(), body);

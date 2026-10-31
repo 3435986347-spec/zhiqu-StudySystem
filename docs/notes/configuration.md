@@ -13,6 +13,11 @@
 - JWT — `jwt.secret`, `jwt.expiration`
 - Uploads — `app.upload-dir`
 - Desktop installers — `app.desktop-downloads-dir` (default `downloads`, relative to the working directory; round 82). The web "下载桌面版" dialog offers the newest `.dmg` (macOS) and `.exe/.msi/.zip` (Windows) found there; not in git, not in the JAR. `package-macos-native.sh` copies the dmg in when `ZHIQU_DOWNLOADS_DIR` is set.
+- Sampling temperature — `app.ai.temperature` (default empty = not sent; newer Claude models reject the parameter) and
+  `app.ai.harness-temperature` (default `0`, round 89): the command-line coding loop (`/api/harness/model/stream`) sends its own
+  temperature. Left unset, DeepSeek samples at its default 1.0 and the same task took different paths run to run (three of ten
+  SWE-bench tasks flipped across three reruns); DeepSeek's docs recommend 0 for code. A provider 400 that mentions `temperature`
+  makes `HarnessModelGateway` drop it and retry once (before any output). Empty = fall back to `app.ai.temperature`.
 - Timezone — `app.timezone` (default `Asia/Shanghai`). **"Which calendar day is it" is decided in
   exactly one place**, `BusinessClock.today()`. Before 2026-09-21 there were two: the AI prompts
   used `LocalDate.now(ZoneId.of("Asia/Shanghai"))` ("今天是 %s，时区是 Asia/Shanghai", and the

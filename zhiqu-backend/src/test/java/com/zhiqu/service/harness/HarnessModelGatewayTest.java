@@ -84,13 +84,14 @@ class HarnessModelGatewayTest {
     }
 
     private final AiService aiService = mock(AiService.class);
+    private String harnessTemperature = "0";
     private final HarnessUsageMapper usageMapper = mock(HarnessUsageMapper.class);
 
     private HarnessModelGateway gateway() {
         SensitiveCryptoService crypto = mock(SensitiveCryptoService.class);
         when(crypto.decrypt(any())).thenReturn("sk-test");
         ModelProviderClient provider = new ModelProviderClient(JSON, crypto, "2023-06-01", "");
-        return new HarnessModelGateway(aiService, provider, new ModelStreamAdapterFactory(List.of()), usageMapper, JSON, "2023-06-01");
+        return new HarnessModelGateway(aiService, provider, new ModelStreamAdapterFactory(List.of()), usageMapper, JSON, "2023-06-01", harnessTemperature);
     }
 
     private AiModelConfig model(String type, String url, Integer window) {
@@ -159,6 +160,7 @@ class HarnessModelGatewayTest {
 
         JsonNode sent = requests.get(0);
         assertEquals(16384, sent.path("max_tokens").asInt());
+        assertTrue(sent.has("temperature") && sent.path("temperature").asDouble() == 0.0, "命令行干活的请求默认温度 0（第八十九轮）：" + sent.path("temperature"));
         assertTrue(sent.path("stream").asBoolean());
         assertEquals("write_file", sent.path("tools").path(0).path("function").path("name").asText());
         assertEquals("Bearer sk-test", headers.get(0).get("authorization"), "API Key 由服务器带上");
@@ -181,6 +183,32 @@ class HarnessModelGatewayTest {
         assertEquals(List.of(16384, 8192), requests.stream().map(r -> r.path("max_tokens").asInt()).toList());
         assertEquals(8192, last.get("done").get("maxTokens"));
         assertFalse(events.contains("error"));
+    }
+
+    @Test
+    @DisplayName("第八十九轮：供应商不认 temperature（400 里提到它）—— 去掉它原样重试一次，这次成功就不报错；输出上限不变")
+    void 温度不认就去掉() throws Exception {
+        String url = fakeModel(b -> b.has("temperature")
+                ? new Object[]{400, "{\"error\":{\"message\":\"Unsupported value: 'temperature' does not support 0 with this model.\"}}"}
+                : new Object[]{200, sse("{\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":\"stop\"}]}")});
+        model("OPENAI_COMPATIBLE", url, null);
+        gateway().stream(1L, body(ASK), sink());
+        assertEquals(2, requests.size(), "只重试一次");
+        assertTrue(requests.get(0).has("temperature"));
+        assertFalse(requests.get(1).has("temperature"), "重试时去掉 temperature");
+        assertEquals(List.of(16384, 16384), requests.stream().map(r -> r.path("max_tokens").asInt()).toList(), "温度的事不降输出上限");
+        assertFalse(events.contains("error"));
+    }
+
+    @Test
+    @DisplayName("第八十九轮：harness-temperature 留空就跟 app.ai.temperature（默认空 = 不发）；提到 temperature 的 400 在没发温度时不重试")
+    void 温度留空不发() throws Exception {
+        harnessTemperature = "";
+        String url = fakeModel(b -> new Object[]{400, "{\"error\":{\"message\":\"temperature is deprecated for this model\"}}"});
+        model("OPENAI_COMPATIBLE", url, null);
+        assertThrows(HarnessModelGateway.ModelCallException.class, () -> gateway().stream(1L, body(ASK), sink()));
+        assertEquals(1, requests.size());
+        assertFalse(requests.get(0).has("temperature"));
     }
 
     @Test
@@ -234,6 +262,7 @@ class HarnessModelGatewayTest {
         assertEquals("write_file", sent.path("tools").path(0).path("name").asText());
         assertTrue(sent.path("tools").path(0).has("input_schema"));
         assertEquals("sk-test", headers.get(0).get("x-api-key"));
+        assertEquals(0.0, sent.path("temperature").asDouble(-1), "Anthropic 那条也带温度 0（不认时同样去掉重试）");
         Map<String, Object> msg = (Map<String, Object>) last.get("done").get("message");
         assertEquals("t1", ((List<Map<String, Object>>) msg.get("tool_calls")).get(0).get("id"));
         assertEquals("tool_calls", last.get("done").get("finishReason"));

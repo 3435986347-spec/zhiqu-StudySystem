@@ -76,6 +76,8 @@ app:
     # 采样温度。留空 = 不发送 temperature 参数。
     # 新一代模型（Claude opus-4 / fable 等）已废弃该参数，发送会报 400；老模型可填 0.3 之类。
     temperature: ""
+    # 命令行（/api/harness）干活的请求用的采样温度：写代码要稳，DeepSeek 建议 0；模型不认时网关去掉它重试一次。留空 = 跟上面的 temperature 一样。
+    harness-temperature: "0"
     # 系统级默认模型：开启后所有用户可直接使用，API Key 会被加密存库。
     # 不需要就保持 false，让用户各自在「设置 → AI 模型」里配置自己的模型。
     system-default-enabled: false

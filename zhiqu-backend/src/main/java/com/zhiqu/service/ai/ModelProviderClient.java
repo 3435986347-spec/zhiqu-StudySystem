@@ -160,6 +160,18 @@ public class ModelProviderClient {
      * 留空 = 不发送——新一代模型（如 Claude fable / opus-4 系列）已废弃该参数，
      * 发送会报 400 "temperature is deprecated for this model"。
      */
+    /** app.ai.temperature 配的数；留空或不是数字是 null（不发送） */
+    public Double configuredTemperature() {
+        if (!hasText(aiTemperature)) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(aiTemperature.trim());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
     public void applyTemperature(Map<String, Object> body) {
         if (!hasText(aiTemperature)) {
             return;
