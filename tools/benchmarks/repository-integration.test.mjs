@@ -45,11 +45,10 @@ test('real worker Api/SSE passes through budget broker to edit and execute only 
     assert.match(fs.readFileSync(path.join(workspace, 'base_repo/math.cjs'), 'utf8'), /reduce/);
     const summary = broker.snapshot();
     assert.equal(summary.acceptedRequests, calls);
-    // 6 次：4 个动作 + 交活 + 第八十九轮的交活核对（改过文件、要交活时推一次）
-    assert.equal(calls, 6);
-    assert.equal(summary.inputUsedOrReserved, 60);
-    assert.equal(summary.outputUsedOrReserved, 30);
-    assert.equal(summary.chargedOrReservedMicroCny, 1350);
+    assert.equal(calls, 5, '4 个动作 + 交活');
+    assert.equal(summary.inputUsedOrReserved, 50);
+    assert.equal(summary.outputUsedOrReserved, 25);
+    assert.equal(summary.chargedOrReservedMicroCny, 1125);
     assert.equal(summary.halted, false);
     const ledger = fs.readFileSync(path.join(folder, 'private/ledger.jsonl'), 'utf8');
     assert.equal(ledger.includes(capability), false);

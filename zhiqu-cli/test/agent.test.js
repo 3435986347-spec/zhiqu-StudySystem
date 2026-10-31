@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { VERIFY_NUDGE, archiveTurn, runTurn, toolset } from '../src/agent.js';
+import { archiveTurn, runTurn, toolset } from '../src/agent.js';
 import { SessionStore } from '../src/session.js';
 import { LocalTools } from '../src/tools/local.js';
 import { fakeApi, fakeUi, tmpdir, write } from './helpers.js';
@@ -120,9 +120,7 @@ test('截断：参数不完整的调用不执行，历史里换成小而合法�
   const asst = ctx.messages.find((m) => m.role === 'assistant' && m.tool_calls);
   assert.equal(asst.tool_calls[0].function.arguments, '{"_truncated":true,"path":"big.js"}');
   assert.match(toolMessages(ctx)[0], /参数被截断了.*没有执行.*append=true/s);
-  // 第 4 次是第八十九轮的收尾核对：写过文件、要交活时推一次（替身对第 4 次回的还是最后那句）
-  assert.equal(ctx.api.requests.length, 4, '截断之后要接着问模型，而不是结束；交活前再核对一次');
-  assert.equal(ctx.api.requests[3].messages.at(-1).content, VERIFY_NUDGE);
+  assert.equal(ctx.api.requests.length, 3, '截断之后要接着问模型，而不是结束');
   assert.equal(fs.readFileSync(path.join(ctx.root, 'big.js'), 'utf8'), '第一段\n');
   assert.equal(r.finalText, '分两次写完了');
   assert.match(ctx.ui.text(), /被截断了/);
@@ -260,35 +258,13 @@ test('ask 档里「本会话都允许写」不等于允许删', async () => {
   assert.match(ctx.ui.text(), /删除 a\.js（/);
 });
 
-// 第八十九轮：评测三次重跑里三题时对时错，答错的都是「自己写的测试过了就交活，没覆盖问题里说的那个情况」
-test('收尾核对：这一轮改过文件、要交活时推一次（只推一次）；没改文件、在问用户问题时不推', async () => {
+// 第八十九轮加过「改过文件要交活时推一次核对」；第九十轮用尺子量没量出好处、每题多花一半到一倍的 token，第九十一轮去掉
+test('改过文件交活：不再多推一次核对（第九十一轮去掉）', async () => {
   const ctx = makeCtx({ replies: [
     { calls: [{ name: 'write_file', args: { path: 'a.js', content: 'x\n' } }] },
-    { text: '改好了' },
-    { text: '核对过了：空的、重复的都试了，改好了' }] });
-  const r = await runTurn(ctx, '改一下');
-  assert.equal(ctx.api.requests.length, 3);
-  assert.equal(ctx.api.requests[2].messages.at(-1).content, VERIFY_NUDGE);
-  assert.match(VERIFY_NUDGE, /例子、每种情况 —— 包括边界：空的、重复的、顺序、类型不对的、出错的/);
-  assert.match(VERIFY_NUDGE, /git diff/);
-  assert.equal(r.finalText, '核对过了：空的、重复的都试了，改好了');
-
-  const again = makeCtx({ replies: [
-    { calls: [{ name: 'write_file', args: { path: 'a.js', content: 'x\n' } }] },
     { text: '改好了' }] });
-  await runTurn(again, '改一下');
-  assert.equal(again.api.requests.length, 3, '核对之后模型直接交活：不再推第二次');
-
-  const readOnly = makeCtx({ replies: [{ calls: [{ name: 'list_files', args: {} }] }, { text: '看完了' }] });
-  await runTurn(readOnly, '看看');
-  assert.equal(readOnly.api.requests.length, 2, '没改文件不推');
-
-  const asking = makeCtx({ replies: [{ calls: [{ name: 'write_file', args: { path: 'a.js', content: 'x\n' } }] }, { text: '要不要顺便改 b.js？' }] });
-  await runTurn(asking, '改一下');
-  assert.equal(asking.api.requests.length, 2, '在问用户问题时不推');
-
-  const next = makeCtx({ replies: [{ text: '好' }] });
-  next.turnWrites = 3;   // 上一轮对话写过的不算这一轮
-  await runTurn(next, '问个问题');
-  assert.equal(next.api.requests.length, 1, '上一轮对话改过的文件不算');
+  const r = await runTurn(ctx, '改一下');
+  assert.equal(ctx.api.requests.length, 2);
+  assert.ok(!ctx.messages.some((m) => m.role === 'user' && /交活之前核对/.test(m.content || '')));
+  assert.equal(r.finalText, '改好了');
 });

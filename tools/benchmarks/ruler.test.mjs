@@ -9,8 +9,8 @@ import { listTasks, prepareWorkspace, runHidden, runVisible } from './ruler/rule
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const tasks = listTasks();
 
-test('尺子有 10 道题，每题都有问题描述、公开 / 隐藏测试的跑法', () => {
-  assert.equal(tasks.length, 10, tasks.map((t) => t.name).join(','));
+test('尺子有 14 道题，每题都有问题描述、公开 / 隐藏测试的跑法', () => {
+  assert.equal(tasks.length, 14, tasks.map((t) => t.name).join(','));
   for (const t of tasks) {
     assert.ok(t.issue.length > 40, `${t.name} 的问题描述太短`);
     assert.ok(Array.isArray(t.run) && Array.isArray(t.visible), t.name);

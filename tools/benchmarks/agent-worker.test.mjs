@@ -57,11 +57,10 @@ test('real file-tool loop appends implementation, retains prompt bytes and recor
   assert.equal(result.generation_status, 'completed');
   assert.equal(result.completion, '    return x * 2\n');
   assert.equal(fs.readFileSync(path.join(fixtureData.workspace, 'solution.py'), 'utf8'), task.prompt + result.completion);
-  // 第 4 次是第八十九轮的交活核对（改过文件、要交活时推一次；替身对它回的还是最后那句）
-  assert.equal(result.rounds, 4);
-  assert.equal(result.model_requests, 4);
+  assert.equal(result.rounds, 3);
+  assert.equal(result.model_requests, 3);
   assert.equal(result.tool_calls, 2);
-  assert.deepEqual(result.usage, { prompt_tokens: 40, completion_tokens: 20, estimated: false, missing_usage: 0 });
+  assert.deepEqual(result.usage, { prompt_tokens: 30, completion_tokens: 15, estimated: false, missing_usage: 0 });
   assert.ok(fs.existsSync(path.join(fixtureData.workspace, result.session)));
   const offered = fixtureData.requests[0].tools.map((tool) => tool.function.name);
   assert.equal(offered.includes('write_file'), true);
@@ -156,7 +155,7 @@ test('transport pacing separates actual model starts, including fast tool rounds
   data.api.stream = (...args) => { starts.push(performance.now()); return stream(...args); };
   const result = await runTask(data.payload, { api: data.api });
   assert.equal(result.generation_status, 'completed');
-  assert.equal(starts.length, 4, '三轮 + 交活核对那一次（第八十九轮）');
+  assert.equal(starts.length, 3);
   for (let index = 1; index < starts.length; index++) {
     assert.ok(starts[index] - starts[index - 1] >= 78,
       `Actual model starts were only ${starts[index] - starts[index - 1]}ms apart`);

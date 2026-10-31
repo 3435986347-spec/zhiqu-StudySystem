@@ -491,20 +491,15 @@ const streakReminder = (n) => `你已经连续查看了 ${n} 次还没动手。�
 // 和上面两条一样，只在工具结果后面附一句，不拦。
 export const WRAP_UP_ROUNDS = 3;
 const windowReminder = (p, offset) => `你在接着上一次往下读 ${p}（第 ${offset} 行起）。直接读大一点：limit 省掉就是一次最多 2000 行，把要看的那一段一次读完；互相不依赖的读、搜放在同一次回复里一起发。`;
-// 第八十九轮（评测三次重跑里三题时对时错，答错的都是「自己写的测试过了就交活，没覆盖问题里说的那个情况」：
-// django-12308 没试带元组键的 JSON 值、pytest-10356 多个基类的 mark 顺序排反、sympy-23950 待修的那条没过）：
-// 这一轮改过文件、要交活时，推一次核对。只推一次；没改文件的（问答、只读、plan 档本来就写不了）、在问用户问题时不推。
-export const VERIFY_NUDGE = '（交活之前核对一遍）对照用户的原话：① 里面提到的每个例子、每种情况 —— 包括边界：空的、重复的、顺序、类型不对的、出错的 —— '
-  + '都验证过了吗？没验证的补一个测试或检查跑一下；② 看一眼这次的改动（git diff，或者重读改过的地方）：有没有多改、漏改、把原来的行为改坏（相关的已有测试跑过吗）？'
-  + '③ 都对上了就直接给结论，不用复述核对的过程；发现问题就接着改。';
+// 第八十九轮加过「改过文件要交活时推一次核对」，第九十轮用尺子量：正确率没有差别（核对推了 35 次没救回一题）、每题多花一半到一倍的 token，
+// 第九十一轮用户定了去掉。
 /**
- * 不调工具的那条回复之后还要不要推一句：清单没做完（todo）、这一轮改过文件要核对（verify）。在问用户问题、最后一轮不推。
- * 要推的话那条先不当结论打出来 —— 原来安静模式下先打一遍「修好了」，核对完再打一遍（第八十九轮真模型试出来的）。
+ * 不调工具的那条回复之后还要不要推一句（清单没做完）。在问用户问题、最后一轮不推。
+ * 要推的话那条先不当结论打出来 —— 原来安静模式下先打一遍结论、推完再打一遍（第八十九轮真模型试出来的）。
  */
-function pendingNudge(ctx, text, { nudged, verified, lastRound }) {
+function pendingNudge(ctx, text, { nudged, lastRound }) {
   if (lastRound || /[？?]\s*$/.test((text || '').trim())) return null;
   if (!nudged && ctx.mode !== 'plan' && unfinished(ctx.todos).length) return 'todo';
-  if (!verified && ctx.turnWrites > 0) return 'verify';
   return null;
 }
 /**
@@ -602,7 +597,6 @@ async function executeTool(ctx, call, offered, signal) {
       if (r.error) { ui.result(r.error, false); return r.error; }
       succeeded(ctx, spinKey);
       ctx.changedFiles.add(prep.rel);
-      ctx.turnWrites = (ctx.turnWrites || 0) + 1;
       ui.result(ui.paint.green(`✓ ${r.content.split('（')[0]}  +${r.added} -${r.removed}`));
       if (r.syntax) ui.result(`语法错误：${r.syntax.split('\n')[0]}`, false);
       return r.content;
@@ -617,7 +611,6 @@ async function executeTool(ctx, call, offered, signal) {
       const r = local.commitDelete(prep);
       if (r.error) { ui.result(r.error, false); return r.error; }
       ctx.changedFiles.add(`${prep.rel}（已删除）`);
-      ctx.turnWrites = (ctx.turnWrites || 0) + 1;
       ui.result(ui.paint.green(`✓ 已删除 ${prep.rel}`) + ui.paint.dim(`  → ${r.trashed}`));
       return r.content;
     }
@@ -772,8 +765,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   let nudged = false;
   ctx.turnStats = { read: 0, search: 0, list: 0 };
   ctx.readStreak = 0;
-  ctx.readWindows = new Map(); ctx.readHinted = new Set(); ctx.turnWrites = 0;
-  let verified = false;
+  ctx.readWindows = new Map(); ctx.readHinted = new Set();
   if (quiet(ctx)) ctx.ui.startThinking();
   try {
   const maxRounds = ctx.maxRounds || 60;
@@ -790,7 +782,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
 
     // 安静模式下文字是收完才打的：不调工具的那条就是结论（被截断的结论也是结论的一段），调工具的那条是过程，不打
     const nudge = calls.length || res.finishReason === 'length' ? null
-      : pendingNudge(ctx, message.content, { nudged, verified, lastRound: round === maxRounds - 1 });
+      : pendingNudge(ctx, message.content, { nudged, lastRound: round === maxRounds - 1 });
     if (quiet(ctx) && !calls.length && !nudge && (message.content || '').trim()) showAnswer(ctx, message.content);
     if (res.finishReason === 'length') {
       // 被截断不是「说完了」：截断的工具调用不执行，告诉模型为什么、该怎么改
@@ -819,15 +811,10 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     record(ctx, message);
     if (!calls.length) {
       finalText = message.content || '';
-      // 清单没做完就收尾、改过文件要交活：各推一次（pendingNudge）
+      // 清单没做完就收尾：推一次（pendingNudge）
       if (nudge === 'todo') {
         nudged = true;
         record(ctx, { role: 'user', content: todoNudge(ctx.todos) }, 'system');
-        continue;
-      }
-      if (nudge === 'verify') {
-        verified = true;
-        record(ctx, { role: 'user', content: VERIFY_NUDGE }, 'system');
         continue;
       }
       break;

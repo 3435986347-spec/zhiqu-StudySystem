@@ -259,25 +259,21 @@ test('系统提示里说清：互相不依赖的读 / 搜一次发几个，读�
   const { BUILTIN_SYSTEM_PROMPT } = await import('../src/prompt.js');
   assert.match(BUILTIN_SYSTEM_PROMPT, /互相不依赖的读、搜、列目录放在同一次回复里一起发/);
   assert.match(BUILTIN_SYSTEM_PROMPT, /读文件读成段：不知道要哪几行就整份读/);
-  assert.match(BUILTIN_SYSTEM_PROMPT, /里面的例子、边界情况（空的、重复的、顺序、出错的）都验证过了吗/, '第八十九轮：收尾检查带上例子和边界');
+  assert.match(BUILTIN_SYSTEM_PROMPT, /里面的例子、边界情况（空的、重复的、顺序、出错的）都验证过了吗/, '第八十九轮：收尾检查带上例子和边界（这一句不花钱，第九十一轮去掉核对时留着）');
 });
 
-// 第八十九轮（真模型试出来的）：收尾核对推了以后，「修好了」那条结论原来先打一遍、核对完又打一遍
-test('要推收尾核对的那条回复先不当结论打出来，只打核对完的那条；落在最后一轮时不推、照常打出来', async () => {
+// 第八十九轮（真模型试出来的）：推了一句以后，前面那条结论原来先打一遍、推完又打一遍。核对第九十一轮去掉了，清单没做完那一句还是这样
+test('要推「清单没做完」的那条回复先不当结论打出来，只打推完以后那条；落在最后一轮时不推、照常打出来', async () => {
   const root = tmpdir();
-  const ctx = makeCtx({ root, replies: [
-    { calls: [{ name: 'write_file', args: { path: 'a.js', content: 'x\n' } }] },
-    { text: '先说的结论：改好了' },
-    { text: '核对后的结论：改好了，空的也试了' }] });
+  const todo = { calls: [{ name: 'update_todos', args: { todos: [{ content: '改 a.js', status: 'in_progress' }, { content: '跑测试', status: 'pending' }] } }] };
+  const ctx = makeCtx({ root, replies: [todo, { text: '先说的结论：改好了' }, { text: '清单做完了的结论' }] });
   const r = await runTurn(ctx, '改一下');
   const out = ctx.ui.text();
-  assert.ok(out.includes('核对后的结论'), out);
-  assert.ok(!out.includes('先说的结论'), `推核对之前那条被当成结论打出来了：\n${out}`);
-  assert.equal(r.finalText, '核对后的结论：改好了，空的也试了');
+  assert.ok(out.includes('清单做完了的结论'), out);
+  assert.ok(!out.includes('先说的结论'), `推之前那条被当成结论打出来了：\n${out}`);
+  assert.equal(r.finalText, '清单做完了的结论');
 
-  const last = makeCtx({ root, replies: [
-    { calls: [{ name: 'write_file', args: { path: 'b.js', content: 'y\n' } }] },
-    { text: '最后一轮的结论' }] });
+  const last = makeCtx({ root, replies: [todo, { text: '最后一轮的结论' }] });
   last.maxRounds = 2;
   await runTurn(last, '改一下');
   assert.equal(last.api.requests.length, 2, '最后一轮不推（推了也没轮数再答）');

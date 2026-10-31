@@ -1,0 +1,1 @@
+{"run": ["node", "hidden.test.mjs"], "visible": ["node", "app.test.mjs"]}
