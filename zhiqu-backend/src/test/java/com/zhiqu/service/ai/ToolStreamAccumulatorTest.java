@@ -93,6 +93,37 @@ class ToolStreamAccumulatorTest {
         assertEquals("tool_calls", acc.finishReason());
         assertEquals(88, acc.promptTokens());
         assertEquals(42, acc.completionTokens());
+        assertEquals(null, acc.cachedTokens(), "没报缓存就是 null，不是 0");
         assertTrue(log.events.contains("start:0:write_file") && log.events.contains("start:1:list_files"), log.events.toString());
+    }
+
+    /**
+     * 缓存命中数（第九十三轮）：按命中价记账要用它。三家各报各的字段；Anthropic 的 input_tokens 不含缓存读写，
+     * 原来只认它 —— 有缓存时把输入算少了（命中 1000 的请求记成 88）。
+     */
+    @Test
+    @DisplayName("缓存命中数：DeepSeek 的 prompt_cache_hit_tokens、OpenAI 的 cached_tokens、Anthropic 的 cache_read_input_tokens（输入总数含缓存读写）；不报是 null")
+    void 缓存命中数() throws Exception {
+        ToolStreamAccumulator deepseek = new ToolStreamAccumulator(new Log());
+        feedOpenAi(deepseek, "{\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":\"stop\"}],"
+                + "\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":5,\"prompt_cache_hit_tokens\":1024,\"prompt_cache_miss_tokens\":176}}");
+        // 只带 DeepSeek 自己那两个字段（文档说现在也给 prompt_tokens_details.cached_tokens、数一样；两个都给时这个样本照不出哪个分支在干活）
+        assertEquals(1200, deepseek.promptTokens());
+        assertEquals(1024, deepseek.cachedTokens());
+
+        ToolStreamAccumulator openai = new ToolStreamAccumulator(new Log());
+        feedOpenAi(openai, "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],"
+                + "\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":512}}}");
+        assertEquals(512, openai.cachedTokens());
+
+        ToolStreamAccumulator plain = new ToolStreamAccumulator(new Log());
+        feedOpenAi(plain, "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":1}}");
+        assertEquals(null, plain.cachedTokens(), "不报缓存的供应商：null，不是 0");
+
+        ToolStreamAccumulator anthropic = new ToolStreamAccumulator(new Log());
+        anthropic.onAnthropicEvent(JSON.readTree("{\"type\":\"message_start\",\"message\":{\"usage\":"
+                + "{\"input_tokens\":88,\"cache_read_input_tokens\":1000,\"cache_creation_input_tokens\":200}}}"));
+        assertEquals(1288, anthropic.promptTokens(), "Anthropic 的全部输入 = input_tokens + 缓存读 + 缓存写");
+        assertEquals(1000, anthropic.cachedTokens());
     }
 }

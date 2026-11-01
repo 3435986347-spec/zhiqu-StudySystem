@@ -115,6 +115,7 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
   流式里工具名一到就发 `tool_call`、参数每长 2KB 发一次 `tool_progress`：模型写大文件时不是一段沉默。
   供应商嫌 `max_tokens` 大（400）就按 8192 → 4096 重试；按模型窗口最后兜底裁剪（按「一轮」丢，工具调用与结果永远成对）；
   HTTP(S) URL 格式校验在发请求那一层，模型地址允许本机和内网；用量记进 `harness_usage`，供应商不报就估算并标 `estimated`。
+  缓存命中数（第九十三轮，V46 的 `cached_tokens`）：DeepSeek 的 `prompt_cache_hit_tokens`、OpenAI 的 `prompt_tokens_details.cached_tokens`、Anthropic 的 `cache_read_input_tokens`（Anthropic 的输入总数另加上缓存读写）；供应商不报是 NULL、`done` 里不给 `cachedTokens` —— 「没报」不是「没命中」。命令行 `/usage` 说「输入 X（缓存命中 Y，Z%）」。真模型上一轮对话里命中约九成。
 - **远程工具**（Wiki / 计划 / 记忆）写类一律是草稿：计划、记忆挂在这段会话自己的那一轮 `ai_agent_run` 上，
   网页打开这段会话的 Notebook 就能确认。Wiki 的「这一轮读过什么」按「用户 + 会话」存在进程里（服务重启丢失 =
   要求重读，是安全的方向）。

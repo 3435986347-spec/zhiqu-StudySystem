@@ -59,7 +59,7 @@ export async function runEpisode(task, { cliDir, server, token, modelId, maxRoun
   const ui = new Ui({ input: new PassThrough(), output: new Writable({ write(c, e, cb) { out += c; cb(); } }), interactive: false, color: false });
   const store = new SessionStore(ws);
   const ctx = { api, ui, root: ws, mode: 'auto', maxRounds, local: new LocalTools({ root: ws }), store, session: store.create({ model: model.label }),
-    messages: [], allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() }, usage: { prompt: 0, completion: 0 },
+    messages: [], allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() }, usage: { prompt: 0, completion: 0, cached: 0 },
     changedFiles: new Set(), todos: [], system: { text: BUILTIN_SYSTEM_PROMPT }, instructionsText: '', skillsText: '', skills: [], remoteTools: [],
     verbose: false, archiveDisabled: true, model };
   const controller = new AbortController();

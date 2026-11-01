@@ -147,6 +147,8 @@ python3 tools/benchmarks/select-sweverified.py \
 
 账本在 `<eval-dir>/ledger/`：broker 停过的账不再受理，下一次开新的一本，额度是 ¥50 减去之前每一本花掉 / 留着的（`pilotLedger`）；已经起过 episode 的题不重跑。
 
+记账的价（第九十三轮）：预留照旧全按未命中价（DeepSeek v4-pro 高峰时段：输入 ¥9 / 百万、输出 ¥27 / 百万）；结算时网关报了缓存命中数，命中的那部分按 ¥0.30 / 百万（每 10 个 token 3 微元，每次请求向上取整；整本的合计 = 各次结算之和 + 还没结的预留）。新账本的 init 里记着这三个价；第九十三轮之前开的账本没有命中价，回放照旧、之后的结算也照旧全按未命中价。报告里 `charged_or_reserved_micro_cny` 是按命中价的，`miss_price_micro_cny` 是全按未命中价的老口径，`cached_input_tokens` 是命中的 token 数。
+
 ```bash
 node tools/benchmarks/repository-docker.mjs runtime --eval-dir /Users/me/zhiqu-repo-eval
 node tools/benchmarks/repository-docker.mjs images  --eval-dir /Users/me/zhiqu-repo-eval

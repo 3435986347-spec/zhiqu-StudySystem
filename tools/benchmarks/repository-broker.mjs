@@ -14,6 +14,11 @@ export const MODEL_PATH = '/api/harness/model/stream';
 export const OUTPUT_RESERVATION_TOKENS = 16_384;
 export const INPUT_MICRO_CNY_PER_TOKEN = 9;
 export const OUTPUT_MICRO_CNY_PER_TOKEN = 27;
+// Cache-hit input (DeepSeek v4-pro peak price, CNY 0.30 per million, checked 2026-11-02): 3 micro-CNY per 10 tokens,
+// rounded up per request. Reservations stay at the miss price; only verified settlements use it.
+export const CACHED_INPUT_MICRO_CNY_PER_TEN_TOKENS = 3;
+const PRICES = Object.freeze({ inputMicroCnyPerToken: INPUT_MICRO_CNY_PER_TOKEN, outputMicroCnyPerToken: OUTPUT_MICRO_CNY_PER_TOKEN,
+  cachedInputMicroCnyPerTenTokens: CACHED_INPUT_MICRO_CNY_PER_TEN_TOKENS });
 const EVENTS = new Set(['start', 'delta', 'reasoning', 'tool_call', 'tool_progress', 'done']);
 const DEFAULTS = Object.freeze({ limitMicroCny: 50_000_000, inputTokenLimit: 4_000_000, outputTokenLimit: 500_000,
   perEpisodeInputTokenLimit: 2_000_000, perEpisodeOutputTokenLimit: 131_072, maxRequestsPerEpisode: 200,
@@ -36,8 +41,10 @@ const nonnegative = (value, name) => {
 const isHash = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const isId = (value) => typeof value === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(value);
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
-const charge = (input, output) => {
-  const value = input * INPUT_MICRO_CNY_PER_TOKEN + output * OUTPUT_MICRO_CNY_PER_TOKEN;
+const hitCharge = (cached) => Math.ceil((cached * CACHED_INPUT_MICRO_CNY_PER_TEN_TOKENS) / 10);
+const charge = (input, output, cached = 0) => {
+  if (!Number.isSafeInteger(cached) || cached < 0 || cached > input) fail('invalid_cached_usage', 502);
+  const value = (input - cached) * INPUT_MICRO_CNY_PER_TOKEN + hitCharge(cached) + output * OUTPUT_MICRO_CNY_PER_TOKEN;
   if (!Number.isSafeInteger(value)) fail('usage_integer_overflow', 502);
   return value;
 };
@@ -131,6 +138,9 @@ export class RepositoryBroker {
     this.episodes = new Map(); this.capabilities = new Map(); this.usedCapabilityHashes = new Set(); this.requests = new Map(); this.active = new Map();
     this.pending = new Map(); this.handlers = new Set(); this.closed = false; this.closing = null;
     this.inputUsed = 0; this.outputUsed = 0; this.received = 0; this.accepted = 0; this.halted = false;
+    // Hit tokens and the sum of their per-request (rounded-up) charges: the run total equals the sum of settled charges
+    // plus reservations, never the smaller once-rounded total. A recovered ledger's init decides cachedPricing.
+    this.cachedUsed = 0; this.cachedMicro = 0; this.cachedPricing = true;
     this.haltReason = null; this.lastDispatch = -Infinity; this.gate = Promise.resolve(); this.sequence = 0;
     try {
       // Exclusive creation works across processes. A stale lock deliberately
@@ -141,7 +151,7 @@ export class RepositoryBroker {
       if (fs.existsSync(this.ledgerPath)) this.recover();
       this.fd = fs.openSync(this.ledgerPath, 'a', 0o600);
       fs.chmodSync(this.ledgerPath, 0o600);
-      if (!this.sequence) this.append({ event: 'init', config: this.config, prices: { inputMicroCnyPerToken: 9, outputMicroCnyPerToken: 27 },
+      if (!this.sequence) this.append({ event: 'init', config: this.config, prices: PRICES,
         inputBound: 'serialized UTF8 bytes + 4096 + 256 per message + 256 per tool', vendorInvoiceHardCap: false });
     } catch (error) {
       if (this.fd != null) { fs.closeSync(this.fd); this.fd = null; }
@@ -166,8 +176,13 @@ export class RepositoryBroker {
       this.sequence = item.sequence;
       if (item.event === 'init') {
         if (this.sequence !== 1 || JSON.stringify(item.config) !== JSON.stringify(this.config)) throw new Error('Ledger budget/config mismatch');
+        // Ledgers written before the cache-hit price existed replay unchanged and keep settling at the miss price.
+        const keys = Object.keys(item.prices || {}).sort().join(',');
         if (item.prices?.inputMicroCnyPerToken !== 9 || item.prices?.outputMicroCnyPerToken !== 27
+            || !['inputMicroCnyPerToken,outputMicroCnyPerToken', 'cachedInputMicroCnyPerTenTokens,inputMicroCnyPerToken,outputMicroCnyPerToken'].includes(keys)
+            || (keys.startsWith('cached') && item.prices.cachedInputMicroCnyPerTenTokens !== CACHED_INPUT_MICRO_CNY_PER_TEN_TOKENS)
             || item.vendorInvoiceHardCap !== false) throw new Error('Ledger prices/config mismatch');
+        this.cachedPricing = keys.startsWith('cached');
       } else if (item.event === 'received') {
         if (!isId(item.requestId) || receivedIds.has(item.requestId) || !isHash(item.pathSha256)
             || typeof item.method !== 'string' || item.method.length > 16) throw new Error('Invalid received ledger entry');
@@ -202,7 +217,7 @@ export class RepositoryBroker {
             || this.halted || episode.requests >= episode.requestLimit
             || this.inputUsed + item.inputUpperTokens > this.config.inputTokenLimit
             || this.outputUsed + item.reservedOutputTokens > this.config.outputTokenLimit
-            || charge(this.inputUsed + item.inputUpperTokens, this.outputUsed + item.reservedOutputTokens) > this.config.limitMicroCny
+            || this.spent(item.inputUpperTokens, item.reservedOutputTokens) > this.config.limitMicroCny
             || episode.inputUsed + item.inputUpperTokens > episode.inputLimit
             || episode.outputUsed + item.reservedOutputTokens > episode.outputLimit) throw new Error('Invalid ledger acceptance');
         this.requests.set(item.requestId, { ...item, settled: false });
@@ -212,14 +227,17 @@ export class RepositoryBroker {
         const accepted = this.requests.get(item.requestId);
         if (!accepted || accepted.settled) throw new Error('Invalid ledger settlement');
         positive(item.promptTokens, 'ledger prompt usage'); nonnegative(item.completionTokens, 'ledger completion usage');
+        const cached = item.cachedTokens ?? 0;
+        if (!Number.isSafeInteger(cached) || cached < 0 || cached > item.promptTokens || (cached && !this.cachedPricing)) throw new Error('Invalid ledger cached usage');
         const over = item.promptTokens > accepted.inputUpperTokens || item.completionTokens > accepted.reservedOutputTokens;
-        if (item.actualMicroCny !== charge(item.promptTokens, item.completionTokens)
+        if (item.actualMicroCny !== charge(item.promptTokens, item.completionTokens, cached)
             || !['verified_usage', 'usage_over_reservation', 'output_cap_exceeded'].includes(item.status)
             || (item.status === 'verified_usage' && (over || item.completionTokens > accepted.requestedMaxTokens))
             || (item.status === 'usage_over_reservation' && !over)) throw new Error('Invalid verified ledger settlement');
         const episode = this.episodes.get(accepted.episodeId);
         this.inputUsed += item.promptTokens - accepted.inputUpperTokens;
         this.outputUsed += item.completionTokens - accepted.reservedOutputTokens;
+        this.cachedUsed += cached; this.cachedMicro += hitCharge(cached);
         episode.inputUsed += item.promptTokens - accepted.inputUpperTokens;
         episode.outputUsed += item.completionTokens - accepted.reservedOutputTokens;
         accepted.settled = true; accepted.status = item.status;
@@ -240,11 +258,18 @@ export class RepositoryBroker {
         this.halted = true; this.haltReason = 'invalid_reported_usage';
       } else throw new Error('Unknown ledger event');
       nonnegative(this.inputUsed, 'recovered input'); nonnegative(this.outputUsed, 'recovered output');
-      charge(this.inputUsed, this.outputUsed);
+      this.spent();
     }
     // Restart never resurrects an episode capability. A trusted parent must
     // register a fresh capability without resetting persisted episode budgets.
     for (const episode of this.episodes.values()) episode.active = false;
+  }
+
+  /** Money charged or reserved so far (optionally with a pending input/output change): miss-priced tokens plus settled hit charges. */
+  spent(inputDelta = 0, outputDelta = 0) {
+    const value = charge(this.inputUsed + inputDelta - this.cachedUsed, this.outputUsed + outputDelta) + this.cachedMicro;
+    if (!Number.isSafeInteger(value)) fail('usage_integer_overflow', 502);
+    return value;
   }
 
   append(item) {
@@ -310,7 +335,8 @@ export class RepositoryBroker {
 
   snapshot() {
     return { modelId: this.config.modelId, modelName: this.config.modelName, contextWindow: this.config.contextWindow,
-      limitMicroCny: this.config.limitMicroCny, chargedOrReservedMicroCny: charge(this.inputUsed, this.outputUsed),
+      limitMicroCny: this.config.limitMicroCny, chargedOrReservedMicroCny: this.spent(),
+      missPriceMicroCny: charge(this.inputUsed, this.outputUsed), cachedInputUsed: this.cachedUsed,
       inputTokenLimit: this.config.inputTokenLimit, outputTokenLimit: this.config.outputTokenLimit,
       inputUsedOrReserved: this.inputUsed, outputUsedOrReserved: this.outputUsed,
       receivedRequests: this.received, acceptedRequests: this.accepted, activeRequests: this.active.size,
@@ -395,7 +421,7 @@ export class RepositoryBroker {
         if (episode.requests >= episode.requestLimit) fail('episode_request_limit', 402);
         const output = OUTPUT_RESERVATION_TOKENS;
         if (this.inputUsed + upper > this.config.inputTokenLimit || this.outputUsed + output > this.config.outputTokenLimit
-            || charge(this.inputUsed + upper, this.outputUsed + output) > this.config.limitMicroCny) fail('run_budget_exhausted', 402);
+            || this.spent(upper, output) > this.config.limitMicroCny) fail('run_budget_exhausted', 402);
         if (episode.inputUsed + upper > episode.inputLimit || episode.outputUsed + output > episode.outputLimit) fail('episode_token_budget_exhausted', 402);
         record = { requestId, episodeId: episode.id, inputUpperTokens: upper, reservedOutputTokens: output,
           reservedMicroCny: charge(upper, output), requestedMaxTokens: body.maxTokens, bodySha256: hash(JSON.stringify(body)),
@@ -465,9 +491,8 @@ export class RepositoryBroker {
       if (usage?.estimated === false) {
         try {
           positive(usage.promptTokens, 'reported prompt usage'); nonnegative(usage.completionTokens, 'reported output usage');
-          charge(usage.promptTokens, usage.completionTokens);
-          charge(this.inputUsed + usage.promptTokens - record.inputUpperTokens,
-            this.outputUsed + usage.completionTokens - record.reservedOutputTokens);
+          charge(usage.promptTokens, usage.completionTokens, usage.cachedTokens ?? 0);
+          this.spent(usage.promptTokens - record.inputUpperTokens, usage.completionTokens - record.reservedOutputTokens);
         } catch {
           this.append({ event: 'invalid_usage', requestId: record.requestId,
             promptTokens: Number.isSafeInteger(usage.promptTokens) ? usage.promptTokens : null,
@@ -498,10 +523,13 @@ export class RepositoryBroker {
   verified(record, usage, status) {
     if (record.settled) throw new Error('Double settlement');
     const episode = this.episodes.get(record.episodeId);
-    charge(usage.promptTokens, usage.completionTokens);
+    // A ledger begun before the cache-hit price keeps settling at the miss price (its replay rejects cached tokens).
+    const cached = this.cachedPricing ? usage.cachedTokens ?? 0 : 0;
+    const actualMicroCny = charge(usage.promptTokens, usage.completionTokens, cached);
     this.append({ event: 'settled_verified', requestId: record.requestId, promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens, actualMicroCny: charge(usage.promptTokens, usage.completionTokens), status });
+      completionTokens: usage.completionTokens, ...(this.cachedPricing ? { cachedTokens: cached } : {}), actualMicroCny, status });
     this.inputUsed += usage.promptTokens - record.inputUpperTokens; this.outputUsed += usage.completionTokens - record.reservedOutputTokens;
+    this.cachedUsed += cached; this.cachedMicro += hitCharge(cached);
     episode.inputUsed += usage.promptTokens - record.inputUpperTokens; episode.outputUsed += usage.completionTokens - record.reservedOutputTokens;
     record.settled = true; record.status = status;
   }

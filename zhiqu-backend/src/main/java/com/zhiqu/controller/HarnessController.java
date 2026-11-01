@@ -300,7 +300,7 @@ public class HarnessController {
     private Map<String, Object> usageSince(Long userId, java.time.LocalDateTime since) {
         List<Map<String, Object>> rows = usageMapper.selectMaps(new QueryWrapper<HarnessUsage>()
                 .select("COUNT(*) AS calls", "COALESCE(SUM(prompt_tokens),0) AS promptTokens",
-                        "COALESCE(SUM(completion_tokens),0) AS completionTokens")
+                        "COALESCE(SUM(completion_tokens),0) AS completionTokens", "COALESCE(SUM(cached_tokens),0) AS cachedTokens")
                 .eq("user_id", userId)
                 .ge("created_at", since));
         Map<String, Object> row = rows.isEmpty() || rows.get(0) == null ? Map.of() : rows.get(0);
@@ -308,6 +308,7 @@ public class HarnessController {
         out.put("calls", num(row.get("calls")));
         out.put("promptTokens", num(row.get("promptTokens")));
         out.put("completionTokens", num(row.get("completionTokens")));
+        out.put("cachedTokens", num(row.get("cachedTokens")));
         return out;
     }
 

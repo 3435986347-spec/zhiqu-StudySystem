@@ -53,7 +53,7 @@ export function fakeApi(replies, { remote = {} } = {}) {
       const message = { role: 'assistant', content: r.text || '' };
       if (calls.length) message.tool_calls = calls;
       onEvent('done', { message, finishReason: r.finishReason || (calls.length ? 'tool_calls' : 'stop'), maxTokens: 16000,
-        usage: { promptTokens: 10, completionTokens: 5, estimated: false } });
+        usage: r.usage || { promptTokens: 10, completionTokens: 5, estimated: false } });
     },
     async post(pathname, body) {
       posts.push({ pathname, body });

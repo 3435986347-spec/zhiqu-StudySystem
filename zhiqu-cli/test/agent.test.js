@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { archiveTurn, runTurn, toolset } from '../src/agent.js';
+import { archiveTurn, cacheNote, runTurn, toolset } from '../src/agent.js';
 import { SessionStore } from '../src/session.js';
 import { LocalTools } from '../src/tools/local.js';
 import { fakeApi, fakeUi, tmpdir, write } from './helpers.js';
@@ -267,4 +267,17 @@ test('改过文件交活：不再多推一次核对（第九十一轮去掉）',
   assert.equal(ctx.api.requests.length, 2);
   assert.ok(!ctx.messages.some((m) => m.role === 'user' && /交活之前核对/.test(m.content || '')));
   assert.equal(r.finalText, '改好了');
+});
+
+test('缓存命中数（第九十三轮）：网关报了就累加进会话用量，没报的那次不算命中；/usage 那一句说命中了多少', async () => {
+  const ctx = makeCtx({ replies: [
+    { calls: [{ name: 'list_files', args: {} }], usage: { promptTokens: 3000, completionTokens: 5, cachedTokens: 2816, estimated: false } },
+    { text: '好了', usage: { promptTokens: 1000, completionTokens: 5, estimated: false } }] });
+  await runTurn(ctx, '看看');
+  assert.equal(ctx.usage.prompt, 4000);
+  assert.equal(ctx.usage.cached, 2816);
+  assert.equal(cacheNote(ctx.usage.prompt, ctx.usage.cached), '（缓存命中 2816，70%）');
+  assert.equal(cacheNote(4000, 0), '', '没命中不说');
+  assert.equal(cacheNote(0, 0), '');
+  assert.equal(cacheNote(4000, undefined), '', '服务器老版本的合计里没有 cachedTokens');
 });

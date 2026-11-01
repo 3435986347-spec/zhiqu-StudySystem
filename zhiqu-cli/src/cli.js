@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Api, ApiError } from './api.js';
-import { archiveTurn, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote } from './agent.js';
+import { archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote } from './agent.js';
 import { newGoal } from './goal.js';
 import { generatedOrigin } from './origins.js';
 import { unfinished } from './todos.js';
@@ -310,7 +310,7 @@ async function runAgent(cwd, flags) {
     ui, api, root, settings, mode: modeFlag || settings.mode, maxRounds: settings.maxRounds, verbose: settings.showThinking,
     local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs }),
     store: new SessionStore(root), allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
-    usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
+    usage: { prompt: 0, completion: 0, cached: 0 }, changedFiles: new Set(),
   };
   try {
     // 三个请求互不依赖，一起发（原来一个等一个，服务器远的时候启动慢一倍多）
@@ -639,10 +639,10 @@ async function slash(ctx, text) {
       return null;
     }
     case '/usage': {
-      ui.line(`这次会话：输入约 ${ctx.usage.prompt} token，输出约 ${ctx.usage.completion} token`);
+      ui.line(`这次会话：输入约 ${ctx.usage.prompt} token${cacheNote(ctx.usage.prompt, ctx.usage.cached)}，输出约 ${ctx.usage.completion} token`);
       try {
         const u = await ctx.api.get('/api/harness/usage');
-        ui.line(`今天（命令行）：${u.today.calls} 次调用，输入 ${u.today.promptTokens}、输出 ${u.today.completionTokens} token`);
+        ui.line(`今天（命令行）：${u.today.calls} 次调用，输入 ${u.today.promptTokens}${cacheNote(u.today.promptTokens, u.today.cachedTokens)}、输出 ${u.today.completionTokens} token`);
       } catch (e) { ui.note(`（服务器上的用量拿不到：${e.message}）`); }
       return null;
     }

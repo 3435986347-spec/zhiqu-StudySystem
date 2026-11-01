@@ -267,11 +267,16 @@ public class HarnessModelGateway {
         int promptTokens = acc.promptTokens() != null ? acc.promptTokens() : trimmed.estimatedTokens();
         int completionTokens = acc.completionTokens() != null ? acc.completionTokens()
                 : HarnessContext.estimateTokens(acc.text()) + (int) Math.ceil((acc.outputChars() - acc.text().length()) / 3.5);
-        recordUsage(userId, config, promptTokens, completionTokens, estimated, acc.finishReason());
+        // 缓存命中数只在供应商报了、而且不是估算的时候给（第九十三轮）：命令行据此说命中了多少，评测代理按命中价结算
+        Integer cachedTokens = estimated || acc.cachedTokens() == null ? null : Math.min(Math.max(acc.cachedTokens(), 0), promptTokens);
+        recordUsage(userId, config, promptTokens, completionTokens, cachedTokens, estimated, acc.finishReason());
 
         Map<String, Object> usage = new LinkedHashMap<>();
         usage.put("promptTokens", promptTokens);
         usage.put("completionTokens", completionTokens);
+        if (cachedTokens != null) {
+            usage.put("cachedTokens", cachedTokens);
+        }
         usage.put("estimated", estimated);
         Map<String, Object> done = new LinkedHashMap<>();
         done.put("message", acc.message());
@@ -375,7 +380,7 @@ public class HarnessModelGateway {
         }
     }
 
-    private void recordUsage(Long userId, AiModelConfig config, int prompt, int completion, boolean estimated, String finish) {
+    private void recordUsage(Long userId, AiModelConfig config, int prompt, int completion, Integer cached, boolean estimated, String finish) {
         try {
             HarnessUsage row = new HarnessUsage();
             row.setUserId(userId);
@@ -383,6 +388,7 @@ public class HarnessModelGateway {
             row.setModelName(config.getModelName());
             row.setPromptTokens(prompt);
             row.setCompletionTokens(completion);
+            row.setCachedTokens(cached);
             row.setEstimated(estimated ? 1 : 0);
             row.setFinishReason(finish);
             row.setCreatedAt(LocalDateTime.now());

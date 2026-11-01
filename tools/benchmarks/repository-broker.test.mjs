@@ -432,3 +432,76 @@ test('budget and exclusive-lock assertions have been seen red under known regres
     await owner?.close();
   }
 });
+
+// Cache-hit settlement (round 93): DeepSeek v4-pro bills hit input at CNY 0.30/M (3 micro-CNY per 10 tokens) against 9.00/M
+// for a miss. Reservations stay at the miss price; a verified settlement with cachedTokens charges the hit share at the hit price.
+test('verified cache hits settle at the hit price, survive restart, and are reported next to the miss-price total', async (t) => {
+  const usage = { promptTokens: 1000, completionTokens: 100, cachedTokens: 901, estimated: false };
+  const f = await fixture(t, { handler: ({ payload, emit }) => { emit('start', start(payload)); emit('done', done(payload, usage)); } });
+  await stream(f.client);
+  const expected = (1000 - 901) * 9 + Math.ceil(901 * 3 / 10) + 100 * 27;   // 891 + 271 + 2700, hit share rounded up
+  const settled = ledger(f.ledgerPath).find((row) => row.event === 'settled_verified');
+  assert.equal(settled.cachedTokens, 901); assert.equal(settled.actualMicroCny, expected);
+  assert.deepEqual(ledger(f.ledgerPath)[0].prices, { inputMicroCnyPerToken: 9, outputMicroCnyPerToken: 27, cachedInputMicroCnyPerTenTokens: 3 });
+  const state = f.broker.snapshot();
+  assert.equal(state.chargedOrReservedMicroCny, expected);
+  assert.equal(state.missPriceMicroCny, 1000 * 9 + 100 * 27);
+  assert.equal(state.cachedInputUsed, 901);
+  await f.broker.close();
+  const recovered = new RepositoryBroker({ api: { stream() { assert.fail('offline only'); } }, ledgerPath: f.ledgerPath });
+  t.after(() => recovered.close());
+  assert.equal(recovered.snapshot().chargedOrReservedMicroCny, expected);
+  assert.equal(recovered.snapshot().cachedInputUsed, 901);
+});
+
+test('a ledger begun before the hit price replays unchanged, keeps settling at the miss price, and rejects tampered hit counts', async (t) => {
+  const usage = { promptTokens: 1000, completionTokens: 100, cachedTokens: 900, estimated: false };
+  const f = await fixture(t, { handler: ({ payload, emit }) => { emit('start', start(payload)); emit('done', done(payload)); } });
+  await stream(f.client); await f.broker.close();
+  // Rewrite the init row the way rounds 62-92 wrote it: no cached price.
+  const rows = ledger(f.ledgerPath);
+  rows[0].prices = { inputMicroCnyPerToken: 9, outputMicroCnyPerToken: 27 };
+  fs.writeFileSync(f.ledgerPath, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+  const old = new RepositoryBroker({ ledgerPath: f.ledgerPath, api: { stream: async (pathname, payload, emit) => {
+    emit('start', start(payload)); emit('done', done(payload, usage)); } } });
+  t.after(() => old.close());
+  const before = old.snapshot().chargedOrReservedMicroCny;
+  const endpoint = await old.listen();
+  const capability = 'old_ledger_capability_'.padEnd(48, 'o');
+  old.registerEpisode({ episodeId: 'episode-1', capability });
+  await stream(new Api({ server: endpoint.server, token: capability }));
+  const settled = ledger(f.ledgerPath).filter((row) => row.event === 'settled_verified').at(-1);
+  assert.equal(settled.cachedTokens, undefined, 'an old ledger never records hit tokens');
+  assert.equal(settled.actualMicroCny, 1000 * 9 + 100 * 27);
+  assert.equal(old.snapshot().chargedOrReservedMicroCny, before + 1000 * 9 + 100 * 27);
+  await old.close();
+  // A hit count slipped into the old ledger, or one larger than the prompt in a new ledger, fails closed.
+  const tampered = ledger(f.ledgerPath);
+  const last = tampered.filter((row) => row.event === 'settled_verified').at(-1);
+  last.cachedTokens = 900; last.actualMicroCny = 100 * 9 + 270 + 2700;
+  fs.writeFileSync(f.ledgerPath, tampered.map((row) => JSON.stringify(row)).join('\n') + '\n');
+  assert.throws(() => new RepositoryBroker({ api: { stream() {} }, ledgerPath: f.ledgerPath }), /cached usage/);
+});
+
+test('a reported hit count larger than the prompt is invalid usage and halts admission', async (t) => {
+  const usage = { promptTokens: 100, completionTokens: 5, cachedTokens: 101, estimated: false };
+  const f = await fixture(t, { handler: ({ payload, emit }) => { emit('start', start(payload)); emit('done', done(payload, usage)); } });
+  await assert.rejects(stream(f.client));
+  assert.equal(f.broker.snapshot().halted, true);
+  assert.equal(f.broker.snapshot().haltReason, 'invalid_reported_usage');
+  assert.ok(ledger(f.ledgerPath).some((row) => row.event === 'invalid_usage'));
+});
+
+test('the run total is the sum of settled per-request charges (each rounded up), never a smaller once-rounded total', async (t) => {
+  const usage = { promptTokens: 1000, completionTokens: 100, cachedTokens: 901, estimated: false };
+  const f = await fixture(t, { handler: ({ payload, emit }) => { emit('start', start(payload)); emit('done', done(payload, usage)); } });
+  await stream(f.client); await stream(f.client);
+  const settled = ledger(f.ledgerPath).filter((row) => row.event === 'settled_verified');
+  assert.equal(settled.length, 2);
+  const sum = settled.reduce((total, row) => total + row.actualMicroCny, 0);
+  assert.equal(sum, 2 * (99 * 9 + 271 + 2700));
+  assert.equal(f.broker.snapshot().chargedOrReservedMicroCny, sum, 'rounding 1802 hit tokens once would give 541 instead of 542');
+  await f.broker.close();
+  const recovered = new RepositoryBroker({ api: { stream() {} }, ledgerPath: f.ledgerPath }); t.after(() => recovered.close());
+  assert.equal(recovered.snapshot().chargedOrReservedMicroCny, sum);
+});

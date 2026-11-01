@@ -284,8 +284,16 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   if (ctx.usage) {
     ctx.usage.prompt += done.usage ? done.usage.promptTokens || 0 : 0;
     ctx.usage.completion += done.usage ? done.usage.completionTokens || 0 : 0;
+    // 输入里命中供应商前缀缓存的部分（第九十三轮）：网关在供应商报了时才给；命中的按命中价算钱
+    ctx.usage.cached = (ctx.usage.cached || 0) + (done.usage ? done.usage.cachedTokens || 0 : 0);
   }
   return { ...done, text, maxTokens: done.maxTokens || maxTokens };
+}
+
+/** /usage 里输入后面那一句「（缓存命中 N，P%）」；没命中、供应商没报就不说。 */
+export function cacheNote(prompt, cached) {
+  if (!cached || !prompt) return '';
+  return `（缓存命中 ${cached}，${Math.round((cached / prompt) * 100)}%）`;
 }
 
 // ── 工具 ────────────────────────────────────────────────────────────────

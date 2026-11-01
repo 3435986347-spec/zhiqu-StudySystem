@@ -557,7 +557,8 @@ async function smoke(ctx, only) {
   } finally {
     const budget = await broker.status().catch(() => null);
     await broker.stop();
-    results._broker = { accepted_requests: budget?.acceptedRequests, received_requests: budget?.receivedRequests, charged_or_reserved_micro_cny: budget?.chargedOrReservedMicroCny };
+    results._broker = { accepted_requests: budget?.acceptedRequests, received_requests: budget?.receivedRequests, charged_or_reserved_micro_cny: budget?.chargedOrReservedMicroCny,
+      miss_price_micro_cny: budget?.missPriceMicroCny, cached_input_tokens: budget?.cachedInputUsed };
   }
   const policies = new Set(Object.values(results).map((r) => r.policy_sha256).filter(Boolean));
   const summary = { ok: Object.entries(results).filter(([k]) => !k.startsWith('_')).every(([, r]) => r.ok) && results._broker.accepted_requests === 0 && policies.size === 1,

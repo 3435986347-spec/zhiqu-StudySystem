@@ -40,6 +40,8 @@ public final class ToolStreamAccumulator {
     private String finishReason;
     private Integer promptTokens;
     private Integer completionTokens;
+    /** 输入里命中供应商前缀缓存的 token 数（第九十三轮）；供应商不报是 null —— 「没报」和「没命中」是两回事。 */
+    private Integer cachedTokens;
 
     private static final class Call {
         String id = "";
@@ -106,6 +108,12 @@ public final class ToolStreamAccumulator {
         if (usage.isObject()) {
             if (usage.has("prompt_tokens")) promptTokens = usage.path("prompt_tokens").asInt();
             if (usage.has("completion_tokens")) completionTokens = usage.path("completion_tokens").asInt();
+            // DeepSeek 报 prompt_cache_hit_tokens；OpenAI 和别的兼容实现报 prompt_tokens_details.cached_tokens（DeepSeek 两个都给、数一样）
+            if (usage.has("prompt_cache_hit_tokens")) {
+                cachedTokens = usage.path("prompt_cache_hit_tokens").asInt();
+            } else if (usage.path("prompt_tokens_details").has("cached_tokens")) {
+                cachedTokens = usage.path("prompt_tokens_details").path("cached_tokens").asInt();
+            }
         }
     }
 
@@ -136,7 +144,12 @@ public final class ToolStreamAccumulator {
             case "error" -> throw new BusinessException("模型返回错误：" + root.path("error").path("message").asText(root.toString()));
             case "message_start" -> {
                 JsonNode usage = root.path("message").path("usage");
-                if (usage.has("input_tokens")) promptTokens = usage.path("input_tokens").asInt();
+                // Anthropic 的 input_tokens 不含缓存读写：全部输入 = 它 + 缓存读 + 缓存写（和 OpenAI 兼容那边 prompt_tokens 同一个口径）
+                if (usage.has("input_tokens")) {
+                    promptTokens = usage.path("input_tokens").asInt()
+                            + usage.path("cache_read_input_tokens").asInt(0) + usage.path("cache_creation_input_tokens").asInt(0);
+                }
+                if (usage.has("cache_read_input_tokens")) cachedTokens = usage.path("cache_read_input_tokens").asInt();
             }
             case "content_block_start" -> {
                 JsonNode block = root.path("content_block");
@@ -243,6 +256,10 @@ public final class ToolStreamAccumulator {
 
     public Integer completionTokens() {
         return completionTokens;
+    }
+
+    public Integer cachedTokens() {
+        return cachedTokens;
     }
 
     /** 本轮输出了多少字（正文 + 工具参数）—— 供应商不报用量时用来估算。 */

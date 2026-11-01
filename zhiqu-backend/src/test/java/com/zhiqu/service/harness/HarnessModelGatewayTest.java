@@ -170,6 +170,26 @@ class HarnessModelGatewayTest {
         assertEquals(50, usage.getValue().getPromptTokens());
         assertEquals(1300, usage.getValue().getCompletionTokens());
         assertEquals(0, usage.getValue().getEstimated());
+        assertEquals(null, usage.getValue().getCachedTokens(), "供应商没报缓存：记 null，不记 0");
+        assertFalse(((Map<String, Object>) done.get("usage")).containsKey("cachedTokens"), "没报缓存就不给 cachedTokens：" + done.get("usage"));
+    }
+
+    @Test
+    @DisplayName("缓存命中数（第九十三轮）：供应商报了就放进 done 的 usage、记进用量表；估算的用量不带它")
+    @SuppressWarnings("unchecked")
+    void 缓存命中数() throws Exception {
+        String url = fakeModel(b -> new Object[]{200, sse(
+                "{\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":\"stop\"}],"
+                        + "\"usage\":{\"prompt_tokens\":3000,\"completion_tokens\":7,\"prompt_cache_hit_tokens\":2816,\"prompt_cache_miss_tokens\":184}}",
+                "[DONE]")});
+        model("OPENAI_COMPATIBLE", url, null);
+        gateway().stream(1L, body(ASK), sink());
+        Map<String, Object> reported = (Map<String, Object>) last.get("done").get("usage");
+        assertEquals(3000, reported.get("promptTokens"));
+        assertEquals(2816, reported.get("cachedTokens"));
+        ArgumentCaptor<HarnessUsage> row = ArgumentCaptor.forClass(HarnessUsage.class);
+        verify(usageMapper).insert(row.capture());
+        assertEquals(2816, row.getValue().getCachedTokens());
     }
 
     @Test
