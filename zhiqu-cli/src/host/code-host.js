@@ -6,6 +6,7 @@
 //                step（轨迹里的一句）、result（收尾）、fatal（出错了）
 // 门（是不是管理员、工作区档位、写意图、能不能执行）后端判好了才起这个进程；模型和命令都回到后端去做 —— 这里只有循环和工作区的读、草稿。
 // 认不出的消息就停，不猜。
+import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -183,4 +184,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(last)}\n`, () => process.exit(0));
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) main();
+// 比真实路径（第九十六轮）：import.meta.url 是解过软链的，argv[1] 不是 —— macOS 的临时目录 /var 是 /private/var 的软链，
+// 后端把 JAR 里带的源码解到那里，原来两边对不上、main() 不跑，进程一声不响就退了
+const realPath = (p) => { try { return fs.realpathSync(path.resolve(p)); } catch { return path.resolve(p); } };
+if (process.argv[1] && realPath(fileURLToPath(import.meta.url)) === realPath(process.argv[1])) main();

@@ -167,6 +167,24 @@ test('真起一个进程：stdin 进 run、stdout 出 model … result；最后�
   assert.equal(result.text, '里面是 hello');
 });
 
+test('经软链的路径起也能跑（第九十六轮：macOS 的临时目录 /var 是软链，原来 main() 不跑、进程一声不响就退了）', async () => {
+  const root = tmpdir();
+  write(root, 'a.txt', 'hello\n');
+  const link = path.join(tmpdir(), 'linked-cli');
+  fs.symlinkSync(path.resolve(path.dirname(HOST), '..', '..'), link);
+  const child = spawn(process.execPath, [path.join(link, 'src', 'host', 'code-host.js')], { stdio: ['pipe', 'pipe', 'inherit'], env: { PATH: process.env.PATH } });
+  const lines = [];
+  readline.createInterface({ input: child.stdout }).on('line', (line) => {
+    const msg = JSON.parse(line);
+    lines.push(msg);
+    if (msg.type === 'model') child.stdin.write(`${JSON.stringify({ type: 'event', id: msg.id, name: 'done', data: { message: { role: 'assistant', content: '好' },
+      finishReason: 'stop', maxTokens: 16384, usage: { promptTokens: 1, completionTokens: 1, estimated: false } } })}\n`);
+  });
+  child.stdin.write(`${JSON.stringify({ type: 'run', root, message: '看看', model: MODEL })}\n`);
+  await new Promise((resolve) => child.on('exit', resolve));
+  assert.equal(lines.at(-1) && lines.at(-1).type, 'result', `经软链起的进程没有跑：${JSON.stringify(lines)}`);
+});
+
 test('协议：认不出的消息就停（fatal），不猜', async () => {
   const toHost = new PassThrough();
   const fromHost = new PassThrough();

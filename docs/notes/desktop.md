@@ -66,6 +66,14 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 登录不一样：胶囊里登录失效时写「在主窗口登录后再用」、不再跳，主窗口重新登录（或换了账号）它看不出来 —— 所以面板建过之后**每次缩小都重新载入胶囊**（`miniPage?.reload()`，第五十八轮 review）。
 `DesktopPageViewTest` 把 `MiniPanel.swift` 一起编进检查程序，建一个面板核对这些设定（不放到屏幕上）、点得到两边的按钮、中间拖得动。
 
+## 代码模式带的 node（第九十六轮）
+
+网页 / 桌面应用的代码模式跑命令行那份循环（`JsCodeAgent` 起 node，见 `docs/notes/code-workspace.md`）。打包时把这台机器上的 node 放进
+`Contents/Resources/node/bin/node`（`NODE_BIN` 指定，默认 PATH 上那个；找不到就不出包），外壳用 `-Dapp.ai.code-agent.node=` 告诉后端；
+命令行源码在 JAR 里（pom 的 `bundle-zhiqu-cli`），后端第一次用时解到临时目录。node v22 未压缩 108M，应用包 246M、dmg 147M。
+打进去的是打包那台机器的架构（Apple 芯片打的包只带 arm64 的 node）。Windows 包同样带 `node\node.exe`（`NODE_EXE`），路径用 jpackage 的 `$APPDIR`。
+**外壳（Swift）改了，要重新打包才到用户手里。**
+
 ## 从网页版下载（第八十二轮）
 
 网页版的落地页和头像菜单里有「下载桌面版」，安装包从后端的下载目录拿（`app.desktop-downloads-dir`，服务器上是 `C:/zhiqu/downloads`）：

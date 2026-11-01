@@ -214,12 +214,38 @@ class JsCodeAgentTest {
         assertTrue(r.drafts().isEmpty());
     }
 
+    /** 第九十六轮：桌面应用、网页服务器部署旁边没有 zhiqu-cli 目录 —— 用 JAR 里带的那一份（pom 的 bundle-zhiqu-cli） */
     @Test
-    @DisplayName("开关不是 js、找不到脚本：不启用；找不到 node：返回 null（调用方退回 Java 的循环）")
+    @DisplayName("找不到 zhiqu-cli 目录：用 JAR 里带的那一份（解到临时目录），照样跑得起来，而且和源码一字不差（不会带着旧代码出去）")
+    void 用JAR里带的那一份() throws Exception {
+        Files.writeString(root.resolve("a.txt"), "hello\n");
+        JsCodeAgent js = agent(root.resolve("没有这个目录"), List.of(calls("read_file", "{\"path\":\"a.txt\"}"), text("里面是 hello")));
+        assertTrue(js.enabled());
+        Path script = js.hostScript();
+        assertFalse(script.startsWith(CLI_DIR), "应当是解出来的那一份：" + script);
+        Path bundled = script.getParent().getParent().getParent();
+        try (var files = Files.walk(CLI_DIR.resolve("src"))) {
+            List<Path> sources = files.filter(Files::isRegularFile).toList();
+            assertTrue(sources.size() > 20, "源码太少，扫描没扫到东西：" + sources.size());
+            for (Path f : sources) {
+                Path copy = bundled.resolve(CLI_DIR.relativize(f).toString());
+                assertTrue(Files.exists(copy) && java.util.Arrays.equals(Files.readAllBytes(f), Files.readAllBytes(copy)),
+                        "JAR 里带的和源码不一样（或者没带）：" + CLI_DIR.relativize(f));
+            }
+        }
+        CodeWorkspaceAgent.Result r = js.run(config, 7L, "a.txt 里是什么", List.of(), false, false,
+                CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add);
+        assertNotNull(r);
+        assertTrue(r.context().contains("里面是 hello"), r.context() + " 轨迹：" + notes);
+    }
+
+    @Test
+    @DisplayName("开关不是 js：不启用；找不到 zhiqu-cli 目录：用 JAR 里带的（第九十六轮）；找不到 node：返回 null（调用方退回 Java 的循环）")
     void 起不来就退回() {
         ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
         assertFalse(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "java", node, CLI_DIR.toString()).enabled());
-        assertFalse(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, root.toString()).enabled());
+        assertTrue(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, root.toString()).enabled(),
+                "配的目录里没有脚本：用 JAR 里带的那一份");
         // cli-dir 没配：按工作目录找（Maven 在 zhiqu-backend 里跑，旁边就是 zhiqu-cli）
         assertTrue(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, "").enabled(),
                 "cli-dir 留空时应当按工作目录找到 zhiqu-cli（user.dir=" + System.getProperty("user.dir") + "）");

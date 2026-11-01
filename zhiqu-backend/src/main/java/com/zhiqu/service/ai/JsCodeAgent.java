@@ -115,7 +115,53 @@ public class JsCodeAgent {
                 return script;
             }
         }
-        return null;
+        // 第九十六轮：都没有（桌面应用、网页服务器部署）就用 JAR 里带的那一份（pom 的 bundle-zhiqu-cli）
+        Path bundledDir = bundledCliDir();
+        return bundledDir == null ? null : bundledDir.resolve(HOST_SCRIPT);
+    }
+
+    /** JAR 里带的命令行源码解到临时目录 —— 解一次；没带（老 JAR）是 null */
+    private volatile Path bundled;
+
+    Path bundledCliDir() {
+        Path known = bundled;
+        if (known != null && Files.isRegularFile(known.resolve(HOST_SCRIPT))) {
+            return known;
+        }
+        synchronized (this) {
+            if (bundled != null && Files.isRegularFile(bundled.resolve(HOST_SCRIPT))) {
+                return bundled;
+            }
+            try {
+                org.springframework.core.io.Resource[] all = new org.springframework.core.io.support.PathMatchingResourcePatternResolver(
+                        getClass().getClassLoader()).getResources("classpath*:zhiqu-cli/**");
+                Path root = null;
+                for (org.springframework.core.io.Resource r : all) {
+                    String url = r.getURL().toString();
+                    int at = url.lastIndexOf("/zhiqu-cli/");
+                    String rel = at < 0 ? "" : java.net.URLDecoder.decode(url.substring(at + "/zhiqu-cli/".length()), StandardCharsets.UTF_8);
+                    if (rel.isEmpty() || rel.endsWith("/") || !r.isReadable()) {
+                        continue;   // 目录
+                    }
+                    if (root == null) {
+                        root = Files.createTempDirectory("zhiqu-cli-");
+                    }
+                    Path target = root.resolve(rel).normalize();
+                    if (!target.startsWith(root)) {
+                        continue;
+                    }
+                    Files.createDirectories(target.getParent());
+                    try (var in = r.getInputStream()) {
+                        Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+                bundled = root != null && Files.isRegularFile(root.resolve(HOST_SCRIPT)) ? root : null;
+            } catch (IOException e) {
+                log.warn("JAR 里带的命令行源码解不出来：{}", e.toString());
+                bundled = null;
+            }
+            return bundled;
+        }
     }
 
     /** node 的绝对路径：给的就是绝对路径就用它，否则从 PATH 里找；找不到是 null */
@@ -165,7 +211,7 @@ public class JsCodeAgent {
         Process process;
         try {
             home = Files.createTempDirectory("zhiqu-code-host-");
-            ProcessBuilder pb = new ProcessBuilder(nodeBin, script.toString());
+            ProcessBuilder pb = new ProcessBuilder(nodeBin, script.toRealPath().toString());   // 真实路径：临时目录可能在软链下
             // 不继承环境变量：HOME 是自己的空目录（仓库里带的配置文件不会被当成全局配置），PATH 只有 node 那一个目录
             pb.environment().clear();
             pb.environment().put("HOME", home.toString());

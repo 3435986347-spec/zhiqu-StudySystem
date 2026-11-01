@@ -81,6 +81,10 @@ final class Backend {
         let cache = CdsCache(directory: home.appendingPathComponent(".zhiqu/cds"), jar: runJar, java: java)
         cds = cache
 
+        // 网页代码模式跑命令行那份循环用的 node（第九十六轮，打包时放进 Resources/node）；老的包里没有就不传，后端退回 Java 的循环
+        let node = resources.appendingPathComponent("node/bin/node")
+        let nodeArgs = FileManager.default.isExecutableFile(atPath: node.path) ? ["-Dapp.ai.code-agent.node=\(node.path)"] : []
+
         process.executableURL = java
         process.arguments = cache.jvmArguments() + [
             "-Dspring.profiles.active=desktop",
@@ -91,8 +95,7 @@ final class Backend {
             "-Djava.awt.headless=true",
             "-Dzhiqu.desktop.port-file=\(portFile.path)",
             "-Xmx1g",
-            "-jar", runJar.path,
-        ]
+        ] + nodeArgs + ["-jar", runJar.path]   // -D 都要在 -jar 之前，之后的会被当成应用参数
         try process.run()
     }
 

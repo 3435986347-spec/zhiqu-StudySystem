@@ -11,7 +11,7 @@ Windows Server
 └─ WinSW 注册 Windows 服务
 ```
 
-前端静态页面已经内嵌在 Spring Boot JAR 中，因此服务器上不需要单独安装 Node.js，也不需要单独部署前端。
+前端静态页面已经内嵌在 Spring Boot JAR 中，因此服务器上不需要单独安装 Node.js，也不需要单独部署前端。（AI 助手的「代码」模式从第九十四轮起由后端起 Node 跑命令行那份循环、源码在 JAR 里；但代码工作区只在后端绑回环地址时才开，普通的服务器部署用不到它。真要在服务器本机开代码工作区，装 Node ≥ 18.17，`app.ai.code-agent.node` 指过去。）
 
 ## 一、部署目标结构
 

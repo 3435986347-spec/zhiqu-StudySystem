@@ -60,4 +60,15 @@ class WindowsPackagingScriptTest {
             assertFalse(l.matches(".*\\s-o(\\s|$).*") || l.contains("--offline"), l);
         }
     }
+
+    /** 第九十六轮：Windows 包同样带 node.exe，路径用 jpackage 的 $APPDIR 告诉后端（PowerShell 里要转义成 `$APPDIR） */
+    @Test
+    @DisplayName("Windows 包带 node.exe（应用目录的 node\\node.exe），--java-options 把路径告诉后端；找不到就停")
+    void 带node() throws java.io.IOException {
+        String script = java.nio.file.Files.readString(SCRIPT, java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(script.contains("Copy-Item $nodeExe \"$Out\\input\\node\\node.exe\""), "没把 node.exe 放进输入目录");
+        assertTrue(script.contains("\"-Dapp.ai.code-agent.node=`$APPDIR\\node\\node.exe\""),
+                "没把 node 的路径告诉后端（$APPDIR 在双引号里要写成 `$APPDIR，不然 PowerShell 当场把它换成空）");
+        assertTrue(script.contains("throw \"找不到 node.exe"), "找不到 node.exe 时要停下");
+    }
 }

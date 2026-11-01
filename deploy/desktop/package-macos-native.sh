@@ -74,6 +74,15 @@ echo "==> 3/6 裁一份 JRE（jlink）"
 rm -f "$APP/Contents/Resources/runtime/Contents/Home/lib/server/classes_nocoops.jsa"
 echo "    runtime  $(du -sh "$APP/Contents/Resources/runtime" | cut -f1)"
 
+# 网页代码模式跑命令行那份循环要 node（第九十六轮，用户 2026-11-02 定的「一份 JS，后端用子进程跑」）：
+# 把这台机器上的 node 打进应用包（NODE_BIN 指定，默认 PATH 上那个）；命令行源码在 JAR 里，后端解出来跑；外壳把这个 node 的路径告诉后端。
+NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
+[ -n "$NODE_BIN" ] && [ -x "$NODE_BIN" ] || { echo "找不到 node（设 NODE_BIN=/绝对/路径）—— 网页代码模式要用它"; exit 1; }
+mkdir -p "$APP/Contents/Resources/node/bin"
+cp "$NODE_BIN" "$APP/Contents/Resources/node/bin/node"
+"$APP/Contents/Resources/node/bin/node" --version > /dev/null || { echo "打进去的 node 跑不起来：$NODE_BIN"; exit 1; }
+echo "    node     $(du -sh "$APP/Contents/Resources/node" | cut -f1)（$("$APP/Contents/Resources/node/bin/node" --version)）"
+
 echo "==> 4/6 生成应用图标"
 # 图标是设计稿（第七十二轮：知字图标设计方案），这里按 macOS 图标的版式四周留白做成 iconset。
 # 母版是设计稿的 icon-1024.png（第七十六轮）：原来拿网页用的 icon-512.png，最大那一档（1024 像素）只能放大。

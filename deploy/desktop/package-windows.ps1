@@ -53,6 +53,14 @@ Write-Host "==> 2/3 准备输入目录"
 if (Test-Path $Out) { Remove-Item $Out -Recurse -Force }
 New-Item -ItemType Directory -Path "$Out\input" | Out-Null
 Copy-Item $jar.FullName "$Out\input\"
+# 网页代码模式跑命令行那份循环要 node（第九十六轮）：这台机器上的 node.exe 打进去（NODE_EXE 指定，默认 PATH 上那个），
+# 落在应用目录的 node\node.exe（jpackage 把 input 目录原样放进 $APPDIR），下面 --java-options 把路径告诉后端
+$nodeExe = if ($env:NODE_EXE) { $env:NODE_EXE } else { (Get-Command "node.exe" -ErrorAction SilentlyContinue).Source }
+if (-not $nodeExe -or -not (Test-Path $nodeExe)) { throw "找不到 node.exe（设 NODE_EXE=绝对路径）—— 网页代码模式要用它" }
+New-Item -ItemType Directory -Path "$Out\input\node" | Out-Null
+Copy-Item $nodeExe "$Out\input\node\node.exe"
+& "$Out\input\node\node.exe" --version | Out-Null
+Assert-Exit "打进去的 node.exe 跑不起来"
 
 # 有没有 WiX（--type exe 需要）。没有就退回 app-image。
 $hasWix = ($null -ne (Get-Command "candle.exe" -ErrorAction SilentlyContinue)) -or
@@ -73,7 +81,8 @@ $common = @(
     "--java-options", "-Dspring.profiles.active=desktop",
     "--java-options", "-Dfile.encoding=UTF-8",
     "--java-options", "-Djava.awt.headless=false",
-    "--java-options", "-Xmx1g"
+    "--java-options", "-Xmx1g",
+    "--java-options", "-Dapp.ai.code-agent.node=`$APPDIR\node\node.exe"
 )
 if (Test-Path $Icon) { $common += @("--icon", $Icon) }
 if ($type -eq "exe") {

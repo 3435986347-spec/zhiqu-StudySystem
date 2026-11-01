@@ -209,6 +209,37 @@
                     <mainClass>com.zhiqu.ZhiquApplication</mainClass>
                 </configuration>
             </plugin>
+                    <!--
+              第九十六轮：网页 / 桌面应用的代码模式跑命令行那份循环（JsCodeAgent 起 node 跑 zhiqu-cli/src/host/code-host.js）。
+              命令行源码打进 JAR（classpath:zhiqu-cli/）：找不到 zhiqu-cli 目录时（桌面应用、网页服务器部署）JsCodeAgent 把它解到临时目录用。
+              命令行没有 npm 依赖，src + package.json 就是全部。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>bundle-zhiqu-cli</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/zhiqu-cli</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../zhiqu-cli</directory>
+                                    <includes>
+                                        <include>package.json</include>
+                                        <include>src/**</include>
+                                    </includes>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 </project>
