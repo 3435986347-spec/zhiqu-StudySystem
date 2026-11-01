@@ -33,7 +33,7 @@ test('plan 档只下发读 / 搜 / 查（含远程只读）和 exit_plan_mode；
   assert.deepEqual(plan, ['list_files', 'read_file', 'search', 'search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks', 'update_todos', 'exit_plan_mode']);
   for (const mode of ['ask', 'auto']) {
     const all = names(makeCtx({ mode }));
-    for (const n of ['write_file', 'run_command', 'create_study_plan', 'propose_memory']) assert.ok(all.includes(n), `${mode} 缺 ${n}`);
+    for (const n of ['write_file', 'edit_file', 'run_command', 'create_study_plan', 'propose_memory']) assert.ok(all.includes(n), `${mode} 缺 ${n}`);
     assert.ok(!all.includes('exit_plan_mode'));
   }
 });
@@ -80,16 +80,16 @@ test('模型编了一个不存在的工具名（replace）：说清「不是暂�
   const ctx = makeCtx({ root, replies: [
     { calls: [{ name: 'read_file', args: { path: 'a.js' } }] },
     { calls: [{ name: 'replace', args: { path: 'a.js', old_string: '1', new_string: '2' } }] },
-    { calls: [{ name: 'write_file', args: { path: 'a.js', old_string: 'x = 1', new_string: 'x = 2' } }] },
+    { calls: [{ name: 'edit_file', args: { path: 'a.js', old_string: 'x = 1', new_string: 'x = 2' } }] },
     { text: '改好了' }] });
   ctx.verbose = true;   // 用户那一行只在 /verbose 下显示（第十二轮起默认不显示过程）；给模型的话两种模式一样
   await runTurn(ctx, '把 1 改成 2');
   const refusal = toolMessages(ctx)[1];
   assert.match(refusal, /没有叫 replace 的工具 —— 不是暂时不可用/);
-  assert.match(refusal, /write_file 的替换用法.*old_string.*new_string/);
-  assert.match(refusal, /能用的工具：.*write_file/);
+  assert.match(refusal, /改文件里的一段用 edit_file：传 path、old_string.*new_string/);
+  assert.match(refusal, /能用的工具：.*edit_file/);
   assert.ok(!/这一轮/.test(refusal), '「这一轮」听起来像暂时的，模型会一遍遍重试');
-  assert.match(ctx.ui.text(), /replace（没有这个工具，应当用 write_file）/, '用户看到的那一行也要说清');
+  assert.match(ctx.ui.text(), /replace（没有这个工具，应当用 edit_file）/, '用户看到的那一行也要说清');
   assert.equal(fs.readFileSync(path.join(root, 'a.js'), 'utf8'), 'const x = 2;\n');
 
   // 默认（安静）模式：给模型的话一样，用户那边不留这一行 —— 它是过程，不是结论也不是改动
@@ -105,7 +105,7 @@ test('别家的工具名各自指到这里的对应工具（rm → delete_file�
     { text: '好' }] });
   await runTurn(ctx, '做');
   const [strReplace, bash, del, unknown] = toolMessages(ctx);
-  assert.match(strReplace, /write_file 的替换用法/);
+  assert.match(strReplace, /改文件里的一段用 edit_file/);
   assert.match(bash, /run_command/);
   assert.match(del, /没有叫 rm 的工具.*删除文件用 delete_file/);
   assert.match(unknown, /没有叫 frobnicate 的工具.*能用的工具：/);

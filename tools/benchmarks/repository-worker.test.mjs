@@ -54,7 +54,7 @@ test('repository task projection excludes patches, hints and grading test lists'
 test('real file tools edit repository bytes and execute a public Node check with shipped commands', async (t) => {
   const data = fixture(t, [
     { calls: [{ name: 'read_file', args: { path: 'math.cjs' } }] },
-    { calls: [{ name: 'write_file', args: { path: 'math.cjs', old_string: 'return values[0];',
+    { calls: [{ name: 'edit_file', args: { path: 'math.cjs', old_string: 'return values[0];',
       new_string: 'return values.reduce((sum, value) => sum + value, 0); // Bearer harmless-example' } }] },
     { calls: [{ name: 'write_file', args: { path: 'check.cjs', content:
       "const assert = require('node:assert/strict');\nconst {total} = require('./math.cjs');\n"
@@ -85,7 +85,7 @@ test('real file tools edit repository bytes and execute a public Node check with
   assert.ok(system.includes('PUBLIC_REPOSITORY_RULE'));
   assert.ok(system.includes(`run_command 能跑的命令：${DEFAULT_COMMANDS.join('、')}`));
   const tools = data.requests[0].body.tools.map((tool) => tool.function.name);
-  assert.deepEqual(tools, ['list_files', 'read_file', 'search', 'write_file', 'delete_file', 'run_command', 'update_todos']);
+  assert.deepEqual(tools, ['list_files', 'read_file', 'search', 'write_file', 'edit_file', 'delete_file', 'run_command', 'update_todos']);
   assert.equal(data.requests[0].body.maxTokens, 16_384);
   assert.equal(JSON.stringify(result).includes(CAPABILITY), false);
   assert.equal(result.diagnostics_trusted, false);

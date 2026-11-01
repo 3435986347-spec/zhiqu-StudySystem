@@ -30,6 +30,8 @@ class CodeToolNarrationTest {
         assertEquals("搜索「TODO」（在 src 下）", CodeToolNarration.describeCall("search_workspace", "{\"query\":\"TODO\",\"path\":\"src\"}"));
         assertEquals("生成草稿 game.html（3 行，未落盘）",
                 CodeToolNarration.describeCall("write_workspace_file", "{\"path\":\"game.html\",\"content\":\"a\\nb\\nc\\n\"}"));
+        assertEquals("修改草稿 game.html（替换一段，未落盘）",
+                CodeToolNarration.describeCall("edit_workspace_file", "{\"path\":\"game.html\",\"old_string\":\"a\",\"new_string\":\"b\"}"));
         assertEquals("运行 python3 test.py -v",
                 CodeToolNarration.describeCall("run_workspace_command", "{\"command\":\"python3\",\"args\":[\"test.py\",\"-v\"]}"));
         assertEquals("读知识页 薄弱点", CodeToolNarration.describeCall("read_wiki_page", "{\"title\":\"薄弱点\"}"));

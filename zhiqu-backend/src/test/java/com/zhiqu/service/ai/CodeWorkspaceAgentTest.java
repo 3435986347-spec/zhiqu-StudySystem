@@ -171,7 +171,7 @@ class CodeWorkspaceAgentTest {
         rig.run("帮我做一个小游戏", CODE_MODE);
         String results = rig.results();
         assertTrue(results.contains("没有叫「replace」的工具 —— 不是暂时不可用"), results);
-        assertTrue(results.contains("write_workspace_file"), "要告诉它这一轮能用的写工具：" + results);
+        assertTrue(results.contains("write_workspace_file") && results.contains("edit_workspace_file"), "要告诉它这一轮能用的写工具：" + results);
         assertFalse(results.contains("没有这个能力"), "写工具下发了，却让模型告诉用户没有这个能力：" + results);
     }
 
@@ -261,7 +261,7 @@ class CodeWorkspaceAgentTest {
         // 按消息在列表里的位置比，不在拼起来的字符串里找 —— 系统提示词里本身就写着「确认创建」
         assertTrue(codeAt > 0, "上一轮助手写的代码没交给工具循环 —— 「确认创建」时它不知道要建什么：" + sent);
         assertTrue(askAt > codeAt, "历史应当在这一句话之前：code@" + codeAt + " ask@" + askAt);
-        assertTrue(CodeWorkspaceAgent.offeredToolNames(tools.getValue()).contains("write_workspace_file"),
+        assertTrue(CodeWorkspaceAgent.offeredToolNames(tools.getValue()).containsAll(List.of("write_workspace_file", "edit_workspace_file")),
                 "按了「代码」、档位允许写，写工具却没下发");
     }
 
@@ -382,7 +382,7 @@ class CodeWorkspaceAgentTest {
         rig.modelSays(
                 toolCall("read_workspace_file", args(Map.of("path", "src/Big.java"))),
                 toolCall("write_workspace_file", args(Map.of("path", "src/Big.java", "content", "class Big {}"))),
-                toolCall("write_workspace_file", args(Map.of("path", "src/Big.java",
+                toolCall("edit_workspace_file", args(Map.of("path", "src/Big.java",
                         "old_string", "line 10 ", "new_string", "LINE 10 "))));
         CodeWorkspaceAgent.Result r = rig.run("改一下 src/Big.java", CODE_MODE);
         String ctx = r.context();
@@ -401,7 +401,7 @@ class CodeWorkspaceAgentTest {
     void 替换的前提() throws Exception {
         Rig unread = new Rig(WorkspaceMode.WRITE, true);
         when(unread.workspace.baselineOf("a.py")).thenReturn("h1");
-        unread.modelSays(toolCall("write_workspace_file", args(Map.of("path", "a.py", "old_string", "x", "new_string", "y"))));
+        unread.modelSays(toolCall("edit_workspace_file", args(Map.of("path", "a.py", "old_string", "x", "new_string", "y"))));
         CodeWorkspaceAgent.Result r1 = unread.run("改 a.py", CODE_MODE);
         assertTrue(r1.drafts().isEmpty());
         assertTrue(r1.context().contains("先 read_workspace_file"), r1.context());
@@ -411,7 +411,7 @@ class CodeWorkspaceAgentTest {
         when(changed.workspace.baselineOf("a.py")).thenReturn("h1", "h2");
         changed.modelSays(
                 toolCall("read_workspace_file", args(Map.of("path", "a.py"))),
-                toolCall("write_workspace_file", args(Map.of("path", "a.py", "old_string", "return 1", "new_string", "return 2"))));
+                toolCall("edit_workspace_file", args(Map.of("path", "a.py", "old_string", "return 1", "new_string", "return 2"))));
         CodeWorkspaceAgent.Result r2 = changed.run("改 a.py", CODE_MODE);
         assertTrue(r2.drafts().isEmpty(), "读过之后文件变了，还按旧的内容替换");
         assertTrue(r2.context().contains("被改过"), r2.context());
@@ -421,7 +421,7 @@ class CodeWorkspaceAgentTest {
         when(near.workspace.baselineOf("a.py")).thenReturn("h1");
         near.modelSays(
                 toolCall("read_workspace_file", args(Map.of("path", "a.py"))),
-                toolCall("write_workspace_file", args(Map.of("path", "a.py", "old_string", "def f():\n  return 1", "new_string", "x"))));
+                toolCall("edit_workspace_file", args(Map.of("path", "a.py", "old_string", "def f():\n  return 1", "new_string", "x"))));
         CodeWorkspaceAgent.Result r3 = near.run("改 a.py", CODE_MODE);
         assertTrue(r3.context().contains("第 1–2 行只差空白"), r3.context());
     }
@@ -436,20 +436,63 @@ class CodeWorkspaceAgentTest {
         rig.modelSays(
                 toolCall("read_workspace_file", args(Map.of("path", "m.py"))),
                 // 照仓库评测记录里模型发的样子（pytest-5840）：替换后的文字放在 content，没有 new_string
-                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "def a():\n    return 1\n",
+                toolCall("edit_workspace_file", args(Map.of("path", "m.py", "old_string", "def a():\n    return 1\n",
                         "content", "def a():\n    return 10\n"))),
-                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "def a():\n    return 1\n"))),
-                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "return 1", "new_string", "return 1"))),
-                // 三项全给（new_string 也合法）：只有「不能一起给」这道关拦得住，不拦就照替换出了草稿
-                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "return 2", "new_string", "return 20",
+                toolCall("edit_workspace_file", args(Map.of("path", "m.py", "old_string", "def a():\n    return 1\n"))),
+                toolCall("edit_workspace_file", args(Map.of("path", "m.py", "old_string", "return 1", "new_string", "return 1"))),
+                // 三项全给（new_string 也合法）：只有「没有 content」这道关拦得住，不拦就照替换出了草稿
+                toolCall("edit_workspace_file", args(Map.of("path", "m.py", "old_string", "return 2", "new_string", "return 20",
                         "content", "def b():\n    return 20\n"))));
         CodeWorkspaceAgent.Result r = rig.run("改 m.py", CODE_MODE);
         assertTrue(r.drafts().isEmpty(), "缺 new_string 的替换出了草稿（删掉了那一段）：" + r.drafts());
         String results = r.context();   // 拒绝写在给模型的上下文里（和「替换的前提」一样），执行轨迹里只有读那一下
-        assertTrue(results.contains("old_string 和 content 不能一起给"), results);
-        assertTrue(results.contains("content 只用于整份写入"), results);
+        assertTrue(results.contains("edit_workspace_file 没有 content 这个参数"), results);
+        assertTrue(results.contains("整份写入用 write_workspace_file"), results);
         assertTrue(results.contains("明写 new_string: \"\""), results);
         assertTrue(results.contains("什么都没改"), results);
+    }
+
+    /**
+     * 写整份和改一段是两个工具（第九十二轮）：原来一个工具两种用法，old_string + content 分不清要哪一种。
+     * 模型照老样子给 write_workspace_file 传改一段的参数、或者漏了 content，都不猜着出草稿。
+     */
+    @Test
+    @DisplayName("write_workspace_file 收到 old_string / new_string、缺 content：都不出草稿，说该用哪一个；两个工具的参数各自必填")
+    void 写整份和改一段是两个工具() throws Exception {
+        String src = "def a():\n    return 1\n";
+        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        when(rig.workspace.read("m.py")).thenReturn(src);
+        when(rig.workspace.baselineOf("m.py")).thenReturn("h1");
+        rig.modelSays(
+                toolCall("read_workspace_file", args(Map.of("path", "m.py"))),
+                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "return 1", "new_string", "return 2"))),
+                toolCall("write_workspace_file", args(Map.of("path", "m.py", "old_string", "def a():\n    return 1\n",
+                        "content", "def a():\n    return 10\n"))),
+                toolCall("write_workspace_file", args(Map.of("path", "m.py", "new_string", "return 2", "content", src))),
+                toolCall("write_workspace_file", args(Map.of("path", "m.py"))));
+        CodeWorkspaceAgent.Result r = rig.run("改 m.py", CODE_MODE);
+        assertTrue(r.drafts().isEmpty(), "给错了工具的调用出了草稿：" + r.drafts());
+        String results = r.context();
+        assertEquals(3, results.split("write_workspace_file 只管整份写入", -1).length - 1,
+                "三次传了改一段的参数，三次都要说该用 edit_workspace_file：" + results);
+        assertTrue(results.contains("改一段用 edit_workspace_file（path、old_string、new_string）"), results);
+        assertTrue(results.contains("write_workspace_file 要给 content"), "缺 content 原来读成空字符串、整个文件写成空的草稿：" + results);
+
+        Map<String, Map<String, Object>> params = new java.util.HashMap<>();
+        for (Map<String, Object> t : rig.agent.buildTools(true, false)) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> fn = (Map<String, Object>) t.get("function");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> p = (Map<String, Object>) fn.get("parameters");
+            params.put(String.valueOf(fn.get("name")), p);
+        }
+        assertEquals(List.of("path", "content"), params.get("write_workspace_file").get("required"));
+        assertEquals(java.util.Set.of("path", "content"), ((Map<?, ?>) params.get("write_workspace_file").get("properties")).keySet());
+        assertEquals(List.of("path", "old_string", "new_string"), params.get("edit_workspace_file").get("required"));
+        assertEquals(java.util.Set.of("path", "old_string", "new_string", "replace_all"),
+                ((Map<?, ?>) params.get("edit_workspace_file").get("properties")).keySet());
+        assertFalse(CodeWorkspaceAgent.offeredToolNames(rig.agent.buildTools(false, false)).contains("edit_workspace_file"),
+                "不能写的时候改一段的工具也不能下发");
     }
 
     @Test
@@ -460,8 +503,8 @@ class CodeWorkspaceAgentTest {
         when(rig.workspace.baselineOf("m.js")).thenReturn("h1");
         rig.modelSays(
                 toolCall("read_workspace_file", args(Map.of("path", "m.js"))),
-                toolCall("write_workspace_file", args(Map.of("path", "m.js", "old_string", "a = 1", "new_string", "a = 10"))),
-                toolCall("write_workspace_file", args(Map.of("path", "m.js", "old_string", "b = 2", "new_string", "b = 20"))));
+                toolCall("edit_workspace_file", args(Map.of("path", "m.js", "old_string", "a = 1", "new_string", "a = 10"))),
+                toolCall("edit_workspace_file", args(Map.of("path", "m.js", "old_string", "b = 2", "new_string", "b = 20"))));
         CodeWorkspaceAgent.Result r = rig.run("改 m.js", CODE_MODE);
         assertEquals(1, r.drafts().size());
         assertEquals("const a = 10;\nconst b = 20;\n", r.drafts().get(0).get("content"));

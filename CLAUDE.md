@@ -86,7 +86,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261031-r85e`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261102-r92a`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；**内联样式、写死的字号按文件只许降**（`InlineStyleRatchetTest`，`==` 钉着，少了就改小）；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -197,4 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第八十五轮](docs/rounds/round-85.md) Wiki 表格在格子里直接改（照 Obsidian）：点进一格露出原文、打字同步写回（| 转义）、Tab / 回车 / Esc 走格子、⌘Z 走整篇历史；自己改的那一下不重画；之后 review 修了四处（点圆点放光标、页名删空显示「无标题」不藏），桌面应用里鼠标点又修了三处（格子里的 | 读回来、整页高 2px、标签跟着改名）；[第八十六轮](docs/rounds/round-86.md) coding agent：仓库评测里 `write_file` 只给 old_string + content 被当成「换成空」、一声不响删代码（pytest-5840 / sympy-23950，命令行和网页 code agent 同一个错）、新旧一样说「已修改」、`.rst` 读不了还标「可能含密钥」；回放 14 段真实记录 19 次静默删代码全拒
 - [第八十七轮](docs/rounds/round-87.md) 命令行放开行内代码（`python3 -c`）和 git 的 status / diff / log：仓库里带的 `.gitconfig` 原来能让 git 叫起 fsmonitor / 过滤器 / 外部 diff，跑时隔离；用新 agent 重跑仓库评测十题：官方 6/10（完整性全过）、用满 60 轮 3 → 1、静默删代码 19 → 0、¥47.69 → ¥33.13；[第八十八轮](docs/rounds/round-88.md) coding agent 少花轮数：一轮发多个调用、读文件读成段（接着往下挪会被提醒）、剩 3 轮时提醒收尾、工作区里的绝对路径照收；真模型对比（一个只读的问题）轮数 8 → 3–5，评测十题重跑看不出效果、官方 4/10（丢的两题是修法判断，一题一遍的随机性内）
 - [第八十九轮](docs/rounds/round-89.md) coding agent 的稳定性：命令行干活的请求温度 0（`app.ai.harness-temperature`，原来从没设、DeepSeek 默认 1.0；不认就去掉重试）、改过文件要交活时推一次核对（例子 / 边界 / diff）；全方位锐评；[第九十轮](docs/rounds/round-90.md) 尺子（`tools/benchmarks/ruler/`，10 道本机小题 + 隐藏测试、对照组先验）：量第八十九轮 —— 温度 0 和交活核对都没量出好处、核对每题多花一半到一倍 token；子进程 HOME 换成自己的空目录（仓库里带的 sitecustomize.py 原来会被执行）、终端给头尾、桌面后端写日志、网页 code agent 跟上温度
-- [第九十一轮](docs/rounds/round-91.md) 去掉交活核对（尺子上量不出好处）；尺子第二版加 4 道多文件、要读约定的题 —— 校准 12/12 全过：自己出的题量不出这个模型的好坏，要量就拿真实评测里时对时错的那几道多跑几遍
+- [第九十一轮](docs/rounds/round-91.md) 去掉交活核对（尺子上量不出好处）；尺子第二版加 4 道多文件、要读约定的题 —— 校准 12/12 全过：自己出的题量不出这个模型的好坏，要量就拿真实评测里时对时错的那几道多跑几遍；[第九十二轮](docs/rounds/round-92.md) `write_file` 拆成写整份 / 改一段两个工具（命令行 `edit_file`、网页 `edit_workspace_file`，参数各自必填、给错就拒）：尺子 25/28、给错工具 0 次；真浏览器里点出代码草稿的确认框一关就没处确认；本机验证后端要带 `--app.workspace.state-file`

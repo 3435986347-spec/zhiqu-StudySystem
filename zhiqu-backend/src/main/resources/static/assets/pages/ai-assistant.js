@@ -896,14 +896,30 @@ function openPlanConfirmModal(artifact) {
   return handle;
 }
 
+var CONFIRMABLE_TYPES = ['PLAN_DRAFT', 'TASK_DRAFT', 'ROUTINE_DRAFT', 'WIKI_DRAFT', 'NOTE_DRAFT', 'MEMORY_DRAFT', 'CODE_DRAFT'];
+
+/**
+ * 产物卡片上的「查看并确认 / 确认」「忽略」。确认框只自动弹一次，关掉以后就靠这里再打开 ——
+ * 代码草稿原来不在这份清单里：确认框一关（点到遮罩、按 Esc），不刷新页面就没处确认（第九十二轮在真浏览器里点出来的）。
+ */
+function artifactActionsHtml(artifact) {
+  var type = String(artifact.artifactType || '').toUpperCase();
+  var status = String(artifact.status || '').toUpperCase();
+  if (CONFIRMABLE_TYPES.indexOf(type) < 0 || (status !== 'DRAFT' && status !== 'PENDING')) return '';
+  return '<div class="zq-artifact-actions">'
+    // 计划、记忆、代码草稿：走弹窗（可逐条勾选 / 看 diff），点这里可随时再打开
+    + ((isPlanDraft(artifact) || isMemoryDraft(artifact) || isCodeDraft(artifact))
+      ? '<button data-art-view="' + artifact.id + '">查看并确认</button>'
+      : '<button data-art-ok="' + artifact.id + '">确认</button>')
+    + '<button data-art-no="' + artifact.id + '" class="zq-btn-ghost">忽略</button></div>';
+}
+
 function renderArtifacts(artifacts) {
   var host = $('#zq-artifacts'); if (!host) return;
   var grouped = groupArtifacts(artifacts);
   host.innerHTML = grouped.length ? grouped.map(function (artifact) {
     var type = String(artifact.artifactType || '').toUpperCase();
     var status = String(artifact.status || '').toUpperCase();
-    var draft = ['PLAN_DRAFT', 'TASK_DRAFT', 'ROUTINE_DRAFT', 'WIKI_DRAFT', 'NOTE_DRAFT', 'MEMORY_DRAFT'].indexOf(type) >= 0
-      && (status === 'DRAFT' || status === 'PENDING');
     var content = artifactContent(artifact);
     var parts = artifact._citationParts || [];
     var hitCount = parts.length || Number(artifact.hitCount || 0);
@@ -929,12 +945,7 @@ function renderArtifacts(artifacts) {
       + (preview ? '<p class="zq-artifact-preview">' + esc(preview) + '</p>' : '')
       + itemHtml
       + '<details class="zq-artifact-details"><summary>展开详情</summary>' + artifactDetailsHtml(artifact) + '</details>'
-      + (draft ? '<div class="zq-artifact-actions">'
-          // 计划类草稿：优先走弹窗（可逐条勾选/修改），点这里可随时切回完整视图重看
-          + ((isPlanDraft(artifact) || isMemoryDraft(artifact) || isCodeDraft(artifact))
-            ? '<button data-art-view="' + artifact.id + '">查看并确认</button>'
-            : '<button data-art-ok="' + artifact.id + '">确认</button>')
-          + '<button data-art-no="' + artifact.id + '" class="zq-btn-ghost">忽略</button></div>' : '')
+      + artifactActionsHtml(artifact)
       + '</article>';
   }).join('') : empty('暂无产物');
   $all('[data-art-view]', host).forEach(function (b) {

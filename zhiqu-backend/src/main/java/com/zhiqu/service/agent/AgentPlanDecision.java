@@ -600,7 +600,7 @@ public record AgentPlanDecision(
      * 「这句话要求<b>改</b>工作区里的代码吗」—— 唯一定义，工具下发与判据共用。
      *
      * <p>要求同时命中代码提及词与写动作词，和 {@link #wikiWriteIntent} 同一个形状。
-     * 「最小权限」：只有明确的写意图才把 {@code write_workspace_file} 下发给模型 ——
+     * 「最小权限」：只有明确的写意图才把写工具（{@code write_workspace_file} / {@code edit_workspace_file}）下发给模型 ——
      * 不下发，它就不会尝试，也不会承诺自己改了文件。
      */
     public static boolean codeWriteIntent(String message) {

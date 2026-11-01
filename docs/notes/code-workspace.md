@@ -17,7 +17,10 @@ AI 助手原本只是个「work agent」（排计划、写 Wiki、做检索）�
 **档位与根目录现在能从界面切换**（AI 助手页工作区面板的 ⚙，`PUT /api/workspace/settings`），
 不必再改 `application.yml`；用户的选择持久化在 `~/.zhiqu/workspace-state.json`
 （桌面每次重启新 JVM，不持久化就每次回到 OFF）。文件夹选择器走 `GET /api/workspace/browse`
-（只列目录、管理员 + 回环）。**切换绕不过下面三条前提** —— `WorkspaceService.applySettings`
+（只列目录、管理员 + 回环）。**本机起验证用的后端要带 `--app.workspace.state-file=<临时路径>`**：这份文件一旦存在，
+它说的档位和根目录就盖过命令行的 `app.workspace.mode` / `root` —— 第九十二轮在验证库上起了一个 WRITE、指向临时目录的后端，
+实际生效的是这台机器上用户选的 EXEC + 一个真实项目目录，code agent 在那里面列了目录、搜了一遍（没写，草稿也没出）。
+**切换绕不过下面三条前提** —— `WorkspaceService.applySettings`
 只改「想要什么」，`rebuild` 每次重跑那三条裁决「实际允许什么」，所以公网（非回环）上无论
 点到哪、持久化里存的是什么，`effectiveMode` 都还是 OFF。持久化存的是<b>用户选的档位</b>
 而非降级结果 —— 把同一份 state 拿到回环机器上，原本想要的档位自动恢复。
@@ -58,7 +61,7 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 回答。`CodeAgentGateTest.已知会过触发的那一类` 把它钉成了明示的取舍，不是待修的 bug。
 
 **工作区写入（阶段 2）走的是 Wiki 那条已经验证过的路：草稿 → 用户确认 → 落盘。**
-模型调 `write_workspace_file` 只产出 `CODE_DRAFT` 工件，磁盘一个字节都不动；
+模型调 `write_workspace_file`（整份写）/ `edit_workspace_file`（改一段，第九十二轮拆开）只产出 `CODE_DRAFT` 工件，磁盘一个字节都不动；
 只有 `POST /api/ai/artifacts/{id}/confirm` 才会写。四条纪律各挡一件事：
 
 - **最小权限** —— 写工具只在 `canWrite`（工作区档位允许写 **且** `codeWriteIntent` 成立）

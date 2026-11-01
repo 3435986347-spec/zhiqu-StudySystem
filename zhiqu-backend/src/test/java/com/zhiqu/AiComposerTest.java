@@ -105,6 +105,13 @@ class AiComposerTest {
     }
 
     @Test
+    @DisplayName("产物卡片：代码草稿关掉确认框以后，卡片上还有「查看并确认」重新打开它（第九十二轮；在 node 里真跑）")
+    void 代码草稿的卡片能再打开确认框() throws Exception {
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/artifact-actions-check.js"), STATIC.resolve("assets/pages/ai-assistant.js")),
+                "artifact-actions-check.js 没有全绿");
+    }
+
+    @Test
     @DisplayName("拖文件：拖拽框平时不出现（桌面也是），拖到对话这一栏上方时整栏盖一层；进出子元素不闪、拖的不是文件不管（在 node 里真跑）")
     void 拖文件() throws Exception {
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/ai-drop-check.js"), STATIC.resolve("assets/pages/ai-assistant.js")),

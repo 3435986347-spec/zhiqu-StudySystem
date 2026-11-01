@@ -1,5 +1,5 @@
-// 「按原文替换一段」—— 纯函数，不碰文件。write_file 的替换用法走它；网页 code agent 的
-// write_workspace_file 替换用法（TextEdit.java）是同一套规矩，两边跑同一份 conformance/text-edit.json。
+// 「按原文替换一段」—— 纯函数，不碰文件。edit_file 走它；网页 code agent 的
+// edit_workspace_file（TextEdit.java）是同一套规矩，两边跑同一份 conformance/text-edit.json。
 //
 // 规矩（第九轮定的，第十轮提成一处）：
 //   - old_string 必须一字不差、只出现一次；出现几处时说出行号，replace_all 才全换；
@@ -46,7 +46,7 @@ function hintFor(text, needle) {
 /**
  * 在 text 里把 oldStr 换成 newStr（newStr 没给 = null / undefined，不是空字符串）。
  * 成功：{ text, replaced }；拒绝：{ error: { kind: 'empty_old' | 'missing_new' | 'not_found' | 'no_change' | 'ambiguous', … } }。
- * 'with_content'（old_string 和 content 一起给）由调用的工具判，说法也在 describeEditError 里。
+ * 'with_content'（edit_file 给了 content）、'wrong_tool'（write_file 给了 old_string / new_string）由调用的工具判，说法也在 describeEditError 里。
  */
 export function applyEdit(text, oldStr, newStr, { replaceAll = false } = {}) {
   const old = String(oldStr ?? '');
@@ -69,13 +69,16 @@ export function describeEditError(error, rel) {
   if (error.kind === 'empty_old') return 'old_string 不能为空';
   if (error.kind === 'missing_new') {
     return `只给了 old_string，没给 new_string —— 不知道要换成什么，这次没改 ${rel}。`
-      + '把改完的样子放进 new_string（content 只用于整份写入 / 追加）；真要删掉这一段，就明写 new_string: ""。';
+      + '把改完的样子放进 new_string；真要删掉这一段，就明写 new_string: ""。';
   }
   if (error.kind === 'no_change') {
     return `new_string 和 old_string 一模一样，这次 ${rel} 什么都没改。把 new_string 写成改完的样子；要是那里已经是对的，就不用再改。`;
   }
   if (error.kind === 'with_content') {
-    return `old_string 和 content 不能一起给，这次没改 ${rel}：替换一段时，换成的文字放 new_string；content 只用于整份写入 / 追加。`;
+    return `edit_file 没有 content 这个参数，这次没改 ${rel}：换成的文字放 new_string；整份写入 / 追加用 write_file。`;
+  }
+  if (error.kind === 'wrong_tool') {
+    return `write_file 只管整份写入和追加，不收 old_string / new_string，这次没改 ${rel}：改一段用 edit_file（path、old_string、new_string）。`;
   }
   if (error.kind === 'ambiguous') {
     const where = error.lines.slice(0, 12).join('、');

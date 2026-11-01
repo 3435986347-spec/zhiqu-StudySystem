@@ -1,4 +1,4 @@
-// 本地六个工具：list_files / read_file / search / write_file / delete_file / run_command。全部在用户电脑上执行。
+// 本地七个工具：list_files / read_file / search / write_file / edit_file / delete_file / run_command。全部在用户电脑上执行。
 //
 // 写入分两步（prepare → commit）：中间是权限这一关（ask 档要给用户看 diff、问 y/n）。commit 时再比一次磁盘，
 // 确认期间文件被改过就不写 —— 用户在编辑器里的改动不能被一个旧草稿覆盖。
@@ -148,21 +148,25 @@ export function localSchemas() {
       { query: { type: 'string', description: '要找的文字，原样匹配' },
         path: { type: 'string', description: '只在这个目录里找，默认整个工作区' },
         ignore_case: { type: 'boolean', description: '忽略大小写，默认否' } }, ['query']),
+    // 写整份和改一段是两个工具（第九十二轮拆开）：原来一个 write_file 三种用法、参数互相打架，
+    // old_string + content 被当成「换成空」一声不响删代码（第八十六轮）。现在每个工具的参数都是必填的那几个
     fn('write_file', [
-      '写文件（新建、追加、替换一段都用它 —— 没有单独的 replace / edit 工具）。三种用法选一种：',
-      '1）整份写入：给 content —— 新建文件，或者整份重写一个读过全文的文件；',
-      '2）追加：给 content 并且 append=true —— 长文件分几次写，就先写开头再一段段追加；',
-      '3）替换一段：给 old_string 和 new_string —— old_string 必须和文件里的原文一字不差（缩进也算）、且只出现一次；同样的一段要全部替换就加 replace_all=true。改一小段就用它，不要整份重写。',
-      '   换成的文字放 new_string，不要放 content（content 只用于 1、2）；要删掉一段就给 new_string=""。',
-      '上级目录不存在会自动建。',
+      '写文件：新建，或者整份重写一个读过全文的文件；append=true 时把 content 追加到末尾（长文件分几次写，就先写开头再一段段追加）。',
+      '只改已有文件里的一段用 edit_file，不要整份重写。上级目录不存在会自动建。',
     ].join('\n'), {
       path: { type: 'string', description: '相对工作区根的路径' },
       content: { type: 'string', description: '要写入（或追加）的完整内容' },
       append: { type: 'boolean', description: '为 true 时把 content 追加到文件末尾' },
-      old_string: { type: 'string', description: '替换用法：要被替换的原文' },
-      new_string: { type: 'string', description: '替换用法：替换成的新文字' },
-      replace_all: { type: 'boolean', description: '替换用法：old_string 出现几处就换几处（改名这类）' },
-    }, ['path']),
+    }, ['path', 'content']),
+    fn('edit_file', [
+      '改已有文件里的一段：把 old_string 换成 new_string。改之前先 read_file 读过（读到那一段就行）。',
+      'old_string 必须和文件里的原文一字不差（缩进也算）、且只出现一次；同样的一段要全部替换就加 replace_all=true。要删掉一段就给 new_string=""。',
+    ].join('\n'), {
+      path: { type: 'string', description: '相对工作区根的路径' },
+      old_string: { type: 'string', description: '要被替换的原文' },
+      new_string: { type: 'string', description: '替换成的新文字' },
+      replace_all: { type: 'boolean', description: 'old_string 出现几处就换几处（改名这类）' },
+    }, ['path', 'old_string', 'new_string']),
     fn('delete_file', [
       '删除工作区里的一个文件（只能是文件，不能是目录）。',
       '和改文件一样：这段会话里读过或写过、之后没被改过的文件才能删。',
@@ -325,7 +329,7 @@ export class LocalTools {
     // 不是 UTF-8 的不算读全：整份重写会把编码改掉（write_file 那边也会拒绝改它）
     const utf8 = kind === 'utf8';
     this.known.set(rel, { hash, full: utf8 && (full || Boolean(prev && prev.hash === hash && prev.full)) });
-    const encodingNote = utf8 ? '' : `【这个文件不是 UTF-8，是 ${ENCODING_NAME[kind]}${kind === 'gb18030' ? '，已按它解码' : '，认不出的字节显示成 �'}；不能用 write_file 改它（会把编码改掉）—— 要改先和用户确认要不要转成 UTF-8】\n`;
+    const encodingNote = utf8 ? '' : `【这个文件不是 UTF-8，是 ${ENCODING_NAME[kind]}${kind === 'gb18030' ? '，已按它解码' : '，认不出的字节显示成 �'}；不能用 write_file / edit_file 改它（会把编码改掉）—— 要改先和用户确认要不要转成 UTF-8】\n`;
     // 开头 / 结尾的空行在这份输出里看不出来：第一行空着和标题下面换的那一行一个样，最后几行空着和文件结尾一个样 ——
     // 整份重写时就悄悄丢了（第六十九轮：HumanEval 8 题失败里 6 题是「开头的空行没了」，题目明说一个字节都不许改）。标题里说出来
     const blank = (l) => /^\s*$/.test(l);
@@ -467,7 +471,18 @@ export class LocalTools {
       : `${rel} 在 .git 里 —— 那是版本库本身，不能由你来${verb}。`;
   }
 
+  /** write_file：整份写入 / 追加 */
   prepareWrite(args = {}) {
+    return this.prepareChange(args, false);
+  }
+
+  /** edit_file：把一段原文换成新的 */
+  prepareEdit(args = {}) {
+    return this.prepareChange(args, true);
+  }
+
+  /** 两个工具后面是同一套检查：读过、没被别人改过、读全了才能整份写、UTF-8、大小 */
+  prepareChange(args, replacing) {
     args = this.inWorkspace(args, 'path');
     const w = this.guard.resolveWritable(args.path);
     if (w.reason !== Reason.OK) return { error: describe(w.reason, args.path, this.guard.maxFileBytes) };
@@ -477,17 +492,18 @@ export class LocalTools {
     const exists = fs.existsSync(w.path);
     // 太大的文件只能分段读，也就不能改（先读进整个文件再拒绝，几百 MB 就白占了内存）
     if (exists && fs.statSync(w.path).size > this.guard.maxFileBytes) {
-      return { error: `${this.guard.display(w.path)} 太大（${formatBytes(fs.statSync(w.path).size)}，超过 ${formatBytes(this.guard.maxFileBytes)}）：只能分段读，不能用 write_file 改` };
+      return { error: `${this.guard.display(w.path)} 太大（${formatBytes(fs.statSync(w.path).size)}，超过 ${formatBytes(this.guard.maxFileBytes)}）：只能分段读，不能用 write_file / edit_file 改` };
     }
     const current = exists ? fs.readFileSync(w.path) : null;
     const currentKind = current ? classifyText(current) : 'utf8';
     if (currentKind !== 'utf8') {
-      return { error: `${this.guard.display(w.path)} 不是 UTF-8 编码（${ENCODING_NAME[currentKind] || '二进制'}）：用 write_file 改会把整个文件的编码换掉，原来的中文就成了乱码。先和用户确认要不要转成 UTF-8（比如 iconv -f GB18030 -t UTF-8），转好再改` };
+      return { error: `${this.guard.display(w.path)} 不是 UTF-8 编码（${ENCODING_NAME[currentKind] || '二进制'}）：用 write_file / edit_file 改会把整个文件的编码换掉，原来的中文就成了乱码。先和用户确认要不要转成 UTF-8（比如 iconv -f GB18030 -t UTF-8），转好再改` };
     }
     const currentText = current ? current.toString('utf8') : '';
     const known = this.known.get(rel);
-    const replacing = args.old_string != null;
-    // 分不清要整份写还是替换：原来按替换做、new_string 缺了当成空 —— 一声不响删代码（第八十六轮，见 edit.js）
+    // 参数给错了工具：拒绝、说该用哪一个，不猜着做 —— 原来分不清要整份写还是替换，按替换做、new_string 缺了当成空，
+    // 一声不响删代码（第八十六轮，见 edit.js）
+    if (!replacing && (args.old_string != null || args.new_string != null)) return { error: describeEditError({ kind: 'wrong_tool' }, rel) };
     if (replacing && args.content != null) return { error: describeEditError({ kind: 'with_content' }, rel) };
     const appending = !replacing && Boolean(args.append);
     if (exists) {
@@ -498,14 +514,14 @@ export class LocalTools {
         return { error: `${rel} 在你读过之后被改过了（可能是用户在编辑器里改的），请重新 read_file 再改。` };
       }
       if (!replacing && !appending && !known.full) {
-        return { error: `${rel} 你只读了一部分，整份重写会把没读到的部分冲掉。请用替换用法（old_string / new_string），或者先把全文读完。` };
+        return { error: `${rel} 你只读了一部分，整份重写会把没读到的部分冲掉。请用 edit_file 只改要改的那一段，或者先把全文读完。` };
       }
     }
     let newText;
     let kind;
     let replaced = 0;
     if (replacing) {
-      if (!exists) return { error: `替换用法只能用在已存在的文件上：${rel} 不存在。新建文件请直接给 content。` };
+      if (!exists) return { error: `edit_file 只能改已存在的文件：${rel} 不存在。新建文件用 write_file。` };
       // 规矩与网页 code agent 同一套（edit.js / TextEdit.java，跑同一份 conformance/text-edit.json）
       const r = applyEdit(currentText, args.old_string, args.new_string, { replaceAll: Boolean(args.replace_all) });
       if (r.error) return { error: describeEditError(r.error, rel) };
@@ -513,7 +529,7 @@ export class LocalTools {
       replaced = r.replaced;
       kind = 'replace';
     } else {
-      if (args.content == null) return { error: '没有给出 content（整份写入 / 追加），也没有给出 old_string（替换）' };
+      if (args.content == null) return { error: 'write_file 要给 content：整份写入的内容（append=true 时是要追加的内容）。改一段用 edit_file。' };
       newText = appending ? currentText + String(args.content) : String(args.content);
       kind = appending && exists ? 'append' : (exists ? 'overwrite' : 'create');
     }

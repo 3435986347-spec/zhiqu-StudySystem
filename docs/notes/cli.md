@@ -23,11 +23,13 @@
   `git diff` 叫起 clean 过滤器和外部 diff（这台机器上试出来的）。所以 `GIT_CONFIG_GLOBAL` 指到空设备、`--no-pager`、`core.fsmonitor=false`、`log.showSignature=false`，
   diff / log 加 `--no-ext-diff --no-textconv`，`GIT_OPTIONAL_LOCKS=0`（status 不顺手重写 index）。剩下的只有仓库自己 `.git/config` 里的过滤器（克隆不带它）。
   路径参数（文件、目录、`cwd`）落在工作区里面的绝对路径，命令行先换成相对路径再交给这套检查（`LocalTools.inWorkspace`，第八十八轮）；服务器端照旧只认相对路径。
-- **交活之前核对一次**（第八十九轮，`agent.js` 的 `VERIFY_NUDGE` / `pendingNudge`）：这一轮改过文件、模型不调工具要交活时，推一句「对照原话核对例子和边界、看一眼改动」，只推一次；
+- **交活之前核对一次**（第八十九轮加，第九十一轮去掉：尺子上量不出好处，每题多花一半到一倍 token）。`pendingNudge` 只剩「清单没做完」那一句，
   在问用户问题、最后一轮不推；要推的那条先不当结论打出来（原来安静模式下结论打两遍）。命令行干活的请求温度由网关定（`app.ai.harness-temperature`，默认 0）。
 - **没读过不许改、只读一部分不许整份重写、确认期间被改过不写**（`local.js` 的 prepare / commit 两步）。
-  `write_file` 一个工具三种用法（整份 / append / old_string 替换）—— 长文件分几次写，就是为了不撞单次输出上限。
-  替换缺 `new_string` 不当成「换成空」、新旧一样不说「已修改」、`old_string` 和 `content` 不能一起给（第八十六轮：仓库评测里模型把替换后的字放进 `content`，原来一声不响删了代码；网页 code agent 的 `TextEdit` 同一套，用例在 `conformance/text-edit.json`）。
+  写整份和改一段是两个工具（第九十二轮拆开，原来一个 `write_file` 三种用法、参数互相打架）：`write_file` 只收 `path` + `content`（`append` 追加 ——
+  长文件分几次写，就是为了不撞单次输出上限），`edit_file` 只收 `path` + `old_string` + `new_string`（`replace_all`），参数各自必填；
+  给 `write_file` 传改一段的参数、给 `edit_file` 传 `content`，都拒绝、说该用哪一个，不猜。
+  替换缺 `new_string` 不当成「换成空」、新旧一样不说「已修改」（第八十六轮：仓库评测里模型把替换后的字放进 `content`，原来一声不响删了代码；网页 code agent 的 `TextEdit` 同一套，用例在 `conformance/text-edit.json`）。
 - **截断不是说完了**：`finish_reason=length` 时截断的调用不执行，历史里的参数换成小而合法的 JSON（带 path），
   回模型「分几次写」。单条工具输出按模型窗口截断（窗口 × 0.35 字）—— 否则小窗口模型一轮就超，两边的压缩都救不了。
 - **子进程与 MCP 服务器都不继承命令行的环境**（那里有 `ZHIQU_TOKEN`）。子进程的 HOME 是这个进程自己的空目录（`childHome`，第九十轮；原来是工作区，仓库里带的 `.gitconfig`、Python 用户 site 里的 `sitecustomize.py` 会被当成用户自己的配置执行）。超时杀整个进程组（`detached` + `kill(-pid)`）：

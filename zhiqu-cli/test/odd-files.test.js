@@ -54,7 +54,7 @@ test('GBK 的中文文件：按 GBK 解码给模型看、说清不是 UTF-8；�
   assert.match(r.content, /你好世界/);
   assert.match(r.content, /不是 UTF-8，是 GBK \/ GB18030/);
   assert.match(t.prepareWrite({ path: 'old/main.c', content: 'x\n' }).error, /不是 UTF-8 编码/);
-  assert.match(t.prepareWrite({ path: 'old/main.c', old_string: 'return 0', new_string: 'return 1' }).error, /不是 UTF-8 编码/);
+  assert.match(t.prepareEdit({ path: 'old/main.c', old_string: 'return 0', new_string: 'return 1' }).error, /不是 UTF-8 编码/);
   assert.match(t.search({ query: '你好世界' }).content, /old\/main\.c:1:/);
 });
 
@@ -71,7 +71,7 @@ test('几百 KB 以上的大文件：不再一律「超过上限」—— 能读
   const tail = t.readFile({ path: 'big.txt', offset: -2 });
   assert.match(tail.content, /最后 2 行/);
   assert.match(tail.content, /\nline 49999 x+\nline 50000 x+$/);
-  assert.match(t.prepareWrite({ path: 'big.txt', old_string: 'line 1 ', new_string: 'LINE 1 ' }).error, /太大.*只能分段读，不能用 write_file 改/);
+  assert.match(t.prepareEdit({ path: 'big.txt', old_string: 'line 1 ', new_string: 'LINE 1 ' }).error, /太大.*只能分段读，不能用 write_file \/ edit_file 改/);
 });
 
 test('搜索：大文件照样搜到；二进制、没有读权限的跳过并说出来（原来一声不吭，「1 处」其实是「能看的那些里 1 处」）', () => {

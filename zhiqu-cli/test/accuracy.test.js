@@ -55,7 +55,7 @@ test('一行就超过上限（压缩过的 js）：只给前面一段并说明�
 function readThenReplace(root, rel, oldStr, newStr, extra = {}) {
   const tools = new LocalTools({ root });
   tools.readFile({ path: rel });
-  const prep = tools.prepareWrite({ path: rel, old_string: oldStr, new_string: newStr, ...extra });
+  const prep = tools.prepareEdit({ path: rel, old_string: oldStr, new_string: newStr, ...extra });
   if (prep.error) return { error: prep.error };
   const r = tools.commitWrite(prep);
   return { ...r, text: fs.readFileSync(path.join(root, rel), 'utf8') };
@@ -119,8 +119,8 @@ test('搜索结果保留缩进：模型常把搜到的那行直接当 old_string
 test('同一个文件连续改不成：第 3 次失败时插一句「停下来重读原文」；改成一次就重新计数', async () => {
   const root = tmpdir();
   write(root, 'a.js', 'const a = 1;\n');
-  const bad = { name: 'write_file', args: { path: 'a.js', old_string: 'const a = 2;', new_string: 'const a = 3;' } };
-  const good = { name: 'write_file', args: { path: 'a.js', old_string: 'const a = 1;', new_string: 'const a = 9;' } };
+  const bad = { name: 'edit_file', args: { path: 'a.js', old_string: 'const a = 2;', new_string: 'const a = 3;' } };
+  const good = { name: 'edit_file', args: { path: 'a.js', old_string: 'const a = 1;', new_string: 'const a = 9;' } };
   const ctx = makeCtx({ root, replies: [
     { calls: [{ name: 'read_file', args: { path: 'a.js' } }] },
     { calls: [bad] }, { calls: [bad] }, { calls: [bad] }, { calls: [good] }, { calls: [bad] }, { calls: [bad] }, { text: '好' }] });
@@ -148,7 +148,7 @@ test('同一条命令同样失败 3 次：提醒先读完整错误、找根因�
 test('用户说了新的一句话就重新计数：上一轮的失败不算到这一轮', async () => {
   const root = tmpdir();
   write(root, 'a.js', 'const a = 1;\n');
-  const bad = { name: 'write_file', args: { path: 'a.js', old_string: 'nope', new_string: 'x' } };
+  const bad = { name: 'edit_file', args: { path: 'a.js', old_string: 'nope', new_string: 'x' } };
   const ctx = makeCtx({ root, replies: [
     { calls: [{ name: 'read_file', args: { path: 'a.js' } }] }, { calls: [bad] }, { calls: [bad] }, { text: '没改成' },
     { calls: [bad] }, { text: '还是没改成' }] });

@@ -382,7 +382,8 @@ export function describeCall(name, args) {
     case 'list_files': return `列出 ${args.path || '工作区根'}`;
     case 'read_file': return `读取 ${args.path}${args.offset ? `（从第 ${args.offset} 行）` : ''}`;
     case 'search': return `搜索「${args.query}」${args.path ? `（在 ${args.path}）` : ''}`;
-    case 'write_file': return `${args.old_string != null ? '修改' : args.append ? '追加到' : '写入'} ${args.path}`;
+    case 'write_file': return `${args.append ? '追加到' : '写入'} ${args.path}`;
+    case 'edit_file': return `修改 ${args.path}`;
     case 'delete_file': return `删除 ${args.path}`;
     case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
     case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
@@ -409,10 +410,10 @@ export function describeCall(name, args) {
  *   根本没有这个工具（说「不是暂时的」、说该用哪个、怎么用） vs. 有、但这一档不给（说档位）。
  */
 const TOOL_ALIASES = [
-  [/^(replace|str_replace|str_replace_editor|str_replace_based_edit_tool|search_replace|edit|edit_file|multi_edit|multiedit|apply_patch|apply_diff|patch|modify_file|update_file)$/i,
-    'write_file', '改文件里的一段用 write_file 的替换用法：传 path、old_string（原文，一字不差、只出现一次）、new_string。'],
+  [/^(replace|str_replace|str_replace_editor|str_replace_based_edit_tool|search_replace|edit|multi_edit|multiedit|apply_patch|apply_diff|patch|modify_file|update_file)$/i,
+    'edit_file', '改文件里的一段用 edit_file：传 path、old_string（原文，一字不差、只出现一次）、new_string。'],
   [/^(create_file|write|write_to_file|save_file|new_file|create)$/i,
-    'write_file', '新建或整份写文件用 write_file（path + content），追加用 append: true。'],
+    'write_file', '新建或整份写文件用 write_file（path + content），追加用 append: true；改一段用 edit_file。'],
   [/^(delete|remove|remove_file|rm|unlink|delete_path|trash)$/i,
     'delete_file', '删除文件用 delete_file（传 path；读过或写过的才能删，删掉的挪进 .zhiqu/trash/，能恢复）。'],
   [/^(bash|shell|sh|exec|execute|execute_command|run|run_shell|run_terminal_cmd|terminal)$/i,
@@ -549,7 +550,7 @@ export function slimThinking(messages, keep = 2) {
 }
 
 const writeReminder = (file) => (n) => `你已经连续 ${n} 次没能改成 ${file}。停下来：先 read_file 重新读它现在的内容，`
-  + '照原文一字不差地拼 old_string（或者挑一段更短、只出现一次的原文）；不要凭记忆再试。如果是方案本身有问题，先想清楚再动手。';
+  + '照原文一字不差地拼 edit_file 的 old_string（或者挑一段更短、只出现一次的原文）；不要凭记忆再试。如果是方案本身有问题，先想清楚再动手。';
 const runReminder = (line) => (n) => `同一条命令 ${line} 已经连续 ${n} 次失败。先把上面的错误信息完整读一遍，找出根因（不是症状）、`
   + '想清楚要改哪里再改，一次改对；如果是环境问题或者需要用户决定，就停下来说明，不要换着花样重跑。';
 
@@ -584,9 +585,9 @@ async function executeTool(ctx, call, offered, signal) {
       ui.result(r.summary);
       return r.content;
     }
-    if (name === 'write_file') {
+    if (name === 'write_file' || name === 'edit_file') {
       const spinKey = `write:${String(args.path || '')}`;
-      const prep = local.prepareWrite(args);
+      const prep = name === 'edit_file' ? local.prepareEdit(args) : local.prepareWrite(args);
       if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, writeReminder(args.path)); }
       if (prep.newDirectories.length) ui.note(`    （会连同新建目录 ${prep.newDirectories.join('、')}）`);
       if (!(await confirmWrite(ctx, prep))) {

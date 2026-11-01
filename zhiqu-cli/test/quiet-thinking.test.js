@@ -31,7 +31,7 @@ function scripted(root) {
   write(root, 'a.js', 'const a = 1\nconst b = 2\n');
   return [
     { text: THINKING, calls: [{ name: 'read_file', args: { path: 'a.js' } }] },
-    { text: '找到了：第 1 行少了分号，我来改。', calls: [{ name: 'write_file', args: { path: 'a.js', old_string: 'const a = 1\n', new_string: 'const a = 1;\n' } }] },
+    { text: '找到了：第 1 行少了分号，我来改。', calls: [{ name: 'edit_file', args: { path: 'a.js', old_string: 'const a = 1\n', new_string: 'const a = 1;\n' } }] },
     { text: '改好了：a.js 第 1 行补了分号。' },
   ];
 }

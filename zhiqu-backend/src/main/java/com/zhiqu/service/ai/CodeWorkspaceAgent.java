@@ -414,21 +414,25 @@ public class CodeWorkspaceAgent {
                 searchProps, List.of("query")));
 
         if (canWrite) {
+            // 写整份和改一段是两个工具（第九十二轮拆开，和命令行的 write_file / edit_file 一样）：原来一个工具两种用法，
+            // old_string + content 分不清要哪一种（第八十六轮）。现在每个工具的参数都是必填的那几个
             Map<String, Object> writeProps = new LinkedHashMap<>();
             writeProps.put("path", ToolSchemas.schemaProp("string", "相对工作区根的文件路径"));
-            writeProps.put("content", ToolSchemas.schemaProp("string", "整份写入用：这个文件修改后的完整内容"));
-            writeProps.put("old_string", ToolSchemas.schemaProp("string", "替换用：要被替换的原文，一字不差（缩进也算）、只出现一次"));
-            writeProps.put("new_string", ToolSchemas.schemaProp("string", "替换用：替换成的新文字"));
-            writeProps.put("replace_all", ToolSchemas.schemaProp("boolean", "替换用：old_string 出现几处就换几处"));
+            writeProps.put("content", ToolSchemas.schemaProp("string", "这个文件写完之后的完整内容"));
             tools.add(ToolSchemas.functionTool("write_workspace_file",
-                    "把对一个文件的修改写成<b>草稿</b>。两种用法选一种：给 content 是整份写入（新建文件，或重写一个读过全文的文件）；"
-                            + "给 old_string 和 new_string 是只替换其中一段 —— 改一个已存在的文件时优先用它，不要把整个文件重写一遍。"
-                            + "替换时换成的文字放 new_string，不要放 content；要删掉一段就给 new_string=\"\"。"
-                            + "同一个文件多次替换会叠在同一份草稿上。"
-                            + "注意：这不会改动磁盘上的文件，只是生成一份待用户确认的草稿，用户在界面上看过 diff、点了确认才会落盘。"
-                            + "所以不要说「我已经改好了」，要说「改动已生成草稿，确认后生效」。"
+                    "把一个文件整份写成<b>草稿</b>：新建文件，或者重写一个读过全文的文件。"
+                            + "只改已有文件里的一段用 edit_workspace_file，不要把整个文件重写一遍。" + DRAFT_NOTE
                             + "改一个已存在的文件之前必须先 read_workspace_file 读过它 —— 没读过就改是盲写。",
-                    writeProps, List.of("path")));
+                    writeProps, List.of("path", "content")));
+            Map<String, Object> editProps = new LinkedHashMap<>();
+            editProps.put("path", ToolSchemas.schemaProp("string", "相对工作区根的文件路径"));
+            editProps.put("old_string", ToolSchemas.schemaProp("string", "要被替换的原文，一字不差（缩进也算）、只出现一次"));
+            editProps.put("new_string", ToolSchemas.schemaProp("string", "替换成的新文字；要删掉这一段就给空字符串"));
+            editProps.put("replace_all", ToolSchemas.schemaProp("boolean", "old_string 出现几处就换几处"));
+            tools.add(ToolSchemas.functionTool("edit_workspace_file",
+                    "把一个文件里的一段改动写成<b>草稿</b>：old_string 换成 new_string。改之前先 read_workspace_file 读过。"
+                            + "同一个文件改几处会叠在同一份草稿上。" + DRAFT_NOTE,
+                    editProps, List.of("path", "old_string", "new_string")));
         }
         if (canExec) {
             Map<String, Object> runProps = new LinkedHashMap<>();
@@ -445,6 +449,9 @@ public class CodeWorkspaceAgent {
         }
         return tools;
     }
+
+    private static final String DRAFT_NOTE = "注意：这不会改动磁盘上的文件，只是生成一份待用户确认的草稿，用户在界面上看过 diff、点了确认才会落盘。"
+            + "所以不要说「我已经改好了」，要说「改动已生成草稿，确认后生效」。";
 
     private static final int READ_MAX_LINES = 2000;
 
@@ -543,17 +550,22 @@ public class CodeWorkspaceAgent {
                 loop.baselines.put(path, workspaceService.baselineOf(path));
                 return readSlice(path, content, args, loop);
             }
-            if ("write_workspace_file".equals(name)) {
+            if ("write_workspace_file".equals(name) || "edit_workspace_file".equals(name)) {
+                boolean editing = "edit_workspace_file".equals(name);
                 String path = String.valueOf(args.getOrDefault("path", ""));
                 Map<String, Object> pending = loop.drafts.stream().filter(d -> path.equals(d.get("path"))).findFirst().orElse(null);
                 int replaced = 0;
                 String content;
                 String baseline = loop.baselines.get(path);
-                if (args.get("old_string") != null && args.get("content") != null) {
-                    // 分不清要整份写还是替换：原来按替换做、new_string 缺了当成空 —— 一声不响删代码（第八十六轮，见 TextEdit）
+                // 参数给错了工具：拒绝、说该用哪一个，不猜着做 —— 原来分不清要整份写还是替换，按替换做、new_string 缺了当成空，
+                // 一声不响删代码（第八十六轮，见 TextEdit）
+                if (!editing && (args.get("old_string") != null || args.get("new_string") != null)) {
+                    return TextEdit.describe(TextEdit.wrongTool(), path);
+                }
+                if (editing && args.get("content") != null) {
                     return TextEdit.describe(TextEdit.withContent(), path);
                 }
-                if (args.get("old_string") != null) {
+                if (editing) {
                     // 替换一段（第十轮）：在这个文件的草稿上接着改（同一个文件改两处叠在一起），没有草稿就在读到的那一份上改
                     String base;
                     if (pending != null) {
@@ -578,12 +590,16 @@ public class CodeWorkspaceAgent {
                     content = edit.text();
                     replaced = edit.replaced();
                 } else {
-                    content = String.valueOf(args.getOrDefault("content", ""));
+                    if (args.get("content") == null) {
+                        // 原来缺 content 读成 ""：整个文件写成空的草稿
+                        return "操作被拒绝：write_workspace_file 要给 content（" + path + " 写完之后的完整内容）；改一段用 edit_workspace_file。";
+                    }
+                    content = String.valueOf(args.get("content"));
                     // 整份重写一个已存在的文件：必须读过全文（或者这一轮自己整份写过它）。只看了一段就整份写，没看到的部分就没了
                     boolean exists = baseline != null && !WorkspaceService.ABSENT.equals(baseline);
                     if (exists && pending == null && !loop.fullyRead.contains(path)) {
                         return "操作被拒绝：" + path + " 你只读了一部分，整份重写会把没读到的部分冲掉。"
-                                + "请用替换用法（old_string / new_string）只改要改的那一段，或者先把全文读完。";
+                                + "请用 edit_workspace_file 只改要改的那一段，或者先把全文读完。";
                     }
                 }
                 if (baseline == null) {
@@ -675,9 +691,10 @@ public class CodeWorkspaceAgent {
                 2.2 搜索结果说「还有更多」时，你看到的<b>不是全部</b>。这时不要下
                     「只有这几处用到」这类结论，换一个更具体的关键词再搜。
                 3. 你能不能改文件、能不能跑命令，取决于这一轮给了你哪些工具 —— 没给就是没有。
-                   3.1 有 write_workspace_file 时：它<b>只生成草稿</b>，磁盘没有改动。
+                   3.1 有 write_workspace_file / edit_workspace_file 时：它们<b>只生成草稿</b>，磁盘没有改动。
+                       新建或整份重写用 write_workspace_file，只改一段用 edit_workspace_file。
                        所以说「改动已生成草稿，你确认后才会写入」，不要说「我已经改好了」。
-                   3.2 没有 write_workspace_file 时：把改动写成代码块给他，说明改哪个文件的哪一段。
+                   3.2 没有这两个工具时：把改动写成代码块给他，说明改哪个文件的哪一段。
                    3.3 有 run_workspace_command 时：只能跑工作区里<b>已经存在的文件</b>。
                        想跑一段新代码，先写成草稿让他确认落盘，再跑 —— 这样他知道自己机器上
                        将要执行的是什么。命令行上塞代码（-c/-e）会被拒绝。

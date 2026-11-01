@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { LocalTools } from '../src/tools/local.js';
+import { LocalTools, localSchemas } from '../src/tools/local.js';
 import { resolveOnPath } from '../src/tools/exec.js';
 import { tmpdir, write } from './helpers.js';
 
@@ -39,7 +39,7 @@ test('只读了一部分：不许整份重写（会冲掉没读到的部分）�
   const r = t.readFile({ path: 'long.js' });
   assert.match(r.content, /没读完，用 offset=2001 接着读/);
   assert.match(t.prepareWrite({ path: 'long.js', content: 'x' }).error, /只读了一部分/);
-  const rep = t.prepareWrite({ path: 'long.js', old_string: 'line 42\n', new_string: 'LINE 42\n' });
+  const rep = t.prepareEdit({ path: 'long.js', old_string: 'line 42\n', new_string: 'LINE 42\n' });
   assert.equal(rep.kind, 'replace');
   t.commitWrite(rep);
   assert.match(fs.readFileSync(path.join(root, 'long.js'), 'utf8'), /\nLINE 42\nline 43\n/);
@@ -49,8 +49,8 @@ test('替换：没找到、出现不止一次都拒；追加接在末尾', () =>
   const { root, t } = tools();
   write(root, 'a.js', 'x = 1\nx = 1\ny = 2\n');
   t.readFile({ path: 'a.js' });
-  assert.match(t.prepareWrite({ path: 'a.js', old_string: 'z', new_string: 'q' }).error, /没找到/);
-  assert.match(t.prepareWrite({ path: 'a.js', old_string: 'x = 1', new_string: 'x = 3' }).error, /出现了 2 处（第 1、2 行）/);
+  assert.match(t.prepareEdit({ path: 'a.js', old_string: 'z', new_string: 'q' }).error, /没找到/);
+  assert.match(t.prepareEdit({ path: 'a.js', old_string: 'x = 1', new_string: 'x = 3' }).error, /出现了 2 处（第 1、2 行）/);
   const ap = t.prepareWrite({ path: 'a.js', content: 'z = 3\n', append: true });
   assert.equal(ap.kind, 'append');
   t.commitWrite(ap);
@@ -60,31 +60,58 @@ test('替换：没找到、出现不止一次都拒；追加接在末尾', () =>
   assert.ok(!again.error, again.error);
 });
 
-test('替换：只给 old_string、没给 new_string —— 拒绝，文件一个字不动；新旧一样也拒；明写 new_string 为空才是删（第八十六轮：pytest-5840 原来被一声不响删了 32 行）', () => {
+test('改一段：只给 old_string、没给 new_string —— 拒绝，文件一个字不动；新旧一样也拒；明写 new_string 为空才是删（第八十六轮：pytest-5840 原来被一声不响删了 32 行）', () => {
   const { root, t } = tools();
   const src = 'def a():\n    return 1\n\ndef b():\n    return 2\n';
   write(root, 'm.py', src);
   t.readFile({ path: 'm.py' });
   // 照评测记录里模型发的样子：替换后的文字放进了 content，没有 new_string
-  const r = t.prepareWrite({ path: 'm.py', old_string: 'def a():\n    return 1\n', content: 'def a():\n    return 10\n' });
+  const r = t.prepareEdit({ path: 'm.py', old_string: 'def a():\n    return 1\n', content: 'def a():\n    return 10\n' });
   assert.ok(r.error, `应当拒绝，却准备写成：${JSON.stringify(r.newText)}`);
-  assert.match(r.error, /old_string 和 content 不能一起给/);
-  assert.match(r.error, /content 只用于整份写入/);
-  // 三项全给（new_string 也合法）：分不清要整份写还是替换 —— 只有「不能一起给」这道关拦得住（缺 new_string 那道管不到）
-  const all = t.prepareWrite({ path: 'm.py', old_string: 'return 1', new_string: 'return 10', content: 'def a():\n    return 10\n' });
+  assert.match(r.error, /edit_file 没有 content 这个参数/);
+  assert.match(r.error, /整份写入 \/ 追加用 write_file/);
+  // 三项全给（new_string 也合法）：分不清换成的是哪一份 —— 只有「没有 content」这道关拦得住（缺 new_string 那道管不到）
+  const all = t.prepareEdit({ path: 'm.py', old_string: 'return 1', new_string: 'return 10', content: 'def a():\n    return 10\n' });
   assert.ok(all.error, `三项全给应当拒绝，却准备写成：${JSON.stringify(all.newText)}`);
-  assert.match(all.error, /不能一起给/);
-  const only = t.prepareWrite({ path: 'm.py', old_string: 'def a():\n    return 1\n' });
+  assert.match(all.error, /没有 content/);
+  const only = t.prepareEdit({ path: 'm.py', old_string: 'def a():\n    return 1\n' });
   assert.ok(only.error, `只给 old_string 应当拒绝，却准备写成：${JSON.stringify(only.newText)}`);
   assert.match(only.error, /new_string: ""/);
-  const same = t.prepareWrite({ path: 'm.py', old_string: 'return 1', new_string: 'return 1' });
+  const same = t.prepareEdit({ path: 'm.py', old_string: 'return 1', new_string: 'return 1' });
   assert.ok(same.error, '新旧一样应当拒绝（原来回「已修改 +0 -0」，模型以为改上了）');
   assert.match(same.error, /什么都没改/);
   assert.equal(fs.readFileSync(path.join(root, 'm.py'), 'utf8'), src);
-  const del = t.prepareWrite({ path: 'm.py', old_string: '\ndef b():\n    return 2\n', new_string: '' });
+  const del = t.prepareEdit({ path: 'm.py', old_string: '\ndef b():\n    return 2\n', new_string: '' });
   assert.equal(del.kind, 'replace');
   t.commitWrite(del);
   assert.equal(fs.readFileSync(path.join(root, 'm.py'), 'utf8'), 'def a():\n    return 1\n');
+});
+
+test('写整份和改一段是两个工具（第九十二轮）：write_file 收到改一段的参数、缺 content，edit_file 用在不存在的文件上 —— 都拒，说该用哪一个', () => {
+  const { root, t } = tools();
+  const src = 'def a():\n    return 1\n';
+  write(root, 'm.py', src);
+  t.readFile({ path: 'm.py' });
+  // 原来的一个工具三种用法：模型照老样子给 write_file 传 old_string —— 不猜它要整份写还是替换
+  for (const args of [
+    { path: 'm.py', old_string: 'return 1', new_string: 'return 2' },
+    { path: 'm.py', old_string: 'def a():\n    return 1\n', content: 'def a():\n    return 10\n' },
+    { path: 'm.py', new_string: 'return 2', content: src },
+  ]) {
+    const r = t.prepareWrite(args);
+    assert.ok(r.error, `${JSON.stringify(args)} 应当拒绝，却准备写成：${JSON.stringify(r.newText)}`);
+    assert.match(r.error, /write_file 只管整份写入和追加.*改一段用 edit_file/);
+  }
+  assert.match(t.prepareWrite({ path: 'm.py' }).error, /write_file 要给 content.*改一段用 edit_file/);
+  assert.match(t.prepareEdit({ path: 'new.py', old_string: 'x', new_string: 'y' }).error, /edit_file 只能改已存在的文件.*新建文件用 write_file/);
+  assert.equal(fs.readFileSync(path.join(root, 'm.py'), 'utf8'), src);
+  assert.ok(!fs.existsSync(path.join(root, 'new.py')));
+  // 两个工具的参数各自必填：错的组合从接口上就不该出现
+  const schema = Object.fromEntries(localSchemas().map((s) => [s.function.name, s.function.parameters]));
+  assert.deepEqual(schema.write_file.required, ['path', 'content']);
+  assert.deepEqual(Object.keys(schema.write_file.properties), ['path', 'content', 'append']);
+  assert.deepEqual(schema.edit_file.required, ['path', 'old_string', 'new_string']);
+  assert.deepEqual(Object.keys(schema.edit_file.properties), ['path', 'old_string', 'new_string', 'replace_all']);
 });
 
 test('Python 项目常见的 .rst / .pyi / MANIFEST.in 能读能写；列目录时读不了的不再一律说「可能含密钥」、拒绝时说清去哪加（第八十六轮：pytest-10356 在 .rst 上白花约 10 轮）', () => {
@@ -337,7 +364,7 @@ test('工作区里面的绝对路径照收（文件、目录、cwd、工作区�
   write(root, 'src/a.js', 'x\n');
   const abs = (rel) => path.join(root, rel);
   assert.match(t.readFile({ path: abs('src/a.js') }).content, /x/);
-  assert.equal(t.prepareWrite({ path: abs('src/a.js'), old_string: 'x', new_string: 'y' }).rel, 'src/a.js');
+  assert.equal(t.prepareEdit({ path: abs('src/a.js'), old_string: 'x', new_string: 'y' }).rel, 'src/a.js');
   assert.match(t.listFiles({ path: abs('src') }).content, /a\.js/);
   assert.match(t.search({ query: 'x', path: abs('src') }).content, /a\.js:1/);
   assert.equal(t.prepareRun({ command: 'node', args: ['-e', '1'], cwd: root }).cwdRel, '.');

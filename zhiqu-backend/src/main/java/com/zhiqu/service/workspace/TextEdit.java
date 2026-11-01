@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * 「按原文替换一段」—— 纯函数，不碰文件。网页 code agent 的 {@code write_workspace_file} 替换用法走它；
- * npm 版 zhiqu 的 {@code write_file} 替换用法（{@code zhiqu-cli/src/tools/edit.js}）是同一套规矩，
+ * 「按原文替换一段」—— 纯函数，不碰文件。网页 code agent 的 {@code edit_workspace_file} 走它；
+ * npm 版 zhiqu 的 {@code edit_file}（{@code zhiqu-cli/src/tools/edit.js}）是同一套规矩，
  * 两边跑同一份 {@code conformance/text-edit.json}（{@code TextEditConformanceTest} 与 {@code edit-conformance.test.js}）。
  *
  * <h2>为什么网页这边要有它（第十轮）</h2>
@@ -33,12 +33,20 @@ public final class TextEdit {
     private static final Pattern LONE_LF = Pattern.compile("(^|[^\\r])\\n");
     private static final int SHOW_CHARS = 2000;
 
-    /** {@code WITH_CONTENT}（old_string 和 content 一起给）由调用的工具判，说法在 {@link #describe} 里，两边一样。 */
-    public enum Kind { EMPTY_OLD, MISSING_NEW, NOT_FOUND, NO_CHANGE, AMBIGUOUS, WITH_CONTENT }
+    /**
+     * {@code WITH_CONTENT}（改一段的工具给了 content）、{@code WRONG_TOOL}（整份写的工具给了 old_string / new_string）
+     * 由调用的工具判，说法在 {@link #describe} 里，两边一样。
+     */
+    public enum Kind { EMPTY_OLD, MISSING_NEW, NOT_FOUND, NO_CHANGE, AMBIGUOUS, WITH_CONTENT, WRONG_TOOL }
 
-    /** old_string 和 content 一起给：分不清要整份写还是替换。 */
+    /** edit_workspace_file 给了 content：分不清换成的是哪一份。 */
     public static Error withContent() {
         return new Error(Kind.WITH_CONTENT, null, 0, List.of());
+    }
+
+    /** write_workspace_file 给了 old_string / new_string：那是改一段的参数。 */
+    public static Error wrongTool() {
+        return new Error(Kind.WRONG_TOOL, null, 0, List.of());
     }
 
     /** 没找到时的线索。{@code kind} 是 {@code whitespace}（只差空白，{@code from..to} 行）或 {@code first_line}（第一行在 {@code at}）。 */
@@ -97,11 +105,13 @@ public final class TextEdit {
         return switch (error.kind()) {
             case EMPTY_OLD -> "old_string 不能为空";
             case MISSING_NEW -> "只给了 old_string，没给 new_string —— 不知道要换成什么，这次没改 " + path + "。"
-                    + "把改完的样子放进 new_string（content 只用于整份写入）；真要删掉这一段，就明写 new_string: \"\"。";
+                    + "把改完的样子放进 new_string；真要删掉这一段，就明写 new_string: \"\"。";
             case NO_CHANGE -> "new_string 和 old_string 一模一样，这次 " + path + " 什么都没改。"
                     + "把 new_string 写成改完的样子；要是那里已经是对的，就不用再改。";
-            case WITH_CONTENT -> "old_string 和 content 不能一起给，这次没改 " + path + "：替换一段时，换成的文字放 new_string；"
-                    + "content 只用于整份写入。";
+            case WITH_CONTENT -> "edit_workspace_file 没有 content 这个参数，这次没改 " + path + "：换成的文字放 new_string；"
+                    + "整份写入用 write_workspace_file。";
+            case WRONG_TOOL -> "write_workspace_file 只管整份写入，不收 old_string / new_string，这次没改 " + path + "："
+                    + "改一段用 edit_workspace_file（path、old_string、new_string）。";
             case AMBIGUOUS -> {
                 List<Integer> shown = error.lines().subList(0, Math.min(12, error.lines().size()));
                 yield "old_string 在 " + path + " 里出现了 " + error.count() + " 处（第 "

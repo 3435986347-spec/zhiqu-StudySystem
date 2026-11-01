@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -46,6 +47,24 @@ class CodeAgentGateTest {
 
     private static String src(Path p) throws IOException {
         return SourceText.stripComments(Files.readString(p, StandardCharsets.UTF_8));
+    }
+
+    /** 从 open（一个 '{' 的位置）找到配对的 '}'；字符串、字符字面量里的括号不算。 */
+    private static int blockEnd(String code, int open) {
+        int depth = 0;
+        for (int i = open; i < code.length(); i++) {
+            char c = code.charAt(i);
+            if (c == '"' || c == '\'') {
+                for (i++; i < code.length() && code.charAt(i) != c; i++) {
+                    if (code.charAt(i) == '\\') i++;
+                }
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}' && --depth == 0) {
+                return i;
+            }
+        }
+        throw new AssertionError("找不到配对的 } —— 判据的锚点没了");
     }
 
     private static AgentPlanDecision decide(String message, boolean toolCalling, boolean workspaceReadable) {
@@ -230,13 +249,17 @@ class CodeAgentGateTest {
                         || service.contains("private boolean codeWriteIntent") || service.contains("looksCodeWriteIntent"),
                 "不得在实现侧另写一套写意图判定 —— 两处各判一次迟早分叉");
 
-        // write_workspace_file 的声明必须在 canWrite 分支里，不能无条件加进工具集
-        int declaration = code.indexOf("functionTool(\"write_workspace_file\"");
-        assertTrue(declaration > 0, "找不到写工具的声明 —— 判据的锚点没了");
+        // 两个写工具（整份写、改一段，第九十二轮拆开）的声明都必须在 canWrite 分支里，不能无条件加进工具集
         int gate = code.indexOf("if (canWrite) {");
-        assertTrue(gate > 0 && gate < declaration,
-                "写工具的声明必须在 if (canWrite) 里面。无条件声明的话，"
-                        + "用户只是问「这段代码为什么报错」，模型也会拿到改文件的能力");
+        assertTrue(gate > 0, "找不到 if (canWrite) —— 判据的锚点没了");
+        int gateEnd = blockEnd(code, code.indexOf('{', gate));
+        for (String tool : List.of("write_workspace_file", "edit_workspace_file")) {
+            int declaration = code.indexOf("functionTool(\"" + tool + "\"");
+            assertTrue(declaration > 0, "找不到 " + tool + " 的声明 —— 判据的锚点没了");
+            assertTrue(gate < declaration && declaration < gateEnd,
+                    tool + " 的声明必须在 if (canWrite) 里面。无条件声明的话，"
+                            + "用户只是问「这段代码为什么报错」，模型也会拿到改文件的能力");
+        }
     }
 
     /** 磁盘那一侧也要问档位：写意图成立但工作区是只读的，同样不能下发写工具。 */

@@ -14,7 +14,7 @@ test('real worker Api/SSE passes through budget broker to edit and execute only 
   fs.writeFileSync(path.join(workspace, 'base_repo/math.cjs'), 'exports.total = values => values[0];\n');
   const actions = [
     ['read_file', { path: 'math.cjs' }],
-    ['write_file', { path: 'math.cjs', old_string: 'values[0]', new_string: 'values.reduce((a, b) => a + b, 0)' }],
+    ['edit_file', { path: 'math.cjs', old_string: 'values[0]', new_string: 'values.reduce((a, b) => a + b, 0)' }],
     ['write_file', { path: 'check.cjs', content: "const assert = require('node:assert/strict'); const {total} = require('./math.cjs'); assert.equal(total([1,2,3]),6); assert.equal(total([]),0); console.log('PUBLIC_CHECK_PASSED');\n" }],
     ['run_command', { command: 'node', args: ['check.cjs'] }],
   ];

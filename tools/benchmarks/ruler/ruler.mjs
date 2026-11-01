@@ -69,10 +69,13 @@ export async function runEpisode(task, { cliDir, server, token, modelId, maxRoun
   try { await runTurn(ctx, task.issue, { signal: controller.signal }); } catch (e) { error = String(e && e.message || e); } finally { clearTimeout(timer); }
   const seconds = Math.round((Date.now() - t0) / 1000);
   const toolRounds = ctx.messages.filter((m) => m.role === 'assistant' && (m.tool_calls || []).length).length;
-  const nudges = ctx.messages.filter((m) => m.role === 'user' && /交活之前核对一遍/.test(m.content || '')).length;
+  // 各工具调了几次、写 / 改文件因为参数给错了工具被拒几次（第九十二轮拆开 write_file / edit_file 之后看模型会不会用）
+  const calls = {};
+  for (const m of ctx.messages) for (const c of m.role === 'assistant' ? m.tool_calls || [] : []) calls[c.function.name] = (calls[c.function.name] || 0) + 1;
+  const wrongTool = ctx.messages.filter((m) => m.role === 'tool' && /write_file 只管整份写入和追加|edit_file 没有 content 这个参数/.test(m.content || '')).length;
   const visible = runVisible(task, ws);
   const hidden = runHidden(task, ws);
-  return { task: task.name, pass: hidden.pass, visiblePass: visible.pass, seconds, toolRounds, nudges, usage: ctx.usage, aborted: controller.signal.aborted,
+  return { task: task.name, pass: hidden.pass, visiblePass: visible.pass, seconds, toolRounds, calls, wrongTool, usage: ctx.usage, aborted: controller.signal.aborted,
     error, changed: [...ctx.changedFiles], hiddenTail: hidden.pass ? '' : hidden.output.slice(-600), workspace: ws };
 }
 
