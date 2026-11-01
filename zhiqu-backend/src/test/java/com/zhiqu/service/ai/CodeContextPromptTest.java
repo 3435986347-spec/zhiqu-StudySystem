@@ -66,6 +66,23 @@ class CodeContextPromptTest {
         assertTrue(text.contains("把完整内容放进一个代码块，告诉他存成哪个文件名"), text);
     }
 
+    /**
+     * 第九十四轮（真浏览器里用户的 key 点出来的）：「写进去了，跑一下 test_calc.py 看看过没过」—— 句子里有写的词，写工具下发了；
+     * 循环只跑了测试、过了（本来就不用改），最终回答却说「这一轮没生成草稿，所以没写入磁盘，请再说一次写进去」，和跑出来的结果对着干。
+     */
+    @Test
+    @DisplayName("能写、没草稿、也没试过写（只跑了测试）：照结果回答，不许说「没写成」、不许让他再说「写进去」")
+    void 只跑了测试不说没写成() {
+        String ran = CodeContextPrompt.dataBlock("【工作区 run_command】\n$ python3 test_calc.py\n退出码 0\nok", List.of(), true, false);
+        assertTrue(ran.contains("这一轮没有改文件"), ran);
+        assertTrue(ran.contains("不要说「没写成」"), ran);
+        assertFalse(ran.contains("请他再说一次「写进去」：") || ran.contains("没有生成任何文件草稿。如实说明这一轮没写成"),
+                "只跑了测试，却让模型说没写成：" + ran);
+        String tried = CodeContextPrompt.dataBlock("(写入被拒)", List.of(), true, true);
+        assertTrue(tried.contains("如实说明这一轮没写成"), "真的试过写却没写成：照旧要说出来 —— " + tried);
+        assertTrue(CodeContextPrompt.dataBlock("x", List.of(), true).contains("如实说明这一轮没写成"), "说不清试没试过的老调用按「试过」算");
+    }
+
     @Test
     @DisplayName("没草稿：让模型把改法写出来，不许暗示已经改了")
     void 没草稿时让它写出改法() {
@@ -89,7 +106,7 @@ class CodeContextPromptTest {
         String code = SourceText.stripComments(Files.readString(
                 Path.of("src", "main", "java", "com", "zhiqu", "service", "impl", "AiServiceImpl.java"),
                 StandardCharsets.UTF_8));
-        assertTrue(code.contains("CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered)"),
+        assertTrue(code.contains("CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered, s.codeWriteAttempted)"),
                 "最终回答的工作区数据块没有按本轮草稿分支 —— 又会出现「草稿弹出来了，回答却说改不了」");
         assertTrue(code.contains("if (hasText(s.codeContext) || !s.codeDrafts.isEmpty() || s.codeWriteOffered)"),
                 "外层条件没算上「写工具下发过」—— 循环很快中断时最终回答收不到「别贴整份文件」的约束");

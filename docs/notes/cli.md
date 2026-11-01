@@ -25,6 +25,7 @@
   路径参数（文件、目录、`cwd`）落在工作区里面的绝对路径，命令行先换成相对路径再交给这套检查（`LocalTools.inWorkspace`，第八十八轮）；服务器端照旧只认相对路径。
 - **交活之前核对一次**（第八十九轮加，第九十一轮去掉：尺子上量不出好处，每题多花一半到一倍 token）。`pendingNudge` 只剩「清单没做完」那一句，
   在问用户问题、最后一轮不推；要推的那条先不当结论打出来（原来安静模式下结论打两遍）。命令行干活的请求温度由网关定（`app.ai.harness-temperature`，默认 0）。
+- **网页 / 桌面应用的代码模式也跑这一份循环**（第九十四轮起，开关后面）：后端起 `src/host/code-host.js`，一行一个 JSON；`tools/drafts.js` 的 `DraftTools` 改动只成草稿（`LocalTools.overlay`，命令行里是 null），模型和命令回到后端做。草稿模式的环境说明在 `prompt.js` 的 `draftEnvironment`。
 - **没读过不许改、只读一部分不许整份重写、确认期间被改过不写**（`local.js` 的 prepare / commit 两步）。
   写整份和改一段是两个工具（第九十二轮拆开，原来一个 `write_file` 三种用法、参数互相打架）：`write_file` 只收 `path` + `content`（`append` 追加 ——
   长文件分几次写，就是为了不撞单次输出上限），`edit_file` 只收 `path` + `old_string` + `new_string`（`replace_all`），参数各自必填；

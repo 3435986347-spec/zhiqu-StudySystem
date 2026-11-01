@@ -29,6 +29,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -495,6 +497,39 @@ class CodeWorkspaceAgentTest {
                 "不能写的时候改一段的工具也不能下发");
     }
 
+    /**
+     * 两份 coding agent 合成一份，第 1 步（第九十四轮）：开关是 js 时，门（管理员、档位、写意图、能不能执行）照旧在这里判完，
+     * 循环交给命令行那一份（JsCodeAgent 起子进程）；它起不来（返回 null）就照旧走 Java 的循环。
+     */
+    @Test
+    @DisplayName("开关是 js：门判完才交给命令行那一份（写意图、能不能执行原样传过去）；不是管理员连起都不起；起不来照旧走 Java 的循环")
+    void 交给命令行那一份() throws Exception {
+        CodeWorkspaceAgent.Result fromJs = new CodeWorkspaceAgent.Result("【代码 agent 的结论】\n好", List.of(), null, true);
+        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        JsCodeAgent js = mock(JsCodeAgent.class);
+        when(js.enabled()).thenReturn(true);
+        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any())).thenReturn(fromJs);
+        rig.agent.setJsEngine(js);
+        assertSame(fromJs, rig.run("改一下 a.py", CODE_MODE));
+        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(false), any(), any(), any());
+        verify(rig.provider, never()).callToolTurn(any(), any(), any(), any());
+
+        Rig notAdmin = new Rig(WorkspaceMode.WRITE, false);
+        JsCodeAgent js2 = mock(JsCodeAgent.class);
+        when(js2.enabled()).thenReturn(true);
+        notAdmin.agent.setJsEngine(js2);
+        notAdmin.run("改一下 a.py", CODE_MODE);
+        verify(js2, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any());
+
+        Rig fallback = new Rig(WorkspaceMode.WRITE, true);
+        JsCodeAgent broken = mock(JsCodeAgent.class);
+        when(broken.enabled()).thenReturn(true);
+        fallback.agent.setJsEngine(broken);   // run 返回 null：起不来
+        fallback.modelSays("{\"role\":\"assistant\",\"content\":\"看过了\"}");
+        fallback.run("改一下 a.py", CODE_MODE);
+        verify(fallback.provider).callToolTurn(any(), any(), any(), any());
+    }
+
     @Test
     @DisplayName("同一个文件改两处：两次替换叠在同一份草稿上（不是第二次把第一次冲掉）")
     void 两次替换叠加() throws Exception {
@@ -508,6 +543,12 @@ class CodeWorkspaceAgentTest {
         CodeWorkspaceAgent.Result r = rig.run("改 m.js", CODE_MODE);
         assertEquals(1, r.drafts().size());
         assertEquals("const a = 10;\nconst b = 20;\n", r.drafts().get(0).get("content"));
+        assertTrue(r.writeAttempted(), "调过 edit_workspace_file");
+        Rig readOnly = new Rig(WorkspaceMode.WRITE, true);
+        when(readOnly.workspace.read("m.js")).thenReturn("const a = 1;\n");
+        when(readOnly.workspace.baselineOf("m.js")).thenReturn("h1");
+        readOnly.modelSays(toolCall("read_workspace_file", args(Map.of("path", "m.js"))));
+        assertFalse(readOnly.run("改 m.js", CODE_MODE).writeAttempted(), "只读了文件、没调写工具：不算试过写");
     }
 
     /**

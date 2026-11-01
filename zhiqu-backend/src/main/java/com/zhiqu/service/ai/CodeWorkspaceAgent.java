@@ -118,17 +118,33 @@ public class CodeWorkspaceAgent {
         this.studyPlanTool = studyPlanTool;
     }
 
-    /** 这一轮的产物：给最终回答用的上下文、待确认的写草稿、里程碑计划（可为 null）。 */
+    /** 第九十四轮：跑命令行那一份循环的引擎（开关 app.ai.code-agent.engine）；没有它就只有 Java 的循环 */
+    private JsCodeAgent jsEngine;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setJsEngine(JsCodeAgent jsEngine) {
+        this.jsEngine = jsEngine;
+    }
+
+    /**
+     * 这一轮的产物：给最终回答用的上下文、待确认的写草稿、里程碑计划（可为 null）。
+     * {@code writeAttempted}：这一轮真的调过写文件的工具（第九十四轮）—— 能写、没草稿时，「没写成」只在试过写的时候才说；
+     * 只是跑了个测试（用户说「写进去了，跑一下」）就不该说没写成、让他再说一次「写进去」。说不清的老构造器按「试过」算，和原来一样。
+     */
     public record Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
-                         boolean writeOffered, List<Long> wikiPendingPatchIds) {
+                         boolean writeOffered, List<Long> wikiPendingPatchIds, boolean writeAttempted) {
         public Result {
             wikiPendingPatchIds = wikiPendingPatchIds == null ? List.of() : List.copyOf(wikiPendingPatchIds);
+        }
+        public Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
+                      boolean writeOffered, List<Long> wikiPendingPatchIds) {
+            this(context, drafts, milestonePlan, writeOffered, wikiPendingPatchIds, true);
         }
         public Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
                       boolean writeOffered) {
             this(context, drafts, milestonePlan, writeOffered, List.of());
         }
-        public static final Result EMPTY = new Result("", List.of(), null, false, List.of());
+        public static final Result EMPTY = new Result("", List.of(), null, false, List.of(), false);
     }
 
     /**
@@ -156,6 +172,8 @@ public class CodeWorkspaceAgent {
          * 而「跑过没跑过」是事实，不是猜测。所以 {@code create_wiki_patch} 只在这之后才下发。
          */
         boolean ranCommand;
+        /** 这一轮调过写文件的工具（不管成没成）—— 见 {@link Result#writeAttempted} */
+        boolean writeAttempted;
         /** Wiki 工具自己的循环状态（读过哪些页、快照、本轮已提过哪些草稿）—— 复用同一套防护。 */
         final WikiToolAgent.WikiLoopState wiki = new WikiToolAgent.WikiLoopState();
         /** 模型给出的里程碑计划（{@code {tasks, routines}}），形状由 {@link StudyPlanTool} 决定。 */
@@ -214,6 +232,15 @@ public class CodeWorkspaceAgent {
             boolean canPlanMilestones = AgentPlanDecision.projectIntent(userMessage);
             // 显式按了「代码」给大预算，关键词触发给小预算 —— 理由见 CodeLoopBudget
             CodeLoopBudget budget = CodeLoopBudget.forRequest(AgentPlanDecision.codeModeRequested(contextOptions));
+            if (jsEngine != null && jsEngine.enabled()) {
+                // 第九十四轮（两份 coding agent 合成一份，第 1 步）：门在上面判完，循环交给命令行那一份（app.ai.code-agent.engine=js）。
+                // Wiki 工具和「把里程碑排成任务」第 2 步才接；起不来（没有 node、没有脚本）就接着走下面 Java 的循环
+                Result viaJs = jsEngine.run(config, userId, userMessage, recentHistory(history, limits.codeHistoryChars()),
+                        canWrite, canExec, budget, limits, onStep);
+                if (viaJs != null) {
+                    return viaJs;
+                }
+            }
             long loopStart = System.currentTimeMillis();
             for (int round = 0; round < budget.rounds(); round++) {
                 if (System.currentTimeMillis() - loopStart > budget.millis()) {
@@ -303,7 +330,7 @@ public class CodeWorkspaceAgent {
         }
         return new Result(Texts.limitRaw(context.toString(), limits.codeContextChars()),
                 List.copyOf(loop.drafts), loop.milestonePlan, writeOffered,
-                loop.wiki.pendingPatchIdsByTitle.values().stream().distinct().toList());
+                loop.wiki.pendingPatchIdsByTitle.values().stream().distinct().toList(), loop.writeAttempted);
     }
 
     /**
@@ -551,6 +578,7 @@ public class CodeWorkspaceAgent {
                 return readSlice(path, content, args, loop);
             }
             if ("write_workspace_file".equals(name) || "edit_workspace_file".equals(name)) {
+                loop.writeAttempted = true;
                 boolean editing = "edit_workspace_file".equals(name);
                 String path = String.valueOf(args.getOrDefault("path", ""));
                 Map<String, Object> pending = loop.drafts.stream().filter(d -> path.equals(d.get("path"))).findFirst().orElse(null);

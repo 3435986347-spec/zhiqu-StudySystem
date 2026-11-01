@@ -113,7 +113,10 @@ export function findMcpTools(ctx, schemas, query) {
 export function toolset(ctx) {
   const plan = ctx.mode === 'plan';
   const out = [];
+  // 草稿模式（第九十四轮）只下发后端这一次允许的那几个（没有写意图不给写、不能执行不给跑、从来不给删）
+  const allowed = ctx.local && ctx.local.allowedTools;
   for (const t of localSchemas()) {
+    if (allowed && !allowed.has(t.function.name)) continue;
     if (!plan || READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'local' });
   }
   for (const t of ctx.remoteTools || []) {
@@ -145,7 +148,7 @@ export function toolset(ctx) {
 export function systemText(ctx) {
   const env = environmentBlock({
     root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.mode, commands: ctx.local.commands,
-    today: today(),
+    today: today(), draft: Boolean(ctx.local.drafts),
   });
   // 目标、用户这次的原话、任务清单置顶：在系统内容之后、其它一切之前 —— 每一轮都在，压缩也压不掉
   const pinned = [goalBlock(ctx.goal), requestBlock(ctx), todoBlock(ctx.todos)].filter(Boolean).join('\n\n');

@@ -167,7 +167,7 @@ public final class NodeRunner {
      * {@code /opt/homebrew/bin/node}，而本机的 node 在 {@code ~/.local/node/bin} ——
      * 候选全落空，实际只有 PATH 那一条在起作用，清单纯属摆设。
      */
-    static String findNode() {
+    public static String findNode() {
         String configured = System.getProperty("zhiqu.nodePath");
         if (configured != null && !configured.isBlank()) {
             return runs(configured) ? configured : null;

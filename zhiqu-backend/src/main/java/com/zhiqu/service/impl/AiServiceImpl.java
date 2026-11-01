@@ -968,6 +968,7 @@ public class AiServiceImpl implements AiService {
         private List<Long> codeWikiPendingPatchIds = List.of();
         /** 这一轮工具循环有没有拿到写工具 —— 最终回答据此决定能不能贴代码（见 CodeContextPrompt）。 */
         private boolean codeWriteOffered;
+        private boolean codeWriteAttempted;
         /** 读到的任务（第二十七轮，{@link TaskReaderRunner}）。空 = 这一轮没读。 */
         private String taskContext = "";
         /** 问到了安排、可用户关着「让 AI 读我的任务」—— 最终回答要知道为什么看不到。 */
@@ -1544,6 +1545,7 @@ public class AiServiceImpl implements AiService {
             s.codeContext = codeResult.context();
             s.codeDrafts = codeResult.drafts();
             s.codeWriteOffered = codeResult.writeOffered();
+            s.codeWriteAttempted = codeResult.writeAttempted();
             s.codeWikiPendingPatchIds = codeResult.wikiPendingPatchIds();
             if (codeResult.milestonePlan() != null) {
                 // 走 PLANNER 那条已有的路：TASK_DRAFT / ROUTINE_DRAFT 工件 + 既有的确认分支。
@@ -1644,7 +1646,7 @@ public class AiServiceImpl implements AiService {
                 // 与 Wiki 检索资料同样处理：工作区读到的是<b>数据</b>，以 user 数据块注入（提示注入防护）。
                 // 结尾那句「有没有草稿」必须跟着本轮实际结果走 —— 见 CodeContextPrompt。
                 messages.add(Map.of("role", "user", "content",
-                        CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered)));
+                        CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered, s.codeWriteAttempted)));
             }
             // 用户的任务（第二十七轮）：和 Wiki、工作区一样是数据，以 user 数据块注入（标题是用户写的、可能是粘来的）
             if (hasText(s.taskContext)) {

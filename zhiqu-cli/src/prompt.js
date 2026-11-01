@@ -50,8 +50,26 @@ const MODE_TEXT = {
   auto: 'auto（全自动）—— 写文件、跑命令都不会逐个问用户。直接把事做完，做完再汇报。',
 };
 
-export function environmentBlock({ root, workspaceName, mode, commands, platform = process.platform, today }) {
+/**
+ * 网页 / 桌面应用的代码模式（第九十四轮）：跑的是同一份循环，规矩不一样的几条在这里说，和上面说命令行的几句冲突时以这里为准。
+ */
+function draftEnvironment({ root, workspaceName, commands, os, today }) {
+  return [
+    '## 环境（网页 / 桌面应用的代码模式 —— 和上面说命令行的几句不一样时，以这里为准）',
+    `- 工作区：${root}（${workspaceName}）。所有路径都相对它。`,
+    `- 系统：${os}；今天：${today}`,
+    '- 改动只生成草稿：write_file / edit_file 不落盘，用户在页面上看过 diff、点了确认才写进磁盘。回答里说「改动已生成草稿，确认后生效」，不要说「已经改好了」。'
+      + '这里没有 delete_file，也不要建临时文件（建了就会出现在用户要确认的草稿里）。',
+    commands.length
+      ? `- run_command 能跑的命令：${commands.join('、')}。只能跑工作区里已经存在的文件：不接受 python3 -c / node -e 这类行内代码，也不接受 shell 语句；`
+        + '草稿确认之前，命令跑的是磁盘上的旧版本。'
+      : '- 这一次不能跑命令（没有 run_command）。',
+  ].join('\n');
+}
+
+export function environmentBlock({ root, workspaceName, mode, commands, platform = process.platform, today, draft = false }) {
   const os = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' }[platform] || platform;
+  if (draft) return draftEnvironment({ root, workspaceName, commands, os, today });
   return [
     '## 环境',
     `- 工作区：${root}（${workspaceName}）。所有路径都相对它。`,

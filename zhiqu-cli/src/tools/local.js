@@ -216,6 +216,18 @@ export class LocalTools {
     this.execTimeoutMs = execTimeoutMs;
     /** rel → { hash, full }：这段会话里读过 / 写过的文件，以及当时的内容指纹。 */
     this.known = new Map();
+    /**
+     * 草稿层（第九十四轮，DraftTools）：绝对路径 → 改过之后的内容。网页 / 桌面应用的代码模式里改动不落盘，
+     * 之后读、改、搜同一个文件看到的是草稿。命令行里是 null，一切照旧。
+     */
+    this.overlay = null;
+  }
+
+  /** 这个路径有草稿就返回它的绝对路径（路径照写入的规矩判过） */
+  draftOf(p) {
+    if (!this.overlay || !this.overlay.size || typeof p !== 'string' || !p) return null;
+    const w = this.guard.resolveWritable(p);
+    return w.reason === Reason.OK && this.overlay.has(w.path) ? w.path : null;
   }
 
   // ── 读 ────────────────────────────────────────────────────────────────
@@ -292,12 +304,13 @@ export class LocalTools {
    */
   readFile(args = {}, { maxChars } = {}) {
     args = this.inWorkspace(args, 'path');
-    const r = this.guard.resolveReadable(args.path);
+    const drafted = this.draftOf(args.path);
+    const r = drafted ? { reason: Reason.OK, path: drafted } : this.guard.resolveReadable(args.path);
     if (r.reason === Reason.TOO_LARGE && r.path) return this.readLargeFile(r, args, maxChars);
     if (r.reason !== Reason.OK) return { error: describe(r.reason, args.path, this.guard.maxFileBytes) };
     let buf;
     try {
-      buf = fs.readFileSync(r.path);
+      buf = drafted ? this.overlay.get(drafted) : fs.readFileSync(r.path);
     } catch (e) {
       return { error: unreadable(e) ? `没有读权限：${this.guard.display(r.path)}` : `读不了 ${this.guard.display(r.path)}：${e.code || e.message}` };
     }
@@ -378,7 +391,8 @@ export class LocalTools {
     if (!query) return { error: '没有给出要搜索的文字' };
     // path 可以是目录，也可以是一个文件（第十二轮：原来给文件报「不是一个普通文件」，模型以为搜索坏了、改成一段段读）
     const dir = this.guard.resolveDirectory(args.path);
-    const single = dir.reason === Reason.OK ? null : this.guard.resolveReadable(args.path);
+    const drafted = dir.reason === Reason.OK ? null : this.draftOf(args.path);
+    const single = dir.reason === Reason.OK ? null : drafted ? { reason: Reason.OK, path: drafted } : this.guard.resolveReadable(args.path);
     if (dir.reason !== Reason.OK && single.reason !== Reason.OK) return { error: describe(dir.reason, args.path || '.') };
     const ic = Boolean(args.ignore_case);
     const needle = ic ? query.toLowerCase() : query;
@@ -398,7 +412,14 @@ export class LocalTools {
       hits.push(`${this.guard.display(file)}:${lineNo}: ${shown.trimEnd()}`);
       return true;
     };
+    // 有草稿的文件搜草稿（草稿都是 UTF-8 文本，不大）
+    const scanDraft = (file) => {
+      const lines = this.overlay.get(file).toString('utf8').split('\n');
+      if (lines[lines.length - 1] === '') lines.pop();
+      for (let i = 0; i < lines.length; i++) if (!onLine(file, i + 1, lines[i])) return;
+    };
     const scan = (file) => {
+      if (this.overlay && this.overlay.has(file)) { scanDraft(file); return; }
       let fd;
       try { fd = fs.openSync(file, 'r'); } catch (e) { if (unreadable(e)) skipped.denied += 1; return; }
       try {
@@ -445,6 +466,12 @@ export class LocalTools {
       }
     };
     if (single) scan(single.path); else walk(dir.path);
+    // 新建的草稿磁盘上还没有，走目录时看不到
+    if (!single && this.overlay) {
+      for (const abs of this.overlay.keys()) {
+        if (!truncated && !fs.existsSync(abs) && (abs + path.sep).startsWith(dir.path + path.sep)) scanDraft(abs);
+      }
+    }
     const body = hits.length ? hits.join('\n') : '（没有找到）';
     const notes = [];
     // 截断必须说出来：模型把「80 条」当成「一共 80 条」就会给出错误结论
@@ -489,12 +516,13 @@ export class LocalTools {
     const rel = this.guard.display(w.path);
     const guarded = this.protectedDir(w.path);
     if (guarded) return { error: this.protectedError(guarded, rel, '改') };
-    const exists = fs.existsSync(w.path);
+    const drafted = Boolean(this.overlay && this.overlay.has(w.path));
+    const exists = drafted || fs.existsSync(w.path);
     // 太大的文件只能分段读，也就不能改（先读进整个文件再拒绝，几百 MB 就白占了内存）
-    if (exists && fs.statSync(w.path).size > this.guard.maxFileBytes) {
+    if (!drafted && exists && fs.statSync(w.path).size > this.guard.maxFileBytes) {
       return { error: `${this.guard.display(w.path)} 太大（${formatBytes(fs.statSync(w.path).size)}，超过 ${formatBytes(this.guard.maxFileBytes)}）：只能分段读，不能用 write_file / edit_file 改` };
     }
-    const current = exists ? fs.readFileSync(w.path) : null;
+    const current = drafted ? this.overlay.get(w.path) : exists ? fs.readFileSync(w.path) : null;
     const currentKind = current ? classifyText(current) : 'utf8';
     if (currentKind !== 'utf8') {
       return { error: `${this.guard.display(w.path)} 不是 UTF-8 编码（${ENCODING_NAME[currentKind] || '二进制'}）：用 write_file / edit_file 改会把整个文件的编码换掉，原来的中文就成了乱码。先和用户确认要不要转成 UTF-8（比如 iconv -f GB18030 -t UTF-8），转好再改` };

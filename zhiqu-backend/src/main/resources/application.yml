@@ -75,6 +75,13 @@ app:
     # 同一道题每次走不同的路（评测三次重跑里三题时对时错）；DeepSeek 文档对写代码 / 数学的建议是 0。
     # 模型不认 temperature（400 里提到它）时网关去掉它原样重试一次。留空 = 跟上面的 temperature 一样。
     harness-temperature: "0"
+    # 网页 / 桌面应用代码模式的循环（第九十四轮，两份 coding agent 合成一份）：js = 后端用子进程跑命令行那一份
+    # （node + zhiqu-cli/src/host/code-host.js；模型和命令照旧回到后端做），java = 原来那一份。分三步换，第 1 步默认还是 java。
+    # cli-dir 指向 zhiqu-cli 目录；node 不是绝对路径就从 PATH 里找。找不到 node 或脚本时退回 java。
+    code-agent:
+      engine: java
+      node: node
+      cli-dir: ""
     system-default-enabled: false
     system-display-name: 知趣默认模型
     system-provider-type: OPENAI_COMPATIBLE

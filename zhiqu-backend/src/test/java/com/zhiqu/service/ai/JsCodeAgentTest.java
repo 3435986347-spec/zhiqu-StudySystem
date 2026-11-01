@@ -1,0 +1,194 @@
+package com.zhiqu.service.ai;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhiqu.NodeRunner;
+import com.zhiqu.common.BusinessException;
+import com.zhiqu.entity.AiModelConfig;
+import com.zhiqu.service.harness.HarnessModelGateway;
+import com.zhiqu.service.workspace.WorkspaceAccess;
+import com.zhiqu.service.workspace.WorkspaceExecutor;
+import com.zhiqu.service.workspace.WorkspaceProperties;
+import com.zhiqu.service.workspace.WorkspaceService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.beans.factory.ObjectProvider;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * 两份 coding agent 合成一份，第 1 步（第九十四轮）：后端起 node 跑命令行那一份循环（zhiqu-cli/src/host/code-host.js），一行一个 JSON。
+ * 真起 node、真跑命令行的循环；模型（HarnessModelGateway）和命令（WorkspaceExecutor）是假的 —— 看协议两头对不对得上、
+ * 草稿照旧不落盘、门照旧在后端；另用一个专门干坏事的假子进程（src/test/resources/js/fake-code-host）看后端拒不拒、丢不丢、停不停。
+ */
+class JsCodeAgentTest {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final Path CLI_DIR = Path.of("../zhiqu-cli").toAbsolutePath().normalize();
+    private static final Path FAKE_HOST = Path.of("src/test/resources/js/fake-code-host").toAbsolutePath();
+
+    @TempDir Path root;
+    private final WorkspaceService workspace = mock(WorkspaceService.class);
+    private final WorkspaceExecutor executor = mock(WorkspaceExecutor.class);
+    private final HarnessModelGateway gateway = mock(HarnessModelGateway.class);
+    private final List<Map<String, Object>> bodies = new ArrayList<>();
+    private final List<Map<String, Object>> notes = new ArrayList<>();
+    private final AiModelConfig config = new AiModelConfig();
+    private String node;
+
+    @BeforeEach
+    void setUp() {
+        node = NodeRunner.findNode();
+        assumeTrue(node != null || !Boolean.getBoolean("zhiqu.skipNodeTests"), "显式跳过了 node 判据");
+        assertNotNull(node, "找不到 node：这几条判据没有跑 —— 这不是通过（-Dzhiqu.nodePath 指过来，或 -Dzhiqu.skipNodeTests=true 写明跳过）");
+        WorkspaceAccess access = mock(WorkspaceAccess.class);
+        when(access.root()).thenReturn(root);
+        when(workspace.access()).thenReturn(access);
+        config.setId(42L);
+        config.setModelName("deepseek-v4-pro");
+        config.setContextWindowTokens(1_000_000);
+    }
+
+    @SuppressWarnings("unchecked")
+    private JsCodeAgent agent(Path cliDir, List<Map<String, Object>> replies) {
+        int[] n = {0};
+        doAnswer(inv -> {
+            bodies.add(new LinkedHashMap<>((Map<String, Object>) inv.getArgument(1)));
+            Map<String, Object> reply = replies.get(Math.min(n[0]++, replies.size() - 1));
+            HarnessModelGateway.Sink sink = inv.getArgument(2);
+            sink.event("start", Map.of("contextWindow", 1_000_000));
+            sink.event("done", reply);
+            return null;
+        }).when(gateway).stream(eq(7L), any(), any());
+        ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(gateway);
+        return new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, cliDir.toString());
+    }
+
+    private static Map<String, Object> calls(String... nameAndArgs) {
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (int i = 0; i < nameAndArgs.length; i += 2) {
+            list.add(Map.of("id", "c" + i, "type", "function", "function", Map.of("name", nameAndArgs[i], "arguments", nameAndArgs[i + 1])));
+        }
+        return Map.of("message", Map.of("role", "assistant", "content", "", "tool_calls", list), "finishReason", "tool_calls", "maxTokens", 16384,
+                "usage", Map.of("promptTokens", 100, "completionTokens", 5, "estimated", false));
+    }
+
+    private static Map<String, Object> text(String content) {
+        return Map.of("message", Map.of("role", "assistant", "content", content), "finishReason", "stop", "maxTokens", 16384,
+                "usage", Map.of("promptTokens", 100, "completionTokens", 5, "estimated", false));
+    }
+
+    private static String sha256(String s) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    @DisplayName("真跑命令行那一份：读、改成草稿、跑命令回到后端的执行器；草稿和指纹对、磁盘不动、轨迹一步一句、结论进上下文")
+    void 真跑命令行那一份() throws Exception {
+        String original = "def add(a, b):\n    return a - b\n";
+        Files.writeString(root.resolve("calc.py"), original);
+        when(executor.exec(anyString(), any(), anyString())).thenReturn(
+                new WorkspaceExecutor.ExecResult("python3", List.of("test_calc.py"), 0, "ok", false, false, 30));
+        JsCodeAgent js = agent(CLI_DIR, List.of(
+                calls("read_file", "{\"path\":\"calc.py\"}"),
+                calls("edit_file", "{\"path\":\"calc.py\",\"old_string\":\"return a - b\",\"new_string\":\"return a + b\"}"),
+                calls("run_command", "{\"command\":\"python3\",\"args\":[\"test_calc.py\"]}"),
+                text("改动已生成草稿，确认后生效。")));
+        assertTrue(js.enabled());
+        CodeWorkspaceAgent.Result r = js.run(config, 7L, "修好 add", List.of(Map.of("role", "user", "content", "前一句")),
+                true, true, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add);
+        assertNotNull(r, "起不来了：" + notes);
+        assertEquals(1, r.drafts().size(), "应当有一份草稿：" + r.drafts() + " 轨迹：" + notes);
+        Map<String, Object> draft = r.drafts().get(0);
+        assertEquals("calc.py", draft.get("path"));
+        assertEquals("def add(a, b):\n    return a + b\n", draft.get("content"));
+        assertEquals(sha256(original), draft.get("baseline"), "指纹要和 WorkspaceService.baselineOf 同一个算法，确认时才对得上");
+        assertEquals(false, draft.get("creating"));
+        assertEquals(original, Files.readString(root.resolve("calc.py")), "磁盘一个字都不能动");
+        verify(executor).exec("python3", List.of("test_calc.py"), "");
+        assertTrue(r.writeOffered());
+        assertTrue(r.writeAttempted(), "调过 edit_file：最终回答在没草稿时才能据此说「没写成」");
+        assertTrue(r.context().contains("【代码 agent 的结论】\n改动已生成草稿，确认后生效。"), r.context());
+        assertTrue(notes.stream().anyMatch(n -> String.valueOf(n.get("message")).contains("修改 calc.py")), "轨迹里要说改了哪个文件：" + notes);
+        assertEquals(4, bodies.size());
+        assertTrue(bodies.stream().allMatch(b -> Long.valueOf(42L).equals(b.get("modelId"))), "模型由后端定");
+    }
+
+    @Test
+    @DisplayName("门在后端：子进程自己填的模型不认；不能执行时硬发 exec 回拒绝、执行器碰都不碰；跳出工作区的草稿路径丢掉")
+    void 门在后端() throws Exception {
+        doThrow(new BusinessException("路径超出工作区范围")).when(workspace).checkWritable("../evil.txt");
+        JsCodeAgent js = agent(FAKE_HOST, List.of(text("好")));
+        CodeWorkspaceAgent.Result r = js.run(config, 7L, "abuse", List.of(), true, false,
+                CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add);
+        assertNotNull(r);
+        assertEquals(42L, bodies.get(0).get("modelId"), "子进程填的 999 不认");
+        verify(executor, never()).exec(anyString(), any(), anyString());
+        assertTrue(r.context().contains("这一次不能跑命令"), r.context());
+        assertEquals(List.of("ok.txt"), r.drafts().stream().map(d -> d.get("path")).toList(), "跳出工作区的那份要丢掉");
+    }
+
+    /** node 在真正空的环境下自己就有的变量（macOS 会给每个进程加 __CF_USER_TEXT_ENCODING）—— 判据的地板，现场量，不手写名单 */
+    private java.util.Set<String> nodeFloor() throws Exception {
+        String bin = new JsCodeAgent(null, workspace, executor, new WorkspaceProperties(), JSON, "js", node, CLI_DIR.toString()).nodeBinary();
+        ProcessBuilder pb = new ProcessBuilder(bin, "-e", "console.log(Object.keys(process.env).sort().join(','))");
+        pb.environment().clear();
+        Process p = pb.start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        p.waitFor();
+        return out.isEmpty() ? java.util.Set.of() : java.util.Set.of(out.split(","));
+    }
+
+    @Test
+    @DisplayName("子进程只看得到 HOME 和 PATH（不继承环境变量：主进程里有 AI 密钥和数据库密码）；认不出的消息就停，不猜")
+    void 环境变量与认不出的消息() throws Exception {
+        JsCodeAgent js = agent(FAKE_HOST, List.of(text("好")));
+        CodeWorkspaceAgent.Result r = js.run(config, 7L, "env", List.of(), false, false,
+                CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add);
+        assertNotNull(r);
+        String env = notes.stream().map(n -> String.valueOf(n.get("message"))).filter(m -> m.contains("PATH")).findFirst().orElse("");
+        java.util.Set<String> floor = nodeFloor();
+        List<String> extra = java.util.Arrays.stream(env.split(",")).filter(k -> !floor.contains(k)).sorted().toList();
+        assertEquals(List.of("HOME", "PATH"), extra, "子进程的环境变量（node 自己的地板 " + floor + " 之外）：" + notes);
+        assertTrue(System.getenv().size() > 5, "父进程只有 " + System.getenv().size() + " 个环境变量 —— 判据没有可比对的样本");
+        assertEquals("", r.context());
+        assertTrue(r.drafts().isEmpty());
+    }
+
+    @Test
+    @DisplayName("开关不是 js、找不到脚本：不启用；找不到 node：返回 null（调用方退回 Java 的循环）")
+    void 起不来就退回() {
+        ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
+        assertFalse(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "java", node, CLI_DIR.toString()).enabled());
+        assertFalse(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, root.toString()).enabled());
+        JsCodeAgent noNode = new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", "/nonexistent/node", CLI_DIR.toString());
+        assertTrue(noNode.enabled());
+        assertNull(noNode.run(config, 7L, "x", List.of(), false, false, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add));
+    }
+}
