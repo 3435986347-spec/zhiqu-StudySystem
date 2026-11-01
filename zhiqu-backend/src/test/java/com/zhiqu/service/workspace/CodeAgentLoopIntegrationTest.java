@@ -54,8 +54,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <h2>其中一条断言是间接的，而这恰恰是它最有力的地方</h2>
  *
  * <p>「待合入变更草稿存在」<b>证明了命令确实跑过</b> —— 因为 {@code create_wiki_patch}
- * 只在 {@code CodeLoopState.ranCommand} 置位之后才会下发给模型。拿不到工具就调不出来，
+ * 只在真的跑过一次命令之后才会下发给模型。拿不到工具就调不出来，
  * 调不出来就不会有草稿。这比直接断言「exec 被调用过」更硬：它验的是那道门本身。
+ *
+ * <p>第九十七轮起循环是命令行那一份（后端真起 node 跑 zhiqu-cli/src/host/code-host.js，模型经网关、命令经执行器、
+ * Wiki 经桥回到后端）：假模型照网关发的流式请求回工具调用的增量，整条路照样从头走到尾。
  */
 @Testcontainers
 @DisabledIfSystemProperty(named = "zhiqu.skipDockerTests", matches = "true",
@@ -87,14 +90,19 @@ class CodeAgentLoopIntegrationTest {
                 "from solve import two_sum\n"
                         + "assert two_sum([2, 7], 9) == [0, 1], '期望 [0, 1]'\n", StandardCharsets.UTF_8);
         registry.add("app.workspace.root", () -> workspaceRoot.toString());
+        String node = com.zhiqu.NodeRunner.findNode();
+        org.junit.jupiter.api.Assumptions.assumeTrue(node != null || !Boolean.getBoolean("zhiqu.skipNodeTests"), "显式跳过了 node 判据");
+        assertNotNull(node, "找不到 node：代码模式的端到端判据没有跑 —— 这不是通过（-Dzhiqu.nodePath 指过来，或 -Dzhiqu.skipNodeTests=true 写明跳过）");
+        registry.add("app.ai.code-agent.node", () -> node);
     }
 
     private static HttpServer fakeModelServer;
     /** code agent 那一轮调用的计数 —— 脚本按它决定这一轮请求哪个工具。 */
     private static final AtomicInteger codeAgentRound = new AtomicInteger();
 
-    /** code agent 的系统提示词里独有的一句，用来把它的调用和别的调用区分开。 */
-    private static final String CODE_AGENT_MARK = "你在帮用户读懂和改进他自己电脑上的代码";
+    /** 命令行那份循环发的请求里才有这个工具 —— 用来把它的调用和主流程别的调用区分开 */
+    private static final String CODE_AGENT_MARK = "\"name\":\"read_file\"";
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
     @Autowired private AiService aiService;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -108,18 +116,17 @@ class CodeAgentLoopIntegrationTest {
         fakeModelServer.createContext("/v1/chat/completions", exchange -> {
             String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             boolean streaming = requestBody.contains("\"stream\":true") || requestBody.contains("\"stream\": true");
-            String json;
-            if (!streaming && requestBody.contains(CODE_AGENT_MARK)) {
-                json = codeAgentScript(codeAgentRound.incrementAndGet());
+            String sse = null;
+            String json = null;
+            if (streaming && requestBody.contains(CODE_AGENT_MARK)) {
+                sse = codeAgentScript(codeAgentRound.incrementAndGet());
             } else if (streaming) {
-                json = null;
+                sse = "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n";
             } else {
                 json = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"测试回复\"}}]}";
             }
-            byte[] body = (json == null
-                    ? "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n"
-                    : json).getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", json == null ? "text/event-stream" : "application/json");
+            byte[] body = (sse != null ? sse : json).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", sse != null ? "text/event-stream" : "application/json");
             exchange.sendResponseHeaders(200, body.length);
             try (OutputStream out = exchange.getResponseBody()) {
                 out.write(body);
@@ -137,34 +144,36 @@ class CodeAgentLoopIntegrationTest {
      */
     private static String codeAgentScript(int round) {
         String name;
-        String args;
+        Map<String, Object> args;
         switch (round) {
-            case 1 -> {
-                name = "read_workspace_file";
-                args = "{\\\"path\\\":\\\"solve.py\\\"}";
-            }
-            case 2 -> {
-                name = "run_workspace_command";
-                args = "{\\\"command\\\":\\\"python3\\\",\\\"args\\\":[\\\"test_solve.py\\\"]}";
-            }
-            case 3 -> {
-                // 这一轮能不能调到，取决于上一轮真的跑过命令（ranCommand 门）
-                name = "create_wiki_patch";
-                args = "{\\\"title\\\":\\\"薄弱点：两数之和\\\",\\\"content\\\":\\\"返回空列表，没有实现查找\\\","
-                        + "\\\"pageType\\\":\\\"WEAKNESS\\\"}";
-            }
-            case 4 -> {
-                name = "write_workspace_file";
-                args = "{\\\"path\\\":\\\"solve.py\\\",\\\"content\\\":\\\"def two_sum(nums, target):\\\\n"
-                        + "    seen = {}\\\\n    return []\\\\n\\\"}";
-            }
+            case 1 -> { name = "read_file"; args = Map.of("path", "solve.py"); }
+            case 2 -> { name = "run_command"; args = Map.of("command", "python3", "args", java.util.List.of("test_solve.py")); }
+            // 这一轮能不能调到，取决于上一轮真的跑过命令（宿主每一轮重建工具表，跑过才给）
+            case 3 -> { name = "create_wiki_patch"; args = Map.of("title", "薄弱点：两数之和", "content", "返回空列表，没有实现查找", "pageType", "WEAKNESS"); }
+            case 4 -> { name = "write_file"; args = Map.of("path", "solve.py", "content", "def two_sum(nums, target):\n    seen = {}\n    return []\n"); }
             default -> {
-                return "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"看完了\"}}]}";
+                return sseLine(Map.of("choices", java.util.List.of(Map.of("delta", Map.of("content", "看完了"), "finish_reason", "stop")),
+                        "usage", Map.of("prompt_tokens", 10, "completion_tokens", 2))) + "data: [DONE]\n\n";
             }
         }
-        return "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{"
-                + "\"id\":\"call_" + round + "\",\"type\":\"function\",\"function\":{"
-                + "\"name\":\"" + name + "\",\"arguments\":\"" + args + "\"}}]}}]}";
+        try {
+            Map<String, Object> call = Map.of("index", 0, "id", "call_" + round, "type", "function",
+                    "function", Map.of("name", name, "arguments", JSON.writeValueAsString(args)));
+            return sseLine(Map.of("choices", java.util.List.of(Map.of("delta", Map.of("tool_calls", java.util.List.of(call))))))
+                    + sseLine(Map.of("choices", java.util.List.of(Map.of("delta", Map.of(), "finish_reason", "tool_calls")),
+                            "usage", Map.of("prompt_tokens", 10, "completion_tokens", 5)))
+                    + "data: [DONE]\n\n";
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String sseLine(Map<String, Object> chunk) {
+        try {
+            return "data: " + JSON.writeValueAsString(chunk) + "\n\n";
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @AfterAll

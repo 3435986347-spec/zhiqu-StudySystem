@@ -87,7 +87,7 @@ class JsCodeAgentTest {
         }).when(gateway).stream(eq(7L), any(), any(), eq(false));   // 不记进命令行的用量表（第九十五轮）
         ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
         when(provider.getObject()).thenReturn(gateway);
-        return new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, cliDir.toString());
+        return new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, node, cliDir.toString());
     }
 
     private static Map<String, Object> calls(String... nameAndArgs) {
@@ -189,7 +189,7 @@ class JsCodeAgentTest {
 
     /** node 在真正空的环境下自己就有的变量（macOS 会给每个进程加 __CF_USER_TEXT_ENCODING）—— 判据的地板，现场量，不手写名单 */
     private java.util.Set<String> nodeFloor() throws Exception {
-        String bin = new JsCodeAgent(null, workspace, executor, new WorkspaceProperties(), JSON, "js", node, CLI_DIR.toString()).nodeBinary();
+        String bin = new JsCodeAgent(null, workspace, executor, new WorkspaceProperties(), JSON, node, CLI_DIR.toString()).nodeBinary();
         ProcessBuilder pb = new ProcessBuilder(bin, "-e", "console.log(Object.keys(process.env).sort().join(','))");
         pb.environment().clear();
         Process p = pb.start();
@@ -240,16 +240,15 @@ class JsCodeAgentTest {
     }
 
     @Test
-    @DisplayName("开关不是 js：不启用；找不到 zhiqu-cli 目录：用 JAR 里带的（第九十六轮）；找不到 node：返回 null（调用方退回 Java 的循环）")
+    @DisplayName("找不到 zhiqu-cli 目录：用 JAR 里带的（第九十六轮）；找不到 node：返回 null（调用方在轨迹里说清楚，第九十七轮起没有 Java 的循环可退）")
     void 起不来就退回() {
         ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
-        assertFalse(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "java", node, CLI_DIR.toString()).enabled());
-        assertTrue(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, root.toString()).enabled(),
+        assertTrue(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, node, root.toString()).enabled(),
                 "配的目录里没有脚本：用 JAR 里带的那一份");
         // cli-dir 没配：按工作目录找（Maven 在 zhiqu-backend 里跑，旁边就是 zhiqu-cli）
-        assertTrue(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, "").enabled(),
+        assertTrue(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, node, "").enabled(),
                 "cli-dir 留空时应当按工作目录找到 zhiqu-cli（user.dir=" + System.getProperty("user.dir") + "）");
-        JsCodeAgent noNode = new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", "/nonexistent/node", CLI_DIR.toString());
+        JsCodeAgent noNode = new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "/nonexistent/node", CLI_DIR.toString());
         assertTrue(noNode.enabled());
         assertNull(noNode.run(config, 7L, "x", List.of(), false, false, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add));
     }

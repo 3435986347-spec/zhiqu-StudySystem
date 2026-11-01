@@ -60,7 +60,7 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 故意的：过触发的代价是白读几个文件，漏触发的代价是用户问代码问题却得到一个没看过代码的
 回答。`CodeAgentGateTest.已知会过触发的那一类` 把它钉成了明示的取舍，不是待修的 bug。
 
-**两份 coding agent 合成一份（第九十四轮起，分三步）**：开关 `app.ai.code-agent.engine=js` 时，门在 `CodeWorkspaceAgent.run` 里判完，循环交给命令行那一份 —— `JsCodeAgent` 起 node 跑 `zhiqu-cli/src/host/code-host.js`（草稿模式的 `DraftTools`），模型回到 `HarnessModelGateway`、命令回到 `WorkspaceExecutor`，草稿照旧成 `CODE_DRAFT`。子进程只有 HOME 和 PATH、超时整组杀、协议里认不出的就停。起不来退回 Java 的循环。三步见 `docs/rounds/round-94.md`。第九十五轮起默认 js（`cli-dir` 留空按工作目录找），Wiki 工具和里程碑经桥回到这里执行；执行器给子进程的 HOME 是自己的空目录（原来是工作区：python3 往项目里写缓存、仓库里的 sitecustomize.py 会被执行）。
+**两份 coding agent 合成一份（第九十四轮起，分三步）**：开关 `app.ai.code-agent.engine=js` 时，门在 `CodeWorkspaceAgent.run` 里判完，循环交给命令行那一份 —— `JsCodeAgent` 起 node 跑 `zhiqu-cli/src/host/code-host.js`（草稿模式的 `DraftTools`），模型回到 `HarnessModelGateway`、命令回到 `WorkspaceExecutor`，草稿照旧成 `CODE_DRAFT`。子进程只有 HOME 和 PATH、超时整组杀、协议里认不出的就停。三步见 `docs/rounds/round-94.md`；第九十七轮删了 Java 的循环（`CodeWorkspaceAgent` 只剩门和桥），找不到 node 时代码模式没有、轨迹里说清楚。第九十五轮起默认 js（`cli-dir` 留空按工作目录找），Wiki 工具和里程碑经桥回到这里执行；执行器给子进程的 HOME 是自己的空目录（原来是工作区：python3 往项目里写缓存、仓库里的 sitecustomize.py 会被执行）。
 
 **工作区写入（阶段 2）走的是 Wiki 那条已经验证过的路：草稿 → 用户确认 → 落盘。**
 模型调 `write_workspace_file`（整份写）/ `edit_workspace_file`（改一段，第九十二轮拆开）只产出 `CODE_DRAFT` 工件，磁盘一个字节都不动；
@@ -204,7 +204,7 @@ CODE_AGENT：读门动作词没有「做」，写门没有「放在」。两层�
 （草稿弹出来了，回答却说改不了 —— 现在由 `CodeContextPrompt` 按本轮是否有草稿分支）；
 显式请求沿用关键词的 4 轮 30 秒预算（写一个完整小游戏做不完 —— `CodeLoopBudget` 分两档，
 显式 10 轮 180 秒，且要给最终回答留出一分钟）；工具循环对外只有开头结尾两条事件
-（现在每次调用前后各发一条 `agent.step.note`，`CodeToolNarration` 负责说成人话，
+（现在每一步发一条 `agent.step.note`，第九十七轮起说法是命令行那份循环的（`describeCall`），
 网页轨迹与 CLI 读同一份；命令输出进 innerHTML 前必须转义，`step-note-check.js` 用对抗性输出判）。
 
 ### 限额边界

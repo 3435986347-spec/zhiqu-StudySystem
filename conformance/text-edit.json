@@ -1,5 +1,5 @@
 {
-  "_说明": "「按原文替换一段」的一致性用例（第十轮）。npm 版 zhiqu 的 edit_file（zhiqu-cli/src/tools/edit.js）与网页 code agent 的 edit_workspace_file（TextEdit.java）（第九十二轮之前是 write_file / write_workspace_file 的替换用法）跑同一份：两边各自绿不算数，对同一份输入给出同样的结论才算数。expect 里有 text 就是应当成功、结果一字不差；有 error 就是应当拒绝，并核对种类与行号（提示文字两边可以不同）。没有 new 这一项（或是 null）= 模型没给 new_string：拒绝，不当成「换成空」—— 要删一段得明写 new 为空字符串（第八十六轮）。",
+  "_说明": "「按原文替换一段」的一致性用例（第十轮）。npm 版 zhiqu 的 edit_file（zhiqu-cli/src/tools/edit.js）与网页 code agent 的 edit_workspace_file（TextEdit.java）（第九十二轮之前是 write_file / write_workspace_file 的替换用法）。第九十七轮两份 coding agent 合成一份、Java 那份（TextEdit.java）删了，这份用例表只剩命令行那一份实现在跑跑同一份：两边各自绿不算数，对同一份输入给出同样的结论才算数。expect 里有 text 就是应当成功、结果一字不差；有 error 就是应当拒绝，并核对种类与行号（提示文字两边可以不同）。没有 new 这一项（或是 null）= 模型没给 new_string：拒绝，不当成「换成空」—— 要删一段得明写 new 为空字符串（第八十六轮）。",
   "cases": [
     { "name": "一处，照原文换", "text": "a = 1\nb = 2\n", "old": "a = 1", "new": "a = 3", "expect": { "text": "a = 3\nb = 2\n", "replaced": 1 } },
     { "name": "多行一段", "text": "function f() {\n  return 1;\n}\n", "old": "  return 1;\n}", "new": "  return 2;\n}", "expect": { "text": "function f() {\n  return 2;\n}\n", "replaced": 1 } },

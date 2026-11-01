@@ -75,11 +75,10 @@ app:
     # 同一道题每次走不同的路（评测三次重跑里三题时对时错）；DeepSeek 文档对写代码 / 数学的建议是 0。
     # 模型不认 temperature（400 里提到它）时网关去掉它原样重试一次。留空 = 跟上面的 temperature 一样。
     harness-temperature: "0"
-    # 网页 / 桌面应用代码模式的循环（第九十四轮，两份 coding agent 合成一份）：js = 后端用子进程跑命令行那一份
-    # （node + zhiqu-cli/src/host/code-host.js；模型和命令照旧回到后端做），java = 原来那一份。分三步换，第 2 步（第九十五轮）起默认 js。
-    # cli-dir 指向 zhiqu-cli 目录，留空就按工作目录找；node 不是绝对路径就从 PATH 里找。找不到 node 或脚本时退回 java。
+    # 网页 / 桌面应用的代码模式跑的是命令行那一份循环（第九十四到九十七轮，两份 coding agent 合成一份）：后端用 node 起 zhiqu-cli/src/host/code-host.js，
+    # 模型和命令回到后端做。node 不是绝对路径就从 PATH 里找（桌面应用用包里带的）；cli-dir 留空先按工作目录找 zhiqu-cli，找不到用 JAR 里带的。
+    # 找不到 node 时代码模式没有（执行轨迹里说清楚），主回答照常。
     code-agent:
-      engine: js
       node: node
       cli-dir: ""
     system-default-enabled: false

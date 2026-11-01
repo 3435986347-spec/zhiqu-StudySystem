@@ -1,5 +1,5 @@
-// 「按原文替换一段」—— 纯函数，不碰文件。edit_file 走它；网页 code agent 的
-// edit_workspace_file（TextEdit.java）是同一套规矩，两边跑同一份 conformance/text-edit.json。
+// 「按原文替换一段」—— 纯函数，不碰文件。edit_file 走它（命令行和网页 / 桌面应用的代码模式是同一份循环，第九十七轮起只有这一份实现），
+// 用例表在 conformance/text-edit.json。
 //
 // 规矩（第九轮定的，第十轮提成一处）：
 //   - old_string 必须一字不差、只出现一次；出现几处时说出行号，replace_all 才全换；

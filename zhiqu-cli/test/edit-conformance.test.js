@@ -1,5 +1,5 @@
-// 「按原文替换一段」的一致性用例 —— 命令行这一侧。网页 code agent 的 TextEditConformanceTest（Java）跑的是同一份
-// conformance/text-edit.json：两份实现各自绿不算数，对同一份输入给出同样的结论才算数（与 workspace-rules.json 同一个做法）。
+// 「按原文替换一段」的用例表（conformance/text-edit.json）。第九十七轮之前网页 code agent 的 TextEdit（Java）也跑同一份 ——
+// 两份实现对同一份输入给出同样的结论才算数；两份 coding agent 合成一份之后只剩这一份实现，用例表照旧管着它。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

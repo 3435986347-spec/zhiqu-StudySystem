@@ -30,7 +30,7 @@
   写整份和改一段是两个工具（第九十二轮拆开，原来一个 `write_file` 三种用法、参数互相打架）：`write_file` 只收 `path` + `content`（`append` 追加 ——
   长文件分几次写，就是为了不撞单次输出上限），`edit_file` 只收 `path` + `old_string` + `new_string`（`replace_all`），参数各自必填；
   给 `write_file` 传改一段的参数、给 `edit_file` 传 `content`，都拒绝、说该用哪一个，不猜。
-  替换缺 `new_string` 不当成「换成空」、新旧一样不说「已修改」（第八十六轮：仓库评测里模型把替换后的字放进 `content`，原来一声不响删了代码；网页 code agent 的 `TextEdit` 同一套，用例在 `conformance/text-edit.json`）。
+  替换缺 `new_string` 不当成「换成空」、新旧一样不说「已修改」（第八十六轮：仓库评测里模型把替换后的字放进 `content`，原来一声不响删了代码；用例在 `conformance/text-edit.json`；第九十七轮起网页 / 桌面应用的代码模式也是这一份）。
 - **截断不是说完了**：`finish_reason=length` 时截断的调用不执行，历史里的参数换成小而合法的 JSON（带 path），
   回模型「分几次写」。单条工具输出按模型窗口截断（窗口 × 0.35 字）—— 否则小窗口模型一轮就超，两边的压缩都救不了。
 - **子进程与 MCP 服务器都不继承命令行的环境**（那里有 `ZHIQU_TOKEN`）。子进程的 HOME 是这个进程自己的空目录（`childHome`，第九十轮；原来是工作区，仓库里带的 `.gitconfig`、Python 用户 site 里的 `sitecustomize.py` 会被当成用户自己的配置执行）。超时杀整个进程组（`detached` + `kill(-pid)`）：

@@ -550,7 +550,7 @@ export class LocalTools {
     let replaced = 0;
     if (replacing) {
       if (!exists) return { error: `edit_file 只能改已存在的文件：${rel} 不存在。新建文件用 write_file。` };
-      // 规矩与网页 code agent 同一套（edit.js / TextEdit.java，跑同一份 conformance/text-edit.json）
+      // 规矩在 edit.js（用例表 conformance/text-edit.json）
       const r = applyEdit(currentText, args.old_string, args.new_string, { replaceAll: Boolean(args.replace_all) });
       if (r.error) return { error: describeEditError(r.error, rel) };
       newText = r.text;

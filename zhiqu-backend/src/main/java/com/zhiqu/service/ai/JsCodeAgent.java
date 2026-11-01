@@ -60,13 +60,11 @@ public class JsCodeAgent {
     private final WorkspaceExecutor executor;
     private final WorkspaceProperties workspaceProperties;
     private final ObjectMapper json;
-    private final String engine;
     private final String node;
     private final String cliDir;
 
     public JsCodeAgent(ObjectProvider<HarnessModelGateway> gateway, WorkspaceService workspaceService, WorkspaceExecutor executor,
                        WorkspaceProperties workspaceProperties, ObjectMapper json,
-                       @Value("${app.ai.code-agent.engine:js}") String engine,
                        @Value("${app.ai.code-agent.node:node}") String node,
                        @Value("${app.ai.code-agent.cli-dir:}") String cliDir) {
         this.gateway = gateway;
@@ -74,7 +72,6 @@ public class JsCodeAgent {
         this.executor = executor;
         this.workspaceProperties = workspaceProperties;
         this.json = json;
-        this.engine = engine == null ? "" : engine.trim();
         this.node = node == null || node.isBlank() ? "node" : node.trim();
         this.cliDir = cliDir == null ? "" : cliDir.trim();
     }
@@ -91,9 +88,9 @@ public class JsCodeAgent {
         String call(String name, String argsJson, boolean ranCommand);
     }
 
-    /** 开关是 js、脚本也在 */
+    /** 宿主脚本找得到（zhiqu-cli 目录或 JAR 里带的）；node 找不到时 run 返回 null */
     public boolean enabled() {
-        return "js".equalsIgnoreCase(engine) && hostScript() != null;
+        return hostScript() != null;
     }
 
     /**

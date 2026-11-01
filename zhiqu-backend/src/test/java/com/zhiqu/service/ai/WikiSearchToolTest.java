@@ -138,8 +138,6 @@ class WikiSearchToolTest {
         String out = a.executeWikiTool(1L, "search_wiki", "{\"type\":\"目标\"}", new WikiToolAgent.WikiLoopState()).result;
         Map<String, Object> parsed = json.readValue(out, new TypeReference<Map<String, Object>>() {});
         assertEquals(List.of("27考研"), titles(parsed));
-        // 网页 code agent 那一侧的「正在查……」：只给类型时不能是「查知识库「」」
-        assertEquals("查知识库里的目标页", CodeToolNarration.describeCall("search_wiki", "{\"type\":\"GOAL\"}"));
-        assertEquals("查知识库「考研」（目标页）", CodeToolNarration.describeCall("search_wiki", "{\"query\":\"考研\",\"type\":\"目标\"}"));
+        // 网页代码模式那一侧的「正在查……」第九十七轮起是命令行那份循环的说法（zhiqu-cli/test/wiki-search-label.test.js）
     }
 }

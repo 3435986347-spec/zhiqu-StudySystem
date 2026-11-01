@@ -171,48 +171,6 @@ class CodeAgentGateTest {
     }
 
     /**
-     * 声明给模型的每个工作区工具，都必须有执行分支。
-     *
-     * <h2>缺了分支不会报错，会变成模型编一个结果</h2>
-     *
-     * <p>{@code executeWorkspaceTool} 对认不出的名字返回「未知的工作区工具：X」。
-     * 那句话是发给<b>模型</b>的，不是发给日志的：模型看到自己声明可用的工具说自己不存在，
-     * 多半不会如实转述，而是换个说法继续，最后凭文件名编出一段它从没读过的代码。
-     * 这类错误在日志里一片安静。
-     *
-     * <p>这条判据是加 {@code search_workspace} 时写的 —— 当时工具已经在提示词里
-     * 写了「你可以按关键词搜」，但既没有声明也没有实现，提示词说的是一件不存在的事。
-     *
-     * <p>扰动：删掉 {@code executeWorkspaceTool} 里任意一个 {@code equals(name)} 分支 → 本条红。
-     */
-    @Test
-    void 声明的工作区工具必须都能执行() throws IOException {
-        String code = src(CODE_AGENT);
-
-        Set<String> declared = new TreeSet<>();
-        Matcher dm = Pattern.compile("functionTool\\(\"(\\w*workspace\\w*)\"").matcher(code);
-        while (dm.find()) {
-            declared.add(dm.group(1));
-        }
-
-        Set<String> handled = new TreeSet<>();
-        Matcher hm = Pattern.compile("\"(\\w*workspace\\w*)\"\\.equals\\(name\\)").matcher(code);
-        while (hm.find()) {
-            handled.add(hm.group(1));
-        }
-
-        // 下限：扫空和「全都对上了」形状一样。三个只读工具是当前的下界。
-        assertTrue(declared.size() >= 3,
-                "只解析出 " + declared.size() + " 个工作区工具声明 —— 正则多半没跟上写法的变化，"
-                        + "这时候的绿是「什么都没看到」，不是「没问题」。解析到的：" + declared);
-
-        assertEquals(declared, handled,
-                "声明给模型的工具和能执行的工具对不上。声明了没实现的那些，模型会调用它们、"
-                        + "拿到「未知的工作区工具」，然后多半不会如实转述而是自己编一个结果。"
-                        + "声明：" + declared + "，实现：" + handled);
-    }
-
-    /**
      * 写这道门比读那道窄，而且是刻意的。
      *
      * <p>读过触发的代价是白读几个文件；写过触发的代价是弹出一个用户没要的确认框，
@@ -241,25 +199,14 @@ class CodeAgentGateTest {
 
         // 钉的是「canWrite 被传进去」这个性质，不是参数个数 —— 写死整个参数表的话，
         // 加一个无关的新参数（2026-09-21 加 canExec 时就发生了）会让判据红得莫名其妙。
-        assertTrue(code.contains("buildTools(canWrite"),
-                "工具集必须按写意图分档下发 —— 不下发，模型就不会尝试，也不会承诺自己改了文件");
         assertTrue(code.contains("AgentPlanDecision.codeWriteIntent("),
                 "写意图必须问 AgentPlanDecision 那道唯一的门");
         assertFalse(code.contains("private boolean codeWriteIntent") || code.contains("looksCodeWriteIntent")
                         || service.contains("private boolean codeWriteIntent") || service.contains("looksCodeWriteIntent"),
                 "不得在实现侧另写一套写意图判定 —— 两处各判一次迟早分叉");
 
-        // 两个写工具（整份写、改一段，第九十二轮拆开）的声明都必须在 canWrite 分支里，不能无条件加进工具集
-        int gate = code.indexOf("if (canWrite) {");
-        assertTrue(gate > 0, "找不到 if (canWrite) —— 判据的锚点没了");
-        int gateEnd = blockEnd(code, code.indexOf('{', gate));
-        for (String tool : List.of("write_workspace_file", "edit_workspace_file")) {
-            int declaration = code.indexOf("functionTool(\"" + tool + "\"");
-            assertTrue(declaration > 0, "找不到 " + tool + " 的声明 —— 判据的锚点没了");
-            assertTrue(gate < declaration && declaration < gateEnd,
-                    tool + " 的声明必须在 if (canWrite) 里面。无条件声明的话，"
-                            + "用户只是问「这段代码为什么报错」，模型也会拿到改文件的能力");
-        }
+        // 写工具给不给由 canWrite 决定，原样交给命令行那份循环（第九十七轮起它的 DraftTools.allowedTools 照着下发）
+        assertTrue(code.contains("canWrite, canExec, budget, limits, onStep"), "门算出来的 canWrite 没有交给命令行那份循环");
     }
 
     /** 磁盘那一侧也要问档位：写意图成立但工作区是只读的，同样不能下发写工具。 */
@@ -331,110 +278,6 @@ class CodeAgentGateTest {
             n++;
         }
         return n;
-    }
-
-    /**
-     * 不允许执行时，执行工具<b>连声明都不能有</b>。
-     *
-     * <p>与写工具同一条纪律：不下发，模型就不会尝试，也不会承诺自己跑过了。
-     * 而「允许不允许执行」这件事只有一个判定 —— {@code WorkspaceExecutor.enabled()}，
-     * 它自己把「档位是 EXEC」和「不是生产 profile」两条都算在里面了。
-     * 在这里复述那两个条件就是第二份真相，改一边忘一边的经典形状。
-     *
-     * <p>扰动：把 {@code if (canExec)} 改成 {@code if (true)} → 本条红。
-     */
-    @Test
-    void 不允许执行时不得下发执行工具() throws IOException {
-        String code = src(CODE_AGENT);
-
-        int at = code.indexOf("boolean canExec =");
-        assertTrue(at > 0, "找不到 canExec 的赋值 —— 判据的锚点没了");
-        String statement = code.substring(at, code.indexOf(';', at) + 1);
-        assertTrue(statement.contains("workspaceExecutor.enabled()"),
-                "canExec 必须直接问 WorkspaceExecutor.enabled()，它已经把档位与生产 profile "
-                        + "两条都算进去了。在这里复述那两个条件就是第二份真相。实际：" + statement);
-        assertFalse(statement.contains("allowsExec()") || statement.contains("profiles"),
-                "不得在这里另算一遍执行条件。实际：" + statement);
-
-        int declaration = code.indexOf("functionTool(\"run_workspace_command\"");
-        assertTrue(declaration > 0, "找不到执行工具的声明 —— 判据的锚点没了");
-        int gate = code.indexOf("if (canExec) {");
-        assertTrue(gate > 0 && gate < declaration,
-                "执行工具的声明必须在 if (canExec) 里面。无条件声明的话，工作区只读、"
-                        + "甚至生产环境下模型也会拿到在服务器上起进程的能力");
-    }
-
-    /**
-     * 错题归档这条路：code agent 能到达 Wiki，但要先真的判过题。
-     *
-     * <h2>为什么门开在「跑过没跑过」上，而不是关键词上</h2>
-     *
-     * <p>「把错题记进薄弱点页」的前提是<b>确实判过题</b>。用关键词判（「刷题」「考考我」）
-     * 会过触发也会漏触发 —— {@code codeIntent} 那条判据自己就明示了它会过触发。
-     * 而 {@code CodeLoopState.ranCommand} 是事实：这一轮到底有没有跑过一次
-     * {@code run_workspace_command}。
-     *
-     * <p>所以工具表要<b>每轮重建</b>。一次性算好的话，这个条件只能用「用户说了什么」来近似。
-     *
-     * <h2>Wiki 那一侧不许另写一份</h2>
-     *
-     * <p>{@code executeWikiTool} 里有一整套防护：保留页、<b>未完整读取不许整页覆盖</b>、
-     * 本轮幂等、条带锁、可信快照基线。其中「未完整读取不许整页覆盖」对错题归档尤其要紧 ——
-     * 薄弱点页是累积的，一次整页覆盖就把用户以前记的全冲掉了。
-     * code agent 必须原样走这条路，不能自己拼一个 createPatchSet。
-     *
-     * <p>扰动：把 {@code buildWikiTools(loop.ranCommand)} 改成 {@code buildWikiTools(true)} → 本条红。
-     */
-    @Test
-    void 判过题之前不得下发写薄弱点的工具() throws IOException {
-        String code = src(CODE_AGENT);
-        String service = src(AI_SERVICE);
-
-        assertTrue(code.contains("buildWikiTools(loop.ranCommand)"),
-                "Wiki 写工具必须由「本轮跑过判题没有」决定。用关键词近似这个条件，"
-                        + "就会在没判过题的时候也给出写薄弱点的能力");
-
-        // 工具表必须在 round 循环<b>里面</b>重建，否则 ranCommand 变了也没人看见
-        int loopAt = code.indexOf("for (int round = 0; round < budget.rounds(); round++)");
-        assertTrue(loopAt > 0, "找不到代码循环 —— 判据的锚点没了");
-        int buildAt = code.indexOf("buildWikiTools(loop.ranCommand)");
-        assertTrue(buildAt > loopAt,
-                "工具表在 round 循环之外算好了 —— ranCommand 在循环中途才置位，"
-                        + "算在外面就等于永远是 false，写薄弱点的工具永远不会出现");
-
-        // ranCommand 只能由真的执行<b>无条件</b>置位。
-        //
-        // 第一版这里只断言了「这段文字离 exec 够近」，于是把它包成
-        // `if (false) { loop.ranCommand = true; }` 照样绿 —— 文字还在原地，语句却永远不执行。
-        // 这和「注释满足了判据」是同一个物种：contains 分不出「代码这么做」和「文本这么写」。
-        int execAt = code.indexOf("workspaceExecutor.exec(");
-        int flagAt = code.indexOf("loop.ranCommand = true;");
-        assertTrue(execAt > 0 && flagAt > execAt && flagAt - execAt < 300,
-                "loop.ranCommand 必须紧跟在真正的 exec 调用之后置位 —— "
-                        + "在别处置位就等于这个门可以被绕过");
-        String between = code.substring(execAt, flagAt);
-        assertFalse(between.contains("if ") || between.contains("if("),
-                "exec 与置位之间夹了条件判断，置位不是无条件的。中间这段：" + between.trim());
-        assertTrue(Pattern.compile("(?m)^\\s*loop\\.ranCommand = true;\\s*$").matcher(code).find(),
-                "置位必须是独立一条语句，而不是被包在别的语句里 —— 包起来就可能永远不执行");
-
-        // Wiki 工具必须走加固过的那条路，不能在 code 循环里另拼一份
-        assertTrue(code.contains("executeWikiTool(userId, name, argsRaw, loop.wiki)"),
-                "code agent 的 Wiki 调用必须原样交给 executeWikiTool。另写一份就会绕开"
-                        + "「未完整读取不许整页覆盖」，而薄弱点页是累积的，覆盖一次就全没了");
-        // createPatchSet 只允许有一处调用 —— 它现在住在 WikiToolAgent 里。
-        //
-        // 这条判据 2026-09-21 差点变成摆设：Wiki 循环搬走之后，它还在扫 AiServiceImpl，
-        // 而那里的计数已经是 0，assertFalse(contains(...) && ...) 于是<b>真空通过</b>。
-        // 搬家会让判据扫错文件，而扫错文件的判据看起来和通过一模一样。
-        String wikiAgent = SourceText.stripComments(Files.readString(
-                Path.of("src/main/java/com/zhiqu/service/ai/WikiToolAgent.java"), StandardCharsets.UTF_8));
-        assertEquals(1, countOccurrences(wikiAgent, "createPatchSet("),
-                "createPatchSet 只允许有一处调用（executeWikiTool 里那处）。"
-                        + "第二处就是绕开「未完整读取不许整页覆盖」的那条路。"
-                        + "数到 0 通常意味着判据扫错了文件");
-        assertEquals(0, countOccurrences(service, "createPatchSet(") + countOccurrences(code, "createPatchSet("),
-                "AiServiceImpl 里不该再有 createPatchSet —— Wiki 的写入只走 WikiToolAgent 一条路");
     }
 
     // ── 刷题这道门（阶段 4）───────────────────────────────────────────────

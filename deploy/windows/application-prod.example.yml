@@ -78,9 +78,8 @@ app:
     temperature: ""
     # 命令行（/api/harness）干活的请求用的采样温度：写代码要稳，DeepSeek 建议 0；模型不认时网关去掉它重试一次。留空 = 跟上面的 temperature 一样。
     harness-temperature: "0"
-    # 网页代码模式的循环：js（后端用子进程跑命令行那一份，要装 Node、cli-dir 指向 zhiqu-cli）或 java（原来那一份）。找不到 Node 或脚本时自动用 java。
+    # 网页代码模式要 Node（只在后端绑回环地址、开了代码工作区时用得到）：node 不在 PATH 上就写绝对路径；cli-dir 留空用 JAR 里带的命令行源码。
     code-agent:
-      engine: js
       node: node
       cli-dir: ""
     # 系统级默认模型：开启后所有用户可直接使用，API Key 会被加密存库。
