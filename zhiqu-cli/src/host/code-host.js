@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // 网页 / 桌面应用的代码模式跑的就是命令行这一份循环（第九十四轮，用户 2026-11-02 定的「一份 JS，后端用子进程跑」）。
 // 后端（Java 的 JsCodeAgent）起这个进程，stdin / stdout 一行一个 JSON：
-//   后端 → 这里：run（开始）、event / error（模型调用的回音）、exec_result（命令跑完了）
-//   这里 → 后端：model（请后端调一次模型）、exec（请后端跑一条命令）、step（轨迹里的一句）、result（收尾）、fatal（出错了）
+//   后端 → 这里：run（开始）、event / error（模型调用的回音）、exec_result（命令跑完了）、tool_result（远程工具的结果）
+//   这里 → 后端：model（请后端调一次模型）、exec（请后端跑一条命令）、tool（请后端执行一个 Wiki / 里程碑工具，第九十五轮）、
+//                step（轨迹里的一句）、result（收尾）、fatal（出错了）
 // 门（是不是管理员、工作区档位、写意图、能不能执行）后端判好了才起这个进程；模型和命令都回到后端去做 —— 这里只有循环和工作区的读、草稿。
 // 认不出的消息就停，不猜。
 import path from 'node:path';
@@ -29,7 +30,7 @@ export function createBridge({ input, output }) {
     try { msg = JSON.parse(line); } catch { fail('收到的不是 JSON'); return; }
     if (msg.type === 'run' && onRun) { const f = onRun; onRun = null; f(msg); return; }
     const waiter = pending.get(msg.id);
-    if (!waiter || !['event', 'error', 'exec_result'].includes(msg.type)) { fail(`认不出的消息：${String(msg.type).slice(0, 40)}`); return; }
+    if (!waiter || !['event', 'error', 'exec_result', 'tool_result'].includes(msg.type)) { fail(`认不出的消息：${String(msg.type).slice(0, 40)}`); return; }
     waiter(msg);
   });
   lines.on('close', () => { for (const w of pending.values()) w({ type: 'error', message: '后端关掉了连接', retryable: false }); pending.clear(); });
@@ -58,6 +59,20 @@ export function createBridge({ input, output }) {
         send({ type: 'model', id, body });
       });
     },
+    /** 远程工具（Wiki、里程碑计划）：后端照它自己那一套执行，回 { content } */
+    tool(name, args, { signal } = {}) {
+      const id = `t${++seq}`;
+      return new Promise((resolve, reject) => {
+        const abort = () => { pending.delete(id); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
+        if (signal) signal.addEventListener('abort', abort, { once: true });
+        pending.set(id, (msg) => {
+          pending.delete(id); if (signal) signal.removeEventListener('abort', abort);
+          if (msg.type === 'error') reject(new ApiError(msg.message || '远程工具调用失败', { retryable: false }));
+          else resolve({ content: String(msg.content ?? '') });
+        });
+        send({ type: 'tool', id, name, arguments: args });
+      });
+    },
     exec(request, { signal } = {}) {
       const id = `x${++seq}`;
       return new Promise((resolve) => {
@@ -73,6 +88,24 @@ export function createBridge({ input, output }) {
   };
 }
 
+/** 「生成了 / 写好了……草稿」「草稿已经生成」这类说法 */
+export const CLAIMS_DRAFT = /(生成|写好|写成|写进|创建|建好|准备好|改好)[^。\n]{0,16}草稿|草稿[^。\n]{0,8}已经?(生成|写好|准备好|建好)/;
+
+/** 「退出码 0」「跑了 test.py」「输出：」这类说跑过命令的说法 */
+export const CLAIMS_RUN = /退出码\s*-?\d|(跑|运行)(了|过了|的是)[^。\n]{0,24}(test|测试|\.py|\.js|\.java)|输出(是|为)?[:：]/;
+
+/**
+ * 前面的对话（第九十五轮）：网页给的只有每一轮的问和最终回答 —— 原样当成一问一答放进去，模型学的是「不调工具直接答」，
+ * 两回照着上一次的结果编了这一次的（0 轮）。命令行的历史里有真的工具调用，没有这个问题。所以合成一段带标注的参考，不当成示范。
+ */
+export function historyBlock(history) {
+  const turns = (Array.isArray(history) ? history : []).filter((m) => m && ['user', 'assistant'].includes(m.role) && typeof m.content === 'string' && m.content.trim());
+  if (!turns.length) return [];
+  const text = turns.map((m) => `${m.role === 'user' ? '用户' : '助手'}：${m.content.trim()}`).join('\n\n');
+  return [{ role: 'user', content: `【前面的对话，供参考 —— 里面说到的文件内容、命令结果都是当时的，文件可能已经变了；这一次要的结果用工具重新查、重新跑，不要照抄】\n${text}` },
+    { role: 'assistant', content: '好的，前面的对话我当参考；这一次要的结果我用工具重新查。' }];
+}
+
 /** 跑一轮：run 消息 → 循环 → result。返回 result（测试直接调） */
 export async function runHosted(bridge, run) {
   const local = new DraftTools({ root: run.root, exec: (req, opts) => bridge.exec(req, opts),
@@ -83,16 +116,35 @@ export async function runHosted(bridge, run) {
   const step = ui.step.bind(ui);
   ui.step = (text) => { bridge.send({ type: 'step', text: String(text) }); return step(text); };
   const api = { stream: (p, body, onEvent, opts) => bridge.stream(p, body, onEvent, opts),
-    post: async () => { throw new ApiError('这里没有远程工具', { retryable: false }); },
+    post: async (p, body, opts) => {
+      if (p !== '/api/harness/tools/call') throw new ApiError('这里没有这个远程接口', { retryable: false });
+      return bridge.tool(body.name, body.arguments, opts);
+    },
     get: async () => { throw new ApiError('这里没有远程接口', { retryable: false }); } };
   const ctx = {
     api, ui, root: local.root, mode: 'auto', maxRounds: Math.max(1, Math.min(60, Number(run.maxRounds) || 30)), local,
     store: null, session: { id: 'web-code-agent' }, archiveDisabled: true,
-    messages: (Array.isArray(run.history) ? run.history : []).filter((m) => m && ['user', 'assistant'].includes(m.role) && typeof m.content === 'string')
-      .map((m) => ({ role: m.role, content: m.content })),
+    messages: historyBlock(run.history),
     allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() }, usage: { prompt: 0, completion: 0, cached: 0 },
-    changedFiles: new Set(), todos: [], system: { text: BUILTIN_SYSTEM_PROMPT }, instructionsText: '', skillsText: '', skills: [], remoteTools: [],
+    changedFiles: new Set(), todos: [], system: { text: BUILTIN_SYSTEM_PROMPT }, instructionsText: '', skillsText: '', skills: [],
     verbose: true, model: run.model,
+  };
+  // 远程工具（第九十五轮）：一直给的那几个 + 真的跑过一次命令之后才给的（create_wiki_patch：判过题才许记薄弱点）。工具表每一轮重建，所以随时变
+  const always = Array.isArray(run.remoteTools) ? run.remoteTools : [];
+  const afterRun = Array.isArray(run.remoteToolsAfterRun) ? run.remoteToolsAfterRun : [];
+  Object.defineProperty(ctx, 'remoteTools', { get: () => (local.ranCommand ? [...always, ...afterRun] : always), enumerable: true });
+  // 说的和这一次做的对不上 —— 推一次让它照实做 / 照实说（第九十五轮，真浏览器里两回：0 轮就说「已生成三个文件的草稿」；
+  // 0 轮就说「跑了 test_two_sum.py，输出 ok，三组断言全过」—— 解法还是 return []，根本没跑）
+  ctx.claimCheck = (text) => {
+    const s = String(text || '');
+    if (CLAIMS_DRAFT.test(s) && !local.drafts.size) {
+      return '这一次你还没有成功调用 write_file / edit_file，并没有生成任何草稿 —— 不要说生成了。要改文件就现在调工具；不用改就照实说你做了什么。';
+    }
+    if (CLAIMS_RUN.test(s) && !local.ranCommand) {
+      return '这一次你没有调用 run_command，什么命令都没跑过 —— 不要说跑了、结果是什么（前面对话里的结果是当时的，文件可能已经变了）。'
+        + '要知道结果就现在调 run_command 跑；不跑就照实说没跑。';
+    }
+    return null;
   };
   const controller = new AbortController();
   const timer = run.timeoutMs ? setTimeout(() => controller.abort(), Number(run.timeoutMs)) : null;

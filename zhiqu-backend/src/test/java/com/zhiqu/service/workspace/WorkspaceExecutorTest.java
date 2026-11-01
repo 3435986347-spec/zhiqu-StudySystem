@@ -230,6 +230,45 @@ class WorkspaceExecutorTest {
      * （我们显式放行的三个除外），再加上「子进程的 PATH 是我们给的那份固定值，
      * 不是父进程那份」。两条都与平台无关，也不会被工具注入的名字骗到。
      */
+    /**
+     * 子进程的 HOME 不是工作区（第九十五轮）：原来是 —— macOS 的 python3 往用户项目里写了 Library/Caches；
+     * 仓库里带的 user site 下的 sitecustomize.py 会被任何一句 python3 执行。照真的做法复现：先问 python3「HOME 是工作区时 user site 在哪」，
+     * 在那里放一个会留记号的 sitecustomize.py，再经执行器跑一个普通脚本 —— 记号不许出现，工作区里也不许多出 Library。
+     */
+    @Test
+    void 子进程的HOME不是工作区(@TempDir Path root) throws Exception {
+        if (!hasPython()) {
+            return;
+        }
+        Path python = WorkspaceExecutor.resolveOnPath("python3");
+        ProcessBuilder ask = new ProcessBuilder(python.toString(), "-c", "import site; print(site.getusersitepackages())");
+        ask.environment().clear();
+        ask.environment().put("HOME", root.toString());
+        Process asked = ask.start();
+        String userSite = new String(asked.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        asked.waitFor();
+        assertTrue(userSite.startsWith(root.toString()), "HOME 是工作区时 user site 应当落在工作区里：" + userSite);
+        // 上面那一问本身就是「HOME = 工作区」：shim 已经往这里写了 Library/ —— 清掉，下面只看执行器那一跑
+        if (Files.exists(root.resolve("Library"))) {
+            try (var walk = Files.walk(root.resolve("Library"))) {
+                walk.sorted(java.util.Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
+            }
+        }
+        Path marker = root.resolve("PWNED");
+        Files.createDirectories(Path.of(userSite));
+        Files.writeString(Path.of(userSite, "sitecustomize.py"), "open(" + JSON_STR.apply(marker.toString()) + ", 'w').write('x')\n");
+        script(root, "probe.py", "import os\nprint('HOME=' + os.environ.get('HOME', ''))\n");
+        WorkspaceExecutor.ExecResult r = execAt(root).exec("python3", List.of("probe.py"), "");
+        assertEquals(0, r.exitCode(), r.output());
+        String home = r.output().lines().filter(l -> l.startsWith("HOME=")).findFirst().orElse("").substring(5);
+        assertFalse(home.isEmpty() || Path.of(home).toAbsolutePath().startsWith(root.toAbsolutePath()), "子进程的 HOME 不能在工作区里：" + home);
+        assertFalse(Files.exists(marker), "仓库里带的 sitecustomize.py 被执行了");
+        // macOS 自带的 python3 的 user site 本身就在 ~/Library/Python 下（上面放 sitecustomize.py 时建的），看的是它写的缓存
+        assertFalse(Files.exists(root.resolve("Library/Caches")), "python3 往工作区里写了 Library/Caches");
+    }
+
+    private static final java.util.function.Function<String, String> JSON_STR = s -> "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'";
+
     @Test
     void 子进程不得继承父进程的环境变量(@TempDir Path root) throws IOException {
         if (!hasPython()) {

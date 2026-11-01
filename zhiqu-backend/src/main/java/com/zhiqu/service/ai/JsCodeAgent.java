@@ -66,7 +66,7 @@ public class JsCodeAgent {
 
     public JsCodeAgent(ObjectProvider<HarnessModelGateway> gateway, WorkspaceService workspaceService, WorkspaceExecutor executor,
                        WorkspaceProperties workspaceProperties, ObjectMapper json,
-                       @Value("${app.ai.code-agent.engine:java}") String engine,
+                       @Value("${app.ai.code-agent.engine:js}") String engine,
                        @Value("${app.ai.code-agent.node:node}") String node,
                        @Value("${app.ai.code-agent.cli-dir:}") String cliDir) {
         this.gateway = gateway;
@@ -79,17 +79,43 @@ public class JsCodeAgent {
         this.cliDir = cliDir == null ? "" : cliDir.trim();
     }
 
+    /**
+     * 命令行那份循环里的远程工具（第九十五轮：Wiki 工具、把里程碑排成任务）—— 照旧由 {@link CodeWorkspaceAgent} 那一套执行，这里只转。
+     * 下发和执行同一份清单：{@link #always()} 一直给，{@link #afterRun()} 真的跑过一次命令才给（宿主每一轮重建工具表），{@link #call} 执行时照样核。
+     */
+    public interface RemoteTools {
+        List<Map<String, Object>> always();
+
+        List<Map<String, Object>> afterRun();
+
+        String call(String name, String argsJson, boolean ranCommand);
+    }
+
     /** 开关是 js、脚本也在 */
     public boolean enabled() {
         return "js".equalsIgnoreCase(engine) && hostScript() != null;
     }
 
+    /**
+     * 宿主脚本。cli-dir 没配时按工作目录找 zhiqu-cli（第九十五轮：开发时从仓库根或 zhiqu-backend 起都找得到）；
+     * 桌面应用的工作目录是 /、网页服务器部署没带命令行源码 —— 找不到就退回 Java 的循环（第 3 步打包之前桌面上照旧是 Java）。
+     */
     Path hostScript() {
-        if (cliDir.isEmpty()) {
-            return null;
+        List<Path> candidates = new ArrayList<>();
+        if (!cliDir.isEmpty()) {
+            candidates.add(Path.of(cliDir));
+        } else {
+            Path here = Path.of(System.getProperty("user.dir", ".")).toAbsolutePath();
+            candidates.add(here.resolve("zhiqu-cli"));
+            candidates.add(here.resolveSibling("zhiqu-cli"));
         }
-        Path script = Path.of(cliDir).toAbsolutePath().normalize().resolve(HOST_SCRIPT);
-        return Files.isRegularFile(script) ? script : null;
+        for (Path dir : candidates) {
+            Path script = dir.toAbsolutePath().normalize().resolve(HOST_SCRIPT);
+            if (Files.isRegularFile(script)) {
+                return script;
+            }
+        }
+        return null;
     }
 
     /** node 的绝对路径：给的就是绝对路径就用它，否则从 PATH 里找；找不到是 null */
@@ -122,6 +148,12 @@ public class JsCodeAgent {
     public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
                                          boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
                                          Consumer<Map<String, Object>> onStep) {
+        return run(config, userId, userMessage, history, canWrite, canExec, budget, limits, onStep, null);
+    }
+
+    public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
+                                         boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
+                                         Consumer<Map<String, Object>> onStep, RemoteTools remote) {
         Path script = hostScript();
         String nodeBin = nodeBinary();
         Path root = workspaceService.access().root();
@@ -176,12 +208,15 @@ public class JsCodeAgent {
         run.put("maxRounds", budget.rounds());
         run.put("timeoutMs", budget.millis());
         run.put("model", model);
+        run.put("remoteTools", remote == null ? List.of() : remote.always());
+        run.put("remoteToolsAfterRun", remote == null ? List.of() : remote.afterRun());
 
         JsonNode result = null;
         try (BufferedWriter out = new BufferedWriter(new OutputStreamWriter(child.getOutputStream(), StandardCharsets.UTF_8));
              BufferedReader in = new BufferedReader(new InputStreamReader(child.getInputStream(), StandardCharsets.UTF_8))) {
             Channel channel = new Channel(out);
             channel.send(run);
+            boolean[] ranCommand = {false};
             String line;
             while ((line = in.readLine()) != null) {
                 if (line.length() > MAX_LINE_CHARS) {
@@ -192,7 +227,9 @@ public class JsCodeAgent {
                 if ("model".equals(type)) {
                     callModel(config, userId, msg, channel);
                 } else if ("exec".equals(type)) {
-                    exec(msg, canExec, channel);
+                    ranCommand[0] |= exec(msg, canExec, channel);
+                } else if ("tool".equals(type)) {
+                    tool(msg, remote, ranCommand[0], channel);
                 } else if ("step".equals(type)) {
                     narrate(onStep, Map.of("phase", "call", "tool", "", "message", Texts.limitRaw(msg.path("text").asText(""), 400)));
                 } else if ("result".equals(type)) {
@@ -256,7 +293,7 @@ public class JsCodeAgent {
                 event.put("name", name);
                 event.put("data", data);
                 channel.send(event);
-            });
+            }, false);   // 不记进命令行的用量表：这不是命令行的调用
         } catch (HarnessModelGateway.ModelCallException e) {
             channel.send(error(id, e.getMessage(), e.retryable()));
         } catch (BusinessException e) {
@@ -264,14 +301,31 @@ public class JsCodeAgent {
         }
     }
 
-    private void exec(JsonNode msg, boolean canExec, Channel channel) throws IOException {
+    /** 远程工具：交给 CodeWorkspaceAgent 那一套执行；出错照实说给模型 */
+    private void tool(JsonNode msg, RemoteTools remote, boolean ranCommand, Channel channel) throws IOException {
+        Map<String, Object> reply = new LinkedHashMap<>();
+        reply.put("type", "tool_result");
+        reply.put("id", msg.path("id").asText(""));
+        String name = msg.path("name").asText("");
+        JsonNode args = msg.path("arguments");
+        String argsJson = args.isTextual() ? args.asText() : args.isMissingNode() ? "{}" : args.toString();
+        try {
+            reply.put("content", remote == null ? "没有叫 " + name + " 的工具。" : remote.call(name, argsJson, ranCommand));
+        } catch (RuntimeException e) {
+            reply.put("content", "工具执行失败：" + e.getMessage());
+        }
+        channel.send(reply);
+    }
+
+    /** @return 真的跑了（交给了执行器、没被拒） */
+    private boolean exec(JsonNode msg, boolean canExec, Channel channel) throws IOException {
         Map<String, Object> reply = new LinkedHashMap<>();
         reply.put("type", "exec_result");
         reply.put("id", msg.path("id").asText(""));
         if (!canExec) {
             reply.put("error", "这一次不能跑命令。");
             channel.send(reply);
-            return;
+            return false;
         }
         List<String> args = new ArrayList<>();
         msg.path("args").forEach(a -> args.add(a.asText("")));
@@ -285,8 +339,11 @@ public class JsCodeAgent {
         } catch (BusinessException e) {
             log.info("代码模式跑命令 {} 被拒：{}", msg.path("command").asText(""), e.getMessage());
             reply.put("error", "没有运行：" + e.getMessage());
+            channel.send(reply);
+            return false;
         }
         channel.send(reply);
+        return true;
     }
 
     private static Map<String, Object> error(String id, String message, boolean retryable) {

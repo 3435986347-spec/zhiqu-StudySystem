@@ -60,7 +60,7 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 故意的：过触发的代价是白读几个文件，漏触发的代价是用户问代码问题却得到一个没看过代码的
 回答。`CodeAgentGateTest.已知会过触发的那一类` 把它钉成了明示的取舍，不是待修的 bug。
 
-**两份 coding agent 合成一份（第九十四轮起，分三步）**：开关 `app.ai.code-agent.engine=js` 时，门在 `CodeWorkspaceAgent.run` 里判完，循环交给命令行那一份 —— `JsCodeAgent` 起 node 跑 `zhiqu-cli/src/host/code-host.js`（草稿模式的 `DraftTools`），模型回到 `HarnessModelGateway`、命令回到 `WorkspaceExecutor`，草稿照旧成 `CODE_DRAFT`。子进程只有 HOME 和 PATH、超时整组杀、协议里认不出的就停。起不来退回 Java 的循环。三步见 `docs/rounds/round-94.md`。
+**两份 coding agent 合成一份（第九十四轮起，分三步）**：开关 `app.ai.code-agent.engine=js` 时，门在 `CodeWorkspaceAgent.run` 里判完，循环交给命令行那一份 —— `JsCodeAgent` 起 node 跑 `zhiqu-cli/src/host/code-host.js`（草稿模式的 `DraftTools`），模型回到 `HarnessModelGateway`、命令回到 `WorkspaceExecutor`，草稿照旧成 `CODE_DRAFT`。子进程只有 HOME 和 PATH、超时整组杀、协议里认不出的就停。起不来退回 Java 的循环。三步见 `docs/rounds/round-94.md`。第九十五轮起默认 js（`cli-dir` 留空按工作目录找），Wiki 工具和里程碑经桥回到这里执行；执行器给子进程的 HOME 是自己的空目录（原来是工作区：python3 往项目里写缓存、仓库里的 sitecustomize.py 会被执行）。
 
 **工作区写入（阶段 2）走的是 Wiki 那条已经验证过的路：草稿 → 用户确认 → 落盘。**
 模型调 `write_workspace_file`（整份写）/ `edit_workspace_file`（改一段，第九十二轮拆开）只产出 `CODE_DRAFT` 工件，磁盘一个字节都不动；

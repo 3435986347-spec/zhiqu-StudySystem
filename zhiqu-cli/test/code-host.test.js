@@ -78,6 +78,7 @@ function fakeBackend({ replies, exec = () => ({ exitCode: 0, output: 'ok', milli
         usage: { promptTokens: 1000, completionTokens: 10, cachedTokens: 900, estimated: false } } });
     }
     if (msg.type === 'exec') reply({ type: 'exec_result', id: msg.id, ...exec(msg) });
+    if (msg.type === 'tool') reply({ type: 'tool_result', id: msg.id, content: `后端执行了 ${msg.name}：${JSON.stringify(msg.arguments)}` });
   });
   return { bridge: createBridge({ input: toHost, output: fromHost }), seen };
 }
@@ -114,7 +115,12 @@ test('协议：模型调用、跑命令都回到后端；轨迹一步一步交�
   assert.match(system, /网页 \/ 桌面应用的代码模式/);
   assert.match(system, /不接受 python3 -c \/ node -e/);
   assert.ok(!/一两行的小检查直接用 python3 -c/.test(system), '命令行那句「行内代码可以用」不能出现在草稿模式里');
-  assert.deepEqual(models[0].body.messages.slice(1, 3).map((m) => m.content), ['前一句', '前一句的回答'], '最近的对话在这句话之前');
+  // 第九十五轮（真浏览器里「再跑一下」时它拿上一次的结果回答、0 轮）：命令行和网页同一份提示
+  assert.match(system, /再跑一次、再看一次.*就真的再调工具做一次.*不要拿对话里上一次的结果回答/);
+  const prior = models[0].body.messages[1];
+  assert.equal(prior.role, 'user');
+  assert.match(prior.content, /【前面的对话，供参考.*这一次要的结果用工具重新查、重新跑[\s\S]*用户：前一句[\s\S]*助手：前一句的回答/,
+    '最近的对话在这句话之前，而且是带标注的参考，不是一问一答的示范（第九十五轮）');
   const execs = seen.filter((m) => m.type === 'exec');
   assert.deepEqual(execs.map((m) => [m.command, m.args]), [['python3', ['test_calc.py']]]);
   const ran = models[3].body.messages.filter((m) => m.role === 'tool').at(-1).content;
@@ -171,4 +177,82 @@ test('协议：认不出的消息就停（fatal），不猜', async () => {
   await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(out.map((m) => m.type), ['fatal']);
   assert.match(out[0].message, /认不出的消息/);
+});
+
+const wikiTool = (name) => ({ type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } } });
+
+test('远程工具（第九十五轮）：Wiki / 里程碑工具经桥交给后端执行；记薄弱点的工具真的跑过一次命令才下发（判过题才许记）', async () => {
+  const root = tmpdir();
+  write(root, 'test_two_sum.py', 'print("FAIL")\n');
+  const { bridge, seen } = fakeBackend({
+    replies: [
+      { calls: [{ name: 'search_wiki', args: { query: '薄弱点' } }] },
+      { calls: [{ name: 'create_wiki_patch', args: { title: '薄弱点：两数之和' } }] },
+      { calls: [{ name: 'run_command', args: { command: 'python3', args: ['test_two_sum.py'] } }] },
+      { calls: [{ name: 'create_wiki_patch', args: { title: '薄弱点：两数之和' } }] },
+      { text: '记下来了，等你确认。' },
+    ],
+    exec: () => ({ exitCode: 1, output: 'FAIL', millis: 5 }),
+  });
+  const result = await runHosted(bridge, { type: 'run', root, message: '出一道题考我', canWrite: true, canExec: true, commands: ['python3'], model: MODEL,
+    remoteTools: [wikiTool('search_wiki'), wikiTool('read_wiki_page')], remoteToolsAfterRun: [wikiTool('create_wiki_patch')] });
+  assert.equal(result.text, '记下来了，等你确认。');
+  const models = seen.filter((m) => m.type === 'model');
+  const offered = (i) => models[i].body.tools.map((x) => x.function.name);
+  assert.ok(offered(0).includes('search_wiki') && !offered(0).includes('create_wiki_patch'), offered(0).join(','));
+  assert.ok(!offered(2).includes('create_wiki_patch'), '跑命令之前不给记薄弱点');
+  assert.ok(offered(3).includes('create_wiki_patch'), `跑过命令之后给：${offered(3).join(',')}`);
+  const tools = seen.filter((m) => m.type === 'tool');
+  assert.deepEqual(tools.map((m) => m.name), ['search_wiki', 'create_wiki_patch'], '没下发时硬调的那次不该到后端');
+  assert.deepEqual(tools[0].arguments, { query: '薄弱点' });
+  const toolMessages = models[4].body.messages.filter((m) => m.role === 'tool').map((m) => m.content);
+  assert.match(toolMessages[0], /后端执行了 search_wiki/);
+  assert.match(toolMessages[1], /没有叫 create_wiki_patch 的工具|create_wiki_patch/);
+  assert.match(toolMessages[3], /后端执行了 create_wiki_patch/);
+});
+
+test('说生成了草稿、这一次却一份都没有：推一次让它照实做（第九十五轮：真浏览器里 0 轮就说「已生成三个文件的草稿」）；真生成了就不推', async () => {
+  const root = tmpdir();
+  const { bridge, seen } = fakeBackend({ replies: [
+    { text: '已生成三个文件的草稿，等你确认后才会写进磁盘。' },
+    { calls: [{ name: 'write_file', args: { path: 'two_sum.py', content: 'def two_sum(nums, target):\n    return []\n' } }] },
+    { text: '已生成 two_sum.py 的草稿，等你确认。' },
+  ] });
+  const result = await runHosted(bridge, { type: 'run', root, message: '出一道题', canWrite: true, model: MODEL });
+  const models = seen.filter((m) => m.type === 'model');
+  assert.equal(models.length, 3, '应当推了一次、然后真写了');
+  const pushed = models[1].body.messages.at(-1);
+  assert.equal(pushed.role, 'user');
+  assert.match(pushed.content, /并没有生成任何草稿/);
+  assert.deepEqual(result.drafts.map((d) => d.path), ['two_sum.py']);
+  assert.equal(result.text, '已生成 two_sum.py 的草稿，等你确认。', '真有草稿时同样的说法不再推');
+});
+
+test('草稿说法的判定：生成了 / 写好了 / 草稿已经生成算，问句、「没有草稿」不算', async () => {
+  const { CLAIMS_DRAFT } = await import('../src/host/code-host.js');
+  for (const s of ['已生成三个文件的草稿', '改动草稿已经生成好了', '我写好了 calc.py 的草稿']) assert.ok(CLAIMS_DRAFT.test(s), s);
+  for (const s of ['这一轮没有改文件。', '测试过了，退出码 0。']) assert.ok(!CLAIMS_DRAFT.test(s), s);
+});
+
+test('说跑过了、这一次却没跑过任何命令：推一次让它真跑（第九十五轮：0 轮就说「跑了 test_two_sum.py，输出 ok」，解法其实是 return []）', async () => {
+  const root = tmpdir();
+  write(root, 'test_two_sum.py', 'assert False\n');
+  const { bridge, seen } = fakeBackend({
+    replies: [
+      { text: '我跑了 test_two_sum.py，输出：ok，退出码 0，三组断言全过。' },
+      { calls: [{ name: 'run_command', args: { command: 'python3', args: ['test_two_sum.py'] } }] },
+      { text: '跑了 test_two_sum.py：退出码 1，AssertionError —— 没过。' },
+    ],
+    exec: () => ({ exitCode: 1, output: 'AssertionError', millis: 5 }),
+  });
+  const result = await runHosted(bridge, { type: 'run', root, message: '帮我判一下', canExec: true, commands: ['python3'], model: MODEL,
+    history: [{ role: 'user', content: '跑一下' }, { role: 'assistant', content: '跑了，输出：ok，退出码 0' }] });
+  const models = seen.filter((m) => m.type === 'model');
+  assert.equal(models.length, 3);
+  assert.match(models[1].body.messages.at(-1).content, /没有调用 run_command，什么命令都没跑过/);
+  assert.equal(seen.filter((m) => m.type === 'exec').length, 1, '推了以后真的跑了');
+  assert.match(result.text, /退出码 1/);
+  const { CLAIMS_RUN } = await import('../src/host/code-host.js');
+  for (const s of ['退出码 0，全过', '我跑了 test_calc.py', '输出：ok']) assert.ok(CLAIMS_RUN.test(s), s);
+  for (const s of ['写进去后你可以运行 python3 test.py 验证', '改好了 calc.py 的草稿']) assert.ok(!CLAIMS_RUN.test(s), s);
 });

@@ -192,6 +192,14 @@ public class HarnessModelGateway {
     }
 
     public void stream(Long userId, Map<String, Object> body, Sink sink) {
+        stream(userId, body, sink, true);
+    }
+
+    /**
+     * metered = false：不记进命令行的用量表（第九十五轮）。网页代码模式跑命令行那份循环时模型也走这里，
+     * 但它不是命令行的调用 —— 记进去，命令行 /usage「今天（命令行）」就把网页的也算上了；网页代码模式原来就不记这张表。
+     */
+    public void stream(Long userId, Map<String, Object> body, Sink sink, boolean metered) {
         List<Map<String, Object>> messages = validMessages(body.get("messages"));
         List<Map<String, Object>> tools = validTools(body.get("tools"));
         Long modelId = body.get("modelId") instanceof Number n ? n.longValue() : null;
@@ -269,7 +277,9 @@ public class HarnessModelGateway {
                 : HarnessContext.estimateTokens(acc.text()) + (int) Math.ceil((acc.outputChars() - acc.text().length()) / 3.5);
         // 缓存命中数只在供应商报了、而且不是估算的时候给（第九十三轮）：命令行据此说命中了多少，评测代理按命中价结算
         Integer cachedTokens = estimated || acc.cachedTokens() == null ? null : Math.min(Math.max(acc.cachedTokens(), 0), promptTokens);
-        recordUsage(userId, config, promptTokens, completionTokens, cachedTokens, estimated, acc.finishReason());
+        if (metered) {
+            recordUsage(userId, config, promptTokens, completionTokens, cachedTokens, estimated, acc.finishReason());
+        }
 
         Map<String, Object> usage = new LinkedHashMap<>();
         usage.put("promptTokens", promptTokens);

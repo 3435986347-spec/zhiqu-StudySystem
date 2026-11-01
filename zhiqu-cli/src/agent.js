@@ -509,9 +509,11 @@ const windowReminder = (p, offset) => `你在接着上一次往下读 ${p}（第
  * 不调工具的那条回复之后还要不要推一句（清单没做完）。在问用户问题、最后一轮不推。
  * 要推的话那条先不当结论打出来 —— 原来安静模式下先打一遍结论、推完再打一遍（第八十九轮真模型试出来的）。
  */
-function pendingNudge(ctx, text, { nudged, lastRound }) {
+function pendingNudge(ctx, text, { nudged, claimChecked, lastRound }) {
   if (lastRound || /[？?]\s*$/.test((text || '').trim())) return null;
   if (!nudged && ctx.mode !== 'plan' && unfinished(ctx.todos).length) return 'todo';
+  // 交活时说的和这一轮做的对不上：宿主给的核对（第九十五轮：网页代码模式里一个工具没调就说「已生成三个文件的草稿」），只推一次。命令行里没有这个钩子
+  if (!claimChecked && ctx.claimCheck && ctx.claimCheck(text)) return 'claim';
   return null;
 }
 /**
@@ -775,6 +777,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   let finalText = '';
   let continuations = 0;
   let nudged = false;
+  let claimChecked = false;
   ctx.turnStats = { read: 0, search: 0, list: 0 };
   ctx.readStreak = 0;
   ctx.readWindows = new Map(); ctx.readHinted = new Set();
@@ -794,7 +797,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
 
     // 安静模式下文字是收完才打的：不调工具的那条就是结论（被截断的结论也是结论的一段），调工具的那条是过程，不打
     const nudge = calls.length || res.finishReason === 'length' ? null
-      : pendingNudge(ctx, message.content, { nudged, lastRound: round === maxRounds - 1 });
+      : pendingNudge(ctx, message.content, { nudged, claimChecked, lastRound: round === maxRounds - 1 });
     if (quiet(ctx) && !calls.length && !nudge && (message.content || '').trim()) showAnswer(ctx, message.content);
     if (res.finishReason === 'length') {
       // 被截断不是「说完了」：截断的工具调用不执行，告诉模型为什么、该怎么改
@@ -827,6 +830,11 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       if (nudge === 'todo') {
         nudged = true;
         record(ctx, { role: 'user', content: todoNudge(ctx.todos) }, 'system');
+        continue;
+      }
+      if (nudge === 'claim') {
+        claimChecked = true;
+        record(ctx, { role: 'user', content: ctx.claimCheck(message.content) }, 'system');
         continue;
       }
       break;

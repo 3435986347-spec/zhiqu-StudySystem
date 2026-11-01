@@ -26,6 +26,7 @@ import java.util.TreeSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -508,10 +509,11 @@ class CodeWorkspaceAgentTest {
         Rig rig = new Rig(WorkspaceMode.WRITE, true);
         JsCodeAgent js = mock(JsCodeAgent.class);
         when(js.enabled()).thenReturn(true);
-        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any())).thenReturn(fromJs);
+        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any())).thenReturn(fromJs);
         rig.agent.setJsEngine(js);
-        assertSame(fromJs, rig.run("改一下 a.py", CODE_MODE));
-        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(false), any(), any(), any());
+        CodeWorkspaceAgent.Result viaJs = rig.run("改一下 a.py", CODE_MODE);
+        assertEquals(fromJs.context(), viaJs.context());
+        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(false), any(), any(), any(), any());
         verify(rig.provider, never()).callToolTurn(any(), any(), any(), any());
 
         Rig notAdmin = new Rig(WorkspaceMode.WRITE, false);
@@ -519,7 +521,21 @@ class CodeWorkspaceAgentTest {
         when(js2.enabled()).thenReturn(true);
         notAdmin.agent.setJsEngine(js2);
         notAdmin.run("改一下 a.py", CODE_MODE);
-        verify(js2, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any());
+        verify(js2, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any());
+
+        // 第九十五轮：JS 那份经桥调了「把里程碑排成任务」—— 记在这里的循环状态上，要交回主流程（走 PLANNER 那条确认的路）
+        Rig project = new Rig(WorkspaceMode.WRITE, true);
+        JsCodeAgent js3 = mock(JsCodeAgent.class);
+        when(js3.enabled()).thenReturn(true);
+        when(js3.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any())).thenAnswer(inv -> {
+            JsCodeAgent.RemoteTools remote = inv.getArgument(9);
+            String reply = remote.call(StudyPlanTool.NAME, "{\"tasks\":[{\"title\":\"让蛇动起来\"}]}", false);
+            return new CodeWorkspaceAgent.Result("【工作区 create_study_plan】\n" + reply, List.of(), null, true, List.of(), false);
+        });
+        project.agent.setJsEngine(js3);
+        CodeWorkspaceAgent.Result planned = project.run("带我从零做一个贪吃蛇小项目", CODE_MODE);
+        assertNotNull(planned.milestonePlan(), "经桥记下的里程碑没交回主流程：" + planned.context());
+        assertEquals(1, ((List<?>) planned.milestonePlan().get("tasks")).size());
 
         Rig fallback = new Rig(WorkspaceMode.WRITE, true);
         JsCodeAgent broken = mock(JsCodeAgent.class);
@@ -528,6 +544,23 @@ class CodeWorkspaceAgentTest {
         fallback.modelSays("{\"role\":\"assistant\",\"content\":\"看过了\"}");
         fallback.run("改一下 a.py", CODE_MODE);
         verify(fallback.provider).callToolTurn(any(), any(), any(), any());
+    }
+
+    /** 第九十五轮：交给命令行那份循环的远程工具 —— 下发和执行同一份清单，判过题之前的 create_wiki_patch 在执行时也挡 */
+    @Test
+    @DisplayName("交给命令行那份循环的远程工具：Wiki 读工具一直给、记薄弱点等跑过命令、里程碑只在项目引导时给；没给的照样拒")
+    void 交给命令行那份循环的远程工具() {
+        Rig rig = new Rig(WorkspaceMode.EXEC, true);
+        CodeWorkspaceAgent.LoopState loop = new CodeWorkspaceAgent.LoopState();
+        JsCodeAgent.RemoteTools tools = rig.agent.remoteTools(1L, loop, false);
+        Set<String> always = CodeWorkspaceAgent.offeredToolNames(tools.always());
+        assertTrue(always.contains("search_wiki") && always.contains("read_wiki_page"), always.toString());
+        assertFalse(always.contains("create_wiki_patch") || always.contains(StudyPlanTool.NAME), always.toString());
+        assertEquals(Set.of("create_wiki_patch"), CodeWorkspaceAgent.offeredToolNames(tools.afterRun()));
+        String early = tools.call("create_wiki_patch", "{\"title\":\"薄弱点：x\",\"content\":\"x\"}", false);
+        assertTrue(early.contains("create_wiki_patch") && !early.startsWith("已"), "没判过题就记薄弱点，应当被拒：" + early);
+        assertTrue(tools.call(StudyPlanTool.NAME, "{}", true).contains(StudyPlanTool.NAME), "不是项目引导时不给里程碑工具");
+        assertTrue(CodeWorkspaceAgent.offeredToolNames(rig.agent.remoteTools(1L, loop, true).always()).contains(StudyPlanTool.NAME));
     }
 
     @Test

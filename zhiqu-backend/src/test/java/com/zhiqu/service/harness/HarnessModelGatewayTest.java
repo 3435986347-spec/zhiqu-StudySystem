@@ -175,6 +175,17 @@ class HarnessModelGatewayTest {
     }
 
     @Test
+    @DisplayName("网页代码模式走这里调模型（第九十五轮）：不记进命令行的用量表")
+    void 不计量() throws Exception {
+        String url = fakeModel(b -> new Object[]{200, sse("{\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":\"stop\"}],"
+                + "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":1}}", "[DONE]")});
+        model("OPENAI_COMPATIBLE", url, null);
+        gateway().stream(1L, body(ASK), sink(), false);
+        assertEquals("done", events.get(events.size() - 1));
+        verify(usageMapper, never()).insert(any(HarnessUsage.class));
+    }
+
+    @Test
     @DisplayName("缓存命中数（第九十三轮）：供应商报了就放进 done 的 usage、记进用量表；估算的用量不带它")
     @SuppressWarnings("unchecked")
     void 缓存命中数() throws Exception {

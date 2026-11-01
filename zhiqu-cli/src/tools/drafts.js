@@ -69,6 +69,7 @@ export class DraftTools extends LocalTools {
 
   async commitRun(prep, { signal } = {}) {
     const r = await this.exec({ command: prep.command, args: prep.args, cwd: prep.cwd }, { signal });
+    if (!r.error) this.ranCommand = true;   // 真的跑过一次（不管过没过）：判过题之后才给记薄弱点的工具
     const line = [prep.command, ...prep.args].join(' ');
     // 有没落盘的草稿：命令看到的是磁盘上的旧版本 —— 说出来，免得模型拿旧版本的结果判断草稿对不对
     const pending = [...this.drafts.keys()];

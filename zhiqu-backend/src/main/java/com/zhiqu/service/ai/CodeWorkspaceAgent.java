@@ -235,10 +235,12 @@ public class CodeWorkspaceAgent {
             if (jsEngine != null && jsEngine.enabled()) {
                 // 第九十四轮（两份 coding agent 合成一份，第 1 步）：门在上面判完，循环交给命令行那一份（app.ai.code-agent.engine=js）。
                 // Wiki 工具和「把里程碑排成任务」第 2 步才接；起不来（没有 node、没有脚本）就接着走下面 Java 的循环
+                // 第 2 步（第九十五轮）：Wiki 工具、把里程碑排成任务也经桥回到这里执行 —— 同一份加固过的路、同一个循环状态
                 Result viaJs = jsEngine.run(config, userId, userMessage, recentHistory(history, limits.codeHistoryChars()),
-                        canWrite, canExec, budget, limits, onStep);
+                        canWrite, canExec, budget, limits, onStep, remoteTools(userId, loop, canPlanMilestones));
                 if (viaJs != null) {
-                    return viaJs;
+                    return new Result(viaJs.context(), viaJs.drafts(), loop.milestonePlan, viaJs.writeOffered(),
+                            loop.wiki.pendingPatchIdsByTitle.values().stream().distinct().toList(), viaJs.writeAttempted());
                 }
             }
             long loopStart = System.currentTimeMillis();
@@ -398,6 +400,43 @@ public class CodeWorkspaceAgent {
      *       现在说清「不是暂时的」、这一轮能用的是哪几个。能执行的仍然只有 {@code offered} 里的，所以这不会绕过任何门。</li>
      * </ul>
      */
+    /** 交给命令行那份循环的远程工具：和 Java 循环里同一套（Wiki 读工具一直给，记薄弱点等判过题，里程碑只在项目引导时给） */
+    JsCodeAgent.RemoteTools remoteTools(Long userId, LoopState loop, boolean canPlanMilestones) {
+        List<Map<String, Object>> always = new ArrayList<>(wikiToolAgent.buildWikiTools(false));
+        if (canPlanMilestones) {
+            always.addAll(studyPlanTool.tools());
+        }
+        Set<String> alwaysNames = offeredToolNames(always);
+        List<Map<String, Object>> afterRun = wikiToolAgent.buildWikiTools(true).stream()
+                .filter(t -> !alwaysNames.containsAll(offeredToolNames(List.of(t)))).toList();
+        return new JsCodeAgent.RemoteTools() {
+            @Override
+            public List<Map<String, Object>> always() {
+                return always;
+            }
+
+            @Override
+            public List<Map<String, Object>> afterRun() {
+                return afterRun;
+            }
+
+            @Override
+            public String call(String name, String argsJson, boolean ranCommand) {
+                // 下发和执行同一份清单：没下发的照样拒（判过题之前的 create_wiki_patch 也在这里挡）
+                Set<String> offered = new HashSet<>(alwaysNames);
+                if (ranCommand) {
+                    offered.addAll(offeredToolNames(afterRun));
+                }
+                if (!offered.contains(name)) {
+                    return refusal(name, offered);
+                }
+                loop.ranCommand = ranCommand;
+                return StudyPlanTool.NAME.equals(name) ? recordMilestonePlan(argsJson, loop)
+                        : wikiToolAgent.executeWikiTool(userId, name, argsJson, loop.wiki).result;
+            }
+        };
+    }
+
     String refusal(String name, Set<String> offered) {
         Set<String> existing = new HashSet<>(offeredToolNames(buildTools(true, true)));
         existing.addAll(WikiToolAgent.TOOL_NAMES);

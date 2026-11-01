@@ -113,6 +113,33 @@ public class WorkspaceExecutor {
         return DeploymentProfiles.isProduction(activeProfiles);
     }
 
+    /**
+     * 子进程的 HOME：自己的一个空目录（第九十五轮），建一次、只给本用户读写。原来是工作区本身 ——
+     * macOS 的 python3 把缓存写进了用户项目里的 {@code Library/Caches/com.apple.python}（网页代码模式的真浏览器测试里看到的）；
+     * 仓库里带的 {@code .local/lib/python3.x/site-packages/sitecustomize.py} 会被任何一句 python3 执行
+     * （命令行第九十轮修过同一个口子，那时这边没跟上）。
+     */
+    private volatile Path childHome;
+
+    private Path childHome() throws IOException {
+        Path home = childHome;
+        if (home != null && Files.isDirectory(home)) {
+            return home;
+        }
+        synchronized (this) {
+            if (childHome == null || !Files.isDirectory(childHome)) {
+                Path created = Files.createTempDirectory("zhiqu-exec-home-");
+                try {
+                    Files.setPosixFilePermissions(created, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+                } catch (UnsupportedOperationException ignored) {
+                    // Windows：没有 POSIX 权限，临时目录本来就在用户自己的目录下
+                }
+                childHome = created;
+            }
+            return childHome;
+        }
+    }
+
     /** 执行能不能用 —— 档位允许执行，且不是生产 profile。 */
     public boolean enabled() {
         return access.effectiveMode().allowsExec() && !productionProfile;
@@ -191,7 +218,12 @@ public class WorkspaceExecutor {
         Map<String, String> env = builder.environment();
         env.clear();
         env.put("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
-        env.put("HOME", dir.path().toString());
+        try {
+            env.put("HOME", childHome().toString());
+        } catch (IOException e) {
+            // 准备不出自己的 HOME 就不跑：退回工作区就是原来那个口子
+            throw new BusinessException("没法准备运行环境（临时目录建不出来）：" + e.getMessage());
+        }
         env.put("LANG", "en_US.UTF-8");
 
         long started = System.currentTimeMillis();

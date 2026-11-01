@@ -84,7 +84,7 @@ class JsCodeAgentTest {
             sink.event("start", Map.of("contextWindow", 1_000_000));
             sink.event("done", reply);
             return null;
-        }).when(gateway).stream(eq(7L), any(), any());
+        }).when(gateway).stream(eq(7L), any(), any(), eq(false));   // 不记进命令行的用量表（第九十五轮）
         ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
         when(provider.getObject()).thenReturn(gateway);
         return new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, cliDir.toString());
@@ -141,6 +141,39 @@ class JsCodeAgentTest {
     }
 
     @Test
+    @DisplayName("远程工具（第九十五轮）：Wiki 工具经桥交给后端那一套执行；记薄弱点的工具真的跑过一次命令才下发，后端执行时也知道跑没跑过")
+    void 远程工具经桥执行() throws Exception {
+        Files.writeString(root.resolve("test_q.py"), "print('FAIL')\n");
+        when(executor.exec(anyString(), any(), anyString())).thenReturn(
+                new WorkspaceExecutor.ExecResult("python3", List.of("test_q.py"), 1, "FAIL", false, false, 9));
+        List<String> called = new ArrayList<>();
+        Map<String, Object> search = Map.of("type", "function", "function", Map.of("name", "search_wiki", "description", "搜", "parameters", Map.of("type", "object")));
+        Map<String, Object> patch = Map.of("type", "function", "function", Map.of("name", "create_wiki_patch", "description", "记", "parameters", Map.of("type", "object")));
+        JsCodeAgent.RemoteTools remote = new JsCodeAgent.RemoteTools() {
+            public List<Map<String, Object>> always() { return List.of(search); }
+            public List<Map<String, Object>> afterRun() { return List.of(patch); }
+            public String call(String name, String argsJson, boolean ranCommand) {
+                called.add(name + ":" + ranCommand + ":" + argsJson);
+                return "后端执行了 " + name;
+            }
+        };
+        JsCodeAgent js = agent(CLI_DIR, List.of(
+                calls("search_wiki", "{\"query\":\"薄弱点\"}"),
+                calls("run_command", "{\"command\":\"python3\",\"args\":[\"test_q.py\"]}"),
+                calls("create_wiki_patch", "{\"title\":\"薄弱点：两数之和\"}"),
+                text("记下来了。")));
+        CodeWorkspaceAgent.Result r = js.run(config, 7L, "出题考我", List.of(), true, true, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT,
+                notes::add, remote);
+        assertNotNull(r);
+        assertEquals(List.of("search_wiki:false:{\"query\":\"薄弱点\"}", "create_wiki_patch:true:{\"title\":\"薄弱点：两数之和\"}"), called);
+        java.util.function.Function<Integer, List<String>> offered = i -> ((List<Map<String, Object>>) bodies.get(i).get("tools")).stream()
+                .map(t -> String.valueOf(((Map<?, ?>) t.get("function")).get("name"))).toList();
+        assertTrue(offered.apply(0).contains("search_wiki") && !offered.apply(0).contains("create_wiki_patch"), offered.apply(0).toString());
+        assertTrue(offered.apply(2).contains("create_wiki_patch"), "跑过命令之后才给：" + offered.apply(2));
+        assertTrue(r.context().contains("后端执行了 create_wiki_patch"), r.context());
+    }
+
+    @Test
     @DisplayName("门在后端：子进程自己填的模型不认；不能执行时硬发 exec 回拒绝、执行器碰都不碰；跳出工作区的草稿路径丢掉")
     void 门在后端() throws Exception {
         doThrow(new BusinessException("路径超出工作区范围")).when(workspace).checkWritable("../evil.txt");
@@ -187,6 +220,9 @@ class JsCodeAgentTest {
         ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
         assertFalse(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "java", node, CLI_DIR.toString()).enabled());
         assertFalse(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, root.toString()).enabled());
+        // cli-dir 没配：按工作目录找（Maven 在 zhiqu-backend 里跑，旁边就是 zhiqu-cli）
+        assertTrue(new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", node, "").enabled(),
+                "cli-dir 留空时应当按工作目录找到 zhiqu-cli（user.dir=" + System.getProperty("user.dir") + "）");
         JsCodeAgent noNode = new JsCodeAgent(provider, workspace, executor, new WorkspaceProperties(), JSON, "js", "/nonexistent/node", CLI_DIR.toString());
         assertTrue(noNode.enabled());
         assertNull(noNode.run(config, 7L, "x", List.of(), false, false, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add));
