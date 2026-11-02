@@ -23,3 +23,17 @@ PATH 上的 Homebrew Node 26.8.2 依赖 libnode、OpenSSL、ICU 等外部库；�
 - **相关 Maven 判据**：JDK17，`mvn -o test -Dtest=DesktopPackagingTest,ClaudeMdTest,DesktopPageViewTest,WebAppManifestTest -Dzhiqu.skipDockerTests=true -q`，28/28，0 失败 / 错误 / 跳过；其中 PageView 在隐藏的真实 WebKit 窗口验证。此次没有 API、业务或页面改动，没有跑后端全量 / Docker / 模型请求，也未启动桌面应用连接真实数据。
 - **完整打包成功**：直接运行用户原命令；JAR 76MiB、JRE 56MiB、Node 108MiB，应用 240MiB、`build/desktop-native/知趣象限-1.0.0.dmg` 为 149,818,155 字节（约 143MiB）。`hdiutil verify` 成功；只读挂载 DMG 后对其中应用执行 `codesign --verify --deep --strict` 成功，检查 LICENSE 与 Applications 软链。取出 DMG 内的 Node 搬到中文 / 空格目录，用干净环境验证 ARM64、ESM、crypto、子进程（42），只依赖系统库。验证挂载与临时文件已清理。
 - 文档同步 `deploy/desktop/README.md`、`docs/notes/desktop.md`；CLAUDE 保持 200 行，缓存令牌未变（没有前端改动）。独立 review 已完成，无剩余阻断项。macOS 13 兼容性按 Mach-O 最低系统版本检查，未在另一台 macOS 13 机器上运行整套应用。
+
+## 2026-11-03 补：换了机器，官方 Node 也被判「不是 ARM64」
+
+- 同一份脚本在另一台 Mac 上重跑打包，`prepare-macos-node.sh` 对着刚校验通过的官方 Node 也报
+  `不是 macOS ARM64 可执行文件`，连 `NODE_BIN` 也一样 —— 不是 Node 的问题。
+- 原因：`lipo` 的用法是 `lipo <文件> -verify_arch <架构>`，脚本写成了 `lipo -verify_arch arm64 <文件>`；
+  文件和架构的顺序一反，**文件路径被当成架构名**，lipo 对任何输入都失败，而脚本把它的 stderr 吞了。
+- 修正：改成文件在前（`lipo "$binary" -verify_arch arm64`），并在那一行上面写明顺序，见
+  `deploy/desktop/prepare-macos-node.sh`。
+- 同一条行为判据 `python3 deploy/desktop/tests/test_macos_node.py -v` 在这台机器（只装了 Command Line
+  Tools）上修前 **6/10 红**（包括「官方缓存可离线使用」），修后 **10/10**；完整打包的 JAR / jlink / 内置
+  Node / 外壳 / 签名均通过。
+- 因此上面那条「10/10」只在当时那台机器上成立：**这条判据换机器要重新跑**，它照不出顺序问题时，
+  打包会在第一步就停下。

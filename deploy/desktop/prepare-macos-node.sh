@@ -7,7 +7,9 @@ fail() { echo "Node 准备失败：$*" >&2; exit 1; }
 validate_node() {
   local binary="$1" dependencies library minimum version
   [ -x "$binary" ] || fail "找不到可执行文件：${binary}（NODE_BIN 需指向官方 macOS ARM64 发行包的 bin/node）"
-  lipo -verify_arch arm64 "$binary" >/dev/null 2>&1 || fail "不是 macOS ARM64 可执行文件：$binary"
+  # lipo 的用法是 `lipo <文件> -verify_arch <架构>`；写成架构在前时，文件路径会被当成架构名，
+  # lipo 对任何文件都失败，看起来就像「官方 Node 不是 ARM64」（2026-11-03）。
+  lipo "$binary" -verify_arch arm64 >/dev/null 2>&1 || fail "不是 macOS ARM64 可执行文件：$binary"
   dependencies="$(otool -arch arm64 -L "$binary")" || fail "读不出动态库依赖：$binary"
   dependencies="$(printf '%s\n' "$dependencies" | awk 'NR > 1 {sub(/^[ \t]+/, ""); sub(/ \(compatibility version.*$/, ""); print}')"
   [ -n "$dependencies" ] || fail "没有读到动态库依赖：$binary"
