@@ -252,4 +252,21 @@ class JsCodeAgentTest {
         assertTrue(noNode.enabled());
         assertNull(noNode.run(config, 7L, "x", List.of(), false, false, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add));
     }
+
+    /** 第九十九轮 review：子进程不交结果就退 —— 原来轨迹里什么都不说、stderr 跟着临时目录一起删掉 */
+    @Test
+    @DisplayName("子进程没交回结果：轨迹里说清楚，stderr 的末尾记进日志（stderrTail 读得到、超长只留末尾）")
+    void 没交回结果() throws Exception {
+        JsCodeAgent js = agent(FAKE_HOST, List.of(text("好")));
+        CodeWorkspaceAgent.Result r = js.run(config, 7L, "crash", List.of(), false, false,
+                CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add);
+        assertNotNull(r);
+        assertEquals("", r.context());
+        assertTrue(notes.stream().anyMatch(n -> "error".equals(n.get("phase")) && String.valueOf(n.get("message")).contains("没交回结果")), notes.toString());
+        Path log = root.resolve("stderr.log");
+        Files.writeString(log, "x".repeat(3000) + "最后一行");
+        String tail = JsCodeAgent.stderrTail(log);
+        assertTrue(tail.endsWith("最后一行") && tail.length() <= 2001, tail.length() + "");
+        assertEquals("", JsCodeAgent.stderrTail(root.resolve("没有这个文件")));
+    }
 }

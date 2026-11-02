@@ -21,6 +21,8 @@ import { Ui } from '../ui.js';
 export function createBridge({ input, output }) {
   let seq = 0;
   const pending = new Map();
+  // 已经收尾的请求（中断了、出错了、done 了）：后端在半路的回音还可能到 —— 认得、丢掉，不当成「认不出的消息」停下（第九十九轮 review）
+  const retired = new Set();
   let onRun = null;
   let closed = false;
   const send = (msg) => { if (!closed) output.write(`${JSON.stringify(msg)}\n`); };
@@ -30,11 +32,13 @@ export function createBridge({ input, output }) {
     let msg;
     try { msg = JSON.parse(line); } catch { fail('收到的不是 JSON'); return; }
     if (msg.type === 'run' && onRun) { const f = onRun; onRun = null; f(msg); return; }
+    if (retired.has(msg.id) && ['event', 'error', 'exec_result', 'tool_result'].includes(msg.type)) return;
     const waiter = pending.get(msg.id);
     if (!waiter || !['event', 'error', 'exec_result', 'tool_result'].includes(msg.type)) { fail(`认不出的消息：${String(msg.type).slice(0, 40)}`); return; }
     waiter(msg);
   });
   lines.on('close', () => { for (const w of pending.values()) w({ type: 'error', message: '后端关掉了连接', retryable: false }); pending.clear(); });
+  const retire = (id) => { pending.delete(id); retired.add(id); };
   return {
     send,
     fail,
@@ -44,18 +48,18 @@ export function createBridge({ input, output }) {
       const id = `m${++seq}`;
       return new Promise((resolve, reject) => {
         if (signal && signal.aborted) { reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); return; }
-        const abort = () => { pending.delete(id); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
+        const abort = () => { retire(id); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
         if (signal) signal.addEventListener('abort', abort, { once: true });
         let output = false;
         pending.set(id, (msg) => {
           if (msg.type === 'error') {
-            pending.delete(id); if (signal) signal.removeEventListener('abort', abort);
+            retire(id); if (signal) signal.removeEventListener('abort', abort);
             reject(new ApiError(msg.message || '模型调用失败', { retryable: Boolean(msg.retryable), beforeOutput: !output, status: msg.status || 0 }));
             return;
           }
           if (msg.name === 'delta' || msg.name === 'tool_call') output = true;
           onEvent(msg.name, msg.data || {});
-          if (msg.name === 'done') { pending.delete(id); if (signal) signal.removeEventListener('abort', abort); resolve(); }
+          if (msg.name === 'done') { retire(id); if (signal) signal.removeEventListener('abort', abort); resolve(); }
         });
         send({ type: 'model', id, body });
       });
@@ -64,10 +68,10 @@ export function createBridge({ input, output }) {
     tool(name, args, { signal } = {}) {
       const id = `t${++seq}`;
       return new Promise((resolve, reject) => {
-        const abort = () => { pending.delete(id); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
+        const abort = () => { retire(id); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
         if (signal) signal.addEventListener('abort', abort, { once: true });
         pending.set(id, (msg) => {
-          pending.delete(id); if (signal) signal.removeEventListener('abort', abort);
+          retire(id); if (signal) signal.removeEventListener('abort', abort);
           if (msg.type === 'error') reject(new ApiError(msg.message || '远程工具调用失败', { retryable: false }));
           else resolve({ content: String(msg.content ?? '') });
         });
@@ -77,10 +81,10 @@ export function createBridge({ input, output }) {
     exec(request, { signal } = {}) {
       const id = `x${++seq}`;
       return new Promise((resolve) => {
-        const abort = () => { pending.delete(id); resolve({ error: '已中断，没有运行完' }); };
+        const abort = () => { retire(id); resolve({ error: '已中断，没有运行完' }); };
         if (signal) signal.addEventListener('abort', abort, { once: true });
         pending.set(id, (msg) => {
-          pending.delete(id); if (signal) signal.removeEventListener('abort', abort);
+          retire(id); if (signal) signal.removeEventListener('abort', abort);
           resolve(msg.type === 'error' ? { error: msg.message || '没有运行' } : msg);
         });
         send({ type: 'exec', id, ...request });
@@ -93,7 +97,8 @@ export function createBridge({ input, output }) {
 export const CLAIMS_DRAFT = /(生成|写好|写成|写进|创建|建好|准备好|改好)[^。\n]{0,16}草稿|草稿[^。\n]{0,8}已经?(生成|写好|准备好|建好)/;
 
 /** 「退出码 0」「跑了 test.py」「输出：」这类说跑过命令的说法 */
-export const CLAIMS_RUN = /退出码\s*-?\d|(跑|运行)(了|过了|的是)[^。\n]{0,24}(test|测试|\.py|\.js|\.java)|输出(是|为)?[:：]/;
+// 「预期输出：」「应该输出：」是教用户怎么验，不是说跑过了（第九十九轮 review）
+export const CLAIMS_RUN = /退出码\s*-?\d|(跑|运行)(了|过了|的是)[^。\n]{0,24}(test|测试|\.py|\.js|\.java)|(?<!预期|应该|应当|会)输出(是|为)?[:：]/;
 
 /**
  * 前面的对话（第九十五轮）：网页给的只有每一轮的问和最终回答 —— 原样当成一问一答放进去，模型学的是「不调工具直接答」，

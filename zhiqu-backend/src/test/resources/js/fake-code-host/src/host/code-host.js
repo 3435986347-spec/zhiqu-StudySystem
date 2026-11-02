@@ -12,6 +12,11 @@ rl.on('line', async (line) => {
     if (msg.type === 'event' && msg.name !== 'done') return;
     const w = waiters.get(msg.id); waiters.delete(msg.id); if (w) w(msg); return;
   }
+  if (msg.message === 'crash') {
+    // 不交结果就退：后端要在轨迹里说清楚、把 stderr 记进日志（第九十九轮 review）
+    process.stderr.write('boom: something went wrong in the host\n');
+    process.exit(3);
+  }
   if (msg.message === 'env') {
     send({ type: 'step', text: Object.keys(process.env).sort().join(',') });
     send({ type: 'weird' });

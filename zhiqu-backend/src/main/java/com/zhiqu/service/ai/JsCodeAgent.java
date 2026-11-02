@@ -295,9 +295,14 @@ public class JsCodeAgent {
             child.descendants().forEach(ProcessHandle::destroyForcibly);
             child.destroyForcibly();
             watchdog.interrupt();
+            if (result == null) {
+                // 子进程没交回结果：它的 stderr 是唯一的线索，临时目录删掉之前记下来（第九十九轮 review：第九十六轮软链那回一声不响退出，原来什么都没留下）
+                log.warn("代码模式的 JS 循环没交回结果 userId={} stderr 末尾：{}", userId, stderrTail(home.resolve("stderr.log")));
+            }
             deleteQuietly(home);
         }
         if (result == null) {
+            narrate(onStep, Map.of("phase", "error", "message", "工具循环中断：代码模式的循环没交回结果（后端日志里有它的错误输出）"));
             return new CodeWorkspaceAgent.Result("", List.of(), null, canWrite, List.of(), false);
         }
         log.info("代码模式的 JS 循环收尾 userId={}：{} 轮、草稿 {} 份、结论：{}", userId, result.path("rounds").asInt(),
@@ -435,6 +440,16 @@ public class JsCodeAgent {
             onStep.accept(note);
         } catch (RuntimeException e) {
             log.debug("步骤叙述发送失败（不影响工具循环）：{}", e.toString());
+        }
+    }
+
+    /** stderr 的最后 2000 字（读不到是空串） */
+    static String stderrTail(Path file) {
+        try {
+            String text = Files.readString(file, StandardCharsets.UTF_8).strip();
+            return text.length() > 2000 ? "…" + text.substring(text.length() - 2000) : text;
+        } catch (IOException | RuntimeException e) {
+            return "";
         }
     }
 

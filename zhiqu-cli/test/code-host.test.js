@@ -272,5 +272,26 @@ test('说跑过了、这一次却没跑过任何命令：推一次让它真跑�
   assert.match(result.text, /退出码 1/);
   const { CLAIMS_RUN } = await import('../src/host/code-host.js');
   for (const s of ['退出码 0，全过', '我跑了 test_calc.py', '输出：ok']) assert.ok(CLAIMS_RUN.test(s), s);
-  for (const s of ['写进去后你可以运行 python3 test.py 验证', '改好了 calc.py 的草稿']) assert.ok(!CLAIMS_RUN.test(s), s);
+  for (const s of ['写进去后你可以运行 python3 test.py 验证', '改好了 calc.py 的草稿', '写入后跑一下，预期输出：ok', '应该输出：3']) assert.ok(!CLAIMS_RUN.test(s), s);
+});
+
+test('中断以后后端在半路的回音（第九十九轮 review）：认得、丢掉，不当成「认不出的消息」停下 —— 不然 fatal 抢在 result 前面，结论就丢了', async () => {
+  const toHost = new PassThrough();
+  const fromHost = new PassThrough();
+  const out = [];
+  readline.createInterface({ input: fromHost }).on('line', (l) => out.push(JSON.parse(l)));
+  const bridge = createBridge({ input: toHost, output: fromHost });
+  const controller = new AbortController();
+  const streaming = bridge.stream('/api/harness/model/stream', { messages: [] }, () => {}, { signal: controller.signal });
+  await new Promise((r) => setTimeout(r, 10));
+  const id = out.find((m) => m.type === 'model').id;
+  controller.abort();
+  await assert.rejects(streaming, /aborted/);
+  toHost.write(`${JSON.stringify({ type: 'event', id, name: 'delta', data: { text: '迟到的' } })}\n`);
+  toHost.write(`${JSON.stringify({ type: 'event', id, name: 'done', data: {} })}\n`);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(out.map((m) => m.type), ['model'], '迟到的回音不该让宿主停下');
+  toHost.write('{"type":"event","id":"m999","name":"done","data":{}}\n');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(out.map((m) => m.type), ['model', 'fatal'], '从没发过的 ID 照旧认不出、照旧停');
 });
