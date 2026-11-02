@@ -552,7 +552,7 @@ export class LocalTools {
       if (!exists) return { error: `edit_file 只能改已存在的文件：${rel} 不存在。新建文件用 write_file。` };
       // 规矩在 edit.js（用例表 conformance/text-edit.json）
       const r = applyEdit(currentText, args.old_string, args.new_string, { replaceAll: Boolean(args.replace_all) });
-      if (r.error) return { error: describeEditError(r.error, rel) };
+      if (r.error) return { error: describeEditError(r.error, rel), unchanged: r.error.kind === 'no_change' };
       newText = r.text;
       replaced = r.replaced;
       kind = 'replace';

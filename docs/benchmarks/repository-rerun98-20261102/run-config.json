@@ -3,7 +3,7 @@
   "name": "zhiqu-sweverified-pilot10-v1-rerun98-20261102",
   "status": "ready_personal_machine",
   "execution_ready": true,
-  "model_calls": 0,
+  "model_calls": 360,
   "dataset": {
     "name": "princeton-nlp/SWE-bench_Verified",
     "revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
@@ -419,9 +419,9 @@
     "network_dependent_tasks": "psf__requests-1921 and psf__requests-1724 are graded and reported, but their official result on this machine depends on httpbin through the Docker Desktop proxy hop; a non-resolved result whose failing tests are network-dependent is regraded unchanged once the network is fixed; no final rate before that."
   },
   "blockers_before_execution": [],
-  "cost_so_far_rmb": 0,
+  "cost_so_far_rmb": 6.85,
   "execution_location": "personal_machine_only; company machine stopped per user after IT Docker download warning",
-  "real_model_calls": 0,
+  "real_model_calls": 360,
   "preparation_entry_sha256": "ba5bd10cd22e0156315d03d0e53db83847049855df12f557e9889a7b284c3c8d",
   "controls_detail": {
     "gold": {
@@ -505,5 +505,39 @@
     ],
     "environment_unchanged": "same images, isolation, grader and per-episode limits as rounds 69 / 87 / 88; only the agent version, the gateway (verify DB, same model name / window) and the repeat count differ."
   },
-  "result": "pending"
+  "result": {
+    "official_resolved": 5,
+    "denominator": 12,
+    "unit": "4 tasks x 3 repeats, each repeat graded separately",
+    "run": "rerun98-20261102-20261102T013139",
+    "per_task": {
+      "django__django-12308": [
+        false,
+        true,
+        true
+      ],
+      "sympy__sympy-23950": [
+        true,
+        true,
+        true
+      ],
+      "pytest-dev__pytest-10356": [
+        false,
+        false,
+        false
+      ],
+      "pytest-dev__pytest-5840": [
+        false,
+        false,
+        false
+      ]
+    },
+    "charged_rmb_cache_hit_price": 6.85,
+    "miss_price_rmb": 50.87,
+    "input_tokens": 5296641,
+    "cached_input_tokens": 5059200,
+    "output_tokens": 118368,
+    "integrity_note": "django__django-12308 r1 expected_tests_unobserved (official Django parser, as in rounds 69 / 88); unresolved either way (FAIL_TO_PASS error: keys must be a string)",
+    "note": "pytest-5840 r3 produced an empty patch: three 16384-token degenerate repetition replies (finish_reason length), six identical edit_file calls, the repetition became the final answer; the only length-truncated episode across rounds 69 / 87 / 88 / 98 (42 episodes). Fixed in round 100."
+  }
 }

@@ -10,6 +10,7 @@
 // 不在表里就拒 —— 模型（或者一段被注入了指令的工具输出）报一个没下发的名字，不会被执行。
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
 import { localSchemas, READ_TOOLS } from './tools/local.js';
@@ -54,6 +55,33 @@ export function capToolOutput(text, window) {
 }
 export const DEFAULT_MAX_TOKENS = 16_384;
 const MAX_CONTINUATIONS = 2;
+
+// 原地重复（第一百轮，第九十八轮评测 pytest-5840 第三遍）：模型在不调工具的回复里一遍遍写同一段，写满输出上限被截断，
+// 循环当它「话没说完」—— 整段留进历史、叫它接着说，它就接着那段往下写，最后 6.8 万字的重复成了回答。
+// 两样都要够：压缩比（zlib）≥ 12，而且六成以上的字是前面一字不差出现过的句子 / 行（≥ 16 字）。量过 ——
+// 四轮评测 42 遍里长度 ≥ 1500 字的回复：压缩比最高 5.03、重复句最多 33.8%；那三段是 41–114 倍、84–97%。
+// 只看压缩比不够：1200 行的表格压缩比 15、一句重复都没有；只看重复句也不够（同一句日志夹着各不相同的哈希）。只看被截断的、不调工具的回复。
+export const LOOP_MIN_CHARS = 4_000;
+export const LOOP_RATIO = 12;
+export const LOOP_REPEATED_SHARE = 0.6;
+const LOOP_KEEP_CHARS = 1_200;
+export function repeating(text) {
+  const s = String(text || '');
+  if (s.length < LOOP_MIN_CHARS) return false;
+  const b = Buffer.from(s, 'utf8');
+  if (b.length / zlib.deflateSync(b).length < LOOP_RATIO) return false;
+  const seen = new Set();
+  let repeated = 0;
+  for (const unit of s.split(/(?<=[\n。！？!?])|(?<=\.\s)/)) {
+    const k = unit.trim();
+    if (k.length < 16) continue;
+    if (seen.has(k)) repeated += k.length; else seen.add(k);
+  }
+  return repeated / s.length >= LOOP_REPEATED_SHARE;
+}
+const loopTrimmed = (s) => `${s.slice(0, LOOP_KEEP_CHARS)}\n…（后面 ${s.length - LOOP_KEEP_CHARS} 字是同一段话的重复，已删掉）`;
+const LOOP_NUDGE = '（你上一次的回答一直在重复同一段话，写满了单次输出上限，重复的部分已经删掉。不要再复述或回忆；'
+  + '按已经读到的内容定下要做什么，直接调用工具去做 —— 拿不准就写一个最小的复现跑一下，用结果说话。）';
 
 export function exitPlanSchema() {
   return {
@@ -564,6 +592,9 @@ export function slimThinking(messages, keep = 2) {
 
 const writeReminder = (file) => (n) => `你已经连续 ${n} 次没能改成 ${file}。停下来：先 read_file 重新读它现在的内容，`
   + '照原文一字不差地拼 edit_file 的 old_string（或者挑一段更短、只出现一次的原文）；不要凭记忆再试。如果是方案本身有问题，先想清楚再动手。';
+// 新旧一模一样被拒（第一百轮：评测里连交 6 次同一段）：原文没拼错，叫它重拼 old_string 是指错了方向
+const sameEditReminder = (file) => (n) => `你已经连续 ${n} 次没能改成 ${file}，这一次 new_string 和 old_string 一模一样 —— 原文没拼错，是还没定下要改成什么。`
+  + '先想清楚这一处改完应该是什么样（拿不准就写一个最小的复现跑一下），再调 edit_file；不要把同一段原样再交一次。';
 const runReminder = (line) => (n) => `同一条命令 ${line} 已经连续 ${n} 次失败。先把上面的错误信息完整读一遍，找出根因（不是症状）、`
   + '想清楚要改哪里再改，一次改对；如果是环境问题或者需要用户决定，就停下来说明，不要换着花样重跑。';
 
@@ -601,7 +632,7 @@ async function executeTool(ctx, call, offered, signal) {
     if (name === 'write_file' || name === 'edit_file') {
       const spinKey = `write:${String(args.path || '')}`;
       const prep = name === 'edit_file' ? local.prepareEdit(args) : local.prepareWrite(args);
-      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, writeReminder(args.path)); }
+      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, (prep.unchanged ? sameEditReminder : writeReminder)(args.path)); }
       if (prep.newDirectories.length) ui.note(`    （会连同新建目录 ${prep.newDirectories.join('、')}）`);
       if (!(await confirmWrite(ctx, prep))) {
         ui.result('用户没有同意，没写', false);
@@ -794,11 +825,14 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     const res = await callModel(ctx, tools, signal);
     const message = res.message || { role: 'assistant', content: res.text };
     const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    // 原地重复：历史和回答里只留开头一段
+    const looping = res.finishReason === 'length' && !calls.length && repeating(message.content);
+    if (looping) message.content = loopTrimmed(message.content);
 
     // 安静模式下文字是收完才打的：不调工具的那条就是结论（被截断的结论也是结论的一段），调工具的那条是过程，不打
     const nudge = calls.length || res.finishReason === 'length' ? null
       : pendingNudge(ctx, message.content, { nudged, claimChecked, lastRound: round === maxRounds - 1 });
-    if (quiet(ctx) && !calls.length && !nudge && (message.content || '').trim()) showAnswer(ctx, message.content);
+    if (quiet(ctx) && !calls.length && !nudge && !looping && (message.content || '').trim()) showAnswer(ctx, message.content);
     if (res.finishReason === 'length') {
       // 被截断不是「说完了」：截断的工具调用不执行，告诉模型为什么、该怎么改
       const broken = calls.filter((c) => !parseArgs(c.function.arguments).ok);
@@ -815,10 +849,13 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
         }
         continue;
       }
-      if (continuations++ < MAX_CONTINUATIONS) {
-        record(ctx, { role: 'user', content: '（你的回答被输出上限截断了，请从断开的地方接着说，不要重复前面的内容）' }, 'system');
+      const more = continuations++ < MAX_CONTINUATIONS;
+      if (looping) ctx.ui.warn(`模型在原地重复同一段话，写满了单次输出上限 —— 重复的部分已删掉，${more ? '让它直接动手' : '先停在这里'}`);
+      if (more) {
+        record(ctx, { role: 'user', content: looping ? LOOP_NUDGE : '（你的回答被输出上限截断了，请从断开的地方接着说，不要重复前面的内容）' }, 'system');
         continue;
       }
+      if (looping && quiet(ctx)) showAnswer(ctx, message.content);
       finalText = message.content || '';
       break;
     }
