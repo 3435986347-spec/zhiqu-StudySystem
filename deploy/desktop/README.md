@@ -21,12 +21,28 @@
 ## 打包
 
 **macOS —— 原生应用（推荐）**：Swift + WKWebView 外壳，无边框窗口铺满，不弹浏览器、不弹跳
-Dock 图标、带应用图标（设计稿在 `assets/icons/`，`deploy/desktop/icon/MakeIcon.swift` 做成 iconset 和 ICO）。产出 `.app` 和拖拽安装的 `.dmg`（约 126MB / 103MB）。
+Dock 图标、带应用图标（设计稿在 `assets/icons/`，`deploy/desktop/icon/MakeIcon.swift` 做成 iconset 和 ICO）。产出 `.app` 和拖拽安装的 `.dmg`（含 Node，本轮约 240MiB / 143MiB）。
 
 ```bash
 deploy/desktop/package-macos-native.sh          # → build/desktop-native/{知趣象限.app, 知趣象限-1.0.0.dmg}
 deploy/desktop/package-macos-native.sh 1.2.0
 ```
+
+macOS 打包默认从 [Node 官方发行目录](https://nodejs.org/dist/v22.23.2/) 准备 **Node 22.23.2 / ARM64**，
+按脚本里固定的 SHA256 校验，缓存到 `build/node-runtime/`；第一次需要能访问 `nodejs.org`，之后可离线复用。
+应用内只带 Node 运行时与 LICENSE，不需要用户另装 Node 或 Homebrew。
+
+离线首次打包可把官方 `node-v22.23.2-darwin-arm64.tar.gz` 放进 `build/node-runtime/`，
+或解压官方 macOS ARM64 发行包后指定：
+
+```bash
+NODE_BIN=/绝对路径/node-v22.23.2-darwin-arm64/bin/node bash deploy/desktop/package-macos-native.sh
+```
+
+`NODE_BIN` 需要 Node ≥ 18.17、ARM64、兼容 macOS 13.0，只依赖系统动态库，并保留发行包里的 `LICENSE`。
+不要直接指定 `/opt/homebrew/bin/node`：某些 Homebrew 版本依赖 `libnode`、OpenSSL、ICU 等外部库，
+复制一个文件进应用后会报 `Library not loaded`。脚本现在会在构建 JAR、清理旧包之前拒绝这种运行时。
+准备下载失败或校验失败会停止，不会退回使用 PATH 上的 Node。
 
 启动：第一次打开约 3.5 秒（顺带生成启动加速用的归档，退出时多花两三秒写它），之后约 1.6 秒。
 加速用的两样东西放在 `~/.zhiqu/app`（应用 JAR 的 ASCII 路径副本）和 `~/.zhiqu/cds`（类归档），共约 160MB；

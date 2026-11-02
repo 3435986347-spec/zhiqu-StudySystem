@@ -24,11 +24,17 @@ NAME="知趣象限"
 VERSION="${1:-1.0.0}"
 BUNDLE_ID="com.zhiqu.quadrant"
 
+# 不直接搬 PATH 上的 Homebrew node：它可能依赖 libnode / OpenSSL / ICU，离开本机就缺库。
+# 提前准备，失败时保留原有安装包，也不白跑 Maven 和 jlink。
+NODE_BIN="$(bash "$ROOT/deploy/desktop/prepare-macos-node.sh" "$ROOT/build/node-runtime")"
+NODE_LICENSE="$(dirname "$NODE_BIN")/../LICENSE"
+[ -f "$NODE_LICENSE" ] || { echo "缺少 Node LICENSE：请让 NODE_BIN 指向完整官方发行包的 bin/node"; exit 1; }
+
 export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17)}"
 echo "JDK:   $JAVA_HOME"
 echo "Swift: $(swiftc --version 2>/dev/null | head -1)"
 
-echo "==> 1/6 打 JAR"
+echo "==> 1/7 打 JAR"
 cd "$BACKEND"
 mvn -o clean package -DskipTests -q
 JAR="$(ls target/zhiqu-backend-*.jar | head -1)"
@@ -36,7 +42,7 @@ JAR="$(ls target/zhiqu-backend-*.jar | head -1)"
 echo "    $(basename "$JAR")  $(du -h "$JAR" | cut -f1)"
 
 APP="$OUT/$NAME.app"
-echo "==> 2/6 搭 bundle 骨架"
+echo "==> 2/7 搭 bundle 骨架"
 rm -rf "$OUT"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 # 解压成「瘦 JAR + lib/」，不放胖 JAR（第十轮）：应用类的 CDS 归档只收内置类加载器加载的类，
@@ -46,7 +52,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 [ -f "$APP/Contents/Resources/app/$(basename "$JAR")" ] || { echo "解压失败：找不到瘦 JAR"; exit 1; }
 # 命令行不再随应用打包：Java 版 zhiqu 2026-10-04 删除，命令行是 npm 版（zhiqu-cli/，连的就是这个应用）。
 
-echo "==> 3/6 裁一份 JRE（jlink）"
+echo "==> 3/7 裁一份 JRE（jlink）"
 # 只带用得到的模块。全量 JDK 约 300MB，裁完约 50MB。
 #
 # 两个模块看起来可有可无，删了都会在运行时炸，而且报错都不指向真正的原因：
@@ -75,15 +81,14 @@ rm -f "$APP/Contents/Resources/runtime/Contents/Home/lib/server/classes_nocoops.
 echo "    runtime  $(du -sh "$APP/Contents/Resources/runtime" | cut -f1)"
 
 # 网页代码模式跑命令行那份循环要 node（第九十六轮，用户 2026-11-02 定的「一份 JS，后端用子进程跑」）：
-# 把这台机器上的 node 打进应用包（NODE_BIN 指定，默认 PATH 上那个）；命令行源码在 JAR 里，后端解出来跑；外壳把这个 node 的路径告诉后端。
-NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
-[ -n "$NODE_BIN" ] && [ -x "$NODE_BIN" ] || { echo "找不到 node（设 NODE_BIN=/绝对/路径）—— 网页代码模式要用它"; exit 1; }
+# Node 已在开工前检查过依赖；命令行源码在 JAR 里，外壳把这个 node 的路径告诉后端。
 mkdir -p "$APP/Contents/Resources/node/bin"
 cp "$NODE_BIN" "$APP/Contents/Resources/node/bin/node"
+cp "$NODE_LICENSE" "$APP/Contents/Resources/node/LICENSE"
 "$APP/Contents/Resources/node/bin/node" --version > /dev/null || { echo "打进去的 node 跑不起来：$NODE_BIN"; exit 1; }
 echo "    node     $(du -sh "$APP/Contents/Resources/node" | cut -f1)（$("$APP/Contents/Resources/node/bin/node" --version)）"
 
-echo "==> 4/6 生成应用图标"
+echo "==> 4/7 生成应用图标"
 # 图标是设计稿（第七十二轮：知字图标设计方案），这里按 macOS 图标的版式四周留白做成 iconset。
 # 母版是设计稿的 icon-1024.png（第七十六轮）：原来拿网页用的 icon-512.png，最大那一档（1024 像素）只能放大。
 # 第七十二轮之前是从「知」字现画的蓝底图标，第四十轮换了中性配色之后一直没跟上。
@@ -96,7 +101,7 @@ iconutil -c icns "$OUT/icons/zhiqu.iconset" -o "$APP/Contents/Resources/$NAME.ic
 rm -f "$ICON_TOOL"
 echo "    $NAME.icns  $(du -h "$APP/Contents/Resources/$NAME.icns" | cut -f1)"
 
-echo "==> 5/6 编译 Swift 外壳"
+echo "==> 5/7 编译 Swift 外壳"
 # 两个源文件一起编译时，只有叫 main.swift 的那个能有顶层代码（外壳最后那几行 NSApplication.run 就是）——
 # 原样一起编译报「expressions are not allowed at the top level」。所以拷一份改名成 main.swift 再编。
 SWIFT_BUILD="$OUT/swift-src"
@@ -135,7 +140,10 @@ PLIST
 echo "==> 6/7 签名（ad-hoc）"
 # ad-hoc 签名够本机和「右键→打开」用。要给别人分发得用 Developer ID 并公证，
 # 否则对方会看到「已损坏，无法打开」—— 那句话和损坏没关系，是 Gatekeeper 的措辞。
-codesign --force --deep --sign - "$APP" 2>&1 | grep -v "replacing existing signature" || true
+codesign --force --sign - "$APP/Contents/Resources/node/bin/node"
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP"
+"$APP/Contents/Resources/node/bin/node" --version > /dev/null
 
 echo "==> 7/7 打包成 .dmg（拖拽安装）"
 # 标准的拖拽安装 dmg：一个 .app + 一个指向 /Applications 的软链，用户拖过去即安装。

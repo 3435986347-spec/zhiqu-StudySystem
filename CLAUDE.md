@@ -1,5 +1,4 @@
 # CLAUDE.md
-
 给在这个仓库里干活的 Claude Code 看的规矩：怎么跑、怎么测、不能碰的地方、几条踩过就会再踩的坑。来龙去脉和各部分的细节在 `docs/`：各部分的说明在 `docs/notes/`，每一轮一份 `docs/rounds/round-NN.md`。（第三十八轮从 1529 行压到这里，原来的内容一字不改地挪进了那两处；`ClaudeMdTest` 管着这份不超过 200 行。）
 
 ## 这是什么
@@ -111,7 +110,7 @@ cd ../zhiqu-cli && npm test
 - **DeepSeek 不说就默认思考**：发给模型的每一处 OpenAI 兼容请求都要 `applyOpenAiReasoningOptions`（干活的轮传 `"OFF"`），新加一处会让 `ModelRequestThinkingTest` 红；写回答的输出上限走 `OutputLimits`（和命令行同一档、不收就降）。
 - 流式请求里的「启动就炸」其实炸在每一次请求里：装配窗口（`beginRun` 之后、各相位之前）要自己 try（记日志、`errorRun`、`failAssistantMessage`）。
 - 搬代码会让判据扫错文件，而扫错文件的判据看起来和通过一模一样：判据要读那条性质现在所在的文件。
-- 桌面应用：工作目录是 `/`（相对路径的上传目录写不进去）；WKWebView 不实现代理方法就不做事，也不报错；jlink 要带 `jdk.charsets` / `jdk.crypto.ec`。见 `docs/notes/desktop.md`。
+- 桌面应用：工作目录是 `/`（相对路径的上传目录写不进去）；WKWebView 不实现代理方法就不做事，也不报错；jlink 要带 `jdk.charsets` / `jdk.crypto.ec`。macOS 打包默认用固定校验的官方 Node，不能只搬 Homebrew 的 node（会缺 libnode 等库）；离线配置见 `deploy/desktop/README.md`。见 `docs/notes/desktop.md`。
 - 命令行：不用全局 `fetch`，也不用 ESM 的 `import 'node:http'`（会把 tls 拉进来，每次多等一两秒）；子进程不继承环境变量；超时就杀整个进程组。见 `docs/notes/cli.md`。
 - 测试进程：`kill(pid, 0)` 对僵尸进程也说「在」；漏掉的孙子进程会攥着管道，让读取一直等下去。
 
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第八十七轮](docs/rounds/round-87.md) 命令行放开行内代码（`python3 -c`）和 git 的 status / diff / log：仓库里带的 `.gitconfig` 原来能让 git 叫起 fsmonitor / 过滤器 / 外部 diff，跑时隔离；用新 agent 重跑仓库评测十题：官方 6/10（完整性全过）、用满 60 轮 3 → 1、静默删代码 19 → 0、¥47.69 → ¥33.13；[第八十八轮](docs/rounds/round-88.md) coding agent 少花轮数：一轮发多个调用、读文件读成段（接着往下挪会被提醒）、剩 3 轮时提醒收尾、工作区里的绝对路径照收；真模型对比（一个只读的问题）轮数 8 → 3–5，评测十题重跑看不出效果、官方 4/10（丢的两题是修法判断，一题一遍的随机性内）
 - [第八十九轮](docs/rounds/round-89.md) coding agent 的稳定性：命令行干活的请求温度 0（`app.ai.harness-temperature`，原来从没设、DeepSeek 默认 1.0；不认就去掉重试）、改过文件要交活时推一次核对（例子 / 边界 / diff）；全方位锐评；[第九十轮](docs/rounds/round-90.md) 尺子（`tools/benchmarks/ruler/`，10 道本机小题 + 隐藏测试、对照组先验）：量第八十九轮 —— 温度 0 和交活核对都没量出好处、核对每题多花一半到一倍 token；子进程 HOME 换成自己的空目录（仓库里带的 sitecustomize.py 原来会被执行）、终端给头尾、桌面后端写日志、网页 code agent 跟上温度
 - [第九十一轮](docs/rounds/round-91.md) 去掉交活核对（尺子上量不出好处）；尺子第二版加 4 道多文件、要读约定的题 —— 校准 12/12 全过：自己出的题量不出这个模型的好坏，要量就拿真实评测里时对时错的那几道多跑几遍；[第九十二轮](docs/rounds/round-92.md) `write_file` 拆成写整份 / 改一段两个工具（命令行 `edit_file`、网页 `edit_workspace_file`，参数各自必填、给错就拒）：尺子 25/28、给错工具 0 次；真浏览器里点出代码草稿的确认框一关就没处确认；本机验证后端要带 `--app.workspace.state-file`；[第九十三轮](docs/rounds/round-93.md) 按缓存命中价记账：网关给 `cachedTokens`、`harness_usage.cached_tokens`（V46）、`/usage` 说命中多少，评测代理结算按 ¥0.30 / 百万（预留照旧按未命中价）；真模型输入命中 88%，花费是老口径的四分之一；[第九十四轮](docs/rounds/round-94.md) 两份 coding agent 合成一份第 1 步：后端起 node 跑命令行那份循环（草稿模式 `DraftTools` + `host/code-host.js`，模型 / 命令回到后端，`app.ai.code-agent.engine=js` 后面）；修了「只跑了测试也说没写成」；[第九十五轮](docs/rounds/round-95.md) 第 2 步：Wiki / 里程碑工具经桥、默认 js（找不到 node / 脚本退回 Java）；0 轮就编结果 —— 历史当参考、核对说的和做的；执行器的子进程 HOME 不再是工作区；[第九十六轮](docs/rounds/round-96.md) 第 3 步（上）：命令行源码进 JAR、node 进桌面安装包（外壳告诉后端路径）；软链临时目录下宿主不跑的错；[第九十七轮](docs/rounds/round-97.md) 第 3 步（下）：删掉 Java 的循环（`CodeWorkspaceAgent` 只剩门和桥），合成一份做完；[第九十八轮](docs/rounds/round-98.md) 四道时对时错的 SWE 题各三遍：5/12、¥6.85（命中价，未命中价 ¥50.87），有一遍原地重复写满输出上限交了空补丁；[第九十九轮](docs/rounds/round-99.md) review 九十一到九十八轮：桌面应用里点一遍、宿主迟到回音 / 子进程 stderr / 「预期输出」三处；[第一百轮](docs/rounds/round-100.md) 原地重复同一段话（写满输出上限）不当「话没说完」：历史里只留开头、推「直接动手」；新旧一样的 edit_file 提醒「还没定下改成什么」
+- [第一百零一轮](docs/rounds/round-101.md) macOS 打包使用固定校验的官方 Node，提前拒绝依赖 Homebrew 的运行时，保留离线缓存与许可证，签名后验证

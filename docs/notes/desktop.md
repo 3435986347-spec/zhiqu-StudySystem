@@ -68,10 +68,12 @@ JVM 作为子进程，页面无边框铺满窗口，并封成拖拽安装的 `.d
 
 ## 代码模式带的 node（第九十六轮）
 
-网页 / 桌面应用的代码模式跑命令行那份循环（`JsCodeAgent` 起 node，见 `docs/notes/code-workspace.md`）。打包时把这台机器上的 node 放进
-`Contents/Resources/node/bin/node`（`NODE_BIN` 指定，默认 PATH 上那个；找不到就不出包），外壳用 `-Dapp.ai.code-agent.node=` 告诉后端；
-命令行源码在 JAR 里（pom 的 `bundle-zhiqu-cli`），后端第一次用时解到临时目录。node v22 未压缩 108M，应用包 246M、dmg 147M。
-打进去的是打包那台机器的架构（Apple 芯片打的包只带 arm64 的 node）。Windows 包同样带 `node\node.exe`（`NODE_EXE`），路径用 jpackage 的 `$APPDIR`。
+网页 / 桌面应用的代码模式跑命令行那份循环（`JsCodeAgent` 起 node，见 `docs/notes/code-workspace.md`）。macOS 打包默认下载固定的官方 ARM64 Node 22.23.2，
+按源码固定的 SHA256 校验、缓存到 `build/node-runtime`，运行时与 LICENSE 放进 `Contents/Resources/node/`（第一百零一轮）。外壳用 `-Dapp.ai.code-agent.node=` 告诉后端；
+命令行源码在 JAR 里（pom 的 `bundle-zhiqu-cli`），后端第一次用时解到临时目录。第一百零一轮本机产物：node v22 未压缩 108MiB，应用包 240MiB、dmg 143MiB。
+macOS 包只带 ARM64；显式 `NODE_BIN` 要指向带 LICENSE 的完整发行目录内的 `bin/node`，检查 Node ≥ 18.17、兼容 macOS 13.0、只依赖系统库，
+不再默认搬 PATH 上的 Homebrew Node（会缺 libnode 等外部库）。准备失败在构建 JAR / 删除旧包之前停止，离线办法见 `deploy/desktop/README.md`。
+Windows 包仍带本机的 `node\node.exe`（`NODE_EXE`），路径用 jpackage 的 `$APPDIR`。
 **外壳（Swift）改了，要重新打包才到用户手里。**
 
 ## 从网页版下载（第八十二轮）

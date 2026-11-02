@@ -163,12 +163,20 @@ class DesktopPackagingTest {
 
     /** 第九十六轮：网页代码模式跑命令行那份循环要 node —— 打进应用包、外壳把路径告诉后端；打不进去就别出包 */
     @Test
-    @DisplayName("macOS 应用包带 node（Resources/node/bin/node），外壳把它的路径告诉后端；找不到 node 就不出包")
+    @DisplayName("macOS 应用包带可搬移的 node；准备失败在 Maven 和清理旧包之前停止，签名后再次验证")
     void 应用包带node() throws IOException {
         String script = read(NATIVE_SCRIPT);
         assertTrue(script.contains("cp \"$NODE_BIN\" \"$APP/Contents/Resources/node/bin/node\""), "打包脚本没把 node 放进应用包");
-        assertTrue(script.contains("找不到 node（设 NODE_BIN=/绝对/路径）") && script.contains("exit 1"), "找不到 node 时要停下，不能出一个用不了代码模式的包");
+        int prepare = script.indexOf("NODE_BIN=\"$(bash \"$ROOT/deploy/desktop/prepare-macos-node.sh\"");
+        assertTrue(prepare >= 0 && prepare < script.indexOf("mvn -o clean package")
+                        && prepare < script.indexOf("rm -rf \"$OUT\""),
+                "准备 Node 必须在 Maven 与删除旧产物之前，否则缺库又要构建半天、还会丢上一个安装包");
         assertTrue(script.indexOf("Resources/node/bin/node") < script.indexOf("codesign"), "node 要在签名之前放进去，否则签名不覆盖它");
+        assertTrue(script.contains("codesign --verify --deep --strict \"$APP\"")
+                        && script.lastIndexOf("\"$APP/Contents/Resources/node/bin/node\" --version") > script.indexOf("codesign --force"),
+                "签名失败要停下，签名后还要验证包里的 Node 真的能跑");
+        assertFalse(script.contains("|| true"), "签名或 Node 准备失败不许被吞掉");
+        assertTrue(script.contains("node/LICENSE"), "官方 Node 的 LICENSE 要随运行时分发");
         String shell = read(Path.of("..", "deploy", "desktop", "macos-shell", "ZhiquShell.swift"));
         assertTrue(shell.contains("appendingPathComponent(\"node/bin/node\")") && shell.contains("-Dapp.ai.code-agent.node="),
                 "外壳没把打进去的 node 的路径告诉后端");
