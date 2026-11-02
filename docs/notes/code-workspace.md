@@ -14,7 +14,7 @@ AI 助手原本只是个「work agent」（排计划、写 Wiki、做检索）�
 **回落到 OFF 而不是就近取一档** —— 把 `mode: ON` 写错成一个不存在的值时，该得到「没开」，
 不是「开了个小的」。三档都已实现：READ 读、WRITE 写草稿（确认后落盘）、EXEC 再加执行沙箱。
 
-**档位与根目录现在能从界面切换**（AI 助手页工作区面板的 ⚙，`PUT /api/workspace/settings`），
+**档位与根目录现在能从界面切换**（第一百零三轮起在 AI 助手输入框正上方那一条：项目按钮 —— 最近的项目 + 「选择文件夹…」、一排档位按钮 close / plan / manual / auto = OFF / READ / WRITE / EXEC，点了就生效，`PUT /api/workspace/settings`；原来是左侧面板的 ⚙ + 设置弹窗），
 不必再改 `application.yml`；用户的选择持久化在 `~/.zhiqu/workspace-state.json`
 （桌面每次重启新 JVM，不持久化就每次回到 OFF）。文件夹选择器走 `GET /api/workspace/browse`
 （只列目录、管理员 + 回环）。**本机起验证用的后端要带 `--app.workspace.state-file=<临时路径>`**：这份文件一旦存在，

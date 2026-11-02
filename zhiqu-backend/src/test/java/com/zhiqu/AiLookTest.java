@@ -70,18 +70,17 @@ class AiLookTest {
     }
 
     @Test
-    @DisplayName("工作区设置：按下的档位是 aria-pressed、样子在样式表；选文件夹的每一项是按钮、悬停的底色在样式表；文件树用 ICONS 的 folder / file")
+    @DisplayName("工作区：按下的档位是 aria-pressed、样子在样式表（第一百零三轮起在输入框上方，结构见 AiComposerTest）；选文件夹的每一项是按钮、悬停的底色在样式表；文件树用 ICONS 的 folder / file")
     void 工作区的按下和悬停() throws IOException {
         String js = SourceText.pageModule("ai-assistant.js");
-        String paint = js.substring(js.indexOf("function paintModes()"), js.indexOf("descEl.textContent", js.indexOf("function paintModes()")));
+        String paint = js.substring(js.indexOf("function paintWorkspaceBar("), js.indexOf("$('#zq-ws-bar-note')", js.indexOf("function paintWorkspaceBar(")));
         assertTrue(paint.contains("setAttribute('aria-pressed'"), "档位按下的样子又不是 aria-pressed：" + paint);
-        assertTrue(js.contains("role=\"group\" aria-labelledby=\"zq-wss-modes-label\""), "四个档位没有成组、没有名字");
         assertFalse(js.contains("onmouseenter") || js.contains("onmouseleave"), "又在 JS 里画悬停");
         assertTrue(js.contains("document.createElement('button');\n          a.type = 'button';\n          a.className = 'zq-fp-item';"),
                 "选文件夹的一项不是按钮了（原来是没有 href 的 <a>，键盘 Tab 不到）");
         assertTrue(js.contains("icon(e.directory ? 'folder' : 'file')") && js.contains("icon('folder') + '<span class=\"zq-fp-name\">'"), "文件树 / 选文件夹没用 ICONS 的 folder / file");
         String css = css();
-        assertTrue(css.contains(".zq-wss-modes .zq-btn-ghost[aria-pressed=\"true\"]{border-color:var(--zq-primary);background:var(--zq-primary);color:var(--zq-on-primary);}"),
+        assertTrue(css.contains(".zq-ws-modes button[aria-pressed=\"true\"]{background:var(--zq-primary);color:var(--zq-on-primary);}"),
                 "按下的档位在样式表里没有样子");
         assertTrue(css.contains(".zq-fp-item:hover{background:var(--zq-card-soft);}") && css.contains(".zq-ws-entry:hover,.zq-ws-hit:hover{background:var(--zq-card-soft);}"),
                 "选文件夹 / 文件树的悬停没有样子");

@@ -778,6 +778,8 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-composer:focus-within{border-color:var(--zq-text3);}
 .zq-composer textarea{display:block;width:100%;height:44px;max-height:200px;padding:0 4px 0 0;border:none;outline:none;background:transparent;color:var(--zq-text);font:var(--zq-fw-regular) var(--zq-fs-base)/22px var(--zq-fontBody);resize:none;overflow-y:auto;}
 .zq-composer textarea::placeholder{color:var(--zq-text3);}
+/* 聚焦时里面不再画一圈（第一百零三轮，用户截图里的「矩形框」）：外框 .zq-composer:focus-within 变色就是聚焦的样子；全站的 textarea:focus 光圈在这里不要 */
+.zq-composer textarea:focus{box-shadow:none;}
 .zq-composer-bar{display:flex;align-items:center;gap:4px;min-width:0;margin-left:-6px;}
 .zq-composer-icon{width:30px;height:30px;flex:none;display:inline-flex;align-items:center;justify-content:center;padding:0;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text2);cursor:pointer;}
 .zq-composer-icon:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
@@ -798,6 +800,30 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-send.is-busy::after{content:"";width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:zqSpin .8s linear infinite;}
 @keyframes zqSpin{to{transform:rotate(360deg);}}
 .zq-composer-icon:focus-visible,.zq-chip:focus-visible,.zq-send:focus-visible,.zq-composer-model:focus-visible{outline:none;box-shadow:var(--zq-focus);}
+/* 输入框上方的项目和档位（第一百零三轮）：项目按钮在左、档位一排在右；按下的档位看 aria-pressed、当前项目看 aria-current、菜单开着看 aria-expanded */
+.zq-ws-bar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-width:0;}
+.zq-ws-pick{position:relative;min-width:0;flex:0 1 auto;}
+.zq-ws-project{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:28px;padding:0 8px;border:1px solid transparent;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text2);font-size:var(--zq-fs-xs);cursor:pointer;}
+.zq-ws-project:hover,.zq-ws-project[aria-expanded="true"]{background:var(--zq-sb-active-bg);color:var(--zq-text);}
+.zq-ws-project .zq-icon{width:14px;height:14px;flex:none;}
+.zq-ws-project-name{min-width:0;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-ws-modes{display:inline-flex;gap:2px;margin-left:auto;padding:2px;border:1px solid var(--zq-border);border-radius:999px;background:var(--zq-card);}
+.zq-ws-modes button{height:24px;padding:0 10px;border:none;border-radius:999px;background:transparent;color:var(--zq-text2);font-size:var(--zq-fs-2xs);white-space:nowrap;cursor:pointer;transition:background .12s ease,color .12s ease;}
+.zq-ws-modes button:hover{color:var(--zq-text);}
+.zq-ws-modes button[aria-pressed="true"]{background:var(--zq-primary);color:var(--zq-on-primary);}
+.zq-ws-bar[aria-busy="true"] .zq-ws-project,.zq-ws-bar[aria-busy="true"] .zq-ws-modes button{cursor:progress;}
+.zq-ws-bar-note{flex-basis:100%;font-size:var(--zq-fs-2xs);color:var(--zq-text3);line-height:1.5;}
+.zq-ws-bar-note:empty{display:none;}
+.zq-ws-menu{position:absolute;left:0;bottom:calc(100% + 6px);z-index:30;width:340px;max-width:calc(100vw - 32px);max-height:50vh;overflow:auto;padding:5px;border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);}
+.zq-ws-menu-head{padding:4px 8px 2px;font-size:var(--zq-fs-2xs);color:var(--zq-text3);}
+.zq-ws-menu-item{display:grid;grid-template-columns:16px minmax(0,1fr);column-gap:8px;align-items:center;width:100%;padding:6px 8px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text);font-size:var(--zq-fs-sm);text-align:left;cursor:pointer;}
+.zq-ws-menu-item:hover{background:var(--zq-card-soft);}
+.zq-ws-menu-item[aria-current="true"]{background:var(--zq-tint);}
+.zq-ws-menu-item .zq-icon{width:14px;height:14px;color:var(--zq-text2);}
+.zq-ws-menu-name,.zq-ws-menu-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-ws-menu-path{grid-column:2;font-size:var(--zq-fs-2xs);color:var(--zq-text3);}
+.zq-ws-menu-sep{height:1px;margin:4px 2px;background:var(--zq-border-soft);}
+.zq-ws-project:focus-visible,.zq-ws-modes button:focus-visible,.zq-ws-menu-item:focus-visible{outline:none;box-shadow:var(--zq-focus);}
 /* 拖文件进对话这一栏时整栏盖的那一层（ai-assistant.js 的 bindAiDropZone 给 #zq-chat-col 加 is-dragging） */
 .zq-drop-overlay{position:absolute;inset:10px;z-index:9;display:none;align-items:center;justify-content:center;gap:8px;padding:0 24px;border:1.5px dashed var(--zq-text3);border-radius:var(--zq-rl);background:var(--zq-bg);color:var(--zq-text);font-size:var(--zq-fs-sm);text-align:center;pointer-events:none;}
 #zq-chat-col.is-dragging .zq-drop-overlay{display:flex;}
@@ -894,7 +920,6 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-ai-ws .zq-ai-side-head{border-bottom:0;}
 .zq-ai-ws-tools{display:flex;align-items:center;gap:6px;flex:none;}
 .zq-ai-ws-tools .zq-btn-ghost,#zq-ws-back{height:24px;padding:0 8px;font-size:var(--zq-fs-2xs);}
-#zq-ws-settings{width:24px;padding:0;}
 .zq-ai-ws-search{display:flex;gap:6px;padding:0 14px 8px;}
 #zq-ws-back{height:26px;}
 /* id 选择器：压过全局那条 input:not(…){width:100%}（0,2,1） */
@@ -920,16 +945,6 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-ws-file{margin:0;max-height:62vh;overflow:auto;padding:12px 14px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);}
 .zq-ws-file code{font-size:var(--zq-fs-sm);line-height:1.6;white-space:pre;}
 /* 工作区设置、选文件夹两个弹窗 */
-.zq-wss-warn{margin-bottom:12px;padding:9px 11px;border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-text2);font-size:var(--zq-fs-xs);line-height:1.6;}
-.zq-wss-label{margin-bottom:6px;font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-medium);}
-.zq-wss-row{display:flex;gap:8px;align-items:center;margin-bottom:4px;}
-#zq-wss-root{flex:1;}
-.zq-wss-hint{margin-bottom:16px;font-size:var(--zq-fs-2xs);color:var(--zq-text3);}
-.zq-wss-modes{display:flex;gap:6px;margin-bottom:8px;}
-.zq-wss-modes .zq-btn-ghost{flex:1;}
-.zq-wss-modes .zq-btn-ghost[aria-pressed="true"]{border-color:var(--zq-primary);background:var(--zq-primary);color:var(--zq-on-primary);}
-.zq-wss-desc{min-height:34px;font-size:var(--zq-fs-xs);color:var(--zq-text2);line-height:1.6;}
-.zq-wss-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;}
 .zq-fp-cur{margin-bottom:8px;font-size:var(--zq-fs-xs);color:var(--zq-text2);word-break:break-all;}
 .zq-fp-bar{display:flex;gap:6px;margin-bottom:8px;}
 .zq-fp-bar .zq-btn,.zq-fp-bar .zq-btn-ghost{height:28px;font-size:var(--zq-fs-xs);}

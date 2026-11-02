@@ -45,7 +45,8 @@ class WikiEditingFeelTest {
                 "点表格边上换回原文以后没留在鼠标底下");
         int math = cm.indexOf("const MathWidget = class extends WidgetType {");
         String mathBody = cm.substring(math, cm.indexOf("const CheckboxWidget", math));
-        assertTrue(mathBody.contains("placeKeepingPointer(view, at + (this.display ? 3 : 1), el.getBoundingClientRect().top);") && mathBody.contains("ignoreEvent() { return false; }"),
+        // 第一百零二轮：跳过几个字由 skip 带着（$ 是 1、一行里的 $$ 是 2、块公式是 3，值在 wiki-cm-check.js 里钉着）
+        assertTrue(mathBody.contains("placeKeepingPointer(view, at + this.skip, el.getBoundingClientRect().top);") && mathBody.contains("ignoreEvent() { return false; }"),
                 "点画出来的公式又什么都不发生了");
         String keep = cm.substring(cm.indexOf("function placeKeepingPointer("), cm.indexOf("const TextWidget"));
         assertTrue(keep.contains("scroller.scrollTop += delta"), "换回原文以后没把那一行挪回点下去的高度");

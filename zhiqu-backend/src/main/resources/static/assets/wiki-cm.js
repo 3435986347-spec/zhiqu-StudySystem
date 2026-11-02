@@ -6,7 +6,7 @@
 // 段落格式下拉和 ⌘B / ⌘I / ⌘U、阅读模式里点哪个字进编辑光标就落在原文那个字上（anchorFromCaret → sourcePosition）。
 // 第八十轮起是默认的编辑器（试用开关去掉；加载不上时退回原来的 contentEditable）。阅读模式照旧用 renderMarkdown。
 import {
-  EditorState, EditorSelection, StateField, Compartment, EditorView, Decoration, ViewPlugin, WidgetType, keymap, drawSelection,
+  EditorState, EditorSelection, StateField, StateEffect, Compartment, EditorView, Decoration, ViewPlugin, WidgetType, keymap, drawSelection,
   defaultKeymap, history, historyKeymap, indentWithTab, syntaxTree, syntaxHighlighting, HighlightStyle, LanguageSupport,
   markdownLanguage, insertNewlineContinueMarkup, deleteMarkupBackward, autocompletion, completionKeymap, tags, placeholder,
   closeBrackets, closeBracketsKeymap, undo, redo
@@ -55,6 +55,23 @@ export function inlineMathRanges(text, offset = 0) {
   while ((m = re.exec(text))) {
     const start = m.index + m[1].length;
     out.push({ from: offset + start, to: offset + m.index + m[0].length, tex: m[2] });
+  }
+  return out;
+}
+
+/**
+ * 一行里的 $$…$$（第一百零二轮）：阅读视图和表格认（renderMarkdown 画成公式），编辑器原来不认，同一句话两边不一样。
+ * 和 renderMarkdown 同一条：里面要像公式（有 \ ^ _ { } 或字母，「$$10」这种不算）、没被转义。alone = 这一行只有它（阅读时画成块）
+ */
+export function displayMathRanges(text, offset = 0) {
+  const out = [];
+  const re = /\x24\x24([^\x24\n]{1,200}?)\x24\x24/g;   // \x24 就是 $
+  let m;
+  while ((m = re.exec(text))) {
+    if ((m.index > 0 && text[m.index - 1] === '\\') || !/[\\^_{}a-zA-Z]/.test(m[1])) continue;
+    const lineStart = text.lastIndexOf('\n', m.index - 1) + 1, lineEnd = text.indexOf('\n', m.index);
+    const alone = !text.slice(lineStart, m.index).trim() && !text.slice(m.index + m[0].length, lineEnd < 0 ? text.length : lineEnd).trim();
+    out.push({ from: offset + m.index, to: offset + m.index + m[0].length, tex: m[1].trim(), alone });
   }
   return out;
 }
@@ -194,7 +211,7 @@ function scanInline(s, base) {
   const chars = [], cols = [], ends = [];
   const push = (ch, col, end) => { chars.push(ch); cols.push(col); ends.push(end == null ? col + 1 : end); };
   const pushAll = (str, col) => { for (let k = 0; k < str.length; k++) push(str[k], col + k); };
-  const math = new Map(inlineMathRanges(s).map((r) => [r.from, r.to]));
+  const math = new Map([...inlineMathRanges(s), ...displayMathRanges(s)].map((r) => [r.from, r.to]));
   let j = 0, m;
   while (j < s.length) {
     const rest = s.slice(j);
@@ -574,13 +591,21 @@ const TextWidget = class extends WidgetType {
   ignoreEvent() { return !this.onClick; }
 };
 
+// KaTeX 好了没（第一百零二轮）：编辑器拿到 options.math（ready / load，壳里同一个加载入口）就问它；没给（node 里的判据）照旧看 window.katex。
+// 「好了」也要 CSS 到了 —— 只有 JS 时画出来的公式没有样式
+const mathReady = (options) => !!(options && options.math && options.math.ready ? options.math.ready() : (typeof window !== 'undefined' && window.katex));
+// KaTeX 加载好了：行内、块公式的装饰重算一遍（MathWidget 记着画时好没好，好坏不同就不沿用画成原文的那份 DOM）
+export const mathRefresh = StateEffect.define();
+const refreshed = (tr) => tr.effects.some((e) => e.is(mathRefresh));
+
 const MathWidget = class extends WidgetType {
-  constructor(tex, display) { super(); this.tex = tex; this.display = display; }
-  eq(other) { return other.tex === this.tex && other.display === this.display; }
+  // skip：点公式时光标放到原文里公式开头之后几个字（$ 是 1、一行里的 $$ 是 2、块公式的 $$ 加换行是 3）
+  constructor(tex, display, ready, skip) { super(); this.tex = tex; this.display = display; this.ready = !!ready; this.skip = skip; }
+  eq(other) { return other.tex === this.tex && other.display === this.display && other.ready === this.ready && other.skip === this.skip; }
   toDOM(view) {
     const el = document.createElement(this.display ? 'div' : 'span');
     el.className = this.display ? 'cm-zq-math-block' : 'cm-zq-math';
-    const katex = typeof window !== 'undefined' && window.katex;
+    const katex = this.ready && typeof window !== 'undefined' && window.katex;
     let drawn = false;
     if (katex) { try { katex.render(this.tex, el, { displayMode: this.display, throwOnError: false }); drawn = true; } catch (e) { /* 照原文显示 */ } }
     if (!drawn) el.textContent = this.display ? `$$\n${this.tex}\n$$` : `$${this.tex}$`;
@@ -589,7 +614,7 @@ const MathWidget = class extends WidgetType {
       if (e.button !== 0) return;
       e.preventDefault();
       let at; try { at = view.posAtDOM(el); } catch (err) { return; }
-      placeKeepingPointer(view, at + (this.display ? 3 : 1), el.getBoundingClientRect().top);
+      placeKeepingPointer(view, at + this.skip, el.getBoundingClientRect().top);
     });
     return el;
   }
@@ -692,6 +717,8 @@ function wireTable(el, view, options) {
     const holder = document.createElement('div'); holder.innerHTML = html;
     const drawn = holder.querySelector('th,td');
     if (drawn) cell.innerHTML = drawn.innerHTML; else cell.textContent = rawOf(cell);
+    // 公式照整张表一样交给 KaTeX 画（第一百零二轮：原来漏了这一步，点进一格再出来，那一格的公式就停在灰色的等宽源码）
+    if (options.hydrate) options.hydrate(cell);
   });
   el.addEventListener('input', (e) => {
     const cell = e.target;
@@ -774,6 +801,7 @@ export function inlineDecorations(view, options) {
   const touched = (st, from, to) => view.hasFocus !== false && touchedSel(st, from, to);
   const { state } = view; const out = [];
   const codeRanges = [];
+  const ready = mathReady(options);
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({ from, to, enter(node) {
       const name = node.name;
@@ -868,7 +896,11 @@ export function inlineDecorations(view, options) {
     }
     for (const math of inlineMathRanges(text, from)) {
       if (inCode(math.from, math.to) || touched(state, math.from, math.to)) continue;
-      out.push(Decoration.replace({ widget: new MathWidget(math.tex, false) }).range(math.from, math.to));
+      out.push(Decoration.replace({ widget: new MathWidget(math.tex, false, ready, 1) }).range(math.from, math.to));
+    }
+    for (const math of displayMathRanges(text, from)) {
+      if (inCode(math.from, math.to) || touched(state, math.from, math.to)) continue;
+      out.push(Decoration.replace({ widget: new MathWidget(math.tex, math.alone, ready, 2) }).range(math.from, math.to));
     }
     for (const u of underlineRanges(text, from)) {
       if (inCode(u.from, u.to)) continue;
@@ -904,20 +936,20 @@ function docText(doc) {
 }
 
 // 块公式横跨多行：多行的替换只能放在 StateField 里（ViewPlugin 不许出跨行的块装饰）
-const blockMath = StateField.define({
-  create(state) { const ranges = blockMathRanges(docText(state.doc)); return { ranges, deco: blockMathDecorations(state, ranges) }; },
+const blockMath = (options) => StateField.define({
+  create(state) { const ranges = blockMathRanges(docText(state.doc)); return { ranges, deco: blockMathDecorations(state, ranges, options) }; },
   update(value, tr) {
-    if (!tr.docChanged && !tr.selection) return value;
+    if (!tr.docChanged && !tr.selection && !refreshed(tr)) return value;
     const ranges = tr.docChanged ? blockMathRanges(docText(tr.state.doc)) : value.ranges;
-    return { ranges, deco: blockMathDecorations(tr.state, ranges) };
+    return { ranges, deco: blockMathDecorations(tr.state, ranges, options) };
   },
   provide: (field) => EditorView.decorations.from(field, (value) => value.deco),
 });
-function blockMathDecorations(state, ranges) {
-  const out = [];
+function blockMathDecorations(state, ranges, options) {
+  const out = [], ready = mathReady(options);
   for (const block of ranges) {
     if (touched(state, block.from, block.to)) continue;
-    out.push(Decoration.replace({ widget: new MathWidget(block.tex, true), block: true }).range(block.from, block.to));
+    out.push(Decoration.replace({ widget: new MathWidget(block.tex, true, ready, 3), block: true }).range(block.from, block.to));
   }
   return Decoration.set(out, true);
 }
@@ -961,14 +993,28 @@ function titleDecorations(state, options) {
 }
 
 /** 跨行的两种预览（块公式、表格）：StateField 不要 DOM，node 里的判据直接拿 EditorState 跑同一份 */
-export function blockPreviews(options) { return [blockMath, tablePreview(options), titleHidden(options)]; }
+export function blockPreviews(options) { return [blockMath(options), tablePreview(options), titleHidden(options)]; }
 
 const livePreview = (options) => ViewPlugin.fromClass(class {
   constructor(view) { this.decorations = inlineDecorations(view, options); }
   update(update) {
-    if (update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged) this.decorations = inlineDecorations(update.view, options);
+    if (update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged || update.transactions.some(refreshed)) {
+      this.decorations = inlineDecorations(update.view, options);
+    }
   }
 }, { decorations: (plugin) => plugin.decorations });
+
+// 文档里有公式、KaTeX 还没好：去加载（壳里同一个入口），好了发一个刷新。一个编辑器只问一次
+const mathLoader = (options) => ViewPlugin.fromClass(class {
+  constructor(view) { this.view = view; this.asked = false; this.gone = false; this.loadFor(view.state); }
+  update(update) { if (update.docChanged) this.loadFor(update.state); }
+  loadFor(state) {
+    if (this.asked || !options.math || !options.math.load || mathReady(options) || docText(state.doc).indexOf('$') < 0) return;
+    this.asked = true;
+    options.math.load().then((ok) => { if (ok && !this.gone) this.view.dispatch({ effects: mathRefresh.of(null) }); }, () => {});
+  }
+  destroy() { this.gone = true; }
+});
 
 const highlight = HighlightStyle.define([
   { tag: tags.heading, fontWeight: 'var(--zq-fw-semibold)' },   // 第八十四轮照 Obsidian 加粗（和阅读视图的 .zq-prose .zq-md h1–h6 一样）
@@ -1094,7 +1140,7 @@ export function mountWikiEditor(host, options) {
           ...FORMAT_KEYS.map((k) => ({ key: k.key, run: (v) => wrapSelection(v, k.open, k.close || k.open) })),
           ...completionKeymap, ...historyKeymap, indentWithTab, ...defaultKeymap]),
         autocompletion({ override: [completeTitles], icons: false }),
-        livePreview(options), ...blockPreviews(options), theme,
+        livePreview(options), mathLoader(options), ...blockPreviews(options), theme,
         // 空页：编辑器一直开着（第八十三轮），空着的时候说一句能直接写
         ...(options.placeholder ? [placeholder(options.placeholder)] : []),
         // 页面底上浮着「保存 / 取消」：把光标滚进视野时让开它（第八十轮）

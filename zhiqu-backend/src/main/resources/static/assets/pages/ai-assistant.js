@@ -1970,88 +1970,126 @@ function whenOnline(fn) {
  */
 var wsState = { path: '', enabled: false };
 
-// ── 工作区设置：像 Cursor 那样选工作文件夹 + 切档位 ─────────────────────
-//
-// 三条前提（回环 / 目录存在 / 管理员）由后端裁决，前端不复述判断 —— 只把后端返回的
-// effectiveMode / reason / loopback 如实显示。切换按钮在非回环上也点得动，但后端会拒，
-// 并把原因显示出来，而不是前端偷偷禁用（那样用户不知道为什么不行）。
+// ── 输入框上方的项目和档位（第一百零三轮）────────────────────────────────
+// 用户 2026-11-02：「把代码工作区优化到在输入框上方选择项目里面选择目录，参考其他的 coding agent 产品，几个模式档位也用按钮点击切换」。
+// 原来要点左侧面板的齿轮，在弹窗里浏览文件夹、点档位、再点「保存并生效」。现在输入框正上方一条：项目按钮（最近的项目 + 「选择文件夹…」）、
+// 一排档位按钮，点了就生效。三条前提（回环 / 目录存在 / 管理员）照旧由后端裁决，前端不复述 —— 选了的档位没生效时，
+// 把后端说的原因（reason）写在这一条下面，不偷偷改按钮。
+// 档位的名字用户定了（2026-11-02「模式的名字改成plan，auto，manual，close」）：close = OFF、plan = READ、manual = WRITE、auto = EXEC，
+// 按能力从小到大排。按钮上只写名字，每一档能做什么写在悬停说明里；左侧「代码工作区」那一行也用同一套名字
+var WS_MODE_NAME = { OFF: 'close', READ: 'plan', WRITE: 'manual', EXEC: 'auto' };
+var WS_MODE_DESC = {
+  OFF: 'close：关闭。AI 助手看不到任何本机文件。',
+  READ: 'plan：只读。AI 能读项目文件夹里的文件、出方案，一个字节都不改。',
+  WRITE: 'manual：能改文件，但每一处改动都要你在草稿里确认后才落盘。',
+  EXEC: 'auto：能改文件，还能自己跑白名单命令（python3 / node / java…）；改动照样要你确认才落盘。仅本机自用。'
+};
+// 最近用过的项目只记在这台浏览器里（每个人自己的方便，不是要存的状态）；存不了就当没有
+var WS_RECENT_KEY = 'zq.ws.recent';
+function recentProjects() {
+  try {
+    var v = JSON.parse(localStorage.getItem(WS_RECENT_KEY) || '[]');
+    return Array.isArray(v) ? v.filter(function (x) { return typeof x === 'string' && x; }).slice(0, 6) : [];
+  } catch (e) { return []; }
+}
+function rememberProject(root) {
+  if (!root) return;
+  try { localStorage.setItem(WS_RECENT_KEY, JSON.stringify([root].concat(recentProjects().filter(function (x) { return x !== root; })).slice(0, 6))); } catch (e) { /* 存不了就算了 */ }
+}
+function projectName(root) {
+  var parts = String(root || '').replace(/[\\/]+$/, '').split(/[\\/]/);
+  return parts[parts.length - 1] || String(root || '');
+}
 
-function openWorkspaceSettings(settings) {
-  var modes = (settings && settings.modes) || ['OFF', 'READ', 'WRITE', 'EXEC'];
-  var chosen = (settings && settings.selectedMode) || 'OFF';
-  var chosenRoot = (settings && settings.selectedRoot) || '';
-  var loopback = !(settings && settings.loopback === false);
+var wsBarBusy = false, wsBarNext = null;
+// 选项目 / 切档位都走这一个，一次只发一个。在途时又点了：记下最后点的那一下，这一个回来再发它（最后点的生效 ——
+// 原来在途时的点击直接丢掉，真鼠标快点 plan → manual 停在 plan）。都回来之后整块（左侧文件树、「代码」按钮、这一条）照后端的状态重画，
+// 失败了也重画（按下的样子是点的时候先画上的，要退回后端说的）
+async function applyWorkspace(mode, root) {
+  if (wsBarBusy) { wsBarNext = { mode: mode, root: root }; return; }
+  var bar = $('#zq-ws-bar');
+  wsBarBusy = true;
+  if (bar) bar.setAttribute('aria-busy', 'true');
+  try {
+    await safe('切换代码工作区', async function () {
+      await api.put('/workspace/settings', { mode: mode, root: root });
+      if (mode !== 'OFF') rememberProject(root);
+    });
+  } finally {
+    wsBarBusy = false;
+    var next = wsBarNext; wsBarNext = null;
+    if (next) await applyWorkspace(next.mode, next.root);
+    else { if (bar) bar.removeAttribute('aria-busy'); await loadWorkspace(); }
+  }
+}
+// 选了项目而档位还是 close：开成 plan（只读，最小的那一档），不然选了像没选
+function modeForProject(mode) { return mode && mode !== 'OFF' ? mode : 'READ'; }
 
-  var desc = {
-    OFF: '关闭。AI 助手看不到任何本机文件。',
-    READ: '只读：AI 能读工作文件夹里的文件，一个字节都不改。',
-    WRITE: '读 + 写：能改文件，但每次改动都要你在草稿里确认后才落盘。',
-    EXEC: '读 + 写 + 运行：能改、还能跑白名单命令（python3 / node / java…）。仅本机自用。'
-  };
-
-  var h = openModal({
-    title: '工作区设置',
-    width: 520,
-    bodyHtml:
-      (loopback ? '' :
-        '<div class="zq-wss-warn">当前不是本机回环地址（多半是服务器 / 网页版）。' +
-        '出于安全，工作区只能在<b>本机桌面应用</b>里开启，这里改了也不会生效。</div>') +
-      '<div class="zq-wss-label">工作文件夹</div>' +
-      '<div class="zq-wss-row">' +
-        '<input id="zq-wss-root" class="zq-input" readonly placeholder="（未选择）" aria-label="工作文件夹" />' +
-        '<button id="zq-wss-browse" class="zq-btn-ghost">浏览…</button>' +
-      '</div>' +
-      '<div class="zq-wss-hint">AI 只能读/改/运行这一个文件夹里的东西，范围越小越安全。</div>' +
-      '<div class="zq-wss-label" id="zq-wss-modes-label">访问档位</div>' +
-      '<div id="zq-wss-modes" class="zq-wss-modes" role="group" aria-labelledby="zq-wss-modes-label">' +
-        modes.map(function (m) {
-          return '<button type="button" data-mode="' + m + '" class="zq-btn-ghost" aria-pressed="false">' +
-            (WS_MODE_LABEL[m] || m) + '</button>';
-        }).join('') +
-      '</div>' +
-      '<div id="zq-wss-desc" class="zq-wss-desc"></div>' +
-      '<div class="zq-wss-actions">' +
-        '<button id="zq-wss-cancel" class="zq-btn-ghost">取消</button>' +
-        '<button id="zq-wss-save" class="zq-btn">保存并生效</button>' +
-      '</div>',
-    onMount: function (body) {
-      var rootInput = $('#zq-wss-root', body);
-      rootInput.value = chosenRoot;
-      var descEl = $('#zq-wss-desc', body);
-
-      // 按下的样子在样式表（.zq-wss-modes [aria-pressed="true"]），这里只管 aria-pressed
-      function paintModes() {
-        $all('[data-mode]', body).forEach(function (btn) {
-          btn.setAttribute('aria-pressed', String(btn.getAttribute('data-mode') === chosen));
-        });
-        descEl.textContent = desc[chosen] || '';
-      }
-      $all('[data-mode]', body).forEach(function (btn) {
-        btn.onclick = function () { chosen = btn.getAttribute('data-mode'); paintModes(); };
-      });
-      paintModes();
-
-      $('#zq-wss-browse', body).onclick = function () {
-        openWorkspaceFolderPicker(chosenRoot, function (picked) {
-          chosenRoot = picked;
-          rootInput.value = picked;
-        });
-      };
-      $('#zq-wss-cancel', body).onclick = function () { h.close(); };
-      $('#zq-wss-save', body).onclick = function () {
-        if (chosen !== 'OFF' && !chosenRoot) {
-          toast('先选一个工作文件夹', 'error');
-          return;
-        }
-        safe('保存工作区设置', async function () {
-          await api.put('/workspace/settings', { mode: chosen, root: chosenRoot });
-          h.close();
-          await loadWorkspace();
-          toast('工作区设置已保存');
-        });
-      };
-    }
+function paintWorkspaceBar(status) {
+  var bar = $('#zq-ws-bar');
+  if (!bar) return;
+  if (!status) { bar.hidden = true; closeProjectMenu(); return; }
+  bar.hidden = false;
+  var mode = status.selectedMode || 'OFF', root = status.selectedRoot || '';
+  var btn = $('#zq-ws-project');
+  $('#zq-ws-project-name').textContent = root ? projectName(root) : '选择项目';
+  btn.title = root ? '项目：' + root + '（点开换一个）' : '选择项目：代码模式里 AI 只读写这一个文件夹';
+  btn.onclick = function () { if ($('#zq-ws-menu').hidden) openProjectMenu(status); else closeProjectMenu(); };
+  $all('[data-ws-mode]', bar).forEach(function (b) {
+    var m = b.getAttribute('data-ws-mode');
+    b.setAttribute('aria-pressed', String(m === mode));   // 按下的样子在样式表（.zq-ws-modes button[aria-pressed="true"]）
+    b.title = WS_MODE_DESC[m] || '';
+    b.onclick = function () {
+      // 还没选项目就开某一档：先选文件夹
+      if (m !== 'OFF' && !root) { openWorkspaceFolderPicker('', function (picked) { applyWorkspace(m, picked); }); return; }
+      if (b.getAttribute('aria-pressed') === 'true') return;
+      // 按下的样子先跟着点的走，后端回来以后照它说的重画
+      $all('[data-ws-mode]', bar).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      applyWorkspace(m, root);
+    };
   });
+  $('#zq-ws-bar-note').textContent = mode !== 'OFF' && !status.enabled && status.reason ? '没有生效：' + status.reason : '';
+}
+
+var projectMenuOff = null;
+function closeProjectMenu() {
+  var menu = $('#zq-ws-menu'), btn = $('#zq-ws-project');
+  if (menu) menu.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  if (projectMenuOff) { projectMenuOff(); projectMenuOff = null; }
+}
+function openProjectMenu(status) {
+  var menu = $('#zq-ws-menu'), btn = $('#zq-ws-project');
+  if (!menu || wsBarBusy) return;
+  var mode = status.selectedMode || 'OFF', root = status.selectedRoot || '';
+  var list = [root].concat(recentProjects()).filter(function (x, i, all) { return x && all.indexOf(x) === i; });
+  menu.innerHTML = (list.length ? '<div class="zq-ws-menu-head">最近的项目</div>' : '')
+    + list.map(function (r) {
+      return '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-root="' + esc(r) + '"' + (r === root ? ' aria-current="true"' : '') + ' title="' + esc(r) + '">'
+        + icon('folder') + '<span class="zq-ws-menu-name">' + esc(projectName(r)) + '</span><span class="zq-ws-menu-path">' + esc(r) + '</span></button>';
+    }).join('')
+    + (list.length ? '<div class="zq-ws-menu-sep"></div>' : '')
+    + '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-browse="1">' + icon('plus') + '<span class="zq-ws-menu-name">选择文件夹…</span></button>';
+  menu.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  $all('[data-ws-root]', menu).forEach(function (b) {
+    b.onclick = function () {
+      var r = b.getAttribute('data-ws-root');
+      closeProjectMenu();
+      if (r !== root || mode === 'OFF') applyWorkspace(modeForProject(mode), r);
+    };
+  });
+  $('[data-ws-browse]', menu).onclick = function () {
+    closeProjectMenu();
+    openWorkspaceFolderPicker(root, function (picked) { applyWorkspace(modeForProject(mode), picked); });
+  };
+  var first = $('.zq-ws-menu-item', menu); if (first) first.focus();
+  // 点别处、按 Esc 关上（Esc 之后焦点回到项目按钮）
+  function away(e) { if (!menu.contains(e.target) && !btn.contains(e.target)) closeProjectMenu(); }
+  function onKey(e) { if (e.key === 'Escape') { closeProjectMenu(); btn.focus(); } }
+  document.addEventListener('mousedown', away);
+  document.addEventListener('keydown', onKey);
+  projectMenuOff = function () { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', onKey); };
 }
 
 // 文件夹选择器：走后端 /workspace/browse 一层层点进去。onPick(绝对路径) 选定当前文件夹。
@@ -2106,7 +2144,6 @@ function openWorkspaceFolderPicker(startPath, onPick) {
   });
 }
 
-var WS_MODE_LABEL = { OFF: '未启用', READ: '只读', WRITE: '读+写', EXEC: '读+写+运行' };
 
 async function loadWorkspace() {
   var section = $('#zq-ws');
@@ -2118,11 +2155,11 @@ async function loadWorkspace() {
     status = await api.get('/workspace/settings');
   } catch (e) {
     section.hidden = true;
+    paintWorkspaceBar(null);
     return;
   }
   section.hidden = false;
-  var gear = $('#zq-ws-settings');
-  if (gear) gear.onclick = function () { openWorkspaceSettings(status); };
+  paintWorkspaceBar(status);
 
   wsState.enabled = !!(status && status.enabled);
   // 「代码」按钮只在工作区真的生效时出现。没生效时按了也没用 —— 后端会因为工作区不可读
@@ -2131,15 +2168,15 @@ async function loadWorkspace() {
   if (codeToggle) codeToggle.hidden = !wsState.enabled;
   if (!wsState.enabled) {
     // 没开：显示原因（配了没生效）或一句「点⚙开启」，并把文件树/搜索收起来
-    $('#zq-ws-sub').textContent = '未启用';
+    $('#zq-ws-sub').textContent = WS_MODE_NAME.OFF;
     $('#zq-ws-path').textContent = (status && status.reason)
-      ? status.reason : '点右上角的设置按钮，选择工作文件夹并开启';
+      ? status.reason : '在输入框上方选择项目、点档位开启';
     $('#zq-ws-tree').innerHTML = '';
     $('#zq-ws-up').hidden = true;
     var sr0 = $('#zq-ws-search-row'); if (sr0) sr0.hidden = true;
     return;
   }
-  $('#zq-ws-sub').textContent = WS_MODE_LABEL[status.effectiveMode] || status.effectiveMode;
+  $('#zq-ws-sub').textContent = WS_MODE_NAME[status.effectiveMode] || status.effectiveMode;
   wsState.root = status.root || '';
   $('#zq-ws-up').onclick = function () {
     var at = wsState.path.lastIndexOf('/');

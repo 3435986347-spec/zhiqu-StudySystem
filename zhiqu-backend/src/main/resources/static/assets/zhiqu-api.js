@@ -2313,29 +2313,41 @@
     hydratePrivateMedia(root, skipEmbeds);
     var nodes = root.querySelectorAll('[data-tex]');
     if (!nodes.length) return;
-    if (katexState === 2 && window.katex) { paintMath(nodes); return; }
+    if (katexReady()) { paintMath(nodes); return; }
     if (katexState === 3) return;
     katexPending.push(root);
-    if (katexState === 1) return;
-    katexState = 1;
-    var cssReady = false, jsReady = false;
-    function maybeReady() {
-      if (!cssReady || !jsReady || !window.katex) return;
-      katexState = 2;
-      katexPending.splice(0).forEach(function (r) { paintMath(r.querySelectorAll('[data-tex]')); });
-    }
-    function fail() { katexState = 3; katexPending = []; }
-    var link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = 'assets/vendor/katex/katex.min.css';
-    link.onload = function () { cssReady = true; maybeReady(); };
-    link.onerror = fail;
-    document.head.appendChild(link);
-    var s = document.createElement('script');
-    s.src = 'assets/vendor/katex/katex.min.js';
-    s.onload = function () { jsReady = true; maybeReady(); };
-    s.onerror = fail;
-    document.head.appendChild(s);
+    loadKatex();
+  }
+  // KaTeX 只有这一个加载入口（第一百零二轮）：Wiki 编辑器里的公式原来只看当时 window.katex 在不在，没有就画成原文、加载好了也不重画；
+  // 现在编辑器问 katexReady()、没好就 loadKatex()，等它好了再重画。好了 = JS 和 CSS 都到了。
+  var katexLoading = null;
+  function katexReady() { return katexState === 2 && !!window.katex; }
+  function loadKatex() {
+    if (katexLoading) return katexLoading;
+    katexLoading = new Promise(function (resolve) {
+      if (katexState === 2 && window.katex) { resolve(true); return; }
+      katexState = 1;
+      var cssReady = false, jsReady = false;
+      function maybeReady() {
+        if (!cssReady || !jsReady || !window.katex) return;
+        katexState = 2;
+        katexPending.splice(0).forEach(function (r) { paintMath(r.querySelectorAll('[data-tex]')); });
+        resolve(true);
+      }
+      function fail() { if (katexState === 3) return; katexState = 3; katexPending = []; resolve(false); }
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'assets/vendor/katex/katex.min.css';
+      link.onload = function () { cssReady = true; maybeReady(); };
+      link.onerror = fail;
+      document.head.appendChild(link);
+      var s = document.createElement('script');
+      s.src = 'assets/vendor/katex/katex.min.js';
+      s.onload = function () { jsReady = true; maybeReady(); };
+      s.onerror = fail;
+      document.head.appendChild(s);
+    });
+    return katexLoading;
   }
   function htmlToMarkdown(root) {
     function indentBlock(text, width) {
@@ -2652,7 +2664,7 @@
     planCategory: planCategory, planCategoryOptions: planCategoryOptions, freqLabel: freqLabel,
     today: today, latestOnly: latestOnly, keepDraft: keepDraft, writeKey: writeKey, qKey: qKey, pLabel: pLabel, openTaskForm: openTaskForm,
     weekRange: weekRange, zoneNote: zoneNote, updatePomoCount: updatePomoCount, pomo: pomo, miniBridge: miniBridge,
-    API: API, token: token, popMenu: popMenu, drafts: drafts, renderMarkdown: renderMarkdown, renderMathIn: renderMathIn,
+    API: API, token: token, popMenu: popMenu, drafts: drafts, renderMarkdown: renderMarkdown, renderMathIn: renderMathIn, katexReady: katexReady, loadKatex: loadKatex,
     REQUEST_TIMEOUT_MS: REQUEST_TIMEOUT_MS, role: role, requestError: requestError, redirectToLogin: redirectToLogin, nowMs: nowMs,
     serverTime: serverTime, highlightCode: highlightCode, codeTokens: codeTokens,
     mathBlockHtml: mathBlockHtml, htmlToMarkdown: htmlToMarkdown, openAttachmentPreview: openAttachmentPreview, normalizeTask: normalizeTask, qLabel: qLabel, sLabel: sLabel,

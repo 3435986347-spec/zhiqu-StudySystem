@@ -105,6 +105,35 @@ class AiComposerTest {
     }
 
     @Test
+    @DisplayName("第一百零三轮：输入框正上方一条选项目、切档位（close / plan / manual / auto，按能力从小到大，按下看 aria-pressed）；"
+            + "左侧不再有齿轮和设置弹窗；聚焦时输入框里不再画一圈；点了就生效、最后点的那一下生效这些行为在 ws-bar-check.js 里真跑")
+    void 输入框上方的项目和档位() throws Exception {
+        String html = html();
+        int wrap = html.indexOf("<div class=\"zq-composer-wrap\">");
+        int at = html.indexOf("<div id=\"zq-ws-bar\" class=\"zq-ws-bar\" hidden>");
+        int composer = html.indexOf("<div id=\"zq-composer\" class=\"zq-composer\">");
+        assertTrue(wrap > 0 && at > wrap && composer > at, "项目和档位那一条不在输入框正上方（要在 .zq-composer-wrap 里、#zq-composer 前面）");
+        String bar = PageHeadTest.elementAt(html, at, "div");
+        assertTrue(at + bar.length() <= composer, "那一条把输入框包进去了");
+        Matcher m = Pattern.compile("<button type=\"button\" data-ws-mode=\"(\\w+)\" aria-pressed=\"false\">([^<]+)</button>").matcher(bar);
+        List<String> modes = new java.util.ArrayList<>();
+        while (m.find()) modes.add(m.group(1) + "=" + m.group(2));
+        assertEquals(List.of("OFF=close", "READ=plan", "WRITE=manual", "EXEC=auto"), modes, "档位的名字是用户定的（2026-11-02），按能力从小到大");
+        assertTrue(bar.contains("class=\"zq-ws-modes\" role=\"group\" aria-label=\"代码工作区的档位\""), "四个档位没有成组、没有名字");
+        assertTrue(bar.contains("id=\"zq-ws-project\" type=\"button\" class=\"zq-ws-project\" aria-haspopup=\"menu\" aria-expanded=\"false\""), "项目按钮不是一个会弹菜单的按钮");
+        assertFalse(html.contains("zq-ws-settings"), "左侧还有齿轮（两个地方改同一件事）");
+        String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
+        assertFalse(js.contains("openWorkspaceSettings") || js.contains("zq-wss-"), "设置弹窗还在");
+        String css = css();
+        assertEquals("box-shadow:none;", rule(css, ".zq-composer textarea:focus"), "输入框聚焦时里面又画了一圈（全站的 textarea:focus 光圈，用户截图里的「矩形框」）");
+        assertTrue(rule(css, ".zq-composer").contains("border:1px solid var(--zq-border)") && rule(css, ".zq-composer:focus-within").contains("border-color:"),
+                "外框聚焦时不变色了 —— 去掉里面那一圈以后，聚焦就没有样子了");
+        assertEquals("background:var(--zq-primary);color:var(--zq-on-primary);", rule(css, ".zq-ws-modes button[aria-pressed=\"true\"]"), "按下的档位在样式表里没有样子");
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/ws-bar-check.js"), STATIC.resolve("assets/pages/ai-assistant.js")),
+                "ws-bar-check.js 没有全绿");
+    }
+
+    @Test
     @DisplayName("产物卡片：代码草稿关掉确认框以后，卡片上还有「查看并确认」重新打开它（第九十二轮；在 node 里真跑）")
     void 代码草稿的卡片能再打开确认框() throws Exception {
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/artifact-actions-check.js"), STATIC.resolve("assets/pages/ai-assistant.js")),

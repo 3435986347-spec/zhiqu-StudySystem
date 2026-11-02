@@ -21,6 +21,12 @@ the single guarded entry point `upsertRevisionPage`. Two independent protections
   an uncertain one first resends the identical body (same idempotency key). Rename goes through the
   same queue. Consecutive `page.update` operation logs of one page within 10 minutes are merged into
   one row (`writeUpdateLog`), so the log page isn't flooded.
+- **Formulas (round 102)** — KaTeX has one loader (`loadKatex()` in `zhiqu-api.js`; ready = JS *and*
+  CSS loaded). The reading view / table cells go through `renderMathIn`; the editor gets
+  `options.math` (`ready` / `load`), loads KaTeX when the document has a `$`, and redraws its
+  formula widgets on `mathRefresh` (`MathWidget.eq` includes "was KaTeX ready", otherwise CodeMirror
+  keeps the raw-text DOM). A table cell is hydrated again when you leave it. A one-line `$$…$$` is
+  a formula in the editor too (same rule as `renderMarkdown`; a line of only `$$…$$` is a block).
 - **Draft baseline** — a revision stores `base_content_hash` (title + body) and `base_page_version`
   captured **when the agent read the page**, in memory, from the same text handed to the model.
   Apply is refused if the page changed since, if the draft has no baseline, or if the request tries

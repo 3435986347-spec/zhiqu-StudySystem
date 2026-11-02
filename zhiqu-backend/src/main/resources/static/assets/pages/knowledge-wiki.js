@@ -4,10 +4,10 @@
 // 模块里的函数互相调用、从外面换不掉 —— 所以这一段没改成 import）。
 
 let API, api, token, esc, $, $all, empty, fmtDate, safe, toast, notice, askConfirm, askText, showInfo, openModal, popMenu, state, drafts, keepDraft,
-  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule, codeTokens;
+  renderMarkdown, renderMathIn, katexReady, loadKatex, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule, codeTokens;
 export function bind(sh) {
   ({ API, api, token, esc, $, $all, empty, fmtDate, safe, toast, notice, askConfirm, askText, showInfo, openModal, popMenu, state, drafts, keepDraft,
-  renderMarkdown, renderMathIn, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule, codeTokens } = sh);
+  renderMarkdown, renderMathIn, katexReady, loadKatex, mathBlockHtml, htmlToMarkdown, openAttachmentPreview, icon, loadModule, codeTokens } = sh);
 }
 
 export const boots = { 'knowledge-wiki.html': (sh) => { bind(sh); return bootKnowledge(); } };
@@ -1110,6 +1110,8 @@ function enterWikiCmEdit(doc, p, markdown, opts) {
     onImage: function (file, from, to) { insertWikiImage(file, { from: from, to: to }); },
     renderBlock: renderMarkdown,
     hydrate: function (el) { renderMathIn(el, true); },
+    // 第一百零二轮：编辑器里的公式问 KaTeX 好了没，没好就去加载、好了重画（原来只看当时 window.katex 在不在，没有就一直是原文）
+    math: { ready: function () { return !!(katexReady && katexReady()); }, load: function () { return loadKatex ? loadKatex() : Promise.resolve(false); } },
     codeTokens: function (code, lang) { return codeTokens ? codeTokens(code, lang) : []; }
   }) };
   showWikiActionBar();

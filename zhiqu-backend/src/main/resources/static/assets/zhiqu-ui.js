@@ -109,6 +109,7 @@
     'code': '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
     'chevron-left': '<path d="m15 18-6-6 6-6"/>',
     'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+    'chevron-down': '<path d="m6 9 6 6 6-6"/>',
     'plus': '<path d="M5 12h14"/><path d="M12 5v14"/>',
     'x': '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
     'check': '<path d="M20 6 9 17l-5-5"/>',

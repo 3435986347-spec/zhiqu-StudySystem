@@ -68,6 +68,7 @@ function fixture({ failLoad = false } = {}) {
   const sh = { state, token: () => 'token', esc: String, $: (s) => elements[s] || null, $all: () => [], empty: String, fmtDate: String,
     toast: (m) => toasts.push(m), safe: (_n, fn) => Promise.resolve().then(fn), askConfirm: async () => true, askText: async () => null,
     htmlToMarkdown: () => { throw new Error('验证版编辑器不该走 htmlToMarkdown'); }, renderMarkdown: (t) => t, renderMathIn() {},
+    katexReady: () => true, loadKatex: () => Promise.resolve('壳里的加载入口'),
     drafts: { load() {}, save() {}, clear() {}, clearIf() {} },
     loadModule: (rel) => { assert.equal(rel, 'wiki-cm.js'); return failLoad ? Promise.reject(new Error('网络断了')) : Promise.resolve(cmModule); },
     api: { get: () => new Promise(() => {}), put(_p, body) { writes.push(body); return Promise.resolve({ content: body.content, version: 4 }); },
@@ -315,6 +316,9 @@ function fixture({ failLoad = false } = {}) {
     assert.equal(chose, 1);
     const o = f.mounts[0].options;
     for (const k of ['onImage', 'renderBlock', 'hydrate', 'codeTokens']) assert.equal(typeof o[k], 'function', '没给编辑器 ' + k);
+    // 第一百零二轮：编辑器里的公式问壳里同一个 KaTeX（好了没 / 去加载）
+    assert.ok(o.math && o.math.ready() === true, '编辑器拿不到「KaTeX 好了没」');
+    assert.equal(await o.math.load(), '壳里的加载入口', '编辑器去加载 KaTeX 走的不是壳里那一个入口');
   });
   await check('接入：粘贴 / 拖进的图片上传完插到当时的位置（跟着编辑移动）；上传期间换了页就不插', async () => {
     const f = fixture();
@@ -723,6 +727,84 @@ function fixture({ failLoad = false } = {}) {
       if (/zq-tok-/.test(d.spec.class || '')) marks.push(md.slice(from, to) + ':' + d.spec.class);
     });
     assert.deepEqual(marks, ['const:zq-tok-k', '1:zq-tok-n']);
+  });
+
+  // ── 第一百零二轮：公式的实时渲染 ──
+  await check('扫描：一行里的 $$…$$ 认（和 renderMarkdown 一样里面要像公式，$$10$$、转义的不算），单独占一行的记 alone；行内 $…$ 照旧', () => {
+    const text = '效果 $$\\dfrac{a}{b}$$ 和 $$10$$ 以及 \\$$x$$\n$$x^2$$\n行内 $E$';
+    assert.deepEqual(cm.displayMathRanges(text).map((m) => [m.tex, m.alone, text.slice(m.from, m.to)]),
+      [['\\dfrac{a}{b}', false, '$$\\dfrac{a}{b}$$'], ['x^2', true, '$$x^2$$']]);
+    assert.deepEqual(cm.inlineMathRanges(text).map((m) => m.tex), ['E']);
+    // 阅读 ↔ 原文的映射把一行里的 $$…$$ 当一个整体（阅读视图里它是一个公式节点）
+    const v = cm.visibleText('甲 $$x^2$$ 乙')[0];
+    assert.equal(v.text, '甲 \ufffc 乙');
+  });
+  await check('编辑器里的公式：KaTeX 没好时记着「没好」，好了发刷新 —— 块公式、行内、一行里的 $$ 都重画（不沿用画成原文的 DOM）', async () => {
+    const { EditorState, LanguageSupport, markdownLanguage } = await import(pathToFileURL(path.resolve(path.dirname(cmPath), 'vendor/codemirror/codemirror.js')).href);
+    const md = '正文 $E=mc^2$ 和 $$\\int x$$\n\n$$\nx^2\n$$\n\n结尾';
+    let ok = false;
+    const options = { math: { ready: () => ok, load: () => Promise.resolve(true) } };
+    const [mathField] = cm.blockPreviews(options);
+    const blockWidgets = (st) => { const out = []; st.field(mathField).deco.between(0, st.doc.length, (_f, _t, d) => { if (d.spec.widget) out.push(d.spec.widget); }); return out; };
+    const inlineWidgets = (st) => { const out = []; cm.inlineDecorations({ state: st, visibleRanges: [{ from: 0, to: md.length }], hasFocus: false }, options)
+      .between(0, md.length, (_f, _t, d) => { if (d.spec.widget && d.spec.widget.tex) out.push(d.spec.widget); }); return out; };
+    let st = EditorState.create({ doc: md, extensions: [mathField, new LanguageSupport(markdownLanguage)] });
+    const before = blockWidgets(st)[0], inlineBefore = inlineWidgets(st);
+    assert.equal(before.ready, false);
+    assert.deepEqual(inlineBefore.map((w) => [w.tex, w.display, w.ready]), [['E=mc^2', false, false], ['\\int x', false, false]], '一行里的 $$ 也要画（夹在字里画成行内）');
+    ok = true;
+    const quiet = st.update({}).state;
+    assert.equal(quiet.field(mathField), st.field(mathField), '什么都没变也重算了块公式');
+    st = st.update({ effects: cm.mathRefresh.of(null) }).state;
+    const after = blockWidgets(st)[0], inlineAfter = inlineWidgets(st);
+    assert.equal(after.ready, true, 'KaTeX 好了发了刷新，块公式还记着「没好」');
+    assert.equal(after.eq(before), false, '好坏不同还算同一个公式 —— 编辑器会沿用画成原文的那份 DOM');
+    assert.ok(inlineAfter.every((w) => w.ready) && inlineAfter.every((w, i) => !w.eq(inlineBefore[i])), '行内公式没重画');
+    const alone = cm.inlineDecorations({ state: EditorState.create({ doc: '$$x^2$$', extensions: [new LanguageSupport(markdownLanguage)] }), visibleRanges: [{ from: 0, to: 7 }], hasFocus: false }, options);
+    const shapes = []; alone.between(0, 7, (_f, _t, d) => { if (d.spec.widget && d.spec.widget.tex) shapes.push([d.spec.widget.display, d.spec.widget.skip]); });
+    assert.deepEqual(shapes, [[true, 2]], '单独一行的 $$x^2$$ 画成块（和阅读视图一样），点它光标落在 $$ 后面');
+    assert.deepEqual(inlineAfter.map((w) => w.skip), [1, 2], '点行内公式光标落在 $ 后面、点一行里的 $$ 落在 $$ 后面');
+    assert.equal(after.skip, 3, '点块公式光标落在 $$ 和换行后面（公式第一行开头）');
+  });
+  await check('接上：编辑器文档里有公式时去加载 KaTeX、好了发刷新，行内的装饰收到刷新会重算；表格格子离开时照样交给 KaTeX', () => {
+    const src = fs.readFileSync(path.resolve(cmPath), 'utf8').replace(/\/\/.*$/gm, '');
+    const loader = src.slice(src.indexOf('const mathLoader ='), src.indexOf('const highlight ='));
+    assert.ok(loader.includes("docText(state.doc).indexOf('$') < 0") && loader.includes('options.math.load().then((ok) => { if (ok && !this.gone) this.view.dispatch({ effects: mathRefresh.of(null) }); }'), '没在 KaTeX 好了之后发刷新：' + loader);
+    assert.ok(src.includes('livePreview(options), mathLoader(options), ...blockPreviews(options), theme,'), '编辑器没装上加载 KaTeX 的那一块');
+    const live = src.slice(src.indexOf('const livePreview ='), src.indexOf('const mathLoader ='));
+    assert.ok(live.includes('update.transactions.some(refreshed)'), '行内的装饰收到刷新不重算');
+    const out = src.slice(src.indexOf("el.addEventListener('focusout'"), src.indexOf("el.addEventListener('input'"));
+    assert.ok(out.includes('if (drawn) cell.innerHTML = drawn.innerHTML;') && out.indexOf('if (options.hydrate) options.hydrate(cell);') > out.indexOf('cell.innerHTML = drawn.innerHTML'),
+      '离开格子重画那一格之后没交给 KaTeX（截图里格子停在灰色的等宽源码）：' + out);
+  });
+  await check('KaTeX 只有一个加载入口：JS、CSS 都到了才算好，等着的先画；同时问只加载一次；加载失败说「没好」', async () => {
+    const katexSrc = apiSlice('  // KaTeX 懒加载', '  var privateMedia') + apiSlice('  function renderMathIn(', '  function htmlToMarkdown(');
+    const run = () => {
+      const appended = [], painted = [];
+      const fakeDoc = { createElement: (tag) => ({ tag }), head: { appendChild: (el) => appended.push(el) } };
+      const win = {};
+      const api = new Function('document', 'window', 'hydratePrivateMedia', katexSrc + '\nreturn { renderMathIn, loadKatex, katexReady };')(fakeDoc, win, () => {});
+      const root = (n) => ({ querySelectorAll: () => Array.from({ length: n }, (_, i) => ({ dataset: {}, classList: { contains: () => false }, getAttribute: () => 'x' + i, set innerHTML(v) { painted.push(v); } })) });
+      return { api, appended, painted, win, root };
+    };
+    const a = run();
+    a.api.renderMathIn(a.root(2));
+    const p1 = a.api.loadKatex(), p2 = a.api.loadKatex();
+    assert.equal(p1, p2, '同时问，加载了两次');
+    assert.equal(a.appended.length, 2, '应当只插一个样式表、一个脚本');
+    assert.equal(a.api.katexReady(), false);
+    a.win.katex = { renderToString: (t) => '<katex>' + t + '</katex>' };
+    a.appended.find((e) => e.tag === 'script').onload();
+    assert.equal(a.api.katexReady(), false, '只有 JS、没有 CSS 就算好了（画出来没有样式）');
+    a.appended.find((e) => e.tag === 'link').onload();
+    assert.equal(await p1, true);
+    assert.equal(a.api.katexReady(), true);
+    assert.deepEqual(a.painted, ['<katex>x0</katex>', '<katex>x1</katex>'], '等着的公式没画');
+    const b = run();
+    const pb = b.api.loadKatex();
+    b.appended.find((e) => e.tag === 'link').onerror();
+    assert.equal(await pb, false, '加载失败还说好了');
+    assert.equal(b.api.katexReady(), false);
   });
   console.log(failed ? 'RED: ' + failed : 'ALL-GREEN');
   if (failed) process.exitCode = 1;
