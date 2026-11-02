@@ -12,6 +12,9 @@ import { Api } from '../../zhiqu-cli/src/api.js';
 const http = createRequire(import.meta.url)('node:http');
 export const MODEL_PATH = '/api/harness/model/stream';
 export const OUTPUT_RESERVATION_TOKENS = 16_384;
+// 用户批过的模型配置（都是 deepseek-v4-pro / 1M）：6 是「deepseek测试专用」、1 是日常那个（第六十二、六十九轮）；
+// 23、25 是验证库里配着用户给的测试 key 的两个（第九十八轮：重跑从验证库的网关走，不碰用户平常的库和桌面应用）
+export const APPROVED_MODEL_IDS = Object.freeze([6, 1, 23, 25]);
 export const INPUT_MICRO_CNY_PER_TOKEN = 9;
 export const OUTPUT_MICRO_CNY_PER_TOKEN = 27;
 // Cache-hit input (DeepSeek v4-pro peak price, CNY 0.30 per million, checked 2026-11-02): 3 micro-CNY per 10 tokens,
@@ -120,8 +123,8 @@ export class RepositoryBroker {
     this.config = Object.fromEntries(Object.entries(DEFAULTS).map(([key, value]) => [key, options[key] === undefined ? value : options[key]]));
     for (const key of Object.keys(DEFAULTS).filter((key) => !['modelName', 'modelId'].includes(key))) positive(this.config[key], key);
     // 一本账一个模型 ID：ID 6（2026-10-16 用户指定）或 ID 1（2026-10-18 用户要求补被预算打断的题），都是 deepseek-v4-pro / 1M
-    if (![6, 1].includes(this.config.modelId) || this.config.modelName !== 'deepseek-v4-pro' || this.config.contextWindow !== 1_000_000) {
-      throw new Error('Broker model must be 6 or 1 / deepseek-v4-pro with 1000000 context');
+    if (!APPROVED_MODEL_IDS.includes(this.config.modelId) || this.config.modelName !== 'deepseek-v4-pro' || this.config.contextWindow !== 1_000_000) {
+      throw new Error(`Broker model must be one of ${APPROVED_MODEL_IDS.join(' / ')} / deepseek-v4-pro with 1000000 context`);
     }
     if (this.config.minRequestIntervalMs < 1200 || this.config.maxRequestsPerEpisode > 200) throw new Error('Pacing/request limits exceed approved scope');
     // 一本账的钱数上限：第六十九轮用户批的 ¥50；第八十七轮重跑用户定 ¥100（2026-10-31，同样的保守口径）

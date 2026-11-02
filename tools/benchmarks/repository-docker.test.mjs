@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { auditScript, BROKER_PORT, compareTrees, continuationPlan, controlProblems, pilotLedger, previousEpisode, replayLedger, rerunPlan, parseArgs, fnmatchEscape, GENERATED_EXCLUDES, generationDockerfile, globMatch,
+import { auditScript, BROKER_PORT, compareTrees, continuationPlan, controlProblems, episodeSchedule, pilotLedger, predictionRows, previousEpisode, replayLedger, rerunPlan, parseArgs, fnmatchEscape, GENERATED_EXCLUDES, generationDockerfile, globMatch,
   harnessArgv, installExcludes, parseAudit, policyFingerprint, policyScript, REPO_SPECS, workerPayload } from './repository-docker.mjs';
 
 test('网络规则：默认丢弃、先挡 Docker DNS 和 53 端口、只放行 loopback 和 broker 的那一个端口、IPv6 全丢', () => {
@@ -236,4 +236,33 @@ test('基础设施补跑：列了的题、网关错且 0 轮的那次不算起�
   assert.equal(previousEpisode({ root, config: {} }, 'x', 'rerun-20261031-'), 'rerun-20261031-a', '没有补跑一节就照旧算');
   put('rerun-20261031-b', 'x', failed);
   assert.equal(previousEpisode(ctx, 'x', 'rerun-20261031-'), 'rerun-20261031-b', '补跑那次又这样：算数，不再补');
+});
+
+// 第九十八轮（用户 2026-11-02「跑，四题各三遍」）：重跑只跑列出的几题、每题几遍 —— 一本账、一个上限，每一遍各自一份记录、各自评分
+test('rerun subset and repeats: listed tasks only, 1..5 repeats, distinct episode IDs and directories per repeat; one repeat keeps the old layout', () => {
+  const base = { rerun: { run_prefix: 'rerun98-20261102-', ledger_prefix: 'rerun98-20261102' }, budget: { limit_rmb: 100, input_token_limit: 9_000_000, output_token_limit: 700_000 } };
+  const ids = ['django__django-12308', 'sympy__sympy-23950'];
+  const plan = rerunPlan({ ...base, rerun: { ...base.rerun, instance_ids: ids, repeats: 3 } });
+  assert.deepEqual([plan.instance_ids, plan.repeats], [ids, 3]);
+  assert.equal(rerunPlan(base).repeats, 1, '不写就是一遍');
+  assert.equal(rerunPlan(base).instance_ids, null, '不写就是全部');
+  for (const [name, extra] of [['empty', { instance_ids: [] }], ['dup', { instance_ids: [ids[0], ids[0]] }], ['zero', { repeats: 0 }], ['six', { repeats: 6 }], ['float', { repeats: 1.5 }]]) {
+    assert.throws(() => rerunPlan({ ...base, rerun: { ...base.rerun, ...extra } }), /rerun/, name);
+  }
+  const tasks = ['django__django-12308', 'django__django-15987', 'sympy__sympy-23950'].map((instance_id) => ({ instance_id }));
+  const schedule = episodeSchedule(tasks, { subset: ids, repeats: 3 });
+  assert.deepEqual(schedule.map((s) => s.episodeId), ['django__django-12308.r1', 'sympy__sympy-23950.r1', 'django__django-12308.r2', 'sympy__sympy-23950.r2',
+    'django__django-12308.r3', 'sympy__sympy-23950.r3'], '一遍一遍轮着跑（不是一题连跑三遍）：网关那一侧的波动摊到各题上');
+  assert.deepEqual(schedule.map((s) => s.rel).slice(0, 2), [path.join('r1', ids[0]), path.join('r1', ids[1])]);
+  assert.ok(schedule.every((s) => /^[A-Za-z0-9_.-]{1,128}$/.test(s.episodeId)), 'broker 的 episode ID 只认这些字符');
+  assert.deepEqual(episodeSchedule(tasks).map((s) => [s.episodeId, s.rel]), tasks.map((t) => [t.instance_id, t.instance_id]), '一遍：和原来一样');
+  assert.throws(() => episodeSchedule(tasks, { subset: ['nope'] }), /unknown task/);
+});
+
+test('predictions stay ten fixed rows: a task without a collected patch is an empty patch, still in the denominator', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-pred-'));
+  fs.mkdirSync(path.join(dir, 'a'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'a', 'prediction.json'), JSON.stringify({ instance_id: 'a', model_name_or_path: 'x', model_patch: 'diff' }));
+  const rows = predictionRows([{ instance_id: 'a' }, { instance_id: 'b' }], (task) => path.join(dir, task.instance_id, 'prediction.json'));
+  assert.deepEqual(rows, [{ instance_id: 'a', model_name_or_path: 'x', model_patch: 'diff' }, { instance_id: 'b', model_name_or_path: 'zhiqu-cli-deepseek-v4-pro', model_patch: '' }]);
 });

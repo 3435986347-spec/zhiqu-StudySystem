@@ -117,16 +117,16 @@ test('request bytes and context upper bound are enforced before dispatch', async
   assert.equal((await request(f2.endpoint.server, { payload })).status, 400); assert.equal(f2.calls.length, 0);
 });
 
-test('a ledger is for one approved model: ID 6 or ID 1 (both deepseek-v4-pro / 1M); any other model or window is refused', (t) => {
+test('a ledger is for one approved model: ID 6, 1, 23 or 25 (all deepseek-v4-pro / 1M; 23 / 25 are the verify-DB test keys, round 98); any other model or window is refused', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-broker-model-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  for (const modelId of [6, 1]) {
+  for (const modelId of [6, 1, 23, 25]) {
     const broker = new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, `ok-${modelId}.jsonl`), modelId });
     assert.equal(broker.snapshot().modelId, modelId);
     broker.releaseLock();
   }
   for (const [name, options] of [['id2', { modelId: 2 }], ['name', { modelId: 1, modelName: 'deepseek-chat' }], ['window', { modelId: 1, contextWindow: 64_000 }]]) {
-    assert.throws(() => new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, name + '.jsonl'), ...options }), /6 or 1/);
+    assert.throws(() => new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, name + '.jsonl'), ...options }), /6 \/ 1 \/ 23 \/ 25/);
   }
 });
 

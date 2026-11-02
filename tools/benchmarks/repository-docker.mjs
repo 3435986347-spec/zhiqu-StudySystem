@@ -803,6 +803,14 @@ function limitsAfter(books, base = PILOT_LIMITS) {
   return limits;
 }
 
+/** 固定十行的预测：每题一行，没有补丁文件的题是空补丁（还在分母里） */
+export function predictionRows(tasks, fileFor) {
+  return tasks.map((task) => {
+    const file = fileFor(task);
+    return fs.existsSync(file) ? readJson(file) : { instance_id: task.instance_id, model_name_or_path: 'zhiqu-cli-deepseek-v4-pro', model_patch: '' };
+  });
+}
+
 /** 这一题在之前同一类（pilot- / continuation-）的正式运行里已经起过 episode（不管结果）：返回那次的 runId */
 export function previousEpisode(ctx, instanceId, kind = 'pilot-') {
   const runs = path.join(ctx.root, 'runs');
@@ -849,9 +857,35 @@ export function rerunPlan(config) {
   if (!/^rerun(\d{2,3})?-\d{8}-$/.test(again.run_prefix || '') || !/^rerun(\d{2,3})?-\d{8}$/.test(again.ledger_prefix || '') || again.run_prefix !== `${again.ledger_prefix}-`
       || !(budget.limit_rmb > 0 && budget.limit_rmb <= RERUN_MAX_RMB) || !Number.isSafeInteger(budget.input_token_limit) || !Number.isSafeInteger(budget.output_token_limit)
       || budget.input_token_limit * 9 + budget.output_token_limit * 27 > Math.round(budget.limit_rmb * 1_000_000)) throw new Error('run-config rerun is missing or inconsistent');
-  return { ...again, limits: { limitMicroCny: Math.round(budget.limit_rmb * 1_000_000), inputTokenLimit: budget.input_token_limit, outputTokenLimit: budget.output_token_limit } };
+  // 同一题多跑几遍（第九十八轮，用户 2026-11-02「跑，四题各三遍」）：只跑列出的几题、每题 repeats 遍，一本账、一个上限
+  const ids = again.instance_ids;
+  if (ids !== undefined && (!Array.isArray(ids) || !ids.length || new Set(ids).size !== ids.length || !ids.every((id) => typeof id === 'string' && id))) {
+    throw new Error('run-config rerun.instance_ids must be a non-empty list of distinct task IDs');
+  }
+  const repeats = again.repeats ?? 1;
+  if (!Number.isSafeInteger(repeats) || repeats < 1 || repeats > 5) throw new Error('run-config rerun.repeats must be 1..5');
+  return { ...again, instance_ids: ids || null, repeats,
+    limits: { limitMicroCny: Math.round(budget.limit_rmb * 1_000_000), inputTokenLimit: budget.input_token_limit, outputTokenLimit: budget.output_token_limit } };
 }
-export const RERUN_MAX_RMB = 100;   // 用户 2026-10-31 定的上限（保守口径），broker 那边同一个数
+export const RERUN_MAX_RMB = 100;
+
+/**
+ * 这一次要跑的 episode：遍 × 题（第九十八轮）。只跑一遍时和原来一样（episode ID、目录都是题号）；
+ * 多遍时 episode ID 是「题号.r2」、目录是「r2/题号」—— 同一题的几遍各自一份记录、各自评分。
+ */
+export function episodeSchedule(tasks, { subset = null, repeats = 1 } = {}) {
+  const picked = subset ? tasks.filter((task) => subset.includes(task.instance_id)) : tasks;
+  if (subset && picked.length !== subset.length) throw new Error('run-config lists an unknown task');
+  const out = [];
+  for (let repeat = 1; repeat <= repeats; repeat++) {
+    for (const task of picked) {
+      out.push(repeats > 1
+        ? { task, repeat, episodeId: `${task.instance_id}.r${repeat}`, rel: path.join(`r${repeat}`, task.instance_id) }
+        : { task, repeat, episodeId: task.instance_id, rel: task.instance_id });
+    }
+  }
+  return out;
+}   // 用户 2026-10-31 定的上限（保守口径），broker 那边同一个数
 
 async function formalRun(ctx, { continuation = false } = {}) {
   requireRuntime(ctx);
@@ -859,6 +893,7 @@ async function formalRun(ctx, { continuation = false } = {}) {
   const plan = continuation ? continuationPlan(ctx.config) : null;
   if (plan && !plan.instance_ids.every((id) => ctx.tasks.some((task) => task.instance_id === id))) throw new Error('continuation lists an unknown task');
   const again = plan ? null : rerunPlan(ctx.config);
+  const schedule = episodeSchedule(ctx.tasks, { subset: plan ? plan.instance_ids : again?.instance_ids, repeats: again?.repeats || 1 });
   const modelId = plan ? plan.model.id : ctx.config.model.id;
   const kind = plan ? 'continuation-' : again ? again.run_prefix : 'pilot-';
   const { model, token, upstream } = await gatewayModel(ctx.config, modelId);
@@ -890,14 +925,14 @@ async function formalRun(ctx, { continuation = false } = {}) {
       throw new Error(`Calibration did not verify model ${modelId} / deepseek-v4-pro / 1M through the broker`);
     }
 
-    for (const task of plan ? ctx.tasks.filter((t) => plan.instance_ids.includes(t.instance_id)) : ctx.tasks) {
-      const earlier = previousEpisode(ctx, task.instance_id, kind);
-      if (earlier) { results[task.instance_id] = { status: 'already_run', run: earlier }; continue; }   // 协议：不重生成择优
-      const taskDir = path.join(dir, task.instance_id); fs.mkdirSync(taskDir, { recursive: true });
+    for (const { task, repeat, episodeId, rel } of schedule) {
+      const earlier = previousEpisode(ctx, rel, kind);
+      if (earlier) { results[rel] = { status: 'already_run', run: earlier }; continue; }   // 协议：不重生成择优
+      const taskDir = path.join(dir, rel); fs.mkdirSync(taskDir, { recursive: true });
       const before = await broker.status();
-      if (before.halted) { results[task.instance_id] = { status: 'budget_stopped', reason: before.haltReason }; writeJson(path.join(taskDir, 'result.json'), results[task.instance_id]); continue; }
+      if (before.halted) { results[rel] = { status: 'budget_stopped', reason: before.haltReason }; writeJson(path.join(taskDir, 'result.json'), results[rel]); continue; }
       const env = new TaskEnv({ ctx, task, tag: runId.slice(-6) });
-      const record = { instance_id: task.instance_id, started_at: new Date().toISOString() };
+      const record = { instance_id: task.instance_id, repeat, started_at: new Date().toISOString() };
       try {
         await env.up(broker);
         record.policy_sha256 = env.policySha256;
@@ -906,11 +941,11 @@ async function formalRun(ctx, { continuation = false } = {}) {
         if (!probes.ok) { record.status = 'isolation_failed'; record.probes = probes; }
         else {
           const cap = capability();
-          await broker.register(task.instance_id, cap);
+          await broker.register(episodeId, cap);
           const payload = workerPayload({ task, model, brokerIp: env.brokerIp, capability: cap, config: ctx.config });
           const episode = await runEpisodeProcess(env, ['/opt/node/bin/node', '/opt/zhiqu/tools/benchmarks/repository-worker.mjs'],
             JSON.stringify(payload), ctx.config.limits.episode_seconds * 1000 + 120_000);
-          record.revoked = (await broker.revoke(task.instance_id)).revoked;
+          record.revoked = (await broker.revoke(episodeId)).revoked;
           record.process = { status: episode.status, code: episode.code, stderr_tail: episode.stderr.slice(-2000) };
           let diagnostic = null; try { diagnostic = JSON.parse(episode.stdout.trim().split('\n').at(-1)); } catch { /* 记成缺 */ }
           if (diagnostic) writeJson(path.join(taskDir, 'worker.json'), diagnostic);
@@ -927,11 +962,11 @@ async function formalRun(ctx, { continuation = false } = {}) {
         record.collection = collected.code === 0 ? JSON.parse(collected.stdout) : { error: collected.stderr.slice(-2000) };
       } catch (error) { record.status = 'infrastructure_error'; record.error = String(error.message || error); }
       record.cleanup = await env.down();
-      record.broker_after = (await broker.status()).episodes.find((e) => e.episodeId === task.instance_id) || null;
+      record.broker_after = (await broker.status()).episodes.find((e) => e.episodeId === episodeId) || null;
       record.finished_at = new Date().toISOString();
-      results[task.instance_id] = record;
+      results[rel] = record;
       writeJson(path.join(taskDir, 'result.json'), record);
-      process.stderr.write(`${task.instance_id}: ${record.generation_status || record.status} patch=${record.collection?.patch_bytes ?? '-'}\n`);
+      process.stderr.write(`${rel}: ${record.generation_status || record.status} patch=${record.collection?.patch_bytes ?? '-'}\n`);
     }
   } finally {
     const budget = await broker.status().catch(() => null);
@@ -950,9 +985,22 @@ async function formalRun(ctx, { continuation = false } = {}) {
     const file = path.join(from, task.instance_id, 'collected/prediction.json');
     return fs.existsSync(file) ? readJson(file) : { instance_id: task.instance_id, model_name_or_path: 'zhiqu-cli-deepseek-v4-pro', model_patch: '' };
   });
+  writeJson(path.join(dir, 'results.json'), results);
+  if ((again?.repeats || 1) > 1) {
+    // 多遍：每一遍各出一份固定十行的预测（这一遍没跑的题是空补丁）、各评一次 —— 官方评分一次只认一题一个补丁
+    const graded = [];
+    for (let repeat = 1; repeat <= again.repeats; repeat++) {
+      const repeatRows = predictionRows(ctx.tasks, (task) => path.join(dir, `r${repeat}`, task.instance_id, 'collected/prediction.json'));
+      const file = path.join(dir, `predictions-r${repeat}.jsonl`);
+      fs.writeFileSync(file, repeatRows.map((row) => JSON.stringify(row)).join('\n') + '\n', { mode: 0o600 });
+      const one = await grade(ctx, 'candidate', file);
+      writeJson(path.join(dir, `grade-r${repeat}.json`), one);
+      graded.push({ repeat, validation: one.validation });
+    }
+    return { run_id: runId, dir, graded };
+  }
   const predictions = path.join(dir, 'predictions.jsonl');
   fs.writeFileSync(predictions, rows.map((row) => JSON.stringify(row)).join('\n') + '\n', { mode: 0o600 });
-  writeJson(path.join(dir, 'results.json'), results);
   const graded = await grade(ctx, 'candidate', predictions);
   writeJson(path.join(dir, 'grade.json'), graded);
   return { run_id: runId, dir, graded: graded.validation };

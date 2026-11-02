@@ -125,14 +125,14 @@ test('a different actual model is refused before editing the repository', async 
   assert.equal(fs.existsSync(path.join(data.base, 'unexpected.txt')), false);
 });
 
-test('only the two approved DeepSeek IDs pass validation; any other ID is refused before a request', async (t) => {
-  for (const id of [6, 1]) {
+test('only the approved DeepSeek IDs pass validation (6, 1; 23 / 25 are the verify-DB test keys, round 98); any other ID is refused before a request', async (t) => {
+  for (const id of [6, 1, 23, 25]) {
     const data = fixture(t, [{ text: 'Finished.' }]);
     assert.doesNotThrow(() => validateRepositoryPayload({ ...data.payload, model: { ...data.payload.model, id } }), String(id));
   }
-  for (const id of [2, 3, 0, '6']) {
+  for (const id of [2, 3, 0, '6', 24]) {
     const data = fixture(t, [{ text: 'Finished.' }]);
-    assert.throws(() => validateRepositoryPayload({ ...data.payload, model: { ...data.payload.model, id } }), /ID 6 or 1/, String(id));
+    assert.throws(() => validateRepositoryPayload({ ...data.payload, model: { ...data.payload.model, id } }), /ID 6 \/ 1 \/ 23 \/ 25/, String(id));
   }
 });
 
