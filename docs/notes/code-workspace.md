@@ -14,7 +14,8 @@ AI 助手原本只是个「work agent」（排计划、写 Wiki、做检索）�
 **回落到 OFF 而不是就近取一档** —— 把 `mode: ON` 写错成一个不存在的值时，该得到「没开」，
 不是「开了个小的」。三档都已实现：READ 读、WRITE 写草稿（确认后落盘）、EXEC 再加执行沙箱。
 
-**档位与根目录现在能从界面切换**（第一百零三轮起在 AI 助手输入框正上方那一条：项目按钮 —— 最近的项目 + 「选择文件夹…」、一排档位按钮 close / plan / manual / auto = OFF / READ / WRITE / EXEC，点了就生效，`PUT /api/workspace/settings`；原来是左侧面板的 ⚙ + 设置弹窗），
+**档位与根目录现在能从界面切换**（第一百零五轮起：AI 助手输入框正上方是项目按钮 —— 最近的项目 + 「选择文件夹…」；输入框下面工具条上一个按钮写当前档位，点开向上拉起面板，close / plan / manual / auto = OFF / READ / WRITE / EXEC，选了面板马上收、名字马上变，只发一个 `PUT /api/workspace/settings`，回的状态直接画；在途时最后点的生效。第一百零三轮是上方一排按钮 + 左侧一块文件树，第一百零五轮都去掉了，`/workspace/files`、`/search`、`/status` 页面不再用，接口留着）；
+「选择文件夹…」弹**系统自带的选择框**（`POST /api/workspace/pick-folder`，管理员 + 回环；后端和用户在同一台电脑才开得了工作区，所以由后端起 `osascript` / PowerShell / `zenity`，浏览器的文件框给不出绝对路径。见 `WorkspaceFolderDialog`：路径走环境变量不拼进脚本、一次只开一个、10 分钟没选就关；弹不了退回页面里一层层点的选择器）。
 不必再改 `application.yml`；用户的选择持久化在 `~/.zhiqu/workspace-state.json`
 （桌面每次重启新 JVM，不持久化就每次回到 OFF）。文件夹选择器走 `GET /api/workspace/browse`
 （只列目录、管理员 + 回环）。**本机起验证用的后端要带 `--app.workspace.state-file=<临时路径>`**：这份文件一旦存在，
@@ -192,6 +193,7 @@ CODE_AGENT：读门动作词没有「做」，写门没有「放在」。两层�
 
 - 输入框旁的**「代码」按钮**（`contextOptions.codeMode`，只认字面 `true`，只在工作区生效时出现）。
   按下就不再猜意图、并给写工具；但**绕不过**工作区的回环 / 管理员 / 可读前提。
+  **第一百零五轮按钮去掉了**（用户：「感觉多余了」）：档位开着（生效了）每句都带 `codeMode: true`，想普通聊天切到 close；`codeMode` 的语义和后端的门不变。
   `AgentPlanDecision.codeAgentIntent(message, options)` / `codeWriteIntent(message, options)`
   是这个 OR 的唯一出处，建图与执行共用。
 - `buildIntent`：造（做一个/写个/生成一个…）+ 成品名词 / 语言名 / 算法词，或造 + 放进文件夹。

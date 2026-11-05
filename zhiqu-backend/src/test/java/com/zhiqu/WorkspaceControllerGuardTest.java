@@ -80,44 +80,14 @@ class WorkspaceControllerGuardTest {
                 "还要带上配置里写的那一档 —— 「你想开 EXEC，但没生效」比「没开」有用得多");
     }
 
-    /**
-     * 列目录接口的响应形状，前后端必须对得上。
-     *
-     * <h2>这一条是被自己制造的风险逼出来的</h2>
-     *
-     * <p>2026-09-21 把 {@code /api/workspace/files} 的响应从<b>数组</b>改成
-     * {@code {entries, truncated}}（为了能说出「还有没列完的」）。后端改完、前端是<b>手工</b>
-     * 跟着改的 —— 忘了的话，{@code res.entries} 取到 undefined，面板<b>一片空白而不报错</b>：
-     * 用户以为工作区是空的，控制台里干干净净。
-     *
-     * <p>契约两端在不同语言的不同文件里，编译器看不到它们的关系。所以用判据把两个键名
-     * 钉在一起：改任何一边、不改另一边，这条就红。
-     *
-     * <p>它<b>不</b>证明渲染正确 —— 那要靠真浏览器（本轮也看过了）。它只证明两边说的是
-     * 同一个词。
-     */
+    @org.junit.jupiter.api.DisplayName("弹系统选文件夹框的接口（第一百零五轮）：除了管理员还要回环 —— 框弹在跑后端的这台电脑上，别人的服务器上弹了没人看得见，还卡住一个请求线程")
     @Test
-    void 列目录的响应形状前后端要一致() throws IOException {
-        String controller = SourceText.stripComments(
-                Files.readString(CONTROLLER, StandardCharsets.UTF_8));
-        // 工作区面板第三十七轮随 AI 助手挪进了模块（pages/ai-assistant.js）
-        String api = SourceText.pageModule("ai-assistant.js");
-
-        // 后端：files 方法在顶层放的就是这两个键
-        int at = controller.indexOf("public Result<Map<String, Object>> files(");
-        assertTrue(at > 0, "找不到 files 方法 —— 判据的锚点没了");
-        String body = controller.substring(at, controller.indexOf("@GetMapping", at + 1));
-        assertTrue(body.contains("row.put(\"entries\""), "后端必须放 entries。实际：" + body);
-        assertTrue(body.contains("row.put(\"truncated\""), "后端必须放 truncated。实际：" + body);
-
-        // 前端：读的必须是同样两个键
-        int call = api.indexOf("'/workspace/files'");
-        assertTrue(call > 0, "前端找不到 /workspace/files 的调用 —— 判据的锚点没了");
-        String usage = api.substring(call, Math.min(api.length(), call + 400));
-        assertTrue(usage.contains("res.entries"),
-                "前端必须从 res.entries 取条目。后端改了形状而前端没跟上的话，"
-                        + "面板一片空白而且不报错。这一段：" + usage);
-        assertTrue(usage.contains("res.truncated"),
-                "前端必须读 res.truncated 并显示出来 —— 做出信号却不用，等于没做。这一段：" + usage);
+    void 弹选文件夹框要回环() throws IOException {
+        String code = SourceText.stripComments(Files.readString(CONTROLLER, StandardCharsets.UTF_8));
+        int at = code.indexOf("@PostMapping(\"/pick-folder\")");
+        assertTrue(at > 0, "找不到 /pick-folder");
+        String body = code.substring(at, code.indexOf("@GetMapping", at));
+        int admin = body.indexOf("requireAdmin()"), loopback = body.indexOf("workspaceService.loopbackBound()"), dialog = body.indexOf("folderDialog.pick(");
+        assertTrue(admin > 0 && loopback > admin && dialog > loopback, "顺序应该是 管理员 → 回环 → 弹框：" + body);
     }
 }

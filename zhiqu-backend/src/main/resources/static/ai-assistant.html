@@ -6,11 +6,11 @@
   <title>AI 助手 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261102-r103a" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261102-r103a">
-  <link rel="manifest" href="manifest.json?v=20261102-r103a">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261105-r105a" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261105-r105a">
+  <link rel="manifest" href="manifest.json?v=20261105-r105a">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261102-r103a">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261105-r105a">
 </head>
 <body>
   <div class="zq-app">
@@ -46,28 +46,6 @@
                 <button id="zq-add-url" class="zq-btn-ghost">添加 URL</button>
               </div>
               <div id="zq-sources" class="zq-ai-sources"></div>
-
-              <!-- 代码工作区。整块默认 hidden：工作区没开时（绝大多数部署）连标题都不出现，
-                   由 zhiqu-api.js 根据 /api/workspace/status 决定显不显示。
-                   非管理员拿不到那个接口，这一块同样不显示。 -->
-              <section id="zq-ws" class="zq-ai-ws" hidden>
-                <div class="zq-ai-side-head">
-                  <div>
-                    <strong class="zq-ai-side-title">代码工作区</strong>
-                    <span id="zq-ws-sub" class="zq-ai-side-sub"></span>
-                  </div>
-                  <!-- 选项目、切档位在输入框上方那一条（第一百零三轮）；这里只看文件 -->
-                  <div class="zq-ai-ws-tools">
-                    <button id="zq-ws-up" class="zq-btn-ghost" hidden>上一层</button>
-                  </div>
-                </div>
-                <div id="zq-ws-search-row" class="zq-ai-ws-search" hidden>
-                  <input id="zq-ws-q" type="search" placeholder="搜索工作区（回车）" aria-label="搜索工作区" autocomplete="off" />
-                  <button id="zq-ws-back" class="zq-btn-ghost" hidden>返回目录</button>
-                </div>
-                <div id="zq-ws-path" class="zq-mono zq-ai-ws-path"></div>
-                <div id="zq-ws-tree" class="zq-ai-ws-tree"></div>
-              </section>
             </aside>
 
             <!-- 对话这一栏。拖文件进来时整栏盖一层「松开即可上传」（#zq-drop-overlay，第四十四轮），所以它是定位容器（样式表的 .zq-ai-chat-col） -->
@@ -87,19 +65,12 @@
                   <span class="zq-ai-drop-icon" data-zq-icon="paperclip"></span>
                   <span id="zq-drop-status">拖拽文件到此处 · 支持图片、PDF、Excel、文本（csv / txt / md / json）</span>
                 </div>
-                <!-- 代码工作区：选项目、切档位（第一百零三轮，照 Claude Code / Codex 那类产品放在输入框上方）。
-                     和左侧「代码工作区」同一个条件：拿得到 /workspace/settings（管理员）才出现，由 ai-assistant.js 的 paintWorkspaceBar 决定 -->
+                <!-- 代码工作区的项目（第一百零三轮，照 Claude Code / Codex 那类产品放在输入框上方；档位在输入框下面那条工具里，第一百零五轮）。
+                     拿得到 /workspace/settings（管理员）才出现，由 ai-assistant.js 的 paintWorkspaceBar 决定 -->
                 <div id="zq-ws-bar" class="zq-ws-bar" hidden>
                   <div class="zq-ws-pick">
                     <button id="zq-ws-project" type="button" class="zq-ws-project" aria-haspopup="menu" aria-expanded="false"><span data-zq-icon="folder"></span><span id="zq-ws-project-name" class="zq-ws-project-name">选择项目</span><span data-zq-icon="chevron-down"></span></button>
                     <div id="zq-ws-menu" class="zq-ws-menu" role="menu" aria-label="选择项目" hidden></div>
-                  </div>
-                  <div class="zq-ws-modes" role="group" aria-label="代码工作区的档位">
-                    <!-- 名字是用户定的（2026-11-02）：close / plan / manual / auto，按能力从小到大；每一档能做什么在悬停说明里 -->
-                    <button type="button" data-ws-mode="OFF" aria-pressed="false">close</button>
-                    <button type="button" data-ws-mode="READ" aria-pressed="false">plan</button>
-                    <button type="button" data-ws-mode="WRITE" aria-pressed="false">manual</button>
-                    <button type="button" data-ws-mode="EXEC" aria-pressed="false">auto</button>
                   </div>
                   <div id="zq-ws-bar-note" class="zq-ws-bar-note" role="status"></div>
                 </div>
@@ -109,9 +80,11 @@
                   <textarea id="zq-draft" rows="2" aria-label="给 AI 发消息" placeholder="给 AI 发消息（⌘/Ctrl + 回车发送，回车换行）"></textarea>
                   <div class="zq-composer-bar">
                     <button id="zq-chat-upload" type="button" class="zq-composer-icon" title="上传文件（也可以拖进来、直接粘贴）" aria-label="上传文件"><span data-zq-icon="paperclip"></span></button>
-                    <!-- 「代码」：显式让 coding agent 在工作区里干活（读、写草稿、运行）。只在工作区生效时出现，
-                         由 zhiqu-api.js 的 loadWorkspace 决定。按下后这一轮不再靠关键词猜 —— 见 ContextOptionKeys.CODE_MODE。 -->
-                    <button id="zq-code" type="button" class="zq-chip" aria-pressed="false" hidden aria-label="代码" title="让 AI 直接在代码工作区里读、写（草稿确认后落盘）、运行"><span data-zq-icon="code"></span><span class="zq-chip-label">代码</span></button>
+                    <!-- 档位：按钮显示当前这一档，点开向上拉起面板（第一百零五轮）。面板贴着输入框（.zq-composer）往上弹，不贴按钮：窄屏也不出界 -->
+                    <div id="zq-tier-pick" class="zq-tier-pick" hidden>
+                      <button id="zq-tier" type="button" class="zq-chip zq-tier" aria-haspopup="menu" aria-expanded="false" aria-label="代码工作区的档位"><span id="zq-tier-name">close</span><span data-zq-icon="chevron-down"></span></button>
+                      <div id="zq-tier-menu" class="zq-tier-menu" role="menu" aria-label="代码工作区的档位" hidden></div>
+                    </div>
                     <button id="zq-web" type="button" class="zq-chip" aria-pressed="false" aria-label="联网" title="允许 AI 联网搜索"><span data-zq-icon="globe"></span><span class="zq-chip-label">联网</span></button>
                     <button id="zq-think" type="button" class="zq-chip" aria-pressed="false" aria-label="深度思考" title="让模型先想清楚再回答（更慢）"><span data-zq-icon="lightbulb"></span><span class="zq-chip-label">深度思考</span></button>
                     <select id="zq-model" class="zq-select zq-composer-model" aria-label="模型"><option value="">默认模型</option></select>
@@ -140,7 +113,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261102-r103a"></script>
-  <script src="assets/zhiqu-api.js?v=20261102-r103a"></script>
+  <script src="assets/zhiqu-ui.js?v=20261105-r105a"></script>
+  <script src="assets/zhiqu-api.js?v=20261105-r105a"></script>
 </body>
 </html>

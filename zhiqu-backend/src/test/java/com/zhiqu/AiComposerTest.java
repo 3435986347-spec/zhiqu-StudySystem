@@ -41,7 +41,7 @@ class AiComposerTest {
     }
 
     @Test
-    @DisplayName("输入区是一个框：附件在上、输入框单独一行、工具一条在下（附件、三个开关、模型、发送都在框里）；拖拽框不在框里")
+    @DisplayName("输入区是一个框：附件在上、输入框单独一行、工具一条在下（附件、档位、两个开关、模型、发送都在框里）；拖拽框不在框里")
     void 输入区的结构() throws IOException {
         String html = html();
         int at = html.indexOf("<div id=\"zq-composer\" class=\"zq-composer\">");
@@ -54,12 +54,12 @@ class AiComposerTest {
         String textarea = box.substring(draft, box.indexOf('>', draft));
         assertFalse(textarea.contains("style="), "输入框又写了内联样式（原来 min-width:200px，和按钮挤在一排）：" + textarea);
         String tools = PageHeadTest.elementAt(box, bar, "div");
-        for (String id : List.of("zq-chat-upload", "zq-code", "zq-web", "zq-think", "zq-model", "zq-send")) {
+        for (String id : List.of("zq-chat-upload", "zq-tier", "zq-web", "zq-think", "zq-model", "zq-send")) {
             assertEquals(1, html.split("id=\"" + id + "\"", -1).length - 1, "#" + id + " 在页面上应该恰好一个");
             assertTrue(tools.contains("id=\"" + id + "\""), "#" + id + " 不在输入框底下那条工具里");
         }
         assertFalse(box.contains("id=\"zq-drop-zone\""), "拖拽框又进了输入框");
-        for (String id : List.of("zq-web", "zq-think", "zq-code")) {
+        for (String id : List.of("zq-web", "zq-think")) {
             Matcher b = Pattern.compile("<button id=\"" + id + "\"[^>]*>").matcher(tools);
             assertTrue(b.find() && b.group().contains("class=\"zq-chip\"") && b.group().contains("aria-pressed=\"false\"") && b.group().contains("aria-label=\""),
                     "#" + id + " 要是 .zq-chip、带 aria-pressed 和 aria-label（手机上只剩图标）");
@@ -70,7 +70,7 @@ class AiComposerTest {
     }
 
     @Test
-    @DisplayName("联网 / 深度思考 / 代码按下的样子只在样式表里（按 aria-pressed）；JS 不再写内联样式、不写死字重")
+    @DisplayName("联网 / 深度思考按下的样子只在样式表里（按 aria-pressed）；JS 不再写内联样式、不写死字重")
     void 开关的样子在样式表里() throws IOException {
         String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
         String toggle = SourceText.functionBody(js, "function setAiToggleState(kind, on)");
@@ -105,30 +105,41 @@ class AiComposerTest {
     }
 
     @Test
-    @DisplayName("第一百零三轮：输入框正上方一条选项目、切档位（close / plan / manual / auto，按能力从小到大，按下看 aria-pressed）；"
-            + "左侧不再有齿轮和设置弹窗；聚焦时输入框里不再画一圈；点了就生效、最后点的那一下生效这些行为在 ws-bar-check.js 里真跑")
-    void 输入框上方的项目和档位() throws Exception {
+    @DisplayName("第一百零五轮：项目在输入框上方，档位在输入框下面那条工具里（一个按钮，点开向上拉起面板，面板贴着输入框不出界）；左侧的工作区、齿轮、设置弹窗都没了；"
+            + "聚焦时输入框里不再画一圈；选了马上变、只发一个请求、弹系统的选文件夹框这些行为在 ws-bar-check.js 里真跑")
+    void 项目在上档位在下() throws Exception {
         String html = html();
         int wrap = html.indexOf("<div class=\"zq-composer-wrap\">");
         int at = html.indexOf("<div id=\"zq-ws-bar\" class=\"zq-ws-bar\" hidden>");
         int composer = html.indexOf("<div id=\"zq-composer\" class=\"zq-composer\">");
-        assertTrue(wrap > 0 && at > wrap && composer > at, "项目和档位那一条不在输入框正上方（要在 .zq-composer-wrap 里、#zq-composer 前面）");
+        assertTrue(wrap > 0 && at > wrap && composer > at, "项目那一条不在输入框正上方（要在 .zq-composer-wrap 里、#zq-composer 前面）");
         String bar = PageHeadTest.elementAt(html, at, "div");
         assertTrue(at + bar.length() <= composer, "那一条把输入框包进去了");
-        Matcher m = Pattern.compile("<button type=\"button\" data-ws-mode=\"(\\w+)\" aria-pressed=\"false\">([^<]+)</button>").matcher(bar);
-        List<String> modes = new java.util.ArrayList<>();
-        while (m.find()) modes.add(m.group(1) + "=" + m.group(2));
-        assertEquals(List.of("OFF=close", "READ=plan", "WRITE=manual", "EXEC=auto"), modes, "档位的名字是用户定的（2026-11-02），按能力从小到大");
-        assertTrue(bar.contains("class=\"zq-ws-modes\" role=\"group\" aria-label=\"代码工作区的档位\""), "四个档位没有成组、没有名字");
         assertTrue(bar.contains("id=\"zq-ws-project\" type=\"button\" class=\"zq-ws-project\" aria-haspopup=\"menu\" aria-expanded=\"false\""), "项目按钮不是一个会弹菜单的按钮");
-        assertFalse(html.contains("zq-ws-settings"), "左侧还有齿轮（两个地方改同一件事）");
+        assertFalse(bar.contains("data-ws-mode"), "档位又回到输入框上方了");
+        String box = PageHeadTest.elementAt(html, composer, "div");
+        String tools = PageHeadTest.elementAt(box, box.indexOf("<div class=\"zq-composer-bar\">"), "div");
+        assertTrue(tools.contains("<div id=\"zq-tier-pick\" class=\"zq-tier-pick\" hidden>"), "档位不在输入框下面那条工具里，或者默认没藏（不是管理员也看得见）");
+        assertTrue(tools.contains("id=\"zq-tier\" type=\"button\" class=\"zq-chip zq-tier\" aria-haspopup=\"menu\" aria-expanded=\"false\""), "档位按钮不是一个会弹面板的按钮");
+        assertTrue(tools.contains("id=\"zq-tier-menu\" class=\"zq-tier-menu\" role=\"menu\""), "没有档位面板");
+        for (String gone : List.of("id=\"zq-ws\"", "zq-ws-tree", "zq-ws-settings", "zq-ai-ws")) {
+            assertFalse(html.contains(gone), "左侧的工作区还在：" + gone);
+        }
         String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
-        assertFalse(js.contains("openWorkspaceSettings") || js.contains("zq-wss-"), "设置弹窗还在");
+        for (String gone : List.of("openWorkspaceSettings", "paintWorkspace(", "searchWorkspace", "'/workspace/files", "'/workspace/search")) {
+            assertFalse(js.contains(gone), "左侧工作区的代码还在：" + gone);
+        }
         String css = css();
+        assertFalse(css.contains(".zq-ai-ws") || css.contains(".zq-ws-entry") || css.contains(".zq-ws-modes"), "左侧工作区 / 旧档位条的样式还在");
+        assertTrue(rule(css, ".zq-composer").contains("position:relative"), "面板要贴着输入框，.zq-composer 得是定位容器");
+        assertFalse(rule(css, ".zq-tier-pick").contains("position"), ".zq-tier-pick 不能是定位容器：面板贴着按钮，窄屏会出界");
+        String menu = rule(css, ".zq-tier-menu");
+        assertTrue(menu.contains("position:absolute") && menu.contains("bottom:calc(100% + 8px)") && menu.contains("max-width:100%") && menu.contains("animation:zqPullUp"),
+                "面板要向上拉起、不比输入框宽：" + menu);
+        assertTrue(rule(css, ".zq-tier-item").contains("white-space:normal"), "全站的 button 不换行：说明长的那一档会伸出面板（真浏览器里看到过）");
         assertEquals("box-shadow:none;", rule(css, ".zq-composer textarea:focus"), "输入框聚焦时里面又画了一圈（全站的 textarea:focus 光圈，用户截图里的「矩形框」）");
         assertTrue(rule(css, ".zq-composer").contains("border:1px solid var(--zq-border)") && rule(css, ".zq-composer:focus-within").contains("border-color:"),
                 "外框聚焦时不变色了 —— 去掉里面那一圈以后，聚焦就没有样子了");
-        assertEquals("background:var(--zq-primary);color:var(--zq-on-primary);", rule(css, ".zq-ws-modes button[aria-pressed=\"true\"]"), "按下的档位在样式表里没有样子");
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/ws-bar-check.js"), STATIC.resolve("assets/pages/ai-assistant.js")),
                 "ws-bar-check.js 没有全绿");
     }

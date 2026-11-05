@@ -42,7 +42,7 @@ import java.util.Set;
  * 配置阶段不解析主机名，连接是否可用由实际模型请求判断；每条出站请求前仍校验地址格式。
  *
  * <p>工具调用的限额（输出上限、读超时）由调用方按场景给出，见 {@link ToolTurnLimits}：
- * Wiki 与关键词触发的循环要快（4096 token / 25 秒），显式「代码」模式要能一次写出一整个文件。
+ * Wiki 与关键词触发的循环要快（4096 token / 25 秒），显式的代码模式要能一次写出一整个文件。
  */
 @lombok.extern.slf4j.Slf4j
 @Component
@@ -65,7 +65,7 @@ public class ModelProviderClient {
      * <p>{@link #QUICK} 是原来唯一的一档（4096 token / 25 秒），给「查一下、读一页」这种快速轮次。
      * 2026-09-23 用户在命令行里让 coding agent 写一个马里奥小游戏：模型要在<b>一次</b>工具调用里写出
      * 整个 HTML，25 秒读超时把它掐断（日志里是 69 秒后的 I/O error），就算不超时，4096 token 也写不完
-     * 一整个文件 —— 参数会被截成半截 JSON。显式「代码」模式因此要另一档，见 {@code CodeLoopBudget}。
+     * 一整个文件 —— 参数会被截成半截 JSON。显式的代码模式因此要另一档，见 {@code CodeLoopBudget}。
      */
     public record ToolTurnLimits(int maxTokens, int readTimeoutMillis, Double temperature) {
         public static final ToolTurnLimits QUICK = new ToolTurnLimits(MODEL_MAX_TOKENS, 25_000);

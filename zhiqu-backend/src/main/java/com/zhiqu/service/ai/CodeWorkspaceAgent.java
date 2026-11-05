@@ -174,7 +174,7 @@ public class CodeWorkspaceAgent {
         boolean canExec = workspaceExecutor.enabled();
         // 项目式引导才给「把里程碑排成任务」的能力：别的语境下模型不该往用户日历里塞东西
         boolean canPlanMilestones = AgentPlanDecision.projectIntent(userMessage);
-        // 显式按了「代码」给大预算，关键词触发给小预算 —— 理由见 CodeLoopBudget
+        // 代码模式（档位开着）给大预算，关键词触发给小预算 —— 理由见 CodeLoopBudget
         CodeLoopBudget budget = CodeLoopBudget.forRequest(AgentPlanDecision.codeModeRequested(contextOptions));
         LoopState loop = new LoopState();
         Result viaJs = jsEngine == null || !jsEngine.enabled() ? null

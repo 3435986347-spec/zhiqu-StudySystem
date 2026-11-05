@@ -410,7 +410,7 @@
     return pending;
   }
   async function requestWithRetry(path, options, method, upload, keyed) {
-    var timeoutMs = upload ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+    var timeoutMs = (options && options.timeoutMs) || (upload ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS);   // timeoutMs：要等用户的（系统的选文件夹框）
     // 有没有哪一下可能已经到了服务器、做了（断网、超时、502…、还在处理）—— 429 不算。要看每一下，不只看最后一下：
     // 第一下超时（其实做了）、最后一下 429，原来就按「确定没做」把键扔了，学生再点拿新键，又做一遍
     var maybeDone = false;
@@ -473,7 +473,7 @@
   var api = {
     get: function (p) { return request(p, { method: 'GET' }); },
     download: download,
-    post: function (p, b, h) { return request(p, { method: 'POST', body: JSON.stringify(b || {}), headers: h || {} }); },
+    post: function (p, b, h, o) { return request(p, Object.assign({ method: 'POST', body: JSON.stringify(b || {}), headers: h || {} }, o)); },
     put: function (p, b) { return request(p, { method: 'PUT', body: b == null ? undefined : JSON.stringify(b) }); },
     del: function (p) { return request(p, { method: 'DELETE' }); },
     upload: function (p, file, fields, headers) {

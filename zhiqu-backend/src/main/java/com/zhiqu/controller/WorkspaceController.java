@@ -4,9 +4,11 @@ import com.zhiqu.common.BusinessException;
 import com.zhiqu.common.Result;
 import com.zhiqu.security.SecurityUtils;
 import com.zhiqu.service.AdminGuard;
+import com.zhiqu.service.workspace.WorkspaceFolderDialog;
 import com.zhiqu.service.workspace.WorkspaceService;
 import com.zhiqu.service.workspace.WorkspaceSettingsStore;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -39,10 +41,12 @@ public class WorkspaceController {
 
     private final WorkspaceService workspaceService;
     private final AdminGuard adminGuard;
+    private final WorkspaceFolderDialog folderDialog;
 
-    public WorkspaceController(WorkspaceService workspaceService, AdminGuard adminGuard) {
+    public WorkspaceController(WorkspaceService workspaceService, AdminGuard adminGuard, WorkspaceFolderDialog folderDialog) {
         this.workspaceService = workspaceService;
         this.adminGuard = adminGuard;
+        this.folderDialog = folderDialog;
     }
 
     private void requireAdmin() {
@@ -105,6 +109,24 @@ public class WorkspaceController {
         String root = body.get("root") == null ? "" : String.valueOf(body.get("root"));
         workspaceService.applySettings(mode, root);
         return settings();
+    }
+
+    /**
+     * 弹系统的文件夹选择框（第一百零五轮），等用户选完才回。管理员 + 回环：框弹在跑后端的这台电脑上，
+     * 不是回环就是别人的服务器，弹了也没人看得见，还会卡住一个请求线程。
+     */
+    @PostMapping("/pick-folder")
+    public Result<Map<String, Object>> pickFolder(@RequestBody(required = false) Map<String, Object> body) {
+        requireAdmin();
+        if (!workspaceService.loopbackBound()) {
+            throw new BusinessException("选文件夹只在绑定回环地址的本机实例上可用");
+        }
+        WorkspaceFolderDialog.Pick pick = folderDialog.pick(body == null || body.get("start") == null ? "" : String.valueOf(body.get("start")));
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("path", pick.path());
+        row.put("cancelled", pick.cancelled());
+        row.put("unavailable", pick.unavailable());
+        return Result.success(row);
     }
 
     /**

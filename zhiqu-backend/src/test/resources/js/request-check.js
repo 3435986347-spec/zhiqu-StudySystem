@@ -121,6 +121,15 @@ async function rejects(p) { try { await p; return null; } catch (e) { return e; 
     e8 && /秒没有回应，不确定有没有保存上/.test(e8.message) && Date.now() - t0 < 2000 && calls.length === 3 && e8.uncertain === true,
     e8 && e8.message + ' calls=' + calls.length);
 
+  // 第一百零五轮：要等用户的请求（系统的选文件夹框）自己给超时。这里默认调成了 60 毫秒，150 毫秒才回：不认 timeoutMs 就会超时重来
+  script((url, opts) => new Promise((resolve, reject) => {
+    opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    setTimeout(() => res(200, JSON.stringify({ code: 200, message: 'ok', data: '选好了' })).then(resolve, reject), 150);
+  }));
+  const waited = await mod.request('/x', { method: 'POST', body: '{"t":9}', timeoutMs: 1000 }).catch((e) => e);
+  judge('自己给了 timeoutMs 的请求按它等（要等用户选的，不能 30 秒就算失败），只发一次', waited === '选好了' && calls.length === 1, String(waited) + ' calls=' + calls.length);
+  judge('api.post 能带这个选项', src.includes("post: function (p, b, h, o) { return request(p, Object.assign({ method: 'POST', body: JSON.stringify(b || {}), headers: h || {} }, o)); }"));
+
   script(res(401, ''));
   redirected = 0;
   const e9 = await rejects(mod.request('/x', { method: 'GET' }));

@@ -480,16 +480,16 @@ public record AgentPlanDecision(
     }
 
     /**
-     * 同上，再加上用户<b>显式</b>按下的「代码」开关。建图侧与执行侧都调这一个。
+     * 同上，再加上用户<b>显式</b>选的档位（前端在档位生效时发 {@code codeMode}，第一百零五轮之前是一个「代码」按钮）。建图侧与执行侧都调这一个。
      *
-     * <p>开关与关键词是 OR，不是替代：没按按钮时关键词门照常工作。
+     * <p>档位与关键词是 OR，不是替代：请求里没有 {@code codeMode} 时关键词门照常工作。
      */
     public static boolean codeAgentIntent(String message, Map<String, Object> contextOptions) {
         return codeModeRequested(contextOptions) || codeAgentIntent(message);
     }
 
     /**
-     * 用户按下了「代码」按钮 —— 只认字面 {@code true}。
+     * 代码工作区开着，这一句走代码模式 —— 只认字面 {@code true}。
      *
      * <p>{@code "true"} 字符串、{@code 1} 都不算：这个键决定要不要把改文件的工具交给模型，
      * 认错一个值的代价是用户没要的写权限。
@@ -616,7 +616,7 @@ public record AgentPlanDecision(
     }
 
     /**
-     * 同上，再加上「代码」开关。按下开关就是明说「这一轮让你动手」——
+     * 同上，再加上档位。选了能写的档位就是明说「让你动手」——
      * 写工具照样只产出草稿，要他看过 diff 点确认才落盘，所以这里不再二次猜他想不想写。
      */
     public static boolean codeWriteIntent(String message, Map<String, Object> contextOptions) {

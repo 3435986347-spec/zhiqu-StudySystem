@@ -55,12 +55,13 @@ public final class ContextOptionKeys {
     public static final String QUERY = "query";
 
     /**
-     * 客户端发：用户按下了输入框旁的「代码」按钮 —— <b>显式</b>要 coding agent 干活。
+     * 客户端发：代码工作区开着（档位不是 close 而且生效了）—— <b>显式</b>要 coding agent 干活。
+     * 第一百零五轮之前是输入框旁一个「代码」按钮，用户说多余（选了项目和档位就是要它干活），去掉了。
      *
      * <p>由来（2026-09-23）：工作区已经在界面上切到「读+写+运行」，用户说
      * 「帮我做一个小游戏，放在test文件夹里」，却得到「我无法直接操作你的电脑」。
      * 关键词门漏了（动作词表里没有「做」，写词表里没有「放在」），图里根本没有 CODE_AGENT。
-     * 词表永远补不全；用户亲手按下的开关不需要猜。只认字面 {@code true}。
+     * 词表永远补不全；用户亲手选的档位不需要猜。只认字面 {@code true}。
      */
     public static final String CODE_MODE = "codeMode";
 

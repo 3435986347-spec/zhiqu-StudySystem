@@ -1237,7 +1237,7 @@ public class AiServiceImpl implements AiService {
             // 放宽 selectedSourceIds 与「用户选定的资料必须被尊重」冲突（见 ADR 与
             // VerifierServiceImpl.SELECTED_SOURCES_UNUSABLE 那条 BLOCKER）；
             // includeWiki 活壳恒发 true，放宽是空操作。
-            // 按下「代码」时不改写（第五十四轮）：改写是一整次模型往返、排在写回答前面，而「帮我写个动画」本来就不是在资料里找东西 ——
+            // 代码模式（档位开着）不改写（第五十四轮）：改写是一整次模型往返、排在写回答前面，而「帮我写个动画」本来就不是在资料里找东西 ——
             // 用户在桌面应用里每问一句都要多等这一趟（慢模型一趟几十秒）
             if (s.notebookContextRows.isEmpty() && !AgentPlanDecision.codeModeRequested(s.contextOptions)) {
                 String rewritten = rewriteRetrievalQuery(s.config, s.limitedMessage);
