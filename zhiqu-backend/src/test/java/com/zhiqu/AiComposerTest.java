@@ -70,6 +70,18 @@ class AiComposerTest {
     }
 
     @Test
+    @DisplayName("模型、深度思考、联网刷新后还在（用户：「每次刷新后…回到默认模型，深度思考等状态也没有保留」）：打开页面时读记下的，行为在 composer-prefs-check.js 里真跑")
+    void 输入框下面的选择刷新后还在() throws Exception {
+        String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
+        String boot = SourceText.functionBody(js, "async function bootAiAssistant()");
+        assertTrue(boot.contains("restoreAiToggles();"), "打开页面时没有读记下的开关");
+        assertFalse(boot.contains("setAiToggleState('web', false)") || boot.contains("setAiToggleState('think', false)"), "打开页面又把开关写死成关");
+        assertTrue(boot.contains("loadAiModelSelect()"), "打开页面没有取模型列表");
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/composer-prefs-check.js"), STATIC.resolve("assets/pages/ai-assistant.js")),
+                "composer-prefs-check.js 没有全绿");
+    }
+
+    @Test
     @DisplayName("联网 / 深度思考按下的样子只在样式表里（按 aria-pressed）；JS 不再写内联样式、不写死字重")
     void 开关的样子在样式表里() throws IOException {
         String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
@@ -136,7 +148,8 @@ class AiComposerTest {
         String menu = rule(css, ".zq-tier-menu");
         assertTrue(menu.contains("position:absolute") && menu.contains("bottom:calc(100% + 8px)") && menu.contains("max-width:100%") && menu.contains("animation:zqPullUp"),
                 "面板要向上拉起、不比输入框宽：" + menu);
-        assertTrue(rule(css, ".zq-tier-item").contains("white-space:normal"), "全站的 button 不换行：说明长的那一档会伸出面板（真浏览器里看到过）");
+        assertTrue(menu.contains("width:150px"), "面板只写名字，不该还是放说明时的宽度：" + menu);
+        assertFalse(css.contains("zq-tier-item-desc") || css.contains("zq-tier-item-name") || js.contains("zq-tier-item-desc"), "档位下面的小字还在（用户：「去掉档位下面的小字」）");
         assertEquals("box-shadow:none;", rule(css, ".zq-composer textarea:focus"), "输入框聚焦时里面又画了一圈（全站的 textarea:focus 光圈，用户截图里的「矩形框」）");
         assertTrue(rule(css, ".zq-composer").contains("border:1px solid var(--zq-border)") && rule(css, ".zq-composer:focus-within").contains("border-color:"),
                 "外框聚焦时不变色了 —— 去掉里面那一圈以后，聚焦就没有样子了");

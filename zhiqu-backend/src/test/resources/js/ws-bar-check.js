@@ -33,8 +33,8 @@ function setup({ status, storage } = {}) {
   const tierMenu = node(); tierMenu.hidden = true;
   Object.defineProperty(tierMenu, 'innerHTML', { set(html) {
     this._html = html;
-    tierItems = [...html.matchAll(/data-ws-mode="(\w+)" aria-checked="(true|false)">.*?zq-tier-item-name">([^<]*)<.*?zq-tier-item-desc">([^<]*)</g)]
-      .map((m) => Object.assign(node({ 'data-ws-mode': m[1], 'aria-checked': m[2] }), { name: m[3], desc: m[4] }));
+    tierItems = [...html.matchAll(/data-ws-mode="(\w+)" aria-checked="(true|false)" title="([^"]*)">([^<]*)<\/button>/g)]
+      .map((m) => Object.assign(node({ 'data-ws-mode': m[1], 'aria-checked': m[2] }), { name: m[4], tip: m[3] }));
   }, get() { return this._html; } });
   const projectMenu = node(); projectMenu.hidden = true;
   Object.defineProperty(projectMenu, 'innerHTML', { set(html) {
@@ -83,11 +83,12 @@ const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
 const on = { selectedMode: 'READ', selectedRoot: '/w/a', enabled: true };
 
-check('名字照用户定的：close / plan / manual / auto 对着 OFF / READ / WRITE / EXEC，面板里按能力从小到大，每档一句说明', () => {
+check('名字照用户定的：close / plan / manual / auto 对着 OFF / READ / WRITE / EXEC，面板里按能力从小到大；只写名字（用户：「去掉档位下面的小字」），说明在悬停提示里', () => {
   const t = setup({ status: on });
   assert.deepEqual(t.api.WS_MODE_NAME, { OFF: 'close', READ: 'plan', WRITE: 'manual', EXEC: 'auto' });
   assert.deepEqual(t.openTier().map((i) => [i.getAttribute('data-ws-mode'), i.name]), [['OFF', 'close'], ['READ', 'plan'], ['WRITE', 'manual'], ['EXEC', 'auto']]);
-  assert.ok(t.tierItems().every((i) => i.desc.length > 8), '每档要有一句说明');
+  assert.ok(t.tierItems().every((i) => i.tip === t.api.WS_MODE_DESC[i.getAttribute('data-ws-mode')]), '每档的悬停提示要是它那一句说明');
+  assert.ok(!/<span/.test(t.tierMenu.innerHTML), '档位下面的小字又回来了');
 });
 
 check('画出来：按钮写当前这一档、项目名是文件夹名（完整路径在悬停说明里）、没选项目写「选择项目」；不是管理员两处都不露', () => {

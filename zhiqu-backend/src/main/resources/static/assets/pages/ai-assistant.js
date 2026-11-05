@@ -13,8 +13,7 @@ export function bind(sh) {
 export const boots = { 'ai-assistant.html': (sh) => { bind(sh); startWaitTicker(); return bootAiAssistant(); } };
 
 async function bootAiAssistant() {
-  setAiToggleState('web', false);
-  setAiToggleState('think', false);
+  restoreAiToggles();
   var webBtn = $('#zq-web'), thinkBtn = $('#zq-think'), sendBtn = $('#zq-send'), draft = $('#zq-draft');
   if (webBtn) webBtn.onclick = function () { aiToggle('web'); };
   if (thinkBtn) thinkBtn.onclick = function () { aiToggle('think'); };
@@ -98,21 +97,6 @@ function chooseAiFiles(cb) {
     if (files.length) cb(files);
   };
   input.click();
-}
-
-var AI_TOGGLE_IDS = { web: 'zq-web', think: 'zq-think' };
-function setAiToggleState(kind, on) {
-  var button = document.getElementById(AI_TOGGLE_IDS[kind]);
-  if (!button) return;
-  button.dataset.on = on ? '1' : '0';
-  // 按下的样子由样式表按 aria-pressed 画（.zq-chip，第四十四轮）；原来在这里一项一项写内联样式，还写死了字重 600
-  button.setAttribute('aria-pressed', on ? 'true' : 'false');
-}
-
-function aiToggle(k) {
-  var button = document.getElementById(AI_TOGGLE_IDS[k]);
-  if (!button) return;
-  setAiToggleState(k, button.dataset.on !== '1');
 }
 
 function setAiDropState(text, mode) {
@@ -310,8 +294,52 @@ async function uploadAiFiles(files, attachToNextMessage) {
   toast('上传完成：' + summary + (firstError ? '（' + firstError + '）' : ''),
     errorCount && !(readyCount || imageCount) ? 'error' : undefined);
 }
+// ───────────────────────── 输入框下面的选择（模型、深度思考、联网）：刷新、重开都还在
+// 用户 2026-11-06：「每次刷新后ai助手下面的模型就会回到默认模型，深度思考等状态也没有保留，很影响体验」。
+// 只记在这台浏览器。按用户分开：模型 ID 是各人的，公用电脑上换个人登录不接上一个人的。存不了（隐私窗口）、存的是坏数据都不炸，只管这一页。
+// 退出登录不删：这不是内容，重新登录还接着用（草稿才要删）。
+function composerPrefKey() {
+  var uid = state.user && state.user.id;
+  return uid == null ? null : 'zq.ai.composer.' + uid;
+}
+function composerPrefs() {
+  var key = composerPrefKey(); if (!key) return {};
+  try {
+    var v = JSON.parse(localStorage.getItem(key) || '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch (e) { return {}; }
+}
+function saveComposerPref(name, value) {
+  var key = composerPrefKey(); if (!key) return;
+  try {
+    var p = composerPrefs();
+    p[name] = value;
+    localStorage.setItem(key, JSON.stringify(p));
+  } catch (e) { /* 存不了就只管这一页 */ }
+}
+var AI_TOGGLE_IDS = { web: 'zq-web', think: 'zq-think' };
+function setAiToggleState(kind, on) {
+  var button = document.getElementById(AI_TOGGLE_IDS[kind]);
+  if (!button) return;
+  button.dataset.on = on ? '1' : '0';
+  // 按下的样子由样式表按 aria-pressed 画（.zq-chip，第四十四轮）；原来在这里一项一项写内联样式，还写死了字重 600
+  button.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+function restoreAiToggles() {
+  var p = composerPrefs();
+  setAiToggleState('web', p.web === true);
+  setAiToggleState('think', p.think === true);
+}
+function aiToggle(k) {
+  var button = document.getElementById(AI_TOGGLE_IDS[k]);
+  if (!button) return;
+  var on = button.dataset.on !== '1';
+  setAiToggleState(k, on);
+  saveComposerPref(k, on);
+}
 async function loadAiModelSelect() {
   var sel = $('#zq-model'); if (!sel) return;
+  sel.onchange = function () { saveComposerPref('model', sel.value); };
   try {
     var models = normalizeModelList(await api.get('/ai/models'));
     // 一个能用的模型都没有时不能再写「默认模型」—— 像是有一个；新用户发出第一句才看到一行红字（2026-10-03 走主流程）
@@ -319,9 +347,13 @@ async function loadAiModelSelect() {
     sel.innerHTML = '<option value="">' + (state.aiNoModel ? '还没有可用的模型' : '默认模型') + '</option>' + (models || []).map(function (m) {
       return '<option value="' + m.id + '">' + esc(m.label || m.displayName || m.modelName) + '</option>';
     }).join('');
+    // 记的那个被删了就回到默认（不去选一个不存在的项）；取列表失败走不到这里，记的不会被擦掉
+    var want = String(composerPrefs().model || '');
+    if ((models || []).some(function (m) { return String(m.id) === want; })) sel.value = want;
     if (!(state.messages || []).length) renderAiMessages();
   } catch (e) { /* 保持默认项 */ }
 }
+// ───────────────────────── 输入框下面的选择到此为止
 /**
  * 对话区空着的时候说点什么（2026-10-03 走主流程）：原来新用户进来是一片空白 —— 不知道有没有模型、能让它做什么。
  * 示例照着真能触发的说法写（出计划要「制定 / 生成」，写进知识库要「整理到知识库」），点一下填进输入框，不直接发。
@@ -2067,8 +2099,7 @@ function toggleTierMenu() {
   if (wsMenuOpen && wsMenuOpen.menu === menu) { closeWorkspaceMenu(); return; }
   var current = wsStatus.selectedMode || 'OFF';
   menu.innerHTML = WS_MODE_ORDER.map(function (m) {
-    return '<button type="button" role="menuitemradio" class="zq-tier-item" data-ws-mode="' + m + '" aria-checked="' + (m === current) + '">'
-      + '<span class="zq-tier-item-name">' + esc(WS_MODE_NAME[m]) + '</span><span class="zq-tier-item-desc">' + esc(WS_MODE_DESC[m]) + '</span></button>';
+    return '<button type="button" role="menuitemradio" class="zq-tier-item" data-ws-mode="' + m + '" aria-checked="' + (m === current) + '" title="' + esc(WS_MODE_DESC[m]) + '">' + esc(WS_MODE_NAME[m]) + '</button>';
   }).join('');
   $all('[data-ws-mode]', menu).forEach(function (b) {
     b.onclick = function () { chooseTier(b.getAttribute('data-ws-mode')); };

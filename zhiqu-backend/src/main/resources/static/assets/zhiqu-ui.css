@@ -823,12 +823,10 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-tier-pick{flex:none;}
 .zq-tier .zq-icon{width:12px;height:12px;}
 .zq-tier[aria-expanded="true"]{background:var(--zq-sb-active-bg);color:var(--zq-text);}
-.zq-tier-menu{position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:360px;max-width:100%;padding:5px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);box-shadow:var(--zq-sh2);animation:zqPullUp .14s ease-out;}
-.zq-tier-item{display:block;width:100%;padding:8px 10px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text);font-size:var(--zq-fs-sm);text-align:left;white-space:normal;cursor:pointer;}
+.zq-tier-menu{position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:150px;max-width:100%;padding:5px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);box-shadow:var(--zq-sh2);animation:zqPullUp .14s ease-out;}
+.zq-tier-item{display:block;width:100%;padding:8px 10px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text);font-size:var(--zq-fs-sm);text-align:left;cursor:pointer;}
 .zq-tier-item:hover{background:var(--zq-card-soft);}
 .zq-tier-item[aria-checked="true"]{background:var(--zq-tint);}
-.zq-tier-item-name{display:block;}
-.zq-tier-item-desc{display:block;margin-top:2px;font-size:var(--zq-fs-2xs);line-height:1.5;color:var(--zq-text3);}
 @keyframes zqPullUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
 @media (prefers-reduced-motion:reduce){.zq-tier-menu{animation:none;}}
 /* 拖文件进对话这一栏时整栏盖的那一层（ai-assistant.js 的 bindAiDropZone 给 #zq-chat-col 加 is-dragging） */
