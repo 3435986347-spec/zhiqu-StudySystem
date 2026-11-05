@@ -95,18 +95,8 @@ async function call(method, path, body) {
     fs.writeFileSync(tokenFile, token, { mode: 0o600 });
     await call('PUT', '/user/profile', { nickname: '林舟', school: '星河科技', major: '市场部 · 产品运营' });
 
-    const tasks = [
-      { title: '准备周五的季度汇报', description: '数据截至 9 月 30 日，先出大纲再补图表', quadrant: 1, priority: 2, startTime: at(0, 10, 0), durationMinutes: 90, deadline: at(2, 18) },
-      { title: '和设计部对齐官网首页需求', description: '带上上周的用户访谈结论', quadrant: 2, priority: 1, startTime: at(0, 15, 0), durationMinutes: 60, deadline: at(0, 16) },
-      { title: '回复星河客户的报价邮件', quadrant: 3, priority: 1, startTime: at(0, 9, 30), durationMinutes: 30, deadline: at(0, 11) },
-      { title: '梳理下季度 OKR 草案', quadrant: 2, priority: 1, startTime: at(1, 14, 0), durationMinutes: 60, deadline: at(4, 18) },
-      { title: '提交 9 月报销单', quadrant: 3, priority: 0, startTime: at(1, 11, 0), durationMinutes: 20, deadline: at(3, 12) },
-      { title: '约新同事做一次 1:1', quadrant: 2, priority: 1, startTime: at(2, 16, 0), durationMinutes: 30, deadline: at(2, 17) },
-      { title: '整理旧项目文档', quadrant: 4, priority: 0, startTime: at(4, 15, 0), durationMinutes: 60, deadline: at(4, 18) },
-    ];
-    const ids = [];
-    for (const t of tasks) ids.push((await call('POST', '/task', Object.assign({ status: 0, reminderOffsets: [] }, t))).id);
     // 这周已经过去的那几天各放一两件做完的事 —— 不然在周末、周一跑，看板的本周日历几乎是空的
+    // 要先于下面的待办建：任务页新建的排在前面，后建的话周五跑出来的图前八行全是灰的（第一百零六轮）
     const weekday = new Date(Date.now() + 8 * 3600e3).getUTCDay() || 7;   // 1=周一 … 7=周日
     const done = [['发出周会纪要', 10], ['更新竞品对比表', 14], ['和财务确认预算', 11], ['评审活动落地页文案', 16],
       ['整理客户反馈', 10], ['跟进合同盖章', 15], ['写渠道合作方案', 9], ['复盘上周投放数据', 14], ['准备面试题', 11], ['回访老客户', 16]];
@@ -117,6 +107,17 @@ async function call(method, path, body) {
         await call('PUT', `/task/${t.id}/status?status=2`);
       }
     }
+    const tasks = [
+      { title: '准备季度汇报', description: '数据截至 9 月 30 日，先出大纲再补图表', quadrant: 1, priority: 2, startTime: at(0, 10, 0), durationMinutes: 90, deadline: at(2, 18) },
+      { title: '和设计部对齐官网首页需求', description: '带上上周的用户访谈结论', quadrant: 2, priority: 1, startTime: at(0, 15, 0), durationMinutes: 60, deadline: at(0, 16) },
+      { title: '回复星河客户的报价邮件', quadrant: 3, priority: 1, startTime: at(0, 9, 30), durationMinutes: 30, deadline: at(0, 11) },
+      { title: '梳理下季度 OKR 草案', quadrant: 2, priority: 1, startTime: at(1, 14, 0), durationMinutes: 60, deadline: at(4, 18) },
+      { title: '提交 9 月报销单', quadrant: 3, priority: 0, startTime: at(1, 11, 0), durationMinutes: 20, deadline: at(3, 12) },
+      { title: '约新同事做一次 1:1', quadrant: 2, priority: 1, startTime: at(2, 16, 0), durationMinutes: 30, deadline: at(2, 17) },
+      { title: '整理旧项目文档', quadrant: 4, priority: 0, startTime: at(4, 15, 0), durationMinutes: 60, deadline: at(4, 18) },
+    ];
+    const ids = [];
+    for (const t of tasks) ids.push((await call('POST', '/task', Object.assign({ status: 0, reminderOffsets: [] }, t))).id);
     await call('PUT', `/task/${ids[2]}/status?status=1`);   // 邮件：进行中
     await call('POST', '/record', { taskId: ids[0], durationMinutes: 25, note: '汇报大纲' });
     await call('POST', '/record', { taskId: ids[0], durationMinutes: 25, note: '拉数据' });
