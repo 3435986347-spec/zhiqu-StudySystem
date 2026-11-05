@@ -1,6 +1,6 @@
 // 复杂的活、很长的输入（用户 2026-09-27：「提高处理复杂任务的能力和长上下文输入时的分析和工作能力」
 // 「叫它干一个活不要一直偏离然后一直修正」）。
-//   - 任务清单：先列步骤再做，清单置顶在系统提示里（压缩之后也在），没做完就收尾会被推一次；
+//   - 任务清单：先列步骤再做，清单在历史里、隔几轮再说一遍（压缩之后补一条，第一百零四轮起不进系统提示），没做完就收尾会被推一次；
 //   - 用户这次的原话：对话压缩掉了原文之后，原话仍然置顶 —— 摘要是转述，约束条件在转述里最容易走样；
 //   - 很长的输入：超过窗口一定比例就存成文件、让模型分段读，而不是一整块塞进去被服务器裁掉或被供应商拒绝；
 //   - 压缩：记录太长时分块滚动摘要（原来从中间砍掉一段，那段里做的决定就没了），用户说过的原话逐字保留。
@@ -35,7 +35,7 @@ test('任务清单工具三档都有（plan 档列计划正用得上）', () => 
   }
 });
 
-test('列了清单：终端里显示出来，下一次调模型时置顶在系统提示里，记进会话（/resume 能恢复）', async () => {
+test('列了清单：终端里显示出来，记进会话（/resume 能恢复）；不进系统提示（改一次清单整段缓存失效，第一百零四轮）', async () => {
   const ctx = makeCtx({ replies: [
     { calls: [TODOS(['读懂登录流程', 'completed'], ['给登录加限流', 'in_progress'], ['跑 auth 测试', 'pending'])] },
     { text: '都做完了？' }] });
@@ -43,10 +43,8 @@ test('列了清单：终端里显示出来，下一次调模型时置顶在系�
   assert.match(ctx.ui.text(), /任务清单 1\/3/);
   assert.match(ctx.ui.text(), /☑ 读懂登录流程/);
   assert.match(ctx.ui.text(), /◐ 给登录加限流/);
-  const sys = systemOf(ctx.api.requests[1]);
-  assert.match(sys, /## 任务清单/);
-  assert.match(sys, /\[ \] 跑 auth 测试/);
-  assert.match(sys, /\[~\] 给登录加限流/);
+  assert.ok(!/## 任务清单/.test(systemOf(ctx.api.requests[1])), '清单又进了系统提示');
+  assert.match(JSON.stringify(ctx.api.requests[1].messages), /跑 auth 测试/, '下一次请求里要看得到清单（update_todos 那次调用）');
   const loaded = ctx.store.load(ctx.session.id);
   assert.deepEqual(loaded.todos.map((t) => t.status), ['completed', 'in_progress', 'pending']);
 });
@@ -75,7 +73,6 @@ test('不推：在问用户问题（问号结尾）、plan 档、清单全做完
   const done = makeCtx({ replies: [{ calls: [TODOS(['a', 'completed'])] }, { text: '做完了' }] });
   await runTurn(done, '做');
   assert.equal(done.api.requests.length, 2);
-  assert.ok(!/## 任务清单/.test(systemOf(done.api.requests[1])), '全做完了就不用再占系统提示');
 });
 
 test('清单参数不对：说清哪里不对，不改原来的清单', async () => {

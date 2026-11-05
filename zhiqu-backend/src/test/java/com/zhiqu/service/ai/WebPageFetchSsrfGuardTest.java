@@ -65,7 +65,16 @@ class WebPageFetchSsrfGuardTest {
 
     @Test
     void 无法解析的域名也要拒绝而不是当成抓取失败() {
-        // .invalid 是 RFC 2606 保留后缀，永远解析不出来
+        // .invalid 是 RFC 2606 保留后缀，永远解析不出来 —— 除非这个网络的 DNS 什么都答（代理的 fake-IP 模式连它都给 198.18/15 的地址）。
+        // 那样「解析失败」这件事根本不会发生，这条量不了，明说跳过，不算通过（第一百零四轮在这样的网络上红过）
+        boolean answered;
+        try {
+            java.net.InetAddress.getByName("never-resolves-zhiqu.invalid");
+            answered = true;
+        } catch (java.net.UnknownHostException e) {
+            answered = false;
+        }
+        org.junit.jupiter.api.Assumptions.assumeFalse(answered, "这个网络的 DNS 连 .invalid 都给地址，量不了解析失败");
         assertRefused("http://never-resolves-zhiqu.invalid/x", "无法解析");
     }
 

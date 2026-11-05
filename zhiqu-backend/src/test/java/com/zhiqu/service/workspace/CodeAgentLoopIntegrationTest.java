@@ -235,6 +235,14 @@ class CodeAgentLoopIntegrationTest {
                 "确认之前磁盘必须一个字节都没动 —— 这是草稿优先的全部意义");
     }
 
+    /** 第一百零四轮：状态文件一存在就盖过这里配的 EXEC 和临时目录。原来读的是用户的 ~/.zhiqu/workspace-state.json，跟着他在桌面应用里选的档位变红，选 EXEC 时判题命令跑进他真实的项目 */
+    @Test
+    void 测试不读用户的工作区状态文件(@Autowired org.springframework.core.env.Environment env) {
+        String stateFile = env.getProperty("app.workspace.state-file");
+        assertNotNull(stateFile, "src/test/resources/application.properties 要把 app.workspace.state-file 指到临时目录");
+        assertTrue(!stateFile.startsWith(System.getProperty("user.home")), "测试用的状态文件在用户目录下：" + stateFile);
+    }
+
     /** 普通用户走同一条路：什么都拿不到。工作区读的是服务器磁盘，不是他的东西。 */
     @Test
     void 普通用户走同一条路什么都拿不到() throws Exception {

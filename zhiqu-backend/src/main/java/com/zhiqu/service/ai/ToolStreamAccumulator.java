@@ -113,6 +113,8 @@ public final class ToolStreamAccumulator {
                 cachedTokens = usage.path("prompt_cache_hit_tokens").asInt();
             } else if (usage.path("prompt_tokens_details").has("cached_tokens")) {
                 cachedTokens = usage.path("prompt_tokens_details").path("cached_tokens").asInt();
+            } else if (usage.has("cache_read_input_tokens")) {
+                cachedTokens = usage.path("cache_read_input_tokens").asInt();   // 转 Claude 的中转有的照搬 Anthropic 的字段
             }
         }
     }

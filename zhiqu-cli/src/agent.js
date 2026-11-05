@@ -178,12 +178,41 @@ export function systemText(ctx) {
     root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.mode, commands: ctx.local.commands,
     today: today(), draft: Boolean(ctx.local.drafts),
   });
-  // 目标、用户这次的原话、任务清单置顶：在系统内容之后、其它一切之前 —— 每一轮都在，压缩也压不掉
-  const pinned = [goalBlock(ctx.goal), requestBlock(ctx), todoBlock(ctx.todos)].filter(Boolean).join('\n\n');
+  // 目标、用户这次的原话置顶：在系统内容之后、其它一切之前 —— 每一轮都在，压缩也压不掉。
+  // 系统提示排在所有历史前面，改一个字后面的缓存全部失效（第一百零四轮）：这两样很少变；任务清单常变，不放这里，见 TODO_REMIND_ROUNDS
+  const pinned = [goalBlock(ctx.goal), requestBlock(ctx)].filter(Boolean).join('\n\n');
   return buildSystemMessage({ systemText: pinned ? `${ctx.system.text.trim()}\n\n${pinned}` : ctx.system.text, env, instructions: ctx.instructionsText, skills: ctx.skillsText });
 }
 
 const REQUEST_PIN_CHARS = 6000;
+
+// 任务清单不进系统提示（第一百零四轮）：原来每改一次清单，下一次请求整段历史都没命中缓存。历史只追加不改写 ——
+// 清单本来就在 update_todos 那次调用里；隔这么多轮工具，把它附在工具结果后面再说一遍（也记进历史）；压缩掉了就补一条
+export const TODO_REMIND_ROUNDS = 8;
+function todoInHistory(messages) {
+  return messages.some((m) => (Array.isArray(m.tool_calls) && m.tool_calls.some((c) => c.function && c.function.name === TODO_TOOL))
+    || (typeof m.content === 'string' && m.content.includes('## 任务清单')));
+}
+
+// 同一个调用、同样的结果连着来（第一百零四轮）：用户贴的记录里 deepseek-flash 把一条每次都打印 ok 的 node -e 连跑了 94 次，又一版 64 次，
+// 用满两次 60 轮；用户问「你在干什么」它认了错，说完「好的」接着跑。failed 只管同样的失败、READ_STREAK 只管只读，成功的重复谁都不管。
+// 比的是工具名 + 参数（键的顺序不算）+ 结果（命令用时、后面附的提醒不算）；换一个调用、结果变了、用户新说一句都重新数。
+// 第 3 次提醒，第 5 次起不执行，第 7 次停下这一轮。评测 47 遍里连着一样的最多 2 次，不会碰到正常的活
+export const REPEAT_WARN = 3;
+export const REPEAT_REFUSE = 5;
+export const REPEAT_STOP = 7;
+const sortKeys = (v) => (Array.isArray(v) ? v.map(sortKeys)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])])) : v);
+function callKey(call) {
+  const fn = call.function || {};
+  const parsed = parseArgs(fn.arguments);
+  return `${fn.name}\n${parsed.ok ? JSON.stringify(sortKeys(parsed.value)) : fn.arguments}`;
+}
+const comparableResult = (content) => String(content).split('\n\n【提醒】')[0].replace(/（\d+(\.\d+)?s）/g, '');
+const repeatReminder = (n) => `这个调用你已经连续发了 ${n} 次，参数和结果都一模一样 —— 中间什么都没变，再发一次结果也不会变。`
+  + '想清楚你缺的是什么：要看别的信息就换命令或参数，该改代码就去改，做完了就收尾。';
+const repeatRefusal = (n) => `没有执行：这是连续第 ${n} 次发一模一样的调用，结果看前面那一次，它不会变。`
+  + '换个做法：改命令或参数让它给出你要的信息、去改代码，或者直接说明卡在哪。再这样这一轮会被停下。';
 
 /**
  * 用户这次的原话 —— 只在对话里已经没有原文（被压缩成摘要了）时才放。摘要是转述，
@@ -576,6 +605,7 @@ function readWindowHint(ctx, call) {
  * 结论另有不调工具的那条回复；会话记录里是原话（记录是 record 时写的），省略的只是 ctx.messages 这一份。
  */
 export const THINKING_KEEP_CHARS = 200;
+export const SLIM_THRESHOLD = 0.5;
 export function slimThinking(messages, keep = 2) {
   const at = [];
   messages.forEach((m, i) => { if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) at.push(i); });
@@ -723,6 +753,7 @@ async function executeTool(ctx, call, offered, signal) {
     const r = parseTodos(args);
     if (r.error) { ui.result(r.error, false); return r.error; }
     ctx.todos = r.todos;
+    ctx.roundsSinceTodo = 0;
     const [head, ...items] = todoLines(r.todos, ui.paint);
     ui.result(head);
     for (const l of items) ui.line(`  ${l}`);
@@ -793,6 +824,7 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
 export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   ctx.steps = [];
   ctx.spin = new Map();
+  ctx.repeat = null;
   ctx.changedFiles = ctx.changedFiles || new Set();
   const turnWindow = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
   // 很长的输入存成文件、让模型分段读（见 longinput.js）；只对用户自己说的话
@@ -819,9 +851,14 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     if (signal && signal.aborted) break;
     const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
     if (needsCompaction(systemText(ctx), ctx.messages, window)) await compactNow(ctx, signal);
+    // 清单不在历史里了（压缩掉了、接回一段压缩过的会话）：补一条
+    if (unfinished(ctx.todos).length && !todoInHistory(ctx.messages)) {
+      record(ctx, { role: 'user', content: `（任务清单里还有 ${unfinished(ctx.todos).length} 项没做完，对话压缩过，再说一遍）\n\n${todoBlock(ctx.todos)}` }, 'system');
+    }
     const tools = toolset(ctx);
     const offered = new Map(tools.map((t) => [t.schema.function.name, t.kind]));
-    slimThinking(ctx.messages);
+    // 省略旧思考是改写历史，从那条起缓存全部失效（评测上约 1.6 个点，按价算约一成花费）；省下的那点 token 按命中价不值 —— 吃紧了才做
+    if (needsCompaction(systemText(ctx), ctx.messages, window, SLIM_THRESHOLD)) slimThinking(ctx.messages);
     const res = await callModel(ctx, tools, signal);
     const message = res.message || { role: 'assistant', content: res.text };
     const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
@@ -880,8 +917,21 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     const thought = (message.content || '').length;
     for (const [i, call] of calls.entries()) {
       if (signal && signal.aborted) break;
-      let content = capToolOutput(await executeTool(ctx, call, offered, signal), window);
+      const key = callKey(call);
+      const again = ctx.repeat && ctx.repeat.key === key;
       const reminders = [];
+      let content;
+      if (again && ctx.repeat.count >= REPEAT_REFUSE - 1) {
+        ctx.repeat.count += 1;
+        ctx.ui.note(`· ${call.function.name} 和前面一模一样，没有执行（连续第 ${ctx.repeat.count} 次）`);
+        content = repeatRefusal(ctx.repeat.count);
+      } else {
+        content = capToolOutput(await executeTool(ctx, call, offered, signal), window);
+        const result = comparableResult(content);
+        const count = again && ctx.repeat.result === result ? ctx.repeat.count + 1 : 1;
+        ctx.repeat = { key, result, count };
+        if (count >= REPEAT_WARN && !content.includes('\n\n【提醒】')) reminders.push(repeatReminder(count));   // 同样的失败 failed 已经提醒过了
+      }
       if (i === 0 && thought > LONG_THINKING) reminders.push(thinkingReminder(thought));
       const name = call.function && call.function.name;
       ctx.readStreak = QUIET_TOOLS.has(name) ? (ctx.readStreak || 0) + 1 : 0;
@@ -889,8 +939,20 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       const windowHint = readWindowHint(ctx, call);
       if (windowHint) reminders.push(windowHint);
       if (i === calls.length - 1 && maxRounds > WRAP_UP_ROUNDS * 3 && maxRounds - round - 1 === WRAP_UP_ROUNDS) reminders.push(wrapUpReminder(WRAP_UP_ROUNDS, maxRounds));
+      if (i === calls.length - 1) {
+        ctx.roundsSinceTodo = (ctx.roundsSinceTodo || 0) + 1;
+        if (ctx.roundsSinceTodo >= TODO_REMIND_ROUNDS && unfinished(ctx.todos).length) {
+          reminders.push(todoBlock(ctx.todos));
+          ctx.roundsSinceTodo = 0;
+        }
+      }
       if (reminders.length) content += reminders.map((r) => `\n\n【提醒】${r}`).join('');
       record(ctx, { role: 'tool', tool_call_id: call.id, content });
+    }
+    if (ctx.repeat && ctx.repeat.count >= REPEAT_STOP) {
+      finalText = `已经停下：模型连续 ${ctx.repeat.count} 次发同一个调用（${ctx.repeat.key.split('\n')[0]}），结果一直没变。说说接下来想怎么做，或者换个模型试试。`;
+      ctx.ui.warn(finalText);
+      break;
     }
     if (round === maxRounds - 1) {
       ctx.ui.warn(`已经连续调用了 ${maxRounds} 轮工具，先停在这里。说「继续」可以接着做。`);

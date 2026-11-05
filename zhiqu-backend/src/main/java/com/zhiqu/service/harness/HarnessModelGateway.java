@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 模型网关：命令行把整段对话和工具声明交过来，这里替它调模型、把增量原样流回去。
@@ -107,6 +108,9 @@ public class HarnessModelGateway {
     private final RestTemplate restTemplate;
     /** 命令行干活的请求用的采样温度（app.ai.harness-temperature，默认 0）；null = 跟 app.ai.temperature 一样 */
     private final Double harnessTemperature;
+    /** 这个进程里被供应商拒过的：不再发 temperature / 缓存标记（键是模型 ID + 地址 + 模型名，改了配置就重新试） */
+    private final Set<String> noTemperature = ConcurrentHashMap.newKeySet();
+    private final Set<String> noCacheMarks = ConcurrentHashMap.newKeySet();
 
     public HarnessModelGateway(AiService aiService, ModelProviderClient provider, ModelStreamAdapterFactory adapters,
                                HarnessUsageMapper usageMapper, ObjectMapper json,
@@ -233,12 +237,18 @@ public class HarnessModelGateway {
         RuntimeException last = null;
         // 第八十九轮：写代码要稳 —— 不设温度时 DeepSeek 默认 1.0，同一题每次走不同的路
         Double temperature = harnessTemperature != null ? harnessTemperature : provider.configuredTemperature();
+        // 被拒过的记住（第一百零四轮）：Opus 5.5 不收 temperature，原来每一轮都要先挨一个 400 再重试
+        String remembered = config.getId() + "|" + config.getApiUrl() + "|" + config.getModelName();
+        if (noTemperature.contains(remembered)) temperature = null;
+        boolean cacheMarks = PromptCacheMarks.applies(type, config.getModelName()) && !noCacheMarks.contains(remembered);
+        boolean droppedMarks = false;
         List<Integer> limits = OutputLimits.fallbackLimits(maxTokens);
         for (int i = 0; i < limits.size(); i++) {
             int limit = limits.get(i);
             try {
                 usedMaxTokens = limit;
-                call(config, type, trimmed.messages(), tools, limit, temperature, acc);
+                call(config, type, trimmed.messages(), tools, limit, temperature, cacheMarks, acc);
+                if (droppedMarks) noCacheMarks.add(remembered);   // 去掉标记才成功：这个供应商不收，以后不再标
                 last = null;
                 break;
             } catch (RestClientResponseException e) {
@@ -246,12 +256,21 @@ public class HarnessModelGateway {
                 if (temperature != null && ModelProviderClient.rejectsTemperature(e.getStatusCode().value(), e.getResponseBodyAsString()) && acc.outputChars() == 0) {
                     log.info("模型不认 temperature，去掉它重试：{}", detail);
                     temperature = null;
+                    noTemperature.add(remembered);
                     i--;
                     continue;
                 }
                 if (OutputLimits.rejectsMaxTokens(e.getStatusCode().value(), e.getResponseBodyAsString()) && acc.outputChars() == 0) {
                     log.info("模型拒绝了输出上限 {}，降一档重试：{}", limit, detail);
                     last = new BusinessException("模型拒绝了输出上限：" + detail);
+                    continue;
+                }
+                // 中转不一定认缓存标记，报的错也不一定提到它：带着标记被 400 就去掉重试一次，还是 400 就照常报错
+                if (cacheMarks && (e.getStatusCode().value() == 400 || e.getStatusCode().value() == 422) && acc.outputChars() == 0) {
+                    log.info("带缓存标记被拒，去掉它重试：{}", detail);
+                    cacheMarks = false;
+                    droppedMarks = true;
+                    i--;
                     continue;
                 }
                 // 与网页聊天同一套说法（ProviderFailure）：按状态码说人话，供应商的原因附在后面、遮住 key
@@ -303,13 +322,13 @@ public class HarnessModelGateway {
     }
 
     private void call(AiModelConfig config, String type, List<Map<String, Object>> messages,
-                      List<Map<String, Object>> tools, int maxTokens, Double temperature, ToolStreamAccumulator acc) {
+                      List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks, ToolStreamAccumulator acc) {
         // URL 格式校验：API URL 是用户自己填的。与其它出站请求一样，校验放在真正发请求的这一层
         provider.validateProviderRequestUrl(config.getApiUrl());
         if ("ANTHROPIC".equals(type)) {
-            streamAnthropic(config, messages, tools, maxTokens, temperature, acc);
+            streamAnthropic(config, messages, tools, maxTokens, temperature, cacheMarks, acc);
         } else if ("OPENAI_COMPATIBLE".equals(type) || "VLLM_OPENAI_COMPATIBLE".equals(type) || "OLLAMA".equals(type)) {
-            streamOpenAi(config, messages, tools, maxTokens, temperature, acc);
+            streamOpenAi(config, messages, tools, maxTokens, temperature, cacheMarks, acc);
         } else {
             // 其余协议（Gemini、Responses…）只走纯文本：上面已经保证了这里 tools 为空
             adapters.getAdapter(type).stream(
@@ -321,10 +340,10 @@ public class HarnessModelGateway {
     }
 
     private void streamOpenAi(AiModelConfig config, List<Map<String, Object>> messages,
-                              List<Map<String, Object>> tools, int maxTokens, Double temperature, ToolStreamAccumulator acc) {
+                              List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks, ToolStreamAccumulator acc) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
-        body.put("messages", messages);
+        body.put("messages", cacheMarks ? PromptCacheMarks.markOpenAi(messages) : messages);
         body.put("max_tokens", maxTokens);
         body.put("stream", true);
         if (!tools.isEmpty()) {
@@ -347,15 +366,15 @@ public class HarnessModelGateway {
     }
 
     private void streamAnthropic(AiModelConfig config, List<Map<String, Object>> messages,
-                                 List<Map<String, Object>> tools, int maxTokens, Double temperature, ToolStreamAccumulator acc) {
+                                 List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks, ToolStreamAccumulator acc) {
         AnthropicFormat.Request converted = AnthropicFormat.fromOpenAi(messages, json);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
         body.put("max_tokens", maxTokens);
         if (!converted.system().isBlank()) {
-            body.put("system", converted.system());
+            body.put("system", cacheMarks ? PromptCacheMarks.markedSystem(converted.system()) : converted.system());
         }
-        body.put("messages", converted.messages());
+        body.put("messages", cacheMarks ? PromptCacheMarks.markLastAnthropic(converted.messages()) : converted.messages());
         if (!tools.isEmpty()) {
             body.put("tools", provider.toAnthropicTools(tools));
             body.put("tool_choice", Map.of("type", "auto"));

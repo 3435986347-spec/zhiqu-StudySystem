@@ -288,7 +288,7 @@ class HarnessModelGatewayTest {
         gateway().stream(1L, body(loop), sink());
 
         JsonNode sent = requests.get(0);
-        assertEquals("你是 zhiqu", sent.path("system").asText());
+        assertEquals("你是 zhiqu", sent.path("system").path(0).path("text").asText(), "Anthropic 的系统提示是带缓存标记的块（第一百零四轮）");
         assertEquals("tool_result", sent.path("messages").path(2).path("content").path(0).path("type").asText(), sent.toString());
         assertEquals("write_file", sent.path("tools").path(0).path("name").asText());
         assertTrue(sent.path("tools").path(0).has("input_schema"));
@@ -423,5 +423,116 @@ class HarnessModelGatewayTest {
                 "{\"error\":{\"message\":\"Incorrect API key provided: sk-test\"}}"});
         assertTrue(e.getMessage().contains("API Key 不对"), e.getMessage());
         assertFalse(e.retryable());
+    }
+    // ── 第一百零四轮：给 Claude 标缓存（用户：Opus 5.5 命中率只有 9%）。DeepSeek 自动缓存，Claude 不标就是全价 ──
+
+    private static final String OK_CHUNK = "{\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":\"stop\"}]}";
+
+    private List<Map<String, Object>> toolLoop() {
+        List<Map<String, Object>> loop = new ArrayList<>(ASK);
+        loop.add(Map.of("role", "assistant", "content", "", "tool_calls", List.of(
+                Map.of("id", "t0", "type", "function", "function", Map.of("name", "list_files", "arguments", "{}")))));
+        loop.add(Map.of("role", "tool", "tool_call_id", "t0", "content", "（空目录）"));
+        return loop;
+    }
+
+    private static int marks(JsonNode request) {
+        return request.toString().split("cache_control", -1).length - 1;
+    }
+
+    @Test
+    @DisplayName("Anthropic 接口：系统提示和最后一条消息的最后一块带 cache_control（滚动），别处不标")
+    void Anthropic标缓存() throws Exception {
+        String url = fakeModel(b -> new Object[]{200, sse(
+                "{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":900,\"cache_creation_input_tokens\":90}}}",
+                "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"好\"}}",
+                "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}")});
+        model("ANTHROPIC", url, null);
+        gateway().stream(1L, body(toolLoop()), sink());
+        JsonNode sent = requests.get(0);
+        assertEquals("ephemeral", sent.path("system").path(0).path("cache_control").path("type").asText(), sent.toString());
+        JsonNode messages = sent.path("messages");
+        JsonNode lastBlock = messages.path(messages.size() - 1).path("content").path(0);
+        assertEquals("tool_result", lastBlock.path("type").asText());
+        assertEquals("ephemeral", lastBlock.path("cache_control").path("type").asText(), sent.toString());
+        assertEquals(2, marks(sent), "只标两处：" + sent);
+        Map<?, ?> usage = (Map<?, ?>) last.get("done").get("usage");
+        assertEquals(900, usage.get("cachedTokens"), "命中数要报回去：" + usage);
+        assertEquals(1000, usage.get("promptTokens"), "输入的总数含缓存读写：" + usage);
+    }
+
+    @Test
+    @DisplayName("OpenAI 兼容接口 + 模型名带 claude（中转）：系统提示和最后一条消息拆成带 cache_control 的块；中转照搬的 cache_read_input_tokens 也认")
+    void 中转的Claude标缓存() throws Exception {
+        String url = fakeModel(b -> new Object[]{200, sse(OK_CHUNK,
+                "{\"choices\":[],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":5,\"cache_read_input_tokens\":800}}")});
+        model("OPENAI_COMPATIBLE", url, null).setModelName("Claude-opus-5-5");
+        HarnessModelGateway gateway = gateway();
+        gateway.stream(1L, body(toolLoop()), sink());
+        gateway.stream(1L, body(toolLoop()), sink());
+        assertEquals(2, marks(requests.get(1)), "成功了下一次还要接着标：" + requests.get(1));
+        JsonNode sent = requests.get(0);
+        JsonNode messages = sent.path("messages");
+        assertEquals("你是 zhiqu", messages.path(0).path("content").path(0).path("text").asText(), sent.toString());
+        assertEquals("ephemeral", messages.path(0).path("content").path(0).path("cache_control").path("type").asText());
+        JsonNode lastMessage = messages.path(messages.size() - 1);
+        assertEquals("tool", lastMessage.path("role").asText());
+        assertEquals("（空目录）", lastMessage.path("content").path(0).path("text").asText());
+        assertEquals("ephemeral", lastMessage.path("content").path(0).path("cache_control").path("type").asText());
+        assertTrue(messages.path(1).path("content").isTextual(), "中间的消息不动：" + sent);
+        assertEquals(2, marks(sent));
+        assertEquals(800, ((Map<?, ?>) last.get("done").get("usage")).get("cachedTokens"));
+    }
+
+    @Test
+    @DisplayName("DeepSeek 这类自动缓存的不标：请求和原来一模一样")
+    void 别的模型不标() throws Exception {
+        String url = fakeModel(b -> new Object[]{200, sse(OK_CHUNK)});
+        model("OPENAI_COMPATIBLE", url, null).setModelName("deepseek-flash");
+        gateway().stream(1L, body(toolLoop()), sink());
+        assertEquals(0, marks(requests.get(0)), requests.get(0).toString());
+        assertTrue(requests.get(0).path("messages").path(0).path("content").isTextual());
+    }
+
+    @Test
+    @DisplayName("中转不认缓存标记（400，不一定提到它）：去掉重试一次，成功就记住、下一次不再标；还是 400 就照常报错、也不记（错不在标记）")
+    void 标记被拒就记住() throws Exception {
+        String url = fakeModel(b -> b.toString().contains("cache_control")
+                ? new Object[]{400, "{\"error\":{\"message\":\"messages[0].content must be a string\"}}"}
+                : new Object[]{200, sse(OK_CHUNK)});
+        model("OPENAI_COMPATIBLE", url, null).setModelName("claude-opus-5-5");
+        HarnessModelGateway gateway = gateway();
+        gateway.stream(1L, body(ASK), sink());
+        assertEquals(2, requests.size(), "一次带标记、一次不带");
+        assertFalse(events.contains("error"));
+        gateway.stream(1L, body(ASK), sink());
+        assertEquals(3, requests.size(), "记住了：这次一上来就不带，不再挨 400");
+        assertEquals(0, marks(requests.get(2)));
+    }
+
+    @Test
+    @DisplayName("别的原因的 400：去掉标记也不行就照常报错，下一次还标（不能因为一次坏请求就永远不缓存）")
+    void 别的400不记() throws Exception {
+        String url = fakeModel(b -> new Object[]{400, "{\"error\":{\"message\":\"invalid request\"}}"});
+        model("OPENAI_COMPATIBLE", url, null).setModelName("claude-opus-5-5");
+        HarnessModelGateway gateway = gateway();
+        assertThrows(RuntimeException.class, () -> gateway.stream(1L, body(ASK), sink()));
+        assertEquals(2, requests.size());
+        assertThrows(RuntimeException.class, () -> gateway.stream(1L, body(ASK), sink()));
+        assertTrue(marks(requests.get(2)) > 0, "不该记住：下一次还带标记");
+    }
+
+    @Test
+    @DisplayName("温度被拒也记住（Opus 5.5 不收 temperature，原来每一轮都先挨一个 400）")
+    void 温度被拒就记住() throws Exception {
+        String url = fakeModel(b -> b.has("temperature")
+                ? new Object[]{400, "{\"error\":{\"message\":\"temperature is not supported on this model\"}}"}
+                : new Object[]{200, sse(OK_CHUNK)});
+        model("OPENAI_COMPATIBLE", url, null);
+        HarnessModelGateway gateway = gateway();
+        gateway.stream(1L, body(ASK), sink());
+        gateway.stream(1L, body(ASK), sink());
+        assertEquals(3, requests.size(), "第二次不该再挨 400");
+        assertFalse(requests.get(2).has("temperature"));
     }
 }

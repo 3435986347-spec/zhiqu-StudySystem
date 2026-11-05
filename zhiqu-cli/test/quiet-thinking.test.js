@@ -137,27 +137,30 @@ test('调工具的回复里写了一大段推测（> 3000 字）：工具结果�
 
 test('连续 8 次只看不动（读 / 搜 / 列目录）：第 8 次附一句「已知的够就直接改，拿不准就写复现」；中间动过手就重新数', async () => {
   const root = tmpdir();
-  write(root, 'a.js', 'x\n');
-  const read = { calls: [{ name: 'read_file', args: { path: 'a.js' } }] };
-  const ctx = makeCtx({ root, replies: [read, read, read, read, read, read, read, read, { text: '好' }] });
+  write(root, 'a.js', 'x\n'.repeat(40));
+  // 每次读不同的一行：一模一样的连发另有一道（repeat-call.test.js）
+  let line = 0;
+  const reads = (n) => Array.from({ length: n }, () => ({ calls: [{ name: 'read_file', args: { path: 'a.js', offset: ++line, limit: 1 } }] }));
+  const ctx = makeCtx({ root, replies: [...reads(8), { text: '好' }] });
   await runTurn(ctx, '看看');
   const tools = ctx.messages.filter((m) => m.role === 'tool').map((m) => m.content);
   assert.equal(tools.length, 8);
   assert.ok(!tools.slice(0, 7).some((t) => /连续查看了/.test(t)));
   assert.match(tools[7], /连续查看了 8 次/);
 
-  const mixed = makeCtx({ root, replies: [read, read, read, read, read,
-    { calls: [{ name: 'write_file', args: { path: 'b.js', content: 'y\n' } }] }, read, read, read, { text: '好' }] });
+  const mixed = makeCtx({ root, replies: [...reads(5),
+    { calls: [{ name: 'write_file', args: { path: 'b.js', content: 'y\n' } }] }, ...reads(3), { text: '好' }] });
   await runTurn(mixed, '看看');
   assert.ok(!mixed.messages.some((m) => m.role === 'tool' && /连续查看了/.test(m.content)), '中间写过文件，应当重新数');
 });
 
-test('省上下文：较早几轮调工具那几条回复里的长篇思考，发给模型时只留开头；最近两条原样', async () => {
+test('上下文吃紧时（超过窗口一半，第一百零四轮）：较早几轮调工具那几条回复里的长篇思考，发给模型时只留开头；最近两条原样', async () => {
   const root = tmpdir();
   write(root, 'a.js', 'x\n');
   const long = (i) => `第 ${i} 段思考：${'分析'.repeat(800)}`;
   const replies = [0, 1, 2, 3].map((i) => ({ text: long(i), calls: [{ name: 'read_file', args: { path: 'a.js' } }] }));
   const ctx = makeCtx({ root, replies: [...replies, { text: '好' }] });
+  ctx.model.effectiveContextWindow = 8_000;   // 四段思考约 6400 token：过半（4000）、不到压缩线（6400，省略之后约 5000）
   await runTurn(ctx, '看看');
   const last = ctx.api.requests.at(-1).messages.filter((m) => m.role === 'assistant' && m.tool_calls);
   assert.equal(last.length, 4);
@@ -209,9 +212,9 @@ test('思考中按 Ctrl+C：动画停掉、状态行清掉、定时器不留（�
 
 test('模型连着调 200 次读文件：屏幕上不刷屏（安静模式下读不留行），最后一句说看了多少', async () => {
   const root = tmpdir();
-  write(root, 'a.js', 'x\n');
-  const read = { calls: [{ name: 'read_file', args: { path: 'a.js' } }] };
-  const ctx = makeCtx({ root, replies: [...Array(200).fill(read), { text: '结论：没问题。' }] });
+  write(root, 'a.js', 'x\n'.repeat(300));
+  const reads = Array.from({ length: 200 }, (_, i) => ({ calls: [{ name: 'read_file', args: { path: 'a.js', offset: i + 1, limit: 1 } }] }));
+  const ctx = makeCtx({ root, replies: [...reads, { text: '结论：没问题。' }] });
   ctx.maxRounds = 300;
   const r = await runTurn(ctx, '看看');
   const lines = ctx.ui.text().split('\n').filter((l) => l.trim());
