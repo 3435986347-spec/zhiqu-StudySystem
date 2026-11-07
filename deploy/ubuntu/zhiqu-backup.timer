@@ -1,0 +1,9 @@
+[Unit]
+Description=Zhiqu backup every night
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

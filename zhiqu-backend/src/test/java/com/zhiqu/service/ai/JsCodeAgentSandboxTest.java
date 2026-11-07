@@ -103,8 +103,12 @@ class JsCodeAgentSandboxTest {
     // ── 服务器上（第一百一十七轮）：接错了就会走普通沙箱，而普通沙箱的根目录是整个系统 ─────────
 
     private JsCodeAgent hostedAgent(List<Map<String, Object>> replies) {
+        return hostedAgent("EXEC", replies);
+    }
+
+    private JsCodeAgent hostedAgent(String mode, List<Map<String, Object>> replies) {
         WorkspaceProperties props = new WorkspaceProperties();
-        props.setMode("EXEC");
+        props.setMode(mode);
         props.setRoot(root.toString());
         WorkspaceService service = new WorkspaceService(props, new WorkspaceSettingsStore(home.resolve("state-hosted.json").toString(), JSON), "127.0.0.1");
         WorkspaceExecutor executor = new WorkspaceExecutor(props, service, "prod", new HostedShellGate(1, 100), 7L);
@@ -160,6 +164,21 @@ class JsCodeAgentSandboxTest {
     }
 
     @Test
+    @DisplayName("第一百一十九轮：服务器上 auto 档的命令能写工作区，manual、plan 只读。生产 profile 下 canExec 恒为假（真服务器上 python3 main.py > out.txt 报只读才查出来）")
+    void 服务器上按档位定能不能写() throws Exception {
+        for (String[] c : new String[][]{{"EXEC", "能写"}, {"WRITE", "只读"}}) {
+            bodies.clear();
+            JsCodeAgent js = hostedAgent(c[0], List.of(text("好")));
+            js.assumeSandbox(true);
+            // 和真的一样：canWrite 为真，canExec 为假（WorkspaceExecutor.enabled() 在生产 profile 下恒为假）
+            runHosted(js);
+            String system = String.valueOf(((List<?>) bodies.get(0).get("messages")).get(0));
+            assertTrue(system.contains("服务器上的隔离环境"), system);
+            assertEquals("只读".equals(c[1]), system.contains("工作区只读"), c[0] + " 档应当" + c[1] + "：" + system);
+        }
+    }
+
+    @Test
     @DisplayName("服务器：模型拿到的说法是服务器那份（断网、60 秒、不能后台），没有后台的工具；问怎么起时也要说 hosted")
     void 服务器上的说明和起法() throws Exception {
         JsCodeAgent js = hostedAgent(List.of(text("好")));
@@ -184,7 +203,8 @@ class JsCodeAgentSandboxTest {
             } catch (com.zhiqu.common.BusinessException e) {
                 return;   // 没装 bubblewrap 的 Linux：一样是不跑
             }
-            assertTrue(launch.args().contains("--unshare-net") && launch.args().contains("/work"), launch.args().toString());
+            // bwrap 的参数在文件里（--args，第一百一十九轮）：命令行上不能有真路径，1 号进程是 bwrap，里面读得到
+            assertTrue(launch.args().stream().anyMatch(x -> x.contains("--args 3")) && !launch.args().contains("--unshare-net"), launch.args().toString());
         }
     }
 

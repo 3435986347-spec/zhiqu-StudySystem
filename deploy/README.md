@@ -2,7 +2,13 @@
 
 `deploy` 目录保存知趣·象限学习系统的生产部署脚本、配置模板和运维说明。
 
-当前默认部署目标是：
+现在线上用的是 **`deploy/ubuntu/`**（第一百一十九轮），步骤见 [ubuntu/README.md](ubuntu/README.md)：
+
+```text
+Ubuntu + Spring Boot JAR + MySQL + Redis + Caddy + systemd
+```
+
+`deploy/windows/` 是之前的 Windows Server 部署，下面的目录说明讲的是它：
 
 ```text
 Windows Server + Spring Boot JAR + MySQL 8 + Redis + Caddy + WinSW

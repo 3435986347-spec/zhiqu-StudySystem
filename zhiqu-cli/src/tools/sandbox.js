@@ -7,6 +7,7 @@
 //   - 系统服务：mach-lookup 只放一小撮。放开的话 open、osascript、launchctl 能让系统替它在沙箱外跑东西，读剪贴板、钥匙串。
 // 探测（detectSandbox）是真跑一次：嵌套沙箱、用户命名空间被关时 sandbox-exec / bwrap 起不来，当作没有，退回白名单。
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -227,8 +228,9 @@ const HOSTED_WORK = '/work';
 
 function hostedBwrapArgs({ root, cwd, policy, privateDir }) {
   // 不用 --unshare-all：它对 user、cgroup 是「能开就开」，开不了就悄悄不开。这里开不了就该起不来
-  // --as-pid-1：命令自己当 1 号进程。不然 1 号是 bwrap，/proc/1/cmdline 里是它全部的参数（服务器上的真路径、账号 id，真跑才看到）
-  const args = ['--die-with-parent', '--new-session', '--as-pid-1', '--unshare-user', '--disable-userns', '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup',
+  // 不要 --as-pid-1：那样 1 号进程是 exec 出来的命令，AppArmor 切配置时内核把 --die-with-parent 设的 pdeathsig 清了（第一百一十九轮在真服务器上撞到，容器里没有
+  // AppArmor 看不到）：外层一死，里面的进程就成了没人管的孤儿。1 号留给 bwrap，它没有 exec 过，外层一死它就死，整个 PID 命名空间跟着没了
+  const args = ['--die-with-parent', '--new-session', '--unshare-user', '--disable-userns', '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup',
     '--uid', '1000', '--gid', '1000', '--hostname', 'sandbox', '--cap-drop', 'ALL', '--clearenv'];
   args.push('--ro-bind', '/usr', '/usr');
   // /bin、/lib 这些在 merged-usr 上是软链，老系统上是目录
@@ -269,10 +271,16 @@ function hostedBwrapArgs({ root, cwd, policy, privateDir }) {
  */
 function hostedLaunch(box, { command, root, cwd, policy, privateDir }) {
   const inner = `${HOSTED_LIMITS} || { echo '限额设不上，这条命令没有运行' >&2; exit 126; }; ${reapJobs(command)}`;
+  // 1 号进程是 bwrap，里面的命令读得到它的 /proc/1/cmdline 和 environ：参数放文件里（--args，打开就删，bwrap 读完就关），不写在命令行上（服务器上的真路径、账号 id）；
+  // env -i：它的环境是空的，调用方带了什么都进不来
+  const argsFile = path.join(real(privateDir), `hosted-args-${crypto.randomBytes(8).toString('hex')}`);
+  const argv = hostedBwrapArgs({ root: real(root), cwd: real(cwd), policy, privateDir: real(privateDir) });
+  fs.writeFileSync(argsFile, `${argv.join('\0')}\0`, { mode: 0o600 });
   return {
     binary: '/bin/sh',
-    args: ['-c', 'echo 1000 > /proc/self/oom_score_adj; exec nice -n 19 "$0" "$@"', box.binary, ...hostedBwrapArgs({ root: real(root), cwd: real(cwd), policy, privateDir: real(privateDir) }), '--', '/bin/bash', '-c', inner],
+    args: ['-c', 'echo 1000 > /proc/self/oom_score_adj; exec 3<"$1"; rm -f "$1"; shift; exec env -i PATH=/usr/bin:/bin nice -n 19 "$0" --args 3 "$@"', box.binary, argsFile, '--', '/bin/bash', '-c', inner],
     env: { PATH: '/usr/bin:/bin' },
+    argsFile,
   };
 }
 

@@ -1,0 +1,41 @@
+# 知趣·象限后端。install.sh 把它放到 /etc/systemd/system/。
+[Unit]
+Description=Zhiqu backend
+After=network-online.target mysql.service redis-server.service
+Wants=network-online.target mysql.service redis-server.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# 不用 ubuntu 这个账号：它有免密 sudo，所有注册用户都能叫起命令的进程不能跑在它下面
+User=zhiqu
+Group=zhiqu
+WorkingDirectory=/home/ubuntu/zhiqu-StudySystem
+Environment=TZ=Asia/Shanghai
+Environment=LANG=C.UTF-8
+# --spring.profiles.active=prod 是安全边界：没有它，磁盘接口和执行的门都按开发机算。配置文件里也写了一遍
+ExecStart=/usr/bin/java -Xms256m -Xmx640m -XX:MaxMetaspaceSize=220m -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8 -jar /home/ubuntu/zhiqu-StudySystem/app/zhiqu-backend.jar --spring.config.location=file:/home/ubuntu/zhiqu-StudySystem/config/application-prod.yml --spring.profiles.active=prod
+Restart=on-failure
+RestartSec=10
+SuccessExitStatus=143
+TimeoutStopSec=30
+
+# 2 核 2G 的机器上还有 MySQL。整个服务（后端 + 宿主的 node + 沙箱里的命令）的上限；到了上限先杀 oom_score_adj 最高的那个，
+# 也就是沙箱里的命令（hostedLaunch 设成 1000）。OOMPolicy=continue：杀掉一条命令不等于这个服务挂了（默认会把整个服务停掉）
+MemoryMax=1300M
+MemorySwapMax=512M
+OOMPolicy=continue
+TasksMax=1024
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/zhiqu-StudySystem/data /home/ubuntu/zhiqu-StudySystem/logs
+RestrictSUIDSGID=true
+LockPersonality=true
+# 不要加 ProtectKernelTunables、ProtectProc、ProcSubset、PrivateDevices、RestrictNamespaces：
+# bubblewrap 要建用户命名空间，要在里面挂新的 /proc，内核只在外面的 /proc 没被盖住时才允许（真跑过）
+
+[Install]
+WantedBy=multi-user.target

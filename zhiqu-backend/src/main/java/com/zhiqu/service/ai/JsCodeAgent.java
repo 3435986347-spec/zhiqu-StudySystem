@@ -269,7 +269,9 @@ public class JsCodeAgent {
 
         // 这台机器有系统沙箱就给 shell（第一百零九轮，和命令行一致）。能写工作区要 auto 档（EXEC）+ 这一轮有写意图；plan、manual 是只读沙箱
         boolean canShell = executor.shellEnabled() && sandboxAvailable(nodeBin, script, executor.hostedShell());
-        boolean shellWrite = canShell && canExec && canWrite;
+        // canExec 是「能不能跑白名单命令」，生产 profile 下恒为假：服务器上要看档位本身，不然 auto 档的命令连 /work 都写不了（第一百一十九轮在真服务器上跑出来的）
+        boolean execTier = canExec || (executor.hostedShell() && workspace.access().effectiveMode().allowsExec());
+        boolean shellWrite = canShell && execTier && canWrite;
         Map<String, Object> model = new LinkedHashMap<>();
         model.put("id", config.getId());
         model.put("label", config.getDisplayName() == null || config.getDisplayName().isBlank() ? config.getModelName() : config.getDisplayName());

@@ -2,7 +2,7 @@
 // 真进程、真 bubblewrap。没有它的机器（macOS）真判据显式跳过：不是通过。部署之后在真服务器上要再跑一遍。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -16,6 +16,8 @@ const box = detectSandbox({ hosted: true });
 const skip = box ? false : '这台机器没有能用的 bubblewrap（macOS、没装、AppArmor 拦着）：这些判据没有跑';
 const FAKE = { kind: 'bwrap', binary: '/usr/bin/bwrap' };
 const real = (p) => fs.realpathSync(p);
+/** bwrap 真正收到的参数（放在文件里，第一百一十九轮）：只给没真跑的看，真跑时文件打开就删了 */
+const bwrapArgv = (launch) => fs.readFileSync(launch.argsFile, 'utf8').split('\0').join(' ');
 
 function rig() {
   const root = real(tmpdir('zhiqu-hosted-'));
@@ -32,10 +34,16 @@ function rig() {
 
 test('参数：不绑根目录；断网、PID、用户命名空间都是必开（不用 --unshare-all 的「能开就开」）；不继承环境', () => {
   const root = real(tmpdir());
-  const a = sandboxedLaunch(FAKE, { hosted: true, command: 'true', root, cwd: root, policy: WORKSPACE_WRITE, privateDir: real(tmpdir()) });
-  const args = a.args.join(' ');
+  const priv = real(tmpdir());
+  const a = sandboxedLaunch(FAKE, { hosted: true, command: 'true', root, cwd: root, policy: WORKSPACE_WRITE, privateDir: priv });
+  const args = bwrapArgv(a);
   assert.ok(!/--ro-bind \/ \//.test(args), '根目录不能绑进去');
-  for (const flag of ['--unshare-net', '--unshare-pid', '--unshare-user', '--disable-userns', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup', '--clearenv', '--new-session', '--die-with-parent', '--cap-drop ALL', '--as-pid-1', '--remount-ro /', '--remount-ro /proc']) {
+  // 命令行上不能有真路径（1 号进程是 bwrap，里面读得到它的 /proc/1/cmdline），文件只有自己读得了
+  assert.ok(!a.args.includes(root) && !a.args.some((x) => x.includes('--bind')), a.args.join(' '));
+  assert.ok(a.args[1].includes('--args 3'), a.args[1]);
+  assert.equal(fs.statSync(a.argsFile).mode & 0o077, 0, '参数文件别人读得到');
+  assert.ok(!args.includes('--as-pid-1'), '不能让命令当 1 号进程：AppArmor 切配置时 pdeathsig 被清掉，外层一死里面就成了孤儿（只有真服务器上看得到）');
+  for (const flag of ['--unshare-net', '--unshare-pid', '--unshare-user', '--disable-userns', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup', '--clearenv', '--new-session', '--die-with-parent', '--cap-drop ALL', '--remount-ro /', '--remount-ro /proc']) {
     assert.ok(args.includes(flag), flag);
   }
   assert.ok(!args.includes('--unshare-all') && !args.includes('--share-net'));
@@ -48,7 +56,7 @@ test('参数：网络不听配置：写了 on 也是断的；只读档是 --ro-b
   const root = real(tmpdir());
   fs.mkdirSync(path.join(root, 'sub'));
   const priv = real(tmpdir());
-  const make = (o) => sandboxedLaunch(FAKE, { hosted: true, command: 'true', root, cwd: root, policy: WORKSPACE_WRITE, privateDir: priv, ...o }).args.join(' ');
+  const make = (o) => bwrapArgv(sandboxedLaunch(FAKE, { hosted: true, command: 'true', root, cwd: root, policy: WORKSPACE_WRITE, privateDir: priv, ...o }));
   assert.ok(make({ network: 'on' }).includes('--unshare-net') && !make({ network: 'on' }).includes('--share-net'));
   assert.ok(make({ policy: READ_ONLY }).includes(`--ro-bind ${root} /work`));
   assert.ok(make({ cwd: path.join(root, 'sub') }).includes('--chdir /work/sub'));
@@ -138,13 +146,39 @@ test('断网：连本机的端口（MySQL、Redis 那种）、外网、元数据
   assert.match(routes.output, /^1\n/, `不该有路由：${routes.output}`);
 });
 
-test('看不到别的进程：PID 命名空间，/proc/1 是自己；读不到后端的环境变量和命令行', { skip }, async () => {
+test('1 号进程是 bwrap（不是命令：不然外层一死里面的进程就成了孤儿）：它的命令行没有真路径，环境是空的，读参数的描述符关了，文件也删了', { skip }, async () => {
+  const { root, priv, run } = rig();
+  const r = await run('tr "\\0" " " < /proc/1/cmdline; echo; echo "env=[$(tr "\\0" " " < /proc/1/environ)]"; [ -e /proc/1/fd/3 ] && echo fd3-open-in-1; [ -e /proc/$$/fd/3 ] && echo fd3-open; echo pid=$$');
+  assert.match(r.output, /bwrap --args 3 -- /, r.output);
+  assert.ok(!r.output.includes(root) && !r.output.includes(priv), `真路径露出来了：${r.output}`);
+  assert.ok(!r.output.includes('SECRET'), `调用方的环境进了 1 号进程：${r.output}`);
+  assert.match(r.output, /env=\[(PATH=\/usr\/bin:\/bin )?\]/, r.output);
+  assert.ok(!/^fd3-open/m.test(r.output), r.output);   // 按行首认：1 号进程的命令行里本来就带着这条命令的原文
+  assert.ok(!/pid=1\b/.test(r.output), `命令成了 1 号进程：${r.output}`);
+  assert.deepEqual(fs.readdirSync(priv).filter((f) => f.startsWith('hosted-args-')), [], '参数文件留下了');
+});
+
+test('外层被单独杀掉（内存不够时 OOM 可能只杀它）：里面的进程一个不留', { skip, timeout: 30_000 }, async () => {
+  const { root, priv } = rig();
+  const mark = `sleep 3${Date.now() % 100000}`;
+  const launch = sandboxedLaunch(box, { hosted: true, command: `(${mark} &) ; ${mark}`, root, cwd: root, policy: WORKSPACE_WRITE, privateDir: priv });
+  const child = spawn(launch.binary, launch.args, { cwd: root, env: launch.env, stdio: 'ignore', detached: true });
+  const alive = () => spawnSync('pgrep', ['-f', mark], { encoding: 'utf8' }).stdout.trim().split('\n').filter(Boolean)
+    .filter((pid) => { try { return !fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes('pgrep'); } catch { return false; } });
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.ok(alive().length >= 2, '命令没跑起来：这条判据没看到东西');
+  child.kill('SIGKILL');   // 只杀外层这一个进程，不是整组
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.deepEqual(alive(), [], '外层死了里面还活着');
+});
+
+test('看不到别的进程：PID 命名空间；读不到后端的环境变量和命令行', { skip }, async () => {
   const { run } = rig();
   const r = await run('ls /proc | grep -E "^[0-9]+$" | wc -l; cat /proc/1/cmdline | tr "\\0" " "; env | sort');
   const count = Number(r.output.split('\n')[0]);
   assert.ok(count < 10, `看得到 ${count} 个进程：${r.output}`);
   assert.ok(!r.output.includes('node') && !r.output.includes('test/sandbox-hosted'), r.output);
-  assert.ok(!r.output.includes('bwrap') && !r.output.includes('--bind'), `1 号进程露出了 bwrap 的参数（服务器上的真路径）：${r.output}`);
+  assert.ok(!r.output.includes('--bind') && !r.output.includes('--unshare'), `1 号进程露出了 bwrap 的参数（服务器上的真路径）：${r.output}`);
   assert.ok(!/ZHIQU|TOKEN|SECRET|PASSWORD|JWT|MASTER/i.test(r.output), `环境变量漏进去了：${r.output}`);
   assert.match(r.output, /HOME=\/tmp/);
 });

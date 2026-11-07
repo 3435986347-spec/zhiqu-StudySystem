@@ -1,0 +1,6 @@
+[Unit]
+Description=Zhiqu backup (database, uploads, config)
+
+[Service]
+Type=oneshot
+ExecStart=/home/ubuntu/zhiqu-StudySystem/deploy/backup-zhiqu.sh

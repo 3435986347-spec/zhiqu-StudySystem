@@ -110,7 +110,7 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 
 白名单的 `run_command` 在服务器上一直是关的：它不在沙箱里。不用 `--unshare-all`：它对用户、cgroup 命名空间是「能开就开」，开不了就悄悄不开，这里开不了就该起不来。
 
-真跑才查出来的（读代码看不出来）：根目录默认能写（`/etc/ld.so.preload` 能盖）；`/proc/1/cmdline` 是 bwrap 的全部参数（服务器上的真路径、账号 id），加 `--as-pid-1`；普通权限能把 `oom_score_adj` 调回 0（`--remount-ro /proc`）。
+真跑才查出来的（读代码看不出来）：根目录默认能写（`/etc/ld.so.preload` 能盖）；`/proc/1/cmdline` 是 bwrap 的全部参数（服务器上的真路径、账号 id），放进 `--args` 的文件（第一百一十七轮加过 `--as-pid-1`，第一百一十九轮在真服务器上去掉了：AppArmor 切配置时内核清掉 pdeathsig，外层一死里面的进程就成了孤儿，容器里看不到）；普通权限能把 `oom_score_adj` 调回 0（`--remount-ro /proc`）。
 
 **判据只有在 Linux 上才真的跑**（`test/sandbox-hosted.test.js`，macOS 上 14 条显式跳过）：改了这份沙箱要在容器里跑（`deploy/ubuntu/` 有办法），部署之后在真服务器上再跑一遍。
 

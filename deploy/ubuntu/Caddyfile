@@ -1,0 +1,32 @@
+# Caddy 自动向 Let's Encrypt 申请、续期证书。前提：
+#   1. zhiqustudy.com、www.zhiqustudy.com 的 A 记录指向这台服务器（134.175.110.207）
+#   2. 安全组放行 80 和 443（80 用于签发校验，不能只开 443）
+# A 记录没加之前证书签不下来，Caddy 会一直隔一段时间重试；加上就好，不用重启。
+
+zhiqustudy.com, www.zhiqustudy.com {
+    encode zstd gzip
+
+    # 应用只监听 127.0.0.1，Caddy 是唯一的入口。
+    reverse_proxy 127.0.0.1:8080
+
+    header {
+        # 先别加 preload：进了 preload 列表，回退到 HTTP 会非常麻烦
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # SSE（AI 助手的流式回答）不能被缓冲，否则用户看到的是「一直没反应，然后一次性全出来」。
+    # Caddy 对 text/event-stream 有自动探测，这里显式写出来：响应头哪天不带那个类型，症状只是流式变成了一次性，没人会想到反向代理。
+    @sse path /api/ai/chat/stream
+    reverse_proxy @sse 127.0.0.1:8080 {
+        flush_interval -1
+    }
+}
+
+# 裸 IP 访问：跳到域名，不把明文的登录页送出去
+http://134.175.110.207 {
+    redir https://zhiqustudy.com{uri} permanent
+}
