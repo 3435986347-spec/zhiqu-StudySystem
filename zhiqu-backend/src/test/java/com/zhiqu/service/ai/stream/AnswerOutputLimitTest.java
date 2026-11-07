@@ -86,6 +86,20 @@ class AnswerOutputLimitTest {
     }
 
     @Test
+    @DisplayName("OpenAI Responses 接口：档位照 ReasoningEffort 说（第一百零八轮，原来只认 DEEP、别的都是 medium）；instant 不带 reasoning")
+    void responses接口的档位() throws Exception {
+        String url = fake(body -> new String[]{"200", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"好\"}\n\n"
+                + "data: {\"type\":\"response.completed\",\"response\":{}}\n\n", "text/event-stream"});
+        for (String mode : List.of("MEDIUM", "HIGH", "EXTRA", "MAX", "OFF")) {
+            bodies.clear();
+            AiModelConfig c = config(url, "gpt-6.1-sol");
+            new OpenAiResponsesAdapter().stream(request(c, mode), e -> { });
+            assertEquals("OFF".equals(mode) ? "" : ReasoningEffort.forOpenAi("gpt-6.1-sol", mode), bodies.get(0).at("/reasoning/effort").asText(), mode);
+            assertEquals("OFF".equals(mode), bodies.get(0).path("reasoning").isMissingNode(), mode);
+        }
+    }
+
+    @Test
     @DisplayName("供应商不收 16384（说的是上限太大）：降到 8192 再来一次、拿到回答；4096 那档用不上就不发")
     void 不收就降一档() throws Exception {
         String url = fake(body -> body.path("max_tokens").asInt() > 8192

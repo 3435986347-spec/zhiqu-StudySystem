@@ -66,6 +66,11 @@ public final class HarnessContext {
         if (calls != null) {
             n += estimateTokens(String.valueOf(calls));
         }
+        // 思考内容回传时也占窗口（第一百零八轮）
+        Object thought = m.get("reasoning_content");
+        if (thought != null) n += estimateTokens(String.valueOf(thought));
+        Object blocks = m.get("reasoning_blocks");
+        if (blocks != null) n += estimateTokens(String.valueOf(blocks));
         return n;
     }
 

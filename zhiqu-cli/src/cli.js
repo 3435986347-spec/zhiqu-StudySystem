@@ -18,7 +18,7 @@ import { generatedOrigin } from './origins.js';
 import { unfinished } from './todos.js';
 import { SLASH_COMMANDS, slashHelp } from './commands.js';
 import { replayTranscript } from './replay.js';
-import { DEFAULT_SERVER, loadUserConfig, normalizeMode, resetSystemContent, resolveSettings, saveUserConfig, stripSlash, systemContent, userDir, MODES } from './config.js';
+import { DEFAULT_SERVER, EFFORTS, loadUserConfig, normalizeEffort, normalizeMode, resetSystemContent, resolveSettings, saveUserConfig, stripSlash, systemContent, userDir, MODES } from './config.js';
 import { isLoopbackUrl } from './defaults.js';
 import { displayPath, initPrompt, instructionsBlock, loadInstructions } from './instructions.js';
 import { McpManager } from './mcp.js';
@@ -69,6 +69,7 @@ export function parseArgs(argv) {
     else if (a === '--resume') flags.resume = argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : true;
     else if (a === '--mode') flags.mode = next();
     else if (a === '--model') flags.model = next();
+    else if (a === '--effort') flags.effort = next();
     else if (a === '--server') flags.server = next();
     else if (a === '--token') flags.token = next();
     else if (a === '--no-browser') flags.noBrowser = true;
@@ -99,6 +100,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
 选项
   --mode plan|ask|auto        档位：只读出计划 / 逐个确认 / 全自动（默认 ask，或 ~/.zhiqu/config.json 里的 mode）
   --model <id>                这次用哪个模型（zhiqu models 列出可用的）
+  --effort <档位>             思考档位：instant / medium / high / extra / max（不说就听服务端的默认）
   --server <url>              服务器地址（默认 ${DEFAULT_SERVER}${isLoopbackUrl(DEFAULT_SERVER) ? '，即本机的桌面应用' : ''}；也可以设 ZHIQU_SERVER）
   --no-mcp                    这次不连 MCP 服务器
   --allow-broad-root          允许在家目录或根目录下运行
@@ -294,6 +296,7 @@ async function runAgent(cwd, flags) {
   for (const w of terminalWarnings({ interactive: ui.interactive })) ui.warn(w);
   const modeFlag = flags.mode ? normalizeMode(flags.mode) : null;
   if (flags.mode && !modeFlag) throw new Error(`--mode 只接受 plan / ask / auto，收到 ${flags.mode}`);
+  if (flags.effort && !normalizeEffort(flags.effort)) throw new Error(`--effort 只接受 ${EFFORTS.join(' / ')}，收到 ${flags.effort}`);
   if (!settings.token) {
     if (!process.stdin.isTTY || flags.print) {
       ui.error('还没登录：先运行 zhiqu login（或者设置环境变量 ZHIQU_TOKEN）');
@@ -307,7 +310,7 @@ async function runAgent(cwd, flags) {
   // 默认连的本机桌面应用没开：macOS 上替用户打开、等它起来（见 desktop.js）
   if (await ensureLocalServer({ api, server: settings.server, ui }) === 'failed') return 1;
   const ctx = {
-    ui, api, root, settings, mode: modeFlag || settings.mode, maxRounds: settings.maxRounds, verbose: settings.showThinking,
+    ui, api, root, settings, mode: modeFlag || settings.mode, effort: settings.effort, maxRounds: settings.maxRounds, verbose: settings.showThinking,
     local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs }),
     store: new SessionStore(root), allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0, cached: 0 }, changedFiles: new Set(),
@@ -530,7 +533,7 @@ function turnNote(ctx, result) {
   if (note) ctx.ui.note(note);
 }
 
-async function slash(ctx, text) {
+export async function slash(ctx, text) {
   const { ui } = ctx;
   const [cmd, ...rest] = text.split(/\s+/);
   const arg = rest.join(' ').trim();
@@ -565,6 +568,18 @@ async function slash(ctx, text) {
       ctx.allow.write = false;
       ctx.allow.run = false;
       ui.line(`档位：${MODE_LABEL[m]}`);
+      return null;
+    }
+    case '/effort': {
+      if (!arg) {
+        ui.line(`思考档位：${ctx.effort || '跟服务端的默认'}\n可选：${EFFORTS.join(' / ')}（instant 不思考，往后越想越久、越费 token）`);
+        return null;
+      }
+      const e = normalizeEffort(arg);
+      if (!e) { ui.error(`思考档位只有 ${EFFORTS.join(' / ')}`); return null; }
+      ctx.effort = e;
+      saveUserConfig({ effort: e });
+      ui.line(`思考档位：${e}`);
       return null;
     }
     case '/model': {

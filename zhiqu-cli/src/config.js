@@ -19,6 +19,14 @@ export const DEFAULT_SERVER = packageDefaultServer();
 export const MODES = ['plan', 'ask', 'auto'];
 const MODE_ALIASES = { read: 'plan', readonly: 'plan', write: 'ask', exec: 'auto', confirm: 'ask', default: 'ask' };
 
+// 思考档位（第一百零八轮，用户 2026-11-07 定的名字，网页同一套）：instant 不思考，往后越想越久、越费 token。
+// 不说就听服务端的默认（app.ai.harness-reasoning）。
+export const EFFORTS = ['instant', 'medium', 'high', 'extra', 'max'];
+export function normalizeEffort(value) {
+  const s = String(value ?? '').trim().toLowerCase();
+  return EFFORTS.includes(s) ? s : null;
+}
+
 export function normalizeMode(value) {
   const v = String(value || '').trim().toLowerCase();
   if (MODES.includes(v)) return v;
@@ -113,6 +121,7 @@ export function resolveSettings(root, flags = {}) {
     token: process.env.ZHIQU_TOKEN || user.token || '',
     model: pick('model') ?? null,
     mode,
+    effort: normalizeEffort(pick('effort')),
     maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 60),
     execTimeoutMs: Number(project.execTimeoutMs ?? user.execTimeoutMs ?? 120_000),
     allowedCommands: project.allowedCommands ?? user.allowedCommands ?? null,

@@ -18,6 +18,10 @@
   temperature. Left unset, DeepSeek samples at its default 1.0 and the same task took different paths run to run (three of ten
   SWE-bench tasks flipped across three reruns); DeepSeek's docs recommend 0 for code. A provider 400 that mentions `temperature`
   makes `HarnessModelGateway` drop it and retry once (before any output). Empty = fall back to `app.ai.temperature`.
+- Thinking tier — `app.ai.harness-reasoning` (default `off`, round 108): which tier the command line gets when it does not say
+  (`instant` / `medium` / `high` / `extra` / `max`; `off` means `instant`). The default stays off until a real-model comparison says
+  otherwise: rounds 12 and 54 turned thinking off for real reasons (slow, spinning). The web code mode always says its own tier, so
+  this key does not reach it. Benchmarks use this key rather than a request field, so the broker's exact-body check stays as it is.
 - Timezone — `app.timezone` (default `Asia/Shanghai`). **"Which calendar day is it" is decided in
   exactly one place**, `BusinessClock.today()`. Before 2026-09-21 there were two: the AI prompts
   used `LocalDate.now(ZoneId.of("Asia/Shanghai"))` ("今天是 %s，时区是 Asia/Shanghai", and the

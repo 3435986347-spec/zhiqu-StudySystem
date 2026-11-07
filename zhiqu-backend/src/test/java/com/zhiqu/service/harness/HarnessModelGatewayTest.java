@@ -85,13 +85,14 @@ class HarnessModelGatewayTest {
 
     private final AiService aiService = mock(AiService.class);
     private String harnessTemperature = "0";
+    private String harnessReasoning = "off";
     private final HarnessUsageMapper usageMapper = mock(HarnessUsageMapper.class);
 
     private HarnessModelGateway gateway() {
         SensitiveCryptoService crypto = mock(SensitiveCryptoService.class);
         when(crypto.decrypt(any())).thenReturn("sk-test");
         ModelProviderClient provider = new ModelProviderClient(JSON, crypto, "2023-06-01", "");
-        return new HarnessModelGateway(aiService, provider, new ModelStreamAdapterFactory(List.of()), usageMapper, JSON, "2023-06-01", harnessTemperature);
+        return new HarnessModelGateway(aiService, provider, new ModelStreamAdapterFactory(List.of()), usageMapper, JSON, "2023-06-01", harnessTemperature, harnessReasoning);
     }
 
     private AiModelConfig model(String type, String url, Integer window) {

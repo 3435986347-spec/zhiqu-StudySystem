@@ -45,6 +45,7 @@ export function fakeApi(replies, { remote = {} } = {}) {
       const r = replies[Math.min(n, replies.length - 1)];
       n += 1;
       onEvent('start', { droppedMessages: 0, elidedToolOutputs: 0, contextWindow: 64000 });
+      if (r.reasoning) onEvent('reasoning', { text: r.reasoning });
       if (r.text) onEvent('delta', { text: r.text });
       const calls = (r.calls || []).map((c, i) => {
         onEvent('tool_call', { index: i, id: `c${n}_${i}`, name: c.name });
@@ -52,6 +53,7 @@ export function fakeApi(replies, { remote = {} } = {}) {
       });
       const message = { role: 'assistant', content: r.text || '' };
       if (calls.length) message.tool_calls = calls;
+      Object.assign(message, r.fields);   // 网关挂上来的字段（思考内容），命令行要原样记着带回去
       onEvent('done', { message, finishReason: r.finishReason || (calls.length ? 'tool_calls' : 'stop'), maxTokens: 16000,
         usage: r.usage || { promptTokens: 10, completionTokens: 5, estimated: false } });
     },

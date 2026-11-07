@@ -295,6 +295,8 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     tools: tools.map((t) => t.schema),
     maxTokens,
   };
+  if (ctx.effort) body.reasoning = ctx.effort;   // 不说就听服务端的默认
+  let thought = 0;
   // 安静模式不边收边打：这时断了，已经收到的那一段就这么没了（第二十二轮实测：回答到一半服务器重启，只剩一句「断开了」）。
   // 把它打出来 —— 用户至少看得到说到哪了。断的两种样子都要：连接出错（下面的 catch）、流好好结束了却没有 done
   const showPartial = () => {
@@ -312,6 +314,11 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
         ui.note(`· 服务器按上下文窗口（${data.contextWindow} token）裁掉了最早的 ${data.droppedMessages} 条消息`
           + `${data.elidedToolOutputs ? `、省略了 ${data.elidedToolOutputs} 段旧的工具输出` : ''}`);
       }
+    } else if (name === 'reasoning') {
+      // 思考不打进终端（要回传的内容在 done 的 message 里，见 HarnessModelGateway），只说它在想：不然模型想一分钟，看着像卡死了
+      thought += String(data.text || '').length;
+      if (hush) ui.setActivity(`思考中 ${formatBytes(thought)}`);
+      else if (render) ui.status.set(ui.paint.dim(`… 思考中 ${formatBytes(thought)}`));
     } else if (name === 'delta') {
       text += data.text;
       if (md) md.feed(data.text);

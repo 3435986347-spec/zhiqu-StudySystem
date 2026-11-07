@@ -76,6 +76,16 @@ public final class AnthropicFormat {
 
     private static List<Object> assistantBlocks(Map<String, Object> m, ObjectMapper json) {
         List<Object> blocks = new ArrayList<>();
+        // 思考块在最前面、原样（带签名，改一个字就失效）：ReasoningHistory 已经挑过，只有想出它的那个模型才见得到
+        int thinking = 0;
+        if (m.get("reasoning_blocks") instanceof List<?> saved) {
+            for (Object b : saved) {
+                if (b instanceof Map<?, ?>) {
+                    blocks.add(b);
+                    thinking++;
+                }
+            }
+        }
         String text = textOf(m.get("content"));
         if (!text.isBlank()) {
             blocks.add(new LinkedHashMap<>(Map.of("type", "text", "text", text)));
@@ -93,7 +103,7 @@ public final class AnthropicFormat {
                 blocks.add(block);
             }
         }
-        if (blocks.isEmpty()) {
+        if (blocks.size() == thinking) {
             blocks.add(new LinkedHashMap<>(Map.of("type", "text", "text", "（空）")));   // 规矩 4
         }
         return blocks;

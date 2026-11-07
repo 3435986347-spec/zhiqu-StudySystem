@@ -65,6 +65,7 @@ import com.zhiqu.service.VerifierService;
 import com.zhiqu.service.ai.WebResearchService;
 import com.zhiqu.service.ai.WebSearchProvider;
 import com.zhiqu.service.ai.stream.AiStreamAdapterSupport;
+import com.zhiqu.service.ai.stream.ReasoningEffort;
 import com.zhiqu.service.ai.stream.ModelStreamAdapterFactory;
 import com.zhiqu.service.ai.stream.ModelStreamRequest;
 import com.zhiqu.service.ai.stream.ModelStreamResult;
@@ -439,10 +440,8 @@ public class AiServiceImpl implements AiService {
         if (!hasText(message)) {
             throw new BusinessException("消息不能为空");
         }
-        String normalizedReasoningMode = normalizeReasoningMode(reasoningMode);
-        if (isReasoningRequested(normalizedReasoningMode) && !supportsDeepReasoning(config)) {
-            throw new BusinessException("当前模型不支持深度思考，请切换到 DeepSeek Reasoner、OpenAI reasoning 或 Claude thinking 模型");
-        }
+        // 模型不认思考就按 instant 走，不报错（第一百零八轮）：档位是记住的，换到一个不认的模型不该连话都发不出去
+        String normalizedReasoningMode = supportsDeepReasoning(config) ? normalizeReasoningMode(reasoningMode) : ReasoningEffort.OFF;
         // 首次会话解析也要入锁:与删除 Notebook 串行,避免"删除先完成、旧请求随后建出孤儿活动会话"
         AiConversation conversation = conversationLocks.withUserLock(userId,
                 () -> conversationTx.execute(tx -> getOrCreateConversation(userId, notebookId)));
@@ -621,10 +620,8 @@ public class AiServiceImpl implements AiService {
         if (!hasText(message)) {
             throw new BusinessException("消息不能为空");
         }
-        String normalizedReasoningMode = normalizeReasoningMode(reasoningMode);
-        if (isReasoningRequested(normalizedReasoningMode) && !supportsDeepReasoning(config)) {
-            throw new BusinessException("当前模型不支持深度思考，请切换到 DeepSeek Reasoner、OpenAI reasoning 或 Claude thinking 模型");
-        }
+        // 模型不认思考就按 instant 走，不报错（第一百零八轮）：档位是记住的，换到一个不认的模型不该连话都发不出去
+        String normalizedReasoningMode = supportsDeepReasoning(config) ? normalizeReasoningMode(reasoningMode) : ReasoningEffort.OFF;
         // 换行、缩进原样保留；超长的保留头尾、截掉中间并写明，下面 stream.start 之后再弹给用户（见 UserMessageFit）
         UserMessageFit messageFit = UserMessageFit.of(message, UserMessageFit.limitFor(config.getContextWindowTokens()));
         String limitedMessage = messageFit.text();
@@ -1532,7 +1529,7 @@ public class AiServiceImpl implements AiService {
                 }
             }
             CodeWorkspaceAgent.Result codeResult = codeWorkspaceAgent.run(s.config, s.userId, s.limitedMessage,
-                    chatHistory, s.contextOptions, ContextBudget.forWindow(s.config.getContextWindowTokens()),
+                    chatHistory, s.contextOptions, ContextBudget.forWindow(s.config.getContextWindowTokens()), s.reasoningMode,
                     note -> {
                         Map<String, Object> payload = new LinkedHashMap<>();
                         payload.put("requestId", s.requestId);
@@ -2453,27 +2450,16 @@ public class AiServiceImpl implements AiService {
     }
 
     private String normalizeReasoningMode(String mode) {
-        String normalized = hasText(mode) ? mode.trim().toUpperCase(Locale.ROOT) : "OFF";
-        return Set.of("AUTO", "DEEP").contains(normalized) ? normalized : "OFF";
+        return ReasoningEffort.normalize(mode);
     }
 
     private boolean isReasoningRequested(String mode) {
-        return "AUTO".equals(mode) || "DEEP".equals(mode);
+        return ReasoningEffort.on(mode);
     }
 
     private boolean supportsDeepReasoning(AiModelConfig config) {
-        String caps = config == null || config.getCapabilities() == null ? "" : config.getCapabilities().toUpperCase(Locale.ROOT);
-        String name = config == null || config.getModelName() == null ? "" : config.getModelName().toLowerCase(Locale.ROOT);
-        String providerType = config == null ? "" : provider.normalizeProviderType(config.getProviderType());
-        return caps.contains("REASONING")
-                || caps.contains("THINKING")
-                || name.contains("deepseek-reasoner")
-                || name.contains("reasoner")
-                || name.startsWith("o1")
-                || name.startsWith("o3")
-                || name.startsWith("o4")
-                || name.startsWith("gpt-5")
-                || ("ANTHROPIC".equals(provider) && name.contains("claude"));
+        return config != null && ReasoningEffort.supported(config.getCapabilities(), config.getModelName(),
+                provider.normalizeProviderType(config.getProviderType()));
     }
 
     private boolean shouldProbeReasoning(AiModelConfig config) {
@@ -3983,19 +3969,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private void applyAnthropicThinkingOptions(Map<String, Object> body, String reasoningMode, AiModelConfig config) {
-        if (!isReasoningRequested(reasoningMode)) {
-            return;
-        }
-        String name = config == null || config.getModelName() == null ? "" : config.getModelName().toLowerCase(Locale.ROOT);
-        boolean deep = "DEEP".equals(reasoningMode);
-        if (name.contains("claude-2") || name.contains("claude-3")) {
-            // 老一代 extended thinking：enabled + budget_tokens
-            body.put("thinking", Map.of("type", "enabled", "budget_tokens", deep ? 2048 : 1024));
-        } else {
-            // 新一代（fable / opus-4+ / sonnet-4+ / haiku-4+）：adaptive + output_config.effort（fable-5 实测）
-            body.put("thinking", Map.of("type", "adaptive"));
-            body.put("output_config", Map.of("effort", deep ? "high" : "medium"));
-        }
+        AiStreamAdapterSupport.applyAnthropicThinking(body, reasoningMode, config == null ? null : config.getModelName());
     }
 
     /** 调用 AI 视觉接口（携带 Base64 图片，OpenAI Vision 格式） */

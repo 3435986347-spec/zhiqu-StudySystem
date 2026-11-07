@@ -6,11 +6,11 @@
   <title>AI 助手 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261106-r107a" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261106-r107a">
-  <link rel="manifest" href="manifest.json?v=20261106-r107a">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261107-r108a" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261107-r108a">
+  <link rel="manifest" href="manifest.json?v=20261107-r108a">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261106-r107a">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261107-r108a">
 </head>
 <body>
   <div class="zq-app">
@@ -80,13 +80,17 @@
                   <textarea id="zq-draft" rows="2" aria-label="给 AI 发消息" placeholder="给 AI 发消息（⌘/Ctrl + 回车发送，回车换行）"></textarea>
                   <div class="zq-composer-bar">
                     <button id="zq-chat-upload" type="button" class="zq-composer-icon" title="上传文件（也可以拖进来、直接粘贴）" aria-label="上传文件"><span data-zq-icon="paperclip"></span></button>
-                    <!-- 档位：按钮显示当前这一档，点开向上拉起面板（第一百零五轮）。面板贴着输入框（.zq-composer）往上弹，不贴按钮：窄屏也不出界 -->
+                    <!-- 档位：按钮显示当前这一档，点开向上拉起面板（第一百零五轮；面板贴着自己的按钮，第一百零八轮） -->
                     <div id="zq-tier-pick" class="zq-tier-pick" hidden>
                       <button id="zq-tier" type="button" class="zq-chip zq-tier" aria-haspopup="menu" aria-expanded="false" aria-label="代码工作区的档位"><span id="zq-tier-name">close</span><span data-zq-icon="chevron-down"></span></button>
                       <div id="zq-tier-menu" class="zq-tier-menu" role="menu" aria-label="代码工作区的档位" hidden></div>
                     </div>
                     <button id="zq-web" type="button" class="zq-chip" aria-pressed="false" aria-label="联网" title="允许 AI 联网搜索"><span data-zq-icon="globe"></span><span class="zq-chip-label">联网</span></button>
-                    <button id="zq-think" type="button" class="zq-chip" aria-pressed="false" aria-label="深度思考" title="让模型先想清楚再回答（更慢）"><span data-zq-icon="lightbulb"></span><span class="zq-chip-label">深度思考</span></button>
+                    <!-- 思考档位（第一百零八轮，用户定的五个名字）：和代码工作区的档位同一个样子，点开向上拉起面板 -->
+                    <div id="zq-effort-pick" class="zq-tier-pick">
+                      <button id="zq-effort" type="button" class="zq-chip zq-tier" aria-haspopup="menu" aria-expanded="false" aria-label="思考档位"><span data-zq-icon="lightbulb"></span><span id="zq-effort-name">instant</span><span data-zq-icon="chevron-down"></span></button>
+                      <div id="zq-effort-menu" class="zq-tier-menu" role="menu" aria-label="思考档位" hidden></div>
+                    </div>
                     <select id="zq-model" class="zq-select zq-composer-model" aria-label="模型"><option value="">默认模型</option></select>
                     <button id="zq-send" type="button" class="zq-send" aria-label="发送（⌘/Ctrl + 回车）" title="发送（⌘/Ctrl + 回车）"><span data-zq-icon="arrow-up"></span></button>
                   </div>
@@ -113,7 +117,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261106-r107a"></script>
-  <script src="assets/zhiqu-api.js?v=20261106-r107a"></script>
+  <script src="assets/zhiqu-ui.js?v=20261107-r108a"></script>
+  <script src="assets/zhiqu-api.js?v=20261107-r108a"></script>
 </body>
 </html>

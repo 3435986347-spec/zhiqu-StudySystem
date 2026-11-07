@@ -34,6 +34,9 @@ export function estimateTokens(text) {
 export function estimateMessage(m) {
   let n = 4 + estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''));
   if (m.tool_calls) n += estimateTokens(JSON.stringify(m.tool_calls));
+  // 思考内容也要传回去、占窗口（第一百零八轮）：不算的话开着思考时压缩来得太晚，最后由服务端按轮丢
+  if (m.reasoning_content) n += estimateTokens(m.reasoning_content);
+  if (m.reasoning_blocks) n += estimateTokens(JSON.stringify(m.reasoning_blocks));
   return n;
 }
 

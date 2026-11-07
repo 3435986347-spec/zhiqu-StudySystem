@@ -34,6 +34,8 @@ public final class ToolStreamAccumulator {
     private final Listener listener;
     private final StringBuilder text = new StringBuilder();
     private final StringBuilder reasoning = new StringBuilder();
+    /** Anthropic 的思考块：下标 → 块，原样回放要带签名（第一百零八轮） */
+    private final java.util.TreeMap<Integer, Map<String, Object>> thinkingBlocks = new java.util.TreeMap<>();
     private final List<Call> calls = new ArrayList<>();
     /** Anthropic 的块序号 → 工具调用序号（文本块也占序号）。 */
     private final Map<Integer, Integer> anthropicBlockToCall = new LinkedHashMap<>();
@@ -162,6 +164,17 @@ public final class ToolStreamAccumulator {
                     call.id = block.path("id").asText("");
                     call.name = block.path("name").asText("");
                     listener.onToolStart(ordinal, call.id, call.name);
+                } else if ("thinking".equals(block.path("type").asText())) {
+                    Map<String, Object> saved = new LinkedHashMap<>();
+                    saved.put("type", "thinking");
+                    saved.put("thinking", block.path("thinking").asText(""));
+                    saved.put("signature", block.path("signature").asText(""));
+                    thinkingBlocks.put(root.path("index").asInt(), saved);
+                } else if ("redacted_thinking".equals(block.path("type").asText())) {
+                    Map<String, Object> saved = new LinkedHashMap<>();
+                    saved.put("type", "redacted_thinking");
+                    saved.put("data", block.path("data").asText(""));
+                    thinkingBlocks.put(root.path("index").asInt(), saved);
                 } else if ("text".equals(block.path("type").asText()) && !block.path("text").asText("").isEmpty()) {
                     text.append(block.path("text").asText());
                     listener.onText(block.path("text").asText());
@@ -182,7 +195,13 @@ public final class ToolStreamAccumulator {
                         if (!t.isEmpty()) {
                             reasoning.append(t);
                             listener.onReasoning(t);
+                            Map<String, Object> saved = thinkingBlocks.get(root.path("index").asInt());
+                            if (saved != null) saved.put("thinking", saved.get("thinking") + t);
                         }
+                    }
+                    case "signature_delta" -> {
+                        Map<String, Object> saved = thinkingBlocks.get(root.path("index").asInt());
+                        if (saved != null) saved.put("signature", saved.get("signature") + delta.path("signature").asText(""));
                     }
                     case "input_json_delta" -> {
                         Integer ordinal = anthropicBlockToCall.get(root.path("index").asInt());
@@ -250,6 +269,11 @@ public final class ToolStreamAccumulator {
 
     public String reasoning() {
         return reasoning.toString();
+    }
+
+    /** Anthropic 的思考块（带签名，按流里的顺序）；别的协议是空的，看 {@link #reasoning()}。 */
+    public List<Map<String, Object>> thinkingBlocks() {
+        return new ArrayList<>(thinkingBlocks.values());
     }
 
     public Integer promptTokens() {

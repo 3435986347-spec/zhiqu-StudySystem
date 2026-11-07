@@ -118,6 +118,9 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
   `/api/harness/**` 通配」都钉着。
 - **设备码登录**：命令行拿 deviceCode（库里存哈希），用户在「设置 → 命令行」里输入 8 位码、看过设备名和来源 IP
   之后点允许；命令行轮询换令牌，`WHERE status='APPROVED'` 的条件更新保证并发轮询只签出一张。
+- **思考档位**（第一百零八轮，Codex 同级第 1 步）：`--effort` / `/effort` / 设置里的 `effort`，名字是用户定的 instant / medium / high / extra / max；没选就不说，听 `app.ai.harness-reasoning`（默认 off）。各家的词只在 `ReasoningEffort`：DeepSeek 只有 low / high / max（medium → low、high 和 extra → high、max → max），Anthropic 用 `output_config.effort`。
+  不看代码想不到的：DeepSeek 开着思考、带工具时**之前每一轮的 `reasoning_content` 都要传回去，缺了 400**，关着档位时生成的旧消息补空串（官方文档）；Claude 的思考块带签名，改一个字就失效，只回放给想出它的那个模型（`reasoning_model` 记着，不发给供应商）。这三个字段只有 `ReasoningHistory` 认识，别的供应商见不到。思考算在输出上限里，开着时网关把上限翻倍（封顶 32000，不超过半个窗口）。参数被拒就关掉重试并记住这个模型，回放被拒就去掉回放重试。思考不打进终端，只显示「思考中 N」；会话存档里有思考内容（续接时要回传）。
+  评测：验证库后端带 `--app.ai.harness-reasoning=high`，run-config 的 `rerun.output_reservation_tokens` 给 32768。不给的话网关翻倍的 `start` 会被代理当成违规，整场停下。
 - **模型网关**进出都是 OpenAI 格式；Anthropic 的翻译只在 `AnthropicFormat` 一处（服务器端 code agent 的
   `ModelProviderClient.callToolTurn` 也用它 —— 此前 Anthropic 配置被标成支持工具调用，请求却是 OpenAI 格式）。
   流式里工具名一到就发 `tool_call`、参数每长 2KB 发一次 `tool_progress`：模型写大文件时不是一段沉默。

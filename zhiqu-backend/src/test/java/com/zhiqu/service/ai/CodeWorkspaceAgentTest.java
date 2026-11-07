@@ -116,7 +116,7 @@ class CodeWorkspaceAgentTest {
             when(js.enabled()).thenReturn(true);
             rig.agent.setJsEngine(js);
             assertSame(CodeWorkspaceAgent.Result.EMPTY, rig.run("帮我看看 Main.java 这段代码", CODE_MODE));
-            verify(js, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any());
+            verify(js, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any());
         }
     }
 
@@ -137,11 +137,11 @@ class CodeWorkspaceAgentTest {
             when(rig.executor.enabled()).thenReturn(c.execEnabled());
             JsCodeAgent js = mock(JsCodeAgent.class);
             when(js.enabled()).thenReturn(true);
-            when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any()))
+            when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any()))
                     .thenReturn(new CodeWorkspaceAgent.Result("", List.of(), null, c.write(), List.of(), false));
             rig.agent.setJsEngine(js);
             rig.run(c.message(), c.options());
-            verify(js).run(any(), eq(1L), eq(c.message()), any(), eq(c.write()), eq(c.exec()), any(), any(), any(), any());
+            verify(js).run(any(), eq(1L), eq(c.message()), any(), eq(c.write()), eq(c.exec()), any(), any(), any(), any(), any());
         }
     }
 
@@ -194,17 +194,32 @@ class CodeWorkspaceAgentTest {
      * 循环交给命令行那一份（JsCodeAgent 起子进程）；它起不来（返回 null）就照旧走 Java 的循环。
      */
     @Test
+    @DisplayName("网页选的思考档位交给循环（第一百零八轮）；不说就是 instant —— 工具轮不思考（第五十四轮：一问要等几分钟）")
+    void 思考档位交给循环() {
+        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        JsCodeAgent js = mock(JsCodeAgent.class);
+        when(js.enabled()).thenReturn(true);
+        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any()))
+                .thenReturn(new CodeWorkspaceAgent.Result("", List.of(), null, true, List.of(), false));
+        rig.agent.setJsEngine(js);
+        rig.agent.run(new AiModelConfig(), 1L, "改一下 a.py", List.of(), CODE_MODE, null, "MAX", rig.notes::add);
+        verify(js).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), eq("MAX"));
+        rig.run("改一下 a.py", CODE_MODE);
+        verify(js).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), eq("OFF"));
+    }
+
+    @Test
     @DisplayName("门判完才交给命令行那一份；不是管理员连起都不起；经桥记下的里程碑交回主流程；起不来（没有 node）说清楚、结果是空的")
     void 交给命令行那一份() throws Exception {
         CodeWorkspaceAgent.Result fromJs = new CodeWorkspaceAgent.Result("【代码 agent 的结论】\n好", List.of(), null, true);
         Rig rig = new Rig(WorkspaceMode.WRITE, true);
         JsCodeAgent js = mock(JsCodeAgent.class);
         when(js.enabled()).thenReturn(true);
-        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any())).thenReturn(fromJs);
+        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(fromJs);
         rig.agent.setJsEngine(js);
         CodeWorkspaceAgent.Result viaJs = rig.run("改一下 a.py", CODE_MODE);
         assertEquals(fromJs.context(), viaJs.context());
-        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(false), any(), any(), any(), any());
+        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(false), any(), any(), any(), any(), any());
         verify(rig.provider, never()).callToolTurn(any(), any(), any(), any());
 
         Rig notAdmin = new Rig(WorkspaceMode.WRITE, false);
@@ -212,13 +227,13 @@ class CodeWorkspaceAgentTest {
         when(js2.enabled()).thenReturn(true);
         notAdmin.agent.setJsEngine(js2);
         notAdmin.run("改一下 a.py", CODE_MODE);
-        verify(js2, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any());
+        verify(js2, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any());
 
         // 第九十五轮：JS 那份经桥调了「把里程碑排成任务」—— 记在这里的循环状态上，要交回主流程（走 PLANNER 那条确认的路）
         Rig project = new Rig(WorkspaceMode.WRITE, true);
         JsCodeAgent js3 = mock(JsCodeAgent.class);
         when(js3.enabled()).thenReturn(true);
-        when(js3.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(js3.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
             JsCodeAgent.RemoteTools remote = inv.getArgument(9);
             String reply = remote.call(StudyPlanTool.NAME, "{\"tasks\":[{\"title\":\"让蛇动起来\"}]}", false);
             return new CodeWorkspaceAgent.Result("【工作区 create_study_plan】\n" + reply, List.of(), null, true, List.of(), false);

@@ -7,6 +7,7 @@ export const SLASH_COMMANDS = [
   { name: '/goal', args: '<目标>', desc: 'goal 模式：把它当圣目标，一直做到达成并核对通过（Ctrl+C 随时停）' },
   { name: '/mode', args: '[plan|ask|auto]', desc: '切换档位（只读出计划 / 逐个确认 / 全自动）' },
   { name: '/model', args: '[id|default]', desc: '查看 / 切换模型' },
+  { name: '/effort', args: '[instant|medium|high|extra|max]', desc: '思考档位：想得越久答得越稳，也越慢、越费 token' },
   { name: '/window', args: '[数，如 1m / 128k]', desc: '看 / 设当前模型的上下文窗口（没填就按默认 64K 算）' },
   { name: '/resume', desc: '列出这个工作区的会话，挑一段接着做' },
   { name: '/new', desc: '开一段新会话' },

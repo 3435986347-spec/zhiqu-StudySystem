@@ -141,6 +141,17 @@ class JsCodeAgentTest {
     }
 
     @Test
+    @DisplayName("思考档位真的到了模型请求（第一百零八轮）：后端的词换成命令行的词；instant 也明说，不落到服务端给命令行的默认档")
+    void 思考档位到模型请求() throws Exception {
+        JsCodeAgent js = agent(CLI_DIR, List.of(text("结论")));
+        js.run(config, 7L, "看看", List.of(), false, false, CodeLoopBudget.forRequest(false), ContextBudget.DEFAULT, notes::add, null, "EXTRA");
+        assertEquals("extra", bodies.get(0).get("reasoning"), "选的档位没传到模型请求：" + notes);
+        bodies.clear();
+        js.run(config, 7L, "看看", List.of(), false, false, CodeLoopBudget.forRequest(false), ContextBudget.DEFAULT, notes::add, null);
+        assertEquals("instant", bodies.get(0).get("reasoning"));
+    }
+
+    @Test
     @DisplayName("远程工具（第九十五轮）：Wiki 工具经桥交给后端那一套执行；记薄弱点的工具真的跑过一次命令才下发，后端执行时也知道跑没跑过")
     void 远程工具经桥执行() throws Exception {
         Files.writeString(root.resolve("test_q.py"), "print('FAIL')\n");

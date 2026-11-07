@@ -14,9 +14,9 @@ export const boots = { 'ai-assistant.html': (sh) => { bind(sh); startWaitTicker(
 
 async function bootAiAssistant() {
   restoreAiToggles();
-  var webBtn = $('#zq-web'), thinkBtn = $('#zq-think'), sendBtn = $('#zq-send'), draft = $('#zq-draft');
+  var webBtn = $('#zq-web'), effortBtn = $('#zq-effort'), sendBtn = $('#zq-send'), draft = $('#zq-draft');
   if (webBtn) webBtn.onclick = function () { aiToggle('web'); };
-  if (thinkBtn) thinkBtn.onclick = function () { aiToggle('think'); };
+  if (effortBtn) effortBtn.onclick = toggleEffortMenu;
   if (sendBtn) sendBtn.onclick = sendAiMessage;
   if (draft) {
     state.chatDraft = keepDraft(draft, chatDraftKey, growDraft);
@@ -294,7 +294,7 @@ async function uploadAiFiles(files, attachToNextMessage) {
   toast('上传完成：' + summary + (firstError ? '（' + firstError + '）' : ''),
     errorCount && !(readyCount || imageCount) ? 'error' : undefined);
 }
-// ───────────────────────── 输入框下面的选择（模型、深度思考、联网）：刷新、重开都还在
+// ───────────────────────── 输入框下面的选择（模型、思考档位、联网）：刷新、重开都还在
 // 用户 2026-11-06：「每次刷新后ai助手下面的模型就会回到默认模型，深度思考等状态也没有保留，很影响体验」。
 // 只记在这台浏览器。按用户分开：模型 ID 是各人的，公用电脑上换个人登录不接上一个人的。存不了（隐私窗口）、存的是坏数据都不炸，只管这一页。
 // 退出登录不删：这不是内容，重新登录还接着用（草稿才要删）。
@@ -317,7 +317,7 @@ function saveComposerPref(name, value) {
     localStorage.setItem(key, JSON.stringify(p));
   } catch (e) { /* 存不了就只管这一页 */ }
 }
-var AI_TOGGLE_IDS = { web: 'zq-web', think: 'zq-think' };
+var AI_TOGGLE_IDS = { web: 'zq-web' };
 function setAiToggleState(kind, on) {
   var button = document.getElementById(AI_TOGGLE_IDS[kind]);
   if (!button) return;
@@ -328,7 +328,46 @@ function setAiToggleState(kind, on) {
 function restoreAiToggles() {
   var p = composerPrefs();
   setAiToggleState('web', p.web === true);
-  setAiToggleState('think', p.think === true);
+  // 第一百零七轮记的是「深度思考」开没开（think），当时的深度思考就是 high
+  paintEffort(AI_EFFORTS.indexOf(p.effort) >= 0 ? p.effort : (p.think === true ? 'high' : 'instant'));
+}
+// 思考档位（第一百零八轮）。用户 2026-11-07：「把深度思考的按钮换成思考档位切换（instant-medium-high-extra-max）同样还是点击之后上方拉出页面点击切换」。
+// 面板只写名字（用户：「去掉档位下面的小字」），每档做什么在悬停提示里。发给后端的词在 reasoningModeForRequest，后端映射到各家（ReasoningEffort）。
+var AI_EFFORTS = ['instant', 'medium', 'high', 'extra', 'max'];
+var AI_EFFORT_DESC = {
+  instant: '不思考，最快。有的模型关不掉思考，就按它自己的默认。',
+  medium: '想一下再答。',
+  high: '仔细想，慢一些、多花一些 token。',
+  extra: '想得更久，更慢、更费 token。有的模型到 high 就是顶了。',
+  max: '能想多久想多久，最慢、最费 token。',
+};
+var aiEffort = 'instant';
+function paintEffort(effort) {
+  aiEffort = effort;
+  var btn = $('#zq-effort'), name = $('#zq-effort-name');
+  if (!btn || !name) return;
+  name.textContent = effort;
+  btn.classList.toggle('is-on', effort !== 'instant');
+  btn.title = '思考档位：' + AI_EFFORT_DESC[effort];
+}
+function reasoningModeForRequest() {
+  return aiEffort === 'instant' ? 'OFF' : aiEffort.toUpperCase();
+}
+function toggleEffortMenu() {
+  var menu = $('#zq-effort-menu'), btn = $('#zq-effort');
+  if (wsMenuOpen && wsMenuOpen.menu === menu) { closeWorkspaceMenu(); return; }
+  menu.innerHTML = AI_EFFORTS.map(function (e) {
+    return '<button type="button" role="menuitemradio" class="zq-tier-item" data-effort="' + e + '" aria-checked="' + (e === aiEffort) + '" title="' + esc(AI_EFFORT_DESC[e]) + '">' + e + '</button>';
+  }).join('');
+  $all('[data-effort]', menu).forEach(function (b) {
+    b.onclick = function () { chooseEffort(b.getAttribute('data-effort')); };
+  });
+  openWorkspaceMenu(menu, btn, '[aria-checked="true"]');
+}
+function chooseEffort(effort) {
+  closeWorkspaceMenu();
+  paintEffort(effort);
+  saveComposerPref('effort', effort);
 }
 function aiToggle(k) {
   var button = document.getElementById(AI_TOGGLE_IDS[k]);
@@ -1765,7 +1804,7 @@ async function sendAiMessage() {
   var sendButton = $('#zq-send');
   // 发送键只有一个箭头（第四十四轮）：生成中换成转圈（样式表画），读屏念「生成中」
   if (sendButton) { sendButton.disabled = true; sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中'); }
-  var reasoningMode = ($('#zq-think') && $('#zq-think').dataset.on === '1') ? 'DEEP' : 'OFF';
+  var reasoningMode = reasoningModeForRequest();
   // READY（有分块，走检索）和 IMAGE（无分块，走视觉内容块）都要发给后端。
   // 只发 READY 的话图片就被挡在这一层，后端永远收不到它。
   var selectedSourceIds = state.pendingSources

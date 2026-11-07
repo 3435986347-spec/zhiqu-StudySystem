@@ -173,8 +173,7 @@ public final class AiStreamAdapterSupport {
     }
 
     static boolean isReasoningRequested(String mode) {
-        String normalized = mode == null ? "OFF" : mode.trim().toUpperCase(Locale.ROOT);
-        return "AUTO".equals(normalized) || "DEEP".equals(normalized);
+        return ReasoningEffort.on(mode);
     }
 
     /**
@@ -200,17 +199,16 @@ public final class AiStreamAdapterSupport {
      *  - 其余（fable / opus-4+ / sonnet-4+ / haiku-4+ 等新代）：thinking:{type:adaptive} + output_config.effort
      * 新代模型发旧格式会被拒（400 "thinking.type: enabled is not supported"），已由 fable-5 实测确认。
      */
-    static void applyAnthropicThinking(Map<String, Object> body, String reasoningMode, String modelName) {
+    public static void applyAnthropicThinking(Map<String, Object> body, String reasoningMode, String modelName) {
         if (!isReasoningRequested(reasoningMode)) {
             return;
         }
         String name = modelName == null ? "" : modelName.toLowerCase(Locale.ROOT);
-        boolean deep = "DEEP".equalsIgnoreCase(reasoningMode);
         if (name.contains("claude-2") || name.contains("claude-3")) {
-            body.put("thinking", Map.of("type", "enabled", "budget_tokens", deep ? 2048 : 1024));
+            body.put("thinking", Map.of("type", "enabled", "budget_tokens", ReasoningEffort.anthropicLegacyBudget(reasoningMode)));
         } else {
             body.put("thinking", Map.of("type", "adaptive"));
-            body.put("output_config", Map.of("effort", deep ? "high" : "medium"));
+            body.put("output_config", Map.of("effort", ReasoningEffort.forAnthropic(reasoningMode)));
         }
     }
 
@@ -289,18 +287,22 @@ public final class AiStreamAdapterSupport {
 
     public static void applyOpenAiReasoningOptions(AiModelConfig config, Map<String, Object> body, String reasoningMode) {
         String name = config.getModelName() == null ? "" : config.getModelName().toLowerCase(Locale.ROOT);
-        if (!isReasoningRequested(reasoningMode)) {
-            if (name.contains("deepseek") && !name.contains("reasoner")) {
+        boolean deepSeek = name.contains("deepseek");
+        if (!ReasoningEffort.on(reasoningMode)) {
+            if (deepSeek && !name.contains("reasoner")) {
                 body.put("thinking", Map.of("type", "disabled"));
             }
             return;
         }
-        if (name.contains("deepseek") && !name.contains("reasoner")) {
-            body.put("thinking", Map.of("type", "enabled"));
-            return;
-        }
-        if (name.startsWith("o1") || name.startsWith("o3") || name.startsWith("o4") || name.startsWith("gpt-5")) {
-            body.put("reasoning", Map.of("effort", "DEEP".equals(reasoningMode) ? "high" : "medium"));
+        // 只给认得出的那几家发，别的模型照它自己的默认；命令行的网关发了不收会降，网页这边 400 由调用方说清楚
+        if (deepSeek) {
+            if (!name.contains("reasoner")) body.put("thinking", Map.of("type", "enabled"));
+            body.put("reasoning_effort", ReasoningEffort.forDeepSeek(reasoningMode));
+        } else if (name.matches("(?:.*/)?(?:o[134]|gpt-[5-9]).*")) {
+            body.put("reasoning_effort", ReasoningEffort.forOpenAi(name, reasoningMode));
+        } else if (name.contains("claude")) {
+            // OpenAI 兼容的中转：一般把它转成 output_config.effort
+            body.put("reasoning_effort", ReasoningEffort.forOpenAi(name, reasoningMode));
         }
     }
 

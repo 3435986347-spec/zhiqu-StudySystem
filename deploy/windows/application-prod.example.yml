@@ -78,6 +78,8 @@ app:
     temperature: ""
     # 命令行（/api/harness）干活的请求用的采样温度：写代码要稳，DeepSeek 建议 0；模型不认时网关去掉它重试一次。留空 = 跟上面的 temperature 一样。
     harness-temperature: "0"
+    # 命令行没说思考档位时用哪一档（instant / medium / high / extra / max；off 和 instant 一个意思）。默认 off：第十二、五十四轮关思考的理由（慢、空转）是真的，量过再改（docs/codex-parity-plan.md）
+    harness-reasoning: "off"
     # 网页代码模式要 Node（只在后端绑回环地址、开了代码工作区时用得到）：node 不在 PATH 上就写绝对路径；cli-dir 留空用 JAR 里带的命令行源码。
     code-agent:
       node: node

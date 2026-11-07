@@ -903,7 +903,9 @@ async function formalRun(ctx, { continuation = false } = {}) {
   const ledger = plan || again ? pilotLedger(path.join(ctx.root, 'ledger'), (plan || again).ledger_prefix, (plan || again).limits) : pilotLedger(path.join(ctx.root, 'ledger'));
   writeJson(path.join(dir, 'ledger-choice.json'), ledger);
   const broker = new BrokerContainer({ name: `zq-eval-broker-${runId}`, runtime: ctx.runtime, ledgerDir: path.join(ctx.root, 'ledger'), logFile: path.join(dir, 'broker.log') });
-  await broker.start({ server: upstream, token, ledgerName: ledger.ledgerName, limits: { ...ledger.limits, modelId } });
+  // 开着思考跑（第一百零八轮）：后端带 --app.ai.harness-reasoning=high，run-config 里 output_reservation_tokens 给 32768；请求体一个字不变
+  const reservation = (plan || again)?.output_reservation_tokens;
+  await broker.start({ server: upstream, token, ledgerName: ledger.ledgerName, limits: { ...ledger.limits, modelId, ...(reservation ? { outputReservationTokens: reservation } : {}) } });
   const results = {};
   let hostGatewayIp = null;
   const manifest = { run_id: runId, started_at: new Date().toISOString(), model, continuation: plan, config_sha256: sha(fs.readFileSync(ctx.configPath)),

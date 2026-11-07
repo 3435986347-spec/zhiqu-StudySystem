@@ -12,6 +12,9 @@ import { Api } from '../../zhiqu-cli/src/api.js';
 const http = createRequire(import.meta.url)('node:http');
 export const MODEL_PATH = '/api/harness/model/stream';
 export const OUTPUT_RESERVATION_TOKENS = 16_384;
+// Thinking on, the gateway doubles the output cap (ReasoningHistory.outputLimit, capped at 32000). Reserving only 16384
+// would halt the whole run on the first start event, or on the first long answer.
+export const THINKING_OUTPUT_RESERVATION_TOKENS = 32_768;
 // 用户批过的模型配置（都是 deepseek-v4-pro / 1M）：6 是「deepseek测试专用」、1 是日常那个（第六十二、六十九轮）；
 // 23、25 是验证库里配着用户给的测试 key 的两个（第九十八轮：重跑从验证库的网关走，不碰用户平常的库和桌面应用）
 export const APPROVED_MODEL_IDS = Object.freeze([6, 1, 23, 25]);
@@ -74,7 +77,8 @@ function validateBody(body, config) {
   const fields = Object.keys(body).sort();
   if (JSON.stringify(fields) !== JSON.stringify(['maxTokens', 'messages', 'modelId', 'tools'])) fail('unexpected_body_fields');
   if (body.modelId !== config.modelId) fail('wrong_requested_model');
-  if (!Number.isSafeInteger(body.maxTokens) || body.maxTokens <= 0 || body.maxTokens > OUTPUT_RESERVATION_TOKENS) fail('invalid_output_cap');
+  const reservation = config.outputReservationTokens ?? OUTPUT_RESERVATION_TOKENS;
+  if (!Number.isSafeInteger(body.maxTokens) || body.maxTokens <= 0 || body.maxTokens > reservation) fail('invalid_output_cap');
   if (!Array.isArray(body.messages) || !body.messages.length || body.messages.length > 2000) fail('invalid_messages');
   if (!Array.isArray(body.tools) || body.tools.length > 128) fail('invalid_tools');
   for (const message of body.messages) {
@@ -85,7 +89,7 @@ function validateBody(body, config) {
     if (!tool || tool.type !== 'function' || !tool.function || typeof tool.function.name !== 'string') fail('invalid_tool');
   }
   const upper = inputTokenUpperBound(body);
-  if (!Number.isSafeInteger(upper) || upper <= 0 || upper + OUTPUT_RESERVATION_TOKENS > config.contextWindow) fail('input_context_cap');
+  if (!Number.isSafeInteger(upper) || upper <= 0 || upper + reservation > config.contextWindow) fail('input_context_cap');
   return upper;
 }
 
@@ -122,6 +126,12 @@ export class RepositoryBroker {
   constructor(options = {}) {
     this.config = Object.fromEntries(Object.entries(DEFAULTS).map(([key, value]) => [key, options[key] === undefined ? value : options[key]]));
     for (const key of Object.keys(DEFAULTS).filter((key) => !['modelName', 'modelId'].includes(key))) positive(this.config[key], key);
+    // Only present when asked for: a ledger's init is compared byte for byte, and older ledgers do not have this key.
+    if (options.outputReservationTokens !== undefined) {
+      if (![OUTPUT_RESERVATION_TOKENS, THINKING_OUTPUT_RESERVATION_TOKENS].includes(options.outputReservationTokens)) throw new Error('Output reservation exceeds approved scope');
+      this.config.outputReservationTokens = options.outputReservationTokens;
+    }
+    this.outputReservation = this.config.outputReservationTokens ?? OUTPUT_RESERVATION_TOKENS;
     // 一本账一个模型 ID：ID 6（2026-10-16 用户指定）或 ID 1（2026-10-18 用户要求补被预算打断的题），都是 deepseek-v4-pro / 1M
     if (!APPROVED_MODEL_IDS.includes(this.config.modelId) || this.config.modelName !== 'deepseek-v4-pro' || this.config.contextWindow !== 1_000_000) {
       throw new Error(`Broker model must be one of ${APPROVED_MODEL_IDS.join(' / ')} / deepseek-v4-pro with 1000000 context`);
@@ -213,9 +223,9 @@ export class RepositoryBroker {
         const episode = this.episodes.get(item.episodeId);
         positive(item.inputUpperTokens, 'ledger input reservation'); positive(item.requestedMaxTokens, 'ledger requested output');
         if (!episode?.active || !receivedIds.has(item.requestId) || this.requests.has(item.requestId)
-            || !isHash(item.bodySha256) || item.reservedOutputTokens !== OUTPUT_RESERVATION_TOKENS
-            || item.requestedMaxTokens > OUTPUT_RESERVATION_TOKENS
-            || item.inputUpperTokens + OUTPUT_RESERVATION_TOKENS > this.config.contextWindow
+            || !isHash(item.bodySha256) || item.reservedOutputTokens !== this.outputReservation
+            || item.requestedMaxTokens > this.outputReservation
+            || item.inputUpperTokens + this.outputReservation > this.config.contextWindow
             || item.reservedMicroCny !== charge(item.inputUpperTokens, item.reservedOutputTokens)
             || this.halted || episode.requests >= episode.requestLimit
             || this.inputUsed + item.inputUpperTokens > this.config.inputTokenLimit
@@ -422,7 +432,7 @@ export class RepositoryBroker {
         if (this.halted) fail('broker_budget_stopped', 402);
         if (this.active.size >= this.config.maxActiveRequests) fail('broker_busy', 429);
         if (episode.requests >= episode.requestLimit) fail('episode_request_limit', 402);
-        const output = OUTPUT_RESERVATION_TOKENS;
+        const output = this.outputReservation;
         if (this.inputUsed + upper > this.config.inputTokenLimit || this.outputUsed + output > this.config.outputTokenLimit
             || this.spent(upper, output) > this.config.limitMicroCny) fail('run_budget_exhausted', 402);
         if (episode.inputUsed + upper > episode.inputLimit || episode.outputUsed + output > episode.outputLimit) fail('episode_token_budget_exhausted', 402);
@@ -480,7 +490,7 @@ export class RepositoryBroker {
     if (name === 'start') {
       if (record.verifiedStart || data.model?.id !== this.config.modelId || data.model?.modelName !== this.config.modelName
           || data.contextWindow !== this.config.contextWindow || !Number.isSafeInteger(data.maxTokens)
-          || data.maxTokens <= 0 || data.maxTokens > record.requestedMaxTokens) {
+          || data.maxTokens <= 0 || data.maxTokens > (this.config.outputReservationTokens ?? record.requestedMaxTokens)) {
         this.halt('wrong_sse_start'); fail('wrong_sse_start', 502);
       }
       record.verifiedStart = true; record.startedMaxTokens = data.maxTokens;

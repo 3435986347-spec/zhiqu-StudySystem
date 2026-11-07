@@ -6,6 +6,7 @@
 //                step（轨迹里的一句）、result（收尾）、fatal（出错了）
 // 门（是不是管理员、工作区档位、写意图、能不能执行）后端判好了才起这个进程；模型和命令都回到后端去做 —— 这里只有循环和工作区的读、草稿。
 // 认不出的消息就停，不猜。
+import { normalizeEffort } from '../config.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -134,6 +135,8 @@ export async function runHosted(bridge, run) {
     allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() }, usage: { prompt: 0, completion: 0, cached: 0 },
     changedFiles: new Set(), todos: [], system: { text: BUILTIN_SYSTEM_PROMPT }, instructionsText: '', skillsText: '', skills: [],
     verbose: true, model: run.model,
+    // 网页输入框下面选的思考档位（第一百零八轮）；明说，不听服务端给命令行的默认（第五十四轮：工具轮想起来，一问要等几分钟）
+    effort: normalizeEffort(run.effort) || 'instant',
   };
   // 远程工具（第九十五轮）：一直给的那几个 + 真的跑过一次命令之后才给的（create_wiki_patch：判过题才许记薄弱点）。工具表每一轮重建，所以随时变
   const always = Array.isArray(run.remoteTools) ? run.remoteTools : [];

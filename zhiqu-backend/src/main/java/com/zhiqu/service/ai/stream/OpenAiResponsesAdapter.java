@@ -36,7 +36,7 @@ public class OpenAiResponsesAdapter implements ModelStreamAdapter {
             body.put("input", toResponsesInput(request.messages()));
             body.put("stream", true);
             if (AiStreamAdapterSupport.isReasoningRequested(request.reasoningMode())) {
-                body.put("reasoning", Map.of("effort", "DEEP".equals(request.reasoningMode()) ? "high" : "medium"));
+                body.put("reasoning", Map.of("effort", ReasoningEffort.forOpenAi(request.config().getModelName(), request.reasoningMode())));
             }
             AiStreamAdapterSupport.StreamEnd end = restTemplate.execute(
                     AiStreamAdapterSupport.resolveResponsesUrl(request.config().getApiUrl()),

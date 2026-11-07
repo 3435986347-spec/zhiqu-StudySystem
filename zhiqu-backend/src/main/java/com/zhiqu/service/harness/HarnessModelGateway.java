@@ -111,12 +111,19 @@ public class HarnessModelGateway {
     /** 这个进程里被供应商拒过的：不再发 temperature / 缓存标记（键是模型 ID + 地址 + 模型名，改了配置就重新试） */
     private final Set<String> noTemperature = ConcurrentHashMap.newKeySet();
     private final Set<String> noCacheMarks = ConcurrentHashMap.newKeySet();
+    /** 同上：思考参数不收的（第一百零八轮）、回放思考被拒的（历史改过、签名失效，再带也是 400） */
+    private final Set<String> noReasoning = ConcurrentHashMap.newKeySet();
+    private final Set<String> noReplay = ConcurrentHashMap.newKeySet();
+    /** 请求没说档位时用的（app.ai.harness-reasoning，默认 off：第十二、五十四轮关思考的理由是真的，量过再改） */
+    private final String defaultReasoning;
 
     public HarnessModelGateway(AiService aiService, ModelProviderClient provider, ModelStreamAdapterFactory adapters,
                                HarnessUsageMapper usageMapper, ObjectMapper json,
                                @Value("${app.ai.anthropic-version:2023-06-01}") String anthropicVersion,
-                               @Value("${app.ai.harness-temperature:0}") String harnessTemperature) {
+                               @Value("${app.ai.harness-temperature:0}") String harnessTemperature,
+                               @Value("${app.ai.harness-reasoning:off}") String harnessReasoning) {
         this.harnessTemperature = parseTemperature(harnessTemperature);
+        this.defaultReasoning = com.zhiqu.service.ai.stream.ReasoningEffort.normalize(harnessReasoning);
         this.aiService = aiService;
         this.provider = provider;
         this.adapters = adapters;
@@ -152,6 +159,8 @@ public class HarnessModelGateway {
             chars += content == null ? 0 : String.valueOf(content).length();
             Object calls = m.get("tool_calls");
             chars += calls == null ? 0 : String.valueOf(calls).length();
+            Object thought = m.get(ReasoningHistory.CONTENT);
+            chars += thought == null ? 0 : String.valueOf(thought).length();
             out.add(new LinkedHashMap<>((Map<String, Object>) m));
         }
         if (chars > MAX_TOTAL_CHARS) {
@@ -213,8 +222,13 @@ public class HarnessModelGateway {
             throw new BusinessException("模型「" + label(config) + "」不支持工具调用，命令行读写文件、跑命令都靠它。"
                     + "请用 /model 换一个 OpenAI 兼容或 Anthropic 的模型");
         }
+        // 被拒过的记住（第一百零四轮）：Opus 5.5 不收 temperature，原来每一轮都要先挨一个 400 再重试
+        String remembered = config.getId() + "|" + config.getApiUrl() + "|" + config.getModelName();
+        String effort = noReasoning.contains(remembered) ? ReasoningHistory.OFF
+                : ReasoningHistory.resolve(body.get("reasoning"), defaultReasoning);
+        boolean replay = !noReplay.contains(remembered);
         int window = HarnessContext.effectiveWindow(config.getContextWindowTokens());
-        int maxTokens = maxTokens(body.get("maxTokens"), window);
+        int maxTokens = ReasoningHistory.outputLimit(maxTokens(body.get("maxTokens"), window), effort, MAX_MAX_TOKENS, window);
         HarnessContext.Trimmed trimmed = HarnessContext.trim(messages,
                 window - maxTokens - HarnessContext.SAFETY_TOKENS);
 
@@ -237,8 +251,6 @@ public class HarnessModelGateway {
         RuntimeException last = null;
         // 第八十九轮：写代码要稳 —— 不设温度时 DeepSeek 默认 1.0，同一题每次走不同的路
         Double temperature = harnessTemperature != null ? harnessTemperature : provider.configuredTemperature();
-        // 被拒过的记住（第一百零四轮）：Opus 5.5 不收 temperature，原来每一轮都要先挨一个 400 再重试
-        String remembered = config.getId() + "|" + config.getApiUrl() + "|" + config.getModelName();
         if (noTemperature.contains(remembered)) temperature = null;
         boolean cacheMarks = PromptCacheMarks.applies(type, config.getModelName()) && !noCacheMarks.contains(remembered);
         boolean droppedMarks = false;
@@ -247,7 +259,7 @@ public class HarnessModelGateway {
             int limit = limits.get(i);
             try {
                 usedMaxTokens = limit;
-                call(config, type, trimmed.messages(), tools, limit, temperature, cacheMarks, acc);
+                call(config, type, trimmed.messages(), tools, limit, temperature, cacheMarks, effort, replay, acc);
                 if (droppedMarks) noCacheMarks.add(remembered);   // 去掉标记才成功：这个供应商不收，以后不再标
                 last = null;
                 break;
@@ -259,6 +271,24 @@ public class HarnessModelGateway {
                     noTemperature.add(remembered);
                     i--;
                     continue;
+                }
+                // 思考相关的被拒（第一百零八轮）：先去掉回放（历史改过、签名失效），还不行就关掉思考。记住，下一轮不再挨这个 400
+                if (acc.outputChars() == 0 && ReasoningHistory.rejected(e.getStatusCode().value(), e.getResponseBodyAsString())
+                        && !OutputLimits.rejectsMaxTokens(e.getStatusCode().value(), e.getResponseBodyAsString())) {
+                    if (replay && ReasoningHistory.hasReplay(trimmed.messages(), config.getModelName())) {
+                        log.info("回放思考被拒，去掉它重试：{}", detail);
+                        replay = false;
+                        noReplay.add(remembered);
+                        i--;
+                        continue;
+                    }
+                    if (!ReasoningHistory.OFF.equals(effort)) {
+                        log.info("模型不收思考档位 {}，关掉重试：{}", effort, detail);
+                        effort = ReasoningHistory.OFF;
+                        noReasoning.add(remembered);
+                        i--;
+                        continue;
+                    }
                 }
                 if (OutputLimits.rejectsMaxTokens(e.getStatusCode().value(), e.getResponseBodyAsString()) && acc.outputChars() == 0) {
                     log.info("模型拒绝了输出上限 {}，降一档重试：{}", limit, detail);
@@ -308,7 +338,7 @@ public class HarnessModelGateway {
         }
         usage.put("estimated", estimated);
         Map<String, Object> done = new LinkedHashMap<>();
-        done.put("message", acc.message());
+        done.put("message", ReasoningHistory.attach(acc.message(), acc.reasoning(), acc.thinkingBlocks(), config.getModelName()));
         done.put("finishReason", acc.finishReason());
         done.put("maxTokens", usedMaxTokens);
         done.put("usage", usage);
@@ -322,17 +352,20 @@ public class HarnessModelGateway {
     }
 
     private void call(AiModelConfig config, String type, List<Map<String, Object>> messages,
-                      List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks, ToolStreamAccumulator acc) {
+                      List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks,
+                      String effort, boolean replay, ToolStreamAccumulator acc) {
         // URL 格式校验：API URL 是用户自己填的。与其它出站请求一样，校验放在真正发请求的这一层
         provider.validateProviderRequestUrl(config.getApiUrl());
         if ("ANTHROPIC".equals(type)) {
-            streamAnthropic(config, messages, tools, maxTokens, temperature, cacheMarks, acc);
+            streamAnthropic(config, ReasoningHistory.forAnthropic(messages, config.getModelName(), replay), tools, maxTokens, temperature, cacheMarks, effort, acc);
         } else if ("OPENAI_COMPATIBLE".equals(type) || "VLLM_OPENAI_COMPATIBLE".equals(type) || "OLLAMA".equals(type)) {
-            streamOpenAi(config, messages, tools, maxTokens, temperature, cacheMarks, acc);
+            streamOpenAi(config, ReasoningHistory.forOpenAi(messages, config.getModelName(),
+                    ReasoningHistory.mustEcho(config.getModelName(), effort)), tools, maxTokens, temperature, cacheMarks, effort, acc);
         } else {
             // 其余协议（Gemini、Responses…）只走纯文本：上面已经保证了这里 tools 为空
             adapters.getAdapter(type).stream(
-                    new ModelStreamRequest(config, provider.decryptedApiKey(config), messages, "OFF", anthropicVersion),
+                    new ModelStreamRequest(config, provider.decryptedApiKey(config),
+                            ReasoningHistory.forOpenAi(messages, config.getModelName(), false), "OFF", anthropicVersion),
                     event -> {
                         if ("message.delta".equals(event.type())) acc.onPlainText(event.text());
                     });
@@ -340,7 +373,8 @@ public class HarnessModelGateway {
     }
 
     private void streamOpenAi(AiModelConfig config, List<Map<String, Object>> messages,
-                              List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks, ToolStreamAccumulator acc) {
+                              List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks,
+                              String effort, ToolStreamAccumulator acc) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
         body.put("messages", cacheMarks ? PromptCacheMarks.markOpenAi(messages) : messages);
@@ -351,7 +385,7 @@ public class HarnessModelGateway {
             body.put("tool_choice", "auto");
         }
         if (temperature != null) body.put("temperature", temperature);
-        AiStreamAdapterSupport.applyOpenAiReasoningOptions(config, body, "OFF");
+        AiStreamAdapterSupport.applyOpenAiReasoningOptions(config, body, effort);
         String apiKey = provider.decryptedApiKey(config);
         restTemplate.execute(provider.resolveChatCompletionsUrl(config.getApiUrl()), HttpMethod.POST, request -> {
             request.getHeaders().setContentType(MediaType.APPLICATION_JSON);
@@ -366,7 +400,8 @@ public class HarnessModelGateway {
     }
 
     private void streamAnthropic(AiModelConfig config, List<Map<String, Object>> messages,
-                                 List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks, ToolStreamAccumulator acc) {
+                                 List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks,
+                                 String effort, ToolStreamAccumulator acc) {
         AnthropicFormat.Request converted = AnthropicFormat.fromOpenAi(messages, json);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
@@ -381,6 +416,8 @@ public class HarnessModelGateway {
         }
         body.put("stream", true);
         if (temperature != null) body.put("temperature", temperature);
+        // off 什么都不发：Opus 5.5 的思考关不掉（发 disabled 是 400），用模型自己的默认
+        AiStreamAdapterSupport.applyAnthropicThinking(body, effort, config.getModelName());
         restTemplate.execute(provider.resolveAnthropicMessagesUrl(config.getApiUrl()), HttpMethod.POST, request -> {
             request.getHeaders().putAll(provider.anthropicHeaders(config));
             json.writeValue(request.getBody(), body);

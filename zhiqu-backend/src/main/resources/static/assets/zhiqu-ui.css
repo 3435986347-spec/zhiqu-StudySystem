@@ -774,7 +774,7 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 /* ── AI 助手的输入区（第四十四轮）：一个大圆角框 —— 附件在上、输入在中、工具一条在下；和消息一栏同宽、居中 ── */
 .zq-composer-wrap{padding:4px 22px max(22px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;flex:none;}
 .zq-composer-wrap>*,.zq-msg{width:100%;max-width:760px;margin-left:auto;margin-right:auto;}
-.zq-composer{position:relative;display:flex;flex-direction:column;gap:6px;padding:12px 10px 8px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);box-shadow:var(--zq-sh1);transition:border-color .12s ease;}
+.zq-composer{display:flex;flex-direction:column;gap:6px;padding:12px 10px 8px 14px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);box-shadow:var(--zq-sh1);transition:border-color .12s ease;}
 .zq-composer:focus-within{border-color:var(--zq-text3);}
 .zq-composer textarea{display:block;width:100%;height:44px;max-height:200px;padding:0 4px 0 0;border:none;outline:none;background:transparent;color:var(--zq-text);font:var(--zq-fw-regular) var(--zq-fs-base)/22px var(--zq-fontBody);resize:none;overflow-y:auto;}
 .zq-composer textarea::placeholder{color:var(--zq-text3);}
@@ -819,11 +819,12 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-ws-menu-path{grid-column:2;font-size:var(--zq-fs-2xs);color:var(--zq-text3);}
 .zq-ws-menu-sep{height:1px;margin:4px 2px;background:var(--zq-border-soft);}
 .zq-ws-project:focus-visible,.zq-ws-menu-item:focus-visible,.zq-tier-item:focus-visible{outline:none;box-shadow:var(--zq-focus);}
-/* 档位（第一百零五轮）：输入框下面那条工具里一个按钮显示当前这一档，点开向上拉起面板。面板贴着 .zq-composer（.zq-tier-pick 不是定位容器），窄屏也不出界；当前这一档看 aria-checked */
-.zq-tier-pick{flex:none;}
+/* 档位（第一百零五轮）和思考档位（第一百零八轮）：输入框下面那条工具里一个按钮显示当前这一档，点开向上拉起面板，面板贴着自己的按钮。 */
+.zq-tier-pick{flex:none;position:relative;}
 .zq-tier .zq-icon{width:12px;height:12px;}
 .zq-tier[aria-expanded="true"]{background:var(--zq-sb-active-bg);color:var(--zq-text);}
-.zq-tier-menu{position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:150px;max-width:100%;padding:5px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);box-shadow:var(--zq-sh2);animation:zqPullUp .14s ease-out;}
+.zq-tier.is-on{border-color:var(--zq-tint-strong);background:var(--zq-tint);color:var(--zq-primary);}
+.zq-tier-menu{position:absolute;left:0;bottom:calc(100% + 6px);z-index:30;width:150px;padding:5px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);box-shadow:var(--zq-sh2);animation:zqPullUp .14s ease-out;}
 .zq-tier-item{display:block;width:100%;padding:8px 10px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text);font-size:var(--zq-fs-sm);text-align:left;cursor:pointer;}
 .zq-tier-item:hover{background:var(--zq-card-soft);}
 .zq-tier-item[aria-checked="true"]{background:var(--zq-tint);}
@@ -1642,6 +1643,9 @@ html.zq-desktop [data-zq-download]{display:none !important;}
   .zq-chip{padding:0 8px;}
   .zq-chip-label{display:none;}
   .zq-composer-model{max-width:120px;}
+  /* 思考档位写着名字，比原来的图标宽（第一百零八轮）：一行放不下时模型和发送换到第二行，不把模型名挤没；面板向左展开，不出屏幕 */
+  .zq-composer-bar{flex-wrap:wrap;}
+  #zq-effort-pick .zq-tier-menu{left:auto;right:0;}
   #zq-chat{padding:14px 12px!important;}
   /* AI 助手、Wiki 的定高容器：桌面上减的是 .zq-main 的上下 padding（32 + 80），手机上 padding 是 18+64=82px，
      照减桌面那份底下白空 30px。dvh 跟着手机浏览器地址栏的收放走；不支持 dvh 的浏览器丢掉这一条，退回 .zq-fill-page 的 100vh。

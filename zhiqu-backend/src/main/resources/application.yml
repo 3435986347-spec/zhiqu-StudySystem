@@ -75,6 +75,8 @@ app:
     # 同一道题每次走不同的路（评测三次重跑里三题时对时错）；DeepSeek 文档对写代码 / 数学的建议是 0。
     # 模型不认 temperature（400 里提到它）时网关去掉它原样重试一次。留空 = 跟上面的 temperature 一样。
     harness-temperature: "0"
+    # 命令行没说思考档位时用哪一档（instant / medium / high / extra / max；off 和 instant 一个意思）。默认 off：第十二、五十四轮关思考的理由（慢、空转）是真的，量过再改（docs/codex-parity-plan.md）
+    harness-reasoning: "off"
     # 网页 / 桌面应用的代码模式跑的是命令行那一份循环（第九十四到九十七轮，两份 coding agent 合成一份）：后端用 node 起 zhiqu-cli/src/host/code-host.js，
     # 模型和命令回到后端做。node 不是绝对路径就从 PATH 里找（桌面应用用包里带的）；cli-dir 留空先按工作目录找 zhiqu-cli，找不到用 JAR 里带的。
     # 找不到 node 时代码模式没有（执行轨迹里说清楚），主回答照常。

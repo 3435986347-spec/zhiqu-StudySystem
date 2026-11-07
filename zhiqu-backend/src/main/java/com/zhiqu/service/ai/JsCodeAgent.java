@@ -1,5 +1,6 @@
 package com.zhiqu.service.ai;
 
+import com.zhiqu.service.ai.stream.ReasoningEffort;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -197,6 +198,12 @@ public class JsCodeAgent {
     public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
                                          boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
                                          Consumer<Map<String, Object>> onStep, RemoteTools remote) {
+        return run(config, userId, userMessage, history, canWrite, canExec, budget, limits, onStep, remote, ReasoningEffort.OFF);
+    }
+
+    public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
+                                         boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
+                                         Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode) {
         Path script = hostScript();
         String nodeBin = nodeBinary();
         Path root = workspaceService.access().root();
@@ -249,6 +256,7 @@ public class JsCodeAgent {
         run.put("canExec", canExec);
         run.put("commands", canExec ? workspaceProperties.getAllowedCommands() : List.of());
         run.put("maxRounds", budget.rounds());
+        run.put("effort", ReasoningEffort.cliName(reasoningMode));
         run.put("timeoutMs", budget.millis());
         run.put("model", model);
         run.put("remoteTools", remote == null ? List.of() : remote.always());

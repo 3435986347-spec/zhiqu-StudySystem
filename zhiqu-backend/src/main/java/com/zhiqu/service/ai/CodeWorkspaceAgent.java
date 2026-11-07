@@ -1,5 +1,6 @@
 package com.zhiqu.service.ai;
 
+import com.zhiqu.service.ai.stream.ReasoningEffort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.entity.AiModelConfig;
 import com.zhiqu.service.AdminGuard;
@@ -160,6 +161,13 @@ public class CodeWorkspaceAgent {
     public Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
                       Map<String, Object> contextOptions, ContextBudget contextBudget,
                       Consumer<Map<String, Object>> onStep) {
+        return run(config, userId, userMessage, history, contextOptions, contextBudget, ReasoningEffort.OFF, onStep);
+    }
+
+    /** reasoningMode：网页输入框下面选的思考档位（第一百零八轮），instant 就是第五十四轮那样工具轮不思考。 */
+    public Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
+                      Map<String, Object> contextOptions, ContextBudget contextBudget, String reasoningMode,
+                      Consumer<Map<String, Object>> onStep) {
         ContextBudget limits = contextBudget == null ? ContextBudget.DEFAULT : contextBudget;
         if (!AgentPlanDecision.codeAgentIntent(userMessage, contextOptions) || !provider.supportsToolCalling(config)) {
             return Result.EMPTY;
@@ -179,7 +187,7 @@ public class CodeWorkspaceAgent {
         LoopState loop = new LoopState();
         Result viaJs = jsEngine == null || !jsEngine.enabled() ? null
                 : jsEngine.run(config, userId, userMessage, recentHistory(history, limits.codeHistoryChars()),
-                        canWrite, canExec, budget, limits, onStep, remoteTools(userId, loop, canPlanMilestones));
+                        canWrite, canExec, budget, limits, onStep, remoteTools(userId, loop, canPlanMilestones), reasoningMode);
         if (viaJs == null) {
             // 第九十七轮删了 Java 的循环，没有后路了：说清楚缺什么，主回答照常
             log.warn("代码模式起不来（找不到 node 或命令行源码），这一轮没有读工作区 userId={}", userId);

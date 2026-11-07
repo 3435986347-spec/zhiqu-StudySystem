@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Api } from '../../zhiqu-cli/src/api.js';
-import { RepositoryBroker, MODEL_PATH, OUTPUT_RESERVATION_TOKENS, inputTokenUpperBound, runBrokerMain } from './repository-broker.mjs';
+import { RepositoryBroker, MODEL_PATH, OUTPUT_RESERVATION_TOKENS, THINKING_OUTPUT_RESERVATION_TOKENS, inputTokenUpperBound, runBrokerMain } from './repository-broker.mjs';
 
 const CAPABILITY = 'episode_capability_'.padEnd(48, 'x');
 const body = () => ({ modelId: 6, messages: [{ role: 'user', content: 'private prompt 汉字' }], tools: [], maxTokens: 1024 });
@@ -504,4 +504,28 @@ test('the run total is the sum of settled per-request charges (each rounded up),
   await f.broker.close();
   const recovered = new RepositoryBroker({ api: { stream() {} }, ledgerPath: f.ledgerPath }); t.after(() => recovered.close());
   assert.equal(recovered.snapshot().chargedOrReservedMicroCny, sum);
+});
+
+test('thinking on: the gateway doubles the output cap, so a run that asked for the larger reservation survives it; the default still halts, and old ledgers still replay', async (t) => {
+  const thinking = ({ payload, emit }) => {
+    const maxTokens = payload.maxTokens * 2;
+    emit('start', start(payload, { maxTokens }));
+    emit('reasoning', { text: 'thinking' });
+    emit('done', { ...done(payload, { promptTokens: 100, completionTokens: 20_000, estimated: false }), maxTokens,
+      message: { role: 'assistant', content: 'ok', reasoning_content: 'thinking', reasoning_model: 'deepseek-v4-pro' } });
+  };
+  const payload = { ...body(), maxTokens: OUTPUT_RESERVATION_TOKENS };
+  const on = await fixture(t, { config: { outputReservationTokens: THINKING_OUTPUT_RESERVATION_TOKENS }, handler: thinking });
+  const events = await stream(on.client, payload);
+  assert.equal(events.at(-1).name, 'done');
+  assert.equal(on.broker.snapshot().halted, false, 'a 20000-token answer fits the thinking reservation');
+  const accepted = ledger(on.ledgerPath).find((entry) => entry.event === 'accepted');
+  assert.equal(accepted.reservedOutputTokens, THINKING_OUTPUT_RESERVATION_TOKENS);
+  assert.equal(accepted.reservedMicroCny, (accepted.inputUpperTokens * 9) + (THINKING_OUTPUT_RESERVATION_TOKENS * 27), 'the money reservation covers it too');
+
+  const off = await fixture(t, { handler: thinking });
+  await stream(off.client, payload).catch(() => {});
+  assert.equal(off.broker.snapshot().halted, true, 'without it a raised cap is still a protocol violation');
+  assert.equal(ledger(off.ledgerPath).find((entry) => entry.event === 'init').config.outputReservationTokens, undefined, 'old ledgers compare byte for byte: no new key unless asked for');
+  assert.throws(() => new RepositoryBroker({ ledgerPath: path.join(off.directory, 'x.jsonl'), outputReservationTokens: 1_000_000 }), /approved scope/);
 });
