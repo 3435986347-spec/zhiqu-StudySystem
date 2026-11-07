@@ -13,7 +13,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
-import { localSchemas, READ_TOOLS, shellSchema } from './tools/local.js';
+import { localSchemas, READ_TOOLS, shellSchemas } from './tools/local.js';
 import { patchFiles } from './tools/patch.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
 import { loadSkill, loadSkillSchema } from './skills.js';
@@ -158,7 +158,7 @@ export function toolset(ctx) {
     if (sandboxed && t.function.name === 'run_command') continue;
     if (!plan || READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'local' });
   }
-  if (sandboxed) out.push({ schema: shellSchema(), kind: 'local' });
+  if (sandboxed) for (const t of shellSchemas()) out.push({ schema: t, kind: 'local' });
   for (const t of ctx.remoteTools || []) {
     if (!plan || REMOTE_READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'remote' });
   }
@@ -510,7 +510,9 @@ export function describeCall(name, args) {
     case 'apply_patch': { const files = patchFiles(args.patch); return `打补丁 ${files.slice(0, 3).join('、')}${files.length > 3 ? ` 等 ${files.length} 个文件` : ''}`; }
     case 'delete_file': return `删除 ${args.path}`;
     case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
-    case 'shell': return `运行 ${args.command}`;
+    case 'shell': return `${args.background ? '后台运行' : '运行'} ${args.command}`;
+    case 'shell_output': return `看 ${args.id} 的输出`;
+    case 'shell_stop': return `停掉 ${args.id}`;
     case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
     case 'find_mcp_tool': return `找 MCP 工具「${args.query}」`;
     case 'exit_plan_mode': return '提交计划';
@@ -773,6 +775,13 @@ async function executeTool(ctx, call, offered, signal) {
         ui.result('用户没有同意，没运行', false);
         return `用户没有同意运行 ${prep.command}。不要原样重试；问问用户，或者换个做法。`;
       }
+      if (args.background) {
+        const job = await local.startJob(prep, { policy: shellPolicy(ctx), signal });
+        if (job.error) { ui.result(job.error, false); return failed(ctx, spinKey, job.error, runReminder(prep.command)); }
+        succeeded(ctx, spinKey);
+        ui.result(`${job.id} 在后台${job.snap.running ? '跑着' : `结束了（退出码 ${job.snap.exitCode}）`}`, job.snap.running || job.snap.exitCode === 0);
+        return job.content;
+      }
       let tail = '';
       const onOutput = (s) => { tail = (tail + s).slice(-4000); };
       let r = await local.commitShell(prep, { policy: shellPolicy(ctx), signal, onOutput });
@@ -784,6 +793,12 @@ async function executeTool(ctx, call, offered, signal) {
       ui.result(r.summary, r.exitCode === 0);
       if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content; }
       return failed(ctx, spinKey, r.content, runReminder(prep.command));
+    }
+    if (name === 'shell_output' || name === 'shell_stop') {
+      const r = name === 'shell_output' ? await local.readJob(args, { signal }) : await local.stopJob(args, { signal });
+      if (r.error) { ui.result(r.error, false); return r.error; }
+      ui.result(r.snap.running ? `${r.snap.id} 还在跑` : `${r.snap.id} 已结束（退出码 ${r.snap.exitCode}）`);
+      return r.content;
     }
     if (name === 'run_command') {
       const line = [args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ');

@@ -273,6 +273,7 @@ public class JsCodeAgent {
         run.put("remoteTools", remote == null ? List.of() : remote.always());
         run.put("remoteToolsAfterRun", remote == null ? List.of() : remote.afterRun());
 
+        Map<String, WorkspaceExecutor.Background> jobs = new LinkedHashMap<>();
         JsonNode result = null;
         try (BufferedWriter out = new BufferedWriter(new OutputStreamWriter(child.getOutputStream(), StandardCharsets.UTF_8));
              BufferedReader in = new BufferedReader(new InputStreamReader(child.getInputStream(), StandardCharsets.UTF_8))) {
@@ -290,8 +291,10 @@ public class JsCodeAgent {
                     callModel(config, userId, msg, channel);
                 } else if ("exec".equals(type)) {
                     // 下发的和能执行的同一份清单：给了 shell 就不再接白名单的命令，没给 shell 就不接 shell
-                    ranCommand[0] |= msg.path("shell").asBoolean(false)
-                            ? shell(msg, canShell, shellWrite, nodeBin, script, channel)
+                    ranCommand[0] |= msg.hasNonNull("job")
+                            ? job(msg, jobs, channel)
+                            : msg.path("shell").asBoolean(false)
+                            ? shell(msg, canShell, shellWrite, nodeBin, script, jobs, channel)
                             : exec(msg, canExec && !canShell, channel);
                 } else if ("tool".equals(type)) {
                     tool(msg, remote, ranCommand[0], channel);
@@ -314,6 +317,8 @@ public class JsCodeAgent {
             log.warn("代码模式的 JS 循环失败（不影响主回答） userId={} err={}", userId, e.toString());
             narrate(onStep, Map.of("phase", "error", "message", "工具循环中断：" + e.getMessage()));
         } finally {
+            // 这一轮起的后台命令不留过夜（网页没有 /ps，留着就没人管了）
+            jobs.values().forEach(WorkspaceExecutor.Background::stop);
             child.descendants().forEach(ProcessHandle::destroyForcibly);
             child.destroyForcibly();
             watchdog.interrupt();
@@ -477,7 +482,7 @@ public class JsCodeAgent {
     }
 
     /** @return 真的跑了（交给了执行器、没被拒） */
-    private boolean shell(JsonNode msg, boolean canShell, boolean shellWrite, String nodeBin, Path hostScript, Channel channel) throws IOException {
+    private boolean shell(JsonNode msg, boolean canShell, boolean shellWrite, String nodeBin, Path hostScript, Map<String, WorkspaceExecutor.Background> jobs, Channel channel) throws IOException {
         Map<String, Object> reply = new LinkedHashMap<>();
         reply.put("type", "exec_result");
         reply.put("id", msg.path("id").asText(""));
@@ -487,8 +492,23 @@ public class JsCodeAgent {
             return false;
         }
         try {
+            if (msg.path("background").asBoolean(false)) {
+                if (jobs.values().stream().filter(WorkspaceExecutor.Background::running).count() >= MAX_JOBS) {
+                    reply.put("error", "后台已经有 " + MAX_JOBS + " 个命令在跑了，先用 shell_stop 停掉不用的。");
+                    channel.send(reply);
+                    return false;
+                }
+                WorkspaceExecutor.Background started = executor.startShell(msg.path("command").asText(""), msg.path("cwd").asText(""), shellWrite,
+                        request -> sandboxLaunch(nodeBin, hostScript, request));
+                String id = "job-" + (jobs.size() + 1);
+                jobs.put(id, started);
+                log.info("代码模式起后台命令 {}：{}", id, Texts.limitRaw(msg.path("command").asText(""), 200));
+                putSnapshot(reply, id, started.read(jobWait(msg.path("waitMs").asLong(0))));
+                channel.send(reply);
+                return true;
+            }
             WorkspaceExecutor.ExecResult r = executor.shell(msg.path("command").asText(""), msg.path("cwd").asText(""), shellWrite,
-                    request -> sandboxLaunch(nodeBin, hostScript, request));
+                    request -> sandboxLaunch(nodeBin, hostScript, request), msg.path("timeoutMs").asLong(0));
             log.info("代码模式跑 shell {} → 退出码 {}（{}ms）", Texts.limitRaw(r.command(), 200), r.exitCode(), r.millis());
             reply.put("exitCode", r.exitCode());
             reply.put("output", r.output() + (r.truncated() ? "\n（输出太长，已截断 —— 这不是全部）" : ""));
@@ -499,9 +519,58 @@ public class JsCodeAgent {
             reply.put("error", "没有运行：" + e.getMessage());
             channel.send(reply);
             return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            reply.put("error", "已中断");
+            channel.send(reply);
+            return false;
         }
         channel.send(reply);
         return true;
+    }
+
+    /** 一轮最多几个后台命令；shell_output 最多等多久（和命令行 MAX_WAIT_SECONDS 一样） */
+    private static final int MAX_JOBS = 4;
+    private static final long MAX_JOB_WAIT_MS = 60_000L;
+
+    /** 子进程说等多久不全算数：后端的线程在这里等着 */
+    static long jobWait(long asked) {
+        return Math.max(0, Math.min(asked, MAX_JOB_WAIT_MS));
+    }
+
+    private static void putSnapshot(Map<String, Object> reply, String id, WorkspaceExecutor.Background.Snapshot s) {
+        reply.put("jobId", id);
+        reply.put("running", s.running());
+        reply.put("exitCode", s.exitCode());
+        reply.put("stopped", s.stopped());
+        reply.put("output", s.output());
+        reply.put("skipped", s.skipped());
+        reply.put("more", s.more());
+        reply.put("millis", s.millis());
+    }
+
+    /** shell_output、shell_stop：只认这一轮自己起的 */
+    private boolean job(JsonNode msg, Map<String, WorkspaceExecutor.Background> jobs, Channel channel) throws IOException {
+        Map<String, Object> reply = new LinkedHashMap<>();
+        reply.put("type", "exec_result");
+        reply.put("id", msg.path("id").asText(""));
+        String jobId = msg.path("jobId").asText("");
+        WorkspaceExecutor.Background target = jobs.get(jobId);
+        if (target == null) {
+            reply.put("error", "没有 " + jobId + " 这个后台命令（现在有：" + String.join("、", jobs.keySet()) + "）。");
+            channel.send(reply);
+            return false;
+        }
+        try {
+            putSnapshot(reply, jobId, "stop".equals(msg.path("job").asText(""))
+                    ? target.stop()
+                    : target.read(jobWait(msg.path("waitMs").asLong(0))));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            reply.put("error", "已中断");
+        }
+        channel.send(reply);
+        return false;
     }
 
     WorkspaceExecutor.Launch sandboxLaunch(String nodeBin, Path hostScript, WorkspaceExecutor.SandboxRequest r) {

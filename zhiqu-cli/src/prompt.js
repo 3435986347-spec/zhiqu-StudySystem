@@ -65,6 +65,7 @@ function draftEnvironment({ root, workspaceName, commands, os, today, shell = nu
     shell
       ? `- shell 跑一条 bash 命令，管道、重定向、&& 都能用。命令跑在系统沙箱里：${shell}。被挡住了就换个做法，或者说清楚缺什么权限，不要换着花样绕。`
         + (shellWrites ? '改代码只用 write_file / edit_file / apply_patch：shell 写的东西直接落到磁盘，不经过草稿，用户看不到 diff。shell 用来跑测试、构建、查东西。' : '')
+        + '要跑很久或者要一直跑的用 background: true，再用 shell_output 看、shell_stop 停，这一轮结束时全部停掉。'
         + '草稿确认之前，命令跑的是磁盘上的旧版本。'
       : commands.length
       ? `- run_command 能跑的命令：${commands.join('、')}。只能跑工作区里已经存在的文件：不接受 python3 -c / node -e 这类行内代码，也不接受 shell 语句；`
@@ -75,6 +76,7 @@ function draftEnvironment({ root, workspaceName, commands, os, today, shell = nu
 
 /** 有系统沙箱时那一行（命令行和网页同一个边界，同一种说法）。 */
 const SHELL_LINE = (boundary) => `- shell 跑一条 bash 命令，管道、重定向、&& 都能用。命令跑在系统沙箱里：${boundary}。被挡住了就换个做法，或者说清楚缺什么权限，不要换着花样绕。`
+  + '要跑很久或者要一直跑的（dev server、watch）用 background: true，再用 shell_output 看、shell_stop 停，用完要停。'
   + '读文件、搜内容、改文件还是优先用 read_file / search / edit_file（改动有 diff、记得住），删文件用 delete_file。';
 
 export function environmentBlock({ root, workspaceName, mode, commands, platform = process.platform, today, draft = false, shell = null, shellWrites = false }) {

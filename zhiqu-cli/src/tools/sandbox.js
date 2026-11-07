@@ -250,5 +250,5 @@ export function looksBlocked(output) {
 export function describeBoundary({ policy = WORKSPACE_WRITE, network = 'off' } = {}) {
   const write = policy === READ_ONLY ? '只读（只能写临时目录 $TMPDIR）' : '能写工作区（.git、.zhiqu 除外）和临时目录 $TMPDIR，别处都不能写';
   const net = network === 'on' ? '能联网' : network === 'local' ? '只能连本机' : '不能联网（连本机也不行）';
-  return `${write}；${net}；家目录下除了工具链都读不到；临时文件放 $TMPDIR，不要放 /tmp；每条命令是一个新的 bash，cd、变量留不到下一条，后台进程随命令结束`;
+  return `${write}；${net}；家目录下除了工具链都读不到；临时文件放 $TMPDIR，不要放 /tmp；每条命令是一个新的 bash，cd、变量留不到下一条，& 起的进程随命令结束（要一直跑用 background: true）`;
 }

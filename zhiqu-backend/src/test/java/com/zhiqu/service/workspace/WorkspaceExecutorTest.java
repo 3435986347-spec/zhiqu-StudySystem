@@ -473,6 +473,73 @@ class WorkspaceExecutorTest {
         assertFalse(alive, "孙子进程还活着");
     }
 
+    @Test
+    @org.junit.jupiter.api.DisplayName("后台命令（第一百一十二轮）：起了就回；新输出一段一段给；停的时候连子进程；结束了说退出码")
+    void 后台命令(@TempDir Path root) throws Exception {
+        WorkspaceExecutor e = executorAt(root, "EXEC", "");
+        java.util.List<WorkspaceExecutor.SandboxRequest> seen = new java.util.ArrayList<>();
+        long t0 = System.currentTimeMillis();
+        WorkspaceExecutor.Background job = e.startShell("echo 第一段; sleep 60 & echo $! > child.pid; echo ready > ready; wait", "", true, plain(seen));
+        assertTrue(System.currentTimeMillis() - t0 < 2000, "后台命令要起了就回");
+        assertTrue(seen.get(0).write());
+        for (int i = 0; i < 100 && !Files.exists(root.resolve("ready")); i++) {
+            Thread.sleep(30);
+        }
+        WorkspaceExecutor.Background.Snapshot first = job.read(300);
+        assertTrue(first.running());
+        assertTrue(first.output().contains("第一段"), first.output());
+        assertEquals("", job.read(0).output(), "看过的不再给");
+        long child = Long.parseLong(Files.readString(root.resolve("child.pid")).trim());
+        assertTrue(java.lang.ProcessHandle.of(child).map(java.lang.ProcessHandle::isAlive).orElse(false), "对照：子进程先是活的");
+        WorkspaceExecutor.Background.Snapshot stopped = job.stop();
+        assertFalse(stopped.running());
+        assertTrue(stopped.stopped());
+        boolean alive = true;
+        for (int i = 0; alive && i < 60; i++) {
+            alive = java.lang.ProcessHandle.of(child).map(java.lang.ProcessHandle::isAlive).orElse(false);
+            if (alive) {
+                Thread.sleep(50);
+            }
+        }
+        assertFalse(alive, "停了，子进程还活着");
+        WorkspaceExecutor.Background done = e.startShell("echo bye; exit 5", "", false, plain(seen));
+        WorkspaceExecutor.Background.Snapshot end = done.read(5000);
+        assertFalse(end.running());
+        assertEquals(5, end.exitCode());
+        assertTrue(end.output().contains("bye"));
+        assertFalse(end.stopped(), "自己退出的不算停的");
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("后台命令的输出：只留最后 1 MB，丢了多少、后面还有多少都说；一次给的不超过上限；门和前台一样")
+    void 后台命令的输出和门(@TempDir Path root) throws Exception {
+        WorkspaceExecutor e = executorAt(root, "EXEC", "");
+        WorkspaceExecutor.Background job = e.startShell("head -c 3000000 /dev/zero | tr '\\0' x", "", false, plain(new java.util.ArrayList<>()));
+        WorkspaceExecutor.Background.Snapshot s = job.read(10_000);
+        assertFalse(s.running());
+        assertEquals(3_000_000L - WorkspaceExecutor.Background.KEEP_BYTES, s.skipped(), "丢了多少");
+        assertEquals(64 * 1024, s.output().length(), "一次给的不超过上限");
+        assertEquals(WorkspaceExecutor.Background.KEEP_BYTES - 64 * 1024L, s.more(), "后面还有多少");
+        WorkspaceExecutor.Background.Snapshot next = job.read(0);
+        assertEquals(0, next.skipped(), "接着看不算丢");
+        assertEquals(64 * 1024, next.output().length());
+        assertTrue(assertThrowsBusiness(() -> executorAt(root, "EXEC", "prod").startShell("true", "", false, plain(new java.util.ArrayList<>()))).contains("生产"));
+        assertTrue(assertThrowsBusiness(() -> e.startShell(" ", "", false, plain(new java.util.ArrayList<>()))).contains("没有给出"));
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("前台时限：模型给的算数，比默认短、比默认长都听，不超过上限；0 用默认")
+    void 前台时限(@TempDir Path root) throws Exception {
+        WorkspaceProperties p = props(root, "EXEC");
+        p.setShellTimeoutMs(700L);
+        WorkspaceExecutor e = new WorkspaceExecutor(p, new WorkspaceService(p, "127.0.0.1"), "");
+        assertTrue(e.shell("sleep 30", "", false, plain(new java.util.ArrayList<>()), 0).timedOut(), "0 用默认（700ms）");
+        assertTrue(e.shell("sleep 30", "", false, plain(new java.util.ArrayList<>()), 300).timedOut(), "比默认短");
+        assertFalse(e.shell("sleep 1", "", false, plain(new java.util.ArrayList<>()), 5000).timedOut(), "比默认长也要听：要跑久的命令才能跑完");
+        assertEquals(600_000L, WorkspaceExecutor.effectiveTimeout(99_999_999L, 700L), "不超过上限，和命令行的 MAX_SHELL_SECONDS 一样");
+        assertEquals(700L, WorkspaceExecutor.effectiveTimeout(-1, 700L));
+    }
+
     private static String assertThrowsBusiness(org.junit.jupiter.api.function.Executable action) {
         return org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class, action).getMessage();
     }

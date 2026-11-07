@@ -578,6 +578,25 @@ export async function slash(ctx, text) {
       ui.line(`档位：${MODE_LABEL[m]}`);
       return null;
     }
+    case '/ps': {
+      const jobs = ctx.local.jobs ? ctx.local.jobs.list() : [];
+      if (!jobs.length) { ui.line('后台没有命令。'); return null; }
+      for (const j of jobs) {
+        const secs = Math.round(j.millis / 1000);
+        ui.line(`${j.id}  ${j.running ? `在跑（${secs} 秒）` : j.stopped ? '已停止' : `已结束，退出码 ${j.exitCode}`}  ${j.command}`);
+      }
+      return null;
+    }
+    case '/stop': {
+      if (!arg) { ui.line('要停哪个：/stop <id>，或者 /stop all（/ps 看有哪些）。'); return null; }
+      const running = ctx.local.jobs.running().map((j) => j.id);
+      for (const id of arg === 'all' ? running : [arg]) {
+        const r = await ctx.local.stopJob({ id });
+        ui.line(r.error || `已停止 ${id}`);
+      }
+      if (arg === 'all' && !running.length) ui.line('后台没有在跑的命令。');
+      return null;
+    }
     case '/effort': {
       if (!arg) {
         ui.line(`思考档位：${ctx.effort || '跟服务端的默认'}\n可选：${EFFORTS.join(' / ')}（instant 不思考，往后越想越久、越费 token）`);

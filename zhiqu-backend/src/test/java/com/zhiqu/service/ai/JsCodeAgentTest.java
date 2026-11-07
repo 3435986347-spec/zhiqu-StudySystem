@@ -199,7 +199,8 @@ class JsCodeAgentTest {
         CodeWorkspaceAgent.Result shell = agent(FAKE_HOST, List.of(text("好"))).run(config, 7L, "abuse-shell", List.of(), true, true,
                 CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add);
         assertTrue(shell.context().contains("这一次不能跑命令"), shell.context());
-        verify(executor, never()).shell(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+        verify(executor, never()).shell(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), org.mockito.ArgumentMatchers.anyLong());
+        verify(executor, never()).startShell(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
         assertEquals(List.of("ok.txt"), r.drafts().stream().map(d -> d.get("path")).toList(), "跳出工作区的那份要丢掉");
     }
 

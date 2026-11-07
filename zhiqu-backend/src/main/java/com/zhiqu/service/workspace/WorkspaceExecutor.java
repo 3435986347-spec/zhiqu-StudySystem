@@ -235,6 +235,26 @@ public class WorkspaceExecutor {
      * @param sandbox 沙箱只有一份实现，在命令行那边；这里不再写一份
      */
     public ExecResult shell(String command, String relativeDir, boolean write, Function<SandboxRequest, Launch> sandbox) {
+        return shell(command, relativeDir, write, sandbox, 0);
+    }
+
+    /** @param timeoutMs 这条命令的时限，模型给的；0 或负的用默认（shellTimeoutMs） */
+    public ExecResult shell(String command, String relativeDir, boolean write, Function<SandboxRequest, Launch> sandbox, long timeoutMs) {
+        ShellStart start = prepareShell(command, relativeDir, write, sandbox);
+        return runLine(start.line(), List.of(), start.full(), start.cwd(), start.env(), effectiveTimeout(timeoutMs, properties.getShellTimeoutMs()));
+    }
+
+    static long effectiveTimeout(long asked, long fallback) {
+        return asked > 0 ? Math.min(asked, MAX_SHELL_TIMEOUT_MS) : fallback;
+    }
+
+    /** 模型能要的最长时限（和命令行 MAX_SHELL_SECONDS 一样），再长的用后台 */
+    static final long MAX_SHELL_TIMEOUT_MS = 600_000L;
+
+    private record ShellStart(String line, List<String> full, Path cwd, Map<String, String> env) {
+    }
+
+    private ShellStart prepareShell(String command, String relativeDir, boolean write, Function<SandboxRequest, Launch> sandbox) {
         if (!shellEnabled()) {
             throw new BusinessException(productionProfile ? "生产环境下不允许执行命令" : "工作区当前是关着的");
         }
@@ -255,20 +275,117 @@ public class WorkspaceExecutor {
         List<String> full = new ArrayList<>();
         full.add(launch.binary());
         full.addAll(launch.args());
-        return runLine(line, List.of(), full, cwd, launch.env(), properties.getShellTimeoutMs());
+        return new ShellStart(line, full, cwd, launch.env());
     }
 
-    private Path resolveDir(String relativeDir) {
-        WorkspaceGuard guard = workspaceService.guard();
-        WorkspaceGuard.Resolution dir = guard == null ? null : guard.resolveDirectory(relativeDir);
-        if (dir == null || !dir.ok()) {
-            throw new BusinessException("工作目录不可用：" + relativeDir);
+    /**
+     * 后台命令（第一百一十二轮，shell 的 background: true）：和前台一样关在沙箱里，门一样。起了就回；一轮结束调用方全部 {@link Background#stop()}。
+     */
+    public Background startShell(String command, String relativeDir, boolean write, Function<SandboxRequest, Launch> sandbox) {
+        ShellStart start = prepareShell(command, relativeDir, write, sandbox);
+        try {
+            return new Background(builderFor(start.full(), start.cwd(), start.env()).start(), properties.getExecOutputLimitBytes());
+        } catch (IOException e) {
+            throw new BusinessException("执行失败：" + e.getMessage());
         }
-        return dir.path();
     }
 
-    /** 起进程只有这一处。extraEnv 放在最小环境上面（沙箱实现给的 PATH、临时目录这些）。 */
-    private ExecResult runLine(String name, List<String> shownArgs, List<String> line, Path dir, Map<String, String> extraEnv, long timeoutMs) {
+    /** 一个在后台跑的命令。输出只留最后 1 MB（dev server 跑很久，不能把内存吃光），丢了多少照实说 */
+    public static final class Background {
+        static final int KEEP_BYTES = 1024 * 1024;
+        private final Process process;
+        private final int readBytes;
+        private final long started = System.currentTimeMillis();
+        private final Thread reader;
+        private byte[] buf = new byte[0];
+        private long total;
+        private long cursor;
+        private volatile boolean stopped;
+        private volatile long ended;
+
+        Background(Process process, int readBytes) {
+            this.process = process;
+            this.readBytes = readBytes;
+            this.reader = new Thread(() -> {
+                try (InputStream in = process.getInputStream()) {
+                    byte[] chunk = new byte[8192];
+                    int read;
+                    while ((read = in.read(chunk)) != -1) {
+                        take(chunk, read);
+                    }
+                } catch (IOException ignored) {
+                    // 被 stop 杀掉时管道断了，读到多少算多少
+                }
+            }, "workspace-background-reader");
+            this.reader.setDaemon(true);
+            this.reader.start();
+        }
+
+        private synchronized void take(byte[] chunk, int read) {
+            total += read;
+            int keep = Math.min(KEEP_BYTES, buf.length + read);
+            byte[] next = new byte[keep];
+            int fromOld = keep - read;
+            if (fromOld > 0) {
+                System.arraycopy(buf, buf.length - fromOld, next, 0, fromOld);
+                System.arraycopy(chunk, 0, next, fromOld, read);
+            } else {
+                System.arraycopy(chunk, read - keep, next, 0, keep);
+            }
+            buf = next;
+        }
+
+        /** 这一次看到的：字段名和命令行的 describeJob 一样 */
+        public record Snapshot(boolean running, int exitCode, boolean stopped, String output, long skipped, long more, long millis) {
+        }
+
+        /** 等到结束或者到点，给新输出 */
+        public Snapshot read(long waitMs) throws InterruptedException {
+            if (waitMs > 0) {
+                process.waitFor(waitMs, TimeUnit.MILLISECONDS);
+            }
+            if (!process.isAlive()) {
+                reader.join(500);
+            }
+            return snapshot();
+        }
+
+        /** 连子进程一起停；等它真的没了再回 */
+        public Snapshot stop() {
+            if (process.isAlive()) {
+                stopped = true;
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+                try {
+                    process.waitFor(2, TimeUnit.SECONDS);
+                    reader.join(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return snapshot();
+        }
+
+        public boolean running() {
+            return process.isAlive();
+        }
+
+        private synchronized Snapshot snapshot() {
+            boolean alive = process.isAlive();
+            if (!alive && ended == 0) {
+                ended = System.currentTimeMillis();
+            }
+            long base = total - buf.length;
+            long from = Math.max(cursor, base);
+            long skipped = from - cursor;
+            long end = Math.min(from + readBytes, total);
+            String output = new String(buf, (int) (from - base), (int) (end - from), StandardCharsets.UTF_8);
+            cursor = end;
+            return new Snapshot(alive, alive ? 0 : process.exitValue(), stopped, output, skipped, total - end, (alive ? System.currentTimeMillis() : ended) - started);
+        }
+    }
+
+    private ProcessBuilder builderFor(List<String> line, Path dir, Map<String, String> extraEnv) {
         ProcessBuilder builder = new ProcessBuilder(line)
                 .directory(dir.toFile())
                 .redirectErrorStream(true);
@@ -285,6 +402,21 @@ public class WorkspaceExecutor {
         }
         env.put("LANG", "en_US.UTF-8");
         env.putAll(extraEnv);
+        return builder;
+    }
+
+    private Path resolveDir(String relativeDir) {
+        WorkspaceGuard guard = workspaceService.guard();
+        WorkspaceGuard.Resolution dir = guard == null ? null : guard.resolveDirectory(relativeDir);
+        if (dir == null || !dir.ok()) {
+            throw new BusinessException("工作目录不可用：" + relativeDir);
+        }
+        return dir.path();
+    }
+
+    /** 起进程只有这一处。extraEnv 放在最小环境上面（沙箱实现给的 PATH、临时目录这些）。 */
+    private ExecResult runLine(String name, List<String> shownArgs, List<String> line, Path dir, Map<String, String> extraEnv, long timeoutMs) {
+        ProcessBuilder builder = builderFor(line, dir, extraEnv);
 
         long started = System.currentTimeMillis();
         Process spawned = null;

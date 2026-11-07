@@ -15,6 +15,7 @@ import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_
 import { checkLocalCommand, describeRefusal, LOCAL_DEFAULT_COMMANDS, ExecRefusal, gitLaunch } from './execrules.js';
 import { planLaunch, resolveOnPath, runProcess } from './exec.js';
 import { describeBoundary, looksBlocked, plainLaunch, sandboxedLaunch, WORKSPACE_WRITE } from './sandbox.js';
+import { describeJob, MAX_WAIT_SECONDS, ShellJobs, START_WAIT_MS } from './jobs.js';
 import { applyEdit, describeEditError } from './edit.js';
 import { applyHunks, describePatchError, parsePatch } from './patch.js';
 import { syntaxProblem } from './syntax.js';
@@ -139,11 +140,27 @@ const fn = (name, description, properties, required = []) => ({
   function: { name, description, parameters: { type: 'object', properties, required } },
 });
 
+export const DEFAULT_SHELL_SECONDS = 120;
+export const MAX_SHELL_SECONDS = 600;
+/** 模型给的时限：认不出就用默认，不超过上限 */
+export function shellSeconds(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.ceil(n), MAX_SHELL_SECONDS) : DEFAULT_SHELL_SECONDS;
+}
+
 /** shell 工具（第一百零九轮）：有系统沙箱才下发，下发了就不再给 run_command（见 agent.js 的 toolset）。 */
-export function shellSchema() {
-  return fn('shell', '在工作区里运行一条 bash 命令：管道、重定向、&& 都能用。用来跑测试、构建、查 git、搜东西。命令跑在系统沙箱里，边界见「环境」一节。',
-    { command: { type: 'string', description: '一整条 shell 命令，字符串' },
-      cwd: { type: 'string', description: '在哪个子目录里运行，默认工作区根' } }, ['command']);
+export function shellSchemas() {
+  return [
+    fn('shell', '在工作区里运行一条 bash 命令：管道、重定向、&& 都能用。用来跑测试、构建、查 git、搜东西。命令跑在系统沙箱里，边界见「环境」一节。',
+      { command: { type: 'string', description: '一整条 shell 命令，字符串' },
+        cwd: { type: 'string', description: '在哪个子目录里运行，默认工作区根' },
+        timeout_seconds: { type: 'number', description: `最多跑多久，默认 ${DEFAULT_SHELL_SECONDS}，最多 ${MAX_SHELL_SECONDS}。到点连子进程一起杀` },
+        background: { type: 'boolean', description: '放到后台跑（dev server、watch、很长的构建）：起完就回，带回开头的输出和一个 id；用 shell_output 看、shell_stop 停，用完要停' } }, ['command']),
+    fn('shell_output', '看后台命令（shell 的 background: true）的新输出和状态。',
+      { id: { type: 'string', description: '后台命令的 id，如 job-1' },
+        wait_seconds: { type: 'number', description: `等一会儿再回，结束了立刻回。默认 0，最多 ${MAX_WAIT_SECONDS}` } }, ['id']),
+    fn('shell_stop', '停掉后台命令，连它的子进程一起。', { id: { type: 'string', description: '后台命令的 id' } }, ['id']),
+  ];
 }
 
 /** 一次 shell 的结果怎么说（命令行和网页同一种说法）。被挡住的猜测只在沙箱里才说。 */
@@ -265,6 +282,7 @@ export class LocalTools {
   constructor({ root, extensions, maxFileBytes, commands, execTimeoutMs = 120_000, sandbox = null, sandboxNetwork = 'off' } = {}) {
     this.sandbox = sandbox;
     this.sandboxNetwork = sandboxNetwork;
+    this.jobs = new ShellJobs();
     this.guard = new WorkspaceGuard(root, {
       extensions: extensions || DEFAULT_EXTENSIONS, maxFileBytes: maxFileBytes || DEFAULT_MAX_FILE_BYTES,
     });
@@ -903,15 +921,38 @@ export class LocalTools {
     if (!command) return { error: '没有给出要运行的命令（command 是一整条 shell 命令，字符串）' };
     const dir = this.guard.resolveDirectory(args.cwd);
     if (dir.reason !== Reason.OK) return { error: `工作目录不可用：${describe(dir.reason, args.cwd || '.')}` };
-    return { command, cwd: dir.path, cwdRel: this.guard.display(dir.path) };
+    return { command, cwd: dir.path, cwdRel: this.guard.display(dir.path), timeoutSeconds: args.timeout_seconds == null ? null : shellSeconds(args.timeout_seconds) };
   }
 
   /** unsandboxed：只有 ask 档用户当场点了才有（agent.js 的 shell 分支） */
   async commitShell(prep, { policy = WORKSPACE_WRITE, unsandboxed = false, signal, onOutput } = {}) {
     const launch = unsandboxed ? plainLaunch({ command: prep.command })
       : sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork });
-    const r = await runProcess({ binary: launch.binary, args: launch.args, cwd: prep.cwd, env: launch.env, timeoutMs: this.execTimeoutMs, signal, onOutput });
+    const timeoutMs = prep.timeoutSeconds ? prep.timeoutSeconds * 1000 : this.execTimeoutMs;
+    const r = await runProcess({ binary: launch.binary, args: launch.args, cwd: prep.cwd, env: launch.env, timeoutMs, signal, onOutput });
     return shellOutcome(prep, r, { boundary: describeBoundary({ policy, network: this.sandboxNetwork }), sandboxed: !unsandboxed });
+  }
+
+  /** background: true。起完等一小会儿：立刻失败的（端口被占、命令写错）当场看得到 */
+  async startJob(prep, { policy = WORKSPACE_WRITE, signal } = {}) {
+    const launch = sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork });
+    const started = this.jobs.start({ ...launch, cwd: prep.cwd, command: prep.command });
+    if (started.error) return { error: started.error };
+    const snap = await this.jobs.read(started.id, { waitMs: START_WAIT_MS, signal });
+    return { id: started.id, content: describeJob(snap, { boundary: describeBoundary({ policy, network: this.sandboxNetwork }) }), snap, policy };
+  }
+
+  async readJob(args = {}, { signal } = {}) {
+    const wait = Math.min(Math.max(Number(args.wait_seconds) || 0, 0), MAX_WAIT_SECONDS);
+    const snap = await this.jobs.read(String(args.id || ''), { waitMs: wait * 1000, signal });
+    if (snap.error) return { error: snap.error };
+    return { content: describeJob(snap, { boundary: describeBoundary({ network: this.sandboxNetwork }) }), snap };
+  }
+
+  async stopJob(args = {}) {
+    const snap = await this.jobs.stop(String(args.id || ''));
+    if (snap.error) return { error: snap.error };
+    return { content: `已停止 ${describeJob(snap)}`, snap };
   }
 
   async commitRun(prep, { signal, onOutput } = {}) {

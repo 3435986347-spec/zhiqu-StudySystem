@@ -9,6 +9,8 @@ export const SLASH_COMMANDS = [
   { name: '/model', args: '[id|default]', desc: '查看 / 切换模型' },
   { name: '/effort', args: '[instant|medium|high|extra|max]', desc: '思考档位：想得越久答得越稳，也越慢、越费 token' },
   { name: '/window', args: '[数，如 1m / 128k]', desc: '看 / 设当前模型的上下文窗口（没填就按默认 64K 算）' },
+  { name: '/ps', desc: '后台在跑的命令' },
+  { name: '/stop', args: '<id|all>', desc: '停掉后台命令（连子进程）' },
   { name: '/resume', desc: '列出这个工作区的会话，挑一段接着做' },
   { name: '/new', desc: '开一段新会话' },
   { name: '/compact', desc: '现在就把较早的对话压成摘要' },

@@ -188,6 +188,92 @@ class JsCodeAgentSandboxTest {
         assertFalse(alive, "后台进程还活着");
     }
 
+    private static Map<String, Object> tool(String name, Map<String, Object> args) throws Exception {
+        return Map.of("message", Map.of("role", "assistant", "content", "", "tool_calls",
+                        List.of(Map.of("id", "c" + name, "type", "function", "function", Map.of("name", name, "arguments", JSON.writeValueAsString(args))))),
+                "finishReason", "tool_calls", "maxTokens", 16384, "usage", Map.of("promptTokens", 100, "completionTokens", 5, "estimated", false));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> toolOutputs() {
+        List<Map<String, Object>> messages = (List<Map<String, Object>>) bodies.get(bodies.size() - 1).get("messages");
+        return messages.stream().filter(m -> "tool".equals(m.get("role"))).map(m -> String.valueOf(m.get("content"))).toList();
+    }
+
+    @Test
+    @DisplayName("后台命令（和命令行同一套）：起、看、停；还关在沙箱里；一轮结束全部收掉；同时最多 4 个；没给 shell 时看不了")
+    void 后台命令() throws Exception {
+        JsCodeAgent js = agent("EXEC", "", CLI_DIR, List.of(
+                tool("shell", Map.of("command", "echo 起来了; echo y > " + home.resolve("escaped-job.txt") + "; echo $$ > stopped.pid; sleep 100", "background", true)),
+                tool("shell_output", Map.of("id", "job-1")),
+                tool("shell_stop", Map.of("id", "job-1")),
+                tool("shell_output", Map.of("id", "job-9")),
+                tool("shell", Map.of("command", "echo $$ > left.pid; sleep 100", "background", true)),
+                tool("shell", Map.of("command", "sleep 100", "background", true)),
+                tool("shell", Map.of("command", "sleep 100", "background", true)),
+                tool("shell", Map.of("command", "sleep 100", "background", true)),
+                tool("shell", Map.of("command", "sleep 100", "background", true)),
+                text("好了")));
+        needSandbox(js);
+        run(js, true, true);
+        List<String> out = toolOutputs();
+        assertTrue(out.get(0).contains("job-1：还在跑") && out.get(0).contains("起来了"), out.get(0));
+        assertFalse(Files.exists(home.resolve("escaped-job.txt")), "后台命令写到工作区外了");
+        assertTrue(out.get(1).contains("job-1：还在跑"), out.get(1));
+        assertTrue(out.get(2).contains("已停止 job-1：已结束"), out.get(2));
+        assertTrue(out.get(3).contains("没有 job-9"), out.get(3));
+        assertTrue(out.get(7).contains("还在跑"), "停掉的不占名额：第 4 个在跑的要起得来：" + out.get(7));
+        assertTrue(out.get(8).contains("已经有 4 个命令在跑了"), "同时最多 4 个：" + out.get(8));
+        assertTrue(awaitDead(Long.parseLong(Files.readString(root.resolve("stopped.pid")).trim())), "shell_stop 之后进程还活着");
+        assertTrue(awaitDead(Long.parseLong(Files.readString(root.resolve("left.pid")).trim())), "这一轮结束了，后台命令还活着（网页没有 /ps，留着就没人管了）");
+    }
+
+    @Test
+    @DisplayName("起过后台命令也算跑过命令：判过题才给的工具（记薄弱点）要下发，后端执行时也知道跑过")
+    void 后台命令也算跑过() throws Exception {
+        JsCodeAgent js = agent("EXEC", "", CLI_DIR, List.of(
+                tool("shell", Map.of("command", "echo ok", "background", true)),
+                tool("after_run_tool", Map.of()),
+                text("好了")));
+        needSandbox(js);
+        boolean[] seen = {false};
+        JsCodeAgent.RemoteTools remote = new JsCodeAgent.RemoteTools() {
+            @Override public List<Map<String, Object>> always() { return List.of(); }
+            @Override public List<Map<String, Object>> afterRun() {
+                return List.of(Map.of("type", "function", "function", Map.of("name", "after_run_tool", "description", "x", "parameters", Map.of("type", "object", "properties", Map.of()))));
+            }
+            @Override public String call(String name, String argsJson, boolean ranCommand) {
+                seen[0] = ranCommand;
+                return "ok";
+            }
+        };
+        js.run(config, 7L, "干活", List.of(), true, true, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add, remote);
+        assertTrue(seen[0], "后端不知道跑过命令：" + toolOutput());
+    }
+
+    @Test
+    @DisplayName("前台时限：模型给的传到后端；到点结束")
+    void 前台时限() throws Exception {
+        JsCodeAgent js = agent("EXEC", "", CLI_DIR, List.of(tool("shell", Map.of("command", "sleep 30", "timeout_seconds", 1)), text("好了")));
+        needSandbox(js);
+        long t0 = System.currentTimeMillis();
+        run(js, true, true);
+        assertTrue(System.currentTimeMillis() - t0 < 10_000, "没听模型给的时限");
+        assertTrue(toolOutput().contains("超时"), toolOutput());
+        assertEquals(60_000L, JsCodeAgent.jobWait(99_999_999L), "子进程说等多久不全算数：后端的线程在这里等着");
+        assertEquals(0L, JsCodeAgent.jobWait(-5));
+    }
+
+    private static boolean awaitDead(long pid) throws InterruptedException {
+        for (int i = 0; i < 80; i++) {
+            if (!ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)) {
+                return true;
+            }
+            Thread.sleep(50);
+        }
+        return false;
+    }
+
     @Test
     @DisplayName("断网：本机的服务也连不上（本机的数据库、Docker 都在本机）；认不出的配置按断网算；管理员配了 local 才连得上（和命令行一个意思）")
     void 断网() throws Exception {

@@ -6,7 +6,8 @@
 //   - 跑命令交回后端的 WorkspaceExecutor：服务器上执行命令只有那一处（行内代码开关、超时、输出上限、不继承环境变量都在它里面）。
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { LocalTools, READ_TOOLS, shellOutcome } from './local.js';
+import { LocalTools, READ_TOOLS, shellOutcome, shellSeconds } from './local.js';
+import { describeJob, MAX_WAIT_SECONDS, START_WAIT_MS } from './jobs.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './sandbox.js';
 import { syntaxProblem } from './syntax.js';
 import { stat as diffStat } from '../render/diff.js';
@@ -81,11 +82,35 @@ export class DraftTools extends LocalTools {
     const command = typeof args.command === 'string' ? args.command.trim() : '';
     if (!command) return { error: '没有给出要运行的命令（command 是一整条 shell 命令，字符串）' };
     const cwd = args.cwd == null ? '' : String(args.cwd);
-    return { command, cwd, cwdRel: cwd || '.' };
+    return { command, cwd, cwdRel: cwd || '.', timeoutSeconds: args.timeout_seconds == null ? null : shellSeconds(args.timeout_seconds) };
+  }
+
+  /** 后台命令也是后端起的（门在后端，一轮结束后端全部收掉） */
+  async startJob(prep, { signal } = {}) {
+    const r = await this.exec({ shell: true, background: true, command: prep.command, cwd: prep.cwd, waitMs: START_WAIT_MS }, { signal });
+    if (r.error) return { error: r.error };
+    this.ranCommand = true;
+    const snap = { ...r, id: r.jobId };
+    return { id: r.jobId, content: describeJob(snap, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork }) }), snap };
+  }
+
+  async readJob(args = {}, { signal } = {}) {
+    const wait = Math.min(Math.max(Number(args.wait_seconds) || 0, 0), MAX_WAIT_SECONDS);
+    const r = await this.exec({ job: 'read', jobId: String(args.id || ''), waitMs: wait * 1000 }, { signal });
+    if (r.error) return { error: r.error };
+    const snap = { ...r, id: r.jobId };
+    return { content: describeJob(snap, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork }) }), snap };
+  }
+
+  async stopJob(args = {}, { signal } = {}) {
+    const r = await this.exec({ job: 'stop', jobId: String(args.id || '') }, { signal });
+    if (r.error) return { error: r.error };
+    const snap = { ...r, id: r.jobId };
+    return { content: `已停止 ${describeJob(snap)}`, snap };
   }
 
   async commitShell(prep, { signal } = {}) {
-    const r = await this.exec({ shell: true, command: prep.command, cwd: prep.cwd }, { signal });
+    const r = await this.exec({ shell: true, command: prep.command, cwd: prep.cwd, ...(prep.timeoutSeconds ? { timeoutMs: prep.timeoutSeconds * 1000 } : {}) }, { signal });
     if (r.error) return { content: `${r.error}${this.pendingNote()}`, summary: '没有运行', exitCode: -1, output: '' };
     this.ranCommand = true;
     const out = shellOutcome(prep, r, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork }) });
