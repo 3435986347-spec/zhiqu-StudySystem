@@ -154,3 +154,31 @@ export class DraftTools extends LocalTools {
     return [...this.drafts.values()].map((d) => ({ ...d }));
   }
 }
+
+/**
+ * 生成到 artifact（第一百一十六轮，用户要的）：工作区是后端给这段对话的临时空间，不是用户的文件夹。
+ * 写工具直接写进去，不走草稿：没碰用户的东西，不用确认；后面的命令也要看得到刚写的文件。
+ * 一轮结束后端比对前后，新增和改过的文件存成产物。
+ */
+export class ArtifactTools extends DraftTools {
+  constructor(options) {
+    super(options);
+    this.artifact = true;
+    this.wrote = new Set();
+    // 扩展名白名单防的是把用户的 .env、.pem 读进上下文。临时空间里只有模型自己写的东西，拦着只会让 .svg、.drawio 这些写不了
+    this.guard.extensionAllowed = () => true;
+  }
+
+  commitWrite(prep) {
+    const r = LocalTools.prototype.commitWrite.call(this, prep);
+    if (!r.error) this.wrote.add(prep.rel);
+    return r;
+  }
+
+  commitPatch(prep) {
+    const r = LocalTools.prototype.commitPatch.call(this, prep);
+    if (!r.error) for (const w of prep.writes) this.wrote.add(w.rel);
+    return r;
+  }
+}
+

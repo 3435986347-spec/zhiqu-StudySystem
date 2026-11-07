@@ -39,6 +39,7 @@ public final class WorkspaceAccess {
     private final WorkspaceMode effectiveMode;
     private final Path root;
     private final String refusalReason;
+    private final boolean artifactMode;
 
     /** 按配置构造 —— 薄适配层，真正的判定在下面那个显式构造器里。 */
     public WorkspaceAccess(WorkspaceProperties properties, String serverAddress) {
@@ -75,6 +76,25 @@ public final class WorkspaceAccess {
         this.root = resolvedRoot;
         this.refusalReason = refusal;
         this.effectiveMode = resolvedRoot == null ? WorkspaceMode.OFF : configuredMode;
+        this.artifactMode = false;
+    }
+
+    /** 档位开着、没选文件夹：生成到产物（第一百一十六轮）。工作区是后端给每段对话的临时空间，见 WorkspaceRegistry#target */
+    public static WorkspaceAccess artifact(WorkspaceMode mode) {
+        return new WorkspaceAccess(mode, mode, null, null, true);
+    }
+
+    /** 这段对话的临时空间：路径守卫、执行器照常用，只是根目录是后端给的 */
+    static WorkspaceAccess scratch(WorkspaceMode mode, Path root) {
+        return new WorkspaceAccess(mode, mode, root, null, false);
+    }
+
+    private WorkspaceAccess(WorkspaceMode configuredMode, WorkspaceMode effectiveMode, Path root, String refusalReason, boolean artifactMode) {
+        this.configuredMode = configuredMode;
+        this.effectiveMode = effectiveMode;
+        this.root = root;
+        this.refusalReason = refusalReason;
+        this.artifactMode = artifactMode;
     }
 
     /**
@@ -82,14 +102,13 @@ public final class WorkspaceAccess {
      * 服务器上的代码功能另走一条路（不碰磁盘）。
      */
     public static WorkspaceAccess production(WorkspaceMode configuredMode) {
-        return new WorkspaceAccess(configuredMode, "这是服务器上的部署：代码工作区只能在本机（桌面应用、本机跑的网页）使用");
+        return new WorkspaceAccess(configuredMode, WorkspaceMode.OFF, null,
+                "这是服务器上的部署：代码工作区只能在本机（桌面应用、本机跑的网页）使用", false);
     }
 
-    private WorkspaceAccess(WorkspaceMode configuredMode, String refusalReason) {
-        this.configuredMode = configuredMode;
-        this.effectiveMode = WorkspaceMode.OFF;
-        this.root = null;
-        this.refusalReason = refusalReason;
+    /** 生成到产物：有档位，没有 root（每段对话的临时空间由 WorkspaceRegistry 给） */
+    public boolean artifactMode() {
+        return artifactMode;
     }
 
     /** 配置里写的那一档（可能因为前置不满足而没有生效）。 */

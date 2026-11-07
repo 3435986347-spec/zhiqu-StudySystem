@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
+import com.zhiqu.entity.AiArtifactFile;
+import com.zhiqu.service.workspace.ArtifactFiles;
 import com.zhiqu.service.workspace.WorkspaceRegistry;
 import com.zhiqu.service.workspace.WorkspaceService;
 import com.zhiqu.dto.TaskCreateRequest;
@@ -96,6 +98,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private final RagContentHashService ragContentHashService;
     private final SourceScopeResolver sourceScopeResolver;
     private final WorkspaceRegistry workspaces;
+    private final com.zhiqu.mapper.AiArtifactFileMapper artifactFileMapper;
     private final com.zhiqu.rag.RagUnitRegistry ragUnitRegistry;
     private final RagRetriever ragRetriever;
     private final ContextCandidateHydrator contextCandidateHydrator;
@@ -127,6 +130,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                                   RagIndexJobService ragIndexJobService,
                                   RagContentHashService ragContentHashService,
                                   WorkspaceRegistry workspaces,
+                                  com.zhiqu.mapper.AiArtifactFileMapper artifactFileMapper,
                                   SourceScopeResolver sourceScopeResolver,
                                   com.zhiqu.rag.RagUnitRegistry ragUnitRegistry,
                                   RagRetriever ragRetriever,
@@ -163,6 +167,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         this.ragContentHashService = ragContentHashService;
         this.sourceScopeResolver = sourceScopeResolver;
         this.workspaces = workspaces;
+        this.artifactFileMapper = artifactFileMapper;
         this.ragUnitRegistry = ragUnitRegistry;
         this.ragRetriever = ragRetriever;
         this.contextCandidateHydrator = contextCandidateHydrator;
@@ -232,6 +237,10 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                 messageMapper.delete(new LambdaQueryWrapper<AiMessage>()
                         .eq(AiMessage::getUserId, userId)
                         .eq(AiMessage::getConversationId, conversation.getId()));
+                artifactFileMapper.delete(new LambdaQueryWrapper<AiArtifactFile>()
+                        .eq(AiArtifactFile::getUserId, userId)
+                        .eq(AiArtifactFile::getConversationId, conversation.getId()));
+                workspaces.deleteSpace(userId, conversation.getId());
                 conversationMapper.deleteById(conversation.getId());
             }
         }));
@@ -754,6 +763,98 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         artifact.setSourceMessageId(sourceMessageId);
         artifactMapper.insert(artifact);
         return artifact;
+    }
+
+    @Override
+    @Transactional
+    public AiAgentArtifact saveGeneratedFiles(Long runId, Long stepId, Long userId, Long conversationId,
+                                              List<ArtifactFiles.Generated> files, Long sourceMessageId) {
+        if (files == null || files.isEmpty()) {
+            return null;
+        }
+        AiAgentArtifact artifact = createArtifact(runId, stepId, "GENERATED_FILES", "生成了 " + files.size() + " 个文件", Map.of("files", List.of()), sourceMessageId);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        long room = ArtifactFiles.MAX_ACCOUNT_BYTES - artifactFileMapper.totalBytes(userId);
+        for (ArtifactFiles.Generated each : files) {
+            ArtifactFiles.Generated g = each.content() != null && each.content().length > room
+                    ? each.notStored("这个账号的产物空间用完了（200MB）") : each;
+            Long fileId = null;
+            if (g.content() != null) {
+                room -= g.content().length;
+                AiArtifactFile row = new AiArtifactFile();
+                row.setArtifactId(artifact.getId());
+                row.setUserId(userId);
+                row.setConversationId(conversationId);
+                row.setPath(limit(g.path(), 512));
+                row.setSizeBytes((long) g.content().length);
+                row.setSha256(g.sha256());
+                row.setContent(g.content());
+                artifactFileMapper.insert(row);
+                fileId = row.getId();
+            }
+            rows.add(ArtifactFiles.row(fileId, g));
+        }
+        artifact.setContentJson(toJson(Map.of("files", rows)));
+        artifact.setStatus("READY");   // 不用确认：没碰用户的东西
+        artifactMapper.updateById(artifact);
+        return artifact;
+    }
+
+    @Override
+    public void prepareArtifactSpace(Long userId, Long conversationId) {
+        WorkspaceRegistry.CodeTarget target = workspaces.target(userId, conversationId);
+        if (!target.artifact() || target.service().access().root() == null) {
+            return;
+        }
+        java.nio.file.Path root = target.service().access().root();
+        try (var entries = java.nio.file.Files.list(root)) {
+            if (entries.findAny().isPresent()) {
+                return;   // 还在：不覆盖（命令可能在这之后又改过）
+            }
+        } catch (java.io.IOException e) {
+            return;
+        }
+        for (Long id : artifactFileMapper.latestIds(userId, conversationId)) {
+            AiArtifactFile file = artifactFileMapper.selectById(id);
+            java.nio.file.Path to = file == null ? null : root.resolve(file.getPath()).normalize();
+            if (to == null || !to.startsWith(root)) {
+                continue;
+            }
+            try {
+                java.nio.file.Files.createDirectories(to.getParent());
+                java.nio.file.Files.write(to, file.getContent());
+            } catch (java.io.IOException e) {
+                log.warn("恢复临时空间失败 {}：{}", file.getPath(), e.toString());
+            }
+        }
+    }
+
+    @Override
+    public List<Map<String, Object>> generatedFiles(Long userId, Long notebookId) {
+        AiConversation conversation = conversationMapper.selectOne(new LambdaQueryWrapper<AiConversation>()
+                .eq(AiConversation::getUserId, userId)
+                .eq(AiConversation::getConversationKey, notebookId == null ? AiConversation.DEFAULT_KEY : AiConversation.notebookKey(notebookId)));
+        if (conversation == null) {
+            return List.of();
+        }
+        return artifactFileMapper.latestRows(userId, conversation.getId()).stream().map(f -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", f.getId());
+            row.put("artifactId", f.getArtifactId());
+            row.put("path", f.getPath());
+            row.put("size", f.getSizeBytes());
+            return row;
+        }).toList();
+    }
+
+    @Override
+    public AiArtifactFile artifactFile(Long userId, Long artifactId, Long fileId) {
+        AiArtifactFile file = artifactFileMapper.selectById(fileId);
+        // 三个都要对：这个文件属于这个产物、属于这个账号。说法一样，不告诉别人这个 id 存不存在
+        if (file == null || !Objects.equals(file.getArtifactId(), artifactId) || !Objects.equals(file.getUserId(), userId)) {
+            throw new BusinessException("文件不存在或无权限访问");
+        }
+        return file;
     }
 
     @Override

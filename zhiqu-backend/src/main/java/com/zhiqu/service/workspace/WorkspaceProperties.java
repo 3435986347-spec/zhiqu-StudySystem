@@ -120,6 +120,20 @@ public class WorkspaceProperties {
     /** shell 工具一条命令的时限：和命令行同一档（要跑测试、构建）。白名单的 run_command 还是 execTimeoutMs。 */
     private long shellTimeoutMs = 120_000L;
 
+    /** 生成到产物的临时空间放哪（一段对话一个目录）。可以随时清，接着聊时从数据库恢复 */
+    private String artifactDir = System.getProperty("user.home") + "/.zhiqu/artifact-spaces";
+    /** 临时空间几天没动就清 */
+    private int artifactRetentionDays = 3;
+    /** 服务器上（生产 profile）的代码功能：默认关，部署时打开。打开了也不碰服务器的磁盘，只生成到产物 */
+    private boolean hostedEnabled = false;
+
+    public String getArtifactDir() { return artifactDir; }
+    public void setArtifactDir(String artifactDir) { this.artifactDir = artifactDir; }
+    public int getArtifactRetentionDays() { return artifactRetentionDays; }
+    public void setArtifactRetentionDays(int artifactRetentionDays) { this.artifactRetentionDays = artifactRetentionDays; }
+    public boolean isHostedEnabled() { return hostedEnabled; }
+    public void setHostedEnabled(boolean hostedEnabled) { this.hostedEnabled = hostedEnabled; }
+
     public String getSandboxNetwork() { return sandboxNetwork; }
     public void setSandboxNetwork(String sandboxNetwork) { this.sandboxNetwork = sandboxNetwork; }
     public long getShellTimeoutMs() { return shellTimeoutMs; }

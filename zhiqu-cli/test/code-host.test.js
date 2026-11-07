@@ -310,3 +310,85 @@ test('apply_patch 经宿主进草稿：算写过（最终回答在没草稿时�
   assert.equal(fs.readFileSync(path.join(root, 'a.py'), 'utf8'), 'one\n');
 });
 
+// ── 生成到产物（第一百一十六轮）───────────────────────────
+
+test('生成到产物：写工具直接写进临时空间，不走草稿；什么类型都能写；命令看得到刚写的文件；提示说的是产物', async () => {
+  const root = tmpdir();
+  const { bridge, seen } = fakeBackend({
+    replies: [
+      { calls: [{ name: 'write_file', args: { path: 'chart.svg', content: '<svg>one</svg>\n' } }] },
+      { calls: [{ name: 'edit_file', args: { path: 'chart.svg', old_string: 'one', new_string: 'two' } }] },
+      { calls: [{ name: 'write_file', args: { path: 'dir/data.custom', content: 'x\n' } }] },
+      { calls: [{ name: 'apply_patch', args: { patch: '*** Begin Patch\n*** Add File: patched.txt\n+补丁写的\n*** End Patch' } }] },
+      { calls: [{ name: 'read_file', args: { path: 'chart.svg' } }] },
+      { calls: [{ name: 'shell', args: { command: 'cat chart.svg' } }] },
+      { text: '生成了 chart.svg。' },
+    ],
+    exec: () => ({ exitCode: 0, output: 'ok', millis: 1 }),
+  });
+  const result = await runHosted(bridge, { type: 'run', root, artifact: true, message: '画一张图', canWrite: true, canShell: true, shellWrite: true, canExec: true, maxRounds: 10, model: MODEL });
+  assert.equal(result.error, null);
+  assert.equal(fs.readFileSync(path.join(root, 'chart.svg'), 'utf8'), '<svg>two</svg>\n', '落在临时空间里，不是草稿');
+  assert.equal(fs.readFileSync(path.join(root, 'dir/data.custom'), 'utf8'), 'x\n', '不认识的类型也能写');
+  assert.equal(fs.readFileSync(path.join(root, 'patched.txt'), 'utf8'), '补丁写的\n');
+  assert.deepEqual(result.drafts, [], '没有草稿要用户确认');
+  assert.equal(result.writeCalls, 4);
+  const models = seen.filter((m) => m.type === 'model');
+  const system = models[0].body.messages[0].content;
+  assert.match(system, /生成到产物/);
+  assert.match(system, /不是用户电脑上的文件夹/);
+  assert.ok(!/点了确认才写进磁盘/.test(system), '草稿那段不该出现');
+  const toolTexts = models.at(-1).body.messages.filter((m) => m.role === 'tool').map((m) => m.content).join('\n');
+  assert.ok(!/有没确认的草稿/.test(toolTexts), '没有草稿，不该说命令跑的是旧版本');
+  assert.ok(!/已生成草稿/.test(toolTexts), toolTexts);
+  const offered = models[0].body.tools.map((t) => t.function.name);
+  assert.ok(!offered.includes('delete_file'), offered.join(','));
+  assert.equal(seen.filter((m) => m.type === 'exec' && m.shell).length, 1);
+});
+
+test('生成到产物：临时空间也出不去：../、绝对路径、软链、.git、.zhiqu 都写不了', async () => {
+  const root = tmpdir();
+  const outside = tmpdir();
+  fs.symlinkSync(outside, path.join(root, 'link'));
+  const tries = ['../escape.txt', path.join(outside, 'abs.txt'), 'link/through.txt', '.git/hooks/pre-commit', '.zhiqu/settings.json'];
+  const { bridge } = fakeBackend({ replies: [...tries.map((p) => ({ calls: [{ name: 'write_file', args: { path: p, content: 'x' } }] })), { text: '好' }] });
+  const result = await runHosted(bridge, { type: 'run', root, artifact: true, message: '写', canWrite: true, maxRounds: 10, model: MODEL });
+  assert.equal(result.error, null);
+  assert.deepEqual(fs.readdirSync(outside), []);
+  assert.ok(!fs.existsSync(path.join(path.dirname(root), 'escape.txt')));
+  assert.ok(!fs.existsSync(path.join(root, '.git')) && !fs.existsSync(path.join(root, '.zhiqu')));
+});
+
+test('生成到产物：这一轮不能写就不给写工具；不能跑命令就照实说；能跑时说跑一下', async () => {
+  const read = fakeBackend({ replies: [{ text: '好' }] });
+  await runHosted(read.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '看看', maxRounds: 5, model: MODEL });
+  const first = read.seen.find((m) => m.type === 'model').body;
+  const names = first.tools.map((t) => t.function.name);
+  assert.ok(!names.includes('write_file') && !names.includes('shell'), names.join(','));
+  assert.match(first.messages[0].content, /这里不能跑命令/);
+  const shell = fakeBackend({ replies: [{ text: '好' }] });
+  await runHosted(shell.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '写', canWrite: true, canShell: true, shellWrite: false, maxRounds: 5, model: MODEL });
+  const system = shell.seen.find((m) => m.type === 'model').body.messages[0].content;
+  assert.match(system, /这一档 shell 写不了临时空间/);
+  assert.match(system, /能运行的就运行一下/);
+  assert.ok(!/这里不能跑命令/.test(system));
+});
+
+test('生成到产物：先写再说「生成了」：真写了，不推', async () => {
+  const honest = fakeBackend({ replies: [{ calls: [{ name: 'write_file', args: { path: 'a.txt', content: 'x' } }] }, { text: '已生成草稿。' }] });
+  await runHosted(honest.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '写', canWrite: true, maxRounds: 5, model: MODEL });
+  assert.equal(honest.seen.filter((m) => m.type === 'model').length, 2, '写过了就不该再推它');
+  const patched = fakeBackend({ replies: [{ calls: [{ name: 'apply_patch', args: { patch: '*** Begin Patch\n*** Add File: b.txt\n+x\n*** End Patch' } }] }, { text: '已生成草稿。' }] });
+  await runHosted(patched.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '写', canWrite: true, maxRounds: 5, model: MODEL });
+  assert.equal(patched.seen.filter((m) => m.type === 'model').length, 2, '补丁写的也算写过');
+});
+
+test('生成到产物：说写了却一个都没写，推一次；真写了不推', async () => {
+  const lied = fakeBackend({ replies: [{ text: '已生成草稿，确认后生效。' }, { calls: [{ name: 'write_file', args: { path: 'a.txt', content: 'x' } }] }, { text: '已生成草稿。' }] });
+  const r = await runHosted(lied.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '写', canWrite: true, maxRounds: 5, model: MODEL });
+  const asked = lied.seen.filter((m) => m.type === 'model');
+  assert.equal(asked.length, 3, '第一次没写就说写了：推一次；写了之后那句不再推');
+  assert.match(JSON.stringify(asked[1].body.messages), /并没有生成任何草稿/);
+  assert.equal(r.writeCalls, 1);
+});
+

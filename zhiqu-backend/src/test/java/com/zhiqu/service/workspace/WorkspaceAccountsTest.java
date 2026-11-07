@@ -136,4 +136,127 @@ class WorkspaceAccountsTest {
     void 没有账号不给() {
         assertThrows(NullPointerException.class, () -> registry().service(null));
     }
+
+    // ── 生成到产物（第一百一十六轮）──────────────────────────
+
+    private WorkspaceProperties artifactProps(boolean hosted) {
+        WorkspaceProperties props = new WorkspaceProperties();
+        props.setArtifactDir(dir.resolve("spaces").toString());
+        props.setHostedEnabled(hosted);
+        return props;
+    }
+
+    @Test
+    @DisplayName("本机：档位开着、没选文件夹就是生成到产物；一段对话一个临时空间，账号之间、对话之间都分开；选了文件夹就还是文件夹")
+    void 本机没选文件夹生成到产物() throws Exception {
+        WorkspaceRegistry r = registry(artifactProps(false), "127.0.0.1", "");
+        r.service(1L).applySettings("EXEC", "");
+        assertTrue(r.service(1L).access().artifactMode());
+        assertTrue(r.service(1L).access().enabled());
+        WorkspaceRegistry.CodeTarget one = r.target(1L, 10L);
+        assertTrue(one.artifact());
+        Path root = one.service().access().root();
+        assertTrue(Files.isDirectory(root), "临时空间要建好");
+        assertEquals(dir.resolve("spaces").resolve("1").resolve("10").toRealPath(), root);
+        if (java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.resolve("spaces"))), "别的系统账号进不来");
+        }
+        assertEquals(WorkspaceMode.EXEC, one.service().access().effectiveMode());
+        assertTrue(one.executor().enabled(), "桌面版的临时空间能跑命令（沿用系统沙箱）");
+        assertFalse(root.equals(r.target(1L, 11L).service().access().root()), "另一段对话是另一个空间");
+        r.service(2L).applySettings("READ", "");
+        assertFalse(root.equals(r.target(2L, 10L).service().access().root()), "另一个账号是另一个空间");
+        assertFalse(r.target(2L, 10L).executor().enabled(), "只读的档位跑不了");
+        assertTrue(r.target(1L, null).service().access().root().endsWith("default"), "不知道是哪段对话：按账号放一个");
+
+        Path folder = folder("project");
+        r.service(1L).applySettings("WRITE", folder.toString());
+        assertFalse(r.service(1L).access().artifactMode());
+        WorkspaceRegistry.CodeTarget mine = r.target(1L, 10L);
+        assertFalse(mine.artifact());
+        assertEquals(folder, mine.service().access().root());
+
+        r.service(3L).applySettings("OFF", "");
+        assertFalse(r.service(3L).access().enabled());
+        assertFalse(r.target(3L, 10L).artifact(), "关着的不算");
+
+        r.deleteSpace(1L, 10L);
+        assertFalse(Files.exists(root), "对话删了空间也删");
+    }
+
+    @Test
+    @DisplayName("没绑回环的后端：配了档位也不会变成生成到产物（局域网里的人不能在这台电脑上跑命令）")
+    void 没绑回环不给产物() throws Exception {
+        WorkspaceRegistry r = registry(artifactProps(false), "0.0.0.0", "");
+        assertFalse(r.artifactAllowed());
+        r.service(1L).applySettings("EXEC", "");
+        assertFalse(r.service(1L).access().artifactMode());
+        assertFalse(r.service(1L).access().enabled());
+    }
+
+    @Test
+    @DisplayName("服务器默认关：hosted-enabled 没开就和原来一样什么都没有")
+    void 服务器默认关() throws Exception {
+        WorkspaceRegistry prod = registry(artifactProps(false), "127.0.0.1", "prod");
+        assertFalse(prod.artifactOnly());
+        assertFalse(prod.artifactAllowed());
+        prod.service(1L).applySettings("EXEC", "");
+        assertFalse(prod.service(1L).access().enabled());
+        assertNotNull(prod.service(1L).access().refusalReason());
+    }
+
+    @Test
+    @DisplayName("服务器打开之后：只有产物，写了文件夹也不看；这一轮还跑不了命令（下一轮才有隔离）；磁盘的入口照旧关着")
+    void 服务器打开之后只有产物() throws Exception {
+        WorkspaceRegistry prod = registry(artifactProps(true), "127.0.0.1", "prod");
+        assertTrue(prod.artifactOnly());
+        Path secret = folder("server-secrets");
+        prod.service(1L).applySettings("EXEC", secret.toString());
+        assertTrue(prod.service(1L).access().artifactMode(), "写了目录也不当文件夹");
+        assertNull(prod.service(1L).access().root());
+        WorkspaceRegistry.CodeTarget t = prod.target(1L, 5L);
+        assertTrue(t.artifact());
+        assertFalse(t.service().access().root().startsWith(secret));
+        assertFalse(t.executor().enabled(), "生产 profile 还是不执行");
+        assertFalse(t.executor().shellEnabled());
+        assertFalse(prod.localDiskAllowed());
+        assertFalse(prod.openByDefault());
+        prod.service(2L).applySettings("OFF", "");
+        assertFalse(prod.service(2L).access().enabled(), "账号自己没开就是关的");
+    }
+
+    @Test
+    @DisplayName("临时空间清理：几天没动的删，还在用的留着（里面的文件新也算），软链不跟")
+    void 清理临时空间() throws Exception {
+        WorkspaceProperties props = artifactProps(false);
+        props.setArtifactRetentionDays(3);
+        Path base = dir.resolve("spaces");
+        Path idle = Files.createDirectories(base.resolve("1/10"));
+        Path active = Files.createDirectories(base.resolve("1/11"));
+        Path outside = folder("outside");
+        Files.writeString(outside.resolve("keep.txt"), "别删我");
+        Files.writeString(idle.resolve("old.txt"), "x");
+        Files.createSymbolicLink(idle.resolve("link"), outside);
+        Files.writeString(active.resolve("new.txt"), "x");
+        long now = System.currentTimeMillis();
+        java.nio.file.attribute.FileTime old = java.nio.file.attribute.FileTime.fromMillis(now - java.time.Duration.ofDays(5).toMillis());
+        for (Path p : java.util.List.of(idle.resolve("old.txt"), idle, active)) {
+            Files.setLastModifiedTime(p, old);
+        }
+        // 刚建的软链和 new.txt 都是「现在」。idle 的软链改不了时间（Java 没有 lutimes），删掉它之后再试一次软链不跟的那种
+        Files.delete(idle.resolve("link"));
+        Files.setLastModifiedTime(idle, old);   // 删软链刷新了目录的时间
+        Path idle2 = Files.createDirectories(base.resolve("1/12"));
+        Files.setLastModifiedTime(idle2, old);
+        assertEquals(2, new ArtifactSpaces(props).clean(now));
+        assertFalse(Files.exists(idle));
+        assertFalse(Files.exists(idle2));
+        assertTrue(Files.exists(active.resolve("new.txt")), "里面的文件是新的就还在用");
+        // deleteTree 碰到软链只删软链
+        Path withLink = Files.createDirectories(base.resolve("1/13"));
+        Files.createSymbolicLink(withLink.resolve("link"), outside);
+        ArtifactSpaces.deleteTree(withLink);
+        assertFalse(Files.exists(withLink));
+        assertTrue(Files.exists(outside.resolve("keep.txt")), "软链指向的东西不能被删");
+    }
 }

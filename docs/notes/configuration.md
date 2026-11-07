@@ -56,3 +56,12 @@
 - RAG — `app.rag.*`
 
 Never commit real API keys; they are injected via environment variables.
+
+## 代码功能（生成到产物，第一百一十六轮）
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `app.workspace.artifact-dir` | `~/.zhiqu/artifact-spaces` | 每段对话的临时空间放哪。可以随时清，接着聊时从数据库恢复 |
+| `app.workspace.artifact-retention-days` | `3` | 临时空间几天没动就清 |
+| `app.workspace.hosted-enabled` | `false` | 服务器上（生产 profile）的代码功能。打开了也不碰服务器的磁盘，只生成到产物 |
+

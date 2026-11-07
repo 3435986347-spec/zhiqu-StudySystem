@@ -114,7 +114,7 @@ class CodeWorkspaceAgentTest {
         when(js.enabled()).thenReturn(true);
         rig.agent.setJsEngine(js);
         assertSame(CodeWorkspaceAgent.Result.EMPTY, rig.run("帮我看看 Main.java 这段代码", CODE_MODE));
-        verify(js, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any());
+        verify(js, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -151,9 +151,9 @@ class CodeWorkspaceAgentTest {
                 new StudyPlanTool(clock, mock(ReminderPlanService.class), JSON));
         running.setJsEngine(js);
         running.run(new AiModelConfig(), 3L, "改一下 a.py", List.of(), CODE_MODE, null, m -> { });
-        verify(js).run(any(), eq(3L), eq("改一下 a.py"), any(), eq(false), eq(false), any(), any(), any(), any(), any());
+        verify(js).run(any(), eq(3L), eq("改一下 a.py"), any(), eq(false), eq(false), any(), any(), any(), any(), any(), any());
         running.run(new AiModelConfig(), 1L, "改一下 a.py", List.of(), CODE_MODE, null, m -> { });
-        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(true), any(), any(), any(), any(), any());
+        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(true), any(), any(), any(), any(), any(), any());
     }
 
     /**
@@ -173,11 +173,11 @@ class CodeWorkspaceAgentTest {
             when(rig.executor.enabled()).thenReturn(c.execEnabled());
             JsCodeAgent js = mock(JsCodeAgent.class);
             when(js.enabled()).thenReturn(true);
-            when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any()))
+            when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any(), any()))
                     .thenReturn(new CodeWorkspaceAgent.Result("", List.of(), null, c.write(), List.of(), false));
             rig.agent.setJsEngine(js);
             rig.run(c.message(), c.options());
-            verify(js).run(any(), eq(1L), eq(c.message()), any(), eq(c.write()), eq(c.exec()), any(), any(), any(), any(), any());
+            verify(js).run(any(), eq(1L), eq(c.message()), any(), eq(c.write()), eq(c.exec()), any(), any(), any(), any(), any(), any());
         }
     }
 
@@ -235,13 +235,13 @@ class CodeWorkspaceAgentTest {
         Rig rig = new Rig(WorkspaceMode.WRITE);
         JsCodeAgent js = mock(JsCodeAgent.class);
         when(js.enabled()).thenReturn(true);
-        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any()))
+        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CodeWorkspaceAgent.Result("", List.of(), null, true, List.of(), false));
         rig.agent.setJsEngine(js);
         rig.agent.run(new AiModelConfig(), 1L, "改一下 a.py", List.of(), CODE_MODE, null, "MAX", rig.notes::add);
-        verify(js).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), eq("MAX"));
+        verify(js).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), eq("MAX"), any());
         rig.run("改一下 a.py", CODE_MODE);
-        verify(js).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), eq("OFF"));
+        verify(js).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), eq("OFF"), any());
     }
 
     @Test
@@ -251,18 +251,18 @@ class CodeWorkspaceAgentTest {
         Rig rig = new Rig(WorkspaceMode.WRITE);
         JsCodeAgent js = mock(JsCodeAgent.class);
         when(js.enabled()).thenReturn(true);
-        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(fromJs);
+        when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any(), any())).thenReturn(fromJs);
         rig.agent.setJsEngine(js);
         CodeWorkspaceAgent.Result viaJs = rig.run("改一下 a.py", CODE_MODE);
         assertEquals(fromJs.context(), viaJs.context());
-        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(false), any(), any(), any(), any(), any());
+        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(false), any(), any(), any(), any(), any(), any());
         verify(rig.provider, never()).callToolTurn(any(), any(), any(), any());
 
         // 第九十五轮：JS 那份经桥调了「把里程碑排成任务」—— 记在这里的循环状态上，要交回主流程（走 PLANNER 那条确认的路）
         Rig project = new Rig(WorkspaceMode.WRITE);
         JsCodeAgent js3 = mock(JsCodeAgent.class);
         when(js3.enabled()).thenReturn(true);
-        when(js3.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(js3.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
             JsCodeAgent.RemoteTools remote = inv.getArgument(9);
             String reply = remote.call(StudyPlanTool.NAME, "{\"tasks\":[{\"title\":\"让蛇动起来\"}]}", false);
             return new CodeWorkspaceAgent.Result("【工作区 create_study_plan】\n" + reply, List.of(), null, true, List.of(), false);

@@ -119,7 +119,7 @@ class WikiWriterStateTest {
 
     @Test
     void 实际代码runner必须保留工具返回的typedWiki回执() throws Exception {
-        when(codeAgent.run(any(), any(), anyString(), anyList(), anyMap(), any(), any(), any()))
+        when(codeAgent.run(any(), any(), any(), anyString(), anyList(), anyMap(), any(), any(), any()))
                 .thenReturn(new CodeWorkspaceAgent.Result("", List.of(), null, false, List.of(88L)));
         Object state = state();
         runner(service(), state, "CodeAgentRunner").run(new AgentRunContext(List.of(), (name, data) -> {}));

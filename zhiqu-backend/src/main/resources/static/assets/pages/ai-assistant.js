@@ -435,7 +435,8 @@ function artifactTypeLabel(type) {
     WIKI_DRAFT: 'Wiki 草稿',
     MEMORY_DRAFT: '记忆草稿',
     CODE_DRAFT: '代码改动草稿',
-    NOTE_DRAFT: '笔记草稿'
+    NOTE_DRAFT: '笔记草稿',
+    GENERATED_FILES: '生成的文件'
   })[String(type || '').toUpperCase()] || '其他产物';
 }
 
@@ -444,6 +445,7 @@ function artifactStatusLabel(status) {
     DRAFT: '待确认',
     PENDING: '待确认',
     CONFIRMED: '已确认',
+    READY: '已生成',
     DISCARDED: '已忽略',
     FAILED: '失败'
   })[String(status || '').toUpperCase()] || (status || '');
@@ -609,6 +611,14 @@ function showFreshPlanDraft(artifacts) {
   return advancePlanModalQueue();
 }
 
+// 刚生成了文件：产物那栏收着的话打开（用户得看得到）。手机上这栏是盖在对话上面的，不替他打开
+function revealArtifactsPanel() {
+  var panel = document.querySelector('[data-zq-collapse="right"]');
+  if (!panel || !panel.classList.contains('zq-collapsed') || window.innerWidth <= 760) return;
+  var opener = panel.querySelector('.zq-xbtn');
+  if (opener) opener.click();
+}
+
 function receiveAgentArtifact(raw) {
   var incoming = normalizeArtifact(raw);
   if (incoming.id == null) return null;
@@ -621,6 +631,7 @@ function receiveAgentArtifact(raw) {
   state.agentArtifactRevision = (state.agentArtifactRevision || 0) + 1;
   renderArtifacts(state.agentArtifacts);
   showFreshPlanDraft(state.agentArtifacts);
+  if (String(incoming.artifactType || '').toUpperCase() === 'GENERATED_FILES') revealArtifactsPanel();
   return incoming;
 }
 
@@ -958,6 +969,128 @@ var CONFIRMABLE_TYPES = ['PLAN_DRAFT', 'TASK_DRAFT', 'ROUTINE_DRAFT', 'WIKI_DRAF
  * 产物卡片上的「查看并确认 / 确认」「忽略」。确认框只自动弹一次，关掉以后就靠这里再打开 ——
  * 代码草稿原来不在这份清单里：确认框一关（点到遮罩、按 Esc），不刷新页面就没处确认（第九十二轮在真浏览器里点出来的）。
  */
+// ───────────────────────── 生成的文件（第一百一十六轮）─────────────────────────
+// 用户：「可以生成文件到artifact」。内容是模型和命令写的，不能信：下载走 attachment，预览不在本站的页面里跑 ——
+// HTML 关在没有同源权限的 iframe 里（拿不到这个页面的登录令牌），图片走 <img>（SVG 里的脚本不跑），别的都当纯文本。
+var GEN_IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
+var GEN_TEXT_PREVIEW_BYTES = 200 * 1024;
+
+function genExtension(path) {
+  var name = String(path || '').split('/').pop();
+  var dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+function genPreviewKind(path) {
+  var ext = genExtension(path);
+  if (ext === 'html' || ext === 'htm') return 'html';
+  if (ext === 'md' || ext === 'markdown') return 'markdown';
+  return GEN_IMAGE_TYPES[ext] ? 'image' : 'text';
+}
+function humanSize(bytes) {
+  var n = Number(bytes) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+function generatedFilesHtml(artifact) {
+  var files = artifactContent(artifact).files;
+  if (!Array.isArray(files) || !files.length) return '';
+  return '<ul class="zq-gen-files">' + files.map(function (f) {
+    var path = String(f.path || '');
+    var stored = f.id != null;
+    var ids = ' data-gen-artifact="' + esc(f.artifactId != null ? f.artifactId : artifact.id) + '" data-gen-file="' + esc(f.id) + '" data-gen-path="' + esc(path) + '"';
+    return '<li class="zq-gen-file">' + icon('file')
+      + '<span class="zq-gen-name" title="' + esc(path) + '">' + esc(path) + '</span>'
+      + '<span class="zq-gen-size zq-num">' + esc(humanSize(f.size)) + '</span>'
+      + (stored
+        ? '<button type="button" class="zq-gen-act" data-gen-view="1"' + ids + '>预览</button>'
+          + '<button type="button" class="zq-gen-act" data-gen-down="1"' + ids + '>下载</button>'
+        : '<em class="zq-gen-skip" title="' + esc(f.skipped || '') + '">没存：' + esc(f.skipped || '') + '</em>')
+      + '</li>';
+  }).join('') + '</ul>';
+}
+// 这段对话之前生成的文件：面板只显示最近一轮的产物，不单独列的话换一轮、刷新之后就点不到了。这一轮卡片上已有的路径不重复
+function earlierGeneratedFiles(files, artifacts) {
+  var shown = {};
+  (artifacts || []).forEach(function (a) {
+    if (String(a.artifactType || '').toUpperCase() !== 'GENERATED_FILES') return;
+    var rows = artifactContent(a).files;
+    if (Array.isArray(rows)) rows.forEach(function (f) { shown[f.path] = true; });
+  });
+  return (files || []).filter(function (f) { return !shown[f.path]; });
+}
+function earlierFilesCard(files) {
+  if (!files.length) return '';
+  return '<article class="zq-artifact-card">'
+    + '<div class="zq-artifact-head"><span>' + esc(artifactTypeLabel('GENERATED_FILES')) + '</span></div>'
+    + '<div class="zq-artifact-title">之前生成的 ' + files.length + ' 个文件</div>'
+    + generatedFilesHtml({ content: { files: files } })
+    + '</article>';
+}
+function saveBlobAs(blob, filename) {
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = filename || 'file';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+}
+function downloadGeneratedFile(artifactId, fileId) {
+  return safe('下载文件', async function () {
+    var got = await api.download('/ai/artifacts/' + artifactId + '/files/' + fileId);
+    saveBlobAs(got.blob, got.filename);
+  });
+}
+// 有 NUL 就是二进制：当文本显示只是一屏乱码
+function looksBinary(bytes) {
+  var n = Math.min(bytes.length, 8192);
+  for (var i = 0; i < n; i++) if (bytes[i] === 0) return true;
+  return false;
+}
+function genPreviewNode(kind, path, blob, bytes) {
+  if (kind === 'image') {
+    var img = document.createElement('img');
+    img.className = 'zq-gen-image'; img.alt = path;
+    // 类型照扩展名给，不信文件自己说的：一个写成 .png 的 HTML 在 <img> 里只是一张坏图
+    img.src = URL.createObjectURL(new Blob([blob], { type: GEN_IMAGE_TYPES[genExtension(path)] }));
+    return img;
+  }
+  var box = document.createElement(kind === 'text' ? 'pre' : 'div');
+  if (looksBinary(bytes)) {
+    box.className = 'zq-gen-note';
+    box.textContent = '这个文件不是文本，不能预览，下载之后打开。';
+    return box;
+  }
+  var clipped = bytes.length > GEN_TEXT_PREVIEW_BYTES;
+  var text = new TextDecoder('utf-8').decode(clipped ? bytes.subarray(0, GEN_TEXT_PREVIEW_BYTES) : bytes);
+  if (kind === 'html') {
+    var frame = document.createElement('iframe');
+    frame.className = 'zq-gen-frame';
+    frame.setAttribute('sandbox', 'allow-scripts');   // 没有 allow-same-origin：脚本能跑，但它是个陌生的来源
+    frame.title = path;
+    frame.srcdoc = text;
+    return frame;
+  }
+  if (kind === 'markdown') {
+    box.className = 'zq-gen-markdown';
+    box.innerHTML = renderMarkdown(text);
+    return box;
+  }
+  box.className = 'zq-gen-text';
+  box.textContent = clipped ? text + '\n…（太长，只预览开头，下载看全部）' : text;
+  return box;
+}
+function previewGeneratedFile(artifactId, fileId, path) {
+  return safe('预览文件', async function () {
+    var got = await api.download('/ai/artifacts/' + artifactId + '/files/' + fileId);
+    var bytes = new Uint8Array(await got.blob.arrayBuffer());
+    var node = genPreviewNode(genPreviewKind(path), path, got.blob, bytes);
+    openModal({
+      title: path, width: 'min(880px, 94vw)', bodyNode: node,
+      onClose: function () { if (node.tagName === 'IMG') URL.revokeObjectURL(node.src); }
+    });
+  });
+}
+
 function artifactActionsHtml(artifact) {
   var type = String(artifact.artifactType || '').toUpperCase();
   var status = String(artifact.status || '').toUpperCase();
@@ -973,7 +1106,8 @@ function artifactActionsHtml(artifact) {
 function renderArtifacts(artifacts) {
   var host = $('#zq-artifacts'); if (!host) return;
   var grouped = groupArtifacts(artifacts);
-  host.innerHTML = grouped.length ? grouped.map(function (artifact) {
+  var earlier = earlierFilesCard(earlierGeneratedFiles(state.generatedFiles, grouped));
+  host.innerHTML = grouped.length || earlier ? grouped.map(function (artifact) {
     var type = String(artifact.artifactType || '').toUpperCase();
     var status = String(artifact.status || '').toUpperCase();
     var content = artifactContent(artifact);
@@ -993,17 +1127,18 @@ function renderArtifacts(artifacts) {
     var titleHtml = /^https?:\/\//i.test(url)
       ? '<a class="zq-artifact-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(title) + '</a>'
       : esc(title);
-    var itemHtml = titles.length ? '<ul class="zq-artifact-items">' + titles.slice(0, 5).map(function (item) { return '<li>' + esc(item) + '</li>'; }).join('') + '</ul>' : '';
+    var generated = type === 'GENERATED_FILES';
+    var itemHtml = generated ? generatedFilesHtml(artifact) : titles.length ? '<ul class="zq-artifact-items">' + titles.slice(0, 5).map(function (item) { return '<li>' + esc(item) + '</li>'; }).join('') + '</ul>' : '';
     return '<article class="zq-artifact-card">'
       + '<div class="zq-artifact-head"><span>' + esc(artifactTypeLabel(type)) + '</span><em>' + esc(artifactStatusLabel(status)) + '</em></div>'
       + '<div class="zq-artifact-title">' + titleHtml + '</div>'
       + (meta ? '<div class="zq-artifact-meta">' + esc(meta) + '</div>' : '')
       + (preview ? '<p class="zq-artifact-preview">' + esc(preview) + '</p>' : '')
       + itemHtml
-      + '<details class="zq-artifact-details"><summary>展开详情</summary>' + artifactDetailsHtml(artifact) + '</details>'
+      + (generated ? '' : '<details class="zq-artifact-details"><summary>展开详情</summary>' + artifactDetailsHtml(artifact) + '</details>')
       + artifactActionsHtml(artifact)
       + '</article>';
-  }).join('') : empty('暂无产物');
+  }).join('') + earlier : empty('暂无产物');
   $all('[data-art-view]', host).forEach(function (b) {
     b.onclick = function () {
       var target = grouped.filter(function (a) { return String(a.id) === String(b.dataset.artView); })[0];
@@ -1013,6 +1148,12 @@ function renderArtifacts(artifacts) {
         else openPlanConfirmModal(target);
       }
     };
+  });
+  $all('[data-gen-view]', host).forEach(function (b) {
+    b.onclick = function () { previewGeneratedFile(b.dataset.genArtifact, b.dataset.genFile, b.dataset.genPath); };
+  });
+  $all('[data-gen-down]', host).forEach(function (b) {
+    b.onclick = function () { downloadGeneratedFile(b.dataset.genArtifact, b.dataset.genFile); };
   });
   $all('[data-art-ok]', host).forEach(function (b) { b.onclick = function () { safe('确认产物', async function () { await api.post('/ai/artifacts/' + b.dataset.artOk + '/confirm', {}); toast('已确认'); await renderAgentPanels(); }); }; });
   $all('[data-art-no]', host).forEach(function (b) { b.onclick = function () { safe('忽略产物', async function () { await api.post('/ai/artifacts/' + b.dataset.artNo + '/discard', {}); toast('已忽略'); await renderAgentPanels(); }); }; });
@@ -1029,7 +1170,9 @@ async function renderAgentPanels() {
   }
   var latest = runs && runs.length ? runs[0] : null;
   var detail = latest ? await safe('执行详情', function () { return api.get('/ai/agent-runs/' + latest.id); }) : null;
+  var generated = await safe('生成的文件', function () { return api.get('/ai/generated-files' + (nbId ? '?notebookId=' + nbId : '')); });
   if (nbId !== state.notebookId || revision !== (state.agentArtifactRevision || 0)) return;
+  state.generatedFiles = Array.isArray(generated) ? generated : [];
   // 请求开始后若收到了新 SSE 产物，旧快照不能盖回去或弹出上一轮草稿。
   renderSteps((detail && (detail.steps || detail.stepList)) || []);
   var artifacts = (detail && (detail.artifacts || detail.artifactList)) || [];
@@ -2083,8 +2226,11 @@ function modeForProject(mode) { return mode && mode !== 'OFF' ? mode : 'READ'; }
 function paintWorkspaceChoice() {
   var mode = wsStatus.selectedMode || 'OFF', root = wsStatus.selectedRoot || '';
   var btn = $('#zq-ws-project');
-  $('#zq-ws-project-name').textContent = root ? projectName(root) : '选择项目';
-  btn.title = root ? '项目：' + root + '（点开换一个）' : '选择项目：AI 只读写这一个文件夹';
+  // 档位开着、没选文件夹：生成到产物（第一百一十六轮）
+  var toArtifact = mode !== 'OFF' && !root;
+  $('#zq-ws-project-name').textContent = root ? projectName(root) : toArtifact ? '生成到产物' : '选择项目';
+  btn.title = root ? '项目：' + root + '（点开换一个）'
+    : toArtifact ? '没选文件夹：文件生成到产物，能预览、下载（点开选一个文件夹）' : '选择项目：AI 只读写这一个文件夹；不选就生成到产物';
   $('#zq-tier-name').textContent = WS_MODE_NAME[mode] || mode;
   $('#zq-tier').title = '代码工作区的档位：' + (WS_MODE_DESC[mode] || '');
 }
@@ -2094,14 +2240,16 @@ function paintWorkspaceBar(status) {
   if (!bar) return;
   closeWorkspaceMenu();
   wsStatus = status;
-  bar.hidden = !status;
+  var only = !!(status && status.artifactOnly);   // 服务器上：没有文件夹，只有产物
+  bar.hidden = !status || (only && (status.selectedMode || 'OFF') === 'OFF');   // 只剩一句说明：close 时没什么可说
   if (tier) tier.hidden = !status;
   if (!status) return;
+  $('#zq-ws-project').hidden = only;
   paintWorkspaceChoice();
   $('#zq-ws-project').onclick = function () { toggleProjectMenu(); };
   $('#zq-tier').onclick = function () { toggleTierMenu(); };
   var mode = status.selectedMode || 'OFF';
-  $('#zq-ws-bar-note').textContent = mode !== 'OFF' && !status.enabled && status.reason ? '没有生效：' + status.reason : '';
+  $('#zq-ws-bar-note').textContent = mode !== 'OFF' && !status.enabled && status.reason ? '没有生效：' + status.reason : status.artifactMode ? '文件会生成到产物里，能预览、下载' : '';
 }
 
 // 两个弹出的面板（项目、档位）同一套开关：同时只开一个；点别处、按 Esc 收起（Esc 之后焦点回到按钮）；上下键在几项之间走
@@ -2149,8 +2297,7 @@ function chooseTier(mode) {
   closeWorkspaceMenu();
   if (mode === (wsStatus.selectedMode || 'OFF')) return;
   var root = wsStatus.selectedRoot || '';
-  // 还没选项目就开某一档：先选文件夹
-  if (mode !== 'OFF' && !root) { pickProjectFolder('', function (picked) { switchWorkspace(mode, picked); }); return; }
+  // 没选项目也能开：就是生成到产物。要文件夹点项目那个按钮（第一百一十六轮，原来这里直接弹选文件夹的框）
   switchWorkspace(mode, root);
 }
 
@@ -2160,15 +2307,14 @@ function toggleProjectMenu() {
   var root = wsStatus.selectedRoot || '';
   function toProject(picked) { switchWorkspace(modeForProject(wsStatus.selectedMode), picked); }
   var list = [root].concat(recentProjects()).filter(function (x, i, all) { return x && all.indexOf(x) === i; });
-  // 一个项目都没有：菜单里只会有「选择文件夹…」一项，直接弹
-  if (!list.length) { pickProjectFolder('', toProject); return; }
-  menu.innerHTML = '<div class="zq-ws-menu-head">最近的项目</div>'
+  menu.innerHTML = (list.length ? '<div class="zq-ws-menu-head">最近的项目</div>' : '')
     + list.map(function (r) {
       return '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-root="' + esc(r) + '"' + (r === root ? ' aria-current="true"' : '') + ' title="' + esc(r) + '">'
         + icon('folder') + '<span class="zq-ws-menu-name">' + esc(projectName(r)) + '</span><span class="zq-ws-menu-path">' + esc(r) + '</span></button>';
     }).join('')
     + '<div class="zq-ws-menu-sep"></div>'
-    + '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-browse="1">' + icon('plus') + '<span class="zq-ws-menu-name">选择文件夹…</span></button>';
+    + '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-browse="1">' + icon('plus') + '<span class="zq-ws-menu-name">选择文件夹…</span></button>'
+    + '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-artifact="1"' + (root ? '' : ' aria-current="true"') + '>' + icon('file') + '<span class="zq-ws-menu-name">不选文件夹，生成到产物</span></button>';
   $all('[data-ws-root]', menu).forEach(function (b) {
     b.onclick = function () {
       var r = b.getAttribute('data-ws-root');
@@ -2179,6 +2325,10 @@ function toggleProjectMenu() {
   $('[data-ws-browse]', menu).onclick = function () {
     closeWorkspaceMenu();
     pickProjectFolder(root, toProject);
+  };
+  $('[data-ws-artifact]', menu).onclick = function () {
+    closeWorkspaceMenu();
+    if (root || wsStatus.selectedMode === 'OFF') switchWorkspace(modeForProject(wsStatus.selectedMode), '');
   };
   openWorkspaceMenu(menu, btn, '[aria-current="true"]');
 }
@@ -2265,4 +2415,4 @@ async function loadWorkspace() {
 
 // 给测试直接 import 的纯函数（第三十七轮）：step-note-check.js（执行轨迹里一条叙述的转义）、diff-check.js（改动草稿的逐行对比）。
 // 它们只用到 esc —— 测试 bind 一个只有 esc 的 sh 就能跑。
-export { stepNoteHtml, diffLines, diffHtml };
+export { stepNoteHtml, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard };

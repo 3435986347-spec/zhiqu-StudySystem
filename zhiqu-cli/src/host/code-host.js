@@ -15,7 +15,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { ApiError } from '../api.js';
 import { runTurn } from '../agent.js';
 import { BUILTIN_SYSTEM_PROMPT } from '../prompt.js';
-import { DraftTools } from '../tools/drafts.js';
+import { ArtifactTools, DraftTools } from '../tools/drafts.js';
 import { Ui } from '../ui.js';
 
 /** 一行一个 JSON 的两头。send 写给后端；pending 等后端回音 */
@@ -115,7 +115,8 @@ export function historyBlock(history) {
 
 /** 跑一轮：run 消息 → 循环 → result。返回 result（测试直接调） */
 export async function runHosted(bridge, run) {
-  const local = new DraftTools({ root: run.root, exec: (req, opts) => bridge.exec(req, opts),
+  const Tools = run.artifact ? ArtifactTools : DraftTools;   // 生成到产物：写进临时空间，不走草稿
+  const local = new Tools({ root: run.root, exec: (req, opts) => bridge.exec(req, opts),
     canWrite: Boolean(run.canWrite), canExec: Boolean(run.canExec), canShell: Boolean(run.canShell), shellWrite: Boolean(run.shellWrite),
     sandboxNetwork: typeof run.sandboxNetwork === 'string' ? run.sandboxNetwork : 'off', commands: Array.isArray(run.commands) ? run.commands.map(String) : [] });
   let transcript = '';
@@ -147,7 +148,7 @@ export async function runHosted(bridge, run) {
   // 0 轮就说「跑了 test_two_sum.py，输出 ok，三组断言全过」—— 解法还是 return []，根本没跑）
   ctx.claimCheck = (text) => {
     const s = String(text || '');
-    if (CLAIMS_DRAFT.test(s) && !local.drafts.size) {
+    if (CLAIMS_DRAFT.test(s) && !local.drafts.size && !(local.wrote && local.wrote.size)) {
       return '这一次你还没有成功调用 write_file / edit_file / apply_patch，并没有生成任何草稿 —— 不要说生成了。要改文件就现在调工具；不用改就照实说你做了什么。';
     }
     if (CLAIMS_RUN.test(s) && !local.ranCommand) {

@@ -13,6 +13,7 @@ import com.zhiqu.service.StudyTaskService;
 import com.zhiqu.service.ai.WebResearchService;
 import com.zhiqu.service.concurrency.IdempotencyService;
 import com.zhiqu.util.FileParseUtil;
+import com.zhiqu.entity.AiArtifactFile;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -253,6 +254,28 @@ public class AiController {
     @PostMapping("/artifacts/{id}/discard")
     public Result<Map<String, Object>> discardArtifact(@PathVariable Long id) {
         return Result.success(aiWorkspaceService.discardArtifact(SecurityUtils.getCurrentUserId(), id));
+    }
+
+    @GetMapping("/generated-files")
+    public Result<List<Map<String, Object>>> generatedFiles(@RequestParam(required = false) Long notebookId) {
+        return Result.success(aiWorkspaceService.generatedFiles(SecurityUtils.getCurrentUserId(), notebookId));
+    }
+
+    /**
+     * 下载生成的文件。内容是模型和命令写的：一律当下载（不在本站打开），否则一个 HTML 就能拿到页面的登录令牌。
+     * 前端预览也走这里，自己决定怎么显示（HTML 关在没有同源权限的 iframe 里）。
+     */
+    @GetMapping("/artifacts/{id}/files/{fileId}")
+    public ResponseEntity<byte[]> artifactFile(@PathVariable Long id, @PathVariable Long fileId) {
+        AiArtifactFile file = aiWorkspaceService.artifactFile(SecurityUtils.getCurrentUserId(), id, fileId);
+        String name = file.getPath().substring(file.getPath().lastIndexOf('/') + 1);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20"))
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Content-Security-Policy", "sandbox")
+                .header(HttpHeaders.CACHE_CONTROL, "private, no-store")
+                .body(file.getContent());
     }
 
     @GetMapping("/models")

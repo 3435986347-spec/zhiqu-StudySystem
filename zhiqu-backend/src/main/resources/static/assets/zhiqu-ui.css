@@ -874,6 +874,21 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-artifact-part strong{color:var(--zq-text);}
 .zq-artifact-part span{white-space:pre-wrap;overflow-wrap:anywhere;}
 .zq-artifact-json{max-height:220px;margin:7px 0 0;padding:8px;overflow:auto;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);color:var(--zq-text2);font:10px/1.55 var(--zq-fontM);white-space:pre-wrap;overflow-wrap:anywhere;}
+/* 生成的文件（第一百一十六轮）：一行一个，名字太长省略；这一栏窄（手机）时操作换到下一行，名字不被挤没 */
+.zq-gen-files{list-style:none;margin:7px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;}
+.zq-gen-file{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;min-width:0;color:var(--zq-text3);font-size:var(--zq-fs-2xs);}
+.zq-gen-file svg{flex:none;width:13px;height:13px;}
+.zq-gen-name{flex:1 1 72px;min-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--zq-text);}
+.zq-gen-size{flex:none;}
+.zq-gen-act{flex:none;padding:2px 5px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-primary);font-size:var(--zq-fs-2xs);cursor:pointer;}
+.zq-gen-act:hover{background:var(--zq-sb-active-bg);}
+.zq-gen-act:focus-visible{outline:2px solid var(--zq-primary);outline-offset:1px;}
+.zq-gen-skip{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:normal;}
+.zq-gen-frame{display:block;width:100%;height:min(70vh,640px);border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:white;}
+.zq-gen-text{max-height:70vh;margin:0;padding:10px 12px;overflow:auto;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);color:var(--zq-text);font-size:var(--zq-fs-xs);line-height:1.55;font-family:var(--zq-fontM);white-space:pre;}
+.zq-gen-markdown{max-height:70vh;overflow:auto;}
+.zq-gen-image{display:block;max-width:100%;max-height:70vh;margin:0 auto;}
+.zq-gen-note{color:var(--zq-text2);font-size:var(--zq-fs-sm);}
 .zq-artifact-actions{display:flex;gap:6px;margin-top:8px;}
 .zq-artifact-actions button{height:23px;padding:0 9px;border:1px solid var(--zq-tint-strong);border-radius:var(--zq-rs);background:var(--zq-tint);color:var(--zq-primary);font-size:var(--zq-fs-2xs);font-weight:var(--zq-fw-medium);cursor:pointer;}
 .zq-artifact-actions .zq-btn-ghost{border-color:var(--zq-border);background:var(--zq-card);color:var(--zq-text2);}

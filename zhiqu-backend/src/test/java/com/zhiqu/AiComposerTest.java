@@ -181,6 +181,13 @@ class AiComposerTest {
     }
 
     @Test
+    @DisplayName("第一百一十六轮：生成的文件能预览、下载；别人写的文件名不能变成标签；HTML 关在没有同源权限的 iframe 里")
+    void 生成的文件() throws Exception {
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/generated-files-check.js"), STATIC.resolve("assets")),
+                "generated-files-check.js 没有全绿");
+    }
+
+    @Test
     @DisplayName("产物卡片：代码草稿关掉确认框以后，卡片上还有「查看并确认」重新打开它（第九十二轮；在 node 里真跑）")
     void 代码草稿的卡片能再打开确认框() throws Exception {
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/artifact-actions-check.js"), STATIC.resolve("assets/pages/ai-assistant.js")),

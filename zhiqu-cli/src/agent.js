@@ -191,7 +191,7 @@ export function systemText(ctx) {
     root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.execReadOnly ? 'exec-read' : ctx.mode, commands: ctx.local.commands,
     shell: ctx.local.sandbox ? describeBoundary({ policy: shellPolicy(ctx), network: ctx.local.sandboxNetwork }) : null,
     shellWrites: Boolean(ctx.local.sandbox) && shellPolicy(ctx) === WORKSPACE_WRITE,
-    today: today(), draft: Boolean(ctx.local.drafts),
+    today: today(), draft: Boolean(ctx.local.drafts), artifact: Boolean(ctx.local.artifact),
   });
   // 目标、用户这次的原话置顶：在系统内容之后、其它一切之前 —— 每一轮都在，压缩也压不掉。
   // 系统提示排在所有历史前面，改一个字后面的缓存全部失效（第一百零四轮）：这两样很少变；任务清单常变，不放这里，见 TODO_REMIND_ROUNDS

@@ -55,7 +55,7 @@ class WorkspaceControllerGuardTest {
                     i + 1 < starts.size() ? starts.get(i + 1) : code.length());
             Matcher head = MAPPING.matcher(chunk);
             head.find();
-            if (!chunk.contains("requireLocal()")) {
+            if (!chunk.contains("requireLocal()") && !chunk.contains("requireTierAccess()")) {
                 unguarded.add(head.group(1).toUpperCase() + " " + head.group(2));
             }
         }

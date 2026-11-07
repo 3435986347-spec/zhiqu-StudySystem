@@ -46,6 +46,7 @@ public class WorkspaceService {
     private final WorkspaceSettingsStore settingsStore;
     private final String serverAddress;
     private final boolean production;
+    private final boolean artifactAllowed;
 
     // volatile 而非 final：档位 / 根目录能在运行时从界面切换（applySettings）。
     // access 与 guard 成对重建、成对替换，读的一方各自读一次 volatile 即可。切换是偶发的
@@ -69,14 +70,17 @@ public class WorkspaceService {
     }
 
     public WorkspaceService(WorkspaceProperties properties, WorkspaceSettingsStore settingsStore, String serverAddress) {
-        this(properties, settingsStore, serverAddress, false);
+        this(properties, settingsStore, serverAddress, false, false);
     }
 
-    public WorkspaceService(WorkspaceProperties properties, WorkspaceSettingsStore settingsStore, String serverAddress, boolean production) {
+    /** artifactAllowed：没选文件夹时生成到产物。本机绑回环的后端、打开了 hosted-enabled 的服务器才有（WorkspaceRegistry 判） */
+    public WorkspaceService(WorkspaceProperties properties, WorkspaceSettingsStore settingsStore, String serverAddress,
+                            boolean production, boolean artifactAllowed) {
         this.properties = properties;
         this.settingsStore = settingsStore;
         this.serverAddress = serverAddress;
         this.production = production;
+        this.artifactAllowed = artifactAllowed;
 
         // 用户在界面上选过的档位 / 根目录，盖过配置里的默认值 —— 否则桌面每次重启都回到 OFF。
         // 但这只是「想要什么」；「实际允许什么」仍由 rebuild 里的三条前提裁决。
@@ -107,9 +111,16 @@ public class WorkspaceService {
      * 这条不变量由 {@code WorkspaceRuntimeToggleTest} 钉住。
      */
     private synchronized void rebuild(WorkspaceMode mode, String root) {
-        WorkspaceAccess next = production ? WorkspaceAccess.production(mode) : new WorkspaceAccess(mode, root, serverAddress);
+        WorkspaceAccess next;
+        if (mode != WorkspaceMode.OFF && artifactAllowed && (production || root == null || root.isBlank())) {
+            next = WorkspaceAccess.artifact(mode);   // 服务器上永远是这样：root 写了什么都不看
+        } else if (production) {
+            next = WorkspaceAccess.production(mode);
+        } else {
+            next = new WorkspaceAccess(mode, root, serverAddress);
+        }
         this.access = next;
-        this.guard = next.enabled()
+        this.guard = next.enabled() && next.root() != null   // 生成到产物：账号这一份没有 root，每段对话的临时空间各有各的
                 ? new WorkspaceGuard(next.root(), properties.getAllowedExtensions(), properties.getMaxFileBytes())
                 : null;
     }
@@ -127,6 +138,22 @@ public class WorkspaceService {
         // 用户原本想要的档位应当自动恢复，而不是被这次的降级结果永久固化成 OFF。
         settingsStore.save(new WorkspaceSettingsStore.Settings(mode.name(), trimmedRoot));
         return access;
+    }
+
+    /** 这段对话的临时空间（生成到产物）：只给循环和执行器用，不存设置 */
+    static WorkspaceService scratch(WorkspaceProperties properties, WorkspaceMode mode, Path root) {
+        WorkspaceService scratch = new WorkspaceService(properties);
+        scratch.access = WorkspaceAccess.scratch(mode, root);
+        scratch.guard = new WorkspaceGuard(root, properties.getAllowedExtensions(), properties.getMaxFileBytes());
+        return scratch;
+    }
+
+    private WorkspaceService(WorkspaceProperties properties) {
+        this.properties = properties;
+        this.settingsStore = null;
+        this.serverAddress = "";
+        this.production = false;
+        this.artifactAllowed = false;
     }
 
     /** 用户当前选定的档位 / 根目录（持久化的那一份，不是降级结果）。 */

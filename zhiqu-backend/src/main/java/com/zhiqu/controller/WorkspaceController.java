@@ -61,6 +61,16 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * 切档位这几个接口。服务器上（打开了 hosted-enabled）谁都能切自己的：没有文件夹，只生成到产物，Host 是公开的域名。
+     * 本机的后端还是只认本机的请求：不然陌生网页注册个账号就能开档位，在用户电脑上跑命令。
+     */
+    private void requireTierAccess() {
+        if (!workspaces.artifactOnly()) {
+            requireLocal();
+        }
+    }
+
     /** 这个账号自己的那一份：档位和文件夹分账号 */
     private WorkspaceService workspace() {
         return workspaces.service(SecurityUtils.getCurrentUserId());
@@ -74,7 +84,7 @@ public class WorkspaceController {
      */
     @GetMapping("/status")
     public Result<Map<String, Object>> status() {
-        requireLocal();
+        requireTierAccess();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("enabled", workspace().access().enabled());
         row.put("mode", workspace().access().effectiveMode().name());
@@ -94,7 +104,7 @@ public class WorkspaceController {
      */
     @GetMapping("/settings")
     public Result<Map<String, Object>> settings() {
-        requireLocal();
+        requireTierAccess();
         WorkspaceSettingsStore.Settings sel = workspace().currentSelection();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("selectedMode", sel.mode());
@@ -105,6 +115,8 @@ public class WorkspaceController {
         row.put("reason", workspace().access().refusalReason());
         row.put("loopback", workspaces.loopbackBound());
         row.put("modes", List.of("OFF", "READ", "WRITE", "EXEC"));
+        row.put("artifactMode", workspace().access().artifactMode());
+        row.put("artifactOnly", workspaces.artifactOnly());
         return Result.success(row);
     }
 
@@ -114,12 +126,13 @@ public class WorkspaceController {
      */
     @PutMapping("/settings")
     public Result<Map<String, Object>> updateSettings(@RequestBody Map<String, Object> body) throws java.io.IOException {
-        requireLocal();
-        if (!workspaces.loopbackBound()) {
+        requireTierAccess();
+        if (!workspaces.artifactOnly() && !workspaces.loopbackBound()) {
             throw new BusinessException("工作区只能在绑定回环地址的本机实例上开启（当前不是回环）");
         }
         String mode = body.get("mode") == null ? "OFF" : String.valueOf(body.get("mode"));
-        String root = body.get("root") == null ? "" : String.valueOf(body.get("root"));
+        // 服务器上没有文件夹：写了什么都不存，免得这份设置看着像选过服务器上的目录
+        String root = workspaces.artifactOnly() || body.get("root") == null ? "" : String.valueOf(body.get("root"));
         workspace().applySettings(mode, root);
         return settings();
     }

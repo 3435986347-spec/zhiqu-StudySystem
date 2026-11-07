@@ -106,6 +106,9 @@ class CodeAgentLoopIntegrationTest {
     private static final String CODE_AGENT_MARK = "\"name\":\"read_file\"";
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
+    /** 最后一次写最终回答的请求（不带工具的那种）：看它知不知道这一轮生成了什么 */
+    private static final java.util.concurrent.atomic.AtomicReference<String> lastAnswerBody = new java.util.concurrent.atomic.AtomicReference<>("");
+
     @Autowired private AiService aiService;
     @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -125,6 +128,7 @@ class CodeAgentLoopIntegrationTest {
                 shellOffered.set(shell);
                 sse = codeAgentScript(codeAgentRound.incrementAndGet(), shell);
             } else if (streaming) {
+                lastAnswerBody.set(requestBody);
                 sse = "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n";
             } else {
                 json = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"测试回复\"}}]}";
@@ -276,6 +280,138 @@ class CodeAgentLoopIntegrationTest {
         ai.confirmArtifact(userId, artifact, null);
         assertTrue(Files.readString(own.resolve("solve.py"), StandardCharsets.UTF_8).contains("seen"), "写进自己选的文件夹");
         assertEquals(before, Files.readString(workspaceRoot.resolve("solve.py"), StandardCharsets.UTF_8), "别处一个字都不动");
+    }
+
+    /** 生成到产物（第一百一十六轮）：不选文件夹，写的文件进数据库；只有本人能取；清掉临时空间接着聊能恢复；不是草稿 */
+    @Test
+    void 不选文件夹生成到产物(@Autowired WorkspaceRegistry workspaces, @Autowired com.zhiqu.service.AiWorkspaceService ai,
+                     @Autowired com.zhiqu.controller.AiController controller) throws Exception {
+        String configRoot = Files.readString(workspaceRoot.resolve("solve.py"), StandardCharsets.UTF_8);
+        workspaces.service(userId).applySettings("EXEC", "");
+        assertTrue(workspaces.service(userId).access().artifactMode());
+
+        aiService.streamChat(userId, "判一下我的解法对不对", modelId, false, "OFF", null, "CHAT_ONLY", Map.of());
+        awaitRunFinished();
+
+        assertEquals(configRoot, Files.readString(workspaceRoot.resolve("solve.py"), StandardCharsets.UTF_8), "配置的目录一个字都不动");
+        Integer drafts = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_agent_artifact a JOIN ai_agent_run r ON r.id = a.run_id "
+                + "WHERE r.user_id = ? AND a.artifact_type = 'CODE_DRAFT'", Integer.class, userId);
+        assertEquals(0, drafts, "不走草稿");
+        Map<String, Object> artifact = jdbcTemplate.queryForMap("SELECT a.id, a.status, a.content_json FROM ai_agent_artifact a JOIN ai_agent_run r ON r.id = a.run_id "
+                + "WHERE r.user_id = ? AND a.artifact_type = 'GENERATED_FILES'", userId);
+        assertEquals("READY", artifact.get("status"));
+        Long artifactId = ((Number) artifact.get("id")).longValue();
+        assertTrue(String.valueOf(artifact.get("content_json")).contains("solve.py"), String.valueOf(artifact.get("content_json")));
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_agent_artifact a JOIN ai_agent_run r ON r.id = a.run_id WHERE r.user_id = ? AND a.artifact_type = 'GENERATED_FILES' AND a.title NOT LIKE '生成了 % 个文件'", Integer.class, userId), "标题说几个文件");
+        Map<String, Object> file = jdbcTemplate.queryForMap("SELECT id, conversation_id, size_bytes FROM ai_artifact_file WHERE artifact_id = ? AND path = 'solve.py'", artifactId);
+        Long fileId = ((Number) file.get("id")).longValue();
+        Long conversationId = ((Number) file.get("conversation_id")).longValue();
+
+        assertTrue(new String(ai.artifactFile(userId, artifactId, fileId).getContent(), StandardCharsets.UTF_8).contains("seen"), "存的是模型写的内容");
+        org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class, () -> ai.artifactFile(userId + 1, artifactId, fileId), "别的账号取不到");
+        org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class, () -> ai.artifactFile(userId, artifactId + 1, fileId), "文件和产物要对得上");
+        Path space = workspaces.space(userId, conversationId);
+        assertTrue(Files.isRegularFile(space.resolve("solve.py")), "写在这段对话的临时空间里");
+
+        assertTrue(lastAnswerBody.get().contains("本轮生成了这些文件") && lastAnswerBody.get().contains("solve.py"), "最终回答要知道生成了什么");
+
+        // 再跑一轮，内容没变：不重复存；临时空间被清掉了：先恢复，模型看得到之前的文件
+        Files.writeString(space(workspaces, conversationId).resolve("keep-me.txt"), "");
+        ArtifactSpaces.deleteTree(space(workspaces, conversationId));
+        jdbcTemplate.update("INSERT INTO ai_artifact_file(artifact_id, user_id, conversation_id, path, size_bytes, sha256, content) VALUES (?, ?, ?, 'keep-me.txt', 1, 'x', 'n')", artifactId, userId, conversationId);
+        codeAgentRound.set(0);
+        int runsBefore = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_agent_run WHERE user_id = ?", Integer.class, userId);
+        aiService.streamChat(userId, "判一下我的解法对不对", modelId, false, "OFF", null, "CHAT_ONLY", Map.of());
+        awaitAnotherRunFinished(runsBefore);
+        assertTrue(Files.isRegularFile(space(workspaces, conversationId).resolve("keep-me.txt")), "这一轮开始之前要恢复");
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_agent_artifact a JOIN ai_agent_run r ON r.id = a.run_id WHERE r.user_id = ? AND a.artifact_type = 'GENERATED_FILES'", Integer.class, userId),
+                "内容没变、恢复回来的也不算新生成，不该再存一份");
+        jdbcTemplate.update("DELETE FROM ai_artifact_file WHERE user_id = ? AND sha256 = 'x'", userId);
+
+        // 面板：换一轮、刷新之后还点得到；每个路径只列最新的；别的账号、别的对话看不到
+        var listed = ai.generatedFiles(userId, null);
+        assertTrue(listed.stream().anyMatch(r -> "solve.py".equals(r.get("path")) && artifactId.equals(r.get("artifactId")) && fileId.equals(r.get("id"))), String.valueOf(listed));
+        assertTrue(listed.stream().noneMatch(r -> r.containsKey("content")), "列表不带内容");
+        assertTrue(ai.generatedFiles(userId + 1, null).isEmpty(), "别的账号看不到");
+        jdbcTemplate.update("INSERT INTO ai_artifact_file(artifact_id, user_id, conversation_id, path, size_bytes, sha256, content) VALUES (?, ?, ?, 'solve.py', 1, 'x', 'n')", artifactId, userId, conversationId);
+        jdbcTemplate.update("INSERT INTO ai_artifact_file(artifact_id, user_id, conversation_id, path, size_bytes, sha256, content) VALUES (?, ?, ?, 'other-conversation.txt', 1, 'x', 'n')", artifactId, userId, conversationId + 1_000_000);
+        var again = ai.generatedFiles(userId, null);
+        assertEquals(1, again.stream().filter(r -> "solve.py".equals(r.get("path"))).count(), "同一个路径只列最新的");
+        assertTrue(again.stream().noneMatch(r -> fileId.equals(r.get("id"))), "旧版本不列");
+        assertTrue(again.stream().noneMatch(r -> "other-conversation.txt".equals(r.get("path"))), "别的对话的不列");
+        jdbcTemplate.update("DELETE FROM ai_artifact_file WHERE user_id = ? AND sha256 = 'x'", userId);
+
+        // 清掉临时空间：接着聊之前恢复；还在的时候不覆盖
+        ArtifactSpaces.deleteTree(space);
+        ai.prepareArtifactSpace(userId, conversationId);
+        assertTrue(Files.readString(space.resolve("solve.py"), StandardCharsets.UTF_8).contains("seen"), "从数据库恢复");
+        Files.writeString(space.resolve("solve.py"), "命令后来改过的");
+        ai.prepareArtifactSpace(userId, conversationId);
+        assertEquals("命令后来改过的", Files.readString(space.resolve("solve.py"), StandardCharsets.UTF_8), "还在的不覆盖");
+
+        // 恢复时路径不能跳出去：数据库里的路径也不信
+        ArtifactSpaces.deleteTree(space);
+        Path escaped = space.getParent().resolve("escaped-by-restore.txt");
+        jdbcTemplate.update("INSERT INTO ai_artifact_file(artifact_id, user_id, conversation_id, path, size_bytes, sha256, content) VALUES (?, ?, ?, '../escaped-by-restore.txt', 1, 'x', 'n')", artifactId, userId, conversationId);
+        ai.prepareArtifactSpace(userId, conversationId);
+        assertTrue(Files.isRegularFile(space.resolve("solve.py")), "正常的照样恢复");
+        assertTrue(!Files.exists(escaped), "../ 不能写到临时空间外面");
+        jdbcTemplate.update("DELETE FROM ai_artifact_file WHERE user_id = ? AND sha256 = 'x'", userId);
+
+        // 下载：一律当下载，不在本站打开；带上名字；只有本人
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(userId, null, List.of()));
+        try {
+            var res = controller.artifactFile(artifactId, fileId);
+            assertEquals("application/octet-stream", String.valueOf(res.getHeaders().getContentType()));
+            assertEquals("attachment; filename*=UTF-8''solve.py", res.getHeaders().getFirst("Content-Disposition"));
+            assertEquals("nosniff", res.getHeaders().getFirst("X-Content-Type-Options"));
+            assertEquals("sandbox", res.getHeaders().getFirst("Content-Security-Policy"));
+            assertEquals("private, no-store", res.getHeaders().getFirst("Cache-Control"));
+            assertTrue(new String(res.getBody(), StandardCharsets.UTF_8).contains("seen"));
+            assertEquals(1, ((List<?>) controller.generatedFiles(null).getData()).stream().filter(r -> "solve.py".equals(((Map<?, ?>) r).get("path"))).count());
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+
+        // 删 Notebook：那段对话的文件和临时空间一起删，别的对话不动
+        Long notebookId = ((Number) ai.createNotebook(userId, Map.of("title", "要删的")).get("id")).longValue();
+        jdbcTemplate.update("INSERT INTO ai_conversation(user_id, conversation_key, deleted) VALUES (?, ?, 0)", userId, com.zhiqu.entity.AiConversation.notebookKey(notebookId));
+        Long notebookConversation = jdbcTemplate.queryForObject("SELECT id FROM ai_conversation WHERE user_id = ? AND conversation_key = ?", Long.class, userId, com.zhiqu.entity.AiConversation.notebookKey(notebookId));
+        jdbcTemplate.update("INSERT INTO ai_artifact_file(artifact_id, user_id, conversation_id, path, size_bytes, sha256, content) VALUES (?, ?, ?, 'in-notebook.txt', 1, 'x', 'n')", artifactId, userId, notebookConversation);
+        Files.createDirectories(workspaces.space(userId, notebookConversation));
+        ai.deleteNotebook(userId, notebookId);
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_artifact_file WHERE conversation_id = ?", Integer.class, notebookConversation), "文件要一起删");
+        assertTrue(!Files.exists(workspaces.space(userId, notebookConversation)), "临时空间要一起删");
+        assertTrue(ai.generatedFiles(userId, null).stream().anyMatch(r -> "solve.py".equals(r.get("path"))), "别的对话不动");
+
+        // 账号的总量：只放得下一个字节时，第一个存、第二个不存但要说
+        long used = jdbcTemplate.queryForObject("SELECT COALESCE(SUM(size_bytes), 0) FROM ai_artifact_file WHERE user_id = ?", Long.class, userId);
+        jdbcTemplate.update("INSERT INTO ai_artifact_file(artifact_id, user_id, path, size_bytes, sha256, content) VALUES (?, ?, 'pad', ?, 'x', '')",
+                artifactId, userId, ArtifactFiles.MAX_ACCOUNT_BYTES - used - 1);
+        var over = ai.saveGeneratedFiles(((Number) jdbcTemplate.queryForMap("SELECT run_id FROM ai_agent_artifact WHERE id = ?", artifactId).get("run_id")).longValue(), null, userId, conversationId,
+                List.of(new ArtifactFiles.Generated("more1.txt", 1, "x", new byte[] {1}, null), new ArtifactFiles.Generated("more2.txt", 1, "x", new byte[] {1}, null)), null);
+        assertTrue(over.getContentJson().contains("空间用完了"), over.getContentJson());
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_artifact_file WHERE path = 'more1.txt' AND user_id = ?", Integer.class, userId));
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_artifact_file WHERE path = 'more2.txt' AND user_id = ?", Integer.class, userId), "放不下的不存");
+    }
+
+    private Path space(WorkspaceRegistry workspaces, Long conversationId) {
+        return workspaces.space(userId, conversationId);
+    }
+
+    private void awaitAnotherRunFinished(int before) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 60_000;
+        while (System.currentTimeMillis() < deadline) {
+            int started = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_agent_run WHERE user_id = ?", Integer.class, userId);
+            int running = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_agent_run WHERE user_id = ? AND status = 'RUNNING'", Integer.class, userId);
+            if (started > before && running == 0) {
+                TimeUnit.MILLISECONDS.sleep(300);
+                return;
+            }
+            TimeUnit.MILLISECONDS.sleep(200);
+        }
+        throw new AssertionError("第二轮未在 60s 内结束");
     }
 
     /** 档位分账号：这个账号自己把档位关了，走同一条路什么都拿不到；配置给的默认对别的账号还在。 */

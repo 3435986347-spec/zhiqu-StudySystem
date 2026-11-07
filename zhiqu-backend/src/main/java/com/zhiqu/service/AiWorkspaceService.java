@@ -1,6 +1,7 @@
 package com.zhiqu.service;
 
 import com.zhiqu.entity.*;
+import com.zhiqu.service.workspace.ArtifactFiles;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
@@ -73,6 +74,19 @@ public interface AiWorkspaceService {
 
     AiAgentArtifact createArtifact(Long runId, Long stepId, String artifactType, String title,
                                    Map<String, Object> content, Long sourceMessageId);
+
+    /** 生成到产物：这一轮新增和改过的文件存库，挂在一个 GENERATED_FILES 产物上。一个文件都没有返回 null */
+    AiAgentArtifact saveGeneratedFiles(Long runId, Long stepId, Long userId, Long conversationId,
+                                       List<ArtifactFiles.Generated> files, Long sourceMessageId);
+
+    /** 临时空间清掉了（几天没动）就从数据库恢复这段对话生成过的文件，接着聊时模型看得到 */
+    void prepareArtifactSpace(Long userId, Long conversationId);
+
+    /** 这段对话生成过的文件（每个路径最新的那一份）。notebookId 为空是普通聊天 */
+    List<Map<String, Object>> generatedFiles(Long userId, Long notebookId);
+
+    /** 取一个生成的文件：只有本人能取 */
+    AiArtifactFile artifactFile(Long userId, Long artifactId, Long fileId);
 
     void completeRun(AiAgentRun run, AiMessage assistantMessage);
 

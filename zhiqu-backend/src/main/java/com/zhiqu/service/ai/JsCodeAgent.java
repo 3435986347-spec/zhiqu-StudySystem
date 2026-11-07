@@ -9,6 +9,7 @@ import com.zhiqu.common.Texts;
 import com.zhiqu.entity.AiModelConfig;
 import com.zhiqu.service.harness.HarnessContext;
 import com.zhiqu.service.harness.HarnessModelGateway;
+import com.zhiqu.service.workspace.ArtifactFiles;
 import com.zhiqu.service.workspace.WorkspaceExecutor;
 import com.zhiqu.service.workspace.WorkspaceProperties;
 import com.zhiqu.service.workspace.WorkspaceRegistry;
@@ -208,16 +209,24 @@ public class JsCodeAgent {
     public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
                                          boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
                                          Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode) {
+        return run(config, userId, userMessage, history, canWrite, canExec, budget, limits, onStep, remote, reasoningMode, null);
+    }
+
+    public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
+                                         boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
+                                         Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode, Long conversationId) {
         Path script = hostScript();
         String nodeBin = nodeBinary();
-        // 这个账号自己的文件夹和档位（第一百一十五轮起分账号），这一轮从头到尾用同一份
-        WorkspaceService workspace = workspaces.service(userId);
-        WorkspaceExecutor executor = workspaces.executor(userId);
+        // 这个账号自己的文件夹和档位（第一百一十五轮起分账号），或者这段对话的临时空间，这一轮从头到尾用同一份
+        WorkspaceRegistry.CodeTarget target = workspaces.target(userId, conversationId);
+        WorkspaceService workspace = target.service();
+        WorkspaceExecutor executor = target.executor();
         Path root = workspace.access().root();
         if (script == null || nodeBin == null || root == null) {
             log.warn("代码模式的 JS 循环起不来（node={} script={}），退回 Java 的循环", nodeBin, script);
             return null;
         }
+        Map<String, ArtifactFiles.Stamp> before = target.artifact() ? ArtifactFiles.snapshot(root) : Map.of();
         Path home;
         Process process;
         try {
@@ -260,6 +269,7 @@ public class JsCodeAgent {
         Map<String, Object> run = new LinkedHashMap<>();
         run.put("type", "run");
         run.put("root", root.toString());
+        run.put("artifact", target.artifact());
         run.put("message", userMessage);
         run.put("history", history == null ? List.of() : history);
         run.put("canWrite", canWrite);
@@ -337,7 +347,8 @@ public class JsCodeAgent {
         log.info("代码模式的 JS 循环收尾 userId={}：{} 轮、草稿 {} 份、结论：{}", userId, result.path("rounds").asInt(),
                 result.path("drafts").size(), Texts.limitRaw(result.path("text").asText(""), 200));
         return new CodeWorkspaceAgent.Result(Texts.limitRaw(result.path("context").asText(""), limits.codeContextChars()),
-                drafts(workspace, result.path("drafts"), canWrite), null, canWrite, List.of(), result.path("writeCalls").asInt(0) > 0);
+                drafts(workspace, result.path("drafts"), canWrite), null, canWrite, List.of(), result.path("writeCalls").asInt(0) > 0,
+                target.artifact() ? ArtifactFiles.changes(root, before) : List.of());
     }
 
     /** 一行一个 JSON 写给子进程（模型的事件和命令的结果都从这里走） */

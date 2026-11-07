@@ -28,6 +28,7 @@ function environment(events, detail = []) {
       return [{ id: 7, notebookId: 4 }];
     }
     if (path === '/ai/agent-runs/7') return { artifacts: detail, steps: [] };
+    if (path.startsWith('/ai/generated-files')) return [];   // 第一百一十六轮：产物面板另外取「之前生成的文件」，后端给的是空数组
     throw new Error('Unexpected GET: ' + path);
   };
   const shared = {

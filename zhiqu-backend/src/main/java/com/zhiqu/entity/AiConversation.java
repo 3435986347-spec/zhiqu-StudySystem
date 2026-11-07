@@ -9,6 +9,9 @@ import java.time.LocalDateTime;
 @TableName("ai_conversation")
 public class AiConversation {
 
+    /** 普通聊天（没选 Notebook）那一段会话的 key */
+    public static final String DEFAULT_KEY = "default";
+
     /** notebook 专属会话的 conversation_key 约定，读写两侧共用，避免字面量漂移 */
     public static String notebookKey(Long notebookId) {
         return "notebook-" + notebookId;

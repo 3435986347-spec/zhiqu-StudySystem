@@ -29,7 +29,7 @@ function setup({ status, storage } = {}) {
   const listeners = {};
   doc = { activeElement: null, addEventListener: (t, f) => { (listeners[t] = listeners[t] || []).push(f); }, removeEventListener: (t, f) => { listeners[t] = (listeners[t] || []).filter((x) => x !== f); } };
   const bar = node(), tierPick = node(), project = node({ 'aria-expanded': 'false' }), projectName = node(), note = node(), tier = node({ 'aria-expanded': 'false' }), tierName = node();
-  let tierItems = [], projectItems = [], browse = null;
+  let tierItems = [], projectItems = [], browse = null, artifact = null;
   const tierMenu = node(); tierMenu.hidden = true;
   Object.defineProperty(tierMenu, 'innerHTML', { set(html) {
     this._html = html;
@@ -41,8 +41,9 @@ function setup({ status, storage } = {}) {
     this._html = html;
     projectItems = [...html.matchAll(/data-ws-root="([^"]*)"( aria-current="true")?/g)].map((m) => Object.assign(node({ 'data-ws-root': m[1] }), { current: !!m[2] }));
     browse = /data-ws-browse/.test(html) ? node() : null;
+    artifact = /data-ws-artifact/.test(html) ? node() : null;
   }, get() { return this._html; } });
-  const itemsOf = (menu) => (menu === tierMenu ? tierItems : [...projectItems, ...(browse ? [browse] : [])]);
+  const itemsOf = (menu) => (menu === tierMenu ? tierItems : [...projectItems, ...(browse ? [browse] : []), ...(artifact ? [artifact] : [])]);
   const elements = { '#zq-ws-bar': bar, '#zq-tier-pick': tierPick, '#zq-ws-project': project, '#zq-ws-project-name': projectName, '#zq-ws-bar-note': note, '#zq-tier': tier, '#zq-tier-name': tierName, '#zq-tier-menu': tierMenu, '#zq-ws-menu': projectMenu };
   const puts = [], posts = [], pending = [], loads = [], pagePicker = [], toasts = [];
   const replies = { failNext: false, pick: null, server: (body) => ({ selectedMode: body.mode, selectedRoot: body.root, enabled: body.mode !== 'OFF', reason: null }) };
@@ -52,6 +53,7 @@ function setup({ status, storage } = {}) {
     $: (sel, root) => {
       if (root) {
         if (sel === '[data-ws-browse]') return browse;
+        if (sel === '[data-ws-artifact]') return artifact;
         if (sel === '[aria-checked="true"]') return tierItems.find((i) => i.getAttribute('aria-checked') === 'true') || null;
         if (sel === '[aria-current="true"]') return projectItems.find((i) => i.current) || null;
         return itemsOf(root)[0] || null;
@@ -75,7 +77,7 @@ function setup({ status, storage } = {}) {
   const choose = (m) => { if (tierMenu.hidden) tier.onclick(); tierItems.find((x) => x.getAttribute('data-ws-mode') === m).onclick(); };
   if (status) api.paintWorkspaceBar(status);
   return { api, bar, tierPick, project, projectName, note, tier, tierName, tierMenu, projectMenu, puts, posts, pending, loads, pagePicker, toasts, listeners, replies, settle, openTier, choose,
-    projectItems: () => projectItems, browse: () => browse, tierItems: () => tierItems };
+    projectItems: () => projectItems, browse: () => browse, artifact: () => artifact, tierItems: () => tierItems };
 }
 
 let failed = 0;
@@ -103,8 +105,8 @@ check('画出来：按钮写当前这一档、项目名是文件夹名（完整�
   assert.equal(t.projectName.textContent, '选择项目');
   assert.equal(t.tierName.textContent, 'close');
   t.api.paintWorkspaceBar(null);
-  assert.equal(t.bar.hidden, true, '不是管理员还露着项目');
-  assert.equal(t.tierPick.hidden, true, '不是管理员还露着档位');
+  assert.equal(t.bar.hidden, true, '接口拒绝了（服务器上没打开）还露着项目');
+  assert.equal(t.tierPick.hidden, true, '接口拒绝了（服务器上没打开）还露着档位');
 });
 
 check('点档位按钮拉起面板，当前这一档标出来、焦点在它上面；再点一下收起', () => {
@@ -179,21 +181,24 @@ check('失败了照后端重画（名字是先改的，要退回去）', async (
   assert.equal(t.loads.length, 1, '失败了没重新读状态，按钮停在没生效的那一档');
 });
 
-check('还没选项目就开某一档：弹系统的选文件夹框（不是页面里的），选了才发、才变名字；取消什么都不做', async () => {
-  const t = setup({ status: { selectedMode: 'OFF', selectedRoot: '', enabled: false } });
+check('菜单里点「选择文件夹…」：弹系统的选文件夹框（不是页面里的），选了才发、才变名字；取消什么都不做', async () => {
+  const t = setup({ status: { selectedMode: 'WRITE', selectedRoot: '', enabled: true } });
   t.replies.pick = { path: '/w/new', cancelled: false, unavailable: null };
-  t.choose('WRITE');
-  assert.equal(t.tierName.textContent, 'close', '还没选文件夹，名字不该变');
+  t.project.onclick();
+  t.browse().onclick();
+  assert.equal(t.projectName.textContent, '生成到产物', '还没选文件夹，名字不该变');
   assert.equal(t.posts.length, 1);
   assert.equal(t.posts[0].path, '/workspace/pick-folder');
   assert.equal(t.pagePicker.length, 0, '应当弹系统的框，不是页面里的');
   await t.settle();
   assert.deepEqual(t.puts, [{ mode: 'WRITE', root: '/w/new' }]);
+  assert.equal(t.projectName.textContent, 'new');
   assert.equal(t.tierName.textContent, 'manual');
 
   const u = setup({ status: { selectedMode: 'OFF', selectedRoot: '', enabled: false } });
   u.replies.pick = { path: null, cancelled: true, unavailable: null };
-  u.choose('WRITE');
+  u.project.onclick();
+  u.browse().onclick();
   await u.settle();
   assert.equal(u.puts.length, 0, '取消了不该发');
   assert.equal(u.pagePicker.length, 0, '取消了不该再弹页面里的');
@@ -203,12 +208,13 @@ check('还没选项目就开某一档：弹系统的选文件夹框（不是页�
 check('等用户选的请求超时要够长（比后端 10 分钟的上限长，默认 30 秒会把开着的框算成失败）；连点只发一个', async () => {
   const t = setup({ status: { selectedMode: 'READ', selectedRoot: '', enabled: false } });
   t.replies.pick = { path: null, cancelled: true, unavailable: null };
-  t.project.onclick();
-  t.project.onclick();
+  const pick = () => { t.project.onclick(); t.browse().onclick(); };
+  pick();
+  pick();
   assert.equal(t.posts.length, 1, '连点弹了两个');
   assert.ok(t.posts[0].options.timeoutMs > 600000, `超时只有 ${t.posts[0].options.timeoutMs}`);
   await t.settle();
-  t.project.onclick();
+  pick();
   assert.equal(t.posts.length, 2, '上一个结束了应当还能再弹');
   await t.settle();
 });
@@ -217,6 +223,7 @@ check('这台机器弹不了系统的框：说一声，退回页面里的选择�
   const t = setup({ status: { selectedMode: 'OFF', selectedRoot: '', enabled: false } });
   t.replies.pick = { path: null, cancelled: false, unavailable: '这台机器弹不了系统的文件夹选择框' };
   t.project.onclick();
+  t.browse().onclick();
   await t.settle();
   assert.equal(t.pagePicker.length, 1);
   assert.match(t.toasts[0], /弹不了/);
@@ -271,14 +278,64 @@ check('点菜单里当前这个项目：档位开着就什么都不发；close �
   assert.deepEqual(u.puts, [{ mode: 'READ', root: '/w/a' }]);
 });
 
-check('一个项目都没有：点项目按钮直接弹框（菜单里只会有「选择文件夹…」一项）', async () => {
+check('一个项目都没有：菜单里有「选择文件夹…」和「不选文件夹」（第一百一十六轮，原来直接弹框）', async () => {
   const t = setup({ status: { selectedMode: 'OFF', selectedRoot: '', enabled: false } });
   t.replies.pick = { path: '/w/x', cancelled: false, unavailable: null };
   t.project.onclick();
-  assert.equal(t.projectMenu.hidden, true, '不该先弹菜单');
+  assert.equal(t.projectMenu.hidden, false);
+  assert.equal(t.posts.length, 0, '不该直接弹系统的框');
+  assert.ok(!/最近的项目/.test(t.projectMenu.innerHTML), '没有项目就不写这个标题');
+  assert.ok(t.browse() && t.artifact());
+  t.browse().onclick();
   assert.equal(t.posts.length, 1);
   await t.settle();
   assert.deepEqual(t.puts, [{ mode: 'READ', root: '/w/x' }]);
+});
+
+check('生成到产物：没选项目开档位不弹框，直接开（root 是空的）；按钮写「生成到产物」；菜单里能换回文件夹，也能从文件夹换回产物', async () => {
+  const t = setup({ status: { selectedMode: 'OFF', selectedRoot: '', enabled: false } });
+  assert.equal(t.projectName.textContent, '选择项目');
+  t.choose('EXEC');
+  assert.equal(t.posts.length, 0, '开档位不该弹选文件夹的框');
+  assert.equal(t.projectName.textContent, '生成到产物', '点下去马上变');
+  await t.settle();
+  assert.deepEqual(t.puts, [{ mode: 'EXEC', root: '' }]);
+
+  const u = setup({ status: { selectedMode: 'WRITE', selectedRoot: '/w/a', enabled: true } });
+  u.project.onclick();
+  assert.ok(!/data-ws-artifact="1" aria-current/.test(u.projectMenu.innerHTML), '选着文件夹时当前项不是它');
+  u.artifact().onclick();
+  assert.equal(u.projectMenu.hidden, true);
+  assert.equal(u.projectName.textContent, '生成到产物');
+  await u.settle();
+  assert.deepEqual(u.puts, [{ mode: 'WRITE', root: '' }], '档位不变，只把文件夹去掉');
+
+  const v = setup({ status: { selectedMode: 'READ', selectedRoot: '', enabled: true, artifactMode: true } });
+  assert.equal(v.note.textContent, '文件会生成到产物里，能预览、下载');
+  v.project.onclick();
+  assert.ok(/data-ws-artifact="1" aria-current="true"/.test(v.projectMenu.innerHTML), '正在生成到产物：当前项是它');
+  v.artifact().onclick();
+  await v.settle();
+  assert.deepEqual(v.puts, [], '已经是了，不用再发');
+
+  const off = setup({ status: { selectedMode: 'OFF', selectedRoot: '', enabled: false } });
+  off.project.onclick();
+  off.artifact().onclick();
+  await off.settle();
+  assert.deepEqual(off.puts, [{ mode: 'READ', root: '' }], 'close 时选它：开成 plan，不然选了像没选');
+});
+
+check('服务器上（artifactOnly）：没有项目按钮；close 时那一条整个不露、档位还在；开了只留一句说明', () => {
+  const t = setup({ status: { selectedMode: 'OFF', selectedRoot: '', enabled: false, artifactOnly: true } });
+  assert.equal(t.project.hidden, true);
+  assert.equal(t.bar.hidden, true);
+  assert.equal(t.tierPick.hidden, false, '档位要能切');
+  t.api.paintWorkspaceBar({ selectedMode: 'EXEC', selectedRoot: '', enabled: true, artifactOnly: true, artifactMode: true });
+  assert.equal(t.project.hidden, true);
+  assert.equal(t.bar.hidden, false);
+  assert.equal(t.note.textContent, '文件会生成到产物里，能预览、下载');
+  t.api.paintWorkspaceBar({ selectedMode: 'READ', selectedRoot: '/w', enabled: true });
+  assert.equal(t.project.hidden, false, '本机的后端：项目按钮要回来');
 });
 
 check('没生效（文件夹不在了、不是本机）：照后端的原因写出来，按钮不偷偷改；close 时不说', () => {

@@ -119,10 +119,8 @@ class JsCodeAgentTest {
         WorkspaceAccess noAccess = mock(WorkspaceAccess.class);
         when(noAccess.root()).thenReturn(null);
         when(none.access()).thenReturn(noAccess);
-        when(registry.service(7L)).thenReturn(workspace);
-        when(registry.executor(7L)).thenReturn(executor);
-        when(registry.service(8L)).thenReturn(none);
-        when(registry.executor(8L)).thenReturn(mock(WorkspaceExecutor.class));
+        when(registry.target(7L, null)).thenReturn(new WorkspaceRegistry.CodeTarget(workspace, executor, false));
+        when(registry.target(8L, null)).thenReturn(new WorkspaceRegistry.CodeTarget(none, mock(WorkspaceExecutor.class), false));
         ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
         when(provider.getObject()).thenReturn(gateway);
         JsCodeAgent js = new JsCodeAgent(provider, registry, new WorkspaceProperties(), JSON, node, CLI_DIR.toString());
@@ -134,8 +132,7 @@ class JsCodeAgentTest {
             return null;
         }).when(gateway).stream(eq(7L), any(), any(), eq(false));
         assertNotNull(js.run(config, 7L, "看看", List.of(), false, false, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add), "账号 7 选了");
-        verify(registry).service(7L);
-        verify(registry).executor(7L);
+        verify(registry).target(7L, null);
     }
 
     @Test

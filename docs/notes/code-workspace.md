@@ -89,6 +89,14 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 
 写盘用「临时文件 + 原子改名」：直接就地写，中途失败会留下一个被截断的源码文件。
 
+**生成到产物（第一百一十六轮，用户要的）**：档位开着、没选文件夹，模型写的文件不进用户的文件夹，也不走草稿：
+- 每段对话一个临时空间（`app.workspace.artifact-dir`，默认 `~/.zhiqu/artifact-spaces/<账号>/<对话>/`，目录 0700），`WorkspaceRegistry.target` 给。写工具直接写进去（`ArtifactTools`，没碰用户的东西、不用确认，后面的命令要看得到），什么类型都能写：扩展名白名单防的是把用户的 `.env` 读进上下文，这里只有模型自己写的东西。
+- 一轮结束比对前后（`ArtifactFiles`，内容指纹，只动时间不算），新增和改过的存进 `ai_artifact_file`（存库不存盘：几个后端连同一个库，换台电脑也打得开），挂在 `GENERATED_FILES` 产物上，状态 `READY`。单个 5MB、一轮 20MB、一轮 100 个、一个账号 200MB，超了不存但照实说（`skipped`）。**里面的东西不能信**：软链不跟、管道不读（读它会卡住线程）、打开时 `NOFOLLOW` 再防一次。
+- 面板只显示最近一轮的产物，所以另有 `GET /api/ai/generated-files`（每个路径最新的那份）列「之前生成的文件」，不然换一轮、刷新就点不到了（真浏览器里发现的）。
+- 下载 `GET /api/ai/artifacts/{id}/files/{fileId}`：只有本人；一律 `attachment` + `nosniff` + `CSP: sandbox`，不在本站打开，否则一个 HTML 就能拿到页面的登录令牌。预览在前端：HTML 关在 `sandbox="allow-scripts"` 的 iframe 里（没有 `allow-same-origin`，真浏览器里偷令牌是 `SecurityError`），图片走 `<img>`（SVG 里的脚本不跑，类型按扩展名给），别的只进 `textContent`。
+- 临时空间几天没动就清（`app.workspace.artifact-retention-days`，默认 3），接着聊时从数据库恢复；还在的不覆盖（命令可能改过）。删 Notebook 连文件和空间一起删。
+- **服务器上默认关**（`app.workspace.hosted-enabled=false`）。打开之后只有产物这一种：写了目录也不看，碰磁盘的接口（`browse`、`pick-folder`、`files`、`file`、`search`）照旧 `requireLocal()`，切档位走 `requireTierAccess()`（Host 是公开的域名）。这一轮服务器上还不跑命令（生产 profile 的执行器是关的），下一轮才有隔离。**本机的后端切档位还是只认本机的请求**，配了 `hosted-enabled` 也一样：不然陌生网页注册个账号就能在用户电脑上跑命令。
+
 **两个出口问同一个判定。** 工作区的内容有 `/api/workspace/**` 和 code agent 两个出口，判定收在 `CodeWorkspaceAgent.readableBy(userId)` 一处（问这个账号自己的档位），`CodeAgentGateTest` 断言 `effectiveMode().allowsRead()` 在全文件只出现一次。code agent 一度只问全局的档位，普通用户对助手说一句「看看 xxx.java」就绕过了 HTTP 那一侧的门。
 
 **目录软链曾经能把工作区漏出去。** `normalize()` 是纯字符串运算，不解析软链；而守卫只检查

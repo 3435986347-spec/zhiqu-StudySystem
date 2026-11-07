@@ -40,6 +40,7 @@ import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.CodeContextPrompt;
 import com.zhiqu.service.ai.CodeWorkspaceAgent;
+import com.zhiqu.service.workspace.ArtifactFiles;
 import com.zhiqu.service.ai.AssistantTaskContext;
 import com.zhiqu.service.ai.AssistantTaskReader;
 import com.zhiqu.service.ai.UserMessageFit;
@@ -110,7 +111,7 @@ public class AiServiceImpl implements AiService {
     /** create_study_plan 的 schema 与解析器（拆第六刀）。PLANNER 与 code agent 共用这一份。 */
     private final StudyPlanTool studyPlanTool;
     private static final Logger log = LoggerFactory.getLogger(AiServiceImpl.class);
-    private static final String DEFAULT_CONVERSATION_KEY = "default";
+    private static final String DEFAULT_CONVERSATION_KEY = AiConversation.DEFAULT_KEY;
     private static final int SUMMARY_MAX_LENGTH = 1500;
     /** 自上次摘要以来新滑出窗口的消息达到这个数才重算 —— 否则每一轮都要多花一次模型调用。 */
     private static final int SUMMARY_REFRESH_MIN = 10;
@@ -961,6 +962,7 @@ public class AiServiceImpl implements AiService {
         private AiAgentStep codeAgentStep;
         private String codeContext = "";
         private List<Map<String, Object>> codeDrafts = List.of();
+        private List<String> codeGeneratedFiles = List.of();
         /** 代码判题之后经同一 Wiki 执行器获得的真实待合入编号。 */
         private List<Long> codeWikiPendingPatchIds = List.of();
         /** 这一轮工具循环有没有拿到写工具 —— 最终回答据此决定能不能贴代码（见 CodeContextPrompt）。 */
@@ -1528,7 +1530,9 @@ public class AiServiceImpl implements AiService {
                     chatHistory.add(Map.of("role", normalizeChatRole(item.getRole()), "content", item.getContent()));
                 }
             }
-            CodeWorkspaceAgent.Result codeResult = codeWorkspaceAgent.run(s.config, s.userId, s.limitedMessage,
+            Long conversationId = s.assistantMessage == null ? null : s.assistantMessage.getConversationId();
+            aiWorkspaceService.prepareArtifactSpace(s.userId, conversationId);
+            CodeWorkspaceAgent.Result codeResult = codeWorkspaceAgent.run(s.config, s.userId, conversationId, s.limitedMessage,
                     chatHistory, s.contextOptions, ContextBudget.forWindow(s.config.getContextWindowTokens()), s.reasoningMode,
                     note -> {
                         Map<String, Object> payload = new LinkedHashMap<>();
@@ -1550,6 +1554,13 @@ public class AiServiceImpl implements AiService {
                 s.suggestedPlan = codeResult.milestonePlan();
             }
             boolean read = hasText(s.codeContext);
+            s.codeGeneratedFiles = codeResult.generatedFiles().stream().map(ArtifactFiles.Generated::path).toList();
+            AiAgentArtifact generated = aiWorkspaceService.saveGeneratedFiles(s.agentRun.getId(),
+                    s.codeAgentStep == null ? null : s.codeAgentStep.getId(), s.userId, conversationId, codeResult.generatedFiles(),
+                    s.liveUser == null ? null : s.liveUser.getId());
+            if (generated != null) {
+                ctx.emit("artifact.created", s.trace.artifactEvent(s.codeAgentStep, generated, artifactStreamSummary(generated)));
+            }
             if (!s.codeDrafts.isEmpty()) {
                 // 与 Wiki / 计划 / 记忆同一条纪律：模型的写操作落成草稿，磁盘一个字节都没动。
                 // 只有 POST /api/ai/artifacts/{id}/confirm 才会真正写盘。
@@ -1560,7 +1571,9 @@ public class AiServiceImpl implements AiService {
                 ctx.emit("artifact.created", s.trace.artifactEvent(s.codeAgentStep, artifact, artifactStreamSummary(artifact)));
             }
             s.trace.finishStep(ctx, s.codeAgentStep,
-                    s.codeDrafts.isEmpty()
+                    !s.codeGeneratedFiles.isEmpty()
+                            ? "已生成 " + s.codeGeneratedFiles.size() + " 个文件（在产物里）"
+                            : s.codeDrafts.isEmpty()
                             ? (read ? "已读取工作区代码" : "工作区没有可用内容")
                             : "已生成 " + s.codeDrafts.size() + " 个文件的改动草稿（未落盘）",
                     "chars=" + s.codeContext.length() + " drafts=" + s.codeDrafts.size());
@@ -1639,11 +1652,11 @@ public class AiServiceImpl implements AiService {
             }
             // 写工具下发过也要加：循环很快就中断时上下文和草稿都是空的，不加的话最终回答收不到
             // 「别贴整份文件」这条约束，又会自己把代码整份写出来
-            if (hasText(s.codeContext) || !s.codeDrafts.isEmpty() || s.codeWriteOffered) {
+            if (hasText(s.codeContext) || !s.codeDrafts.isEmpty() || s.codeWriteOffered || !s.codeGeneratedFiles.isEmpty()) {
                 // 与 Wiki 检索资料同样处理：工作区读到的是<b>数据</b>，以 user 数据块注入（提示注入防护）。
                 // 结尾那句「有没有草稿」必须跟着本轮实际结果走 —— 见 CodeContextPrompt。
                 messages.add(Map.of("role", "user", "content",
-                        CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered, s.codeWriteAttempted)));
+                        CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered, s.codeWriteAttempted, s.codeGeneratedFiles)));
             }
             // 用户的任务（第二十七轮）：和 Wiki、工作区一样是数据，以 user 数据块注入（标题是用户写的、可能是粘来的）
             if (hasText(s.taskContext)) {

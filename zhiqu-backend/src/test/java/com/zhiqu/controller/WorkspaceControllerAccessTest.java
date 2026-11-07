@@ -129,4 +129,91 @@ class WorkspaceControllerAccessTest {
         as(55);
         assertEquals("/x", data(c.pickFolder(null)).get("path"));
     }
+
+    // ── 服务器上（第一百一十六轮）────────────────────────────
+
+    private WorkspaceController hosted(MockHttpServletRequest req, boolean enabled) {
+        WorkspaceProperties props = new WorkspaceProperties();
+        props.setArtifactDir(dir.resolve("spaces").toString());
+        props.setHostedEnabled(enabled);
+        return new WorkspaceController(new WorkspaceRegistry(props, new ObjectMapper(), dir.resolve("state.json").toString(), "127.0.0.1", "prod"), dialog, req);
+    }
+
+    private static MockHttpServletRequest viaCaddy() {
+        MockHttpServletRequest r = new MockHttpServletRequest();
+        r.setRemoteAddr("127.0.0.1");
+        r.addHeader("Host", "zhiqustudy.com");
+        r.addHeader("X-Forwarded-For", "203.0.113.9");
+        return r;
+    }
+
+    @Test
+    @DisplayName("服务器打开之后：经过 Caddy 的账号能切自己的档位，只生成到产物；写了目录也不存；碰磁盘的接口一律拒绝")
+    void 服务器上能切档位不能碰磁盘() throws Exception {
+        WorkspaceController c = hosted(viaCaddy(), true);
+        as(66);
+        Map<String, Object> first = data(c.settings());
+        assertEquals("OFF", first.get("selectedMode"));
+        assertEquals(true, first.get("artifactOnly"));
+        Map<String, Object> on = data(c.updateSettings(Map.of("mode", "EXEC", "root", "/etc")));
+        assertEquals("EXEC", on.get("effectiveMode"));
+        assertEquals(true, on.get("artifactMode"));
+        assertEquals("", on.get("selectedRoot"), "写的目录不存");
+        assertEquals(true, data(c.status()).get("enabled"));
+        for (Executable disk : List.<Executable>of(() -> c.pickFolder(null), () -> c.browse("/etc"), () -> c.files(null), () -> c.file("passwd"), () -> c.search("x", null))) {
+            BusinessException e = assertThrows(BusinessException.class, disk);
+            assertTrue(e.getMessage().contains("本机"), "拦它的要是本机这道门，不是碰巧没有文件夹：" + e.getMessage());
+        }
+        verify(dialog, never()).pick(org.mockito.ArgumentMatchers.any());
+        as(77);
+        assertEquals("OFF", data(c.settings()).get("selectedMode"), "另一个账号不受影响");
+    }
+
+    @Test
+    @DisplayName("服务器上后端没绑回环（server.address 没配）：一样能切档位，那道回环的门只管本机的后端")
+    void 服务器没绑回环也能切档位() throws Exception {
+        WorkspaceProperties props = new WorkspaceProperties();
+        props.setArtifactDir(dir.resolve("spaces").toString());
+        props.setHostedEnabled(true);
+        WorkspaceController c = new WorkspaceController(new WorkspaceRegistry(props, new ObjectMapper(), dir.resolve("state.json").toString(), "", "prod"), dialog, viaCaddy());
+        as(66);
+        assertEquals("READ", data(c.updateSettings(Map.of("mode", "READ"))).get("effectiveMode"));
+    }
+
+    @Test
+    @DisplayName("服务器没打开：和原来一样，每个接口都拒绝")
+    void 服务器没打开都拒绝() {
+        WorkspaceController c = hosted(viaCaddy(), false);
+        as(66);
+        for (Executable call : everyEndpoint(c)) {
+            assertThrows(BusinessException.class, call);
+        }
+    }
+
+    @Test
+    @DisplayName("本机的后端（不是生产）：陌生网页还是开不了档位，生成到产物也不行：不然它就能在用户电脑上跑命令")
+    void 本机后端陌生网页开不了产物() {
+        MockHttpServletRequest evil = new MockHttpServletRequest();
+        evil.setRemoteAddr("127.0.0.1");
+        evil.addHeader("Host", "evil.example:8080");
+        WorkspaceProperties props = new WorkspaceProperties();
+        props.setArtifactDir(dir.resolve("spaces").toString());
+        props.setHostedEnabled(true);   // 配了也不算：这不是生产 profile
+        WorkspaceRegistry registry = new WorkspaceRegistry(props, new ObjectMapper(), dir.resolve("state.json").toString(), "127.0.0.1", "");
+        WorkspaceController c = new WorkspaceController(registry, dialog, evil);
+        as(88);
+        assertThrows(BusinessException.class, () -> c.updateSettings(Map.of("mode", "EXEC", "root", "")));
+        assertFalse(registry.service(88L).access().enabled());
+    }
+
+    @Test
+    @DisplayName("本机的普通账号：不选文件夹也能开档位，就是生成到产物")
+    void 本机不选文件夹() throws Exception {
+        WorkspaceController c = controller("");
+        as(99);
+        Map<String, Object> on = data(c.updateSettings(Map.of("mode", "WRITE", "root", "")));
+        assertEquals("WRITE", on.get("effectiveMode"));
+        assertEquals(true, on.get("artifactMode"));
+        assertEquals(false, on.get("artifactOnly"));
+    }
 }

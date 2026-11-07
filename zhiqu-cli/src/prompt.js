@@ -55,6 +55,24 @@ const MODE_TEXT = {
 /**
  * 网页 / 桌面应用的代码模式（第九十四轮）：跑的是同一份循环，规矩不一样的几条在这里说，和上面说命令行的几句冲突时以这里为准。
  */
+function artifactEnvironment({ commands, os, today, shell = null, shellWrites = false }) {
+  const canRun = shell || commands.length;
+  return [
+    '## 环境（生成到产物 —— 和上面说命令行、说项目的几句不一样时，以这里为准）',
+    '- 工作区是这段对话的临时空间，不是用户电脑上的文件夹，读不到用户的文件。所有路径都相对它。这段对话里之前生成的文件还在。',
+    `- 系统：${os}；今天：${today}`,
+    '- write_file / edit_file / apply_patch 直接写进临时空间，不用用户确认。这一轮结束后，新建和改过的文件会作为「产物」显示给用户，能预览、能下载。'
+      + '用户要文件就写成文件，回答里说清生成了哪些文件、怎么用，不要把整份内容再贴一遍，也不要说写进了用户的电脑。这里没有 delete_file。',
+    '- 工作区里留下的文件都会显示给用户：中间产物放 $TMPDIR 或者用完删掉。单个文件超过 5MB 不会保存。',
+    shell
+      ? `- shell 跑一条 bash 命令，管道、重定向、&& 都能用。命令跑在系统沙箱里：${shell}。${shellWrites ? '' : '这一档 shell 写不了临时空间，要写文件用 write_file。'}被挡住了就换个做法，或者说清楚缺什么权限。`
+      : commands.length
+        ? `- run_command 能跑的命令：${commands.join('、')}。只能跑临时空间里已经有的文件，不接受行内代码和 shell 语句。`
+        : '- 这里不能跑命令：写的代码没有运行过，回答里要照实说。',
+    canRun ? '- 能运行的就运行一下再交给用户。' : '',
+  ].filter(Boolean).join('\n');
+}
+
 function draftEnvironment({ root, workspaceName, commands, os, today, shell = null, shellWrites = false }) {
   return [
     '## 环境（网页 / 桌面应用的代码模式 —— 和上面说命令行的几句不一样时，以这里为准）',
@@ -80,8 +98,9 @@ const SHELL_LINE = (boundary) => `- shell 跑一条 bash 命令，管道、重�
   + '要跑很久或者要一直跑的（dev server、watch）用 background: true，再用 shell_output 看、shell_stop 停，用完要停。'
   + '读文件、搜内容、改文件还是优先用 read_file / search / edit_file（改动有 diff、记得住），删文件用 delete_file。';
 
-export function environmentBlock({ root, workspaceName, mode, commands, platform = process.platform, today, draft = false, shell = null, shellWrites = false }) {
+export function environmentBlock({ root, workspaceName, mode, commands, platform = process.platform, today, draft = false, artifact = false, shell = null, shellWrites = false }) {
   const os = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' }[platform] || platform;
+  if (artifact) return artifactEnvironment({ commands, os, today, shell, shellWrites });
   if (draft) return draftEnvironment({ root, workspaceName, commands, os, today, shell, shellWrites });
   if (shell) {
     return ['## 环境', `- 工作区：${root}（${workspaceName}）。所有路径都相对它。`, `- 系统：${os}；今天：${today}`, `- 当前档位：${MODE_TEXT[mode] || mode}`, SHELL_LINE(shell)].join('\n');

@@ -106,9 +106,9 @@ class CodeContextPromptTest {
         String code = SourceText.stripComments(Files.readString(
                 Path.of("src", "main", "java", "com", "zhiqu", "service", "impl", "AiServiceImpl.java"),
                 StandardCharsets.UTF_8));
-        assertTrue(code.contains("CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered, s.codeWriteAttempted)"),
+        assertTrue(code.contains("CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered, s.codeWriteAttempted, s.codeGeneratedFiles)"),
                 "最终回答的工作区数据块没有按本轮草稿分支 —— 又会出现「草稿弹出来了，回答却说改不了」");
-        assertTrue(code.contains("if (hasText(s.codeContext) || !s.codeDrafts.isEmpty() || s.codeWriteOffered)"),
+        assertTrue(code.contains("if (hasText(s.codeContext) || !s.codeDrafts.isEmpty() || s.codeWriteOffered || !s.codeGeneratedFiles.isEmpty())"),
                 "外层条件没算上「写工具下发过」—— 循环很快中断时最终回答收不到「别贴整份文件」的约束");
         assertFalse(code.contains("没有写文件的能力"),
                 "AiServiceImpl 里又出现了无条件的「没有写文件的能力」");

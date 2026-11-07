@@ -4,6 +4,7 @@ import com.zhiqu.service.ai.stream.ReasoningEffort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.entity.AiModelConfig;
 import com.zhiqu.service.agent.AgentPlanDecision;
+import com.zhiqu.service.workspace.ArtifactFiles;
 import com.zhiqu.service.workspace.WorkspaceRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -106,9 +107,15 @@ public class CodeWorkspaceAgent {
      * 只是跑了个测试（用户说「写进去了，跑一下」）就不该说没写成、让他再说一次「写进去」。说不清的老构造器按「试过」算，和原来一样。
      */
     public record Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
-                         boolean writeOffered, List<Long> wikiPendingPatchIds, boolean writeAttempted) {
+                         boolean writeOffered, List<Long> wikiPendingPatchIds, boolean writeAttempted,
+                         List<ArtifactFiles.Generated> generatedFiles) {
         public Result {
             wikiPendingPatchIds = wikiPendingPatchIds == null ? List.of() : List.copyOf(wikiPendingPatchIds);
+            generatedFiles = generatedFiles == null ? List.of() : List.copyOf(generatedFiles);
+        }
+        public Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
+                      boolean writeOffered, List<Long> wikiPendingPatchIds, boolean writeAttempted) {
+            this(context, drafts, milestonePlan, writeOffered, wikiPendingPatchIds, writeAttempted, List.of());
         }
         public Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
                       boolean writeOffered, List<Long> wikiPendingPatchIds) {
@@ -160,6 +167,13 @@ public class CodeWorkspaceAgent {
     public Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
                       Map<String, Object> contextOptions, ContextBudget contextBudget, String reasoningMode,
                       Consumer<Map<String, Object>> onStep) {
+        return run(config, userId, null, userMessage, history, contextOptions, contextBudget, reasoningMode, onStep);
+    }
+
+    /** conversationId：生成到产物时一段对话一个临时空间 */
+    public Result run(AiModelConfig config, Long userId, Long conversationId, String userMessage, List<Map<String, Object>> history,
+                      Map<String, Object> contextOptions, ContextBudget contextBudget, String reasoningMode,
+                      Consumer<Map<String, Object>> onStep) {
         ContextBudget limits = contextBudget == null ? ContextBudget.DEFAULT : contextBudget;
         if (!AgentPlanDecision.codeAgentIntent(userMessage, contextOptions) || !provider.supportsToolCalling(config)) {
             return Result.EMPTY;
@@ -179,7 +193,7 @@ public class CodeWorkspaceAgent {
         LoopState loop = new LoopState();
         Result viaJs = jsEngine == null || !jsEngine.enabled() ? null
                 : jsEngine.run(config, userId, userMessage, recentHistory(history, limits.codeHistoryChars()),
-                        canWrite, canExec, budget, limits, onStep, remoteTools(userId, loop, canPlanMilestones), reasoningMode);
+                        canWrite, canExec, budget, limits, onStep, remoteTools(userId, loop, canPlanMilestones), reasoningMode, conversationId);
         if (viaJs == null) {
             // 第九十七轮删了 Java 的循环，没有后路了：说清楚缺什么，主回答照常
             log.warn("代码模式起不来（找不到 node 或命令行源码），这一轮没有读工作区 userId={}", userId);
@@ -188,7 +202,7 @@ public class CodeWorkspaceAgent {
             return Result.EMPTY;
         }
         return new Result(viaJs.context(), viaJs.drafts(), loop.milestonePlan, viaJs.writeOffered(),
-                loop.wiki.pendingPatchIdsByTitle.values().stream().distinct().toList(), viaJs.writeAttempted());
+                loop.wiki.pendingPatchIdsByTitle.values().stream().distinct().toList(), viaJs.writeAttempted(), viaJs.generatedFiles());
     }
 
     /**
