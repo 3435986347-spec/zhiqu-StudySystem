@@ -526,7 +526,7 @@ const TOOL_ALIASES = [
     'run_command', '跑命令用 run_command：command 是命令名，args 是参数数组（不接受整行 shell 字符串）。'],
   [/^(ls|list_dir|list_directory|glob|find_files)$/i, 'list_files', '列目录用 list_files。'],
   [/^(cat|view|view_file|open_file|read|read_text_file)$/i, 'read_file', '读文件用 read_file。'],
-  [/^(grep|find|search_files|search_code|ripgrep|codebase_search)$/i, 'search', '搜内容用 search。'],
+  [/^(grep|find|search_files|search_code|ripgrep|codebase_search)$/i, 'search', '搜内容用 search（regex: true 按正则，glob 限定文件）。'],
 ];
 
 function aliasFor(name, ctx) {

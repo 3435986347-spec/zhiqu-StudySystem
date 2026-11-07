@@ -82,6 +82,7 @@
   不是抹掉而是挪进 `.zhiqu/trash/<时间>/`；ask 档单独一道确认、单独一个「本会话都允许删除」（允许了写不等于允许了删）。
   `run_command` 仍不许 `rm`，拒绝时指到 `delete_file`。
 - **`shell` 和系统沙箱**（第一百零九轮，Codex 同级第 2 步）：有沙箱（`detectSandbox`，真跑一次）就给 `shell`、不给 `run_command`；plan 档也有，沙箱是只读的。边界、档位、踩过的坑在 `docs/notes/code-workspace.md`（网页同一份实现）。网络默认全断，`--sandbox-network local|on` 或用户级配置的 `sandboxNetwork` 才放开，**项目里的 `.zhiqu/settings.json` 不算数**：克隆下来的仓库不能给自己开网。
+- **`search`**（第一百一十轮，Codex 同级第 3 步）：默认字面，`regex: true` 按正则（一行一行），`glob` 限定文件（`*.py` 哪层都算，`src/**/*.js` 从根算，`*.{js,ts}`），默认跳过 `.gitignore` 忽略的（根、子目录、工作区是子目录时上层的、`.git/info/exclude`），`include_ignored` 才搜，明确指定 `path` 照搜。不看代码想不到的：正则是模型给的，灾难性回溯会卡死进程（Ctrl+C 都动不了），所以跑在带时限的 `vm` 里（1.5 秒，能打断正在跑的正则）；`.gitignore` 的规矩拿真的 `git ls-files` 当对照，不是照理解写的。`shell` 里也能 `grep`，但 `search` 认草稿、认 GBK、说得出跳过了什么。
 - **模型不许写、不许删 `.zhiqu/` 与 `.git/`**（`LocalTools.protectedDir`）。原来 `.json` / `.md` 在扩展名白名单里，
   模型能改 `.zhiqu/settings.json`（给自己加允许的命令）、`.zhiqu/mcp.json`（下次启动就拉起它写的服务器）、
   `system.md` / skills（改自己的规矩）—— auto 档连问都不问。判定按软链解开后的真实位置、大小写不敏感

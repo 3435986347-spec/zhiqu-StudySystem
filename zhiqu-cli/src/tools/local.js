@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import { StringDecoder } from 'node:string_decoder';
+import vm from 'node:vm';
 import path from 'node:path';
 import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_BYTES } from './guard.js';
 import { checkLocalCommand, describeRefusal, LOCAL_DEFAULT_COMMANDS, ExecRefusal, gitLaunch } from './execrules.js';
@@ -16,6 +17,7 @@ import { planLaunch, resolveOnPath, runProcess } from './exec.js';
 import { describeBoundary, looksBlocked, plainLaunch, sandboxedLaunch, WORKSPACE_WRITE } from './sandbox.js';
 import { applyEdit, describeEditError } from './edit.js';
 import { syntaxProblem } from './syntax.js';
+import { compileGlob, isIgnored, rulesAt, rulesIn } from './globs.js';
 import { stat as diffStat } from '../render/diff.js';
 import { formatBytes } from '../render/term.js';
 import { monotonic } from '../clock.js';
@@ -157,6 +159,18 @@ export function shellOutcome(prep, r, { boundary = '', sandboxed = true } = {}) 
   };
 }
 
+// 模型给的正则：灾难性回溯（(a+)+b）能把进程卡死，主循环、Ctrl+C 都动不了。跑在带时限的 vm 里（实测能打断正在跑的正则，一次约 50 微秒）
+const REGEX_BUDGET_MS = 1500;
+const REGEX_SCAN = new vm.Script('found = []; for (let i = 0; i < lines.length; i++) { if (re.test(lines[i])) found.push(i); }');
+function scanRegex(context, re, lines) {
+  context.re = re;
+  context.lines = lines;
+  try {
+    REGEX_SCAN.runInContext(context, { timeout: REGEX_BUDGET_MS });
+    return context.found;
+  } catch { return null; } finally { context.lines = null; }
+}
+
 export function localSchemas() {
   return [
     fn('list_files', '列出工作区里某个目录的文件和子目录（默认展开两层）。读不了的文件（密钥、证书这类）会标出来。',
@@ -166,10 +180,13 @@ export function localSchemas() {
       { path: { type: 'string', description: '相对工作区根的路径' },
         offset: { type: 'integer', description: '从第几行开始（1 起），默认 1；负数 = 最后几行（-100 就是最后 100 行）' },
         limit: { type: 'integer', description: '最多读几行，默认 2000' } }, ['path']),
-    fn('search', '在工作区的文件里按字面文本搜索（不是正则），返回「路径:行号: 内容」。',
-      { query: { type: 'string', description: '要找的文字，原样匹配' },
-        path: { type: 'string', description: '只在这个目录里找，默认整个工作区' },
-        ignore_case: { type: 'boolean', description: '忽略大小写，默认否' } }, ['query']),
+    fn('search', '在工作区的文件里搜索，返回「路径:行号: 内容」。默认按字面文本；regex=true 时按正则。默认跳过 .gitignore 忽略的文件和 node_modules 这类目录。',
+      { query: { type: 'string', description: '要找的文字；regex=true 时是 JavaScript 正则' },
+        regex: { type: 'boolean', description: '按正则找，默认否（原样匹配）。一行一行匹配，不跨行' },
+        glob: { type: 'string', description: '只看这些文件。*.py 不带斜杠，哪一层的都算；src/**/*.js 带斜杠，从工作区根开始算；*.{js,ts} 多选一' },
+        path: { type: 'string', description: '只在这个目录里找（或者只找这一个文件），默认整个工作区' },
+        ignore_case: { type: 'boolean', description: '忽略大小写，默认否' },
+        include_ignored: { type: 'boolean', description: '连 .gitignore 忽略的也搜，默认否' } }, ['query']),
     // 写整份和改一段是两个工具（第九十二轮拆开）：原来一个 write_file 三种用法、参数互相打架，
     // old_string + content 被当成「换成空」一声不响删代码（第八十六轮）。现在每个工具的参数都是必填的那几个
     fn('write_file', [
@@ -421,27 +438,49 @@ export class LocalTools {
     if (dir.reason !== Reason.OK && single.reason !== Reason.OK) return { error: describe(dir.reason, args.path || '.') };
     const ic = Boolean(args.ignore_case);
     const needle = ic ? query.toLowerCase() : query;
+    let regex = null;
+    if (args.regex) {
+      // 写错了照实说，不悄悄退回字面：那样搜不到，模型会以为真的没有
+      try { regex = new RegExp(query, ic ? 'i' : ''); } catch (e) {
+        return { error: `正则写错了：${e.message}（JavaScript 语法；忽略大小写用 ignore_case，不用 (?i)）` };
+      }
+    }
+    const glob = args.glob ? compileGlob(args.glob) : null;
+    if (args.glob && !glob) return { error: `glob 写错了：${args.glob}（比如 *.py、src/**/*.js、*.{js,ts}）` };
+    const regexContext = regex ? vm.createContext({}) : null;
     const hits = [];
     let files = 0;
     let truncated = null;
     // 跳过了什么要说出来（第十六轮）：原来太大的、读不了的一声不吭地跳过 —— 「1 处」其实是「在能看的那些里 1 处」，
     // 模型据此下「别处没有」的结论
-    const skipped = { huge: [], binary: [], denied: 0 };
+    const skipped = { huge: [], binary: [], denied: 0, ignored: 0 };
     const started = monotonic();
     const buf = Buffer.alloc(CHUNK_BYTES);      // 一次搜索共用一块（原来每个文件新分配 1MB，五万个文件就是五十 GB 的分配）
-    const onLine = (file, lineNo, line) => {
-      if (!(ic ? line.toLowerCase() : line).includes(needle)) return true;
+    const record = (file, lineNo, line) => {
       if (hits.length >= SEARCH_MAX_HITS) { truncated = `命中太多，只列出了前 ${SEARCH_MAX_HITS} 条`; return false; }
       const shown = line.length > SEARCH_MAX_LINE_CHARS ? `${line.slice(0, SEARCH_MAX_LINE_CHARS)}…` : line;
       // 保留缩进：模型常把搜到的那行直接拿去当 old_string，去掉缩进就对不上了
       hits.push(`${this.guard.display(file)}:${lineNo}: ${shown.trimEnd()}`);
       return true;
     };
+    /** 一段连续的行，firstNo 是第一行的行号。返回 false 就不用接着搜了 */
+    const onLines = (file, firstNo, lines) => {
+      if (regex) {
+        const found = scanRegex(regexContext, regex, lines);
+        if (!found) { truncated = `这个正则太慢（一段文字跑了 ${REGEX_BUDGET_MS / 1000} 秒还没完），停在这里。换个写法，比如不要嵌套的重复`; return false; }
+        for (const i of found) if (!record(file, firstNo + i, lines[i])) return false;
+        return true;
+      }
+      for (let i = 0; i < lines.length; i++) {
+        if ((ic ? lines[i].toLowerCase() : lines[i]).includes(needle) && !record(file, firstNo + i, lines[i])) return false;
+      }
+      return true;
+    };
     // 有草稿的文件搜草稿（草稿都是 UTF-8 文本，不大）
     const scanDraft = (file) => {
       const lines = this.overlay.get(file).toString('utf8').split('\n');
       if (lines[lines.length - 1] === '') lines.pop();
-      for (let i = 0; i < lines.length; i++) if (!onLine(file, i + 1, lines[i])) return;
+      onLines(file, 1, lines);
     };
     const scan = (file) => {
       if (this.overlay && this.overlay.has(file)) { scanDraft(file); return; }
@@ -464,24 +503,34 @@ export class LocalTools {
           pos += n;
           const parts = (rest + decoder.decode(buf.subarray(0, n), { stream: true })).split('\n');
           rest = parts.pop();
-          for (const line of parts) { if (!onLine(file, lineNo, line)) return; lineNo += 1; }
+          if (!onLines(file, lineNo, parts)) return;
+          lineNo += parts.length;
         }
-        if (rest) onLine(file, lineNo, rest);
+        if (rest) onLines(file, lineNo, [rest]);
       } catch (e) {
         if (unreadable(e)) skipped.denied += 1;
       } finally {
         fs.closeSync(fd);
       }
     };
-    const walk = (abs) => {
+    const useIgnore = !args.include_ignored;
+    const relOf = (abs) => path.relative(this.root, abs).split(path.sep).join('/');
+    const walk = (abs, rules) => {
       let names;
       try { names = fs.readdirSync(abs, { withFileTypes: true }); } catch (e) { if (unreadable(e)) skipped.denied += 1; return; }
       for (const d of names) {
         if (truncated) return;
         const child = path.join(abs, d.name);
         if (d.isSymbolicLink()) continue;
-        if (d.isDirectory()) { if (!SKIPPED_DIRS.has(d.name)) walk(child); continue; }
+        if (d.isDirectory()) {
+          if (SKIPPED_DIRS.has(d.name)) continue;
+          if (useIgnore && isIgnored(rules, child, true)) { skipped.ignored += 1; continue; }
+          walk(child, useIgnore ? rules.concat(rulesIn(child)) : rules);
+          continue;
+        }
         if (!this.guard.extensionAllowed(child)) continue;
+        if (glob && !glob(relOf(child))) continue;
+        if (useIgnore && isIgnored(rules, child, false)) { skipped.ignored += 1; continue; }
         let st;
         try { st = fs.statSync(child); } catch { continue; }
         if (st.size > SEARCH_STREAM_MAX_BYTES) { skipped.huge.push(`${this.guard.display(child)}（${formatBytes(st.size)}）`); continue; }
@@ -490,11 +539,12 @@ export class LocalTools {
         scan(child);
       }
     };
-    if (single) scan(single.path); else walk(dir.path);
+    // 明确指定的 path 就是要搜它：它自己被忽略也照搜（走下去的时候规则照样算）
+    if (single) scan(single.path); else walk(dir.path, useIgnore ? rulesAt(dir.path) : []);
     // 新建的草稿磁盘上还没有，走目录时看不到
     if (!single && this.overlay) {
       for (const abs of this.overlay.keys()) {
-        if (!truncated && !fs.existsSync(abs) && (abs + path.sep).startsWith(dir.path + path.sep)) scanDraft(abs);
+        if (!truncated && !fs.existsSync(abs) && (abs + path.sep).startsWith(dir.path + path.sep) && (!glob || glob(relOf(abs)))) scanDraft(abs);
       }
     }
     const body = hits.length ? hits.join('\n') : '（没有找到）';
@@ -504,6 +554,9 @@ export class LocalTools {
     if (skipped.huge.length) notes.push(`跳过了 ${skipped.huge.length} 个太大的文件（超过 ${formatBytes(SEARCH_STREAM_MAX_BYTES)}）：${skipped.huge.slice(0, 5).join('、')} —— 那里面有没有，没搜`);
     if (skipped.binary.length) notes.push(`跳过了 ${skipped.binary.length} 个二进制文件：${skipped.binary.slice(0, 5).join('、')}`);
     if (skipped.denied) notes.push(`有 ${skipped.denied} 个文件 / 目录没有读权限，没搜到里面`);
+    if (skipped.ignored) notes.push(`.gitignore 忽略了 ${skipped.ignored} 个文件 / 目录，没搜；要搜它们给 include_ignored: true`);
+    // 字面没搜到，query 又像正则：多半是想按正则找（评测里 210 次搜索 28 次是空的）
+    if (!hits.length && !regex && /[\\^$*+?()[\]{}|]/.test(query)) notes.push('query 是按字面找的；要按正则找给 regex: true');
     const partial = truncated || skipped.huge.length || skipped.denied;
     return { content: notes.length ? `${body}\n${notes.map((n) => `（${n}）`).join('\n')}` : body,
       summary: `${hits.length} 处${truncated ? '（已截断）' : partial ? '（有没搜到的）' : ''}` };
