@@ -1,5 +1,7 @@
 // 测试用的小工具：临时目录、临时的 ~/.zhiqu、假终端、假服务器接口。
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
@@ -64,4 +66,51 @@ export function fakeApi(replies, { remote = {} } = {}) {
     },
     async get() { return {}; },
   };
+}
+
+/** 假服务器：replies 依次是模型的回答 */
+export async function fakeServer(t, replies) {
+  const seen = [];
+  const srv = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      const json = (v) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ code: 200, data: v })); };
+      if (req.url.startsWith('/api/harness/models')) return json({ models: [{ id: 1, label: 'm', modelName: 'm', toolCalling: true, effectiveContextWindow: 100000 }], defaultModelId: 1 });
+      if (req.url.startsWith('/api/harness/tools')) return json([]);
+      if (req.url.startsWith('/api/harness/model/stream')) {
+        const body = JSON.parse(raw);
+        seen.push(body);
+        const r = replies[Math.min(seen.length - 1, replies.length - 1)];
+        res.setHeader('Content-Type', 'text/event-stream');
+        const send = (name, data) => res.write(`event:${name}\ndata:${JSON.stringify(data)}\n\n`);
+        if (r.hang) return undefined;   // 不回：看中断
+        send('start', { contextWindow: 100000, droppedMessages: 0, elidedToolOutputs: 0 });
+        const calls = (r.calls || []).map((c, i) => ({ id: `c${seen.length}_${i}`, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args || {}) } }));
+        const message = { role: 'assistant', content: r.text || '' };
+        if (calls.length) message.tool_calls = calls;
+        send('done', { message, finishReason: calls.length ? 'tool_calls' : 'stop', maxTokens: 16000, usage: { promptTokens: 100, completionTokens: 7, cachedTokens: 40, estimated: false } });
+        return res.end();
+      }
+      return json({});
+    });
+  });
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  t.after(() => { srv.closeAllConnections(); srv.close(); });
+  return { url: `http://127.0.0.1:${srv.address().port}`, seen };
+}
+
+export function runZhiqu(sub, args, { url, root = tmpdir(), home = tmpdir(), stdin = null, onSpawn, path: searchPath = process.env.PATH } = {}) {
+  const env = { PATH: searchPath, HOME: home, ZHIQU_HOME: path.join(home, '.zhiqu'), ZHIQU_TOKEN: 'zqp_x', ZHIQU_SERVER: url || 'http://127.0.0.1:1' };
+  return new Promise((resolve) => {
+    const c = spawn(process.execPath, [path.resolve('bin/zhiqu.js'), sub, ...args], { cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    c.stdout.on('data', (d) => { stdout += d; });
+    c.stderr.on('data', (d) => { stderr += d; });
+    c.on('close', (code) => resolve({ code, stdout, stderr, root, home }));
+    if (stdin != null) c.stdin.end(stdin);
+    else if (!onSpawn) c.stdin.end();
+    if (onSpawn) onSpawn(c);
+  });
 }

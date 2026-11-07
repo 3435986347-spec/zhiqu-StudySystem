@@ -11,7 +11,7 @@ import { runTurn, toolset } from '../src/agent.js';
 import { runProcess } from '../src/tools/exec.js';
 import { LocalTools, shellOutcome } from '../src/tools/local.js';
 import { DraftTools } from '../src/tools/drafts.js';
-import { detectSandbox, gitReadRoots, looksBlocked, plainLaunch, READ_ONLY, sandboxedLaunch, toolchainRoots, WORKSPACE_WRITE } from '../src/tools/sandbox.js';
+import { detectSandbox, gitReadRoots, looksBlocked, plainLaunch, READ_ONLY, repoAncestors, sandboxedLaunch, toolchainRoots, WORKSPACE_WRITE } from '../src/tools/sandbox.js';
 import { environmentBlock } from '../src/prompt.js';
 import { resolveSettings } from '../src/config.js';
 import { SessionStore } from '../src/session.js';
@@ -128,6 +128,48 @@ test('读得到工作区里的 git：工作区是子目录、是 worktree 都行
   fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${gitdir}\n`);
   assert.deepEqual(gitReadRoots(wt), [gitdir, path.join(top, '.git')]);
   assert.deepEqual(toolchainRoots({ home: realTmp(), env: { PATH: '/usr/bin' } }), [], '家目录外的 PATH 不算');
+});
+
+test('工作区是仓库的子目录：git 真跑得起来，顶层的 .gitignore 照样认；外面的文件内容还是读不到（只看得到名字）', { skip }, async () => {
+  const top = realTmp();
+  const env = { PATH: process.env.PATH, HOME: top, GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const git = (...args) => spawnSync('git', args, { cwd: top, env, encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  fs.mkdirSync(path.join(top, 'mid', 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(top, '.gitignore'), 'top-ignored.log\n');
+  fs.writeFileSync(path.join(top, 'mid', '.gitignore'), 'mid-ignored.log\n');
+  fs.writeFileSync(path.join(top, 'outside.txt'), 'SECRET-OUTSIDE');
+  fs.writeFileSync(path.join(top, 'mid', 'sibling.txt'), 'SECRET-SIBLING');
+  fs.writeFileSync(path.join(top, 'mid', 'sub', 'in.txt'), 'in\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'x');
+  const root = path.join(top, 'mid', 'sub');
+  for (const f of ['top-ignored.log', 'mid-ignored.log', 'fresh.txt']) fs.writeFileSync(path.join(root, f), 'x\n');
+  // 没提交的：提交过的 git 读不到文件时会退回读 index，看不出这一层放没放
+  fs.writeFileSync(path.join(top, '.gitattributes'), 'in.txt from-top=yes\n');
+  const run = (command) => {
+    const launch = sandboxedLaunch(box, { command, root, cwd: root, policy: READ_ONLY, network: 'off', home: realTmp(), env: { PATH: process.env.PATH }, privateDir: realTmp() });
+    return runProcess({ binary: launch.binary, args: launch.args, cwd: root, env: launch.env, timeoutMs: 30_000 });
+  };
+  const status = await run('git status --short -- .');
+  assert.equal(status.exitCode, 0, status.output);
+  assert.ok(status.output.includes('fresh.txt') && !status.output.includes('ignored.log'), status.output);
+  const log = await run('git log --oneline');
+  assert.equal(log.exitCode, 0, log.output);
+  const attr = await run('git check-attr from-top -- in.txt');
+  assert.ok(attr.output.includes('from-top: yes'), `顶层的 .gitattributes 没读到：${attr.output}`);
+  for (const file of ['../../outside.txt', '../sibling.txt']) {
+    const read = await run(`cat ${file}`);
+    assert.notEqual(read.exitCode, 0, `${file} 读到了：${read.output}`);
+    assert.ok(!read.output.includes('SECRET'), read.output);
+  }
+  // 不是仓库的话，上面几层什么都不放
+  const plain = realTmp();
+  fs.mkdirSync(path.join(plain, 'sub'));
+  fs.writeFileSync(path.join(plain, 'neighbor.txt'), 'x');
+  assert.deepEqual(repoAncestors(path.join(plain, 'sub')), []);
+  assert.deepEqual(repoAncestors(top), []);
+  assert.deepEqual(repoAncestors(root), [path.join(top, 'mid'), top]);
 });
 
 test('断网：外网、本机、Unix socket 都连不上；用户放开 local / on 才通', { skip }, async (t) => {

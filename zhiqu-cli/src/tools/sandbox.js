@@ -62,6 +62,21 @@ export function gitReadRoots(root) {
   return out.map(real);
 }
 
+/**
+ * 工作区是仓库的子目录时，它上面到仓库顶层的那几层目录（含顶层）。git 要 chdir 到顶层再 getcwd（读不了就「unable to get current working directory」，
+ * 什么 git 命令都跑不了；第一百一十四轮才发现：之前的样本工作区都是仓库顶层），还要读各层的 .gitignore / .gitattributes。
+ * 只放这几层目录本身和这两个文件：能看到文件名，读不到别的文件的内容。
+ */
+export function repoAncestors(root) {
+  const chain = [];
+  for (let dir = root; ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.git'))) return chain;
+    if (dir === path.dirname(dir)) return [];   // 到头了也没有：不是仓库，什么都不放
+    chain.push(path.dirname(dir));
+  }
+}
+const GIT_RULE_FILES = ['.gitignore', '.gitattributes'];
+
 /** 家目录下要放读的工具链：PATH 里的、工具链变量指的、约定的那几个。 */
 export function toolchainRoots({ home, env = process.env }) {
   const out = new Set();
@@ -81,7 +96,7 @@ export function toolchainRoots({ home, env = process.env }) {
   return [...out];
 }
 
-function seatbeltProfile({ policy, network, toolchains, gitRoots, secrets }) {
+function seatbeltProfile({ policy, network, toolchains, gitRoots, repoChain, secrets }) {
   const params = {};
   const param = (prefix, list) => list.map((value, i) => { params[`${prefix}${i}`] = value; return `(param "${prefix}${i}")`; });
   const subpaths = (prefix, list) => param(prefix, list).map((p) => `(subpath ${p})`).join(' ');
@@ -107,6 +122,10 @@ function seatbeltProfile({ policy, network, toolchains, gitRoots, secrets }) {
   ];
   if (toolchains.length) rules.push(`(allow file-read* file-map-executable ${subpaths('TOOL', toolchains)})`);
   if (gitRoots.length) rules.push(`(allow file-read* ${subpaths('GIT', gitRoots)})`);
+  if (repoChain.length) {
+    const literal = repoChain.flatMap((dir) => [dir, ...GIT_RULE_FILES.map((f) => path.join(dir, f))]);
+    rules.push(`(allow file-read* ${param('CHAIN', literal).map((p) => `(literal ${p})`).join(' ')})`);
+  }
   rules.push('(allow file-read* file-map-executable (subpath (param "ROOT")) (subpath (param "PRIVATE")))');
   if (secrets.length) rules.push(`(deny file-read* file-map-executable ${subpaths('SECRET', secrets)})`);
   // 写。系统的工具有两个不听 TMPDIR：xcrun（git、python3、clang 这些都经过它，写不了缓存就每次报一行错）、mktemp。只放这两种名字，别的程序留在那儿的东西照样读不到
@@ -129,7 +148,7 @@ function seatbeltProfile({ policy, network, toolchains, gitRoots, secrets }) {
   return { text: rules.join('\n'), params };
 }
 
-function bwrapArgs({ root, cwd, policy, network, toolchains, gitRoots, secrets, privateDir }) {
+function bwrapArgs({ root, cwd, policy, network, toolchains, gitRoots, repoChain, secrets, privateDir }) {
   const args = ['--die-with-parent', '--new-session', '--unshare-all'];
   if (network !== 'off') args.push('--share-net');   // bwrap 分不出本机和外网：local 也只能全放（说明里写着）
   args.push('--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc');
@@ -137,6 +156,8 @@ function bwrapArgs({ root, cwd, policy, network, toolchains, gitRoots, secrets, 
     if (fs.existsSync(dir)) args.push('--tmpfs', dir);
   }
   for (const dir of [...toolchains, ...gitRoots]) args.push('--ro-bind-try', dir, dir);
+  // 上面几层的目录 bwrap 自己会建空的（chdir、getcwd 没问题），缺的只是那两个文件
+  for (const dir of repoChain) for (const f of GIT_RULE_FILES) args.push('--ro-bind-try', path.join(dir, f), path.join(dir, f));
   args.push('--bind', privateDir, privateDir);
   args.push(policy === WORKSPACE_WRITE ? '--bind' : '--ro-bind', root, root);
   // bwrap 只能挡已有的路径（Seatbelt 按名字挡，没有的也算）：工作区里还没有 .git / .zhiqu 时放一个只读的空目录占住，
@@ -156,7 +177,7 @@ function bwrapArgs({ root, cwd, policy, network, toolchains, gitRoots, secrets, 
   return { args, placeholders };
 }
 
-const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+export const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 /**
  * 这条命令怎么起：{ binary, args, env }。env 是在 childEnv 上再加的。
@@ -170,16 +191,19 @@ export function sandboxedLaunch(box, { command, root, cwd, policy = WORKSPACE_WR
   const priv = real(privateDir);
   const toolchains = toolchainRoots({ home: realHome, env });
   const gitRoots = gitReadRoots(realRoot);
+  const repoChain = repoAncestors(realRoot);
   const secrets = HOME_SECRETS.map((rel) => path.join(realHome, rel));
   const extra = shellEnv({ home: realHome, env, privateDir: priv });
   const shell = shellBinary();
   if (box.kind === 'seatbelt') {
-    const { text, params } = seatbeltProfile({ policy, network, toolchains, gitRoots, secrets });
+    const { text, params } = seatbeltProfile({ policy, network, toolchains, gitRoots, repoChain, secrets });
     const defines = Object.entries({ ...params, ROOT: realRoot, PRIVATE: priv, HOME: realHome }).flatMap(([k, v]) => ['-D', `${k}=${v}`]);
     return { binary: box.binary, args: [...defines, '-p', text, shell, '-c', reapJobs(command)], env: extra };
   }
-  const { args, placeholders } = bwrapArgs({ root: realRoot, cwd: real(cwd), policy, network, toolchains, gitRoots, secrets, privateDir: priv });
+  const { args, placeholders } = bwrapArgs({ root: realRoot, cwd: real(cwd), policy, network, toolchains, gitRoots, repoChain, secrets, privateDir: priv });
   const full = [...args, '--', shell, '-c', reapJobs(command)];
+  // 工作区绑成了单独的挂载点，git 往上找仓库碰到挂载边界就停（「not a git repository … up to mount point」）：工作区是仓库子目录时什么 git 都跑不了
+  extra.GIT_DISCOVERY_ACROSS_FILESYSTEM = '1';
   if (!placeholders.length) return { binary: box.binary, args: full, env: extra };
   // 外面包一层 sh 只为跑完收掉占位。挡不挡得住不靠它：被杀了来不及收，也只是留一个空目录
   return { binary: '/bin/sh', args: ['-c', `"$0" "$@"; code=$?; rmdir ${placeholders.map(shellQuote).join(' ')} 2>/dev/null; exit $code`, box.binary, ...full], env: extra };

@@ -30,6 +30,7 @@ import { SessionStore } from './session.js';
 import { discoverSkills, skillsBlock } from './skills.js';
 import { LocalTools } from './tools/local.js';
 import { execShot, prepareExec } from './execmode.js';
+import { parseReviewWords, prepareReview, reportNothing, reviewInSession, reviewShot, reviewSpec } from './review.js';
 import { detectSandbox } from './tools/sandbox.js';
 import { Ui, briefInput } from './ui.js';
 import { ensureLocalServer } from './desktop.js';
@@ -80,6 +81,9 @@ export function parseArgs(argv) {
     else if (a === '-o' || a === '--output') flags.output = next();
     else if (a === '--ephemeral') flags.ephemeral = true;
     else if (a === '--last') flags.last = true;
+    else if (a === '--uncommitted') flags.uncommitted = true;
+    else if (a === '--base') flags.base = next();
+    else if (a === '--commit') flags.commit = next();
     else if (a === '--server') flags.server = next();
     else if (a === '--token') flags.token = next();
     else if (a === '--no-browser') flags.noBrowser = true;
@@ -110,6 +114,10 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
     zhiqu exec resume --last "接着做" / zhiqu exec resume <id> "接着做"（不继承上次的档位）
     提示也可以从管道来；参数和管道都有时，管道里的当材料附在后面
     退出码：0 成功，1 失败，2 用法不对，130 被中断
+  zhiqu review [说明]          只读地审查改动，按 P0–P3 列出真问题（默认看没提交的；没有改动就不叫模型）
+    --uncommitted / --base <分支> / --commit <提交>   看哪段（只能给一个）
+    --json、--ephemeral 同 exec；-o <文件> 写 JSON（findings、summary、partial、skipped）
+    退出码同 exec：有问题也是 0，脚本看 findings
   zhiqu login [--server URL]  登录（浏览器里确认，命令行不接触密码）
   zhiqu login --token zqp_…   用网页里签的个人访问令牌登录
   zhiqu logout | whoami | models | help | --version
@@ -139,6 +147,12 @@ export async function main(argv) {
   if (cmd === 'exec') {
     const prepared = await prepareExec(flags);
     if (prepared.error) { process.stderr.write(`zhiqu exec：${prepared.error}\n`); return 2; }
+    return runAgent(cwd, prepared.flags);
+  }
+  if (cmd === 'review') {
+    const prepared = await prepareReview(flags, cwd);
+    if (prepared.error) { process.stderr.write(`zhiqu review：${prepared.error}\n`); return prepared.code; }
+    if (prepared.changes.nothing) return reportNothing(prepared.changes, flags);
     return runAgent(cwd, prepared.flags);
   }
   if (cmd === 'login') return login(cwd, flags);
@@ -387,7 +401,7 @@ async function runAgent(cwd, flags) {
 
   if (flags.exec) {
     await startMcp(ctx, flags);
-    const code = await execShot(ctx, flags);
+    const code = flags.review ? await reviewShot(ctx, flags) : await execShot(ctx, flags);
     await flushArchive(ctx);
     ctx.mcp && ctx.mcp.close();
     ui.close();
@@ -524,6 +538,10 @@ async function repl(ctx, flags = {}) {
         await turn(ctx, r.turn, (c) => { running = c; });
         running = null;
       }
+      if (typeof r === 'object' && r && r.review) {
+        await reviewTurn(ctx, r.review, (c) => { running = c; });
+        running = null;
+      }
       if (r === 'goal') {
         await pursue(ctx, (c) => { running = c; });
         running = null;
@@ -576,6 +594,21 @@ async function turn(ctx, text, setRunning) {
     ctx.changedFiles = new Set();
     turnNote(ctx, result);
     archiveTurn(ctx, text, result);   // 后台发，不挡下一句话
+  } catch (e) {
+    if (controller.signal.aborted || (e && e.name === 'AbortError')) return;
+    ctx.ui.error(e.message);
+    if (e instanceof ApiError && e.auth) ctx.ui.note('（令牌失效了：退出后运行 zhiqu login）');
+  }
+}
+
+/** /review：能被 Ctrl+C 打断，干活时输入框一直在，和普通的一轮一样 */
+async function reviewTurn(ctx, spec, setRunning) {
+  const controller = new AbortController();
+  setRunning(controller);
+  ctx.ui.beginLive();
+  await mcpStarted(ctx);
+  try {
+    await reviewInSession(ctx, spec, { signal: controller.signal });
   } catch (e) {
     if (controller.signal.aborted || (e && e.name === 'AbortError')) return;
     ctx.ui.error(e.message);
@@ -694,6 +727,12 @@ export async function slash(ctx, text) {
       return null;
     case '/init':
       return { turn: initPrompt(fs.existsSync(path.join(ctx.root, 'ZHIQU.md'))) };
+    case '/review': {
+      const words = parseReviewWords(rest.filter(Boolean));
+      const spec = words.error ? words : reviewSpec(words);
+      if (spec.error) { ui.error(spec.error); return null; }
+      return { review: spec };
+    }
     case '/skills':
       if (!ctx.skills.length) { ui.line('没有 skill。把 SKILL.md 放进 .zhiqu/skills/<名字>/（项目级）或 ~/.zhiqu/skills/<名字>/（用户级）'); return null; }
       for (const s of ctx.skills) ui.line(`${s.name}  ${ui.paint.dim(`（${s.source === 'project' ? '项目' : '用户'}）`)} ${s.description}`);

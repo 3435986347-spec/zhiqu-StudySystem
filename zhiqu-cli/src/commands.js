@@ -15,6 +15,7 @@ export const SLASH_COMMANDS = [
   { name: '/new', desc: '开一段新会话' },
   { name: '/compact', desc: '现在就把较早的对话压成摘要' },
   { name: '/init', desc: '读项目，写一份 ZHIQU.md 初稿' },
+  { name: '/review', args: '[--base 分支|--commit 提交] [说明]', desc: '只读地审查改动，按 P0–P3 列出真问题（默认看没提交的），结论留在会话里，能接着说「修第 1 条」' },
   { name: '/skills', desc: '列出可用的 skills' },
   { name: '/mcp', desc: 'MCP 服务器与工具' },
   { name: '/system', args: '[path|diff|reset]', desc: '系统内容（~/.zhiqu/system.md）' },

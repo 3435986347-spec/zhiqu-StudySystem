@@ -1086,6 +1086,16 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   return { finalText, stalled, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats } };
 }
 
+/** 在会话历史后面追加一问一答，不走模型（/review 的结论放回会话，才能接着说「修第 1 条」）。历史只追加。 */
+export function recordExchange(ctx, userText, answer) {
+  const silent = { ...ctx, emit: null };   // 事件流里的结论由调用方说，这里不再冒一条 agent_message
+  record(silent, { role: 'user', content: userText });
+  record(silent, { role: 'assistant', content: answer });
+  if (!ctx.store || !ctx.session) return;
+  if (!ctx.session.title) ctx.session.title = userText.replace(/\s+/g, ' ').slice(0, 40);
+  ctx.store.touch(ctx.session.id, { title: ctx.session.title, messages: ctx.messages.length });
+}
+
 /** 结论：一次整段打（按 Markdown 渲染）。 */
 function showAnswer(ctx, text) {
   if (ctx.exec) return;   // zhiqu exec：结论由它写到 stdout，stderr 里不再打一遍

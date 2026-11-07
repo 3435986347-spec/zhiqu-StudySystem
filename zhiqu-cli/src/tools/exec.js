@@ -14,6 +14,7 @@ import path from 'node:path';
 import { monotonic } from '../clock.js';
 
 export const DEFAULT_OUTPUT_LIMIT = 64 * 1024;
+const STDERR_KEEP_BYTES = 16 * 1024;
 
 /** 在父进程的 PATH 里找命令（用父进程的 PATH 去「找」，不等于把它「传下去」）。 */
 export function resolveOnPath(name, env = process.env, platform = process.platform) {
@@ -89,8 +90,11 @@ export function childEnv(binary, cwd, platform = process.platform) {
   return env;
 }
 
-/** env：在最小环境（childEnv）上再加的几项，不是整个替换（git 用它关掉配置里能叫起的程序） */
-export function runProcess({ binary, args, cwd, env, timeoutMs, outputLimit = DEFAULT_OUTPUT_LIMIT, signal, onOutput }) {
+/**
+ * env：在最小环境（childEnv）上再加的几项，不是整个替换（git 用它关掉配置里能叫起的程序）。
+ * separateStderr：stderr 单独放（只留开头），不混进 output —— 要解析 stdout 时用，一行警告混进来就解析错了。
+ */
+export function runProcess({ binary, args, cwd, env, timeoutMs, outputLimit = DEFAULT_OUTPUT_LIMIT, signal, onOutput, separateStderr = false }) {
   return new Promise((resolve) => {
     const started = monotonic();
     const posix = process.platform !== 'win32';
@@ -117,7 +121,11 @@ export function runProcess({ binary, args, cwd, env, timeoutMs, outputLimit = DE
       if (onOutput) onOutput(piece.toString('utf8'));
     };
     child.stdout.on('data', take);
-    child.stderr.on('data', take);
+    const errors = [];
+    let errorSize = 0;
+    child.stderr.on('data', !separateStderr ? take : (buf) => {
+      if (errorSize < STDERR_KEEP_BYTES) { errors.push(buf); errorSize += buf.length; }
+    });
     let timedOut = false;
     let aborted = false;
     const kill = () => {
@@ -137,7 +145,7 @@ export function runProcess({ binary, args, cwd, env, timeoutMs, outputLimit = DE
       if (truncated) output += `\n【输出超过 ${outputLimit} 字节，已截断】`;
       if (timedOut) output += `\n【超时：超过 ${timeoutMs}ms，已强制结束】`;
       if (aborted) output += '\n【用户中断了这条命令】';
-      resolve({ exitCode: code == null ? -1 : code, signal: sig, output, truncated, timedOut, aborted, millis: Math.round(monotonic() - started) });
+      resolve({ exitCode: code == null ? -1 : code, signal: sig, output, stderr: Buffer.concat(errors).toString('utf8'), truncated, timedOut, aborted, millis: Math.round(monotonic() - started) });
     });
   });
 }
