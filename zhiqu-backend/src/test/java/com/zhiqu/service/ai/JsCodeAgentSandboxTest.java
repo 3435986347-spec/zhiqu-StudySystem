@@ -6,7 +6,9 @@ import com.zhiqu.NodeRunner;
 import com.zhiqu.entity.AiModelConfig;
 import com.zhiqu.service.harness.HarnessModelGateway;
 import com.zhiqu.service.workspace.WorkspaceExecutor;
+import com.zhiqu.service.workspace.HostedShellGate;
 import com.zhiqu.service.workspace.SingleAccountRegistry;
+import com.zhiqu.service.workspace.WorkspaceRegistry;
 import com.zhiqu.service.workspace.WorkspaceProperties;
 import com.zhiqu.service.workspace.WorkspaceService;
 import com.zhiqu.service.workspace.WorkspaceSettingsStore;
@@ -96,6 +98,94 @@ class JsCodeAgentSandboxTest {
         JsCodeAgent js = new JsCodeAgent(provider, new SingleAccountRegistry(service, executor), props, JSON, node, cliDir.toString());
         js.useSandboxHome(home.toString());
         return js;
+    }
+
+    // ── 服务器上（第一百一十七轮）：接错了就会走普通沙箱，而普通沙箱的根目录是整个系统 ─────────
+
+    private JsCodeAgent hostedAgent(List<Map<String, Object>> replies) {
+        WorkspaceProperties props = new WorkspaceProperties();
+        props.setMode("EXEC");
+        props.setRoot(root.toString());
+        WorkspaceService service = new WorkspaceService(props, new WorkspaceSettingsStore(home.resolve("state-hosted.json").toString(), JSON), "127.0.0.1");
+        WorkspaceExecutor executor = new WorkspaceExecutor(props, service, "prod", new HostedShellGate(1, 100), 7L);
+        int[] n = {0};
+        doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = (Map<String, Object>) inv.getArgument(1);
+            bodies.add(new LinkedHashMap<>(body));
+            HarnessModelGateway.Sink sink = inv.getArgument(2);
+            sink.event("start", Map.of("contextWindow", 1_000_000));
+            sink.event("done", replies.get(Math.min(n[0]++, replies.size() - 1)));
+            return null;
+        }).when(gateway).stream(eq(7L), any(), any(), eq(false));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
+        when(provider.getObject()).thenReturn(gateway);
+        // 服务器上永远是生成到产物：照真实的给
+        WorkspaceRegistry registry = mock(WorkspaceRegistry.class);
+        when(registry.target(7L, null)).thenReturn(new WorkspaceRegistry.CodeTarget(service, executor, true));
+        JsCodeAgent js = new JsCodeAgent(provider, registry, props, JSON, node, CLI_DIR.toString());
+        js.useSandboxHome(home.toString());
+        return js;
+    }
+
+    /** canExec 是 CodeWorkspaceAgent 问 executor.enabled() 得来的：服务器上是 false（白名单不在沙箱里） */
+    private void runHosted(JsCodeAgent js) {
+        assertNotNull(js.run(config, 7L, "干活", List.of(), true, false, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add, null, "OFF"), "起不来了：" + notes);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> offered(Map<String, Object> body) {
+        return ((List<Map<String, Object>>) body.get("tools")).stream()
+                .map(t -> String.valueOf(((Map<String, Object>) t.get("function")).get("name"))).toList();
+    }
+
+    @Test
+    @DisplayName("服务器：探测问的是最小环境那一份。macOS 上没有 bubblewrap：探测说没有、不给 shell，绝不退回本机那份")
+    void 服务器上的探测和工具() throws Exception {
+        boolean mac = System.getProperty("os.name", "").toLowerCase().contains("mac");
+        JsCodeAgent asked = hostedAgent(List.of(text("好")));
+        boolean hostedBox = asked.sandboxAvailable(asked.nodeBinary(), asked.hostScript(), true);
+        if (mac) {
+            assertFalse(hostedBox, "macOS 上不该有服务器那份沙箱：多半是探测没把 hosted 传过去");
+        }
+        // 探测结果是记住的：换一个没问过的，看 run 自己问的是哪一份
+        JsCodeAgent js = hostedAgent(List.of(text("好")));
+        runHosted(js);
+        List<String> tools = offered(bodies.get(0));
+        assertFalse(tools.contains("run_command"), "白名单不在沙箱里，服务器上不能给：" + tools);
+        if (mac) {
+            assertFalse(tools.contains("shell"), "探测说没有就不给 shell：" + tools);
+        }
+    }
+
+    @Test
+    @DisplayName("服务器：模型拿到的说法是服务器那份（断网、60 秒、不能后台），没有后台的工具；问怎么起时也要说 hosted")
+    void 服务器上的说明和起法() throws Exception {
+        JsCodeAgent js = hostedAgent(List.of(text("好")));
+        js.assumeSandbox(true);
+        runHosted(js);
+        List<String> tools = offered(bodies.get(0));
+        assertTrue(tools.contains("shell"), tools.toString());
+        assertFalse(tools.contains("shell_output") || tools.contains("shell_stop"), "服务器上没有后台命令：" + tools);
+        String system = String.valueOf(((List<?>) bodies.get(0).get("messages")).get(0));
+        assertTrue(system.contains("服务器上的隔离环境") && system.contains("60 秒"), system);
+
+        WorkspaceExecutor.SandboxRequest request = new WorkspaceExecutor.SandboxRequest("true", root, root, true, "on", home, true);
+        if (System.getProperty("os.name", "").toLowerCase().contains("mac")) {
+            // 没有 bubblewrap：起不来就是不跑，不能拿本机那份凑数
+            com.zhiqu.common.BusinessException e = org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class,
+                    () -> js.sandboxLaunch(js.nodeBinary(), js.hostScript(), request));
+            assertTrue(e.getMessage().contains("沙箱"), e.getMessage());
+        } else {
+            WorkspaceExecutor.Launch launch;
+            try {
+                launch = js.sandboxLaunch(js.nodeBinary(), js.hostScript(), request);
+            } catch (com.zhiqu.common.BusinessException e) {
+                return;   // 没装 bubblewrap 的 Linux：一样是不跑
+            }
+            assertTrue(launch.args().contains("--unshare-net") && launch.args().contains("/work"), launch.args().toString());
+        }
     }
 
     /** 跳过要写明：macOS 一定有 sandbox-exec，探测说没有是探测坏了，不能和通过长得一样。别的平台、写了 -Dzhiqu.skipSandboxTests=true 才跳 */

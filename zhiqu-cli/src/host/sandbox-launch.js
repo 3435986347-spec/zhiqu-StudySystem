@@ -12,13 +12,13 @@ process.stdin.on('end', () => {
     const req = JSON.parse(input);
     const env = req.env || {};
     if (req.probe) {
-      process.stdout.write(JSON.stringify({ box: detectSandbox({ env }) }));
+      process.stdout.write(JSON.stringify({ box: detectSandbox({ env, hosted: Boolean(req.hosted) }) }));
       return;
     }
-    const box = detectSandbox({ env, probe: false });
+    const box = detectSandbox({ env, probe: false, hosted: Boolean(req.hosted) });
     if (!box) throw new Error('这台机器没有系统沙箱');
     process.stdout.write(JSON.stringify(sandboxedLaunch(box, { command: req.command, root: req.root, cwd: req.cwd, policy: req.policy, network: req.network,
-      home: req.home, env, privateDir: req.privateDir })));
+      home: req.home, env, privateDir: req.privateDir, hosted: Boolean(req.hosted) })));
   } catch (e) {
     process.stdout.write(JSON.stringify({ error: String(e && e.message || e) }));
   }

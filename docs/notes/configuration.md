@@ -64,4 +64,6 @@ Never commit real API keys; they are injected via environment variables.
 | `app.workspace.artifact-dir` | `~/.zhiqu/artifact-spaces` | 每段对话的临时空间放哪。可以随时清，接着聊时从数据库恢复 |
 | `app.workspace.artifact-retention-days` | `3` | 临时空间几天没动就清 |
 | `app.workspace.hosted-enabled` | `false` | 服务器上（生产 profile）的代码功能。打开了也不碰服务器的磁盘，只生成到产物 |
-
+| `app.workspace.hosted-shell-enabled` | `false` | 服务器上跑命令（第一百一十七轮）。要 `hosted-enabled` 也开着，bubblewrap 起不来也不跑 |
+| `app.workspace.hosted-shell-timeout-ms` | `60000` | 服务器上一条命令最多跑多久，模型要得再长也是这么长 |
+| `app.workspace.hosted-shell-slots` | `2` | 服务器上同时跑几条（全站）；一个账号一次一条 |

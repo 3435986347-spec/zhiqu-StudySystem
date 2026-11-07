@@ -87,13 +87,26 @@ public class WorkspaceExecutor {
     // 以 EXEC 起的后端切到只读还能跑命令、换了项目命令还跑在旧目录（第一百零九轮才发现）
     private final WorkspaceService workspaceService;
     private final boolean productionProfile;
+    /** 服务器上这段对话的临时空间能跑 shell（第一百一十七轮）：另一份沙箱、限时、限条数。白名单的 exec 还是关的，它不在沙箱里 */
+    private final HostedShellGate hostedGate;
+    private final Long hostedUser;
 
     public WorkspaceExecutor(WorkspaceProperties properties,
                              WorkspaceService workspaceService,
                              String activeProfiles) {
+        this(properties, workspaceService, activeProfiles, null, null);
+    }
+
+    public WorkspaceExecutor(WorkspaceProperties properties,
+                             WorkspaceService workspaceService,
+                             String activeProfiles,
+                             HostedShellGate hostedGate,
+                             Long hostedUser) {
         this.properties = properties;
         this.workspaceService = workspaceService;
         this.productionProfile = isProduction(activeProfiles);
+        this.hostedGate = hostedGate;
+        this.hostedUser = hostedUser;
         if (this.productionProfile && access().effectiveMode().allowsExec()) {
             log.warn("生产 profile 下不允许执行命令，app.workspace.mode=EXEC 的执行能力已禁用");
         }
@@ -214,11 +227,16 @@ public class WorkspaceExecutor {
      * 生产 profile 一律不行，这条和 {@link #enabled()} 一样不能绕。还要这台机器真有沙箱，那一条调用方问（{@code JsCodeAgent}）。
      */
     public boolean shellEnabled() {
-        return access().effectiveMode().allowsRead() && !productionProfile;
+        return access().effectiveMode().allowsRead() && (!productionProfile || hostedShell());
+    }
+
+    /** 这是不是服务器上那种。给不给 gate 是 WorkspaceRegistry 判的（生产 profile + 两个开关），只判一处 */
+    public boolean hostedShell() {
+        return hostedGate != null;
     }
 
     /** 请沙箱实现回答「这条命令怎么起」时交过去的东西：全部由后端定，不来自子进程。 */
-    public record SandboxRequest(String command, Path root, Path cwd, boolean write, String network, Path privateDir) {
+    public record SandboxRequest(String command, Path root, Path cwd, boolean write, String network, Path privateDir, boolean hosted) {
     }
 
     /** 起进程要的东西：沙箱实现（zhiqu-cli/src/tools/sandbox.js）给的。 */
@@ -238,6 +256,16 @@ public class WorkspaceExecutor {
     /** @param timeoutMs 这条命令的时限，模型给的；0 或负的用默认（shellTimeoutMs） */
     public ExecResult shell(String command, String relativeDir, boolean write, Function<SandboxRequest, Launch> sandbox, long timeoutMs) {
         ShellStart start = prepareShell(command, relativeDir, write, sandbox);
+        if (hostedShell()) {
+            long limit = properties.getHostedShellTimeoutMs();
+            try (AutoCloseable slot = hostedGate.enter(hostedUser)) {
+                return runLine(start.line(), List.of(), start.full(), start.cwd(), start.env(), timeoutMs > 0 ? Math.min(timeoutMs, limit) : limit);
+            } catch (BusinessException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new BusinessException("执行失败：" + e.getMessage());
+            }
+        }
         return runLine(start.line(), List.of(), start.full(), start.cwd(), start.env(), effectiveTimeout(timeoutMs, properties.getShellTimeoutMs()));
     }
 
@@ -268,7 +296,7 @@ public class WorkspaceExecutor {
         }
         Path cwd = resolveDir(relativeDir);
         boolean canWrite = write && current.effectiveMode().allowsExec();
-        Launch launch = sandbox.apply(new SandboxRequest(line, current.root(), cwd, canWrite, properties.getSandboxNetwork(), privateDir));
+        Launch launch = sandbox.apply(new SandboxRequest(line, current.root(), cwd, canWrite, properties.getSandboxNetwork(), privateDir, hostedShell()));
         List<String> full = new ArrayList<>();
         full.add(launch.binary());
         full.addAll(launch.args());
@@ -279,6 +307,9 @@ public class WorkspaceExecutor {
      * 后台命令（第一百一十二轮，shell 的 background: true）：和前台一样关在沙箱里，门一样。起了就回；一轮结束调用方全部 {@link Background#stop()}。
      */
     public Background startShell(String command, String relativeDir, boolean write, Function<SandboxRequest, Launch> sandbox) {
+        if (hostedShell()) {
+            throw new BusinessException("服务器上不能起后台命令：一条命令最多跑 " + properties.getHostedShellTimeoutMs() / 1000 + " 秒");
+        }
         ShellStart start = prepareShell(command, relativeDir, write, sandbox);
         try {
             return new Background(builderFor(start.full(), start.cwd(), start.env()).start(), properties.getExecOutputLimitBytes());

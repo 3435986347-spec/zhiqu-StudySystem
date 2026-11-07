@@ -95,7 +95,24 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 - 面板只显示最近一轮的产物，所以另有 `GET /api/ai/generated-files`（每个路径最新的那份）列「之前生成的文件」，不然换一轮、刷新就点不到了（真浏览器里发现的）。
 - 下载 `GET /api/ai/artifacts/{id}/files/{fileId}`：只有本人；一律 `attachment` + `nosniff` + `CSP: sandbox`，不在本站打开，否则一个 HTML 就能拿到页面的登录令牌。预览在前端：HTML 关在 `sandbox="allow-scripts"` 的 iframe 里（没有 `allow-same-origin`，真浏览器里偷令牌是 `SecurityError`），图片走 `<img>`（SVG 里的脚本不跑，类型按扩展名给），别的只进 `textContent`。
 - 临时空间几天没动就清（`app.workspace.artifact-retention-days`，默认 3），接着聊时从数据库恢复；还在的不覆盖（命令可能改过）。删 Notebook 连文件和空间一起删。
-- **服务器上默认关**（`app.workspace.hosted-enabled=false`）。打开之后只有产物这一种：写了目录也不看，碰磁盘的接口（`browse`、`pick-folder`、`files`、`file`、`search`）照旧 `requireLocal()`，切档位走 `requireTierAccess()`（Host 是公开的域名）。这一轮服务器上还不跑命令（生产 profile 的执行器是关的），下一轮才有隔离。**本机的后端切档位还是只认本机的请求**，配了 `hosted-enabled` 也一样：不然陌生网页注册个账号就能在用户电脑上跑命令。
+- **服务器上默认关**（`app.workspace.hosted-enabled=false`）。打开之后只有产物这一种：写了目录也不看，碰磁盘的接口（`browse`、`pick-folder`、`files`、`file`、`search`）照旧 `requireLocal()`，切档位走 `requireTierAccess()`（Host 是公开的域名）。跑命令要另开 `app.workspace.hosted-shell-enabled`，见下一段。**本机的后端切档位还是只认本机的请求**，配了 `hosted-enabled` 也一样：不然陌生网页注册个账号就能在用户电脑上跑命令。
+
+**服务器上跑命令（第一百一十七轮，用户要的）**：所有注册用户都能叫起的命令，跑在放着数据库和主密钥的机器上。**边界错了就是全部用户的数据**，所以两个开关都开才有（`hosted-enabled` + `hosted-shell-enabled`，默认都关），`bubblewrap` 起不来或者探测时边界不在，就不给 `shell`，只生成文件（`detectSandbox({ hosted: true })` 真跑一次，要 `/work` 写得了、`/home` 不存在、连不上外网）。实现在 `sandbox.js` 的 `hostedLaunch`，和本机那份不是一回事：
+
+| | 本机的沙箱 | 服务器的沙箱 |
+|---|---|---|
+| 思路 | 全部能读，挡住要紧的 | **只给这几样**，别的路径在里面根本不存在 |
+| 文件系统 | `/` 只读，挡家目录 | 只有 `/usr`（`/bin`、`/lib` 这些）、`/etc` 的小子集（`passwd` 是假的）、`/work`、`/tmp`。根目录和 `/proc` 只读 |
+| 网络 | 默认断，用户能放开 | 永远断，不听配置（本机的 MySQL、Redis、云厂商的元数据服务都不通） |
+| 进程 | 看得到同一沙箱里的 | 自己的 PID 命名空间，命令自己是 1 号进程 |
+| 再逃 | | 没有能力（`--cap-drop ALL`）、`no_new_privs`（`sudo` 没用）、不能再建用户命名空间（`--disable-userns`，少一大块内核攻击面）、环境变量清空 |
+| 资源 | 不限 | 一条 60 秒、进程 128、单个文件 64MB、CPU 90 秒、打开文件 256；优先级最低；`oom_score_adj=1000`（内存不够先杀它）；全站同时 2 条、一个账号 1 条（`HostedShellGate`）；没有后台命令 |
+
+白名单的 `run_command` 在服务器上一直是关的：它不在沙箱里。不用 `--unshare-all`：它对用户、cgroup 命名空间是「能开就开」，开不了就悄悄不开，这里开不了就该起不来。
+
+真跑才查出来的（读代码看不出来）：根目录默认能写（`/etc/ld.so.preload` 能盖）；`/proc/1/cmdline` 是 bwrap 的全部参数（服务器上的真路径、账号 id），加 `--as-pid-1`；普通权限能把 `oom_score_adj` 调回 0（`--remount-ro /proc`）。
+
+**判据只有在 Linux 上才真的跑**（`test/sandbox-hosted.test.js`，macOS 上 14 条显式跳过）：改了这份沙箱要在容器里跑（`deploy/ubuntu/` 有办法），部署之后在真服务器上再跑一遍。
 
 **两个出口问同一个判定。** 工作区的内容有 `/api/workspace/**` 和 code agent 两个出口，判定收在 `CodeWorkspaceAgent.readableBy(userId)` 一处（问这个账号自己的档位），`CodeAgentGateTest` 断言 `effectiveMode().allowsRead()` 在全文件只出现一次。code agent 一度只问全局的档位，普通用户对助手说一句「看看 xxx.java」就绕过了 HTTP 那一侧的门。
 

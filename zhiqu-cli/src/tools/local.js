@@ -149,8 +149,8 @@ export function shellSeconds(value) {
 }
 
 /** shell 工具（第一百零九轮）：有系统沙箱才下发，下发了就不再给 run_command（见 agent.js 的 toolset）。 */
-export function shellSchemas() {
-  return [
+export function shellSchemas({ background = true } = {}) {
+  const tools = [
     fn('shell', '在工作区里运行一条 bash 命令：管道、重定向、&& 都能用。用来跑测试、构建、查 git、搜东西。命令跑在系统沙箱里，边界见「环境」一节。',
       { command: { type: 'string', description: '一整条 shell 命令，字符串' },
         cwd: { type: 'string', description: '在哪个子目录里运行，默认工作区根' },
@@ -161,6 +161,10 @@ export function shellSchemas() {
         wait_seconds: { type: 'number', description: `等一会儿再回，结束了立刻回。默认 0，最多 ${MAX_WAIT_SECONDS}` } }, ['id']),
     fn('shell_stop', '停掉后台命令，连它的子进程一起。', { id: { type: 'string', description: '后台命令的 id' } }, ['id']),
   ];
+  if (background) return tools;
+  const [shell] = tools;   // 没有后台命令：参数里也不提，免得模型去试
+  delete shell.function.parameters.properties.background;
+  return [shell];
 }
 
 /** 一次 shell 的结果怎么说（命令行和网页同一种说法）。被挡住的猜测只在沙箱里才说。 */

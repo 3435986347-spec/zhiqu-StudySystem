@@ -259,7 +259,7 @@ public class JsCodeAgent {
         watchdog.start();
 
         // 这台机器有系统沙箱就给 shell（第一百零九轮，和命令行一致）。能写工作区要 auto 档（EXEC）+ 这一轮有写意图；plan、manual 是只读沙箱
-        boolean canShell = executor.shellEnabled() && sandboxAvailable(nodeBin, script);
+        boolean canShell = executor.shellEnabled() && sandboxAvailable(nodeBin, script, executor.hostedShell());
         boolean shellWrite = canShell && canExec && canWrite;
         Map<String, Object> model = new LinkedHashMap<>();
         model.put("id", config.getId());
@@ -270,6 +270,7 @@ public class JsCodeAgent {
         run.put("type", "run");
         run.put("root", root.toString());
         run.put("artifact", target.artifact());
+        run.put("hosted", executor.hostedShell());
         run.put("message", userMessage);
         run.put("history", history == null ? List.of() : history);
         run.put("canWrite", canWrite);
@@ -409,6 +410,11 @@ public class JsCodeAgent {
      * 这台机器有没有能用的系统沙箱：问一次记住（真跑一次，嵌套沙箱、用户命名空间被关时算没有）。没有就退回白名单的 run_command，和命令行一样。
      */
     boolean sandboxAvailable(String nodeBin, Path hostScript) {
+        return sandboxAvailable(nodeBin, hostScript, false);
+    }
+
+    /** hosted：问的是服务器上那份最小环境。一个后端只会问其中一种（生产 profile 决定），记一份就够 */
+    boolean sandboxAvailable(String nodeBin, Path hostScript, boolean hosted) {
         Boolean known = sandboxKnown;
         if (known != null) {
             return known;
@@ -417,6 +423,7 @@ public class JsCodeAgent {
         try {
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("probe", true);
+            request.put("hosted", hosted);
             request.put("env", toolEnv(nodeBin));
             available = askSandbox(nodeBin, hostScript, request).path("box").isObject();
         } catch (Exception e) {
@@ -596,6 +603,7 @@ public class JsCodeAgent {
         request.put("home", sandboxHome);
         request.put("env", toolEnv(nodeBin));
         request.put("privateDir", r.privateDir().toString());
+        request.put("hosted", r.hosted());
         try {
             JsonNode answer = askSandbox(nodeBin, hostScript, request);
             List<String> args = new ArrayList<>();

@@ -3,6 +3,7 @@ package com.zhiqu.service.workspace;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
@@ -258,5 +259,109 @@ class WorkspaceAccountsTest {
         ArtifactSpaces.deleteTree(withLink);
         assertFalse(Files.exists(withLink));
         assertTrue(Files.exists(outside.resolve("keep.txt")), "软链指向的东西不能被删");
+    }
+
+    // ── 服务器上跑命令（第一百一十七轮）──────────────────────
+
+    private WorkspaceRegistry hostedRegistry(boolean shell) {
+        WorkspaceProperties props = artifactProps(true);
+        props.setHostedShellEnabled(shell);
+        props.setHostedShellTimeoutMs(1500);
+        props.setHostedShellSlots(1);
+        props.setHostedShellWaitMs(200);
+        return registry(props, "127.0.0.1", "prod");
+    }
+
+    @Test
+    @DisplayName("服务器：要两个开关都开才跑 shell；白名单的 exec 一直是关的（它不在沙箱里）；本机的后端不走这一条")
+    void 服务器跑命令的开关() throws Exception {
+        WorkspaceRegistry off = hostedRegistry(false);
+        off.service(1L).applySettings("EXEC", "");
+        assertFalse(off.target(1L, 5L).executor().shellEnabled(), "只开了 hosted-enabled：只生成文件");
+        assertFalse(off.target(1L, 5L).executor().hostedShell());
+
+        WorkspaceRegistry on = hostedRegistry(true);
+        on.service(1L).applySettings("EXEC", "");
+        WorkspaceExecutor exec = on.target(1L, 5L).executor();
+        assertTrue(exec.shellEnabled());
+        assertTrue(exec.hostedShell());
+        assertFalse(exec.enabled(), "白名单不在沙箱里，服务器上不能开");
+        org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class,
+                () -> exec.exec("python3", java.util.List.of("a.py"), ""), "白名单不能跑");
+        on.service(2L).applySettings("OFF", "");
+        assertFalse(on.target(2L, 5L).executor().shellEnabled(), "账号自己关着");
+
+        WorkspaceProperties props = artifactProps(true);
+        props.setHostedShellEnabled(true);
+        WorkspaceRegistry local = registry(props, "127.0.0.1", "");
+        local.service(1L).applySettings("EXEC", "");
+        assertFalse(local.target(1L, 5L).executor().hostedShell(), "不是生产 profile：配了也走普通的沙箱");
+        assertTrue(local.target(1L, 5L).executor().shellEnabled());
+    }
+
+    private static WorkspaceExecutor.Launch sleeping() {
+        return new WorkspaceExecutor.Launch("/bin/sh", java.util.List.of("-c", "sleep 30"), java.util.Map.of());
+    }
+
+    private static WorkspaceExecutor.Launch echoing() {
+        return new WorkspaceExecutor.Launch("/bin/sh", java.util.List.of("-c", "echo ok"), java.util.Map.of());
+    }
+
+    @Test
+    @Timeout(20)
+    @DisplayName("服务器：模型要得再长也是 60 秒那个限；告诉沙箱实现这是 hosted；不能起后台命令")
+    void 服务器的时限和后台() throws Exception {
+        WorkspaceRegistry on = hostedRegistry(true);
+        on.service(1L).applySettings("EXEC", "");
+        WorkspaceExecutor exec = on.target(1L, 5L).executor();
+        long started = System.currentTimeMillis();
+        boolean[] hosted = {false};
+        WorkspaceExecutor.ExecResult r = exec.shell("sleep 30", "", true, q -> { hosted[0] = q.hosted(); return sleeping(); }, 600_000L);
+        assertTrue(r.timedOut(), "模型要 600 秒也只给配置的时限");
+        assertTrue(System.currentTimeMillis() - started < 10_000, "超时了还在等");
+        assertTrue(hosted[0], "沙箱实现要知道这是服务器");
+        assertTrue(exec.shell("x", "", true, q -> echoing()).output().contains("ok"), "时限到了之后槽位要还回来");
+        com.zhiqu.common.BusinessException e = org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class,
+                () -> exec.startShell("sleep 30", "", true, q -> sleeping()));
+        assertTrue(e.getMessage().contains("后台"), e.getMessage());
+    }
+
+    @Test
+    @Timeout(20)
+    @DisplayName("同时跑几条：一个账号一次一条，全站有总数；放不下说清楚、不跑；跑完还回来")
+    void 同时跑几条() throws Exception {
+        HostedShellGate gate = new HostedShellGate(1, 100);
+        AutoCloseable first = gate.enter(1L);
+        com.zhiqu.common.BusinessException mine = org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class, () -> gate.enter(1L));
+        assertTrue(mine.getMessage().contains("你还有一条"), mine.getMessage());
+        com.zhiqu.common.BusinessException full = org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class, () -> gate.enter(2L));
+        assertTrue(full.getMessage().contains("太多"), full.getMessage());
+        first.close();
+        AutoCloseable second = gate.enter(2L);   // 全站满了那次失败要把账号的槽还回来
+        second.close();
+        gate.enter(2L).close();
+        gate.enter(1L).close();
+    }
+
+    @Test
+    @Timeout(20)
+    @DisplayName("闸门真的接在执行器上：全站只有一个槽时，别的账号、别的对话的命令都轮不到，说清楚、不跑；跑完就轮到了")
+    void 闸门接在执行器上() throws Exception {
+        WorkspaceRegistry on = hostedRegistry(true);
+        on.service(1L).applySettings("EXEC", "");
+        on.service(2L).applySettings("EXEC", "");
+        WorkspaceExecutor first = on.target(1L, 5L).executor();
+        Thread busy = new Thread(() -> first.shell("sleep 30", "", true, q -> sleeping(), 0));
+        busy.start();
+        Thread.sleep(300);
+        boolean[] ran = {false};
+        com.zhiqu.common.BusinessException other = org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class,
+                () -> on.target(2L, 6L).executor().shell("x", "", true, q -> { ran[0] = true; return echoing(); }, 0));
+        assertTrue(other.getMessage().contains("太多"), other.getMessage());
+        com.zhiqu.common.BusinessException mine = org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class,
+                () -> on.target(1L, 7L).executor().shell("x", "", true, q -> echoing(), 0), "同一个账号的另一段对话也算");
+        assertTrue(mine.getMessage().contains("你还有一条"), mine.getMessage());
+        busy.join();
+        assertTrue(on.target(2L, 6L).executor().shell("x", "", true, q -> echoing(), 0).output().contains("ok"), "跑完就轮到了");
     }
 }

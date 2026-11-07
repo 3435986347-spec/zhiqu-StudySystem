@@ -117,7 +117,7 @@ export function historyBlock(history) {
 export async function runHosted(bridge, run) {
   const Tools = run.artifact ? ArtifactTools : DraftTools;   // 生成到产物：写进临时空间，不走草稿
   const local = new Tools({ root: run.root, exec: (req, opts) => bridge.exec(req, opts),
-    canWrite: Boolean(run.canWrite), canExec: Boolean(run.canExec), canShell: Boolean(run.canShell), shellWrite: Boolean(run.shellWrite),
+    canWrite: Boolean(run.canWrite), canExec: Boolean(run.canExec), canShell: Boolean(run.canShell), shellWrite: Boolean(run.shellWrite), hosted: Boolean(run.hosted),
     sandboxNetwork: typeof run.sandboxNetwork === 'string' ? run.sandboxNetwork : 'off', commands: Array.isArray(run.commands) ? run.commands.map(String) : [] });
   let transcript = '';
   const ui = new Ui({ input: new PassThrough(), output: new Writable({ write(c, e, cb) { transcript += c; cb(); } }), interactive: false, color: false });

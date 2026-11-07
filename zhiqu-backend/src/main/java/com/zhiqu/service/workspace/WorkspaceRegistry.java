@@ -89,7 +89,22 @@ public class WorkspaceRegistry {
             return new CodeTarget(mine, executor(userId), true);
         }
         WorkspaceService scratch = WorkspaceService.scratch(properties, access.effectiveMode(), real(root));
-        return new CodeTarget(scratch, new WorkspaceExecutor(properties, scratch, activeProfiles), true);
+        // 本机的后端走普通的沙箱；服务器上打开了才有那份最小环境。userId 用来限一个账号一次一条
+        return new CodeTarget(scratch, new WorkspaceExecutor(properties, scratch, activeProfiles, hostedShellOn() ? hostedGate() : null, userId), true);
+    }
+
+    private boolean hostedShellOn() {
+        return artifactOnly() && properties.isHostedShellEnabled();
+    }
+
+    private volatile HostedShellGate gate;
+
+    /** 全站一个：一段对话一个执行器，但同时跑几条是全站的事 */
+    private synchronized HostedShellGate hostedGate() {
+        if (gate == null) {
+            gate = new HostedShellGate(properties.getHostedShellSlots(), properties.getHostedShellWaitMs());
+        }
+        return gate;
     }
 
     public Path space(Long userId, Long conversationId) {

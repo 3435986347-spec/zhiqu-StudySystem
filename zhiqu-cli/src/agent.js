@@ -158,7 +158,8 @@ export function toolset(ctx) {
     if (sandboxed && t.function.name === 'run_command') continue;
     if (!plan || READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'local' });
   }
-  if (sandboxed) for (const t of shellSchemas()) out.push({ schema: t, kind: 'local' });
+  // 服务器上没有后台命令（第一百一十七轮）：要管它们活多久、占多少，先不给
+  if (sandboxed) for (const t of shellSchemas({ background: !ctx.local.hosted })) out.push({ schema: t, kind: 'local' });
   for (const t of ctx.remoteTools || []) {
     if (!plan || REMOTE_READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'remote' });
   }
@@ -189,7 +190,7 @@ export function toolset(ctx) {
 export function systemText(ctx) {
   const env = environmentBlock({
     root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.execReadOnly ? 'exec-read' : ctx.mode, commands: ctx.local.commands,
-    shell: ctx.local.sandbox ? describeBoundary({ policy: shellPolicy(ctx), network: ctx.local.sandboxNetwork }) : null,
+    shell: ctx.local.sandbox ? describeBoundary({ policy: shellPolicy(ctx), network: ctx.local.sandboxNetwork, hosted: ctx.local.hosted }) : null,
     shellWrites: Boolean(ctx.local.sandbox) && shellPolicy(ctx) === WORKSPACE_WRITE,
     today: today(), draft: Boolean(ctx.local.drafts), artifact: Boolean(ctx.local.artifact),
   });

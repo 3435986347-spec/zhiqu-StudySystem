@@ -91,7 +91,7 @@ export class DraftTools extends LocalTools {
     if (r.error) return { error: r.error };
     this.ranCommand = true;
     const snap = { ...r, id: r.jobId };
-    return { id: r.jobId, content: describeJob(snap, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork }) }), snap };
+    return { id: r.jobId, content: describeJob(snap, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork, hosted: this.hosted }) }), snap };
   }
 
   async readJob(args = {}, { signal } = {}) {
@@ -99,7 +99,7 @@ export class DraftTools extends LocalTools {
     const r = await this.exec({ job: 'read', jobId: String(args.id || ''), waitMs: wait * 1000 }, { signal });
     if (r.error) return { error: r.error };
     const snap = { ...r, id: r.jobId };
-    return { content: describeJob(snap, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork }) }), snap };
+    return { content: describeJob(snap, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork, hosted: this.hosted }) }), snap };
   }
 
   async stopJob(args = {}, { signal } = {}) {
@@ -113,7 +113,7 @@ export class DraftTools extends LocalTools {
     const r = await this.exec({ shell: true, command: prep.command, cwd: prep.cwd, ...(prep.timeoutSeconds ? { timeoutMs: prep.timeoutSeconds * 1000 } : {}) }, { signal });
     if (r.error) return { content: `${r.error}${this.pendingNote()}`, summary: '没有运行', exitCode: -1, output: '' };
     this.ranCommand = true;
-    const out = shellOutcome(prep, r, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork }) });
+    const out = shellOutcome(prep, r, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork, hosted: this.hosted }) });
     return { ...out, content: `${out.content}${this.pendingNote()}` };
   }
 
@@ -164,6 +164,7 @@ export class ArtifactTools extends DraftTools {
   constructor(options) {
     super(options);
     this.artifact = true;
+    this.hosted = Boolean(options.hosted);   // 服务器上：另一份沙箱，没有后台命令
     this.wrote = new Set();
     // 扩展名白名单防的是把用户的 .env、.pem 读进上下文。临时空间里只有模型自己写的东西，拦着只会让 .svg、.drawio 这些写不了
     this.guard.extensionAllowed = () => true;

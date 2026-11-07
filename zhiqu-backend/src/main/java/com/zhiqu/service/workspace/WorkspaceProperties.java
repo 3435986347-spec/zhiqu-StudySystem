@@ -127,6 +127,25 @@ public class WorkspaceProperties {
     /** 服务器上（生产 profile）的代码功能：默认关，部署时打开。打开了也不碰服务器的磁盘，只生成到产物 */
     private boolean hostedEnabled = false;
 
+    /** 服务器上跑命令（第一百一十七轮）：默认关，部署时打开。打开了隔离起不来也不跑，只生成文件 */
+    private boolean hostedShellEnabled = false;
+    /** 服务器上一条命令最多跑多久。模型要得再长也是这么长 */
+    private long hostedShellTimeoutMs = 60_000L;
+    /** 服务器上同时跑几条（全站） */
+    private int hostedShellSlots = 2;
+
+    /** 轮不到时等多久：不让模型的一轮一直挂着 */
+    private long hostedShellWaitMs = 15_000L;
+
+    public long getHostedShellWaitMs() { return hostedShellWaitMs; }
+    public void setHostedShellWaitMs(long hostedShellWaitMs) { this.hostedShellWaitMs = hostedShellWaitMs; }
+    public boolean isHostedShellEnabled() { return hostedShellEnabled; }
+    public void setHostedShellEnabled(boolean hostedShellEnabled) { this.hostedShellEnabled = hostedShellEnabled; }
+    public long getHostedShellTimeoutMs() { return hostedShellTimeoutMs; }
+    public void setHostedShellTimeoutMs(long hostedShellTimeoutMs) { this.hostedShellTimeoutMs = hostedShellTimeoutMs; }
+    public int getHostedShellSlots() { return hostedShellSlots; }
+    public void setHostedShellSlots(int hostedShellSlots) { this.hostedShellSlots = hostedShellSlots; }
+
     public String getArtifactDir() { return artifactDir; }
     public void setArtifactDir(String artifactDir) { this.artifactDir = artifactDir; }
     public int getArtifactRetentionDays() { return artifactRetentionDays; }
