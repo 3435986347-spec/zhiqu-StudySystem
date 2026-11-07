@@ -2019,7 +2019,7 @@ function whenOnline(fn) {
 // ───────────────────────── 代码工作区：选项目、切档位 ─────────────────────────
 // 用户 2026-11-02：「在输入框上方选择项目里面选择目录，参考其他的 coding agent 产品，几个模式档位也用按钮点击切换」「模式的名字改成plan，auto，manual，close」；
 // 2026-11-05：「左侧下面的工作区去掉」「点击选择文件夹应该直接打开系统的文件夹和文件页面」「档位切换有明显卡顿，放在输入框下方，点击向上拉起切换档位的面板」。
-// 项目按钮在输入框上方，档位按钮在输入框下面那条工具里。三条前提（回环 / 目录存在 / 管理员）由后端裁决，前端不复述 ——
+// 项目按钮在输入框上方，档位按钮在输入框下面那条工具里。前提（回环 / 目录存在 / 本机的请求）由后端裁决，前端不复述 ——
 // 选了的档位没生效时，把后端说的原因（reason）写出来，不偷偷改按钮。
 var WS_MODE_ORDER = ['OFF', 'READ', 'WRITE', 'EXEC'];   // 按能力从小到大，最常用的离按钮最近
 var WS_MODE_NAME = { OFF: 'close', READ: 'plan', WRITE: 'manual', EXEC: 'auto' };
@@ -2257,7 +2257,7 @@ function openWorkspaceFolderPicker(startPath, onPick) {
 async function loadWorkspace() {
   var status = null;
   try {
-    // /settings 是管理员限定的：拿得到 = 是管理员，选项目和档位就该显示（哪怕当前 close，要给他开的地方）。拿不到（403）= 非管理员，静默不显示
+    // /settings 只认本机的请求（第一百一十五轮起登录的用户都能用）：拿得到 = 在本机，选项目和档位就该显示（哪怕当前 close，要给他开的地方）。拿不到（403）= 非管理员，静默不显示
     status = await api.get('/workspace/settings');
   } catch (e) { /* 不显示 */ }
   paintWorkspaceBar(status);

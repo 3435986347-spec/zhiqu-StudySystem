@@ -15,10 +15,10 @@ AI 助手原本只是个「work agent」（排计划、写 Wiki、做检索）�
 不是「开了个小的」。三档都已实现：READ 读、WRITE 写草稿（确认后落盘）、EXEC 再加执行沙箱。
 
 **档位与根目录现在能从界面切换**（第一百零五轮起：AI 助手输入框正上方是项目按钮 —— 最近的项目 + 「选择文件夹…」；输入框下面工具条上一个按钮写当前档位，点开向上拉起面板，close / plan / manual / auto = OFF / READ / WRITE / EXEC，选了面板马上收、名字马上变，只发一个 `PUT /api/workspace/settings`，回的状态直接画；在途时最后点的生效。第一百零三轮是上方一排按钮 + 左侧一块文件树，第一百零五轮都去掉了，`/workspace/files`、`/search`、`/status` 页面不再用，接口留着）；
-「选择文件夹…」弹**系统自带的选择框**（`POST /api/workspace/pick-folder`，管理员 + 回环；后端和用户在同一台电脑才开得了工作区，所以由后端起 `osascript` / PowerShell / `zenity`，浏览器的文件框给不出绝对路径。见 `WorkspaceFolderDialog`：路径走环境变量不拼进脚本、一次只开一个、10 分钟没选就关；弹不了退回页面里一层层点的选择器）。
-不必再改 `application.yml`；用户的选择持久化在 `~/.zhiqu/workspace-state.json`
+「选择文件夹…」弹**系统自带的选择框**（`POST /api/workspace/pick-folder`，本机的请求 + 回环；后端和用户在同一台电脑才开得了工作区，所以由后端起 `osascript` / PowerShell / `zenity`，浏览器的文件框给不出绝对路径。见 `WorkspaceFolderDialog`：路径走环境变量不拼进脚本、一次只开一个、10 分钟没选就关；弹不了退回页面里一层层点的选择器）。
+不必再改 `application.yml`；每个账号的选择持久化在 `~/.zhiqu/workspace-state/<账号>.json`（第一百一十五轮起分账号）
 （桌面每次重启新 JVM，不持久化就每次回到 OFF）。文件夹选择器走 `GET /api/workspace/browse`
-（只列目录、管理员 + 回环）。**本机起验证用的后端要带 `--app.workspace.state-file=<临时路径>`**：这份文件一旦存在，
+（只列目录、本机的请求 + 回环）。**本机起验证用的后端要带 `--app.workspace.state-file=<临时路径>`**：这份文件一旦存在，
 它说的档位和根目录就盖过命令行的 `app.workspace.mode` / `root` —— 第九十二轮在验证库上起了一个 WRITE、指向临时目录的后端，
 实际生效的是这台机器上用户选的 EXEC + 一个真实项目目录，code agent 在那里面列了目录、搜了一遍（没写，草稿也没出）。
 **切换绕不过下面三条前提** —— `WorkspaceService.applySettings`
@@ -45,9 +45,15 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 是为了别把 `.env` / `.pem` / `id_rsa` 喂进模型上下文；所以列目录时就把不可读的文件
 标成不可读，而不是等用户点开才拒绝。
 
-四个 HTTP 端点 `/api/workspace/{status,files,file,search}` **全部要管理员**（`WorkspaceControllerGuardTest` 扫的是「每个 `@*Mapping` 都要调 `requireAdmin()`」，所以新加端点会被自动纳入，不用改判据）。理由不是权限模型，
-是这个功能读的是**服务器**的磁盘 —— 多用户部署里，普通用户能读的应该是他自己的东西，
-而工作区里没有一个字节属于他。
+`/api/workspace/**` 的每个接口第一句都是 `requireLocal()`（`WorkspaceControllerGuardTest` 扫的是「每个 `@*Mapping` 都要调」，新加端点自动纳入）。
+
+**登录的用户都能用（第一百一十五轮，用户 2026-11-07 要的；原来只给管理员），档位和文件夹分账号。** 去掉管理员校验不能只是删一行：注册是开放的，一个陌生网页用 DNS 重绑定（它的域名解析到 127.0.0.1）能连上用户电脑上的后端，注册、登录都成功（真后端上试过），原来只有管理员校验挡在后面。绑回环挡不住它，连接确实来自本机，认得出它的只有 `Host`。所以：
+- **`LocalRequest`**：连接来自回环地址 + `Host` 是 `localhost` / `127.x.x.x` / `[::1]` + 没有反向代理的转发头（服务器上是 Caddy 转给绑回环的后端，连接同样来自本机）。工作区接口都走它；陌生网页开不了档位。
+- **分账号**（`WorkspaceRegistry`：一个账号一份 `WorkspaceService` + `WorkspaceExecutor`）：新账号默认关。陌生网页注册的账号开不了档位，也就叫不起 code agent。选择存在这台电脑上、不进数据库：路径只在这台电脑上有意义，而几个后端连同一个库。原来那份不分账号的 `workspace-state.json` 谁也不继承（不然「原来开着 EXEC」就变成每个账号都开着）。
+- **配置给了默认档位**（`app.workspace.mode` 不是 OFF，本机开发用）时新账号一注册就有档位，走 `/api/ai/**` 能叫起 code agent，工作区接口那道门管不到：`WorkspaceDefaultLocalFilter` 让整个 `/api/**` 只接本机的请求。默认配置下它什么都不做。
+- **生产 profile 一律关**（`WorkspaceAccess.production`），连本机的请求也不给：读写的是后端所在电脑的磁盘，服务器上那是所有人的数据和密钥。
+
+**还挡不住的**：同一台电脑上别的系统账号、别的程序能连这个端口、注册账号，然后用后端的身份读写它们选的任何文件夹（只读目录名的 `browse` 也一样）。管理员校验原来挡得住这一条，放开之后要靠「这台电脑只有你在用」。
 
 搜索是**字面量匹配、不接受正则**：这个入口的调用方是模型，而 `(a+)+b` 这类正则在不匹配时
 会灾难性回溯，把我们自己的 JVM 跑满几分钟 —— 模型没有恶意也会写出来。三道上限各挡一件事：
@@ -83,10 +89,7 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 
 写盘用「临时文件 + 原子改名」：直接就地写，中途失败会留下一个被截断的源码文件。
 
-**读工作区也要管理员。** `/api/workspace/**` 限了管理员，而 code agent 一度只检查档位 ——
-那样普通用户对助手说一句「看看 xxx.java」就绕过了那道门，HTTP 那一侧的限制等于装饰。
-判定收在 `AiServiceImpl.workspaceReadableBy(userId)` 一处，`CodeAgentGateTest` 断言
-`effectiveMode().allowsRead()` 在全文件只出现一次。
+**两个出口问同一个判定。** 工作区的内容有 `/api/workspace/**` 和 code agent 两个出口，判定收在 `CodeWorkspaceAgent.readableBy(userId)` 一处（问这个账号自己的档位），`CodeAgentGateTest` 断言 `effectiveMode().allowsRead()` 在全文件只出现一次。code agent 一度只问全局的档位，普通用户对助手说一句「看看 xxx.java」就绕过了 HTTP 那一侧的门。
 
 **目录软链曾经能把工作区漏出去。** `normalize()` 是纯字符串运算，不解析软链；而守卫只检查
 路径最后一段是不是软链。于是 `root/docs -> /别处` 存在时，`docs/secret.md` 两道检查都通过。
@@ -221,7 +224,7 @@ code agent 在项目语境下拿到 `create_study_plan`（**同一个 schema，�
 CODE_AGENT：读门动作词没有「做」，写门没有「放在」。两层都漏了。修法两半：
 
 - 输入框旁的**「代码」按钮**（`contextOptions.codeMode`，只认字面 `true`，只在工作区生效时出现）。
-  按下就不再猜意图、并给写工具；但**绕不过**工作区的回环 / 管理员 / 可读前提。
+  按下就不再猜意图、并给写工具；但**绕不过**工作区的回环 / 这个账号的档位 / 可读前提。
   **第一百零五轮按钮去掉了**（用户：「感觉多余了」）：档位开着（生效了）每句都带 `codeMode: true`，想普通聊天切到 close；`codeMode` 的语义和后端的门不变。
   `AgentPlanDecision.codeAgentIntent(message, options)` / `codeWriteIntent(message, options)`
   是这个 OR 的唯一出处，建图与执行共用。

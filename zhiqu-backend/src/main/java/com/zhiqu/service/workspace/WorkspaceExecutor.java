@@ -4,8 +4,6 @@ import com.zhiqu.common.BusinessException;
 import com.zhiqu.common.DeploymentProfiles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -59,7 +57,6 @@ import java.util.function.Function;
  * <p>环境清空之后子进程就没有 {@code PATH} 了，所以命令名在<b>父进程</b>这一侧解析成绝对路径，
  * 再交给子进程 —— 解析用父进程的 PATH，但那份 PATH 不会传下去。
  */
-@Service
 public class WorkspaceExecutor {
     private static final Logger log = LoggerFactory.getLogger(WorkspaceExecutor.class);
 
@@ -86,14 +83,14 @@ public class WorkspaceExecutor {
     private static final Set<String> NPM_REMOTE_SUBCOMMANDS = Set.of("exec", "x", "create", "init", "dlx");
 
     private final WorkspaceProperties properties;
-    // 不存档位和路径守卫：管理员能从界面切（WorkspaceService.applySettings）。原来这里启动时存一份，
+    // 一个账号一份（WorkspaceRegistry）。不存档位和路径守卫：能从界面切（WorkspaceService.applySettings）。原来这里启动时存一份，
     // 以 EXEC 起的后端切到只读还能跑命令、换了项目命令还跑在旧目录（第一百零九轮才发现）
     private final WorkspaceService workspaceService;
     private final boolean productionProfile;
 
     public WorkspaceExecutor(WorkspaceProperties properties,
                              WorkspaceService workspaceService,
-                             @Value("${spring.profiles.active:}") String activeProfiles) {
+                             String activeProfiles) {
         this.properties = properties;
         this.workspaceService = workspaceService;
         this.productionProfile = isProduction(activeProfiles);

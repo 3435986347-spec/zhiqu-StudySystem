@@ -3,8 +3,6 @@ package com.zhiqu.service.workspace;
 import com.zhiqu.common.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -36,7 +34,6 @@ import java.util.stream.Stream;
  * 没有帮助，却能轻易占满条数上限、把真正的源码挤出去。这不是安全考虑，是可用性考虑 ——
  * 但它同时也避免了把 {@code .git/config}（可能含带 token 的远程地址）列出来。
  */
-@Service
 public class WorkspaceService {
     private static final Logger log = LoggerFactory.getLogger(WorkspaceService.class);
 
@@ -48,10 +45,11 @@ public class WorkspaceService {
     private final WorkspaceProperties properties;
     private final WorkspaceSettingsStore settingsStore;
     private final String serverAddress;
+    private final boolean production;
 
-    // volatile 而非 final：档位 / 根目录现在能在运行时被管理员从界面切换（applySettings）。
+    // volatile 而非 final：档位 / 根目录能在运行时从界面切换（applySettings）。
     // access 与 guard 成对重建、成对替换，读的一方各自读一次 volatile 即可。切换是偶发的
-    // 单管理员操作，不用把这两个读打包成一个快照 —— 最坏的竞态是一次在途请求用了旧 root，
+    // 操作（一个账号一份，见 WorkspaceRegistry），不用把这两个读打包成一个快照 —— 最坏的竞态是一次在途请求用了旧 root，
     // 而它下一道守卫检查会把不属于旧 root 的路径拒掉，不会漏。
     private volatile WorkspaceAccess access;
     private volatile WorkspaceGuard guard;
@@ -61,8 +59,7 @@ public class WorkspaceService {
      * 的一次性 store。既让既有的 25 处测试原样编译，又保证它们读到的不是你真实的持久化设置。
      * 生产走下面那个三参构造器（Spring 注入 store）。
      */
-    WorkspaceService(WorkspaceProperties properties,
-                     @Value("${server.address:}") String serverAddress) {
+    WorkspaceService(WorkspaceProperties properties, String serverAddress) {
         this(properties,
                 new WorkspaceSettingsStore(
                         System.getProperty("java.io.tmpdir", ".") + "/zhiqu-ws-ephemeral-"
@@ -71,13 +68,15 @@ public class WorkspaceService {
                 serverAddress);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
-    public WorkspaceService(WorkspaceProperties properties,
-                            WorkspaceSettingsStore settingsStore,
-                            @Value("${server.address:}") String serverAddress) {
+    public WorkspaceService(WorkspaceProperties properties, WorkspaceSettingsStore settingsStore, String serverAddress) {
+        this(properties, settingsStore, serverAddress, false);
+    }
+
+    public WorkspaceService(WorkspaceProperties properties, WorkspaceSettingsStore settingsStore, String serverAddress, boolean production) {
         this.properties = properties;
         this.settingsStore = settingsStore;
         this.serverAddress = serverAddress;
+        this.production = production;
 
         // 用户在界面上选过的档位 / 根目录，盖过配置里的默认值 —— 否则桌面每次重启都回到 OFF。
         // 但这只是「想要什么」；「实际允许什么」仍由 rebuild 里的三条前提裁决。
@@ -108,7 +107,7 @@ public class WorkspaceService {
      * 这条不变量由 {@code WorkspaceRuntimeToggleTest} 钉住。
      */
     private synchronized void rebuild(WorkspaceMode mode, String root) {
-        WorkspaceAccess next = new WorkspaceAccess(mode, root, serverAddress);
+        WorkspaceAccess next = production ? WorkspaceAccess.production(mode) : new WorkspaceAccess(mode, root, serverAddress);
         this.access = next;
         this.guard = next.enabled()
                 ? new WorkspaceGuard(next.root(), properties.getAllowedExtensions(), properties.getMaxFileBytes())
@@ -116,7 +115,7 @@ public class WorkspaceService {
     }
 
     /**
-     * 管理员从界面切换档位 / 根目录。持久化用户的选择，并立即生效（或按前提降级）。
+     * 从界面切换这个账号的档位 / 根目录。持久化用户的选择，并立即生效（或按前提降级）。
      *
      * @return 切换后<b>实际</b>的访问状态（可能因为前提不满足而仍是 OFF，此时 refusalReason 说明原因）
      */
@@ -137,10 +136,6 @@ public class WorkspaceService {
     }
 
     /** 服务是否绑在回环地址 —— 文件夹浏览器与档位切换都要看它（公网上一律不给）。 */
-    public boolean loopbackBound() {
-        return WorkspaceAccess.isLoopback(serverAddress);
-    }
-
     public WorkspaceAccess access() {
         return access;
     }
@@ -166,7 +161,7 @@ public class WorkspaceService {
      *
      * <p>它<b>独立于工作区根</b>：用户正是要用它去挑选那个根，所以必须能浏览工作区之外。
      * 因此它只列<b>目录名</b>，不列文件、更不读任何文件内容 —— 能力仅限「看见文件夹结构」。
-     * 调用它的控制器端点另加两道闸：管理员 + 回环（公网上一律不给）。
+     * 调用它的控制器端点另加两道闸：只认本机来的请求 + 回环（公网上一律不给）。
      *
      * <p>不传路径时从用户主目录开始。读不动某个目录（权限）就返回空列表而不是抛异常 ——
      * 选择器点进一个没权限的目录，该是「这里是空的」，不是整个功能报错。

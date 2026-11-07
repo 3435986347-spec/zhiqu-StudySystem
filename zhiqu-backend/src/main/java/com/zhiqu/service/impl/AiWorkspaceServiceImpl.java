@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessException;
+import com.zhiqu.service.workspace.WorkspaceRegistry;
 import com.zhiqu.service.workspace.WorkspaceService;
 import com.zhiqu.dto.TaskCreateRequest;
 import com.zhiqu.entity.*;
@@ -94,7 +95,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     private final RagIndexJobService ragIndexJobService;
     private final RagContentHashService ragContentHashService;
     private final SourceScopeResolver sourceScopeResolver;
-    private final WorkspaceService workspaceService;
+    private final WorkspaceRegistry workspaces;
     private final com.zhiqu.rag.RagUnitRegistry ragUnitRegistry;
     private final RagRetriever ragRetriever;
     private final ContextCandidateHydrator contextCandidateHydrator;
@@ -125,7 +126,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
                                   AgentBlackboardService blackboardService,
                                   RagIndexJobService ragIndexJobService,
                                   RagContentHashService ragContentHashService,
-                                  WorkspaceService workspaceService,
+                                  WorkspaceRegistry workspaces,
                                   SourceScopeResolver sourceScopeResolver,
                                   com.zhiqu.rag.RagUnitRegistry ragUnitRegistry,
                                   RagRetriever ragRetriever,
@@ -161,7 +162,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         this.ragIndexJobService = ragIndexJobService;
         this.ragContentHashService = ragContentHashService;
         this.sourceScopeResolver = sourceScopeResolver;
-        this.workspaceService = workspaceService;
+        this.workspaces = workspaces;
         this.ragUnitRegistry = ragUnitRegistry;
         this.ragRetriever = ragRetriever;
         this.contextCandidateHydrator = contextCandidateHydrator;
@@ -864,7 +865,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             // 落盘。基线校验在 WorkspaceService.write 里：草稿记的是「agent 读到这个文件时」
             // 的内容指纹，从那一刻到用户点确认可能隔着几分钟，这段时间里用户完全可能
             // 在自己的编辑器里改了同一个文件。不校验就是用旧内容把新内容整份吃掉。
-            List<Map<String, Object>> written = confirmCodeArtifact(artifact, editedPlan);
+            List<Map<String, Object>> written = confirmCodeArtifact(userId, artifact, editedPlan);
             artifact.setContentJson(toJson(merge(parseMap(artifact.getContentJson()),
                     Map.of("writtenFiles", written.stream().map(f -> f.get("path")).toList()))));
             artifact.setTargetType("WORKSPACE_FILES");
@@ -927,7 +928,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
      * <p>请求体带 {@code files} 时以它为准（用户在弹窗里取消勾选了某些文件），
      * 与计划草稿「省略 body 即按原样应用」的既有约定一致。
      */
-    private List<Map<String, Object>> confirmCodeArtifact(AiAgentArtifact artifact, Map<String, Object> body) {
+    private List<Map<String, Object>> confirmCodeArtifact(Long userId, AiAgentArtifact artifact, Map<String, Object> body) {
         Map<String, Object> content = parseMap(artifact.getContentJson());
         Object stored = content.get("files");
         List<Map<String, Object>> files = new ArrayList<>();
@@ -954,7 +955,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             throw new BusinessException("这份草稿没有要写入的文件");
         }
         // 「先全部校验、再逐个写」的规则住在 WorkspaceService.writeAll 里，不在这里重写一遍。
-        workspaceService.writeAll(files.stream()
+        workspaces.service(userId).writeAll(files.stream()   // 写进确认的这个账号自己选的文件夹
                 .map(f -> new WorkspaceService.PendingWrite(
                         String.valueOf(f.get("path")),
                         f.get("content") == null ? "" : String.valueOf(f.get("content")),

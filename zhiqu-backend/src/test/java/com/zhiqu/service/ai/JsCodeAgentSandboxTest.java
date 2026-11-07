@@ -6,6 +6,7 @@ import com.zhiqu.NodeRunner;
 import com.zhiqu.entity.AiModelConfig;
 import com.zhiqu.service.harness.HarnessModelGateway;
 import com.zhiqu.service.workspace.WorkspaceExecutor;
+import com.zhiqu.service.workspace.SingleAccountRegistry;
 import com.zhiqu.service.workspace.WorkspaceProperties;
 import com.zhiqu.service.workspace.WorkspaceService;
 import com.zhiqu.service.workspace.WorkspaceSettingsStore;
@@ -92,7 +93,7 @@ class JsCodeAgentSandboxTest {
         @SuppressWarnings("unchecked")
         ObjectProvider<HarnessModelGateway> provider = mock(ObjectProvider.class);
         when(provider.getObject()).thenReturn(gateway);
-        JsCodeAgent js = new JsCodeAgent(provider, service, executor, props, JSON, node, cliDir.toString());
+        JsCodeAgent js = new JsCodeAgent(provider, new SingleAccountRegistry(service, executor), props, JSON, node, cliDir.toString());
         js.useSandboxHome(home.toString());
         return js;
     }

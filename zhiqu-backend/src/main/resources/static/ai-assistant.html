@@ -6,11 +6,11 @@
   <title>AI 助手 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261107-r109a" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261107-r109a">
-  <link rel="manifest" href="manifest.json?v=20261107-r109a">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261107-r115a" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261107-r115a">
+  <link rel="manifest" href="manifest.json?v=20261107-r115a">
   <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261107-r109a">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261107-r115a">
 </head>
 <body>
   <div class="zq-app">
@@ -66,7 +66,7 @@
                   <span id="zq-drop-status">拖拽文件到此处 · 支持图片、PDF、Excel、文本（csv / txt / md / json）</span>
                 </div>
                 <!-- 代码工作区的项目（第一百零三轮，照 Claude Code / Codex 那类产品放在输入框上方；档位在输入框下面那条工具里，第一百零五轮）。
-                     拿得到 /workspace/settings（管理员）才出现，由 ai-assistant.js 的 paintWorkspaceBar 决定 -->
+                     拿得到 /workspace/settings（本机的后端）才出现，由 ai-assistant.js 的 paintWorkspaceBar 决定 -->
                 <div id="zq-ws-bar" class="zq-ws-bar" hidden>
                   <div class="zq-ws-pick">
                     <button id="zq-ws-project" type="button" class="zq-ws-project" aria-haspopup="menu" aria-expanded="false"><span data-zq-icon="folder"></span><span id="zq-ws-project-name" class="zq-ws-project-name">选择项目</span><span data-zq-icon="chevron-down"></span></button>
@@ -117,7 +117,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261107-r109a"></script>
-  <script src="assets/zhiqu-api.js?v=20261107-r109a"></script>
+  <script src="assets/zhiqu-ui.js?v=20261107-r115a"></script>
+  <script src="assets/zhiqu-api.js?v=20261107-r115a"></script>
 </body>
 </html>

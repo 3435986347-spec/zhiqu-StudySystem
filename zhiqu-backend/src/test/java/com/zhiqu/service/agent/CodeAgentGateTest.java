@@ -163,7 +163,7 @@ class CodeAgentGateTest {
     void 执行侧必须问生效档位() throws IOException {
         String code = src(CODE_AGENT);
         String service = src(AI_SERVICE);
-        assertTrue(code.contains("workspaceService.access().effectiveMode().allowsRead()"),
+        assertTrue(code.contains("workspaces.service(userId).access().effectiveMode().allowsRead()"),
                 "三个前置有一条不满足时配置写 EXEC 也只能是 OFF —— 必须问 effectiveMode，"
                         + "问 configuredMode 会让工作区在没绑回环时也造出节点");
         assertFalse(code.contains("configuredMode()") || service.contains("configuredMode()"),
@@ -232,22 +232,13 @@ class CodeAgentGateTest {
      *
      * <h2>两条路通向同一批文件</h2>
      *
-     * <p>工作区的内容有两个出口：管理员限定的 HTTP 端点，和 AI 助手的 code agent。
-     * 后者一度只检查「工作区生效档位允许读」，不检查用户是谁。于是在多用户部署上，
-     * 任何登录用户只要对助手说一句「看看 src/main/resources/application.yml」，
-     * 就能拿到服务器磁盘上的内容 —— 而 {@code WorkspaceController} 上那道
-     * {@code requireAdmin()} 一点作用都没起。
-     *
-     * <p>工作区读的是<b>服务器</b>的磁盘，不像 Notebook 那样按 userId 分账，
-     * 所以「登录了」远远不够。
-     *
-     * <p>判定必须由 {@code AdminGuard} 给出，不许另写 —— {@code AdminGuard.isAdmin}
-     * 本身就是从 {@code requireAdmin} 派生的，为的是两者不可能分叉。
-     *
-     * <p>扰动：把 {@code workspaceReadableBy} 里的 {@code adminGuard.isAdmin} 去掉 → 本条红。
+     * <p>工作区的内容有两个出口：HTTP 端点和 AI 助手的 code agent。第一百一十五轮起登录的用户都能用（用户要的），
+     * 两边都问这个账号自己的档位：没开过的是 OFF，开档位的接口只认本机的请求。
+     * 所以这里钉的是「问的是这个账号」和「只有一处判定」：要是问回全局的那一份，一个账号开了档位，
+     * 别的账号对助手说一句「看看 xxx」就读到他的文件夹。
      */
     @Test
-    void 读工作区必须同时要求管理员() throws IOException {
+    void 读工作区问的是这个账号自己的档位() throws IOException {
         String code = src(CODE_AGENT);
         String service = src(AI_SERVICE);
 
@@ -256,9 +247,8 @@ class CodeAgentGateTest {
         int end = code.indexOf('}', code.indexOf('{', at));
         String body = code.substring(at, end);
 
-        assertTrue(body.contains("adminGuard.isAdmin("),
-                "读工作区必须要求管理员。少了这一条，普通用户对助手说一句「看看 xxx」"
-                        + "就绕过了 /api/workspace/** 上的管理员限制。实际：" + body);
+        assertTrue(body.contains("workspaces.service(userId)"),
+                "读工作区要问这个账号自己的那一份。实际：" + body);
         assertTrue(body.contains("allowsRead()"),
                 "也必须要求生效档位允许读。实际：" + body);
 

@@ -11,6 +11,7 @@ import com.zhiqu.service.harness.HarnessContext;
 import com.zhiqu.service.harness.HarnessModelGateway;
 import com.zhiqu.service.workspace.WorkspaceExecutor;
 import com.zhiqu.service.workspace.WorkspaceProperties;
+import com.zhiqu.service.workspace.WorkspaceRegistry;
 import com.zhiqu.service.workspace.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,20 +63,18 @@ public class JsCodeAgent {
             "PYENV_ROOT", "NVM_DIR", "VIRTUAL_ENV", "CONDA_PREFIX", "SDKROOT", "DEVELOPER_DIR", "LC_ALL", "LANG");
 
     private final ObjectProvider<HarnessModelGateway> gateway;
-    private final WorkspaceService workspaceService;
-    private final WorkspaceExecutor executor;
+    private final WorkspaceRegistry workspaces;
     private final WorkspaceProperties workspaceProperties;
     private final ObjectMapper json;
     private final String node;
     private final String cliDir;
 
-    public JsCodeAgent(ObjectProvider<HarnessModelGateway> gateway, WorkspaceService workspaceService, WorkspaceExecutor executor,
+    public JsCodeAgent(ObjectProvider<HarnessModelGateway> gateway, WorkspaceRegistry workspaces,
                        WorkspaceProperties workspaceProperties, ObjectMapper json,
                        @Value("${app.ai.code-agent.node:node}") String node,
                        @Value("${app.ai.code-agent.cli-dir:}") String cliDir) {
         this.gateway = gateway;
-        this.workspaceService = workspaceService;
-        this.executor = executor;
+        this.workspaces = workspaces;
         this.workspaceProperties = workspaceProperties;
         this.json = json;
         this.node = node == null || node.isBlank() ? "node" : node.trim();
@@ -211,7 +210,10 @@ public class JsCodeAgent {
                                          Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode) {
         Path script = hostScript();
         String nodeBin = nodeBinary();
-        Path root = workspaceService.access().root();
+        // 这个账号自己的文件夹和档位（第一百一十五轮起分账号），这一轮从头到尾用同一份
+        WorkspaceService workspace = workspaces.service(userId);
+        WorkspaceExecutor executor = workspaces.executor(userId);
+        Path root = workspace.access().root();
         if (script == null || nodeBin == null || root == null) {
             log.warn("代码模式的 JS 循环起不来（node={} script={}），退回 Java 的循环", nodeBin, script);
             return null;
@@ -294,8 +296,8 @@ public class JsCodeAgent {
                     ranCommand[0] |= msg.hasNonNull("job")
                             ? job(msg, jobs, channel)
                             : msg.path("shell").asBoolean(false)
-                            ? shell(msg, canShell, shellWrite, nodeBin, script, jobs, channel)
-                            : exec(msg, canExec && !canShell, channel);
+                            ? shell(executor, msg, canShell, shellWrite, nodeBin, script, jobs, channel)
+                            : exec(executor, msg, canExec && !canShell, channel);
                 } else if ("tool".equals(type)) {
                     tool(msg, remote, ranCommand[0], channel);
                 } else if ("step".equals(type)) {
@@ -335,7 +337,7 @@ public class JsCodeAgent {
         log.info("代码模式的 JS 循环收尾 userId={}：{} 轮、草稿 {} 份、结论：{}", userId, result.path("rounds").asInt(),
                 result.path("drafts").size(), Texts.limitRaw(result.path("text").asText(""), 200));
         return new CodeWorkspaceAgent.Result(Texts.limitRaw(result.path("context").asText(""), limits.codeContextChars()),
-                drafts(result.path("drafts"), canWrite), null, canWrite, List.of(), result.path("writeCalls").asInt(0) > 0);
+                drafts(workspace, result.path("drafts"), canWrite), null, canWrite, List.of(), result.path("writeCalls").asInt(0) > 0);
     }
 
     /** 一行一个 JSON 写给子进程（模型的事件和命令的结果都从这里走） */
@@ -482,7 +484,7 @@ public class JsCodeAgent {
     }
 
     /** @return 真的跑了（交给了执行器、没被拒） */
-    private boolean shell(JsonNode msg, boolean canShell, boolean shellWrite, String nodeBin, Path hostScript, Map<String, WorkspaceExecutor.Background> jobs, Channel channel) throws IOException {
+    private boolean shell(WorkspaceExecutor executor, JsonNode msg, boolean canShell, boolean shellWrite, String nodeBin, Path hostScript, Map<String, WorkspaceExecutor.Background> jobs, Channel channel) throws IOException {
         Map<String, Object> reply = new LinkedHashMap<>();
         reply.put("type", "exec_result");
         reply.put("id", msg.path("id").asText(""));
@@ -603,7 +605,7 @@ public class JsCodeAgent {
     }
 
     /** @return 真的跑了（交给了执行器、没被拒） */
-    private boolean exec(JsonNode msg, boolean canExec, Channel channel) throws IOException {
+    private boolean exec(WorkspaceExecutor executor, JsonNode msg, boolean canExec, Channel channel) throws IOException {
         Map<String, Object> reply = new LinkedHashMap<>();
         reply.put("type", "exec_result");
         reply.put("id", msg.path("id").asText(""));
@@ -641,7 +643,7 @@ public class JsCodeAgent {
     }
 
     /** 子进程交回的草稿：路径照写入规矩再判一遍（不合法的丢掉、记日志），形状和 Java 循环出的一样 */
-    List<Map<String, Object>> drafts(JsonNode nodes, boolean canWrite) {
+    List<Map<String, Object>> drafts(WorkspaceService workspace, JsonNode nodes, boolean canWrite) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (!canWrite || !nodes.isArray()) {
             return out;
@@ -649,7 +651,7 @@ public class JsCodeAgent {
         for (JsonNode d : nodes) {
             String path = d.path("path").asText("");
             try {
-                workspaceService.checkWritable(path);
+                workspace.checkWritable(path);
             } catch (BusinessException e) {
                 log.warn("JS 循环交回的草稿路径不合法，丢掉：{} —— {}", path, e.getMessage());
                 continue;

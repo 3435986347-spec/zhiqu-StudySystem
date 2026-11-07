@@ -23,6 +23,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
@@ -194,9 +195,9 @@ class CodeAgentLoopIntegrationTest {
     void seed() {
         codeAgentRound.set(0);
         String username = "code_loop_" + UUID.randomUUID().toString().replace("-", "");
-        // 工作区只对管理员开放 —— 普通用户跑这条环路会（正确地）什么都拿不到
+        // 第一百一十五轮起普通账号就能走这条环路（用户要的）：这个文件里的每一条都是普通账号跑的
         jdbcTemplate.update(
-                "INSERT INTO sys_user(username, password, nickname, role, deleted) VALUES (?, ?, ?, 'ADMIN', 0)",
+                "INSERT INTO sys_user(username, password, nickname, role, deleted) VALUES (?, ?, ?, 'USER', 0)",
                 username, "test-password", "Code Loop Test");
         userId = jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
         assertNotNull(userId);
@@ -255,18 +256,39 @@ class CodeAgentLoopIntegrationTest {
         assertTrue(!stateFile.startsWith(System.getProperty("user.home")), "测试用的状态文件在用户目录下：" + stateFile);
     }
 
-    /** 普通用户走同一条路：什么都拿不到。工作区读的是服务器磁盘，不是他的东西。 */
+    /** 档位分账号：确认草稿写进这个账号自己选的文件夹，配置给的那个默认目录一个字都不动。 */
     @Test
-    void 普通用户走同一条路什么都拿不到() throws Exception {
-        jdbcTemplate.update("UPDATE sys_user SET role = 'USER' WHERE id = ?", userId);
+    void 确认写进这个账号自己选的文件夹(@Autowired WorkspaceRegistry workspaces, @Autowired com.zhiqu.service.AiWorkspaceService ai) throws Exception {
+        Path own = Files.createTempDirectory("code-loop-own-").toRealPath();
+        for (String name : List.of("solve.py", "test_solve.py")) {
+            Files.copy(workspaceRoot.resolve(name), own.resolve(name));
+        }
+        String before = Files.readString(workspaceRoot.resolve("solve.py"), StandardCharsets.UTF_8);
+        workspaces.service(userId).applySettings("EXEC", own.toString());
+
+        aiService.streamChat(userId, "判一下我的解法对不对", modelId, false, "OFF", null, "CHAT_ONLY", Map.of());
+        awaitRunFinished();
+
+        Long artifact = jdbcTemplate.queryForObject(
+                "SELECT a.id FROM ai_agent_artifact a JOIN ai_agent_run r ON r.id = a.run_id "
+                        + "WHERE r.user_id = ? AND a.artifact_type = 'CODE_DRAFT' ORDER BY a.id DESC LIMIT 1",
+                Long.class, userId);
+        ai.confirmArtifact(userId, artifact, null);
+        assertTrue(Files.readString(own.resolve("solve.py"), StandardCharsets.UTF_8).contains("seen"), "写进自己选的文件夹");
+        assertEquals(before, Files.readString(workspaceRoot.resolve("solve.py"), StandardCharsets.UTF_8), "别处一个字都不动");
+    }
+
+    /** 档位分账号：这个账号自己把档位关了，走同一条路什么都拿不到；配置给的默认对别的账号还在。 */
+    @Test
+    void 账号自己关了档位走同一条路什么都拿不到(@Autowired WorkspaceRegistry workspaces) throws Exception {
+        workspaces.service(userId).applySettings("OFF", "");
+        assertTrue(workspaces.service(userId + 1_000_000).access().enabled(), "别的账号不受影响");
 
         aiService.streamChat(userId, "判一下我的解法对不对", modelId, false, "OFF",
                 null, "CHAT_ONLY", Map.of());
         awaitRunFinished();
 
-        assertEquals(0, codeAgentRound.get(),
-                "非管理员不该触发任何工作区工具调用 —— 触发了就说明 /api/workspace/** 上的"
-                        + "管理员限制可以被「对助手说一句话」绕过");
+        assertEquals(0, codeAgentRound.get(), "档位是关的，不该触发任何工作区工具调用");
         Integer drafts = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM ai_agent_artifact a JOIN ai_agent_run r ON r.id = a.run_id "
                         + "WHERE r.user_id = ? AND a.artifact_type = 'CODE_DRAFT'",

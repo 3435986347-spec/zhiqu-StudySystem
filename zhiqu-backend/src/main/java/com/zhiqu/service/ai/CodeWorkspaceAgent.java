@@ -3,10 +3,8 @@ package com.zhiqu.service.ai;
 import com.zhiqu.service.ai.stream.ReasoningEffort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.entity.AiModelConfig;
-import com.zhiqu.service.AdminGuard;
 import com.zhiqu.service.agent.AgentPlanDecision;
-import com.zhiqu.service.workspace.WorkspaceExecutor;
-import com.zhiqu.service.workspace.WorkspaceService;
+import com.zhiqu.service.workspace.WorkspaceRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -80,21 +78,16 @@ public class CodeWorkspaceAgent {
     }
 
     private final ModelProviderClient provider;
-    private final WorkspaceService workspaceService;
-    private final WorkspaceExecutor workspaceExecutor;
+    private final WorkspaceRegistry workspaces;
     private final WikiToolAgent wikiToolAgent;
-    private final AdminGuard adminGuard;
     private final ObjectMapper objectMapper;
     private final StudyPlanTool studyPlanTool;
 
-    public CodeWorkspaceAgent(ModelProviderClient provider, WorkspaceService workspaceService,
-                              WorkspaceExecutor workspaceExecutor, WikiToolAgent wikiToolAgent,
-                              AdminGuard adminGuard, ObjectMapper objectMapper, StudyPlanTool studyPlanTool) {
+    public CodeWorkspaceAgent(ModelProviderClient provider, WorkspaceRegistry workspaces, WikiToolAgent wikiToolAgent,
+                              ObjectMapper objectMapper, StudyPlanTool studyPlanTool) {
         this.provider = provider;
-        this.workspaceService = workspaceService;
-        this.workspaceExecutor = workspaceExecutor;
+        this.workspaces = workspaces;
         this.wikiToolAgent = wikiToolAgent;
-        this.adminGuard = adminGuard;
         this.objectMapper = objectMapper;
         this.studyPlanTool = studyPlanTool;
     }
@@ -144,13 +137,12 @@ public class CodeWorkspaceAgent {
     /**
      * 这个用户能不能读工作区 —— <b>唯一判定</b>。
      *
-     * <p>两个条件缺一不可：工作区本身生效，且用户是管理员。后者容易漏 ——
-     * 工作区读的是服务器磁盘，不是用户自己的数据，所以它和 Notebook 那种按 userId
-     * 分账的资源不是一回事，不能只靠「登录了」就给。建图（要不要造 CODE_AGENT 节点）
-     * 和执行（要不要真的跑循环）都问这一处。
+     * <p>问的是这个账号自己的档位（第一百一十五轮起分账号，登录的用户都能用）。没开过的账号是 OFF，
+     * 陌生网页注册的账号开不了（工作区接口只认本机的请求），也就到不了这里。
+     * 建图（要不要造 CODE_AGENT 节点）和执行（要不要真的跑循环）都问这一处。
      */
     public boolean readableBy(Long userId) {
-        return workspaceService.access().effectiveMode().allowsRead() && adminGuard.isAdmin(userId);
+        return workspaces.service(userId).access().effectiveMode().allowsRead();
     }
 
     /**
@@ -176,10 +168,10 @@ public class CodeWorkspaceAgent {
             return Result.EMPTY;
         }
         // 最小权限：只有明确的写意图才给写工具。不给，它就不会尝试，也不会承诺自己改了文件
-        boolean canWrite = workspaceService.access().effectiveMode().allowsWrite()
+        boolean canWrite = workspaces.service(userId).access().effectiveMode().allowsWrite()
                 && AgentPlanDecision.codeWriteIntent(userMessage, contextOptions);
         // 执行这一档由 WorkspaceExecutor 自己说了算（档位 + 非生产 profile 两条都在它里面）。这里不再复述那两个条件
-        boolean canExec = workspaceExecutor.enabled();
+        boolean canExec = workspaces.executor(userId).enabled();
         // 项目式引导才给「把里程碑排成任务」的能力：别的语境下模型不该往用户日历里塞东西
         boolean canPlanMilestones = AgentPlanDecision.projectIntent(userMessage);
         // 代码模式（档位开着）给大预算，关键词触发给小预算 —— 理由见 CodeLoopBudget

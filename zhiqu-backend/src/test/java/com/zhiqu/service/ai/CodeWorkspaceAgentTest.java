@@ -4,12 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.common.BusinessClock;
 import com.zhiqu.entity.AiModelConfig;
 import com.zhiqu.service.ReminderPlanService;
-import com.zhiqu.service.AdminGuard;
 import com.zhiqu.service.ContextOptionKeys;
 import com.zhiqu.service.KnowledgeService;
 import com.zhiqu.service.workspace.WorkspaceAccess;
 import com.zhiqu.service.workspace.WorkspaceExecutor;
 import com.zhiqu.service.workspace.WorkspaceMode;
+import com.zhiqu.service.workspace.SingleAccountRegistry;
+import com.zhiqu.service.workspace.WorkspaceRegistry;
 import com.zhiqu.service.workspace.WorkspaceService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -58,19 +59,17 @@ class CodeWorkspaceAgentTest {
         final ModelProviderClient provider = mock(ModelProviderClient.class);
         final WorkspaceService workspace = mock(WorkspaceService.class);
         final WorkspaceExecutor executor = mock(WorkspaceExecutor.class);
-        final AdminGuard adminGuard = mock(AdminGuard.class);
         final List<Map<String, Object>> notes = new ArrayList<>();
         final CodeWorkspaceAgent agent;
 
-        Rig(WorkspaceMode mode, boolean admin) {
+        Rig(WorkspaceMode mode) {
             when(workspace.access()).thenReturn(new WorkspaceAccess(mode, root.toString(), "127.0.0.1"));
-            when(adminGuard.isAdmin(1L)).thenReturn(admin);
             when(provider.supportsToolCalling(any())).thenReturn(true);
             WikiToolAgent wiki = new WikiToolAgent(mock(KnowledgeService.class), provider, JSON);
             BusinessClock clock = mock(BusinessClock.class);
             when(clock.today()).thenReturn(LocalDate.of(2026, 9, 23));
             StudyPlanTool plans = new StudyPlanTool(clock, mock(ReminderPlanService.class), JSON);
-            agent = new CodeWorkspaceAgent(provider, workspace, executor, wiki, adminGuard, JSON, plans);
+            agent = new CodeWorkspaceAgent(provider, new SingleAccountRegistry(workspace, executor), wiki, JSON, plans);
         }
 
         /** 模型依次给出这些回复；给完之后回一条不调工具的消息，循环自然结束。 */
@@ -107,17 +106,54 @@ class CodeWorkspaceAgentTest {
 
     private static final Map<String, Object> CODE_MODE = Map.of(ContextOptionKeys.CODE_MODE, true);
 
-    /** 不是管理员就连起都不起 —— 否则普通用户一句话就能让服务器去读自己的磁盘。 */
     @Test
-    @DisplayName("非管理员 / 工作区是 OFF：直接返回空，命令行那份循环连起都不起")
+    @DisplayName("这个账号的工作区是 OFF：直接返回空，命令行那份循环连起都不起")
     void 门没过不起循环() {
-        for (Rig rig : List.of(new Rig(WorkspaceMode.EXEC, false), new Rig(WorkspaceMode.OFF, true))) {
-            JsCodeAgent js = mock(JsCodeAgent.class);
-            when(js.enabled()).thenReturn(true);
-            rig.agent.setJsEngine(js);
-            assertSame(CodeWorkspaceAgent.Result.EMPTY, rig.run("帮我看看 Main.java 这段代码", CODE_MODE));
-            verify(js, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any());
-        }
+        Rig rig = new Rig(WorkspaceMode.OFF);
+        JsCodeAgent js = mock(JsCodeAgent.class);
+        when(js.enabled()).thenReturn(true);
+        rig.agent.setJsEngine(js);
+        assertSame(CodeWorkspaceAgent.Result.EMPTY, rig.run("帮我看看 Main.java 这段代码", CODE_MODE));
+        verify(js, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("问的是发消息的这个账号：一个开着 EXEC，另一个关着，同一个后端各走各的")
+    void 按账号判() throws Exception {
+        WorkspaceService on = mock(WorkspaceService.class);
+        WorkspaceService off = mock(WorkspaceService.class);
+        WorkspaceExecutor onExec = mock(WorkspaceExecutor.class);
+        WorkspaceExecutor offExec = mock(WorkspaceExecutor.class);
+        when(on.access()).thenReturn(new WorkspaceAccess(WorkspaceMode.EXEC, root.toString(), "127.0.0.1"));
+        when(off.access()).thenReturn(new WorkspaceAccess(WorkspaceMode.OFF, "", "127.0.0.1"));
+        when(onExec.enabled()).thenReturn(true);
+        WorkspaceRegistry registry = mock(WorkspaceRegistry.class);
+        when(registry.service(1L)).thenReturn(on);
+        when(registry.service(2L)).thenReturn(off);
+        when(registry.executor(1L)).thenReturn(onExec);
+        when(registry.executor(2L)).thenReturn(offExec);
+        CodeWorkspaceAgent agent = new CodeWorkspaceAgent(mock(ModelProviderClient.class), registry, null, JSON, null);
+        assertTrue(agent.readableBy(1L));
+        assertFalse(agent.readableBy(2L));
+        // 写和执行也问发消息的这个账号：账号 3 只读，账号 1 的 EXEC 不给它
+        WorkspaceService readOnly = mock(WorkspaceService.class);
+        when(readOnly.access()).thenReturn(new WorkspaceAccess(WorkspaceMode.READ, root.toString(), "127.0.0.1"));
+        when(registry.service(3L)).thenReturn(readOnly);
+        when(registry.executor(3L)).thenReturn(offExec);
+        when(registry.service(1L)).thenReturn(on);
+        JsCodeAgent js = mock(JsCodeAgent.class);
+        when(js.enabled()).thenReturn(true);
+        ModelProviderClient provider = mock(ModelProviderClient.class);
+        when(provider.supportsToolCalling(any())).thenReturn(true);
+        BusinessClock clock = mock(BusinessClock.class);
+        when(clock.today()).thenReturn(LocalDate.of(2026, 9, 23));
+        CodeWorkspaceAgent running = new CodeWorkspaceAgent(provider, registry, new WikiToolAgent(mock(KnowledgeService.class), provider, JSON), JSON,
+                new StudyPlanTool(clock, mock(ReminderPlanService.class), JSON));
+        running.setJsEngine(js);
+        running.run(new AiModelConfig(), 3L, "改一下 a.py", List.of(), CODE_MODE, null, m -> { });
+        verify(js).run(any(), eq(3L), eq("改一下 a.py"), any(), eq(false), eq(false), any(), any(), any(), any(), any());
+        running.run(new AiModelConfig(), 1L, "改一下 a.py", List.of(), CODE_MODE, null, m -> { });
+        verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(true), any(), any(), any(), any(), any());
     }
 
     /**
@@ -133,7 +169,7 @@ class CodeWorkspaceAgentTest {
                 new Case(WorkspaceMode.WRITE, false, "改一下 a.py", CODE_MODE, true, false),
                 new Case(WorkspaceMode.EXEC, true, "改一下 a.py", CODE_MODE, true, true),
                 new Case(WorkspaceMode.EXEC, true, "这段代码为什么报错", Map.of(), false, true))) {
-            Rig rig = new Rig(c.mode(), true);
+            Rig rig = new Rig(c.mode());
             when(rig.executor.enabled()).thenReturn(c.execEnabled());
             JsCodeAgent js = mock(JsCodeAgent.class);
             when(js.enabled()).thenReturn(true);
@@ -176,7 +212,7 @@ class CodeWorkspaceAgentTest {
     @Test
     @DisplayName("交给命令行那份循环的远程工具：Wiki 读工具一直给、记薄弱点等跑过命令、里程碑只在项目引导时给；没给的照样拒")
     void 交给命令行那份循环的远程工具() {
-        Rig rig = new Rig(WorkspaceMode.EXEC, true);
+        Rig rig = new Rig(WorkspaceMode.EXEC);
         CodeWorkspaceAgent.LoopState loop = new CodeWorkspaceAgent.LoopState();
         JsCodeAgent.RemoteTools tools = rig.agent.remoteTools(1L, loop, false);
         Set<String> always = CodeWorkspaceAgent.offeredToolNames(tools.always());
@@ -196,7 +232,7 @@ class CodeWorkspaceAgentTest {
     @Test
     @DisplayName("网页选的思考档位交给循环（第一百零八轮）；不说就是 instant —— 工具轮不思考（第五十四轮：一问要等几分钟）")
     void 思考档位交给循环() {
-        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        Rig rig = new Rig(WorkspaceMode.WRITE);
         JsCodeAgent js = mock(JsCodeAgent.class);
         when(js.enabled()).thenReturn(true);
         when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any()))
@@ -212,7 +248,7 @@ class CodeWorkspaceAgentTest {
     @DisplayName("门判完才交给命令行那一份；不是管理员连起都不起；经桥记下的里程碑交回主流程；起不来（没有 node）说清楚、结果是空的")
     void 交给命令行那一份() throws Exception {
         CodeWorkspaceAgent.Result fromJs = new CodeWorkspaceAgent.Result("【代码 agent 的结论】\n好", List.of(), null, true);
-        Rig rig = new Rig(WorkspaceMode.WRITE, true);
+        Rig rig = new Rig(WorkspaceMode.WRITE);
         JsCodeAgent js = mock(JsCodeAgent.class);
         when(js.enabled()).thenReturn(true);
         when(js.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(fromJs);
@@ -222,15 +258,8 @@ class CodeWorkspaceAgentTest {
         verify(js).run(any(), eq(1L), eq("改一下 a.py"), any(), eq(true), eq(false), any(), any(), any(), any(), any());
         verify(rig.provider, never()).callToolTurn(any(), any(), any(), any());
 
-        Rig notAdmin = new Rig(WorkspaceMode.WRITE, false);
-        JsCodeAgent js2 = mock(JsCodeAgent.class);
-        when(js2.enabled()).thenReturn(true);
-        notAdmin.agent.setJsEngine(js2);
-        notAdmin.run("改一下 a.py", CODE_MODE);
-        verify(js2, never()).run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any());
-
         // 第九十五轮：JS 那份经桥调了「把里程碑排成任务」—— 记在这里的循环状态上，要交回主流程（走 PLANNER 那条确认的路）
-        Rig project = new Rig(WorkspaceMode.WRITE, true);
+        Rig project = new Rig(WorkspaceMode.WRITE);
         JsCodeAgent js3 = mock(JsCodeAgent.class);
         when(js3.enabled()).thenReturn(true);
         when(js3.run(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
@@ -245,7 +274,7 @@ class CodeWorkspaceAgentTest {
 
         // 第九十七轮删了 Java 的循环：js 那份起不来（run 返回 null）、或者根本没有引擎 —— 不再退回，轨迹里说清楚缺 Node，结果是空的
         for (JsCodeAgent broken : java.util.Arrays.asList(mock(JsCodeAgent.class), null)) {
-            Rig fallback = new Rig(WorkspaceMode.WRITE, true);
+            Rig fallback = new Rig(WorkspaceMode.WRITE);
             if (broken != null) {
                 when(broken.enabled()).thenReturn(true);
             }

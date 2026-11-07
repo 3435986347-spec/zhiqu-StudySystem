@@ -77,6 +77,21 @@ public final class WorkspaceAccess {
         this.effectiveMode = resolvedRoot == null ? WorkspaceMode.OFF : configuredMode;
     }
 
+    /**
+     * 生产环境：不管选了什么都是 OFF。工作区操作的是后端所在电脑的磁盘，服务器上那是所有人的数据和密钥。
+     * 服务器上的代码功能另走一条路（不碰磁盘）。
+     */
+    public static WorkspaceAccess production(WorkspaceMode configuredMode) {
+        return new WorkspaceAccess(configuredMode, "这是服务器上的部署：代码工作区只能在本机（桌面应用、本机跑的网页）使用");
+    }
+
+    private WorkspaceAccess(WorkspaceMode configuredMode, String refusalReason) {
+        this.configuredMode = configuredMode;
+        this.effectiveMode = WorkspaceMode.OFF;
+        this.root = null;
+        this.refusalReason = refusalReason;
+    }
+
     /** 配置里写的那一档（可能因为前置不满足而没有生效）。 */
     public WorkspaceMode configuredMode() {
         return configuredMode;
@@ -107,7 +122,7 @@ public final class WorkspaceAccess {
      * <p>这里刻意<b>不</b>把空值当成 localhost：Spring 的默认行为就是绑所有网卡，
      * 把它当回环会让这道检查在最常见的那种配置下失效。
      */
-    static boolean isLoopback(String address) {
+    public static boolean isLoopback(String address) {
         if (address == null || address.isBlank()) {
             return false;
         }

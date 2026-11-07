@@ -3,8 +3,6 @@ package com.zhiqu.service.workspace;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -15,7 +13,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.Optional;
 
 /**
- * 用户在界面上选的「档位 + 根目录」<b>持久化到磁盘</b>，重启后还在。
+ * 一个账号在界面上选的「档位 + 根目录」<b>持久化到磁盘</b>，重启后还在。一个账号一个文件，见 {@link WorkspaceRegistry}。
  *
  * <h2>为什么必须持久化</h2>
  *
@@ -32,7 +30,6 @@ import java.util.Optional;
  * <p>读文件坏了（手改乱了 / 截断）一律当成「没设过」，回落到配置默认值，<b>绝不让启动崩</b>：
  * 一个记设置的附属文件，不该有能力阻止整个应用起来。
  */
-@Component
 public class WorkspaceSettingsStore {
 
     private static final Logger log = LoggerFactory.getLogger(WorkspaceSettingsStore.class);
@@ -44,9 +41,7 @@ public class WorkspaceSettingsStore {
     private final Path file;
     private final ObjectMapper objectMapper;
 
-    public WorkspaceSettingsStore(
-            @Value("${app.workspace.state-file:${user.home}/.zhiqu/workspace-state.json}") String statePath,
-            ObjectMapper objectMapper) {
+    public WorkspaceSettingsStore(String statePath, ObjectMapper objectMapper) {
         this.file = Paths.get(statePath);
         this.objectMapper = objectMapper;
     }

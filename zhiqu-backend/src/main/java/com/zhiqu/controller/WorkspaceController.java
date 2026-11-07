@@ -2,11 +2,13 @@ package com.zhiqu.controller;
 
 import com.zhiqu.common.BusinessException;
 import com.zhiqu.common.Result;
+import com.zhiqu.security.LocalRequest;
 import com.zhiqu.security.SecurityUtils;
-import com.zhiqu.service.AdminGuard;
 import com.zhiqu.service.workspace.WorkspaceFolderDialog;
+import com.zhiqu.service.workspace.WorkspaceRegistry;
 import com.zhiqu.service.workspace.WorkspaceService;
 import com.zhiqu.service.workspace.WorkspaceSettingsStore;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -39,18 +41,29 @@ import java.util.Map;
 @RequestMapping("/api/workspace")
 public class WorkspaceController {
 
-    private final WorkspaceService workspaceService;
-    private final AdminGuard adminGuard;
+    private final WorkspaceRegistry workspaces;
     private final WorkspaceFolderDialog folderDialog;
+    private final HttpServletRequest request;
 
-    public WorkspaceController(WorkspaceService workspaceService, AdminGuard adminGuard, WorkspaceFolderDialog folderDialog) {
-        this.workspaceService = workspaceService;
-        this.adminGuard = adminGuard;
+    public WorkspaceController(WorkspaceRegistry workspaces, WorkspaceFolderDialog folderDialog, HttpServletRequest request) {
+        this.workspaces = workspaces;
         this.folderDialog = folderDialog;
+        this.request = request;
     }
 
-    private void requireAdmin() {
-        adminGuard.requireAdmin(SecurityUtils.getCurrentUserId());
+    /**
+     * 每个接口的第一句。登录的用户都能用（第一百一十五轮，用户要的），但只认这台电脑上发来的请求，
+     * 而且只在本机的部署上：读写的是后端所在电脑的磁盘。理由见 {@link LocalRequest}。
+     */
+    private void requireLocal() {
+        if (!workspaces.localDiskAllowed() || !LocalRequest.isLocal(request)) {
+            throw new BusinessException("代码工作区只能在本机使用（桌面应用、本机跑的网页）");
+        }
+    }
+
+    /** 这个账号自己的那一份：档位和文件夹分账号 */
+    private WorkspaceService workspace() {
+        return workspaces.service(SecurityUtils.getCurrentUserId());
     }
 
     /**
@@ -61,13 +74,13 @@ public class WorkspaceController {
      */
     @GetMapping("/status")
     public Result<Map<String, Object>> status() {
-        requireAdmin();
+        requireLocal();
         Map<String, Object> row = new LinkedHashMap<>();
-        row.put("enabled", workspaceService.access().enabled());
-        row.put("mode", workspaceService.access().effectiveMode().name());
-        row.put("configuredMode", workspaceService.access().configuredMode().name());
-        row.put("root", workspaceService.access().root() == null ? "" : workspaceService.access().root().toString());
-        row.put("reason", workspaceService.access().refusalReason());
+        row.put("enabled", workspace().access().enabled());
+        row.put("mode", workspace().access().effectiveMode().name());
+        row.put("configuredMode", workspace().access().configuredMode().name());
+        row.put("root", workspace().access().root() == null ? "" : workspace().access().root().toString());
+        row.put("reason", workspace().access().refusalReason());
         return Result.success(row);
     }
 
@@ -81,44 +94,44 @@ public class WorkspaceController {
      */
     @GetMapping("/settings")
     public Result<Map<String, Object>> settings() {
-        requireAdmin();
-        WorkspaceSettingsStore.Settings sel = workspaceService.currentSelection();
+        requireLocal();
+        WorkspaceSettingsStore.Settings sel = workspace().currentSelection();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("selectedMode", sel.mode());
         row.put("selectedRoot", sel.root() == null ? "" : sel.root());
-        row.put("effectiveMode", workspaceService.access().effectiveMode().name());
-        row.put("enabled", workspaceService.access().enabled());
-        row.put("root", workspaceService.access().root() == null ? "" : workspaceService.access().root().toString());
-        row.put("reason", workspaceService.access().refusalReason());
-        row.put("loopback", workspaceService.loopbackBound());
+        row.put("effectiveMode", workspace().access().effectiveMode().name());
+        row.put("enabled", workspace().access().enabled());
+        row.put("root", workspace().access().root() == null ? "" : workspace().access().root().toString());
+        row.put("reason", workspace().access().refusalReason());
+        row.put("loopback", workspaces.loopbackBound());
         row.put("modes", List.of("OFF", "READ", "WRITE", "EXEC"));
         return Result.success(row);
     }
 
     /**
-     * 切换档位 / 根目录，并持久化。切换本身限管理员 + 回环 —— 公网上一律拒绝，
+     * 切换档位 / 根目录，并持久化。切换本身只认本机的请求 + 回环 —— 公网上一律拒绝，
      * 免得有人以为在服务器上点一下就把本机文件读取接口打开了（实际打不开，但不该给这个入口）。
      */
     @PutMapping("/settings")
     public Result<Map<String, Object>> updateSettings(@RequestBody Map<String, Object> body) throws java.io.IOException {
-        requireAdmin();
-        if (!workspaceService.loopbackBound()) {
+        requireLocal();
+        if (!workspaces.loopbackBound()) {
             throw new BusinessException("工作区只能在绑定回环地址的本机实例上开启（当前不是回环）");
         }
         String mode = body.get("mode") == null ? "OFF" : String.valueOf(body.get("mode"));
         String root = body.get("root") == null ? "" : String.valueOf(body.get("root"));
-        workspaceService.applySettings(mode, root);
+        workspace().applySettings(mode, root);
         return settings();
     }
 
     /**
-     * 弹系统的文件夹选择框（第一百零五轮），等用户选完才回。管理员 + 回环：框弹在跑后端的这台电脑上，
+     * 弹系统的文件夹选择框（第一百零五轮），等用户选完才回。只认本机的请求 + 回环：框弹在跑后端的这台电脑上，
      * 不是回环就是别人的服务器，弹了也没人看得见，还会卡住一个请求线程。
      */
     @PostMapping("/pick-folder")
     public Result<Map<String, Object>> pickFolder(@RequestBody(required = false) Map<String, Object> body) {
-        requireAdmin();
-        if (!workspaceService.loopbackBound()) {
+        requireLocal();
+        if (!workspaces.loopbackBound()) {
             throw new BusinessException("选文件夹只在绑定回环地址的本机实例上可用");
         }
         WorkspaceFolderDialog.Pick pick = folderDialog.pick(body == null || body.get("start") == null ? "" : String.valueOf(body.get("start")));
@@ -130,18 +143,18 @@ public class WorkspaceController {
     }
 
     /**
-     * 文件夹浏览器：列一个目录下的子目录，供选择根目录用。管理员 + 回环。
+     * 文件夹浏览器：列一个目录下的子目录，供选择根目录用。只认本机的请求 + 回环。
      *
      * <p>只列目录名、不碰文件内容。它独立于工作区根（你正是要用它挑那个根），
-     * 所以能浏览工作区之外 —— 正因如此才把它锁在回环 + 管理员后面。
+     * 所以能浏览工作区之外 —— 正因如此才把它锁在回环 + 本机请求后面。
      */
     @GetMapping("/browse")
     public Result<Map<String, Object>> browse(@RequestParam(required = false) String path) {
-        requireAdmin();
-        if (!workspaceService.loopbackBound()) {
+        requireLocal();
+        if (!workspaces.loopbackBound()) {
             throw new BusinessException("文件夹浏览只在绑定回环地址的本机实例上可用");
         }
-        WorkspaceService.Browse browse = workspaceService.browseDirectories(path);
+        WorkspaceService.Browse browse = workspace().browseDirectories(path);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("path", browse.path());
         row.put("parent", browse.parent());
@@ -158,8 +171,8 @@ public class WorkspaceController {
     /** 列目录。{@code truncated} 要透传 —— 500 条和「至少 500 条」是两回事。 */
     @GetMapping("/files")
     public Result<Map<String, Object>> files(@RequestParam(required = false) String path) {
-        requireAdmin();
-        WorkspaceService.Listing listing = workspaceService.listing(path == null ? "" : path);
+        requireLocal();
+        WorkspaceService.Listing listing = workspace().listing(path == null ? "" : path);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("truncated", listing.truncated());
         row.put("entries", listing.entries().stream().map(e -> {
@@ -175,10 +188,10 @@ public class WorkspaceController {
 
     @GetMapping("/file")
     public Result<Map<String, Object>> file(@RequestParam String path) {
-        requireAdmin();
+        requireLocal();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("path", path);
-        row.put("content", workspaceService.read(path));
+        row.put("content", workspace().read(path));
         return Result.success(row);
     }
 
@@ -186,8 +199,8 @@ public class WorkspaceController {
     @GetMapping("/search")
     public Result<Map<String, Object>> search(@RequestParam String query,
                                               @RequestParam(required = false) String path) {
-        requireAdmin();
-        WorkspaceService.SearchResult result = workspaceService.search(query, path == null ? "" : path);
+        requireLocal();
+        WorkspaceService.SearchResult result = workspace().search(query, path == null ? "" : path);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("truncated", result.truncated());
         row.put("filesScanned", result.filesScanned());
