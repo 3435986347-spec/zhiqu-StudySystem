@@ -7,6 +7,7 @@
 //   zhiqu login [--server u]  设备码登录（不在网络上传密码）；--token zqp_… 直接用一张令牌
 //   zhiqu logout | whoami | models | --version | help
 //   zhiqu mcp                 当 MCP 服务器（stdio）：把知识 Wiki、任务、计划草稿、长期记忆给 Claude Code / Cursor 这些客户端用
+import { PassThrough } from 'node:stream';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,6 +29,7 @@ import { terminalWarnings } from './render/term.js';
 import { SessionStore } from './session.js';
 import { discoverSkills, skillsBlock } from './skills.js';
 import { LocalTools } from './tools/local.js';
+import { execShot, prepareExec } from './execmode.js';
 import { detectSandbox } from './tools/sandbox.js';
 import { Ui, briefInput } from './ui.js';
 import { ensureLocalServer } from './desktop.js';
@@ -64,7 +66,8 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => { if (i + 1 >= argv.length) throw new Error(`${a} 后面要跟一个值`); return argv[++i]; };
-    if (a === '-p' || a === '--print') flags.print = next();
+    if (a === '-') flags._.push(a);   // zhiqu exec -：从 stdin 读提示
+    else if (a === '-p' || a === '--print') flags.print = next();
     else if (a === '-c' || a === '--continue') flags.continue = true;
     else if (a === '--verbose') flags.verbose = true;
     else if (a === '--resume') flags.resume = argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : true;
@@ -72,6 +75,11 @@ export function parseArgs(argv) {
     else if (a === '--model') flags.model = next();
     else if (a === '--effort') flags.effort = next();
     else if (a === '--sandbox-network') flags.sandboxNetwork = next();
+    else if (a === '--json') flags.json = true;
+    else if (a === '--output-schema') flags.outputSchema = next();
+    else if (a === '-o' || a === '--output') flags.output = next();
+    else if (a === '--ephemeral') flags.ephemeral = true;
+    else if (a === '--last') flags.last = true;
     else if (a === '--server') flags.server = next();
     else if (a === '--token') flags.token = next();
     else if (a === '--no-browser') flags.noBrowser = true;
@@ -94,6 +102,14 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
   zhiqu -c                    接着上一段会话
   zhiqu --resume [id]         挑一段会话接着做
   zhiqu --goal "目标"          goal 模式：一直做到目标达成并核对通过（配 -p 可以无人值守；退出码 0 达成 / 2 卡住 / 3 轮数用完）
+  zhiqu exec "要做的事"        给脚本和 CI 用：stdout 只有结论，进度走 stderr，默认只读（要写给 --mode auto）
+    --json                    stdout 是事件流，一行一个 JSON
+    --output-schema <文件>    结论要符合这个 JSON Schema，不符合就让模型重写，还不行退出码 1
+    -o, --output <文件>       把结论也写进文件
+    --ephemeral               不留会话
+    zhiqu exec resume --last "接着做" / zhiqu exec resume <id> "接着做"（不继承上次的档位）
+    提示也可以从管道来；参数和管道都有时，管道里的当材料附在后面
+    退出码：0 成功，1 失败，2 用法不对，130 被中断
   zhiqu login [--server URL]  登录（浏览器里确认，命令行不接触密码）
   zhiqu login --token zqp_…   用网页里签的个人访问令牌登录
   zhiqu logout | whoami | models | help | --version
@@ -120,6 +136,11 @@ export async function main(argv) {
   const cmd = flags._[0];
   if (flags.help || cmd === 'help') { process.stdout.write(`${HELP}\n`); return 0; }
   const cwd = process.cwd();
+  if (cmd === 'exec') {
+    const prepared = await prepareExec(flags);
+    if (prepared.error) { process.stderr.write(`zhiqu exec：${prepared.error}\n`); return 2; }
+    return runAgent(cwd, prepared.flags);
+  }
   if (cmd === 'login') return login(cwd, flags);
   if (cmd === 'logout') {
     saveUserConfig({ token: null });
@@ -254,7 +275,7 @@ export function resumeInto(ctx, id) {
   const left = unfinished(ctx.todos);
   if (left.length) ctx.ui.note(`· 任务清单还有 ${left.length} 项没做完：${left.map((t) => t.content).join('；')}`);
   ctx.store.touch(id);
-  replayTranscript(ctx.ui, said, { verbose: ctx.verbose, fullLog: path.relative(ctx.root, ctx.store.file(id)) });
+  if (!ctx.exec) replayTranscript(ctx.ui, said, { verbose: ctx.verbose, fullLog: path.relative(ctx.root, ctx.store.file(id)) });
   ctx.ui.note(`· 接着「${loaded.meta.title || '（无标题）'}」这段会话（${loaded.messages.length} 条记录${loaded.broken ? `，${loaded.broken} 行坏了已跳过` : ''}）`);
 }
 
@@ -286,7 +307,10 @@ async function startMcp(ctx, flags) {
 }
 
 async function runAgent(cwd, flags) {
-  const ui = new Ui({ commands: SLASH_COMMANDS });
+  // exec：stdout 留给结论，进度全走 stderr；stdin 已经读过了，也没有人能回答确认
+  const noInput = new PassThrough();
+  if (flags.exec) noInput.end();
+  const ui = flags.exec ? new Ui({ input: noInput, output: process.stderr, interactive: false }) : new Ui({ commands: SLASH_COMMANDS });
   const root = path.resolve(cwd);
   if (broadRoot(root) && !flags.allowBroadRoot) {
     ui.error(`不在 ${root} 下运行：这里是家目录或根目录，工作区会大到把不相干的东西都卷进来。请 cd 到项目目录（确实要的话加 --allow-broad-root）`);
@@ -317,7 +341,8 @@ async function runAgent(cwd, flags) {
     ui, api, root, settings, mode: modeFlag || settings.mode, effort: settings.effort, maxRounds: settings.maxRounds, verbose: settings.showThinking,
     local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs,
       sandbox: detectSandbox(), sandboxNetwork: settings.sandboxNetwork }),
-    store: new SessionStore(root), allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
+    exec: Boolean(flags.exec), execReadOnly: Boolean(flags.execReadOnly), archiveDisabled: Boolean(flags.ephemeral),
+    store: flags.ephemeral ? null : new SessionStore(root), allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0, cached: 0 }, changedFiles: new Set(),
   };
   if (!ctx.local.sandbox) {
@@ -338,13 +363,36 @@ async function runAgent(cwd, flags) {
     throw e;
   }
   loadContext(ctx);
-  openSession(ctx, flags);
+  if (flags.ephemeral) {
+    ctx.session = { id: `ephemeral-${process.pid}` };
+    ctx.messages = [];
+    ctx.todos = [];
+    ctx.request = null;
+  } else {
+    if (flags.exec && (flags.continue || flags.resume)) {
+      // 接不上就说接不上，不悄悄开一段新的：脚本以为接着上次，模型什么都不记得
+      const known = ctx.store.list();
+      const found = flags.continue ? ctx.store.last() : known.find((s) => s.id === flags.resume);
+      if (!found) { ui.error(flags.continue ? '这个工作区还没有会话，没有可以接着的。' : `没有 ${flags.resume} 这段会话。`); return 1; }
+    }
+    openSession(ctx, flags);
+  }
+  // resume 不继承上次的档位：exec 默认只读，交互模式没给 --mode 时才接着上次的
   if (modeFlag) ctx.mode = modeFlag;
   if (flags.goal) {
     ctx.goal = newGoal(flags.goal);
     recordGoal(ctx);
   }
   const updateCheck = checkForUpdate(api).then((v) => updateMessage(v)).catch(() => null);
+
+  if (flags.exec) {
+    await startMcp(ctx, flags);
+    const code = await execShot(ctx, flags);
+    await flushArchive(ctx);
+    ctx.mcp && ctx.mcp.close();
+    ui.close();
+    return code;
+  }
 
   if (flags.print != null || (flags.goal && !process.stdin.isTTY)) {
     await startMcp(ctx, flags);

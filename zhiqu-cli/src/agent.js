@@ -178,7 +178,8 @@ export function toolset(ctx) {
       for (const t of mcp) out.push({ schema: t, kind: 'mcp' });
     }
   }
-  if (plan) out.push({ schema: exitPlanSchema(), kind: 'plan' });
+  // exec 的只读没有人批准计划：把结论写出来就是了（第一百一十三轮）
+  if (plan && !ctx.execReadOnly) out.push({ schema: exitPlanSchema(), kind: 'plan' });
   if (ctx.goal && ctx.goal.status === 'active') out.push({ schema: goalSchema(), kind: 'goal' });
   // 同名只留第一个：本地工具优先于远程 / MCP（MCP 名字有前缀，本不会撞）
   const seen = new Set();
@@ -187,7 +188,7 @@ export function toolset(ctx) {
 
 export function systemText(ctx) {
   const env = environmentBlock({
-    root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.mode, commands: ctx.local.commands,
+    root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.execReadOnly ? 'exec-read' : ctx.mode, commands: ctx.local.commands,
     shell: ctx.local.sandbox ? describeBoundary({ policy: shellPolicy(ctx), network: ctx.local.sandboxNetwork }) : null,
     shellWrites: Boolean(ctx.local.sandbox) && shellPolicy(ctx) === WORKSPACE_WRITE,
     today: today(), draft: Boolean(ctx.local.drafts),
@@ -247,6 +248,7 @@ export function requestBlock(ctx) {
  * /resume 回放记录时靠它区分 —— 否则它们会显示成「› …」，像是用户说的。
  */
 function record(ctx, message, origin = null) {
+  if (ctx.emit && message.role === 'assistant' && message.content) ctx.emit('completed', { id: ctx.nextItemId(), type: 'agent_message', text: message.content });
   ctx.messages.push(message);
   if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, origin ? { type: 'message', message, origin } : { type: 'message', message });
 }
@@ -582,7 +584,8 @@ function refuseUnoffered(ctx, name, offered) {
     ui.step(`${name}（${ctx.mode} 档不给这个工具）`);
     ui.result('已拒绝', false);
     return `${name} 在当前的 ${ctx.mode} 档没有下发，没有执行。`
-      + (ctx.mode === 'plan' ? '现在是只读的 plan 档：想好之后用 exit_plan_mode 提交计划，用户批准后才能写、才能跑。' : '')
+      + (ctx.execReadOnly ? '现在是只读的（zhiqu exec 默认）：改不了文件。把结论写出来；用户要改的话得用 --mode auto 重跑。'
+        : ctx.mode === 'plan' ? '现在是只读的 plan 档：想好之后用 exit_plan_mode 提交计划，用户批准后才能写、才能跑。' : '')
       + `这一档能用的：${available}。`;
   }
   const alias = aliasFor(name, ctx);
@@ -949,6 +952,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     ctx.store.touch(ctx.session.id, { title: ctx.session.title });
   }
   let finalText = '';
+  let stalled = false;
   let continuations = 0;
   let nudged = false;
   let claimChecked = false;
@@ -1037,7 +1041,11 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
         ctx.ui.note(`· ${call.function.name} 和前面一模一样，没有执行（连续第 ${ctx.repeat.count} 次）`);
         content = repeatRefusal(ctx.repeat.count);
       } else {
+        const itemId = ctx.emit ? ctx.nextItemId() : null;
+        const item = ctx.emit ? { id: itemId, type: 'tool_call', name: call.function && call.function.name, arguments: call.function && call.function.arguments } : null;
+        if (ctx.emit) ctx.emit('started', item);
         content = capToolOutput(await executeTool(ctx, call, offered, signal), window);
+        if (ctx.emit) ctx.emit('completed', { ...item, output: content });
         const result = comparableResult(content);
         const count = again && ctx.repeat.result === result ? ctx.repeat.count + 1 : 1;
         ctx.repeat = { key, result, count };
@@ -1061,6 +1069,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       record(ctx, { role: 'tool', tool_call_id: call.id, content });
     }
     if (ctx.repeat && ctx.repeat.count >= REPEAT_STOP) {
+      stalled = true;
       finalText = `已经停下：模型连续 ${ctx.repeat.count} 次发同一个调用（${ctx.repeat.key.split('\n')[0]}），结果一直没变。说说接下来想怎么做，或者换个模型试试。`;
       ctx.ui.warn(finalText);
       break;
@@ -1074,11 +1083,12 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   }
   if (signal && signal.aborted) ctx.messages = dropDanglingToolCalls(ctx.messages);
   if (ctx.store && ctx.session) ctx.store.touch(ctx.session.id, { messages: ctx.messages.length, model: ctx.model ? ctx.model.label : null });
-  return { finalText, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats } };
+  return { finalText, stalled, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats } };
 }
 
 /** 结论：一次整段打（按 Markdown 渲染）。 */
 function showAnswer(ctx, text) {
+  if (ctx.exec) return;   // zhiqu exec：结论由它写到 stdout，stderr 里不再打一遍
   const md = ctx.ui.markdown();
   md.feed(text.endsWith('\n') ? text : `${text}\n`);
   md.finish();

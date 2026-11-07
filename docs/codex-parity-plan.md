@@ -30,7 +30,7 @@
 | 正则搜索 | shell 里的 rg | 有（第一百一十轮）：`regex`、`glob`、`.gitignore`，也认草稿 | 3 |
 | 一次改多个文件 | apply_patch | 有（第一百一十一轮），全成或全不成，网页进草稿 | 4 |
 | 长命令 / 后台进程 | exec 会话、`/ps`、`/stop` | 有（第一百一十二轮，网页同一套）：`background`、`shell_output`、`shell_stop`、`/ps`、`/stop`；不能往进程里写 stdin | 5 |
-| 非交互 | `codex exec`：`--json`、`--output-schema`、`-o`、stdin、`exec resume` | `-p` | 6 |
+| 非交互 | `codex exec`：`--json`、`--output-schema`、`-o`、stdin、`exec resume` | 有（第一百一十三轮）：`zhiqu exec`，同样的参数和事件名 | 6 |
 | 代码审查 | `/review`、`codex review` | 无 | 7 |
 | 子 agent | 有，默认开，继承权限 | 无 | 8 |
 | 图片输入 | `--image` | 无 | 9 |
@@ -49,7 +49,7 @@
 | 3 | `search` 认正则、文件类型过滤、跳过 `.gitignore` | 用例 | 做完（第一百一十轮） |
 | 4 | `apply_patch`：一次多文件、要么全成要么全不成，改前给 diff | 用例 + 一致性 | 做完（第一百一十一轮）；模型爱不爱用要真模型量 |
 | 5 | 长命令：后台跑、看输出、停，`/ps`、`/stop` | 真进程 | 做完（第一百一十二轮）；还不能往进程里写 stdin |
-| 6 | `zhiqu exec`：只把结论写 stdout、`--json` 事件流、`--output-schema`、`-o`、stdin、`exec resume --last`，默认只读 | 端到端 | |
+| 6 | `zhiqu exec`：只把结论写 stdout、`--json` 事件流、`--output-schema`、`-o`、stdin、`exec resume --last`，默认只读 | 端到端 | 做完（第一百一十三轮） |
 | 7 | `/review`、`zhiqu review`：只读，给分优先级的发现 | 端到端 | |
 | 8 | 子 agent：只读探索、干活两种，继承权限，有并发和预算上限 | 端到端 | |
 | 9 | 图片、`/diff`、`/fork`、`/status`、`--cd`、`--add-dir`、`--worktree`、插话、hooks、命令规则 | 用例 | |
