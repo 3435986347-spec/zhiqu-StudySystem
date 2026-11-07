@@ -28,7 +28,7 @@
 | 系统沙箱（写范围、断网） | Seatbelt / bubblewrap / Windows 沙箱 | Seatbelt / bubblewrap；Windows 退回白名单 | 2 |
 | 沙箱挡住时问用户放行 | on-request | 命令行 ask 档有；网页没有确认界面 | 2 |
 | 正则搜索 | shell 里的 rg | 有（第一百一十轮）：`regex`、`glob`、`.gitignore`，也认草稿 | 3 |
-| 一次改多个文件 | apply_patch | edit_file 一处一处 | 4 |
+| 一次改多个文件 | apply_patch | 有（第一百一十一轮），全成或全不成，网页进草稿 | 4 |
 | 长命令 / 后台进程 | exec 会话、`/ps`、`/stop` | 超时就杀 | 5 |
 | 非交互 | `codex exec`：`--json`、`--output-schema`、`-o`、stdin、`exec resume` | `-p` | 6 |
 | 代码审查 | `/review`、`codex review` | 无 | 7 |
@@ -47,7 +47,7 @@
 | 1 | **思考档位**：`--effort` / `/effort`，网页输入框下面的按钮（用户定的 instant / medium / high / extra / max）；网关照档位发，回传 `reasoning_content` 和 Claude 的思考块，不收就降 | 假模型真 HTTP；**真模型四题三遍对比（要用户点头花钱）** 决定默认值 | 代码做完（第一百零八轮）；默认值待量 |
 | 2 | **`shell` + 系统沙箱**：plan 只读、ask 逐个问、auto 不问但关在工作区且断网；挡住时 ask 档可放行；没有沙箱的平台退回白名单。网页代码模式同一份沙箱（用户 2026-11-07 改的，原来写的是不给），auto 档的 shell 直接写工作区（用户定的） | 真的试写工作区外、读密钥、连网，都要被系统挡住 | 做完（第一百零九轮）；Windows 没有，退回白名单 |
 | 3 | `search` 认正则、文件类型过滤、跳过 `.gitignore` | 用例 | 做完（第一百一十轮） |
-| 4 | `apply_patch`：一次多文件、要么全成要么全不成，改前给 diff | 用例 + 一致性 | |
+| 4 | `apply_patch`：一次多文件、要么全成要么全不成，改前给 diff | 用例 + 一致性 | 做完（第一百一十一轮）；模型爱不爱用要真模型量 |
 | 5 | 长命令：后台跑、看输出、停，`/ps`、`/stop` | 真进程 | |
 | 6 | `zhiqu exec`：只把结论写 stdout、`--json` 事件流、`--output-schema`、`-o`、stdin、`exec resume --last`，默认只读 | 端到端 | |
 | 7 | `/review`、`zhiqu review`：只读，给分优先级的发现 | 端到端 | |

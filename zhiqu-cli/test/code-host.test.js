@@ -50,7 +50,7 @@ test('草稿层：没给的工具不下发（没有写意图不给写、不能�
   write(root, 'a.js', 'x\n');
   assert.deepEqual([...new DraftTools({ root }).allowedTools].sort(), ['list_files', 'read_file', 'search']);
   assert.deepEqual([...new DraftTools({ root, canWrite: true, canExec: true }).allowedTools].sort(),
-    ['edit_file', 'list_files', 'read_file', 'run_command', 'search', 'write_file']);
+    ['apply_patch', 'edit_file', 'list_files', 'read_file', 'run_command', 'search', 'write_file']);
   const t = new DraftTools({ root, canWrite: true });
   assert.match(t.prepareDelete({ path: 'a.js' }).error, /不能删除文件/);
   t.readFile({ path: 'a.js' });
@@ -295,3 +295,18 @@ test('中断以后后端在半路的回音（第九十九轮 review）：认得�
   await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(out.map((m) => m.type), ['model', 'fatal'], '从没发过的 ID 照旧认不出、照旧停');
 });
+
+test('apply_patch 经宿主进草稿：算写过（最终回答在没草稿时才据此说「没写成」）、草稿交给后端、磁盘不动', async () => {
+  const root = tmpdir();
+  write(root, 'a.py', 'one\n');
+  const patch = ['*** Begin Patch', '*** Update File: a.py', '-one', '+ONE', '*** Add File: n.py', '+x', '*** End Patch'].join('\n');
+  const { bridge } = fakeBackend({ replies: [
+    { calls: [{ name: 'read_file', args: { path: 'a.py' } }] },
+    { calls: [{ name: 'apply_patch', args: { patch } }] },
+    { text: '改动已生成草稿，确认后生效。' }] });
+  const result = await runHosted(bridge, { type: 'run', root, message: '修好', canWrite: true, model: MODEL });
+  assert.equal(result.writeCalls, 1);
+  assert.deepEqual(result.drafts.map((d) => d.path).sort(), ['a.py', 'n.py']);
+  assert.equal(fs.readFileSync(path.join(root, 'a.py'), 'utf8'), 'one\n');
+});
+

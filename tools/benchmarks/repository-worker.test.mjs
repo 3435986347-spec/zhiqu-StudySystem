@@ -85,7 +85,7 @@ test('real file tools edit repository bytes and execute a public Node check with
   assert.ok(system.includes('PUBLIC_REPOSITORY_RULE'));
   assert.ok(system.includes(`run_command 能跑的命令：${DEFAULT_COMMANDS.join('、')}`));
   const tools = data.requests[0].body.tools.map((tool) => tool.function.name);
-  assert.deepEqual(tools, ['list_files', 'read_file', 'search', 'write_file', 'edit_file', 'delete_file', 'run_command', 'update_todos']);
+  assert.deepEqual(tools, ['list_files', 'read_file', 'search', 'write_file', 'edit_file', 'apply_patch', 'delete_file', 'run_command', 'update_todos']);
   assert.equal(data.requests[0].body.maxTokens, 16_384);
   assert.equal(JSON.stringify(result).includes(CAPABILITY), false);
   assert.equal(result.diagnostics_trusted, false);

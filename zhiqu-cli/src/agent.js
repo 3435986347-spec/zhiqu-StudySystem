@@ -14,6 +14,7 @@ import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
 import { localSchemas, READ_TOOLS, shellSchema } from './tools/local.js';
+import { patchFiles } from './tools/patch.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
 import { loadSkill, loadSkillSchema } from './skills.js';
 import { buildSystemMessage, environmentBlock, today } from './prompt.js';
@@ -412,6 +413,23 @@ async function confirmRun(ctx, prep) {
   return pick === 'y' || pick === 'a';
 }
 
+/** 所有文件的 diff 摆出来，问一次。带删除的：「本会话都允许写文件」不算，和 delete_file 一样要问 */
+async function confirmPatch(ctx, prep) {
+  const ui = ctx.ui;
+  const noAsk = ctx.mode === 'auto' || (ctx.allow.write && (!prep.deletes.length || ctx.allow.delete));
+  for (const w of prep.writes) {
+    ui.note(`    ${w.movedFrom ? `${w.movedFrom} → ` : ''}${w.rel}${w.creating && !w.movedFrom ? '（新建）' : ''}`);
+    ui.diff(hunks(w.oldText, w.newText, 3), noAsk ? 16 : 400);
+  }
+  for (const d of prep.deletes) ui.note(`    删除 ${d.rel}（${d.lines} 行，挪进 .zhiqu/trash/）`);
+  if (noAsk) return true;
+  const pick = await ui.choose(`打这个补丁（${prep.files} 个文件）？`, [
+    { key: 'y', label: '打' }, { key: 'n', label: '不打' }, { key: 'a', label: '本会话都允许写文件' },
+  ], 'n');
+  if (pick === 'a') ctx.allow.write = true;
+  return pick === 'y' || pick === 'a';
+}
+
 async function confirmShell(ctx, prep) {
   if (ctx.allow.run) return true;
   const pick = await ctx.ui.choose(`运行 ${prep.command}${prep.cwdRel === '.' ? '' : `（在 ${prep.cwdRel}）`}？（在系统沙箱里）`, [
@@ -489,6 +507,7 @@ export function describeCall(name, args) {
     case 'search': return `搜索「${args.query}」${args.path ? `（在 ${args.path}）` : ''}`;
     case 'write_file': return `${args.append ? '追加到' : '写入'} ${args.path}`;
     case 'edit_file': return `修改 ${args.path}`;
+    case 'apply_patch': { const files = patchFiles(args.patch); return `打补丁 ${files.slice(0, 3).join('、')}${files.length > 3 ? ` 等 ${files.length} 个文件` : ''}`; }
     case 'delete_file': return `删除 ${args.path}`;
     case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
     case 'shell': return `运行 ${args.command}`;
@@ -516,7 +535,7 @@ export function describeCall(name, args) {
  *   根本没有这个工具（说「不是暂时的」、说该用哪个、怎么用） vs. 有、但这一档不给（说档位）。
  */
 const TOOL_ALIASES = [
-  [/^(replace|str_replace|str_replace_editor|str_replace_based_edit_tool|search_replace|edit|multi_edit|multiedit|apply_patch|apply_diff|patch|modify_file|update_file)$/i,
+  [/^(replace|str_replace|str_replace_editor|str_replace_based_edit_tool|search_replace|edit|multi_edit|multiedit|apply_diff|patch|modify_file|update_file)$/i,
     'edit_file', '改文件里的一段用 edit_file：传 path、old_string（原文，一字不差、只出现一次）、new_string。'],
   [/^(create_file|write|write_to_file|save_file|new_file|create)$/i,
     'write_file', '新建或整份写文件用 write_file（path + content），追加用 append: true；改一段用 edit_file。'],
@@ -713,6 +732,23 @@ async function executeTool(ctx, call, offered, signal) {
       succeeded(ctx, spinKey);
       ctx.changedFiles.add(prep.rel);
       ui.result(ui.paint.green(`✓ ${r.content.split('（')[0]}  +${r.added} -${r.removed}`));
+      if (r.syntax) ui.result(`语法错误：${r.syntax.split('\n')[0]}`, false);
+      return r.content;
+    }
+    if (name === 'apply_patch') {
+      const spinKey = `patch:${String(args.patch || '').slice(0, 300)}`;
+      const shown = patchFiles(args.patch).join('、') || '补丁';
+      const prep = local.preparePatch(args);
+      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, (prep.unchanged ? sameEditReminder : writeReminder)(shown)); }
+      if (!(await confirmPatch(ctx, prep))) {
+        ui.result('用户没有同意，没改', false);
+        return `用户没有同意这个补丁，${shown} 都没有改动。不要原样重试；问问用户想怎么改，或者换个做法。`;
+      }
+      const r = local.commitPatch(prep);
+      if (r.error) { ui.result(r.error, false); return r.error; }
+      succeeded(ctx, spinKey);
+      for (const rel of r.changed) ctx.changedFiles.add(rel);
+      ui.result(ui.paint.green(`✓ ${r.summary}`));
       if (r.syntax) ui.result(`语法错误：${r.syntax.split('\n')[0]}`, false);
       return r.content;
     }

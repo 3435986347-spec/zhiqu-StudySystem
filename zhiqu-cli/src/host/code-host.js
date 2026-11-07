@@ -148,7 +148,7 @@ export async function runHosted(bridge, run) {
   ctx.claimCheck = (text) => {
     const s = String(text || '');
     if (CLAIMS_DRAFT.test(s) && !local.drafts.size) {
-      return '这一次你还没有成功调用 write_file / edit_file，并没有生成任何草稿 —— 不要说生成了。要改文件就现在调工具；不用改就照实说你做了什么。';
+      return '这一次你还没有成功调用 write_file / edit_file / apply_patch，并没有生成任何草稿 —— 不要说生成了。要改文件就现在调工具；不用改就照实说你做了什么。';
     }
     if (CLAIMS_RUN.test(s) && !local.ranCommand) {
       const runTool = local.sandbox ? 'shell' : 'run_command';
@@ -175,7 +175,7 @@ export async function runHosted(bridge, run) {
   const context = [...ctx.messages.filter((m) => m.role === 'tool').map((m) => `【工作区 ${names.get(m.tool_call_id) || '工具'}】\n${m.content}`),
     text ? `【代码 agent 的结论】\n${text}` : ''].filter(Boolean).join('\n\n');
   // 调过几次写文件的工具（不管成没成）：后端据此决定最终回答能不能说「这一轮没写成」
-  const writeCalls = ctx.messages.reduce((n, m) => n + (m.role === 'assistant' ? (m.tool_calls || []).filter((c) => ['write_file', 'edit_file'].includes(c.function.name)).length : 0), 0);
+  const writeCalls = ctx.messages.reduce((n, m) => n + (m.role === 'assistant' ? (m.tool_calls || []).filter((c) => ['write_file', 'edit_file', 'apply_patch'].includes(c.function.name)).length : 0), 0);
   return { type: 'result', text, context, drafts: local.draftList(), writeCalls, usage: ctx.usage,
     rounds: ctx.messages.filter((m) => m.role === 'assistant' && (m.tool_calls || []).length).length,
     aborted: controller.signal.aborted, error };

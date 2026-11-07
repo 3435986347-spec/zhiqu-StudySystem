@@ -16,6 +16,7 @@ import { checkLocalCommand, describeRefusal, LOCAL_DEFAULT_COMMANDS, ExecRefusal
 import { planLaunch, resolveOnPath, runProcess } from './exec.js';
 import { describeBoundary, looksBlocked, plainLaunch, sandboxedLaunch, WORKSPACE_WRITE } from './sandbox.js';
 import { applyEdit, describeEditError } from './edit.js';
+import { applyHunks, describePatchError, parsePatch } from './patch.js';
 import { syntaxProblem } from './syntax.js';
 import { compileGlob, isIgnored, rulesAt, rulesIn } from './globs.js';
 import { stat as diffStat } from '../render/diff.js';
@@ -206,6 +207,21 @@ export function localSchemas() {
       new_string: { type: 'string', description: '替换成的新文字' },
       replace_all: { type: 'boolean', description: 'old_string 出现几处就换几处（改名这类）' },
     }, ['path', 'old_string', 'new_string']),
+    fn('apply_patch', [
+      '一次改多个文件，要么全成要么全不成。格式：',
+      '*** Begin Patch',
+      '*** Add File: 路径',
+      '+新文件的每一行都 + 开头',
+      '*** Update File: 路径',
+      '*** Move to: 新路径（可选，改名）',
+      '@@ 可选：定位用的一行，比如所在的函数',
+      ' 上下文（一个空格开头，照原文）',
+      '-要删的行',
+      '+要加的行',
+      '*** Delete File: 路径',
+      '*** End Patch',
+      '要改、要删的文件必须先 read_file 读过。每段前后带 2–3 行上下文，要能唯一定位：出现几处会被拒绝。一个文件改一小段用 edit_file 就行。',
+    ].join('\n'), { patch: { type: 'string', description: '整个补丁，从 *** Begin Patch 到 *** End Patch' } }, ['patch']),
     fn('delete_file', [
       '删除工作区里的一个文件（只能是文件，不能是目录）。',
       '和改文件一样：这段会话里读过或写过、之后没被改过的文件才能删。',
@@ -586,11 +602,10 @@ export class LocalTools {
     return this.prepareChange(args, true);
   }
 
-  /** 两个工具后面是同一套检查：读过、没被别人改过、读全了才能整份写、UTF-8、大小 */
-  prepareChange(args, replacing) {
-    args = this.inWorkspace(args, 'path');
-    const w = this.guard.resolveWritable(args.path);
-    if (w.reason !== Reason.OK) return { error: describe(w.reason, args.path, this.guard.maxFileBytes) };
+  /** 要改的这个文件：路径、保护目录、大小、编码。write_file、edit_file、apply_patch 同一套 */
+  changeTarget(given) {
+    const w = this.guard.resolveWritable(given);
+    if (w.reason !== Reason.OK) return { error: describe(w.reason, given, this.guard.maxFileBytes) };
     const rel = this.guard.display(w.path);
     const guarded = this.protectedDir(w.path);
     if (guarded) return { error: this.protectedError(guarded, rel, '改') };
@@ -605,20 +620,31 @@ export class LocalTools {
     if (currentKind !== 'utf8') {
       return { error: `${this.guard.display(w.path)} 不是 UTF-8 编码（${ENCODING_NAME[currentKind] || '二进制'}）：用 write_file / edit_file 改会把整个文件的编码换掉，原来的中文就成了乱码。先和用户确认要不要转成 UTF-8（比如 iconv -f GB18030 -t UTF-8），转好再改` };
     }
-    const currentText = current ? current.toString('utf8') : '';
-    const known = this.known.get(rel);
+    return { w, rel, exists, current, currentText: current ? current.toString('utf8') : '', known: this.known.get(rel) };
+  }
+
+  /** 读过、之后没被别人改过（没有这个文件不用读） */
+  staleError({ exists, known, rel, current }) {
+    if (!exists) return null;
+    if (!known) return `改动一个已存在的文件之前必须先 read_file 读过它：${rel}。没读过就改，是拿想象中的内容覆盖真实内容。`;
+    if (known.hash !== sha(current)) return `${rel} 在你读过之后被改过了（可能是用户在编辑器里改的），请重新 read_file 再改。`;
+    return null;
+  }
+
+  /** 两个工具后面是同一套检查：读过、没被别人改过、读全了才能整份写、UTF-8、大小 */
+  prepareChange(args, replacing) {
+    args = this.inWorkspace(args, 'path');
+    const target = this.changeTarget(args.path);
+    if (target.error) return target;
+    const { w, rel, exists, current, currentText, known } = target;
     // 参数给错了工具：拒绝、说该用哪一个，不猜着做 —— 原来分不清要整份写还是替换，按替换做、new_string 缺了当成空，
     // 一声不响删代码（第八十六轮，见 edit.js）
     if (!replacing && (args.old_string != null || args.new_string != null)) return { error: describeEditError({ kind: 'wrong_tool' }, rel) };
     if (replacing && args.content != null) return { error: describeEditError({ kind: 'with_content' }, rel) };
     const appending = !replacing && Boolean(args.append);
+    const stale = this.staleError(target);
+    if (stale) return { error: stale };
     if (exists) {
-      if (!known) {
-        return { error: `改动一个已存在的文件之前必须先 read_file 读过它：${rel}。没读过就改，是拿想象中的内容覆盖真实内容。` };
-      }
-      if (known.hash !== sha(current)) {
-        return { error: `${rel} 在你读过之后被改过了（可能是用户在编辑器里改的），请重新 read_file 再改。` };
-      }
       if (!replacing && !appending && !known.full) {
         return { error: `${rel} 你只读了一部分，整份重写会把没读到的部分冲掉。请用 edit_file 只改要改的那一段，或者先把全文读完。` };
       }
@@ -672,6 +698,143 @@ export class LocalTools {
     const syntax = syntaxProblem(prep.abs, prep.rel, prep.newText);
     const warn = syntax ? `\n⚠ 写进去的内容有语法错误 —— 先修好它再做别的：\n${syntax}` : '';
     return { content: `${what} ${prep.rel}${dirs}（+${added} -${removed}${times}，现在共 ${lines} 行）${warn}`, summary: `+${added} -${removed}`, added, removed, syntax };
+  }
+
+  // ── 补丁 ────────────────────────────────────────────────────
+
+  /**
+   * apply_patch：一次改多个文件。这一步把所有文件的结果都算好、查完，一个字节都不动；哪个文件不行，整个补丁都不打。
+   * 每个文件的规矩和 write_file / edit_file / delete_file 同一套。
+   */
+  preparePatch(args = {}) {
+    const parsed = parsePatch(args.patch);
+    if (parsed.error) return { error: describePatchError(parsed.error) };
+    const writes = [];
+    const deletes = [];
+    const seen = new Set();
+    const once = (abs, rel) => {
+      if (seen.has(abs)) return `${rel} 在补丁里出现了不止一次，一个文件都没改。同一个文件的改动写在一个 *** Update File 里。`;
+      seen.add(abs);
+      return null;
+    };
+    const fits = (rel, text) => {
+      const bytes = Buffer.byteLength(text, 'utf8');
+      return bytes > this.guard.maxFileBytes ? `写完之后 ${rel} 会有 ${bytes} 字节，超过 ${this.guard.maxFileBytes} 字节的上限，一个文件都没改。请拆成几个文件。` : null;
+    };
+    const nothing = (message) => ({ error: `${message}（补丁整个没打，一个文件都没改）` });
+    for (const op of parsed.ops) {
+      const given = this.inWorkspace({ path: op.path }, 'path').path;
+      if (op.type === 'delete') {
+        const d = this.prepareDelete({ path: given });
+        if (d.error) return nothing(d.error);
+        const dup = once(d.abs, d.rel);
+        if (dup) return { error: dup };
+        deletes.push(d);
+        continue;
+      }
+      const target = this.changeTarget(given);
+      if (target.error) return nothing(target.error);
+      const dup = once(target.w.path, target.rel);
+      if (dup) return { error: dup };
+      if (op.type === 'add') {
+        if (target.exists) return nothing(`${target.rel} 已经存在，不能 Add File。要改它用 *** Update File（先 read_file 读过）`);
+        const tooBig = fits(target.rel, op.content);
+        if (tooBig) return { error: tooBig };
+        writes.push({ rel: target.rel, abs: target.w.path, kind: 'create', replaced: 0, creating: true, oldText: '', newText: op.content, baseline: null,
+          newDirectories: this.guard.missingParents(given) });
+        continue;
+      }
+      if (!target.exists) return nothing(`${target.rel} 不存在，不能 Update File。新建用 *** Add File`);
+      const stale = this.staleError(target);
+      if (stale) return nothing(stale);
+      const hunks = op.hunks.filter((h) => h.lines.length);
+      const r = hunks.length ? applyHunks(target.currentText, hunks) : { text: target.currentText };
+      if (r.error) return { error: describePatchError(r.error, target.rel), unchanged: r.error.kind === 'no_change' };
+      const tooBig = fits(target.rel, r.text);
+      if (tooBig) return { error: tooBig };
+      if (op.moveTo) {
+        const destGiven = this.inWorkspace({ path: op.moveTo }, 'path').path;
+        const dest = this.changeTarget(destGiven);
+        if (dest.error) return nothing(dest.error);
+        if (dest.exists) return nothing(`${dest.rel} 已经存在，不能改名过去`);
+        const dupDest = once(dest.w.path, dest.rel);
+        if (dupDest) return { error: dupDest };
+        const d = this.prepareDelete({ path: given });
+        if (d.error) return nothing(d.error);
+        deletes.push(d);
+        writes.push({ rel: dest.rel, abs: dest.w.path, kind: 'create', replaced: 0, creating: true, oldText: target.currentText, newText: r.text, baseline: null,
+          newDirectories: this.guard.missingParents(destGiven), movedFrom: target.rel });
+      } else {
+        writes.push({ rel: target.rel, abs: target.w.path, kind: 'replace', replaced: 0, creating: false, oldText: target.currentText, newText: r.text, baseline: sha(target.current), newDirectories: [] });
+      }
+    }
+    return { writes, deletes, files: writes.length + deletes.length - writes.filter((w) => w.movedFrom).length };
+  }
+
+  /** 写完之后那一句话 + 语法检查。真写和草稿共用 */
+  patchLines(prep) {
+    const lines = [];
+    const syntax = [];
+    let added = 0;
+    let removed = 0;
+    for (const w of prep.writes) {
+      const d = diffStat(w.oldText, w.newText);
+      added += d.added;
+      removed += d.removed;
+      lines.push(`${w.movedFrom ? `${w.movedFrom} → ` : ''}${w.rel}（+${d.added} -${d.removed}）`);
+      const problem = syntaxProblem(w.abs, w.rel, w.newText);
+      if (problem) syntax.push(`⚠ ${w.rel} 写进去的内容有语法错误 —— 先修好它再做别的：\n${problem}`);
+    }
+    return { lines, syntax, added, removed };
+  }
+
+  /**
+   * 真写：先对一遍（确认期间被改过就一个都不动）；先全写成临时文件，再一起改名，再删；中间任何一步出错全部退回。
+   */
+  commitPatch(prep) {
+    for (const x of [...prep.writes, ...prep.deletes]) {
+      const now = fs.existsSync(x.abs) ? sha(fs.readFileSync(x.abs)) : null;
+      if (now !== x.baseline) return { error: `${x.rel} 在确认期间被改过了，一个文件都没改。请重新读一遍再改。` };
+    }
+    const temps = [];
+    const madeDirs = [];
+    const renamed = [];
+    const trashed = [];
+    try {
+      for (const w of prep.writes) {
+        const made = fs.mkdirSync(path.dirname(w.abs), { recursive: true });
+        if (made) madeDirs.push(made);
+        const tmp = `${w.abs}.zhiqu-tmp-${process.pid}`;
+        temps.push(tmp);
+        fs.writeFileSync(tmp, w.newText);
+      }
+      prep.writes.forEach((w, i) => {
+        const backup = fs.existsSync(w.abs) ? fs.readFileSync(w.abs) : null;
+        fs.renameSync(temps[i], w.abs);
+        renamed.push({ w, backup });
+      });
+      for (const d of prep.deletes) {
+        const r = this.commitDelete(d);
+        if (r.error) throw new Error(r.error);
+        trashed.push({ d, where: path.join(this.root, ...r.trashed.split('/')), shown: r.trashed });
+      }
+    } catch (e) {
+      for (const { d, where } of trashed.reverse()) {
+        try { fs.renameSync(where, d.abs); this.known.set(d.rel, { hash: d.baseline, full: true }); } catch { /* 下面说 */ }
+      }
+      for (const { w, backup } of renamed.reverse()) {
+        try { if (backup) fs.writeFileSync(w.abs, backup); else fs.rmSync(w.abs, { force: true }); } catch { /* 下面说 */ }
+      }
+      for (const t of temps) { try { fs.rmSync(t, { force: true }); } catch { /* 已经改名走了 */ } }
+      for (const dir of madeDirs.reverse()) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 留个空目录不要紧 */ } }
+      return { error: `打补丁时出错（${e.message}），已经全部退回，一个文件都没改。` };
+    }
+    for (const w of prep.writes) this.known.set(w.rel, { hash: sha(Buffer.from(w.newText, 'utf8')), full: true });
+    const { lines, syntax, added, removed } = this.patchLines(prep);
+    const gone = trashed.filter(({ d }) => !prep.writes.some((w) => w.movedFrom === d.rel)).map(({ d, shown }) => `${d.rel}（已删除，挪进了 ${shown}）`);
+    const body = [...lines, ...gone].map((l) => `  ${l}`).join('\n');
+    return { content: `补丁已打上（${prep.files} 个文件）：\n${body}${syntax.length ? `\n${syntax.join('\n')}` : ''}`,
+      summary: `${prep.files} 个文件 +${added} -${removed}`, changed: [...prep.writes.map((w) => w.rel), ...prep.deletes.map((d) => `${d.rel}（已删除）`)], syntax: syntax[0] };
   }
 
   // ── 删除 ──────────────────────────────────────────────────────────────

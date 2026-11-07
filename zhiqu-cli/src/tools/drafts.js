@@ -26,7 +26,7 @@ export class DraftTools extends LocalTools {
   constructor({ root, exec, canWrite = false, canExec = false, commands = [], canShell = false, shellWrite = false, sandboxNetwork = 'off' }) {
     super({ root, commands: canExec ? commands : [], sandbox: canShell ? { kind: 'backend' } : null, sandboxNetwork });
     this.shellPolicy = shellWrite ? WORKSPACE_WRITE : READ_ONLY;
-    this.allowedTools = new Set([...READ_TOOLS, ...(canWrite ? ['write_file', 'edit_file'] : []), ...(canExec ? ['run_command'] : [])]);
+    this.allowedTools = new Set([...READ_TOOLS, ...(canWrite ? ['write_file', 'edit_file', 'apply_patch'] : []), ...(canExec ? ['run_command'] : [])]);
     this.overlay = new Map();
     /** rel → { path, content, baseline, creating, newDirectories }：交给后端的草稿，baseline 是第一次改它时磁盘上的指纹 */
     this.drafts = new Map();
@@ -54,6 +54,21 @@ export class DraftTools extends LocalTools {
       content: `已生成草稿（${what}，磁盘上的文件没有改动）：${prep.rel}（+${added} -${removed}${times}，现在共 ${lineCount(prep.newText)} 行）。`
         + `用户在页面上看过 diff、点了确认才会写进磁盘 —— 回答里说「改动已生成草稿，确认后生效」，不要说「已经改好了」。${warn}`,
       summary: `+${added} -${removed}`, added, removed, syntax,
+    };
+  }
+
+  /** 补丁也进草稿：先对一遍，都对才记。带 Delete / Move 的走 prepareDelete，在 preparePatch 里就整个拒绝了 */
+  commitPatch(prep) {
+    for (const w of prep.writes) {
+      const current = this.overlay.has(w.abs) ? this.overlay.get(w.abs) : fs.existsSync(w.abs) ? fs.readFileSync(w.abs) : null;
+      if ((current ? sha(current) : null) !== w.baseline) return { error: `${w.rel} 在你读过之后被改过了（可能是用户在编辑器里改的），一个草稿都没生成。请重新 read_file 再改。` };
+    }
+    for (const w of prep.writes) this.commitWrite(w);
+    const { lines, syntax, added, removed } = this.patchLines(prep);
+    return {
+      content: `已生成草稿（${prep.files} 个文件，磁盘上的文件没有改动）：\n${lines.map((l) => `  ${l}`).join('\n')}\n`
+        + `用户在页面上看过 diff、点了确认才会写进磁盘 —— 回答里说「改动已生成草稿，确认后生效」，不要说「已经改好了」。${syntax.length ? `\n${syntax.join('\n')}` : ''}`,
+      summary: `${prep.files} 个文件 +${added} -${removed}`, changed: prep.writes.map((w) => w.rel), syntax: syntax[0],
     };
   }
 

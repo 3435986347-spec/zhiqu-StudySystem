@@ -23,7 +23,7 @@ function occurrences(hay, needle) {
 }
 const lineAt = (text, index) => text.slice(0, index).split('\n').length;
 
-function hintFor(text, needle) {
+export function hintFor(text, needle) {
   const lines = text.split('\n');
   const want = needle.split('\n').map(squash);
   while (want.length && !want[0]) want.shift();
