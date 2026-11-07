@@ -188,6 +188,31 @@ class JsCodeAgentSandboxTest {
         }
     }
 
+    @Test
+    @DisplayName("第一百一十八轮：/review 的 git 在宿主里跑，沙箱挡的要是真的家目录（宿主的 HOME 只是临时目录）：工作区盖住家目录时 ~/.ssh 也读不到")
+    void review的git挡真的家目录() throws Exception {
+        // 工作区盖住家目录是唯一看得出差别的情况：工作区放开读，~/.ssh 这些靠后面再挡一遍
+        Path covered = root.resolve("myhome");
+        Files.createDirectories(covered.resolve(".ssh"));
+        Files.writeString(covered.resolve(".ssh/ignore-me"), "*.py\nmyhome/\n");   // 读得到的话，下面这个新文件就从审查里消失了
+        for (String[] args : List.of(new String[]{"init", "-q"}, new String[]{"config", "core.excludesFile", covered.resolve(".ssh/ignore-me").toString()})) {
+            List<String> command = new java.util.ArrayList<>(List.of("git"));
+            command.addAll(List.of(args));
+            Process p = new ProcessBuilder(command).directory(root.toFile()).redirectErrorStream(true).start();
+            p.getInputStream().readAllBytes();
+            assertEquals(0, p.waitFor());
+        }
+        Files.delete(root.resolve("a.txt"));
+        Files.writeString(root.resolve("new.py"), "x = 1\n");
+        JsCodeAgent js = agent("READ", "dev", CLI_DIR, List.of(text("{\"summary\":\"看到了新文件。\",\"findings\":[]}")));
+        needSandbox(js);
+        js.useSandboxHome(covered.toString());
+        CodeWorkspaceAgent.Result r = js.run(config, 7L, "/review", List.of(), false, false, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT,
+                notes::add, null, "OFF", null, "review");
+        assertNotNull(r, "起不来了：" + notes);
+        assertTrue(r.context().contains("看到了新文件"), "new.py 不见了：沙箱没挡住真的家目录。" + r.context());
+    }
+
     /** 跳过要写明：macOS 一定有 sandbox-exec，探测说没有是探测坏了，不能和通过长得一样。别的平台、写了 -Dzhiqu.skipSandboxTests=true 才跳 */
     private void needSandbox(JsCodeAgent js) throws Exception {
         boolean available = js.sandboxAvailable(js.nodeBinary(), js.hostScript());

@@ -197,3 +197,7 @@
 
 **AI 助手输入框下面的选择**（第一百零七轮）：模型、思考档位、联网存 localStorage 的 `zq.ai.composer.<用户 id>`，打开页面读回来；记的模型不在列表里回到默认（不能直接赋值：选中项变 -1，下拉空白）。只记在这台浏览器。行为在 `composer-prefs-check.js`。
 思考档位（第一百零八轮，用户定的名字）：instant / medium / high / extra / max，按钮在自己上方拉起面板（和工作区档位一个样子、互相关掉）；发给后端的是 `reasoningMode`（instant = `OFF`，其余大写）；老的 `think: true` 接着算 high。模型不能思考时后端当 instant 发，不报错（`ReasoningEffort.supported`）。
+
+**输入框里的 `/` 命令**（第一百一十八轮）：命令表 `SLASH_COMMANDS` 在 `assets/pages/ai-assistant.js`。`parseSlash` 是唯一的判定：第一个词正好是命令才算，不接参数的（`bare`）后面跟了字是一句话。`turn: true` 的（`/init`、`/review`）发一轮，别的当场做完（发送中也能做）。按键只有 `slashKeydown` 一处。
+
+命令上色靠后面垫一层字（`#zq-draft-mirror`），`.has-command` 时启用。改 `.zq-composer textarea` 的字体、内边距、换行，要同步改 `.zq-draft-mirror`（`AiComposerTest` 比这两条规则，`DesktopWebKitLayoutTest` 在 WebKit 里比折出来的高度）。输入框的值被代码改过之后要调 `growDraft()` 或 `paintSlash()`：不然字是透明的，下一句就看不见了。

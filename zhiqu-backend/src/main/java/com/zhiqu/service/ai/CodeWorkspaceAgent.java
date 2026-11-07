@@ -182,7 +182,8 @@ public class CodeWorkspaceAgent {
             return Result.EMPTY;
         }
         // 最小权限：只有明确的写意图才给写工具。不给，它就不会尝试，也不会承诺自己改了文件
-        boolean canWrite = workspaces.service(userId).access().effectiveMode().allowsWrite()
+        boolean review = AgentPlanDecision.codeReview(contextOptions);
+        boolean canWrite = !review && workspaces.service(userId).access().effectiveMode().allowsWrite()
                 && AgentPlanDecision.codeWriteIntent(userMessage, contextOptions);
         // 执行这一档由 WorkspaceExecutor 自己说了算（档位 + 非生产 profile 两条都在它里面）。这里不再复述那两个条件
         boolean canExec = workspaces.executor(userId).enabled();
@@ -193,7 +194,8 @@ public class CodeWorkspaceAgent {
         LoopState loop = new LoopState();
         Result viaJs = jsEngine == null || !jsEngine.enabled() ? null
                 : jsEngine.run(config, userId, userMessage, recentHistory(history, limits.codeHistoryChars()),
-                        canWrite, canExec, budget, limits, onStep, remoteTools(userId, loop, canPlanMilestones), reasoningMode, conversationId);
+                        canWrite, canExec, budget, limits, onStep, review ? null : remoteTools(userId, loop, canPlanMilestones), reasoningMode, conversationId,
+                        AgentPlanDecision.codeCommand(contextOptions));
         if (viaJs == null) {
             // 第九十七轮删了 Java 的循环，没有后路了：说清楚缺什么，主回答照常
             log.warn("代码模式起不来（找不到 node 或命令行源码），这一轮没有读工作区 userId={}", userId);

@@ -168,6 +168,41 @@ class JsCodeAgentTest {
     }
 
     @Test
+    @DisplayName("第一百一十八轮：/review 走真的宿主和真的 git：diff 替模型取好，下发的工具没有写的，结论写回给最终回答；/init 发的是命令行那份提示")
+    void review和init走宿主() throws Exception {
+        git("init", "-q");
+        Files.writeString(root.resolve("calc.py"), "def add(a, b):\n    return a + b\n");
+        git("add", ".");
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "第一版");
+        Files.writeString(root.resolve("calc.py"), "def add(a, b):\n    return a - b\n");
+        JsCodeAgent review = agent(CLI_DIR, List.of(text("{\"summary\":\"符号反了。\",\"findings\":[{\"priority\":\"P1\",\"file\":\"calc.py\",\"line\":2,"
+                + "\"title\":\"加法在减\",\"why\":\"add 在减\",\"fix\":\"改回 +\"}]}")));
+        CodeWorkspaceAgent.Result r = review.run(config, 7L, "/review 看看符号", List.of(), false, false, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT,
+                notes::add, null, "OFF", null, "review");
+        assertNotNull(r, "起不来了：" + notes);
+        assertTrue(r.context().contains("[P1] calc.py:2 加法在减"), r.context());
+        assertTrue(r.drafts().isEmpty());
+        String sent = String.valueOf(bodies.get(0).get("messages"));
+        assertTrue(sent.contains("+    return a - b"), "diff 要替模型取好放进提示：" + sent);
+        String tools = String.valueOf(bodies.get(0).get("tools"));
+        assertTrue(tools.contains("read_file") && !tools.contains("write_file") && !tools.contains("edit_file"), tools);
+
+        bodies.clear();
+        JsCodeAgent init = agent(CLI_DIR, List.of(text("写好了")));
+        init.run(config, 7L, "/init", List.of(), true, false, CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add, null, "OFF", null, "init");
+        String asked = String.valueOf(bodies.get(0).get("messages"));
+        assertTrue(asked.contains("写一份 ZHIQU.md 初稿"), asked);
+    }
+
+    private void git(String... args) throws Exception {
+        List<String> command = new ArrayList<>(List.of("git"));
+        command.addAll(List.of(args));
+        Process p = new ProcessBuilder(command).directory(root.toFile()).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes());
+        assertEquals(0, p.waitFor(), "git 没跑成：" + out);
+    }
+
+    @Test
     @DisplayName("思考档位真的到了模型请求（第一百零八轮）：后端的词换成命令行的词；instant 也明说，不落到服务端给命令行的默认档")
     void 思考档位到模型请求() throws Exception {
         JsCodeAgent js = agent(CLI_DIR, List.of(text("结论")));

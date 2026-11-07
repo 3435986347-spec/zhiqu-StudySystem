@@ -20,17 +20,7 @@ async function bootAiAssistant() {
   if (sendBtn) sendBtn.onclick = sendAiMessage;
   if (draft) {
     state.chatDraft = keepDraft(draft, chatDraftKey, growDraft);
-    draft.addEventListener('input', growDraft);
-    draft.addEventListener('keydown', function (event) {
-      // ⌘/Ctrl + 回车发送，单独回车换行 —— 与多数聊天工具一致。
-      // 旧行为是「回车发送、Shift+回车换行」，而那时 #zq-draft 还是 <input>：
-      // Shift+回车那一半从来就没生效过，input 根本装不下换行符。
-      // 换成 textarea 之后「换行」才第一次真的可用，所以发送键位一并让出去。
-      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        sendAiMessage();
-      }
-    });
+    bindSlash(draft);
   }
 
   // 先确定当前 Notebook，聊天记录按 Notebook 隔离加载。
@@ -1929,11 +1919,21 @@ function growDraft() {
   if (!el) return;
   el.style.height = 'auto';
   el.style.height = Math.max(DRAFT_BASE_HEIGHT, Math.min(el.scrollHeight, DRAFT_MAX_HEIGHT)) + 'px';
+  paintSlash();
 }
 async function sendAiMessage() {
-  if (state.aiSending) return; // 发送中保护:双击/回车连发只算一次
   var inp = $('#zq-draft'), txt = inp && inp.value.trim();
   if (!txt) return;
+  // 输入框里的 / 命令（第一百一十八轮）：切档位这些当场做完，发送中也能切；/init、/review 走下面发一轮
+  var slash = parseSlash(inp.value), codeCommand = null;
+  closeSlashMenu();
+  if (slash && !slash.def.turn) { runLocalSlash(slash); return; }
+  if (state.aiSending) return; // 发送中保护:双击/回车连发只算一次
+  if (slash) {
+    var blocked = slashBlocked(slash.def);
+    if (blocked) { toast(blocked, 'error'); return; }   // 字留着，切好了接着发；没叫模型
+    codeCommand = slash.def.name.slice(1);
+  }
   // 草稿等服务器确认收到了这条消息（任一事件带 userMessageId）才删；没收到就把字放回输入框（第十五轮）。
   // 原来一按发送就清空：没配模型、被限流、一刷新，这句话就没了。
   if (state.chatDraft) state.chatDraft.flush();
@@ -1942,6 +1942,7 @@ async function sendAiMessage() {
   var gotEvent = false;
   inp.value = '';
   inp.style.height = DRAFT_BASE_HEIGHT + 'px'; // 收回单行，否则清空后仍撑着上一条的高度
+  paintSlash();
   state.aiSending = true;
   stopStreamWatch();   // SSE 接管，轮询再跑就会和它抢着改同一批消息
   var sendButton = $('#zq-send');
@@ -1985,7 +1986,8 @@ async function sendAiMessage() {
     contextOptions: {
       includeWiki: true,
       selectedSourceIds: selectedSourceIds,
-      codeMode: codeModeOn()
+      codeMode: codeModeOn(),
+      codeCommand: codeCommand || undefined
     }
   };
   // SSE 回调期间用户可能切换 notebook:快照发送时的 id,不再渲染/改写新窗口的全局流式状态
@@ -2194,6 +2196,240 @@ var wsStatus = null, wsBarBusy = false, wsBarNext = null;
 // 选了项目、选了档位就是要它在里面干活；原来还要再按一个按钮，不按就靠关键词猜，猜漏了就是「我无法操作你的电脑」。想普通聊天切到 close。
 // 能不能写、能不能跑照旧由档位卡在后端（门在 CodeWorkspaceAgent）；编辑工具的改动先成草稿，auto 档 shell 写的直接落盘（用户定的）
 function codeModeOn() { return !!(wsStatus && wsStatus.enabled); }
+
+// ───────────────────────── 输入框里的 / 命令（第一百一十八轮）
+// 用户 2026-11-07：「在网页里输入/ 可以向上拉出页面显示/ 什么的作用，并且也能作为正常命令」「/init 这类在网页里输入的时候颜色要和其他文字区分开」。
+// 只有第一个词正好是认识的命令才算命令：「/usr/bin 有问题」照常发给模型；不接参数的命令后面跟了字（「/init 是什么意思」）也是一句话。
+// 全部走现有的功能，这里不另存一份档位、模型。
+var SLASH_COMMANDS = [
+  { name: '/mode', args: 'close | plan | manual | auto', desc: '切换档位', choices: function () {
+    return WS_MODE_ORDER.map(function (m) { return { value: WS_MODE_NAME[m], desc: WS_MODE_DESC[m] }; });
+  } },
+  { name: '/effort', args: 'instant | medium | high | extra | max', desc: '思考档位：想得越久答得越稳，也越慢、越费 token', choices: function () {
+    return AI_EFFORTS.map(function (e) { return { value: e, desc: AI_EFFORT_DESC[e] }; });
+  } },
+  { name: '/model', args: '模型名', desc: '查看 / 切换模型', choices: function () { return slashModels().map(function (m) { return { value: m.label, desc: '' }; }); } },
+  { name: '/project', args: '文件夹路径', desc: '选项目；不写路径就打开选择', folder: true },
+  { name: '/web', args: 'on | off', desc: '联网搜索开 / 关', choices: function () { return [{ value: 'on', desc: '打开联网搜索' }, { value: 'off', desc: '关掉联网搜索' }]; } },
+  { name: '/new', desc: '新建一个 Notebook', bare: true },
+  { name: '/init', desc: '读项目，写一份 ZHIQU.md 初稿', bare: true, turn: true, folder: true },
+  { name: '/review', args: '[--base 分支 | --commit 提交] [说明]', desc: '只读地审查改动，按 P0–P3 列问题', turn: true, folder: true },
+  { name: '/help', desc: '列出这些命令', bare: true },
+];
+var slashItems = [], slashActive = 0, slashDismissed = null;
+
+function slashDef(name) { return SLASH_COMMANDS.filter(function (c) { return c.name === name; })[0] || null; }
+/** 认得的命令才返回：{ def, rest }。开头有空格不算（那一段要和输入框的字逐个对齐上色，也不像在打命令） */
+function parseSlash(text) {
+  var m = /^(\/[a-z]+)(?:\s+([\s\S]*))?$/.exec(String(text || ''));
+  if (!m) return null;
+  var def = slashDef(m[1]);
+  var rest = (m[2] || '').trim();
+  if (!def || (def.bare && rest)) return null;
+  return { def: def, rest: rest };
+}
+/** 现在这段字对应面板里哪几项。{ name, args, desc }：name 是选中后输入框里的样子 */
+function slashMatches(text) {
+  var value = String(text || '');
+  if (value.charAt(0) !== '/' || /\n/.test(value)) return [];
+  if (!/\s/.test(value)) {
+    return SLASH_COMMANDS.filter(function (c) {
+      return c.name.indexOf(value) === 0 && !(c.folder && wsStatus && wsStatus.artifactOnly);   // 服务器上没有文件夹：这几个做不了，不列
+    }).map(function (c) { return { name: c.name, args: c.args || '', desc: c.desc }; });
+  }
+  var m = /^(\/[a-z]+)\s+(.*)$/.exec(value);
+  var def = m && slashDef(m[1]);
+  if (!def || !def.choices) return [];
+  var typed = m[2].trim().toLowerCase();
+  return def.choices().filter(function (c) { return c.value.toLowerCase().indexOf(typed) === 0; })
+    .map(function (c) { return { name: def.name + ' ' + c.value, args: '', desc: c.desc }; });
+}
+function slashModels() {
+  var sel = $('#zq-model');
+  return sel && sel.options ? Array.prototype.slice.call(sel.options).filter(function (o) { return o.value; })
+    .map(function (o) { return { value: o.value, label: String(o.textContent || '').trim() }; }) : [];
+}
+/** /init、/review 现在做不了的话，告诉用户差什么（不叫模型）。能做返回 null */
+function slashBlocked(def) {
+  if (wsStatus && wsStatus.artifactOnly) return '服务器上没有项目文件夹，' + def.name + ' 要在桌面版或本机用';
+  if (!wsStatus || (wsStatus.selectedMode || 'OFF') === 'OFF') return '代码模式关着（close）。先切档位：/mode ' + (def.name === '/review' ? 'plan' : 'manual');
+  if (!wsStatus.selectedRoot) return def.name + ' 要先选项目：/project';
+  if (!wsStatus.enabled) return '代码工作区没有生效：' + (wsStatus.reason || '看一下项目和档位');
+  if (def.name === '/init' && wsStatus.selectedMode === 'READ') return 'plan 是只读的，写不了 ZHIQU.md。先切档位：/mode manual';
+  return null;
+}
+/** 当场做完的命令。参数不对就说、字留着；做了就清掉输入框 */
+function runLocalSlash(slash) {
+  var ok = localSlashActions[slash.def.name](slash.rest);
+  if (ok === false) return;
+  var inp = $('#zq-draft');
+  inp.value = slash.def.name === '/help' ? '/' : '';
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+  if (state.chatDraft) state.chatDraft.flush();
+  if (slash.def.name === '/help') inp.focus();
+}
+function slashNo(text) { toast(text, 'error'); return false; }
+var localSlashActions = {
+  '/mode': function (arg) {
+    if (!wsStatus) return slashNo('工作区的状态还没读到，等一下再切');
+    if (!arg) { toggleTierMenu(); return true; }
+    var mode = WS_MODE_ORDER.filter(function (m) { return WS_MODE_NAME[m] === arg; })[0];
+    if (!mode) return slashNo('/mode 接 close、plan、manual、auto，收到 ' + arg);
+    chooseTier(mode);
+    return true;
+  },
+  '/effort': function (arg) {
+    if (!arg) { toggleEffortMenu(); return true; }
+    if (AI_EFFORTS.indexOf(arg) < 0) return slashNo('/effort 接 ' + AI_EFFORTS.join('、') + '，收到 ' + arg);
+    chooseEffort(arg);
+    return true;
+  },
+  '/model': function (arg) {
+    var sel = $('#zq-model'), models = slashModels();
+    if (!sel) return false;
+    if (!arg) {
+      sel.focus();
+      try { sel.showPicker(); } catch (e) { /* 老的 WebKit 没有，焦点已经在上面了 */ }
+      return true;
+    }
+    var typed = arg.toLowerCase();
+    var exact = models.filter(function (m) { return m.label.toLowerCase() === typed || m.value === arg; });
+    var hits = exact.length ? exact : models.filter(function (m) { return m.label.toLowerCase().indexOf(typed) >= 0; });
+    if (hits.length !== 1) {
+      return slashNo(hits.length ? arg + ' 对得上几个：' + hits.map(function (m) { return m.label; }).join('、')
+        : models.length ? '没有叫 ' + arg + ' 的模型，可以选：' + models.map(function (m) { return m.label; }).join('、') : '还没有可用的模型');
+    }
+    sel.value = hits[0].value;
+    saveComposerPref('model', sel.value);
+    toast('模型：' + hits[0].label);
+    return true;
+  },
+  '/project': function (arg) {
+    if (!wsStatus) return slashNo('工作区的状态还没读到，等一下再选');
+    if (wsStatus.artifactOnly) return slashNo('服务器上没有项目文件夹，文件会生成到产物');
+    if (!arg) { toggleProjectMenu(); return true; }
+    var folder = arg.replace(/^(["'])(.*)\1$/, '$2');
+    // 不是路径就不去切（「/project 这个目录怎么样」）：切了，这句话就没了
+    if (!/^(\/|[A-Za-z]:[\\/])/.test(folder)) return slashNo('/project 接文件夹的绝对路径，收到 ' + arg);
+    switchWorkspace(modeForProject(wsStatus.selectedMode), folder);
+    return true;
+  },
+  '/web': function (arg) {
+    if (arg && arg !== 'on' && arg !== 'off') return slashNo('/web 接 on 或 off，收到 ' + arg);
+    var on = $('#' + AI_TOGGLE_IDS.web).dataset.on === '1';
+    if (!arg || (arg === 'on') !== on) aiToggle('web');
+    toast('联网搜索：' + ($('#' + AI_TOGGLE_IDS.web).dataset.on === '1' ? '开' : '关'));
+    return true;
+  },
+  '/new': function () { $('#zq-new-notebook').click(); return true; },
+  '/help': function () { return true; },
+};
+
+function closeSlashMenu() {
+  var menu = $('#zq-slash-menu'), inp = $('#zq-draft');
+  slashItems = [];
+  if (!menu || !inp) return;
+  menu.hidden = true;
+  inp.removeAttribute('aria-activedescendant');
+}
+function slashOpen() { return slashItems.length > 0; }
+/** 命令那一段换颜色：输入框不能一段一段上色，后面垫一层排版一样的字。只有在打命令时才启用，平时还是原来的输入框 */
+function paintSlash() {
+  var inp = $('#zq-draft'), mirror = $('#zq-draft-mirror'), box = $('#zq-composer');
+  if (!inp || !mirror || !box) return;
+  var slash = parseSlash(inp.value);
+  box.classList.toggle('has-command', !!slash);
+  if (slash) {
+    // 末尾的零宽字符：最后一个字是换行时，后面这层也要多出一行，不然滚到底对不齐
+    mirror.innerHTML = '<span class="zq-draft-cmd">' + esc(slash.def.name) + '</span>' + esc(inp.value.slice(slash.def.name.length)) + '\u200b';
+    mirror.scrollTop = inp.scrollTop;
+  } else if (mirror.innerHTML) mirror.innerHTML = '';
+  paintSlashMenu();
+}
+function paintSlashMenu() {
+  var menu = $('#zq-slash-menu'), inp = $('#zq-draft');
+  if (!menu || !inp) return;
+  var value = inp.value;
+  var items = slashDismissed === value || (document.activeElement && document.activeElement !== inp) ? [] : slashMatches(value);
+  if (!items.length) { closeSlashMenu(); return; }
+  slashItems = items;
+  slashActive = 0;
+  menu.innerHTML = items.map(function (it, i) {
+    return '<button type="button" role="option" tabindex="-1" class="zq-slash-item" id="zq-slash-' + i + '" data-slash-i="' + i + '" aria-selected="' + (i === 0) + '">'
+      + '<span class="zq-slash-name">' + esc(it.name) + '</span>'
+      + (it.args ? '<span class="zq-slash-args">' + esc(it.args) + '</span>' : '')
+      + '<span class="zq-slash-desc">' + esc(it.desc) + '</span></button>';
+  }).join('');
+  menu.hidden = false;
+  inp.setAttribute('aria-activedescendant', 'zq-slash-0');
+}
+function moveSlash(step) {
+  var menu = $('#zq-slash-menu'), inp = $('#zq-draft');
+  slashActive = (slashActive + step + slashItems.length) % slashItems.length;
+  $all('[data-slash-i]', menu).forEach(function (b, i) {
+    b.setAttribute('aria-selected', i === slashActive ? 'true' : 'false');
+    if (i === slashActive && b.scrollIntoView) b.scrollIntoView({ block: 'nearest' });
+  });
+  inp.setAttribute('aria-activedescendant', 'zq-slash-' + slashActive);
+}
+function setDraftText(text) {
+  var inp = $('#zq-draft');
+  inp.value = text;
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+  inp.focus();
+}
+/** Tab：补全，接着打参数（要参数的后面留一个空格） */
+function completeSlash(item) {
+  var def = slashDef(item.name);
+  setDraftText(item.name + (def && def.args ? ' ' : ''));
+}
+/** 回车、点一下：就是它，执行 */
+function acceptSlash(item) {
+  setDraftText(item.name);
+  sendAiMessage();
+}
+function bindSlash(draft) {
+  draft.setAttribute('aria-autocomplete', 'list');
+  draft.setAttribute('aria-controls', 'zq-slash-menu');
+  draft.addEventListener('input', function () { slashDismissed = null; growDraft(); });
+  draft.addEventListener('scroll', function () {
+    var mirror = $('#zq-draft-mirror');
+    if (mirror) mirror.scrollTop = draft.scrollTop;
+  });
+  draft.addEventListener('focus', paintSlashMenu);
+  draft.addEventListener('blur', closeSlashMenu);
+  draft.addEventListener('keydown', slashKeydown);
+  var menu = $('#zq-slash-menu');
+  if (!menu) return;
+  // 按下时不让输入框失焦（失焦就收起了，这一下点不到）
+  menu.addEventListener('mousedown', function (event) { event.preventDefault(); });
+  menu.addEventListener('click', function (event) {
+    var row = event.target.closest && event.target.closest('[data-slash-i]');
+    if (row) acceptSlash(slashItems[Number(row.getAttribute('data-slash-i'))]);
+  });
+}
+function slashKeydown(event) {
+  // ⌘/Ctrl + 回车发送，单独回车换行 —— 与多数聊天工具一致。
+  // 旧行为是「回车发送、Shift+回车换行」，而那时 #zq-draft 还是 <input>：
+  // Shift+回车那一半从来就没生效过，input 根本装不下换行符。
+  // 换成 textarea 之后「换行」才第一次真的可用，所以发送键位一并让出去。
+  // 只有一处按键处理：面板开着时这个回车是选命令的，两处各管各就会发两次
+  if (event.isComposing || event.keyCode === 229) return;   // 正在选拼音：这个回车是选字的
+  var enter = event.key === 'Enter' && !event.shiftKey;
+  if (slashOpen()) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); moveSlash(event.key === 'ArrowDown' ? 1 : -1); return; }
+    if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); completeSlash(slashItems[slashActive]); return; }
+    if (event.key === 'Escape') { event.preventDefault(); slashDismissed = event.target.value; closeSlashMenu(); return; }
+    if (enter) { event.preventDefault(); acceptSlash(slashItems[slashActive]); return; }
+    return;
+  }
+  // 面板收着（打了参数）：一行的命令回车就执行。两行以上是在写长说明，回车还是换行，⌘/Ctrl + 回车才发
+  var command = event.target.value.trim().indexOf('\n') < 0 && parseSlash(event.target.value);
+  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey || (enter && command))) {
+    event.preventDefault();
+    sendAiMessage();
+  }
+}
 // 切换只发这一个请求，回来的就是新状态，直接画（第一百零五轮：原来再读一遍设置、再读一遍文件树，库在远程时每个都要多走一趟）。
 // 一次只发一个。在途时又选了：记下最后选的，这一个回来再发它（最后选的生效）。失败了照后端重画（名字是选的时候先改的，要退回去）
 async function applyWorkspace(mode, root) {
@@ -2415,4 +2651,4 @@ async function loadWorkspace() {
 
 // 给测试直接 import 的纯函数（第三十七轮）：step-note-check.js（执行轨迹里一条叙述的转义）、diff-check.js（改动草稿的逐行对比）。
 // 它们只用到 esc —— 测试 bind 一个只有 esc 的 sh 就能跑。
-export { stepNoteHtml, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard };
+export { stepNoteHtml, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard, parseSlash, slashMatches, slashBlocked, bindSlash, paintSlash, sendAiMessage, paintWorkspaceBar };

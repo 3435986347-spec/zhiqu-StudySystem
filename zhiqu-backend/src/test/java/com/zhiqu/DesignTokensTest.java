@@ -123,6 +123,8 @@ class DesignTokensTest {
         pairs.add(new String[]{"--zq-mini-text", "--zq-mini-bg"});
         pairs.add(new String[]{"--zq-mini-text2", "--zq-mini-bg"});
         pairs.add(new String[]{"--zq-primary", "--zq-card"});
+        pairs.add(new String[]{"--zq-cmd", "--zq-card"});         // 输入框和命令面板里的 / 命令（第一百一十八轮）
+        pairs.add(new String[]{"--zq-cmd", "--zq-card-soft"});    // 面板里鼠标停着的那一行
         pairs.add(new String[]{"--zq-primary", "--zq-bg"});
         for (String c : List.of("--zq-ok", "--zq-warn", "--zq-bad", "--zq-q1", "--zq-q2", "--zq-q3", "--zq-q4")) pairs.add(new String[]{c, "--zq-card"});
         List<String> low = new ArrayList<>();

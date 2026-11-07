@@ -50,7 +50,7 @@
 | 4 | `apply_patch`：一次多文件、要么全成要么全不成，改前给 diff | 用例 + 一致性 | 做完（第一百一十一轮）；模型爱不爱用要真模型量 |
 | 5 | 长命令：后台跑、看输出、停，`/ps`、`/stop` | 真进程 | 做完（第一百一十二轮）；还不能往进程里写 stdin |
 | 6 | `zhiqu exec`：只把结论写 stdout、`--json` 事件流、`--output-schema`、`-o`、stdin、`exec resume --last`，默认只读 | 端到端 | 做完（第一百一十三轮） |
-| 7 | `/review`、`zhiqu review`：只读，给分优先级的发现 | 端到端 | 做完（第一百一十四轮；网页的 `/review` 下一轮和 `/` 面板一起做） |
+| 7 | `/review`、`zhiqu review`：只读，给分优先级的发现 | 端到端 | 做完（第一百一十四轮；网页的 `/review` 第一百一十八轮和 `/` 面板一起做） |
 | 8 | 子 agent：只读探索、干活两种，继承权限，有并发和预算上限 | 端到端 | |
 | 9 | 图片、`/diff`、`/fork`、`/status`、`--cd`、`--add-dir`、`--worktree`、插话、hooks、命令规则 | 用例 | |
 | 10 | **对照评测**：工作目录给一个只有基线提交的 `.git`；Codex + DeepSeek 和 zhiqu + DeepSeek 同题配对（**要用户点头：装 Codex、花钱**） | 官方评分 | |

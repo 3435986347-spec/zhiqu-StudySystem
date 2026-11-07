@@ -14,7 +14,10 @@ import { fileURLToPath } from 'node:url';
 import { PassThrough, Writable } from 'node:stream';
 import { ApiError } from '../api.js';
 import { runTurn } from '../agent.js';
+import { initPrompt } from '../instructions.js';
 import { BUILTIN_SYSTEM_PROMPT } from '../prompt.js';
+import { collectChanges, nothingReport, parseReviewWords, renderReport, reviewSpec, runReview } from '../review.js';
+import { detectSandbox } from '../tools/sandbox.js';
 import { ArtifactTools, DraftTools } from '../tools/drafts.js';
 import { Ui } from '../ui.js';
 
@@ -113,6 +116,27 @@ export function historyBlock(history) {
     { role: 'assistant', content: '好的，前面的对话我当参考；这一次要的结果我用工具重新查。' }];
 }
 
+/**
+ * 网页输入框里的 /review（第一百一十八轮）：和命令行同一份 —— 取 diff 的 git 关在只读沙箱里、能叫起程序的配置都关掉，
+ * 模型在单独的上下文里看，结论按格式核过。这里的 ctx.local.sandbox 只是「后端有沙箱」的记号，git 是这个进程自己跑的，要真的那一份。
+ * 返回给用户看的结论。
+ */
+const STOPPED = '审查没做完（到时间了或者被中断了），没有结论。';
+async function reviewHosted(ctx, message, signal, home) {
+  const words = parseReviewWords(message.trim().split(/\s+/).filter(Boolean).slice(1));
+  const spec = words.error ? words : reviewSpec(words);
+  if (spec.error) return spec.error;
+  const guard = ctx.local.guard;
+  const changes = await collectChanges({ root: ctx.local.root, sandbox: detectSandbox(), readable: (f) => guard.extensionAllowed(f), target: spec.target, signal, home });
+  if (changes.aborted) return STOPPED;
+  if (changes.error) return changes.error;
+  if (changes.nothing) return renderReport(nothingReport(changes));
+  ctx.ui.step(`在看${changes.label}（${changes.files.length + changes.untracked.length} 个文件，只读）`);
+  const r = await runReview(ctx, changes, { signal, instructions: spec.instructions });
+  if (r.aborted) return STOPPED;
+  return r.error || r.text;
+}
+
 /** 跑一轮：run 消息 → 循环 → result。返回 result（测试直接调） */
 export async function runHosted(bridge, run) {
   const Tools = run.artifact ? ArtifactTools : DraftTools;   // 生成到产物：写进临时空间，不走草稿
@@ -146,7 +170,8 @@ export async function runHosted(bridge, run) {
   Object.defineProperty(ctx, 'remoteTools', { get: () => (local.ranCommand ? [...always, ...afterRun] : always), enumerable: true });
   // 说的和这一次做的对不上 —— 推一次让它照实做 / 照实说（第九十五轮，真浏览器里两回：0 轮就说「已生成三个文件的草稿」；
   // 0 轮就说「跑了 test_two_sum.py，输出 ok，三组断言全过」—— 解法还是 return []，根本没跑）
-  ctx.claimCheck = (text) => {
+  // 审查的结论是 JSON，引用的代码里什么话都可能有：不拿它核对（命令行的 /review 也没有这一道）
+  if (run.command !== 'review') ctx.claimCheck = (text) => {
     const s = String(text || '');
     if (CLAIMS_DRAFT.test(s) && !local.drafts.size && !(local.wrote && local.wrote.size)) {
       return '这一次你还没有成功调用 write_file / edit_file / apply_patch，并没有生成任何草稿 —— 不要说生成了。要改文件就现在调工具；不用改就照实说你做了什么。';
@@ -161,15 +186,23 @@ export async function runHosted(bridge, run) {
   const controller = new AbortController();
   const timer = run.timeoutMs ? setTimeout(() => controller.abort(), Number(run.timeoutMs)) : null;
   let error = null;
+  let reviewed = null;
+  // /init、/review 要项目文件夹：页面已经拦过，这里是最后一道（生成到产物时根目录是临时空间，没什么可看、写了也没人读）
+  const command = run.command === 'init' || run.command === 'review' ? run.command : null;
+  const needsFolder = command && run.artifact;
   try {
-    await runTurn(ctx, String(run.message || ''), { signal: controller.signal });
+    if (needsFolder) reviewed = `/${command} 要先选一个项目文件夹，现在是生成到产物，没有项目可看。`;
+    else if (command === 'review') reviewed = await reviewHosted(ctx, String(run.message || ''), controller.signal, typeof run.home === 'string' ? run.home : undefined);
+    else await runTurn(ctx, command === 'init' ? initPrompt(fs.existsSync(path.join(local.root, 'ZHIQU.md'))) : String(run.message || ''), { signal: controller.signal });
   } catch (e) {
     error = String((e && e.message) || e);
+    // 审查的过程在单独的上下文里，这里没有别的字：不写一句，最终回答就只能照空的编
+    if (command === 'review') reviewed = `审查没做完：${error}`;
   } finally {
     if (timer) clearTimeout(timer);
   }
   const last = [...ctx.messages].reverse().find((m) => m.role === 'assistant' && !(m.tool_calls || []).length);
-  const text = last ? String(last.content || '') : '';
+  const text = reviewed != null ? reviewed : last ? String(last.content || '') : '';
   // 给后端写最终回答用的上下文：和 Java 循环同一个样子（每个工具的结果一段），最后是这份循环自己的结论
   const names = new Map();
   for (const m of ctx.messages) for (const c of m.role === 'assistant' ? m.tool_calls || [] : []) names.set(c.id, c.function.name);

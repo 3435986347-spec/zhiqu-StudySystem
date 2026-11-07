@@ -295,3 +295,9 @@ CODE_AGENT：读门动作词没有「做」，写门没有「放在」。两层�
 （读文件 → 跑判题 → 记薄弱点 → 生成改动草稿）。其中一条断言是间接的，而这正是它最硬的
 地方：「薄弱点草稿存在」<b>证明了命令确实跑过</b> —— `create_wiki_patch` 只在 `ranCommand`
 置位之后才下发，拿不到工具就调不出来。
+
+## 网页的 `/init`、`/review`（第一百一十八轮）
+
+请求带 `contextOptions.codeCommand`，`AgentPlanDecision.codeCommand` 只认 `init`、`review`，代码模式开着才算。提示和审查都在 `host/code-host.js`，用的是命令行那一份。`/review` 不给写工具和远程工具，这是后端的门（`CodeWorkspaceAgent`）；页面上「差什么说什么」只是不白叫模型。
+
+宿主平时什么命令都不跑，PATH 只有 node 那一个目录。`/review` 例外：取 diff 的 git 是宿主自己跑的（关在只读沙箱里，能叫起程序的配置都关掉），所以这一轮给 `toolEnv` 的 PATH，也把真的家目录传过去（`run.home`）。宿主的 HOME 是临时目录，不传的话沙箱挡的 `~/.ssh` 就算到了临时目录头上。

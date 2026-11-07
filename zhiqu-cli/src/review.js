@@ -54,13 +54,13 @@ const DIFF_FLAGS = ['--no-ext-diff', '--no-textconv', '--no-color', '--relative'
 // 有沙箱时写不进去，也不报错，结果照样对；没有沙箱时和用户自己跑 git diff 一样，内容不变。
 const gitEnv = () => ({ GIT_NO_LAZY_FETCH: '1', LC_ALL: 'C' });
 
-function gitRunner({ root, sandbox, signal, timeoutMs }) {
+function gitRunner({ root, sandbox, signal, timeoutMs, home }) {
   const binary = resolveOnPath('git');
   const pinned = [...PINNED];
   const run = (args, limit = 1024 * 1024) => {
     const full = [...pinned, ...args];
     const launch = sandbox
-      ? sandboxedLaunch(sandbox, { command: `git ${full.map(shellQuote).join(' ')}`, root, cwd: root, policy: READ_ONLY })
+      ? sandboxedLaunch(sandbox, { command: `git ${full.map(shellQuote).join(' ')}`, root, cwd: root, policy: READ_ONLY, ...(home ? { home } : {}) })
       : { binary, args: full, env: {} };
     return runProcess({ binary: launch.binary, args: launch.args, cwd: root, env: { ...launch.env, ...gitEnv() }, timeoutMs, outputLimit: limit, signal, separateStderr: true });
   };
@@ -143,9 +143,9 @@ async function resolveRange(git, target) {
  * files 空且 untracked 空就是没东西可看（nothing: true）：不该叫模型。
  * readable：和 read_file 同一条规矩（扩展名白名单）：它不读的文件，diff 也不交给模型，否则 .env 的改动就绕过去了。
  */
-export async function collectChanges({ root, sandbox, readable = () => true, target, signal, limits = DEFAULT_LIMITS }) {
+export async function collectChanges({ root, sandbox, readable = () => true, target, signal, limits = DEFAULT_LIMITS, home }) {
   const { diffBytes, namesBytes, excludes, gitTimeoutMs } = { ...DEFAULT_LIMITS, ...limits };
-  const git = gitRunner({ root, sandbox, signal, timeoutMs: gitTimeoutMs });
+  const git = gitRunner({ root, sandbox, signal, timeoutMs: gitTimeoutMs, home });
   if (!git.binary) return { error: '找不到 git', code: 2 };
   const stop = (r, what) => {
     if (r.aborted) return { aborted: true };

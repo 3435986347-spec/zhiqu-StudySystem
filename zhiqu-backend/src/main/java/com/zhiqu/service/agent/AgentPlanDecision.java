@@ -498,6 +498,20 @@ public record AgentPlanDecision(
         return contextOptions != null && Boolean.TRUE.equals(contextOptions.get(ContextOptionKeys.CODE_MODE));
     }
 
+    /** 这一句是不是 {@code /init}、{@code /review}（第一百一十八轮）：代码模式开着才算，只认这两个字面值，其它返回 null */
+    public static String codeCommand(Map<String, Object> contextOptions) {
+        if (!codeModeRequested(contextOptions)) {
+            return null;
+        }
+        Object command = contextOptions.get(ContextOptionKeys.CODE_COMMAND);
+        return "init".equals(command) || "review".equals(command) ? (String) command : null;
+    }
+
+    /** {@code /review}：只读地看改动。这一轮不给写工具，命令只读，也不给 Wiki、里程碑这些远程工具 */
+    public static boolean codeReview(Map<String, Object> contextOptions) {
+        return "review".equals(codeCommand(contextOptions));
+    }
+
     /**
      * 「造一个东西」的动词 —— 做 / 写 / 生成 + 一个。
      *

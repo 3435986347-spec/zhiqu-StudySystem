@@ -215,6 +215,14 @@ public class JsCodeAgent {
     public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
                                          boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
                                          Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode, Long conversationId) {
+        return run(config, userId, userMessage, history, canWrite, canExec, budget, limits, onStep, remote, reasoningMode, conversationId, null);
+    }
+
+    /** command：网页输入框里打的 init / review（第一百一十八轮），提示和审查都在 host/code-host.js，用的是命令行那一份 */
+    public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
+                                         boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
+                                         Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode, Long conversationId,
+                                         String command) {
         Path script = hostScript();
         String nodeBin = nodeBinary();
         // 这个账号自己的文件夹和档位（第一百一十五轮起分账号），或者这段对话的临时空间，这一轮从头到尾用同一份
@@ -235,7 +243,8 @@ public class JsCodeAgent {
             // 不继承环境变量：HOME 是自己的空目录（仓库里带的配置文件不会被当成全局配置），PATH 只有 node 那一个目录
             pb.environment().clear();
             pb.environment().put("HOME", home.toString());
-            pb.environment().put("PATH", Path.of(nodeBin).getParent().toString());
+            // /review 的 git 是宿主自己跑的（第一百一十八轮，关在只读沙箱里），要找得到；别的时候宿主什么命令都不跑
+            pb.environment().put("PATH", "review".equals(command) ? toolEnv(nodeBin).get("PATH") : Path.of(nodeBin).getParent().toString());
             pb.directory(home.toFile());
             pb.redirectError(home.resolve("stderr.log").toFile());
             process = pb.start();
@@ -272,6 +281,8 @@ public class JsCodeAgent {
         run.put("artifact", target.artifact());
         run.put("hosted", executor.hostedShell());
         run.put("message", userMessage);
+        run.put("command", command);
+        run.put("home", sandboxHome);   // 宿主的 HOME 是临时目录，沙箱要挡的是真的家目录（~/.ssh 这些）
         run.put("history", history == null ? List.of() : history);
         run.put("canWrite", canWrite);
         run.put("canExec", canExec);

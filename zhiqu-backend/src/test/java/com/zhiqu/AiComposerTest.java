@@ -181,6 +181,39 @@ class AiComposerTest {
     }
 
     @Test
+    @DisplayName("第一百一十八轮：打 / 拉出命令面板、能当命令执行；命令那一段换颜色，靠后面垫一层排版完全相同的字")
+    void 斜杠命令() throws Exception {
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/slash-check.js"), STATIC.resolve("assets")), "slash-check.js 没有全绿");
+        String html = html();
+        int wrap = html.indexOf("<div class=\"zq-draft-wrap\">");
+        int menu = html.indexOf("id=\"zq-slash-menu\"");
+        int mirror = html.indexOf("id=\"zq-draft-mirror\"");
+        int draft = html.indexOf("<textarea id=\"zq-draft\"");
+        assertTrue(wrap > 0 && menu > wrap && mirror > menu && draft > mirror,
+                "后面那层要排在输入框前面（输入框盖在上面才接得到打字和光标）");
+        String css = Files.readString(STATIC.resolve("assets/zhiqu-ui.css"));
+        String area = rule(css, ".zq-composer textarea"), back = rule(css, ".zq-draft-mirror");
+        for (String prop : List.of("font", "padding")) {
+            assertEquals(declared(area, prop), declared(back, prop), prop + " 和输入框不一样：字就对不上了，看到的和光标错开");
+        }
+        assertEquals("pre-wrap", declared(back, "white-space"), "换行要和输入框一样");
+        assertEquals("break-word", declared(back, "overflow-wrap"), "长串折行要和输入框一样");
+        assertEquals("none", declared(back, "display"), "平时不启用：输入框还是原来的样子");
+        assertEquals("block", declared(rule(css, ".zq-composer.has-command .zq-draft-mirror"), "display"));
+        String on = rule(css, ".zq-composer.has-command textarea");
+        assertEquals("transparent", declared(on, "color"), "输入框的字不透明就把上了色的那层盖住了");
+        assertEquals("var(--zq-text)", declared(on, "caret-color"), "字透明了光标也跟着没了");
+        assertEquals("none", declared(on, "scrollbar-width"), "有滚动条的机器上折行宽度会和后面那层不一样");
+        assertEquals("var(--zq-cmd)", declared(rule(css, ".zq-draft-cmd"), "color"));
+    }
+
+    private static String declared(String rule, String prop) {
+        Matcher m = Pattern.compile("(?:^|;)" + Pattern.quote(prop) + ":([^;]+)").matcher(rule);
+        assertTrue(m.find(), "找不到 " + prop + "：" + rule);
+        return m.group(1).trim();
+    }
+
+    @Test
     @DisplayName("第一百一十六轮：生成的文件能预览、下载；别人写的文件名不能变成标签；HTML 关在没有同源权限的 iframe 里")
     void 生成的文件() throws Exception {
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/generated-files-check.js"), STATIC.resolve("assets")),

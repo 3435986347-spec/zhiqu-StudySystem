@@ -4,12 +4,13 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { DraftTools, ABSENT } from '../src/tools/drafts.js';
 import { createBridge, runHosted } from '../src/host/code-host.js';
+import { detectSandbox } from '../src/tools/sandbox.js';
 import { tmpdir, write } from './helpers.js';
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -392,3 +393,135 @@ test('生成到产物：说写了却一个都没写，推一次；真写了不�
   assert.equal(r.writeCalls, 1);
 });
 
+
+// ─────────── 网页输入框里的 /init、/review（第一百一十八轮）：用命令行那一份，门在后端
+function gitRepo() {
+  const root = tmpdir();
+  write(root, 'calc.py', 'def add(a, b):\n    return a + b\n');
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: root, stdio: 'pipe' });
+  git('init', '-q');
+  git('add', '.');
+  git('commit', '-qm', '第一版');
+  return { root, git };
+}
+const REVIEW_JSON = JSON.stringify({ summary: '加法写成了减法。', findings: [{ priority: 'P1', file: 'calc.py', line: 2, title: '符号反了', why: 'add 现在在减', fix: '改回 +' }] });
+const lastUser = (m) => m.body.messages.filter((x) => x.role === 'user').at(-1).content;
+
+test('/init：发给模型的是命令行那份提示，不是「/init」这四个字；已经有 ZHIQU.md 时说的是更新', async () => {
+  const root = tmpdir();
+  write(root, 'a.js', 'x\n');
+  const first = fakeBackend({ replies: [{ text: '写好了' }] });
+  await runHosted(first.bridge, { type: 'run', root, command: 'init', message: '/init', canWrite: true, model: MODEL });
+  const prompt = lastUser(first.seen.find((m) => m.type === 'model'));
+  assert.match(prompt, /请为这个项目写一份 ZHIQU\.md 初稿/);
+  assert.ok(!/^\/init/.test(prompt));
+  write(root, 'ZHIQU.md', '# 已有\n');
+  const again = fakeBackend({ replies: [{ text: '更新了' }] });
+  await runHosted(again.bridge, { type: 'run', root, command: 'init', message: '/init', canWrite: true, model: MODEL });
+  assert.match(lastUser(again.seen.find((m) => m.type === 'model')), /工作区里已经有 ZHIQU\.md 了/);
+});
+
+test('/review：diff 替模型取好（真 git）；下发的工具没有写的；模型硬调写工具不落地；结论按格式核过、照命令行的样子写回', async () => {
+  const { root } = gitRepo();
+  write(root, 'calc.py', 'def add(a, b):\n    return a - b\n');
+  const { bridge, seen } = fakeBackend({ replies: [
+    { calls: [{ name: 'write_file', args: { path: 'calc.py', content: 'hacked\n' } }] },
+    { text: REVIEW_JSON },
+  ] });
+  const result = await runHosted(bridge, { type: 'run', root, command: 'review', message: '/review --uncommitted 看看符号', canWrite: false, canExec: true, canShell: true, shellWrite: false, commands: [], model: MODEL });
+  const models = seen.filter((m) => m.type === 'model');
+  assert.equal(models.length, 2);
+  const prompt = lastUser(models[0]);
+  assert.match(prompt, /你在审查一段代码改动/);
+  assert.match(prompt, /-    return a \+ b\n\+    return a - b/, '真的 diff 放进了提示');
+  assert.match(prompt, /用户另外的要求.*看看符号/);
+  const offered = models[0].body.tools.map((t) => t.function.name);
+  for (const name of ['write_file', 'edit_file', 'apply_patch', 'delete_file', 'exit_plan_mode']) assert.ok(!offered.includes(name), offered.join(','));
+  assert.equal(fs.readFileSync(path.join(root, 'calc.py'), 'utf8'), 'def add(a, b):\n    return a - b\n');
+  assert.deepEqual(result.drafts, []);
+  assert.equal(result.writeCalls, 0);
+  assert.match(result.text, /发现 1 个问题（P1 1 个）/);
+  assert.match(result.text, /\[P1\] calc\.py:2 符号反了/);
+  assert.match(result.context, /【代码 agent 的结论】\n发现 1 个问题/);
+  assert.ok(seen.some((m) => m.type === 'step' && /在看.*只读/.test(m.text)), '轨迹里要说在看什么');
+  assert.ok(result.usage.prompt > 0, '审查花的用量要算进来：单独的上下文，用量还是这一轮的');
+});
+
+test('/review：结论不是要的格式就推回去重写，模型说的话不拿来当「说了没做」核对', async () => {
+  const { root } = gitRepo();
+  write(root, 'calc.py', 'def add(a, b):\n    return a - b\n');
+  const { bridge, seen } = fakeBackend({ replies: [{ text: '已生成三个文件的草稿，跑了 test.py，退出码 0' }, { text: REVIEW_JSON }] });
+  const result = await runHosted(bridge, { type: 'run', root, command: 'review', message: '/review', canExec: true, canShell: true, commands: [], model: MODEL });
+  const models = seen.filter((m) => m.type === 'model');
+  assert.equal(models.length, 2);
+  assert.match(lastUser(models[1]), /不符合要求的格式/);
+  assert.ok(!models[1].body.messages.some((m) => /你还没有成功调用|什么命令都没跑过/.test(String(m.content))));
+  assert.match(result.text, /符号反了/);
+});
+
+test('/review：git 关在沙箱里，挡的是真的家目录（宿主自己的 HOME 只是个临时目录）：工作区就是家目录时 ~/.ssh 也读不到', { skip: detectSandbox() ? false : '这台机器没有系统沙箱' }, async () => {
+  const { root } = gitRepo();
+  // 工作区盖住了家目录是唯一看得出差别的情况：工作区是放开读的，~/.ssh 这些靠后面再挡一遍。家目录要是还是那个临时目录，就没挡
+  const home = path.join(root, 'myhome');
+  write(root, 'myhome/.ssh/ignore-me', '*.py\nmyhome/\n');   // 读得到的话，下面这个新文件就从审查里消失了
+  fs.appendFileSync(path.join(root, '.git', 'config'), `[core]\n\texcludesFile = ${path.join(home, '.ssh', 'ignore-me')}\n`);
+  write(root, 'new.py', 'x = 1\n');
+  const run = async (extra) => {
+    const { bridge, seen } = fakeBackend({ replies: [{ text: REVIEW_JSON }] });
+    await runHosted(bridge, { type: 'run', root, command: 'review', message: '/review', model: MODEL, ...extra });
+    return seen.filter((m) => m.type === 'model').length;
+  };
+  assert.equal(await run({ home }), 1, '沙箱挡住了：看得到 new.py，要叫模型');
+  assert.equal(await run({}), 0, '对照：家目录没指对就读到了，没有改动可看');
+});
+
+test('/review：没有改动、不是仓库、参数不对、提交不存在：不叫模型，把原因写回去', async () => {
+  const { root } = gitRepo();
+  const cases = [
+    [root, '/review', /没有改动/],
+    [root, '/review --base', /--base 后面要跟一个值/],
+    [root, '/review --base a --commit b', /只能给一个/],
+    [root, '/review --base 没有这个分支', /没有这个分支/],
+    [tmpdir(), '/review', /仓库/],
+  ];
+  for (const [dir, message, expected] of cases) {
+    const { bridge, seen } = fakeBackend({ replies: [{ text: '不该走到这' }] });
+    const result = await runHosted(bridge, { type: 'run', root: dir, command: 'review', message, model: MODEL });
+    assert.match(result.text, expected, message);
+    assert.equal(seen.filter((m) => m.type === 'model').length, 0, message);
+  }
+});
+
+test('/review：模型调用失败、审查被中断：写一句「没做完」，不留空（留空的话最终回答只能照空的编）', async () => {
+  const { root } = gitRepo();
+  write(root, 'calc.py', 'x\n');
+  const failed = fakeBackend({ replies: [{ error: '模型不在' }] });
+  const a = await runHosted(failed.bridge, { type: 'run', root, command: 'review', message: '/review', model: MODEL });
+  assert.match(a.text, /审查没做完：.*模型不在/);
+  assert.match(a.context, /审查没做完/);
+  const never = createBridge({ input: new PassThrough(), output: new PassThrough() });
+  const b = await runHosted(never, { type: 'run', root, command: 'review', message: '/review', model: MODEL, timeoutMs: 50 });
+  assert.match(b.text, /审查没做完/);
+});
+
+test('/init、/review 在生成到产物时不跑：根目录是临时空间，没有项目可看（页面拦过，这是最后一道）', async () => {
+  for (const command of ['init', 'review']) {
+    const root = tmpdir();
+    const { bridge, seen } = fakeBackend({ replies: [{ text: '不该走到这' }] });
+    const result = await runHosted(bridge, { type: 'run', root, artifact: true, command, message: `/${command}`, canWrite: true, model: MODEL });
+    assert.match(result.text, new RegExp(`/${command} 要先选一个项目文件夹`));
+    assert.equal(seen.filter((m) => m.type === 'model').length, 0);
+    assert.deepEqual(fs.readdirSync(root), []);
+  }
+});
+
+test('认不出的 command 当普通的一句话', async () => {
+  const root = tmpdir();
+  const { bridge, seen } = fakeBackend({ replies: [{ text: '好' }] });
+  const result = await runHosted(bridge, { type: 'run', root, command: 'rm -rf', message: '普通的一句', model: MODEL });
+  assert.equal(lastUser(seen.find((m) => m.type === 'model')), '普通的一句');
+  assert.equal(result.text, '好');
+  const artifact = fakeBackend({ replies: [{ text: '好' }] });
+  const inArtifact = await runHosted(artifact.bridge, { type: 'run', root: tmpdir(), artifact: true, command: 'rm -rf', message: '普通的一句', model: MODEL });
+  assert.equal(inArtifact.text, '好', '生成到产物时也一样，不说要选文件夹');
+});

@@ -12,7 +12,9 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -109,6 +111,23 @@ class CodeModeAndBuildIntentTest {
         Map<String, Object> on = Map.of(ContextOptionKeys.CODE_MODE, true);
         assertFalse(decide("帮我做一个小游戏", on, true, false).needsCodeAgent(), "工作区不可读时按开关造出了 CODE_AGENT");
         assertFalse(decide("帮我做一个小游戏", on, false, true).needsCodeAgent(), "模型不支持工具调用时按开关造出了 CODE_AGENT");
+    }
+
+    /** review 这个值决定不给写工具：认错了，用户说只读地看，模型却拿到了写权限；反过来也不能让别的字混进去。 */
+    @Test
+    @DisplayName("第一百一十八轮：codeCommand 只认 init、review 两个字面值，而且代码模式开着才算")
+    void 命令只认字面值() {
+        Map<String, Object> review = Map.of(ContextOptionKeys.CODE_MODE, true, ContextOptionKeys.CODE_COMMAND, "review");
+        assertEquals("review", AgentPlanDecision.codeCommand(review));
+        assertTrue(AgentPlanDecision.codeReview(review));
+        Map<String, Object> init = Map.of(ContextOptionKeys.CODE_MODE, true, ContextOptionKeys.CODE_COMMAND, "init");
+        assertEquals("init", AgentPlanDecision.codeCommand(init));
+        assertFalse(AgentPlanDecision.codeReview(init));
+        assertNull(AgentPlanDecision.codeCommand(Map.of(ContextOptionKeys.CODE_COMMAND, "review")), "代码模式关着不算");
+        assertNull(AgentPlanDecision.codeCommand(Map.of(ContextOptionKeys.CODE_MODE, true, ContextOptionKeys.CODE_COMMAND, "REVIEW")));
+        assertNull(AgentPlanDecision.codeCommand(Map.of(ContextOptionKeys.CODE_MODE, true, ContextOptionKeys.CODE_COMMAND, 1)));
+        assertNull(AgentPlanDecision.codeCommand(Map.of(ContextOptionKeys.CODE_MODE, true)));
+        assertNull(AgentPlanDecision.codeCommand(null));
     }
 
     /** 这个键决定要不要给写权限：认错一个值的代价是用户没要的写工具。 */

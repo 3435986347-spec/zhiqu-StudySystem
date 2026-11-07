@@ -76,6 +76,11 @@ class DesktopWebKitLayoutTest {
         }
         assertTrue(Double.parseDouble(out.get("inlineTitle.overflow")) <= 0.5, "很长的页名在窄窗口里撑出正文：" + out);
         assertTrue(Integer.parseInt(out.get("inlineTitle.lines")) >= 2, "很长的页名没有折行：" + out);
+        // 第一百一十八轮：命令上色那层字。折行不一样高度就不一样，看到的字和光标就错开了
+        assertEquals("block", out.get("draftMirror.display"), "探针没量到后面那层：" + out);
+        assertTrue(Double.parseDouble(out.get("draftMirror.tallest")) > 660, "样本折得不够多（要三十行以上），差 1px 量不出来：" + out);
+        assertTrue(Double.parseDouble(out.get("draftMirror.heightGap")) <= 0.5, "WebKit 里输入框和后面那层折行不一样：" + out);
+        assertTrue(Double.parseDouble(out.get("draftMirror.widthGap")) <= 0.5, "WebKit 里输入框和后面那层不一样宽：" + out);
     }
 
     private Map<String, String> runCheck() throws Exception {

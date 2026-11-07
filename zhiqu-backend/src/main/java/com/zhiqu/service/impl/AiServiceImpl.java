@@ -1655,8 +1655,9 @@ public class AiServiceImpl implements AiService {
             if (hasText(s.codeContext) || !s.codeDrafts.isEmpty() || s.codeWriteOffered || !s.codeGeneratedFiles.isEmpty()) {
                 // 与 Wiki 检索资料同样处理：工作区读到的是<b>数据</b>，以 user 数据块注入（提示注入防护）。
                 // 结尾那句「有没有草稿」必须跟着本轮实际结果走 —— 见 CodeContextPrompt。
-                messages.add(Map.of("role", "user", "content",
-                        CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered, s.codeWriteAttempted, s.codeGeneratedFiles)));
+                messages.add(Map.of("role", "user", "content", AgentPlanDecision.codeReview(s.contextOptions)
+                        ? CodeContextPrompt.reviewBlock(s.codeContext)
+                        : CodeContextPrompt.dataBlock(s.codeContext, s.codeDrafts, s.codeWriteOffered, s.codeWriteAttempted, s.codeGeneratedFiles)));
             }
             // 用户的任务（第二十七轮）：和 Wiki、工作区一样是数据，以 user 数据块注入（标题是用户写的、可能是粘来的）
             if (hasText(s.taskContext)) {

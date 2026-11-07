@@ -65,9 +65,15 @@ public final class ContextOptionKeys {
      */
     public static final String CODE_MODE = "codeMode";
 
+    /**
+     * 网页输入框里打的 {@code /init}、{@code /review}（第一百一十八轮）。只认这两个字面值，别的当没有。
+     * 提示和审查都用命令行那一份（host/code-host.js）；{@code review} 这一轮不给写工具，命令只读。
+     */
+    public static final String CODE_COMMAND = "codeCommand";
+
     /** 由客户端提供的键 —— 覆盖测试要求活壳里至少有一处在发。 */
     public static final Set<String> CLIENT_SUPPLIED =
-            Set.of(SELECTED_SOURCE_IDS, INCLUDE_WIKI, SELECTED_WIKI_PAGE_IDS, CODE_MODE);
+            Set.of(SELECTED_SOURCE_IDS, INCLUDE_WIKI, SELECTED_WIKI_PAGE_IDS, CODE_MODE, CODE_COMMAND);
 
     /** 由服务端在调用前注入的键 —— 不参与前端覆盖检查。 */
     public static final Set<String> SERVER_INJECTED = Set.of(QUERY);

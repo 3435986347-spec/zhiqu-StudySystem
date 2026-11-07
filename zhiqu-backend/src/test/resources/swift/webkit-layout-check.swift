@@ -100,6 +100,23 @@ let measure = """
   result['inlineTitle.overflow'] = Math.max(0, titleHost.scrollWidth - titleHost.clientWidth);
   result['inlineTitle.lines'] = Math.round(titleHost.firstChild.getBoundingClientRect().height / parseFloat(getComputedStyle(titleHost.firstChild).lineHeight));
   result.wikiToolbarCases = wikiToolbarCases;
+  // 第一百一十八轮：命令上色靠输入框后面垫的那层字，要和输入框逐行对齐。输入框里的字量不到位置，比折出来的总高度：折行不一样，高度就不一样
+  // 样本要折三十行以上：字号差 1px 只差 7%，折十行时总行数常常碰巧一样（扰动撞出来的）
+  var composerHost = document.createElement('div'); composerHost.style.width = '420px';
+  composerHost.innerHTML = '<div class="zq-composer has-command"><div class="zq-draft-wrap"><div class="zq-draft-mirror"></div><textarea></textarea></div></div>';
+  document.body.appendChild(composerHost);
+  var area = composerHost.querySelector('textarea'), behind = composerHost.querySelector('.zq-draft-mirror'), newline = String.fromCharCode(10);
+  var heightGap = 0, tallest = 0;
+  ['/review ' + '看看这一段很长的说明 and some long english words, '.repeat(40), '/review ' + 'x'.repeat(1600), '/review 第一行' + newline + newline + '第三行', '/review ' + '中文折行，标点、引号「」要落在同一处。'.repeat(50)].forEach(function (text) {
+    area.value = text;
+    behind.textContent = text + String.fromCharCode(0x200b);
+    heightGap = Math.max(heightGap, Math.abs(area.scrollHeight - behind.scrollHeight));
+    tallest = Math.max(tallest, behind.scrollHeight);
+  });
+  result['draftMirror.heightGap'] = heightGap;
+  result['draftMirror.widthGap'] = Math.abs(area.clientWidth - behind.clientWidth);
+  result['draftMirror.tallest'] = tallest;
+  result['draftMirror.display'] = getComputedStyle(behind).display;
   return JSON.stringify(result);
 })()
 """

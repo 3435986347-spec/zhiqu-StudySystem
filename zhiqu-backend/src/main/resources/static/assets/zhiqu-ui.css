@@ -15,6 +15,7 @@
   /* 灰阶（浅色） */
   --zq-bg: #FAFAFA;
   --zq-card: #FFFFFF;
+  --zq-cmd: #1D4ED8;   /* 第一百一十八轮：输入框和面板里的 / 命令 */
   --zq-card-soft: #F4F4F5;
   --zq-text: #232326;
   --zq-text2: #52525B;
@@ -118,6 +119,7 @@
 html[data-zq-mode="dark"]{
   --zq-bg: #0B0B0C;
   --zq-card: #141416;
+  --zq-cmd: #8AB4FF;
   --zq-card-soft: #1C1C1F;
   --zq-text: #ECECEE;
   --zq-text2: #B4B4BC;
@@ -780,6 +782,22 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-composer textarea::placeholder{color:var(--zq-text3);}
 /* 聚焦时里面不再画一圈（第一百零三轮，用户截图里的「矩形框」）：外框 .zq-composer:focus-within 变色就是聚焦的样子；全站的 textarea:focus 光圈在这里不要 */
 .zq-composer textarea:focus{box-shadow:none;}
+/* 打 / 拉出的命令面板、命令那一段的颜色（第一百一十八轮）。颜色靠后面垫一层一模一样排版的文字：只在有命令时启用，平时输入框还是原来的样子 */
+.zq-draft-wrap{position:relative;min-width:0;}
+.zq-draft-mirror{position:absolute;inset:0;display:none;padding:0 4px 0 0;overflow:hidden;pointer-events:none;color:var(--zq-text);font:var(--zq-fw-regular) var(--zq-fs-base)/22px var(--zq-fontBody);white-space:pre-wrap;overflow-wrap:break-word;}
+.zq-draft-cmd{color:var(--zq-cmd);}
+.zq-composer.has-command .zq-draft-mirror{display:block;}
+.zq-composer.has-command textarea{position:relative;color:transparent;caret-color:var(--zq-text);scrollbar-width:none;}
+.zq-composer.has-command textarea::-webkit-scrollbar{display:none;}
+.zq-slash-menu{position:absolute;left:-4px;right:-4px;bottom:calc(100% + 14px);z-index:30;max-height:300px;overflow-y:auto;padding:5px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);box-shadow:var(--zq-sh2);animation:zqPullUp .14s ease-out;}
+.zq-slash-menu[hidden]{display:none;}
+.zq-slash-item{display:flex;align-items:baseline;gap:10px;width:100%;padding:7px 10px;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text2);font-size:var(--zq-fs-sm);text-align:left;cursor:pointer;}
+.zq-slash-item:hover{background:var(--zq-card-soft);}
+.zq-slash-item[aria-selected="true"]{background:var(--zq-tint);}
+.zq-slash-name{flex:none;color:var(--zq-cmd);}
+.zq-slash-args{flex:none;color:var(--zq-text3);font-size:var(--zq-fs-2xs);}
+.zq-slash-desc{flex:1 1 auto;min-width:0;}
+@media (prefers-reduced-motion:reduce){.zq-slash-menu{animation:none;}}
 .zq-composer-bar{display:flex;align-items:center;gap:4px;min-width:0;margin-left:-6px;}
 .zq-composer-icon{width:30px;height:30px;flex:none;display:inline-flex;align-items:center;justify-content:center;padding:0;border:none;border-radius:var(--zq-rs);background:transparent;color:var(--zq-text2);cursor:pointer;}
 .zq-composer-icon:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}
@@ -1661,6 +1679,9 @@ html.zq-desktop [data-zq-download]{display:none !important;}
   /* 思考档位写着名字，比原来的图标宽（第一百零八轮）：一行放不下时模型和发送换到第二行，不把模型名挤没；面板向左展开，不出屏幕 */
   .zq-composer-bar{flex-wrap:wrap;}
   #zq-effort-pick .zq-tier-menu{left:auto;right:0;}
+  /* 命令面板窄了：说明另起一行，名字和参数不被挤成竖排（第一百一十八轮） */
+  .zq-slash-item{flex-wrap:wrap;gap:2px 10px;}
+  .zq-slash-desc{flex-basis:100%;}
   #zq-chat{padding:14px 12px!important;}
   /* AI 助手、Wiki 的定高容器：桌面上减的是 .zq-main 的上下 padding（32 + 80），手机上 padding 是 18+64=82px，
      照减桌面那份底下白空 30px。dvh 跟着手机浏览器地址栏的收放走；不支持 dvh 的浏览器丢掉这一条，退回 .zq-fill-page 的 100vh。
