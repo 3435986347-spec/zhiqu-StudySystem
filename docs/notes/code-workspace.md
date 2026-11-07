@@ -94,7 +94,36 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 `WorkspaceGuard.containedAfterSymlinks` 用 `toRealPath()` 解开每一段再比，**root 自己也要
 realpath** —— 否则 macOS 上 `/tmp` 实际是 `/private/tmp`，正常读取会全部失效。
 
-**执行沙箱（阶段 3）默认关闭，而且它不是你以为的那种沙箱。**
+**系统沙箱（第一百零九轮，用户 2026-11-07：「网页代码模式也要给系统沙箱，两者要一致」）。** 这台机器有系统沙箱（macOS 的 Seatbelt、Linux 的 bubblewrap，真跑一次才算有）时，网页和命令行都给 `shell`，不再给白名单的 `run_command`。沙箱只有一份实现：`zhiqu-cli/src/tools/sandbox.js`。网页这边 `JsCodeAgent` 问 `host/sandbox-launch.js`「这条命令怎么起」（输入全部来自后端，不经过模型和 code-host），进程还是由 `WorkspaceExecutor.shell` 起，门还在后端。边界：
+
+| | 能 | 不能 |
+|---|---|---|
+| 写 | 工作区、自己的临时目录 `$TMPDIR` | 别处；`.git`、`.zhiqu`（写一个 hook、改一下设置，下次就跑到沙箱外了）；`/tmp` |
+| 读 | 系统目录、工作区、工具链（PATH 里的、`JAVA_HOME` 这类、依赖缓存） | 家目录其余的一切（`.ssh`、`~/.zhiqu` 的令牌…），工具链旁边的凭据（`.cargo/credentials` 这类）再挡一遍 |
+| 网 | 默认全断，**连本机也不行**（本机 MySQL 没密码、Docker 的 socket 也在本机）；`app.workspace.sandbox-network=local\|on` 才放开 | |
+| 系统服务（macOS） | 目录查询、日志、通知 | `open`、`osascript`（叫别的程序，就跑到沙箱外了）、剪贴板、钥匙串、`defaults`、`launchctl`；别的进程的路径和命令行（`lsof`、`kern.proc*`）；给别的进程发信号 |
+
+档位（网页和命令行对应）：
+
+| 网页 | 命令行 | 命令 | 改文件的工具 |
+|---|---|---|---|
+| close | — | 没有 | 没有 |
+| plan | plan | 只读沙箱，不问 | 没有 |
+| manual | ask | 网页：只读沙箱（**网页没有逐条确认的界面**）；命令行：逐个问，沙箱里能写 | 网页先成草稿；命令行逐个问 |
+| auto | auto | 不问，沙箱里能写工作区（网页要这一轮有写意图，代码模式都算有） | 网页先成草稿；命令行直接写 |
+
+**网页 auto 档的 `shell` 写的东西直接落盘，不经过草稿**（用户问过三选一后定的「和命令行完全一样」）。`edit_file` / `write_file` 的改动还是草稿，系统提示让模型改代码只用它们。草稿确认之前，命令跑的是磁盘上的旧版本（这条没变）。被挡住时：命令行 ask 档问要不要不带沙箱再跑一次（默认不、每次都问，「本会话都允许」不算），网页和 plan、auto 只把边界告诉模型。
+
+不看代码想不到的（都是这一轮真跑出来的）：
+- **`deny default` 拦不住 `process-info`**：要显式 `(deny process-info*)`，再加 `(deny sysctl-read (sysctl-name-prefix "kern.proc"))`，两条一起别的进程才看不到。第一版判据的靶子进程一启动就退出了，「读不到」被当成挡住了；现在靶子是活的，沙箱外读得到当对照。
+- **JVM 附加到自己被挡**（Mockito 5 的 inline mock maker 要这个）：要连系统临时目录里的 `.java_pid<pid>` socket，别的 JVM（比如持有 AI 密钥的后端）的也在那儿，放开就能往里面加载代码、跳出沙箱。所以不放，用到它的测试在沙箱里跑不过，会被认成「可能被沙箱挡了」；项目可以改用 `-javaagent` 方式加载 Mockito。
+- 系统工具不听 `TMPDIR`：`xcrun`（git、python3、clang 都经过它，写不了缓存每次报一行错）和 `mktemp` 按名字放（`xcrun_db*`、`tmp.*`），别的东西留在系统临时目录的照样读不到；`mktemp -t 前缀` 写不了，用 `mktemp "$TMPDIR/x.XXXX"`。Java 用 `JAVA_TOOL_OPTIONS` 指临时目录，代价是每次多打一行 `Picked up JAVA_TOOL_OPTIONS`。
+- bubblewrap 只能挡已有的路径：工作区里还没有 `.git` / `.zhiqu` 时放一个只读的空目录占住，跑完收掉（被杀来不及收也只是留个空目录）。它分不出本机和外网，`local` 等于 `on`。Linux 上 `/tmp`、家目录在沙箱里是空的，被挡的样子是「没有这个文件」，`looksBlocked` 认这种。
+- 启动时存一份档位是错的：`WorkspaceExecutor` 原来在构造时存下 `access` 和 `guard`，**以 EXEC 起的后端切到只读还能跑命令、换了项目命令还跑在旧目录**（本机验证都带 `--app.workspace.mode=EXEC` 启动，一直没发现）。现在每次读 `WorkspaceService`。
+
+没有系统沙箱的机器（Windows、没装 bubblewrap 的 Linux）退回下面的白名单。
+
+**白名单命令（没有系统沙箱时的退路，阶段 3）默认关闭，而且它不是你以为的那种沙箱。**
 白名单里有 `python3` / `node` / `java`，**允许它们就等于允许任意代码** —— 一段 Python 能删掉
 用户的家目录，`WorkspaceExecutor` 拦不住，进程级隔离（容器 / seccomp）不在这一层。
 把它叫「沙箱」而不说这一点，会让人以为代码被关住了。

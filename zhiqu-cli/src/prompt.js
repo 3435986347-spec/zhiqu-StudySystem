@@ -3,7 +3,7 @@
 export const BUILTIN_SYSTEM_PROMPT = `你是 zhiqu，「知趣·象限」AI 办公助手的命令行 agent。你在用户自己的电脑上、在当前工作区里替用户读代码、写代码、跑命令。
 
 ## 做事的方式
-- 用户要你做一件事（写一个小游戏、修一个 bug、加一个功能），就直接动手：用工具读需要的文件，用 write_file / edit_file 把代码写进文件，需要时用 run_command 跑一下验证。**做完之后**再用几句话告诉用户做了什么、文件在哪、怎么用。
+- 用户要你做一件事（写一个小游戏、修一个 bug、加一个功能），就直接动手：用工具读需要的文件，用 write_file / edit_file 把代码写进文件，需要时跑一下命令验证。**做完之后**再用几句话告诉用户做了什么、文件在哪、怎么用。
 - 不要把整份代码贴在回答里让用户自己复制 —— 代码写进文件；回答里只说改了什么，必要时引用几行关键代码。
 - 不要先问「要不要我直接写」「你确认吗」—— 用户已经说了要做什么。只有需求本身有歧义、不同理解会得到完全不同的结果时，才先问一句。
 - 权限由命令行负责：需要用户确认的写入和命令，命令行会自己问。你不用在回答里再要确认，也不要说「确认后我再写」。
@@ -46,7 +46,7 @@ export const BUILTIN_SYSTEM_PROMPT = `你是 zhiqu，「知趣·象限」AI 办�
 `;
 
 const MODE_TEXT = {
-  plan: 'plan（只读）—— 你只能读、搜、查，不能写文件、不能跑命令。把要做的事想清楚之后，调用 exit_plan_mode 把计划交给用户；用户批准了，命令行会切到能写的档位，你再接着做。',
+  plan: 'plan（只读）—— 你只能读、搜、查，不能写文件（有 shell 工具的话，它跑在只读的系统沙箱里）。把要做的事想清楚之后，调用 exit_plan_mode 把计划交给用户；用户批准了，命令行会切到能写的档位，你再接着做。',
   ask: 'ask（逐个确认）—— 每次写文件、跑命令，命令行会先把 diff / 命令给用户看再问。被拒绝了就换个做法或者问用户怎么办，不要原样重试。',
   auto: 'auto（全自动）—— 写文件、跑命令都不会逐个问用户。直接把事做完，做完再汇报。',
 };
@@ -54,7 +54,7 @@ const MODE_TEXT = {
 /**
  * 网页 / 桌面应用的代码模式（第九十四轮）：跑的是同一份循环，规矩不一样的几条在这里说，和上面说命令行的几句冲突时以这里为准。
  */
-function draftEnvironment({ root, workspaceName, commands, os, today }) {
+function draftEnvironment({ root, workspaceName, commands, os, today, shell = null, shellWrites = false }) {
   return [
     '## 环境（网页 / 桌面应用的代码模式 —— 和上面说命令行的几句不一样时，以这里为准）',
     `- 工作区：${root}（${workspaceName}）。所有路径都相对它。`,
@@ -62,16 +62,27 @@ function draftEnvironment({ root, workspaceName, commands, os, today }) {
     '- 改动只生成草稿：write_file / edit_file 不落盘，用户在页面上看过 diff、点了确认才写进磁盘。调了这两个工具、结果说「已生成草稿」才有草稿 —— '
       + '没调就没有，不要在回答里说生成了；有草稿时说清是草稿、确认后才生效，不要说「已经改好了」。'
       + '这里没有 delete_file，也不要建临时文件（建了就会出现在用户要确认的草稿里）。',
-    commands.length
+    shell
+      ? `- shell 跑一条 bash 命令，管道、重定向、&& 都能用。命令跑在系统沙箱里：${shell}。被挡住了就换个做法，或者说清楚缺什么权限，不要换着花样绕。`
+        + (shellWrites ? '改代码只用 write_file / edit_file：shell 写的东西直接落到磁盘，不经过草稿，用户看不到 diff。shell 用来跑测试、构建、查东西。' : '')
+        + '草稿确认之前，命令跑的是磁盘上的旧版本。'
+      : commands.length
       ? `- run_command 能跑的命令：${commands.join('、')}。只能跑工作区里已经存在的文件：不接受 python3 -c / node -e 这类行内代码，也不接受 shell 语句；`
         + '草稿确认之前，命令跑的是磁盘上的旧版本。'
       : '- 这一次不能跑命令（没有 run_command）。',
   ].join('\n');
 }
 
-export function environmentBlock({ root, workspaceName, mode, commands, platform = process.platform, today, draft = false }) {
+/** 有系统沙箱时那一行（命令行和网页同一个边界，同一种说法）。 */
+const SHELL_LINE = (boundary) => `- shell 跑一条 bash 命令，管道、重定向、&& 都能用。命令跑在系统沙箱里：${boundary}。被挡住了就换个做法，或者说清楚缺什么权限，不要换着花样绕。`
+  + '读文件、搜内容、改文件还是优先用 read_file / search / edit_file（改动有 diff、记得住），删文件用 delete_file。';
+
+export function environmentBlock({ root, workspaceName, mode, commands, platform = process.platform, today, draft = false, shell = null, shellWrites = false }) {
   const os = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' }[platform] || platform;
-  if (draft) return draftEnvironment({ root, workspaceName, commands, os, today });
+  if (draft) return draftEnvironment({ root, workspaceName, commands, os, today, shell, shellWrites });
+  if (shell) {
+    return ['## 环境', `- 工作区：${root}（${workspaceName}）。所有路径都相对它。`, `- 系统：${os}；今天：${today}`, `- 当前档位：${MODE_TEXT[mode] || mode}`, SHELL_LINE(shell)].join('\n');
+  }
   return [
     '## 环境',
     `- 工作区：${root}（${workspaceName}）。所有路径都相对它。`,

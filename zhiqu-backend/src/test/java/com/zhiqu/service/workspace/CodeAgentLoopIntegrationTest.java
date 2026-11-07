@@ -99,6 +99,7 @@ class CodeAgentLoopIntegrationTest {
     private static HttpServer fakeModelServer;
     /** code agent 那一轮调用的计数 —— 脚本按它决定这一轮请求哪个工具。 */
     private static final AtomicInteger codeAgentRound = new AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicBoolean shellOffered = new java.util.concurrent.atomic.AtomicBoolean();
 
     /** 命令行那份循环发的请求里才有这个工具 —— 用来把它的调用和主流程别的调用区分开 */
     private static final String CODE_AGENT_MARK = "\"name\":\"read_file\"";
@@ -119,7 +120,9 @@ class CodeAgentLoopIntegrationTest {
             String sse = null;
             String json = null;
             if (streaming && requestBody.contains(CODE_AGENT_MARK)) {
-                sse = codeAgentScript(codeAgentRound.incrementAndGet());
+                boolean shell = requestBody.contains("\"name\":\"shell\"");
+                shellOffered.set(shell);
+                sse = codeAgentScript(codeAgentRound.incrementAndGet(), shell);
             } else if (streaming) {
                 sse = "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n";
             } else {
@@ -142,12 +145,16 @@ class CodeAgentLoopIntegrationTest {
      * <p>顺序是有意的 —— 它就是刷题环路本身：先读他的解法，再跑判题，
      * 判题失败之后记薄弱点，最后给出改动草稿。
      */
-    private static String codeAgentScript(int round) {
+    private static String codeAgentScript(int round, boolean shell) {
         String name;
         Map<String, Object> args;
         switch (round) {
             case 1 -> { name = "read_file"; args = Map.of("path", "solve.py"); }
-            case 2 -> { name = "run_command"; args = Map.of("command", "python3", "args", java.util.List.of("test_solve.py")); }
+            // 有系统沙箱给的是 shell（第一百零九轮），没有才是白名单的 run_command：看请求里实际下发了什么
+            case 2 -> {
+                name = shell ? "shell" : "run_command";
+                args = shell ? Map.of("command", "python3 test_solve.py") : Map.of("command", "python3", "args", java.util.List.of("test_solve.py"));
+            }
             // 这一轮能不能调到，取决于上一轮真的跑过命令（宿主每一轮重建工具表，跑过才给）
             case 3 -> { name = "create_wiki_patch"; args = Map.of("title", "薄弱点：两数之和", "content", "返回空列表，没有实现查找", "pageType", "WEAKNESS"); }
             case 4 -> { name = "write_file"; args = Map.of("path", "solve.py", "content", "def two_sum(nums, target):\n    seen = {}\n    return []\n"); }
@@ -213,6 +220,11 @@ class CodeAgentLoopIntegrationTest {
         assertTrue(codeAgentRound.get() >= 4,
                 "code agent 只调了 " + codeAgentRound.get() + " 轮 —— 环路没走完。"
                         + "轮次不够通常意味着某一步的工具没有下发给模型");
+
+        // macOS 一定有系统沙箱：整个应用接起来之后模型要真的拿到 shell（别的平台看有没有装 bubblewrap）
+        if (System.getProperty("os.name", "").toLowerCase().contains("mac") && !Boolean.getBoolean("zhiqu.skipSandboxTests")) {
+            assertTrue(shellOffered.get(), "macOS 上模型没拿到 shell：沙箱没接上");
+        }
 
         // 二、薄弱点草稿存在。这一条<b>间接证明了命令真的跑过</b>：
         //     create_wiki_patch 只在 ranCommand 置位之后才下发，拿不到工具就调不出来。

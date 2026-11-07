@@ -18,7 +18,7 @@ import { generatedOrigin } from './origins.js';
 import { unfinished } from './todos.js';
 import { SLASH_COMMANDS, slashHelp } from './commands.js';
 import { replayTranscript } from './replay.js';
-import { DEFAULT_SERVER, EFFORTS, loadUserConfig, normalizeEffort, normalizeMode, resetSystemContent, resolveSettings, saveUserConfig, stripSlash, systemContent, userDir, MODES } from './config.js';
+import { DEFAULT_SERVER, EFFORTS, loadUserConfig, normalizeEffort, normalizeMode, normalizeSandboxNetwork, resetSystemContent, SANDBOX_NETWORKS, resolveSettings, saveUserConfig, stripSlash, systemContent, userDir, MODES } from './config.js';
 import { isLoopbackUrl } from './defaults.js';
 import { displayPath, initPrompt, instructionsBlock, loadInstructions } from './instructions.js';
 import { McpManager } from './mcp.js';
@@ -28,6 +28,7 @@ import { terminalWarnings } from './render/term.js';
 import { SessionStore } from './session.js';
 import { discoverSkills, skillsBlock } from './skills.js';
 import { LocalTools } from './tools/local.js';
+import { detectSandbox } from './tools/sandbox.js';
 import { Ui, briefInput } from './ui.js';
 import { ensureLocalServer } from './desktop.js';
 import { setWindow, windowLine } from './window.js';
@@ -70,6 +71,7 @@ export function parseArgs(argv) {
     else if (a === '--mode') flags.mode = next();
     else if (a === '--model') flags.model = next();
     else if (a === '--effort') flags.effort = next();
+    else if (a === '--sandbox-network') flags.sandboxNetwork = next();
     else if (a === '--server') flags.server = next();
     else if (a === '--token') flags.token = next();
     else if (a === '--no-browser') flags.noBrowser = true;
@@ -101,6 +103,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
   --mode plan|ask|auto        档位：只读出计划 / 逐个确认 / 全自动（默认 ask，或 ~/.zhiqu/config.json 里的 mode）
   --model <id>                这次用哪个模型（zhiqu models 列出可用的）
   --effort <档位>             思考档位：instant / medium / high / extra / max（不说就听服务端的默认）
+  --sandbox-network <网络>    shell 的系统沙箱能不能联网：off（默认，连本机也不行）/ local（只能连本机）/ on
   --server <url>              服务器地址（默认 ${DEFAULT_SERVER}${isLoopbackUrl(DEFAULT_SERVER) ? '，即本机的桌面应用' : ''}；也可以设 ZHIQU_SERVER）
   --no-mcp                    这次不连 MCP 服务器
   --allow-broad-root          允许在家目录或根目录下运行
@@ -296,6 +299,7 @@ async function runAgent(cwd, flags) {
   for (const w of terminalWarnings({ interactive: ui.interactive })) ui.warn(w);
   const modeFlag = flags.mode ? normalizeMode(flags.mode) : null;
   if (flags.mode && !modeFlag) throw new Error(`--mode 只接受 plan / ask / auto，收到 ${flags.mode}`);
+  if (flags.sandboxNetwork && !normalizeSandboxNetwork(flags.sandboxNetwork)) throw new Error(`--sandbox-network 只接受 ${SANDBOX_NETWORKS.join(' / ')}，收到 ${flags.sandboxNetwork}`);
   if (flags.effort && !normalizeEffort(flags.effort)) throw new Error(`--effort 只接受 ${EFFORTS.join(' / ')}，收到 ${flags.effort}`);
   if (!settings.token) {
     if (!process.stdin.isTTY || flags.print) {
@@ -311,10 +315,14 @@ async function runAgent(cwd, flags) {
   if (await ensureLocalServer({ api, server: settings.server, ui }) === 'failed') return 1;
   const ctx = {
     ui, api, root, settings, mode: modeFlag || settings.mode, effort: settings.effort, maxRounds: settings.maxRounds, verbose: settings.showThinking,
-    local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs }),
+    local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs,
+      sandbox: detectSandbox(), sandboxNetwork: settings.sandboxNetwork }),
     store: new SessionStore(root), allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0, cached: 0 }, changedFiles: new Set(),
   };
+  if (!ctx.local.sandbox) {
+    ui.note(`· ${process.platform === 'linux' ? '没有可用的 bubblewrap（装上 bwrap 才有）' : '这台机器没有可用的系统沙箱'}：没有 shell 工具，跑命令退回白名单。`);
+  }
   try {
     // 三个请求互不依赖，一起发（原来一个等一个，服务器远的时候启动慢一倍多）
     // 启动时的这几个平常几十毫秒就回：等 15 秒还没回就是服务器卡住了，再等一次就说（原来每个等 30 秒、重来两次）

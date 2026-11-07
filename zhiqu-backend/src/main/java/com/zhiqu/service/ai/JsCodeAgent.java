@@ -55,6 +55,11 @@ public class JsCodeAgent {
     /** 一行协议的上限：一份草稿最多几百 KB，再大就是出了错 */
     static final int MAX_LINE_CHARS = 8_000_000;
     static final String HOST_SCRIPT = "src/host/code-host.js";
+    /** 沙箱只有一份实现（zhiqu-cli/src/tools/sandbox.js）：后端问这个脚本「这条命令怎么起」，不在 Java 里再写一份（第一百零九轮） */
+    static final String SANDBOX_SCRIPT = "sandbox-launch.js";
+    /** 不是秘密的工具链变量（和 sandbox.js 的 TOOLCHAIN_ENV 同一份）：mvn 要 JAVA_HOME，虚拟环境要 VIRTUAL_ENV。AI 密钥、数据库密码一律不传 */
+    private static final List<String> TOOLCHAIN_ENV = List.of("JAVA_HOME", "GOROOT", "GOPATH", "GOMODCACHE", "CARGO_HOME", "RUSTUP_HOME",
+            "PYENV_ROOT", "NVM_DIR", "VIRTUAL_ENV", "CONDA_PREFIX", "SDKROOT", "DEVELOPER_DIR", "LC_ALL", "LANG");
 
     private final ObjectProvider<HarnessModelGateway> gateway;
     private final WorkspaceService workspaceService;
@@ -242,6 +247,9 @@ public class JsCodeAgent {
         watchdog.setDaemon(true);
         watchdog.start();
 
+        // 这台机器有系统沙箱就给 shell（第一百零九轮，和命令行一致）。能写工作区要 auto 档（EXEC）+ 这一轮有写意图；plan、manual 是只读沙箱
+        boolean canShell = executor.shellEnabled() && sandboxAvailable(nodeBin, script);
+        boolean shellWrite = canShell && canExec && canWrite;
         Map<String, Object> model = new LinkedHashMap<>();
         model.put("id", config.getId());
         model.put("label", config.getDisplayName() == null || config.getDisplayName().isBlank() ? config.getModelName() : config.getDisplayName());
@@ -254,6 +262,9 @@ public class JsCodeAgent {
         run.put("history", history == null ? List.of() : history);
         run.put("canWrite", canWrite);
         run.put("canExec", canExec);
+        run.put("canShell", canShell);
+        run.put("shellWrite", shellWrite);
+        run.put("sandboxNetwork", workspaceProperties.getSandboxNetwork());
         run.put("commands", canExec ? workspaceProperties.getAllowedCommands() : List.of());
         run.put("maxRounds", budget.rounds());
         run.put("effort", ReasoningEffort.cliName(reasoningMode));
@@ -278,7 +289,10 @@ public class JsCodeAgent {
                 if ("model".equals(type)) {
                     callModel(config, userId, msg, channel);
                 } else if ("exec".equals(type)) {
-                    ranCommand[0] |= exec(msg, canExec, channel);
+                    // 下发的和能执行的同一份清单：给了 shell 就不再接白名单的命令，没给 shell 就不接 shell
+                    ranCommand[0] |= msg.path("shell").asBoolean(false)
+                            ? shell(msg, canShell, shellWrite, nodeBin, script, channel)
+                            : exec(msg, canExec && !canShell, channel);
                 } else if ("tool".equals(type)) {
                     tool(msg, remote, ranCommand[0], channel);
                 } else if ("step".equals(type)) {
@@ -371,6 +385,152 @@ public class JsCodeAgent {
             reply.put("content", "工具执行失败：" + e.getMessage());
         }
         channel.send(reply);
+    }
+
+    /**
+     * 这台机器有没有能用的系统沙箱：问一次记住（真跑一次，嵌套沙箱、用户命名空间被关时算没有）。没有就退回白名单的 run_command，和命令行一样。
+     */
+    boolean sandboxAvailable(String nodeBin, Path hostScript) {
+        Boolean known = sandboxKnown;
+        if (known != null) {
+            return known;
+        }
+        boolean available = false;
+        try {
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("probe", true);
+            request.put("env", toolEnv(nodeBin));
+            available = askSandbox(nodeBin, hostScript, request).path("box").isObject();
+        } catch (Exception e) {
+            log.warn("探测系统沙箱失败，代码模式退回白名单命令：{}", e.toString());
+        }
+        sandboxKnown = available;
+        if (!available) {
+            log.info("这台机器没有可用的系统沙箱，代码模式跑命令退回白名单");
+        }
+        return available;
+    }
+
+    private volatile Boolean sandboxKnown;
+    /** 真家目录：沙箱默认读不到的那个。判据换成假的，不碰用户真的 ~/.ssh */
+    private volatile String sandboxHome = System.getProperty("user.home");
+
+    void useSandboxHome(String home) {
+        this.sandboxHome = home;
+    }
+
+    /** 判据用：假子进程旁边没有沙箱脚本，要看「给了 shell」时后端的门 */
+    void assumeSandbox(boolean available) {
+        this.sandboxKnown = available;
+    }
+
+    /** 命令能看到的工具链：后端自己的 PATH，加上 node 在的地方和常见的安装位置（桌面应用从 Finder 起时 PATH 只有系统目录） */
+    static Map<String, String> toolEnv(String nodeBin) {
+        Map<String, String> env = new LinkedHashMap<>();
+        List<String> dirs = new ArrayList<>();
+        String path = System.getenv("PATH");
+        if (path != null) {
+            dirs.addAll(List.of(path.split(File.pathSeparator)));
+        }
+        dirs.add(Path.of(nodeBin).getParent().toString());
+        for (String dir : List.of("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin")) {
+            if (Files.isDirectory(Path.of(dir))) {
+                dirs.add(dir);
+            }
+        }
+        env.put("PATH", String.join(File.pathSeparator, new java.util.LinkedHashSet<>(dirs)));
+        for (String key : TOOLCHAIN_ENV) {
+            String value = System.getenv(key);
+            if (value != null && !value.isBlank()) {
+                env.put(key, value);
+            }
+        }
+        return env;
+    }
+
+    /** 问沙箱实现。输入全部来自后端；这个进程只回答，不跑命令。 */
+    private JsonNode askSandbox(String nodeBin, Path hostScript, Map<String, Object> request) throws IOException, InterruptedException {
+        Path helper = hostScript.toRealPath().resolveSibling(SANDBOX_SCRIPT);
+        if (!Files.isRegularFile(helper)) {
+            throw new IOException("找不到 " + helper);
+        }
+        ProcessBuilder pb = new ProcessBuilder(nodeBin, helper.toString());
+        pb.environment().clear();
+        pb.environment().put("PATH", Path.of(nodeBin).getParent().toString());
+        pb.environment().put("HOME", System.getProperty("java.io.tmpdir"));
+        pb.environment().put("TMPDIR", System.getProperty("java.io.tmpdir"));
+        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+        Process p = pb.start();
+        try (var stdin = p.getOutputStream()) {
+            stdin.write(json.writeValueAsBytes(request));
+        }
+        byte[] out = p.getInputStream().readAllBytes();
+        if (!p.waitFor(15, TimeUnit.SECONDS)) {
+            p.destroyForcibly();
+            throw new IOException("沙箱脚本没有回答");
+        }
+        JsonNode answer = json.readTree(out);
+        if (answer.hasNonNull("error")) {
+            throw new IOException(answer.path("error").asText());
+        }
+        return answer;
+    }
+
+    /** @return 真的跑了（交给了执行器、没被拒） */
+    private boolean shell(JsonNode msg, boolean canShell, boolean shellWrite, String nodeBin, Path hostScript, Channel channel) throws IOException {
+        Map<String, Object> reply = new LinkedHashMap<>();
+        reply.put("type", "exec_result");
+        reply.put("id", msg.path("id").asText(""));
+        if (!canShell) {
+            reply.put("error", "这一次不能跑命令。");
+            channel.send(reply);
+            return false;
+        }
+        try {
+            WorkspaceExecutor.ExecResult r = executor.shell(msg.path("command").asText(""), msg.path("cwd").asText(""), shellWrite,
+                    request -> sandboxLaunch(nodeBin, hostScript, request));
+            log.info("代码模式跑 shell {} → 退出码 {}（{}ms）", Texts.limitRaw(r.command(), 200), r.exitCode(), r.millis());
+            reply.put("exitCode", r.exitCode());
+            reply.put("output", r.output() + (r.truncated() ? "\n（输出太长，已截断 —— 这不是全部）" : ""));
+            reply.put("timedOut", r.timedOut());
+            reply.put("millis", r.millis());
+        } catch (BusinessException e) {
+            log.info("代码模式的 shell 被拒：{}", e.getMessage());
+            reply.put("error", "没有运行：" + e.getMessage());
+            channel.send(reply);
+            return false;
+        }
+        channel.send(reply);
+        return true;
+    }
+
+    WorkspaceExecutor.Launch sandboxLaunch(String nodeBin, Path hostScript, WorkspaceExecutor.SandboxRequest r) {
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("command", r.command());
+        request.put("root", r.root().toString());
+        request.put("cwd", r.cwd().toString());
+        request.put("policy", r.write() ? "workspace-write" : "read-only");
+        request.put("network", r.network());   // 认不出的值由沙箱实现按断网算
+        request.put("home", sandboxHome);
+        request.put("env", toolEnv(nodeBin));
+        request.put("privateDir", r.privateDir().toString());
+        try {
+            JsonNode answer = askSandbox(nodeBin, hostScript, request);
+            List<String> args = new ArrayList<>();
+            answer.path("args").forEach(a -> args.add(a.asText("")));
+            Map<String, String> env = new LinkedHashMap<>();
+            answer.path("env").fields().forEachRemaining(e -> env.put(e.getKey(), e.getValue().asText("")));
+            if (answer.path("binary").asText("").isEmpty()) {
+                throw new IOException("沙箱脚本没有给出怎么起");
+            }
+            return new WorkspaceExecutor.Launch(answer.path("binary").asText(), args, env);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException("执行被中断");
+        } catch (IOException e) {
+            // 拿不到沙箱就不跑：绝不退回不带沙箱地跑
+            throw new BusinessException("系统沙箱起不来，这条命令没有运行：" + e.getMessage());
+        }
     }
 
     /** @return 真的跑了（交给了执行器、没被拒） */

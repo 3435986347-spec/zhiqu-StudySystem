@@ -13,6 +13,7 @@ import path from 'node:path';
 import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_BYTES } from './guard.js';
 import { checkLocalCommand, describeRefusal, LOCAL_DEFAULT_COMMANDS, ExecRefusal, gitLaunch } from './execrules.js';
 import { planLaunch, resolveOnPath, runProcess } from './exec.js';
+import { describeBoundary, looksBlocked, plainLaunch, sandboxedLaunch, WORKSPACE_WRITE } from './sandbox.js';
 import { applyEdit, describeEditError } from './edit.js';
 import { syntaxProblem } from './syntax.js';
 import { stat as diffStat } from '../render/diff.js';
@@ -135,6 +136,27 @@ const fn = (name, description, properties, required = []) => ({
   function: { name, description, parameters: { type: 'object', properties, required } },
 });
 
+/** shell 工具（第一百零九轮）：有系统沙箱才下发，下发了就不再给 run_command（见 agent.js 的 toolset）。 */
+export function shellSchema() {
+  return fn('shell', '在工作区里运行一条 bash 命令：管道、重定向、&& 都能用。用来跑测试、构建、查 git、搜东西。命令跑在系统沙箱里，边界见「环境」一节。',
+    { command: { type: 'string', description: '一整条 shell 命令，字符串' },
+      cwd: { type: 'string', description: '在哪个子目录里运行，默认工作区根' } }, ['command']);
+}
+
+/** 一次 shell 的结果怎么说（命令行和网页同一种说法）。被挡住的猜测只在沙箱里才说。 */
+export function shellOutcome(prep, r, { boundary = '', sandboxed = true } = {}) {
+  const secs = ((r.millis || 0) / 1000).toFixed(1);
+  const blocked = sandboxed && r.exitCode !== 0 && looksBlocked(r.output);
+  const note = blocked ? `\n【这条命令可能被系统沙箱挡住了（${boundary}）。换个做法，或者告诉用户缺什么权限；不要换着花样绕。】` : '';
+  return {
+    content: `$ ${prep.command}${prep.cwdRel === '.' ? '' : `（在 ${prep.cwdRel}）`}\n退出码 ${r.exitCode}${r.timedOut ? '（超时被强制结束）' : ''}（${secs}s）\n${r.output || '（没有输出）'}${note}`,
+    summary: r.timedOut ? `超时（${secs}s）` : r.aborted ? '已中断' : `退出码 ${r.exitCode}（${secs}s）`,
+    exitCode: r.exitCode,
+    output: r.output || '',
+    blocked,
+  };
+}
+
 export function localSchemas() {
   return [
     fn('list_files', '列出工作区里某个目录的文件和子目录（默认展开两层）。读不了的文件（密钥、证书这类）会标出来。',
@@ -206,7 +228,10 @@ function realRelative(root, abs) {
 const lineCount = (s) => (s === '' ? 0 : s.split('\n').length - (s.endsWith('\n') ? 1 : 0));
 
 export class LocalTools {
-  constructor({ root, extensions, maxFileBytes, commands, execTimeoutMs = 120_000 } = {}) {
+  /** sandbox：detectSandbox() 的结果；没给（null）就没有 shell，退回白名单的 run_command。sandboxNetwork 只由用户级配置和命令行参数定 */
+  constructor({ root, extensions, maxFileBytes, commands, execTimeoutMs = 120_000, sandbox = null, sandboxNetwork = 'off' } = {}) {
+    this.sandbox = sandbox;
+    this.sandboxNetwork = sandboxNetwork;
     this.guard = new WorkspaceGuard(root, {
       extensions: extensions || DEFAULT_EXTENSIONS, maxFileBytes: maxFileBytes || DEFAULT_MAX_FILE_BYTES,
     });
@@ -654,6 +679,23 @@ export class LocalTools {
     const launch = planLaunch({ command, binary, args: git ? git.args : argv });
     if (launch.error) return { error: launch.error };
     return { command, args: argv, binary: launch.binary, launchArgs: launch.args, env: git ? git.env : undefined, cwd: dir.path, cwdRel: this.guard.display(dir.path) };
+  }
+
+  prepareShell(args = {}) {
+    args = this.inWorkspace(args, 'cwd');
+    const command = typeof args.command === 'string' ? args.command.trim() : '';
+    if (!command) return { error: '没有给出要运行的命令（command 是一整条 shell 命令，字符串）' };
+    const dir = this.guard.resolveDirectory(args.cwd);
+    if (dir.reason !== Reason.OK) return { error: `工作目录不可用：${describe(dir.reason, args.cwd || '.')}` };
+    return { command, cwd: dir.path, cwdRel: this.guard.display(dir.path) };
+  }
+
+  /** unsandboxed：只有 ask 档用户当场点了才有（agent.js 的 shell 分支） */
+  async commitShell(prep, { policy = WORKSPACE_WRITE, unsandboxed = false, signal, onOutput } = {}) {
+    const launch = unsandboxed ? plainLaunch({ command: prep.command })
+      : sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork });
+    const r = await runProcess({ binary: launch.binary, args: launch.args, cwd: prep.cwd, env: launch.env, timeoutMs: this.execTimeoutMs, signal, onOutput });
+    return shellOutcome(prep, r, { boundary: describeBoundary({ policy, network: this.sandboxNetwork }), sandboxed: !unsandboxed });
   }
 
   async commitRun(prep, { signal, onOutput } = {}) {

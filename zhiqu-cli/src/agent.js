@@ -13,7 +13,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
-import { localSchemas, READ_TOOLS } from './tools/local.js';
+import { localSchemas, READ_TOOLS, shellSchema } from './tools/local.js';
+import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
 import { loadSkill, loadSkillSchema } from './skills.js';
 import { buildSystemMessage, environmentBlock, today } from './prompt.js';
 import { compactMessages, needsCompaction, SUMMARY_INSTRUCTIONS } from './compact.js';
@@ -137,16 +138,26 @@ export function findMcpTools(ctx, schemas, query) {
   };
 }
 
+/** 这一档的命令关在什么里面。网页的由后端按档位定（DraftTools.shellPolicy）。 */
+function shellPolicy(ctx) {
+  if (ctx.local && ctx.local.shellPolicy) return ctx.local.shellPolicy;
+  return ctx.mode === 'plan' ? READ_ONLY : WORKSPACE_WRITE;
+}
+
 /** 这一轮给模型哪些工具。 */
 export function toolset(ctx) {
   const plan = ctx.mode === 'plan';
   const out = [];
   // 草稿模式（第九十四轮）只下发后端这一次允许的那几个（没有写意图不给写、不能执行不给跑、从来不给删）
   const allowed = ctx.local && ctx.local.allowedTools;
+  // 有系统沙箱才给 shell（第一百零九轮），给了就不给 run_command；plan 档也给：沙箱是只读的，系统挡着写
+  const sandboxed = Boolean(ctx.local && ctx.local.sandbox);
   for (const t of localSchemas()) {
     if (allowed && !allowed.has(t.function.name)) continue;
+    if (sandboxed && t.function.name === 'run_command') continue;
     if (!plan || READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'local' });
   }
+  if (sandboxed) out.push({ schema: shellSchema(), kind: 'local' });
   for (const t of ctx.remoteTools || []) {
     if (!plan || REMOTE_READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'remote' });
   }
@@ -176,6 +187,8 @@ export function toolset(ctx) {
 export function systemText(ctx) {
   const env = environmentBlock({
     root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.mode, commands: ctx.local.commands,
+    shell: ctx.local.sandbox ? describeBoundary({ policy: shellPolicy(ctx), network: ctx.local.sandboxNetwork }) : null,
+    shellWrites: Boolean(ctx.local.sandbox) && shellPolicy(ctx) === WORKSPACE_WRITE,
     today: today(), draft: Boolean(ctx.local.drafts),
   });
   // 目标、用户这次的原话置顶：在系统内容之后、其它一切之前 —— 每一轮都在，压缩也压不掉。
@@ -399,6 +412,23 @@ async function confirmRun(ctx, prep) {
   return pick === 'y' || pick === 'a';
 }
 
+async function confirmShell(ctx, prep) {
+  if (ctx.allow.run) return true;
+  const pick = await ctx.ui.choose(`运行 ${prep.command}${prep.cwdRel === '.' ? '' : `（在 ${prep.cwdRel}）`}？（在系统沙箱里）`, [
+    { key: 'y', label: '运行' }, { key: 'n', label: '不运行' }, { key: 'a', label: '本会话都允许运行命令' },
+  ], 'n');
+  if (pick === 'a') ctx.allow.run = true;
+  return pick === 'y' || pick === 'a';
+}
+
+/** 没有「本会话都允许」：出沙箱每次都要人点头（「本会话都允许运行命令」只算沙箱里的） */
+async function confirmUnsandboxed(ctx, prep) {
+  const pick = await ctx.ui.choose(`这条命令可能被系统沙箱挡住了：${prep.command}\n不带沙箱再跑一次？它能读写你电脑上的任何文件、能联网。`, [
+    { key: 'n', label: '不跑' }, { key: 'y', label: '不带沙箱跑这一次' },
+  ], 'n');
+  return pick === 'y';
+}
+
 const TASK_STATUS_LABEL = { todo: '待办', doing: '进行中', done: '已完成' };
 // search_wiki 第四十五轮起认页面类型（服务端的 WikiPageTypes）：只给类型时显示「查知识库里的目标页」，不显示「查知识库「undefined」」
 const WIKI_TYPE_LABEL = { GOAL: '目标', PROJECT: '计划', PREFERENCE: '偏好', WEAKNESS: '薄弱点', RESOURCE: '资料', MEMORY: '对话摘要', NOTE: '备注' };
@@ -461,6 +491,7 @@ export function describeCall(name, args) {
     case 'edit_file': return `修改 ${args.path}`;
     case 'delete_file': return `删除 ${args.path}`;
     case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
+    case 'shell': return `运行 ${args.command}`;
     case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
     case 'find_mcp_tool': return `找 MCP 工具「${args.query}」`;
     case 'exit_plan_mode': return '提交计划';
@@ -498,9 +529,11 @@ const TOOL_ALIASES = [
   [/^(grep|find|search_files|search_code|ripgrep|codebase_search)$/i, 'search', '搜内容用 search。'],
 ];
 
-function aliasFor(name) {
+function aliasFor(name, ctx) {
   const hit = TOOL_ALIASES.find(([re]) => re.test(String(name || '')));
-  return hit ? { tool: hit[1], hint: hit[2] } : null;
+  if (!hit) return null;
+  if (hit[1] === 'run_command' && ctx && ctx.local && ctx.local.sandbox) return { tool: 'shell', hint: '跑命令用 shell：command 是一整条 shell 命令（字符串）。' };
+  return { tool: hit[1], hint: hit[2] };
 }
 
 /** 任何档位下存在的工具名 —— 用来区分「这一档不给」和「根本没有」。 */
@@ -531,7 +564,7 @@ function refuseUnoffered(ctx, name, offered) {
       + (ctx.mode === 'plan' ? '现在是只读的 plan 档：想好之后用 exit_plan_mode 提交计划，用户批准后才能写、才能跑。' : '')
       + `这一档能用的：${available}。`;
   }
-  const alias = aliasFor(name);
+  const alias = aliasFor(name, ctx);
   ui.step(`${name}（没有这个工具${alias && alias.tool ? `，应当用 ${alias.tool}` : ''}）`);
   ui.result('已拒绝', false);
   return `没有叫 ${name} 的工具 —— 不是暂时不可用，重试也不会有。${alias ? alias.hint : ''}能用的工具：${available}。`;
@@ -695,6 +728,26 @@ async function executeTool(ctx, call, offered, signal) {
       ctx.changedFiles.add(`${prep.rel}（已删除）`);
       ui.result(ui.paint.green(`✓ 已删除 ${prep.rel}`) + ui.paint.dim(`  → ${r.trashed}`));
       return r.content;
+    }
+    if (name === 'shell') {
+      const spinKey = `shell:${args.command}${args.cwd ? `@${args.cwd}` : ''}`;
+      const prep = local.prepareShell(args);
+      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, runReminder(String(args.command))); }
+      if (ctx.mode === 'ask' && !(await confirmShell(ctx, prep))) {
+        ui.result('用户没有同意，没运行', false);
+        return `用户没有同意运行 ${prep.command}。不要原样重试；问问用户，或者换个做法。`;
+      }
+      let tail = '';
+      const onOutput = (s) => { tail = (tail + s).slice(-4000); };
+      let r = await local.commitShell(prep, { policy: shellPolicy(ctx), signal, onOutput });
+      // 被沙箱挡住：只有 ask 档、用户当场点了才不带沙箱再跑一次（默认不）。plan、auto 只把边界告诉模型
+      if (r.blocked && ctx.mode === 'ask' && await confirmUnsandboxed(ctx, prep)) {
+        r = await local.commitShell(prep, { unsandboxed: true, signal, onOutput });
+      }
+      for (const l of shownOutput(r.output.split('\n').filter((x) => x.trim()))) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
+      ui.result(r.summary, r.exitCode === 0);
+      if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content; }
+      return failed(ctx, spinKey, r.content, runReminder(prep.command));
     }
     if (name === 'run_command') {
       const line = [args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ');

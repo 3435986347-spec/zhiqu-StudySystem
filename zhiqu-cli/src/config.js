@@ -22,6 +22,12 @@ const MODE_ALIASES = { read: 'plan', readonly: 'plan', write: 'ask', exec: 'auto
 // 思考档位（第一百零八轮，用户 2026-11-07 定的名字，网页同一套）：instant 不思考，往后越想越久、越费 token。
 // 不说就听服务端的默认（app.ai.harness-reasoning）。
 export const EFFORTS = ['instant', 'medium', 'high', 'extra', 'max'];
+// shell 的沙箱能不能联网（第一百零九轮）：默认全断，包括本机
+export const SANDBOX_NETWORKS = ['off', 'local', 'on'];
+export function normalizeSandboxNetwork(value) {
+  const s = String(value ?? '').trim().toLowerCase();
+  return SANDBOX_NETWORKS.includes(s) ? s : null;
+}
 export function normalizeEffort(value) {
   const s = String(value ?? '').trim().toLowerCase();
   return EFFORTS.includes(s) ? s : null;
@@ -122,6 +128,8 @@ export function resolveSettings(root, flags = {}) {
     model: pick('model') ?? null,
     mode,
     effort: normalizeEffort(pick('effort')),
+    // 只认命令行参数和用户级配置，不认项目里的 .zhiqu/settings.json：克隆下来的仓库不能给自己开网
+    sandboxNetwork: normalizeSandboxNetwork(flags.sandboxNetwork ?? user.sandboxNetwork) || 'off',
     maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 60),
     execTimeoutMs: Number(project.execTimeoutMs ?? user.execTimeoutMs ?? 120_000),
     allowedCommands: project.allowedCommands ?? user.allowedCommands ?? null,

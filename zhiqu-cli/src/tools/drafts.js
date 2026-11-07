@@ -6,7 +6,8 @@
 //   - 跑命令交回后端的 WorkspaceExecutor：服务器上执行命令只有那一处（行内代码开关、超时、输出上限、不继承环境变量都在它里面）。
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { LocalTools, READ_TOOLS } from './local.js';
+import { LocalTools, READ_TOOLS, shellOutcome } from './local.js';
+import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './sandbox.js';
 import { syntaxProblem } from './syntax.js';
 import { stat as diffStat } from '../render/diff.js';
 
@@ -19,9 +20,12 @@ export class DraftTools extends LocalTools {
   /**
    * exec(request) → Promise<{ exitCode, output, timedOut, millis } | { error }>：请后端跑一条命令。
    * canWrite / canExec / commands 由后端判好了给（门只在后端一处）：没有写意图不给写、不能执行不给跑，从来不给删。
+   * canShell / shellWrite（第一百零九轮，用户：网页也要系统沙箱，和命令行一致）：这台机器有系统沙箱就给 shell、不给 run_command；
+   * 命令由后端在同一份沙箱（sandbox.js）里跑，能不能写工作区后端按档位定，这里只用来告诉模型边界。
    */
-  constructor({ root, exec, canWrite = false, canExec = false, commands = [] }) {
-    super({ root, commands: canExec ? commands : [] });
+  constructor({ root, exec, canWrite = false, canExec = false, commands = [], canShell = false, shellWrite = false, sandboxNetwork = 'off' }) {
+    super({ root, commands: canExec ? commands : [], sandbox: canShell ? { kind: 'backend' } : null, sandboxNetwork });
+    this.shellPolicy = shellWrite ? WORKSPACE_WRITE : READ_ONLY;
     this.allowedTools = new Set([...READ_TOOLS, ...(canWrite ? ['write_file', 'edit_file'] : []), ...(canExec ? ['run_command'] : [])]);
     this.overlay = new Map();
     /** rel → { path, content, baseline, creating, newDirectories }：交给后端的草稿，baseline 是第一次改它时磁盘上的指纹 */
@@ -57,6 +61,29 @@ export class DraftTools extends LocalTools {
     return { error: '这里不能删除文件（网页 / 桌面应用的代码模式只生成草稿）。要删的话告诉用户删哪个、为什么，让用户自己删。' };
   }
 
+  /** 只查形状；能不能跑、工作目录、沙箱都在后端 */
+  prepareShell(args = {}) {
+    const command = typeof args.command === 'string' ? args.command.trim() : '';
+    if (!command) return { error: '没有给出要运行的命令（command 是一整条 shell 命令，字符串）' };
+    const cwd = args.cwd == null ? '' : String(args.cwd);
+    return { command, cwd, cwdRel: cwd || '.' };
+  }
+
+  async commitShell(prep, { signal } = {}) {
+    const r = await this.exec({ shell: true, command: prep.command, cwd: prep.cwd }, { signal });
+    if (r.error) return { content: `${r.error}${this.pendingNote()}`, summary: '没有运行', exitCode: -1, output: '' };
+    this.ranCommand = true;
+    const out = shellOutcome(prep, r, { boundary: describeBoundary({ policy: this.shellPolicy, network: this.sandboxNetwork }) });
+    return { ...out, content: `${out.content}${this.pendingNote()}` };
+  }
+
+  /** 有没落盘的草稿：命令看到的是磁盘上的旧版本 —— 说出来，免得模型拿旧版本的结果判断草稿对不对 */
+  pendingNote() {
+    const pending = [...this.drafts.keys()];
+    return pending.length ? `\n（注意：${pending.slice(0, 5).join('、')}${pending.length > 5 ? ' 等' : ''} 有没确认的草稿，`
+      + '这条命令跑的是磁盘上的旧版本。要跑新代码得先让用户确认草稿落盘。）' : '';
+  }
+
   /** 只查形状；能不能跑、怎么跑由后端的 WorkspaceExecutor 判 */
   prepareRun(args = {}) {
     if (args.args != null && !Array.isArray(args.args)) return { error: 'args 必须是数组，一项一个参数（不接受一整条 shell 命令）' };
@@ -71,10 +98,7 @@ export class DraftTools extends LocalTools {
     const r = await this.exec({ command: prep.command, args: prep.args, cwd: prep.cwd }, { signal });
     if (!r.error) this.ranCommand = true;   // 真的跑过一次（不管过没过）：判过题之后才给记薄弱点的工具
     const line = [prep.command, ...prep.args].join(' ');
-    // 有没落盘的草稿：命令看到的是磁盘上的旧版本 —— 说出来，免得模型拿旧版本的结果判断草稿对不对
-    const pending = [...this.drafts.keys()];
-    const note = pending.length ? `\n（注意：${pending.slice(0, 5).join('、')}${pending.length > 5 ? ' 等' : ''} 有没确认的草稿，`
-      + '这条命令跑的是磁盘上的旧版本。要跑新代码得先让用户确认草稿落盘。）' : '';
+    const note = this.pendingNote();
     if (r.error) return { content: `${r.error}${note}`, summary: '没有运行', exitCode: -1, output: '' };
     const secs = ((r.millis || 0) / 1000).toFixed(1);
     return {

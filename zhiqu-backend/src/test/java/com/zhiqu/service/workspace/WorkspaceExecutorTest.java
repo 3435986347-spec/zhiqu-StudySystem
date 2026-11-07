@@ -357,4 +357,123 @@ class WorkspaceExecutorTest {
         assertTrue(cwd.startsWith(root.toRealPath().toString()),
                 "工作目录必须在工作区内。root=" + root.toRealPath() + " 实际=" + cwd);
     }
+
+    private static WorkspaceSettingsStore storeIn(Path dir) {
+        return new WorkspaceSettingsStore(dir.resolve("workspace-state.json").toString(), new com.fasterxml.jackson.databind.ObjectMapper());
+    }
+
+    /** 不进沙箱的起法：这几条看执行器自己的门和收尾，沙箱的边界在 zhiqu-cli/test/sandbox.test.js */
+    private static java.util.function.Function<WorkspaceExecutor.SandboxRequest, WorkspaceExecutor.Launch> plain(java.util.List<WorkspaceExecutor.SandboxRequest> seen) {
+        return r -> {
+            seen.add(r);
+            return new WorkspaceExecutor.Launch("/bin/sh", List.of("-c", r.command()), java.util.Map.of("ZQ_FROM_SANDBOX", "1"));
+        };
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("界面切档立刻算数（第一百零九轮才发现）：原来启动时存一份，以 EXEC 起的后端切到只读还能跑命令、换了项目命令还跑在旧目录；切到关着 / 只读 / 回到 EXEC 都跟着变")
+    void 切档立刻算数(@TempDir Path dir) throws IOException {
+        Path first = Files.createDirectory(dir.resolve("first"));
+        Path second = Files.createDirectory(dir.resolve("second"));
+        WorkspaceProperties p = props(first, "EXEC");
+        WorkspaceService service = new WorkspaceService(p, storeIn(dir), "127.0.0.1");
+        WorkspaceExecutor e = new WorkspaceExecutor(p, service, "");
+        assertTrue(e.enabled());
+        assertEquals(first.toRealPath().toString(), e.shell("pwd", "", true, plain(new java.util.ArrayList<>())).output().trim(), "先在第一个项目里跑过一次，看换项目时守卫跟不跟");
+
+        service.applySettings("READ", first.toString());
+        assertFalse(e.enabled(), "切到只读还能执行");
+        assertTrue(e.shellEnabled(), "只读的档给只读的 shell");
+        assertTrue(assertThrowsBusiness(() -> e.exec("python3", List.of("a.py"), "")).contains("不允许执行"));
+
+        service.applySettings("OFF", "");
+        assertFalse(e.enabled());
+        assertFalse(e.shellEnabled(), "关着的时候什么都不给");
+
+        service.applySettings("EXEC", second.toString());
+        assertTrue(e.enabled(), "从关着切回来要算数（启动时是 OFF 也一样）");
+        java.util.List<WorkspaceExecutor.SandboxRequest> seen = new java.util.ArrayList<>();
+        WorkspaceExecutor.ExecResult r = e.shell("pwd", "", true, plain(seen));
+        assertEquals(second.toRealPath().toString(), r.output().trim(), "换了项目，命令还跑在旧目录");
+        assertEquals(second.toRealPath(), seen.get(0).root().toRealPath());
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("shell：能不能写以当前档位为准（跑到一半切到只读，下一条就只读）；生产一律不行；空命令不跑；环境干净")
+    void shell的门(@TempDir Path dir) throws IOException {
+        Path root = Files.createDirectory(dir.resolve("p"));
+        WorkspaceProperties p = props(root, "EXEC");
+        WorkspaceService service = new WorkspaceService(p, storeIn(dir), "127.0.0.1");
+        WorkspaceExecutor e = new WorkspaceExecutor(p, service, "");
+        java.util.List<WorkspaceExecutor.SandboxRequest> seen = new java.util.ArrayList<>();
+
+        WorkspaceExecutor.ExecResult r = e.shell("env", "", true, plain(seen));
+        assertTrue(seen.get(0).write(), "EXEC 档、要写：能写");
+        assertTrue(r.output().contains("ZQ_FROM_SANDBOX=1"), "沙箱实现给的环境要放上去");
+        java.util.Set<String> mine = java.util.Set.of("PATH", "HOME", "LANG", "PWD", "SHLVL", "_", "OLDPWD");
+        int checked = 0;
+        for (String key : System.getenv().keySet()) {
+            if (!mine.contains(key)) {
+                checked++;
+                assertFalse(r.output().contains("\n" + key + "=") || r.output().startsWith(key + "="), "继承了父进程的 " + key + "：\n" + r.output());
+            }
+        }
+        assertTrue(checked > 0, "父进程的环境里没有别的变量：这条什么都没看");
+        e.shell("true", "", false, plain(seen));
+        assertFalse(seen.get(1).write(), "调用方说不写就不写");
+
+        service.applySettings("READ", root.toString());
+        e.shell("true", "", true, plain(seen));
+        assertFalse(seen.get(2).write(), "切到只读之后，调用方说写也不能写");
+
+        assertTrue(assertThrowsBusiness(() -> e.shell("  ", "", false, plain(seen))).contains("没有给出"));
+        assertEquals(3, seen.size(), "空命令不该走到沙箱");
+        assertTrue(assertThrowsBusiness(() -> e.shell("true", "../..", false, plain(seen))).contains("工作目录不可用"), "工作目录跳出工作区");
+
+        WorkspaceExecutor prod = executorAt(root, "EXEC", "prod");
+        assertFalse(prod.shellEnabled());
+        assertTrue(assertThrowsBusiness(() -> prod.shell("true", "", false, plain(seen))).contains("生产"));
+
+        service.applySettings("OFF", "");
+        assertTrue(assertThrowsBusiness(() -> e.shell("true", "", false, plain(seen))).contains("关着"));
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("命令退了、还有进程攥着管道：已经读到的输出不丢（真浏览器里试出来的：sleep 20 & echo x 模型只看到「没有输出」）；不跟着等")
+    void 有进程攥着管道输出不丢(@TempDir Path root) throws IOException {
+        WorkspaceExecutor e = executorAt(root, "EXEC", "");
+        long t0 = System.currentTimeMillis();
+        WorkspaceExecutor.ExecResult r = e.shell("(sleep 6 &) ; echo 读到了; exit 3", "", false, plain(new java.util.ArrayList<>()));
+        assertEquals(3, r.exitCode(), r.output());
+        assertTrue(r.output().contains("读到了"), "输出丢了：[" + r.output() + "]");
+        assertTrue(System.currentTimeMillis() - t0 < 5000, "跟着等了攥管道的进程");
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("shell 超时：整棵进程树一起杀（`sleep | cat`，只杀 bash 的话下面的还在跑、还攥着管道）")
+    void shell超时杀整棵树(@TempDir Path root) throws IOException {
+        WorkspaceProperties p = props(root, "EXEC");
+        p.setShellTimeoutMs(800L);
+        WorkspaceExecutor e = new WorkspaceExecutor(p, new WorkspaceService(p, "127.0.0.1"), "");
+        Path pidFile = root.resolve("pid");
+        long t0 = System.currentTimeMillis();
+        WorkspaceExecutor.ExecResult r = e.shell("sleep 60 & echo $! > pid; wait", "", false, plain(new java.util.ArrayList<>()));
+        assertTrue(r.timedOut(), r.output());
+        assertTrue(System.currentTimeMillis() - t0 < 6000, "没有按时限收尾");
+        long pid = Long.parseLong(Files.readString(pidFile).trim());
+        boolean alive = java.lang.ProcessHandle.of(pid).map(java.lang.ProcessHandle::isAlive).orElse(false);
+        for (int i = 0; alive && i < 40; i++) {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            alive = java.lang.ProcessHandle.of(pid).map(java.lang.ProcessHandle::isAlive).orElse(false);
+        }
+        assertFalse(alive, "孙子进程还活着");
+    }
+
+    private static String assertThrowsBusiness(org.junit.jupiter.api.function.Executable action) {
+        return org.junit.jupiter.api.Assertions.assertThrows(com.zhiqu.common.BusinessException.class, action).getMessage();
+    }
 }

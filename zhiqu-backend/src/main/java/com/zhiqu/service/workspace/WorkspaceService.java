@@ -145,6 +145,11 @@ public class WorkspaceService {
         return access;
     }
 
+    /** 和 {@link #access()} 成对的路径守卫；档位是 OFF 时是 null。 */
+    WorkspaceGuard guard() {
+        return guard;
+    }
+
     /** 文件夹浏览器里的一个子目录。 */
     public record DirEntry(String name, String path) {
     }

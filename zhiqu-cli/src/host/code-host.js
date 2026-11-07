@@ -116,7 +116,8 @@ export function historyBlock(history) {
 /** 跑一轮：run 消息 → 循环 → result。返回 result（测试直接调） */
 export async function runHosted(bridge, run) {
   const local = new DraftTools({ root: run.root, exec: (req, opts) => bridge.exec(req, opts),
-    canWrite: Boolean(run.canWrite), canExec: Boolean(run.canExec), commands: Array.isArray(run.commands) ? run.commands.map(String) : [] });
+    canWrite: Boolean(run.canWrite), canExec: Boolean(run.canExec), canShell: Boolean(run.canShell), shellWrite: Boolean(run.shellWrite),
+    sandboxNetwork: typeof run.sandboxNetwork === 'string' ? run.sandboxNetwork : 'off', commands: Array.isArray(run.commands) ? run.commands.map(String) : [] });
   let transcript = '';
   const ui = new Ui({ input: new PassThrough(), output: new Writable({ write(c, e, cb) { transcript += c; cb(); } }), interactive: false, color: false });
   // 轨迹：每一步（读了什么、改了什么、跑了什么）交给后端，网页的「执行轨迹」照命令行的说法显示
@@ -150,8 +151,9 @@ export async function runHosted(bridge, run) {
       return '这一次你还没有成功调用 write_file / edit_file，并没有生成任何草稿 —— 不要说生成了。要改文件就现在调工具；不用改就照实说你做了什么。';
     }
     if (CLAIMS_RUN.test(s) && !local.ranCommand) {
-      return '这一次你没有调用 run_command，什么命令都没跑过 —— 不要说跑了、结果是什么（前面对话里的结果是当时的，文件可能已经变了）。'
-        + '要知道结果就现在调 run_command 跑；不跑就照实说没跑。';
+      const runTool = local.sandbox ? 'shell' : 'run_command';
+      return `这一次你没有调用 ${runTool}，什么命令都没跑过 —— 不要说跑了、结果是什么（前面对话里的结果是当时的，文件可能已经变了）。`
+        + `要知道结果就现在调 ${runTool} 跑；不跑就照实说没跑。`;
     }
     return null;
   };

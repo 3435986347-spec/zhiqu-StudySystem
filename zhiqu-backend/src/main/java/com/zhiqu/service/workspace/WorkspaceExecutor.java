@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 /**
  * 在工作区里跑一条命令。<b>默认关闭，只在本机开发时开。</b>
@@ -85,20 +86,18 @@ public class WorkspaceExecutor {
     private static final Set<String> NPM_REMOTE_SUBCOMMANDS = Set.of("exec", "x", "create", "init", "dlx");
 
     private final WorkspaceProperties properties;
-    private final WorkspaceAccess access;
-    private final WorkspaceGuard guard;
+    // 不存档位和路径守卫：管理员能从界面切（WorkspaceService.applySettings）。原来这里启动时存一份，
+    // 以 EXEC 起的后端切到只读还能跑命令、换了项目命令还跑在旧目录（第一百零九轮才发现）
+    private final WorkspaceService workspaceService;
     private final boolean productionProfile;
 
     public WorkspaceExecutor(WorkspaceProperties properties,
                              WorkspaceService workspaceService,
                              @Value("${spring.profiles.active:}") String activeProfiles) {
         this.properties = properties;
-        this.access = workspaceService.access();
-        this.guard = access.enabled()
-                ? new WorkspaceGuard(access.root(), properties.getAllowedExtensions(), properties.getMaxFileBytes())
-                : null;
+        this.workspaceService = workspaceService;
         this.productionProfile = isProduction(activeProfiles);
-        if (this.productionProfile && access.effectiveMode().allowsExec()) {
+        if (this.productionProfile && access().effectiveMode().allowsExec()) {
             log.warn("生产 profile 下不允许执行命令，app.workspace.mode=EXEC 的执行能力已禁用");
         }
     }
@@ -140,9 +139,13 @@ public class WorkspaceExecutor {
         }
     }
 
+    private WorkspaceAccess access() {
+        return workspaceService.access();
+    }
+
     /** 执行能不能用 —— 档位允许执行，且不是生产 profile。 */
     public boolean enabled() {
-        return access.effectiveMode().allowsExec() && !productionProfile;
+        return access().effectiveMode().allowsExec() && !productionProfile;
     }
 
     /** 当前不能执行的原因；能执行时返回 null。 */
@@ -150,9 +153,9 @@ public class WorkspaceExecutor {
         if (productionProfile) {
             return "生产环境下不允许执行命令";
         }
-        if (!access.effectiveMode().allowsExec()) {
-            return access.refusalReason() != null
-                    ? access.refusalReason()
+        if (!access().effectiveMode().allowsExec()) {
+            return access().refusalReason() != null
+                    ? access().refusalReason()
                     : "工作区当前不允许执行命令（app.workspace.mode 需要 EXEC）";
         }
         return null;
@@ -196,10 +199,7 @@ public class WorkspaceExecutor {
             case PARENT_ESCAPE -> throw new BusinessException("参数不接受跳出工作区的路径：" + check.arg());
         }
 
-        WorkspaceGuard.Resolution dir = guard.resolveDirectory(relativeDir);
-        if (!dir.ok()) {
-            throw new BusinessException("工作目录不可用：" + relativeDir);
-        }
+        Path dir = resolveDir(relativeDir);
 
         Path binary = resolveOnPath(name);
         if (binary == null) {
@@ -209,9 +209,68 @@ public class WorkspaceExecutor {
         List<String> line = new ArrayList<>();
         line.add(binary.toString());
         line.addAll(safeArgs);
+        return runLine(name, safeArgs, line, dir, Map.of(), properties.getExecTimeoutMs());
+    }
 
+    /**
+     * shell 工具能不能用（第一百零九轮，用户：网页也要系统沙箱，和命令行一致）：只读的档位也能跑 —— 沙箱是只读的，系统挡着写。
+     * 生产 profile 一律不行，这条和 {@link #enabled()} 一样不能绕。还要这台机器真有沙箱，那一条调用方问（{@code JsCodeAgent}）。
+     */
+    public boolean shellEnabled() {
+        return access().effectiveMode().allowsRead() && !productionProfile;
+    }
+
+    /** 请沙箱实现回答「这条命令怎么起」时交过去的东西：全部由后端定，不来自子进程。 */
+    public record SandboxRequest(String command, Path root, Path cwd, boolean write, String network, Path privateDir) {
+    }
+
+    /** 起进程要的东西：沙箱实现（zhiqu-cli/src/tools/sandbox.js）给的。 */
+    public record Launch(String binary, List<String> args, Map<String, String> env) {
+    }
+
+    /**
+     * 在系统沙箱里跑一条 shell 命令。
+     *
+     * @param write   能不能写工作区。这里再对一遍当前档位：跑到一半切到只读的档位，下一条命令就只读
+     * @param sandbox 沙箱只有一份实现，在命令行那边；这里不再写一份
+     */
+    public ExecResult shell(String command, String relativeDir, boolean write, Function<SandboxRequest, Launch> sandbox) {
+        if (!shellEnabled()) {
+            throw new BusinessException(productionProfile ? "生产环境下不允许执行命令" : "工作区当前是关着的");
+        }
+        String line = command == null ? "" : command.trim();
+        if (line.isEmpty()) {
+            throw new BusinessException("没有给出要执行的命令");
+        }
+        WorkspaceAccess current = access();
+        Path privateDir;
+        try {
+            privateDir = childHome();
+        } catch (IOException e) {
+            throw new BusinessException("没法准备运行环境（临时目录建不出来）：" + e.getMessage());
+        }
+        Path cwd = resolveDir(relativeDir);
+        boolean canWrite = write && current.effectiveMode().allowsExec();
+        Launch launch = sandbox.apply(new SandboxRequest(line, current.root(), cwd, canWrite, properties.getSandboxNetwork(), privateDir));
+        List<String> full = new ArrayList<>();
+        full.add(launch.binary());
+        full.addAll(launch.args());
+        return runLine(line, List.of(), full, cwd, launch.env(), properties.getShellTimeoutMs());
+    }
+
+    private Path resolveDir(String relativeDir) {
+        WorkspaceGuard guard = workspaceService.guard();
+        WorkspaceGuard.Resolution dir = guard == null ? null : guard.resolveDirectory(relativeDir);
+        if (dir == null || !dir.ok()) {
+            throw new BusinessException("工作目录不可用：" + relativeDir);
+        }
+        return dir.path();
+    }
+
+    /** 起进程只有这一处。extraEnv 放在最小环境上面（沙箱实现给的 PATH、临时目录这些）。 */
+    private ExecResult runLine(String name, List<String> shownArgs, List<String> line, Path dir, Map<String, String> extraEnv, long timeoutMs) {
         ProcessBuilder builder = new ProcessBuilder(line)
-                .directory(dir.path().toFile())
+                .directory(dir.toFile())
                 .redirectErrorStream(true);
         // 主进程的环境里有 AI 密钥与数据库密码。清空之后只放回跑得起来所必需的几个，
         // 而且 PATH 给的是固定值，不是父进程那份。
@@ -225,6 +284,7 @@ public class WorkspaceExecutor {
             throw new BusinessException("没法准备运行环境（临时目录建不出来）：" + e.getMessage());
         }
         env.put("LANG", "en_US.UTF-8");
+        env.putAll(extraEnv);
 
         long started = System.currentTimeMillis();
         Process spawned = null;
@@ -235,33 +295,35 @@ public class WorkspaceExecutor {
             // 读输出必须在<b>另一个线程</b>上。第一版在这里同步读，而 read() 要等到进程退出
             // 才返回 -1 —— 于是 `sleep 30` 会把读循环阻塞 30 秒，waitFor 的超时根本轮不到执行，
             // 「超时」这条约束等于不存在。判据 超时必须真的把进程杀掉 钉的就是这个。
-            Capture[] captured = new Capture[1];
+            CappedOutput output = new CappedOutput(properties.getExecOutputLimitBytes());
             Thread reader = new Thread(() -> {
                 try (InputStream in = process.getInputStream()) {
-                    captured[0] = readCapped(in, properties.getExecOutputLimitBytes());
+                    output.drain(in);
                 } catch (IOException e) {
-                    captured[0] = new Capture("【读取输出失败：" + e.getMessage() + "】", false);
+                    output.fail("【读取输出失败：" + e.getMessage() + "】");
                 }
             }, "workspace-exec-reader");
             reader.setDaemon(true);
             reader.start();
 
-            boolean finished = process.waitFor(properties.getExecTimeoutMs(), TimeUnit.MILLISECONDS);
+            boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
             if (!finished) {
+                // 整棵树一起杀：shell 里的 `sleep 100 | cat`，只杀 bash 的话下面的还在跑，还攥着管道
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
                 process.destroyForcibly();
                 process.waitFor(2, TimeUnit.SECONDS);
             }
             // 进程结束后管道才会 EOF，读线程随之收尾。给它一小段时间，超了就用已有的部分。
             reader.join(2000);
-            Capture capture = captured[0] == null ? new Capture("", false) : captured[0];
+            Capture capture = output.snapshot();
 
             long millis = System.currentTimeMillis() - started;
             if (!finished) {
-                return new ExecResult(name, safeArgs, -1,
-                        capture.text() + "\n【超时：超过 " + properties.getExecTimeoutMs() + "ms，已强制结束】",
+                return new ExecResult(name, shownArgs, -1,
+                        capture.text() + "\n【超时：超过 " + timeoutMs + "ms，已强制结束】",
                         capture.truncated(), true, millis);
             }
-            return new ExecResult(name, safeArgs, process.exitValue(),
+            return new ExecResult(name, shownArgs, process.exitValue(),
                     capture.truncated()
                             ? capture.text() + "\n【输出超过 " + properties.getExecOutputLimitBytes() + " 字节，已截断】"
                             : capture.text(),
@@ -271,6 +333,7 @@ public class WorkspaceExecutor {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (spawned != null) {
+                spawned.descendants().forEach(ProcessHandle::destroyForcibly);
                 spawned.destroyForcibly();
             }
             throw new BusinessException("执行被中断");
@@ -328,32 +391,55 @@ public class WorkspaceExecutor {
         return new Check(Refusal.OK, null);
     }
 
-    private static Capture readCapped(InputStream stream, int limit) throws IOException {
-        byte[] buffer = new byte[8192];
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-        int read;
-        boolean truncated = false;
-        while ((read = stream.read(buffer)) != -1) {
+    /**
+     * 读到多少算多少：命令退了、后台进程还攥着管道时读不到头（{@code sleep 20 & echo x}），已经读到的不能跟着丢
+     * （第一百零九轮，真浏览器里试出来的：模型只看到「没有输出」）。
+     */
+    private static final class CappedOutput {
+        private final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        private final int limit;
+        private boolean truncated;
+        private String failure;
+
+        CappedOutput(int limit) {
+            this.limit = limit;
+        }
+
+        synchronized void add(byte[] buffer, int read) {
             if (out.size() >= limit) {
                 // 已经写满，而这里还读到了东西 —— 这才是真的丢了内容
                 truncated = true;
-                continue;   // 继续排空但丢弃，见下面为什么不能直接 break
+                return;   // 继续排空但丢弃，见 drain 为什么不能停
             }
             int room = limit - out.size();
             if (read > room) {
                 out.write(buffer, 0, room);
                 truncated = true;
-                continue;
+                return;
             }
             // 注意是 read > room 而不是 >=：输出<b>正好</b>等于上限时一个字节都没丢，
             // 不该报截断。报了的话模型会说「还有更多」，而其实没有 —— 它会据此
             // 建议用户换个更窄的命令重跑，白跑一次。
             out.write(buffer, 0, read);
         }
-        // 到上限就 break 的话，管道很快写满，子进程阻塞在 write 上再也退不出去 ——
-        // 一个「日志很多但确实成功了」的构建会被报成超时。宁可多读几 MB 丢掉，
-        // 也要让它自己跑完，把真实的退出码带回来。
-        return new Capture(out.toString(StandardCharsets.UTF_8), truncated);
+
+        /** 到上限就停的话，管道很快写满，子进程阻塞在 write 上再也退不出去 —— 一个「日志很多但确实成功了」的构建会被报成超时。宁可多读几 MB 丢掉，也要让它自己跑完，把真实的退出码带回来。 */
+        void drain(InputStream in) throws IOException {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                add(buffer, read);
+            }
+        }
+
+        synchronized void fail(String message) {
+            failure = message;
+        }
+
+        synchronized Capture snapshot() {
+            String text = out.toString(StandardCharsets.UTF_8);
+            return new Capture(failure == null ? text : text + failure, truncated);
+        }
     }
 
     private record Capture(String text, boolean truncated) {

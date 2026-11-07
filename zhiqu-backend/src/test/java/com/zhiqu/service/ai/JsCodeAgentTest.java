@@ -195,6 +195,11 @@ class JsCodeAgentTest {
         assertEquals(42L, bodies.get(0).get("modelId"), "子进程填的 999 不认");
         verify(executor, never()).exec(anyString(), any(), anyString());
         assertTrue(r.context().contains("这一次不能跑命令"), r.context());
+        // 没给 shell 时硬发 shell（第一百零九轮）：同样在这里挡住，碰都不碰执行器
+        CodeWorkspaceAgent.Result shell = agent(FAKE_HOST, List.of(text("好"))).run(config, 7L, "abuse-shell", List.of(), true, true,
+                CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add);
+        assertTrue(shell.context().contains("这一次不能跑命令"), shell.context());
+        verify(executor, never()).shell(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
         assertEquals(List.of("ok.txt"), r.drafts().stream().map(d -> d.get("path")).toList(), "跳出工作区的那份要丢掉");
     }
 
