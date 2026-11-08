@@ -39,15 +39,22 @@
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[s];
     });
   }
+  var SHELL_CACHE_DELAY_MS = 3000;
   function maintainShellCache() {
     if (!/^https?:$/.test(location.protocol)) return;
     // Old shell caches are removed exclusively by the active Service Worker's activate handler.
     // Keeping one owner avoids the page deleting a newly installed cache with a stale version constant.
-    if ('serviceWorker' in navigator) {
+    if (!('serviceWorker' in navigator)) return;
+    // 带宽先给页面：注册（连同它的预取）等页面加载完再过一会儿。线上服务器只有 1.5 Mbps，原来第一次打开时
+    // 预取的几十个文件和页面自己的脚本抢同一根管子，看起来像卡死（第一百二十轮）
+    var register = function () {
       navigator.serviceWorker.register('/service-worker.js')
         .then(function (registration) { return registration.update().catch(function () {}); })
         .catch(function () {});
-    }
+    };
+    var later = function () { setTimeout(register, SHELL_CACHE_DELAY_MS); };
+    if (document.readyState === 'complete') later();
+    else window.addEventListener('load', later, { once: true });
   }
   function token() { return sessionStorage.getItem('token') || localStorage.getItem('token') || ''; }
   function role() { return sessionStorage.getItem('role') || localStorage.getItem('role') || ''; }

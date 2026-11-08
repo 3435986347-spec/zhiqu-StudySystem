@@ -75,9 +75,12 @@ class StaticAssetCacheTokenTest {
      * （ai-assistant.html），而上面那条判据一直是绿的。裸着的那 11 / 13 个页面，
      * 就是在它眼皮底下裸了很久的。
      *
-     * <p>后果与令牌漂移完全一样，且同样不报错：{@code /assets/**} 没有任何 {@code Cache-Control}
-     * （{@code WebMvcConfig} 只给 {@code /service-worker.js} 设了 {@code noCache()}），
-     * 走浏览器启发式缓存，于是改了资源、用户继续拿旧的。
+     * <p>后果与令牌漂移完全一样，且同样不报错：写这条判据时 {@code /assets/**} 没有任何 {@code Cache-Control}
+     * （{@code WebMvcConfig} 只给 {@code /service-worker.js} 设了 {@code noCache()}），以为走的是浏览器启发式缓存，
+     * 改了资源、用户继续拿旧的。<b>第一百二十轮量出来实际是 no-store</b>（Spring Security 给没设的一律补上），
+     * 现在设成了 {@code private, no-cache}：浏览器每次核对，HTTP 缓存这一层不再靠令牌兜底。
+     * 令牌仍然要带全：Service Worker 换代、桌面应用里旧页面引新资源都看它，而且哪天有人给静态文件加了 max-age，
+     * 裸着的引用又会变回「改了、用户还拿旧的」。
      *
      * <h3>范围只到 {@code static/*.html}，<b>不要</b>顺手扫 service-worker.js</h3>
      *

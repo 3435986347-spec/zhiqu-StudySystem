@@ -104,6 +104,34 @@ class NetworkCompressionIntegrationTest {
     }
 
     @Test
+    @DisplayName("静态文件浏览器能存、每次核对（没改过回 304、不带正文）；接口照旧不许存（第一百二十轮：线上 1.5 Mbps，原来每切一页都重下）")
+    void 静态文件能被浏览器缓存() throws Exception {
+        // 每一类都要有：页面（连同 / 转过去的首页）、壳、页面模块、assets 下的第三方库、vendor 下的、图标、清单
+        List<String> paths = List.of("/", "/index.html", "/ai-assistant.html", "/assets/zhiqu-ui.css?v=x", "/assets/zhiqu-api.js",
+                "/assets/pages/dashboard.js?v=x", "/assets/vendor/katex/katex.min.js", "/vendor/katex/katex.min.css", "/favicon.ico", "/manifest.json");
+        for (String path : paths) {
+            HttpResponse<byte[]> first = get(path);
+            assertEquals(200, first.statusCode(), path);
+            String cache = first.headers().firstValue("Cache-Control").orElse("（没有）");
+            assertTrue(cache.contains("no-cache") && cache.contains("private") && !cache.contains("no-store"),
+                    path + " 的 Cache-Control 是「" + cache + "」：要让浏览器存着、每次核对；no-store 时带宽小的服务器上每切一页都重下");
+            assertFalse(first.headers().firstValue("Expires").isPresent(), path + " 还带着 Expires");
+            String lastModified = first.headers().firstValue("Last-Modified").orElse(null);
+            assertTrue(lastModified != null, path + " 没有 Last-Modified：浏览器没法核对，只能重下");
+            HttpResponse<byte[]> again = http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                    .header("Accept-Encoding", "gzip").header("If-Modified-Since", lastModified).build(), HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(304, again.statusCode(), path + " 没改过却又整个发了一遍");
+            assertEquals(0, again.body().length, path);
+        }
+        // 接口是用户的数据：不许存（公开的、要登录的都一样）
+        for (String api : List.of("/api/harness/meta", "/api/tasks")) {
+            String cache = get(api).headers().firstValue("Cache-Control").orElse("（没有）");
+            assertTrue(cache.contains("no-store"), api + " 的 Cache-Control 是「" + cache + "」");
+        }
+        assertTrue(get("/service-worker.js").headers().firstValue("Cache-Control").orElse("").contains("no-cache"));
+    }
+
+    @Test
     @DisplayName("流式回答不压：压缩要攒够一块才发，会把一个字一个字的流憋住")
     void 流不压() {
         assertTrue(server.getCompression().getEnabled());
