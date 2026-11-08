@@ -180,6 +180,50 @@ public class RagAdminService {
         return generationRow(target);
     }
 
+    /**
+     * 一个启用的索引都没有时，往前推一步（第一百二十四轮，用户要的「默认启动」）。由 {@link RagBootstrapScheduler} 定时调。
+     *
+     * <p>线上撞到的：用户点过两次重建，旁路装好之后两个代次都建好了，可一个都没启用 —— 检索照旧退回关键词；
+     * 而且那两个是空索引（Wiki 页写的时候 RAG 关着，没进投影表），手动点「启用」也会被拒（要先全量对账）。
+     * 新装的服务器、第一次建好的索引，不该还要人去后台点三下才用上。所以按顺序：
+     * <ol>
+     *   <li>已经有在用的 → 什么都不做（换不换由管理员决定，蓝绿切换本来就是要人看过的）；</li>
+     *   <li>投影表空、库里有原料 → 入队全量对账（幂等）；对账还在途 → 等；</li>
+     *   <li>有在建的 → 等；</li>
+     *   <li>有建好的 → 启用最新的那个（和管理员点「启用」同一条路：核对覆盖面、发布）；覆盖不上 → 落到下一步；</li>
+     *   <li>旁路准备好了 → 建一个新的（准备好与否由调用方在拿锁之前问好：不在锁里等 HTTP）。</li>
+     * </ol>
+     * 整步在锁住所有代次之后做：几个后端连同一个库、同时撞上，也只有一个往前推。返回这一步做了什么（日志、判据用）。
+     */
+    @Transactional
+    public String bootstrapStep(boolean sidecarReady) {
+        if (!properties.isEnabled()) return "disabled";
+        List<RagIndexGeneration> locked = generationMapper.lockAll();
+        if (locked.stream().anyMatch(g -> "ACTIVE".equals(g.getStatus()))) return "active";
+        // 先看对账在不在途：在途时投影表还是空的，不看这个就会一遍遍说「对账」（入队本身是幂等的）
+        long reconciling = jobMapper.selectCount(new LambdaQueryWrapper<RagIndexJob>()
+                .eq(RagIndexJob::getOperation, RagOperation.RECONCILE_UNITS.name())
+                .in(RagIndexJob::getStatus, "PENDING", "RUNNING", "RETRY"));
+        if (reconciling > 0) return "reconciling";
+        if (jobService.indexableUnits().isEmpty() && hasIndexableOrigin()) {
+            jobService.enqueueReconcileUnits();
+            return "reconcile";
+        }
+        if (locked.stream().anyMatch(g -> "BUILDING".equals(g.getStatus()))) return "building";
+        RagIndexGeneration newest = locked.stream().filter(g -> "READY".equals(g.getStatus()))
+                .max(java.util.Comparator.comparing(RagIndexGeneration::getId)).orElse(null);
+        if (newest != null) {
+            try {
+                activate(newest.getId());
+                return "activated #" + newest.getId();
+            } catch (BusinessException stale) {
+                // 建的时候还没对账、之后又多了语料：这一个覆盖不上，建个新的
+            }
+        }
+        if (!sidecarReady) return "sidecar-not-ready";
+        return "rebuild #" + jobService.createGeneration(properties.getIndexVersion()).getId();
+    }
+
     @Transactional
     public Map<String, Object> discardFailedGeneration(Long generationId) {
         RagIndexGeneration generation = generationMapper.lockById(generationId);

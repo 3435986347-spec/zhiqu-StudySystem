@@ -131,6 +131,16 @@ class RagIndexIntegrationTest {
         assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_generation", Integer.class), "旁路不在就不该建代次");
     }
 
+    /** 第一百二十四轮：RAG 关着时「默认启动」什么都不推（不入队对账、不建） */
+    @Test
+    void bootstrapDoesNothingWhenRagIsOff() {
+        Integer jobs = jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_job", Integer.class);
+        Integer generations = jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_generation", Integer.class);
+        assertEquals("disabled", adminService.bootstrapStep(true));
+        assertEquals(jobs, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_job", Integer.class));
+        assertEquals(generations, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_generation", Integer.class));
+    }
+
     @Test
     void v26LeaseFencingSchemaWasApplied() {
         Integer columns = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.columns " +
