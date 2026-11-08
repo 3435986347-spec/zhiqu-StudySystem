@@ -67,7 +67,8 @@ test('the rerun (round 87) may use the user-approved CNY 100; the round-69 pilot
   try { assert.throws(() => readRunConfig(pilot.file, { verifyAgent: false }), /\(0, 50\]/); } finally { pilot.close(); }
 });
 test('missing Docker is an explicit not-ready result even with a valid gateway', async () => {
-  const result = await preflight({ config: actual }, { runDocker: missingDocker, api: fakeApi, readConfig: frozenIgnoringAgent });
+  // 不读这台机器的 ~/.zhiqu（原来读：用户登录网站之后 server 就不是本机了，这条就红）
+  const result = await preflight({ config: actual }, { runDocker: missingDocker, api: fakeApi, readConfig: frozenIgnoringAgent, userConfig: () => ({}) });
   assert.equal(result.ready, false);
   assert.equal(result.gateway.ready, true);
   assert.equal(result.tasks.length, 10);

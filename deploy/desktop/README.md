@@ -67,8 +67,8 @@ headless、图标这些修复 Windows 版都有。
 
 ## 命令行 `zhiqu`
 
-命令行是 npm 版（仓库里的 `zhiqu-cli/`）：循环和工具在你电脑上跑，默认连的就是本机这个桌面应用（`http://127.0.0.1:47615`）。
-装好 Node 22，`cd zhiqu-cli && npm link`；macOS 和 Windows 一样。用法见 `zhiqu-cli/README.md`。
+命令行是 npm 版（仓库里的 `zhiqu-cli/`）：循环和工具在你电脑上跑，默认连 `https://zhiqustudy.com`（2026-11-08 起）；连本机这个桌面应用：`zhiqu login --server http://127.0.0.1:47615`。
+`npm install -g zhiqu`，或者在仓库里 `cd zhiqu-cli && npm link`；macOS 和 Windows 一样。用法见 `zhiqu-cli/README.md`。
 
 > 应用包里原来带着一个 Java 版的 `zhiqu`（`Contents/Resources/bin/zhiqu`），2026-10-04 删除了。
 > 以前照着这里建过软链的，删掉它：`rm /opt/homebrew/bin/zhiqu`（Intel Mac 是 `/usr/local/bin/zhiqu`），再按上面装 npm 版。

@@ -7,7 +7,9 @@ import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { Api } from '../../zhiqu-cli/src/api.js';
-import { DEFAULT_SERVER, loadUserConfig } from '../../zhiqu-cli/src/config.js';
+import { loadUserConfig } from '../../zhiqu-cli/src/config.js';
+// 评测连本机桌面应用的网关（协议里定的）；不借命令行的默认值：2026-11-08 起它是 https://zhiqustudy.com
+import { LOCAL_DESKTOP_SERVER } from '../../zhiqu-cli/src/defaults.js';
 import { BUILTIN_SYSTEM_PROMPT } from '../../zhiqu-cli/src/prompt.js';
 import { publicTask, redact, sha256, signalAwareSleep } from './agent-worker.mjs';
 
@@ -113,7 +115,7 @@ export function selectDeepSeekModel(metadata, requestedId) {
 
 function credentials(flags) {
   const config = loadUserConfig(); // Read-only; no systemContent or login call.
-  const server = flags.server || process.env.ZHIQU_SERVER || config.server || DEFAULT_SERVER;
+  const server = flags.server || process.env.ZHIQU_SERVER || config.server || LOCAL_DESKTOP_SERVER;
   const token = process.env.ZHIQU_TOKEN || config.token;
   if (!token) throw new Error('No existing zhiqu login; run zhiqu login first');
   const url = new URL(server);

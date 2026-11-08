@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 设置发布版默认连哪台服务器：npm run set-server -- https://你的域名
-// 写进 package.json 的 zhiqu.defaultServer。仓库里平时是本机桌面应用（http://127.0.0.1:47615），方便测试。
+// 写进 package.json 的 zhiqu.defaultServer。现在是 https://zhiqustudy.com；连本机桌面应用的用 zhiqu login --server http://127.0.0.1:47615。
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 

@@ -36,5 +36,7 @@ test('默认服务器：来自 package.json 的 zhiqu.defaultServer；发布前�
   assert.match(releaseProblems({ zhiqu: { defaultServer: 'http://127.0.0.1:47615' } }).join('\n'), /还是本机/);
   assert.match(releaseProblems({ zhiqu: { defaultServer: 'http://1.2.3.4:8080' } }).join('\n'), /不是 https/);
   assert.match(releaseProblems({ private: true, zhiqu: { defaultServer: 'https://a.b' } }).join('\n'), /private/);
-  assert.ok(releaseProblems(pkg).length > 0, '仓库里的版本（本机地址 + private）不该能发布');
+  // 原来仓库里是本机地址 + private（不能发）；用户 2026-11-08 定了默认连网站、发布到 npm：仓库里的就是发布的那一版
+  assert.equal(pkg.zhiqu.defaultServer, 'https://zhiqustudy.com', '默认连的服务器');
+  assert.deepEqual(releaseProblems(pkg), [], '仓库里的这一版要能发布');
 });

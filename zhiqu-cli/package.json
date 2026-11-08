@@ -20,8 +20,7 @@
     "prepublishOnly": "node scripts/check-release.mjs"
   },
   "license": "UNLICENSED",
-  "private": true,
   "zhiqu": {
-    "defaultServer": "http://127.0.0.1:47615"
+    "defaultServer": "https://zhiqustudy.com"
   }
 }

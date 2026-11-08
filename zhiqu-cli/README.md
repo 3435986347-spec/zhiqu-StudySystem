@@ -1,32 +1,82 @@
 # zhiqu
 
-知趣·象限的命令行 coding agent。**循环和工具跑在你的电脑上**（读、搜、写、跑命令都在本机的工作区里），
-**模型、登录和你的数据（任务、知识 Wiki、记忆）在服务器上**（API Key 只在服务器，命令行拿不到）。
+知趣·象限（[zhiqustudy.com](https://zhiqustudy.com)）的命令行 coding agent。**循环和工具跑在你的电脑上**（读、搜、改文件、跑命令都在本机的工作区里），
+**模型、登录和你的数据（任务、知识 Wiki、记忆）在服务器上**（模型的 API Key 只存在服务器，命令行拿不到）。
+
+## 安装
+
+要 Node.js 18.17 或更新的版本。
 
 ```bash
-npm i -g zhiqu          # 或者在仓库里：cd zhiqu-cli && npm link
-zhiqu login             # 浏览器里确认，命令行不接触密码
-cd 你的项目
-zhiqu                   # 开始
+npm install -g zhiqu
 ```
+
+在国内下得慢的话，换 npmmirror 的源（它会自动同步 npm 上的版本）：
+
+```bash
+npm install -g zhiqu --registry=https://registry.npmmirror.com
+```
+
+## 第一次用
+
+1. 在 [zhiqustudy.com](https://zhiqustudy.com) 注册账号，在网页「设置 → AI 模型」里加一个模型（填你自己的 API Key，只存在服务器上）。
+2. 登录：
+
+   ```bash
+   zhiqu login
+   ```
+
+   它会打开浏览器、给你一个设备码，确认是你本人之后点「允许」就好 —— 命令行不接触你的密码。
+3. 到你的项目目录里开始：
+
+   ```bash
+   cd 你的项目
+   zhiqu
+   ```
+
+默认连的是 `https://zhiqustudy.com`。用本机的知趣·象限桌面应用：`zhiqu login --server http://127.0.0.1:47615`；
+自己部署的服务器同理。
 
 ## 三档权限
 
 | 档位 | 做什么 | 切换 |
 |---|---|---|
 | `plan` | 只读、只搜、只出计划；计划交上来，你批准了才开始改 | `/mode plan` 或 `--mode plan` |
-| `ask` | 每次写文件先给 diff、每条命令先给命令行，问 y / n（`a` = 本会话都允许这一类） | `/mode ask`（默认） |
+| `ask` | 每次写文件先给 diff、每条命令先给你看，问 y / n（`a` = 本会话都允许这一类） | `/mode ask`（默认） |
 | `auto` | 写文件、跑命令都不再问，**做完再告诉你**（每一步照样显示） | `/mode auto` |
 
 三档的安全规则一样，`auto` 免的是「问」，不是「规则」：
 
-- 路径不出工作区（`../`、绝对路径、中间某段是指向外面的软链都拒）；不跟随软链；
-- 不读 `.env`、`*.pem`、`id_rsa` 这类文件（扩展名白名单）；
-- 改一个已存在的文件之前必须先读过它，读过之后被你在编辑器里改了就要重读；
-- 命令只接受「命令名 + 参数」，不经过 shell；不接受行内代码（`-c`、`-e`、`--eval=`、`node -pe`、`python3 -Bc`……）和 `npm exec`；
+- **系统沙箱**（macOS 的 Seatbelt、Linux 的 bubblewrap）：命令只能写工作区（`.git`、`.zhiqu` 除外），默认断网，读不到家目录里的东西。
+  没有沙箱的平台（Windows）退回白名单：只能跑认得的命令，不接受行内代码。
+- 路径不出工作区（`../`、绝对路径、中间某段是指向外面的软链都拒）；不读 `.env`、`*.pem`、`id_rsa` 这类文件。
+- 改一个已存在的文件之前必须先读过它；读过之后被你在编辑器里改了就要重读。
 - 子进程拿不到你的环境变量（令牌、云凭据）；超时连同它起的子进程一起杀掉；输出有上限。
 
-这些规则与服务器端的工作区是同一套，两边共用 `conformance/workspace-rules.json` 这份一致性用例。
+## 命令
+
+```
+zhiqu                       在当前目录开一段会话
+zhiqu -p "帮我写个贪吃蛇"    只跑这一句，打印回答后退出
+zhiqu -c                    接着上一段会话
+zhiqu --resume [id]         挑一段会话接着做
+zhiqu --goal "目标"          一直做到目标达成并核对通过
+zhiqu exec "要做的事"        给脚本和 CI 用：stdout 只有结论，默认只读（要写给 --mode auto）；--json、--output-schema、-o
+zhiqu review [说明]          只读地审查改动，按 P0–P3 列出真问题
+zhiqu login [--server URL]  登录（浏览器里确认）；--token zqp_… 用网页里签的个人访问令牌
+zhiqu logout | whoami | models | help | --version
+zhiqu mcp                   当 MCP 服务器，见下面
+```
+
+常用选项：`--mode plan|ask|auto`、`--model <id>`、`--effort instant|medium|high|extra|max`（思考档位）、
+`--sandbox-network off|local|on`（沙箱里的命令能不能联网，默认 off）。完整的用 `zhiqu help` 看。
+
+会话里输入 `/` 会弹出命令菜单：`/goal`、`/mode`、`/model`、`/effort`、`/window`、`/ps`、`/stop`、`/resume`、`/new`、`/compact`、
+`/init`、`/review`、`/skills`、`/mcp`、`/system`、`/verbose`、`/usage`、`/help`、`/exit`。↑↓ 选、回车执行、Tab 补全、Esc 关掉。
+
+本地工具：`list_files`、`read_file`、`search`（正则、按文件类型过滤、跳过 `.gitignore` 的）、`write_file`、`edit_file`、
+`apply_patch`（一次改多个文件，全成或全不成）、`delete_file`（挪进 `.zhiqu/trash/`，能恢复）、`shell`（在系统沙箱里；
+可以放到后台，用 `/ps`、`/stop` 管）。行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事；它干活时可以接着打下一句，回车排队。
 
 ## goal 模式
 
@@ -38,22 +88,6 @@ zhiqu --goal "修好所有失败的测试" --mode auto < /dev/null   无人值�
 设了目标之后，它是这段会话的最高优先级：模型不能说「接下来你可以……」就停，只有宣告
 **已达成**（附上它亲自验证过的证据）或 **卡住了**（说清楚需要你做什么）才会停；宣告达成之后还要过一道独立核对，
 核对不过就带着缺口接着做。有轮数上限，Ctrl+C 随时停，`/goal continue` 接着追，`/goal clear` 放下。
-
-## 命令
-
-```
-zhiqu -p "帮我写个贪吃蛇"    只跑这一句，打印回答后退出
-zhiqu -c                    接着上一段会话
-zhiqu --resume [id]         挑一段会话接着做
-zhiqu login [--server URL]  登录；--token zqp_… 用网页里签的个人访问令牌
-zhiqu logout | whoami | models
-```
-
-会话里：`/goal`、`/mode`、`/model`、`/resume`、`/new`、`/compact`、`/init`、`/skills`、`/mcp`、`/system`、`/usage`、`/exit`。输入 `/` 会在输入行上方弹出命令菜单：↑↓ 选、回车执行、Tab 补全后接着打参数、Esc 关掉。`/resume` 接上一段会话时会先把那段的聊天记录显示出来。
-
-本地工具：`list_files`、`read_file`、`search`、`write_file`（新建 / 整份重写 / 追加）、`edit_file`（替换一段）、`delete_file`（挪进 `.zhiqu/trash/`，能恢复）、`run_command`。模型不能改、不能删 `.zhiqu/` 与 `.git/` 里的文件。
-行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事。它干活的时候输入框一直在底下：可以接着打下一句，按回车就排队，
-这一轮做完自动发出。
 
 ## 文件放在哪
 
@@ -101,8 +135,8 @@ zhiqu logout | whoami | models
 | `create_study_plan` | 新建任务 / 例行计划 —— **只生成草稿**，到网页 AI 助手里确认 |
 | `read_memory` / `propose_memory` | 读长期记忆 / 提议新的（草稿） |
 
-先 `zhiqu login` 登录一次（令牌存在 `~/.zhiqu/config.json`，`zhiqu mcp` 用的就是它）。连的是登录时的那台服务器 —— 默认是本机的桌面应用，
-那就要开着桌面应用；连服务器的话 `zhiqu login --server https://…`。
+先 `zhiqu login` 登录一次（令牌存在 `~/.zhiqu/config.json`，`zhiqu mcp` 用的就是它）。连的是登录时的那台服务器 —— 默认是 `https://zhiqustudy.com`；
+连本机的桌面应用就 `zhiqu login --server http://127.0.0.1:47615`，那就要开着桌面应用。
 
 **Claude Code**（所有项目都能用）：
 

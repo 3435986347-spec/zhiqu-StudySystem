@@ -697,10 +697,12 @@ async function grade(ctx, kind, predictions) {
 
 async function gatewayModel(config, modelId = config.model.id) {
   const { Api } = await import('../../zhiqu-cli/src/api.js');
-  const { DEFAULT_SERVER, loadUserConfig } = await import('../../zhiqu-cli/src/config.js');
+  const { loadUserConfig } = await import('../../zhiqu-cli/src/config.js');
+  // 评测只走本机桌面应用的网关；不借命令行的默认值（2026-11-08 起是 https://zhiqustudy.com）
+  const { LOCAL_DESKTOP_SERVER } = await import('../../zhiqu-cli/src/defaults.js');
   const { selectDeepSeekModel, assertLoopbackServer } = await import('./run-humaneval.mjs');
   const user = loadUserConfig();
-  const server = process.env.ZHIQU_SERVER || user.server || DEFAULT_SERVER;
+  const server = process.env.ZHIQU_SERVER || user.server || LOCAL_DESKTOP_SERVER;
   const token = process.env.ZHIQU_TOKEN || user.token;
   assertLoopbackServer(server);
   if (!token) throw new Error('No existing zhiqu login');

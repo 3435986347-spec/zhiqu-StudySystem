@@ -1,7 +1,8 @@
 // 默认连哪台服务器：来自 package.json 的 zhiqu.defaultServer。
 //
-// 仓库里是本机桌面应用（http://127.0.0.1:47615），测试方便；发布的那一版要改成服务器地址
-// （npm run set-server -- https://…），scripts/check-release.mjs 在 npm publish 之前挡住没改的版本。
+// 是 https://zhiqustudy.com（用户 2026-11-08：「设置成默认连接这个网址」，同一天发布到 npm）。原来仓库里是本机桌面应用
+// （http://127.0.0.1:47615）、发布前再改；scripts/check-release.mjs 在 npm publish 之前挡住本机地址、不是 https 的版本。
+// 测试不靠这里：helpers.js 的 runZhiqu 一律给 ZHIQU_SERVER。
 // 实际使用时的优先级仍然是：--server > ZHIQU_SERVER > 项目 .zhiqu/settings.json > ~/.zhiqu/config.json > 这里。
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';

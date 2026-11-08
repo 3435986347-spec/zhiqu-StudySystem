@@ -21,3 +21,14 @@
 - `WebMvcConfig`：`/assets/**`、`/vendor/**`、`/*.html`、`/favicon.ico`、`/manifest.json` 都是 `private, no-cache`。第一次写成一个 handler 指到 `static/`：`/assets/**` 交给目录的是去掉前缀的那段，全都找不到，找不到又按业务错误回 200 + 55 字节的 JSON —— 页面脚本全成了这 55 个字节。原来那条压缩判据（逐个比对解开后和原文一样）当场照出来了；改成每个前缀各指各的目录。
 - Service Worker 预取：42 个、压缩后 502KB → 16 个、166KB；预算定 200KB。
 - 扰动 18 个全红（每一类路径不设缓存、不标 private、改成 no-store、指回 static/、一打开就注册、不再等、监听不是一次性、已加载完不注册、去掉协议判断、后台页 / KaTeX / 字体回到预取、预取不存在的文件、超预算）。
+
+## 同一轮：命令行默认连网站、准备发布到 npm
+
+用户：「为什么还是连接本地的，你设置成默认连接这个网址的」「同时发布npm，让用户运行npm install zhiqu可以下载」（这就是 P7，原来定的「发布前单独问用户」，这句就是答复）。
+
+- `zhiqu-cli/package.json`：`zhiqu.defaultServer` 从本机桌面应用（`http://127.0.0.1:47615`）改成 `https://zhiqustudy.com`，去掉 `"private": true`；`check-release` 通过。包名 `zhiqu` 在 npm 上没人用。`npm pack` 看过：48 个文件、压缩后 179KB，只有 `bin`、`src`、`package.json`、README。
+- README 照现在的样子重写（它是 npm 上的介绍页）：安装（国内换 npmmirror）、注册加模型、登录、三档、系统沙箱、命令；原来还写着「不经过 shell、不接受行内代码」，那是第一百零九轮之前的。
+- 用户这台 Mac 的 `~/.zhiqu/config.json` 存着本机地址和本机的令牌，优先级高过默认值：备份成 `config.json.bak-local`，去掉这两项（本机的令牌不该发给网站）。
+- `misc.test.js` 原来钉着「仓库里的这一版不能发布」，照用户的决定改成「默认就是 https://zhiqustudy.com、能发布」；三个扰动（改回本机、换成 http、private 加回去）全红。
+- 评测工具顺带撞出来的：`run-repository` / `run-humaneval` / `repository-docker` 没指定服务器时借的是命令行的默认值，而评测只该连本机的网关（`assertLoopbackServer`）—— 默认值一改、用户配置里的本机地址一去，预检那条就红了。改成明确用 `LOCAL_DESKTOP_SERVER`；那条测试原来还读这台机器真实的 `~/.zhiqu`（用户登录了网站它就会红），改成注入。两个扰动（默认借网站、不认注入）全红，模拟「已经登录了网站」照样绿。
+- 发布本身要用户先在 npm 上注册、`npm login`（账号和密码只能用户来）。用户注册时页面说「访问受限」：代理对 npmjs.com 走的是韩国的节点（203.248.84.72），被 Cloudflare 拦了；换节点或让 npmjs.com 直连。

@@ -6,7 +6,9 @@ import crypto from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Api } from '../../zhiqu-cli/src/api.js';
-import { DEFAULT_SERVER, loadUserConfig } from '../../zhiqu-cli/src/config.js';
+import { loadUserConfig } from '../../zhiqu-cli/src/config.js';
+// 评测只走本机桌面应用的网关（assertLoopbackServer）。不借命令行的默认值：2026-11-08 起它是 https://zhiqustudy.com
+import { LOCAL_DESKTOP_SERVER } from '../../zhiqu-cli/src/defaults.js';
 import { selectDeepSeekModel, assertLoopbackServer } from './run-humaneval.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -102,13 +104,13 @@ export function inspectDocker(run = execFileSync) {
   }
 }
 
-export async function preflight(opts, { runDocker = execFileSync, api: suppliedApi, readConfig = readRunConfig } = {}) {
+export async function preflight(opts, { runDocker = execFileSync, api: suppliedApi, readConfig = readRunConfig, userConfig = loadUserConfig } = {}) {
   const { config, selection, configSha256 } = readConfig(opts.config);
   const docker = inspectDocker(runDocker);
   let gateway;
   try {
-    const user = loadUserConfig();
-    const server = process.env.ZHIQU_SERVER || user.server || DEFAULT_SERVER;
+    const user = userConfig();
+    const server = process.env.ZHIQU_SERVER || user.server || LOCAL_DESKTOP_SERVER;
     const token = process.env.ZHIQU_TOKEN || user.token;
     assertLoopbackServer(server);
     if (!token && !suppliedApi) throw new Error('missing_existing_login');

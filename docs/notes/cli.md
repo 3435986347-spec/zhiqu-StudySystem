@@ -104,8 +104,8 @@
   做成 stdio MCP 服务器给 Claude Code / Cursor 用，令牌用 `zhiqu login` 存的。**stdout 只走协议**（写一个字的日志客户端就断开 —— 真起进程的判据钉着）；
   工具出错回 `isError` 而不是协议错误；转哪些工具是 `EXPOSED_TOOLS` 一个一个列的，服务器新加的远程工具不会自动转出去。
   `update_task_status` 是远程工具里唯一直接生效的（`REMOTE_DIRECT_WRITE_TOOLS`）：plan 档不给，ask 档单独问。`list_tasks` 和网页 AI 读任务是同一个开关。
-- **默认服务器**来自 `package.json` 的 `zhiqu.defaultServer`：仓库里是本机桌面应用（测试用），发布版要指向用户的服务器
-  （`npm run set-server -- https://…`）；`prepublishOnly` 挡住本机地址、非 https、还挂着 `private` 的版本。
+- **默认服务器**来自 `package.json` 的 `zhiqu.defaultServer`：2026-11-08 起是 `https://zhiqustudy.com`（用户要的，同一天发布到 npm；原来仓库里是本机桌面应用、发布前再改，
+  `npm run set-server -- https://…`）；`prepublishOnly` 挡住本机地址、非 https、还挂着 `private` 的版本。
 
 ### 命令行 `zhiqu` 的 Java 版（2026-10-04 删除）
 
