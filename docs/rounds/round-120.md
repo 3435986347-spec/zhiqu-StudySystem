@@ -32,3 +32,10 @@
 - `misc.test.js` 原来钉着「仓库里的这一版不能发布」，照用户的决定改成「默认就是 https://zhiqustudy.com、能发布」；三个扰动（改回本机、换成 http、private 加回去）全红。
 - 评测工具顺带撞出来的：`run-repository` / `run-humaneval` / `repository-docker` 没指定服务器时借的是命令行的默认值，而评测只该连本机的网关（`assertLoopbackServer`）—— 默认值一改、用户配置里的本机地址一去，预检那条就红了。改成明确用 `LOCAL_DESKTOP_SERVER`；那条测试原来还读这台机器真实的 `~/.zhiqu`（用户登录了网站它就会红），改成注入。两个扰动（默认借网站、不认注入）全红，模拟「已经登录了网站」照样绿。
 - 发布本身要用户先在 npm 上注册、`npm login`（账号和密码只能用户来）。用户注册时页面说「访问受限」：代理对 npmjs.com 走的是韩国的节点（203.248.84.72），被 Cloudflare 拦了；换节点或让 npmjs.com 直连。
+
+## 部署、安装包、真服务器上量的
+
+- 后端部署（`deploy-from-dev.sh`，用打包那一次编的 JAR，提交 `e9efa05`）：线上的 `/assets/zhiqu-ui.css`、`/` 回 `no-cache, private` + Last-Modified，带 If-Modified-Since 再取是 **304、0 字节**；`/api/harness/meta` 照旧 `no-store`。内置浏览器里 Service Worker 换成 `zhiqu-shell-v20261108-r120a`、激活、接管页面。页面里看不出 304（Service Worker 取回的、浏览器从缓存补出来的，页面上都是 200、传输 0），HTTP 这一层以服务器上量的为准。
+- macOS 安装包用 `e9efa05` 重打（152.6MB，ad-hoc 签名、没公证：第一次打开要右键「打开」），传到服务器的下载目录（入站 25 秒；先用点开头的名字传完再改名，下载接口跳过点开头的，传一半时下不到半截）。下载接口列出了它，sha256 和本机一致；Range 续传 206 正常；下行实测每秒约 126KB，整个包要 20 分钟左右 —— 带宽升级之前就是这样。
+- **这个安装包现在给普通用户还用不了**：桌面版不带数据库，要用户自己先有 MySQL。用户定了桌面版改成登录网站、数据走网站接口（方案另写），改完才真的能给所有人用。
+- Windows 安装包只能在 Windows 上打，这一轮没有。
