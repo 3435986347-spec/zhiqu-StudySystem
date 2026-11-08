@@ -104,6 +104,14 @@ class CodeContextPromptTest {
     }
 
     @Test
+    @DisplayName("能写、一个文件都没写（代码 agent 没交结论、由这一步兜底时）：不许说写了、不许编内容；代码 agent 在问就转告（第一百二十一轮，线上编过「已写入文件」）")
+    void 没写就不许说写了() {
+        String asked = CodeContextPrompt.dataBlock("【工作区 list_files】\n（空）\n\n【代码 agent 的结论】\n你想写哪个文件？", List.of(), true, false);
+        assertTrue(asked.contains("这一轮一个文件都没有写：不要说写入了、新建了、生成了、保存了任何文件，也不要编文件的内容。"), asked);
+        assertTrue(asked.contains("就把问题照原样转告他，不要替他选"), asked);
+    }
+
+    @Test
     @DisplayName("没草稿：让模型把改法写出来，不许暗示已经改了")
     void 没草稿时让它写出改法() {
         String text = CodeContextPrompt.dataBlock("(读到的内容)", List.of(), false);

@@ -362,7 +362,9 @@ public class JsCodeAgent {
                 result.path("drafts").size(), Texts.limitRaw(result.path("text").asText(""), 200));
         return new CodeWorkspaceAgent.Result(Texts.limitRaw(result.path("context").asText(""), limits.codeContextChars()),
                 drafts(workspace, result.path("drafts"), canWrite), null, canWrite, List.of(), result.path("writeCalls").asInt(0) > 0,
-                target.artifact() ? ArtifactFiles.changes(root, before) : List.of());
+                target.artifact() ? ArtifactFiles.changes(root, before) : List.of(),
+                // 宿主只给这一次新说的、没出错没被打断的结论（code-host.js）；最终回答原样用它
+                Texts.limitRaw(result.path("conclusion").asText(""), limits.codeContextChars()));
     }
 
     /** 一行一个 JSON 写给子进程（模型的事件和命令的结果都从这里走） */

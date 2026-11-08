@@ -100,6 +100,12 @@ export function createBridge({ input, output }) {
 /** 「生成了 / 写好了……草稿」「草稿已经生成」这类说法 */
 export const CLAIMS_DRAFT = /(生成|写好|写成|写进|创建|建好|准备好|改好)[^。\n]{0,16}草稿|草稿[^。\n]{0,8}已经?(生成|写好|准备好|建好)/;
 
+/**
+ * 「已写入文件」「新建了 `./计划.md`」这类说写了文件的说法（第一百二十一轮）。生成到产物时没有草稿，模型说的是这个，
+ * 「……草稿」那条对不上：线上一次 0 个文件、回答却是「## 已写入文件」，连内容都编了。
+ */
+export const CLAIMS_FILE = /(已经?|成功)(写入|写好|写进|新建|创建|生成|保存)了?[^。\n]{0,20}(文件|\.[A-Za-z][A-Za-z0-9]{0,5}\b)|(写入|新建|创建|生成|保存)了\s*[`'"「]?[^\s。\n`'"」]{0,60}\.[A-Za-z][A-Za-z0-9]{0,5}\b|文件[^。\n]{0,8}已经?(写入|写好|写进|保存|生成|创建|建好)/;
+
 /** 「退出码 0」「跑了 test.py」「输出：」这类说跑过命令的说法 */
 // 「预期输出：」「应该输出：」是教用户怎么验，不是说跑过了（第九十九轮 review）
 export const CLAIMS_RUN = /退出码\s*-?\d|(跑|运行)(了|过了|的是)[^。\n]{0,24}(test|测试|\.py|\.js|\.java)|(?<!预期|应该|应当|会)输出(是|为)?[:：]/;
@@ -176,6 +182,12 @@ export async function runHosted(bridge, run) {
     if (CLAIMS_DRAFT.test(s) && !local.drafts.size && !(local.wrote && local.wrote.size)) {
       return '这一次你还没有成功调用 write_file / edit_file / apply_patch，并没有生成任何草稿 —— 不要说生成了。要改文件就现在调工具；不用改就照实说你做了什么。';
     }
+    // 跑过命令的不判：auto 档的 shell 可能直接写了文件，这里看不出来 —— 宁可不推，不能错推
+    const wroteAny = local.drafts.size || (local.wrote && local.wrote.size);   // 选了文件夹记在草稿里，生成到产物记在 wrote 里
+    if (CLAIMS_FILE.test(s) && !wroteAny && !local.ranCommand) {
+      return '这一次你一个文件都没有写（没有调用 write_file / edit_file / apply_patch，也没跑命令）—— 不要说写入了、新建了、生成了文件，也不要把文件内容编出来。'
+        + '要写就现在调工具写；缺信息（写什么、叫什么名字）就照实问用户。';
+    }
     if (CLAIMS_RUN.test(s) && !local.ranCommand) {
       const runTool = local.sandbox ? 'shell' : 'run_command';
       return `这一次你没有调用 ${runTool}，什么命令都没跑过 —— 不要说跑了、结果是什么（前面对话里的结果是当时的，文件可能已经变了）。`
@@ -190,6 +202,7 @@ export async function runHosted(bridge, run) {
   // /init、/review 要项目文件夹：页面已经拦过，这里是最后一道（生成到产物时根目录是临时空间，没什么可看、写了也没人读）
   const command = run.command === 'init' || run.command === 'review' ? run.command : null;
   const needsFolder = command && run.artifact;
+  const before = ctx.messages.length;
   try {
     if (needsFolder) reviewed = `/${command} 要先选一个项目文件夹，现在是生成到产物，没有项目可看。`;
     else if (command === 'review') reviewed = await reviewHosted(ctx, String(run.message || ''), controller.signal, typeof run.home === 'string' ? run.home : undefined);
@@ -203,6 +216,10 @@ export async function runHosted(bridge, run) {
   }
   const last = [...ctx.messages].reverse().find((m) => m.role === 'assistant' && !(m.tool_calls || []).length);
   const text = reviewed != null ? reviewed : last ? String(last.content || '') : '';
+  // 给用户的回答（第一百二十一轮）：后端原样用它，不再另调一次模型重写 —— 重写的那一步照上一轮的选项编过「已写入文件」，其实一个都没写。
+  // 只认这一次新说的、没出错没被打断的：历史那段后面跟着一句固定的「好的，前面的对话我当参考」，半路断了时 last 会是它（或者上一轮的旧回答）
+  const own = [...ctx.messages.slice(before)].reverse().find((m) => m.role === 'assistant' && !(m.tool_calls || []).length);
+  const conclusion = reviewed != null ? reviewed : !error && !controller.signal.aborted && own ? String(own.content || '').trim() : '';
   // 给后端写最终回答用的上下文：和 Java 循环同一个样子（每个工具的结果一段），最后是这份循环自己的结论
   const names = new Map();
   for (const m of ctx.messages) for (const c of m.role === 'assistant' ? m.tool_calls || [] : []) names.set(c.id, c.function.name);
@@ -210,7 +227,7 @@ export async function runHosted(bridge, run) {
     text ? `【代码 agent 的结论】\n${text}` : ''].filter(Boolean).join('\n\n');
   // 调过几次写文件的工具（不管成没成）：后端据此决定最终回答能不能说「这一轮没写成」
   const writeCalls = ctx.messages.reduce((n, m) => n + (m.role === 'assistant' ? (m.tool_calls || []).filter((c) => ['write_file', 'edit_file', 'apply_patch'].includes(c.function.name)).length : 0), 0);
-  return { type: 'result', text, context, drafts: local.draftList(), writeCalls, usage: ctx.usage,
+  return { type: 'result', text, conclusion, context, drafts: local.draftList(), writeCalls, usage: ctx.usage,
     rounds: ctx.messages.filter((m) => m.role === 'assistant' && (m.tool_calls || []).length).length,
     aborted: controller.signal.aborted, error };
 }

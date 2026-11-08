@@ -106,12 +106,22 @@ public class CodeWorkspaceAgent {
      * {@code writeAttempted}：这一轮真的调过写文件的工具（第九十四轮）—— 能写、没草稿时，「没写成」只在试过写的时候才说；
      * 只是跑了个测试（用户说「写进去了，跑一下」）就不该说没写成、让他再说一次「写进去」。说不清的老构造器按「试过」算，和原来一样。
      */
+    /**
+     * {@code conclusion}：代码 agent 自己写给用户的结论（第一百二十一轮）。有就原样当回答，不再另调一次模型重写 ——
+     * 重写的那一步照上一轮列过的选项编过「已写入文件」，其实一个文件都没写。出错、被打断时是空的，最终回答照旧兜底。
+     */
     public record Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
                          boolean writeOffered, List<Long> wikiPendingPatchIds, boolean writeAttempted,
-                         List<ArtifactFiles.Generated> generatedFiles) {
+                         List<ArtifactFiles.Generated> generatedFiles, String conclusion) {
         public Result {
             wikiPendingPatchIds = wikiPendingPatchIds == null ? List.of() : List.copyOf(wikiPendingPatchIds);
             generatedFiles = generatedFiles == null ? List.of() : List.copyOf(generatedFiles);
+            conclusion = conclusion == null ? "" : conclusion.strip();
+        }
+        public Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
+                      boolean writeOffered, List<Long> wikiPendingPatchIds, boolean writeAttempted,
+                      List<ArtifactFiles.Generated> generatedFiles) {
+            this(context, drafts, milestonePlan, writeOffered, wikiPendingPatchIds, writeAttempted, generatedFiles, "");
         }
         public Result(String context, List<Map<String, Object>> drafts, Map<String, Object> milestonePlan,
                       boolean writeOffered, List<Long> wikiPendingPatchIds, boolean writeAttempted) {
@@ -204,7 +214,8 @@ public class CodeWorkspaceAgent {
             return Result.EMPTY;
         }
         return new Result(viaJs.context(), viaJs.drafts(), loop.milestonePlan, viaJs.writeOffered(),
-                loop.wiki.pendingPatchIdsByTitle.values().stream().distinct().toList(), viaJs.writeAttempted(), viaJs.generatedFiles());
+                loop.wiki.pendingPatchIdsByTitle.values().stream().distinct().toList(), viaJs.writeAttempted(), viaJs.generatedFiles(),
+                viaJs.conclusion());
     }
 
     /**

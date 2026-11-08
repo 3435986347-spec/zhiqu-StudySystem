@@ -106,8 +106,13 @@ class CodeAgentLoopIntegrationTest {
     private static final String CODE_AGENT_MARK = "\"name\":\"read_file\"";
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
-    /** 最后一次写最终回答的请求（不带工具的那种）：看它知不知道这一轮生成了什么 */
+    /** 写最终回答的那次模型调用（流式、不带代码工具）有几次：第一百二十一轮起代码 agent 交了结论就一次都没有 */
+    private static final AtomicInteger answerCalls = new AtomicInteger();
+    /** 最后一次写最终回答的请求：代码 agent 没交结论（用完轮数）时兜底的那一步，看它知不知道这一轮生成了什么 */
     private static final java.util.concurrent.atomic.AtomicReference<String> lastAnswerBody = new java.util.concurrent.atomic.AtomicReference<>("");
+    /** 「写一个文件」：线上那一次的样子 —— 代码 agent 看了一眼空的工作区、反问，一个文件都不写 */
+    private static final String ASK_BACK = "写一个文件";
+    private static final String QUESTION = "工作区现在是空的，还没有建立任何文件。你想写哪个文件，我还缺少关键信息：文件名、格式，以及内容主题。";
 
     @Autowired private AiService aiService;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -126,10 +131,16 @@ class CodeAgentLoopIntegrationTest {
             if (streaming && requestBody.contains(CODE_AGENT_MARK)) {
                 boolean shell = requestBody.contains("\"name\":\"shell\"");
                 shellOffered.set(shell);
-                sse = codeAgentScript(codeAgentRound.incrementAndGet(), shell);
+                int round = codeAgentRound.incrementAndGet();
+                sse = requestBody.contains(ASK_BACK) ? askBackScript(round) : codeAgentScript(round, shell);
+            } else if (streaming && requestBody.contains("\"tools\"")) {
+                // 别的带工具的那几步（Wiki 工具循环）：不是写最终回答的，直接收尾
+                sse = sseLine(Map.of("choices", java.util.List.of(Map.of("delta", Map.of("content", "好"), "finish_reason", "stop")))) + "data: [DONE]\n\n";
             } else if (streaming) {
+                answerCalls.incrementAndGet();
                 lastAnswerBody.set(requestBody);
-                sse = "data: {\"choices\":[{\"delta\":{\"content\":\"流式测试回复\"}}]}\n\ndata: [DONE]\n\n";
+                // 写最终回答的那一步要是还被调用，就照线上那一次编：说写了、连内容都给
+                sse = "data: {\"choices\":[{\"delta\":{\"content\":\"## 已写入文件\\n\\n文件路径：`./四象限周计划.md`\"}}]}\n\ndata: [DONE]\n\n";
             } else {
                 json = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"测试回复\"}}]}";
             }
@@ -180,6 +191,25 @@ class CodeAgentLoopIntegrationTest {
         }
     }
 
+    /** 第一轮看一眼工作区，第二轮反问，一个文件都不写 */
+    private static String askBackScript(int round) {
+        if (round == 1) {
+            Map<String, Object> call = Map.of("index", 0, "id", "call_ask_1", "type", "function",
+                    "function", Map.of("name", "list_files", "arguments", "{}"));
+            return sseLine(Map.of("choices", java.util.List.of(Map.of("delta", Map.of("tool_calls", java.util.List.of(call))))))
+                    + sseLine(Map.of("choices", java.util.List.of(Map.of("delta", Map.of(), "finish_reason", "tool_calls")),
+                            "usage", Map.of("prompt_tokens", 10, "completion_tokens", 5)))
+                    + "data: [DONE]\n\n";
+        }
+        return sseLine(Map.of("choices", java.util.List.of(Map.of("delta", Map.of("content", QUESTION), "finish_reason", "stop")),
+                "usage", Map.of("prompt_tokens", 10, "completion_tokens", 20))) + "data: [DONE]\n\n";
+    }
+
+    private String lastAnswer() {
+        return jdbcTemplate.queryForObject("SELECT content FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+                String.class, userId);
+    }
+
     private static String sseLine(Map<String, Object> chunk) {
         try {
             return "data: " + JSON.writeValueAsString(chunk) + "\n\n";
@@ -198,6 +228,7 @@ class CodeAgentLoopIntegrationTest {
     @BeforeEach
     void seed() {
         codeAgentRound.set(0);
+        answerCalls.set(0);
         String username = "code_loop_" + UUID.randomUUID().toString().replace("-", "");
         // 第一百一十五轮起普通账号就能走这条环路（用户要的）：这个文件里的每一条都是普通账号跑的
         jdbcTemplate.update(
@@ -313,6 +344,9 @@ class CodeAgentLoopIntegrationTest {
         Path space = workspaces.space(userId, conversationId);
         assertTrue(Files.isRegularFile(space.resolve("solve.py")), "写在这段对话的临时空间里");
 
+        // 这一轮代码 agent 用完了轮数（4 轮工具），没有自己的结论：兜底由写最终回答的那一步说，它要知道生成了什么
+        // （代码 agent 交了结论的情形见「代码agent反问时回答就是它的反问」：那时这一步根本不调用）
+        assertTrue(answerCalls.get() >= 1, "没有结论时要兜底");
         assertTrue(lastAnswerBody.get().contains("本轮生成了这些文件") && lastAnswerBody.get().contains("solve.py"), "最终回答要知道生成了什么");
 
         // 再跑一轮，内容没变：不重复存；临时空间被清掉了：先恢复，模型看得到之前的文件
@@ -394,6 +428,42 @@ class CodeAgentLoopIntegrationTest {
         assertTrue(over.getContentJson().contains("空间用完了"), over.getContentJson());
         assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_artifact_file WHERE path = 'more1.txt' AND user_id = ?", Integer.class, userId));
         assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_artifact_file WHERE path = 'more2.txt' AND user_id = ?", Integer.class, userId), "放不下的不存");
+    }
+
+    /**
+     * 第一百二十一轮（线上撞到的）：auto 档、生成到产物，用户说「写一个文件」。代码 agent 看了一眼空的工作区、反问要写什么，一个文件都没写；
+     * 原来写最终回答的那一步另调一次模型，照上一轮列过的选项替他选了一个，说「## 已写入文件」，产物里什么都没有。
+     * 这里那一步要是还被调用，假模型就照那一次编 —— 回答里出现「已写入」就是又分家了。
+     */
+    @Test
+    void 代码agent反问时回答就是它的反问不编已写入(@Autowired WorkspaceRegistry workspaces) throws Exception {
+        workspaces.service(userId).applySettings("EXEC", "");
+        aiService.streamChat(userId, ASK_BACK, modelId, false, "OFF", null, "CHAT_ONLY", Map.of("codeMode", true));
+        awaitRunFinished();
+
+        assertTrue(codeAgentRound.get() >= 2, "代码 agent 没走完：" + codeAgentRound.get() + " 轮");
+        String answer = lastAnswer();
+        assertEquals(QUESTION, answer, "回答要是代码 agent 自己的反问");
+        assertTrue(!answer.contains("已写入"), answer);
+        assertEquals(0, answerCalls.get(), "不该再另调一次模型重写回答");
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ai_artifact_file WHERE user_id = ?", Integer.class, userId), "本来就一个文件都没写");
+    }
+
+    /**
+     * 同一轮里 Wiki 工具循环也跑了：它的回执要由写最终回答的那一步拼进去，所以这时照旧由那一步说 ——
+     * 但它拿到的要有代码 agent 的反问，和「这一轮一个文件都没写，不许说写了」。
+     */
+    @Test
+    void 同一轮也查了Wiki时由最终回答合并但不许说写了文件(@Autowired WorkspaceRegistry workspaces) throws Exception {
+        workspaces.service(userId).applySettings("EXEC", "");
+        aiService.streamChat(userId, ASK_BACK + "，顺便查一下知识库", modelId, false, "OFF", null, "CHAT_ONLY", Map.of("codeMode", true));
+        awaitRunFinished();
+
+        assertTrue(codeAgentRound.get() >= 2, "代码 agent 没走完：" + codeAgentRound.get() + " 轮");
+        assertEquals(1, answerCalls.get(), "Wiki 也跑了：由写最终回答的那一步合并");
+        String body = lastAnswerBody.get();
+        assertTrue(body.contains("你想写哪个文件"), "那一步要看得到代码 agent 的反问");
+        assertTrue(body.contains("这一轮一个文件都没有写"), "那一步要被告知一个文件都没写");
     }
 
     private Path space(WorkspaceRegistry workspaces, Long conversationId) {

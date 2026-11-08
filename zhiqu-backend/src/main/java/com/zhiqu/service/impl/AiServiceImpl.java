@@ -961,6 +961,8 @@ public class AiServiceImpl implements AiService {
         private AiAgentStep wikiToolStep;
         private AiAgentStep codeAgentStep;
         private String codeContext = "";
+        /** 代码 agent 自己写给用户的结论：有就是这一轮的回答（第一百二十一轮，见 FinalWriter#run） */
+        private String codeConclusion = "";
         private List<Map<String, Object>> codeDrafts = List.of();
         private List<String> codeGeneratedFiles = List.of();
         /** 代码判题之后经同一 Wiki 执行器获得的真实待合入编号。 */
@@ -1544,6 +1546,7 @@ public class AiServiceImpl implements AiService {
                         ctx.emit("agent.step.note", payload);
                     });
             s.codeContext = codeResult.context();
+            s.codeConclusion = codeResult.conclusion();
             s.codeDrafts = codeResult.drafts();
             s.codeWriteOffered = codeResult.writeOffered();
             s.codeWriteAttempted = codeResult.writeAttempted();
@@ -1624,6 +1627,26 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void run(AgentRunContext ctx) {
+            // 代码模式：回答就是代码 agent 自己的结论，和命令行一样，不再另调一次模型重写（第一百二十一轮）。
+            // 线上撞到的：代码 agent 看了一眼空的工作区，问用户要写什么文件、一个都没写；重写的这一步照上一轮列过的选项替他选了一个，
+            // 说「## 已写入文件」，连内容都编了出来。代码 agent 的结论是同一个模型在同一段上下文里、对着真的工具结果写的，
+            // 宿主还核对过说的和做的（code-host.js 的 claimCheck）；隔一层重写，这些都不算数了。
+            // 只在 Wiki 那条路没跑的时候：那条的回执要由下面拼进最终回答
+            if (hasText(s.codeConclusion) && s.wikiAgent == null) {
+                String text = limitRawMarkdown(s.codeConclusion, REPLY_MAX_LENGTH);
+                s.streamedReply.append(text);
+                ctx.emit("message.delta", Map.of(
+                        "requestId", s.requestId,
+                        "agentRunId", s.agentRun.getId(),
+                        "assistantMessageId", s.assistantMessage.getId(),
+                        "text", text
+                ));
+                messageMapper.flushStreamingContent(s.assistantMessage.getId(), s.userId, text);
+                s.finalNotice = null;
+                s.finalReply = text;
+                s.finalReasoningSummary = "";
+                return;
+            }
             List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", buildChatSystemPrompt(s.memoryText)));
             if (hasPlanDraft(s.suggestedPlan) || planExtractionRequested(s.config, s.limitedMessage)) {
