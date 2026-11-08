@@ -44,8 +44,8 @@ export async function checkForUpdate(api, { force = false, now = Date.now() } = 
 
 export function updateMessage(v) {
   if (v.level === 'required') {
-    return `这个版本（${VERSION}）太旧了，服务器要求至少 ${v.minimum}。请运行 npm i -g zhiqu 更新。`;
+    return `这个版本（${VERSION}）太旧了，服务器要求至少 ${v.minimum}。运行 zhiqu update 更新（或者 npm i -g zhiqu）。`;
   }
-  if (v.level === 'available') return `有新版本 ${v.latest}（你现在是 ${VERSION}）：npm i -g zhiqu`;
+  if (v.level === 'available') return `有新版本 ${v.latest}（你现在是 ${VERSION}）：运行 zhiqu update 更新`;
   return null;
 }

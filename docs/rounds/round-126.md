@@ -50,4 +50,14 @@
 - 真窗口（用户用鼠标点，指向本机验证站 + `zhiqu_verify`）：打开、登录、关掉再开还在、缩小到桌面（拖动 / 开始 / 展开）、下载弹窗（1.1.0、取消不报错）、外链、停掉验证站 ⌘R 显示「连不上」、起来后 ⌘R 回到看板。
 - 发布 / 部署 / 上传：见下面「收口」。
 
+## 发布前用户又要的（2026-11-09，等 npm 验证码时）
+用户：「我自己发布吧，你加一个zhiqu update的命令，同时登录的时候提示一下更新（如果有的话）」—— 进 0.2.0，npm publish 由用户自己做（要 2FA 验证码）。
+- `zhiqu update`（`src/selfupdate.js`）：问 npm 最新版；是 npm 全局装的（`npm root -g` 下的 zhiqu，软链解开比）才 `npm i -g zhiqu@<版本>`，装完读装上去的 package.json 核对；
+  源码目录、npm link 的软链不动（替一个 git 检出跑 npm i -g 会把改了一半的代码换掉），照实说怎么更新；没权限不替人 sudo；问不到 npm 照实说。
+  npm 的子进程只带 npm 用得到的环境（PATH、HOME、代理、npm 配置），令牌、云凭据不带。
+- `zhiqu login` 成功后看一次有没有新版本：不看一天的缓存（刚登录的人要准话），问不到不影响登录。提示语从「npm i -g zhiqu」改成「运行 zhiqu update 更新」。
+- 判据 `test/selfupdate.test.js` 8 条（含真起 `zhiqu login --token` 对一个桩服务器，缓存里写着「没有新版本」也要重新问）；扰动 6 个全红。
+  写判据时桩服务器拿 `startsWith('/api/harness/me')` 分路由，`/api/harness/meta` 也被当成了 `/me` —— 判据先红在桩上，改成整段比。
+- 命令行全量 501（483 过、18 跳）。
+
 ## 收口

@@ -63,7 +63,8 @@ zhiqu --resume [id]         挑一段会话接着做
 zhiqu --goal "目标"          一直做到目标达成并核对通过
 zhiqu exec "要做的事"        给脚本和 CI 用：stdout 只有结论，默认只读（要写给 --mode auto）；--json、--output-schema、-o
 zhiqu review [说明]          只读地审查改动，按 P0–P3 列出真问题
-zhiqu login [--server URL]  登录（浏览器里确认）；--token zqp_… 用网页里签的个人访问令牌
+zhiqu login [--server URL]  登录（浏览器里确认）；--token zqp_… 用网页里签的个人访问令牌；登录完说一句有没有新版本
+zhiqu update                更新到 npm 上的最新版（npm 全局装的才替你装；没权限不替你 sudo）
 zhiqu logout | whoami | models | help | --version
 zhiqu mcp                   当 MCP 服务器，见下面
 ```

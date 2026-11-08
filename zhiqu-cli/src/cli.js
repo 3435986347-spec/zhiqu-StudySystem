@@ -121,6 +121,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
     退出码同 exec：有问题也是 0，脚本看 findings
   zhiqu login [--server URL]  登录（浏览器里确认，命令行不接触密码）
   zhiqu login --token zqp_…   用网页里签的个人访问令牌登录
+  zhiqu update                更新到 npm 上的最新版（npm 全局装的才替你装；源码目录、npm link 的照实说怎么更新）
   zhiqu logout | whoami | models | help | --version
   zhiqu mcp                   当 MCP 服务器：让 Claude Code / Claude 桌面版 / Cursor 读写你的知识 Wiki 和任务（见 README）
 
@@ -157,6 +158,10 @@ export async function main(argv) {
     return runAgent(cwd, prepared.flags);
   }
   if (cmd === 'login') return login(cwd, flags);
+  if (cmd === 'update') {
+    const { selfUpdate } = await import('./selfupdate.js');
+    return selfUpdate();
+  }
   if (cmd === 'logout') {
     saveUserConfig({ token: null });
     process.stdout.write('已删除本机保存的令牌。要让它彻底失效，请在网页「设置 → 命令行」里撤销。\n');
@@ -194,6 +199,15 @@ function openBrowser(url) {
   try { spawn(bin, args, { stdio: 'ignore', detached: true }).unref(); } catch { /* 打不开就让用户自己点 */ }
 }
 
+/**
+ * 登录完看一次有没有新版本（用户要的，第一百二十六轮）：刚登录的人要一个准话，不看一天的缓存；
+ * 问不到就不说（登录已经成了，不能因为这一步说失败），最多等 3 秒。
+ */
+async function noteUpdate(api, ui) {
+  const message = await checkForUpdate(api, { force: true }).then((v) => updateMessage(v)).catch(() => null);
+  if (message) ui.warn(message);
+}
+
 export async function login(cwd, flags, ui = new Ui()) {
   const settings = resolveSettings(cwd, flags);
   if (!flags.quietWarnings) for (const w of settings.warnings) ui.warn(w);
@@ -203,6 +217,7 @@ export async function login(cwd, flags, ui = new Ui()) {
     const me = await api.get('/api/harness/me');
     saveUserConfig({ server, token: flags.token });
     ui.line(`✓ 已登录：${me.nickname || me.username} · ${server}`);
+    await noteUpdate(api, ui);
     return 0;
   }
   const api = new Api({ server });
@@ -218,6 +233,7 @@ export async function login(cwd, flags, ui = new Ui()) {
       saveUserConfig({ server, token: r.token });
       const me = await new Api({ server, token: r.token }).get('/api/harness/me');
       ui.line(`✓ 已登录：${me.nickname || me.username} · ${server}（令牌存在 ${path.join(userDir(), 'config.json')}，600 权限）`);
+      await noteUpdate(api, ui);
       return 0;
     }
     if (r.status === 'DENIED') { ui.error('网页上拒绝了这次登录'); return 1; }
