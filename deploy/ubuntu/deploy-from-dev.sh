@@ -6,11 +6,18 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 HOST=${ZHIQU_HOST:-ubuntu@134.175.110.207}
 BASE=${BASE:-/home/ubuntu/zhiqu-StudySystem}
 SSH="ssh ${ZHIQU_SSH:-} -o BatchMode=yes"
-if [ "${SKIP_BUILD:-}" != 1 ]; then (cd "$ROOT/zhiqu-backend" && mvn -o -q clean package -DskipTests); fi
+# 每一步都说一句：原来整个过程一声不响（编译 -q、rsync 不打进度），用户看着像卡死了（第一百二十一轮）
+if [ "${SKIP_BUILD:-}" != 1 ]; then
+  echo "==> 1/4 编译后端（一分钟左右，不出声是正常的）"
+  (cd "$ROOT/zhiqu-backend" && mvn -o -q clean package -DskipTests)
+fi
+echo "==> 2/4 传部署脚本和命令行源码"
 $SSH "$HOST" "mkdir -p $BASE/incoming"
 rsync -az -e "$SSH" "$ROOT/deploy/ubuntu/" "$HOST:$BASE/incoming/deploy-ubuntu/"
 rsync -az --delete --exclude node_modules --exclude .zhiqu -e "$SSH" "$ROOT/zhiqu-cli/src" "$ROOT/zhiqu-cli/test" "$ROOT/zhiqu-cli/package.json" "$HOST:$BASE/incoming/zhiqu-cli/"
-rsync -az -e "$SSH" "$ROOT/zhiqu-backend/target/zhiqu-backend-0.0.1-SNAPSHOT.jar" "$HOST:$BASE/incoming/zhiqu-backend.jar"
+echo "==> 3/4 传后端（$(du -h "$ROOT/zhiqu-backend/target/zhiqu-backend-0.0.1-SNAPSHOT.jar" | cut -f1)，几十秒）"
+rsync -az --progress -e "$SSH" "$ROOT/zhiqu-backend/target/zhiqu-backend-0.0.1-SNAPSHOT.jar" "$HOST:$BASE/incoming/zhiqu-backend.jar"
+echo "==> 4/4 换上新的、重启（网站会断二三十秒）"
 # 先传到旁边再改名：传到一半断了，服务还是用旧的
 $SSH "$HOST" "sudo -n bash -s" <<REMOTE
 set -euo pipefail
