@@ -1052,8 +1052,9 @@
         + (it.sha256 ? '<details class="zq-dl-sum"><summary>校验值（SHA-256）</summary><code>' + esc(it.sha256) + '</code></details>' : '')
         + '</section>';
     });
-    return h + '<p class="zq-dl-note">桌面版自带后端，要连一个 MySQL 数据库才能用：地址和账号填在用户目录下的 <code>.zhiqu/application.yml</code>；'
-      + '连网页版用的同一个库，就是同一份数据。</p></div>';
+    // 第一百二十五轮：Mac 版窗口里打开的就是这个网站（数据只在服务器上）；Windows 版还自带后端、要连一个 MySQL
+    return h + '<p class="zq-dl-note">Mac 版打开的就是这个网站：用同一个账号登录，就是同一份数据；断网时看不了。</p>'
+      + '<p class="zq-dl-note">Windows 版现在还自带后端，要连一个 MySQL 数据库才能用：地址和账号填在用户目录下的 <code>.zhiqu/application.yml</code>。</p></div>';
   }
   var desktopDownload = null;   // 开着的那个弹窗：连点只开一个
   function openDesktopDownload() {

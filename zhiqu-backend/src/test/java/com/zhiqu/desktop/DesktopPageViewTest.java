@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *
  * <p>这里把 PageView.swift 和一个检查程序一起编译，在真的 WKWebView 里真点 file input、真点 a[download]、
  * 真走外部链接 —— 只有面板换成不开窗口的桩。只在 macOS 上有意义；没有 swiftc 明确失败，
- * 要跳过写明 {@code -Dzhiqu.skipSwiftTests=true}（和 {@link DesktopCdsCacheTest} 同一个约定）。
+ * 要跳过写明 {@code -Dzhiqu.skipSwiftTests=true}。
  */
 class DesktopPageViewTest {
 
@@ -122,7 +122,7 @@ class DesktopPageViewTest {
         String shell = SourceText.stripComments(Files.readString(SHELL.resolve("ZhiquShell.swift"), StandardCharsets.UTF_8));
         assertTrue(shell.contains("webView.onMini = { [weak self] action in self?.mini(action) }"), "主窗口的页面说「缩小到桌面」，外壳没接");
         assertTrue(shell.contains("page.onMini = { [weak self] action in self?.mini(action) }"), "迷你窗的页面说「展开」，外壳没接");
-        assertTrue(shell.contains("miniPanel = makeMiniPanel(page: page)") && shell.contains("/mini.html"), "迷你窗不是 MiniPanel.swift 建的面板、或者没打开 mini.html");
+        assertTrue(shell.contains("miniPanel = makeMiniPanel(page: page)") && shell.contains("Server.page(\"mini.html\")"), "迷你窗不是 MiniPanel.swift 建的面板、或者没打开 mini.html");
         String showMini = shell.substring(shell.indexOf("private func showMini()"), shell.indexOf("private func showMain()"));
         assertTrue(showMini.contains("window.orderOut(nil)") && showMini.contains("miniPanel?.orderFrontRegardless()"),
                 "缩小时要主窗口藏起来、面板出来（不抢焦点地出来）：\n" + showMini);
@@ -189,12 +189,81 @@ class DesktopPageViewTest {
 
         String shell = SourceText.stripComments(Files.readString(SHELL.resolve("ZhiquShell.swift"), StandardCharsets.UTF_8));
         assertTrue(shell.contains("app.mainMenu = makeZhiquApplicationMenu()"), "外壳没有安装真实的原生菜单，WKWebView 不会自动提供宿主的编辑快捷键");
+        // 第一百二十五轮：页面在服务器上，断网、服务器重启后要能重来。页面里有焦点时 WKWebView 自己接 reload:，没有时（没连上、页面是空的）落到外壳
+        assertEquals("true", out.get("menu.reload"), "菜单里没有「重新载入」（⌘R、target 留空走 responder chain）");
+        assertTrue(shell.contains("@objc func reload(_ sender: Any?)"), "页面是空的（没连上）时 ⌘R 没人接");
     }
+
+    /**
+     * 第一百二十五轮：页面从服务器来了（默认 https://zhiqustudy.com），里面有 AI 写的、导入的内容。外壳的桥（通知、缩小到桌面）
+     * 原来谁发都认；AI 生成的 HTML 预览是 sandbox 的 srcdoc iframe，桥在每个框里都看得见 —— 一段生成的网页就能弹通知、把主窗口缩没。
+     * 链接原来按「是不是 127.0.0.1 / localhost」分里外，换成服务器那一个主机；不是本机的只认 https。
+     */
+    @Test
+    @DisplayName("桥只认自己网站的主框架（框里发的通知 / 授权 / 缩小一概不理）；框里的脚本自己跳走不叫系统浏览器")
+    void 桥只认自己网站的主框架() throws Exception {
+        Map<String, String> out = runCheck();
+        assertEquals("ok", out.get("site.firstLoad"), "主框架载入完了，外壳没收到（「正在连接」会一直挂着）");
+        assertEquals("true", out.get("site.framePosted"), "框里的脚本没跑到 —— 这一步什么都没验");
+        // 两个框：sandbox 的（来源是空的，认来源就挡得住）、allow-same-origin 的（来源就是这个网站，只有「主框架」这一条挡得住）
+        assertEquals("主框架发的", out.get("site.bridge"), "桥收了不该收的（框里发的通知、授权、缩小），或者主框架发的没收到");
+        assertEquals("名单里的主框架", out.get("site.foreign"), "页面不是名单里的网站，主框架发的照样收了（或者换回名单里的反而不收）");
+        assertEquals("true", out.get("site.frameStayed"), "框里一句 location.href 就叫起了系统浏览器");
+    }
+
+    @Test
+    @DisplayName("链接：同一主机的明文页面、不在名单里的本机都交给系统浏览器；file:// 不交给系统（.app 会被运行），mailto 交；站内链接留在窗口里")
+    void 链接按服务器那一个主机分里外() throws Exception {
+        Map<String, String> out = runCheck();
+        assertEquals("http://zhiqu.test/plain,http://127.0.0.1:47615/x,https://example.com/after-file,mailto:a@zhiqu.test,https://example.com/blank",
+                out.get("site.opened"),
+                "交给系统的不对：明文的同名主机、名单外的本机要外开；file:// 两条路（导航、target=_blank）都不许交给系统");
+        assertEquals("ok", out.get("site.ok"), "站内链接没在窗口里载入完");
+        assertEquals("true", out.get("site.ok.served"), "站内链接没真的去取");
+        assertEquals("true", out.get("site.ok.inside"), "站内链接被交给了系统浏览器");
+    }
+
+    @Test
+    @DisplayName("载入结果：服务器回 5xx（后端重启时 Caddy 的空 502）当成没载入成；连不上照实说；被顶掉的不算；打开的是文件就当下载")
+    void 载入结果告诉外壳() throws Exception {
+        Map<String, String> out = runCheck();
+        assertEquals("error:ZhiquServer:502", out.get("site.bad"), "502 的空白页被当成载入成功：窗口一片白、什么提示都没有");
+        assertEquals("error:NSURLErrorDomain:-1004", out.get("site.down"), "连不上服务器时外壳没收到错误");
+        assertEquals("ok", out.get("site.slow"), "被新的导航顶掉的那一次（-999）被当成没载入成：外壳会盖上「连不上」，其实下一页已经好了");
+        // 实现了回应策略就得自己管显示不了的类型：照样放行的话 WebKit 报「载入中断」（102），外壳盖上「连不上」
+        assertEquals("2", out.get("site.file.served"), "框里的 zip、主框架的 zip 没有都真的去取 —— 这一步什么都没验");
+        assertEquals("知识库.zip", out.get("site.file.saves"), "主框架打开一个 zip 没有当成下载（没问存到哪），或者框里的 zip 也弹了保存面板");
+        assertEquals("", out.get("site.file.loads"), "打开一个文件被当成了载入失败 / 载入完了");
+        assertEquals("0", out.get("site.file.failures"), "在保存面板里点了取消，反倒提示「没有保存成功」");
+    }
+
+    @Test
+    @DisplayName("服务器地址：https 的任何主机、本机的 http；只要协议 + 主机 + 端口、主机名小写；别的照默认 zhiqustudy.com")
+    void 服务器地址() throws Exception {
+        Map<String, String> out = runCheck();
+        assertEquals("https://zhiqustudy.com", out.get("server.fallback"));
+        assertEquals("https://zhiqustudy.com", out.get("server.plain"));
+        assertEquals("https://zhiqustudy.com", out.get("server.slash"), "末尾的 / 要去掉（拼页面地址时成了 //dashboard.html）");
+        assertEquals("http://127.0.0.1:8080", out.get("server.spaces"), "开发时指到本机的 http 后端要认");
+        assertEquals("http://localhost:18080", out.get("server.localhost"));
+        assertEquals("https://zhiqu.test:8443", out.get("server.upper"), "主机名没转小写：页面里的地址是小写的，比不上就什么都往外开");
+        for (String refused : new String[]{"http", "lookalike", "path", "query", "userinfo", "fragment", "nohost", "js", "ftp", "empty"}) {
+            assertEquals("nil", out.get("server." + refused), "不该认的地址认了：" + refused + "（明文过公网、路径、用户名密码、别的协议）");
+        }
+    }
+
+    /** 检查程序的输出：编一次、跑一次，这个类里的各条共用（每条各编各跑要多花几分钟，检查程序本身一次就把所有步骤走完） */
+    private static Map<String, String> checked;
 
     /** 编译并跑一次检查程序。 */
     private Map<String, String> runCheck() throws Exception {
         Assumptions.assumeTrue(System.getProperty("os.name", "").toLowerCase().contains("mac"), "外壳只在 macOS 上编译");
         Assumptions.assumeFalse(Boolean.getBoolean("zhiqu.skipSwiftTests"), "按 -Dzhiqu.skipSwiftTests=true 跳过");
+        if (checked == null) checked = compileAndRun();
+        return checked;
+    }
+
+    private Map<String, String> compileAndRun() throws Exception {
         if (!new File("/usr/bin/swiftc").canExecute()) {
             fail("这台 Mac 上没有 swiftc（装 Xcode 命令行工具：xcode-select --install），外壳的文件选择 / 下载验不了；"
                     + "确实要跳过就加 -Dzhiqu.skipSwiftTests=true");
@@ -203,9 +272,11 @@ class DesktopPageViewTest {
         Files.copy(Path.of("src/test/resources/swift/page-view-check.swift"), src.resolve("main.swift"));
         Files.copy(SHELL.resolve("PageView.swift"), src.resolve("PageView.swift"));
         Files.copy(SHELL.resolve("MiniPanel.swift"), src.resolve("MiniPanel.swift"));
+        Files.copy(SHELL.resolve("Server.swift"), src.resolve("Server.swift"));
         Path bin = tmp.resolve("check");
         run(600, "/usr/bin/swiftc", "-O", "-framework", "AppKit", "-framework", "WebKit", "-framework", "UserNotifications", "-o", bin.toString(),
-                src.resolve("main.swift").toString(), src.resolve("PageView.swift").toString(), src.resolve("MiniPanel.swift").toString());
+                src.resolve("main.swift").toString(), src.resolve("PageView.swift").toString(), src.resolve("MiniPanel.swift").toString(),
+                src.resolve("Server.swift").toString());
         Path work = Files.createDirectories(tmp.resolve("work"));
         String text = run(90, bin.toString(), work.toString());
         Map<String, String> map = new HashMap<>();

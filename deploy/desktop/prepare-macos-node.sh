@@ -1,5 +1,5 @@
 #!/bin/bash
-# stdout 只返回 Node 的绝对路径，诊断写到 stderr；在构建 JAR / 清理旧包之前运行。
+# stdout 只返回 Node 的绝对路径，诊断写到 stderr；在清理旧包之前运行。
 set -euo pipefail
 
 fail() { echo "Node 准备失败：$*" >&2; exit 1; }

@@ -90,11 +90,12 @@ ssh -t -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 "sudo mysql zhiqu_db -e \"U
 
 重新登录生效。
 
-## 桌面应用连这台的库
+## 桌面应用
 
-MySQL 只听本机，不开到公网（`deploy/desktop/README.md` 的「不要把 MySQL 直接开到公网」）。桌面应用要连就走 SSH 隧道，`~/.zhiqu/application.yml` 里三样要和服务器上 `config/application-prod.yml` 一字不差：数据库账号（`zhiqu_app`）、密码、`app.crypto.master-key`。
+Mac 桌面应用（第一百二十五轮起）窗口里打开的就是这个网站，数据走网站的接口，不连这台的库 —— 主密钥、数据库密码不进任何安装包（`docs/desktop-remote-plan.md`）。
+安装包放在 `data/downloads`（`app.desktop-downloads-dir`），网页上「下载桌面版」从这里拿。
 
-这台是重装的：旧的密码和主密钥都不能用了，主密钥对不上桌面应用不会启动（`CryptoKeyCanary`），这是故意的。没写 `~/.zhiqu/application.yml` 的桌面应用连的是本机的库，不受影响。
+Windows 桌面应用还带着自己的后端：MySQL 只听本机、不开到公网，所以它连的是本机的库。
 
 ## 以后更新
 

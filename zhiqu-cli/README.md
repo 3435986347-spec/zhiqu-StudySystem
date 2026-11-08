@@ -34,8 +34,8 @@ npm install -g zhiqu --registry=https://registry.npmmirror.com
    zhiqu
    ```
 
-默认连的是 `https://zhiqustudy.com`。用本机的知趣·象限桌面应用：`zhiqu login --server http://127.0.0.1:47615`；
-自己部署的服务器同理。
+默认连的是 `https://zhiqustudy.com`，Mac 上的知趣·象限桌面应用打开的也是它（同一个账号、同一份数据）。
+连本机的 Windows 桌面应用（还带着后端）：`zhiqu login --server http://127.0.0.1:47615`；自己部署的服务器同理。
 
 ## 三档权限
 
@@ -138,7 +138,7 @@ zhiqu --goal "修好所有失败的测试" --mode auto < /dev/null   无人值�
 | `read_memory` / `propose_memory` | 读长期记忆 / 提议新的（草稿） |
 
 先 `zhiqu login` 登录一次（令牌存在 `~/.zhiqu/config.json`，`zhiqu mcp` 用的就是它）。连的是登录时的那台服务器 —— 默认是 `https://zhiqustudy.com`；
-连本机的桌面应用就 `zhiqu login --server http://127.0.0.1:47615`，那就要开着桌面应用。
+连本机的 Windows 桌面应用就 `zhiqu login --server http://127.0.0.1:47615`，那就要开着它（Mac 版桌面应用打开的就是网站，不用另连）。
 
 **Claude Code**（所有项目都能用）：
 

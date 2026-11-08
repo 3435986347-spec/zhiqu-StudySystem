@@ -1,150 +1,17 @@
 // 知趣象限 —— macOS 原生外壳。
 //
-// 它做三件事：拉起打包在 Contents/Resources 里的 JVM、等后端把端口写出来、
-// 在一个无边框窗口里用 WKWebView 显示页面。
+// 它做的事：在一个无边框窗口里用 WKWebView 打开这个应用的网站（默认 https://zhiqustudy.com），
+// 再加上网页做不了的几件事：系统通知、迷你番茄钟的悬浮胶囊、文件选择和下载（PageView.swift）。
 //
-// 为什么是 WKWebView 而不是 JavaFX WebView：
-//   - WebKit.framework 是系统自带的，多占 0 字节；JavaFX 的 WebView 要自带一份 WebKit，
-//     光 mac-aarch64 一个平台就 37MB。
-//   - 它就是 Safari 的引擎，常驻内存，不需要先初始化一套 GUI 工具包。
-//   - 无边框（内容顶到窗口边缘）在 AppKit 里就是两个属性的事。
+// 第一百二十五轮之前它拉起包里的 Java 后端（内嵌 JRE），连用户自己装的 MySQL，窗口里开 http://127.0.0.1:47615。
+// 用户定了桌面版给所有下载的人用、数据走网站（docs/desktop-remote-plan.md）：直接连服务器的库就得把主密钥发给每个人，
+// 所以改成打开网站 —— 数据只在服务器上，包里不再带 Java、JRE、MySQL。读写本机项目的代码功能下一步由包里的 node 做。
 //
-// 为什么外壳负责显示、而不是让后端弹浏览器：
-//   用户要的是「一个应用」，不是「一个会打开浏览器的东西」。后端那条开浏览器的路仍然留着，
-//   给直接 java -jar 跑的场景用 —— 区分靠 -Dzhiqu.desktop.port-file 这个属性在不在。
+// 为什么是 WKWebView：WebKit.framework 是系统自带的，多占 0 字节；无边框（内容顶到窗口边缘）在 AppKit 里就是两个属性的事。
 
 import AppKit
 import UserNotifications
 import WebKit
-
-// MARK: - 后端进程
-
-/// 拉起 JVM，并在退出时确保它跟着一起走。
-final class Backend {
-    /// 桌面版用<b>固定端口</b>，不是随机端口。
-    ///
-    /// 原因是「记住登录」：WKWebView 的 localStorage 按 origin（scheme+host+**port**）隔离，
-    /// 端口每次随机的话，上次记住的 token 这次就在另一个 origin 里、读不到 —— 于是每次都要
-    /// 重新登录。固定端口让 origin 稳定，localStorage 才跨启动持久。
-    ///
-    /// 选一个不常用的高位端口，尽量避开冲突；真撞上了会走「单实例」那条：另一个我们自己的
-    /// 实例已经在跑，就直接连过去，不再起第二个后端。
-    static let port = 47615
-    private let process = Process()
-    private let portFile: URL
-    /// 已经有我们的实例在跑，这次只是连过去，没有自己拉 JVM。
-    private var attached = false
-    /// 应用类的 CDS 归档（启动快一半，见 CdsCache.swift）。第一次运行时顺带生成，退出时才落成正式文件。
-    private var cds: CdsCache?
-
-    /// 端口文件放在临时目录，每次启动一个新的 —— 不能复用固定路径：
-    /// 上一次遗留的文件会让外壳立刻连到一个已经不存在的端口上。
-    init() {
-        portFile = FileManager.default.temporaryDirectory
-            .appendingPathComponent("zhiqu-port-\(ProcessInfo.processInfo.processIdentifier)")
-        try? FileManager.default.removeItem(at: portFile)
-    }
-
-    /// 固定端口上是不是已经有我们的后端在响应。用于单实例：再次双击不该起第二个 JVM。
-    private func alreadyRunning() -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(Backend.port)/index.html") else { return false }
-        var request = URLRequest(url: url, timeoutInterval: 1.5)
-        request.httpMethod = "HEAD"
-        var reachable = false
-        let sem = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: request) { _, response, _ in
-            if let http = response as? HTTPURLResponse, http.statusCode == 200 { reachable = true }
-            sem.signal()
-        }.resume()
-        _ = sem.wait(timeout: .now() + 2)
-        return reachable
-    }
-
-    func start() throws {
-        if alreadyRunning() {
-            // 已有实例：这次不拉 JVM，界面直接连过去。localStorage 因为 origin 相同而共享，
-            // 上次记住的登录态在。
-            attached = true
-            return
-        }
-        let resources = Bundle.main.resourceURL!
-        let java = resources.appendingPathComponent("runtime/Contents/Home/bin/java")
-        let jar = try FileManager.default
-            .contentsOfDirectory(at: resources.appendingPathComponent("app"),
-                                 includingPropertiesForKeys: nil)
-            .first { $0.pathExtension == "jar" }!
-
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        // 应用包路径是中文的：JDK 17 的应用类归档对它只归档一小部分，从 ASCII 路径的副本跑（见 CdsCache.swift 的 AppStage）
-        let runJar = AppStage.runnableJar(bundleApp: resources.appendingPathComponent("app"), jar: jar,
-                                          root: home.appendingPathComponent(".zhiqu/app"))
-        let cache = CdsCache(directory: home.appendingPathComponent(".zhiqu/cds"), jar: runJar, java: java)
-        cds = cache
-
-        // 网页代码模式跑命令行那份循环用的 node（第九十六轮，打包时放进 Resources/node）；老的包里没有就不传，后端退回 Java 的循环
-        let node = resources.appendingPathComponent("node/bin/node")
-        let nodeArgs = FileManager.default.isExecutableFile(atPath: node.path) ? ["-Dapp.ai.code-agent.node=\(node.path)"] : []
-
-        process.executableURL = java
-        process.arguments = cache.jvmArguments() + [
-            "-Dspring.profiles.active=desktop",
-            "-Dserver.port=\(Backend.port)",   // 固定端口 —— 见类头，为了「记住登录」
-            "-Dfile.encoding=UTF-8",
-            // 外壳自己就是 GUI 应用，JVM 保持 headless —— 让它去连窗口服务器
-            // 只会在 Dock 里多出一个图标。
-            "-Djava.awt.headless=true",
-            "-Dzhiqu.desktop.port-file=\(portFile.path)",
-            "-Xmx1g",
-        ] + nodeArgs + ["-jar", runJar.path]   // -D 都要在 -jar 之前，之后的会被当成应用参数
-        try process.run()
-    }
-
-    /// 轮询端口文件。返回 nil 表示超时。
-    ///
-    /// 后端写文件用的是「临时文件 + 原子改名」，所以读到的要么是完整的端口、要么什么都没有 ——
-    /// 不会读到半个数字。
-    func waitForPort(timeout: TimeInterval) -> Int? {
-        if attached {
-            return Backend.port   // 连的是已有实例，端口就是固定那个
-        }
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if !process.isRunning {
-                return nil  // 后端自己挂了，再等下去没有意义
-            }
-            if let text = try? String(contentsOf: portFile, encoding: .utf8),
-               let port = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)),
-               port > 0 {
-                return port
-            }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        return nil
-    }
-
-    func stop() {
-        try? FileManager.default.removeItem(at: portFile)
-        // attached 时那个后端不是我们拉起的（另一个实例的），不能替它收尸。
-        if attached { return }
-        guard process.isRunning else { return }
-        process.terminate()
-        // 给 Spring 一点时间收尾（关连接池、flush 掉还在流式输出的消息）。
-        // 第一次运行还要把应用类归档写出来（实测约 3 秒），多等一会儿 —— 只有这一次
-        let training = cds?.training ?? false
-        let deadline = Date().addingTimeInterval(training ? 20 : 5)
-        while process.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        var killed = false
-        if process.isRunning {
-            kill(process.processIdentifier, SIGKILL)
-            killed = true
-            process.waitUntilExit()
-        }
-        // 只有它自己正常退出的，归档才算写完了；被 SIGKILL 的那份可能是半截，删掉
-        cds?.finish(cleanExit: !killed)
-    }
-}
 
 // MARK: - 窗口
 
@@ -166,12 +33,9 @@ final class DragStrip: NSView {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    private let backend = Backend()
     private var window: NSWindow!
     private var webView: PageView!
     private var loadingLabel: NSTextField!
-    /// 后端的端口：迷你窗的页面也从这里打开
-    private var port: Int?
     /// 迷你番茄钟的悬浮面板（MiniPanel.swift）：第一次「缩小到桌面」时才建，之后藏起来再拿出来（页面一直开着、一直跟着那个钟）
     private var miniPanel: NSPanel?
     private var miniPage: PageView?
@@ -184,24 +48,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         makeWindow()
         NSApp.activate(ignoringOtherApps: true)
+        openHome()
+    }
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            do {
-                try self.backend.start()
-            } catch {
-                DispatchQueue.main.async { self.fail("启动后端失败：\(error.localizedDescription)") }
-                return
-            }
-            // 60 秒：冷启动要跑 Flyway 迁移，第一次可能比平时久不少。
-            guard let port = self.backend.waitForPort(timeout: 60) else {
-                DispatchQueue.main.async {
-                    self.fail("后端没有在 60 秒内就绪。\n请检查数据库是否可连接（~/.zhiqu/application.yml）。")
-                }
-                return
-            }
-            DispatchQueue.main.async { self.load(port: port) }
-        }
+    /// 打开网站上的看板（启动时、没连上时按 ⌘R）
+    private func openHome() {
+        loadingLabel.stringValue = "正在连接 \(Server.url.host ?? "")…"
+        loadingLabel.isHidden = false
+        webView.load(URLRequest(url: Server.page("dashboard.html")))
     }
 
     /// 无边框：内容铺满整个窗口，只留左上角三个红绿灯。
@@ -227,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         webView = PageView(frame: frame)
         webView.autoresizingMask = [.width, .height]
         webView.onMini = { [weak self] action in self?.mini(action) }
+        webView.allowedHosts = [Server.url.host ?? ""]
+        webView.onLoad = { [weak self] error in self?.loaded(error) }
 
         loadingLabel = NSTextField(labelWithString: "正在启动…")
         loadingLabel.alignment = .center
@@ -246,10 +102,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         window.makeKeyAndOrderFront(nil)
     }
 
-    private func load(port: Int) {
-        self.port = port
-        loadingLabel.isHidden = true
-        webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/dashboard.html")!))
+    /// 页面载入完了就收起「正在连接」；没载入成（断网、服务器在重启）就说清楚、告诉人怎么重来
+    private func loaded(_ error: Error?) {
+        guard let error else {
+            loadingLabel.isHidden = true
+            return
+        }
+        fail("连不上 \(Server.url.host ?? "服务器")：\(error.localizedDescription)\n数据都在服务器上，断网时看不了。联网后按 ⌘R 重新载入。")
+    }
+
+    /// 「显示 → 重新载入」（⌘R）：页面里有焦点时 WKWebView 自己接；没有时（比如刚才没连上、页面是空的）落到这里
+    @objc func reload(_ sender: Any?) {
+        if webView.url == nil {
+            openHome()
+        } else {
+            loadingLabel.stringValue = "正在连接 \(Server.url.host ?? "")…"
+            loadingLabel.isHidden = false
+            webView.reload()
+        }
     }
 
     // MARK: 迷你番茄钟（第五十一轮）
@@ -265,13 +135,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     /// 主窗口藏起来、胶囊出来。不抢焦点：用户多半正要切去别的应用干活
     private func showMini() {
-        guard let port else { return }
         if miniPanel == nil {
             let page = PageView(frame: NSRect(origin: .zero, size: miniPanelSize))
             page.onMini = { [weak self] action in self?.mini(action) }
+            page.allowedHosts = [Server.url.host ?? ""]
             miniPage = page
             miniPanel = makeMiniPanel(page: page)
-            page.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/mini.html")!))
+            page.load(URLRequest(url: Server.page("mini.html")))
         } else {
             // 再缩小一次就重新载入胶囊（第五十八轮 review）：主窗口那边可能退出过、重新登录过、换了账号 —— 两个 WKWebView 之间不传 storage 事件，
             // 胶囊自己看不出来：退出再登录之后它一直写「在主窗口登录后再用」，换了账号还在看上一个人的钟
@@ -320,13 +190,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         completionHandler()
     }
 
-    /// 点红色按钮关掉主窗口就退出（后端跟着停）；迷你模式下主窗口只是藏起来，不退
+    /// 点红色按钮关掉主窗口就退出；迷你模式下主窗口只是藏起来，不退
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return !inMiniMode
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        backend.stop()
     }
 }
 

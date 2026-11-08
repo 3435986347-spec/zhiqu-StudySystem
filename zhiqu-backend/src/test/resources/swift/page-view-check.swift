@@ -2,6 +2,7 @@
 // 在一个真的 WKWebView 里真点 file input、真点 a[download]、真走外部链接 —— 面板换成不开窗口的桩，其余全是真的。
 // 每一步打印一行「键=值」，由 Java 那边断言。用法：check <临时目录>
 import AppKit
+import Network
 import WebKit
 
 let tmp = URL(fileURLWithPath: CommandLine.arguments[1])
@@ -34,6 +35,8 @@ let applicationMenu = makeZhiquApplicationMenu()
 let nativeEditItems = applicationMenu.items.flatMap { $0.submenu?.items ?? [] }.filter { $0.action != nil && $0.keyEquivalent != "q" }
 // 安装到 NSApp 后 AppKit 会根据 responder chain 更新菜单状态 / target；先验证构造时没有写死 target。
 let menuUsesResponderChain = !nativeEditItems.isEmpty && nativeEditItems.allSatisfy { $0.target == nil }
+// 「显示 → 重新载入」（第一百二十五轮）：页面在服务器上，断网、服务器重启后要有个地方重来
+out("menu.reload", nativeEditItems.contains { $0.action == NSSelectorFromString("reload:") && $0.keyEquivalent == "r" && $0.target == nil })
 app.mainMenu = applicationMenu
 
 // 面板的桩：记下面板怎么配的，按 nextFiles / nextSave 回答
@@ -261,6 +264,159 @@ step("panel", {
     out("panel.buttonsClickable", !(goButton is MiniDragZone) && (goButton?.isDescendant(of: page) ?? false)
         && !(expand is MiniDragZone) && (expand?.isDescendant(of: page) ?? false))
     UserDefaults.standard.removeObject(forKey: "NSWindow Frame " + miniPanelAutosaveName)   // 检查程序不留下记住的位置
+}, until: { true })
+
+// 14. 页面从服务器来（第一百二十五轮）：只认自己网站（allowedHosts、不是本机就要 https）的链接和主框架发的消息；
+//     嵌在页面里的框（AI 生成的 HTML 预览是 sandbox 的 srcdoc iframe）发的消息不理、自己跳走不叫系统浏览器；
+//     交给系统的只有 http / https / mailto；主框架载入完了、5xx、连不上都告诉外壳
+var served: [String] = []
+let listener = try! NWListener(using: .tcp, on: .any)
+listener.newConnectionHandler = { conn in
+    conn.start(queue: .main)
+    conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
+        let head = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        let path = head.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+        served.append(path)
+        let bad = path.hasPrefix("/bad")   // 后端在重启时 Caddy 回的就是正文为空的 502
+        let file = path.hasPrefix("/file")   // 一个显示不了的文件（导出的 zip）
+        let body = bad ? "" : (file ? "PK-not-really-a-zip" : "<html><body>ok</body></html>")
+        let reply = "HTTP/1.1 \(bad ? "502 Bad Gateway" : "200 OK")\r\nContent-Type: \(file ? "application/zip" : "text/html")\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+        // /slow 晚一点回：在它回来之前就换了一页，这一次是被顶掉的（-999），不算没载入成
+        DispatchQueue.main.asyncAfter(deadline: .now() + (path.hasPrefix("/slow") ? 1.5 : 0)) {
+            conn.send(content: reply.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
+        }
+    }
+}
+listener.start(queue: .main)
+let site = PageView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), persistent: false)
+site.allowedHosts = ["zhiqu.test", "localhost"]
+site.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true   // 只在检查程序里：不点也能 window.open，验 target=_blank 的那条路
+let siteInbox = Inbox()
+site.configuration.userContentController.add(siteInbox, name: "t")
+var siteOpened: [String] = []
+var siteBridge: [String] = []
+var siteLoads: [String] = []
+site.openExternally = { siteOpened.append($0.absoluteString) }
+site.deliverNotification = { title, _, _ in siteBridge.append(title) }
+site.requestNotificationAuthorization = { siteBridge.append("authorize") }
+site.onMini = { siteBridge.append("mini:" + $0) }
+var siteSaves: [String] = []
+site.chooseSaveLocation = { panel, _, done in siteSaves.append(panel.nameFieldStringValue); done(nil) }
+// 失败提示也换成桩：默认的是系统的提示框（runModal），检查程序不许在用户的屏幕上弹任何东西（第一百二十五轮扰动时真弹出来过）
+var siteFailures: [String] = []
+site.reportFailure = { message, _ in siteFailures.append(message) }
+site.onLoad = { error in
+    siteLoads.append(error.map { "error:\(($0 as NSError).domain):\(($0 as NSError).code)" } ?? "ok")
+}
+func siteJs(_ s: String) { site.evaluateJavaScript(s + "; 0") { _, e in if let e { out("siteJsError", e.localizedDescription) } } }
+let sitePage = """
+<html><body><iframe sandbox="allow-scripts allow-same-origin" srcdoc="<script>
+  window.webkit.messageHandlers.zqNotify.postMessage({action: 'notify', title: '同源的框里发的'});
+  window.webkit.messageHandlers.t.postMessage('same-origin-frame-posted');
+</script>"></iframe><iframe sandbox="allow-scripts" srcdoc="<script>
+  window.webkit.messageHandlers.zqNotify.postMessage({action: 'notify', title: '框里发的'});
+  window.webkit.messageHandlers.zqNotify.postMessage({action: 'authorize'});
+  window.webkit.messageHandlers.zqMini.postMessage({action: 'shrink'});
+  window.webkit.messageHandlers.t.postMessage('frame-posted');
+  location.href = 'https://example.com/frame';
+</script>"></iframe><script>
+window.webkit.messageHandlers.t.postMessage('ready');
+</script></body></html>
+"""
+step("site.load", { site.loadHTMLString(sitePage, baseURL: URL(string: "https://zhiqu.test/")) },
+     until: { siteInbox.messages.contains("ready") && siteInbox.messages.contains("frame-posted")
+              && siteInbox.messages.contains("same-origin-frame-posted") && !siteLoads.isEmpty })
+step("site.main", { siteJs("window.webkit.messageHandlers.zqNotify.postMessage({action: 'notify', title: '主框架发的'})") },
+     until: { siteBridge.contains("主框架发的") })
+var settleFrom = Date()
+step("site.settle", { settleFrom = Date() }, until: { Date().timeIntervalSince(settleFrom) > 0.8 })
+step("site.report", {
+    out("site.firstLoad", siteLoads.first ?? "none")
+    out("site.framePosted", siteInbox.messages.contains("frame-posted") && siteInbox.messages.contains("same-origin-frame-posted"))
+    out("site.bridge", siteBridge.joined(separator: ","))
+    out("site.frameStayed", !siteOpened.contains { $0.contains("example.com/frame") })
+}, until: { true })
+// 同一个主机的明文页面、不在名单里的本机、file:// 都不是自己的网站；file:// 也不交给系统（.app 会被运行）
+step("site.links", {
+    siteOpened.removeAll()
+    siteJs("location.href = 'http://zhiqu.test/plain'")
+}, until: { siteOpened.contains("http://zhiqu.test/plain") })
+step("site.loopback", { siteJs("location.href = 'http://127.0.0.1:47615/x'") }, until: { siteOpened.contains("http://127.0.0.1:47615/x") })
+step("site.file", {
+    siteJs("location.href = 'file://example.com/Applications/Calculator.app'")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { siteJs("location.href = 'https://example.com/after-file'") }
+}, until: { siteOpened.contains("https://example.com/after-file") })
+step("site.blank", {
+    siteJs("window.open('file://example.com/Applications/Calculator.app', '_blank'); window.open('mailto:a@zhiqu.test', '_blank'); window.open('https://example.com/blank', '_blank')")
+}, until: { siteOpened.contains("https://example.com/blank") })
+step("site.links.report", { out("site.opened", siteOpened.joined(separator: ",")) }, until: { true })
+// 自己网站里的链接留在窗口里：真去本机的小服务器取一页（200 → 载入完了；502 → 当成没载入成；连不上 → 说出来）
+step("site.listener", {}, until: { listener.port != nil })
+step("site.ok", {
+    siteLoads.removeAll(); siteOpened.removeAll()
+    siteJs("location.href = 'http://localhost:\(listener.port!.rawValue)/ok'")
+}, until: { !siteLoads.isEmpty })
+step("site.ok.report", {
+    out("site.ok", siteLoads.joined(separator: ","))
+    out("site.ok.served", served.contains("/ok"))
+    out("site.ok.inside", siteOpened.isEmpty)
+}, until: { true })
+step("site.slow", {
+    siteLoads.removeAll()
+    siteJs("location.href = 'http://localhost:\(listener.port!.rawValue)/slow'")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { siteJs("location.href = 'http://localhost:\(listener.port!.rawValue)/ok?again'") }
+}, until: { siteLoads.contains("ok") })
+var slowFrom = Date()
+step("site.slow.settle", { slowFrom = Date() }, until: { Date().timeIntervalSince(slowFrom) > 1.6 })
+step("site.slow.report", { out("site.slow", siteLoads.joined(separator: ",")) }, until: { true })
+// 页面不是名单里的网站（比如半路被换成了别处的页面）：主框架发的也不理；换回名单里的照常收（对照）
+step("site.foreign", {
+    siteBridge.removeAll()
+    site.allowedHosts = ["zhiqu.test"]
+    siteJs("window.webkit.messageHandlers.zqNotify.postMessage({action: 'notify', title: '名单外的主框架'})")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        site.allowedHosts = ["zhiqu.test", "localhost"]
+        siteJs("window.webkit.messageHandlers.zqNotify.postMessage({action: 'notify', title: '名单里的主框架'})")
+    }
+}, until: { siteBridge.contains("名单里的主框架") })
+step("site.foreign.report", { out("site.foreign", siteBridge.joined(separator: ",")) }, until: { true })
+// 主框架打开的是一个文件：当下载（问存到哪），不是「载入中断」；框里打开的不理（不弹保存面板）
+var frameFileFrom = Date()
+step("site.file.frame", {
+    frameFileFrom = Date()
+    siteJs("document.body.appendChild(Object.assign(document.createElement('iframe'), {src: '/file/框里的.zip'}))")
+}, until: { Date().timeIntervalSince(frameFileFrom) > 1.0 })
+step("site.file.download", {
+    siteLoads.removeAll()
+    siteJs("location.href = 'http://localhost:\(listener.port!.rawValue)/file/知识库.zip'")
+}, until: { !siteSaves.isEmpty })
+var fileFrom = Date()
+step("site.file.settle", { fileFrom = Date() }, until: { Date().timeIntervalSince(fileFrom) > 0.5 })
+step("site.file.report", {
+    out("site.file.saves", siteSaves.joined(separator: ","))
+    out("site.file.loads", siteLoads.joined(separator: ","))
+    out("site.file.served", served.filter { $0.hasPrefix("/file/") }.count)
+    out("site.file.failures", siteFailures.count)   // 在保存面板里取消（这里一律回 nil）不算失败   // 框里那一个也真的取了：不然「框里的不理」什么都没验
+}, until: { true })
+step("site.bad", { siteLoads.removeAll(); siteJs("location.href = 'http://localhost:\(listener.port!.rawValue)/bad'") }, until: { !siteLoads.isEmpty })
+step("site.bad.report", { out("site.bad", siteLoads.joined(separator: ",")) }, until: { true })
+// 连不上：把小服务器关掉再去同一个端口（不用 1 这类端口 —— WebKit 自己拦着那些「受限端口」，根本不发请求）
+var closedPort: UInt16 = 0
+var closedAt = Date()
+step("site.close", { closedPort = listener.port!.rawValue; listener.cancel(); closedAt = Date() }, until: { Date().timeIntervalSince(closedAt) > 0.3 })
+step("site.down", { siteLoads.removeAll(); siteJs("location.href = 'http://localhost:\(closedPort)/down'") }, until: { !siteLoads.isEmpty })
+step("site.down.report", { out("site.down", siteLoads.joined(separator: ",")) }, until: { true })
+
+// 15. 服务器地址（Server.swift）：https 的任何主机、本机的 http；只要协议 + 主机 + 端口，主机名小写
+step("server", {
+    let cases: [(String, String)] = [
+        ("plain", "https://zhiqustudy.com"), ("slash", "https://zhiqustudy.com/"), ("spaces", " http://127.0.0.1:8080 "),
+        ("localhost", "http://localhost:18080/"), ("upper", "HTTPS://Zhiqu.TEST:8443"), ("http", "http://zhiqustudy.com"),
+        ("lookalike", "http://localhost.evil.com"), ("path", "https://zhiqustudy.com/sub"), ("query", "https://zhiqustudy.com?x=1"),
+        ("userinfo", "https://u:p@zhiqustudy.com"), ("fragment", "https://zhiqustudy.com#x"), ("nohost", "https://"), ("js", "javascript:alert(1)"), ("ftp", "ftp://zhiqustudy.com"), ("empty", ""),
+    ]
+    for (name, text) in cases { out("server.\(name)", Server.acceptable(text)?.absoluteString ?? "nil") }
+    out("server.fallback", Server.fallback.absoluteString)
 }, until: { true })
 
 // 13. macOS 的 Cmd 编辑键：实际 NSMenu key equivalent -> WKWebView 原生编辑动作。

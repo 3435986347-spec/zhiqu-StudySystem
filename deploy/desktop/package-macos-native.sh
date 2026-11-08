@@ -1,94 +1,42 @@
 #!/bin/bash
-# 把后端打成一个**原生 macOS 应用**：Swift 外壳 + WKWebView + 内嵌 JRE + 胖 JAR。
+# 打一个**原生 macOS 应用**：Swift 外壳 + WKWebView，窗口里打开这个应用的网站（默认 https://zhiqustudy.com）。
 #
-# 和 package-macos.sh（jpackage 版）的区别，以及为什么有这一份：
+# 第一百二十五轮之前包里还有一个完整的后端（瘦 JAR + jlink 裁的 JRE），连用户自己装的 MySQL —— 没装 MySQL 的人打不开。
+# 用户定了桌面版给所有下载的人用、数据走网站（docs/desktop-remote-plan.md），所以外壳只打开网站，
+# 包里不再带 Java、JRE、JAR，也不再需要 MySQL。WebKit.framework 是系统自带的，外壳本身只有一两百 KB。
 #
-#   jpackage 版产出的应用会**弹系统浏览器**。它能用，但用户要的是一个应用窗口，
-#   不是一个会打开浏览器标签页的东西。而且 jpackage 的启动器是纯 JVM 进程，
-#   不连 CoreGraphics 窗口服务器，macOS 会无限弹跳 Dock 图标（见 DockPresence）。
-#
-#   这一份用 Swift 写一个真正的 Cocoa 应用做外壳：它自己就是 GUI 进程（不弹跳），
-#   页面显示在 WKWebView 里（无边框、铺满窗口），JVM 作为子进程在后台跑。
-#   WebKit.framework 是系统自带的，所以外壳本身只有几十 KB。
-#
-# 体积对照：JavaFX 的 WebView 要自带一份 WebKit，单 mac-aarch64 就 37MB。
+# 包里的 node 留给本机代码助手（方案第 2 步：外壳按需起它跑命令行那一份宿主，在你的磁盘上读写、在系统沙箱里跑命令）。
 #
 # 用法：  ./package-macos-native.sh [版本号]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-BACKEND="$ROOT/zhiqu-backend"
-SHELL_SRC="$ROOT/deploy/desktop/macos-shell/ZhiquShell.swift"
+SHELL_DIR="$ROOT/deploy/desktop/macos-shell"
 OUT="$ROOT/build/desktop-native"
 NAME="知趣象限"
 VERSION="${1:-1.0.0}"
 BUNDLE_ID="com.zhiqu.quadrant"
 
 # 不直接搬 PATH 上的 Homebrew node：它可能依赖 libnode / OpenSSL / ICU，离开本机就缺库。
-# 提前准备，失败时保留原有安装包，也不白跑 Maven 和 jlink。
+# 提前准备，失败时保留原有安装包。
 NODE_BIN="$(bash "$ROOT/deploy/desktop/prepare-macos-node.sh" "$ROOT/build/node-runtime")"
 NODE_LICENSE="$(dirname "$NODE_BIN")/../LICENSE"
 [ -f "$NODE_LICENSE" ] || { echo "缺少 Node LICENSE：请让 NODE_BIN 指向完整官方发行包的 bin/node"; exit 1; }
 
-export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17)}"
-echo "JDK:   $JAVA_HOME"
 echo "Swift: $(swiftc --version 2>/dev/null | head -1)"
 
-echo "==> 1/7 打 JAR"
-cd "$BACKEND"
-mvn -o clean package -DskipTests -q
-JAR="$(ls target/zhiqu-backend-*.jar | head -1)"
-[ -f "$JAR" ] || { echo "打包失败：找不到 JAR"; exit 1; }
-echo "    $(basename "$JAR")  $(du -h "$JAR" | cut -f1)"
-
 APP="$OUT/$NAME.app"
-echo "==> 2/7 搭 bundle 骨架"
+echo "==> 1/5 搭 bundle 骨架、放 node"
 rm -rf "$OUT"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
-# 解压成「瘦 JAR + lib/」，不放胖 JAR（第十轮）：应用类的 CDS 归档只收内置类加载器加载的类，
-# 胖 JAR 里的类走 Spring Boot 自己的加载器，一个都归档不了。解压后的瘦 JAR 用 Class-Path 指向 lib/，
-# java -jar 照样能跑。归档本身在用户第一次运行时生成（见 macos-shell/CdsCache.swift）。
-"$JAVA_HOME/bin/java" -Djarmode=tools -jar "$JAR" extract --destination "$APP/Contents/Resources/app" > /dev/null
-[ -f "$APP/Contents/Resources/app/$(basename "$JAR")" ] || { echo "解压失败：找不到瘦 JAR"; exit 1; }
-# 命令行不再随应用打包：Java 版 zhiqu 2026-10-04 删除，命令行是 npm 版（zhiqu-cli/，连的就是这个应用）。
-
-echo "==> 3/7 裁一份 JRE（jlink）"
-# 只带用得到的模块。全量 JDK 约 300MB，裁完约 50MB。
-#
-# 两个模块看起来可有可无，删了都会在运行时炸，而且报错都不指向真正的原因：
-#
-#   jdk.crypto.ec  —— HTTPS 必需（连远程数据库、连 AI 服务商）。缺了报
-#                     「找不到合适的 TLS 套件」，读起来像对端配置问题。
-#
-#   jdk.charsets   —— 2026-09-21 实测：缺了它，MySQL 驱动把连接字符集协商成
-#                     **eucjpms**（一个日文字符集），于是所有中文明文写入报
-#                     `Incorrect string value`。表和列都是 utf8mb4、JDBC URL 里
-#                     也写着 characterEncoding=utf-8，所以查起来完全指不到这里。
-#                     发现过程：知识 Wiki 建页 500，同一份代码在开发机上正常 ——
-#                     差别只有「跑的是裁过的 runtime」。用同一个探针分别在完整 JDK
-#                     和裁过的 runtime 上跑，一个 utf8mb4、一个 eucjpms。
-#                     任务标题是加密存储的（明文进 encrypted_title），所以它不受
-#                     影响 —— 这让故障看起来只在 Wiki 里，更难联想到字符集。
-"$JAVA_HOME/bin/jlink" \
-  --add-modules java.base,java.logging,java.xml,java.sql,java.naming,java.management,java.instrument,java.desktop,java.security.jgss,java.security.sasl,jdk.crypto.ec,jdk.charsets,jdk.unsupported,jdk.jfr,java.net.http,java.compiler,java.rmi,java.scripting,java.transaction.xa,jdk.management \
-  --strip-debug --no-header-files --no-man-pages --compress=2 \
-  --generate-cds-archive \
-  --output "$APP/Contents/Resources/runtime/Contents/Home"
-# --generate-cds-archive：给 JDK 自己的类生成基础归档。单看它几乎不提速，但应用类的归档（-XX:ArchiveClassesAtExit）
-# 必须叠在它上面 —— 没有它，第一次运行生成归档那一步直接报错跳过。
-# classes_nocoops.jsa 只在关掉压缩指针（堆 > 32GB）时用，应用固定 -Xmx1g，删掉省 11MB。
-rm -f "$APP/Contents/Resources/runtime/Contents/Home/lib/server/classes_nocoops.jsa"
-echo "    runtime  $(du -sh "$APP/Contents/Resources/runtime" | cut -f1)"
-
-# 网页代码模式跑命令行那份循环要 node（第九十六轮，用户 2026-11-02 定的「一份 JS，后端用子进程跑」）：
-# Node 已在开工前检查过依赖；命令行源码在 JAR 里，外壳把这个 node 的路径告诉后端。
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# 命令行不随应用打包：Java 版 zhiqu 2026-10-04 删除，命令行是 npm 版（zhiqu-cli/）。
 mkdir -p "$APP/Contents/Resources/node/bin"
 cp "$NODE_BIN" "$APP/Contents/Resources/node/bin/node"
 cp "$NODE_LICENSE" "$APP/Contents/Resources/node/LICENSE"
 "$APP/Contents/Resources/node/bin/node" --version > /dev/null || { echo "打进去的 node 跑不起来：$NODE_BIN"; exit 1; }
 echo "    node     $(du -sh "$APP/Contents/Resources/node" | cut -f1)（$("$APP/Contents/Resources/node/bin/node" --version)）"
 
-echo "==> 4/7 生成应用图标"
+echo "==> 2/5 生成应用图标"
 # 图标是设计稿（第七十二轮：知字图标设计方案），这里按 macOS 图标的版式四周留白做成 iconset。
 # 母版是设计稿的 icon-1024.png（第七十六轮）：原来拿网页用的 icon-512.png，最大那一档（1024 像素）只能放大。
 # 第七十二轮之前是从「知」字现画的蓝底图标，第四十轮换了中性配色之后一直没跟上。
@@ -101,16 +49,16 @@ iconutil -c icns "$OUT/icons/zhiqu.iconset" -o "$APP/Contents/Resources/$NAME.ic
 rm -f "$ICON_TOOL"
 echo "    $NAME.icns  $(du -h "$APP/Contents/Resources/$NAME.icns" | cut -f1)"
 
-echo "==> 5/7 编译 Swift 外壳"
-# 两个源文件一起编译时，只有叫 main.swift 的那个能有顶层代码（外壳最后那几行 NSApplication.run 就是）——
+echo "==> 3/5 编译 Swift 外壳"
+# 几个源文件一起编译时，只有叫 main.swift 的那个能有顶层代码（外壳最后那几行 NSApplication.run 就是）——
 # 原样一起编译报「expressions are not allowed at the top level」。所以拷一份改名成 main.swift 再编。
 SWIFT_BUILD="$OUT/swift-src"
 mkdir -p "$SWIFT_BUILD"
-cp "$SHELL_SRC" "$SWIFT_BUILD/main.swift"
+cp "$SHELL_DIR/ZhiquShell.swift" "$SWIFT_BUILD/main.swift"
 swiftc -O -target arm64-apple-macos13.0 \
   -framework AppKit -framework WebKit -framework UserNotifications \
   -o "$APP/Contents/MacOS/$NAME" "$SWIFT_BUILD/main.swift" \
-  "$ROOT/deploy/desktop/macos-shell/CdsCache.swift" "$ROOT/deploy/desktop/macos-shell/PageView.swift" \
+  "$ROOT/deploy/desktop/macos-shell/Server.swift" "$ROOT/deploy/desktop/macos-shell/PageView.swift" \
   "$ROOT/deploy/desktop/macos-shell/MiniPanel.swift"
 rm -rf "$SWIFT_BUILD"
 echo "    外壳  $(du -h "$APP/Contents/MacOS/$NAME" | cut -f1)"
@@ -130,14 +78,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>$NAME</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <!-- 本机 HTTP：后端跑在 127.0.0.1，不是 HTTPS。只放行回环，不是全局关掉 ATS。 -->
+  <!-- 网站是 HTTPS。开发时指到本机的 http 后端（ZHIQU_DESKTOP_SERVER）：只放行回环，不是全局关掉 ATS。 -->
   <key>NSAppTransportSecurity</key>
   <dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict>
 </plist>
 PLIST
 
-echo "==> 6/7 签名（ad-hoc）"
+echo "==> 4/5 签名（ad-hoc）"
 # ad-hoc 签名够本机和「右键→打开」用。要给别人分发得用 Developer ID 并公证，
 # 否则对方会看到「已损坏，无法打开」—— 那句话和损坏没关系，是 Gatekeeper 的措辞。
 codesign --force --sign - "$APP/Contents/Resources/node/bin/node"
@@ -145,7 +93,7 @@ codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 "$APP/Contents/Resources/node/bin/node" --version > /dev/null
 
-echo "==> 7/7 打包成 .dmg（拖拽安装）"
+echo "==> 5/5 打包成 .dmg（拖拽安装）"
 # 标准的拖拽安装 dmg：一个 .app + 一个指向 /Applications 的软链，用户拖过去即安装。
 DMG="$OUT/$NAME-$VERSION.dmg"
 STAGE="$OUT/dmg-stage"

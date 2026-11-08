@@ -11,7 +11,7 @@
 //     无边框的窗口没有「后退」，只能退出重开。
 //
 // 两件事都是在一个真的 WKWebView 里实测出来的，DesktopPageViewTest 也是这样判的（PageView.swift 和一个检查程序
-// 一起编译，真点 file input、真点 a[download]）。所以这一份不放进 ZhiquShell.swift：那边有顶层代码和后端进程，
+// 一起编译，真点 file input、真点 a[download]）。所以这一份不放进 ZhiquShell.swift：那边有顶层代码，
 // 检查程序没法和它一起编译。
 //
 // 为什么是 WKWebView 的子类、自己当自己的代理：uiDelegate / navigationDelegate 是 weak 的。
@@ -49,6 +49,14 @@ func makeZhiquApplicationMenu() -> NSMenu {
     command("全选", "selectAll:", "a")
     edit.submenu = editMenu
     main.addItem(edit)
+
+    // 页面在服务器上了（第一百二十五轮）：断网、服务器重启时页面会打不开，要有个地方重来。target 留空：
+    // 页面里有焦点时 WKWebView 接，没有时落到 AppDelegate 的 reload(_:)
+    let view = NSMenuItem(title: "显示", action: nil, keyEquivalent: "")
+    let viewMenu = NSMenu(title: "显示")
+    viewMenu.addItem(NSMenuItem(title: "重新载入", action: NSSelectorFromString("reload:"), keyEquivalent: "r"))
+    view.submenu = viewMenu
+    main.addItem(view)
     return main
 }
 
@@ -105,6 +113,12 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
     /// 迷你番茄钟（第五十一轮）：页面经 `window.webkit.messageHandlers.zqMini` 说「缩小到桌面」（shrink，看板的番茄钟卡片上）
     /// 或「展开」（expand，迷你窗的胶囊上），外壳换窗口。页面看得到这座桥才显示「缩小到桌面」—— 浏览器里没有。
     var onMini: (String) -> Void = { _ in }
+    /// 这个应用自己的网站（第一百二十五轮：页面从服务器来，默认 zhiqustudy.com）：只有它的链接留在窗口里，别的交给系统浏览器；
+    /// 页面经桥发来的消息也只认它的主框架。外壳按服务器地址设；检查程序在本机起页面，用默认的本机。
+    /// 不是本机的只认 https（`isOwnSite`）：同一个域名的明文页面可能是半路被人换过的
+    var allowedHosts: Set<String> = ["127.0.0.1", "localhost"]
+    /// 主框架载入完了（nil）或者没载入成（断网、服务器在重启）：外壳据此收起「正在连接」或者说清楚
+    var onLoad: (Error?) -> Void = { _ in }
 
     /// persistent = false 只给检查程序用：不碰真实的 localStorage（登录态存在那里）。
     /// dataStore 也只给检查程序用：两个页面共用一份不落盘的网站数据，像主窗口和迷你窗共用 .default() 那样。
@@ -125,11 +139,24 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 
     required init?(coder: NSCoder) { fatalError("PageView 只从代码里建") }
 
+    func isOwnSite(scheme: String?, host: String?) -> Bool {
+        guard let host, allowedHosts.contains(host) else { return false }
+        switch scheme?.lowercased() {
+        case "https": return true
+        case "http": return ["127.0.0.1", "localhost"].contains(host)
+        default: return false   // file://localhost/… 也有主机，不是网站
+        }
+    }
+
     // MARK: 页面里的提醒 → macOS 通知
 
     /// 页面发来的：zqNotify 的 {action: "notify", title, body, tag} / {action: "authorize"}，zqMini 的 {action: "shrink"} / {action: "expand"}。
     /// 别的一律不理（页面内容不可信，只接这几种）。
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        // 页面在服务器上了：只认这个应用自己网站的主框架。嵌在页面里的框（AI 生成的 HTML 预览是 srcdoc 的 iframe，
+        // 桥在每个框里都看得见）发的不理 —— 不然一段生成的网页就能弹通知、把主窗口缩没
+        let origin = message.frameInfo.securityOrigin
+        guard message.frameInfo.isMainFrame, isOwnSite(scheme: origin.protocol, host: origin.host) else { return }
         guard let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
         switch (message.name, action) {
         case ("zqMini", "shrink"), ("zqMini", "expand"):
@@ -161,6 +188,41 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 
     // MARK: 导航与下载
 
+    /// 主框架这一次的回应是 5xx（后端在重启、没起来时 Caddy 回 502，正文是空的）：载入「成功」了，但窗口是白的
+    private var mainStatus = 0
+
+    /// 实现了这个方法就得自己管「显示不了的类型」：照样放行的话 WebKit 报「载入中断」（102），外壳会盖上「连不上」。
+    /// 主框架打开的是一个文件（zip、附件）就当下载（走上面的保存面板）；框里的不理
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if navigationResponse.canShowMIMEType {
+            if navigationResponse.isForMainFrame {
+                mainStatus = (navigationResponse.response as? HTTPURLResponse)?.statusCode ?? 0
+            }
+            decisionHandler(.allow)
+        } else {
+            decisionHandler(navigationResponse.isForMainFrame ? .download : .cancel)
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if mainStatus >= 500 {
+            onLoad(NSError(domain: "ZhiquServer", code: mainStatus,
+                           userInfo: [NSLocalizedDescriptionKey: "服务器暂时没响应（HTTP \(mainStatus)），可能在重启"]))
+        } else {
+            onLoad(nil)
+        }
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { reportLoad(error) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { reportLoad(error) }
+    /// 不算没载入成的两种：被新的导航顶掉的那一次（-999）；转成下载的那一次（WebKit 报「因策略改变中断」，102 —— 是这里自己选的）
+    private func reportLoad(_ error: Error) {
+        let e = error as NSError
+        if e.code == NSURLErrorCancelled { return }
+        if e.domain == "WebKitErrorDomain" && e.code == 102 { return }
+        onLoad(error)
+    }
+
     /// 外部链接走系统浏览器，不在应用窗口里打开 —— 应用窗口是这个产品，不是一个浏览器。
     /// <a download> 交给下载，不导航过去。
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
@@ -169,20 +231,37 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
             decisionHandler(.download)
             return
         }
-        if let url = navigationAction.request.url,
-           let host = url.host,
-           host != "127.0.0.1" && host != "localhost" {
-            openExternally(url)
+        if let url = navigationAction.request.url, url.host != nil, !isOwnSite(scheme: url.scheme, host: url.host) {
+            // 嵌在页面里的框自己跳走（生成的网页里一句 location.href）：不是人点的，不叫系统浏览器，就地拦下
+            if navigationAction.targetFrame?.isMainFrame == false && navigationAction.navigationType != .linkActivated {
+                decisionHandler(.cancel)
+                return
+            }
+            openOutside(url)
             decisionHandler(.cancel)
             return
         }
         decisionHandler(.allow)
     }
 
+    /// 交给系统的只有网页和邮件：file:// 会在 Finder 里打开（.app 就是运行它），别的协议会叫起别的应用。
+    /// 页面从服务器来、里面有 AI 写的和导入的内容，链接不能都信
+    private func openOutside(_ url: URL) {
+        guard let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme) else { return }
+        openExternally(url)
+    }
+
     /// 每个下载要写到哪（失败时说得出是哪儿写不进去）
     private var destinations: [ObjectIdentifier: URL] = [:]
+    /// 用户在保存面板里取消的那几个。页面上 a[download] 的下载取消了不会走到 didFailWithError；打开一个文件转成的下载
+    /// （第一百二十五轮）取消了会走到 —— 不记下来的话，用户点了「取消」反倒看到「没有保存成功」
+    private var declined: Set<ObjectIdentifier> = []
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
         download.delegate = self
     }
 
@@ -197,7 +276,7 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
             if let url, FileManager.default.fileExists(atPath: url.path) {
                 try? FileManager.default.removeItem(at: url)
             }
-            if let url { self.destinations[ObjectIdentifier(download)] = url }
+            if let url { self.destinations[ObjectIdentifier(download)] = url } else { self.declined.insert(ObjectIdentifier(download)) }
             completionHandler(url)
         }
     }
@@ -210,6 +289,7 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
     /// WebKit 报的恰恰是「已取消」（NSURLErrorCancelled，没有说明）—— 所以不能按「取消」把它滤掉，
     /// 也不能只把 error 的说明拿给用户看（那是空的），要说出写的是哪儿。
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        if declined.remove(ObjectIdentifier(download)) != nil { return }
         let place = destinations.removeValue(forKey: ObjectIdentifier(download))?.path ?? "选的位置"
         reportFailure("没能写到「\(place)」。可能是那个文件夹没有写入权限，或者磁盘满了 —— 换一个位置再试。", window)
     }
@@ -218,7 +298,7 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url {
-            openExternally(url)
+            openOutside(url)
         }
         return nil
     }

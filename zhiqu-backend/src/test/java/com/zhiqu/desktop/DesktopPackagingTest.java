@@ -18,52 +18,59 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 取代），随之退掉那条「jpackage 版必须关 headless」—— 同一条知识由
  * {@link #Windows脚本要关headless()} 继续钉着，{@code package-windows.ps1} 也走 jpackage。
  *
+ * <p>第一百二十五轮：macOS 外壳改成打开网站（docs/desktop-remote-plan.md），包里不再带 Java 后端和 JRE ——
+ * 钉 jlink 模块（jdk.charsets / jdk.crypto.ec）、外壳里 JVM 要 headless、端口文件属性、CDS 启动加速的几条随之去掉
+ * （它们钉的东西不在了；jdk.charsets 那段经过留在 docs/notes/desktop.md），换成「包里不带 Java」和外壳打开的是哪个网站。
+ *
  * <p>这一类东西不在 Java 代码里，所以平时的判据一条都覆盖不到它们；而它们出问题的方式
  * 有个共同点：<b>报错完全指不到真正的原因</b>，且只在打包后的产物里复现，开发机上永远正常。
  */
 class DesktopPackagingTest {
 
     private static final Path NATIVE_SCRIPT = Path.of("..", "deploy", "desktop", "package-macos-native.sh");
+    private static final Path SHELL_DIR = Path.of("..", "deploy", "desktop", "macos-shell");
 
+    /**
+     * 外壳不起 Java 之后，包里的 JRE 和 JAR 就是死的：几十 MB、每次打包多跑一遍 Maven 和 jlink，而且让人以为桌面版还有一个本机后端。
+     * 外壳里也不许再有起 JVM 的那一套（-jar、包里的 runtime、固定端口 47615）。
+     */
     @Test
-    @DisplayName("jlink 必须带 jdk.charsets —— 否则 MySQL 连接会协商成 eucjpms，中文全写不进去")
-    void jlink必须带字符集模块() throws IOException {
+    @DisplayName("macOS 包里不带 Java：脚本不打 JAR、不跑 jlink、不放 runtime；外壳不起 JVM、不开本机端口；CdsCache.swift 已删")
+    void 包里不带Java() throws IOException {
         String script = read(NATIVE_SCRIPT);
-        assertTrue(script.contains("--add-modules"), "扫到的不是打包脚本 —— 空扫会假绿");
-
-        assertTrue(script.contains("jdk.charsets"),
-                "jlink 的模块列表里没有 jdk.charsets。2026-09-21 实测：缺了它，"
-                        + "MySQL 驱动把 character_set_client 协商成 eucjpms（日文字符集），"
-                        + "所有中文明文写入报 Incorrect string value —— 而表、列、JDBC URL "
-                        + "三处写的都是 utf8mb4，查起来指不到这里。");
-    }
-
-    @Test
-    @DisplayName("jlink 必须带 jdk.crypto.ec —— 否则 HTTPS 握手失败，报错像是对端的问题")
-    void jlink必须带椭圆曲线模块() throws IOException {
-        assertTrue(read(NATIVE_SCRIPT).contains("jdk.crypto.ec"),
-                "缺了它，连远程数据库和 AI 服务商的 TLS 会报「找不到合适的套件」");
-    }
-
-    @Test
-    @DisplayName("原生外壳版相反：JVM 要保持 headless —— 外壳自己才是 GUI 进程")
-    void 原生外壳版要保持headless() throws IOException {
-        String shell = read(Path.of("..", "deploy", "desktop", "macos-shell", "ZhiquShell.swift"));
-        // 锚点认外壳建页面的那一句（2026-10-01 起 WKWebView 收进了 PageView.swift，外壳源码里不再出现这个词）
+        assertTrue(script.contains("hdiutil create"), "扫到的不是打包脚本 —— 空扫会假绿");
+        for (String gone : new String[]{"mvn ", "jlink", "JAVA_HOME", "Resources/app", "Resources/runtime", "-Djarmode", ".jar"}) {
+            assertFalse(script.contains(gone), "打包脚本里还有 Java 后端的那一套：" + gone);
+        }
+        String shell = read(SHELL_DIR.resolve("ZhiquShell.swift"));
         assertTrue(shell.contains("webView = PageView(frame:"), "扫到的不是外壳源码 —— 空扫会假绿");
-        assertTrue(shell.contains("-Djava.awt.headless=true"),
-                "外壳版里 JVM 只是后台子进程。让它也去连窗口服务器会在 Dock 里多出一个图标。");
-        assertFalse(shell.contains("-Djava.awt.headless=false"),
-                "两个版本的取向相反，抄串了会多一个 Dock 图标");
+        for (String gone : new String[]{"\"-jar\"", "runtime/Contents/Home", "47615", "Process()", "java"}) {
+            assertFalse(shell.contains(gone), "外壳里还在起 Java 后端：" + gone);
+        }
+        assertFalse(Files.exists(SHELL_DIR.resolve("CdsCache.swift")), "CdsCache.swift（给包里的 JVM 做启动加速）还在");
     }
 
+    /** 外壳打开的是网站：地址只有 Server.swift 一个出处，两个页面（主窗口、迷你窗）都从它取、都只认它的主机 */
     @Test
-    @DisplayName("原生外壳要把端口文件属性传给后端 —— 否则后端会另外弹一个浏览器")
-    void 外壳要传端口文件属性() throws IOException {
-        assertTrue(read(Path.of("..", "deploy", "desktop", "macos-shell", "ZhiquShell.swift"))
-                        .contains(DesktopLauncher.PORT_FILE_PROPERTY),
-                "外壳没传 " + DesktopLauncher.PORT_FILE_PROPERTY
-                        + "，后端会走回退分支去开系统浏览器 —— 用户同时得到一个应用窗口和一个浏览器标签页");
+    @DisplayName("外壳打开 Server.page(...)：主窗口和迷你窗都只认服务器那一个主机、主窗口接上载入结果；打包脚本编进 Server.swift")
+    void 外壳打开网站() throws IOException {
+        String script = read(NATIVE_SCRIPT);
+        assertTrue(script.contains("macos-shell/Server.swift\""), "打包脚本没把 Server.swift 编进外壳");
+        String shell = read(SHELL_DIR.resolve("ZhiquShell.swift"));
+        String launch = shell.substring(shell.indexOf("func applicationDidFinishLaunching"), shell.indexOf("private func openHome()"));
+        String home = shell.substring(shell.indexOf("private func openHome()"), shell.indexOf("private func makeWindow()"));
+        assertTrue(launch.contains("openHome()") && home.contains("webView.load(URLRequest(url: Server.page(\"dashboard.html\")))"),
+                "启动时打开的不是服务器上的看板：\n" + launch);
+        assertTrue(shell.contains("page.load(URLRequest(url: Server.page(\"mini.html\")))"), "迷你窗打开的不是服务器上的 mini.html");
+        assertTrue(shell.contains("webView.allowedHosts = [Server.url.host ?? \"\"]"),
+                "主窗口还在按本机认「自己的网站」：服务器上的页面一点站内链接就跳到系统浏览器，桥也收不到它的消息");
+        assertTrue(shell.contains("page.allowedHosts = [Server.url.host ?? \"\"]"), "迷你窗还在按本机认「自己的网站」：胶囊上的按钮发不出消息");
+        assertTrue(shell.contains("webView.onLoad = { [weak self] error in self?.loaded(error) }"),
+                "主窗口没接载入结果：连不上服务器时「正在连接」一直挂着，也不说怎么重来");
+        assertFalse(shell.contains("http://") || shell.contains("https://"), "外壳里另写了一个地址 —— 地址只在 Server.swift");
+        String loaded = shell.substring(shell.indexOf("private func loaded(_ error: Error?)"), shell.indexOf("@objc func reload(_ sender: Any?)"));
+        assertTrue(loaded.contains("loadingLabel.isHidden = true") && loaded.contains("fail(") && loaded.contains("⌘R"),
+                "载入结果没用上：成功时要收起「正在连接」，失败时要说清楚、告诉人按 ⌘R 重来：\n" + loaded);
     }
 
     /**
@@ -88,7 +95,7 @@ class DesktopPackagingTest {
     }
 
     @Test
-    @DisplayName("桌面 profile 必须用固定端口 —— 随机端口会让「记住登录」每次失效")
+    @DisplayName("桌面 profile（Windows 版还在用）必须用固定端口 —— 随机端口会让「记住登录」每次失效")
     void 桌面必须固定端口() throws IOException {
         String yml = Files.readString(
                 Path.of("..", "zhiqu-backend", "src", "main", "resources", "application-desktop.yml"),
@@ -102,11 +109,6 @@ class DesktopPackagingTest {
                         + "（含端口）隔离，端口每次随机的话，上次记住的登录 token 这次读不到 —— "
                         + "「记住登录」永远失效。必须固定。");
 
-        // 原生外壳必须连同一个固定端口，否则外壳与后端各说各的端口
-        String shell = read(Path.of("..", "deploy", "desktop", "macos-shell", "ZhiquShell.swift"));
-        assertTrue(shell.contains("static let port = " + port),
-                "外壳里的固定端口和 application-desktop.yml 的 " + port + " 对不上 —— "
-                        + "两处各写一个端口，界面会连到后端没监听的那个。");
     }
 
     // ── 命令行 ────────────────────────────────────────────────────────
@@ -119,33 +121,10 @@ class DesktopPackagingTest {
     @DisplayName("应用包不带 Java 版命令行：不拷 bin/zhiqu、不建 Resources/bin，仓库里也没有它")
     void 不再打包Java版命令行() throws IOException {
         String script = read(NATIVE_SCRIPT);
-        assertTrue(script.contains("mkdir -p \"$APP/Contents/MacOS\" \"$APP/Contents/Resources/app\""), "扫到的不是打包脚本 —— 空扫会假绿");
+        assertTrue(script.contains("mkdir -p \"$APP/Contents/MacOS\" \"$APP/Contents/Resources\""), "扫到的不是打包脚本 —— 空扫会假绿");
         assertFalse(script.contains("bin/zhiqu") || script.contains("Resources/bin"), "打包脚本还在拷 Java 版 zhiqu");
         assertFalse(Files.exists(Path.of("..", "deploy", "desktop", "bin", "zhiqu")), "deploy/desktop/bin/zhiqu 还在");
         assertFalse(Files.exists(Path.of("src", "main", "java", "com", "zhiqu", "cli")), "com.zhiqu.cli 还在");
-    }
-
-    /**
-     * 启动加速（第十轮，实测 3.3 秒 → 1.7 秒）的三个前提，少一个就悄悄回到慢的那条路 —— 应用照常能用，没人会发现：
-     * 运行时带基础归档（没有它，生成应用类归档那一步直接跳过）、放解压后的瘦 JAR（胖 JAR 里的类一个都归档不了）、
-     * 外壳把 CdsCache 编进去并在 -jar 之前加上它的参数、退出时收尾。
-     */
-    @Test
-    @DisplayName("启动加速：jlink 生成基础 CDS 归档；应用里放解压的瘦 JAR；外壳编进 CdsCache、参数在 -jar 之前、退出时收尾")
-    void 启动加速的前提() throws IOException {
-        String script = read(NATIVE_SCRIPT);
-        assertTrue(script.contains("--generate-cds-archive"), "jlink 没生成基础 CDS 归档");
-        assertTrue(script.contains("-Djarmode=tools -jar \"$JAR\" extract --destination \"$APP/Contents/Resources/app\""),
-                "应用里不是解压后的瘦 JAR");
-        assertFalse(script.contains("cp \"$JAR\" \"$APP/Contents/Resources/app/\""), "胖 JAR 又被拷进去了");
-        assertTrue(script.contains("macos-shell/CdsCache.swift"), "CdsCache.swift 没编进外壳");
-        String shell = read(Path.of("..", "deploy", "desktop", "macos-shell", "ZhiquShell.swift"));
-        int args = shell.indexOf("process.arguments = cache.jvmArguments() + [");
-        assertTrue(args > 0, "外壳没把 CDS 参数加在 JVM 参数最前面（必须在 -jar 之前，之后的会被当成应用参数）");
-        assertTrue(shell.indexOf("\"-jar\", runJar.path") > args, "外壳没从 ASCII 路径的副本跑（中文路径下应用类只归档一小部分）");
-        assertTrue(shell.contains("CdsCache(directory: home.appendingPathComponent(\".zhiqu/cds\"), jar: runJar"),
-                "归档要按实际运行的那个 JAR 算");
-        assertTrue(shell.contains("cds?.finish(cleanExit: !killed)"), "退出时没收尾：生成的归档永远是 .part，下次还是慢的");
     }
 
     private static String read(Path path) throws IOException {
@@ -161,24 +140,23 @@ class DesktopPackagingTest {
         return out.toString();
     }
 
-    /** 第九十六轮：网页代码模式跑命令行那份循环要 node —— 打进应用包、外壳把路径告诉后端；打不进去就别出包 */
+    /**
+     * 第九十六轮：网页代码模式跑命令行那份循环要 node —— 打进应用包；打不进去就别出包。
+     * 第一百二十五轮起包里没有后端了，node 留给本机代码助手（方案第 2 步，外壳按需起它）。
+     */
     @Test
-    @DisplayName("macOS 应用包带可搬移的 node；准备失败在 Maven 和清理旧包之前停止，签名后再次验证")
+    @DisplayName("macOS 应用包带可搬移的 node；准备失败在清理旧包之前停止，签名后再次验证")
     void 应用包带node() throws IOException {
         String script = read(NATIVE_SCRIPT);
         assertTrue(script.contains("cp \"$NODE_BIN\" \"$APP/Contents/Resources/node/bin/node\""), "打包脚本没把 node 放进应用包");
         int prepare = script.indexOf("NODE_BIN=\"$(bash \"$ROOT/deploy/desktop/prepare-macos-node.sh\"");
-        assertTrue(prepare >= 0 && prepare < script.indexOf("mvn -o clean package")
-                        && prepare < script.indexOf("rm -rf \"$OUT\""),
-                "准备 Node 必须在 Maven 与删除旧产物之前，否则缺库又要构建半天、还会丢上一个安装包");
+        int clean = script.indexOf("rm -rf \"$OUT\"");
+        assertTrue(prepare >= 0 && clean > prepare, "准备 Node 必须在删除旧产物之前，否则缺库时会丢上一个安装包");
         assertTrue(script.indexOf("Resources/node/bin/node") < script.indexOf("codesign"), "node 要在签名之前放进去，否则签名不覆盖它");
         assertTrue(script.contains("codesign --verify --deep --strict \"$APP\"")
                         && script.lastIndexOf("\"$APP/Contents/Resources/node/bin/node\" --version") > script.indexOf("codesign --force"),
                 "签名失败要停下，签名后还要验证包里的 Node 真的能跑");
         assertFalse(script.contains("|| true"), "签名或 Node 准备失败不许被吞掉");
         assertTrue(script.contains("node/LICENSE"), "官方 Node 的 LICENSE 要随运行时分发");
-        String shell = read(Path.of("..", "deploy", "desktop", "macos-shell", "ZhiquShell.swift"));
-        assertTrue(shell.contains("appendingPathComponent(\"node/bin/node\")") && shell.contains("-Dapp.ai.code-agent.node="),
-                "外壳没把打进去的 node 的路径告诉后端");
     }
 }

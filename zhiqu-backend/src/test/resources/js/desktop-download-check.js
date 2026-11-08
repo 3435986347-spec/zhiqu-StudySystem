@@ -79,7 +79,9 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   judge('校验值照实给', s[0].html.includes('<code>' + mac.sha256 + '</code>'), true);
   judge('Apple 芯片的 Mac 不提醒', html.includes('zq-dl-warn'), false);
   judge('Windows 没有安装包：照实说、不给按钮', s[1].html.includes('还在准备') && !s[1].html.includes('href='), listing.windows == null);
-  judge('写清要连数据库', html.includes('MySQL') && html.includes('.zhiqu/application.yml'), true);
+  // 第一百二十五轮：Mac 版打开网站（不再要 MySQL），Windows 版还自带后端
+  judge('写清 Mac 版打开的是网站、同一个账号同一份数据', html.includes('Mac 版打开的就是这个网站') && html.includes('同一份数据'), true);
+  judge('MySQL 那句只说 Windows 版', /<p class="zq-dl-note">Windows 版[^<]*MySQL[^<]*<code>\.zhiqu\/application\.yml<\/code>/.test(html) && !/Mac 版[^<]*MySQL/.test(html), true);
 
   html = mod.desktopDownloadHtml(listing, 'macos', 'x86');
   judge('认出是 Intel 的 Mac：直说装不上（按钮照给）', html.includes('zq-dl-warn') && html.includes('Intel') && html.includes('href="/api/desktop/downloads/macos"'), true);

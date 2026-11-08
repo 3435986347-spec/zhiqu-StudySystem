@@ -2,6 +2,9 @@
 
 > 原来是 `CLAUDE.md` 里的「桌面应用（原生 macOS 外壳）」，第三十八轮（方案第 5 步，`CLAUDE.md` 瘦身）原样挪到这里，一字未改。
 > `CLAUDE.md` 现在只留规矩；这里是来龙去脉和细节。文中「上面」「下面」指的是原来 `CLAUDE.md` 里的位置。
+>
+> **第一百二十五轮起 macOS 外壳打开网站、包里不带 Java**（见最后一节）：下面讲 JVM、jlink、端口文件、上传目录、本机 MySQL 的几段
+> 对 Windows 版（jpackage，还带后端）和历史仍然有用，对 Mac 版已经不适用。
 
 ### 桌面应用（原生 macOS 外壳）
 
@@ -88,3 +91,30 @@ dmg 一百多 MB，超过 GitHub 单个文件的上限，也不能进 `static/`�
 连不上时后端起不来，外壳报「后端没有在 60 秒内就绪。请检查数据库是否可连接」（第八十二轮量过：数据库连不上，后端重试 48 秒后退出，外壳当场报）。
 
 - **后端的日志写进 `~/.zhiqu/logs/backend.log`**（第九十轮，`application-desktop.yml`，10MB 滚动、留 5 份）：外壳起后端时不接 stdout，原来日志哪儿都不落，网关回 `upstream_error` 时没处查原因。
+
+## 打开网站、包里不带 Java（第一百二十五轮）
+
+用户 2026-11-08 定了桌面版给所有下载的人用、数据走网站（`docs/desktop-remote-plan.md`）。外壳原来起包里的 Java 后端、连用户自己装的 MySQL，
+窗口里开 `http://127.0.0.1:47615`；现在窗口里直接打开 `Server.page("dashboard.html")`（`macos-shell/Server.swift`：默认 `https://zhiqustudy.com`，
+环境变量 `ZHIQU_DESKTOP_SERVER` 或 `defaults write com.zhiqu.quadrant server …` 能改；只认 https，http 只给本机；只要协议 + 主机 + 端口、主机名小写）。
+包里去掉了瘦 JAR、jlink 的 JRE、`CdsCache.swift`（给 JVM 做启动加速的类归档）；node 留着给本机代码助手（方案第 2 步）。
+
+页面从服务器来、里面有 AI 写的和导入的内容，外壳的几道门跟着收紧（`PageView.swift`，`DesktopPageViewTest` 在真的 WKWebView 里验）：
+
+- **桥（`zqNotify`、`zqMini`）只认自己网站的主框架**：`frameInfo.isMainFrame` + 来源是名单里的主机（不是本机的只认 https）。
+  AI 生成的 HTML 预览是 sandbox 的 srcdoc iframe，桥在每个框里都看得见 —— 原来一段生成的网页就能弹通知、把主窗口缩没。
+  两道各有只有它照得出来的样本：`allow-same-origin` 的框来源就是这个网站，只有「主框架」挡得住；名单外来源的主框架，只有「来源」挡得住。
+- **链接按服务器那一个主机分里外**（原来写死 127.0.0.1 / localhost）；同一主机的明文页面算外面。
+- **框里的脚本自己跳走（不是人点的）就地拦下**，不叫系统浏览器；交给系统的只有 http / https / mailto（`file://` 会在 Finder 里打开，`.app` 就是运行它）。
+- **载入结果告诉外壳**：载入完了收起「正在连接」；连不上、主框架回 5xx（后端重启时 Caddy 回的是正文为空的 502，窗口一片白）照实说、告诉人按 ⌘R；
+  被新导航顶掉的那一次（-999）不算。菜单加了「显示 → 重新载入」（target 留空：页面有焦点时 WKWebView 接，页面是空的时落到外壳）。
+- **实现了回应策略（看 5xx 要用它）就得自己管显示不了的类型**：照样放行，WebKit 报「因策略改变中断」（102），外壳会盖上「连不上」。
+  主框架打开一个文件（zip、附件）转成下载（走保存面板），框里的不理；转下载那一次的 102 不算没载入成。
+  转出来的下载在保存面板里点「取消」会走到 `didFailWithError`（页面上 `a[download]` 的不会）—— 不记下来，用户点了取消反倒看到「没有保存成功」。
+
+检查程序里起一个本机的小 HTTP 服务器（`NWListener`）回 200 / 502 / 慢回包，去不在跑的端口验连不上 —— 不用 1 这类端口：WebKit 自己拦着「受限端口」、根本不发请求，
+一个回调都不来（第一次就撞上了）。`DesktopPageViewTest` 的检查程序现在编一次、跑一次，各条共用（原来每条各编各跑）。
+**检查程序里每个 PageView 的面板和提示都要换成桩**：这一轮新建的那个页面漏了 `reportFailure`，默认的是 `NSAlert.runModal` ——
+跑判据时「没有保存成功」的系统提示框弹到了用户的屏幕上（用户以为是磁盘满了）。
+
+验证真应用时**不要让它打开线上网站**（那是用户的真账号）：`defaults write com.zhiqu.quadrant server http://127.0.0.1:18080`，后端连 `zhiqu_verify` 库。
