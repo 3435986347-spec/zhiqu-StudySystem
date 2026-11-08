@@ -48,7 +48,8 @@ if [ "${RAG_BUILD_ONLY:-}" = 1 ]; then echo "只打包（RAG_BUILD_ONLY=1）：$
 echo "==> 4/5 传到服务器（第一次几百 MB，一两分钟；之后只传变了的）"
 $SSH "$HOST" "mkdir -p $BASE/incoming"
 rsync -az --progress -e "$SSH" "$ROOT/deploy/ubuntu/" "$HOST:$BASE/incoming/deploy-ubuntu/"
-rsync -az --delete --progress -e "$SSH" "$OUT/" "$HOST:$BASE/incoming/rag-bundle/"
+# 不压（wheel、tar.gz、模型本来就是压过的，-z 只是白占两头的 CPU）；--partial：传到一半断了（Ctrl+C、网断），下次从断点接着传
+rsync -a --partial --delete --progress -e "$SSH" "$OUT/" "$HOST:$BASE/incoming/rag-bundle/"
 
 echo "==> 5/5 在服务器上装、跟着后端起来（会重启一次后端，网站断二三十秒）"
 $SSH "$HOST" "sudo -n bash $BASE/incoming/deploy-ubuntu/install-rag.sh $BASE/incoming/rag-bundle"

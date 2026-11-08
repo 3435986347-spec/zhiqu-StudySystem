@@ -290,7 +290,7 @@ export async function runReview(ctx, changes, { signal, instructions = '' }) {
   const { prompt, partial } = reviewPrompt(changes, { window, instructions });
   if (partial) ctx.ui.note('· 改动太大，模型只拿到统计，要它自己挑文件看');
   // request 清掉：不然会话里用户的原话钉进审查的系统内容。不用换成这段提示：只有一轮时压缩不碰它，重写时压缩有 userQuotes 留着原话
-  const worker = { ...ctx, mode: 'plan', execReadOnly: true, exec: true, goal: null, store: null, messages: [], todos: [], request: null };
+  const worker = { ...ctx, mode: 'plan', execReadOnly: true, exec: true, goal: null, store: null, messages: [], todos: [], request: null, agents: null };
   const first = await runTurn(worker, prompt, { signal, origin: 'review' });
   const checked = await rewriteUntilValid(worker, REVIEW_SCHEMA, first, { signal });
   if (checked.aborted) return { aborted: true };

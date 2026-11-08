@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Api, ApiError } from './api.js';
 import { archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote } from './agent.js';
+import { SubAgents } from './subagents.js';
 import { newGoal } from './goal.js';
 import { generatedOrigin } from './origins.js';
 import { unfinished } from './todos.js';
@@ -274,6 +275,7 @@ function openSession(ctx, flags) {
 }
 
 export function resumeInto(ctx, id) {
+  if (ctx.agents) ctx.agents.forget();   // 上一段会话的子 agent 不跟过来
   const loaded = ctx.store.load(id);
   ctx.session = loaded.meta;
   ctx.messages = loaded.messages;
@@ -358,6 +360,8 @@ async function runAgent(cwd, flags) {
     exec: Boolean(flags.exec), execReadOnly: Boolean(flags.execReadOnly), archiveDisabled: Boolean(flags.ephemeral),
     store: flags.ephemeral ? null : new SessionStore(root), allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0, cached: 0 }, changedFiles: new Set(),
+    // 子 agent（第一百二十三轮）：~/.zhiqu/config.json 的 agents 是 false 时关掉
+    agents: settings.agents.enabled ? new SubAgents({ runTurn, limits: settings.agents }) : null,
   };
   if (!ctx.local.sandbox) {
     ui.note(`· ${process.platform === 'linux' ? '没有可用的 bubblewrap（装上 bwrap 才有）' : '这台机器没有可用的系统沙箱'}：没有 shell 工具，跑命令退回白名单。`);
@@ -668,6 +672,19 @@ export async function slash(ctx, text) {
       }
       return null;
     }
+    case '/agents': {
+      if (!ctx.agents) { ui.line('子 agent 关着（~/.zhiqu/config.json 里 agents 是 false）。'); return null; }
+      if (arg) {
+        const a = ctx.agents.get(arg);
+        ui.line(a ? ctx.agents.report(a) : `没有 ${arg} 这个子 agent（/agents 看有哪些）。`);
+        return null;
+      }
+      const list = ctx.agents.list();
+      if (!list.length) { ui.line('这段会话还没有派过子 agent。'); return null; }
+      for (const a of list) ui.line(ctx.agents.row(a));
+      ui.line(ui.paint.dim('/agents <编号> 看它的结论'));
+      return null;
+    }
     case '/stop': {
       if (!arg) { ui.line('要停哪个：/stop <id>，或者 /stop all（/ps 看有哪些）。'); return null; }
       const running = ctx.local.jobs.running().map((j) => j.id);
@@ -701,6 +718,7 @@ export async function slash(ctx, text) {
       return null;
     }
     case '/new':
+      if (ctx.agents) await ctx.agents.reset();   // 换一段会话：上一段的子 agent 不跟过来
       ctx.session = ctx.store.create({ model: ctx.model.label });
       ctx.messages = [];
       ctx.todos = [];

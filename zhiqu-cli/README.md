@@ -72,11 +72,13 @@ zhiqu mcp                   当 MCP 服务器，见下面
 `--sandbox-network off|local|on`（沙箱里的命令能不能联网，默认 off）。完整的用 `zhiqu help` 看。
 
 会话里输入 `/` 会弹出命令菜单：`/goal`、`/mode`、`/model`、`/effort`、`/window`、`/ps`、`/stop`、`/resume`、`/new`、`/compact`、
-`/init`、`/review`、`/skills`、`/mcp`、`/system`、`/verbose`、`/usage`、`/help`、`/exit`。↑↓ 选、回车执行、Tab 补全、Esc 关掉。
+`/init`、`/review`、`/agents`、`/skills`、`/mcp`、`/system`、`/verbose`、`/usage`、`/help`、`/exit`。↑↓ 选、回车执行、Tab 补全、Esc 关掉。
 
 本地工具：`list_files`、`read_file`、`search`（正则、按文件类型过滤、跳过 `.gitignore` 的）、`write_file`、`edit_file`、
 `apply_patch`（一次改多个文件，全成或全不成）、`delete_file`（挪进 `.zhiqu/trash/`，能恢复）、`shell`（在系统沙箱里；
-可以放到后台，用 `/ps`、`/stop` 管）。行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事；它干活时可以接着打下一句，回车排队。
+可以放到后台，用 `/ps`、`/stop` 管）。
+
+**子 agent**：说「派两个 agent 分头查」这类话时，它能派子 agent 在单独的上下文里并行做事，做完只交回一段结论 —— explorer 只读（读、搜、跑只读命令），worker 和主 agent 同一档；子 agent 不能再派子 agent。同时最多 3 个、一句话最多 8 个、一句话里子 agent 一共最多花 200 万 token（到了就全停）。`/agents` 看派过的、`/agents <编号>` 看结论。`~/.zhiqu/config.json` 里 `"agents": false` 关掉，或者 `"agents": { "maxConcurrent": 2 }` 这样调（项目里的 `.zhiqu/settings.json` 调不了，克隆下来的仓库不能替你多花钱）。行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事；它干活时可以接着打下一句，回车排队。
 
 ## goal 模式
 

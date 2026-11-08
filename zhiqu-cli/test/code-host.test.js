@@ -587,3 +587,12 @@ test('认不出的 command 当普通的一句话', async () => {
   const inArtifact = await runHosted(artifact.bridge, { type: 'run', root: tmpdir(), artifact: true, command: 'rm -rf', message: '普通的一句', model: MODEL });
   assert.equal(inArtifact.text, '好', '生成到产物时也一样，不说要选文件夹');
 });
+
+// 第一百二十三轮：子 agent 这一轮只给命令行。网页的代码模式（这个宿主）下发的工具里没有，下发的和能执行的同一份
+test('网页的代码模式没有派子 agent 的工具', async () => {
+  const { bridge, seen } = fakeBackend({ replies: [{ text: '好' }] });
+  await runHosted(bridge, { type: 'run', root: tmpdir(), message: '看看', canWrite: true, canExec: true, maxRounds: 3, model: MODEL });
+  const tools = seen.find((m) => m.type === 'model').body.tools.map((x) => x.function.name);
+  assert.ok(tools.includes('read_file'), '扫空了：' + tools.join());
+  for (const n of ['spawn_agent', 'wait_agent', 'send_input', 'close_agent']) assert.ok(!tools.includes(n), n);
+});

@@ -26,6 +26,7 @@ import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todo
 import { spillLongInput } from './longinput.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
+import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
 
 export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks']);
 /** 远程工具里**直接生效**的（不是草稿）：plan 档不给，ask 档先问（第二十九轮，用户定的「改状态直接做」）。 */
@@ -159,7 +160,8 @@ export function toolset(ctx) {
     if (!plan || READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'local' });
   }
   // 服务器上没有后台命令（第一百一十七轮）：要管它们活多久、占多少，先不给
-  if (sandboxed) for (const t of shellSchemas({ background: !ctx.local.hosted })) out.push({ schema: t, kind: 'local' });
+  // 子 agent 也不给（第一百二十三轮）：它停了之后后台命令谁来管说不清
+  if (sandboxed) for (const t of shellSchemas({ background: !ctx.local.hosted && !ctx.subagent })) out.push({ schema: t, kind: 'local' });
   for (const t of ctx.remoteTools || []) {
     if (!plan || REMOTE_READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'remote' });
   }
@@ -182,6 +184,8 @@ export function toolset(ctx) {
   // exec 的只读没有人批准计划：把结论写出来就是了（第一百一十三轮）
   if (plan && !ctx.execReadOnly) out.push({ schema: exitPlanSchema(), kind: 'plan' });
   if (ctx.goal && ctx.goal.status === 'active') out.push({ schema: goalSchema(), kind: 'goal' });
+  // 子 agent（第一百二十三轮）：只有主 agent 有，子 agent 不能再派（深度 1）；命令行建了 ctx.agents 才有（网页的代码模式这一轮不给）
+  if (ctx.agents && !ctx.subagent) for (const t of agentSchemas()) out.push({ schema: t, kind: 'agent' });
   // 同名只留第一个：本地工具优先于远程 / MCP（MCP 名字有前缀，本不会撞）
   const seen = new Set();
   return out.filter((t) => (seen.has(t.schema.function.name) ? false : seen.add(t.schema.function.name)));
@@ -371,6 +375,7 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     // 输入里命中供应商前缀缓存的部分（第九十三轮）：网关在供应商报了时才给；命中的按命中价算钱
     ctx.usage.cached = (ctx.usage.cached || 0) + (done.usage ? done.usage.cachedTokens || 0 : 0);
   }
+  if (ctx.onUsage && done.usage) ctx.onUsage(done.usage);
   return { ...done, text, maxTokens: done.maxTokens || maxTokens };
 }
 
@@ -519,6 +524,7 @@ export function describeCall(name, args) {
     case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
     case 'find_mcp_tool': return `找 MCP 工具「${args.query}」`;
     case 'exit_plan_mode': return '提交计划';
+    case 'spawn_agent': case 'wait_agent': case 'send_input': case 'close_agent': return describeAgentCall(name, args);
     case TODO_TOOL: return '更新任务清单';
     case GOAL_TOOL: return `目标状态：${args.status}`;
     case 'search_wiki': return wikiSearchLabel(args);
@@ -581,11 +587,17 @@ function hushedUi(ui) {
 function refuseUnoffered(ctx, name, offered) {
   const ui = ctx.ui;
   const available = [...offered.keys()].join('、');
+  if (ctx.subagent && AGENT_TOOLS.has(name)) {
+    ui.step(`${name}（子 agent 不能再派子 agent）`);
+    ui.result('已拒绝', false);
+    return `你是子 agent，不能再派子 agent：自己做完，把结论交回去。能用的工具：${available}。`;
+  }
   if (existingToolNames(ctx).has(name)) {
     ui.step(`${name}（${ctx.mode} 档不给这个工具）`);
     ui.result('已拒绝', false);
     return `${name} 在当前的 ${ctx.mode} 档没有下发，没有执行。`
-      + (ctx.execReadOnly ? '现在是只读的（zhiqu exec 默认）：改不了文件。把结论写出来；用户要改的话得用 --mode auto 重跑。'
+      + (ctx.subagent && ctx.subagent.role === 'explorer' ? '你是只读探索的子 agent：不能改文件、不能跑会改东西的命令。把要改什么写进结论交回去，由主 agent 决定。'
+        : ctx.execReadOnly ? '现在是只读的（zhiqu exec 默认）：改不了文件。把结论写出来；用户要改的话得用 --mode auto 重跑。'
         : ctx.mode === 'plan' ? '现在是只读的 plan 档：想好之后用 exit_plan_mode 提交计划，用户批准后才能写、才能跑。' : '')
       + `这一档能用的：${available}。`;
   }
@@ -633,6 +645,8 @@ const windowReminder = (p, offset) => `你在接着上一次往下读 ${p}（第
  */
 function pendingNudge(ctx, text, { nudged, claimChecked, lastRound }) {
   if (lastRound || /[？?]\s*$/.test((text || '').trim())) return null;
+  // 派出去的子 agent 还在跑就收尾：推一次去 wait_agent（第一百二十三轮）
+  if (ctx.agents && !ctx.subagent && !ctx.agents.nudged && ctx.agents.running().length) return 'agents';
   if (!nudged && ctx.mode !== 'plan' && unfinished(ctx.todos).length) return 'todo';
   // 交活时说的和这一轮做的对不上：宿主给的核对（第九十五轮：网页代码模式里一个工具没调就说「已生成三个文件的草稿」），只推一次。命令行里没有这个钩子
   if (!claimChecked && ctx.claimCheck && ctx.claimCheck(text)) return 'claim';
@@ -864,6 +878,12 @@ async function executeTool(ctx, call, offered, signal) {
   if (kind === 'plan') {
     return approvePlan(ctx, String(args.plan || ''));
   }
+  if (kind === 'agent') {
+    const r = await ctx.agents.call(ctx, name, args, { signal });
+    if (r.error) { ui.result(r.error, false); return r.error; }
+    ui.result(r.summary, r.ok !== false);
+    return r.content;
+  }
   if (kind === 'todo') {
     const r = parseTodos(args);
     if (r.error) { ui.result(r.error, false); return r.error; }
@@ -960,6 +980,8 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   ctx.turnStats = { read: 0, search: 0, list: 0 };
   ctx.readStreak = 0;
   ctx.readWindows = new Map(); ctx.readHinted = new Set();
+  const lead = ctx.agents && !ctx.subagent;   // 主 agent 的一句话：管着这一句派出去的子 agent
+  if (lead) ctx.agents.beginTurn(ctx, signal);
   if (quiet(ctx)) ctx.ui.startThinking();
   try {
   const maxRounds = ctx.maxRounds || 60;
@@ -1022,6 +1044,10 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
         record(ctx, { role: 'user', content: todoNudge(ctx.todos) }, 'system');
         continue;
       }
+      if (nudge === 'agents') {
+        record(ctx, { role: 'user', content: ctx.agents.nudgeText() || '（派出去的子 agent 刚做完：用 wait_agent 拿到它们的结论再收尾。）' }, 'system');
+        continue;
+      }
       if (nudge === 'claim') {
         claimChecked = true;
         record(ctx, { role: 'user', content: ctx.claimCheck(message.content) }, 'system');
@@ -1080,6 +1106,8 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     }
   }
   } finally {
+    // 这一句结束时还在跑的子 agent 停掉，不留到下一句（Codex 有完成了的子 agent 一直占名额的 issue）
+    if (lead) await ctx.agents.endTurn(ctx);
     ctx.ui.stopThinking();
   }
   if (signal && signal.aborted) ctx.messages = dropDanglingToolCalls(ctx.messages);

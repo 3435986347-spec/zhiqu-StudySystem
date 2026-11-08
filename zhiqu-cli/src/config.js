@@ -6,6 +6,7 @@
 //   <工作区>/.zhiqu/system.md      项目级系统内容，优先
 //
 // 环境变量 ZHIQU_HOME 可以把用户级目录挪走（测试用）；ZHIQU_SERVER / ZHIQU_TOKEN 覆盖对应的配置。
+import { agentLimits } from './subagents.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -130,6 +131,8 @@ export function resolveSettings(root, flags = {}) {
     effort: normalizeEffort(pick('effort')),
     // 只认命令行参数和用户级配置，不认项目里的 .zhiqu/settings.json：克隆下来的仓库不能给自己开网
     sandboxNetwork: normalizeSandboxNetwork(flags.sandboxNetwork ?? user.sandboxNetwork) || 'off',
+    // 子 agent 的开关和上限（第一百二十三轮）：同样只认用户级配置 —— 克隆下来的仓库不能替用户调高花费
+    agents: agentLimits(user.agents),
     maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 60),
     execTimeoutMs: Number(project.execTimeoutMs ?? user.execTimeoutMs ?? 120_000),
     allowedCommands: project.allowedCommands ?? user.allowedCommands ?? null,

@@ -6,6 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { runTurn, toolset } from '../src/agent.js';
+import { SubAgents } from '../src/subagents.js';
 import { estimateTokens } from '../src/compact.js';
 import { slash } from '../src/cli.js';
 import { slashHelp } from '../src/commands.js';
@@ -860,4 +861,16 @@ test('/review：模型一直给不出格式，说清楚、不进会话；重写�
   await reviewInSession(stopping, { target: { kind: 'uncommitted' }, instructions: '' }, { signal: controller.signal });
   assert.equal(stopping.messages.length, 0);
   assert.ok(!stopping.ui.text().includes('✗'), stopping.ui.text());
+});
+
+// 第一百二十三轮：审查在单独的上下文里，不派子 agent（会话里照样有）
+test('/review：单独的上下文里没有派子 agent 的工具；会话里照样有', async () => {
+  const root = repo();
+  write(root, 'src/a.js', 'changed\n');
+  const ctx = session({ root, replies: [answer()] });
+  ctx.agents = new SubAgents({ runTurn });
+  await reviewInSession(ctx, { target: { kind: 'uncommitted' }, instructions: '' }, { signal: new AbortController().signal });
+  assert.ok(ctx.api.requests.length >= 1, '审查要叫模型');
+  for (const r of ctx.api.requests) assert.ok(!(r.tools || []).some((t) => t.function.name === 'spawn_agent'), '审查里拿到了 spawn_agent');
+  assert.ok(toolset(ctx).some((t) => t.schema.function.name === 'spawn_agent'), '会话里照样有');
 });

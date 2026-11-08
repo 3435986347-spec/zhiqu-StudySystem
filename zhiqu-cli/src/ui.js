@@ -80,6 +80,8 @@ export class Ui {
     this.paint = painter(this.color);
     this.queue = [];
     this.waiters = [];
+    this.chooseChain = Promise.resolve();
+    this.chooseEpoch = 0;
     this.closed = false;
     this.onInterrupt = null;
     this.interactive = interactive ?? Boolean(input.isTTY && output.isTTY);
@@ -450,8 +452,19 @@ export class Ui {
     });
   }
 
-  /** 问一个单字母的选择；输入结束、或者回答不在选项里时返回 fallback。 */
-  async choose(question, options, fallback) {
+  /**
+   * 问一个单字母的选择；输入结束、或者回答不在选项里时返回 fallback。
+   * 一次只问一个（第一百二十轮）：几个子 agent 同时要确认时，原来两个问题一起挂着 —— 屏幕上是后一个，回车交给的是前一个，
+   * 看着「写入 b.js？」按 y，批准的是 a.js。排队一个一个问；Ctrl+C 作废问题时，还排着没问出来的也一并按不同意。
+   */
+  choose(question, options, fallback) {
+    const epoch = this.chooseEpoch;
+    const turn = this.chooseChain.then(() => (epoch === this.chooseEpoch ? this.chooseNow(question, options, fallback) : fallback));
+    this.chooseChain = turn.catch(() => {});
+    return turn;
+  }
+
+  async chooseNow(question, options, fallback) {
     const line = await this.ask(`${question} ${options.map((o) => this.paint.bold(`[${o.key}]`) + ` ${o.label}`).join('  ')} › `, { fresh: true });
     if (line == null) return fallback;
     const k = line.trim().toLowerCase();
@@ -465,6 +478,7 @@ export class Ui {
    * 用户接着打的下一句话被当成对这个问题的回答吃掉（第十三轮真终端实测：「还在吗」→「用户没有同意，没写」，那句话没了）。
    */
   cancelQuestion() {
+    this.chooseEpoch += 1;     // 排着还没问出来的确认：轮到它们时直接按不同意（见 choose）
     const fresh = this.waiters.filter((w) => w.fresh);
     if (!fresh.length) return;
     this.waiters = this.waiters.filter((w) => !w.fresh);
