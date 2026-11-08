@@ -147,6 +147,9 @@ function shellPolicy(ctx) {
 }
 
 /** 这一轮给模型哪些工具。 */
+/** 这一次下发的 shell 有没有 background（toolset 里同一个条件） */
+const offeredBackground = (ctx) => Boolean(ctx.local && ctx.local.sandbox && !ctx.local.hosted);
+
 export function toolset(ctx) {
   const plan = ctx.mode === 'plan';
   const out = [];
@@ -160,8 +163,8 @@ export function toolset(ctx) {
     if (!plan || READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'local' });
   }
   // 服务器上没有后台命令（第一百一十七轮）：要管它们活多久、占多少，先不给
-  // 子 agent 也不给（第一百二十三轮）：它停了之后后台命令谁来管说不清
-  if (sandboxed) for (const t of shellSchemas({ background: !ctx.local.hosted && !ctx.subagent })) out.push({ schema: t, kind: 'local' });
+  // 子 agent 也给（第一百二十六轮，用户定的：子 agent 能跑命令；但它停下之前，它自己起的后台命令要先停下 —— 见 subagents.js 的 settle）
+  if (sandboxed) for (const t of shellSchemas({ background: offeredBackground(ctx) })) out.push({ schema: t, kind: 'local' });
   for (const t of ctx.remoteTools || []) {
     if (!plan || REMOTE_READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'remote' });
   }
@@ -643,10 +646,20 @@ const windowReminder = (p, offset) => `你在接着上一次往下读 ${p}（第
  * 不调工具的那条回复之后还要不要推一句（清单没做完）。在问用户问题、最后一轮不推。
  * 要推的话那条先不当结论打出来 —— 原来安静模式下先打一遍结论、推完再打一遍（第八十九轮真模型试出来的）。
  */
+/** 子 agent 自己起的、还在跑的后台命令 */
+function runningOwnJobs(ctx) {
+  if (!ctx.ownJobs || !ctx.ownJobs.size || !ctx.local || !ctx.local.jobs) return [];
+  return ctx.local.jobs.running().map((j) => j.id).filter((id) => ctx.ownJobs.has(id));
+}
+const ownJobsNudge = (ids) => `（你起的后台命令 ${ids.join('、')} 还在跑。交结论之前先处理掉：要结果就用 shell_output 看完，不用了就 shell_stop 停掉。`
+  + '你交了结论就算停下，到时还在跑的会被停掉。）';
+
 function pendingNudge(ctx, text, { nudged, claimChecked, lastRound }) {
   if (lastRound || /[？?]\s*$/.test((text || '').trim())) return null;
   // 派出去的子 agent 还在跑就收尾：推一次去 wait_agent（第一百二十三轮）
   if (ctx.agents && !ctx.subagent && !ctx.agents.nudged && ctx.agents.running().length) return 'agents';
+  // 子 agent 要交结论时它起的后台命令还在跑：推一次「看完输出、停掉」（第一百二十六轮）；还不停，交结论时由 settle 停掉
+  if (ctx.subagent && !ctx.jobsNudged && runningOwnJobs(ctx).length) return 'jobs';
   if (!nudged && ctx.mode !== 'plan' && unfinished(ctx.todos).length) return 'todo';
   // 交活时说的和这一轮做的对不上：宿主给的核对（第九十五轮：网页代码模式里一个工具没调就说「已生成三个文件的草稿」），只推一次。命令行里没有这个钩子
   if (!claimChecked && ctx.claimCheck && ctx.claimCheck(text)) return 'claim';
@@ -793,10 +806,13 @@ async function executeTool(ctx, call, offered, signal) {
         ui.result('用户没有同意，没运行', false);
         return `用户没有同意运行 ${prep.command}。不要原样重试；问问用户，或者换个做法。`;
       }
-      if (args.background) {
+      // 没下发 background（服务器上）就不当后台命令起：模型照着别处的说法传了 background: true，原来照样起了（第一百二十六轮 review）
+      if (args.background && offeredBackground(ctx)) {
         const job = await local.startJob(prep, { policy: shellPolicy(ctx), signal });
         if (job.error) { ui.result(job.error, false); return failed(ctx, spinKey, job.error, runReminder(prep.command)); }
         succeeded(ctx, spinKey);
+        // 子 agent 起的记在它自己名下：它停下之前要先停掉（subagents.js 的 settle）
+        if (ctx.ownJobs) ctx.ownJobs.add(job.id);
         ui.result(`${job.id} 在后台${job.snap.running ? '跑着' : `结束了（退出码 ${job.snap.exitCode}）`}`, job.snap.running || job.snap.exitCode === 0);
         return job.content;
       }
@@ -813,6 +829,13 @@ async function executeTool(ctx, call, offered, signal) {
       return failed(ctx, spinKey, r.content, runReminder(prep.command));
     }
     if (name === 'shell_output' || name === 'shell_stop') {
+      // 子 agent 只管自己起的（别人的 dev server 它停不得）
+      if (ctx.ownJobs && !ctx.ownJobs.has(String(args.id || ''))) {
+        const mine = [...ctx.ownJobs];
+        const msg = `${args.id} 不是你起的后台命令${mine.length ? `：你起的是 ${mine.join('、')}` : '：你还没起过后台命令'}。`;
+        ui.result(msg, false);
+        return msg;
+      }
       const r = name === 'shell_output' ? await local.readJob(args, { signal }) : await local.stopJob(args, { signal });
       if (r.error) { ui.result(r.error, false); return r.error; }
       ui.result(r.snap.running ? `${r.snap.id} 还在跑` : `${r.snap.id} 已结束（退出码 ${r.snap.exitCode}）`);
@@ -1042,6 +1065,11 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       if (nudge === 'todo') {
         nudged = true;
         record(ctx, { role: 'user', content: todoNudge(ctx.todos) }, 'system');
+        continue;
+      }
+      if (nudge === 'jobs') {
+        ctx.jobsNudged = true;
+        record(ctx, { role: 'user', content: ownJobsNudge(runningOwnJobs(ctx)) }, 'system');
         continue;
       }
       if (nudge === 'agents') {

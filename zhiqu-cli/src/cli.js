@@ -352,7 +352,7 @@ async function runAgent(cwd, flags) {
   }
   const api = new Api({ server: settings.server, token: settings.token, onRetry: retryNoter((text) => ui.note(text)) });
   // 连的是本机 47615、它却没在跑：Mac 上的桌面应用不再带后端，说清楚、给出换到网站的命令（见 desktop.js）
-  if (await ensureLocalServer({ api, server: settings.server, ui }) === 'failed') return 1;
+  if (await ensureLocalServer({ api, server: settings.server, ui, source: settings.serverSource }) === 'failed') return 1;
   const ctx = {
     ui, api, root, settings, mode: modeFlag || settings.mode, effort: settings.effort, maxRounds: settings.maxRounds, verbose: settings.showThinking,
     local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs,

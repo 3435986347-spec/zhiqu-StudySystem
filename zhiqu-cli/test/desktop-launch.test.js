@@ -50,3 +50,41 @@ test('连的是别的服务器 / 不是 macOS / 不是连接被拒：交给后�
   const other = { async get() { throw Object.assign(new Error('服务器暂时不可用（HTTP 500）'), { status: 500, code: null }); } };
   assert.equal(await ensureLocalServer({ api: other, server: 'http://127.0.0.1:47615', ui: fakeUi([]), platform: 'darwin' }), 'skip');
 });
+
+test('换到网站的说法照地址从哪来的说：环境变量、项目设置、命令行参数各说各的（login 只写用户配置，照着做下一次还是老地址）', async () => {
+  const { resolveSettings } = await import('../src/config.js');
+  const { tmpdir, write } = await import('./helpers.js');
+  const home = tmpdir();
+  const root = tmpdir();
+  const saved = { home: process.env.ZHIQU_HOME, server: process.env.ZHIQU_SERVER };
+  process.env.ZHIQU_HOME = home;
+  delete process.env.ZHIQU_SERVER;
+  const hint = async (source) => {
+    const ui = fakeUi([]);
+    await ensureLocalServer({ api: api(99), server: 'http://127.0.0.1:47615', ui, platform: 'darwin', website: 'https://zhiqustudy.com', source });
+    return ui.text();
+  };
+  try {
+    write(home, 'config.json', JSON.stringify({ server: 'http://127.0.0.1:47615' }));
+    assert.equal(resolveSettings(root).serverSource, 'user');
+    assert.match(await hint(resolveSettings(root).serverSource), /zhiqu login --server https:\/\/zhiqustudy\.com/);
+
+    write(root, '.zhiqu/settings.json', JSON.stringify({ server: 'http://127.0.0.1:47615' }));
+    assert.equal(resolveSettings(root).serverSource, 'project');
+    const project = await hint(resolveSettings(root).serverSource);
+    assert.match(project, /\.zhiqu\/settings\.json/);
+    assert.doesNotMatch(project, /zhiqu login --server/, '地址从项目设置来，叫人 login 也换不过去');
+
+    process.env.ZHIQU_SERVER = 'http://127.0.0.1:47615';
+    assert.equal(resolveSettings(root).serverSource, 'env');
+    const env = await hint(resolveSettings(root).serverSource);
+    assert.match(env, /ZHIQU_SERVER/);
+    assert.doesNotMatch(env, /zhiqu login --server/);
+
+    assert.equal(resolveSettings(root, { server: 'http://127.0.0.1:47615' }).serverSource, 'flag');
+    assert.match(await hint('flag'), /--server https:\/\/zhiqustudy\.com/);
+  } finally {
+    if (saved.home == null) delete process.env.ZHIQU_HOME; else process.env.ZHIQU_HOME = saved.home;
+    if (saved.server == null) delete process.env.ZHIQU_SERVER; else process.env.ZHIQU_SERVER = saved.server;
+  }
+});

@@ -303,3 +303,14 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         return nil
     }
 }
+
+/// 清掉这份网站数据里的 Service Worker 和它的缓存（第一百二十六轮）。
+///
+/// 页面在浏览器里装 Service Worker 是为了网络慢 / 断网时还能打开壳；桌面应用里它反倒挡事：服务器停了、断网了，
+/// 它拿缓存的页面顶上，WebKit 当成载入成功（didFinish、200），外壳就不说「连不上」—— 用户看到一个点什么都没反应的旧页面
+/// （用户在真窗口里停了验证站、按 ⌘R 照出来的）。页面在桌面里已经不装了（zhiqu-api.js 的 maintainShellCache），
+/// 这里清掉以前装上的。只清这两样：登录态在 localStorage 里，不能动。
+func clearOfflineCache(_ store: WKWebsiteDataStore, then done: @escaping () -> Void) {
+    let kinds: Set<String> = [WKWebsiteDataTypeServiceWorkerRegistrations, WKWebsiteDataTypeFetchCache]
+    store.removeData(ofTypes: kinds, modifiedSince: .distantPast) { DispatchQueue.main.async(execute: done) }
+}

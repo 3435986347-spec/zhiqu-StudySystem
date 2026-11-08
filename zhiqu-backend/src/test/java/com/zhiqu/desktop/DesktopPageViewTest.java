@@ -238,6 +238,22 @@ class DesktopPageViewTest {
     }
 
     @Test
+    @DisplayName("断网时 Service Worker 拿缓存的页面顶上、外壳以为载入成了；clearOfflineCache 清掉以后照实报连不上（对照组不清：载入成功）")
+    void 断网时不拿缓存顶上() throws Exception {
+        Map<String, String> out = runCheck();
+        // 对照组先立住：Service Worker 真装上了、真经手了 —— 不然「清了以后连不上」可能只是它从来没装上
+        assertEquals("true", out.get("sw.kept.installed"), "对照组的 Service Worker 没装上：这一段什么都没验");
+        assertEquals("true", out.get("sw.kept.workerServed"));
+        assertEquals("ok", out.get("sw.kept.offline"),
+                "对照组（不清）断网时没有拿缓存顶上 —— 照不出第一百二十六轮那个问题，下面那条绿了也不算数");
+        assertEquals("true", out.get("sw.cleared.installed"), "清的那一组 Service Worker 没装上：清没清都一样");
+        // 只认「是个错误」：同一个进程里 WebKit 的 Service Worker 进程还活着，报的是 WebKitServiceWorker 的错；真应用重开时是 -1004
+        String cleared = out.get("sw.cleared.offline");
+        assertTrue(cleared != null && cleared.startsWith("error:") && !cleared.contains(","),
+                "清掉 Service Worker 以后断网还是「载入成功」：外壳不说连不上，用户看着一个点什么都没反应的旧页面 —— " + cleared);
+    }
+
+    @Test
     @DisplayName("服务器地址：https 的任何主机、本机的 http；只要协议 + 主机 + 端口、主机名小写；别的照默认 zhiqustudy.com")
     void 服务器地址() throws Exception {
         Map<String, String> out = runCheck();

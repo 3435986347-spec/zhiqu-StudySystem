@@ -73,7 +73,7 @@ public class HarnessController {
     public HarnessController(HarnessModelGateway gateway, HarnessRemoteTools remoteTools, HarnessSessionService sessions,
                              DeviceLoginService deviceLogin, AiService aiService, SysUserMapper userMapper,
                              HarnessUsageMapper usageMapper, ClientIpResolver ipResolver, BusinessClock clock,
-                             @Value("${app.harness.cli-latest:0.1.0}") String cliLatest,
+                             @Value("${app.harness.cli-latest:}") String cliLatest,
                              @Value("${app.harness.cli-minimum:0.1.0}") String cliMinimum,
                              com.zhiqu.service.support.SseHeartbeats heartbeats) {
         this.gateway = gateway;
@@ -85,7 +85,8 @@ public class HarnessController {
         this.usageMapper = usageMapper;
         this.ipResolver = ipResolver;
         this.clock = clock;
-        this.cliLatest = cliLatest;
+        // 不配就是打进 JAR 的那份命令行的版本（CliRelease）：原来写死 0.1.0，发了新版旧版也收不到提示（第一百二十六轮）
+        this.cliLatest = cliLatest == null || cliLatest.isBlank() ? com.zhiqu.service.harness.CliRelease.bundledVersion() : cliLatest.trim();
         this.cliMinimum = cliMinimum;
         this.heartbeats = heartbeats;
         AtomicInteger n = new AtomicInteger();

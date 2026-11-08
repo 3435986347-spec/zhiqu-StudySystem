@@ -457,15 +457,39 @@ export class Ui {
    * 一次只问一个（第一百二十轮）：几个子 agent 同时要确认时，原来两个问题一起挂着 —— 屏幕上是后一个，回车交给的是前一个，
    * 看着「写入 b.js？」按 y，批准的是 a.js。排队一个一个问；Ctrl+C 作废问题时，还排着没问出来的也一并按不同意。
    */
-  choose(question, options, fallback) {
+  choose(question, options, fallback, { signal } = {}) {
     const epoch = this.chooseEpoch;
-    const turn = this.chooseChain.then(() => (epoch === this.chooseEpoch ? this.chooseNow(question, options, fallback) : fallback));
+    const live = () => epoch === this.chooseEpoch && !(signal && signal.aborted);
+    const turn = this.chooseChain.then(() => (live() ? this.chooseNow(question, options, fallback, { signal }) : fallback));
     this.chooseChain = turn.catch(() => {});
     return turn;
   }
 
-  async chooseNow(question, options, fallback) {
-    const line = await this.ask(`${question} ${options.map((o) => this.paint.bold(`[${o.key}]`) + ` ${o.label}`).join('  ')} › `, { fresh: true });
+  /**
+   * signal：问的那一方停了（子 agent 被停掉，第一百二十六轮 review）—— 正问着的收起来、按 fallback，排着的轮到时不问。
+   * 原来只有 Ctrl+C 作废问题：子 agent 被 close_agent / 一句话结束停掉以后，它的问题照样挂着，主 agent 收不了尾，
+   * 按 y 也算不同意，接着打的下一句话被当成回答吃掉。
+   */
+  async chooseNow(question, options, fallback, { signal } = {}) {
+    const asked = this.ask(`${question} ${options.map((o) => this.paint.bold(`[${o.key}]`) + ` ${o.label}`).join('  ')} › `, { fresh: true });
+    let onAbort = null;
+    if (signal) {
+      const waiter = this.waiters[this.waiters.length - 1];
+      onAbort = () => {
+        const at = this.waiters.indexOf(waiter);
+        if (at < 0) return;                 // 已经答了
+        this.waiters.splice(at, 1);
+        this.dropQuestion('（不用回答了：问的那一方已经停下）');
+        waiter.resolve(null);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+    let line;
+    try {
+      line = await asked;
+    } finally {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+    }
     if (line == null) return fallback;
     const k = line.trim().toLowerCase();
     const hit = options.find((o) => o.key === k || (o.aliases || []).includes(k));

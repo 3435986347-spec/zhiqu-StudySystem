@@ -1,6 +1,7 @@
 // 子 agent（第一百二十三轮，Codex 同级第 8 步）：真的并行、只读的真只读、权限不超过主 agent、上限、一句话收尾、Ctrl+C、各自一份「读过什么」、确认一次只问一个。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
@@ -147,7 +148,6 @@ test('权限不超过主 agent：plan 档、exec 只读时派不了 worker（exp
   await runTurn(ctx, '干');
   const child = ctx.api.seen.find((s) => s.who === 'worker-1');
   assert.ok(!toolNames(child.body).includes('spawn_agent'), '子 agent 拿到了派子 agent 的工具');
-  assert.ok(!toolNames(child.body).includes('shell_output'), '子 agent 不给后台命令');
   assert.match(JSON.stringify(ctx.api.seen.find((s) => s.who === 'worker-1' && s.round === 2).body.messages), /不能再派子 agent/);
   assert.equal(ctx.agents.list().length, 1);
 });
@@ -315,18 +315,129 @@ test('确认一次只问一个：两个同时要确认时，屏幕上问的就�
   ui.close();
 });
 
-test('有系统沙箱时：主 agent 有后台命令，子 agent 没有（它停了之后后台命令谁来管说不清）', { skip: detectSandbox() ? false : '这台机器没有系统沙箱' }, async () => {
+const SANDBOX = detectSandbox() ? false : '这台机器没有系统沙箱';
+function pidAlive(pid) {
+  try { process.kill(pid, 0); } catch { return false; }
+  // macOS 上僵尸进程 kill(0) 也说「在」（CLAUDE.md 测试进程那条）：问 ps 它的状态
+  try { const st = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); return st !== '' && !st.startsWith('Z'); } catch { return false; }
+}
+
+test('子 agent 能跑命令、能起后台命令（用户定的）；只看 / 停得了自己起的', { skip: SANDBOX }, async () => {
   const root = tmpdir();
   const ctx = makeCtx({ root, script: (who, round) => {
-    if (who === 'lead') return round === 1 ? { calls: [{ name: 'spawn_agent', args: { role: 'worker', task: '干活' } }] } : round === 2 ? { calls: [{ name: 'wait_agent', args: {} }] } : { text: '好' };
+    if (who === 'lead') {
+      if (round === 1) return { calls: [{ name: 'shell', args: { command: 'sleep 30', background: true } }] };
+      if (round === 2) return { calls: [{ name: 'spawn_agent', args: { role: 'worker', task: '跑一下' } }] };
+      if (round === 3) return { calls: [{ name: 'wait_agent', args: {} }] };
+      return { text: '好' };
+    }
+    if (round === 1) return { calls: [{ name: 'shell', args: { command: 'echo 前台 && echo hi > fg.txt' } }, { name: 'shell', args: { command: 'echo 起来了; sleep 30', background: true } }] };
+    if (round === 2) return { calls: [{ name: 'shell_stop', args: { id: 'job-1' } }, { name: 'shell_output', args: { id: 'job-2' } }] };
+    if (round === 3) return { calls: [{ name: 'shell_stop', args: { id: 'job-2' } }] };
     return { text: '做完了' };
   } });
   ctx.local = new LocalTools({ root, sandbox: detectSandbox() });
-  await runTurn(ctx, '干');
-  const lead = toolNames(ctx.api.seen.find((s) => s.who === 'lead').body);
-  const child = toolNames(ctx.api.seen.find((s) => s.who === 'worker-1').body);
-  assert.ok(lead.includes('shell_output') && lead.includes('shell'), lead.join());
-  assert.ok(child.includes('shell') && !child.includes('shell_output') && !child.includes('shell_stop'), child.join());
+  try {
+    await runTurn(ctx, '干');
+    const child = toolNames(ctx.api.seen.find((s) => s.who === 'worker-1').body);
+    assert.ok(child.includes('shell') && child.includes('shell_output') && child.includes('shell_stop'), child.join());
+    const bg = ctx.api.seen.find((s) => s.who === 'worker-1').body.tools.find((t) => t.function.name === 'shell').function.parameters.properties;
+    assert.ok(bg.background, '子 agent 的 shell 没有 background 参数');
+    assert.equal(fs.readFileSync(path.join(root, 'fg.txt'), 'utf8').trim(), 'hi', '子 agent 的前台命令没跑');
+    const seenByChild = JSON.stringify(ctx.api.seen.find((s) => s.who === 'worker-1' && s.round === 3).body.messages);
+    assert.match(seenByChild, /job-1 不是你起的后台命令：你起的是 job-2/, '子 agent 停得了主 agent 的后台命令');
+    assert.match(seenByChild, /起来了/, '子 agent 看不到自己起的后台命令的输出');
+    const jobs = ctx.local.jobs.list();
+    assert.equal(jobs.find((j) => j.id === 'job-1').running, true, '主 agent 的后台命令被子 agent 停了');
+    assert.equal(jobs.find((j) => j.id === 'job-2').running, false);
+    assert.deepEqual(ctx.agents.get('worker-1').jobsStopped, [], '它自己停了，不该再记成「停下时还在跑」');
+  } finally {
+    ctx.local.jobs.stopAll();
+  }
+});
+
+test('子 agent 起的后台命令没停就交结论：先推一次「看完 / 停掉」，还不停就由它停下时停掉；进程真没了才算停下', { skip: SANDBOX }, async () => {
+  const root = tmpdir();
+  const ctx = makeCtx({ root, script: (who, round) => {
+    if (who === 'lead') {
+      if (round === 1) return { calls: [{ name: 'spawn_agent', args: { role: 'worker', task: '起个服务' } }] };
+      if (round === 2) return { calls: [{ name: 'wait_agent', args: {} }] };
+      return { text: '好' };
+    }
+    if (round === 1) return { calls: [{ name: 'shell', args: { command: 'echo $$ > pid.txt; sleep 30 & echo $! > child.txt; wait', background: true } }] };
+    return { text: '服务起来了' };   // 第 2 次（被推了一次）还是不停
+  } });
+  ctx.local = new LocalTools({ root, sandbox: detectSandbox() });
+  try {
+    await runTurn(ctx, '干');
+    const nudged = ctx.api.seen.find((s) => s.who === 'worker-1' && s.round === 3);
+    assert.ok(nudged, '交结论时它起的后台命令还在跑：没有推它一次');
+    assert.match(JSON.stringify(nudged.body.messages), /你起的后台命令 job-1 还在跑/);
+    assert.ok(!ctx.api.seen.find((s) => s.who === 'worker-1' && s.round === 4), '只推一次');
+    const agent = ctx.agents.get('worker-1');
+    assert.equal(agent.status, 'done');
+    assert.deepEqual(agent.jobsStopped, ['job-1']);
+    assert.equal(ctx.local.jobs.list()[0].running, false, '子 agent 算停下了，它起的后台命令还在跑');
+    for (const f of ['pid.txt', 'child.txt']) {
+      const pid = Number(fs.readFileSync(path.join(root, f), 'utf8'));
+      assert.ok(pid > 0 && !pidAlive(pid), `${f} 里的进程 ${pid} 还活着：连子进程一起停才算停下`);
+    }
+    const leadSaw = toolOutputs(ctx);
+    assert.match(leadSaw, /它起的后台命令 job-1 在它停下时还在跑，已经停掉了/, '主 agent 不知道它的后台命令被停了');
+  } finally {
+    ctx.local.jobs.stopAll();
+  }
+});
+
+test('close_agent / 一句话结束停下子 agent：它起的后台命令一起停，回来时进程已经没了', { skip: SANDBOX }, async () => {
+  for (const how of ['close', 'turn-end']) {
+    const root = tmpdir();
+    const ctx = makeCtx({ root, script: (who, round) => {
+      if (who === 'lead') {
+        if (round === 1) return { calls: [{ name: 'spawn_agent', args: { role: 'worker', task: '起个服务' } }] };
+        if (round === 2) return { delay: 2500, calls: how === 'close' ? [{ name: 'close_agent', args: { id: 'worker-1' } }] : [] , text: how === 'close' ? '' : '先这样' };
+        if (round === 3 && how === 'turn-end') return { text: '先这样' };
+        return { text: '好' };
+      }
+      if (round === 1) return { calls: [{ name: 'shell', args: { command: 'echo $$ > pid.txt; exec sleep 30', background: true } }] };
+      return { delay: 20_000, text: '还在忙' };
+    } });
+    ctx.local = new LocalTools({ root, sandbox: detectSandbox() });
+    try {
+      await runTurn(ctx, '干');
+      const agent = ctx.agents.get('worker-1');
+      assert.equal(agent.status, how === 'close' ? 'closed' : 'turn-end', how);
+      assert.deepEqual(agent.jobsStopped, ['job-1'], how);
+      const pid = Number(fs.readFileSync(path.join(root, 'pid.txt'), 'utf8'));
+      assert.ok(!pidAlive(pid), `${how}：子 agent 停下了，它起的后台命令 ${pid} 还活着`);
+    } finally {
+      ctx.local.jobs.stopAll();
+    }
+  }
+});
+
+test('子 agent 被停下：它正问着的确认当场收起（不等人回答）、排着的不再问；接着打的话不被吃掉', async () => {
+  const { ui, vt, input } = tty();
+  ui.beginLive();
+  const opts = [{ key: 'y', label: '写入' }, { key: 'n', label: '不写' }];
+  const ctrl = new AbortController();
+  const u = agentUi(ui, 'worker-1', () => ctrl.signal.aborted, () => ctrl.signal);
+  const asking = u.choose('写入 a.js？', opts, 'n');
+  const queued = u.choose('写入 b.js？', opts, 'n');
+  await tick(); await tick();
+  assert.match(vt.lines().join('\n'), /\[worker-1\] 写入 a\.js？/);
+  ctrl.abort();
+  const settled = await Promise.race([Promise.all([asking, queued]), sleep(500).then(() => 'still-waiting')]);
+  assert.deepEqual(settled, ['n', 'n'], '子 agent 停下了，它的问题还在等人回答（主 agent 收不了尾）');
+  await tick(); await tick();
+  const screen = vt.lines().join('\n');
+  assert.doesNotMatch(screen, /写入 b\.js？/, '排着的又问出来了');
+  assert.match(screen, /不用回答了/, '收起来的问题没留下为什么');
+  ui.endLive();
+  const next = ui.ask('', {});
+  input.write('下一句话\r'); await tick(); await tick();
+  assert.equal(await Promise.race([next, sleep(500).then(() => '没收到')]), '下一句话', '接着打的话被当成对已经作废的问题的回答吃掉了');
+  ui.close();
 });
 
 test('子 agent 停下了就不再问确认；问出去、回答回来时已经停了，也按不同意', async () => {
@@ -397,4 +508,19 @@ test('真的命令行入口（zhiqu exec）：建好了子 agent，默认只读�
   const r2 = await runZhiqu('exec', ['看看'], { url: off.url, home });
   assert.equal(r2.code, 0, r2.stderr);
   assert.ok(!off.seen[0].tools.some((x) => x.function.name === 'spawn_agent'), '关掉了还下发');
+});
+
+test('服务器上（没下发 background）：模型照别处的说法传了 background: true，也只当前台命令跑、不起后台命令', async () => {
+  const { ArtifactTools } = await import('../src/tools/drafts.js');
+  const root = tmpdir();
+  const requests = [];
+  const exec = async (req) => { requests.push(req); return { exitCode: 0, output: 'ok\n', timedOut: false, millis: 5 }; };
+  const ctx = makeCtx({ root, script: (who, round) => (round === 1 ? { calls: [{ name: 'shell', args: { command: 'sleep 1', background: true } }] } : { text: '好' }) });
+  ctx.agents = null;
+  ctx.local = new ArtifactTools({ root, exec, canWrite: true, canShell: true, shellWrite: true, hosted: true });
+  await runTurn(ctx, '跑');
+  const shell = ctx.api.seen[0].body.tools.find((t) => t.function.name === 'shell');
+  assert.ok(shell && !shell.function.parameters.properties.background, '服务器上不该下发 background');
+  assert.equal(requests.length, 1, JSON.stringify(requests));
+  assert.ok(!requests[0].background, `没下发 background 却起了后台命令：${JSON.stringify(requests[0])}`);
 });

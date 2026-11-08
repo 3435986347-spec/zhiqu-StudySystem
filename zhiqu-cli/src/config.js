@@ -125,6 +125,9 @@ export function resolveSettings(root, flags = {}) {
   const mode = normalizeMode(pick('mode')) || 'ask';
   return {
     server: stripSlash(pick('server', 'ZHIQU_SERVER') || DEFAULT_SERVER),
+    // 服务器地址是从哪来的（第一百二十六轮 review）：连不上本机时教人换，要说对改哪一处 ——
+    // 「zhiqu login --server」只写用户配置，地址要是从环境变量 / 项目设置来的，照着做下一次还是老地址
+    serverSource: flags.server != null ? 'flag' : process.env.ZHIQU_SERVER ? 'env' : project.server != null ? 'project' : user.server != null ? 'user' : 'default',
     token: process.env.ZHIQU_TOKEN || user.token || '',
     model: pick('model') ?? null,
     mode,

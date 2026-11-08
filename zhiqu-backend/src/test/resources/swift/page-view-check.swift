@@ -407,6 +407,83 @@ step("site.close", { closedPort = listener.port!.rawValue; listener.cancel(); cl
 step("site.down", { siteLoads.removeAll(); siteJs("location.href = 'http://localhost:\(closedPort)/down'") }, until: { !siteLoads.isEmpty })
 step("site.down.report", { out("site.down", siteLoads.joined(separator: ",")) }, until: { true })
 
+// 14b. 断网时 Service Worker 拿缓存顶上（第一百二十六轮，用户在真窗口里停了验证站、按 ⌘R 照出来的）：
+//      WebKit 当成载入成功，外壳就不说「连不上」。照外壳的启动走：页面撤掉（应用退出）→ clearOfflineCache → 新页面打开。
+//      对照组：同样装上、不清 —— 必须是「载入成功」，不然这一段什么都没验（可能 Service Worker 根本没装上）。
+//      每组一份不落盘的网站数据、一个本机小服务器（Service Worker 要安全来源：localhost 的 http 算）。
+//      同一个进程里 WebKit 的 Service Worker 进程还活着，清了以后报的是 WebKitServiceWorker 的错，真应用重开时是 -1004；
+//      对外壳来说要的是同一件事：没载入成（Java 那边只认「是个错误」）
+final class SwSite {
+    let listener = try! NWListener(using: .tcp, on: .any)
+    var served: [String] = []
+    init() {
+        listener.newConnectionHandler = { [weak self] conn in
+            conn.start(queue: .main)
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
+                let head = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                let path = head.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+                self?.served.append(path)
+                let worker = path.hasPrefix("/sw.js")
+                // 和发布的 service-worker.js 同一个形状：先去网络，取不到拿缓存
+                let body = worker
+                    ? "self.addEventListener('install', e => { e.waitUntil(caches.open('c').then(c => c.add('/page')).then(() => self.skipWaiting())) });"
+                      + "self.addEventListener('activate', e => { e.waitUntil(self.clients.claim()) });"
+                      + "self.addEventListener('fetch', e => { e.respondWith(fetch(e.request).catch(() => caches.match(e.request, {ignoreSearch: true}))) });"
+                    : "<html><body>page<script>navigator.serviceWorker.register('/sw.js').then(() => navigator.serviceWorker.ready).then(() => window.webkit.messageHandlers.t.postMessage('sw-ready'))</script></body></html>"
+                let reply = "HTTP/1.1 200 OK\r\nContent-Type: \(worker ? "text/javascript" : "text/html")\r\nCache-Control: no-store\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                conn.send(content: reply.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
+            }
+        }
+        listener.start(queue: .main)
+    }
+}
+func swPage(_ store: WKWebsiteDataStore, _ inbox: Inbox, _ loads: @escaping (String) -> Void) -> PageView {
+    let page = PageView(frame: NSRect(x: 0, y: 0, width: 300, height: 200), persistent: false, dataStore: store)
+    page.allowedHosts = ["localhost"]
+    page.configuration.userContentController.add(inbox, name: "t")
+    page.reportFailure = { _, _ in }   // 桩：不许在用户屏幕上弹提示框
+    page.openExternally = { _ in }
+    page.onLoad = { error in loads(error.map { "error:\(($0 as NSError).domain):\(($0 as NSError).code)" } ?? "ok") }
+    return page
+}
+final class SwGroup {
+    let name: String, clear: Bool
+    let site = SwSite(), store = WKWebsiteDataStore.nonPersistent(), inbox = Inbox()
+    var page: PageView?
+    var loads: [String] = []
+    var port: UInt16 = 0
+    init(_ name: String, clear: Bool) { self.name = name; self.clear = clear }
+}
+for g in [SwGroup("sw.kept", clear: false), SwGroup("sw.cleared", clear: true)] {
+    g.page = swPage(g.store, g.inbox) { g.loads.append($0) }
+    step("\(g.name).listener", {}, until: { g.site.listener.port != nil })
+    step("\(g.name).install", {
+        g.port = g.site.listener.port!.rawValue
+        g.page!.load(URLRequest(url: URL(string: "http://localhost:\(g.port)/page")!))
+    }, until: { g.inbox.messages.contains("sw-ready") })
+    // 再载入一次：这一次由装好的 Service Worker 经手（第一次载入时它还没接管）
+    step("\(g.name).controlled", { g.loads.removeAll(); g.page!.reload() }, until: { !g.loads.isEmpty })
+    var downAt = Date()
+    step("\(g.name).down", { g.site.listener.cancel(); downAt = Date() }, until: { Date().timeIntervalSince(downAt) > 0.3 })
+    // 应用退出：页面没了。重开：清（清的那一组）完了才建页面、打开 —— 和 ZhiquShell 的 applicationDidFinishLaunching 一样
+    var cleared = false
+    step("\(g.name).relaunch", {
+        g.page?.removeFromSuperview()
+        g.page = nil
+        if g.clear { clearOfflineCache(g.store) { cleared = true } } else { cleared = true }
+    }, until: { cleared })
+    step("\(g.name).reopen", {
+        g.page = swPage(g.store, g.inbox) { g.loads.append($0) }
+        g.loads.removeAll()
+        g.page!.load(URLRequest(url: URL(string: "http://localhost:\(g.port)/page")!))
+    }, until: { !g.loads.isEmpty })
+    step("\(g.name).report", {
+        out("\(g.name).installed", g.inbox.messages.contains("sw-ready"))
+        out("\(g.name).workerServed", g.site.served.contains("/sw.js"))
+        out("\(g.name).offline", g.loads.joined(separator: ","))
+    }, until: { true })
+}
+
 // 15. 服务器地址（Server.swift）：https 的任何主机、本机的 http；只要协议 + 主机 + 端口，主机名小写
 step("server", {
     let cases: [(String, String)] = [

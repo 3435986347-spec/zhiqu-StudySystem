@@ -3,7 +3,8 @@
 //
 // 两种：explorer 只读探索（plan 档的工具、只读沙箱 —— 是代码保证的，不是说明里叫它别改；Codex 的 explorer 没有单独的只读沙箱），
 // worker 干活（和主 agent 同一档）。都不超过主 agent：plan 档、exec 只读时不能派 worker；「本会话都允许」两边共用。
-// 子 agent 不能再派子 agent（深度 1），不给后台命令（活多久、谁来停说不清）。
+// 子 agent 不能再派子 agent（深度 1）。能跑命令、能起后台命令（第一百二十六轮用户定的），但只管得了自己起的，
+// 而且它停下之前（做完、被停、预算到了、一句话结束、Ctrl+C）它起的后台命令要先停下、进程真没了才算停下（settle）。
 //
 // 上限（只认用户级的 ~/.zhiqu/config.json，项目里的 .zhiqu/settings.json 不能替用户调高花费）：同时在跑的个数、一句话里派的个数、
 // 一句话里子 agent 一共花的 token（到了就停下所有在跑的、不再派），每个的轮数。
@@ -140,7 +141,7 @@ export function childLocal(local) {
  * 子 agent 的终端：每一行前面标上是谁；不边收边打、不画自己的「思考中」（主 agent 那个一直在转，状态行写着哪个子 agent 在做什么）；
  * 确认问题标上是谁，停下了就不再问（问出去的回答回来时已经停了，也按不同意）。
  */
-export function agentUi(ui, label, stopped) {
+export function agentUi(ui, label, stopped, signal = null) {
   const tag = `[${label}]`;
   const quietMd = { feed() {}, finish() {}, wroteAnything: false };
   return new Proxy(ui, {
@@ -154,7 +155,8 @@ export function agentUi(ui, label, stopped) {
         case 'line': return (t = '') => target.line(t ? `${target.paint.dim(tag)} ${t}` : t);
         case 'choose': return async (q, options, fallback) => {
           if (stopped()) return fallback;
-          const pick = await target.choose(`${tag} ${q}`, options, fallback);
+          // 它停下的那一刻，正问着的收起来、排着的不再问（不用等人回答：主 agent 正等着它停下）
+          const pick = await target.choose(`${tag} ${q}`, options, fallback, { signal: signal ? signal() : undefined });
           return stopped() ? fallback : pick;
         };
         case 'markdown': return () => quietMd;
@@ -221,6 +223,18 @@ export class SubAgents {
     if (agent.status !== 'running') return;
     agent.stopReason = agent.stopReason || reason;
     agent.controller.abort();
+  }
+
+  /** 它起的、还在跑的后台命令停掉，等进程真没了（ShellJobs.stop 连进程组一起杀、等它退）。停了哪些记下来，结论里说 */
+  async settle(agent) {
+    const jobs = agent.ctx && agent.ctx.local && agent.ctx.local.jobs;
+    if (!jobs || !agent.jobs.size) return;
+    const left = jobs.running().map((j) => j.id).filter((id) => agent.jobs.has(id));
+    if (!left.length) return;
+    await Promise.allSettled(left.map((id) => jobs.stop(id)));
+    agent.jobsStopped.push(...left);
+    const parent = agent.parent;
+    if (parent && parent.ui) parent.ui.note(`· [${agent.id}] 停下之前停掉了它起的后台命令 ${left.join('、')}`);
   }
 
   /** 主 agent 的一句话结束：还在跑的停掉，不留到下一句 */
@@ -301,6 +315,7 @@ export class SubAgents {
     const agent = {
       id, role, task, status: 'running', parent, calls: 0, tokens: 0, turns: 0,
       startedAt: this.now(), endedAt: null, result: null, error: null, stopReason: null, reported: false, changedFiles: new Set(),
+      jobs: new Set(), jobsStopped: [],
     };
     agent.ctx = this.childContext(parent, agent);
     this.agents.set(id, agent);
@@ -313,7 +328,7 @@ export class SubAgents {
     const explorer = agent.role === 'explorer';
     return {
       ...parent,
-      ui: agentUi(parent.ui, agent.id, () => !agent.controller || agent.controller.signal.aborted),
+      ui: agentUi(parent.ui, agent.id, () => !agent.controller || agent.controller.signal.aborted, () => agent.controller && agent.controller.signal),
       mode: explorer ? 'plan' : parent.mode,
       execReadOnly: explorer ? true : parent.execReadOnly,
       exec: true,                 // 结论不当成回答打出来：交回主 agent
@@ -331,6 +346,8 @@ export class SubAgents {
       onUsage: (u) => this.charge(agent, u),
       changedFiles: agent.changedFiles,
       local: childLocal(parent.local),
+      ownJobs: agent.jobs,        // 它起的后台命令：只看 / 停得了这些，停下之前要先停掉（settle）
+      jobsNudged: false,
     };
   }
 
@@ -346,17 +363,22 @@ export class SubAgents {
       if (outer.aborted) onOuter();
       else outer.addEventListener('abort', onOuter, { once: true });
     }
+    agent.ctx.jobsNudged = false;
     agent.promise = (async () => {
+      let status;
       try {
         const r = await this.runTurn(agent.ctx, text, { signal: agent.controller.signal });
         agent.result = r;
         agent.turns += 1;
-        agent.status = agent.controller.signal.aborted ? (agent.stopReason || 'closed') : r.stalled ? 'failed' : 'done';
+        status = agent.controller.signal.aborted ? (agent.stopReason || 'closed') : r.stalled ? 'failed' : 'done';
         if (r.stalled) agent.error = r.finalText;
       } catch (e) {
-        agent.status = agent.controller.signal.aborted ? (agent.stopReason || 'closed') : 'failed';
-        if (agent.status === 'failed') agent.error = e && e.message ? e.message : String(e);
+        status = agent.controller.signal.aborted ? (agent.stopReason || 'closed') : 'failed';
+        if (status === 'failed') agent.error = e && e.message ? e.message : String(e);
       } finally {
+        // 它起的后台命令先停下、进程真没了，它才算停下（不然 wait_agent / close_agent 回来时 dev server 还占着端口）
+        await this.settle(agent);
+        agent.status = status || agent.stopReason || 'failed';
         if (outer) outer.removeEventListener('abort', onOuter);
         agent.endedAt = this.now();
         const parent = agent.parent;
@@ -433,6 +455,7 @@ export class SubAgents {
       if (agent.status !== 'failed') lines.push(`要它接着做：send_input（id: ${agent.id}）。`);
     } else lines.push('（它没有写结论）');
     if (agent.changedFiles.size) lines.push(`改过的文件：${[...agent.changedFiles].join('、')}`);
+    if (agent.jobsStopped.length) lines.push(`它起的后台命令 ${agent.jobsStopped.join('、')} 在它停下时还在跑，已经停掉了（要一直跑的，比如 dev server，你自己起）。`);
     return lines.join('\n');
   }
 

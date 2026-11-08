@@ -48,7 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         makeWindow()
         NSApp.activate(ignoringOtherApps: true)
-        openHome()
+        // 先清掉以前装上的 Service Worker 和它的缓存，再打开页面（第一百二十六轮）：不然断网时它拿缓存的页面顶上，
+        // WebKit 当成载入成功，外壳不说「连不上」。登录态在 localStorage 里，不清
+        clearOfflineCache(webView.configuration.websiteDataStore) { [weak self] in self?.openHome() }
     }
 
     /// 打开网站上的看板（启动时、没连上时按 ⌘R）
@@ -106,8 +108,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func loaded(_ error: Error?) {
         guard let error else {
             loadingLabel.isHidden = true
+            webView.isHidden = false
             return
         }
+        // 没载入成时 WebKit 照样留着上一页（或者 502 的白页）：说明压在一个点什么都没反应的旧页面上，看着像卡死。
+        // 页面先藏起来，只剩说明；载入成了再露出来（第一百二十六轮）
+        webView.isHidden = true
         fail("连不上 \(Server.url.host ?? "服务器")：\(error.localizedDescription)\n数据都在服务器上，断网时看不了。联网后按 ⌘R 重新载入。")
     }
 

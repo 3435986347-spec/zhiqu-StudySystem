@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -71,6 +72,23 @@ class DesktopPackagingTest {
         String loaded = shell.substring(shell.indexOf("private func loaded(_ error: Error?)"), shell.indexOf("@objc func reload(_ sender: Any?)"));
         assertTrue(loaded.contains("loadingLabel.isHidden = true") && loaded.contains("fail(") && loaded.contains("⌘R"),
                 "载入结果没用上：成功时要收起「正在连接」，失败时要说清楚、告诉人按 ⌘R 重来：\n" + loaded);
+    }
+
+    /** 第一百二十六轮：用户在真窗口里停了验证站、按 ⌘R，窗口照样是旧页面、不说连不上 —— 页面装的 Service Worker 拿缓存顶上了 */
+    @Test
+    @DisplayName("外壳启动先 clearOfflineCache 再打开首页；没载入成时页面藏起来、只剩说明，载入成了再露出来")
+    void 启动先清离线缓存() throws IOException {
+        String shell = com.zhiqu.SourceText.stripComments(read(SHELL_DIR.resolve("ZhiquShell.swift")));
+        String launch = shell.substring(shell.indexOf("func applicationDidFinishLaunching"), shell.indexOf("private func openHome()"));
+        assertTrue(launch.contains("clearOfflineCache(webView.configuration.websiteDataStore) { [weak self] in self?.openHome() }"),
+                "启动时没先清掉以前装上的 Service Worker（或者清完之前就打开了首页）：断网时它拿缓存的页面顶上，外壳不说连不上：\n" + launch);
+        assertEquals(1, launch.split("openHome\\(\\)", -1).length - 1, "启动时 openHome() 只该在清完之后调一次：\n" + launch);
+        String loaded = shell.substring(shell.indexOf("private func loaded(_ error: Error?)"), shell.indexOf("@objc func reload(_ sender: Any?)"));
+        int ok = loaded.indexOf("webView.isHidden = false");
+        int hide = loaded.indexOf("webView.isHidden = true");
+        int fail = loaded.indexOf("fail(");
+        assertTrue(ok >= 0 && ok < loaded.indexOf("return"), "载入成了没把页面露出来（上一次没连上时藏起来的）：\n" + loaded);
+        assertTrue(hide > ok && hide < fail, "没载入成时页面没藏起来：说明压在一个点什么都没反应的旧页面上：\n" + loaded);
     }
 
     /**

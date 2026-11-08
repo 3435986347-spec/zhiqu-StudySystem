@@ -9,7 +9,7 @@ set -euo pipefail
 BASE=${BASE:-/home/ubuntu/zhiqu-StudySystem}
 CONFIG=$BASE/config/application-prod.yml
 CLI=$BASE/deploy/zhiqu-cli
-[ -f "$CLI/test/sandbox-hosted.test.js" ] || { echo "找不到 $CLI：deploy-from-dev.sh 会把命令行的源码和判据传上来" >&2; exit 1; }
+[ -f "$CLI/test/sandbox-hosted.test.js" ] || { echo "找不到 ${CLI}：deploy-from-dev.sh 会把命令行的源码和判据传上来" >&2; exit 1; }
 RESULT=$(mktemp)
 chmod 644 "$RESULT"
 set +e

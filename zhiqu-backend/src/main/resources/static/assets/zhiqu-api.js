@@ -45,6 +45,10 @@
     // Old shell caches are removed exclusively by the active Service Worker's activate handler.
     // Keeping one owner avoids the page deleting a newly installed cache with a stale version constant.
     if (!('serviceWorker' in navigator)) return;
+    // 桌面应用里不装（第一百二十六轮）：断网 / 服务器停了的时候它拿缓存的页面顶上，WebKit 当成载入成功，
+    // 外壳就不说「连不上」—— 用户看到的是一个点什么都没反应的旧页面。桌面版的规矩是断网看不了、说清楚（docs/desktop-remote-plan.md）。
+    // 外壳启动时也会清掉以前装上的（ZhiquShell.swift 的 clearOfflineCache）
+    if (desktopBridge()) return;
     // 带宽先给页面：注册（连同它的预取）等页面加载完再过一会儿。线上服务器只有 1.5 Mbps，原来第一次打开时
     // 预取的几十个文件和页面自己的脚本抢同一根管子，看起来像卡死（第一百二十轮）
     var register = function () {

@@ -32,7 +32,7 @@
 | 长命令 / 后台进程 | exec 会话、`/ps`、`/stop` | 有（第一百一十二轮，网页同一套）：`background`、`shell_output`、`shell_stop`、`/ps`、`/stop`；不能往进程里写 stdin | 5 |
 | 非交互 | `codex exec`：`--json`、`--output-schema`、`-o`、stdin、`exec resume` | 有（第一百一十三轮）：`zhiqu exec`，同样的参数和事件名 | 6 |
 | 代码审查 | `/review`、`codex review` | 无 | 7 |
-| 子 agent | 有，默认开，继承权限 | 有（第一百二十三轮）：explorer（真只读）/ worker，继承权限、深度 1、并发 / 个数 / token 上限；网页还没有 | 8 |
+| 子 agent | 有，默认开，继承权限 | 有（第一百二十三轮，npm 0.2.0）：explorer（真只读）/ worker，继承权限、深度 1、并发 / 个数 / token 上限；能起后台命令、停下前先停掉；网页还没有 | 8 |
 | 图片输入 | `--image` | 无 | 9 |
 | `/diff`、`/fork`、`/status`、`--cd`、`--add-dir`、`--worktree`、hooks、命令规则 | 有 | 无 | 9 |
 | 跑的时候插话（steer） | 有 | 无 | 9 |
@@ -51,7 +51,7 @@
 | 5 | 长命令：后台跑、看输出、停，`/ps`、`/stop` | 真进程 | 做完（第一百一十二轮）；还不能往进程里写 stdin |
 | 6 | `zhiqu exec`：只把结论写 stdout、`--json` 事件流、`--output-schema`、`-o`、stdin、`exec resume --last`，默认只读 | 端到端 | 做完（第一百一十三轮） |
 | 7 | `/review`、`zhiqu review`：只读，给分优先级的发现 | 端到端 | 做完（第一百一十四轮；网页的 `/review` 第一百一十八轮和 `/` 面板一起做） |
-| 8 | 子 agent：只读探索、干活两种，继承权限，有并发和预算上限 | 端到端 | 做完（第一百二十三轮，命令行）；网页的代码模式还没有（没有显示子 agent 的地方）；真模型爱不爱用、用了好不好没量 |
+| 8 | 子 agent：只读探索、干活两种，继承权限，有并发和预算上限 | 端到端 | 做完（第一百二十三轮，命令行；npm 0.2.0 起才在用户手里，第一百二十六轮）；第一百二十六轮起子 agent 能起后台命令、停下前先停掉自己的（用户定的）；网页的代码模式还没有（没有显示子 agent 的地方）；真模型爱不爱用、用了好不好没量 |
 | 9 | 图片、`/diff`、`/fork`、`/status`、`--cd`、`--add-dir`、`--worktree`、插话、hooks、命令规则 | 用例 | |
 | 10 | **对照评测**：工作目录给一个只有基线提交的 `.git`；Codex + DeepSeek 和 zhiqu + DeepSeek 同题配对（**要用户点头：装 Codex、花钱**） | 官方评分 | |
 

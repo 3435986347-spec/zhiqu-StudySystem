@@ -11,7 +11,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 CONFIG=$BASE/config/application-prod.yml
 RAG=$BASE/rag
 [ "$(id -u)" = 0 ] || { echo "要 root：sudo bash $0 $BUNDLE"; exit 1; }
-[ -f "$CONFIG" ] || { echo "没有 $CONFIG：先跑 install.sh"; exit 1; }
+[ -f "$CONFIG" ] || { echo "没有 ${CONFIG}：先跑 install.sh"; exit 1; }
 id zhiqu >/dev/null 2>&1 || { echo "没有 zhiqu 账号：先跑 install.sh"; exit 1; }
 for f in python.tar.gz python.sha256 requirements-server.txt; do [ -f "$BUNDLE/$f" ] || { echo "离线包里缺 $f"; exit 1; }; done
 [ -d "$BUNDLE/wheels" ] && [ -d "$BUNDLE/app" ] && [ -d "$BUNDLE/model" ] || { echo "离线包里缺 wheels / app / model"; exit 1; }

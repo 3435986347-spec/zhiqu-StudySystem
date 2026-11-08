@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const source = fs.readFileSync(process.argv[2], 'utf8');
 function slice(start, end) { const a = source.indexOf(start), b = source.indexOf(end, a); if (a < 0 || b < 0) throw Error(start); return source.slice(a, b); }
-const code = slice('  var SHELL_CACHE_DELAY_MS', '  function token()');
+// 第一百二十六轮起 maintainShellCache 先看桌面应用的桥（桌面里不注册）：把发布的 desktopBridge 一起带上，这里的 window 没有桥 = 浏览器
+const code = slice('  var SHELL_CACHE_DELAY_MS', '  function token()') + slice('  function desktopBridge() {', '  /** 迷你番茄钟的桥');
 
 function fixture(readyState) {
   const calls = [];

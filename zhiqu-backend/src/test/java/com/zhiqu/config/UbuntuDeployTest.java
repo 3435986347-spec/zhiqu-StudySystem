@@ -234,6 +234,75 @@ class UbuntuDeployTest {
         assertTrue(dev.contains("grep -vE '^(#|pytest=="), "测试用的 pytest 不装到服务器上");
     }
 
+    /**
+     * 第一百二十六轮：服务器告诉命令行的「最新版本」是部署时打进 JAR 的那份 zhiqu-cli/package.json（CliRelease）。
+     * npm 上还没发就部署，所有旧版每次启动都被提示去装一个装不到的版本。真跑部署脚本：npm 换成桩，
+     * ssh / mvn 换成一调就记下来的桩 —— 没发的版本在第一步就停下、什么都没传、什么都没编。
+     */
+    @Test
+    @DisplayName("部署之前先看 npm 上有没有这个版本的命令行：没有就停下（不编、不传）；有就往下走；SKIP_NPM_CHECK=1 写明了才跳过")
+    void 先发npm再部署(@org.junit.jupiter.api.io.TempDir Path tmp) throws Exception {
+        Path bin = Files.createDirectories(tmp.resolve("bin"));
+        Path calls = tmp.resolve("calls.log");
+        String version = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(Files.readString(Path.of("..", "zhiqu-cli", "package.json"))).path("version").asText();
+        // npm view zhiqu@<版本> version：PUBLISHED 里列着的版本才回
+        stub(bin, "npm", "echo \"npm $*\" >> " + calls + "\n"
+                + "want=\"${2#zhiqu@}\"\n"
+                + "for v in $PUBLISHED; do [ \"$v\" = \"$want\" ] && { echo \"$v\"; exit 0; }; done\n"
+                + "echo 'npm error code E404' >&2; exit 1\n");
+        for (String tool : new String[]{"mvn", "ssh", "rsync", "du"}) {
+            stub(bin, tool, "echo \"" + tool + " $*\" >> " + calls + "\nexit 1\n");
+        }
+        String node = com.zhiqu.NodeRunner.findNode();
+        if (node == null) {
+            assertTrue(Boolean.getBoolean("zhiqu.skipNodeTests"), "找不到 node：部署脚本用 node 读版本号，这条判据没有跑 —— 这不是通过");
+            return;
+        }
+        // findNode 在 PATH 上找到时回的是「node」这个词：换成真路径放进桩目录（PATH 只留桩目录和系统目录）
+        Path realNode = Path.of(new String(new ProcessBuilder(node, "-p", "process.execPath").start().getInputStream().readAllBytes()).trim());
+        Files.createSymbolicLink(bin.resolve("node"), realNode);
+
+        Run missing = deploy(bin, calls, "0.0.1 0.0.2", false);
+        assertTrue(missing.code != 0, "npm 上没有 " + version + " 还往下部署了：\n" + missing.out);
+        assertTrue(missing.out.contains("npm 上还没有 zhiqu@" + version), missing.out);
+        assertTrue(missing.calls.contains("npm view zhiqu@" + version + " version"), "没去问 npm：" + missing.calls);
+        for (String tool : new String[]{"mvn", "ssh", "rsync"}) {
+            assertFalse(missing.calls.contains(tool + " "), "没发 npm 就已经动手了（" + tool + "）：\n" + missing.calls);
+        }
+
+        // 对照：发过了就往下走（走到第一个桩 mvn 失败为止） —— 不然上面停下可能只是脚本一开头就坏了
+        Run published = deploy(bin, calls, "0.0.1 " + version, false);
+        assertTrue(published.calls.contains("mvn "), "npm 上有这个版本却没往下走：\n" + published.out + "\n" + published.calls);
+
+        Run skipped = deploy(bin, calls, "", true);
+        assertFalse(skipped.calls.contains("npm "), "SKIP_NPM_CHECK=1 还去问 npm：" + skipped.calls);
+        assertTrue(skipped.calls.contains("mvn "), "SKIP_NPM_CHECK=1 没往下走：\n" + skipped.out);
+    }
+
+    private record Run(int code, String out, String calls) {
+    }
+
+    private static void stub(Path bin, String name, String body) throws Exception {
+        Path f = bin.resolve(name);
+        Files.writeString(f, "#!/bin/bash\n" + body);
+        assertTrue(f.toFile().setExecutable(true));
+    }
+
+    private static Run deploy(Path bin, Path calls, String published, boolean skip) throws Exception {
+        Files.deleteIfExists(calls);
+        ProcessBuilder pb = new ProcessBuilder("bash", DIR.resolve("deploy-from-dev.sh").toString()).redirectErrorStream(true);
+        pb.environment().put("PATH", bin + ":/usr/bin:/bin");
+        pb.environment().put("PUBLISHED", published);
+        pb.environment().put("ZHIQU_HOST", "nobody@127.0.0.1");
+        if (skip) pb.environment().put("SKIP_NPM_CHECK", "1");
+        Process p = pb.start();
+        p.getOutputStream().close();
+        String out = new String(p.getInputStream().readAllBytes());
+        assertTrue(p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS), "部署脚本没停下：" + out);
+        return new Run(p.exitValue(), out, Files.exists(calls) ? Files.readString(calls) : "");
+    }
+
     @Test
     @DisplayName("脚本语法都对（bash -n）")
     void 脚本语法() throws Exception {
