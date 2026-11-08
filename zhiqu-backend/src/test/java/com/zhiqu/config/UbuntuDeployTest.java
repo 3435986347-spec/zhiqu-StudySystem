@@ -185,6 +185,56 @@ class UbuntuDeployTest {
     }
 
     @Test
+    @DisplayName("RAG 旁路（第一百二十二轮）：跟着后端起（后端不等它）、跟着后端停；只听本机、一个字节都不往外发、有内存上限；模板里默认开")
+    void RAG旁路的单元() throws Exception {
+        String rag = code("zhiqu-rag.service");
+        assertTrue(rag.contains("User=zhiqu\n"));
+        assertTrue(rag.contains("--host 127.0.0.1 --port 8001"), "旁路只听本机");
+        assertTrue(rag.contains("PartOf=zhiqu-backend.service"), "后端停、重启，它跟着");
+        assertTrue(rag.contains("IPAddressDeny=any\nIPAddressAllow=localhost\n"), "它只处理用户的资料、只回本机的后端：不往外发");
+        assertTrue(rag.contains("Environment=HF_HUB_OFFLINE=1") && rag.contains("Environment=TRANSFORMERS_OFFLINE=1"), "模型是本地目录，启动时不下载");
+        assertTrue(rag.contains("MemoryMax="), "2 核 2G 的机器");
+        assertTrue(rag.contains("ReadWritePaths=/home/ubuntu/zhiqu-StudySystem/data/rag\n"), "只写得了自己的数据目录");
+        assertTrue(rag.contains("EnvironmentFile=/home/ubuntu/zhiqu-StudySystem/config/rag.env"));
+
+        String backend = code("zhiqu-backend.service");
+        String wants = backend.lines().filter(l -> l.startsWith("Wants=")).findFirst().orElse("");
+        String after = backend.lines().filter(l -> l.startsWith("After=")).findFirst().orElse("");
+        assertTrue(wants.contains("zhiqu-rag.service"), "后端起来时把旁路也带起来：" + wants);
+        assertFalse(after.contains("zhiqu-rag"), "后端不等旁路：它要十秒左右，没起来时后端退回关键词检索");
+
+        String yml = code("application-prod.example.yml");
+        int rag0 = yml.indexOf("  rag:\n");
+        assertTrue(rag0 > 0 && yml.indexOf("    enabled: true\n", rag0) == yml.indexOf("    enabled:", rag0), "模板里 RAG 默认开（用户要的）");
+    }
+
+    @Test
+    @DisplayName("RAG 的安装：离线（服务器上不从外网下）、Python 先校验再解开、torch 只要 CPU 的；令牌照后端的配置抄、不打印；配置只翻 rag.enabled 一个值")
+    void RAG的安装() throws Exception {
+        String install = code("install-rag.sh");
+        assertTrue(install.contains("pip install -q --no-index --find-links"), "服务器上只认离线包里的 wheel");
+        int check = install.indexOf("sha256sum -c");
+        int unpack = install.indexOf("tar -xzf \"$BUNDLE/python.tar.gz\"");
+        assertTrue(check > 0 && unpack > check, "Python 先校验再解开");
+        assertTrue(install.contains("token = block['service-token'][1]") && install.contains("RAG_SERVICE_TOKEN={token}"), "令牌照后端的配置抄：两边对不上旁路就白装");
+        assertTrue(install.contains("RAG_INDEX_VERSION={version}") && install.contains("version = block['index-version'][1]"),
+                "索引版本两边要一字不差，不然后端当成版本不对、退回关键词");
+        // 两道各查各的：写的时候就是 640（没有一刻是谁都能读的），最后再 chmod 一次（文件原来就在、权限不对时）
+        assertTrue(install.contains("os.open(env['ZQ_ENV'] + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)"), "rag.env 里有令牌：写的时候就要 640");
+        assertTrue(install.contains("chown root:zhiqu \"$CONFIG\" \"$BASE/config/rag.env\" && chmod 640 \"$CONFIG\" \"$BASE/config/rag.env\""), "最后再定一次属主和权限");
+        assertFalse(install.matches("(?s).*echo[^\\n]*\\$TOKEN.*"), "令牌不打印");
+        assertTrue(install.contains("lines[i] = '    enabled: true'") && install.contains("cp -p \"$CONFIG\" \"$CONFIG.bak-rag-"),
+                "配置只翻一个值、先留一份（主密钥一换，库里的密文就解不开）");
+
+        String dev = code("rag-from-dev.sh");
+        assertTrue(dev.contains("s/^torch==([0-9.]+)$/torch==\\1+cpu/"), "torch 换成 CPU 版：PyPI 上 Linux 的默认版会把几 GB 的 CUDA 库一起拉下来");
+        assertTrue(dev.contains("--index-url https://download.pytorch.org/whl/cpu"));
+        assertTrue(dev.contains("ls \"$OUT\"/wheels/nvidia_*"), "下完再查一遍有没有 CUDA 的库");
+        assertTrue(dev.matches("(?s).*PY_SHA=[0-9a-f]{64}\\n.*"), "Python 钉 sha256");
+        assertTrue(dev.contains("grep -vE '^(#|pytest=="), "测试用的 pytest 不装到服务器上");
+    }
+
+    @Test
     @DisplayName("脚本语法都对（bash -n）")
     void 脚本语法() throws Exception {
         try (var files = Files.list(DIR)) {

@@ -2,7 +2,8 @@
 [Unit]
 Description=Zhiqu backend
 After=network-online.target mysql.service redis-server.service
-Wants=network-online.target mysql.service redis-server.service
+# RAG 旁路跟着起（第一百二十二轮）；不写在 After= 里：不等它，它没起来时后端退回关键词检索。没装旁路时这一项什么都不做
+Wants=network-online.target mysql.service redis-server.service zhiqu-rag.service
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

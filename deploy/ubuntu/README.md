@@ -62,6 +62,24 @@ ssh -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 'sudo bash ~/zhiqu-StudySystem
 
 同一台机器上的隔离挡不住内核漏洞。要防这一层，命令得放到单独的机器上。
 
+## RAG 旁路（语义检索，第一百二十二轮）
+
+默认开着、跟着后端起停（后端的单元 `Wants=zhiqu-rag.service`，旁路 `PartOf=` 后端）；没起来时后端退回关键词检索。每个人的索引分开：旁路按 userId + 资料编号过滤，后端只交这个人自己的编号。
+
+在开发机上跑一条命令：在这边把 Linux x86_64 的 Python 3.11、只要 CPU 的 torch 和其余依赖、模型打成离线包（约 530MB，留在 `build/rag-bundle`，依赖没变就不重下），传上去、离线装好、重启一次后端：
+
+```bash
+ZHIQU_SSH="-i $HOME/.ssh/zhiqu_server" bash deploy/ubuntu/rag-from-dev.sh
+```
+
+服务器在国内，PyPI / GitHub / HuggingFace 慢或断，所以服务器上一个字节都不从外网下。模型默认取 `~/zhiqu/models/bge-small-zh-v1.5`（`rag-service/README.md` 第 2 步下的，带 `ZHIQU_MODEL_REVISION`），别处用 `RAG_MODEL_DIR=` 指。令牌、索引版本照后端的配置抄（`config/rag.env`，root:zhiqu 640），配置只把 `rag.enabled` 翻成 true、动之前留一份 `.bak-rag-…`。
+
+旁路只听 127.0.0.1:8001、出不了网（`IPAddressDeny=any`）、内存到 850M 先压着、1000M 封顶（量过：Mac 上起来 407MB、建了索引 470MB；amd64 的 Linux 版 torch 起来 600MB、查完 672MB）。看状态：
+
+```bash
+ssh -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 'systemctl status zhiqu-rag --no-pager | head -5; sudo journalctl -u zhiqu-rag -n 30 --no-pager'
+```
+
 ## 第一个管理员
 
 注册出来的都是普通用户，库里也没有预置账号。注册好自己的账号之后，在服务器上把它提成管理员：

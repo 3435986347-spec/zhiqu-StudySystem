@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -113,6 +114,7 @@ class RagRetrievalUnitDialectBaselineTest {
     private Long sourceUnitId;
     private Long pageId;
     private Long pageUnitId;
+    private Long generationId;
     private final List<Long> chunkIds = new ArrayList<>();
     private final List<Long> pageChunkIds = new ArrayList<>();
 
@@ -157,7 +159,7 @@ class RagRetrievalUnitDialectBaselineTest {
 
         jdbc.update("INSERT INTO rag_index_generation(index_version,collection_name,status) " +
                 "VALUES(?,?,'ACTIVE')", INDEX_VERSION, "rag_base_" + suffix);
-        Long generationId = jdbc.queryForObject("SELECT id FROM rag_index_generation " +
+        generationId = jdbc.queryForObject("SELECT id FROM rag_index_generation " +
                 "ORDER BY id DESC LIMIT 1", Long.class);
 
         registry.refreshUnitIfLive(RagNamespace.NOTEBOOK_SOURCE, sourceId);
@@ -299,6 +301,73 @@ class RagRetrievalUnitDialectBaselineTest {
         assertTrue(rows.stream().anyMatch(row ->
                         CandidateKeys.wikiSourceId(pageId).equals(row.get(CandidateKeys.SOURCE_ID))),
                 "显式选中的 Wiki 页必须进上下文，与 includeWiki 是否给出无关。实际收到：" + rows);
+    }
+
+    /**
+     * 第一百二十二轮：「每个人的 RAG 都不一样」。另一个用户有自己的资料和 Wiki 页、在同一个索引代次里；
+     * 各自去查时，交给旁路的 userId 和资料编号只能是自己的（旁路按这两样过滤，本机真旁路实测过拿别人的编号查不到）。
+     * 再往里一层：旁路就算错把别人的候选交回来（桩故意这么做），后端也不能把它放进上下文。
+     */
+    @Test
+    void 每个人只查得到自己的() {
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        jdbc.update("INSERT INTO sys_user(username,password,nickname,role,deleted) VALUES(?,?,?,'USER',0)", "other_" + suffix, "test-password", "Other");
+        Long other = jdbc.queryForObject("SELECT id FROM sys_user WHERE username=?", Long.class, "other_" + suffix);
+        jdbc.update("INSERT INTO ai_notebook(user_id,title,status,deleted) VALUES(?,?,'ACTIVE',0)", other, "Other Notebook");
+        Long otherNotebook = jdbc.queryForObject("SELECT id FROM ai_notebook WHERE user_id=? ORDER BY id DESC LIMIT 1", Long.class, other);
+        jdbc.update("INSERT INTO ai_notebook_source(user_id,notebook_id,source_type,title,status,index_status,content_hash,deleted) "
+                + "VALUES(?,?,'TEXT','secret.txt','READY','INDEXED',?,0)", other, otherNotebook, "hash-other");
+        Long otherSource = jdbc.queryForObject("SELECT id FROM ai_notebook_source WHERE notebook_id=? ORDER BY id DESC LIMIT 1", Long.class, otherNotebook);
+        jdbc.update("INSERT INTO ai_source_chunk(source_id,chunk_index,content) VALUES(?,?,?)", otherSource, 0, "别人的象限法机密：项目代号青鸟");
+        Long otherChunk = jdbc.queryForObject("SELECT id FROM ai_source_chunk WHERE source_id=?", Long.class, otherSource);
+        jdbc.update("INSERT INTO user_knowledge_page(user_id,page_type,title,encrypted_content,encryption_version,version,sort_order,pinned,deleted) "
+                + "VALUES(?,'NOTE','别人的象限法',?,'v0',0,0,0,0)", other, "别人的象限法页面");
+        Long otherPage = jdbc.queryForObject("SELECT id FROM user_knowledge_page WHERE user_id=? ORDER BY id DESC LIMIT 1", Long.class, other);
+        registry.refreshUnitIfLive(RagNamespace.NOTEBOOK_SOURCE, otherSource);
+        registry.refreshUnitIfLive(RagNamespace.WIKI_PAGE, otherPage);
+        Long otherSourceUnit = unitIdOf(RagNamespace.NOTEBOOK_SOURCE, otherSource);
+        Long otherPageUnit = unitIdOf(RagNamespace.WIKI_PAGE, otherPage);
+        for (Long unitId : List.of(otherSourceUnit, otherPageUnit)) {
+            jdbc.update("INSERT INTO rag_source_index_state(source_id,unit_id,generation_id,index_version,content_hash,status,vector_count,indexed_at) "
+                            + "VALUES(?,?,?,?,?,'INDEXED',1,NOW())", unitId.equals(otherSourceUnit) ? otherSource : null, unitId, generationId, INDEX_VERSION,
+                    jdbc.queryForObject("SELECT canonical_hash FROM rag_indexable_unit WHERE id=?", String.class, unitId));
+        }
+
+        // 我去查：交给旁路的只有我的 userId、我的编号
+        CANDIDATES.set(List.of());
+        workspaceService.sourceContext(userId, notebookId, Map.of("query", "象限法", "includeWiki", true));
+        String mine = LAST_QUERY_BODY.get();
+        assertTrue(mine.contains("\"userId\":" + userId), "查的时候要带我的 userId：" + mine);
+        assertTrue(mine.contains(String.valueOf(sourceUnitId)) && mine.contains(String.valueOf(pageUnitId)), "要带我的编号：" + mine);
+        assertFalse(unitIdsOf(mine).contains(otherSourceUnit) || unitIdsOf(mine).contains(otherPageUnit), "不能带别人的编号：" + mine);
+
+        // 别人去查：反过来
+        workspaceService.sourceContext(other, otherNotebook, Map.of("query", "象限法", "includeWiki", true));
+        String theirs = LAST_QUERY_BODY.get();
+        assertTrue(theirs.contains("\"userId\":" + other), theirs);
+        assertTrue(unitIdsOf(theirs).contains(otherSourceUnit), "别人查得到他自己的：" + theirs);
+        assertFalse(unitIdsOf(theirs).contains(sourceUnitId) || unitIdsOf(theirs).contains(pageUnitId), "别人不能带我的编号：" + theirs);
+
+        // 旁路就算错把别人的候选交回来，后端也不放进我的上下文
+        CANDIDATES.set(List.of(unitCandidate(otherSourceUnit, RagNamespace.NOTEBOOK_SOURCE, otherChunk, 0.01)));
+        List<Map<String, Object>> rows = workspaceService.sourceContext(userId, notebookId, Map.of("query", "象限法", "includeWiki", true));
+        assertTrue(rows.stream().noneMatch(row -> String.valueOf(row).contains("青鸟")), "别人的内容进了我的上下文：" + rows);
+        // 拿别人的笔记本编号、在自己的笔记本里点名要别人的资料：都拒，旁路一次都不问
+        LAST_QUERY_BODY.set("");
+        assertThrows(com.zhiqu.common.BusinessException.class,
+                () -> workspaceService.sourceContext(userId, otherNotebook, Map.of("query", "象限法")), "别人的笔记本");
+        assertThrows(com.zhiqu.common.BusinessException.class,
+                () -> workspaceService.sourceContext(userId, notebookId, Map.of("query", "象限法", "selectedSourceIds", List.of(otherSource))), "别人的资料");
+        assertEquals("", LAST_QUERY_BODY.get(), "拒了就不该再去问旁路");
+    }
+
+    /** 请求体里 unitIds 那一段的数字 */
+    private static List<Long> unitIdsOf(String body) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"unitIds\":\\[([0-9,\\s]*)\\]").matcher(body);
+        assertTrue(m.find(), "请求体里没有 unitIds：" + body);
+        List<Long> ids = new ArrayList<>();
+        for (String part : m.group(1).split(",")) if (!part.isBlank()) ids.add(Long.valueOf(part.trim()));
+        return ids;
     }
 
     // ── 桩 ────────────────────────────────────────────────────────────────

@@ -127,7 +127,8 @@ app:
   # 原来的注释写的是「不配则浏览器推送不可用」，反过来暗示配了就可用 ——
   # 而配了什么都不会变，运维会白生成一对 VAPID 密钥并以为提醒已接通。
   rag:
-    enabled: false
+    # 默认开（第一百二十二轮，用户要的）：旁路由 install-rag.sh 装、跟着后端起；连不上时退回关键词检索
+    enabled: true
     base-url: http://127.0.0.1:8001
     service-token: CHANGE_ME_RAG_SERVICE_TOKEN
     connect-timeout-ms: 300

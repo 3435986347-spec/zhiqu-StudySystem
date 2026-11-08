@@ -126,8 +126,29 @@ public class RagAdminService {
         return Map.of("sourceId", sourceId, "indexStatus", "PENDING");
     }
 
+    /**
+     * 重建索引。先看旁路，再看有没有一个已经在重建（第一百二十二轮）。
+     *
+     * <p>原来什么都不查：线上旁路没装，用户点一下就多一个 BUILDING 的代次、排一个要旁路才做得了的作业，
+     * 领作业的那边跳过要旁路的活 —— 页面上永远是 building，也没人说为什么。旁路不在就照实说，不建；
+     * 已经有一个在重建就说那一个，不再叠一个（叠上去的也一样卡着）。
+     */
     @Transactional
     public Map<String, Object> rebuild() {
+        Map<String, Object> sidecar = client.meta();
+        if (!Boolean.TRUE.equals(sidecar.get("ready"))) {
+            Object reason = sidecar.get("reason");
+            String why = RagClient.REASON_DISABLED.equals(reason) ? "没有开（app.rag.enabled=false）"
+                    : RagClient.REASON_TOKEN_MISSING.equals(reason) ? "开着但没配令牌（app.rag.service-token）"
+                    : "连不上或还没准备好（" + reason + "）";
+            throw new BusinessException("RAG 旁路" + why + "：现在检索退回关键词，重建要等旁路起来。服务器上看 systemctl status zhiqu-rag");
+        }
+        RagIndexGeneration building = generationMapper.selectOne(new LambdaQueryWrapper<RagIndexGeneration>()
+                .eq(RagIndexGeneration::getStatus, "BUILDING").orderByDesc(RagIndexGeneration::getId).last("LIMIT 1"));
+        if (building != null) {
+            throw new BusinessException("已经有一个在重建（#" + building.getId() + "，" + building.getIndexedSourceCount()
+                    + " / " + building.getExpectedSourceCount() + "）：等它做完再重建");
+        }
         RagIndexGeneration generation = jobService.createGeneration(properties.getIndexVersion());
         return generationRow(generationMapper.selectById(generation.getId()));
     }

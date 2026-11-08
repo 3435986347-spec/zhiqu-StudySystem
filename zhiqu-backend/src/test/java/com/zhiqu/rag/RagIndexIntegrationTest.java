@@ -122,6 +122,15 @@ class RagIndexIntegrationTest {
         assertEquals(3, tables);
     }
 
+    /** 第一百二十二轮（线上）：旁路没装，点一下「重建」就多一个永远 building 的代次。旁路不在就照实说、一个都不建 */
+    @Test
+    void rebuildRefusesWhenSidecarIsOff() {
+        Integer before = jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_generation", Integer.class);
+        BusinessException error = assertThrows(BusinessException.class, () -> adminService.rebuild());
+        assertTrue(error.getMessage().contains("没有开") && error.getMessage().contains("退回关键词"), error.getMessage());
+        assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM rag_index_generation", Integer.class), "旁路不在就不该建代次");
+    }
+
     @Test
     void v26LeaseFencingSchemaWasApplied() {
         Integer columns = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.columns " +

@@ -1,0 +1,55 @@
+# 知趣·象限的 RAG 旁路（第一百二十二轮）：向量检索。install-rag.sh 把它放到 /etc/systemd/system/。
+# 跟着后端起停：后端的单元 Wants= 它（一起起；后端不等它 —— 它起来要十秒左右，没起来时后端照旧退回关键词检索），
+# 它 PartOf= 后端（后端停、重启，它跟着）。
+[Unit]
+Description=Zhiqu RAG sidecar
+After=network.target
+PartOf=zhiqu-backend.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=zhiqu
+Group=zhiqu
+WorkingDirectory=/home/ubuntu/zhiqu-StudySystem/rag
+# 令牌、模型、数据目录、索引版本（和后端的配置一字不差）：install-rag.sh 从后端的配置里读出来写的，root:zhiqu 640
+EnvironmentFile=/home/ubuntu/zhiqu-StudySystem/config/rag.env
+Environment=OMP_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+Environment=ANONYMIZED_TELEMETRY=False
+ExecStart=/home/ubuntu/zhiqu-StudySystem/rag/venv/bin/python -m uvicorn app.main:app --app-dir /home/ubuntu/zhiqu-StudySystem/rag --host 127.0.0.1 --port 8001 --workers 1
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+Nice=5
+
+# 2 核 2G 的机器上还有后端和 MySQL。量过：macOS（arm64）起来 407MB、建了索引 470MB；amd64 的容器里（Linux 版 torch，模拟跑的）
+# 起来 600MB、查完 672MB。800M 太紧，建索引时会被杀：到 850M 先压着，1000M 才杀
+MemoryHigh=850M
+MemoryMax=1000M
+MemorySwapMax=512M
+TasksMax=128
+
+# 它只处理用户的资料、只回本机的后端：一个字节都不往外发（模型是本地目录，启动时不下载）
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/zhiqu-StudySystem/data/rag
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
