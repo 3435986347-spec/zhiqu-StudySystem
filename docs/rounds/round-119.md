@@ -37,10 +37,21 @@
 - 真浏览器（经隧道）：面板里不列 `/project`、`/init`、`/review`，打 `/review` 说「服务器上没有项目文件夹」，`/model 假` 切模型，生成的文件能预览、下载。
 - 备份跑过一次（`zhiqu_db-*.sql.gz`、`files-*.tar.gz`，root 700）。
 
+## 收尾：A 记录加上之后打不开（用户 2026-11-08 报的）
+
+1. **证书没签**。A 记录加上之前 Caddy 已经失败了 12 次，下一次重试排到了 6 小时以后（`retrying_in 21600`）。我在 Caddyfile 里写的「加上就好，不用重启」是错的。`sudo systemctl restart caddy` 之后 1 秒签下（Let's Encrypt 正式证书，主域名和 www 各一张，2027-02-06 到期，Caddy 自己续）。Caddyfile 的注释和 README 改成「加上之后要重启」。
+2. **www 是单独一个源**。原来 `zhiqustudy.com, www.zhiqustudy.com` 挂同一个应用：两个源的登录（localStorage）和 Service Worker 各算各的，在 www 登录了换到主域名还得再登。改成 www 用 301 跳到主域名（路径、参数都带上）。
+3. **流式接口只列了一个**。`@sse` 原来只有 AI 助手的回答；命令行经服务器的模型网关、参考计划和后台的事件也是 SSE。四个都列上，`UbuntuDeployTest` 从控制器里找出所有返回 `SseEmitter` / produces `text/event-stream` 的接口，要求和 `@sse` 一一对上（后端新加一个会红）。
+
+验证：
+
+- `UbuntuDeployTest` 新的一条，9 个扰动全红（www 也挂应用、www 不跳转 / 跳错、`@sse` 漏一个 / 多一个、缓冲、后端改了路径 / 前缀 / 不带 produces 的那种）。
+- 服务器上 `caddy validate` 过了再换；www → 301 主域名、http → 308 https、裸 IP → 301 域名。
+- 经 Caddy 的流式回答（服务器本机的假模型隔 1 秒吐一个字，经 127.0.0.1:443、SNI 是 zhiqustudy.com、校验证书）：不带压缩、gzip、zstd、浏览器那一串，四次都是一秒到一个字（0.05、1.05、2.05、3.05、4.05 秒），Caddy 不压缩事件流，`encode` 不会攒。测试账号测完按 id 删干净（`ai_agent_task` 有指向自己的外键，第一遍一次删不掉；按外键的顺序删，每张表核对是 0 行），这时用户已经注册了自己的账号（id 1），没碰。
+- 内置浏览器：www 跳到主域名、`isSecureContext`、走 HTTP/3、Service Worker 激活并接管页面、缓存 `zhiqu-shell-v20261108-r118a` 建好，控制台没有错误。中间有几分钟面板里对这个站的请求全卡住（服务器本机同时取是 20 毫秒，这台 Mac 走的代理一个样式表要 0.7–2.6 秒），之后自己好了；服务器上抓包看 UDP 443 两个方向都有包，HTTP/3 是通的，没有关它。
+
 ## 还没验的、挡不住的
 
-- HTTPS、SSE 经过 Caddy：要 A 记录。
-- 浏览器面板经隧道时 Service Worker 注册报 `unknown error`（服务器回 200、类型对，页面接住了），HTTPS 上再看一眼。
 - 真模型没跑（要花钱，没问）。
 - 同一台机器上的隔离挡不住内核漏洞；一个账号能把 4G 的临时空间写满（只影响别人生成文件，三天清一次，没有按账号的配额）。
 - 备份和数据在同一台机器上。

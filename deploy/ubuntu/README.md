@@ -42,7 +42,13 @@ ssh -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 'sudo bash ~/zhiqu-StudySystem
 ZHIQU_SSH="-i $HOME/.ssh/zhiqu_server" bash deploy/ubuntu/deploy-from-dev.sh
 ```
 
-DNS：`zhiqustudy.com`、`www.zhiqustudy.com` 两条 A 记录指向 `134.175.110.207`。安全组放行 22、80、443。A 记录加上之后 Caddy 自己去签证书，不用动它；等不及就 `sudo systemctl reload caddy`。
+DNS：`zhiqustudy.com`、`www.zhiqustudy.com` 两条 A 记录指向 `134.175.110.207`（www 只跳到主域名）。安全组放行 22、80、443。
+
+A 记录加上之后**要重启 Caddy**：之前签证书失败的次数越多，它下一次重试隔得越久（失败十几次后是 6 小时），用户这时打开就是连不上：
+
+```bash
+ssh -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 'sudo systemctl restart caddy'
+```
 
 ## 服务器上跑命令
 

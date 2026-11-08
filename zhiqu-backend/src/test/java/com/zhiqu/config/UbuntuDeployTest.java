@@ -3,11 +3,17 @@ package com.zhiqu.config;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import com.zhiqu.SourceText;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -112,6 +118,70 @@ class UbuntuDeployTest {
         assertFalse(install.contains("--password") || install.contains("-p$"), "密码不进命令行参数");
         assertTrue(install.contains("--shell /usr/sbin/nologin"));
         assertTrue(install.contains("loop,nodev,nosuid"), "临时空间要是单独一块文件系统：命令写满了也不影响 MySQL");
+    }
+
+    /** Caddyfile 顶层的站点块：地址 → 块里的内容（每行去掉缩进） */
+    static Map<String, String> sites(String caddyfile) {
+        Map<String, String> out = new LinkedHashMap<>();
+        String head = null;
+        StringBuilder body = new StringBuilder();
+        int depth = 0;
+        for (String line : caddyfile.split("\n")) {
+            String t = line.strip();
+            if (depth == 0 && t.endsWith("{")) {
+                head = t.substring(0, t.length() - 1).strip();
+                body = new StringBuilder();
+            } else if (depth > 0) {
+                body.append(t).append('\n');
+            }
+            depth += t.chars().filter(c -> c == '{').count() - t.chars().filter(c -> c == '}').count();
+            if (depth == 0 && head != null) {
+                out.put(head, body.toString());
+                head = null;
+            }
+        }
+        return out;
+    }
+
+    /** 后端所有的流式接口（返回 SseEmitter 或 produces text/event-stream）：类上的前缀 + 方法上的路径 */
+    static Set<String> streamEndpoints() throws Exception {
+        Pattern classMapping = Pattern.compile("@RequestMapping\\(\"([^\"]*)\"\\)\\s*public\\s+class");
+        Pattern method = Pattern.compile("@(?:Get|Post)Mapping\\((?:value\\s*=\\s*)?\"([^\"]*)\"([^)]*)\\)\\s*(?:@\\w+(?:\\([^)]*\\))?\\s*)*public\\s+([\\w<>?, ]+?)\\s+\\w+\\(");
+        Set<String> out = new TreeSet<>();
+        try (var files = Files.list(Path.of("src/main/java/com/zhiqu/controller"))) {
+            for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+                String src = SourceText.stripComments(Files.readString(file));
+                Matcher c = classMapping.matcher(src);
+                String prefix = c.find() ? c.group(1) : "";
+                Matcher m = method.matcher(src);
+                while (m.find()) {
+                    if (m.group(3).contains("SseEmitter") || m.group(2).contains("EVENT_STREAM")) {
+                        out.add(prefix + m.group(1));
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    @Test
+    @DisplayName("Caddy：只有一个源（www 只跳转，不然登录和 Service Worker 各算各的）；后端每个流式接口都不缓冲")
+    void 反向代理() throws Exception {
+        Map<String, String> sites = sites(code("Caddyfile"));
+        assertTrue(sites.size() >= 2, "解析出的站点块太少，判据在空转：" + sites.keySet());
+        List<String> app = sites.entrySet().stream().filter(e -> e.getValue().contains("reverse_proxy")).map(Map.Entry::getKey).toList();
+        assertEquals(List.of("zhiqustudy.com"), app, "应用只挂在一个地址上：www 也挂应用的话，用户在 www 登录了换到主域名还得再登");
+        String www = sites.get("www.zhiqustudy.com");
+        assertTrue(www != null && www.contains("redir https://zhiqustudy.com{uri} permanent\n"), "www 要跳到主域名：" + sites.keySet());
+
+        String main = sites.get("zhiqustudy.com");
+        Matcher sse = Pattern.compile("(?m)^@sse path (.+)$").matcher(main);
+        assertTrue(sse.find(), "没有 @sse 的匹配");
+        Set<String> proxied = new TreeSet<>(List.of(sse.group(1).strip().split("\\s+")));
+        Set<String> streams = streamEndpoints();
+        assertTrue(streams.size() >= 4, "找到的流式接口太少，判据在空转：" + streams);
+        assertEquals(streams, proxied, "Caddyfile 的 @sse 要和后端的流式接口一一对上");
+        assertTrue(main.contains("reverse_proxy @sse 127.0.0.1:8080 {\nflush_interval -1\n}"), "@sse 要不缓冲");
     }
 
     @Test
