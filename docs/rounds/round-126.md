@@ -61,3 +61,15 @@
 - 命令行全量 501（483 过、18 跳）。
 
 ## 收口
+
+## 收口（2026-11-09）
+- **npm 0.2.0 没发出去**：用户自己发，验证码那一栏贴了 npm 的恢复码 —— npm 对「用恢复码登录」上 72 小时安全冻结（E403「temporarily suspended due to a recent security-sensitive action」），
+  到点自动解，期间不能发布、不能建令牌，能装包（[GitHub Changelog 2026-09-09](https://github.blog/changelog/2026-09-09-npm-extends-recovery-code-security-holds-to-all-accounts/)）。
+- **网站照样部署了**（用户定的）：npm 上没有 0.2.0，服务器说的最新版本先用 systemd 的 drop-in 钉在 0.1.0（`/etc/systemd/system/zhiqu-backend.service.d/cli-latest.conf`，`APP_HARNESS_CLI_LATEST=0.1.0`），
+  `SKIP_NPM_CHECK=1` 部署。线上核对：`/api/harness/meta` 回 0.1.0、缓存令牌 `20261109-r126a`、桌面里不装 Service Worker 的那句在、后端和 RAG 都 active。
+  **npm 发了 0.2.0 之后**：删掉那个 drop-in、`daemon-reload`、重启后端，旧版才会被提示更新。
+- 安装包 1.1.0（42 MB，sha256 核对过）放进 `data/downloads`，下载接口给的是 1.1.0；旧的 1.0.0（152 MB）还在目录里没删（接口只给最新的）。
+- 用户这台 Mac：命令行装了本地打的 0.2.0（`npm pack` + `npm i -g`，`zhiqu --version` 是 0.2.0，包里有 `subagents.js`、`selfupdate.js`）；
+  桌面应用的 `defaults` 删掉（打开的是线上网站），本机验证站停了；验证账号 `r126_af4db5` 留在 `zhiqu_verify` 库里，留给用户删。
+- 推到 origin/master（82385b9..8b671c9）。
+
