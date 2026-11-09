@@ -30,7 +30,9 @@ export function npmEnv(env = process.env) {
 }
 
 /** 跑一次 npm，拿回 { code, out, err }。run 可以换成桩（测试用） */
-export function runNpm(args, { env = process.env, platform = process.platform, timeoutMs = 300_000, inherit = false } = {}) {
+// killAfterMs：本机 npm 子进程最多跑多久（装包慢），到点杀掉。不是对服务器的请求超时 —— 不叫 timeoutMs：
+// IdempotencyLockSpanTest 把命令行里的 timeoutMs 都当成请求超时，拿来算服务器要把幂等结果留多久（第一百二十六轮漏跑后端全量，这里红着提交了）
+export function runNpm(args, { env = process.env, platform = process.platform, killAfterMs = 300_000, inherit = false } = {}) {
   const binary = resolveOnPath('npm', env, platform);
   if (!binary) return Promise.resolve({ code: -1, out: '', err: '找不到 npm（装 Node.js 时会一起装上）' });
   const plan = planLaunch({ command: 'npm', binary, args, platform });
@@ -49,7 +51,7 @@ export function runNpm(args, { env = process.env, platform = process.platform, t
       child.stdout.on('data', (d) => { out += d; });
       child.stderr.on('data', (d) => { err += d; });
     }
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* 已经退出 */ } }, timeoutMs);
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* 已经退出 */ } }, killAfterMs);
     child.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, out, err: err + e.message }); });
     child.on('close', (code) => { clearTimeout(timer); resolve({ code: code == null ? -1 : code, out, err }); });
   });

@@ -442,6 +442,32 @@ class AiConversationLifecycleIntegrationTest {
                 latestRunId(userId, control)), "对照：回答有正文时照常造工件");
     }
 
+    /**
+     * 第一百二十七轮：普通聊天也按顺序列出每一步，存进 ai_message.steps_json、列表接口读得回来。
+     * 计划草稿那一步在 COMMIT 里才出（completeAssistantMessage 之后）—— 存库要在 COMMIT 之后，不然这一步没进去。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void 普通聊天的步骤按顺序存下来() throws Exception {
+        Long notebookId = createNotebook(userId, "普通聊天的步骤");
+        Long before = latestRunId(userId, notebookId);
+        aiService.streamChat(userId, PLAN_REQUEST, modelId, false, "OFF", notebookId, "AUTO", Map.of());
+        awaitRunAfter(userId, notebookId, before);
+        String raw = jdbcTemplate.queryForObject("SELECT steps_json FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, userId);
+        // run 一标成完成就读（awaitRunAfter 只等这个）：步骤要在那之前已经进库
+        assertNotNull(raw, "run 已经完成了，步骤还没进 steps_json（原来写在事务之后）");
+        java.util.List<Map<String, Object>> steps = (java.util.List<Map<String, Object>>) new com.fasterxml.jackson.databind.ObjectMapper().readValue(raw, Map.class).get("steps");
+        java.util.List<String> kinds = steps.stream().map(st -> String.valueOf(st.get("kind"))).toList();
+        assertTrue(kinds.contains("plan"), "计划草稿那一步（COMMIT 里出的）没进库：" + kinds);
+        Map<String, Object> plan = steps.stream().filter(st -> "plan".equals(st.get("kind"))).findFirst().orElseThrow();
+        assertTrue(String.valueOf(plan.get("summary")).matches(".*\\d+ 个任务.*等你确认"), "计划草稿那一步要说几个任务、等确认：" + plan);
+        assertTrue(steps.stream().noneMatch(st -> "running".equals(st.get("status"))), "收尾了还有 running 的：" + steps);
+        java.util.List<Map<String, Object>> rows = aiService.getRecentChatMessages(userId, notebookId, 20, null);
+        Map<String, Object> last = rows.get(rows.size() - 1);
+        assertNotNull(last.get("steps"), "列表接口没带步骤：一刷新就没了");
+        assertNull(rows.get(rows.size() - 2).get("steps"), "用户的那条不该有步骤");
+    }
+
     /** 第八遍 review：上一轮没建草稿；这一轮再说「存进知识库」、模型又只回一句「已写入」时，也不建（上一轮的回答里没有可以当正文的东西） */
     @Test
     void theNoDraftNoteFromTheLastTurnIsNotTakenAsDraftContent() {

@@ -90,6 +90,9 @@ public interface AiService {
      */
     List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit, Long before);
 
+    /** 一条回答的全部步骤（带每一步的细节：命令输出、diff）。列表接口里只有一行一步（第一百二十七轮）；只认自己的消息 */
+    Map<String, Object> getMessageSteps(Long userId, Long messageId);
+
     /** 删除单条聊天消息 */
     void deleteChatMessage(Long userId, Long messageId);
 

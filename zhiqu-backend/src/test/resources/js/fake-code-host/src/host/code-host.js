@@ -2,6 +2,7 @@
 //   abuse：请调模型时自己填 modelId（后端要换成它定的那个）；不许执行时硬发 exec（后端要回拒绝）；交回一个跳出工作区的草稿路径（后端要丢掉）
 //   abuse-shell：后端没给 shell 时硬发一条 shell 命令（后端要回拒绝）；
 //   env：把自己看得到的环境变量名报上来（后端起它时只给 HOME 和 PATH），然后发一条认不出的消息（后端要停下）
+//   trace：发几条步骤，有的不像样（后端要截、要丢，第一百二十七轮）
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 const send = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);
@@ -23,6 +24,17 @@ rl.on('line', async (line) => {
     send({ type: 'weird' });
     // 后端要在上一行就停下：读到这一条说明它没停
     send({ type: 'result', text: 'x', context: '不该读到', drafts: [] });
+    return;
+  }
+  if (msg.message === 'trace') {
+    // 第一百二十七轮：回答里的步骤 —— 后端照形状收、按上限截，认不出的字段 / 种类不要，没有 id 的整条丢掉
+    send({ type: 'trace', step: { id: 's1', kind: 'run', title: '运行', target: 'npm test', summary: '', status: 'running' } });
+    send({ type: 'trace', step: { id: 's1', kind: 'run', title: '运行', target: 'npm test', summary: '退出码 1', status: 'error', ms: 1234,
+      detail: { command: 'npm test', exitCode: 1, output: 'x'.repeat(100000), omitted: 3, evil: '<script>', files: 'not-a-list' }, injected: 'drop me' } });
+    send({ type: 'trace', step: { id: 's2', kind: 'rm -rf', title: 't'.repeat(500), status: 'exploded', detail: { files: [{ path: 'a.js', added: 1, removed: -5, hunks: ['+a', 7, '-b'] }] } } });
+    send({ type: 'trace', step: { kind: 'read', title: '没有 id' } });
+    send({ type: 'trace', step: 'not an object' });
+    send({ type: 'result', text: 'done', context: 'traced', drafts: [] });
     return;
   }
   if (msg.message === 'abuse-shell') {

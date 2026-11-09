@@ -27,6 +27,7 @@ import { spillLongInput } from './longinput.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
+import { listDetail, patchDetail, runDetail, writeDetail } from './steps.js';
 
 export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks']);
 /** 远程工具里**直接生效**的（不是草稿）：plan 档不给，ask 档先问（第二十九轮，用户定的「改状态直接做」）。 */
@@ -321,6 +322,8 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   };
   if (ctx.effort) body.reasoning = ctx.effort;   // 不说就听服务端的默认
   let thought = 0;
+  let thinkingFrom = null;
+  let thinkingMs = 0;
   // 安静模式不边收边打：这时断了，已经收到的那一段就这么没了（第二十二轮实测：回答到一半服务器重启，只剩一句「断开了」）。
   // 把它打出来 —— 用户至少看得到说到哪了。断的两种样子都要：连接出错（下面的 catch）、流好好结束了却没有 done
   const showPartial = () => {
@@ -341,12 +344,15 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     } else if (name === 'reasoning') {
       // 思考不打进终端（要回传的内容在 done 的 message 里，见 HarnessModelGateway），只说它在想：不然模型想一分钟，看着像卡死了
       thought += String(data.text || '').length;
+      if (thinkingFrom == null) thinkingFrom = monotonic();
       if (hush) ui.setActivity(`思考中 ${formatBytes(thought)}`);
       else if (render) ui.status.set(ui.paint.dim(`… 思考中 ${formatBytes(thought)}`));
     } else if (name === 'delta') {
+      if (thinkingFrom != null && !thinkingMs) thinkingMs = monotonic() - thinkingFrom;
       text += data.text;
       if (md) md.feed(data.text);
     } else if (name === 'tool_call') {
+      if (thinkingFrom != null && !thinkingMs) thinkingMs = monotonic() - thinkingFrom;
       toolNames.set(data.index, data.name);
       if (md && md.wroteAnything) md.finish();     // 正文说完了才轮到工具：先把这段收尾换行
       if (hush) ui.setActivity(`准备 ${data.name}`);
@@ -379,7 +385,9 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     ctx.usage.cached = (ctx.usage.cached || 0) + (done.usage ? done.usage.cachedTokens || 0 : 0);
   }
   if (ctx.onUsage && done.usage) ctx.onUsage(done.usage);
-  return { ...done, text, maxTokens: done.maxTokens || maxTokens };
+  // 这一次想了多久（第一百二十七轮：网页回答里「思考 N 秒」那一步）—— 从第一个思考字到第一个正文 / 工具调用
+  if (thinkingFrom != null && !thinkingMs) thinkingMs = monotonic() - thinkingFrom;
+  return { ...done, text, maxTokens: done.maxTokens || maxTokens, thought: { chars: thought, ms: thinkingMs } };
 }
 
 /** /usage 里输入后面那一句「（缓存命中 N，P%）」；没命中、供应商没报就不说。 */
@@ -720,17 +728,63 @@ const sameEditReminder = (file) => (n) => `你已经连续 ${n} 次没能改成 
 const runReminder = (line) => (n) => `同一条命令 ${line} 已经连续 ${n} 次失败。先把上面的错误信息完整读一遍，找出根因（不是症状）、`
   + '想清楚要改哪里再改，一次改对；如果是环境问题或者需要用户决定，就停下来说明，不要换着花样重跑。';
 
+/**
+ * 一次工具调用记成一步（第一百二十七轮）：开始一条、结束一条。各分支用 ctx.stepNote({...}) 补结果 / detail，
+ * 没补的就按给模型的那句话当小结。没有 ctx.stepLog（命令行的终端）就什么都不做 —— 终端的显示不变。
+ */
 async function executeTool(ctx, call, offered, signal) {
+  const log = ctx.stepLog;
+  if (!log) return runTool(ctx, call, offered, signal);
+  const name = call.function && call.function.name;
+  const parsed = parseArgs(call.function.arguments);
+  const step = log.start(name || '', parsed.ok ? parsed.value : {});
+  let note = null;
+  ctx.stepNote = (n) => { note = { ...(note || {}), ...n }; };
+  try {
+    const content = await runTool(ctx, call, offered, signal);
+    const n = note || {};
+    log.finish(step, { summary: n.summary ?? firstLineOf(content), ok: n.ok ?? true, detail: n.detail, kind: n.kind, title: n.title });
+    return content;
+  } catch (e) {
+    log.finish(step, { summary: e && e.message ? e.message : String(e), ok: false });
+    throw e;
+  } finally {
+    ctx.stepNote = null;
+  }
+}
+const firstLineOf = (s) => String(s || '').split('\n').find((l) => l.trim()) || '';
+/** 远程工具的结果多半是一整段 JSON（read_wiki_page 是 {title, content: 正文}）：不拿 JSON 当小结（review），只说读到了什么 */
+function remoteSummary(content) {
+  const text = String(content || '').trim();
+  if (!text.startsWith('{') && !text.startsWith('[')) return firstLineOf(text);
+  try {
+    const v = JSON.parse(text);
+    if (Array.isArray(v)) return `${v.length} 条`;
+    if (Array.isArray(v.results)) return `${v.results.length} 条`;
+    if (Array.isArray(v.pages)) return `${v.pages.length} 页`;
+    if (typeof v.title === 'string') return `「${v.title.slice(0, 60)}」`;
+    return '完成';
+  } catch {
+    return '完成';
+  }
+}
+/** 改动只是草稿（网页选了文件夹）；生成到产物（ArtifactTools 继承了 drafts 这个 Map）写的是真的 */
+const isDraft = (local) => Boolean(local && local.drafts && !local.artifact);
+/** 有就记（runTool 里的各分支用）。n 可以是函数：要算 diff 的那几种只在真的要记时才算（终端里没有 stepLog，不白算） */
+const stepNote = (ctx, n) => { if (ctx.stepNote) ctx.stepNote(typeof n === 'function' ? n() : n); };
+
+async function runTool(ctx, call, offered, signal) {
   const name = call.function && call.function.name;
   // 读 / 搜 / 列目录、没下发的名字、参数坏了 —— 都是过程，安静模式下只在状态行里一闪，不留成行
   const hush = quiet(ctx) && (QUIET_TOOLS.has(name) || !offered.get(name));
   const ui = hush ? hushedUi(ctx.ui) : ctx.ui;
   const kind = offered.get(name);
-  if (!kind) return refuseUnoffered({ ...ctx, ui }, name, offered);
+  if (!kind) { stepNote(ctx, { ok: false, summary: '没有这个工具 / 这一档不给' }); return refuseUnoffered({ ...ctx, ui }, name, offered); }
   const parsed = parseArgs(call.function.arguments);
   if (!parsed.ok) {
     ui.step(`${name}（参数不对）`);
     ui.result(parsed.error, false);
+    stepNote(ctx, { ok: false, summary: `参数不对：${parsed.error}` });
     return `参数不是合法的 JSON（${parsed.error}），没有执行。请重新调用。`;
   }
   const args = parsed.value;
@@ -747,23 +801,30 @@ async function executeTool(ctx, call, offered, signal) {
       // 读文件按这个模型一次能看的量给（留一点给头部）：否则它以为看全了，其实后半截被截断了
       const cap = toolOutputCap(ctx.model ? ctx.model.effectiveContextWindow : null) - 300;
       const r = name === 'list_files' ? local.listFiles(args) : name === 'read_file' ? local.readFile(args, { maxChars: cap }) : local.search(args);
-      if (r.error) { ui.result(r.error, false); return r.error; }
+      if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
       ui.result(r.summary);
+      // list_files 的头一行是「src：」这样的说明，search 没有（review：原来一律去掉头一行，搜索的第一条命中没了）
+      stepNote(ctx, () => ({ summary: r.summary, detail: name === 'read_file' ? { path: String(args.path || '') }
+        : listDetail(name === 'list_files' ? r.content.split('\n').slice(1).join('\n') : r.content) }));
       return r.content;
     }
     if (name === 'write_file' || name === 'edit_file') {
       const spinKey = `write:${String(args.path || '')}`;
       const prep = name === 'edit_file' ? local.prepareEdit(args) : local.prepareWrite(args);
-      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, (prep.unchanged ? sameEditReminder : writeReminder)(args.path)); }
+      if (prep.error) { ui.result(prep.error, false); stepNote(ctx, { ok: false, summary: prep.error }); return failed(ctx, spinKey, prep.error, (prep.unchanged ? sameEditReminder : writeReminder)(args.path)); }
       if (prep.newDirectories.length) ui.note(`    （会连同新建目录 ${prep.newDirectories.join('、')}）`);
       if (!(await confirmWrite(ctx, prep))) {
         ui.result('用户没有同意，没写', false);
+        stepNote(ctx, { ok: false, summary: '用户没有同意，没写' });
         return `用户没有同意写入 ${prep.rel}，文件没有改动。不要原样重试；问问用户想怎么改，或者换个做法。`;
       }
       const r = local.commitWrite(prep);
-      if (r.error) { ui.result(r.error, false); return r.error; }
+      if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
       succeeded(ctx, spinKey);
       ctx.changedFiles.add(prep.rel);
+      // 新建的算 create，改已有的（edit_file、覆盖、追加）算 edit；草稿模式另说一句「草稿，没落盘」
+      stepNote(ctx, () => ({ kind: prep.creating ? 'create' : 'edit', title: prep.creating ? '新建' : prep.kind === 'append' ? '追加' : '修改',
+        summary: `+${r.added} -${r.removed}${isDraft(local) ? '（草稿）' : ''}${r.syntax ? '，语法错误' : ''}`, ok: !r.syntax, detail: writeDetail(prep, r) }));
       ui.result(ui.paint.green(`✓ ${r.content.split('（')[0]}  +${r.added} -${r.removed}`));
       if (r.syntax) ui.result(`语法错误：${r.syntax.split('\n')[0]}`, false);
       return r.content;
@@ -772,45 +833,52 @@ async function executeTool(ctx, call, offered, signal) {
       const spinKey = `patch:${String(args.patch || '').slice(0, 300)}`;
       const shown = patchFiles(args.patch).join('、') || '补丁';
       const prep = local.preparePatch(args);
-      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, (prep.unchanged ? sameEditReminder : writeReminder)(shown)); }
+      if (prep.error) { ui.result(prep.error, false); stepNote(ctx, { ok: false, summary: prep.error }); return failed(ctx, spinKey, prep.error, (prep.unchanged ? sameEditReminder : writeReminder)(shown)); }
       if (!(await confirmPatch(ctx, prep))) {
         ui.result('用户没有同意，没改', false);
+        stepNote(ctx, { ok: false, summary: '用户没有同意，没改' });
         return `用户没有同意这个补丁，${shown} 都没有改动。不要原样重试；问问用户想怎么改，或者换个做法。`;
       }
       const r = local.commitPatch(prep);
-      if (r.error) { ui.result(r.error, false); return r.error; }
+      if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
       succeeded(ctx, spinKey);
       for (const rel of r.changed) ctx.changedFiles.add(rel);
+      stepNote(ctx, () => ({ summary: `${r.summary}${isDraft(local) ? '（草稿）' : ''}${r.syntax ? '，语法错误' : ''}`, ok: !r.syntax, detail: patchDetail(prep) }));
       ui.result(ui.paint.green(`✓ ${r.summary}`));
       if (r.syntax) ui.result(`语法错误：${r.syntax.split('\n')[0]}`, false);
       return r.content;
     }
     if (name === 'delete_file') {
       const prep = local.prepareDelete(args);
-      if (prep.error) { ui.result(prep.error, false); return prep.error; }
+      if (prep.error) { ui.result(prep.error, false); stepNote(ctx, { ok: false, summary: prep.error }); return prep.error; }
       if (!(await confirmDelete(ctx, prep))) {
         ui.result('用户没有同意，没删', false);
+        stepNote(ctx, { ok: false, summary: '用户没有同意，没删' });
         return `用户没有同意删除 ${prep.rel}，文件还在。不要原样重试；问问用户想怎么处理。`;
       }
       const r = local.commitDelete(prep);
-      if (r.error) { ui.result(r.error, false); return r.error; }
+      if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
       ctx.changedFiles.add(`${prep.rel}（已删除）`);
+      stepNote(ctx, { summary: `${prep.lines} 行，挪进 .zhiqu/trash/` });
       ui.result(ui.paint.green(`✓ 已删除 ${prep.rel}`) + ui.paint.dim(`  → ${r.trashed}`));
       return r.content;
     }
     if (name === 'shell') {
       const spinKey = `shell:${args.command}${args.cwd ? `@${args.cwd}` : ''}`;
       const prep = local.prepareShell(args);
-      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, runReminder(String(args.command))); }
+      if (prep.error) { ui.result(prep.error, false); stepNote(ctx, { ok: false, summary: prep.error }); return failed(ctx, spinKey, prep.error, runReminder(String(args.command))); }
       if (ctx.mode === 'ask' && !(await confirmShell(ctx, prep))) {
         ui.result('用户没有同意，没运行', false);
+        stepNote(ctx, { ok: false, summary: '用户没有同意，没运行' });
         return `用户没有同意运行 ${prep.command}。不要原样重试；问问用户，或者换个做法。`;
       }
       // 没下发 background（服务器上）就不当后台命令起：模型照着别处的说法传了 background: true，原来照样起了（第一百二十六轮 review）
       if (args.background && offeredBackground(ctx)) {
         const job = await local.startJob(prep, { policy: shellPolicy(ctx), signal });
-        if (job.error) { ui.result(job.error, false); return failed(ctx, spinKey, job.error, runReminder(prep.command)); }
+        if (job.error) { ui.result(job.error, false); stepNote(ctx, { ok: false, summary: job.error }); return failed(ctx, spinKey, job.error, runReminder(prep.command)); }
         succeeded(ctx, spinKey);
+        stepNote(ctx, { summary: `${job.id} ${job.snap.running ? '在后台跑着' : `结束了（退出码 ${job.snap.exitCode}）`}`, ok: job.snap.running || job.snap.exitCode === 0,
+          detail: runDetail(prep, { output: job.snap.output, exitCode: job.snap.running ? null : job.snap.exitCode }) });
         // 子 agent 起的记在它自己名下：它停下之前要先停掉（subagents.js 的 settle）
         if (ctx.ownJobs) ctx.ownJobs.add(job.id);
         ui.result(`${job.id} 在后台${job.snap.running ? '跑着' : `结束了（退出码 ${job.snap.exitCode}）`}`, job.snap.running || job.snap.exitCode === 0);
@@ -825,6 +893,7 @@ async function executeTool(ctx, call, offered, signal) {
       }
       for (const l of shownOutput(r.output.split('\n').filter((x) => x.trim()))) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
       ui.result(r.summary, r.exitCode === 0);
+      stepNote(ctx, { summary: r.summary, ok: r.exitCode === 0, detail: runDetail(prep, r) });
       if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content; }
       return failed(ctx, spinKey, r.content, runReminder(prep.command));
     }
@@ -834,26 +903,31 @@ async function executeTool(ctx, call, offered, signal) {
         const mine = [...ctx.ownJobs];
         const msg = `${args.id} 不是你起的后台命令${mine.length ? `：你起的是 ${mine.join('、')}` : '：你还没起过后台命令'}。`;
         ui.result(msg, false);
+        stepNote(ctx, { ok: false, summary: msg });
         return msg;
       }
       const r = name === 'shell_output' ? await local.readJob(args, { signal }) : await local.stopJob(args, { signal });
-      if (r.error) { ui.result(r.error, false); return r.error; }
+      if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
       ui.result(r.snap.running ? `${r.snap.id} 还在跑` : `${r.snap.id} 已结束（退出码 ${r.snap.exitCode}）`);
+      stepNote(ctx, { summary: r.snap.running ? `${r.snap.id} 还在跑` : `${r.snap.id} 已结束（退出码 ${r.snap.exitCode}）`, ok: r.snap.running || r.snap.exitCode === 0,
+        detail: runDetail({ command: r.snap.command || '' }, { output: r.snap.output, exitCode: r.snap.running ? null : r.snap.exitCode }) });
       return r.content;
     }
     if (name === 'run_command') {
       const line = [args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ');
       const spinKey = `run:${line}${args.cwd ? `@${args.cwd}` : ''}`;
       const prep = local.prepareRun(args);
-      if (prep.error) { ui.result(prep.error, false); return failed(ctx, spinKey, prep.error, runReminder(line)); }
+      if (prep.error) { ui.result(prep.error, false); stepNote(ctx, { ok: false, summary: prep.error }); return failed(ctx, spinKey, prep.error, runReminder(line)); }
       if (!(await confirmRun(ctx, prep))) {
         ui.result('用户没有同意，没运行', false);
+        stepNote(ctx, { ok: false, summary: '用户没有同意，没运行' });
         return `用户没有同意运行 ${[prep.command, ...prep.args].join(' ')}。不要原样重试；问问用户，或者换个做法。`;
       }
       let tail = '';
       const r = await local.commitRun(prep, { signal, onOutput: (s) => { tail = (tail + s).slice(-4000); } });
       for (const l of shownOutput(r.output.split('\n').filter((x) => x.trim()))) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
       ui.result(r.summary, r.exitCode === 0);
+      stepNote(ctx, { summary: r.summary, ok: r.exitCode === 0, detail: runDetail(prep, r) });
       if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content; }
       return failed(ctx, spinKey, r.content, runReminder(line));
     }
@@ -869,9 +943,11 @@ async function executeTool(ctx, call, offered, signal) {
         : await ctx.api.post('/api/harness/tools/call', { sessionId: ctx.session.id, name, arguments: args }, { signal, timeoutMs: 60_000 });
       const drafts = r.drafts || [];
       ui.result(drafts.length ? `草稿：${drafts.map((d) => d.title).join('、')} → 到网页里确认` : '完成');
+      stepNote(ctx, { summary: drafts.length ? `草稿：${drafts.map((d) => d.title).join('、')}` : remoteSummary(r.content) });
       return r.content;
     } catch (e) {
       ui.result(e.message, false);
+      stepNote(ctx, { ok: false, summary: e.message });
       // 没拿到回应（服务器可能已经做了）：别说成「失败」—— 模型会换个说法再调一次；照原样再调，同一个键，不会重复
       return e.uncertain ? `远程工具没拿到回应：${e.message}` : `远程工具调用失败：${e.message}`;
     }
@@ -914,6 +990,8 @@ async function executeTool(ctx, call, offered, signal) {
     ctx.roundsSinceTodo = 0;
     const [head, ...items] = todoLines(r.todos, ui.paint);
     ui.result(head);
+    // 网页里每项带状态（画成什么由前端定，不把终端的 ☑ ◐ ☐ 带过去）
+    stepNote(ctx, { summary: head, detail: { todos: r.todos.slice(0, 30).map((t) => ({ content: String(t.content).slice(0, 300), status: t.status })) } });
     for (const l of items) ui.line(`  ${l}`);
     if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'todos', todos: ctx.todos });
     return todoReply(r.todos);
@@ -1021,6 +1099,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     // 省略旧思考是改写历史，从那条起缓存全部失效（评测上约 1.6 个点，按价算约一成花费）；省下的那点 token 按命中价不值 —— 吃紧了才做
     if (needsCompaction(systemText(ctx), ctx.messages, window, SLIM_THRESHOLD)) slimThinking(ctx.messages);
     const res = await callModel(ctx, tools, signal);
+    if (ctx.stepLog && res.thought) ctx.stepLog.thinking(res.thought.chars, res.thought.ms);
     const message = res.message || { role: 'assistant', content: res.text };
     const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
     // 原地重复：历史和回答里只留开头一段

@@ -40,6 +40,14 @@ public class WebResearchService {
     }
 
     public List<WebSearchProvider.SearchResult> research(String question, List<AiMessage> recentMessages) {
+        return researchTraced(question, recentMessages).results();
+    }
+
+    /** 搜了什么（问题里带网址时是那几个网址）、得到什么 —— 回答里的「联网」那一步要说出来（第一百二十七轮） */
+    public record Research(String query, List<String> urls, List<WebSearchProvider.SearchResult> results) {
+    }
+
+    public Research researchTraced(String question, List<AiMessage> recentMessages) {
         Set<String> urls = extractUrls(question);
         List<WebSearchProvider.SearchResult> results = new ArrayList<>();
         if (!urls.isEmpty()) {
@@ -49,7 +57,7 @@ public class WebResearchService {
                     break;
                 }
             }
-            return results;
+            return new Research(null, List.copyOf(urls), results);
         }
         if (!webSearchProvider.isAvailable()) {
             throw new BusinessException("联网搜索需要配置搜索源；如果只想读取网页，请直接在问题里提供 http/https 链接。");
@@ -65,7 +73,7 @@ public class WebResearchService {
                 break;
             }
         }
-        return results.isEmpty() ? searchResults : results;
+        return new Research(query, List.of(), results.isEmpty() ? searchResults : results);
     }
 
     public WebSearchProvider.SearchResult fetch(String url) {

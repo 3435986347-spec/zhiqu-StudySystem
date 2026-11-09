@@ -81,6 +81,18 @@ class DesktopWebKitLayoutTest {
         assertTrue(Double.parseDouble(out.get("draftMirror.tallest")) > 660, "样本折得不够多（要三十行以上），差 1px 量不出来：" + out);
         assertTrue(Double.parseDouble(out.get("draftMirror.heightGap")) <= 0.5, "WebKit 里输入框和后面那层折行不一样：" + out);
         assertTrue(Double.parseDouble(out.get("draftMirror.widthGap")) <= 0.5, "WebKit 里输入框和后面那层不一样宽：" + out);
+        // 第一百二十七轮：回答里的每一步，展开之后放进三种宽度的回答里（760 桌面、420 窄窗口、300 手机）
+        assertEquals("3", out.get("traceCases"), "三种宽度没有都量到：" + out);
+        for (String size : new String[]{"wide", "narrow", "tiny"}) {
+            String key = "trace." + size;
+            assertEquals("7", out.get(key + ".steps"), key + " 没画出七步：" + out);
+            // 七步里思考没有细节、跑着的那一步不给展开：有细节的五步都要展开（量的是展开之后的样子）
+            assertEquals("5", out.get(key + ".open"), key + " 有细节的五步没都展开（量的是展开之后）：" + out);
+            assertTrue(Double.parseDouble(out.get(key + ".overflow")) <= 0.5, key + " 长命令 / 长输出 / 长路径把回答那一栏撑出去 " + out.get(key + ".overflow") + "px");
+            assertTrue(Double.parseDouble(out.get(key + ".scrollWidth")) <= 0.5, key + " 回答那一栏出现了横向滚动：" + out.get(key + ".scrollWidth") + "px");
+            assertTrue(Double.parseDouble(out.get(key + ".tallestLine")) <= 30, key + " 一步的那一行被挤成了好几行（" + out.get(key + ".tallestLine") + "px 高）：长的对象要省略，不是折行");
+        }
+        assertEquals("zqSpin", out.get("trace.spinner"), "跑着的那一步没在转");
     }
 
     private Map<String, String> runCheck() throws Exception {
@@ -95,6 +107,8 @@ class DesktopWebKitLayoutTest {
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/week-markup.js"), STATIC.resolve("assets/pages/dashboard.js"), work.resolve("week.html").toString()),
                 "week-markup.js 没画出日历");
         Files.writeString(work.resolve("pomo.html"), pomodoroCard(Files.readString(STATIC.resolve("dashboard.html"), StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
+        assertTrue(NodeRunner.run(Path.of("src/test/resources/js/trace-markup.js"), STATIC.resolve("assets"), work.resolve("trace.html").toString()),
+                "trace-markup.js 没画出步骤");
         Path src = Files.createDirectories(tmp.resolve("src"));
         Files.copy(Path.of("src/test/resources/swift/webkit-layout-check.swift"), src.resolve("main.swift"));
         Path bin = tmp.resolve("check");

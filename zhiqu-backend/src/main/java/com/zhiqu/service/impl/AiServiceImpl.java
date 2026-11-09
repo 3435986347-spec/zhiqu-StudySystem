@@ -40,6 +40,7 @@ import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.CodeContextPrompt;
 import com.zhiqu.service.ai.CodeWorkspaceAgent;
+import com.zhiqu.service.ai.TraceSteps;
 import com.zhiqu.service.workspace.ArtifactFiles;
 import com.zhiqu.service.ai.AssistantTaskContext;
 import com.zhiqu.service.ai.AssistantTaskReader;
@@ -853,6 +854,10 @@ public class AiServiceImpl implements AiService {
                 }
                 executor.execute(AgentPhase.COMMIT, ctx);
                 state.trace.settleUnrunTasks(ctx);
+                // 回答里的每一步（第一百二十七轮）：COMMIT 之后才全（计划 / 记忆 / Wiki 草稿那几步在 COMMIT 里），
+                // 而且要在 run 标成完成之前写 —— 原来写在事务之后，看到 run 完成的人（页面刷新、判据）这时去读，步骤还没进库
+                // 这一轮结束了还停在 running 的（宿主没交回那一步就退了、读管子时断了）收成「没做完」：不然页面上一直转（review）
+                saveTraceSteps(state.liveAssistant, state.traceSteps, "这一步没做完（循环提前结束了）");
                 aiWorkspaceService.completeRun(agentRun, state.liveAssistant);
                 return new StreamCompletionResult(state.liveUser, state.liveAssistant, null);
             }));
@@ -899,6 +904,10 @@ public class AiServiceImpl implements AiService {
                 done.put("notice", state.finalNotice);
             }
             persistSuggestedPlan(completion.assistantMessage(), state.suggestedPlan);
+            // 库里存的那一份（事务里已经写了）也放进 done：页面拿它盖掉流里攒的
+            if (!state.traceSteps.isEmpty()) {
+                done.put("steps", state.traceSteps.snapshot());
+            }
             ctx.emit("done", done);
         } catch (Exception e) {
             state.trace.errorStep(state.dispatcherStep, e);
@@ -910,6 +919,9 @@ public class AiServiceImpl implements AiService {
             state.trace.settleUnrunTasks(ctx, AgentTraceRecorder.FAILED_RUN_TASK_SUMMARY);
             aiWorkspaceService.errorRun(agentRun, e);
             failAssistantMessage(assistantMessage, e, state.streamedReply);
+            // 失败了也存：做到哪一步、哪一步出的错，比一句错误更有用；还在跑的收成「没做完」
+            state.traceSteps.voidDrafts("这一轮出错了，草稿没存下来");
+            saveTraceSteps(assistantMessage, state.traceSteps, "这一轮出错了，没做完");
             Map<String, Object> error = new LinkedHashMap<>();
             error.put("requestId", requestId);
             error.put("agentRunId", agentRun.getId());
@@ -954,6 +966,10 @@ public class AiServiceImpl implements AiService {
          */
         private List<ChatImageAttachments.LoadedImage> attachedImages = List.of();
 
+        /** 回答里按顺序列出的每一步（第一百二十七轮）：几个 runner 并行时也往这里记，TraceSteps 自己加锁 */
+        private final TraceSteps traceSteps = new TraceSteps();
+        /** 上一次生成途中写步骤的时刻（flushStreamingSteps 节流；在 traceSteps 上加锁读写） */
+        private long stepsFlushedAt;
         private AiAgentStep dispatcherStep;
         private AiAgentStep retrieverStep;
         private AiAgentStep verifierStep;
@@ -1161,6 +1177,18 @@ public class AiServiceImpl implements AiService {
                     + notebookChunkCount + " 个片段";
             int sources = s.notebookContextRows.size() + s.webCitationRows.size();
             String attemptNote = s.retrievalAttempts > 1 ? "（换了一次说法）" : "";
+            if (ctx.task("CONTEXT_RESEARCHER") != null || ctx.task("RETRIEVER") != null) {
+                // 回答里的那一步（第一百二十七轮）：查了几份资料 / Wiki，标题列在点开里（标题是用户自己的资料名，不是正文）
+                List<String> titles = s.notebookContextRows.stream().map(r -> stringValue(r.get("title"))).filter(t -> !t.isBlank()).distinct().toList();
+                long wikiRows = s.notebookContextRows.stream().filter(r -> "WIKI_PAGE".equals(stringValue(r.get("sourceType")))).count();
+                String what = notebookSourceIds.isEmpty() ? "没找到相关的资料"
+                        : "找到 " + notebookSourceIds.size() + " 份资料、" + notebookChunkCount + " 个片段" + (wikiRows > 0 ? "（含知识 Wiki）" : "");
+                Map<String, Object> step = TraceSteps.step("retrieve", "retrieve", "检索资料", s.retryQuery == null ? "" : "换了说法：" + s.retryQuery, what + attemptNote, true);
+                if (!titles.isEmpty()) {
+                    step.put("detail", TraceSteps.items(titles));
+                }
+                emitTraceStep(ctx, s, step);
+            }
             s.trace.finishStep(ctx, s.retrieverStep, publicSummary + attemptNote,
                     "sources=" + sources + ", attempts=" + s.retrievalAttempts);
             Map<String, Object> output = new LinkedHashMap<>();
@@ -1291,9 +1319,23 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void run(AgentRunContext ctx) {
-            s.citations = s.webSearchEnabled ? webResearchService.research(s.limitedMessage, s.history) : List.of();
+            WebResearchService.Research research = s.webSearchEnabled ? webResearchService.researchTraced(s.limitedMessage, s.history) : null;
+            s.citations = research == null ? List.of() : research.results();
             s.webCitationRows = RetrievalPresentation.citationRows(s.citations);
             s.retrievalStatus = RetrievalPresentation.retrievalStatus(s.citations);
+            if (research != null) {
+                // 回答里的那一步（第一百二十七轮）：搜了什么（或者读了哪几个网址）、成了几个，点开是标题 + 网址
+                long ok = s.webCitationRows.stream().filter(RetrievalPresentation::isSuccessfulCitation).count();
+                long failed = s.webCitationRows.size() - ok;
+                String target = research.query() != null ? research.query() : String.join("、", research.urls());
+                Map<String, Object> step = TraceSteps.step("web", "web", research.query() != null ? "联网搜索" : "读网页", target,
+                        s.webCitationRows.isEmpty() ? "没有结果" : ok + " 个结果" + (failed > 0 ? "，" + failed + " 个打不开" : ""), ok > 0 || s.webCitationRows.isEmpty());
+                List<String> rows = s.webCitationRows.stream().map(c -> stringValue(c.get("title")) + "  " + stringValue(c.get("url"))).toList();
+                if (!rows.isEmpty()) {
+                    step.put("detail", TraceSteps.items(rows));
+                }
+                emitTraceStep(ctx, s, step);
+            }
 
             AiAgentTask researchTask = ctx.task("WEB_RESEARCHER");
             for (Map<String, Object> citation : s.webCitationRows) {
@@ -1346,6 +1388,8 @@ public class AiServiceImpl implements AiService {
             String summary = read.total() == 0 ? "你没有未完成的任务"
                     : "读了你的 " + read.shown() + " 条任务" + (read.total() > read.shown() ? "（共 " + read.total() + " 条未完成）" : "");
             s.trace.finishStep(ctx, s.taskReaderStep, summary, "shown=" + read.shown() + ", total=" + read.total());
+            // 回答里的那一步只说条数：任务标题在库里是加密的，不往步骤（明文存）里抄
+            emitTraceStep(ctx, s, TraceSteps.step("tasks", "tasks", "读任务", "", summary, true));
             s.trace.completeTask(ctx, ctx.task("TASK_READER"), Map.of("shown", read.shown(), "total", read.total()), summary);
         }
     }
@@ -1450,6 +1494,9 @@ public class AiServiceImpl implements AiService {
             boolean drafted = s.planDraftArtifactId != null;
             s.trace.finishStep(ctx, s.plannerStep, drafted ? "计划草稿已整理，等你确认" : "这一轮没有生成计划草稿",
                     "planDraft=" + drafted);
+            if (drafted) {
+                emitTraceStep(ctx, s, TraceSteps.step("plan", "plan", "计划草稿", "", draftCounts(s.planArtifactContent) + "，等你确认", true));
+            }
             s.trace.completeTask(ctx, ctx.task("PLANNER"),
                     Map.of("planDraft", drafted), drafted ? "Plan draft ready" : "No plan draft");
         }
@@ -1490,6 +1537,8 @@ public class AiServiceImpl implements AiService {
             List<Long> pendingIds = s.wikiAgent == null ? List.of() : s.wikiAgent.pendingPatchIds;
             String status = wrote ? "已确认待合入变更草稿" : writeRequested ? "未确认生成待合入变更" : "Wiki 读取完成";
             s.trace.finishStep(ctx, s.wikiToolStep, status, "wrotePatch=" + wrote + "; pendingPatchIds=" + pendingIds);
+            emitTraceStep(ctx, s, TraceSteps.step("wiki", "wiki", wrote ? "知识库草稿" : "读知识库", "",
+                    wrote ? "改了 " + pendingIds.size() + " 页，等你确认" : writeRequested ? "想改，没能生成草稿" : "读完了", !writeRequested || wrote));
             s.trace.completeTask(ctx, ctx.task("WIKI_TOOL_AGENT"),
                     Map.of("wrotePatch", wrote, "writeRequested", writeRequested, "pendingPatchIds", pendingIds), status);
         }
@@ -1537,6 +1586,12 @@ public class AiServiceImpl implements AiService {
             CodeWorkspaceAgent.Result codeResult = codeWorkspaceAgent.run(s.config, s.userId, conversationId, s.limitedMessage,
                     chatHistory, s.contextOptions, ContextBudget.forWindow(s.config.getContextWindowTokens()), s.reasoningMode,
                     note -> {
+                        // 回答里按顺序列出的一步（第一百二十七轮）：单独一个事件、记进这一轮的步骤（收尾时存库）
+                        if (note.get("trace") instanceof Map<?, ?> traced) {
+                            @SuppressWarnings("unchecked") Map<String, Object> step = (Map<String, Object>) traced;
+                            emitTraceStep(ctx, s, step);
+                            return;
+                        }
                         Map<String, Object> payload = new LinkedHashMap<>();
                         payload.put("requestId", s.requestId);
                         payload.put("agentRunId", s.agentRun.getId());
@@ -1585,6 +1640,78 @@ public class AiServiceImpl implements AiService {
                             "wikiPendingPatchIds", s.codeWikiPendingPatchIds),
                     "Code workspace loop done");
         }
+    }
+
+    /**
+     * 回答里的一步（第一百二十七轮）：记进这一轮（收尾时存库），同时发 {@code trace.step} 给页面实时画。
+     * 写完回答之后那几步（COMMIT 里）的 emit 是攒到事务提交后才发的（AgentRunContext.emit），记进这一轮不受影响。
+     */
+    private void emitTraceStep(AgentRunContext ctx, StreamState s, Map<String, Object> step) {
+        if (step == null) {
+            return;
+        }
+        s.traceSteps.put(step);
+        flushStreamingSteps(ctx, s, step);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("requestId", s.requestId);
+        payload.put("agentRunId", s.agentRun == null ? null : s.agentRun.getId());
+        payload.put("assistantMessageId", s.assistantMessage == null ? null : s.assistantMessage.getId());
+        payload.put("step", step);
+        ctx.emit("trace.step", payload);
+    }
+
+    /**
+     * 生成途中把步骤阶段性写进库（review：刷新 / 断线后轮询列表，原来要等整轮完才看得到步骤）。
+     * 一步做完才写（running 那条不写，省一半写入），最多一秒一次；COMMIT 里的不写（事务里有收尾那次）。
+     */
+    private void flushStreamingSteps(AgentRunContext ctx, StreamState s, Map<String, Object> step) {
+        if (s.assistantMessage == null || s.assistantMessage.getId() == null || "running".equals(step.get("status"))
+                || ctx.phase() == AgentPhase.COMMIT) {
+            return;
+        }
+        long now = System.nanoTime();
+        synchronized (s.traceSteps) {
+            if (now - s.stepsFlushedAt < 1_000_000_000L) {
+                return;
+            }
+            s.stepsFlushedAt = now;
+        }
+        try {
+            messageMapper.flushStreamingSteps(s.assistantMessage.getId(), s.userId, toJson(s.traceSteps.snapshot()));
+        } catch (Exception e) {
+            log.debug("生成途中写步骤失败（收尾时还会再写） err={}", e.toString());
+        }
+    }
+
+    /** 存这一轮的步骤（没有就不写），返回存进去的那一份；写失败不影响回答 */
+    private Map<String, Object> saveTraceSteps(AiMessage message, TraceSteps steps, String settleRunning) {
+        if (message == null || message.getId() == null || steps.isEmpty()) {
+            return null;
+        }
+        if (settleRunning != null) {
+            steps.settleRunning(settleRunning);
+        }
+        Map<String, Object> snapshot = steps.snapshot();
+        try {
+            messageMapper.saveSteps(message.getId(), message.getUserId(), toJson(snapshot));
+        } catch (Exception e) {
+            log.warn("回答里的步骤没存上（不影响回答） messageId={} err={}", message.getId(), e.toString());
+        }
+        return snapshot;
+    }
+
+    /** 「3 个任务、1 个例行计划」 */
+    static String draftCounts(Map<String, Object> plan) {
+        int tasks = plan != null && plan.get("tasks") instanceof List<?> t ? t.size() : 0;
+        int routines = plan != null && plan.get("routines") instanceof List<?> r ? r.size() : 0;
+        List<String> parts = new ArrayList<>();
+        if (tasks > 0) {
+            parts.add(tasks + " 个任务");
+        }
+        if (routines > 0) {
+            parts.add(routines + " 个例行计划");
+        }
+        return parts.isEmpty() ? "空的" : String.join("、", parts);
     }
 
     /** 回答照样能用、但不完整：说出为什么。完整的回答返回 null。 */
@@ -1713,6 +1840,8 @@ public class AiServiceImpl implements AiService {
 
             StringBuilder reply = s.streamedReply;
             StringBuilder reasoning = new StringBuilder();
+            // 回答里「思考 N 秒」那一步（第一百二十七轮）：第一个思考字到第一个正文字
+            long[] thinking = {0L, 0L};
             // 阶段性把已生成的正文写进库，让「生成途中刷新页面」还能看到已有的部分。
             // 详见 AiMessageMapper.flushStreamingContent —— 它的三个 WHERE 条件决定了
             // 这次写入不会复活被清空的消息，也不会把终态消息回退成半截。
@@ -1725,6 +1854,9 @@ public class AiServiceImpl implements AiService {
             try {
                 aiCallResult = callAiApiStream(s.config, messages, s.reasoningMode, event -> {
                 if ("message.delta".equals(event.type()) && event.text() != null && !event.text().isEmpty()) {
+                    if (thinking[0] > 0 && thinking[1] == 0) {
+                        thinking[1] = System.nanoTime();
+                    }
                     int room = REPLY_MAX_LENGTH - reply.length();
                     String text = event.text().length() > room ? event.text().substring(0, Math.max(0, room)) : event.text();
                     if (!text.isEmpty()) {
@@ -1741,6 +1873,9 @@ public class AiServiceImpl implements AiService {
                         throw new ReplyCapReached();
                     }
                 } else if ("reasoning.delta".equals(event.type())) {
+                    if (thinking[0] == 0) {
+                        thinking[0] = System.nanoTime();
+                    }
                     if (isReasoningRequested(s.reasoningMode) && event.text() != null && !event.text().isEmpty()) {
                         reasoning.append(event.text());
                         ctx.emit("reasoning.delta", Map.of(
@@ -1781,6 +1916,12 @@ public class AiServiceImpl implements AiService {
                 throw new BusinessException("length".equals(aiCallResult.finishReason()) && !reasoning.isEmpty()
                         ? "模型把这次的输出额度全用在了思考上，没来得及写回答：换个说法，或者关掉深度思考再试"
                         : "模型这次什么都没说（返回了空回答）：稍后再试，或者换一个模型");
+            }
+            if (thinking[0] > 0) {
+                long ms = ((thinking[1] > 0 ? thinking[1] : System.nanoTime()) - thinking[0]) / 1_000_000L;
+                Map<String, Object> step = TraceSteps.step("thinking", "thinking", "思考", "", Math.max(1, Math.round(ms / 1000.0)) + " 秒", true);
+                step.put("ms", ms);
+                emitTraceStep(ctx, s, step);
             }
             // 不另发事件：done 里带着它，库里也存着 —— 页面在那条回答底下说，刷新之后还在
             s.finalNotice = answerNotice(aiCallResult.finishReason());
@@ -1858,6 +1999,7 @@ public class AiServiceImpl implements AiService {
                     Map.of("items", rows), s.liveUser.getId());
             ctx.emit("artifact.created", s.trace.artifactEvent(step, artifact, artifactStreamSummary(artifact)));
             s.trace.finishStep(ctx, step, "记忆草稿已整理", "items=" + rows.size());
+            emitTraceStep(ctx, s, TraceSteps.step("memory", "memory", "记忆草稿", "", rows.size() + " 条，等你确认", true));
             s.trace.completeTask(ctx, task, Map.of("items", rows.size()), "Memory draft ready");
         }
     }
@@ -1915,6 +2057,9 @@ public class AiServiceImpl implements AiService {
         public void commit(AgentRunContext ctx) {
             // 节点有了就要走到终态：没解析出计划也是一个正当结果，不该被 sweeper 当成「没跑」。
             boolean extracted = hasPlanDraft(s.suggestedPlan);
+            if (extracted && s.planDraftArtifactId == null) {
+                emitTraceStep(ctx, s, TraceSteps.step("plan", "plan", "计划草稿", "", draftCounts(s.suggestedPlan) + "，等你确认", true));
+            }
             s.trace.finishStep(ctx, s.planExtractorStep,
                     extracted ? "已提取计划草稿" : "本轮未从回答里提取到计划", "planDraft=" + extracted);
             s.trace.completeTask(ctx, ctx.task("PLAN_EXTRACTOR"), Map.of("planDraft", extracted), "Plan extraction done");
@@ -1985,6 +2130,7 @@ public class AiServiceImpl implements AiService {
             }
             int bad = s.answerFindings.size();
             s.trace.finishStep(ctx, step, bad == 0 ? "引用核对通过" : "发现 " + bad + " 条来源对不上证据", "findings=" + bad);
+            emitTraceStep(ctx, s, TraceSteps.step("check", "check", "核对引用", "", bad == 0 ? "都对得上" : bad + " 条对不上证据", bad == 0));
             s.trace.completeTask(ctx, task, Map.of("findings", bad), "Answer citations verified");
         }
     }
@@ -2202,6 +2348,7 @@ public class AiServiceImpl implements AiService {
                     stringValue(wikiArtifactContent.get("title")), wikiArtifactContent, s.liveUser.getId());
             ctx.emit("artifact.created", s.trace.artifactEvent(wikiStep, artifact, artifactStreamSummary(artifact)));
             s.trace.completeTask(ctx, wikiTask, Map.of("artifactId", artifact.getId()), "Wiki draft ready");
+            emitTraceStep(ctx, s, TraceSteps.step("wiki-draft", "wiki", "知识库草稿", stringValue(wikiArtifactContent.get("title")), "等你确认", true));
         }
     }
 
@@ -2811,14 +2958,55 @@ public class AiServiceImpl implements AiService {
             return List.of();
         }
         List<Map<String, Object>> result = new ArrayList<>();
-        for (AiMessage item : getRecentMessages(userId, conversation.getId(),
-                Math.min(Math.max(limit, 1), 100), before)) {
+        List<AiMessage> items = getRecentMessages(userId, conversation.getId(), Math.min(Math.max(limit, 1), 100), before);
+        // 回答里的每一步（第一百二十七轮）：实体上不读这一列（大），这一页的回答一次查回来
+        Map<Long, Object> steps = stepsOf(userId, items);
+        for (AiMessage item : items) {
             if (!isChatRole(item.getRole())) {
                 continue;
             }
-            result.add(messageRow(item));
+            Map<String, Object> row = messageRow(item);
+            Object own = steps.get(item.getId());
+            if (own != null) {
+                row.put("steps", own);
+            }
+            result.add(row);
         }
         return result;
+    }
+
+    @Override
+    public Map<String, Object> getMessageSteps(Long userId, Long messageId) {
+        // 只认自己的、没删的（stepsOf 的 WHERE 里有 user_id 和 deleted）
+        for (Map<String, Object> row : messageMapper.stepsOf(userId, List.of(messageId))) {
+            Map<String, Object> parsed = parseJsonObjectMap(stringValue(row.get("steps_json")));
+            if (!parsed.isEmpty()) {
+                return parsed;
+            }
+        }
+        throw new BusinessException("这条回答没有记下步骤");
+    }
+
+    /** 这一页回答的步骤：id → { steps, dropped? }；解析不了的当没有 */
+    private Map<Long, Object> stepsOf(Long userId, List<AiMessage> items) {
+        List<Long> ids = items.stream().filter(m -> "assistant".equals(m.getRole())).map(AiMessage::getId).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Object> out = new HashMap<>();
+        try {
+            for (Map<String, Object> row : messageMapper.stepsOf(userId, ids)) {
+                Object id = row.get("id");
+                Map<String, Object> parsed = parseJsonObjectMap(stringValue(row.get("steps_json")));
+                if (id instanceof Number n && !parsed.isEmpty()) {
+                    // 列表里只给一行一步，细节点开再拿（getMessageSteps）
+                    out.put(n.longValue(), TraceSteps.summaries(parsed));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("回答里的步骤读不出来（不影响消息列表） err={}", e.toString());
+        }
+        return out;
     }
 
     /** 一条消息给页面的样子。个人中心的「最近消息」与聊天区的列表原来各写了一份 —— 新加的字段只进了一边（第十九轮的 notice 就是）。 */

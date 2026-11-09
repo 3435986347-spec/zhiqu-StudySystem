@@ -281,6 +281,49 @@ class CodeAgentLoopIntegrationTest {
         assertEquals("def two_sum(nums, target):\n    return []\n",
                 Files.readString(workspaceRoot.resolve("solve.py"), StandardCharsets.UTF_8),
                 "确认之前磁盘必须一个字节都没动 —— 这是草稿优先的全部意义");
+
+        // 四、回答里按顺序列出的每一步（第一百二十七轮）：存进了库、列表接口读得回来，顺序就是做的顺序，带结果
+        stepsArePersisted();
+    }
+
+    @SuppressWarnings("unchecked")
+    private void stepsArePersisted() throws Exception {
+        String raw = jdbcTemplate.queryForObject(
+                "SELECT steps_json FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, userId);
+        assertNotNull(raw, "这一轮的步骤没存进 ai_message.steps_json");
+        List<Map<String, Object>> steps = (List<Map<String, Object>>) JSON.readValue(raw, Map.class).get("steps");
+        List<String> kinds = steps.stream().map(st -> String.valueOf(st.get("kind"))).toList();
+        // 代码 agent 那四步按顺序：读 → 运行 → 知识库草稿 → 改（write_file 覆盖已有文件 = 修改）
+        List<String> code = kinds.stream().filter(k -> List.of("read", "run", "wiki", "edit", "create").contains(k)).toList();
+        assertEquals(List.of("read", "run", "wiki", "edit"), code.subList(0, 4), "顺序不对：" + kinds);
+        assertTrue(steps.stream().noneMatch(st -> "running".equals(st.get("status"))), "收尾了还有 running 的：" + steps);
+        Map<String, Object> run = steps.stream().filter(st -> "run".equals(st.get("kind"))).findFirst().orElseThrow();
+        Map<String, Object> detail = (Map<String, Object>) run.get("detail");
+        assertNotNull(detail, "运行那一步没有输出：" + run);
+        assertTrue(String.valueOf(detail.get("output")).contains("期望 [0, 1]"), "判题的输出没进步骤：" + detail);
+        assertEquals("error", run.get("status"), "判题没过（退出码不是 0）要标成失败");
+        Map<String, Object> edit = steps.stream().filter(st -> "edit".equals(st.get("kind"))).findFirst().orElseThrow();
+        List<Map<String, Object>> files = (List<Map<String, Object>>) ((Map<String, Object>) edit.get("detail")).get("files");
+        assertEquals("solve.py", files.get(0).get("path"));
+        assertTrue(((List<String>) files.get(0).get("hunks")).contains("+    seen = {}"), "改动的 diff 没进步骤：" + files);
+        assertTrue(String.valueOf(edit.get("summary")).contains("草稿"), "草稿模式要说是草稿：" + edit.get("summary"));
+
+        // 列表接口（页面刷新后拿的就是它）读得回来
+        // 这里的对话没挂 Notebook（streamChat 的 notebookId 是 null）
+        List<Map<String, Object>> rows = aiService.getRecentChatMessages(userId, null, 20, null);
+        Map<String, Object> last = rows.get(rows.size() - 1);
+        assertEquals("assistant", last.get("role"));
+        assertNotNull(last.get("steps"), "列表接口没带步骤：页面一刷新就没了 " + rows.stream().map(r -> r.get("id") + ":" + r.get("role") + ":" + (r.get("steps") != null)).toList()
+                + " 库里：" + jdbcTemplate.queryForList("SELECT id, role, steps_json IS NOT NULL s, conversation_id FROM ai_message WHERE user_id = ? ORDER BY id", userId));
+        List<Map<String, Object>> listed = (List<Map<String, Object>>) ((Map<String, Object>) last.get("steps")).get("steps");
+        assertEquals(steps.size(), listed.size());
+        // 列表里一行一步、不带细节（review：一页 50 条回答的输出和 diff 原来每次都整份下来）；点开时拿整份
+        Map<String, Object> listedRun = listed.stream().filter(st -> "run".equals(st.get("kind"))).findFirst().orElseThrow();
+        assertTrue(!listedRun.containsKey("detail") && Boolean.TRUE.equals(listedRun.get("hasDetail")), "列表里的那一步带了细节 / 没标 hasDetail：" + listedRun);
+        Map<String, Object> full = aiService.getMessageSteps(userId, ((Number) last.get("id")).longValue());
+        assertTrue(String.valueOf(full).contains("期望 [0, 1]"), "点开时拿不到细节：" + full);
+        // 别人拿不到
+        org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () -> aiService.getMessageSteps(userId + 99_999, ((Number) last.get("id")).longValue()));
     }
 
     /** 第一百零四轮：状态文件一存在就盖过这里配的 EXEC 和临时目录。原来读的是用户的 ~/.zhiqu/workspace-state.json，跟着他在桌面应用里选的档位变红，选 EXEC 时判题命令跑进他真实的项目 */

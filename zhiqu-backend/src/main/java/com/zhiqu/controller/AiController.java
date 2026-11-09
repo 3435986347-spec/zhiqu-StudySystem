@@ -340,6 +340,13 @@ public class AiController {
         return Result.success(aiService.getRecentChatMessages(userId, notebookId, limit, before));
     }
 
+    /** 一条回答的步骤带细节（点开一步时拿；列表里只有一行一步，第一百二十七轮） */
+    @GetMapping("/messages/{id}/steps")
+    public Result<Map<String, Object>> getMessageSteps(@PathVariable Long id) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        return Result.success(aiService.getMessageSteps(userId, id));
+    }
+
     @DeleteMapping("/messages/{id}")
     public Result<Void> deleteMessage(@PathVariable Long id) {
         Long userId = SecurityUtils.getCurrentUserId();

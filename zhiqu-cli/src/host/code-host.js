@@ -3,7 +3,7 @@
 // 后端（Java 的 JsCodeAgent）起这个进程，stdin / stdout 一行一个 JSON：
 //   后端 → 这里：run（开始）、event / error（模型调用的回音）、exec_result（命令跑完了）、tool_result（远程工具的结果）
 //   这里 → 后端：model（请后端调一次模型）、exec（请后端跑一条命令）、tool（请后端执行一个 Wiki / 里程碑工具，第九十五轮）、
-//                step（轨迹里的一句）、result（收尾）、fatal（出错了）
+//                step（轨迹里的一句）、trace（回答里按顺序列出的一步，第一百二十七轮，形状见 steps.js）、result（收尾）、fatal（出错了）
 // 门（是不是管理员、工作区档位、写意图、能不能执行）后端判好了才起这个进程；模型和命令都回到后端去做 —— 这里只有循环和工作区的读、草稿。
 // 认不出的消息就停，不猜。
 import { normalizeEffort } from '../config.js';
@@ -15,6 +15,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { ApiError } from '../api.js';
 import { runTurn } from '../agent.js';
 import { initPrompt } from '../instructions.js';
+import { StepLog } from '../steps.js';
 import { BUILTIN_SYSTEM_PROMPT } from '../prompt.js';
 import { collectChanges, nothingReport, parseReviewWords, renderReport, reviewSpec, runReview } from '../review.js';
 import { detectSandbox } from '../tools/sandbox.js';
@@ -154,6 +155,8 @@ export async function runHosted(bridge, run) {
   // 轨迹：每一步（读了什么、改了什么、跑了什么）交给后端，网页的「执行轨迹」照命令行的说法显示
   const step = ui.step.bind(ui);
   ui.step = (text) => { bridge.send({ type: 'step', text: String(text) }); return step(text); };
+  // 回答里按顺序列出的每一步（第一百二十七轮，像 Codex）：开始一条、结束一条，形状见 steps.js
+  const stepLog = new StepLog((s) => bridge.send({ type: 'trace', step: s }));
   const api = { stream: (p, body, onEvent, opts) => bridge.stream(p, body, onEvent, opts),
     post: async (p, body, opts) => {
       if (p !== '/api/harness/tools/call') throw new ApiError('这里没有这个远程接口', { retryable: false });
@@ -166,7 +169,7 @@ export async function runHosted(bridge, run) {
     messages: historyBlock(run.history),
     allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() }, usage: { prompt: 0, completion: 0, cached: 0 },
     changedFiles: new Set(), todos: [], system: { text: BUILTIN_SYSTEM_PROMPT }, instructionsText: '', skillsText: '', skills: [],
-    verbose: true, model: run.model,
+    verbose: true, model: run.model, stepLog,
     // 网页输入框下面选的思考档位（第一百零八轮）；明说，不听服务端给命令行的默认（第五十四轮：工具轮想起来，一问要等几分钟）
     effort: normalizeEffort(run.effort) || 'instant',
   };

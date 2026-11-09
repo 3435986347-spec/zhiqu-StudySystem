@@ -43,4 +43,47 @@ public interface AiMessageMapper extends BaseMapper<AiMessage> {
     int flushStreamingContent(@Param("id") Long id,
                               @Param("userId") Long userId,
                               @Param("content") String content);
+
+    /**
+     * 回答里的每一步（第一百二十七轮）：一轮收尾时写一次（成功、失败都写）。单独一条 UPDATE、只动这一列：
+     * 实体上这一列不读（select = false），整行 updateById 永远碰不到它。
+     *
+     * <p>{@code deleted = 0}：生成途中清空了会话，不给已经软删的消息填上东西（和 flushStreamingContent 同一条理由）。
+     */
+    @Update("""
+            UPDATE ai_message
+            SET steps_json = #{stepsJson}
+            WHERE id = #{id}
+              AND user_id = #{userId}
+              AND deleted = 0
+            """)
+    int saveSteps(@Param("id") Long id,
+                  @Param("userId") Long userId,
+                  @Param("stepsJson") String stepsJson);
+
+    /**
+     * 生成途中阶段性写一份步骤（review：流式中断 / 刷新后页面轮询列表，原来这时候步骤一条都没有，要等整轮完才出来）。
+     * 和 flushStreamingContent 同样三个条件：终态的不回退（收尾那次 saveSteps 才是最后的），删了的不填。
+     */
+    @Update("""
+            UPDATE ai_message
+            SET steps_json = #{stepsJson}
+            WHERE id = #{id}
+              AND user_id = #{userId}
+              AND status = 'STREAMING'
+              AND deleted = 0
+            """)
+    int flushStreamingSteps(@Param("id") Long id,
+                            @Param("userId") Long userId,
+                            @Param("stepsJson") String stepsJson);
+
+    /** 一批消息的步骤（列表接口用：实体上不读这一列）。id → steps_json */
+    @org.apache.ibatis.annotations.Select("""
+            <script>
+            SELECT id, steps_json FROM ai_message
+            WHERE user_id = #{userId} AND deleted = 0 AND steps_json IS NOT NULL AND id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+            </script>
+            """)
+    java.util.List<java.util.Map<String, Object>> stepsOf(@Param("userId") Long userId, @Param("ids") java.util.Collection<Long> ids);
 }

@@ -9,6 +9,8 @@ func out(_ key: String, _ value: Any) { print("\(key)=\(value)"); fflush(stdout)
 let week = try! String(contentsOf: dir.appendingPathComponent("week.html"), encoding: .utf8)
 let pomo = try! String(contentsOf: dir.appendingPathComponent("pomo.html"), encoding: .utf8)
 let wikiHeader = try! String(contentsOf: dir.appendingPathComponent("wiki-header.html"), encoding: .utf8)
+// 回答里的每一步（第一百二十七轮）：发布的 traceStepsHtml 画的极端样本，放进三种宽度的回答里量
+let trace = try! String(contentsOf: dir.appendingPathComponent("trace.html"), encoding: .utf8)
 // 三种宽度的日历：322 是 960 宽的窗口里日历那张卡片的宽度（内置浏览器里量的），802 是 1440 宽时的，200 是 320 宽的手机上
 let page = """
 <!DOCTYPE html><html lang="zh-CN" data-zq-mode="light" data-zq-accent="mono"><head><meta charset="utf-8"><link rel="stylesheet" href="zhiqu-ui.css"></head>
@@ -19,6 +21,9 @@ let page = """
 <div id="pomo-host" style="width:260px;margin-top:20px">\(pomo)</div>
 <select class="zq-composer-model" id="model"><option>DeepSeek（我的）</option></select>
 <template id="wiki-header">\(wikiHeader)</template>
+<div id="trace-wide" style="width:760px;margin-top:20px"><div class="zq-msg is-ai"><div class="zq-msg-body">\(trace)<p>回答正文</p></div></div></div>
+<div id="trace-narrow" style="width:420px;margin-top:20px"><div class="zq-msg is-ai"><div class="zq-msg-body">\(trace)</div></div></div>
+<div id="trace-tiny" style="width:300px;margin-top:20px"><div class="zq-msg is-ai"><div class="zq-msg-body">\(trace)</div></div></div>
 </body></html>
 """
 let pageURL = dir.appendingPathComponent("page.html")
@@ -117,6 +122,30 @@ let measure = """
   result['draftMirror.widthGap'] = Math.abs(area.clientWidth - behind.clientWidth);
   result['draftMirror.tallest'] = tallest;
   result['draftMirror.display'] = getComputedStyle(behind).display;
+  // 回答里的每一步：展开之后，长命令 / 长输出 / 长路径 / 长 diff 行都不能把回答那一栏撑宽（自己会滚的框里的不算）；一行的标题不折成几行
+  var traceCases = 0;
+  ['wide', 'narrow', 'tiny'].forEach(function (size) {
+    var host = document.getElementById('trace-' + size);
+    var box = host.getBoundingClientRect(), worst = 0;
+    host.querySelectorAll('.zq-trace *').forEach(function (el) {
+      for (var p = el.parentElement; p && p !== host; p = p.parentElement) {
+        var ov = getComputedStyle(p).overflowX;
+        if (ov === 'auto' || ov === 'scroll' || ov === 'hidden') return;
+      }
+      var r = el.getBoundingClientRect();
+      if (r.width) worst = Math.max(worst, r.right - box.right, box.left - r.left);
+    });
+    var lines = [].slice.call(host.querySelectorAll('.zq-trace-line')).map(function (l) { return l.getBoundingClientRect().height; });
+    result['trace.' + size + '.overflow'] = Math.round(worst * 10) / 10;
+    result['trace.' + size + '.scrollWidth'] = host.scrollWidth - host.clientWidth;
+    result['trace.' + size + '.tallestLine'] = Math.round(Math.max.apply(null, lines));
+    result['trace.' + size + '.steps'] = host.querySelectorAll('.zq-trace-step').length;
+    result['trace.' + size + '.open'] = host.querySelectorAll('details.zq-trace-step[open]').length;
+    traceCases++;
+  });
+  var spin = document.querySelector('#trace-wide .zq-trace-step[data-state="running"] .zq-trace-icon');
+  result['trace.spinner'] = spin ? getComputedStyle(spin, '::before').animationName : 'none';
+  result.traceCases = traceCases;
   return JSON.stringify(result);
 })()
 """

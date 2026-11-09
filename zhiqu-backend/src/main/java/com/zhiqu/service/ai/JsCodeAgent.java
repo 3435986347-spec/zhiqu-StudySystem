@@ -326,6 +326,15 @@ public class JsCodeAgent {
                     tool(msg, remote, ranCommand[0], channel);
                 } else if ("step".equals(type)) {
                     narrate(onStep, Map.of("phase", "call", "tool", "", "message", Texts.limitRaw(msg.path("text").asText(""), 400)));
+                } else if ("trace".equals(type)) {
+                    // 回答里按顺序列出的一步（第一百二十七轮）：照形状收、按上限截，认不出的字段不要（TraceSteps.sanitize）
+                    // 不是对象就丢（不能让一条坏步骤让 convertValue 抛出来、把整轮停掉）
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> traced = msg.path("step").isObject()
+                            ? TraceSteps.sanitize(json.convertValue(msg.path("step"), Map.class)) : null;
+                    if (traced != null) {
+                        narrate(onStep, Map.of("phase", "trace", "trace", traced));
+                    }
                 } else if ("result".equals(type)) {
                     result = msg;
                     break;

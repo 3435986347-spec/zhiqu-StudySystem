@@ -24,6 +24,13 @@ public class AiMessage {
     private String retrievalStatusJson;
     private String usageJson;
     private String suggestedPlanJson;
+    /**
+     * 回答里按顺序列出的每一步（第一百二十七轮）。<b>只在 {@link com.zhiqu.mapper.AiMessageMapper#saveSteps} 里写</b>：
+     * 实体上默认是 null、查询时不读（select = false）—— 整行 updateById 跳过 null，就不会拿内存里一份旧的盖掉库里的；
+     * 历史查询也不用每一条都拉这一大列。
+     */
+    @TableField(select = false)
+    private String stepsJson;
     private String reasoningMode;
     private Boolean webSearchEnabled;
     private LocalDateTime completedAt;

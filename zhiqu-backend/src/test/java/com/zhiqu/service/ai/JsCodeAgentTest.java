@@ -293,6 +293,35 @@ class JsCodeAgentTest {
         assertTrue(r.drafts().isEmpty());
     }
 
+    /** 第一百二十七轮：回答里按顺序列出的步骤从宿主来，要进库、要回给页面 —— 照形状收、按上限截，认不出的不要 */
+    @Test
+    @DisplayName("宿主交来的步骤：照形状收（认不出的字段、种类、状态不要），按上限截，没有 id / 不是对象的整条丢掉；不认识的 trace 不让后端停下")
+    @SuppressWarnings("unchecked")
+    void 宿主交来的步骤() throws Exception {
+        CodeWorkspaceAgent.Result r = agent(FAKE_HOST, List.of(text("好"))).run(config, 7L, "trace", List.of(), false, false,
+                CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add);
+        assertNotNull(r);
+        assertEquals("traced", r.context(), "收到 trace 之后还要接着读到 result（trace 不是「认不出的消息」）");
+        List<Map<String, Object>> traced = notes.stream().filter(n -> "trace".equals(n.get("phase")))
+                .map(n -> (Map<String, Object>) n.get("trace")).toList();
+        assertEquals(List.of("s1", "s1", "s2"), traced.stream().map(t -> t.get("id")).toList(), "没有 id、不是对象的两条要丢掉：" + traced);
+        Map<String, Object> run = traced.get(1);
+        assertEquals("error", run.get("status"));
+        assertEquals(1234L, ((Number) run.get("ms")).longValue());
+        assertFalse(run.containsKey("injected"), "认不出的字段原样存了：" + run.keySet());
+        Map<String, Object> detail = (Map<String, Object>) run.get("detail");
+        assertEquals(1, detail.get("exitCode"));
+        assertTrue(((String) detail.get("output")).length() <= 16_000, "十万字的输出原样收了");
+        assertFalse(detail.containsKey("evil") || detail.containsKey("files"), "认不出 / 不像样的 detail 字段收了：" + detail.keySet());
+        Map<String, Object> weird = traced.get(2);
+        assertEquals("other", weird.get("kind"), "认不出的种类要落到 other");
+        assertEquals("ok", weird.get("status"), "认不出的状态要落到 ok");
+        assertTrue(((String) weird.get("title")).length() <= 41, "标题没截：" + ((String) weird.get("title")).length());
+        Map<String, Object> file = ((List<Map<String, Object>>) ((Map<String, Object>) weird.get("detail")).get("files")).get(0);
+        assertEquals(0L, ((Number) file.get("removed")).longValue(), "负数要收成 0");
+        assertEquals(List.of("+a", "-b"), file.get("hunks"), "diff 里不是字的那一行要丢掉");
+    }
+
     /** 第九十六轮：桌面应用、网页服务器部署旁边没有 zhiqu-cli 目录 —— 用 JAR 里带的那一份（pom 的 bundle-zhiqu-cli） */
     @Test
     @DisplayName("找不到 zhiqu-cli 目录：用 JAR 里带的那一份（解到临时目录），照样跑得起来，而且和源码一字不差（不会带着旧代码出去）")

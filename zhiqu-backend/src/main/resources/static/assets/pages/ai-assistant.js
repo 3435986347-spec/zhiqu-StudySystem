@@ -402,6 +402,130 @@ function aiEmptyState() {
       return '<button type="button" class="zq-btn-ghost" data-ai-example="' + esc(t) + '">' + esc(t) + '</button>';
     }).join('') + '</div></div>';
 }
+// ── 回答里的每一步（第一百二十七轮，用户要的：「像 codex 那样把思考 - run command - create - edit - ls 等等命令和结果按顺序列出来」）──
+// 一步一行：图标 + 动作 + 对象 + 结果小结；有细节的（命令输出、diff、列表）是一个 <details>，点开看。
+// 形状见 zhiqu-cli/src/steps.js 和后端的 TraceSteps。命令输出、文件内容、标题都是不可信的：一律 esc，样子全在样式表（.zq-trace*）。
+var TRACE_ICON = {
+  thinking: 'brain', list: 'folder', read: 'file', search: 'search', run: 'terminal', create: 'file-plus', edit: 'pencil', patch: 'pencil',
+  delete: 'trash-2', web: 'globe', retrieve: 'book-open', tasks: 'list-checks', wiki: 'book-marked', plan: 'clipboard-check',
+  memory: 'lightbulb', check: 'check', agent: 'users', todo: 'list-checks', other: 'sparkles'
+};
+var TRACE_SHOWN = 60;   // 一条回答默认列多少步；再多的折成「还有 N 步」，点开再看（上百步的一轮不把页面撑到几屏长）
+function traceDuration(ms) {
+  if (!(ms >= 0)) return '';
+  if (ms < 1000) return '';
+  var secs = Math.round(ms / 1000);
+  return secs < 60 ? secs + ' 秒' : Math.floor(secs / 60) + ' 分 ' + (secs % 60) + ' 秒';
+}
+function traceDiffHtml(lines) {
+  return '<div class="zq-mono zq-diff zq-trace-diff">' + lines.map(function (l) {
+    var t = String(l);
+    if (/^@@/.test(t)) return '<div class="zq-diff-gap">' + esc(t) + '</div>';
+    var op = t.charAt(0) === '+' ? 'add' : t.charAt(0) === '-' ? 'del' : 'same';
+    return '<div class="zq-diff-row" data-op="' + op + '"><span class="zq-diff-mark">' + esc(op === 'same' ? ' ' : t.charAt(0)) + '</span><span class="zq-diff-text">' + esc(t.slice(1)) + '</span></div>';
+  }).join('') + '</div>';
+}
+function traceDetailHtml(s) {
+  var d = s.detail || {};
+  var out = '';
+  if (d.command != null || d.output != null) {
+    out += '<pre class="zq-mono zq-trace-out">';
+    if (d.command) out += '<span class="zq-trace-cmd">$ ' + esc(d.command) + (d.cwd ? '  （在 ' + esc(d.cwd) + '）' : '') + '</span>\n';
+    var text = String(d.output || '');
+    if (d.omitted > 0 && d.splitAt > 0) {
+      var lines = text.split('\n');
+      text = lines.slice(0, d.splitAt).join('\n') + '\n… 中间省掉 ' + d.omitted + ' 行 …\n' + lines.slice(d.splitAt).join('\n');
+    } else if (d.omitted > 0) {
+      text += '\n… 后面省掉 ' + d.omitted + ' 行';
+    }
+    out += esc(text || '（没有输出）');
+    if (d.exitCode != null) out += '\n<span class="zq-trace-exit" data-state="' + (d.exitCode === 0 ? 'ok' : 'bad') + '">退出码 ' + esc(d.exitCode) + '</span>';
+    out += '</pre>';
+  }
+  if (Array.isArray(d.files)) {
+    out += d.files.map(function (f) {
+      var head = '<div class="zq-trace-file"><span class="zq-mono">' + esc(f.movedFrom ? f.movedFrom + ' → ' + f.path : f.path) + '</span>'
+        + (f.creating ? '<span class="zq-trace-tag">新建</span>' : '')
+        + '<span class="zq-trace-stat"><span data-op="add">+' + esc(f.added || 0) + '</span> <span data-op="del">-' + esc(f.removed || 0) + '</span></span></div>';
+      var hunks = Array.isArray(f.hunks) ? f.hunks : [];
+      return head + (hunks.length ? traceDiffHtml(hunks) : '') + (f.omitted > 0 ? '<div class="zq-trace-more">… 后面还有 ' + esc(f.omitted) + ' 行改动没列出</div>' : '');
+    }).join('');
+    if (d.omittedFiles > 0) out += '<div class="zq-trace-more">… 还有 ' + esc(d.omittedFiles) + ' 个文件没列出</div>';
+    if (Array.isArray(d.deletes) && d.deletes.length) out += '<div class="zq-trace-more">删除：' + esc(d.deletes.join('、')) + '</div>';
+  }
+  if (Array.isArray(d.items) && d.items.length) {
+    out += '<ul class="zq-trace-items">' + d.items.map(function (it) { return '<li class="zq-mono">' + esc(it) + '</li>'; }).join('') + '</ul>'
+      + (d.omitted > 0 && d.command == null ? '<div class="zq-trace-more">… 还有 ' + esc(d.omitted) + ' 项</div>' : '');
+  }
+  if (Array.isArray(d.todos) && d.todos.length) {
+    out += '<ul class="zq-trace-items">' + d.todos.map(function (t) {
+      return '<li data-todo="' + (t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'doing' : 'todo') + '">' + esc(t.content) + '</li>';
+    }).join('') + '</ul>';
+  }
+  return out;
+}
+function traceStepHtml(s, key) {
+  var state0 = s.status === 'running' ? 'running' : s.status === 'error' ? 'bad' : 'ok';
+  var kind = TRACE_ICON[s.kind] ? s.kind : 'other';
+  var line = '<span class="zq-trace-icon">' + icon(TRACE_ICON[kind]) + '</span>'
+    + '<span class="zq-trace-title">' + esc(s.title || '') + '</span>'
+    + (s.target ? '<span class="zq-mono zq-trace-target">' + esc(s.target) + '</span>' : '')
+    + (s.summary ? '<span class="zq-trace-summary">' + esc(s.summary) + '</span>' : '')
+    + (traceDuration(s.ms) && s.kind !== 'thinking' ? '<span class="zq-trace-time">' + esc(traceDuration(s.ms)) + '</span>' : '');
+  // 有细节才能点开：流式时细节在手上（s.detail），刷新后列表里只有一行一步（s.hasDetail），点开时再去拿（loadTraceDetail）
+  var expandable = s.status !== 'running' && (s.detail || s.hasDetail);
+  if (!expandable) return '<div class="zq-trace-step" data-state="' + state0 + '" data-kind="' + kind + '"><div class="zq-trace-line">' + line + '</div></div>';
+  var openKey = key + ':' + s.id;
+  var open = Boolean(state.reasoningExpanded[openKey]);
+  // 合着的不画细节（review：一条回答的输出和 diff 能有几百 KB，原来合着也整份塞进 DOM，深度思考时每个字重画一次）
+  var detail = !open ? '' : s.detail ? traceDetailHtml(s) : '<div class="zq-trace-more">正在取…</div>';
+  return '<details class="zq-trace-step" data-state="' + state0 + '" data-kind="' + kind + '" data-reason-key="' + esc(openKey) + '" data-trace-step="' + esc(s.id) + '"'
+    + (open ? ' open' : '') + '><summary class="zq-trace-line">' + line + '</summary>'
+    + '<div class="zq-trace-detail">' + detail + '</div></details>';
+}
+/**
+ * 一条回答的步骤列表。key 是这条消息的键（展开状态记在 state.reasoningExpanded[key + ':' + 步骤 id]，
+ * 和思考摘要同一套：全量重画时 renderAiMessages 先存再还原）。
+ */
+function traceStepsHtml(trace, key) {
+  var steps = (trace && trace.steps) || [];
+  var allKey = key + ':all';
+  var showAll = Boolean(state.reasoningExpanded[allKey]);
+  var shown = showAll ? steps : steps.slice(0, TRACE_SHOWN);
+  var hidden = steps.length - shown.length;
+  var rows = shown.map(function (s) { return traceStepHtml(s, key); }).join('');
+  var tail = '';
+  if (hidden > 0) tail += '<button type="button" class="zq-trace-more" data-trace-all="' + esc(allKey) + '">还有 ' + esc(hidden) + ' 步，点开看全部</button>';
+  if (trace && trace.dropped > 0) tail += '<div class="zq-trace-more">… 后面还有 ' + esc(trace.dropped) + ' 步没存</div>';
+  return '<div class="zq-trace" data-trace-key="' + esc(key) + '">' + rows + tail + '</div>';
+}
+/** 刷新之后点开一步：这条回答的步骤（带细节）取一次，按 id 补进去再重画这一条。取不到就照实说 */
+function loadTraceDetail(m, index) {
+  if (!m || !m.id || m._traceLoading) return;
+  m._traceLoading = true;
+  api.get('/ai/messages/' + m.id + '/steps').then(function (full) {
+    var byId = {};
+    ((full && full.steps) || []).forEach(function (x) { byId[x.id] = x; });
+    ((m.steps && m.steps.steps) || []).forEach(function (x) { if (byId[x.id] && byId[x.id].detail) x.detail = byId[x.id].detail; });
+  }).catch(function () {
+    ((m.steps && m.steps.steps) || []).forEach(function (x) { if (x.hasDetail && !x.detail) x.detail = { items: ['取不到这一步的细节，稍后再点一次'] }; });
+  }).then(function () {
+    m._traceLoading = false;
+    if (!patchStreamingMessage(index)) renderAiMessages();
+  });
+}
+
+/** SSE 的 trace.step：按 id 合进这条回答（同一步先 running、后 ok / error，位置不变） */
+function mergeTraceStep(m, step) {
+  if (!m || !step || step.id == null) return;
+  m.steps = m.steps || { steps: [] };
+  var list = m.steps.steps;
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].id === step.id) { list[i] = step; return; }
+  }
+  list.push(step);
+}
+
 function renderSteps(steps) {
   var host = $('#zq-steps'); if (!host) return;
   host.innerHTML = steps.length ? steps.map(function (s, i) {
@@ -1348,7 +1472,11 @@ function messageBodyHtml(m, i) {
   if (!me && m.notice) {
     body += '<div data-msg-notice class="zq-msg-note" data-state="warn">' + esc(m.notice) + '</div>';
   }
-  return reason + body;
+  // 回答里按顺序列出的每一步（第一百二十七轮）：在正文上面；没有步骤时这里是空串，什么都不多
+  // 步骤的展开状态按 requestId 记（流式时是 _clientKey、收尾重新拉列表后是 id —— 两者都会变，requestId 两边都有）
+  var traceKey = String(m.requestId || reasonKey);
+  var steps = (!me && m.steps && m.steps.steps && m.steps.steps.length) ? traceStepsHtml(m.steps, traceKey) : '';
+  return steps + reason + body;
 }
 
 /**
@@ -1397,10 +1525,37 @@ function patchStreamingMessage(index) {
   var m = state.messages[index];
   if (!node || !m) return false;
   var prevScroll = host.scrollTop;
+  $all('details[data-reason-key]', node).forEach(function (details) {
+    state.reasoningExpanded[details.dataset.reasonKey] = details.open;
+  });
   node.innerHTML = messageBodyHtml(m, index);
+  bindTraceToggles(node);
   renderMathIn(node);
   applyChatScroll(host, prevScroll, false);
   return true;
+}
+/** 这一块里的步骤：点开 / 合上记下来，点开时画细节（没有就去拿）；「还有 N 步」点了列全部 */
+function bindTraceToggles(scope) {
+  $all('details.zq-trace-step[data-reason-key]', scope).forEach(function (details) {
+    details.ontoggle = function () {
+      var was = Boolean(state.reasoningExpanded[details.dataset.reasonKey]);
+      state.reasoningExpanded[details.dataset.reasonKey] = details.open;
+      if (!details.open || was) return;
+      var body = details.closest('[data-msg-body]');
+      var m = body && state.messages[Number(body.dataset.msgBody)];
+      var step = m && m.steps && (m.steps.steps || []).filter(function (x) { return String(x.id) === details.dataset.traceStep; })[0];
+      if (!step) return;
+      if (step.detail) { var host = details.querySelector('.zq-trace-detail'); if (host) host.innerHTML = traceDetailHtml(step); return; }
+      loadTraceDetail(m, Number(body.dataset.msgBody));
+    };
+  });
+  $all('[data-trace-all]', scope).forEach(function (b) {
+    b.onclick = function () {
+      state.reasoningExpanded[b.dataset.traceAll] = true;
+      var idx = b.closest('[data-msg-body]');
+      if (idx && !patchStreamingMessage(Number(idx.dataset.msgBody))) renderAiMessages();
+    };
+  });
 }
 /**
  * 往更早翻一页。
@@ -1504,6 +1659,7 @@ function renderAiMessages(opts) {
       state.reasoningExpanded[details.dataset.reasonKey] = details.open;
     };
   });
+  bindTraceToggles(host);
   // 右键删除消息:仅真实历史消息(有 id)可删;流式中的临时消息尚未入库,不弹菜单
   if (state.messages.length) $all('[data-msg-idx]', host).forEach(function (d) {
     d.oncontextmenu = function (e) {
@@ -2010,6 +2166,8 @@ async function sendAiMessage() {
     try {
       await streamAiChat(body, function (event, data) {
         gotEvent = true;
+        // 第一条带 requestId 的事件就记下：回答里步骤的展开状态按它记，流式中和收尾重拉列表之后是同一个键
+        if (!assistant.requestId && data && data.requestId) assistant.requestId = data.requestId;
         if (!stored && data && data.userMessageId) {
           stored = true;
           if (draftKeyAtSend) drafts.clearIf(draftKeyAtSend, txt);
@@ -2027,6 +2185,10 @@ async function sendAiMessage() {
         else if (event === 'agent.step.start') { if (sameNb()) upsertAgentStep(data, false); }
         else if (event === 'agent.step.done') { if (sameNb()) upsertAgentStep(data, true); }
         else if (event === 'agent.step.note') { if (sameNb()) addAgentStepNote(data); }
+        else if (event === 'trace.step') {
+          mergeTraceStep(assistant, data && data.step);
+          if (sameNb() && !patchStreamingMessage(state.messages.indexOf(assistant))) renderAiMessages();
+        }
         // 消息太长被截了中间（后端 UserMessageFit）：说给用户，而且多停一会儿 —— 这句话要读完
         else if (event === 'message.notice') { toast((data && data.message) || '这条消息被截短了', data && data.level === 'error' ? 'error' : 'warn', 9000); }
         else if (event === 'message.processing') {
@@ -2061,6 +2223,7 @@ async function sendAiMessage() {
             }
             if (data && data.assistantMessageId) assistant.id = data.assistantMessageId;
             if (data && data.requestId) assistant.requestId = data.requestId;
+            if (data && data.steps && data.steps.steps) assistant.steps = data.steps;
             if (data && data.notice) assistant.notice = data.notice;
             assistant.status = '';
             completed = true;
@@ -2651,4 +2814,4 @@ async function loadWorkspace() {
 
 // 给测试直接 import 的纯函数（第三十七轮）：step-note-check.js（执行轨迹里一条叙述的转义）、diff-check.js（改动草稿的逐行对比）。
 // 它们只用到 esc —— 测试 bind 一个只有 esc 的 sh 就能跑。
-export { stepNoteHtml, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard, parseSlash, slashMatches, slashBlocked, bindSlash, paintSlash, sendAiMessage, paintWorkspaceBar };
+export { traceStepsHtml, mergeTraceStep, stepNoteHtml, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard, parseSlash, slashMatches, slashBlocked, bindSlash, paintSlash, sendAiMessage, paintWorkspaceBar };

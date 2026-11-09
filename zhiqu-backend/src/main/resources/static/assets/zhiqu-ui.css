@@ -875,6 +875,45 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
  */
 .zq-msg-body>:first-child,.zq-msg-body>:first-child>:first-child{margin-top:0!important;}
 .zq-msg-body>:last-child,.zq-msg-body>:last-child>:last-child,.zq-msg-body>:last-child>:last-child>:last-child{margin-bottom:0!important;}
+/* 回答里的每一步（第一百二十七轮，像 Codex）：一步一行，有细节的点开（<details>）。颜色、字号都是令牌；JS 只给 data-state / data-kind */
+.zq-trace{display:flex;flex-direction:column;gap:1px;margin-bottom:12px;}
+.zq-trace-step{border-radius:var(--zq-rs);}
+.zq-trace-line{display:flex;align-items:center;gap:8px;min-width:0;padding:3px 6px;font-size:var(--zq-fs-sm);color:var(--zq-text2);line-height:1.5;border-radius:var(--zq-rs);}
+details.zq-trace-step>summary{cursor:pointer;list-style:none;user-select:none;}
+details.zq-trace-step>summary::-webkit-details-marker{display:none;}
+details.zq-trace-step>summary:hover{background:var(--zq-card-soft);}
+details.zq-trace-step>summary::after{content:"";flex:none;width:6px;height:6px;margin-left:auto;border-right:1.5px solid var(--zq-text3);border-bottom:1.5px solid var(--zq-text3);transform:rotate(-45deg);transition:transform .15s ease;}
+details.zq-trace-step[open]>summary::after{transform:rotate(45deg);}
+.zq-trace-icon{flex:none;display:flex;color:var(--zq-text3);}
+.zq-trace-icon .zq-icon{width:14px;height:14px;}
+.zq-trace-step[data-state="bad"] .zq-trace-icon{color:var(--zq-bad);}
+.zq-trace-step[data-state="running"] .zq-trace-icon .zq-icon{display:none;}
+.zq-trace-step[data-state="running"] .zq-trace-icon::before{content:"";width:12px;height:12px;margin:1px;border:1.5px solid var(--zq-text3);border-right-color:transparent;border-radius:50%;animation:zqSpin .8s linear infinite;}
+.zq-trace-title{flex:none;font-weight:var(--zq-fw-medium);color:var(--zq-text);}
+.zq-trace-target{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--zq-fs-xs);color:var(--zq-text2);}
+.zq-trace-summary{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--zq-fs-xs);color:var(--zq-text3);}
+.zq-trace-step[data-state="bad"] .zq-trace-summary{color:var(--zq-bad);}
+.zq-trace-time{flex:none;font-size:var(--zq-fs-2xs);color:var(--zq-text3);}
+.zq-trace-detail{margin:2px 0 8px 28px;display:flex;flex-direction:column;gap:6px;min-width:0;}
+.zq-trace-out{margin:0;max-height:40vh;overflow:auto;padding:8px 10px;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);color:var(--zq-text2);font-size:var(--zq-fs-xs);line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;}
+.zq-trace-cmd{color:var(--zq-text);}
+.zq-trace-exit[data-state="ok"]{color:var(--zq-ok);}
+.zq-trace-exit[data-state="bad"]{color:var(--zq-bad);}
+.zq-trace-file{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--zq-fs-xs);color:var(--zq-text2);}
+.zq-trace-file>.zq-mono{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-trace-tag{flex:none;padding:0 6px;border-radius:999px;background:var(--zq-tint);color:var(--zq-text2);font-size:var(--zq-fs-2xs);}
+.zq-trace-stat{flex:none;margin-left:auto;font-size:var(--zq-fs-2xs);}
+.zq-trace-stat [data-op="add"]{color:var(--zq-q2);}
+.zq-trace-stat [data-op="del"]{color:var(--zq-bad);}
+.zq-trace-diff{max-height:40vh;}
+.zq-trace-items{margin:0;padding:6px 10px;list-style:none;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:var(--zq-fs-xs);color:var(--zq-text2);line-height:1.55;}
+.zq-trace-items>li{overflow-wrap:anywhere;}
+.zq-trace-items>li[data-todo="done"]{color:var(--zq-text3);text-decoration:line-through;}
+.zq-trace-items>li[data-todo="doing"]{color:var(--zq-text);}
+.zq-trace-more{align-self:flex-start;padding:3px 6px;border:0;background:none;color:var(--zq-text3);font:inherit;font-size:var(--zq-fs-xs);}
+button.zq-trace-more{cursor:pointer;}
+button.zq-trace-more:hover{color:var(--zq-text);}
+@media (prefers-reduced-motion:reduce){.zq-trace-step[data-state="running"] .zq-trace-icon::before{animation:none;}details.zq-trace-step>summary::after{transition:none;}}
 .zq-ai-reasoning{margin-bottom:9px;padding:8px 11px;border-left:2px solid var(--zq-tint-strong);background:var(--zq-card-soft);border-radius:0 var(--zq-rs) var(--zq-rs) 0;}
 .zq-ai-reasoning summary{cursor:pointer;font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);color:var(--zq-text3);user-select:none;}
 .zq-ai-reasoning>span{display:block;margin-top:6px;font-size:var(--zq-fs-xs);color:var(--zq-text3);line-height:1.65;white-space:pre-wrap;}
@@ -1683,6 +1722,8 @@ html.zq-desktop [data-zq-download]{display:none !important;}
   .zq-slash-item{flex-wrap:wrap;gap:2px 10px;}
   .zq-slash-desc{flex-basis:100%;}
   #zq-chat{padding:14px 12px!important;}
+  .zq-trace-detail{margin-left:6px;}
+  .zq-trace-summary{display:none;}
   /* AI 助手、Wiki 的定高容器：桌面上减的是 .zq-main 的上下 padding（32 + 80），手机上 padding 是 18+64=82px，
      照减桌面那份底下白空 30px。dvh 跟着手机浏览器地址栏的收放走；不支持 dvh 的浏览器丢掉这一条，退回 .zq-fill-page 的 100vh。
      （第七十八轮之前定高写在两页的内联里，这里按 [style*="calc(100vh - 110px)"] 认、带 !important） */
