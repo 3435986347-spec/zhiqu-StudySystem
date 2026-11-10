@@ -348,6 +348,8 @@ export class SubAgents {
       local: childLocal(parent.local),
       ownJobs: agent.jobs,        // 它起的后台命令：只看 / 停得了这些，停下之前要先停掉（settle）
       jobsNudged: false,
+      // 子 agent 的每一步不混进主 agent 存档的那一份（主 agent 那边记的是「派子 agent」「等子 agent」两步）
+      stepLog: null, stepNote: null,
     };
   }
 

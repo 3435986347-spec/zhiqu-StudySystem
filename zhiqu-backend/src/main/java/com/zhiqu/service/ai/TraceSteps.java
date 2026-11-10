@@ -32,6 +32,7 @@ public final class TraceSteps {
     static final int TARGET_CHARS = 500;
     static final int SUMMARY_CHARS = 200;
     static final int OUTPUT_CHARS = 16_000;
+    public static final int THINKING_CHARS = 6_000;
     static final int HUNK_LINES = 400;
     static final int LINE_CHARS = 400;
     static final int FILES = 20;
@@ -55,6 +56,13 @@ public final class TraceSteps {
             return;
         }
         steps.put(id, step);
+    }
+
+    /** 别处已经截掉、没交过来的步数（命令行存档时一轮超过 200 步的那些）：和这里收满之后丢的一起说 */
+    public synchronized void addDropped(long n) {
+        if (n > 0) {
+            dropped = (int) Math.min(1_000_000L, dropped + n);
+        }
     }
 
     /** 现在的样子：存库、给 done 事件用（拷一份，调用方改不到这里） */
@@ -96,6 +104,17 @@ public final class TraceSteps {
     }
 
     /**
+     * 点开有东西可看：思考那一步要有原文才算（第一百二十七轮存的只有字数 {chars}，原来也标 hasDetail ——
+     * 点开是空的，页面还因此把那条回答的「思考摘要」藏掉了）。
+     */
+    static boolean hasBody(Object kind, Object detail) {
+        if (!(detail instanceof Map<?, ?> d) || d.isEmpty()) {
+            return false;
+        }
+        return !"thinking".equals(kind) || (d.get("text") instanceof String t && !t.isBlank());
+    }
+
+    /**
      * 列表接口给的那一份：每一步只留一行（不带 detail，标一个 hasDetail）—— 一页 50 条回答、每条几十步的输出和 diff，
      * 原来每次拉列表（还有流式中断后每 2 秒一次的轮询）都整份下来，线上 1.5 Mbps（review 量过：20 条典型回答 2.3 MB）。
      * 点开一步时再去拿那一步的 detail（{@code GET /api/ai/messages/{id}/steps}）。
@@ -108,7 +127,7 @@ public final class TraceSteps {
             for (Object o : list) {
                 if (o instanceof Map<?, ?> step) {
                     Map<String, Object> row = new LinkedHashMap<>((Map<String, Object>) step);
-                    if (row.remove("detail") != null) {
+                    if (hasBody(row.get("kind"), row.remove("detail"))) {
                         row.put("hasDetail", true);
                     }
                     rows.add(row);
@@ -210,8 +229,9 @@ public final class TraceSteps {
         putCount(d, raw, "splitAt");
         // 读
         putText(d, raw, "path", TARGET_CHARS);
-        // 思考
+        // 思考：字数，和点开看的原文（第一百二十八轮）
         putCount(d, raw, "chars");
+        putText(d, raw, "text", THINKING_CHARS);
         // 改动
         if (raw.get("files") instanceof List<?> files) {
             List<Map<String, Object>> out = new ArrayList<>();

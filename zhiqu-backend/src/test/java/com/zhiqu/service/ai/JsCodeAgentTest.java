@@ -293,6 +293,35 @@ class JsCodeAgentTest {
         assertTrue(r.drafts().isEmpty());
     }
 
+    /**
+     * 第一百二十八轮（线上）：代码循环到了 180 秒，宿主交了 result 就退，这边还在往它的管子里转模型的流 → Stream closed。
+     * 原来这个异常让读循环整个停下，管子里的 result 没人读 —— 步骤里新建了文件、跑过测试，回答却照「这一轮没有改文件」另写。
+     */
+    @Test
+    @DisplayName("宿主交了结果就退（这边还在往它写）：照样读到它的结果和步骤，不当成「什么都没做」")
+    void 宿主先走了照样读完() throws Exception {
+        // 照线上那样：模型的流还在往回走（一个增量接一个增量），宿主那边已经交了结果、退了 —— 一直写到撞上关掉的管子
+        JsCodeAgent js = agent(FAKE_HOST, List.of(text("好")));
+        doAnswer(inv -> {
+            HarnessModelGateway.Sink sink = inv.getArgument(2);
+            sink.event("start", Map.of("contextWindow", 1_000_000));
+            for (int i = 0; i < 200; i++) {
+                Thread.sleep(20);
+                sink.event("reasoning", Map.of("text", "还在想 " + i));
+            }
+            sink.event("done", text("好"));
+            return null;
+        }).when(gateway).stream(eq(7L), any(), any(), eq(false));
+        CodeWorkspaceAgent.Result r = js.run(config, 7L, "quit-early", List.of(), true, false,
+                CodeLoopBudget.forRequest(true), ContextBudget.DEFAULT, notes::add);
+        assertNotNull(r);
+        assertTrue(r.context().contains("已写入 core.js"), "宿主交回的结果没读到（当成了什么都没做）：" + r.context() + " notes=" + notes);
+        assertEquals("写好了 core.js，测试都过了", r.conclusion(), "宿主的结论没用上");
+        assertTrue(r.writeAttempted(), "调过写文件的工具，却当成没写");
+        assertTrue(notes.stream().anyMatch(n -> "trace".equals(n.get("phase"))), "宿主写出来的那一步没读到");
+        assertFalse(notes.stream().anyMatch(n -> String.valueOf(n.get("message")).contains("没交回结果")), "交了结果还说没交回：" + notes);
+    }
+
     /** 第一百二十七轮：回答里按顺序列出的步骤从宿主来，要进库、要回给页面 —— 照形状收、按上限截，认不出的不要 */
     @Test
     @DisplayName("宿主交来的步骤：照形状收（认不出的字段、种类、状态不要），按上限截，没有 id / 不是对象的整条丢掉；不认识的 trace 不让后端停下")

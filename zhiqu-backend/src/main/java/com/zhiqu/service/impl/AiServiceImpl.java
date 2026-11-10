@@ -1921,6 +1921,17 @@ public class AiServiceImpl implements AiService {
                 long ms = ((thinking[1] > 0 ? thinking[1] : System.nanoTime()) - thinking[0]) / 1_000_000L;
                 Map<String, Object> step = TraceSteps.step("thinking", "thinking", "思考", "", Math.max(1, Math.round(ms / 1000.0)) + " 秒", true);
                 step.put("ms", ms);
+                // 点开看想了什么（第一百二十八轮）：用户开了深度思考才收得到原文（reasoning 只在开着时才攒）
+                if (reasoning.length() > 0) {
+                    Map<String, Object> detail = new LinkedHashMap<>();
+                    detail.put("chars", reasoning.length());
+                    // 长的留前一段、说省了多少（页面上「… 后面还有 N 字没存」），不只拿一个省略号带过
+                    detail.put("text", reasoning.length() > TraceSteps.THINKING_CHARS ? reasoning.substring(0, TraceSteps.THINKING_CHARS) : reasoning.toString());
+                    if (reasoning.length() > TraceSteps.THINKING_CHARS) {
+                        detail.put("omitted", reasoning.length() - TraceSteps.THINKING_CHARS);
+                    }
+                    step.put("detail", detail);
+                }
                 emitTraceStep(ctx, s, step);
             }
             // 不另发事件：done 里带着它，库里也存着 —— 页面在那条回答底下说，刷新之后还在
@@ -2727,8 +2738,28 @@ public class AiServiceImpl implements AiService {
                 if (!hasText(content)) {
                     continue;
                 }
-                ids.add(saveChatMessage(userId, conversation.getId(), role,
-                        limitRawMarkdown(content, ARCHIVE_MESSAGE_MAX_CHARS)).getId());
+                AiMessage saved = saveChatMessage(userId, conversation.getId(), role,
+                        limitRawMarkdown(content, ARCHIVE_MESSAGE_MAX_CHARS));
+                ids.add(saved.getId());
+                // 命令行这一轮的每一步（第一百二十八轮）：和网页代码模式同一种形状，照样收、照样截（从命令行来，是别人的机器）
+                if ("assistant".equals(role) && item.get("steps") instanceof List<?> raw && !raw.isEmpty()) {
+                    TraceSteps steps = new TraceSteps();
+                    for (Object o : raw) {
+                        if (o instanceof Map<?, ?> m) {
+                            @SuppressWarnings("unchecked") Map<String, Object> one = TraceSteps.sanitize((Map<String, Object>) m);
+                            if (one != null) {
+                                steps.put(one);
+                            }
+                        }
+                    }
+                    steps.settleRunning("没做完");
+                    if (item.get("stepsDropped") instanceof Number dropped) {
+                        steps.addDropped(dropped.longValue());
+                    }
+                    if (!steps.isEmpty()) {
+                        messageMapper.saveSteps(saved.getId(), userId, toJson(steps.snapshot()));
+                    }
+                }
             }
             return ids;
         }));

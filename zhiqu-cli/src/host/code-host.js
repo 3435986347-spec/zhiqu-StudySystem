@@ -202,6 +202,7 @@ export async function runHosted(bridge, run) {
   const timer = run.timeoutMs ? setTimeout(() => controller.abort(), Number(run.timeoutMs)) : null;
   let error = null;
   let reviewed = null;
+  let turn = null;
   // /init、/review 要项目文件夹：页面已经拦过，这里是最后一道（生成到产物时根目录是临时空间，没什么可看、写了也没人读）
   const command = run.command === 'init' || run.command === 'review' ? run.command : null;
   const needsFolder = command && run.artifact;
@@ -209,7 +210,7 @@ export async function runHosted(bridge, run) {
   try {
     if (needsFolder) reviewed = `/${command} 要先选一个项目文件夹，现在是生成到产物，没有项目可看。`;
     else if (command === 'review') reviewed = await reviewHosted(ctx, String(run.message || ''), controller.signal, typeof run.home === 'string' ? run.home : undefined);
-    else await runTurn(ctx, command === 'init' ? initPrompt(fs.existsSync(path.join(local.root, 'ZHIQU.md'))) : String(run.message || ''), { signal: controller.signal });
+    else turn = await runTurn(ctx, command === 'init' ? initPrompt(fs.existsSync(path.join(local.root, 'ZHIQU.md'))) : String(run.message || ''), { signal: controller.signal });
   } catch (e) {
     error = String((e && e.message) || e);
     // 审查的过程在单独的上下文里，这里没有别的字：不写一句，最终回答就只能照空的编
@@ -221,18 +222,60 @@ export async function runHosted(bridge, run) {
   const text = reviewed != null ? reviewed : last ? String(last.content || '') : '';
   // 给用户的回答（第一百二十一轮）：后端原样用它，不再另调一次模型重写 —— 重写的那一步照上一轮的选项编过「已写入文件」，其实一个都没写。
   // 只认这一次新说的、没出错没被打断的：历史那段后面跟着一句固定的「好的，前面的对话我当参考」，半路断了时 last 会是它（或者上一轮的旧回答）
-  const own = [...ctx.messages.slice(before)].reverse().find((m) => m.role === 'assistant' && !(m.tool_calls || []).length);
-  const conclusion = reviewed != null ? reviewed : !error && !controller.signal.aborted && own ? String(own.content || '').trim() : '';
+  // 而且必须是这一次「最后」说的那句：说了一句被推回去（核对 / 清单），后面接着调工具直到用完轮数 / 连着重复被停下 ——
+  // 那句被推回去的（往往正是「已写入文件」这种没做的说法）不是结论（第一百二十八轮 review）
+  const lastSaid = [...ctx.messages.slice(before)].reverse().find((m) => m.role === 'assistant');
+  const ownText = lastSaid && !(lastSaid.tool_calls || []).length ? String(lastSaid.content || '').trim() : '';
+  const rounds = ctx.messages.filter((m) => m.role === 'assistant' && (m.tool_calls || []).length).length;
+  // 到了时间预算（或出错）、模型没来得及写结论：照实说做到哪一步（第一百二十八轮）。原来交空的，后端就另调一次模型、照「这一轮没有改文件」编了一段 ——
+  // 线上那一次新建了 core.js、跑过测试，回答却说一个文件都没写、扯到上一轮的项目上
+  const stoppedEarly = !ownText || error || controller.signal.aborted;
+  const conclusion = reviewed != null ? reviewed : !stoppedEarly ? ownText
+    : unfinishedReport({ local, steps: ctx.steps || [], timedOut: controller.signal.aborted, error, budgetMs: Number(run.timeoutMs) || 0,
+        exhausted: Boolean(turn && turn.exhausted), stalled: Boolean(turn && turn.stalled), maxRounds: ctx.maxRounds });
   // 给后端写最终回答用的上下文：和 Java 循环同一个样子（每个工具的结果一段），最后是这份循环自己的结论
   const names = new Map();
   for (const m of ctx.messages) for (const c of m.role === 'assistant' ? m.tool_calls || [] : []) names.set(c.id, c.function.name);
   const context = [...ctx.messages.filter((m) => m.role === 'tool').map((m) => `【工作区 ${names.get(m.tool_call_id) || '工具'}】\n${m.content}`),
-    text ? `【代码 agent 的结论】\n${text}` : ''].filter(Boolean).join('\n\n');
+    conclusion ? `【代码 agent 的结论】\n${conclusion}` : ''].filter(Boolean).join('\n\n');
   // 调过几次写文件的工具（不管成没成）：后端据此决定最终回答能不能说「这一轮没写成」
   const writeCalls = ctx.messages.reduce((n, m) => n + (m.role === 'assistant' ? (m.tool_calls || []).filter((c) => ['write_file', 'edit_file', 'apply_patch'].includes(c.function.name)).length : 0), 0);
   return { type: 'result', text, conclusion, context, drafts: local.draftList(), writeCalls, usage: ctx.usage,
-    rounds: ctx.messages.filter((m) => m.role === 'assistant' && (m.tool_calls || []).length).length,
+    rounds,
     aborted: controller.signal.aborted, error };
+}
+
+/**
+ * 没做完时交给用户的那段话：做到哪了（改了哪些文件、跑了什么、最后一步是什么），怎么接着做。只说真的发生了的 ——
+ * 改过的文件看草稿 / 产物的记录，跑过什么看步骤，不让模型另编。
+ */
+export function unfinishedReport({ local, steps, timedOut, error, budgetMs, exhausted = false, stalled = false, maxRounds = 0 }) {
+  // 几种停法分开说：到时间、真出错、轮数用尽、连着重复同一个调用被停下。原来只有前两种，用完轮数时 error 是 null，回答里会出现「半路出错停下了：null」
+  const why = timedOut ? `这一轮到了时间上限（${Math.round(budgetMs / 1000)} 秒），停在了半路`
+    : error ? `这一轮半路出错停下了：${error}`
+      : exhausted ? `这一轮用完了 ${maxRounds} 轮，停在了半路`
+        : stalled ? '这一轮停下了：模型连着发同一个调用，结果一直没变'
+          : '这一轮停在了半路';
+  // 生成到产物（ArtifactTools）写的是真的、记在 wrote；选了文件夹的是草稿、记在 drafts
+  const files = local.artifact ? [...(local.wrote || [])] : [...((local.drafts && local.drafts.keys()) || [])];
+  const lines = [`${why}，还没写结论。`];
+  if (files.length) {
+    lines.push('', `已经${local.artifact ? '生成' : '改好（草稿，确认后才写进磁盘）'}的文件：${files.map((f) => `\`${f}\``).join('、')}`);
+  } else if (local.ranCommand) {
+    // auto 档的 shell 可能已经直接写了文件，这里看不出来 —— 不能断言「还没有改任何文件」
+    lines.push('', '跑过命令，改没改文件看不出来（见上面的步骤）。');
+  } else {
+    lines.push('', '还没有改任何文件。');
+  }
+  if (steps.length) {
+    // 只取第一行：shell 那条是整条命令原文，heredoc 里的 $…$ 会被网页当 Markdown / 公式渲染成乱码
+    const first = String(steps[steps.length - 1] || '').split('\n')[0].trim();
+    const shown = first.length > 160 ? `${first.slice(0, 160)}…` : first;
+    lines.push('', shown ? `做过的 ${steps.length} 步见上面；最后一步是：\`${shown.replace(/`/g, "'")}\``
+      : `做过的 ${steps.length} 步见上面。`);
+  }
+  lines.push('', '说「继续」我接着做（会先看一眼已经写了的，不从头来）。');
+  return lines.join('\n');
 }
 
 async function main() {

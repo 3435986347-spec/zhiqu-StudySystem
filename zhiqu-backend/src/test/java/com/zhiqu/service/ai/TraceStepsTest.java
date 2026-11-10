@@ -86,17 +86,22 @@ class TraceStepsTest {
     }
 
     @Test
-    @DisplayName("列表接口给的：一行一步、不带细节（标 hasDetail），整份留给点开时取")
+    @DisplayName("列表接口给的：一行一步、不带细节（标 hasDetail），整份留给点开时取；只有字数的思考不算有细节")
     @SuppressWarnings("unchecked")
     void 列表里不带细节() {
         Map<String, Object> stored = Map.of("steps", List.of(
                 Map.of("id", "a", "kind", "run", "status", "ok", "detail", Map.of("output", "x".repeat(10_000))),
-                Map.of("id", "b", "kind", "thinking", "status", "ok")), "dropped", 2);
+                Map.of("id", "b", "kind", "thinking", "status", "ok"),
+                // 第一百二十七轮存的思考只有字数：点开是空的，不能标 hasDetail（页面会因此藏掉「思考摘要」）
+                Map.of("id", "c", "kind", "thinking", "status", "ok", "detail", Map.of("chars", 900)),
+                Map.of("id", "d", "kind", "thinking", "status", "ok", "detail", Map.of("chars", 9, "text", "先看看文件"))), "dropped", 2);
         Map<String, Object> list = TraceSteps.summaries(stored);
         List<Map<String, Object>> rows = (List<Map<String, Object>>) list.get("steps");
         assertFalse(rows.get(0).containsKey("detail"));
         assertEquals(true, rows.get(0).get("hasDetail"));
         assertFalse(rows.get(1).containsKey("hasDetail"));
+        assertFalse(rows.get(2).containsKey("hasDetail"), "只有字数的思考标成了点得开");
+        assertEquals(true, rows.get(3).get("hasDetail"), "有原文的思考要点得开");
         assertEquals(2, list.get("dropped"));
         assertTrue(((Map<String, Object>) ((List<?>) stored.get("steps")).get(0)).containsKey("detail"), "原来那份被改了");
     }

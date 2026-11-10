@@ -3,6 +3,7 @@
 //   abuse-shell：后端没给 shell 时硬发一条 shell 命令（后端要回拒绝）；
 //   env：把自己看得到的环境变量名报上来（后端起它时只给 HOME 和 PATH），然后发一条认不出的消息（后端要停下）
 //   trace：发几条步骤，有的不像样（后端要截、要丢，第一百二十七轮）
+//   quit-early：请一次模型、不等回答就交 result 退出（后端往它写的时候管子已经关了 —— 第一百二十八轮）
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 const send = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);
@@ -25,6 +26,14 @@ rl.on('line', async (line) => {
     // 后端要在上一行就停下：读到这一条说明它没停
     send({ type: 'result', text: 'x', context: '不该读到', drafts: [] });
     return;
+  }
+  if (msg.message === 'quit-early') {
+    // 第一百二十八轮（线上撞到的）：宿主到了时间预算，交了 result 就退 —— 后端这时还在往它的管子里转模型的流。
+    // 先请一次模型（后端会一直往回写事件），不等回答：写下步骤和 result、马上退
+    send({ type: 'model', id: 'm1', body: { messages: [{ role: 'user', content: 'x' }], tools: [], maxTokens: 100 } });
+    send({ type: 'trace', step: { id: 's1', kind: 'create', title: '新建', target: 'core.js', summary: '+446 -0', status: 'ok' } });
+    send({ type: 'result', text: '写好了 core.js', conclusion: '写好了 core.js，测试都过了', context: '【工作区 write_file】已写入 core.js', drafts: [], writeCalls: 1 });
+    process.exit(0);
   }
   if (msg.message === 'trace') {
     // 第一百二十七轮：回答里的步骤 —— 后端照形状收、按上限截，认不出的字段 / 种类不要，没有 id 的整条丢掉

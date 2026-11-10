@@ -39,6 +39,14 @@ mod.reportUnhandled(Object.assign(new Error('aborted'), { name: 'AbortError' }))
 judge('用户自己取消的（AbortError）：不吭声', toasts.length === 0, JSON.stringify(toasts));
 
 toasts.length = 0;
+mod.reportUnhandled(Object.assign(new Error('Transition was aborted because of invalid state. Page already revealed'), { name: 'InvalidStateError' }));
+mod.reportUnhandled(Object.assign(new Error('Transition was aborted because of timeout in DOM update'), { name: 'TimeoutError' }));
+judge('换页时浏览器的交叉淡化没做成（第一百二十八轮：点侧栏就弹「页面出了错」）：不吭声', toasts.length === 0, JSON.stringify(toasts));
+toasts.length = 0;
+mod.reportUnhandled(Object.assign(new Error('The object is in an invalid state.'), { name: 'InvalidStateError' }));
+judge('别的 InvalidStateError 照样说（只放过交叉淡化那一种）', toasts.length === 1 && /没有完成/.test(toasts[0][0]), JSON.stringify(toasts));
+
+toasts.length = 0;
 redirecting = true;
 mod.reportUnhandled(mod.requestError('未登录或无权限'));
 redirecting = false;

@@ -874,3 +874,15 @@ test('/review：单独的上下文里没有派子 agent 的工具；会话里照
   for (const r of ctx.api.requests) assert.ok(!(r.tools || []).some((t) => t.function.name === 'spawn_agent'), '审查里拿到了 spawn_agent');
   assert.ok(toolset(ctx).some((t) => t.schema.function.name === 'spawn_agent'), '会话里照样有');
 });
+
+test('/review：上一句被打断没存档，它的步骤不挂到审查结论的存档上（审查那一轮 runTurn 不替它清）', async () => {
+  const root = repo();
+  write(root, 'src/a.js', 'changed-for-archive\n');
+  const ctx = session({ root, replies: [answer([finding({ title: '有毛病' })], '就这一处')] });
+  ctx.archiveSteps = [{ id: 'old', kind: 'run', title: '上一句被打断的那一步', status: 'ok' }];
+  await reviewInSession(ctx, { target: { kind: 'uncommitted' }, instructions: '' }, { signal: new AbortController().signal });
+  await ctx.archiveChain;
+  const archived = ctx.api.posts.filter((p) => p.pathname.endsWith('/messages'));
+  assert.ok(archived.some((p) => JSON.stringify(p.body).includes('有毛病')), '前提：审查的结论存过档');
+  assert.ok(!JSON.stringify(archived).includes('上一句被打断的那一步'), JSON.stringify(archived));
+});

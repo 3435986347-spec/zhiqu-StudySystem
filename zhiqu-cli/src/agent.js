@@ -281,6 +281,8 @@ function truncatedArgs(raw) {
 // ── 模型调用 ─────────────────────────────────────────────────────────────
 
 export const MODEL_RETRY_WAITS = [1000, 3000];
+/** 一段思考在步骤里最多留多少字（点开看的，不是给模型的） */
+export const THINKING_KEEP = 6000;
 
 /**
  * 调模型，失败了在安全的时候重来：只有「还没收到任何实质输出」且错误是临时性的（连接断开、服务器 5xx / 429、
@@ -324,6 +326,9 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   let thought = 0;
   let thinkingFrom = null;
   let thinkingMs = 0;
+  // 思考的原文（第一百二十八轮：网页上「思考 100 秒」点开看得到想了什么）—— 只在有人要（stepLog）时才攒，攒到上限为止
+  const keepThinking = Boolean(ctx.stepLog);
+  let thinkingText = '';
   // 安静模式不边收边打：这时断了，已经收到的那一段就这么没了（第二十二轮实测：回答到一半服务器重启，只剩一句「断开了」）。
   // 把它打出来 —— 用户至少看得到说到哪了。断的两种样子都要：连接出错（下面的 catch）、流好好结束了却没有 done
   const showPartial = () => {
@@ -344,6 +349,7 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     } else if (name === 'reasoning') {
       // 思考不打进终端（要回传的内容在 done 的 message 里，见 HarnessModelGateway），只说它在想：不然模型想一分钟，看着像卡死了
       thought += String(data.text || '').length;
+      if (keepThinking && thinkingText.length < THINKING_KEEP) thinkingText += String(data.text || '').slice(0, THINKING_KEEP - thinkingText.length);
       if (thinkingFrom == null) thinkingFrom = monotonic();
       if (hush) ui.setActivity(`思考中 ${formatBytes(thought)}`);
       else if (render) ui.status.set(ui.paint.dim(`… 思考中 ${formatBytes(thought)}`));
@@ -387,7 +393,7 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   if (ctx.onUsage && done.usage) ctx.onUsage(done.usage);
   // 这一次想了多久（第一百二十七轮：网页回答里「思考 N 秒」那一步）—— 从第一个思考字到第一个正文 / 工具调用
   if (thinkingFrom != null && !thinkingMs) thinkingMs = monotonic() - thinkingFrom;
-  return { ...done, text, maxTokens: done.maxTokens || maxTokens, thought: { chars: thought, ms: thinkingMs } };
+  return { ...done, text, maxTokens: done.maxTokens || maxTokens, thought: { chars: thought, ms: thinkingMs, text: thinkingText } };
 }
 
 /** /usage 里输入后面那一句「（缓存命中 N，P%）」；没命中、供应商没报就不说。 */
@@ -1059,6 +1065,12 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
 
 export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   ctx.steps = [];
+  // 网页存档的步骤每一轮（主 agent）重开一份：上一轮被 Ctrl+C 打断 / 模型出错时 archiveTurn 没跑，
+  // 步骤会留在数组里，被下一轮的成功存档一起发上去 —— 网页上下一轮的回答上方会多出上一轮的步骤。
+  // 子 agent 的 ctx 是从父 ctx 浅拷贝来的，共用这个数组，不能清（它的步骤要由父 agent 的「派 / 等」两步代表）。
+  // 只在人说的那一句开头清：exec --output-schema 不合格式时推回去重写也走 runTurn（origin 'system'），
+  // 那一次清掉的话，存档里只剩重写那几步、真正干活的那一段没了（第一百二十八轮 review）
+  if (!origin && !ctx.subagent) resetArchive(ctx);
   ctx.spin = new Map();
   ctx.repeat = null;
   ctx.changedFiles = ctx.changedFiles || new Set();
@@ -1075,6 +1087,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   }
   let finalText = '';
   let stalled = false;
+  let exhausted = false;   // 轮数用完了、模型还在调工具：没有结论（宿主据此照实说「用完了 N 轮」，不拿半路被推回去的那句顶上）
   let continuations = 0;
   let nudged = false;
   let claimChecked = false;
@@ -1099,7 +1112,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     // 省略旧思考是改写历史，从那条起缓存全部失效（评测上约 1.6 个点，按价算约一成花费）；省下的那点 token 按命中价不值 —— 吃紧了才做
     if (needsCompaction(systemText(ctx), ctx.messages, window, SLIM_THRESHOLD)) slimThinking(ctx.messages);
     const res = await callModel(ctx, tools, signal);
-    if (ctx.stepLog && res.thought) ctx.stepLog.thinking(res.thought.chars, res.thought.ms);
+    if (ctx.stepLog && res.thought) ctx.stepLog.thinking(res.thought.chars, res.thought.ms, res.thought.text);
     const message = res.message || { role: 'assistant', content: res.text };
     const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
     // 原地重复：历史和回答里只留开头一段
@@ -1209,6 +1222,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       break;
     }
     if (round === maxRounds - 1) {
+      exhausted = true;
       ctx.ui.warn(`已经连续调用了 ${maxRounds} 轮工具，先停在这里。说「继续」可以接着做。`);
     }
   }
@@ -1219,7 +1233,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   }
   if (signal && signal.aborted) ctx.messages = dropDanglingToolCalls(ctx.messages);
   if (ctx.store && ctx.session) ctx.store.touch(ctx.session.id, { messages: ctx.messages.length, model: ctx.model ? ctx.model.label : null });
-  return { finalText, stalled, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats } };
+  return { finalText, stalled, exhausted, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats } };
 }
 
 /** 在会话历史后面追加一问一答，不走模型（/review 的结论放回会话，才能接着说「修第 1 条」）。历史只追加。 */
@@ -1257,14 +1271,38 @@ export function statsNote(stats) {
  * 失败了那一轮就永远缺在网页上。现在 archiveTurn 只入队，真正的发送串在 ctx.archiveChain 上；发不出去的留在队列里，
  * 下一轮连同新的一起补；退出前 flushArchive 再等一会儿。
  */
+/** 存到网站上的一轮最多这么多步（和后端 TraceSteps.MAX_STEPS 一样）；多出来的只记个数，网页上说「后面还有 N 步没存」 */
+export const ARCHIVE_STEPS = 200;
+
+/** 记一步（StepLog 每次变化都叫）：同一步先 running 后收尾，按 id 留最后那条；满了的只记 id、不留内容 */
+export function archiveStep(ctx, step) {
+  if (!Array.isArray(ctx.archiveSteps)) ctx.archiveSteps = [];
+  const at = ctx.archiveSteps.findIndex((x) => x.id === step.id);
+  if (at >= 0) ctx.archiveSteps[at] = step;
+  else if (ctx.archiveSteps.length < ARCHIVE_STEPS) ctx.archiveSteps.push(step);
+  else (ctx.archiveOverflow || (ctx.archiveOverflow = new Set())).add(step.id);
+}
+
+/** 这一轮的存档步骤从头记（主 agent 每一句开头、archiveTurn 发完之后） */
+export function resetArchive(ctx) {
+  if (Array.isArray(ctx.archiveSteps)) ctx.archiveSteps = [];
+  ctx.archiveOverflow = null;
+}
+
 export function archiveTurn(ctx, userText, result) {
   if (!ctx.api || !ctx.session || ctx.archiveDisabled) return Promise.resolve();
-  const steps = result.steps.length ? `\n\n> 过程：${result.steps.slice(0, 30).join(' · ')}${result.steps.length > 30 ? ` …共 ${result.steps.length} 步` : ''}` : '';
+  // 每一步单独给（第一百二十八轮）：原来拼成一行「> 过程：列出 . · 运行 … 共 32 步」接在回答正文后面，
+  // 网页上 heredoc 被当成 Markdown / 公式渲染成一堆乱码，也和网页代码模式那种一步一行的样子对不上（用户：「不是说所有显示都要像 codex 那样吗」）
+  const steps = Array.isArray(ctx.archiveSteps) ? ctx.archiveSteps.slice(0, ARCHIVE_STEPS) : [];
+  // 截断要说出来：满了以后没存的步数一起交上去（原来一声不响地只存前 200 步）
+  const dropped = (ctx.archiveOverflow ? ctx.archiveOverflow.size : 0) + (Array.isArray(ctx.archiveSteps) ? ctx.archiveSteps.length - steps.length : 0);
   ctx.archivePending = ctx.archivePending || [];
   ctx.archivePending.push({
     sessionId: ctx.session.id, title: ctx.session.title || userText.slice(0, 40),
-    messages: [{ role: 'user', content: userText }, { role: 'assistant', content: (result.finalText || '（没有文字回答）') + steps }],
+    messages: [{ role: 'user', content: userText }, { role: 'assistant', content: result.finalText || '（没有文字回答）',
+      ...(steps.length ? { steps } : {}), ...(dropped > 0 ? { stepsDropped: dropped } : {}) }],
   });
+  resetArchive(ctx);
   ctx.archiveChain = (ctx.archiveChain || Promise.resolve()).then(() => sendPending(ctx));
   return ctx.archiveChain;
 }
@@ -1319,6 +1357,9 @@ export async function verifyGoal(ctx, signal) {
  */
 export async function runGoal(ctx, { signal, maxTurns = DEFAULT_MAX_GOAL_TURNS, onTurn } = {}) {
   const ui = ctx.ui;
+  // 存到网站的步骤从这里开始记（目标的每一轮 origin 是 goal，runTurn 不替它清；每一轮存完 archiveTurn 自己清）：
+  // 上一句被打断时没存档，它的步骤不能挂到目标第一轮的回答上面
+  resetArchive(ctx);
   const goal = ctx.goal;
   ctx.goalChangedFiles = ctx.goalChangedFiles || new Set();
   let text = goal.turns === 0 ? `目标：${goal.text}\n开始做。` : `继续朝目标推进：${goal.text}`;

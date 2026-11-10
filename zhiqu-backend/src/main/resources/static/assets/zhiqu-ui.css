@@ -910,6 +910,7 @@ details.zq-trace-step[open]>summary::after{transform:rotate(45deg);}
 .zq-trace-items>li{overflow-wrap:anywhere;}
 .zq-trace-items>li[data-todo="done"]{color:var(--zq-text3);text-decoration:line-through;}
 .zq-trace-items>li[data-todo="doing"]{color:var(--zq-text);}
+.zq-trace-thinking{max-height:40vh;overflow:auto;padding:8px 11px;border-left:2px solid var(--zq-tint-strong);background:var(--zq-card-soft);border-radius:0 var(--zq-rs) var(--zq-rs) 0;font-size:var(--zq-fs-xs);color:var(--zq-text3);line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;}
 .zq-trace-more{align-self:flex-start;padding:3px 6px;border:0;background:none;color:var(--zq-text3);font:inherit;font-size:var(--zq-fs-xs);}
 button.zq-trace-more{cursor:pointer;}
 button.zq-trace-more:hover{color:var(--zq-text);}

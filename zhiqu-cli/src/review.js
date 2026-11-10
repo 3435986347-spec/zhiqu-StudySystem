@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { archiveTurn, recordExchange, runTurn } from './agent.js';
+import { archiveTurn, recordExchange, resetArchive, runTurn } from './agent.js';
 import { estimateTokens } from './compact.js';
 import { resolveSettings } from './config.js';
 import { rewriteUntilValid, schemaInstruction, shot, usageOf, writeAtomic } from './execmode.js';
@@ -375,6 +375,9 @@ export function reviewShot(ctx, flags, { out = process.stdout } = {}) {
 /** /review：跑在单独的上下文里，结论放回会话 */
 export async function reviewInSession(ctx, spec, { signal }) {
   const { ui } = ctx;
+  // 存到网站的步骤从这一句开始记：上一句被 Ctrl+C 打断时没存档，它的步骤不能挂到审查的结论上面
+  // （审查的那一轮 origin 是 review，runTurn 不替它清）
+  resetArchive(ctx);
   const guard = ctx.local.guard;
   const changes = await collectChanges({ root: ctx.local.root, sandbox: ctx.local.sandbox, readable: (f) => guard.extensionAllowed(f), target: spec.target, signal });
   if (changes.aborted) return;

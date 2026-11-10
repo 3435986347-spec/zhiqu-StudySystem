@@ -457,6 +457,10 @@ function traceDetailHtml(s) {
     out += '<ul class="zq-trace-items">' + d.items.map(function (it) { return '<li class="zq-mono">' + esc(it) + '</li>'; }).join('') + '</ul>'
       + (d.omitted > 0 && d.command == null ? '<div class="zq-trace-more">… 还有 ' + esc(d.omitted) + ' 项</div>' : '');
   }
+  if (d.text) {
+    // 思考的原文（第一百二十八轮）：和「思考摘要」同一种样子，长的说省了多少
+    out += '<div class="zq-trace-thinking">' + esc(d.text) + (d.omitted > 0 ? '\n… 后面还有 ' + esc(d.omitted) + ' 字没存' : '') + '</div>';
+  }
   if (Array.isArray(d.todos) && d.todos.length) {
     out += '<ul class="zq-trace-items">' + d.todos.map(function (t) {
       return '<li data-todo="' + (t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'doing' : 'todo') + '">' + esc(t.content) + '</li>';
@@ -473,7 +477,7 @@ function traceStepHtml(s, key) {
     + (s.summary ? '<span class="zq-trace-summary">' + esc(s.summary) + '</span>' : '')
     + (traceDuration(s.ms) && s.kind !== 'thinking' ? '<span class="zq-trace-time">' + esc(traceDuration(s.ms)) + '</span>' : '');
   // 有细节才能点开：流式时细节在手上（s.detail），刷新后列表里只有一行一步（s.hasDetail），点开时再去拿（loadTraceDetail）
-  var expandable = s.status !== 'running' && (s.detail || s.hasDetail);
+  var expandable = s.status !== 'running' && (s.hasDetail || (s.detail && (s.kind !== 'thinking' || s.detail.text)));
   if (!expandable) return '<div class="zq-trace-step" data-state="' + state0 + '" data-kind="' + kind + '"><div class="zq-trace-line">' + line + '</div></div>';
   var openKey = key + ':' + s.id;
   var open = Boolean(state.reasoningExpanded[openKey]);
@@ -1449,13 +1453,36 @@ function bindChatScroll(host) {
  * 而分叉只在流式时可见，最难被发现。
  */
 function messageBodyHtml(m, i) {
+  /** 「> 过程：a · b · c …共 N 步」在结尾：拆出正文和步数（不是这个样子就 null） */
+  // 头一步要像命令行旧版 describeCall 写的那几种（第一百二十八轮 review）：模型正常的回答里也可能有一段「> 过程：先求导…」，
+  // 原来见到就把它和后面的整段藏掉、换成「做了 N 步」。认不出的旧存档宁可照原样显示（之前就是这样），也不能吞掉正文
+  var LEGACY_FIRST_STEP = /^(?:列出 |读取 |搜索「|写入 |追加到 |修改 |打补丁 |删除 |运行 |后台运行 |看 \S+ 的输出|停掉 |找 MCP 工具「|提交计划|派(?:干活的|只读探索的)?子 agent：|等子 agent |给 \S+ 交代：|更新任务清单|目标状态：|查知识库|列出知识库的页面|读知识库「|生成知识库草稿「|生成计划草稿|读你的任务|把任务 #|读长期记忆|生成长期记忆草稿|MCP \S)/;
+  function splitLegacyProcess(content) {
+    var text = String(content || '');
+    var at = text.lastIndexOf('\n\n> 过程：');
+    if (at < 0) return null;
+    var tail = text.slice(at + 7);
+    if (!LEGACY_FIRST_STEP.test(tail)) return null;
+    var total = /…共 (\d+) 步\s*$/.exec(tail);
+    return { content: text.slice(0, at), count: total ? Number(total[1]) : tail.split(' · ').length };
+  }
   var me = m.role === 'user';
   var reasoningMode = String(m.reasoningMode || 'OFF').toUpperCase();
   var reasoningText = m.reasoningSummary || m.reasoning || '';
   var reasonKey = String(m._clientKey || m.id || m.requestId || ('assistant-' + i));
-  var reason = (!me && reasoningMode !== 'OFF' && reasoningText)
+  // 步骤里已经有「思考」那一步（第一百二十八轮起存的是思考原文）：下面不再另放一个「思考摘要」，同一段话不说两遍。
+  // 旧消息的思考步骤只有字数（第一百二十七轮的 detail 只有 {chars}，列表接口不给这种标 hasDetail），点不开、看不到内容 —— 这种不能算「已经有」，
+  // 否则 reasoningSummary 被整条藏掉，页面上再也没有入口。
+  var thinkingInSteps = Boolean(m.steps && m.steps.steps && m.steps.steps.some(function (x) {
+    return x.kind === 'thinking' && ((x.detail && x.detail.text) || x.hasDetail);
+  }));
+  var reason = (!me && reasoningMode !== 'OFF' && reasoningText && !thinkingInSteps)
     ? '<details class="zq-ai-reasoning" data-reason-key="' + esc(reasonKey) + '"' + (state.reasoningExpanded[reasonKey] ? ' open' : '') + '><summary>思考摘要</summary><span>' + esc(reasoningText) + '</span></details>'
     : '';
+  // 命令行存档的旧样子（第一百二十八轮之前）：回答后面拼着一行「> 过程：列出 . · 运行 … 共 32 步」，heredoc 被当 Markdown / 公式渲染成乱码。
+  // 收起来，只说一共几步（新的存档每一步单独存，上面画成一步一行）
+  var legacy = !me ? splitLegacyProcess(m.content) : null;
+  if (legacy) m = Object.assign({}, m, { content: legacy.content });
   // 流式中的内容换行完好且可能只收到半截,跳过压平回填,防止启发式误触
   var body = m.content ? renderMarkdown((me || m.status === 'STREAMING') ? m.content : reflowFlatMarkdown(m.content)) : (m.status === 'STREAMING' ? '<span class="zq-msg-wait" data-wait-since="' + waitSince(m) + '">' + waitText(waitSince(m)) + '</span>' : '');
   // 刷新之后那条消息会带着「已经生成的一半」回来（后端阶段性落库）。
@@ -1476,6 +1503,7 @@ function messageBodyHtml(m, i) {
   // 步骤的展开状态按 requestId 记（流式时是 _clientKey、收尾重新拉列表后是 id —— 两者都会变，requestId 两边都有）
   var traceKey = String(m.requestId || reasonKey);
   var steps = (!me && m.steps && m.steps.steps && m.steps.steps.length) ? traceStepsHtml(m.steps, traceKey) : '';
+  if (legacy) body += '<div class="zq-msg-note">（命令行那一轮做了 ' + esc(legacy.count) + ' 步，旧的存档没有分步记下）</div>';
   return steps + reason + body;
 }
 

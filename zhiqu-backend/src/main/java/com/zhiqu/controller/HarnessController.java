@@ -276,6 +276,14 @@ public class HarnessController {
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("role", m.get("role"));
                     row.put("content", m.get("content"));
+                    // 命令行这一轮的每一步（第一百二十八轮）：原来拼成一行「过程：…」接在回答后面，网页上被当 Markdown / 公式渲染成一堆乱码
+                    if (m.get("steps") instanceof List<?> steps) {
+                        row.put("steps", steps);
+                    }
+                    // 命令行一轮超过 200 步时没存的步数：网页上照实说「后面还有 N 步没存」
+                    if (m.get("stepsDropped") instanceof Number dropped) {
+                        row.put("stepsDropped", dropped);
+                    }
                     messages.add(row);
                 }
             }

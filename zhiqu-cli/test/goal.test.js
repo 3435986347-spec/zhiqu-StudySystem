@@ -1,7 +1,7 @@
 // goal 模式：模型没宣告就不许停；宣告达成要附证据、还要过独立核对；卡住就停；轮数有上限；状态记进会话。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runGoal, systemText, toolset } from '../src/agent.js';
+import { archiveTurn, runGoal, systemText, toolset } from '../src/agent.js';
 import { applyGoalUpdate, newGoal, parseVerdict } from '../src/goal.js';
 import { SessionStore } from '../src/session.js';
 import { LocalTools } from '../src/tools/local.js';
@@ -97,4 +97,14 @@ test('goal 推的每一轮（开头、没宣告就想停、核对没过）在会
   const { replayTranscript } = await import('../src/replay.js');
   const ui = fakeUi();
   assert.equal(replayTranscript(ui, ctx.store.transcript(ctx.session.id)), 0, ui.text());
+});
+
+test('上一句被打断没存档：它的步骤不挂到目标第一轮的存档上（目标的每一轮 runTurn 不替它清，runGoal 开头清）', async () => {
+  const ctx = ctxWith([ACHIEVED, { text: '做完了' }, VERIFIED]);
+  ctx.archiveSteps = [{ id: 'old', kind: 'run', title: '上一句被打断的那一步', status: 'ok' }];
+  await runGoal(ctx, { onTurn: (text, result) => archiveTurn(ctx, text, result) });
+  await ctx.archiveChain;
+  const archived = ctx.api.posts.filter((p) => p.pathname.endsWith('/messages'));
+  assert.ok(archived.length >= 1, '前提：目标那一轮存过档');
+  assert.ok(!JSON.stringify(archived).includes('上一句被打断的那一步'), JSON.stringify(archived));
 });

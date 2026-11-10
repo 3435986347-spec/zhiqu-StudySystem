@@ -31,7 +31,7 @@
 | 一次改多个文件 | apply_patch | 有（第一百一十一轮），全成或全不成，网页进草稿 | 4 |
 | 长命令 / 后台进程 | exec 会话、`/ps`、`/stop` | 有（第一百一十二轮，网页同一套）：`background`、`shell_output`、`shell_stop`、`/ps`、`/stop`；不能往进程里写 stdin | 5 |
 | 非交互 | `codex exec`：`--json`、`--output-schema`、`-o`、stdin、`exec resume` | 有（第一百一十三轮）：`zhiqu exec`，同样的参数和事件名 | 6 |
-| 代码审查 | `/review`、`codex review` | 无 | 7 |
+| 代码审查 | `/review`、`codex review` | 有（第一百一十四轮）：`zhiqu review`、`/review`，只读、P0–P3、结论回到会话；网页的 `/review` 第一百一十八轮 | 7 |
 | 子 agent | 有，默认开，继承权限 | 有（第一百二十三轮，npm 0.2.0）：explorer（真只读）/ worker，继承权限、深度 1、并发 / 个数 / token 上限；能起后台命令、停下前先停掉；网页还没有 | 8 |
 | 图片输入 | `--image` | 无 | 9 |
 | `/diff`、`/fork`、`/status`、`--cd`、`--add-dir`、`--worktree`、hooks、命令规则 | 有 | 无 | 9 |

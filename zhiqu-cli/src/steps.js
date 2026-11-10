@@ -11,7 +11,7 @@
 //     create / edit / patch   { files: [{ path, added, removed, hunks: [行], omitted }] }   hunks 和确认框同一个算法（render/diff.js）
 //     read   { path, from, to, total }
 //     list / search  { items: [行], omitted }
-//     thinking { chars }
+//     thinking { chars, text?, omitted? }   text 是思考原文（遮过密钥，最多 THINKING_KEEP 字），omitted = 没存下的字数
 //   这里出的东西会进库、会给人看：每一样都有上限，超了说省掉了多少；命令输出、文件内容是不可信的 —— 只存字，前端一律转义。
 import { hunks, stat } from './render/diff.js';
 
@@ -107,9 +107,18 @@ export class StepLog {
   }
 
   /** 一段思考（模型这一次在想、没出字）：字数、用了多久 */
-  thinking(chars, ms) {
+  thinking(chars, ms, text = '') {
     if (!(chars > 0)) return;
-    this.emit({ id: `s${++this.seq}`, kind: 'thinking', title: '思考', target: '', summary: `${Math.max(1, Math.round(ms / 1000))} 秒`, status: 'ok', ms: Math.round(ms), detail: { chars } });
+    // 点开看想了什么（第一百二十八轮，用户：「思考内容没有显示出来」）；太长的说省了多少
+    const raw = String(text || '');
+    const shown = redact(raw).trim();
+    const detail = { chars };
+    if (shown) {
+      detail.text = shown;
+      // 省了多少按收到的原文算：遮掉密钥、去掉首尾空白会让显示的那份变短，那不是「没存」（第一百二十八轮 review）
+      if (chars > raw.length) detail.omitted = chars - raw.length;
+    }
+    this.emit({ id: `s${++this.seq}`, kind: 'thinking', title: '思考', target: '', summary: `${Math.max(1, Math.round(ms / 1000))} 秒`, status: 'ok', ms: Math.round(ms), detail });
   }
 
   start(name, args) {

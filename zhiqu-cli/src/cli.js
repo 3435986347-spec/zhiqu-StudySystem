@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Api, ApiError } from './api.js';
-import { archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote } from './agent.js';
+import { StepLog } from './steps.js';
+import { archiveStep, archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote } from './agent.js';
 import { SubAgents } from './subagents.js';
 import { newGoal } from './goal.js';
 import { generatedOrigin } from './origins.js';
@@ -379,6 +380,12 @@ async function runAgent(cwd, flags) {
     // 子 agent（第一百二十三轮）：~/.zhiqu/config.json 的 agents 是 false 时关掉
     agents: settings.agents.enabled ? new SubAgents({ runTurn, limits: settings.agents }) : null,
   };
+  // 存到网站上的那一份按一步一条记（第一百二十八轮）：和网页代码模式同一种形状，网页上一步一行、点开看输出 / diff。
+  // 终端的显示不受影响（stepLog 只是旁边记一笔）；同一步先 running 后收尾，按 id 留最后那条
+  if (!ctx.archiveDisabled) {
+    ctx.archiveSteps = [];
+    ctx.stepLog = new StepLog((step) => archiveStep(ctx, step));
+  }
   if (!ctx.local.sandbox) {
     ui.note(`· ${process.platform === 'linux' ? '没有可用的 bubblewrap（装上 bwrap 才有）' : '这台机器没有可用的系统沙箱'}：没有 shell 工具，跑命令退回白名单。`);
   }

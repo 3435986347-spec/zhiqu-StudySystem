@@ -387,10 +387,11 @@ class CodeAgentLoopIntegrationTest {
         Path space = workspaces.space(userId, conversationId);
         assertTrue(Files.isRegularFile(space.resolve("solve.py")), "写在这段对话的临时空间里");
 
-        // 这一轮代码 agent 用完了轮数（4 轮工具），没有自己的结论：兜底由写最终回答的那一步说，它要知道生成了什么
-        // （代码 agent 交了结论的情形见「代码agent反问时回答就是它的反问」：那时这一步根本不调用）
-        assertTrue(answerCalls.get() >= 1, "没有结论时要兜底");
-        assertTrue(lastAnswerBody.get().contains("本轮生成了这些文件") && lastAnswerBody.get().contains("solve.py"), "最终回答要知道生成了什么");
+        // 这一轮代码 agent 用完了轮数（4 轮工具）、没写结论：第一百二十八轮起由宿主照实说做到哪（生成了什么、最后一步是什么），
+        // 不再另调一次模型写回答 —— 线上那一次另调的模型照「这一轮没有改文件」编了一段，和上面列着的步骤对不上
+        assertEquals(0, answerCalls.get(), "没写结论时又另调了模型写回答（会和步骤对不上）");
+        String answer = lastAnswer();
+        assertTrue(answer.contains("solve.py") && answer.contains("说「继续」我接着做"), "回答要照实说生成了什么、怎么接着做：" + answer);
 
         // 再跑一轮，内容没变：不重复存；临时空间被清掉了：先恢复，模型看得到之前的文件
         Files.writeString(space(workspaces, conversationId).resolve("keep-me.txt"), "");

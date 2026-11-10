@@ -41,7 +41,9 @@ test('每种工具按顺序记一步：思考、列目录、读、搜、新建�
   assert.deepEqual(f.map((s) => s.kind), ['thinking', 'list', 'read', 'search', 'edit', 'create', 'run']);
   assert.ok(steps.find((s) => s.kind === 'list' && s.status === 'running'), '开始时没有 running 那一条');
   assert.ok(f.every((s) => s.status !== 'running'), JSON.stringify(f));
-  const [, list, read, search, edit, create, ran] = f;
+  const [thinking, list, read, search, edit, create, ran] = f;
+  // 第一百二十八轮（用户：「思考内容没有显示出来」）：点开「思考」看得到想了什么
+  assert.equal(thinking.detail.text, '先看看有什么文件', '思考的原文没进那一步');
   assert.equal(list.target, 'src');
   assert.match(list.summary, /1 项/);
   assert.ok(list.detail.items.some((l) => l.includes('app.js')), JSON.stringify(list.detail));
@@ -155,4 +157,86 @@ test('搜索那一步点开是全部命中（第一条不丢）；只有一条�
   assert.equal(two.detail.items.length, 2, JSON.stringify(two.detail));
   assert.ok(two.detail.items.some((l) => l.startsWith('a.js')) && two.detail.items.some((l) => l.startsWith('b.js')));
   assert.equal(one.detail.items.length, 1, JSON.stringify(one.detail));
+});
+
+test('存到网站的那一份：每一步单独给（不再拼「过程：…」进正文）；没有步骤时不带 steps 字段', async () => {
+  const { archiveTurn } = await import('../src/agent.js');
+  const posts = [];
+  const api = { post: async (p, body) => { posts.push(body); return {}; } };
+  const ctx = { api, ui: fakeUi(), local: { root: tmpdir() }, session: { id: 's', title: 't' }, archiveSteps: [{ id: 's1', kind: 'run', title: '运行', target: 'npm test', summary: '退出码 0', status: 'ok' }] };
+  await archiveTurn(ctx, '跑一下', { finalText: '过了', steps: ['运行 npm test'] });
+  const assistant = posts[0].messages[1];
+  assert.equal(assistant.content, '过了', '正文后面又拼了一行过程');
+  assert.ok(!/过程：/.test(assistant.content));
+  assert.equal(assistant.steps.length, 1);
+  assert.deepEqual(ctx.archiveSteps, [], '存过的步骤没清掉：下一句会带上这一句的');
+  ctx.archiveSteps = [];
+  await archiveTurn(ctx, '你好', { finalText: '你好', steps: [] });
+  assert.ok(!('steps' in posts[1].messages[1]));
+});
+
+test('真命令行的那份 ctx：终端照常，存档的步骤按 id 留最后那条；子 agent 的步骤不混进来', async () => {
+  const root = tmpdir();
+  write(root, 'a.txt', 'hi\n');
+  const { ctx } = ctxWith([{ calls: [{ name: 'read_file', args: { path: 'a.txt' } }] }, { text: '好' }], { root });
+  ctx.archiveSteps = [];
+  ctx.stepLog = new StepLog((step) => {
+    const at = ctx.archiveSteps.findIndex((x) => x.id === step.id);
+    if (at >= 0) ctx.archiveSteps[at] = step; else ctx.archiveSteps.push(step);
+  });
+  await runTurn(ctx, '读');
+  assert.equal(ctx.archiveSteps.length, 1);
+  assert.equal(ctx.archiveSteps[0].status, 'ok');
+  const { SubAgents } = await import('../src/subagents.js');
+  const child = new SubAgents({ runTurn }).childContext(ctx, { id: 'explorer-1', role: 'explorer', jobs: new Set(), changedFiles: new Set() });
+  assert.equal(child.stepLog, null, '子 agent 拿到了主 agent 的 stepLog：它的每一步会混进主 agent 的存档');
+});
+
+test('思考很长：步骤里留前 THINKING_KEEP 字，说省了多少；像密钥的遮掉', async () => {
+  const { THINKING_KEEP } = await import('../src/agent.js');
+  const long = 'a'.repeat(THINKING_KEEP + 500) + ' sk-proj-abcdefghijklmnopqrstuvwx';
+  const { ctx, steps } = ctxWith([{ reasoning: 'password=hunter2hunter2 想一下', calls: [{ name: 'list_files', args: {} }] }, { reasoning: long, text: '好' }]);
+  await runTurn(ctx, '想');
+  const [first, , second] = finals(steps);
+  assert.equal(first.kind, 'thinking');
+  assert.ok(!first.detail.text.includes('hunter2hunter2'), first.detail.text);
+  assert.equal(first.detail.omitted, undefined, '没截也说「后面还有 N 字没存」：遮掉密钥变短不是没存');
+  assert.equal(second.detail.text.length, THINKING_KEEP);
+  assert.ok(second.detail.omitted > 0, '截了没说');
+});
+
+test('exec --output-schema 推回去重写（origin system 的那一轮）不清掉干活那一段的存档步骤；人说的下一句才清', async () => {
+  const { rewriteUntilValid } = await import('../src/execmode.js');
+  const root = tmpdir();
+  write(root, 'a.txt', 'hi\n');
+  const { ctx } = ctxWith([{ calls: [{ name: 'read_file', args: { path: 'a.txt' } }] }, { text: '不是 JSON' }, { text: '{"n":1}' }], { root });
+  ctx.archiveSteps = [];
+  ctx.stepLog = new StepLog((step) => {
+    const at = ctx.archiveSteps.findIndex((x) => x.id === step.id);
+    if (at >= 0) ctx.archiveSteps[at] = step; else ctx.archiveSteps.push(step);
+  });
+  const first = await runTurn(ctx, '数');
+  const checked = await rewriteUntilValid(ctx, { type: 'object', required: ['n'], properties: { n: { type: 'integer' } } }, first, {});
+  assert.deepEqual(checked.value, { n: 1 }, '前提：重写过一次');
+  assert.ok(ctx.archiveSteps.some((s) => s.kind === 'read'), `重写那一轮把干活那一段的步骤清掉了：${JSON.stringify(ctx.archiveSteps)}`);
+  await runTurn(ctx, '下一句');
+  assert.ok(!ctx.archiveSteps.some((s) => s.kind === 'read'), '人说的下一句开头没清');
+});
+
+test('一轮超过 200 步：存前 200 步，没存的步数一起交上去（截断要说出来）；同一步先 running 后收尾只算一次；发完从头记', async () => {
+  const { archiveStep, archiveTurn, ARCHIVE_STEPS } = await import('../src/agent.js');
+  const posts = [];
+  const ctx = { api: { post: async (p, body) => { posts.push(body); return {}; } }, ui: fakeUi(), local: { root: tmpdir() }, session: { id: 's', title: 't' }, archiveSteps: [] };
+  for (let i = 0; i < ARCHIVE_STEPS + 5; i++) {
+    archiveStep(ctx, { id: `s${i}`, kind: 'read', title: '读取', status: 'running' });
+    archiveStep(ctx, { id: `s${i}`, kind: 'read', title: '读取', status: 'ok' });
+  }
+  await archiveTurn(ctx, '读很多', { finalText: '读完了' });
+  const assistant = posts[0].messages[1];
+  assert.equal(assistant.steps.length, ARCHIVE_STEPS);
+  assert.equal(assistant.stepsDropped, 5, '没存的步数没交上去（或者 running / 收尾各算了一次）');
+  archiveStep(ctx, { id: 'n1', kind: 'read', title: '读取', status: 'ok' });
+  await archiveTurn(ctx, '再读一个', { finalText: '好' });
+  assert.ok(!('stepsDropped' in posts[1].messages[1]), '上一轮的没存步数串到了下一轮');
+  assert.equal(posts[1].messages[1].steps.length, 1);
 });

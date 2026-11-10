@@ -510,6 +510,9 @@
   function reportUnhandled(reason) {
     if (redirecting || !reason) return false;
     if (reason.name === 'AbortError') return false;       // 用户自己取消的（停止生成、取消选文件）
+    // 页面之间的交叉淡化（@view-transition）没做成：浏览器自己的 ViewTransition 承诺被拒、没人接，也会到这里 ——
+    // 第一百二十八轮真浏览器里点侧栏换页，每次都弹「操作没有完成（页面出了错）」，其实什么都没坏（淡化跳过了而已）
+    if (/^(InvalidStateError|TimeoutError)$/.test(reason.name) && /transition/i.test(String(reason.message || ''))) return false;
     if (reason.userFacing && reason.message) {
       toast(reason.message, 'error');
     } else {

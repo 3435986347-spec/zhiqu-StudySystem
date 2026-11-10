@@ -90,6 +90,16 @@ const tags = (h) => [...h.matchAll(/<\/?([a-z0-9]+)[\s>]/gi)].map((m) => m[1].to
     delete state.reasoningExpanded['req-1:run']; delete state.reasoningExpanded['req-1:ed'];
   });
 
+  check('思考那一步有原文才点得开（第一百二十七轮存的只有字数 {chars}：原来也能点开，点开是空的）', () => {
+    const charsOnly = html([{ id: 'c', kind: 'thinking', title: '思考', summary: '3 秒', status: 'ok', detail: { chars: 900 } }]);
+    assert.match(charsOnly, /<div class="zq-trace-step" data-state="ok" data-kind="thinking"><div class="zq-trace-line">/, '只有字数的思考画成了能点开的');
+    state.reasoningExpanded['req-1:t'] = true;
+    const withText = html([{ id: 't', kind: 'thinking', title: '思考', summary: '3 秒', status: 'ok', detail: { chars: 9, text: '先看看文件', omitted: 40 } }]);
+    assert.match(withText, /<details class="zq-trace-step"/);
+    assert.ok(withText.includes('先看看文件') && withText.includes('后面还有 40 字没存'), withText);
+    delete state.reasoningExpanded['req-1:t'];
+  });
+
   check('合着的不画细节（几百 KB 的输出 / diff 不进 DOM）；点开才画；刷新后列表里只有 hasDetail，点开时显示「正在取」', () => {
     const big = 'x'.repeat(50000);
     const closed = html([{ id: 'r', kind: 'run', title: '运行', status: 'ok', detail: { command: 'x', exitCode: 0, output: big } }]);

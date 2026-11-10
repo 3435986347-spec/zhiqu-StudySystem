@@ -9,7 +9,7 @@ import { PassThrough } from 'node:stream';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { DraftTools, ABSENT } from '../src/tools/drafts.js';
-import { createBridge, runHosted } from '../src/host/code-host.js';
+import { createBridge, runHosted, unfinishedReport } from '../src/host/code-host.js';
 import { detectSandbox } from '../src/tools/sandbox.js';
 import { tmpdir, write } from './helpers.js';
 
@@ -427,33 +427,68 @@ test('跑过命令的不按「说写了文件」推：auto 档的 shell 可能�
   assert.equal(b.seen.filter((m) => m.type === 'model').length, 2, '跑过命令就不推');
 });
 
-test('交给后端当回答的结论：只认这一次新说的；出错、被打断时是空的（后端改由最终回答那一步兜底），不拿历史那句「好的，前面的对话我当参考」顶上', async () => {
+test('交给后端当回答的结论：只认这一次新说的；出错、被打断、用完轮数时是一段照实说「做到哪了」的话（第一百二十八轮：原来交空的，后端另调模型照「这一轮没有改文件」编了一段），不拿历史那句、被推回去的那句顶上', async () => {
   const history = [{ role: 'user', content: '上一轮的问题' }, { role: 'assistant', content: '上一轮的回答' }];
+  const stopped = (r, why) => {
+    assert.match(r.conclusion, why, r.conclusion);
+    assert.ok(!r.conclusion.includes('上一轮的回答') && !r.conclusion.includes('好的，前面的对话我当参考') && !r.conclusion.includes('先说到这'), `拿了不该拿的那句当结论：${r.conclusion}`);
+    assert.match(r.conclusion, /说「继续」我接着做/);
+  };
   const ok = fakeBackend({ replies: [{ text: '这一次的结论' }] });
   const r1 = await runHosted(ok.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '看看', canWrite: true, maxRounds: 5, model: MODEL, history });
   assert.equal(r1.conclusion, '这一次的结论');
   const broken = fakeBackend({ replies: [{ error: '模型那边断了' }] });
   const r2 = await runHosted(broken.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '看看', canWrite: true, maxRounds: 5, model: MODEL, history });
-  assert.equal(r2.conclusion, '', `出错时不该有结论：${r2.conclusion}`);
+  stopped(r2, /半路出错停下了：.*模型那边断了/);
   assert.ok(r2.error, '出错要交回');
   // 用完轮数、没有新的结论：不拿历史后面那句固定的「好的……」顶上
   const used = fakeBackend({ replies: [{ calls: [{ name: 'list_files', args: {} }] }] });
   const r3 = await runHosted(used.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '看看', canWrite: true, maxRounds: 1, model: MODEL, history });
-  assert.equal(r3.conclusion, '', `用完轮数时不该有结论：${r3.conclusion}`);
+  stopped(r3, /还没写结论/);
+  assert.doesNotMatch(r3.conclusion, /：null/, '用完轮数时不能写成「出错停下了：null」');
+  assert.match(r3.conclusion, /用完了 1 轮/, '用完轮数要说清楚是用完了轮数');
+  assert.match(r3.conclusion, /最后一步是：`列出 工作区根`/, '做到哪一步要照实说（放进代码段，别让命令原文变成 Markdown）');
   // 说了一句、清单没做完被推回去，接着那一次出错 / 到点被打断：被推回去的那句不是结论
   const todo = { calls: [{ name: 'update_todos', args: { todos: [{ content: '写文件', status: 'pending' }] } }] };
   const errored = fakeBackend({ replies: [todo, { text: '先说到这' }, { error: '模型那边断了' }] });
   const r4 = await runHosted(errored.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '看看', canWrite: true, maxRounds: 5, model: MODEL });
-  assert.equal(r4.conclusion, '', `推回去之后出错，不该拿被推回去的那句当结论：${r4.conclusion}`);
+  stopped(r4, /半路出错停下了/);
   const hung = fakeBackend({ replies: [todo, { text: '先说到这' }, { hang: true }] });
   const r5 = await runHosted(hung.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '看看', canWrite: true, maxRounds: 5, model: MODEL, timeoutMs: 400 });
-  assert.equal(r5.conclusion, '', `到点被打断，不该拿被推回去的那句当结论：${r5.conclusion}`);
+  stopped(r5, /到了时间上限/);
   assert.ok(r5.aborted);
   // 跑命令时到点：exec 回「已中断」、不抛错，循环在下一轮开头退出 —— 这时 error 是空的，只有「被打断」挡得住
   const stuck = fakeBackend({ replies: [todo, { text: '先说到这' }, { calls: [{ name: 'shell', args: { command: 'sleep 100' } }] }], exec: () => null });
   const r6 = await runHosted(stuck.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '看看', canWrite: true, canShell: true, shellWrite: true, canExec: true, maxRounds: 5, model: MODEL, timeoutMs: 400 });
   assert.equal(r6.error, null, '这条要的是不抛错的打断');
-  assert.equal(r6.conclusion, '', `命令跑到一半被打断，不该拿被推回去的那句当结论：${r6.conclusion}`);
+  stopped(r6, /到了时间上限/);
+  // 写过的文件照实列出来（生成到产物：写的是真的）
+  const wrote = fakeBackend({ replies: [{ calls: [{ name: 'write_file', args: { path: 'core.js', content: 'x\n' } }] }, { hang: true }] });
+  const r7 = await runHosted(wrote.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '做个游戏', canWrite: true, maxRounds: 5, model: MODEL, timeoutMs: 600 });
+  stopped(r7, /已经生成的文件：`core\.js`/);
+  // 说「已写入」被推回去，接着一直调工具到用完轮数：那句没做的说法不是结论（第一百二十八轮 review：原来取的是「最后一句不调工具的」，正好是它）
+  const claimed = fakeBackend({ replies: [{ text: '已写入 a.md。' }, { calls: [{ name: 'list_files', args: { path: '.' } }] }, { calls: [{ name: 'read_file', args: { path: 'x.md' } }] }] });
+  const r8 = await runHosted(claimed.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '写', canWrite: true, maxRounds: 3, model: MODEL });
+  assert.equal(claimed.seen.filter((m) => m.type === 'model').length, 3, '前提：说了没做的那句被推回去，之后又调了两轮工具');
+  stopped(r8, /用完了 3 轮/);
+  assert.ok(!r8.conclusion.includes('已写入 a.md'), r8.conclusion);
+  assert.ok(!r8.context.includes('【代码 agent 的结论】\n已写入'), '给后端的上下文里也不能把它当结论');
+  // 连着重复同一个调用被停下：说清楚是怎么停的
+  const loop = fakeBackend({ replies: [{ calls: [{ name: 'list_files', args: { path: '.' } }] }] });
+  const r9 = await runHosted(loop.bridge, { type: 'run', root: tmpdir(), artifact: true, message: '看看', canWrite: true, maxRounds: 20, model: MODEL });
+  stopped(r9, /连着发同一个调用/);
+});
+
+test('没做完的报告：run 过的命令不拿来断言「没有改文件」；最后一步只取第一行，heredoc 不进 Markdown', () => {
+  const ran = unfinishedReport({ local: { drafts: new Map(), ranCommand: true }, steps: [], timedOut: true, error: null, budgetMs: 1000 });
+  assert.match(ran, /跑过命令，改没改文件看不出来/);
+  assert.doesNotMatch(ran, /还没有改任何文件/);
+
+  const heredoc = unfinishedReport({
+    local: { drafts: new Map(), ranCommand: false }, steps: ['运行 cat <<\'EOF\'\n$x$\nEOF'], timedOut: false, error: '模型那边断了', budgetMs: 0,
+  });
+  assert.match(heredoc, /最后一步是：`运行 cat <<'EOF'`/, heredoc);
+  assert.ok(!heredoc.includes('$x$'), 'heredoc 的正文被塞进了回答（网页会当 Markdown / 公式渲染）');
 });
 
 // ─────────── 网页输入框里的 /init、/review（第一百一十八轮）：用命令行那一份，门在后端

@@ -22,7 +22,10 @@ public record CodeLoopBudget(int rounds, long millis, int maxTokensPerCall, int 
      * 16384 token：一整个单文件小游戏（HTML + CSS + JS，带中文注释）要四五千 token，
      * 推理型模型还要先花 token 想。4096 是 2026-09-23 那次「写马里奥」被截断的原因之一。
      */
-    public static final CodeLoopBudget EXPLICIT = new CodeLoopBudget(10, 180_000L, 16384, 150_000);
+    // 第一百二十八轮：240 秒、20 轮。线上一次「做一个游戏」第一下就想了 100 秒（思考档开着），写完核心和测试、改过一次就到了 180 秒，
+    // 页面、样式都没来得及写。整条流 300 秒（AiWorkspaceService.STREAM_TIMEOUT_MS）里要留出写回答的时间 —— 代码模式的回答就是
+    // 循环自己的结论（第一百二十一轮），不再另调模型，60 秒足够收尾。轮数原来的 10 轮比时间先用完（一轮读一个文件）
+    public static final CodeLoopBudget EXPLICIT = new CodeLoopBudget(20, 240_000L, 16384, 150_000);
 
     public static CodeLoopBudget forRequest(boolean explicitCodeMode) {
         return explicitCodeMode ? EXPLICIT : KEYWORD;

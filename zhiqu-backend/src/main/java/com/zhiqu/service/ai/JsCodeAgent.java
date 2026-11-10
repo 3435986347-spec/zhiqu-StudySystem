@@ -313,6 +313,11 @@ public class JsCodeAgent {
                 }
                 JsonNode msg = json.readTree(line);
                 String type = msg.path("type").asText("");
+                // 宿主已经不收了：它要的东西（调模型、跑命令、远程工具）不再做，只把它写出来的读完（trace、result）
+                if (channel.gone() && ("model".equals(type) || "exec".equals(type) || "tool".equals(type))) {
+                    continue;
+                }
+                try {
                 if ("model".equals(type)) {
                     callModel(config, userId, msg, channel);
                 } else if ("exec".equals(type)) {
@@ -347,6 +352,10 @@ public class JsCodeAgent {
                     log.warn("代码模式的 JS 循环发来认不出的消息：{}", Texts.limitRaw(type, 40));
                     break;
                 }
+                } catch (HostGone | HarnessModelGateway.ClientGone gone) {
+                    // 回给宿主的那一下写不进去：它停了（多半是到了时间预算）。接着读它已经写出来的
+                    log.info("代码模式的宿主已经停了，接着读它写出来的 userId={}", userId);
+                }
             }
         } catch (Exception e) {
             log.warn("代码模式的 JS 循环失败（不影响主回答） userId={} err={}", userId, e.toString());
@@ -365,7 +374,13 @@ public class JsCodeAgent {
         }
         if (result == null) {
             narrate(onStep, Map.of("phase", "error", "message", "工具循环中断：代码模式的循环没交回结果（后端日志里有它的错误输出）"));
-            return new CodeWorkspaceAgent.Result("", List.of(), null, canWrite, List.of(), false);
+            // 回答照实说（第一百二十八轮）：原来交空的，最终回答那一步另调模型、照「这一轮没有改文件」编一段 —— 可它可能已经写了文件、跑过命令。
+            // 生成到产物时，临时空间里真有变化的照样收（存成产物），别的就只说断了、做过的步骤在上面
+            List<ArtifactFiles.Generated> changed = target.artifact() ? ArtifactFiles.changes(root, before) : List.of();
+            String said = "代码模式的循环半路断了，没交回结论（做过的步骤见上面）。"
+                    + (changed.isEmpty() ? "" : "已经生成的文件：" + changed.stream().map(g -> "`" + g.path() + "`").collect(java.util.stream.Collectors.joining("、")) + "。")
+                    + "说「继续」我接着做。";
+            return new CodeWorkspaceAgent.Result("", List.of(), null, canWrite, List.of(), !changed.isEmpty(), changed, said);
         }
         log.info("代码模式的 JS 循环收尾 userId={}：{} 轮、草稿 {} 份、结论：{}", userId, result.path("rounds").asInt(),
                 result.path("drafts").size(), Texts.limitRaw(result.path("text").asText(""), 200));
@@ -377,17 +392,43 @@ public class JsCodeAgent {
     }
 
     /** 一行一个 JSON 写给子进程（模型的事件和命令的结果都从这里走） */
+    /**
+     * 往宿主写。<b>写不进去不抛</b>（第一百二十八轮，线上撞到的）：宿主到了时间预算自己停下、把 result 写进管子就退了，
+     * 这边还在把模型的流转给它 —— 一写就是「Stream closed」。原来这个异常一路抛到读循环外面，管子里那行 result 没人读，
+     * 整轮当成「什么都没做」：步骤里明明新建了文件、跑过测试，回答却照「这一轮没有改文件」另写了一段（用户：「后面和前面完全是割裂的」）。
+     * 现在记下「宿主不收了」，模型那边停下（gone() 让网关不再转），读循环照常读到 EOF。
+     */
     private final class Channel {
         private final BufferedWriter out;
+        private volatile boolean gone;
 
         Channel(BufferedWriter out) {
             this.out = out;
         }
 
         synchronized void send(Map<String, Object> msg) throws IOException {
-            out.write(json.writeValueAsString(msg));
-            out.write('\n');
-            out.flush();
+            if (gone) {
+                throw new HostGone();
+            }
+            try {
+                out.write(json.writeValueAsString(msg));
+                out.write('\n');
+                out.flush();
+            } catch (IOException e) {
+                gone = true;
+                throw new HostGone();
+            }
+        }
+
+        boolean gone() {
+            return gone;
+        }
+    }
+
+    /** 宿主不收了（停了 / 退了）：发给它的东西不用再发，但它已经写出来的还要读完 */
+    static final class HostGone extends IOException {
+        HostGone() {
+            super("宿主已经停了，不再收消息");
         }
     }
 

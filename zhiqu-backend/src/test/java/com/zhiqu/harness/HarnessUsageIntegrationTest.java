@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 /**
@@ -76,5 +77,41 @@ class HarnessUsageIntegrationTest {
         assertEquals(3500, today.path("promptTokens").asInt());
         assertEquals(2816, today.path("cachedTokens").asInt(), "今天命中的只有第一条：" + today);
         assertEquals(2816, r.path("data").path("last30Days").path("cachedTokens").asInt(), "四十天前那条不算进近 30 天");
+    }
+
+    /**
+     * 第一百二十八轮：命令行存到网站的那一份，每一步单独给（原来拼成「> 过程：…」接在回答后面，网页上渲染成乱码）。
+     * 真接口、真库：照形状收（别人机器上来的）、running 收成没做完、存进 steps_json、网页的消息列表读得回来；正文不带过程那一行。
+     */
+    @Test
+    @DisplayName("命令行存档带步骤：照形状收、存进 steps_json、消息列表读得回；坏的不收；截掉的步数照实存")
+    void 命令行存档带步骤(@Autowired org.springframework.jdbc.core.JdbcTemplate db, @Autowired com.zhiqu.service.AiService ai) throws Exception {
+        jdbc.update("INSERT INTO sys_user(username, password, nickname, role, status, deleted) VALUES ('archive-me', 'x', 'archive-me', 'USER', 1, 0)");
+        Long me = jdbc.queryForObject("SELECT id FROM sys_user WHERE username = 'archive-me'", Long.class);
+        String token = jwt.generateToken(me, "archive-me", 0, 3_600_000L);
+        String body = json.writeValueAsString(java.util.Map.of("title", "做个游戏", "workspace", "game", "messages", java.util.List.of(
+                java.util.Map.of("role", "user", "content", "做个游戏"),
+                java.util.Map.of("role", "assistant", "content", "做好了", "stepsDropped", 37, "steps", java.util.List.of(
+                        java.util.Map.of("id", "s1", "kind", "run", "title", "运行", "target", "npm test", "summary", "退出码 0", "status", "ok",
+                                "detail", java.util.Map.of("command", "npm test", "exitCode", 0, "output", "ok 1", "evil", "x")),
+                        java.util.Map.of("id", "s2", "kind", "create", "title", "新建", "target", "a.js", "status", "running"),
+                        java.util.Map.of("kind", "read", "title", "没有 id"))))));
+        JsonNode r = json.readTree(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/harness/sessions/cli-s1/messages")
+                        .header("Authorization", "Bearer " + token).header("Idempotency-Key", java.util.UUID.randomUUID().toString())
+                        .contentType("application/json").content(body)
+                        .with(req -> { req.setRemoteAddr("100.64.9.9"); return req; }))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertEquals(200, r.path("code").asInt(), r.toString());
+        String raw = db.queryForObject("SELECT steps_json FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, me);
+        JsonNode steps = json.readTree(raw).path("steps");
+        assertEquals(2, steps.size(), "没有 id 的那条要丢掉：" + raw);
+        assertEquals("error", steps.get(1).path("status").asText(), "存档里停在 running 的要收成没做完");
+        assertTrue(steps.get(0).path("detail").path("evil").isMissingNode(), "认不出的字段收了：" + raw);
+        assertEquals(37, json.readTree(raw).path("dropped").asInt(), "命令行那边截掉的步数没存（网页上不会说「后面还有 N 步没存」）：" + raw);
+        String content = db.queryForObject("SELECT content FROM ai_message WHERE user_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", String.class, me);
+        assertEquals("做好了", content);
+        Long notebookId = db.queryForObject("SELECT notebook_id FROM harness_session WHERE user_id = ? LIMIT 1", Long.class, me);
+        java.util.List<java.util.Map<String, Object>> rows = ai.getRecentChatMessages(me, notebookId, 10, null);
+        assertTrue(rows.get(rows.size() - 1).get("steps") != null, "消息列表没带步骤：" + rows);
     }
 }

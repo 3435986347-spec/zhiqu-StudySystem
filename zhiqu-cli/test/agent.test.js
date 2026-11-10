@@ -165,7 +165,7 @@ test('其它工具的大段输出（命令、MCP…）仍按窗口截断并说�
   assert.match(out, /只给了前 2800 字/);
 });
 
-test('远程工具带上这段会话的 id；网页存档先开会话再写消息，带着过程', async () => {
+test('远程工具带上这段会话的 id；网页存档一个请求写消息；过程不再拼进正文（第一百二十八轮起每一步单独给，见 steps.test.js）', async () => {
   const ctx = makeCtx({ replies: [{ calls: [{ name: 'create_study_plan', args: { tasks: [{ title: 't' }] } }] }, { text: '草稿好了' }] });
   const r = await runTurn(ctx, '排个计划');
   const call = ctx.api.posts.find((p) => p.pathname === '/api/harness/tools/call');
@@ -175,7 +175,25 @@ test('远程工具带上这段会话的 id；网页存档先开会话再写消�
   assert.equal(last.pathname, `/api/harness/sessions/${ctx.session.id}/messages`, '一轮只发一个存档请求');
   assert.equal(last.body.title, '排个计划');
   assert.equal(last.body.workspace, path.basename(ctx.root));
-  assert.match(last.body.messages[1].content, /> 过程：生成计划草稿/);
+  assert.doesNotMatch(last.body.messages[1].content, /过程：/, '正文后面又拼了一行过程（网页上渲染成乱码）');
+});
+
+test('每一轮开始清掉上一轮留下的存档步骤；子 agent 不清父 agent 正在攒的那一份', async () => {
+  const ctx = makeCtx({ replies: [{ text: '好' }] });
+  ctx.archiveSteps = [{ id: 'old', kind: 'run', title: '上一轮被打断的那一步' }];
+  await runTurn(ctx, '新的一轮');
+  assert.deepEqual(ctx.archiveSteps, [], '上一轮没存档的步骤串到了这一轮');
+
+  const parentSteps = [{ id: 'parent', kind: 'read', title: '父 agent 的步骤' }];
+  const child = {
+    ...makeCtx({ replies: [{ text: '子结论' }] }),
+    subagent: { id: 'agent-1', role: 'worker' },
+    archiveSteps: parentSteps,
+    store: null,
+    session: null,
+  };
+  await runTurn(child, '子任务');
+  assert.deepEqual(child.archiveSteps, parentSteps, '子 agent 把父 agent 的步骤清掉了（它共用这个数组）');
 });
 
 test('改任务状态直接生效（第二十九轮）：ask 档先问、说 n 不调；说 y 调；auto 档不问', async () => {
