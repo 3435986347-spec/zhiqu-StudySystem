@@ -454,19 +454,24 @@ test('网页的 shell 交回后端跑：带 shell: true；跑过才算跑过（�
   assert.match((await local.commitShell(local.prepareShell({ command: 'y' }))).content, /a\.py.*旧版本/);
 });
 
-test('网络只认命令行参数和用户级配置：项目里的 .zhiqu/settings.json 不能给自己开网', () => {
+test('网络只认命令行参数和用户级配置：项目里的 .zhiqu/settings.json 改不了它', () => {
   const root = realTmp();
   const zhiquHome = realTmp();
   const old = process.env.ZHIQU_HOME;
   process.env.ZHIQU_HOME = zhiquHome;
   try {
     fs.mkdirSync(path.join(root, '.zhiqu'));
+    // 2026-11-10 用户定的「所有人都可以联网」：没配过就是 on
+    assert.equal(resolveSettings(root, {}).sandboxNetwork, 'on', '没配过要能联网');
+    fs.writeFileSync(path.join(root, '.zhiqu', 'settings.json'), JSON.stringify({ sandboxNetwork: 'off' }));
+    assert.equal(resolveSettings(root, {}).sandboxNetwork, 'on', '项目把网关了');
+    fs.writeFileSync(path.join(zhiquHome, 'config.json'), JSON.stringify({ sandboxNetwork: 'off' }));
+    assert.equal(resolveSettings(root, {}).sandboxNetwork, 'off', '用户自己关的才算');
     fs.writeFileSync(path.join(root, '.zhiqu', 'settings.json'), JSON.stringify({ sandboxNetwork: 'on' }));
     assert.equal(resolveSettings(root, {}).sandboxNetwork, 'off', '克隆下来的仓库给自己开了网');
     assert.equal(resolveSettings(root, { sandboxNetwork: 'local' }).sandboxNetwork, 'local');
-    fs.writeFileSync(path.join(zhiquHome, 'config.json'), JSON.stringify({ sandboxNetwork: 'on' }));
-    assert.equal(resolveSettings(root, {}).sandboxNetwork, 'on');
-    assert.equal(resolveSettings(root, { sandboxNetwork: 'bad' }).sandboxNetwork, 'off', '坏值当没说');
+    fs.writeFileSync(path.join(zhiquHome, 'config.json'), JSON.stringify({ sandboxNetwork: 'bad' }));
+    assert.equal(resolveSettings(root, {}).sandboxNetwork, 'on', '坏值当没说，回默认');
   } finally {
     if (old === undefined) delete process.env.ZHIQU_HOME; else process.env.ZHIQU_HOME = old;
   }

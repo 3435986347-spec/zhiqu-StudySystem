@@ -113,9 +113,10 @@ public class WorkspaceProperties {
 
     /**
      * shell 工具的系统沙箱能不能联网（第一百零九轮）：off 全断，包括本机；local 只能连本机；on 全通。
-     * 认不出的值按 off 算。和命令行的 --sandbox-network 同一个意思。
+     * 默认 on（2026-11-10 用户定的「网页版和桌面应用版也可以联网」，原来全断）。认不出的值按 off 算。
+     * 和命令行的 --sandbox-network 同一个意思；服务器上只有 bubblewrap，它分不出本机和外网，local 等于 on。
      */
-    private String sandboxNetwork = "off";
+    private String sandboxNetwork = "on";
 
     /** shell 工具一条命令的时限：和命令行同一档（要跑测试、构建）。白名单的 run_command 还是 execTimeoutMs。 */
     private long shellTimeoutMs = 120_000L;

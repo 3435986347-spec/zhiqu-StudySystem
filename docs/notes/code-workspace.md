@@ -128,7 +128,7 @@ realpath** —— 否则 macOS 上 `/tmp` 实际是 `/private/tmp`，正常读�
 |---|---|---|
 | 写 | 工作区、自己的临时目录 `$TMPDIR` | 别处；`.git`、`.zhiqu`（写一个 hook、改一下设置，下次就跑到沙箱外了）；`/tmp` |
 | 读 | 系统目录、工作区、工具链（PATH 里的、`JAVA_HOME` 这类、依赖缓存）；工作区是仓库子目录时，上面到仓库顶层那几层的目录本身和 `.gitignore`、`.gitattributes`（git 要 chdir 到顶层，只看得到文件名，第一百一十四轮） | 家目录其余的一切（`.ssh`、`~/.zhiqu` 的令牌…），工具链旁边的凭据（`.cargo/credentials` 这类）再挡一遍 |
-| 网 | 默认全断，**连本机也不行**（本机 MySQL 没密码、Docker 的 socket 也在本机）；`app.workspace.sandbox-network=local\|on` 才放开 | |
+| 网 | 默认**能联网**（2026-11-10 用户定的「网页版和桌面应用版也可以联网」，原来全断）；`app.workspace.sandbox-network=off` 关掉。服务器上只有 bubblewrap，它分不出本机和外网，`local` 等于 `on` | |
 | 系统服务（macOS） | 目录查询、日志、通知 | `open`、`osascript`（叫别的程序，就跑到沙箱外了）、剪贴板、钥匙串、`defaults`、`launchctl`；别的进程的路径和命令行（`lsof`、`kern.proc*`）；给别的进程发信号 |
 
 档位（网页和命令行对应）：

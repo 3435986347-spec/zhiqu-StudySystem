@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { shellSchemas } from '../src/tools/local.js';
 import { runProcess } from '../src/tools/exec.js';
-import { describeBoundary, detectSandbox, READ_ONLY, sandboxedLaunch, WORKSPACE_WRITE } from '../src/tools/sandbox.js';
+import { describeBoundary, detectSandbox, hostedProbe, READ_ONLY, sandboxedLaunch, WORKSPACE_WRITE } from '../src/tools/sandbox.js';
 import { tmpdir } from './helpers.js';
 
 const box = detectSandbox({ hosted: true });
@@ -19,12 +19,12 @@ const real = (p) => fs.realpathSync(p);
 /** bwrap 真正收到的参数（放在文件里，第一百一十九轮）：只给没真跑的看，真跑时文件打开就删了 */
 const bwrapArgv = (launch) => fs.readFileSync(launch.argsFile, 'utf8').split('\0').join(' ');
 
-function rig() {
+function rig({ network } = {}) {
   const root = real(tmpdir('zhiqu-hosted-'));
   const priv = real(tmpdir('zhiqu-hosted-priv-'));
   // 外层故意带一个像密钥的环境变量：后端自己的环境里就有这些，--clearenv 要把它挡在外面
   const run = (command, { policy = WORKSPACE_WRITE, timeoutMs = 30_000, cwd = root } = {}) => {
-    const launch = sandboxedLaunch(box, { hosted: true, command, root, cwd, policy, privateDir: priv });
+    const launch = sandboxedLaunch(box, { hosted: true, command, root, cwd, policy, privateDir: priv, network });
     return runProcess({ binary: launch.binary, args: launch.args, cwd: root, env: { ...launch.env, ZHIQU_MASTER_KEY: 'SECRET-FROM-BACKEND-ENV' }, timeoutMs, outputLimit: 256 * 1024 });
   };
   return { root, priv, run };
@@ -52,12 +52,17 @@ test('参数：不绑根目录；断网、PID、用户命名空间都是必开�
   assert.deepEqual(Object.keys(a.env), ['PATH'], '外层也不带后端的环境');
 });
 
-test('参数：网络不听配置：写了 on 也是断的；只读档是 --ro-bind；工作目录换成 /work 下面；跳出工作区的回到 /work', () => {
+test('参数：网络跟着 network 走（on 才补 --share-net，而且必须排在 --unshare-net 后面）；只读档是 --ro-bind；工作目录换成 /work 下面；跳出工作区的回到 /work', () => {
   const root = real(tmpdir());
   fs.mkdirSync(path.join(root, 'sub'));
   const priv = real(tmpdir());
   const make = (o) => bwrapArgv(sandboxedLaunch(FAKE, { hosted: true, command: 'true', root, cwd: root, policy: WORKSPACE_WRITE, privateDir: priv, ...o }));
-  assert.ok(make({ network: 'on' }).includes('--unshare-net') && !make({ network: 'on' }).includes('--share-net'));
+  const on = make({ network: 'on' });
+  assert.ok(on.includes('--unshare-net') && on.includes('--share-net'), '允许联网时要补 --share-net');
+  assert.ok(on.indexOf('--share-net') > on.indexOf('--unshare-net'), 'bwrap 按顺序认，--share-net 必须在 --unshare-net 后面');
+  const off = make({ network: 'off' });
+  assert.ok(off.includes('--unshare-net') && !off.includes('--share-net'), 'off 时不能放开');
+  assert.ok(!make({}).includes('--share-net'), '这一层没说要联网就是断的（默认值由配置层给）');
   assert.ok(make({ policy: READ_ONLY }).includes(`--ro-bind ${root} /work`));
   assert.ok(make({ cwd: path.join(root, 'sub') }).includes('--chdir /work/sub'));
   assert.ok(make({ cwd: path.dirname(root) }).includes('--chdir /work '));
@@ -83,9 +88,21 @@ test('探测是真跑一次，而且要看边界真的在：起不来算没有�
   assert.equal(detectSandbox({ hosted: true, platform: 'linux', env: { PATH: bin }, probe: false }).kind, 'bwrap', '不探测时只看在不在（真跑那条路用）');
 });
 
-test('给模型的说明：说清断网、60 秒、不能后台；工具里没有后台那两个，参数也不提', () => {
+test('探测：说好断网时才验「连不出去」；允许联网时不拿它当判据（服务器本来就可能没有外网）', () => {
+  assert.match(hostedProbe('off'), /dev\/tcp/, '断网档要真的验一次连不出去');
+  assert.doesNotMatch(hostedProbe('on'), /dev\/tcp/, '允许联网时还验这条，没有外网的服务器会被判成「没有沙箱」');
+  assert.doesNotMatch(hostedProbe('local'), /dev\/tcp/);
+  for (const n of ['off', 'on']) {
+    for (const word of ['/work/.probe', '[ ! -e /home ]', '[ ! -e /root ]', '[ ! -e /etc/shadow ]']) assert.ok(hostedProbe(n).includes(word), `${n}：${word}`);
+  }
+});
+
+test('给模型的说明：说清网络档位、60 秒、不能后台；工具里没有后台那两个，参数也不提', () => {
   const text = describeBoundary({ hosted: true });
   for (const word of ['不能联网', '60 秒', '不能起后台进程', '/work']) assert.ok(text.includes(word), word);
+  const online = describeBoundary({ hosted: true, network: 'on' });
+  assert.match(online, /能联网/);
+  assert.doesNotMatch(online, /不能联网/, '开了网还说不能联网，模型会放弃本来能做的事');
   assert.match(describeBoundary({ hosted: true, policy: READ_ONLY }), /工作区只读/);
   const tools = shellSchemas({ background: false });
   assert.deepEqual(tools.map((t) => t.function.name), ['shell']);
@@ -129,7 +146,7 @@ test('写不了：/usr、/etc、/bin、别的目录；临时目录之外什么�
   }
 });
 
-test('断网：连本机的端口（MySQL、Redis 那种）、外网、元数据服务都不通；只有自己的回环', { skip }, async (t) => {
+test('断网档（off）：连本机的端口（MySQL、Redis 那种）、外网、元数据服务都不通；只有自己的回环', { skip }, async (t) => {
   const srv = http.createServer((_q, res) => res.end('reached'));
   await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
   t.after(() => srv.close());
@@ -144,6 +161,19 @@ test('断网：连本机的端口（MySQL、Redis 那种）、外网、元数据
   }
   const routes = await run('cat /proc/net/route | wc -l; ls /sys 2>&1 | head -n 1');
   assert.match(routes.output, /^1\n/, `不该有路由：${routes.output}`);
+});
+
+test('联网档（on）：外面连得上的端口，里面也连得上（bwrap 分不出本机和外网，local 等于 on）', { skip }, async (t) => {
+  const srv = http.createServer((_q, res) => res.end('reached'));
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  t.after(() => srv.close());
+  const { run } = rig({ network: 'on' });
+  const r = await run(`(exec 3<>/dev/tcp/127.0.0.1/${srv.address().port}) 2>/dev/null && echo CONNECTED || echo refused`, { timeoutMs: 10_000 });
+  assert.match(r.output, /CONNECTED/, `开了网还连不上：${r.output}`);
+  // 写范围和读范围不跟着网络变：工作区外照样写不了，家目录照样看不到
+  const still = await run('echo x > /tmp/ok && (echo x > /home/nope 2>/dev/null || echo blocked); ls /home 2>&1 | head -n 1');
+  assert.match(still.output, /blocked/, `开了网，写范围也放开了：${still.output}`);
+  assert.match(still.output, /No such file or directory/, `开了网，读范围也放开了：${still.output}`);
 });
 
 test('1 号进程是 bwrap（不是命令：不然外层一死里面的进程就成了孤儿）：它的命令行没有真路径，环境是空的，读参数的描述符关了，文件也删了', { skip }, async () => {

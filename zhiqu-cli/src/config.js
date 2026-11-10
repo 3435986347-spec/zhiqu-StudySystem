@@ -23,7 +23,8 @@ const MODE_ALIASES = { read: 'plan', readonly: 'plan', write: 'ask', exec: 'auto
 // 思考档位（第一百零八轮，用户 2026-11-07 定的名字，网页同一套）：instant 不思考，往后越想越久、越费 token。
 // 不说就听服务端的默认（app.ai.harness-reasoning）。
 export const EFFORTS = ['instant', 'medium', 'high', 'extra', 'max'];
-// shell 的沙箱能不能联网（第一百零九轮）：默认全断，包括本机
+// shell 的沙箱能不能联网（第一百零九轮）：默认 on（2026-11-10 用户定的「所有人都可以联网」）。
+// 原来默认全断、包括本机 —— 本机可能跑着没密码的数据库。现在默认开，想关的人用 --sandbox-network off 或用户级配置。
 export const SANDBOX_NETWORKS = ['off', 'local', 'on'];
 export function normalizeSandboxNetwork(value) {
   const s = String(value ?? '').trim().toLowerCase();
@@ -132,8 +133,9 @@ export function resolveSettings(root, flags = {}) {
     model: pick('model') ?? null,
     mode,
     effort: normalizeEffort(pick('effort')),
-    // 只认命令行参数和用户级配置，不认项目里的 .zhiqu/settings.json：克隆下来的仓库不能给自己开网
-    sandboxNetwork: normalizeSandboxNetwork(flags.sandboxNetwork ?? user.sandboxNetwork) || 'off',
+    // 只认命令行参数和用户级配置，不认项目里的 .zhiqu/settings.json：克隆下来的仓库不能给自己改网络档位。
+    // 没说就是 on（2026-11-10 用户定的）；用户自己写了 off 才算关。
+    sandboxNetwork: normalizeSandboxNetwork(flags.sandboxNetwork ?? user.sandboxNetwork) || 'on',
     // 子 agent 的开关和上限（第一百二十三轮）：同样只认用户级配置 —— 克隆下来的仓库不能替用户调高花费
     agents: agentLimits(user.agents),
     maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 60),

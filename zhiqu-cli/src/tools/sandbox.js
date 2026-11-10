@@ -3,7 +3,8 @@
 // 规则（execrules.js）拦不住一段脚本 —— 白名单里有 python3 就等于允许任意代码。这一层是操作系统在拦：
 //   - 写：工作区 + 这个进程自己的临时目录。.git、.zhiqu 不能写：写一个 hook、改一下设置，下次就跑到沙箱外面去了。
 //   - 读：家目录默认不让读，只放工具链和工作区。读到的东西会原样进模型上下文，发给模型服务。
-//   - 网：默认全断，包括本机：本机的数据库可能没有密码，Docker 的 socket 也在本机。
+//   - 网：默认开着（2026-11-10 用户定的「所有人都可以联网」；原来是全断，因为本机的数据库可能没有密码、Docker 的 socket 也在本机）。
+//     关掉用 --sandbox-network off，只放本机用 local。写范围和读范围不跟着变。
 //   - 系统服务：mach-lookup 只放一小撮。放开的话 open、osascript、launchctl 能让系统替它在沙箱外跑东西，读剪贴板、钥匙串。
 // 探测（detectSandbox）是真跑一次：嵌套沙箱、用户命名空间被关时 sandbox-exec / bwrap 起不来，当作没有，退回白名单。
 import { spawnSync } from 'node:child_process';
@@ -185,13 +186,13 @@ export const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
  * home、env 能传进来：判据用假的家目录，不碰用户真的 ~/.ssh。
  */
 export function sandboxedLaunch(box, { command, root, cwd, policy = WORKSPACE_WRITE, network: wantedNetwork = 'off', home = os.homedir(), env = process.env, privateDir = childHome(), hosted = false }) {
-  if (hosted) {
-    // 服务器上只有这一种：没有 bubblewrap 就是不跑，不能退回上面那份（那份的根目录是整个系统）。网络也不听 network
-    if (box.kind !== 'bwrap') throw new Error('服务器上的沙箱要 bubblewrap');
-    return hostedLaunch(box, { command, root, cwd, policy, privateDir });
-  }
-  // 认不出的一律断网：bwrap 那边「不是 off 就开网」，写错一个字不能把网打开
+  // 认不出的一律断网：两边都是「不是 off 就开网」，写错一个字不能把网打开
   const network = NETWORK_MODES.includes(wantedNetwork) ? wantedNetwork : 'off';
+  if (hosted) {
+    // 服务器上只有这一种：没有 bubblewrap 就是不跑，不能退回上面那份（那份的根目录是整个系统）
+    if (box.kind !== 'bwrap') throw new Error('服务器上的沙箱要 bubblewrap');
+    return hostedLaunch(box, { command, root, cwd, policy, privateDir, network });
+  }
   const realHome = real(home);
   const realRoot = real(root);
   const priv = real(privateDir);
@@ -226,12 +227,14 @@ const HOSTED_LIMITS = 'ulimit -c 0 && ulimit -u 128 && ulimit -n 256 && ulimit -
 const HOSTED_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const HOSTED_WORK = '/work';
 
-function hostedBwrapArgs({ root, cwd, policy, privateDir }) {
+function hostedBwrapArgs({ root, cwd, policy, privateDir, network = 'off' }) {
   // 不用 --unshare-all：它对 user、cgroup 是「能开就开」，开不了就悄悄不开。这里开不了就该起不来
   // 不要 --as-pid-1：那样 1 号进程是 exec 出来的命令，AppArmor 切配置时内核把 --die-with-parent 设的 pdeathsig 清了（第一百一十九轮在真服务器上撞到，容器里没有
   // AppArmor 看不到）：外层一死，里面的进程就成了没人管的孤儿。1 号留给 bwrap，它没有 exec 过，外层一死它就死，整个 PID 命名空间跟着没了
   const args = ['--die-with-parent', '--new-session', '--unshare-user', '--disable-userns', '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup',
     '--uid', '1000', '--gid', '1000', '--hostname', 'sandbox', '--cap-drop', 'ALL', '--clearenv'];
+  // 网络：先 --unshare-net 再 --share-net（bwrap 按顺序认，后面的盖前面的）。bwrap 分不出本机和外网，所以 local 在这里等于 on
+  if (network !== 'off') args.push('--share-net');
   args.push('--ro-bind', '/usr', '/usr');
   // /bin、/lib 这些在 merged-usr 上是软链，老系统上是目录
   for (const name of ['bin', 'sbin', 'lib', 'lib32', 'lib64', 'libx32']) {
@@ -269,12 +272,12 @@ function hostedBwrapArgs({ root, cwd, policy, privateDir }) {
  * 外面包一层 sh：优先级最低（后端和 MySQL 先）、内存不够时先杀它（oom_score_adj 只能往上调，里面的进程调不回来）。
  * 限额设不上就不跑：一条没限额的命令不该跑在这台机器上。
  */
-function hostedLaunch(box, { command, root, cwd, policy, privateDir }) {
+function hostedLaunch(box, { command, root, cwd, policy, privateDir, network = 'off' }) {
   const inner = `${HOSTED_LIMITS} || { echo '限额设不上，这条命令没有运行' >&2; exit 126; }; ${reapJobs(command)}`;
   // 1 号进程是 bwrap，里面的命令读得到它的 /proc/1/cmdline 和 environ：参数放文件里（--args，打开就删，bwrap 读完就关），不写在命令行上（服务器上的真路径、账号 id）；
   // env -i：它的环境是空的，调用方带了什么都进不来
   const argsFile = path.join(real(privateDir), `hosted-args-${crypto.randomBytes(8).toString('hex')}`);
-  const argv = hostedBwrapArgs({ root: real(root), cwd: real(cwd), policy, privateDir: real(privateDir) });
+  const argv = hostedBwrapArgs({ root: real(root), cwd: real(cwd), policy, privateDir: real(privateDir), network });
   fs.writeFileSync(argsFile, `${argv.join('\0')}\0`, { mode: 0o600 });
   return {
     binary: '/bin/sh',
@@ -284,8 +287,10 @@ function hostedLaunch(box, { command, root, cwd, policy, privateDir }) {
   };
 }
 
-// 探测不只看起不起得来：边界得真的在（Ubuntu 的 AppArmor 规则、内核开关都可能让它起不来或者不完整）
-const HOSTED_PROBE = 'echo x > /work/.probe && rm /work/.probe && [ ! -e /home ] && [ ! -e /root ] && [ ! -e /var ] && [ ! -e /etc/shadow ] && ! (exec 3<>/dev/tcp/1.1.1.1/53) 2>/dev/null';
+// 探测不只看起不起得来：边界得真的在（Ubuntu 的 AppArmor 规则、内核开关都可能让它起不来或者不完整）。
+// 网络这一条只在「应该断网」时验：允许联网时服务器本来就可能没有外网，拿它当判据会把好沙箱判死。
+export const hostedProbe = (network) => 'echo x > /work/.probe && rm /work/.probe && [ ! -e /home ] && [ ! -e /root ] && [ ! -e /var ] && [ ! -e /etc/shadow ]'
+  + (network === 'off' ? ' && ! (exec 3<>/dev/tcp/1.1.1.1/53) 2>/dev/null' : '');
 
 /**
  * 命令一结束，它起的后台进程一起结束（第一百零九轮）：不收的话命令行要等它结束才回话，网页把它留在外面接着跑。
@@ -318,8 +323,8 @@ export function plainLaunch({ command, home = os.homedir(), env = process.env, p
  * 这台机器有没有能用的系统沙箱。不只看文件在不在：真跑一次。
  * 返回 { kind, binary } 或 null（调用方退回白名单）。
  */
-export function detectSandbox({ platform = process.platform, env = process.env, probe = true, hosted = false } = {}) {
-  if (hosted) return detectHostedSandbox({ platform, env, probe });
+export function detectSandbox({ platform = process.platform, env = process.env, probe = true, hosted = false, network = 'on' } = {}) {
+  if (hosted) return detectHostedSandbox({ platform, env, probe, network });
   let box = null;
   if (platform === 'darwin' && fs.existsSync('/usr/bin/sandbox-exec')) box = { kind: 'seatbelt', binary: '/usr/bin/sandbox-exec' };
   else if (platform === 'linux') {
@@ -337,7 +342,7 @@ export function detectSandbox({ platform = process.platform, env = process.env, 
   }
 }
 
-function detectHostedSandbox({ platform, env, probe }) {
+function detectHostedSandbox({ platform, env, probe, network = 'on' }) {
   const binary = platform === 'linux' ? resolveOnPath('bwrap', env) : null;
   if (!binary) return null;
   const box = { kind: 'bwrap', binary };
@@ -345,7 +350,7 @@ function detectHostedSandbox({ platform, env, probe }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-probe-'));
   const priv = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-probe-'));
   try {
-    const launch = hostedLaunch(box, { command: HOSTED_PROBE, root: dir, cwd: dir, policy: WORKSPACE_WRITE, privateDir: priv });
+    const launch = hostedLaunch(box, { command: hostedProbe(network), root: dir, cwd: dir, policy: WORKSPACE_WRITE, privateDir: priv, network });
     const r = spawnSync(launch.binary, launch.args, { stdio: 'ignore', timeout: 5000, cwd: dir, env: launch.env });
     return r.status === 0 ? box : null;
   } catch { return null; } finally {
@@ -366,7 +371,7 @@ export function looksBlocked(output) {
 /** 给人和模型看的一句话：现在关在什么里面。 */
 export function describeBoundary({ policy = WORKSPACE_WRITE, network = 'off', hosted = false } = {}) {
   if (hosted) {
-    return `服务器上的隔离环境，工作目录是 ${HOSTED_WORK}（就是工作区）；${policy === READ_ONLY ? '工作区只读，只能写 /tmp' : '只能写工作区和 /tmp'}；不能联网；只有系统目录，读不到别的文件；`
+    return `服务器上的隔离环境，工作目录是 ${HOSTED_WORK}（就是工作区）；${policy === READ_ONLY ? '工作区只读，只能写 /tmp' : '只能写工作区和 /tmp'}；${network === 'off' ? '不能联网' : '能联网'}；只有系统目录，读不到别的文件；`
       + '一条命令最多 60 秒，内存和进程数有限，超了会被杀；不能起后台进程（background 用不了）；每条命令是一个新的 bash，/tmp 也不留到下一条（要留的放工作区）';
   }
   const write = policy === READ_ONLY ? '只读（只能写临时目录 $TMPDIR）' : '能写工作区（.git、.zhiqu 除外）和临时目录 $TMPDIR，别处都不能写';

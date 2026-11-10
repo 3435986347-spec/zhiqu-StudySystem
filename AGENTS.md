@@ -129,7 +129,7 @@ never ran — that proves nothing. It is the mirror image of "an empty scan look
 - Frontend: `zhiqu-backend/src/main/resources/static/` (`assets/` = live, `js/` = legacy)
 - Migrations: `zhiqu-backend/src/main/resources/db/migration/`
 - Optional RAG sidecar: `rag-service/` (Python, `127.0.0.1:8001`)
-- `zhiqu` command-line coding agent (npm harness): `zhiqu-cli/` — loop and local tools run on the user's machine, the backend serves `/api/harness/**` (login, model gateway, archive, remote tools). Local safety rules share `conformance/workspace-rules.json` with the server-side workspace (CLAUDE.md, npm 版 `zhiqu`). The older Java client (`zhiqu-backend/src/main/java/com/zhiqu/cli/`, `deploy/desktop/bin/zhiqu`) is superseded.
+- `zhiqu` command-line coding agent (npm harness): `zhiqu-cli/` — loop and local tools run on the user's machine, the backend serves `/api/harness/**` (login, model gateway, archive, remote tools). Local safety rules share `conformance/workspace-rules.json` with the server-side workspace (CLAUDE.md, npm 版 `zhiqu`). The older Java client (`zhiqu-backend/src/main/java/com/zhiqu/cli/`, `deploy/desktop/bin/zhiqu`) is superseded. Built-in skills live in `zhiqu-cli/skills/` (shipped via `package.json` `files`; `test/builtin-skills.test.js` lints their tool names and frontmatter).
 - Deployment: `deploy/README.md` → `deploy/windows/README.md`
 
 ## Configuration

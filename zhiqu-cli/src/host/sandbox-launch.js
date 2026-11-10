@@ -12,7 +12,7 @@ process.stdin.on('end', () => {
     const req = JSON.parse(input);
     const env = req.env || {};
     if (req.probe) {
-      process.stdout.write(JSON.stringify({ box: detectSandbox({ env, hosted: Boolean(req.hosted) }) }));
+      process.stdout.write(JSON.stringify({ box: detectSandbox({ env, hosted: Boolean(req.hosted), network: req.network }) }));
       return;
     }
     const box = detectSandbox({ env, probe: false, hosted: Boolean(req.hosted) });

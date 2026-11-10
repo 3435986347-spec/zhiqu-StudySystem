@@ -129,7 +129,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
   --mode plan|ask|auto        档位：只读出计划 / 逐个确认 / 全自动（默认 ask，或 ~/.zhiqu/config.json 里的 mode）
   --model <id>                这次用哪个模型（zhiqu models 列出可用的）
   --effort <档位>             思考档位：instant / medium / high / extra / max（不说就听服务端的默认）
-  --sandbox-network <网络>    shell 的系统沙箱能不能联网：off（默认，连本机也不行）/ local（只能连本机）/ on
+  --sandbox-network <网络>    shell 的系统沙箱能不能联网：on（默认）/ local（只能连本机）/ off（连本机也不行）
   --server <url>              服务器地址（默认 ${DEFAULT_SERVER}${isLoopbackUrl(DEFAULT_SERVER) ? '，即本机的桌面应用' : ''}；也可以设 ZHIQU_SERVER）
   --no-mcp                    这次不连 MCP 服务器
   --allow-broad-root          允许在家目录或根目录下运行
@@ -767,10 +767,12 @@ export async function slash(ctx, text) {
       if (spec.error) { ui.error(spec.error); return null; }
       return { review: spec };
     }
-    case '/skills':
+    case '/skills': {
+      const label = { builtin: '内置', user: '用户', project: '项目' };
       if (!ctx.skills.length) { ui.line('没有 skill。把 SKILL.md 放进 .zhiqu/skills/<名字>/（项目级）或 ~/.zhiqu/skills/<名字>/（用户级）'); return null; }
-      for (const s of ctx.skills) ui.line(`${s.name}  ${ui.paint.dim(`（${s.source === 'project' ? '项目' : '用户'}）`)} ${s.description}`);
+      for (const s of ctx.skills) ui.line(`${s.name}  ${ui.paint.dim(`（${label[s.source] || s.source}）`)} ${s.description}`);
       return null;
+    }
     case '/mcp': {
       const status = ctx.mcp ? ctx.mcp.status() : [];
       if (!status.length) { ui.line('没有配置 MCP 服务器。配置写在 .zhiqu/mcp.json（或 ~/.zhiqu/mcp.json）的 mcpServers 里'); return null; }

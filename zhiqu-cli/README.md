@@ -47,7 +47,7 @@ npm install -g zhiqu --registry=https://registry.npmmirror.com
 
 三档的安全规则一样，`auto` 免的是「问」，不是「规则」：
 
-- **系统沙箱**（macOS 的 Seatbelt、Linux 的 bubblewrap）：命令只能写工作区（`.git`、`.zhiqu` 除外），默认断网，读不到家目录里的东西。
+- **系统沙箱**（macOS 的 Seatbelt、Linux 的 bubblewrap）：命令只能写工作区（`.git`、`.zhiqu` 除外），读不到家目录里的东西；联网默认开（`--sandbox-network off` 全断、`local` 只连本机）。
   没有沙箱的平台（Windows）退回白名单：只能跑认得的命令，不接受行内代码。
 - 路径不出工作区（`../`、绝对路径、中间某段是指向外面的软链都拒）；不读 `.env`、`*.pem`、`id_rsa` 这类文件。
 - 改一个已存在的文件之前必须先读过它；读过之后被你在编辑器里改了就要重读。
@@ -70,7 +70,7 @@ zhiqu mcp                   当 MCP 服务器，见下面
 ```
 
 常用选项：`--mode plan|ask|auto`、`--model <id>`、`--effort instant|medium|high|extra|max`（思考档位）、
-`--sandbox-network off|local|on`（沙箱里的命令能不能联网，默认 off）。完整的用 `zhiqu help` 看。
+`--sandbox-network on|local|off`（沙箱里的命令能不能联网，默认 on；`local` 只能连本机，`off` 全断）。完整的用 `zhiqu help` 看。
 
 会话里输入 `/` 会弹出命令菜单：`/goal`、`/mode`、`/model`、`/effort`、`/window`、`/ps`、`/stop`、`/resume`、`/new`、`/compact`、
 `/init`、`/review`、`/agents`、`/skills`、`/mcp`、`/system`、`/verbose`、`/usage`、`/help`、`/exit`。↑↓ 选、回车执行、Tab 补全、Esc 关掉。
@@ -112,6 +112,12 @@ zhiqu --goal "修好所有失败的测试" --mode auto < /dev/null   无人值�
 **Skills 渐进式披露**：平时上下文里只有每个 skill 的名字和一句描述（`SKILL.md` 的 frontmatter）；
 任务对得上时模型用 `load_skill` 取正文；正文里提到的参考文件、脚本，真用到时再按需取。
 所以 `SKILL.md` 可以写得短，把大段细节放进同目录的其它文件。
+
+**内置 skill**：包里带着八个常用的 —— `debug`（排障）、`test-first`（先写测试）、`refactor`（安全重构）、
+`commit`（整理提交）、`code-audit`（体检现有代码）、`security-review`（安全审查）、`perf`（性能）、
+`codebase-tour`（读陌生代码库）。`/skills` 里标「内置」。想改就放一份同名的到项目级或用户级目录，整个盖掉，不用改包。
+
+审查**一次改动**用 `/review`（或者 `zhiqu review`），那不是 skill —— 它在单独的上下文里取 diff、按固定结构出结论。`code-audit` 管的是另一半：没有 diff、只想问「这个模块现在有没有问题」。
 
 **MCP**：`.zhiqu/mcp.json` 里 `mcpServers` 下每项要么是 `{"command", "args", "env"}`（stdio），要么是
 `{"url", "headers"}`（HTTP）；值里可以写 `${环境变量}`。工具名会加前缀 `mcp__服务__工具`；每个工具第一次用都会问你

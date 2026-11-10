@@ -43,6 +43,14 @@ cd ../zhiqu-cli && npm test
 - 前端行为判据跑在 node 上，直接加载发布的那份实现（不在 Java 里重写一份）。没有 node 显式失败；`-Dzhiqu.nodePath=<绝对路径>` 指位置，`-Dzhiqu.skipNodeTests=true` 显式跳过；node 把超时记成 `cancelled` 而不是 `fail`。
 - 测试用的 Redis 指到 1 号端口（进程内替身，不碰开发机的 6379），定时任务用 `app.scheduling.enabled=false` 关，工作区状态文件指到临时目录（不读用户的 `~/.zhiqu/workspace-state.json`）—— 都在 `src/test/resources/application.properties`。限流（`RateLimitFilter`：登录 12 次 / 分钟、AI 写操作 40、其它 180）会拦住脚本化的端到端测试；开很多用户时注意。
 
+### 命令行的内置 skill
+
+`zhiqu-cli/skills/<名字>/SKILL.md` 随 npm 包发（`package.json` 的 `files` 里有 `skills`），优先级 **项目 > 用户 > 内置**（`src/skills.js`）。
+它们是给模型看的指令，写错不会报错、只会让它做错事，所以 `test/builtin-skills.test.js` 钉着四条：工具名必须是 zhiqu 的
+（`read_file` / `search` / `shell` / `spawn_agent`…，写 Claude Code 的 `Read` / `Bash` / `Task` 就是空指）、目录名要等于 frontmatter 的 `name`
+（否则 `load_skill` 按名字找不到）、`description` ≤ 120 字（第一层每一轮都在）、目录里不能有没被 SKILL.md 提到的文件（模型不知道它存在）。
+常驻的那段（名字 + 描述）整体 ≤ 2500 字。加 skill 之前先看这条测试和 `skills/commit/SKILL.md` 里关于「沙箱写不了 `.git`」的写法。
+
 ### 判据的纪律（每一条都吃过亏，经过见 `docs/notes/testing.md`）
 
 1. **新判据要见过红才算数**：扰动源码、看它红。绿可能是「看了，没毛病」，也可能是「什么都没看到」，代码里两者长得一样。
@@ -67,7 +75,7 @@ cd ../zhiqu-cli && npm test
 ## 不能碰、不能绕的地方
 
 - **代码工作区默认关闭，这个默认值本身就是安全边界**。档位 `OFF / READ / WRITE / EXEC`，认不出的值回落 `OFF`；生效要同时满足：档位不是 `OFF`、根目录存在、`server.address` 是回环地址（没配置算「不是」）。
-  登录的用户都能用（用户 2026-11-07 要的，原来只给管理员），档位和文件夹分账号（`WorkspaceRegistry`，新账号默认关），没选文件夹就生成到产物（临时空间，不碰用户的磁盘，服务器上只有这一种）；工作区接口第一句是 `requireLocal()`，只认本机的请求（`LocalRequest`：回环连接 + `Host` 是本机 + 没有转发头，挡 DNS 重绑定和反向代理，注册是开放的，这道不能省）。有系统沙箱的机器（macOS Seatbelt、Linux bubblewrap）网页和命令行都给 `shell`，同一份实现（`zhiqu-cli/src/tools/sandbox.js`）：只能写工作区（`.git`、`.zhiqu` 除外）、断网、读不到家目录；没有沙箱才退回白名单，那时唯一真正的安全判定是禁用行内代码开关（只能运行用户看过的文件）。生产 profile 一律拒绝；子进程不继承环境变量。见 `docs/notes/code-workspace.md`。
+  登录的用户都能用（用户 2026-11-07 要的，原来只给管理员），档位和文件夹分账号（`WorkspaceRegistry`，新账号默认关），没选文件夹就生成到产物（临时空间，不碰用户的磁盘，服务器上只有这一种）；工作区接口第一句是 `requireLocal()`，只认本机的请求（`LocalRequest`：回环连接 + `Host` 是本机 + 没有转发头，挡 DNS 重绑定和反向代理，注册是开放的，这道不能省）。有系统沙箱的机器（macOS Seatbelt、Linux bubblewrap）网页和命令行都给 `shell`，同一份实现（`zhiqu-cli/src/tools/sandbox.js`）：只能写工作区（`.git`、`.zhiqu` 除外）、读不到家目录；联网**默认开**（2026-11-10 用户定的「所有人都可以联网」，原来全断），`--sandbox-network off` / `app.workspace.sandbox-network=off` 才关；没有沙箱才退回白名单，那时唯一真正的安全判定是禁用行内代码开关（只能运行用户看过的文件）。生产 profile 一律拒绝；子进程不继承环境变量。见 `docs/notes/code-workspace.md`。
 - **AI 写的东西一律先成草稿**：计划、任务、例行计划、长期记忆、Wiki 改动、代码改动。只有用户确认（`POST /api/ai/artifacts/{id}/confirm`；Wiki 走 `upsertRevisionPage`）才落地。例外只有一个（用户 2026-11-07 定的）：代码工作区 auto 档的 `shell` 写的直接落盘，`edit_file` / `write_file` 还是草稿。
   「下发给模型的工具」和「能执行的工具」必须是同一份清单。
 - **`app.crypto.master-key` 一换，已有密文（AI 的 key、Wiki 正文、任务标题）就解不开**。连同一个库的几个后端必须用同一把（`CryptoKeyCanary` 对不上就不启动）。

@@ -1,4 +1,5 @@
-// P4 Skills：.zhiqu/skills/<名字>/SKILL.md（项目级）与 ~/.zhiqu/skills/<名字>/SKILL.md（用户级）。同名时项目级优先。
+// P4 Skills：skills/<名字>/SKILL.md（内置，随包发）、~/.zhiqu/skills/<名字>/SKILL.md（用户级）、
+// .zhiqu/skills/<名字>/SKILL.md（项目级）。同名时项目级 > 用户级 > 内置。
 //
 // 渐进式披露，三层（用户 2026-09-24 明确要的）：
 //   第一层  名字 + 一句描述（frontmatter 的 name / description）—— 每一轮都在系统提示里，很便宜；
@@ -8,9 +9,16 @@
 // 写 skill 的人因此可以把 SKILL.md 写短（怎么做 + 什么时候去看哪个文件），把大段细节放进同目录的别的文件。
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_SKILL_CHARS = 60_000;
+
+/**
+ * 内置 skill 目录（包里的 skills/，见 package.json 的 files）。优先级最低：用户级、项目级同名时盖掉它。
+ * 目录不在（只装了 bin/src 的精简安装、或测试里传了 null）就当没有，不报错。
+ */
+export const BUILTIN_SKILLS_DIR = fileURLToPath(new URL('../skills', import.meta.url));
 
 export function parseFrontmatter(text) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
@@ -40,8 +48,9 @@ function scan(base, source) {
   return out;
 }
 
-export function discoverSkills(root, userDir) {
+export function discoverSkills(root, userDir, { builtin = BUILTIN_SKILLS_DIR } = {}) {
   const byName = new Map();
+  if (builtin) for (const s of scan(builtin, 'builtin')) byName.set(s.name, s);
   for (const s of scan(path.join(userDir, 'skills'), 'user')) byName.set(s.name, s);
   for (const s of scan(path.join(root, '.zhiqu', 'skills'), 'project')) byName.set(s.name, s);
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -49,7 +58,7 @@ export function discoverSkills(root, userDir) {
 
 export function skillsBlock(skills) {
   if (!skills.length) return '';
-  return ['## Skills', '下面这些是用户准备好的做事方法（这里只有名字和一句描述）。任务和某个 skill 对得上时，先调用 load_skill 取它的正文，再按它做；'
+  return ['## Skills', '下面这些是备好的做事方法（内置的，加上用户自己放的；这里只有名字和一句描述）。任务和某个 skill 对得上时，先调用 load_skill 取它的正文，再按它做；'
     + '正文里提到的其它文件，真用到时再用 load_skill 的 file 参数取，不要一次全取。',
     ...skills.map((s) => `- ${s.name}：${s.description}`)].join('\n');
 }

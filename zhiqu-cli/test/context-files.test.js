@@ -43,7 +43,7 @@ test('Skills 渐进式披露：常驻的只有名字和描述；正文按需取�
   write(root, '.zhiqu/skills/snake/SKILL.md', '---\nname: snake\ndescription: 项目级的贪吃蛇\n---\n# 正文\n细节见 ref.md');
   write(root, '.zhiqu/skills/snake/ref.md', '参考：方向键');
   write(root, '.zhiqu/skills/nofront/SKILL.md', '# 没有 frontmatter 的 skill\n正文');
-  const skills = discoverSkills(root, home);
+  const skills = discoverSkills(root, home, { builtin: null });
   assert.deepEqual(skills.map((s) => [s.name, s.source]), [['nofront', 'project'], ['snake', 'project']], '同名时项目级优先');
   const block = skillsBlock(skills);
   assert.match(block, /snake：项目级的贪吃蛇/);
@@ -56,4 +56,24 @@ test('Skills 渐进式披露：常驻的只有名字和描述；正文按需取�
   assert.match(loadSkill(skills, { name: 'snake', file: 'ref.md' }).content, /参考：方向键/);
   assert.match(loadSkill(skills, { name: 'snake', file: '../../../etc/passwd' }).error, /只能是 skill 目录里的文件/);
   assert.match(loadSkill(skills, { name: 'nope' }).error, /没有叫/);
+});
+
+test('Skills 优先级：内置 < 用户级 < 项目级，同名的整个盖掉而不是合并', () => {
+  const builtin = tmpdir();
+  const home = tmpdir();
+  const root = tmpdir();
+  write(builtin, 'debug/SKILL.md', '---\nname: debug\ndescription: 内置的排障\n---\n内置正文');
+  write(builtin, 'perf/SKILL.md', '---\nname: perf\ndescription: 内置的性能\n---\n内置性能正文');
+  assert.deepEqual(discoverSkills(root, home, { builtin }).map((s) => [s.name, s.source]),
+    [['debug', 'builtin'], ['perf', 'builtin']], '只有内置时全是内置');
+
+  write(home, 'skills/debug/SKILL.md', '---\nname: debug\ndescription: 我的排障\n---\n用户级正文');
+  const withUser = discoverSkills(root, home, { builtin });
+  assert.deepEqual(withUser.map((s) => [s.name, s.source]), [['debug', 'user'], ['perf', 'builtin']], '用户级盖掉同名的内置');
+  assert.match(loadSkill(withUser, { name: 'debug' }).content, /用户级正文/);
+
+  write(root, '.zhiqu/skills/debug/SKILL.md', '---\nname: debug\ndescription: 这个项目的排障\n---\n项目级正文');
+  const withProject = discoverSkills(root, home, { builtin });
+  assert.deepEqual(withProject.map((s) => [s.name, s.source]), [['debug', 'project'], ['perf', 'builtin']], '项目级盖掉用户级');
+  assert.match(loadSkill(withProject, { name: 'debug' }).content, /项目级正文/);
 });

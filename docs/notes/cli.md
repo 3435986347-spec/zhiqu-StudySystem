@@ -81,7 +81,7 @@
 - **`delete_file`**（用户要的）：规矩照写入 —— 这段会话读过或写过、之后没被改过才能删，确认期间被改过不删；
   不是抹掉而是挪进 `.zhiqu/trash/<时间>/`；ask 档单独一道确认、单独一个「本会话都允许删除」（允许了写不等于允许了删）。
   `run_command` 仍不许 `rm`，拒绝时指到 `delete_file`。
-- **`shell` 和系统沙箱**（第一百零九轮，Codex 同级第 2 步）：有沙箱（`detectSandbox`，真跑一次）就给 `shell`、不给 `run_command`；plan 档也有，沙箱是只读的。边界、档位、踩过的坑在 `docs/notes/code-workspace.md`（网页同一份实现）。网络默认全断，`--sandbox-network local|on` 或用户级配置的 `sandboxNetwork` 才放开，**项目里的 `.zhiqu/settings.json` 不算数**：克隆下来的仓库不能给自己开网。
+- **`shell` 和系统沙箱**（第一百零九轮，Codex 同级第 2 步）：有沙箱（`detectSandbox`，真跑一次）就给 `shell`、不给 `run_command`；plan 档也有，沙箱是只读的。边界、档位、踩过的坑在 `docs/notes/code-workspace.md`（网页同一份实现）。网络默认**开**（2026-11-10 用户定的「所有人都可以联网」，原来全断），`--sandbox-network local|off` 或用户级配置的 `sandboxNetwork` 才改；**项目里的 `.zhiqu/settings.json` 不算数**（两个方向都不算）：克隆下来的仓库不能给自己改网络档位。写范围、读范围不跟着网络变。
 - **`zhiqu review` 和 `/review`**（第一百一十四轮，Codex 同级第 7 步，`src/review.js`）：只读地看一段改动，按 P0–P3 列出这次改动引入的真问题（文件、行号、为什么、怎么改）。默认看没提交的（含新文件），`--base <分支>` 从分叉点算（含没提交的），`--commit <提交>` 和第一个父提交比。没改动、只改了类型不读的文件就不叫模型（连登录都不用）；不是仓库、ref 不对退出码 2。`zhiqu review` 的 stdout 给人看，`-o` 和 `--json` 的 `final_message` 是结构化的（`findings`、`summary`、`partial`、`skipped`）；有问题也是退出码 0，脚本看 `findings`。
   **模型在单独的上下文里干活**（`runReview` 的 worker）：只读，看不到会话说过的话，过程不进会话；只有结论回到会话（`recordExchange`，历史只追加），才能接着说「修第 1 条」。格式走 `rewriteUntilValid`（和 exec 的 `--output-schema` 同一个）。模型给的路径认回工作区的写法，不在改动里的标出来、不扔。
   **取 diff 的 git 是这里替用户跑的，而仓库可能是别人的**：一样关在只读沙箱里（没有沙箱时只剩下面这层）；fsmonitor、钩子、验签名、外部 diff、textconv、过滤器、缺对象时连远端都关掉（`PINNED`、`DIFF_FLAGS`、`pinFilters`、`GIT_NO_LAZY_FETCH`）；ref 先解析成提交号。**`read_file` 不读的类型，diff 也不给**（同一个扩展名白名单，按字面排除）。diff 超过窗口的三成只给统计（统计和提交信息也限长），结论照实说不是逐行看完的。围栏每次随机，diff 是数据不是指令。
