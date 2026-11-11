@@ -1,7 +1,10 @@
 # zhiqu
 
 知趣·象限（[zhiqustudy.com](https://zhiqustudy.com)）的命令行 coding agent。**循环和工具跑在你的电脑上**（读、搜、改文件、跑命令都在本机的工作区里），
-**模型、登录和你的数据（任务、知识 Wiki、记忆）在服务器上**（模型的 API Key 只存在服务器，命令行拿不到）。
+**模型、登录和你的数据（任务、知识 Wiki、记忆）在服务器上**（默认情况下模型的 API Key 只存在服务器，命令行拿不到；直连模式例外，密钥在本机）。
+
+不想经过服务器也行：**直连自己的模型**（内网 vLLM、公司网关、任何 OpenAI 兼容或 Anthropic 接口），配一次就不用登录，
+见下面[「直连自己的模型」](#直连自己的模型内网也行不用登录)。
 
 ## 安装
 
@@ -37,6 +40,9 @@ npm install -g zhiqu --registry=https://registry.npmmirror.com
 默认连的是 `https://zhiqustudy.com`，Mac 上的知趣·象限桌面应用打开的也是它（同一个账号、同一份数据）。
 连本机的 Windows 桌面应用（还带着后端）：`zhiqu login --server http://127.0.0.1:47615`；自己部署的服务器同理。
 
+不想注册、也不想让请求经过服务器：跳过上面两步，直接 `zhiqu model set --url … --name …` 连自己的模型，
+见[「直连自己的模型」](#直连自己的模型内网也行不用登录)。
+
 ## 三档权限
 
 | 档位 | 做什么 | 切换 |
@@ -64,6 +70,7 @@ zhiqu --goal "目标"          一直做到目标达成并核对通过
 zhiqu exec "要做的事"        给脚本和 CI 用：stdout 只有结论，默认只读（要写给 --mode auto）；--json、--output-schema、-o
 zhiqu review [说明]          只读地审查改动，按 P0–P3 列出真问题
 zhiqu login [--server URL]  登录（浏览器里确认）；--token zqp_… 用网页里签的个人访问令牌；登录完说一句有没有新版本
+zhiqu model                 看模型走服务器网关还是直连；`set` 配直连、`off` 切回服务器（见下面）
 zhiqu update                更新到 npm 上的最新版（npm 全局装的才替你装；没权限不替你 sudo）
 zhiqu logout | whoami | models | help | --version
 zhiqu mcp                   当 MCP 服务器，见下面
@@ -95,7 +102,7 @@ zhiqu --goal "修好所有失败的测试" --mode auto < /dev/null   无人值�
 ## 文件放在哪
 
 ```
-~/.zhiqu/config.json          服务器、令牌（600 权限）、默认模型、默认档位
+~/.zhiqu/config.json          服务器、令牌（600 权限）、默认模型、默认档位、直连配置（direct）
 ~/.zhiqu/system.md            系统内容：第一次运行时写一份，之后以它为准，可以改
 ~/.zhiqu/ZHIQU.md             你自己的通用约定（每个项目都会带上）
 ~/.zhiqu/skills/<名字>/SKILL.md
@@ -141,11 +148,14 @@ zhiqu model off        # 关掉，回到服务器网关
 - **配了就不用登录**：完全不连 zhiqustudy.com，只有本地工具（读写、搜索、跑命令）。代价是任务、Wiki、长期记忆、网页存档用不了。
 - 密钥存在 `~/.zhiqu/config.json`（600 权限），只认用户级配置 —— 项目里的 `.zhiqu/settings.json` 改不了它（克隆下来的仓库不能把你的模型地址换成它的服务器）。
 - `--protocol` 只有 `openai`（默认）和 `anthropic` 两种。上下文窗口默认按 64k 算，模型更大就加 `--context-window 128000`（小了会提前压缩，大了会超窗口被拒）。
+- 会话里的 `/model`、`/window` 在直连模式下不生效（它们改的是服务器上的配置），要改就重新跑一次 `zhiqu model set` 或者直接改 `~/.zhiqu/config.json`；`/usage` 只报本地算的 token 数。
 
 ## 对话在网页里也看得到
 
 每段命令行会话在网页「AI 助手」里是一个 Notebook（「命令行 · 项目名 · 标题」）。让它排计划、改任务状态、记长期记忆、写知识 Wiki
 时，除了改任务状态是直接生效，其余生成的都是草稿，在网页里确认之后才生效。
+
+直连模式下没有这一段 —— 不连服务器，也就没有网页上的 Notebook 和草稿。
 
 ## 让别的 AI 也用上你的 Wiki 和任务：`zhiqu mcp`
 
