@@ -8,11 +8,12 @@
 //   openai     POST <url>  { model, messages, tools, stream: true }，SSE 里是 choices[0].delta
 //   anthropic  POST <url>  { model, system, messages, tools, max_tokens, stream: true }，SSE 里是 content_block_*
 // 两者都翻译成服务器那套事件（start / reasoning / delta / tool_call / done），agent.js 不用分家。
-import { openStream } from './http.js';
+import { ApiError } from './api.js';
+import { HttpError, openStream, RETRYABLE_STATUS } from './http.js';
 import { SseParser } from './sse.js';
 import { USER_AGENT } from './version.js';
 
-const fail = (message, extra = {}) => Object.assign(new Error(message), { beforeOutput: true, ...extra });
+const fail = (message, extra = {}) => new ApiError(message, { beforeOutput: true, ...extra });
 
 /** 服务器那套 done 的形状：{ message: { role, content, tool_calls }, finishReason, maxTokens, usage } */
 const doneEvent = ({ text, calls, finishReason, usage, maxTokens }) => ({
@@ -73,19 +74,34 @@ export class DirectModel {
   /** 和 Api.stream 一个签名：body 里的 modelId 不用，模型名来自配置 */
   async stream(body, onEvent, { signal } = {}) {
     const payload = this.protocol === 'anthropic' ? anthropicBody(this, body) : openaiBody(this, body);
+    const host = hostOf(this.url);
     let res;
     try {
       res = await openStream(this.url, { headers: this.headers(), body: JSON.stringify(payload), signal });
     } catch (e) {
-      throw fail(`连不上 ${hostOf(this.url)}：${e.message}（地址是 ${this.url}）`, { retryable: false });
+      if (e && e.name === 'AbortError') throw e;
+      // 和 Api.networkError 一个口径：连不上/断了可以重来，地址写错（ECONNREFUSED）也照实说
+      const code = e instanceof HttpError ? e.code : null;
+      const why = code === 'ECONNREFUSED' ? '连接被拒绝，这个地址上没有服务在听？'
+        : code === 'NO_RESPONSE' || code === 'IDLE_TIMEOUT' ? e.message : code || e.message;
+      throw new ApiError(`连不上 ${host}（${why}）—— 地址是 ${this.url}`, { retryable: e instanceof HttpError ? e.retryable : false, code });
     }
     if (res.status !== 200) {
       const text = await res.readAll().catch(() => '');
-      throw fail(httpMessage(res.status, text), { status: res.status });
+      throw new ApiError(httpMessage(res.status, text), { status: res.status, retryable: res.status === 429 || RETRYABLE_STATUS.has(res.status) });
     }
     onEvent('start', { contextWindow: null, droppedMessages: 0, elidedToolOutputs: 0 });
-    if (this.protocol === 'anthropic') return readAnthropic(res, onEvent, this.maxTokens);
-    return readOpenAI(res, onEvent, this.maxTokens);
+    // 收到过实质内容之后再断，就不能自动重来了（会重复输出、工具调用可能重复）
+    let substantive = false;
+    const emit = (name, data) => { if (name !== 'start') substantive = true; onEvent(name, data); };
+    try {
+      if (this.protocol === 'anthropic') return await readAnthropic(res, emit, this.maxTokens);
+      return await readOpenAI(res, emit, this.maxTokens);
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+      if (e instanceof ApiError) throw e;
+      throw new ApiError(`回复中断了：和 ${host} 的连接断了（${e.code || e.message}）`, { retryable: false, beforeOutput: !substantive });
+    }
   }
 }
 

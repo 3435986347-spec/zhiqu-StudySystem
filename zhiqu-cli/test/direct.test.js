@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { DirectModel, toAnthropicMessages } from '../src/direct.js';
+import { ApiError } from '../src/api.js';
 import { normalizeDirect } from '../src/config.js';
 
 /** 起一个假供应商：记下收到的请求，按给定的分片回 SSE */
@@ -136,4 +137,36 @@ test('配置：没 url 或没模型名就当没配；地址不校验格式（内
   assert.equal(d.protocol, 'openai', '认不出的协议按 openai');
   assert.equal(d.contextWindow, 64_000);
   assert.equal(d.maxTokens, 8192);
+});
+
+test('连不上：是可重试的 ApiError（callModel 只认这个才会重来）', async () => {
+  const model = new DirectModel({ url: 'http://127.0.0.1:1/v1/chat', model: 'm' });
+  await assert.rejects(collect(model), (e) => {
+    assert.ok(e instanceof ApiError, '不是 ApiError 的话 callModel 不会重试');
+    assert.equal(e.retryable, true, '连接被拒是临时错误，要能重来');
+    assert.match(e.message, /连不上 127\.0\.0\.1:1/);
+    assert.match(e.message, /地址是/, '地址是用户填的，出错要带上');
+    return true;
+  });
+});
+
+test('说了一半断掉：标成 beforeOutput=false，别自动重来（会重复输出）', async () => {
+  const server = http.createServer((req, res) => {
+    req.on('data', () => {});
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: '说到一半' } }] })}\n\n`);
+      setTimeout(() => res.destroy(), 20);
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const model = new DirectModel({ url: `http://127.0.0.1:${server.address().port}/v1/chat`, model: 'm' });
+    await assert.rejects(collect(model), (e) => {
+      assert.ok(e instanceof ApiError);
+      assert.equal(e.beforeOutput, false, '已经出过字了，重来会让用户看到重复内容');
+      assert.match(e.message, /回复中断了/);
+      return true;
+    });
+  } finally { await new Promise((r) => server.close(r)); }
 });
