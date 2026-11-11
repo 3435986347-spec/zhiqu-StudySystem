@@ -15,6 +15,7 @@
 | 早八提醒 | 每天 08:00 汇总临近 DDL 和当天例行计划，支持 PushPlus 等外部提醒渠道 |
 | AI 助手 | 多模型切换、流式对话、深度思考（可折叠）、Markdown/表格/公式渲染；Notebook 资料工作区支持 PDF/Excel/文本切块和图片存档；可选 Python RAG sidecar 提供 BGE 中文语义检索，异常时自动降级到关键词检索；顺序 Agent/TaskGraph 提供执行轨迹、Claim/Evidence、Verifier 与可确认产物；AI 生成的学习计划**不会自动写入日历**，而是弹出确认窗口，可逐条勾选、修改标题与时间后再「确认写入」，或直接忽略 |
 | 模型配置 | 支持系统模型与个人模型，个人中心可添加 OpenAI-compatible、Anthropic、Gemini、Ollama、vLLM 等配置，附连通性/能力测试 |
+| 命令行 agent | `zhiqu`：跑在自己电脑上的 coding agent（`npm install -g zhiqu`），同账号同数据，会话在网页 AI 助手里是一个 Notebook；三档权限、系统沙箱、子 agent、内置 skill、`/review`、给 CI 用的 `zhiqu exec`；也能**直连自己的模型**（内网 vLLM / 公司网关，配了就不用登录） |
 | 知识 Wiki | Obsidian/Karpathy 风格个人知识空间，Raw Source、Patch Set、Wiki Pages、index/log、双链、图谱、健康检查；文档视图支持所见即所得编辑、公式块（本地 KaTeX）、参考链接、右键删除、整站 Markdown 导出 |
 | 参考计划 | 用户可提交计划模板，后台审核后发布，其他用户可按开始日期套用到自己的学习日历 |
 | 成就系统 | 根据学习记录、任务完成、连续天数等自动解锁成就 |
@@ -22,6 +23,30 @@
 | 运行异常收集 | 前端运行错误、接口异常可上报到后台，便于排查线上问题 |
 | 高并发基础 | Redis 限流、幂等 key、乐观锁、事务、提醒抢占、死锁重试等生产级基础保护 |
 | 安全与数据隔离 | JWT 鉴权；所有资源访问按登录用户校验归属，防止越权（IDOR）读写他人数据；系统页（index/log/维护规则）写保护；模型 API Key 字段级加密存储；私有学习资料走鉴权下载并校验路径，不暴露在公开目录 |
+
+## 命令行（`zhiqu`）
+
+网页和桌面应用之外，还有一个跑在自己电脑上的命令行 coding agent：
+
+```bash
+npm install -g zhiqu      # 要 Node.js 18.17+
+cd 你的项目
+zhiqu                     # 开一段会话；-p "只问一句" 只跑一次
+```
+
+**和网页是同一个账号、同一份数据**：循环和工具（读、搜、改文件、跑命令）在本机的工作区里跑，
+默认模型请求走服务器网关（模型的 API Key 只存在服务器，命令行拿不到），会话在网页「AI 助手」里是一个 Notebook，
+生成的任务 / 计划 / Wiki 改动都是草稿，在网页里确认后才生效。
+
+- **三档权限**：`plan` 只读出计划、`ask` 每个写操作先给 diff 再问、`auto` 不问但照样显示每一步。
+- **系统沙箱**：macOS Seatbelt / Linux bubblewrap，只能写工作区（`.git`、`.zhiqu` 除外），读不到家目录；没有沙箱的平台退回命令白名单。
+- **子 agent**：说「派两个 agent 分头查」就能并行，explorer 只读、worker 同主 agent 一档。
+- **内置 skill**：debug、test-first、refactor、commit、code-audit、security-review、perf、codebase-tour，按需加载。
+- **`zhiqu review` / `/review`**：只读地审一次改动，按 P0–P3 出结论；**`zhiqu exec`** 给 CI 用，stdout 只有结论。
+- **直连自己的模型**：`zhiqu model set --url <完整地址> --name <模型名> --key …`，支持 OpenAI 兼容和 Anthropic，
+  内网 `http://` 也行；配了就不连服务器、也不用登录（代价是任务 / Wiki / 网页存档用不了）。
+
+细节、全部命令和选项见 [`zhiqu-cli/README.md`](zhiqu-cli/README.md)。
 
 ## 技术栈
 
@@ -67,6 +92,7 @@
 ```text
 软件源代码/
 ├─ zhiqu-backend/              # 主项目，Spring Boot 单体应用
+├─ zhiqu-cli/                  # 命令行 agent（npm 包 zhiqu；源码也打进 JAR）
 ├─ rag-service/                # 可选本地语义检索 sidecar
 ├─ deploy/                     # 部署脚本和配置模板
 ├─ README.md                   # 项目说明
@@ -237,6 +263,9 @@ mvn clean package -DskipTests
 ```text
 zhiqu-backend/target/zhiqu-backend-0.0.1-SNAPSHOT.jar
 ```
+
+这个 JAR 里还带着 `zhiqu-cli/` 的源码和 `package.json`（后端用它跑代码 agent、对外报命令行的最新版本），
+所以打包时 `zhiqu-cli/` 必须在仓库里；命令行自己的判据是 `cd zhiqu-cli && npm test`。
 
 运行：
 
