@@ -51,6 +51,14 @@ cd ../zhiqu-cli && npm test
 （否则 `load_skill` 按名字找不到）、`description` ≤ 120 字（第一层每一轮都在）、目录里不能有没被 SKILL.md 提到的文件（模型不知道它存在）。
 常驻的那段（名字 + 描述）整体 ≤ 2500 字。加 skill 之前先看这条测试和 `skills/commit/SKILL.md` 里关于「沙箱写不了 `.git`」的写法。
 
+### 命令行的直连模型
+
+`zhiqu model set --url <完整地址> --name <模型名> [--key] [--protocol openai|anthropic]` 把模型请求从服务器网关改成直连
+（`src/direct.js`，事件形状和网关一样，`agent.js` 只认 `ctx.modelClient || ctx.api`）。两条硬规矩：
+**地址原样用、不校验格式**（用户 2026-11-11 明确要求，内网 `http://` 要能用）；**`direct` 只认用户级配置**
+（`config.js` 的 `normalizeDirect` 不从项目读 —— 克隆下来的仓库不能把你的模型地址换成它的服务器，那等于把代码送出去）。
+配了 `direct` 就不登录：`api` 是 null，存档、远程工具、`/model`、`/window` 都要能跳过（`cli.js` 里各有分支）。
+
 ### 判据的纪律（每一条都吃过亏，经过见 `docs/notes/testing.md`）
 
 1. **新判据要见过红才算数**：扰动源码、看它红。绿可能是「看了，没毛病」，也可能是「什么都没看到」，代码里两者长得一样。

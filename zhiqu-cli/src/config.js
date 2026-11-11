@@ -26,6 +26,27 @@ export const EFFORTS = ['instant', 'medium', 'high', 'extra', 'max'];
 // shell 的沙箱能不能联网（第一百零九轮）：默认 on（2026-11-10 用户定的「所有人都可以联网」）。
 // 原来默认全断、包括本机 —— 本机可能跑着没密码的数据库。现在默认开，想关的人用 --sandbox-network off 或用户级配置。
 export const SANDBOX_NETWORKS = ['off', 'local', 'on'];
+/**
+ * 直连供应商（第一百二十九轮）：用户自己填完整 URL，请求不经服务器。
+ * **只认用户级配置**（resolveSettings 里不从项目读）：克隆下来的仓库不能把你的模型地址换成它的服务器，
+ * 那等于把代码和对话直接送出去。地址不校验格式 —— 用户明确要求「不做格式校验，直接填完整url」。
+ */
+export function normalizeDirect(value) {
+  if (!value || typeof value !== 'object') return null;
+  const url = typeof value.url === 'string' ? value.url.trim() : '';
+  const model = typeof value.model === 'string' ? value.model.trim() : '';
+  if (!url || !model) return null;   // 少了哪个都用不了，当作没配
+  return {
+    protocol: value.protocol === 'anthropic' ? 'anthropic' : 'openai',
+    url,
+    key: typeof value.key === 'string' ? value.key : '',
+    model,
+    maxTokens: Number(value.maxTokens) > 0 ? Number(value.maxTokens) : 8192,
+    // 直连的模型窗口服务端不知道，得自己填；不填按 64k 保守算（小了会早压缩，大了会超窗口被拒）
+    contextWindow: Number(value.contextWindow) > 0 ? Number(value.contextWindow) : 64_000,
+  };
+}
+
 export function normalizeSandboxNetwork(value) {
   const s = String(value ?? '').trim().toLowerCase();
   return SANDBOX_NETWORKS.includes(s) ? s : null;
@@ -131,6 +152,8 @@ export function resolveSettings(root, flags = {}) {
     serverSource: flags.server != null ? 'flag' : process.env.ZHIQU_SERVER ? 'env' : project.server != null ? 'project' : user.server != null ? 'user' : 'default',
     token: process.env.ZHIQU_TOKEN || user.token || '',
     model: pick('model') ?? null,
+    // 直连供应商：只认用户级（见 normalizeDirect 的注释），配了就不走服务器网关、也不用登录
+    direct: normalizeDirect(user.direct),
     mode,
     effort: normalizeEffort(pick('effort')),
     // 只认命令行参数和用户级配置，不认项目里的 .zhiqu/settings.json：克隆下来的仓库不能给自己改网络档位。

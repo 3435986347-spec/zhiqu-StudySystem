@@ -126,6 +126,22 @@ zhiqu --goal "修好所有失败的测试" --mode auto < /dev/null   无人值�
 **长对话**：用到模型上下文窗口的约 80% 时自动把较早的对话压成摘要（目标、决定、改过的文件、待办），也可以 `/compact`。
 窗口大小在网页「设置 → AI 模型」里按模型设置。
 
+## 直连自己的模型（内网也行，不用登录）
+
+默认模型请求走服务器网关。要连自己的模型（内网 vLLM / one-api、公司网关、任何 OpenAI 兼容或 Anthropic 接口），配一次就行：
+
+```bash
+zhiqu model set --url http://10.0.0.5:8000/v1/chat/completions --name qwen2.5-72b --key sk-xxx
+zhiqu model set --url https://gateway.internal/anthropic/v1/messages --name claude-x --protocol anthropic --key ak-xxx
+zhiqu model            # 看现在走哪条路
+zhiqu model off        # 关掉，回到服务器网关
+```
+
+- **地址原样用**：不拼路径、不补 `/v1`、不校验域名，`http://` 和 `https://` 都行 —— 填什么就请求什么。
+- **配了就不用登录**：完全不连 zhiqustudy.com，只有本地工具（读写、搜索、跑命令）。代价是任务、Wiki、长期记忆、网页存档用不了。
+- 密钥存在 `~/.zhiqu/config.json`（600 权限），只认用户级配置 —— 项目里的 `.zhiqu/settings.json` 改不了它（克隆下来的仓库不能把你的模型地址换成它的服务器）。
+- `--protocol` 只有 `openai`（默认）和 `anthropic` 两种。上下文窗口默认按 64k 算，模型更大就加 `--context-window 128000`（小了会提前压缩，大了会超窗口被拒）。
+
 ## 对话在网页里也看得到
 
 每段命令行会话在网页「AI 助手」里是一个 Notebook（「命令行 · 项目名 · 标题」）。让它排计划、改任务状态、记长期记忆、写知识 Wiki

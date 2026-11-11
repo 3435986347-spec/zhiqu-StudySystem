@@ -344,8 +344,8 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     partial.feed(text);
     partial.finish();
   };
-  try {
-  await ctx.api.stream('/api/harness/model/stream', body, (name, data) => {
+  // 直连供应商（第一百二十九轮）：配了 direct 就不经服务器，事件形状两边一样（见 direct.js）
+  const onEvent = (name, data) => {
     if (name !== 'start') stopWaiting();
     if (name === 'start') {
       if (data.droppedMessages > 0 || data.elidedToolOutputs > 0) {
@@ -376,7 +376,10 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     } else if (name === 'done') {
       done = data;
     }
-  }, { signal });
+  };
+  try {
+    if (ctx.modelClient) await ctx.modelClient.stream(body, onEvent, { signal });
+    else await ctx.api.stream('/api/harness/model/stream', body, onEvent, { signal });
   } catch (e) {
     if (!(e && e.name === 'AbortError')) showPartial();
     throw e;

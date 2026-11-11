@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Api, ApiError } from './api.js';
+import { DirectModel } from './direct.js';
 import { StepLog } from './steps.js';
 import { archiveStep, archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote } from './agent.js';
 import { SubAgents } from './subagents.js';
@@ -88,6 +89,13 @@ export function parseArgs(argv) {
     else if (a === '--commit') flags.commit = next();
     else if (a === '--server') flags.server = next();
     else if (a === '--token') flags.token = next();
+    // 直连供应商（zhiqu model set）：地址原样用，不校验格式
+    else if (a === '--url') flags.url = next();
+    else if (a === '--name') flags.name = next();
+    else if (a === '--key') flags.key = next();
+    else if (a === '--protocol') flags.protocol = next();
+    else if (a === '--max-tokens') flags.maxTokens = next();
+    else if (a === '--context-window') flags.contextWindow = next();
     else if (a === '--no-browser') flags.noBrowser = true;
     else if (a === '--allow-broad-root') flags.allowBroadRoot = true;
     else if (a === '--no-mcp') flags.noMcp = true;
@@ -124,6 +132,7 @@ const HELP = `zhiqu ${VERSION} —— 知趣·象限的命令行 coding agent
   zhiqu login --token zqp_…   用网页里签的个人访问令牌登录
   zhiqu update                更新到 npm 上的最新版（npm 全局装的才替你装；源码目录、npm link 的照实说怎么更新）
   zhiqu logout | whoami | models | help | --version
+  zhiqu model                  看现在走服务器网关还是直连；set / off 改直连（自己填完整 URL，不校验格式）
   zhiqu mcp                   当 MCP 服务器：让 Claude Code / Claude 桌面版 / Cursor 读写你的知识 Wiki 和任务（见 README）
 
 选项
@@ -179,6 +188,46 @@ export async function main(argv) {
       const { models } = await api.get('/api/harness/models');
       for (const m of models) process.stdout.write(`${m.isDefault ? '*' : ' '} ${m.id}  ${m.label}  ${m.modelName}${m.toolCalling ? '' : '  （不支持工具调用）'}\n`);
     }
+    return 0;
+  }
+  if (cmd === 'model') {
+    // 直连供应商（第一百二十九轮）：用户自己填完整 URL，不拼路径、不校验格式；配了就不用登录
+    const settings = resolveSettings(cwd, flags);
+    const cur = settings.direct;
+    const sub = flags._[1];
+    const mask = (k) => (k ? `${k.slice(0, 4)}…${k.slice(-2)}` : '（没设）');
+    if (sub === 'off') {
+      saveUserConfig({ direct: null });
+      process.stdout.write('已关掉直连，回到服务器网关（下次运行 zhiqu 生效）。\n');
+      return 0;
+    }
+    if (sub !== 'set') {
+      if (cur) {
+        process.stdout.write(`直连：${cur.model} → ${cur.url}\n`);
+        process.stdout.write(`  协议 ${cur.protocol} · 密钥 ${mask(cur.key)} · 窗口 ${cur.contextWindow} · 最大输出 ${cur.maxTokens}\n`);
+      } else {
+        process.stdout.write(`现在走服务器网关：${settings.server}${settings.model ? ` · 模型 ${settings.model}` : ''}\n`);
+      }
+      process.stdout.write('改直连：zhiqu model set --url <完整地址> --name <模型名> [--key <密钥>] [--protocol openai|anthropic]\n关掉直连：zhiqu model off\n');
+      return 0;
+    }
+    if (!flags.url || !flags.name) {
+      process.stderr.write('用法：zhiqu model set --url <完整接口地址> --name <模型名> [--key <密钥>] [--protocol openai|anthropic] [--max-tokens N] [--context-window N]\n'
+        + '  地址原样用，不校验格式（内网 http:// 也行）；不填 --key 就沿用原来那个。\n');
+      return 2;
+    }
+    saveUserConfig({
+      direct: {
+        protocol: flags.protocol === 'anthropic' ? 'anthropic' : 'openai',
+        url: flags.url,
+        model: flags.name,
+        key: flags.key != null ? flags.key : (cur ? cur.key : ''),
+        maxTokens: Number(flags.maxTokens) > 0 ? Number(flags.maxTokens) : (cur ? cur.maxTokens : 8192),
+        contextWindow: Number(flags.contextWindow) > 0 ? Number(flags.contextWindow) : (cur ? cur.contextWindow : 64_000),
+      },
+    });
+    process.stdout.write(`已保存直连配置：${flags.name} → ${flags.url}\n`
+      + '  下次运行 zhiqu 就不连服务器了（任务 / Wiki / 网页存档用不了）。密钥存在 ~/.zhiqu/config.json（600）。\n');
     return 0;
   }
   if (cmd === 'mcp') {
@@ -314,7 +363,7 @@ export function resumeInto(ctx, id) {
 
 function banner(ctx) {
   const { ui } = ctx;
-  ui.line(`${ui.paint.bold(`zhiqu ${VERSION}`)} · ${ctx.settings.server}`);
+  ui.line(`${ui.paint.bold(`zhiqu ${VERSION}`)} · ${ctx.modelClient ? `直连 ${ctx.settings.direct.url}` : ctx.settings.server}`);
   ui.line(`📁 ${path.basename(ctx.root)}/  ${ui.paint.dim(ctx.root)}`);
   if (ctx.goal && ctx.goal.status === 'active') ui.line(ui.paint.bold(`🎯 目标：${ctx.goal.text}`));
   const bits = [`档位：${MODE_LABEL[ctx.mode]}`, `模型：${ctx.model.label}`];
@@ -358,7 +407,7 @@ async function runAgent(cwd, flags) {
   if (flags.mode && !modeFlag) throw new Error(`--mode 只接受 plan / ask / auto，收到 ${flags.mode}`);
   if (flags.sandboxNetwork && !normalizeSandboxNetwork(flags.sandboxNetwork)) throw new Error(`--sandbox-network 只接受 ${SANDBOX_NETWORKS.join(' / ')}，收到 ${flags.sandboxNetwork}`);
   if (flags.effort && !normalizeEffort(flags.effort)) throw new Error(`--effort 只接受 ${EFFORTS.join(' / ')}，收到 ${flags.effort}`);
-  if (!settings.token) {
+  if (!settings.token && !settings.direct) {
     if (!process.stdin.isTTY || flags.print) {
       ui.error('还没登录：先运行 zhiqu login（或者设置环境变量 ZHIQU_TOKEN）');
       return 1;
@@ -367,14 +416,17 @@ async function runAgent(cwd, flags) {
     if (await login(root, { ...flags, quietWarnings: true }, ui) !== 0) return 1;
     Object.assign(settings, resolveSettings(root, flags));
   }
-  const api = new Api({ server: settings.server, token: settings.token, onRetry: retryNoter((text) => ui.note(text)) });
+  // 直连（第一百二十九轮）：配了 direct 就不连服务器 —— api 是 null，存档、远程工具、用量都跟着关掉
+  const api = settings.direct ? null : new Api({ server: settings.server, token: settings.token, onRetry: retryNoter((text) => ui.note(text)) });
   // 连的是本机 47615、它却没在跑：Mac 上的桌面应用不再带后端，说清楚、给出换到网站的命令（见 desktop.js）
-  if (await ensureLocalServer({ api, server: settings.server, ui, source: settings.serverSource }) === 'failed') return 1;
+  if (api && await ensureLocalServer({ api, server: settings.server, ui, source: settings.serverSource }) === 'failed') return 1;
   const ctx = {
     ui, api, root, settings, mode: modeFlag || settings.mode, effort: settings.effort, maxRounds: settings.maxRounds, verbose: settings.showThinking,
+    // 直连供应商：agent 那一层有它就走它，没有就走 api（见 agent.callModelOnce）
+    modelClient: settings.direct ? new DirectModel(settings.direct) : null,
     local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs,
       sandbox: detectSandbox(), sandboxNetwork: settings.sandboxNetwork }),
-    exec: Boolean(flags.exec), execReadOnly: Boolean(flags.execReadOnly), archiveDisabled: Boolean(flags.ephemeral),
+    exec: Boolean(flags.exec), execReadOnly: Boolean(flags.execReadOnly), archiveDisabled: Boolean(flags.ephemeral) || Boolean(settings.direct),
     store: flags.ephemeral ? null : new SessionStore(root), allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0, cached: 0 }, changedFiles: new Set(),
     // 子 agent（第一百二十三轮）：~/.zhiqu/config.json 的 agents 是 false 时关掉
@@ -389,19 +441,29 @@ async function runAgent(cwd, flags) {
   if (!ctx.local.sandbox) {
     ui.note(`· ${process.platform === 'linux' ? '没有可用的 bubblewrap（装上 bwrap 才有）' : '这台机器没有可用的系统沙箱'}：没有 shell 工具，跑命令退回白名单。`);
   }
-  try {
-    // 三个请求互不依赖，一起发（原来一个等一个，服务器远的时候启动慢一倍多）
-    // 启动时的这几个平常几十毫秒就回：等 15 秒还没回就是服务器卡住了，再等一次就说（原来每个等 30 秒、重来两次）
-    const [, , remote] = await Promise.all([
-      api.get('/api/harness/me', { timeoutMs: STARTUP_TIMEOUT_MS }),
-      pickModel(ctx, flags.model ?? settings.model),
-      // 连不上服务器时下一行会报，这里就不再叠一句（原来同一个「连不上」报两遍）
-      api.get('/api/harness/tools', { timeoutMs: STARTUP_TIMEOUT_MS }).catch((e) => { if (e.status) ui.warn(`远程工具（Wiki / 计划 / 记忆）拿不到：${e.message}`); return []; }),
-    ]);
-    ctx.remoteTools = remote;
-  } catch (e) {
-    if (e instanceof ApiError && e.auth) { ui.error(e.message); return 1; }
-    throw e;
+  if (settings.direct) {
+    ctx.model = {
+      id: null, label: settings.direct.model, modelName: settings.direct.model, toolCalling: true,
+      effectiveContextWindow: settings.direct.contextWindow || 64_000,
+    };
+    ctx.models = [ctx.model];
+    ctx.remoteTools = [];
+    ui.note(`· 直连模型：${settings.direct.model} → ${settings.direct.url}（不经服务器；任务 / Wiki / 网页存档用不了）`);
+  } else {
+    try {
+      // 三个请求互不依赖，一起发（原来一个等一个，服务器远的时候启动慢一倍多）
+      // 启动时的这几个平常几十毫秒就回：等 15 秒还没回就是服务器卡住了，再等一次就说（原来每个等 30 秒、重来两次）
+      const [, , remote] = await Promise.all([
+        api.get('/api/harness/me', { timeoutMs: STARTUP_TIMEOUT_MS }),
+        pickModel(ctx, flags.model ?? settings.model),
+        // 连不上服务器时下一行会报，这里就不再叠一句（原来同一个「连不上」报两遍）
+        api.get('/api/harness/tools', { timeoutMs: STARTUP_TIMEOUT_MS }).catch((e) => { if (e.status) ui.warn(`远程工具（Wiki / 计划 / 记忆）拿不到：${e.message}`); return []; }),
+      ]);
+      ctx.remoteTools = remote;
+    } catch (e) {
+      if (e instanceof ApiError && e.auth) { ui.error(e.message); return 1; }
+      throw e;
+    }
   }
   loadContext(ctx);
   if (flags.ephemeral) {
@@ -653,6 +715,14 @@ export async function slash(ctx, text) {
   const { ui } = ctx;
   const [cmd, ...rest] = text.split(/\s+/);
   const arg = rest.join(' ').trim();
+  // 直连模式下这两条要改本地配置，不走服务器（第一百二十九轮）
+  if (ctx.modelClient) {
+    const local = {
+      '/model': '直连模式：模型名在 ~/.zhiqu/config.json 的 direct.model 里改（或者重跑一次 zhiqu model）',
+      '/window': '直连模式：上下文窗口在 ~/.zhiqu/config.json 的 direct.contextWindow 里改',
+    }[cmd];
+    if (local) { ui.note(local); return null; }
+  }
   switch (cmd) {
     case '/exit': case '/quit': return 'exit';
     case '/help': ui.line(SLASH_HELP); return null;
@@ -812,6 +882,7 @@ export async function slash(ctx, text) {
     }
     case '/usage': {
       ui.line(`这次会话：输入约 ${ctx.usage.prompt} token${cacheNote(ctx.usage.prompt, ctx.usage.cached)}，输出约 ${ctx.usage.completion} token`);
+      if (!ctx.api) { ui.note('（直连模式：用量只在本地算，服务器上没有记录）'); return null; }
       try {
         const u = await ctx.api.get('/api/harness/usage');
         ui.line(`今天（命令行）：${u.today.calls} 次调用，输入 ${u.today.promptTokens}${cacheNote(u.today.promptTokens, u.today.cachedTokens)}、输出 ${u.today.completionTokens} token`);
