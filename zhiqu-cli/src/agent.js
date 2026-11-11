@@ -326,6 +326,12 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   let thought = 0;
   let thinkingFrom = null;
   let thinkingMs = 0;
+  // 第一个正文 / 工具调用到了：思考到此为止（第一百二十八轮）。原来只在 delta / tool_call 里算，
+  // 模型想完直接调工具、一个字正文都没写时 thinkingMs 一直是 0 —— 网页上那一步成了「思考 1 秒」，
+  // 看着像没思考（用户：「思考过程反而不见了」）。现在收尾时也按「第一个思考字到此刻」算
+  const stopThinking = () => {
+    if (thinkingFrom != null && !thinkingMs) thinkingMs = monotonic() - thinkingFrom;
+  };
   // 思考的原文（第一百二十八轮：网页上「思考 100 秒」点开看得到想了什么）—— 只在有人要（stepLog）时才攒，攒到上限为止
   const keepThinking = Boolean(ctx.stepLog);
   let thinkingText = '';
@@ -354,11 +360,11 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
       if (hush) ui.setActivity(`思考中 ${formatBytes(thought)}`);
       else if (render) ui.status.set(ui.paint.dim(`… 思考中 ${formatBytes(thought)}`));
     } else if (name === 'delta') {
-      if (thinkingFrom != null && !thinkingMs) thinkingMs = monotonic() - thinkingFrom;
+      stopThinking();
       text += data.text;
       if (md) md.feed(data.text);
     } else if (name === 'tool_call') {
-      if (thinkingFrom != null && !thinkingMs) thinkingMs = monotonic() - thinkingFrom;
+      stopThinking();
       toolNames.set(data.index, data.name);
       if (md && md.wroteAnything) md.finish();     // 正文说完了才轮到工具：先把这段收尾换行
       if (hush) ui.setActivity(`准备 ${data.name}`);
@@ -392,7 +398,7 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   }
   if (ctx.onUsage && done.usage) ctx.onUsage(done.usage);
   // 这一次想了多久（第一百二十七轮：网页回答里「思考 N 秒」那一步）—— 从第一个思考字到第一个正文 / 工具调用
-  if (thinkingFrom != null && !thinkingMs) thinkingMs = monotonic() - thinkingFrom;
+  stopThinking();
   return { ...done, text, maxTokens: done.maxTokens || maxTokens, thought: { chars: thought, ms: thinkingMs, text: thinkingText } };
 }
 
@@ -892,10 +898,22 @@ async function runTool(ctx, call, offered, signal) {
       }
       let tail = '';
       const onOutput = (s) => { tail = (tail + s).slice(-4000); };
-      let r = await local.commitShell(prep, { policy: shellPolicy(ctx), signal, onOutput });
+      // 跑命令期间状态行说「运行中 N 秒 · 命令」（第一百二十九轮）：原来一直是「思考中」，分不清在等模型还是在等命令
+      ui.startRun(prep.command);
+      let r;
+      try {
+        r = await local.commitShell(prep, { policy: shellPolicy(ctx), signal, onOutput });
+      } finally {
+        ui.endRun();
+      }
       // 被沙箱挡住：只有 ask 档、用户当场点了才不带沙箱再跑一次（默认不）。plan、auto 只把边界告诉模型
       if (r.blocked && ctx.mode === 'ask' && await confirmUnsandboxed(ctx, prep)) {
-        r = await local.commitShell(prep, { unsandboxed: true, signal, onOutput });
+        ui.startRun(prep.command);
+        try {
+          r = await local.commitShell(prep, { unsandboxed: true, signal, onOutput });
+        } finally {
+          ui.endRun();
+        }
       }
       for (const l of shownOutput(r.output.split('\n').filter((x) => x.trim()))) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
       ui.result(r.summary, r.exitCode === 0);
@@ -930,7 +948,13 @@ async function runTool(ctx, call, offered, signal) {
         return `用户没有同意运行 ${[prep.command, ...prep.args].join(' ')}。不要原样重试；问问用户，或者换个做法。`;
       }
       let tail = '';
-      const r = await local.commitRun(prep, { signal, onOutput: (s) => { tail = (tail + s).slice(-4000); } });
+      ui.startRun(line);
+      let r;
+      try {
+        r = await local.commitRun(prep, { signal, onOutput: (s) => { tail = (tail + s).slice(-4000); } });
+      } finally {
+        ui.endRun();
+      }
       for (const l of shownOutput(r.output.split('\n').filter((x) => x.trim()))) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
       ui.result(r.summary, r.exitCode === 0);
       stepNote(ctx, { summary: r.summary, ok: r.exitCode === 0, detail: runDetail(prep, r) });
@@ -1112,9 +1136,11 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     // 省略旧思考是改写历史，从那条起缓存全部失效（评测上约 1.6 个点，按价算约一成花费）；省下的那点 token 按命中价不值 —— 吃紧了才做
     if (needsCompaction(systemText(ctx), ctx.messages, window, SLIM_THRESHOLD)) slimThinking(ctx.messages);
     const res = await callModel(ctx, tools, signal);
-    if (ctx.stepLog && res.thought) ctx.stepLog.thinking(res.thought.chars, res.thought.ms, res.thought.text);
     const message = res.message || { role: 'assistant', content: res.text };
     const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    // 思考那一步在工具调用之后才收尾（第一百二十八轮）：原来紧跟着模型调用就记，那时还不知道这一轮要调工具，
+    // 网页上「思考」排在「读取 / 运行」后面 —— 和实际顺序反了。现在它排在这一次调用的工具前面，用时也照实
+    if (ctx.stepLog && res.thought) ctx.stepLog.thinking(res.thought.chars, res.thought.ms, res.thought.text);
     // 原地重复：历史和回答里只留开头一段
     const looping = res.finishReason === 'length' && !calls.length && repeating(message.content);
     if (looping) message.content = loopTrimmed(message.content);

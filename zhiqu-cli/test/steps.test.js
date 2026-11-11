@@ -63,6 +63,18 @@ test('每种工具按顺序记一步：思考、列目录、读、搜、新建�
   assert.ok(f.every((s) => typeof s.ms === 'number'), '每一步都要有用时');
 });
 
+test('想完直接调工具（一个字正文都没写）：思考那一步排在工具前面，用时照实，不是「1 秒」', async () => {
+  const root = tmpdir();
+  write(root, 'a.txt', 'hi\n');
+  const { ctx, steps } = ctxWith([{ reasoning: '先读一下这个文件', calls: [{ name: 'read_file', args: { path: 'a.txt' } }] }, { text: '好' }], { root });
+  await runTurn(ctx, '读');
+  const f = finals(steps);
+  assert.deepEqual(f.map((s) => s.kind), ['thinking', 'read'], '思考排到了工具后面（或者根本没记）');
+  assert.equal(f[0].detail.text, '先读一下这个文件');
+  assert.ok(f[0].ms >= 0, '思考那一步没有用时');
+  assert.equal(f[0].summary, `${Math.max(1, Math.round(f[0].ms / 1000))} 秒`);
+});
+
 test('失败的也记一步：没有这个工具、参数坏了、改不上（原文没找到）', async () => {
   const root = tmpdir();
   write(root, 'a.js', 'x\n');

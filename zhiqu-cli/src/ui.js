@@ -625,10 +625,37 @@ export class Ui {
     this.renderThinking();
   }
 
+  /**
+   * 在跑命令（第一百二十九轮）：状态行从「思考中」换成「运行中 N 秒 · 命令」。
+   * 用户原来只看得到「思考中 45s」——分不清是在等模型还是在等命令，以为卡住了（用户：「我以为一直在思考，卡住」）。
+   * 计时从命令开始算，不是从这一轮开始算。
+   */
+  startRun(label) {
+    if (!this.thinking) return;
+    this.thinking.phase = 'run';
+    this.thinking.runStarted = monotonic();
+    this.thinking.runLabel = label ? termSafe(String(label).split('\n')[0], { singleLine: true }).replace(/\s+/g, ' ').slice(0, 60) : '';
+    this.renderThinking();
+  }
+
+  endRun() {
+    if (!this.thinking) return;
+    this.thinking.phase = 'think';
+    this.thinking.runStarted = null;
+    this.thinking.runLabel = '';
+    this.renderThinking();
+  }
+
   renderThinking() {
     const t = this.thinking;
-    const secs = Math.floor((monotonic() - t.started) / 1000);
     const room = this.cols() - 16;
+    if (t.phase === 'run') {
+      const secs = Math.floor((monotonic() - (t.runStarted || t.started)) / 1000);
+      const label = t.runLabel ? ` · ${t.runLabel}` : '';
+      this.setStatus(`${this.paint.cyan(pixelFrame(t.tick))} ${this.paint.dim(fit(`运行中 ${secs}s${label}`, Math.max(10, room)))}`);
+      return;
+    }
+    const secs = Math.floor((monotonic() - t.started) / 1000);
     const act = t.activity ? ` · ${t.activity}` : '';
     this.setStatus(`${this.paint.cyan(pixelFrame(t.tick))} ${this.paint.dim(fit(`思考中 ${secs}s${act}`, Math.max(10, room)))}`);
   }

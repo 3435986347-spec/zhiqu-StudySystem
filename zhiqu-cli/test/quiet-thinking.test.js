@@ -12,6 +12,7 @@ import { replayTranscript } from '../src/replay.js';
 import { SessionStore } from '../src/session.js';
 import { LocalTools } from '../src/tools/local.js';
 import { Ui, pixelFrame } from '../src/ui.js';
+import { monotonic } from '../src/clock.js';
 import { fakeApi, fakeUi, tmpdir, write } from './helpers.js';
 import { Vt } from './vt.js';
 
@@ -298,4 +299,17 @@ test('命令输出多了：终端里给开头 3 行 + 结尾 5 行，中间说�
   assert.match(out, /\ba\b[\s\S]*\bb\b/, '只有两行的照常全给');
   const { shownOutput } = await import('../src/agent.js');
   assert.deepEqual(shownOutput(['1', '2', '3', '4', '5', '6', '7', '8', '9']), ['1', '2', '3', '4', '5', '6', '7', '8', '9'], '9 行以内全给（省一行不如不省）');
+});
+
+test('跑命令时状态行说「运行中 · 命令」，不是一直「思考中」（用户：以为卡住了）', () => {
+  const ui = new Ui({ input: new PassThrough(), output: new Writable({ write(c, e, cb) { cb(); } }), interactive: false, color: false });
+  const seen = [];
+  ui.setStatus = (t) => seen.push(t);
+  ui.thinking = { started: monotonic(), tick: 0, activity: '' };
+  ui.renderThinking();
+  assert.match(seen.at(-1), /思考中 0s/);
+  ui.startRun('npm test 2>&1 | tail -25');
+  assert.match(seen.at(-1), /运行中 0s · npm test/, '跑命令时还说「思考中」');
+  ui.endRun();
+  assert.match(seen.at(-1), /思考中 0s/, '命令跑完要切回去');
 });
