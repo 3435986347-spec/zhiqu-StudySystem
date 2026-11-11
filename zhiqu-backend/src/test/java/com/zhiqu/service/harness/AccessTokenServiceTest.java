@@ -38,6 +38,25 @@ class AccessTokenServiceTest {
     }
 
     @Test
+    @DisplayName("桌面版本机代码的令牌（第一百二十九轮）：范围是 DESKTOP_CODE、12 小时后过期、有名字；命令行的那种照旧不过期、范围 HARNESS")
+    void 本机代码令牌() {
+        UserAccessTokenMapper mapper = mock(UserAccessTokenMapper.class);
+        AccessTokenService service = new AccessTokenService(mapper);
+        LocalDateTime before = LocalDateTime.now();
+        AccessTokenService.Issued desk = service.issueDesktopCode(7L);
+        LocalDateTime after = LocalDateTime.now();
+        assertEquals(AccessTokenService.SCOPE_DESKTOP_CODE, desk.row().getScope());
+        assertEquals(7L, desk.row().getUserId());
+        assertTrue(desk.token().startsWith("zqp_"), desk.token());
+        LocalDateTime expires = desk.row().getExpiresAt();
+        assertTrue(expires != null && !expires.isBefore(before.plusHours(12)) && !expires.isAfter(after.plusHours(12)), "过期时间不是 12 小时后：" + expires);
+        assertEquals("桌面版 · 本机代码", desk.row().getName());
+        AccessTokenService.Issued cli = service.issue(7L, "命令行 · Mac");
+        assertEquals(AccessTokenService.SCOPE_HARNESS, cli.row().getScope());
+        assertNull(cli.row().getExpiresAt(), "命令行的令牌原来不过期，不该跟着变");
+    }
+
+    @Test
     @DisplayName("能不能用：撤销了不行、过期了不行、没过期限的一直行")
     void 可用性() {
         LocalDateTime now = LocalDateTime.of(2026, 9, 24, 12, 0);

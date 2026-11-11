@@ -914,6 +914,7 @@ details.zq-trace-step[open]>summary::after{transform:rotate(45deg);}
 .zq-trace-more{align-self:flex-start;padding:3px 6px;border:0;background:none;color:var(--zq-text3);font:inherit;font-size:var(--zq-fs-xs);}
 button.zq-trace-more{cursor:pointer;}
 button.zq-trace-more:hover{color:var(--zq-text);}
+.zq-trace-note{padding:1px 6px 1px 28px;font-size:var(--zq-fs-xs);line-height:1.5;color:var(--zq-text3);overflow-wrap:anywhere;}
 @media (prefers-reduced-motion:reduce){.zq-trace-step[data-state="running"] .zq-trace-icon::before{animation:none;}details.zq-trace-step>summary::after{transition:none;}}
 .zq-ai-reasoning{margin-bottom:9px;padding:8px 11px;border-left:2px solid var(--zq-tint-strong);background:var(--zq-card-soft);border-radius:0 var(--zq-rs) var(--zq-rs) 0;}
 .zq-ai-reasoning summary{cursor:pointer;font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-regular);color:var(--zq-text3);user-select:none;}

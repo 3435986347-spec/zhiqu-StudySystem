@@ -75,6 +75,33 @@ test('想完直接调工具（一个字正文都没写）：思考那一步排�
   assert.equal(f[0].summary, `${Math.max(1, Math.round(f[0].ms / 1000))} 秒`);
 });
 
+test('调工具前的那一句是 note，排在工具前面；太长的截断；没有字就没有这条', async () => {
+  const root = tmpdir();
+  write(root, 'a.txt', 'hi\n');
+  const { judgmentText, NOTE_CHARS } = await import('../src/steps.js');
+  const long = `先看边界。${'测'.repeat(80)}`;
+  const { ctx, steps } = ctxWith([
+    { text: '先看 a.txt 的结构', calls: [{ name: 'read_file', args: { path: 'a.txt' } }] },
+    { text: long, calls: [{ name: 'read_file', args: { path: 'a.txt', offset: 1, limit: 1 } }] },
+    { calls: [{ name: 'read_file', args: { path: 'a.txt', offset: 1, limit: 1 } }] },
+    { text: '好' },
+  ], { root });
+  await runTurn(ctx, '看');
+  const f = finals(steps);
+  assert.equal(f[0].kind, 'note');
+  assert.equal(f[0].title, '先看 a.txt 的结构');
+  assert.equal(f[0].status, 'ok');
+  assert.equal(f[0].detail, undefined, '判断点不开');
+  assert.equal(f[1].kind, 'read');
+  const notes = f.filter((s) => s.kind === 'note');
+  assert.equal(notes.length, 2, `没有字的那一轮不该有判断：${notes.map((s) => s.title)}`);
+  assert.equal(notes[1].title, judgmentText(long));
+  assert.equal(notes[1].title.length, NOTE_CHARS);
+  assert.ok(notes[1].title.endsWith('…'));
+  assert.notEqual(notes[1].title, long);
+  assert.ok(!notes[1].title.includes('测'.repeat(40)));
+});
+
 test('失败的也记一步：没有这个工具、参数坏了、改不上（原文没找到）', async () => {
   const root = tmpdir();
   write(root, 'a.js', 'x\n');

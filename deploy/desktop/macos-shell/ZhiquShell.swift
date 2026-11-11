@@ -5,7 +5,8 @@
 //
 // 第一百二十五轮之前它拉起包里的 Java 后端（内嵌 JRE），连用户自己装的 MySQL，窗口里开 http://127.0.0.1:47615。
 // 用户定了桌面版给所有下载的人用、数据走网站（docs/desktop-remote-plan.md）：直接连服务器的库就得把主密钥发给每个人，
-// 所以改成打开网站 —— 数据只在服务器上，包里不再带 Java、JRE、MySQL。读写本机项目的代码功能下一步由包里的 node 做。
+// 所以改成打开网站 —— 数据只在服务器上，包里不再带 Java、JRE、MySQL。读写本机项目的代码功能由包里的 node 做
+// （第一百二十九轮：本机代码助手，LocalAgent.swift —— 页面经 zqLocal 桥叫外壳起它；页面那一侧是方案第 3 步）。
 //
 // 为什么是 WKWebView：WebKit.framework 是系统自带的，多占 0 字节；无边框（内容顶到窗口边缘）在 AppKit 里就是两个属性的事。
 
@@ -44,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var inMiniMode = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 本机代码助手往宿主的管子里写：宿主先退了的话默认的 SIGPIPE 会把整个应用带走
+        ignoreBrokenPipe()
         // 应用在前台时系统默认不弹横幅 —— 页面里已经有提示和声音了，这里仍然弹横幅、进通知中心（不带声音，见 PageView.deliverNotification）
         UNUserNotificationCenter.current().delegate = self
         makeWindow()
@@ -85,6 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         webView.onMini = { [weak self] action in self?.mini(action) }
         webView.allowedHosts = [Server.url.host ?? ""]
         webView.onLoad = { [weak self] error in self?.loaded(error) }
+        // 本机代码助手只给主窗口（迷你窗不接）：包里的 node 跑包里的命令行宿主，服务器就是这个窗口打开的网站
+        webView.localAgent = LocalAgent.bundled(server: Server.url).map(LocalAgent.init(config:))
 
         loadingLabel = NSTextField(labelWithString: "正在启动…")
         loadingLabel.alignment = .center
@@ -199,6 +204,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 点红色按钮关掉主窗口就退出；迷你模式下主窗口只是藏起来，不退
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return !inMiniMode
+    }
+
+    /// 退出时本机代码助手还在跑：SIGTERM 给它（中断、收掉它起的后台命令），不留在后台
+    func applicationWillTerminate(_ notification: Notification) {
+        webView?.localAgent?.terminate()
     }
 }
 

@@ -1,4 +1,5 @@
 // 草稿模式的工具（第九十四轮）：网页 / 桌面应用的代码模式也跑命令行这一份循环，后端用子进程起它（host/code-host.js）。
+// 桌面版本机代码助手（第一百二十九轮）也用这一份草稿层，只是命令在本机跑（DesktopTools，见文件末尾）。
 // 和 LocalTools 只差三处 —— 规矩、参数、拒绝的说法全是同一份：
 //   - write_file / edit_file 不落盘：改动记进草稿层（LocalTools.overlay），之后读、改、搜同一个文件看到的是草稿，
 //     同一个文件改几处叠在一份草稿上。收尾时交给后端成一份 CODE_DRAFT，用户看过 diff、确认了才写进磁盘（「AI 写的东西一律先成草稿」）。
@@ -183,3 +184,47 @@ export class ArtifactTools extends DraftTools {
   }
 }
 
+/**
+ * 桌面版本机代码助手（第一百二十九轮，docs/desktop-remote-plan.md 第 2 步）：宿主是桌面外壳起的，旁边没有后端 ——
+ * 命令在这台电脑上、在系统沙箱里跑，和命令行是同一份（LocalTools 的 shell / 后台命令、sandbox.js）。
+ * 写照旧只成草稿、不落盘（「AI 写的东西一律先成草稿」；auto 档的 shell 直接写是用户定的例外，靠 shellWrite）；从来不给删。
+ * 没有系统沙箱就不给命令（Mac 上都有）：不退回白名单，免得在别人电脑上靠一份规则表判断能不能跑。
+ */
+export class DesktopTools extends DraftTools {
+  constructor({ root, canWrite = false, sandbox = null, shellWrite = false, sandboxNetwork = 'off', home }) {
+    // 命令不经外壳：exec 只是兜底，正常走不到（下面的方法都换成了本机的）
+    super({ root, canWrite, canExec: false, canShell: Boolean(sandbox), shellWrite: Boolean(sandbox) && shellWrite, sandboxNetwork,
+      exec: async () => ({ error: '本机代码助手不经外壳跑命令。' }) });
+    this.sandbox = sandbox || null;
+    this.home = home;
+  }
+
+  prepareShell(args = {}) {
+    return LocalTools.prototype.prepareShell.call(this, args);
+  }
+
+  /** 档位只认外壳给的（shellWrite），不认调用方传的；不带沙箱再跑一次（ask 档的那条）这里没有 */
+  async commitShell(prep, { signal, onOutput } = {}) {
+    const r = await LocalTools.prototype.commitShell.call(this, prep, { policy: this.shellPolicy, unsandboxed: false, signal, onOutput });
+    this.ranCommand = true;
+    return { ...r, content: `${r.content}${this.pendingNote()}` };
+  }
+
+  async startJob(prep, { signal } = {}) {
+    const r = await LocalTools.prototype.startJob.call(this, prep, { policy: this.shellPolicy, signal });
+    if (!r.error) this.ranCommand = true;
+    return r;
+  }
+
+  readJob(args = {}, opts = {}) {
+    return LocalTools.prototype.readJob.call(this, args, opts);
+  }
+
+  stopJob(args = {}) {
+    return LocalTools.prototype.stopJob.call(this, args);
+  }
+
+  prepareRun() {
+    return { error: '这台电脑没有可用的系统沙箱，本机代码助手不跑命令。' };
+  }
+}

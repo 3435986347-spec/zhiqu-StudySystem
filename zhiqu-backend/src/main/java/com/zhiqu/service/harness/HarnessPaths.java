@@ -1,5 +1,7 @@
 package com.zhiqu.service.harness;
 
+import java.util.Set;
+
 /**
  * 哪些路径接受个人访问令牌 —— <b>唯一</b>的判定处。
  *
@@ -16,7 +18,36 @@ public final class HarnessPaths {
     /** 设备码登录的两个接口本身不需要登录（命令行此时还没有任何凭据）。 */
     public static final String DEVICE_PREFIX = "/api/harness/device/";
 
+    /**
+     * 桌面版本机代码的令牌（{@link AccessTokenService#SCOPE_DESKTOP_CODE}，第一百二十九轮）只在这几个接口被认：
+     * 外壳起的宿主要的就是挑模型、调模型、远程工具。会话存档、用量、{@code /me}、改上下文窗口一概不认 ——
+     * 它从页面经过外壳交给 node 进程，比命令行的令牌多走两手；泄露了也只是「有人能用你的模型额度、你的远程工具 12 小时」。
+     */
+    static final Set<String> DESKTOP_CODE_ENDPOINTS = Set.of(
+            "GET /api/harness/models",
+            "POST /api/harness/model/stream",
+            "GET /api/harness/tools",
+            "POST /api/harness/tools/call");
+
     private HarnessPaths() {
+    }
+
+    /**
+     * 这张令牌（按它的范围）在这个请求上认不认。认不出的范围一律不认；老的行（V36 起列有默认值 HARNESS）照 HARNESS。
+     *
+     * @param path 和 {@link #acceptsAccessToken} 一样，去掉 context path 的请求路径
+     */
+    public static boolean allowsScope(String scope, String method, String path) {
+        if (!acceptsAccessToken(path)) {
+            return false;
+        }
+        if (scope == null || AccessTokenService.SCOPE_HARNESS.equals(scope)) {
+            return true;
+        }
+        if (AccessTokenService.SCOPE_DESKTOP_CODE.equals(scope)) {
+            return method != null && DESKTOP_CODE_ENDPOINTS.contains(method.toUpperCase(java.util.Locale.ROOT) + " " + path);
+        }
+        return false;
     }
 
     /**

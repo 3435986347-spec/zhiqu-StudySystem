@@ -51,7 +51,7 @@ cd ../zhiqu-cli && npm test            # 命令行，node --test test/*.test.js�
 ## 前端
 
 - 每页是 `assets/pages/<页>.js` 的 ES 模块，壳按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；模块顶层只许有声明。壳给模块的东西只走 `zqShared`。
-- **改了 `static/` 下任何文件就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换。现在是 `20261111-r128d`。一致性由 `StaticAssetCacheTokenTest` 钉着；不换测试不会红，但用户会继续拿旧缓存。
+- **改了 `static/` 下任何文件就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换。现在是 `20261112-r130`。一致性由 `StaticAssetCacheTokenTest` 钉着；不换测试不会红，但用户会继续拿旧缓存。
 - 新加一个 HTML 页面：`SecurityConfig` 的放行清单、`service-worker.js` 的 `CORE_ASSETS`、`PAGE_MODULES` 都要加。漏了放行，没登录时打开是空白 403（`MiniPomodoroTest` 钉着）。
 - 样式：设计令牌只在 `assets/zhiqu-ui.css` 的 `:root` 定义一次（引用不存在的 `var()` 会让整条声明作废，不报错）；手机样式只有一段 `@media (max-width: 760px)`，放在最后。内联样式和写死的字号按文件只许降（`InlineStyleRatchetTest` 用 `==` 钉着）。字要细：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
 - 图标只用 `zhiqu-ui.js` 的 `ICONS`，不用 Unicode 符号当图标（`IconSetTest`）。悬停说明照样写 `title`，由 `setupTips` 画成提示（WKWebView 不显示原生 `title`）；只有图标的按钮另给 `aria-label`。

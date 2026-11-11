@@ -7,6 +7,7 @@
 // 但用户翻回去要看的是当时说了什么。每一步的写法和当时一样（⏺ 做了什么、⎿ 结果的第一行），
 // 不是用户打的 user 消息（goal 模式推的下一轮、命令行补的说明）不显示成「› …」。
 import { describeCall, parseArgs, QUIET_TOOLS } from './agent.js';
+import { judgmentText } from './steps.js';
 import { generatedOrigin } from './origins.js';
 
 const RESULT_CHARS = 120;
@@ -77,13 +78,17 @@ export function replayTranscript(ui, entries, { verbose = false, lastTurns = REP
     }
     if (m.role === 'assistant') {
       const text = textOf(m.content);
-      const thinking = !verbose && (m.tool_calls || []).length > 0;
-      if (text.trim() && !thinking) {
+      const calls = m.tool_calls || [];
+      // 安静模式：调工具前的那一句只留一行判断（第一百三十轮），不把整段推测铺出来。verbose 原样
+      if (calls.length && !verbose) {
+        const said = judgmentText(text);
+        if (said) ui.note(`· ${said}`);
+      } else if (text.trim()) {
         const md = ui.markdown();
         md.feed(text.endsWith('\n') ? text : `${text}\n`);
         md.finish();
       }
-      for (const call of m.tool_calls || []) {
+      for (const call of calls) {
         const name = call.function && call.function.name;
         if (!verbose && QUIET_TOOLS.has(name)) { hiddenCalls.add(call.id); continue; }
         const parsed = parseArgs(call.function && call.function.arguments);

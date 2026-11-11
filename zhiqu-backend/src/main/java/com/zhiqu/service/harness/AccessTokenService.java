@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -34,6 +35,13 @@ public class AccessTokenService {
 
     public static final String PREFIX = "zqp_";
     public static final String SCOPE_HARNESS = "HARNESS";
+    /**
+     * 桌面版本机代码助手的令牌（第一百二十九轮，docs/desktop-remote-plan.md 第 2 步）：页面用网页的登录态换一张，交给外壳起的宿主去连模型网关。
+     * 只在本机代码要的那几个接口被认（{@link HarnessPaths#allowsScope}），12 小时过期 —— 外壳只放在内存里，应用开着的一天里够用，过期了页面再签。
+     */
+    public static final String SCOPE_DESKTOP_CODE = "DESKTOP_CODE";
+    public static final Duration DESKTOP_CODE_TTL = Duration.ofHours(12);
+    static final String DESKTOP_CODE_NAME = "桌面版 · 本机代码";
     /** 最近使用时间最多隔这么久写一次库 —— 否则命令行的每一个请求都是一次 UPDATE。 */
     static final long TOUCH_INTERVAL_MS = 5 * 60_000L;
 
@@ -62,6 +70,15 @@ public class AccessTokenService {
     }
 
     public Issued issue(Long userId, String name) {
+        return issue(userId, name, SCOPE_HARNESS, null);
+    }
+
+    /** 桌面版本机代码用的那一种：范围小、会过期（见 {@link #SCOPE_DESKTOP_CODE}） */
+    public Issued issueDesktopCode(Long userId) {
+        return issue(userId, DESKTOP_CODE_NAME, SCOPE_DESKTOP_CODE, LocalDateTime.now().plus(DESKTOP_CODE_TTL));
+    }
+
+    private Issued issue(Long userId, String name, String scope, LocalDateTime expiresAt) {
         byte[] bytes = new byte[32];
         random.nextBytes(bytes);
         String token = PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
@@ -70,7 +87,8 @@ public class AccessTokenService {
         row.setName(cleanName(name));
         row.setTokenHash(hash(token));
         row.setTokenHint(token.substring(token.length() - 4));
-        row.setScope(SCOPE_HARNESS);
+        row.setScope(scope);
+        row.setExpiresAt(expiresAt);
         row.setCreatedAt(LocalDateTime.now());
         mapper.insert(row);
         return new Issued(row, token);
@@ -123,9 +141,12 @@ public class AccessTokenService {
 
     public List<Map<String, Object>> list(Long userId) {
         List<Map<String, Object>> rows = new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now();
+        // 过期的不列（第一百二十九轮）：桌面版每开一次应用签一张 12 小时的，列着的话设置里一天多几行用不了的
         for (UserAccessToken t : mapper.selectList(new LambdaQueryWrapper<UserAccessToken>()
                 .eq(UserAccessToken::getUserId, userId)
                 .isNull(UserAccessToken::getRevokedAt)
+                .and(w -> w.isNull(UserAccessToken::getExpiresAt).or().gt(UserAccessToken::getExpiresAt, now))
                 .orderByDesc(UserAccessToken::getId))) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("id", t.getId());
@@ -136,6 +157,7 @@ public class AccessTokenService {
             row.put("lastUsedAt", t.getLastUsedAt());
             row.put("lastUsedIp", t.getLastUsedIp());
             row.put("expiresAt", t.getExpiresAt());
+            row.put("scope", t.getScope());
             rows.add(row);
         }
         return rows;

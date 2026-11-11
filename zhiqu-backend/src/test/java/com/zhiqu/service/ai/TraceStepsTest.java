@@ -105,4 +105,19 @@ class TraceStepsTest {
         assertEquals(2, list.get("dropped"));
         assertTrue(((Map<String, Object>) ((List<?>) stored.get("steps")).get(0)).containsKey("detail"), "原来那份被改了");
     }
+
+    @Test
+    @DisplayName("判断（note）认作自己的一种，不收成 other；标题照 40 字截，没有细节就点不开")
+    @SuppressWarnings("unchecked")
+    void 判断不收成别的() {
+        Map<String, Object> s = TraceSteps.sanitize(Map.of(
+                "id", "n1", "kind", "note", "title", "看".repeat(100), "status", "ok",
+                "detail", Map.of("text", "不该留下")));
+        assertEquals("note", s.get("kind"), "note 被收成了 other");
+        assertEquals("看".repeat(40) + "…", s.get("title"));
+        Map<String, Object> list = TraceSteps.summaries(Map.of("steps", List.of(s)));
+        Map<String, Object> row = ((List<Map<String, Object>>) list.get("steps")).get(0);
+        assertFalse(row.containsKey("hasDetail"), "判断被标成点得开");
+        assertEquals("note", row.get("kind"));
+    }
 }

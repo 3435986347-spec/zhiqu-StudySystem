@@ -289,10 +289,11 @@ class DesktopPageViewTest {
         Files.copy(SHELL.resolve("PageView.swift"), src.resolve("PageView.swift"));
         Files.copy(SHELL.resolve("MiniPanel.swift"), src.resolve("MiniPanel.swift"));
         Files.copy(SHELL.resolve("Server.swift"), src.resolve("Server.swift"));
+        Files.copy(SHELL.resolve("LocalAgent.swift"), src.resolve("LocalAgent.swift"));   // PageView 的 zqLocal 桥用它（第一百二十九轮）
         Path bin = tmp.resolve("check");
         run(600, "/usr/bin/swiftc", "-O", "-framework", "AppKit", "-framework", "WebKit", "-framework", "UserNotifications", "-o", bin.toString(),
                 src.resolve("main.swift").toString(), src.resolve("PageView.swift").toString(), src.resolve("MiniPanel.swift").toString(),
-                src.resolve("Server.swift").toString());
+                src.resolve("Server.swift").toString(), src.resolve("LocalAgent.swift").toString());
         Path work = Files.createDirectories(tmp.resolve("work"));
         String text = run(90, bin.toString(), work.toString());
         Map<String, String> map = new HashMap<>();

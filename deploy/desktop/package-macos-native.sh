@@ -5,7 +5,8 @@
 # 用户定了桌面版给所有下载的人用、数据走网站（docs/desktop-remote-plan.md），所以外壳只打开网站，
 # 包里不再带 Java、JRE、JAR，也不再需要 MySQL。WebKit.framework 是系统自带的，外壳本身只有一两百 KB。
 #
-# 包里的 node 留给本机代码助手（方案第 2 步：外壳按需起它跑命令行那一份宿主，在你的磁盘上读写、在系统沙箱里跑命令）。
+# 包里的 node 给本机代码助手（方案第 2 步，第一百二十九轮）：外壳按需起它跑命令行那一份宿主（Resources/zhiqu-cli/src/host/code-host.js），
+# 在你的磁盘上读写、在系统沙箱里跑命令，模型走网站的网关。命令行没有 npm 依赖，package.json + src 就是全部（和后端 JAR 里带的同一份）。
 #
 # 用法：  ./package-macos-native.sh [版本号]
 set -euo pipefail
@@ -29,12 +30,17 @@ APP="$OUT/$NAME.app"
 echo "==> 1/5 搭 bundle 骨架、放 node"
 rm -rf "$OUT"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-# 命令行不随应用打包：Java 版 zhiqu 2026-10-04 删除，命令行是 npm 版（zhiqu-cli/）。
+# 本机代码助手要的是命令行源码，不是 npm 上的 zhiqu 命令：没有依赖，package.json（type: module）+ src 就是全部。
 mkdir -p "$APP/Contents/Resources/node/bin"
 cp "$NODE_BIN" "$APP/Contents/Resources/node/bin/node"
 cp "$NODE_LICENSE" "$APP/Contents/Resources/node/LICENSE"
 "$APP/Contents/Resources/node/bin/node" --version > /dev/null || { echo "打进去的 node 跑不起来：$NODE_BIN"; exit 1; }
 echo "    node     $(du -sh "$APP/Contents/Resources/node" | cut -f1)（$("$APP/Contents/Resources/node/bin/node" --version)）"
+mkdir -p "$APP/Contents/Resources/zhiqu-cli"
+cp "$ROOT/zhiqu-cli/package.json" "$APP/Contents/Resources/zhiqu-cli/package.json"
+cp -R "$ROOT/zhiqu-cli/src" "$APP/Contents/Resources/zhiqu-cli/src"
+"$APP/Contents/Resources/node/bin/node" --check "$APP/Contents/Resources/zhiqu-cli/src/host/code-host.js" || { echo "包里的宿主语法不对"; exit 1; }
+echo "    宿主     $(du -sh "$APP/Contents/Resources/zhiqu-cli" | cut -f1)（zhiqu-cli/src，本机代码助手）"
 
 echo "==> 2/5 生成应用图标"
 # 图标是设计稿（第七十二轮：知字图标设计方案），这里按 macOS 图标的版式四周留白做成 iconset。
@@ -59,7 +65,7 @@ swiftc -O -target arm64-apple-macos13.0 \
   -framework AppKit -framework WebKit -framework UserNotifications \
   -o "$APP/Contents/MacOS/$NAME" "$SWIFT_BUILD/main.swift" \
   "$ROOT/deploy/desktop/macos-shell/Server.swift" "$ROOT/deploy/desktop/macos-shell/PageView.swift" \
-  "$ROOT/deploy/desktop/macos-shell/MiniPanel.swift"
+  "$ROOT/deploy/desktop/macos-shell/MiniPanel.swift" "$ROOT/deploy/desktop/macos-shell/LocalAgent.swift"
 rm -rf "$SWIFT_BUILD"
 echo "    外壳  $(du -h "$APP/Contents/MacOS/$NAME" | cut -f1)"
 

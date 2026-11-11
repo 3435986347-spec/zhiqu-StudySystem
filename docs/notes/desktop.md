@@ -118,3 +118,16 @@ dmg 一百多 MB，超过 GitHub 单个文件的上限，也不能进 `static/`�
 跑判据时「没有保存成功」的系统提示框弹到了用户的屏幕上（用户以为是磁盘满了）。
 
 验证真应用时**不要让它打开线上网站**（那是用户的真账号）：`defaults write com.zhiqu.quadrant server http://127.0.0.1:18080`，后端连 `zhiqu_verify` 库。
+
+## 本机代码助手（第一百二十九轮，方案第 2 步）
+- 外壳 `LocalAgent.swift` 按需起包里的 node 跑 `Resources/zhiqu-cli/src/host/code-host.js`（打包脚本拷 `zhiqu-cli/package.json` + `src/`）。协议和后端起它的那一份同一个；
+  run 里带 `local: { server, token }` 就是本机模式：模型、模型列表、远程工具直接走网站的网关（命令行的 `Api`），命令在本机系统沙箱里跑（`DesktopTools`），写只成草稿。
+- 令牌：页面用网页的登录态 `POST /api/access-tokens/desktop-code` 签一张（`DESKTOP_CODE`，12 小时，只认 `GET /api/harness/models`、`POST /api/harness/model/stream`、
+  `GET /api/harness/tools`、`POST /api/harness/tools/call`），经 `zqLocal` 桥交给外壳、外壳经 stdin 交给宿主；宿主和外壳发给页面的每一行里出现令牌都换成 `zqp_…`。
+- 页面不可信，run 里要紧的字段外壳自己定：根目录只认用户在系统选框里选过的（`LocalFolders`，存偏好设置，不收 `/`、家目录和装着家目录的；路径用 `realpath` ——
+  `URL.resolvingSymlinksInPath` 会把 `/private/var` 写回 `/var`）、服务器是 `Server.url`、家目录、联网档（`defaults write com.zhiqu.quadrant sandboxNetwork off|local|on`，默认 on）。
+- 宿主的环境只有 `PATH`、`HOME`、`TMPDIR`、`LANG`（HOME / TMPDIR 是这一轮自己的空目录）；沙箱挡的家目录经 `run.home` 另给 —— 照宿主自己的 HOME 算会挡错地方。
+- 叫停：stdin 一行 `{"type":"stop"}` → 5 秒 SIGTERM → 3 秒 SIGKILL；宿主收到 stop / SIGTERM / stdin 关掉都中断、收掉后台命令、照实交 result。应用退出时 SIGTERM。
+- 桥 `zqLocal`（带回复）：`status` / `pick` / `run` / `stop`；事件是 `window` 上的 `zq-local`（detail 是宿主的一行 + `runId`，最后一定有 `{type: 'exit'}`）。只认自己网站的主框架，只有主窗口接。
+- 判据：`DesktopLocalAgentTest`（真编译外壳、真起 node、真沙箱、Java 起的假网关）、`zhiqu-cli/test/desktop-host.test.js`。页面那一侧（选文件夹的按钮、代码模式在桌面里走桥、确认草稿写盘）是第 3 步。
+

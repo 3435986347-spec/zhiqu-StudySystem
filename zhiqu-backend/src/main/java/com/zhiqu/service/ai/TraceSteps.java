@@ -23,7 +23,7 @@ import java.util.Set;
 public final class TraceSteps {
 
     public static final Set<String> KINDS = Set.of("thinking", "list", "read", "search", "run", "create", "edit", "patch", "delete",
-            "web", "retrieve", "tasks", "wiki", "plan", "memory", "check", "agent", "todo", "other");
+            "web", "retrieve", "tasks", "wiki", "plan", "memory", "check", "agent", "todo", "note", "other");
     private static final Set<String> STATUSES = Set.of("running", "ok", "error");
 
     /** 一轮最多存多少步；再多的只记个数（页面上说「后面还有 N 步没列出」） */
@@ -199,7 +199,7 @@ public final class TraceSteps {
         if (raw.get("ms") instanceof Number ms) {
             s.put("ms", Math.max(0L, ms.longValue()));
         }
-        if (raw.get("detail") instanceof Map<?, ?> detail) {
+        if (raw.get("detail") instanceof Map<?, ?> detail && !"note".equals(s.get("kind"))) {
             Map<String, Object> d = detail((Map<String, Object>) detail);
             if (!d.isEmpty()) {
                 s.put("detail", d);

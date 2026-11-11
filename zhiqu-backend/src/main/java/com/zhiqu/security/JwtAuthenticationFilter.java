@@ -54,7 +54,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // 就是没登录 —— 不报「令牌无效」，也不回落去当 JWT 解析。
             String path = request.getRequestURI().substring(request.getContextPath().length());
             if (HarnessPaths.acceptsAccessToken(path)) {
-                authenticateAccessToken(request, token);
+                authenticateAccessToken(request, token, path);
             }
             filterChain.doFilter(request, response);
             return;
@@ -90,10 +90,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private void authenticateAccessToken(HttpServletRequest request, String token) {
+    private void authenticateAccessToken(HttpServletRequest request, String token, String path) {
         try {
             UserAccessToken row = accessTokenService.authenticate(token, clientIpResolver.resolve(request));
             if (row == null) {
+                SecurityContextHolder.clearContext();
+                return;
+            }
+            // 范围（第一百二十九轮）：桌面版本机代码的令牌只认那几个接口，别的 harness 接口上它就是没登录
+            if (!HarnessPaths.allowsScope(row.getScope(), request.getMethod(), path)) {
                 SecurityContextHolder.clearContext();
                 return;
             }

@@ -1,9 +1,10 @@
 // 思考过程不展示（用户 2026-09-28：「思考内容不要展示出来，用一个动态的小的像素图案来表示在思考，并且说明在思考中，
 // 然后只告诉用户结论和更改了什么，不要展现废话」）。
-//   - 模型在调工具的那几条回复里写的字 = 思考过程，不打印；只打印最后的结论（不再调工具的那条）；
-//   - 读 / 搜 / 列目录只在状态行里一闪；写 / 删 / 跑命令（改了什么）照常打印；
-//   - 思考时状态行是一个动态的像素图案 +「思考中 Ns」；
-//   - /verbose 切回全显示。
+// 第一百三十轮改了一条：调工具前的那一句是给用户看的判断，有字就打一行（截到 40 字），不把整段推测铺出来。
+//   - 思考通道（reasoning）照旧不打，只在状态行里说「思考中」；
+//   - 不调工具的那一条才是结论、才整段打；
+//   - 读 / 搜 / 列目录只在状态行里一闪，不留成行；写 / 删 / 跑命令（改了什么）照常打印；
+//   - /verbose 切回全显示，判断那一行不重复打。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';
@@ -43,8 +44,11 @@ test('默认：思考过程不打印，读文件不留行；结论和改了什�
   const r = await runTurn(ctx, '修一下 a.js');
   const out = ctx.ui.text();
   assert.ok(out.includes('改好了：a.js 第 1 行补了分号。'), out);
-  assert.ok(!out.includes('我陷入困境'), `思考过程被打印了：\n${out}`);
-  assert.ok(!out.includes('找到了：第 1 行少了分号'), '调工具那条回复里的字也是过程，不打印');
+  assert.equal((out.match(/改好了：a\.js 第 1 行补了分号/g) || []).length, 1, '结论打了不止一遍');
+  assert.ok(out.includes('· 我先看看这个文件'), `调工具前的判断没打出来：\n${out}`);
+  assert.ok(out.includes('· 找到了：第 1 行少了分号，我来改。'), out);
+  assert.ok(out.indexOf('· 找到了') < out.indexOf('⏺ 修改'), `判断要在工具那一行前面：\n${out}`);
+  assert.ok(!out.includes('我陷入困境'), `太长的判断没截断：\n${out}`);
   assert.ok(!/⏺ 读取 a\.js/.test(out), '读文件不该留成一行');
   assert.match(out, /⏺ 修改 a\.js/);
   assert.match(out, /\+const a = 1;/, '改了什么要看得到（diff）');
@@ -58,6 +62,8 @@ test('/verbose：全显示（思考过程、读文件的每一步）', async () 
   await runTurn(ctx, '修一下 a.js');
   const out = ctx.ui.text();
   assert.ok(out.includes('我陷入困境'));
+  assert.ok(!out.includes('· 我先看看'), 'verbose 本来就边收边打，不该再打一行判断');
+  assert.equal((out.match(/我陷入困境/g) || []).length, 1, 'verbose 把判断又打了一遍');
   assert.match(out, /⏺ 读取 a\.js/);
   assert.ok(out.includes('改好了'));
 });
@@ -113,11 +119,13 @@ test('/resume 回放按同一个规矩：默认不显示调工具那几条里的
   const quiet = fakeUi([]);
   replayTranscript(quiet, ctx.store.transcript(ctx.session.id));
   const q = quiet.text();
-  assert.ok(!q.includes('我陷入困境') && !/⏺ 读取 a\.js/.test(q), q);
-  assert.ok(q.includes('改好了') && /⏺ 修改 a\.js/.test(q), q);
+  assert.ok(q.includes('· 我先看看这个文件') && !q.includes('我陷入困境') && !/⏺ 读取 a\.js/.test(q), q);
+  assert.ok(q.includes('· 找到了：第 1 行少了分号') && q.includes('改好了') && /⏺ 修改 a\.js/.test(q), q);
+  assert.ok(q.indexOf('· 找到了') < q.indexOf('⏺ 修改'), q);
   const loud = fakeUi([]);
   replayTranscript(loud, ctx.store.transcript(ctx.session.id), { verbose: true });
   assert.ok(loud.text().includes('我陷入困境') && /⏺ 读取 a\.js/.test(loud.text()));
+  assert.ok(!loud.text().includes('· 我先看看'), 'verbose 回放不该再打一行判断');
 });
 
 // ── 不空转（用户：「明明是一个很小的问题却一直在思考循环，然后也很容易达到上下文上限」）──────────────
@@ -264,6 +272,35 @@ test('系统提示里说清：互相不依赖的读 / 搜一次发几个，读�
   assert.match(BUILTIN_SYSTEM_PROMPT, /互相不依赖的读、搜、列目录放在同一次回复里一起发/);
   assert.match(BUILTIN_SYSTEM_PROMPT, /读文件读成段：不知道要哪几行就整份读/);
   assert.match(BUILTIN_SYSTEM_PROMPT, /里面的例子、边界情况（空的、重复的、顺序、出错的）都验证过了吗/, '第八十九轮：收尾检查带上例子和边界（这一句不花钱，第九十一轮去掉核对时留着）');
+  assert.match(BUILTIN_SYSTEM_PROMPT, /用户在看着/);
+  assert.match(BUILTIN_SYSTEM_PROMPT, /每次调工具之前先用一句话说判断/);
+  assert.match(BUILTIN_SYSTEM_PROMPT, /不超过 40 字/);
+  assert.ok(!BUILTIN_SYSTEM_PROMPT.includes('用户看不到你调工具前写的字'), '还在告诉模型用户看不到判断');
+});
+
+test('安静模式：没有字不打空行；判断不进结论、也不进核对', async () => {
+  const root = tmpdir();
+  write(root, 'a.js', 'x\n');
+  const blank = makeCtx({ root, replies: [
+    { text: ' \n\t ', calls: [{ name: 'read_file', args: { path: 'a.js' } }] },
+    { text: '好' },
+  ] });
+  await runTurn(blank, '看');
+  const lines = blank.ui.text().split('\n').map((s) => s.trim()).filter(Boolean);
+  assert.ok(!lines.some((l) => l === '·' || l.startsWith('· ')), `空白判断打出来了：\n${lines.join('\n')}`);
+  assert.ok(lines.some((l) => l.includes('好')));
+
+  const seen = [];
+  const ctx = makeCtx({ root, replies: [
+    { text: '已写入文件 new.txt', calls: [{ name: 'write_file', args: { path: 'new.txt', content: 'a\n' } }] },
+    { text: '草稿好了' },
+  ] });
+  ctx.claimCheck = (t) => { seen.push(t); return /已写入文件/.test(t) ? '不要说写入了' : null; };
+  const r = await runTurn(ctx, '写');
+  assert.deepEqual(seen, ['草稿好了'], '核对看了调工具前的那一句');
+  assert.equal(r.finalText, '草稿好了');
+  assert.ok(ctx.ui.text().includes('· 已写入文件 new.txt'));
+  assert.equal((ctx.ui.text().match(/草稿好了/g) || []).length, 1);
 });
 
 // 第八十九轮（真模型试出来的）：推了一句以后，前面那条结论原来先打一遍、推完又打一遍。核对第九十一轮去掉了，清单没做完那一句还是这样

@@ -6,20 +6,25 @@
 //                step（轨迹里的一句）、trace（回答里按顺序列出的一步，第一百二十七轮，形状见 steps.js）、result（收尾）、fatal（出错了）
 // 门（是不是管理员、工作区档位、写意图、能不能执行）后端判好了才起这个进程；模型和命令都回到后端去做 —— 这里只有循环和工作区的读、草稿。
 // 认不出的消息就停，不猜。
+//
+// 桌面版本机代码助手（第一百二十九轮，docs/desktop-remote-plan.md 第 2 步）：Mac 桌面外壳也起这个进程，协议同一个（run → step / trace → result），
+// 只是旁边没有后端 —— run 里带 local: { server, token }，模型和远程工具直接走服务器网关（和命令行同一份 Api），命令在本机的系统沙箱里跑（DesktopTools），
+// 不往外壳要 model / exec / tool。外壳可以叫停：一行 { type: 'stop' }、关掉 stdin、或者 SIGTERM。
 import { normalizeEffort } from '../config.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { PassThrough, Writable } from 'node:stream';
-import { ApiError } from '../api.js';
-import { runTurn } from '../agent.js';
+import { Api, ApiError } from '../api.js';
+import { REMOTE_READ_TOOLS, runTurn } from '../agent.js';
 import { initPrompt } from '../instructions.js';
 import { StepLog } from '../steps.js';
 import { BUILTIN_SYSTEM_PROMPT } from '../prompt.js';
 import { collectChanges, nothingReport, parseReviewWords, renderReport, reviewSpec, runReview } from '../review.js';
 import { detectSandbox } from '../tools/sandbox.js';
-import { ArtifactTools, DraftTools } from '../tools/drafts.js';
+import { ArtifactTools, DesktopTools, DraftTools } from '../tools/drafts.js';
+import { NETWORK_MODES } from '../tools/sandbox.js';
 import { Ui } from '../ui.js';
 
 /** 一行一个 JSON 的两头。send 写给后端；pending 等后端回音 */
@@ -29,24 +34,41 @@ export function createBridge({ input, output }) {
   // 已经收尾的请求（中断了、出错了、done 了）：后端在半路的回音还可能到 —— 认得、丢掉，不当成「认不出的消息」停下（第九十九轮 review）
   const retired = new Set();
   let onRun = null;
+  let onStop = null;
   let closed = false;
-  const send = (msg) => { if (!closed) output.write(`${JSON.stringify(msg)}\n`); };
+  // 不能出现在任何一行里的字（桌面版的令牌）：多一道，万一哪条报错把它带出来，换成 zqp_…
+  const secrets = [];
+  const line = (msg) => {
+    let text = JSON.stringify(msg);
+    for (const s of secrets) text = text.split(s).join('zqp_…');
+    return text;
+  };
+  const send = (msg) => { if (!closed) output.write(`${line(msg)}\n`); };
+  const stop = () => { if (onStop) { const f = onStop; onStop = null; f(); } };
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
   const fail = (message) => { send({ type: 'fatal', message }); closed = true; lines.close(); };
   lines.on('line', (line) => {
     let msg;
     try { msg = JSON.parse(line); } catch { fail('收到的不是 JSON'); return; }
     if (msg.type === 'run' && onRun) { const f = onRun; onRun = null; f(msg); return; }
+    // 叫停（第一百二十九轮，桌面外壳）：后端从来不发，发了也只是中断这一轮
+    if (msg.type === 'stop') { stop(); return; }
     if (retired.has(msg.id) && ['event', 'error', 'exec_result', 'tool_result'].includes(msg.type)) return;
     const waiter = pending.get(msg.id);
     if (!waiter || !['event', 'error', 'exec_result', 'tool_result'].includes(msg.type)) { fail(`认不出的消息：${String(msg.type).slice(0, 40)}`); return; }
     waiter(msg);
   });
-  lines.on('close', () => { for (const w of pending.values()) w({ type: 'error', message: '后端关掉了连接', retryable: false }); pending.clear(); });
+  lines.on('close', () => { for (const w of pending.values()) w({ type: 'error', message: '后端关掉了连接', retryable: false }); pending.clear(); stop(); });
   const retire = (id) => { pending.delete(id); retired.add(id); };
   return {
     send,
     fail,
+    line,
+    /** 这些字不许出现在发出去的任何一行里 */
+    redact: (s) => { if (typeof s === 'string' && s.length >= 8) secrets.push(s); },
+    /** 外壳叫停时做什么（只有桌面版设）；SIGTERM 也走这里 */
+    onStop: (f) => { onStop = f; },
+    requestStop: stop,
     nextRun: () => new Promise((resolve) => { onRun = resolve; }),
     /** 和 Api.stream 一样的样子：事件一个个交给 onEvent，done 之后返回；出错抛 ApiError（循环据此决定重不重试） */
     stream(pathname, body, onEvent, { signal } = {}) {
@@ -144,12 +166,51 @@ async function reviewHosted(ctx, message, signal, home) {
   return r.error || r.text;
 }
 
+/**
+ * 桌面版（第一百二十九轮）：run.local 给的服务器和令牌。服务器只认 http(s) 的地址，令牌只认 zqp_ 开头的 ——
+ * 外壳自己定服务器（不听页面的），这里再挡一次形状。不是桌面版返回 null；给了却不对抛错。
+ */
+export function desktopTarget(run) {
+  if (!run || run.local == null) return null;
+  const { server, token } = run.local || {};
+  let url = null;
+  try { url = new URL(String(server)); } catch { /* 下面说 */ }
+  if (!url || !['http:', 'https:'].includes(url.protocol)) throw new Error('本机代码助手没拿到服务器地址');
+  if (typeof token !== 'string' || !/^zqp_[A-Za-z0-9_-]{16,}$/.test(token)) throw new Error('本机代码助手没拿到登录令牌（页面要先签一张）');
+  if (typeof run.home !== 'string' || !path.isAbsolute(run.home)) throw new Error('本机代码助手没拿到家目录（沙箱要挡它）');
+  return { server: url.origin, token };
+}
+
+/** 桌面版：用哪个模型 —— 页面选的那个（没有就用账号的默认），和命令行的 pickModel 同一个口径 */
+async function desktopModel(api, wanted, signal) {
+  const { models, defaultModelId } = await api.get('/api/harness/models', { signal, timeoutMs: 15_000 });
+  if (!Array.isArray(models) || !models.length) throw new Error('这个账号还没有可用的模型：请先在「设置 → AI 模型」里配一个');
+  const id = wanted && typeof wanted === 'object' ? wanted.id : wanted;
+  return (id != null && models.find((m) => String(m.id) === String(id))) || models.find((m) => m.id === defaultModelId) || models[0];
+}
+
 /** 跑一轮：run 消息 → 循环 → result。返回 result（测试直接调） */
-export async function runHosted(bridge, run) {
-  const Tools = run.artifact ? ArtifactTools : DraftTools;   // 生成到产物：写进临时空间，不走草稿
-  const local = new Tools({ root: run.root, exec: (req, opts) => bridge.exec(req, opts),
-    canWrite: Boolean(run.canWrite), canExec: Boolean(run.canExec), canShell: Boolean(run.canShell), shellWrite: Boolean(run.shellWrite), hosted: Boolean(run.hosted),
-    sandboxNetwork: typeof run.sandboxNetwork === 'string' ? run.sandboxNetwork : 'off', commands: Array.isArray(run.commands) ? run.commands.map(String) : [] });
+export async function runHosted(bridge, run, { detectBox = detectSandbox } = {}) {
+  let desktop = null;
+  try {
+    desktop = desktopTarget(run);
+  } catch (e) {
+    return { type: 'result', text: '', conclusion: String(e.message || e), context: '', drafts: [], writeCalls: 0, usage: { prompt: 0, completion: 0, cached: 0 }, rounds: 0, aborted: false, error: String(e.message || e) };
+  }
+  if (desktop) bridge.redact(desktop.token);
+  const network = typeof run.sandboxNetwork === 'string' ? run.sandboxNetwork : 'off';
+  let local;
+  if (desktop) {
+    // 有系统沙箱才给命令；联网档认不出的照断网（sandbox.js 本身也这样算）
+    const box = run.canShell ? detectBox() : null;
+    local = new DesktopTools({ root: run.root, canWrite: Boolean(run.canWrite), sandbox: box, shellWrite: Boolean(run.shellWrite),
+      sandboxNetwork: NETWORK_MODES.includes(network) ? network : 'off', home: run.home });
+  } else {
+    const Tools = run.artifact ? ArtifactTools : DraftTools;   // 生成到产物：写进临时空间，不走草稿
+    local = new Tools({ root: run.root, exec: (req, opts) => bridge.exec(req, opts),
+      canWrite: Boolean(run.canWrite), canExec: Boolean(run.canExec), canShell: Boolean(run.canShell), shellWrite: Boolean(run.shellWrite), hosted: Boolean(run.hosted),
+      sandboxNetwork: network, commands: Array.isArray(run.commands) ? run.commands.map(String) : [] });
+  }
   let transcript = '';
   const ui = new Ui({ input: new PassThrough(), output: new Writable({ write(c, e, cb) { transcript += c; cb(); } }), interactive: false, color: false });
   // 轨迹：每一步（读了什么、改了什么、跑了什么）交给后端，网页的「执行轨迹」照命令行的说法显示
@@ -157,7 +218,8 @@ export async function runHosted(bridge, run) {
   ui.step = (text) => { bridge.send({ type: 'step', text: String(text) }); return step(text); };
   // 回答里按顺序列出的每一步（第一百二十七轮，像 Codex）：开始一条、结束一条，形状见 steps.js
   const stepLog = new StepLog((s) => bridge.send({ type: 'trace', step: s }));
-  const api = { stream: (p, body, onEvent, opts) => bridge.stream(p, body, onEvent, opts),
+  // 桌面版直接连服务器网关（和命令行同一份 Api）；后端起的那一份经 stdout 回给后端
+  const api = desktop ? new Api({ server: desktop.server, token: desktop.token }) : { stream: (p, body, onEvent, opts) => bridge.stream(p, body, onEvent, opts),
     post: async (p, body, opts) => {
       if (p !== '/api/harness/tools/call') throw new ApiError('这里没有这个远程接口', { retryable: false });
       return bridge.tool(body.name, body.arguments, opts);
@@ -174,9 +236,14 @@ export async function runHosted(bridge, run) {
     effort: normalizeEffort(run.effort) || 'instant',
   };
   // 远程工具（第九十五轮）：一直给的那几个 + 真的跑过一次命令之后才给的（create_wiki_patch：判过题才许记薄弱点）。工具表每一轮重建，所以随时变
-  const always = Array.isArray(run.remoteTools) ? run.remoteTools : [];
-  const afterRun = Array.isArray(run.remoteToolsAfterRun) ? run.remoteToolsAfterRun : [];
-  Object.defineProperty(ctx, 'remoteTools', { get: () => (local.ranCommand ? [...always, ...afterRun] : always), enumerable: true });
+  // 桌面版（第一百二十九轮）没有后端替它挑：开工前问服务器要（和命令行同一份清单，执行的也是那一份），只读档只留读的
+  if (!desktop) {
+    const always = Array.isArray(run.remoteTools) ? run.remoteTools : [];
+    const afterRun = Array.isArray(run.remoteToolsAfterRun) ? run.remoteToolsAfterRun : [];
+    Object.defineProperty(ctx, 'remoteTools', { get: () => (local.ranCommand ? [...always, ...afterRun] : always), enumerable: true });
+  } else {
+    ctx.remoteTools = [];
+  }
   // 说的和这一次做的对不上 —— 推一次让它照实做 / 照实说（第九十五轮，真浏览器里两回：0 轮就说「已生成三个文件的草稿」；
   // 0 轮就说「跑了 test_two_sum.py，输出 ok，三组断言全过」—— 解法还是 return []，根本没跑）
   // 审查的结论是 JSON，引用的代码里什么话都可能有：不拿它核对（命令行的 /review 也没有这一道）
@@ -200,6 +267,9 @@ export async function runHosted(bridge, run) {
   };
   const controller = new AbortController();
   const timer = run.timeoutMs ? setTimeout(() => controller.abort(), Number(run.timeoutMs)) : null;
+  // 外壳叫停（桌面版）：和到点一样中断，照实交 result。后端起的那一份、测试里的假桥没有这个方法
+  let stopped = false;
+  if (typeof bridge.onStop === 'function') bridge.onStop(() => { stopped = true; controller.abort(); });
   let error = null;
   let reviewed = null;
   let turn = null;
@@ -208,15 +278,24 @@ export async function runHosted(bridge, run) {
   const needsFolder = command && run.artifact;
   const before = ctx.messages.length;
   try {
+    if (desktop) {
+      ctx.model = await desktopModel(api, run.model, controller.signal);
+      const remote = await api.get('/api/harness/tools', { signal: controller.signal, timeoutMs: 15_000 }).catch((e) => { if (e && e.auth) throw e; return []; });
+      ctx.remoteTools = (Array.isArray(remote) ? remote : []).filter((t) => run.canWrite || REMOTE_READ_TOOLS.has(t && t.function && t.function.name));
+    }
     if (needsFolder) reviewed = `/${command} 要先选一个项目文件夹，现在是生成到产物，没有项目可看。`;
     else if (command === 'review') reviewed = await reviewHosted(ctx, String(run.message || ''), controller.signal, typeof run.home === 'string' ? run.home : undefined);
     else turn = await runTurn(ctx, command === 'init' ? initPrompt(fs.existsSync(path.join(local.root, 'ZHIQU.md'))) : String(run.message || ''), { signal: controller.signal });
   } catch (e) {
-    error = String((e && e.message) || e);
+    // 桌面版的令牌失效（过期 / 撤销）：命令行那句「请运行 zhiqu login」在这里没用
+    error = desktop && e && e.auth ? '本机代码助手的登录令牌失效了（过期或被撤销），重新发一次就会换一张新的。' : String((e && e.message) || e);
     // 审查的过程在单独的上下文里，这里没有别的字：不写一句，最终回答就只能照空的编
     if (command === 'review') reviewed = `审查没做完：${error}`;
   } finally {
     if (timer) clearTimeout(timer);
+    if (typeof bridge.onStop === 'function') bridge.onStop(null);
+    // 后台命令随这一轮收掉（桌面版：这个进程交完结果就退，留下的就没人管了；后端那一份由后端收）
+    if (desktop && local.jobs) local.jobs.stopAll();
   }
   const last = [...ctx.messages].reverse().find((m) => m.role === 'assistant' && !(m.tool_calls || []).length);
   const text = reviewed != null ? reviewed : last ? String(last.content || '') : '';
@@ -231,7 +310,7 @@ export async function runHosted(bridge, run) {
   // 线上那一次新建了 core.js、跑过测试，回答却说一个文件都没写、扯到上一轮的项目上
   const stoppedEarly = !ownText || error || controller.signal.aborted;
   const conclusion = reviewed != null ? reviewed : !stoppedEarly ? ownText
-    : unfinishedReport({ local, steps: ctx.steps || [], timedOut: controller.signal.aborted, error, budgetMs: Number(run.timeoutMs) || 0,
+    : unfinishedReport({ local, steps: ctx.steps || [], timedOut: controller.signal.aborted && !stopped, stopped, error, budgetMs: Number(run.timeoutMs) || 0,
         exhausted: Boolean(turn && turn.exhausted), stalled: Boolean(turn && turn.stalled), maxRounds: ctx.maxRounds });
   // 给后端写最终回答用的上下文：和 Java 循环同一个样子（每个工具的结果一段），最后是这份循环自己的结论
   const names = new Map();
@@ -242,16 +321,18 @@ export async function runHosted(bridge, run) {
   const writeCalls = ctx.messages.reduce((n, m) => n + (m.role === 'assistant' ? (m.tool_calls || []).filter((c) => ['write_file', 'edit_file', 'apply_patch'].includes(c.function.name)).length : 0), 0);
   return { type: 'result', text, conclusion, context, drafts: local.draftList(), writeCalls, usage: ctx.usage,
     rounds,
-    aborted: controller.signal.aborted, error };
+    aborted: controller.signal.aborted, error, ...(stopped ? { stopped: true } : {}) };
 }
 
 /**
  * 没做完时交给用户的那段话：做到哪了（改了哪些文件、跑了什么、最后一步是什么），怎么接着做。只说真的发生了的 ——
  * 改过的文件看草稿 / 产物的记录，跑过什么看步骤，不让模型另编。
  */
-export function unfinishedReport({ local, steps, timedOut, error, budgetMs, exhausted = false, stalled = false, maxRounds = 0 }) {
+export function unfinishedReport({ local, steps, timedOut, stopped = false, error, budgetMs, exhausted = false, stalled = false, maxRounds = 0 }) {
   // 几种停法分开说：到时间、真出错、轮数用尽、连着重复同一个调用被停下。原来只有前两种，用完轮数时 error 是 null，回答里会出现「半路出错停下了：null」
-  const why = timedOut ? `这一轮到了时间上限（${Math.round(budgetMs / 1000)} 秒），停在了半路`
+  // 用户在桌面上点了停（第一百二十九轮）也单说：不是到点，也不是出错
+  const why = stopped ? '这一轮被你停下了'
+    : timedOut ? `这一轮到了时间上限（${Math.round(budgetMs / 1000)} 秒），停在了半路`
     : error ? `这一轮半路出错停下了：${error}`
       : exhausted ? `这一轮用完了 ${maxRounds} 轮，停在了半路`
         : stalled ? '这一轮停下了：模型连着发同一个调用，结果一直没变'
@@ -280,6 +361,8 @@ export function unfinishedReport({ local, steps, timedOut, error, budgetMs, exha
 
 async function main() {
   const bridge = createBridge({ input: process.stdin, output: process.stdout });
+  // 桌面外壳退出时先 SIGTERM：和叫停一样中断、收掉后台命令、照实交 result（外壳等一会儿还没退才 SIGKILL）
+  process.on('SIGTERM', () => bridge.requestStop());
   const run = await bridge.nextRun();
   let last;
   try {
@@ -287,8 +370,8 @@ async function main() {
   } catch (e) {
     last = { type: 'fatal', message: String((e && e.message) || e) };
   }
-  // 管道上的 stdout 是异步的：写完最后一行再退出，不然后端可能收不到 result
-  process.stdout.write(`${JSON.stringify(last)}\n`, () => process.exit(0));
+  // 管道上的 stdout 是异步的：写完最后一行再退出，不然后端可能收不到 result。令牌照样不许出现（bridge.line 换掉）
+  process.stdout.write(`${bridge.line(last)}\n`, () => process.exit(0));
 }
 
 // 比真实路径（第九十六轮）：import.meta.url 是解过软链的，argv[1] 不是 —— macOS 的临时目录 /var 是 /private/var 的软链，

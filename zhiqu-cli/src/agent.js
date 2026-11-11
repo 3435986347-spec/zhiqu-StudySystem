@@ -27,7 +27,7 @@ import { spillLongInput } from './longinput.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
-import { listDetail, patchDetail, runDetail, writeDetail } from './steps.js';
+import { judgmentText, listDetail, patchDetail, runDetail, writeDetail } from './steps.js';
 
 export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks']);
 /** 远程工具里**直接生效**的（不是草稿）：plan 档不给，ask 档先问（第二十九轮，用户定的「改状态直接做」）。 */
@@ -1144,11 +1144,14 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     // 思考那一步在工具调用之后才收尾（第一百二十八轮）：原来紧跟着模型调用就记，那时还不知道这一轮要调工具，
     // 网页上「思考」排在「读取 / 运行」后面 —— 和实际顺序反了。现在它排在这一次调用的工具前面，用时也照实
     if (ctx.stepLog && res.thought) ctx.stepLog.thinking(res.thought.chars, res.thought.ms, res.thought.text);
+    // 调工具前的那一句（第一百三十轮）：有字就马上打一行，排在工具前面。结论还是只认最后那句（下面不调工具的那条）。
+    // --verbose 边收边打过了，这里不重复打；步骤照样记（网页 / 存档要这一条）
+    if (calls.length) showJudgment(ctx, message.content);
     // 原地重复：历史和回答里只留开头一段
     const looping = res.finishReason === 'length' && !calls.length && repeating(message.content);
     if (looping) message.content = loopTrimmed(message.content);
 
-    // 安静模式下文字是收完才打的：不调工具的那条就是结论（被截断的结论也是结论的一段），调工具的那条是过程，不打
+    // 安静模式：不调工具的那条才是结论，收完才打（被截断的结论也是结论的一段）。调工具前的那一句已经在上面打过一行
     const nudge = calls.length || res.finishReason === 'length' ? null
       : pendingNudge(ctx, message.content, { nudged, claimChecked, lastRound: round === maxRounds - 1 });
     if (quiet(ctx) && !calls.length && !nudge && !looping && (message.content || '').trim()) showAnswer(ctx, message.content);
@@ -1273,6 +1276,14 @@ export function recordExchange(ctx, userText, answer) {
   if (!ctx.store || !ctx.session) return;
   if (!ctx.session.title) ctx.session.title = userText.replace(/\s+/g, ' ').slice(0, 40);
   ctx.store.touch(ctx.session.id, { title: ctx.session.title, messages: ctx.messages.length });
+}
+
+/** 调工具前的那一句判断：安静模式打一行灰字；步骤里一条 note（点不开）。空白不打、不记。 */
+function showJudgment(ctx, text) {
+  const said = judgmentText(text);
+  if (!said) return;
+  if (quiet(ctx) && ctx.ui) ctx.ui.note(`· ${said}`);
+  if (ctx.stepLog) ctx.stepLog.note(said);
 }
 
 /** 结论：一次整段打（按 Markdown 渲染）。 */

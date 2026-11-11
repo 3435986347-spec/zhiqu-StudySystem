@@ -283,9 +283,12 @@ const lineCount = (s) => (s === '' ? 0 : s.split('\n').length - (s.endsWith('\n'
 
 export class LocalTools {
   /** sandbox：detectSandbox() 的结果；没给（null）就没有 shell，退回白名单的 run_command。sandboxNetwork 只由用户级配置和命令行参数定 */
-  constructor({ root, extensions, maxFileBytes, commands, execTimeoutMs = 120_000, sandbox = null, sandboxNetwork = 'off' } = {}) {
+  constructor({ root, extensions, maxFileBytes, commands, execTimeoutMs = 120_000, sandbox = null, sandboxNetwork = 'off', home } = {}) {
     this.sandbox = sandbox;
     this.sandboxNetwork = sandboxNetwork;
+    // 沙箱要挡的家目录（第一百二十九轮）：不给就是这个进程的 HOME（命令行）。桌面外壳起的宿主自己的 HOME 是一个空目录，
+    // 照它算会挡错地方 —— 家目录下的工具链读不到、工作区就是家目录时 ~/.ssh 漏出去 —— 所以外壳把真的家目录交过来
+    this.home = home;
     this.jobs = new ShellJobs();
     this.guard = new WorkspaceGuard(root, {
       extensions: extensions || DEFAULT_EXTENSIONS, maxFileBytes: maxFileBytes || DEFAULT_MAX_FILE_BYTES,
@@ -931,7 +934,7 @@ export class LocalTools {
   /** unsandboxed：只有 ask 档用户当场点了才有（agent.js 的 shell 分支） */
   async commitShell(prep, { policy = WORKSPACE_WRITE, unsandboxed = false, signal, onOutput } = {}) {
     const launch = unsandboxed ? plainLaunch({ command: prep.command })
-      : sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork });
+      : sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork, home: this.home });
     const timeoutMs = prep.timeoutSeconds ? prep.timeoutSeconds * 1000 : this.execTimeoutMs;
     const r = await runProcess({ binary: launch.binary, args: launch.args, cwd: prep.cwd, env: launch.env, timeoutMs, signal, onOutput });
     return shellOutcome(prep, r, { boundary: describeBoundary({ policy, network: this.sandboxNetwork }), sandboxed: !unsandboxed });
@@ -939,7 +942,7 @@ export class LocalTools {
 
   /** background: true。起完等一小会儿：立刻失败的（端口被占、命令写错）当场看得到 */
   async startJob(prep, { policy = WORKSPACE_WRITE, signal } = {}) {
-    const launch = sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork });
+    const launch = sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork, home: this.home });
     const started = this.jobs.start({ ...launch, cwd: prep.cwd, command: prep.command });
     if (started.error) return { error: started.error };
     const snap = await this.jobs.read(started.id, { waitMs: START_WAIT_MS, signal });

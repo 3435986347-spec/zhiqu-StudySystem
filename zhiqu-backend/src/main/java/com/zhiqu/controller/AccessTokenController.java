@@ -53,6 +53,20 @@ public class AccessTokenController {
         return Result.success(out);
     }
 
+    /**
+     * 桌面版本机代码助手用的令牌（第一百二十九轮）：页面用网页的登录态换一张，经外壳交给它起的宿主。范围小、12 小时过期，
+     * 见 {@link AccessTokenService#SCOPE_DESKTOP_CODE}。和上面一样在这里而不在 /api/harness 下：令牌换不来令牌。
+     */
+    @PostMapping("/desktop-code")
+    public Result<Map<String, Object>> desktopCode() {
+        Long userId = SecurityUtils.getCurrentUserId();
+        AccessTokenService.Issued issued = tokens.issueDesktopCode(userId);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("token", issued.token());
+        out.put("expiresAt", issued.row().getExpiresAt());
+        return Result.success(out);
+    }
+
     @DeleteMapping("/{id}")
     public Result<Void> revoke(@PathVariable Long id) {
         tokens.revoke(SecurityUtils.getCurrentUserId(), id);

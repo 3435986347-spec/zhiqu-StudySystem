@@ -114,4 +114,49 @@ class HarnessUsageIntegrationTest {
         java.util.List<java.util.Map<String, Object>> rows = ai.getRecentChatMessages(me, notebookId, 10, null);
         assertTrue(rows.get(rows.size() - 1).get("steps") != null, "消息列表没带步骤：" + rows);
     }
+
+    /** 一次请求成没成：HTTP 200 而且业务码 200（没登录时是 401 / 403，或者 200 + 业务码不是 200） */
+    private JsonNode call(String method, String path, String token) throws Exception {
+        org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder b =
+                org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request(org.springframework.http.HttpMethod.valueOf(method), path)
+                        .header("Authorization", "Bearer " + token).header("Idempotency-Key", java.util.UUID.randomUUID().toString())
+                        .with(req -> { req.setRemoteAddr("100.64.9.9"); return req; });
+        org.springframework.mock.web.MockHttpServletResponse r = mvc.perform(b).andReturn().getResponse();
+        String text = r.getContentAsString(StandardCharsets.UTF_8);
+        if (r.getStatus() != 200 || text.isBlank()) return null;
+        JsonNode body = json.readTree(text);
+        return body.path("code").asInt() == 200 ? body : null;
+    }
+
+    /**
+     * 第一百二十九轮：桌面版本机代码助手的令牌。真接口、真库：网页的登录态签一张 → 本机代码要的接口认、别的 harness 接口不认、
+     * 令牌换不来令牌 → 过了期限就不认、设置里的列表也不再列它。
+     */
+    @Test
+    @DisplayName("本机代码的令牌：登录态签一张；模型列表认、用量和存档不认；令牌签不了令牌；过期后不认、列表里不再有")
+    void 本机代码的令牌() throws Exception {
+        jdbc.update("INSERT INTO sys_user(username, password, nickname, role, status, deleted) VALUES ('desk-me', 'x', 'desk-me', 'USER', 1, 0)");
+        Long me = jdbc.queryForObject("SELECT id FROM sys_user WHERE username = 'desk-me'", Long.class);
+        String jwtToken = jwt.generateToken(me, "desk-me", 0, 3_600_000L);
+        JsonNode minted = call("POST", "/api/access-tokens/desktop-code", jwtToken);
+        assertTrue(minted != null, "网页的登录态签不出本机代码的令牌");
+        String desk = minted.path("data").path("token").asText();
+        assertTrue(desk.startsWith("zqp_"), minted.toString());
+        assertTrue(!minted.path("data").path("expiresAt").isMissingNode() && !minted.path("data").path("expiresAt").isNull(), "要告诉页面什么时候过期：" + minted);
+        assertEquals("DESKTOP_CODE", jdbc.queryForObject("SELECT scope FROM user_access_token WHERE user_id = ?", String.class, me));
+
+        assertTrue(call("GET", "/api/harness/models", desk) != null, "本机代码要挑模型，令牌却不认");
+        assertTrue(call("GET", "/api/harness/tools", desk) != null, "本机代码要远程工具，令牌却不认");
+        assertEquals(null, call("GET", "/api/harness/usage", desk), "本机代码的令牌不该看得到用量");
+        assertEquals(null, call("GET", "/api/harness/me", desk), "本机代码的令牌不该在 /me 被认");
+        assertEquals(null, call("POST", "/api/access-tokens/desktop-code", desk), "令牌换不来令牌");
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM user_access_token WHERE user_id = ?", Integer.class, me), "拿令牌又签出了一张");
+        JsonNode listed = call("GET", "/api/access-tokens", jwtToken);
+        assertTrue(listed != null && listed.path("data").toString().contains("DESKTOP_CODE"), "设置里的列表没列它（撤销不了）：" + listed);
+
+        jdbc.update("UPDATE user_access_token SET expires_at = ? WHERE user_id = ?", LocalDateTime.now().minusMinutes(1), me);
+        assertEquals(null, call("GET", "/api/harness/models", desk), "过了期限还认");
+        JsonNode after = call("GET", "/api/access-tokens", jwtToken);
+        assertTrue(after != null && after.path("data").isArray() && after.path("data").size() == 0, "过期的还列着：" + after);
+    }
 }

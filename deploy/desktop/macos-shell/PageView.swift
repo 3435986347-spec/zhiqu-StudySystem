@@ -69,7 +69,18 @@ private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
-final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler {
+/// 带回复的那种（本机代码助手的桥要把结果回给页面）同样会被强持有
+private final class WeakReplyHandler: NSObject, WKScriptMessageHandlerWithReply {
+    weak var target: WKScriptMessageHandlerWithReply?
+    init(_ target: WKScriptMessageHandlerWithReply) { self.target = target }
+    func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping (Any?, String?) -> Void) {
+        guard let target else { replyHandler(nil, "窗口已经关了"); return }
+        target.userContentController(c, didReceive: message, replyHandler: replyHandler)
+    }
+}
+
+final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     /// 弹文件选择面板，回调给选中的文件（nil = 取消）。检查程序换成不开面板的桩，外壳用默认的。
     var chooseFiles: (NSOpenPanel, NSWindow?, @escaping ([URL]?) -> Void) -> Void = { panel, window, done in
         if let window {
@@ -119,6 +130,19 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
     var allowedHosts: Set<String> = ["127.0.0.1", "localhost"]
     /// 主框架载入完了（nil）或者没载入成（断网、服务器在重启）：外壳据此收起「正在连接」或者说清楚
     var onLoad: (Error?) -> Void = { _ in }
+    /// 本机代码助手（第一百二十九轮，LocalAgent.swift）：只有主窗口设，迷你窗没有 —— 没设的页面问 zqLocal 一律回「没有」
+    var localAgent: LocalAgent?
+    /// 用户在系统选框里选过的项目文件夹；检查程序换成一份单独的偏好设置
+    var localFolders = LocalFolders()
+    /// 弹「选文件夹」的系统框（nil = 取消）。检查程序换成不开面板的桩
+    var chooseFolder: (NSOpenPanel, NSWindow?, @escaping (URL?) -> Void) -> Void = { panel, window, done in
+        if let window {
+            panel.beginSheetModal(for: window) { done($0 == .OK ? panel.url : nil) }
+        } else {
+            panel.begin { done($0 == .OK ? panel.url : nil) }
+        }
+    }
+    private var localRunSeq = 0
 
     /// persistent = false 只给检查程序用：不碰真实的 localStorage（登录态存在那里）。
     /// dataStore 也只给检查程序用：两个页面共用一份不落盘的网站数据，像主窗口和迷你窗共用 .default() 那样。
@@ -134,6 +158,7 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         uiDelegate = self
         config.userContentController.add(WeakMessageHandler(self), name: "zqNotify")
         config.userContentController.add(WeakMessageHandler(self), name: "zqMini")
+        config.userContentController.addScriptMessageHandler(WeakReplyHandler(self), contentWorld: .page, name: "zqLocal")
         setValue(false, forKey: "drawsBackground")
     }
 
@@ -171,6 +196,67 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         default:
             break
         }
+    }
+
+    // MARK: 本机代码助手（第一百二十九轮）
+
+    /// 页面经 zqLocal 问的（带回复，页面那边是 await postMessage(...)）：
+    ///   {action: "status"} → {available, running, folders, network}
+    ///   {action: "pick"} → 系统的选文件夹框 → {folder} / {cancelled: true}
+    ///   {action: "run", folder, message, history, model, effort, level, command, token} → {runId}；之后每一行经 zq-local 事件到页面
+    ///   {action: "stop"} → {stopping: true}
+    /// 和别的桥一样只认自己网站的主框架；根目录只认选过的文件夹，服务器地址用外壳自己的（见 LocalAgent.swift 开头）
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping (Any?, String?) -> Void) {
+        let origin = message.frameInfo.securityOrigin
+        guard message.frameInfo.isMainFrame, isOwnSite(scheme: origin.protocol, host: origin.host) else {
+            replyHandler(nil, "不认这个来源")
+            return
+        }
+        guard let agent = localAgent else { replyHandler(nil, "这个窗口没有本机代码助手"); return }
+        guard let body = message.body as? [String: Any], let action = body["action"] as? String else { replyHandler(nil, "认不出的请求"); return }
+        switch action {
+        case "status":
+            replyHandler(["available": agent.available, "running": agent.running, "folders": localFolders.all, "network": agent.config.network], nil)
+        case "pick":
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "用这个文件夹"
+            panel.message = "选一个项目文件夹：本机代码助手只在这里面读写、跑命令（读不到你的家目录）"
+            chooseFolder(panel, window) { [weak self] url in
+                guard let self, let url else { replyHandler(["cancelled": true], nil); return }
+                let added = self.localFolders.add(url)
+                if let path = added.path { replyHandler(["folder": path], nil) } else { replyHandler(nil, added.error ?? "这个文件夹不能用") }
+            }
+        case "run":
+            let (parsed, problem) = LocalRunRequest.parse(body)
+            guard let req = parsed else { replyHandler(nil, problem ?? "认不出的请求"); return }
+            guard localFolders.contains(req.folder) else { replyHandler(nil, "这个文件夹还没在「选文件夹」里选过"); return }
+            localRunSeq += 1
+            let runId = "local-\(localRunSeq)"
+            if let failed = agent.start(req, root: LocalFolders.real(req.folder), onMessage: { [weak self] m in self?.emitLocal(runId, m) }) {
+                replyHandler(nil, failed)
+            } else {
+                replyHandler(["runId": runId], nil)
+            }
+        case "stop":
+            agent.stop()
+            replyHandler(["stopping": true], nil)
+        default:
+            replyHandler(nil, "认不出的请求")
+        }
+    }
+
+    /// 宿主的一行交给页面：window 上一个 zq-local 事件（detail 是那一行，加上 runId）。页面已经不是自己的网站了就不给
+    private func emitLocal(_ runId: String, _ message: [String: Any]) {
+        guard let url, isOwnSite(scheme: url.scheme, host: url.host) else { return }
+        var detail = message
+        detail["runId"] = runId
+        guard let data = try? JSONSerialization.data(withJSONObject: detail), let json = String(data: data, encoding: .utf8) else { return }
+        evaluateJavaScript("window.dispatchEvent(new CustomEvent('zq-local', { detail: \(json) })); 0") { _, _ in }
     }
 
     // MARK: 文件选择

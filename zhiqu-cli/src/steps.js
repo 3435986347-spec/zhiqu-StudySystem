@@ -12,11 +12,15 @@
 //     read   { path, from, to, total }
 //     list / search  { items: [行], omitted }
 //     thinking { chars, text?, omitted? }   text 是思考原文（遮过密钥，最多 THINKING_KEEP 字），omitted = 没存下的字数
+//     note   没有 detail。调工具前的一句判断（第一百三十轮）：title 是那一句，点不开
 //   这里出的东西会进库、会给人看：每一样都有上限，超了说省掉了多少；命令输出、文件内容是不可信的 —— 只存字，前端一律转义。
 import { hunks, stat } from './render/diff.js';
 
 export const KINDS = Object.freeze(['thinking', 'list', 'read', 'search', 'run', 'create', 'edit', 'patch', 'delete',
-  'web', 'retrieve', 'tasks', 'wiki', 'plan', 'memory', 'check', 'agent', 'todo', 'other']);
+  'web', 'retrieve', 'tasks', 'wiki', 'plan', 'memory', 'check', 'agent', 'todo', 'note', 'other']);
+
+/** 调工具前那一句判断最多留这么多字（和系统提示里说的一样；再长的截断）。后端 TraceSteps 的标题上限也是这个数 */
+export const NOTE_CHARS = 40;
 
 export const OUTPUT_HEAD = 20;
 export const OUTPUT_TAIL = 40;
@@ -106,6 +110,16 @@ export class StepLog {
     this.current = null;
   }
 
+  /**
+   * 调工具之前模型写的那一句判断（第一百三十轮）。一行字，不是一个动作：没有细节、点不开。
+   * 空白的不记。太长的截到 {@link NOTE_CHARS}，并说截了。
+   */
+  note(text) {
+    const shown = judgmentText(text);
+    if (!shown) return;
+    this.emit({ id: `s${++this.seq}`, kind: 'note', title: shown, target: '', summary: '', status: 'ok' });
+  }
+
   /** 一段思考（模型这一次在想、没出字）：字数、用了多久 */
   thinking(chars, ms, text = '') {
     if (!(chars > 0)) return;
@@ -162,6 +176,16 @@ const SECRET_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
 ];
 const SECRET_ASSIGN = /\b([A-Za-z0-9_.-]*(?:pass(?:word|wd)?|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credential)[A-Za-z0-9_.-]*)(\s*[=:]\s*)(["']?)([^\s"']{4,})\3/gi;
+/**
+ * 调工具前那一句，收成一行给终端和步骤用。空白（没写判断）返回空串。
+ * 换行、连着的空白收成一个空格；像密钥的串遮掉；超过 {@link NOTE_CHARS} 的截断。
+ */
+export function judgmentText(text) {
+  const flat = redact(String(text || '')).replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  return flat.length > NOTE_CHARS ? `${flat.slice(0, NOTE_CHARS - 1)}…` : flat;
+}
+
 export function redact(text) {
   let t = String(text == null ? '' : text);
   for (const p of SECRET_PATTERNS) t = t.replace(p, '［已遮住］');

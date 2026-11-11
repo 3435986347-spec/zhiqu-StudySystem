@@ -49,15 +49,20 @@ class AccessTokenScopeTest {
     }
 
     private Authentication run(String path) throws Exception {
+        return run("GET", path, AccessTokenService.SCOPE_HARNESS);
+    }
+
+    private Authentication run(String method, String path, String scope) throws Exception {
         UserAccessToken row = new UserAccessToken();
         row.setId(1L);
         row.setUserId(42L);
+        row.setScope(scope);
         when(tokens.authenticate(anyString(), any())).thenReturn(row);
         SysUser user = new SysUser();
         user.setId(42L);
         user.setStatus(1);
         when(users.selectById(42L)).thenReturn(user);
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", path);
+        MockHttpServletRequest request = new MockHttpServletRequest(method, path);
         request.addHeader("Authorization", "Bearer " + TOKEN);
         Authentication[] seen = new Authentication[1];
         filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain() {
@@ -68,6 +73,30 @@ class AccessTokenScopeTest {
         });
         SecurityContextHolder.clearContext();
         return seen[0];
+    }
+
+    /**
+     * 第一百二十九轮：桌面版本机代码的令牌经页面 → 外壳 → node 进程，多走两手，只给它本机代码要的四个接口。
+     * 命令行的令牌（HARNESS）照旧整个 /api/harness 都认（对照组：同一批路径它都认，说明挡下来的是范围，不是路径本身不存在）。
+     */
+    @Test
+    @DisplayName("桌面版本机代码的令牌：只认挑模型 / 调模型 / 远程工具四个接口（方法也要对）；会话存档、用量、/me、改上下文窗口不认；认不出的范围不认")
+    void 本机代码令牌的范围() throws Exception {
+        String desk = AccessTokenService.SCOPE_DESKTOP_CODE;
+        for (String[] ok : new String[][]{{"GET", "/api/harness/models"}, {"POST", "/api/harness/model/stream"},
+                {"GET", "/api/harness/tools"}, {"POST", "/api/harness/tools/call"}}) {
+            Authentication auth = run(ok[0], ok[1], desk);
+            assertTrue(auth != null && Long.valueOf(42L).equals(auth.getPrincipal()), "本机代码要用 " + ok[0] + " " + ok[1] + "，令牌却不认");
+        }
+        for (String[] no : new String[][]{{"GET", "/api/harness/me"}, {"GET", "/api/harness/usage"}, {"GET", "/api/harness/sessions"},
+                {"POST", "/api/harness/sessions"}, {"POST", "/api/harness/sessions/s1/messages"}, {"POST", "/api/harness/models/1/context-window"},
+                {"GET", "/api/harness/model/stream"}, {"DELETE", "/api/harness/tools/call"}, {"GET", "/api/harness/models/"}}) {
+            assertNull(run(no[0], no[1], desk), "本机代码的令牌不该在 " + no[0] + " " + no[1] + " 被认");
+            assertTrue(run(no[0], no[1], AccessTokenService.SCOPE_HARNESS) != null, "对照组：命令行的令牌在 " + no[1] + " 照样认");
+        }
+        assertNull(run("GET", "/api/harness/models", "ADMIN"), "认不出的范围要一律不认");
+        assertTrue(run("GET", "/api/harness/me", null) != null, "老的行范围是空的：照 HARNESS 认");
+        assertNull(run("POST", "/api/access-tokens/desktop-code", desk), "令牌换不来令牌");
     }
 
     @Test

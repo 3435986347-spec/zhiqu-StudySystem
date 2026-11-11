@@ -469,6 +469,8 @@ function traceDetailHtml(s) {
   return out;
 }
 function traceStepHtml(s, key) {
+  // 判断（第一百三十轮）：一行字，不是一个动作。点不开，不画细节，标题原样转义
+  if (s.kind === 'note') return '<div class="zq-trace-note" data-kind="note">' + esc(s.title || '') + '</div>';
   var state0 = s.status === 'running' ? 'running' : s.status === 'error' ? 'bad' : 'ok';
   var kind = TRACE_ICON[s.kind] ? s.kind : 'other';
   var line = '<span class="zq-trace-icon">' + icon(TRACE_ICON[kind]) + '</span>'

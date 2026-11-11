@@ -100,6 +100,20 @@ const tags = (h) => [...h.matchAll(/<\/?([a-z0-9]+)[\s>]/gi)].map((m) => m[1].to
     delete state.reasoningExpanded['req-1:t'];
   });
 
+  check('判断是一行字：点不开、不画细节、HTML 转义', () => {
+    const evil = '<img src=x onerror=alert(1)>';
+    state.reasoningExpanded['req-1:n'] = true;
+    const h = html([
+      { id: 'n', kind: 'note', title: evil, status: 'ok', detail: { text: '不该画出来' } },
+      { id: 'r', kind: 'read', title: '读取', target: 'a.js', status: 'ok' },
+    ]);
+    assert.match(h, /<div class="zq-trace-note" data-kind="note">&lt;img src=x onerror=alert\(1\)&gt;<\/div>/);
+    const note = h.slice(0, h.indexOf('data-kind="read"'));
+    assert.ok(!note.includes('<img') && !note.includes('<svg') && !h.includes('不该画出来'), h);
+    assert.equal((h.match(/<details/g) || []).length, 0);
+    delete state.reasoningExpanded['req-1:n'];
+  });
+
   check('合着的不画细节（几百 KB 的输出 / diff 不进 DOM）；点开才画；刷新后列表里只有 hasDetail，点开时显示「正在取」', () => {
     const big = 'x'.repeat(50000);
     const closed = html([{ id: 'r', kind: 'run', title: '运行', status: 'ok', detail: { command: 'x', exitCode: 0, output: big } }]);
