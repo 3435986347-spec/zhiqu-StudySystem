@@ -1,6 +1,6 @@
 ---
 name: commit
-description: 把当前改动整理成提交：按意图分组、写清为什么，产出给用户执行的 git 命令（这个环境不能写 .git）
+description: 要提交、整理提交、写 commit message、或问「这些改动怎么提交」时用。
 ---
 
 # 整理提交
