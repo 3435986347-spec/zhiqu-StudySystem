@@ -65,7 +65,8 @@ swiftc -O -target arm64-apple-macos13.0 \
   -framework AppKit -framework WebKit -framework UserNotifications \
   -o "$APP/Contents/MacOS/$NAME" "$SWIFT_BUILD/main.swift" \
   "$ROOT/deploy/desktop/macos-shell/Server.swift" "$ROOT/deploy/desktop/macos-shell/PageView.swift" \
-  "$ROOT/deploy/desktop/macos-shell/MiniPanel.swift" "$ROOT/deploy/desktop/macos-shell/LocalAgent.swift"
+  "$ROOT/deploy/desktop/macos-shell/MiniPanel.swift" "$ROOT/deploy/desktop/macos-shell/LocalAgent.swift" \
+  "$ROOT/deploy/desktop/macos-shell/Updater.swift" "$ROOT/deploy/desktop/macos-shell/UpdateBadge.swift"
 rm -rf "$SWIFT_BUILD"
 echo "    外壳  $(du -h "$APP/Contents/MacOS/$NAME" | cut -f1)"
 

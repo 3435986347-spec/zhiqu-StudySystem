@@ -44,12 +44,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 胶囊是面板，不算普通窗口；原来一点「缩小到桌面」主窗口一藏，整个应用连同后端就退出了（用户：「点击缩小到桌面会直接卡退」）
     private var inMiniMode = false
 
+    /// 自更新（第一百三十二轮）：左下角那颗胶囊 + 问版本、下载、换掉自己
+    private var updater: Updater!
+    private var updateBadge: UpdateBadge!
+    private var updateTimer: Timer?
+    private var lastUpdateCheck: Date?
+    /// 用户点过 × 的版本：这个版本不再提示，出了更新的再提示
+    private var skippedUpdate: String? {
+        get { UserDefaults.standard.string(forKey: "skippedUpdate") }
+        set { UserDefaults.standard.set(newValue, forKey: "skippedUpdate") }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 本机代码助手往宿主的管子里写：宿主先退了的话默认的 SIGPIPE 会把整个应用带走
         ignoreBrokenPipe()
         // 应用在前台时系统默认不弹横幅 —— 页面里已经有提示和声音了，这里仍然弹横幅、进通知中心（不带声音，见 PageView.deliverNotification）
         UNUserNotificationCenter.current().delegate = self
         makeWindow()
+        startUpdates()
         NSApp.activate(ignoringOtherApps: true)
         // 先清掉以前装上的 Service Worker 和它的缓存，再打开页面（第一百二十六轮）：不然断网时它拿缓存的页面顶上，
         // WebKit 当成载入成功，外壳不说「连不上」。登录态在 localStorage 里，不清
@@ -105,8 +117,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let drag = DragStrip(frame: NSRect(x: 0, y: frame.height - 28, width: frame.width, height: 28))
         drag.autoresizingMask = [.width, .minYMargin]
         content.addSubview(drag)
+        // 自更新的胶囊（第一百三十二轮）：左下角，没新版本时不出现；压在网页上面，只在自己那一块吃点击
+        updateBadge = UpdateBadge()
+        updateBadge.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(updateBadge)
+        NSLayoutConstraint.activate([
+            updateBadge.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            updateBadge.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+        ])
         window.contentView = content
         window.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - 自更新（第一百三十二轮）
+
+    /// 启动时问一次，之后每 6 小时问一次；从后台切回来时最多一小时问一次
+    /// （用户不会为了更新去重启应用，但也不能每分钟都去问服务器）
+    private func startUpdates() {
+        updater = Updater()
+        updater.onChange = { [weak self] phase in self?.apply(phase) }
+        updateBadge.onClick = { [weak self] in self?.tapUpdate() }
+        updateBadge.onSkip = { [weak self] in
+            guard let self else { return }
+            if let release = self.updater.phase.release { self.skippedUpdate = release.version }
+            self.updateBadge.show(.idle)
+        }
+        checkForUpdates()
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            self?.checkForUpdates()
+        }
+    }
+
+    private func checkForUpdates() {
+        lastUpdateCheck = Date()
+        updater.check()
+    }
+
+    /// 点胶囊：有新版本就开始下载，下载完就重启（中间那一下是用户自己点的，不会打断正在干的事）
+    private func tapUpdate() {
+        switch updater.phase {
+        case .available: updater.download()
+        case .ready: updater.restart()
+        default: break
+        }
+    }
+
+    private func apply(_ phase: UpdatePhase) {
+        // 用户点过 × 的那个版本不再冒出来；出了更新的版本照样提示
+        if case .available(let release) = phase, release.version == skippedUpdate { return }
+        updateBadge.show(phase)
     }
 
     /// 页面载入完了就收起「正在连接」；没载入成（断网、服务器在重启）就说清楚、告诉人怎么重来
@@ -182,6 +241,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 所以应用到了前台一定是人特意切过来的 —— 不处理的话切过来什么窗口都没有
     func applicationDidBecomeActive(_ notification: Notification) {
         if miniPanel?.isVisible == true && !window.isVisible { showMain() }
+        // 切回前台顺手问一次（一小时最多一次）：开机一直不关的应用也能等到新版本
+        if let last = lastUpdateCheck, Date().timeIntervalSince(last) > 3600 { checkForUpdates() }
     }
 
     private func fail(_ message: String) {
@@ -208,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     /// 退出时本机代码助手还在跑：SIGTERM 给它（中断、收掉它起的后台命令），不留在后台
     func applicationWillTerminate(_ notification: Notification) {
+        updateTimer?.invalidate()
         webView?.localAgent?.terminate()
     }
 }
