@@ -39,14 +39,14 @@ bwrap 的 `--disable-userns` 让 Chrome 的渲染进程建不了自己的命名�
 
 用户试过之后：「preview_page 现在能渲染，但这个预览浏览器运行不了 WebGL，所以看不到 3D 画面」。
 
-根因是我自己加的那条 ：它把 GPU 进程整个关掉，headless 里就等于没有 WebGL；
+根因是我自己加的那条 `--disable-gpu`：它把 GPU 进程整个关掉，headless 里就等于没有 WebGL；
 而且 Chrome 129 起默认禁止 SwiftShader 兜底，不显式允许的话连软件 WebGL 上下文都拿不到。
 
-- 去掉 ；加  + （软件渲染，没显卡也能出图）。
-- 想用真 GPU：（macOS）/ （Linux），走环境变量换 ANGLE 后端。
--  3000 → 5000：3D 场景要先建上下文、跑几帧才画得出来。
-- 判据 ：假浏览器把 argv 写下来，断言不许出现 、必须有软件渲染那两条。
-  扰动（把  加回去）见过红。
+- 去掉 `--disable-gpu`；加 `--enable-unsafe-swiftshader` + `--use-gl=angle --use-angle=swiftshader`（软件渲染，没显卡也能出图）。
+- 想用真 GPU：`ZHIQU_PREVIEW_GL=metal`（macOS）/ `gl`（Linux），走环境变量换 ANGLE 后端。
+- `--virtual-time-budget` 3000 → 5000：3D 场景要先建上下文、跑几帧才画得出来。
+- 判据 `preview.test.js.浏览器参数`：假浏览器把 argv 写下来，断言不许出现 `--disable-gpu`、必须有软件渲染那两条。
+  扰动（把 `--disable-gpu` 加回去）见过红。
 
 （本机没法真跑 Chrome 验证：我这个 shell 自己在沙箱里，Chrome 的 sandbox 初始化被拒。
 所以这一条是按已知的 headless 行为修的，靠判据钉住参数；用户下一次用 3D 页面验证。）
