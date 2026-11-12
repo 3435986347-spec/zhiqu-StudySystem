@@ -67,6 +67,13 @@ export async function serveDir(root) {
 }
 
 /**
+ * 默认给多少时间渲染。软件渲染的 3D 页面本来就慢（SwiftShader 是 CPU 在画），
+ * 45 秒在复杂场景上不够 —— 用户 2026-11-12：「45s 可以继续放宽一点」。
+ * 模型也能用 preview_page 的 timeout_seconds 单独申请更长（上限 300 秒）。
+ */
+export const DEFAULT_TIMEOUT_MS = 90_000;
+
+/**
  * 跑一次无头 Chrome 截图。返回 { ok } 或 { error }。
  *
  * <p>两个坑（用户 2026-11-12 报「浏览器退出码 null」）：
@@ -77,7 +84,7 @@ export async function serveDir(root) {
  *   <li>超时被杀要照实说「渲染超时」，不要报一个「退出码 null」让人猜。</li>
  * </ul>
  */
-export function shoot({ chrome, url, out, width, height, timeoutMs = 45_000 }) {
+export function shoot({ chrome, url, out, width, height, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   return new Promise((resolve) => {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-shot-'));
     const args = [

@@ -203,6 +203,7 @@ export function previewSchema() {
     path: { type: 'string', description: '相对工作区根的 .html 文件（或带 index.html 的目录）' },
     width: { type: 'integer', description: '视口宽度，默认 1200（320–2000）' },
     height: { type: 'integer', description: '视口高度，默认 900（240–2000）' },
+    timeout_seconds: { type: 'integer', description: '最多等多久渲染，默认 90，最多 300。3D / 动画多的页面给长一点' },
   }, ['path']);
 }
 
@@ -331,7 +332,9 @@ export class LocalTools {
     if (!rel) return { error: '没说预览哪个页面' };
     // 桌面 / 网页的代码模式里改动只在草稿层：磁盘上还是旧内容，截出来的是上一版 —— 不如直接说清楚
     if (this.draftOf(rel)) return { error: `${rel} 还只是草稿（没落盘），预览看到的是磁盘上的旧版本。先在草稿卡片上确认写入，再看。` };
-    const shot = await screenshotPage({ root: this.root, rel, width: args.width, height: args.height, chrome: this.chrome });
+    const shot = await screenshotPage({ root: this.root, rel, width: args.width, height: args.height, chrome: this.chrome,
+      // 模型可以单独申请更长（15–300 秒）；不给就用默认的 90 秒
+      timeoutMs: args.timeout_seconds ? Math.min(300, Math.max(15, Number(args.timeout_seconds) || 0)) * 1000 : undefined });
     if (shot.error) return { error: shot.error };
     this.pendingImage = shot;
     return { content: `已经把 ${rel} 渲染成一张图（${shot.width}×${shot.height}，${Math.round(shot.bytes / 1024)}KB），就是下面这张。`,

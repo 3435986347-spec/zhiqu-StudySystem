@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findChrome, screenshotPage, serveDir } from '../src/tools/preview.js';
+import { findChrome, screenshotPage, serveDir, DEFAULT_TIMEOUT_MS } from '../src/tools/preview.js';
 import { tmpdir, write } from './helpers.js';
 
 // 1x1 的透明 PNG
@@ -139,6 +139,10 @@ test('页面一直不结束：到点说「渲染超时」，不说退出码', as
   const shot = await screenshotPage({ root, rel: 'p.html', chrome, timeoutMs: 800 });
   assert.match(shot.error, /渲染超时/, shot.error);
   assert.doesNotMatch(shot.error, /退出码 null/, shot.error);
+});
+
+test('默认给的时间：至少 90 秒（软件渲染的 3D 慢），模型还能自己申请更长', () => {
+  assert.ok(DEFAULT_TIMEOUT_MS >= 90_000, `默认只有 ${DEFAULT_TIMEOUT_MS}ms —— 复杂 3D 页面会被当成超时`);
 });
 
 test('浏览器参数：不能带 --disable-gpu（会关掉 WebGL），软件渲染要显式允许', async () => {
