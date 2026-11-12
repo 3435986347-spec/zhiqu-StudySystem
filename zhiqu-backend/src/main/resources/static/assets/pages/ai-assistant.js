@@ -2993,7 +2993,7 @@ function switchWorkspace(mode, root) {
   if (inDesktop()) {
     var folders = (wsStatus && wsStatus.folders) || [];
     if (root && folders.length && folders.indexOf(root) < 0) {
-      toast('这个文件夹还没在「选择文件夹」里选过', 'error');
+      toast('这个文件夹还没在本机授权过：用「选择文件夹…」再选一次它就行', 'error');
       return;
     }
     try {
@@ -3105,7 +3105,10 @@ function toggleProjectMenu() {
   var root = wsStatus.selectedRoot || '';
   var desktop = inDesktop();
   function toProject(picked) { switchWorkspace(modeForProject(wsStatus.selectedMode), picked); }
-  var list = [root].concat(desktop ? (wsStatus.folders || []) : []).concat(recentProjects()).filter(function (x, i, all) { return x && all.indexOf(x) === i; });
+  // 桌面里只列外壳真的授权过的：最近项目里可能留着网页那会儿的路径（服务器上的目录），
+  // 在桌面上点它只会得到一句「没授权过」—— 那不如不列
+  var recents = recentProjects().filter(function (r) { return !desktop || (wsStatus.folders || []).indexOf(r) >= 0; });
+  var list = [root].concat(desktop ? (wsStatus.folders || []) : []).concat(recents).filter(function (x, i, all) { return x && all.indexOf(x) === i; });
   menu.innerHTML = (list.length ? '<div class="zq-ws-menu-head">最近的项目</div>' : '')
     + list.map(function (r) {
       return '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-root="' + esc(r) + '"' + (r === root ? ' aria-current="true"' : '') + ' title="' + esc(r) + '">'
@@ -3133,6 +3136,25 @@ function toggleProjectMenu() {
   openWorkspaceMenu(menu, btn, '[aria-current="true"]');
 }
 
+/**
+ * 把外壳那边的文件夹列表拉一遍（第一百三十三轮）。
+ *
+ * <p>用户：「为什么会显示这个文件夹还没有在选择文件夹里面选过」。桌面里选文件夹走的是系统框，
+ * 外壳把安全书签加进自己的列表，<b>页面手里的 wsStatus.folders 还是上一次的</b> ——
+ * 于是刚选完就切过去，会被 switchWorkspace 的「没授权过」挡下来。选完先拉一次再切。
+ */
+async function refreshDesktopFolders() {
+  try {
+    var st = await localCall({ action: 'status' });
+    if (!st || !Array.isArray(st.folders)) return;
+    wsStatus = Object.assign({}, wsStatus || {}, {
+      desktop: true,
+      folders: st.folders.filter(function (x) { return typeof x === 'string' && x; }),
+      available: st.available !== false
+    });
+  } catch (e) { /* 拉不到就按旧的判，最坏是让用户再点一次 */ }
+}
+
 // 选文件夹：弹系统的选择框（后端起的，它和用户在同一台电脑上），等用户选完才回，所以超时给得比后端 10 分钟的上限长。
 // 弹不了才退回页面里那个一层层点的。连点两下只弹一个
 var WS_PICK_TIMEOUT_MS = 11 * 60 * 1000;
@@ -3144,7 +3166,12 @@ async function pickProjectFolder(start, onPick) {
     try {
       await safe('选择文件夹', async function () {
         var res = await localCall({ action: 'pick' });
-        if (res && res.folder) onPick(res.folder);
+        if (res && res.folder) {
+          // 外壳刚把书签加进去，页面手里的 folders 还是上一次的 —— 不刷新的话
+          // switchWorkspace 会拿旧列表把刚选的那个判成「没选过」
+          await refreshDesktopFolders();
+          onPick(res.folder);
+        }
       });
     } finally { wsPicking = false; }
     return;

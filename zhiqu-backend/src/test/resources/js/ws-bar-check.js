@@ -25,7 +25,7 @@ function node(attrs = {}) {
 }
 let doc;
 
-function setup({ status, storage } = {}) {
+function setup({ status, storage, desktop, folders, picked } = {}) {
   const listeners = {};
   doc = { activeElement: null, addEventListener: (t, f) => { (listeners[t] = listeners[t] || []).push(f); }, removeEventListener: (t, f) => { listeners[t] = (listeners[t] || []).filter((x) => x !== f); } };
   const bar = node(), tierPick = node(), project = node({ 'aria-expanded': 'false' }), projectName = node(), note = node(), tier = node({ 'aria-expanded': 'false' }), tierName = node();
@@ -46,9 +46,22 @@ function setup({ status, storage } = {}) {
   const itemsOf = (menu) => (menu === tierMenu ? tierItems : [...projectItems, ...(browse ? [browse] : []), ...(artifact ? [artifact] : [])]);
   const elements = { '#zq-ws-bar': bar, '#zq-tier-pick': tierPick, '#zq-ws-project': project, '#zq-ws-project-name': projectName, '#zq-ws-bar-note': note, '#zq-tier': tier, '#zq-tier-name': tierName, '#zq-tier-menu': tierMenu, '#zq-ws-menu': projectMenu };
   const puts = [], posts = [], pending = [], loads = [], pagePicker = [], toasts = [];
-  const replies = { failNext: false, pick: null, server: (body) => ({ selectedMode: body.mode, selectedRoot: body.root, enabled: body.mode !== 'OFF', reason: null }) };
+  const replies = { failNext: false, pick: null, folders: folders || [], picked: picked || null,
+    server: (body) => ({ selectedMode: body.mode, selectedRoot: body.root, enabled: body.mode !== 'OFF', reason: null }) };
+  // 桌面应用那座桥（zqLocal）：选文件夹 = 外壳弹系统框 + 把书签加进自己的列表
+  const localCalls = [];
+  const fakeWindow = desktop ? { webkit: { messageHandlers: { zqLocal: { postMessage: (body) => {
+    localCalls.push(body);
+    if (body.action === 'pick') {
+      if (replies.picked) replies.folders = [replies.picked].concat(replies.folders.filter((x) => x !== replies.picked));
+      return Promise.resolve({ folder: replies.picked });
+    }
+    if (body.action === 'status') return Promise.resolve({ available: true, running: false, folders: replies.folders, network: 'on' });
+    return Promise.resolve({});
+  } } } } } : undefined;
   const fakes = {
     document: doc,
+    window: fakeWindow,
     localStorage: storage || (() => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) }; })(),
     $: (sel, root) => {
       if (root) {
@@ -71,12 +84,12 @@ function setup({ status, storage } = {}) {
     openWorkspaceFolderPicker: (start, onPick) => pagePicker.push({ start, onPick }),
   };
   const names = Object.keys(fakes);
-  const api = new Function(...names, body + '\nreturn { paintWorkspaceBar, codeModeOn, recentProjects, rememberProject, projectName, WS_MODE_NAME, WS_MODE_DESC, WS_PICK_TIMEOUT_MS };')(...names.map((n) => fakes[n]));
+  const api = new Function(...names, body + '\nreturn { paintWorkspaceBar, codeModeOn, recentProjects, rememberProject, projectName, WS_MODE_NAME, WS_MODE_DESC, WS_PICK_TIMEOUT_MS, wsStatus: () => wsStatus };')(...names.map((n) => fakes[n]));
   const settle = async () => { for (let i = 0; i < 20; i++) { while (pending.length) pending.shift()(); await new Promise((r) => setImmediate(r)); } };
   const openTier = () => { tier.onclick(); return tierItems; };
   const choose = (m) => { if (tierMenu.hidden) tier.onclick(); tierItems.find((x) => x.getAttribute('data-ws-mode') === m).onclick(); };
   if (status) api.paintWorkspaceBar(status);
-  return { api, bar, tierPick, project, projectName, note, tier, tierName, tierMenu, projectMenu, puts, posts, pending, loads, pagePicker, toasts, listeners, replies, settle, openTier, choose,
+  return { api, bar, tierPick, project, projectName, note, tier, tierName, tierMenu, projectMenu, puts, posts, pending, loads, pagePicker, toasts, listeners, replies, localCalls, settle, openTier, choose,
     projectItems: () => projectItems, browse: () => browse, artifact: () => artifact, tierItems: () => tierItems };
 }
 
@@ -203,6 +216,30 @@ check('菜单里点「选择文件夹…」：弹系统的选文件夹框（不�
   assert.equal(u.puts.length, 0, '取消了不该发');
   assert.equal(u.pagePicker.length, 0, '取消了不该再弹页面里的');
   assert.equal(u.tierName.textContent, 'close');
+});
+
+check('桌面：选了一个新文件夹，选完就能切过去（不能拿旧的 folders 把刚选的判成没授权过）', async () => {
+  // 用户：「为什么会显示这个文件夹还没有在选择文件夹里面选过」——
+  // 外壳选完把书签加进自己的列表，页面手里的 wsStatus.folders 还是上一次的
+  const t = setup({ status: { selectedMode: 'WRITE', selectedRoot: '/w/a', enabled: true, folders: ['/w/a'], desktop: true },
+    desktop: true, folders: ['/w/a'], picked: '/w/new' });
+  t.project.onclick();
+  t.browse().onclick();
+  await t.settle();
+  assert.deepEqual(t.toasts, [], '刚选完就说「没授权过」：页面没刷新 folders');
+  assert.equal(t.projectName.textContent, 'new', '选完没切过去');
+  assert.ok(t.api.wsStatus().folders.indexOf('/w/new') >= 0, '页面手里的 folders 没更新');
+  assert.ok(t.localCalls.some((c) => c.action === 'status'), '选完没有重新问一次外壳的文件夹列表');
+});
+
+check('桌面：菜单里不列没授权过的最近项目（点了也打不开，列出来就是骗人）', () => {
+  const t = setup({ status: { selectedMode: 'WRITE', selectedRoot: '/w/a', enabled: true, folders: ['/w/a'], desktop: true },
+    desktop: true, folders: ['/w/a'] });
+  t.api.rememberProject('/server/only/path');   // 网页那会儿记下的（服务器上的目录）
+  t.api.rememberProject('/w/a');
+  t.project.onclick();
+  const shown = t.projectItems().map((i) => i.getAttribute('data-ws-root'));
+  assert.deepEqual(shown, ['/w/a'], '桌面里列出了外壳读不到的文件夹：' + JSON.stringify(shown));
 });
 
 check('等用户选的请求超时要够长（比后端 10 分钟的上限长，默认 30 秒会把开着的框算成失败）；连点只发一个', async () => {
@@ -339,10 +376,11 @@ check('服务器上（artifactOnly）：没有项目按钮；close 时那一条�
 });
 
 check('桌面应用里才有选择文件夹', () => {
-  global.window = { webkit: { messageHandlers: { zqLocal: { postMessage() {} } } } };
-  const t = setup({ status: { selectedMode: 'READ', selectedRoot: '/w', enabled: true } });
+  // 第一百三十三轮起 window 是注入的（桌面那座桥），不再靠 global.window
+  const t = setup({ status: { selectedMode: 'READ', selectedRoot: '/w', enabled: true }, desktop: true });
   assert.equal(t.project.hidden, false, '桌面应用里项目按钮要在');
-  delete global.window;
+  const web = setup({ status: { selectedMode: 'READ', selectedRoot: '/w', enabled: true } });
+  assert.equal(web.project.hidden, true, '网页上没有选择文件夹');
 });
 
 check('没生效（文件夹不在了、不是本机）：照后端的原因写出来，按钮不偷偷改；close 时不说', () => {
