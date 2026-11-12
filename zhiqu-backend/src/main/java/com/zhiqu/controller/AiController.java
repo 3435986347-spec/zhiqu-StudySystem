@@ -244,6 +244,14 @@ public class AiController {
         return Result.success(aiWorkspaceService.listRuns(SecurityUtils.getCurrentUserId(), notebookId));
     }
 
+    /**
+     * 桌面应用在本机跑完的一轮：回答、步骤、代码草稿存进这条对话。文件不写服务器。
+     */
+    @PostMapping("/desktop-turn")
+    public Result<Map<String, Object>> archiveDesktopTurn(@RequestBody Map<String, Object> body) {
+        return Result.success(aiWorkspaceService.archiveDesktopTurn(SecurityUtils.getCurrentUserId(), body));
+    }
+
     /** body 可选：{tasks:[...], routines:[...]} —— 用户在确认弹窗里“修改”后提交的条目，覆盖草稿原内容后再落库。 */
     @PostMapping("/artifacts/{id}/confirm")
     public Result<Map<String, Object>> confirmArtifact(@PathVariable Long id,

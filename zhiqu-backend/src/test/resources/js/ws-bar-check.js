@@ -335,7 +335,14 @@ check('服务器上（artifactOnly）：没有项目按钮；close 时那一条�
   assert.equal(t.bar.hidden, false);
   assert.equal(t.note.textContent, '文件会生成到产物里，能预览、下载');
   t.api.paintWorkspaceBar({ selectedMode: 'READ', selectedRoot: '/w', enabled: true });
-  assert.equal(t.project.hidden, false, '本机的后端：项目按钮要回来');
+  assert.equal(t.project.hidden, true, '网页上没有选择文件夹，就算本机后端给了路径也不露');
+});
+
+check('桌面应用里才有选择文件夹', () => {
+  global.window = { webkit: { messageHandlers: { zqLocal: { postMessage() {} } } } };
+  const t = setup({ status: { selectedMode: 'READ', selectedRoot: '/w', enabled: true } });
+  assert.equal(t.project.hidden, false, '桌面应用里项目按钮要在');
+  delete global.window;
 });
 
 check('没生效（文件夹不在了、不是本机）：照后端的原因写出来，按钮不偷偷改；close 时不说', () => {

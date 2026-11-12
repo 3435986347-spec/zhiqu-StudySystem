@@ -125,6 +125,20 @@ class DesktopLocalAgentTest {
         assertTrue(r.get("bridge.result").contains("桥那边好了"), "桥那一轮的结果没到页面：" + r.get("bridge.result"));
         assertEquals("false", r.get("bridge.eventLeak"));
         assertEquals("local-1", r.get("bridge.runIds"));
+        assertTrue(r.get("bridge.applyEscape").startsWith("applyEscape:err") && r.get("bridge.applyEscape").contains("不能写"),
+                "路径能写出项目文件夹：" + r.get("bridge.applyEscape"));
+        assertTrue(r.get("bridge.applyLink").startsWith("applyLink:err"), "软链指到外面也能写：" + r.get("bridge.applyLink"));
+        assertEquals("false", r.get("bridge.applyLinkDisk"), "软链外面出现了文件");
+        assertTrue(r.get("bridge.applyStale").startsWith("applyStale:err") && r.get("bridge.applyStale").contains("不一样"),
+                "基线不符也写了：" + r.get("bridge.applyStale"));
+        assertEquals("hello-project\n", r.get("bridge.applyStaleDisk").replace("\\n", "\n"), "基线不符时磁盘被改了");
+        assertTrue(r.get("bridge.applyOk").startsWith("applyOk:ok"), r.get("bridge.applyOk"));
+        assertEquals("next\n", r.get("bridge.applyOkDisk").replace("\\n", "\n"), "确认后没写进选过的文件夹");
+        assertTrue(r.get("bridge.applyAgain").startsWith("applyAgain:ok"), "已经写过再确认一次不该失败：" + r.get("bridge.applyAgain"));
+        assertTrue(r.get("bridge.read").contains("next"), "读不到刚写的文件：" + r.get("bridge.read"));
+        assertTrue(r.get("bridge.readOut").startsWith("readOut:err"), "顺着软链读到了外面：" + r.get("bridge.readOut"));
+        assertTrue(r.get("bridge.applyOther").startsWith("applyOther:err") && r.get("bridge.applyOther").contains("选过"),
+                "没选过的文件夹也能写：" + r.get("bridge.applyOther"));
         assertTrue(seen.stream().anyMatch(s -> s[1].startsWith("/api/harness/model/stream") && s[3].contains("BRIDGE")),
                 "桥那一轮没到外壳自己的网关（页面塞的 http://127.0.0.1:1 被用上了？）");
         assertTrue(r.get("bridge.mini").startsWith("mini:err") && r.get("bridge.mini").contains("没有本机代码助手"), "迷你窗也接了本机代码：" + r.get("bridge.mini"));

@@ -102,6 +102,12 @@ public interface AiWorkspaceService {
 
     List<Map<String, Object>> listRuns(Long userId, Long notebookId);
 
+    /**
+     * 桌面应用本机跑完的一轮存回这条对话（第一百三十一轮）。文件不在服务器上写：
+     * 草稿标 {@code desktop: true}，确认时外壳写进用户选过的文件夹。
+     */
+    Map<String, Object> archiveDesktopTurn(Long userId, Map<String, Object> body);
+
     Map<String, Object> confirmArtifact(Long userId, Long id, Map<String, Object> editedPlan);
 
     Map<String, Object> discardArtifact(Long userId, Long id);

@@ -37,7 +37,7 @@ class El {
   getBoundingClientRect() { return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 }; }
 }
 
-let els, toasts, puts, sent, state, keyPrefs;
+let els, toasts, puts, sent, state, keyPrefs, localCalls;
 function $(sel) {
   if (!(sel in els)) els[sel] = new El(sel);
   return els[sel];
@@ -76,11 +76,30 @@ function key(name, extra = {}) {
 
 let mod;
 function status(s) { mod.paintWorkspaceBar(Object.assign({ selectedMode: 'READ', selectedRoot: '/p', enabled: true }, s)); }
+function armDesktop(on) {
+  if (!on) { delete window.webkit; return; }
+  window.webkit = { messageHandlers: { zqLocal: { postMessage: async (body) => {
+    localCalls.push(body);
+    if (body.action === 'run') {
+      setTimeout(() => window.dispatchEvent({ type: 'zq-local', detail: { runId: 'local-1', type: 'result', conclusion: '好了', drafts: [] } }), 0);
+      return { runId: 'local-1' };
+    }
+    if (body.action === 'pick') return { folder: '/tmp/picked' };
+    if (body.action === 'status') return { available: true, running: false, folders: [], network: 'on' };
+    return {};
+  } } } };
+}
 function fresh(wsOverride) {
-  els = {}; toasts = []; puts = []; sent = []; keyPrefs = {};
+  els = {}; toasts = []; puts = []; sent = []; localCalls = []; keyPrefs = {};
+  armDesktop(true);
   state = { user: { id: 1 }, notebookId: 5, pendingSources: [], messages: [], chatDraft: null, aiSending: false, aiNoModel: false };
   const api = { put: async (p, b) => { puts.push({ path: p, body: b }); return Object.assign({ selectedMode: b.mode, selectedRoot: b.root, enabled: true }); },
-    get: async () => null, post: async () => null };
+    get: async () => null,
+    post: async (path, body) => {
+      sent.push({ url: path, body });
+      if (path === '/access-tokens/desktop-code') return { token: 'zqp_slashcheck_0123456789abcd' };
+      return { userMessageId: 1 };
+    } };
   mod.bind({ API: '/api', REQUEST_TIMEOUT_MS: 1000, api, token: () => 't', role: () => 'USER', requestError: (m) => new Error(m), redirectToLogin() {}, nowMs: () => 0, serverTime: () => 0,
     state, esc, $, $all, empty: () => '', safe: async (n, f) => { try { return await f(); } catch (e) { return undefined; } }, toast: (t, k) => toasts.push({ t, k }), notice: () => {},
     askConfirm: async () => true, askText: async () => '', openModal() {}, popMenu() {}, drafts: { clearIf() {} }, keepDraft: () => ({ flush() {}, key: () => 'k' }), freqLabel: () => '',
@@ -100,6 +119,12 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   globalThis.document = { activeElement: null, addEventListener() {}, removeEventListener() {}, createElement: (t) => new El(t), getElementById: (id) => $('#' + id) };
   globalThis.localStorage = { getItem: (k) => (k in keyPrefs ? keyPrefs[k] : null), setItem: (k, v) => { keyPrefs[k] = v; }, removeItem: (k) => { delete keyPrefs[k]; } };
   globalThis.window = globalThis;
+  if (!globalThis.addEventListener) {
+    const ls = {};
+    globalThis.addEventListener = (t, f) => { (ls[t] = ls[t] || []).push(f); };
+    globalThis.removeEventListener = (t, f) => { ls[t] = (ls[t] || []).filter((x) => x !== f); };
+    globalThis.dispatchEvent = (e) => { (ls[e.type] || []).forEach((f) => f(e)); };
+  }
   globalThis.location = { search: '', pathname: '/ai-assistant.html' };
   globalThis.fetch = async (url, init) => { sent.push({ url, body: JSON.parse(init.body) }); throw new Error('不用真发'); };
   mod = await import('file://' + path.resolve(process.argv[2], 'pages', 'ai-assistant.js'));
@@ -201,7 +226,8 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     type('/mode m');
     assert.ok(key('Enter'));
     await tick();
-    assert.deepEqual(puts.map((p) => [p.path, p.body.mode, p.body.root]), [['/workspace/settings', 'WRITE', '/p']]);
+    assert.equal(puts.length, 0, '桌面版的档位记在这台电脑上，不改服务器的工作区');
+    assert.equal($('#zq-tier-name').textContent, 'manual');
     assert.equal(draft().value, '', '做完了清掉');
     fresh();
     $('#zq-tier-menu').hidden = true;
@@ -275,7 +301,8 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     type('/project /tmp/x');
     key('Enter');
     await tick();
-    assert.deepEqual(puts.map((p) => [p.body.mode, p.body.root]), [['READ', '/tmp/x']]);
+    assert.equal(puts.length, 0, '选项目不改服务器的工作区');
+    assert.equal($('#zq-ws-project-name').textContent, 'x');
     fresh();
     type('/project 这个目录怎么样');
     key('Enter');
@@ -286,7 +313,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     type('/project "/tmp/有 空格"');
     key('Enter');
     await tick();
-    assert.equal(puts[0].body.root, '/tmp/有 空格');
+    assert.equal($('#zq-ws-project-name').textContent, '有 空格');
     fresh();
     $('#zq-ws-menu').hidden = true;
     $('#zq-ws-menu').contains = () => false;
@@ -304,7 +331,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
       [{ selectedRoot: '', selectedMode: 'WRITE' }, '/init', /要先选项目/],
       [{ selectedMode: 'READ' }, '/init', /plan 是只读的/],
       [{ enabled: false, reason: '文件夹不存在了' }, '/review', /没有生效.*文件夹不存在了/],
-      [{ artifactOnly: true, selectedRoot: '' }, '/review', /服务器上没有项目文件夹/],
+      [{ artifactOnly: true, selectedRoot: '' }, '/review', /要先选项目/],
     ];
     for (const [ws, text, expected] of cases) {
       fresh(ws);
@@ -317,26 +344,31 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     }
   });
 
-  await check('能发的时候：请求里带着 codeCommand，用户看到的还是打的那句', async () => {
+  await check('能发的时候：交给本机代码助手，命令和这句话都在；不走服务器的代码模式', async () => {
     fresh();
     type('/review --base main 看并发');
     key('Enter');
     await tick();
-    assert.equal(sent.length, 1);
-    assert.equal(sent[0].body.message, '/review --base main 看并发');
-    assert.equal(sent[0].body.contextOptions.codeCommand, 'review');
-    assert.equal(sent[0].body.contextOptions.codeMode, true);
+    const run = localCalls.find((b) => b.action === 'run');
+    assert.ok(run, '没交给本机');
+    assert.equal(run.message, '/review --base main 看并发');
+    assert.equal(run.command, 'review');
+    assert.equal(run.level, 'READ');
+    assert.equal(run.folder, '/p');
+    assert.equal(run.token, 'zqp_slashcheck_0123456789abcd');
+    assert.equal(sent.filter((s) => s.body && s.body.contextOptions).length, 0, '不该再走服务器的代码模式');
     fresh({ selectedMode: 'WRITE' });
     type('/init');
     key('Enter');
     await tick();
-    assert.equal(sent[0].body.contextOptions.codeCommand, 'init');
+    assert.equal(localCalls.find((b) => b.action === 'run').command, 'init');
     fresh({ selectedMode: 'READ' });
     type('/review 第一行\n第二行');
     assert.equal(key('Enter'), false, '两行以上回车还是换行');
-    assert.equal(sent.length, 0);
+    assert.equal(localCalls.filter((b) => b.action === 'run').length, 0);
     await mod.sendAiMessage();
-    assert.equal(sent[0].body.contextOptions.codeCommand, 'review');
+    await tick();
+    assert.equal(localCalls.find((b) => b.action === 'run').command, 'review');
   });
 
   await check('⌘/Ctrl + 回车：普通的话照常发；面板开着时选命令，只算一次', async () => {
@@ -344,13 +376,15 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     type('普通的话');
     assert.ok(key('Enter', { metaKey: true }));
     await tick();
-    assert.equal(sent.length, 1);
-    assert.equal(sent[0].body.message, '普通的话');
+    const run = localCalls.find((b) => b.action === 'run');
+    assert.ok(run, '档位开着要走本机');
+    assert.equal(run.message, '普通的话');
+    assert.equal(run.command, undefined);
     fresh();
     type('/usr/bin 有问题');
     assert.ok(key('Enter', { ctrlKey: true }));
     await tick();
-    assert.equal(sent[0].body.message, '/usr/bin 有问题');
+    assert.equal(localCalls.find((b) => b.action === 'run').message, '/usr/bin 有问题');
     fresh({ selectedRoot: '' });
     type('/re');
     assert.ok(key('Enter', { metaKey: true }));
@@ -364,13 +398,15 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     fresh();
     type('/usr/bin 有问题');
     await mod.sendAiMessage();
-    assert.equal(sent[0].body.message, '/usr/bin 有问题');
-    assert.equal(sent[0].body.contextOptions.codeCommand, undefined);
+    await tick();
+    assert.equal(localCalls.find((b) => b.action === 'run').message, '/usr/bin 有问题');
+    assert.equal(localCalls.find((b) => b.action === 'run').command, undefined);
     fresh();
     type('/init 是什么意思');
     await mod.sendAiMessage();
-    assert.equal(sent[0].body.message, '/init 是什么意思');
-    assert.equal(sent[0].body.contextOptions.codeCommand, undefined);
+    await tick();
+    assert.equal(localCalls.find((b) => b.action === 'run').message, '/init 是什么意思');
+    assert.equal(localCalls.find((b) => b.action === 'run').command, undefined);
   });
 
   await check('发送中也能切档位（当场做完的不用等）；发一轮的不能（只算一次）', async () => {
@@ -379,7 +415,8 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     type('/mode auto');
     key('Enter');
     await tick();
-    assert.equal(puts[0].body.mode, 'EXEC');
+    assert.equal($('#zq-tier-name').textContent, 'auto');
+    assert.equal(puts.length, 0, '桌面版切档位不请求服务器');
     type('/review');
     key('Enter');
     await tick();
@@ -436,14 +473,26 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     assert.equal(draft().value, '');
   });
 
-  await check('服务器上（只有产物）：要文件夹的不列', () => {
+  await check('桌面应用连着只有产物的网站：要文件夹的命令照样列（文件夹在这台电脑上）', () => {
     fresh({ artifactOnly: true, selectedRoot: '' });
     type('/');
-    assert.deepEqual(names(), ['/mode', '/effort', '/model', '/web', '/new', '/help']);
-    type('/project /tmp');
-    key('Enter');
+    assert.deepEqual(names(), ['/mode', '/effort', '/model', '/project', '/web', '/new', '/init', '/review', '/help']);
+  });
+
+  await check('网页上没有命令面板，也没有选择文件夹：/ 就是一句话', async () => {
+    armDesktop(false);
+    fresh();
+    armDesktop(false);
+    type('/');
+    assert.equal($('#zq-slash-menu').hidden, true);
+    assert.deepEqual(names(), []);
+    type('/mode plan');
+    assert.equal(key('Enter'), false, '网页上回车不该把 /mode 当成命令');
     assert.equal(puts.length, 0);
-    assert.match(toasts[0].t, /服务器上没有项目文件夹/);
+    assert.equal(localCalls.length, 0);
+    mod.paintWorkspaceBar({ selectedMode: 'READ', selectedRoot: '/w/a', enabled: true });
+    assert.equal($('#zq-ws-project').hidden, true, '网页上还露着选择文件夹');
+    armDesktop(true);
   });
 
   if (failed) { console.log(failed + ' FAILED'); process.exit(1); }

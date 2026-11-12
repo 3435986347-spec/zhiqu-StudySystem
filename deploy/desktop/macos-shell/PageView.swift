@@ -205,6 +205,8 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
     ///   {action: "pick"} → 系统的选文件夹框 → {folder} / {cancelled: true}
     ///   {action: "run", folder, message, history, model, effort, level, command, token} → {runId}；之后每一行经 zq-local 事件到页面
     ///   {action: "stop"} → {stopping: true}
+    ///   {action: "read", folder, path} → {content, absent}（确认框里看 diff；只读选过的文件夹里的相对路径）
+    ///   {action: "apply", folder, files:[{path, content, baseline}]} → {written}（基线不符一个都不写；路径出不了选过的文件夹）
     /// 和别的桥一样只认自己网站的主框架；根目录只认选过的文件夹，服务器地址用外壳自己的（见 LocalAgent.swift 开头）
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
@@ -245,6 +247,20 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         case "stop":
             agent.stop()
             replyHandler(["stopping": true], nil)
+        case "read":
+            guard let folder = body["folder"] as? String, localFolders.contains(folder) else {
+                replyHandler(nil, "这个文件夹还没在「选文件夹」里选过"); return
+            }
+            guard let path = body["path"] as? String else { replyHandler(nil, "没说读哪个文件"); return }
+            let read = LocalDrafts.read(folder: folder, path: path)
+            if let error = read.error { replyHandler(nil, error) } else { replyHandler(read.body ?? [:], nil) }
+        case "apply":
+            guard let folder = body["folder"] as? String, localFolders.contains(folder) else {
+                replyHandler(nil, "这个文件夹还没在「选文件夹」里选过"); return
+            }
+            guard let files = body["files"] as? [[String: Any]] else { replyHandler(nil, "没有要写入的文件"); return }
+            if let error = LocalDrafts.apply(folder: folder, files: files) { replyHandler(nil, error) }
+            else { replyHandler(["written": files.count], nil) }
         default:
             replyHandler(nil, "认不出的请求")
         }

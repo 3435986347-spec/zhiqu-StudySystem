@@ -11,6 +11,7 @@
 // 单独一个文件、没有顶层代码：DesktopLocalAgentTest 把它和检查程序一起编译、真起 node 跑。
 
 import AppKit
+import CryptoKit
 import Foundation
 
 /// 用户在系统选框里选过的项目文件夹（存在偏好设置里，最多 20 个，最近选的在前）。本机代码只在这些里面跑
@@ -358,6 +359,98 @@ final class LocalAgent {
         token = ""
         if let work { try? FileManager.default.removeItem(at: work) }
         work = nil
+    }
+}
+
+/// 确认草稿时写进选过的项目文件夹。页面不可信：路径必须留在这个文件夹里，基线不符一个字节都不写。
+/// 基线是第一次改它时磁盘上的 SHA-256（小写十六进制），文件本来没有是 `ABSENT`（和命令行草稿同一份）。
+enum LocalDrafts {
+    static let absent = "ABSENT"
+    static let maxFiles = 40
+    static let maxBytes = 1_000_000
+
+    static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 留在项目文件夹里的路径。`..`、绝对路径、软链指到外面、目标是文件夹，都不要
+    static func resolve(_ root: String, _ rel: String) -> String? {
+        if rel.isEmpty || rel.count > 512 || rel.contains("\0") || rel.contains("\\") || rel.hasPrefix("/") { return nil }
+        let parts = rel.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        if parts.isEmpty || parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) { return nil }
+        let base = LocalFolders.real(root)
+        guard LocalFolders.isDirectory(base) else { return nil }
+        var current = base
+        for (i, part) in parts.enumerated() {
+            let next = (current as NSString).appendingPathComponent(part)
+            if FileManager.default.fileExists(atPath: next) {
+                let resolved = LocalFolders.real(next)
+                if resolved != base && !resolved.hasPrefix(base + "/") { return nil }
+                if i == parts.count - 1 {
+                    return LocalFolders.isDirectory(resolved) ? nil : resolved
+                }
+                if !LocalFolders.isDirectory(resolved) { return nil }
+                current = resolved
+            } else {
+                let dest = (current as NSString).appendingPathComponent(parts[i...].joined(separator: "/"))
+                if dest != base && !dest.hasPrefix(base + "/") { return nil }
+                return dest
+            }
+        }
+        return nil
+    }
+
+    /// 先全部对一遍基线，再写。已经是要写的内容（确认重试）算成功。返回 nil 表示可以了
+    static func apply(folder: String, files: [[String: Any]]) -> String? {
+        let base = LocalFolders.real(folder)
+        guard LocalFolders.isDirectory(base) else { return "这个项目文件夹不在了" }
+        if files.isEmpty { return "没有要写入的文件" }
+        if files.count > maxFiles { return "一次最多写 \(maxFiles) 个文件" }
+        struct Job { let dest: String; let data: Data }
+        var jobs: [Job] = []
+        var seen = Set<String>()
+        var total = 0
+        for raw in files {
+            guard let rel = raw["path"] as? String, !rel.isEmpty else { return "有一个文件没写路径" }
+            if !seen.insert(rel).inserted { return "同一个文件写了两次：" + rel }
+            guard let dest = resolve(base, rel) else { return "这个路径不能写：" + rel }
+            guard let baseline = raw["baseline"] as? String,
+                  baseline == absent || baseline.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+                return "基线不对：" + rel
+            }
+            let content = (raw["content"] as? String) ?? ""
+            let data = Data(content.utf8)
+            if data.count > maxBytes { return rel + " 太大了" }
+            total += data.count
+            if total > maxBytes * 8 { return "这一批太大了" }
+            let current = FileManager.default.contents(atPath: dest)
+            let now = current.map { sha256($0) } ?? absent
+            if now == sha256(data) { continue }
+            if now != baseline { return rel + " 和你看到的不一样了，没有写入" }
+            jobs.append(Job(dest: dest, data: data))
+        }
+        for job in jobs {
+            let parent = (job.dest as NSString).deletingLastPathComponent
+            if !FileManager.default.fileExists(atPath: parent) {
+                do { try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true) }
+                catch { return "建不了目录：" + parent }
+            }
+            let parentReal = LocalFolders.real(parent)
+            if parentReal != base && !parentReal.hasPrefix(base + "/") { return "这个路径不能写" }
+            do { try job.data.write(to: URL(fileURLWithPath: job.dest), options: .atomic) }
+            catch { return "写不进去：" + job.dest }
+        }
+        return nil
+    }
+
+    /// 确认框里要比的「现在的内容」。太大、不是文本，就说原因
+    static func read(folder: String, path: String) -> (body: [String: Any]?, error: String?) {
+        guard let dest = resolve(folder, path) else { return (nil, "这个路径不能读") }
+        if !FileManager.default.fileExists(atPath: dest) { return (["content": "", "absent": true], nil) }
+        guard let data = FileManager.default.contents(atPath: dest) else { return (nil, "读不到这个文件") }
+        if data.count > maxBytes { return (nil, "这个文件太大，确认框里对不了") }
+        guard let text = String(data: data, encoding: .utf8) else { return (nil, "这个文件不是文本") }
+        return (["content": text, "absent": false], nil)
     }
 }
 

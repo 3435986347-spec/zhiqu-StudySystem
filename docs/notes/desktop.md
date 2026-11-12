@@ -128,6 +128,8 @@ dmg 一百多 MB，超过 GitHub 单个文件的上限，也不能进 `static/`�
   `URL.resolvingSymlinksInPath` 会把 `/private/var` 写回 `/var`）、服务器是 `Server.url`、家目录、联网档（`defaults write com.zhiqu.quadrant sandboxNetwork off|local|on`，默认 on）。
 - 宿主的环境只有 `PATH`、`HOME`、`TMPDIR`、`LANG`（HOME / TMPDIR 是这一轮自己的空目录）；沙箱挡的家目录经 `run.home` 另给 —— 照宿主自己的 HOME 算会挡错地方。
 - 叫停：stdin 一行 `{"type":"stop"}` → 5 秒 SIGTERM → 3 秒 SIGKILL；宿主收到 stop / SIGTERM / stdin 关掉都中断、收掉后台命令、照实交 result。应用退出时 SIGTERM。
-- 桥 `zqLocal`（带回复）：`status` / `pick` / `run` / `stop`；事件是 `window` 上的 `zq-local`（detail 是宿主的一行 + `runId`，最后一定有 `{type: 'exit'}`）。只认自己网站的主框架，只有主窗口接。
-- 判据：`DesktopLocalAgentTest`（真编译外壳、真起 node、真沙箱、Java 起的假网关）、`zhiqu-cli/test/desktop-host.test.js`。页面那一侧（选文件夹的按钮、代码模式在桌面里走桥、确认草稿写盘）是第 3 步。
+- 桥 `zqLocal`（带回复）：`status` / `pick` / `run` / `stop` / `read` / `apply`；事件是 `window` 上的 `zq-local`（detail 是宿主的一行 + `runId`，最后一定有 `{type: 'exit'}`）。只认自己网站的主框架，只有主窗口接。
+  `apply` 把确认过的草稿写进选过的文件夹：相对路径、基线（SHA-256，没有文件是 `ABSENT`）不符就一个都不写；软链指到外面的不写。已经是要写的内容再确认一次算成功。
+- 页面（第一百三十一轮）：只有看得到 `zqLocal` 才有斜杠命令和选择文件夹。网页上这两处都不露，代码模式仍走服务器（生成到产物）。桌面里档位和文件夹记在这台电脑（`zq.desktop.mode` / `zq.desktop.folder`），一轮经桥跑，回答和草稿 `POST /api/ai/desktop-turn` 存回网站；确认先 `apply` 再带 `desktopApplied` 标已确认，服务器不写磁盘。
+- 判据：`DesktopLocalAgentTest`（真编译外壳、真起 node、真沙箱、Java 起的假网关，含确认写盘）、`zhiqu-cli/test/desktop-host.test.js`、`slash-check.js`（网页上面板不打开）。
 

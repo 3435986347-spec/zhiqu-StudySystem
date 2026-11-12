@@ -19,6 +19,7 @@ async function bootAiAssistant() {
   if (effortBtn) effortBtn.onclick = toggleEffortMenu;
   if (sendBtn) sendBtn.onclick = sendAiMessage;
   if (draft) {
+    if (inDesktop()) draft.placeholder = '给 AI 发消息（⌘/Ctrl + 回车发送，回车换行，/ 看命令）';
     state.chatDraft = keepDraft(draft, chatDraftKey, growDraft);
     bindSlash(draft);
   }
@@ -847,6 +848,14 @@ function isCodeDraft(artifact) {
     && (status === 'DRAFT' || status === 'PENDING');
 }
 
+function codeDraftDesktop(artifact) {
+  var content = artifactContent(artifact);
+  return !!(content && content.desktop);
+}
+function codeDraftFolder(artifact) {
+  var content = artifactContent(artifact);
+  return content && content.folder ? String(content.folder) : '';
+}
 function codeDraftFiles(artifact) {
   var content = artifactContent(artifact);
   var files = Array.isArray(content.files) ? content.files : [];
@@ -931,12 +940,24 @@ function openCodeConfirmModal(artifact) {
   // 先把每个文件<b>现在</b>的内容取回来再比 —— diff 要比的是「磁盘上现在是什么」，
   // 不是模型当时读到的那份。中间用户可能已经自己改过了，那种情况确认时会被基线挡住，
   // 但在弹窗里就该让他看见。
+  var onDesktop = codeDraftDesktop(artifact);
+  var desktopFolder = codeDraftFolder(artifact);
   Promise.all(files.map(function (f) {
     if (f.creating) return Promise.resolve('');
+    if (onDesktop) {
+      if (!inDesktop()) return Promise.resolve(null);
+      return localCall({ action: 'read', folder: desktopFolder, path: f.path })
+        .then(function (r) { return r && r.absent ? '' : (r && r.content != null ? r.content : ''); })
+        .catch(function () { return null; });
+    }
     return api.get('/workspace/file?path=' + encodeURIComponent(f.path))
       .then(function (r) { return r && r.content != null ? r.content : ''; })
       .catch(function () { return null; });   // 读不到就标出来，而不是当成空文件
   })).then(function (currents) {
+    if (onDesktop && !inDesktop()) {
+      root.innerHTML = '<p class="zq-plan-hint">这些改动要在桌面应用里确认，才会写进你电脑上的项目。</p>';
+      return;
+    }
     function paint() {
       var html = '<p class="zq-plan-hint">这些改动<strong>还没有写进磁盘</strong>。'
         + '看过 diff、点「确认写入」之后才会落盘。</p>';
@@ -972,7 +993,14 @@ function openCodeConfirmModal(artifact) {
         var chosen = files.filter(function (_, i) { return picked[i]; }).map(function (f) { return { path: f.path }; });
         if (!chosen.length) { toast('请至少勾选一个文件，或点「忽略」'); return; }
         safe('写入代码改动', async function () {
-          await api.post('/ai/artifacts/' + artifact.id + '/confirm', { files: chosen });
+          if (onDesktop) {
+            if (!inDesktop()) { toast('要在桌面应用里确认，才会写进你的电脑', 'error'); return; }
+            var full = files.filter(function (_, i) { return picked[i]; }).map(function (f) {
+              return { path: f.path, content: f.content, baseline: f.baseline || 'ABSENT' };
+            });
+            await localCall({ action: 'apply', folder: desktopFolder, files: full });
+          }
+          await api.post('/ai/artifacts/' + artifact.id + '/confirm', onDesktop ? { files: chosen, desktopApplied: true } : { files: chosen });
           handle.close(); toast('已写入 ' + chosen.length + ' 个文件'); await renderAgentPanels();
         });
       };
@@ -2107,11 +2135,113 @@ function growDraft() {
   el.style.height = Math.max(DRAFT_BASE_HEIGHT, Math.min(el.scrollHeight, DRAFT_MAX_HEIGHT)) + 'px';
   paintSlash();
 }
+function waitLocal(runId, assistant, sameNb) {
+  return new Promise(function (resolve) {
+    var done = false;
+    function finish(d) {
+      if (done) return;
+      done = true;
+      window.removeEventListener('zq-local', onEv);
+      clearTimeout(timer);
+      resolve(d || { type: 'fatal', message: '本机代码助手没有交结果' });
+    }
+    function onEv(e) {
+      var d = (e && e.detail) || {};
+      if (d.runId !== runId) return;
+      if (d.type === 'trace' && d.step) {
+        mergeTraceStep(assistant, d.step);
+        if (sameNb()) renderAiMessages();
+      }
+      if (d.type === 'result' || d.type === 'fatal') finish(d);
+    }
+    var timer = setTimeout(function () {
+      localCall({ action: 'stop' }).catch(function () {});
+      finish({ type: 'fatal', message: '这一轮太久了，已经停下' });
+    }, 250000);
+    window.addEventListener('zq-local', onEv);
+  });
+}
+/** 桌面应用里档位开着、选了文件夹：这一轮交给外壳，不走服务器的工作区（那碰不到这台电脑） */
+async function sendDesktopTurn(txt, codeCommand) {
+  var inp = $('#zq-draft');
+  var folder = wsStatus && wsStatus.selectedRoot;
+  if (!folder) { toast('先选一个项目文件夹', 'error'); return; }
+  if (state.chatDraft) state.chatDraft.flush();
+  var draftKey = state.chatDraft ? state.chatDraft.key() : null;
+  inp.value = '';
+  inp.style.height = DRAFT_BASE_HEIGHT + 'px';
+  paintSlash();
+  state.aiSending = true;
+  var sendButton = $('#zq-send');
+  if (sendButton) { sendButton.disabled = true; sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中'); }
+  var clientKey = 'local-' + Date.now();
+  var assistant = { role: 'assistant', content: '', status: 'STREAMING', _clientKey: clientKey, _startedAt: nowMs(), steps: { steps: [] } };
+  state.messages.push({ role: 'user', content: txt, _clientKey: clientKey + '-user' }, assistant);
+  state.chatFollow = true;
+  renderAiMessages();
+  var stored = false;
+  var sentNb = state.notebookId;
+  try {
+    await safe('本机代码', async function () {
+      var minted = await api.post('/access-tokens/desktop-code', {});
+      var token = minted && minted.token;
+      if (!token) throw requestError('没拿到本机代码的登录令牌');
+      var history = (state.messages || []).filter(function (m) {
+        return m && m !== assistant && m._clientKey !== clientKey + '-user'
+          && (m.role === 'user' || m.role === 'assistant') && m.content && m.status !== 'STREAMING';
+      }).slice(-40).map(function (m) { return { role: m.role, content: String(m.content).slice(0, 8000) }; });
+      var level = (wsStatus && wsStatus.selectedMode) || 'READ';
+      if (codeCommand === 'review') level = 'READ';
+      if (['READ', 'WRITE', 'EXEC'].indexOf(level) < 0) level = 'READ';
+      var modelSel = $('#zq-model');
+      var effortName = $('#zq-effort-name');
+      var effortText = effortName && effortName.textContent ? String(effortName.textContent).trim() : '';
+      var effort = AI_EFFORTS.indexOf(effortText) >= 0 ? effortText : 'instant';
+      var body = {
+        action: 'run', folder: folder, message: txt, history: history,
+        model: modelSel && modelSel.value ? Number(modelSel.value) : null,
+        effort: effort, level: level, token: token
+      };
+      if (codeCommand) body.command = codeCommand;
+      var reply = await localCall(body);
+      var runId = reply && reply.runId;
+      if (!runId) throw requestError('本机代码助手没有开始');
+      assistant.requestId = runId;
+      var result = await waitLocal(runId, assistant, function () { return sentNb === state.notebookId; });
+      assistant.status = '';
+      var conclusion = result && (result.conclusion || (result.type === 'fatal' ? result.message : ''));
+      assistant.content = String(conclusion || '').trim() || '（没有结论）';
+      if (result && result.type === 'fatal') assistant.errorMessage = result.message || '本机代码助手没有做完';
+      renderAiMessages();
+      var saved = await api.post('/ai/desktop-turn', {
+        notebookId: sentNb || null, message: txt, conclusion: assistant.content,
+        steps: assistant.steps || { steps: [] }, drafts: (result && result.drafts) || [],
+        folder: folder, command: codeCommand || ''
+      });
+      if (saved && saved.userMessageId && draftKey) drafts.clearIf(draftKey, txt);
+      stored = true;
+      if (sentNb === state.notebookId) {
+        await loadAiMessages();
+        await renderAgentPanels();
+      }
+    });
+  } finally {
+    state.aiSending = false;
+    if (sendButton) { sendButton.disabled = false; sendButton.classList.remove('is-busy'); sendButton.setAttribute('aria-label', '发送（⌘/Ctrl + 回车）'); }
+    if (!stored) {
+      var at = state.messages.indexOf(assistant);
+      if (at > 0 && state.messages[at - 1]._clientKey === clientKey + '-user') state.messages.splice(at - 1, 2);
+      renderAiMessages();
+      if (inp && !inp.value.trim()) { inp.value = txt; growDraft(); }
+    }
+  }
+}
+
 async function sendAiMessage() {
   var inp = $('#zq-draft'), txt = inp && inp.value.trim();
   if (!txt) return;
-  // 输入框里的 / 命令（第一百一十八轮）：切档位这些当场做完，发送中也能切；/init、/review 走下面发一轮
-  var slash = parseSlash(inp.value), codeCommand = null;
+  // 斜杠命令和选文件夹只在桌面应用里（第一百三十一轮，用户：网页上没有）。网页里 / 开头就是一句话
+  var slash = inDesktop() ? parseSlash(inp.value) : null, codeCommand = null;
   closeSlashMenu();
   if (slash && !slash.def.turn) { runLocalSlash(slash); return; }
   if (state.aiSending) return; // 发送中保护:双击/回车连发只算一次
@@ -2120,6 +2250,7 @@ async function sendAiMessage() {
     if (blocked) { toast(blocked, 'error'); return; }   // 字留着，切好了接着发；没叫模型
     codeCommand = slash.def.name.slice(1);
   }
+  if (inDesktop() && (codeCommand || codeModeOn())) return sendDesktopTurn(txt, codeCommand);
   // 草稿等服务器确认收到了这条消息（任一事件带 userMessageId）才删；没收到就把字放回输入框（第十五轮）。
   // 原来一按发送就清空：没配模型、被限流、一刷新，这句话就没了。
   if (state.chatDraft) state.chatDraft.flush();
@@ -2355,6 +2486,17 @@ function whenOnline(fn) {
 
 
 // ───────────────────────── 代码工作区：选项目、切档位 ─────────────────────────
+// 斜杠命令和选择文件夹只在桌面应用里（第一百三十一轮）。网页上没有这座桥，这两处都不露。
+function inDesktop() {
+  try {
+    var w = typeof window === 'undefined' ? null : window;
+    var h = w && w.webkit && w.webkit.messageHandlers;
+    return !!(h && h.zqLocal && typeof h.zqLocal.postMessage === 'function');
+  } catch (e) { return false; }
+}
+function localCall(body) {
+  return window.webkit.messageHandlers.zqLocal.postMessage(body);
+}
 // 用户 2026-11-02：「在输入框上方选择项目里面选择目录，参考其他的 coding agent 产品，几个模式档位也用按钮点击切换」「模式的名字改成plan，auto，manual，close」；
 // 2026-11-05：「左侧下面的工作区去掉」「点击选择文件夹应该直接打开系统的文件夹和文件页面」「档位切换有明显卡顿，放在输入框下方，点击向上拉起切换档位的面板」。
 // 项目按钮在输入框上方，档位按钮在输入框下面那条工具里。前提（回环 / 目录存在 / 本机的请求）由后端裁决，前端不复述 ——
@@ -2388,12 +2530,17 @@ var wsStatus = null, wsBarBusy = false, wsBarNext = null;
 // 这一句走不走代码模式：档位开着（不是 close，而且生效了）就走。用户 2026-11-05：「代码按钮删掉，感觉多余了」——
 // 选了项目、选了档位就是要它在里面干活；原来还要再按一个按钮，不按就靠关键词猜，猜漏了就是「我无法操作你的电脑」。想普通聊天切到 close。
 // 能不能写、能不能跑照旧由档位卡在后端（门在 CodeWorkspaceAgent）；编辑工具的改动先成草稿，auto 档 shell 写的直接落盘（用户定的）
-function codeModeOn() { return !!(wsStatus && wsStatus.enabled); }
+function codeModeOn() {
+  if (!wsStatus || !wsStatus.enabled) return false;
+  // 桌面应用没有选中的文件夹就不走本机代码（网页上档位开着、没选文件夹是生成到产物）
+  if (inDesktop()) return !!wsStatus.selectedRoot;
+  return true;
+}
 
-// ───────────────────────── 输入框里的 / 命令（第一百一十八轮）
-// 用户 2026-11-07：「在网页里输入/ 可以向上拉出页面显示/ 什么的作用，并且也能作为正常命令」「/init 这类在网页里输入的时候颜色要和其他文字区分开」。
+// ───────────────────────── 输入框里的 / 命令（第一百一十八轮；第一百三十一轮起只在桌面应用里）
+// 用户 2026-11-07 在网页里要过这层面板。2026-11-12 改了：面板和选择文件夹只有桌面应用有，网页上打 / 就是一句话。
 // 只有第一个词正好是认识的命令才算命令：「/usr/bin 有问题」照常发给模型；不接参数的命令后面跟了字（「/init 是什么意思」）也是一句话。
-// 全部走现有的功能，这里不另存一份档位、模型。
+// 全部走现有的功能，这里不另存一份档位、模型。桌面里的档位和文件夹记在这台电脑上，不改服务器的工作区。
 var SLASH_COMMANDS = [
   { name: '/mode', args: 'close | plan | manual | auto', desc: '切换档位', choices: function () {
     return WS_MODE_ORDER.map(function (m) { return { value: WS_MODE_NAME[m], desc: WS_MODE_DESC[m] }; });
@@ -2427,7 +2574,7 @@ function slashMatches(text) {
   if (value.charAt(0) !== '/' || /\n/.test(value)) return [];
   if (!/\s/.test(value)) {
     return SLASH_COMMANDS.filter(function (c) {
-      return c.name.indexOf(value) === 0 && !(c.folder && wsStatus && wsStatus.artifactOnly);   // 服务器上没有文件夹：这几个做不了，不列
+      return c.name.indexOf(value) === 0;   // 要文件夹的命令只在桌面里列（面板本身也只在桌面里开）
     }).map(function (c) { return { name: c.name, args: c.args || '', desc: c.desc }; });
   }
   var m = /^(\/[a-z]+)\s+(.*)$/.exec(value);
@@ -2444,7 +2591,7 @@ function slashModels() {
 }
 /** /init、/review 现在做不了的话，告诉用户差什么（不叫模型）。能做返回 null */
 function slashBlocked(def) {
-  if (wsStatus && wsStatus.artifactOnly) return '服务器上没有项目文件夹，' + def.name + ' 要在桌面版或本机用';
+  if (!inDesktop()) return def.name + ' 只在桌面应用里';
   if (!wsStatus || (wsStatus.selectedMode || 'OFF') === 'OFF') return '代码模式关着（close）。先切档位：/mode ' + (def.name === '/review' ? 'plan' : 'manual');
   if (!wsStatus.selectedRoot) return def.name + ' 要先选项目：/project';
   if (!wsStatus.enabled) return '代码工作区没有生效：' + (wsStatus.reason || '看一下项目和档位');
@@ -2499,7 +2646,7 @@ var localSlashActions = {
   },
   '/project': function (arg) {
     if (!wsStatus) return slashNo('工作区的状态还没读到，等一下再选');
-    if (wsStatus.artifactOnly) return slashNo('服务器上没有项目文件夹，文件会生成到产物');
+    if (!inDesktop()) return slashNo('选择文件夹只在桌面应用里');
     if (!arg) { toggleProjectMenu(); return true; }
     var folder = arg.replace(/^(["'])(.*)\1$/, '$2');
     // 不是路径就不去切（「/project 这个目录怎么样」）：切了，这句话就没了
@@ -2530,6 +2677,12 @@ function slashOpen() { return slashItems.length > 0; }
 function paintSlash() {
   var inp = $('#zq-draft'), mirror = $('#zq-draft-mirror'), box = $('#zq-composer');
   if (!inp || !mirror || !box) return;
+  if (!inDesktop()) {
+    box.classList.remove('has-command');
+    if (mirror.innerHTML) mirror.innerHTML = '';
+    closeSlashMenu();
+    return;
+  }
   var slash = parseSlash(inp.value);
   box.classList.toggle('has-command', !!slash);
   if (slash) {
@@ -2542,6 +2695,7 @@ function paintSlash() {
 function paintSlashMenu() {
   var menu = $('#zq-slash-menu'), inp = $('#zq-draft');
   if (!menu || !inp) return;
+  if (!inDesktop()) { closeSlashMenu(); return; }
   var value = inp.value;
   var items = slashDismissed === value || (document.activeElement && document.activeElement !== inp) ? [] : slashMatches(value);
   if (!items.length) { closeSlashMenu(); return; }
@@ -2617,7 +2771,7 @@ function slashKeydown(event) {
     return;
   }
   // 面板收着（打了参数）：一行的命令回车就执行。两行以上是在写长说明，回车还是换行，⌘/Ctrl + 回车才发
-  var command = event.target.value.trim().indexOf('\n') < 0 && parseSlash(event.target.value);
+  var command = inDesktop() && event.target.value.trim().indexOf('\n') < 0 && parseSlash(event.target.value);
   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey || (enter && command))) {
     event.preventDefault();
     sendAiMessage();
@@ -2644,6 +2798,30 @@ async function applyWorkspace(mode, root) {
 }
 // 名字先变、面板先收，请求在后面走：点下去不等网络
 function switchWorkspace(mode, root) {
+  // 桌面应用的档位和文件夹记在这台电脑上，不改服务器的工作区（服务器碰不到用户的磁盘）
+  if (inDesktop()) {
+    var folders = (wsStatus && wsStatus.folders) || [];
+    if (root && folders.length && folders.indexOf(root) < 0) {
+      toast('这个文件夹还没在「选择文件夹」里选过', 'error');
+      return;
+    }
+    try {
+      localStorage.setItem('zq.desktop.mode', mode);
+      if (root) localStorage.setItem('zq.desktop.folder', root);
+      else localStorage.removeItem('zq.desktop.folder');
+    } catch (e) { /* 存不了也先切上 */ }
+    if (root) rememberProject(root);
+    var available = !wsStatus || wsStatus.available !== false;
+    wsStatus = Object.assign({}, wsStatus || {}, {
+      selectedMode: mode, selectedRoot: root, desktop: true, folders: folders,
+      enabled: mode !== 'OFF' && !!root && available,
+      reason: mode !== 'OFF' && !root ? '先选一个项目文件夹' : null
+    });
+    paintWorkspaceChoice();
+    var note = $('#zq-ws-bar-note');
+    if (note) note.textContent = mode !== 'OFF' && !wsStatus.enabled && wsStatus.reason ? '没有生效：' + wsStatus.reason : '';
+    return;
+  }
   // 切到 close 马上算关了（紧接着发的那句不走代码模式）；开着的要等后端说生效了才算
   wsStatus = Object.assign({}, wsStatus, { selectedMode: mode, selectedRoot: root, enabled: mode === 'OFF' ? false : wsStatus.enabled });
   paintWorkspaceChoice();
@@ -2673,7 +2851,7 @@ function paintWorkspaceBar(status) {
   bar.hidden = !status || (only && (status.selectedMode || 'OFF') === 'OFF');   // 只剩一句说明：close 时没什么可说
   if (tier) tier.hidden = !status;
   if (!status) return;
-  $('#zq-ws-project').hidden = only;
+  $('#zq-ws-project').hidden = !inDesktop() || only;   // 选择文件夹只在桌面应用里
   paintWorkspaceChoice();
   $('#zq-ws-project').onclick = function () { toggleProjectMenu(); };
   $('#zq-tier').onclick = function () { toggleTierMenu(); };
@@ -2734,8 +2912,9 @@ function toggleProjectMenu() {
   var menu = $('#zq-ws-menu'), btn = $('#zq-ws-project');
   if (wsMenuOpen && wsMenuOpen.menu === menu) { closeWorkspaceMenu(); return; }
   var root = wsStatus.selectedRoot || '';
+  var desktop = inDesktop();
   function toProject(picked) { switchWorkspace(modeForProject(wsStatus.selectedMode), picked); }
-  var list = [root].concat(recentProjects()).filter(function (x, i, all) { return x && all.indexOf(x) === i; });
+  var list = [root].concat(desktop ? (wsStatus.folders || []) : []).concat(recentProjects()).filter(function (x, i, all) { return x && all.indexOf(x) === i; });
   menu.innerHTML = (list.length ? '<div class="zq-ws-menu-head">最近的项目</div>' : '')
     + list.map(function (r) {
       return '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-root="' + esc(r) + '"' + (r === root ? ' aria-current="true"' : '') + ' title="' + esc(r) + '">'
@@ -2743,7 +2922,7 @@ function toggleProjectMenu() {
     }).join('')
     + '<div class="zq-ws-menu-sep"></div>'
     + '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-browse="1">' + icon('plus') + '<span class="zq-ws-menu-name">选择文件夹…</span></button>'
-    + '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-artifact="1"' + (root ? '' : ' aria-current="true"') + '>' + icon('file') + '<span class="zq-ws-menu-name">不选文件夹，生成到产物</span></button>';
+    + (desktop ? '' : '<button type="button" role="menuitem" class="zq-ws-menu-item" data-ws-artifact="1"' + (root ? '' : ' aria-current="true"') + '>' + icon('file') + '<span class="zq-ws-menu-name">不选文件夹，生成到产物</span></button>');
   $all('[data-ws-root]', menu).forEach(function (b) {
     b.onclick = function () {
       var r = b.getAttribute('data-ws-root');
@@ -2755,7 +2934,8 @@ function toggleProjectMenu() {
     closeWorkspaceMenu();
     pickProjectFolder(root, toProject);
   };
-  $('[data-ws-artifact]', menu).onclick = function () {
+  var artifactBtn = $('[data-ws-artifact]', menu);
+  if (artifactBtn) artifactBtn.onclick = function () {
     closeWorkspaceMenu();
     if (root || wsStatus.selectedMode === 'OFF') switchWorkspace(modeForProject(wsStatus.selectedMode), '');
   };
@@ -2769,6 +2949,15 @@ var wsPicking = false;
 async function pickProjectFolder(start, onPick) {
   if (wsPicking) return;
   wsPicking = true;
+  if (inDesktop()) {
+    try {
+      await safe('选择文件夹', async function () {
+        var res = await localCall({ action: 'pick' });
+        if (res && res.folder) onPick(res.folder);
+      });
+    } finally { wsPicking = false; }
+    return;
+  }
   try {
     await safe('选择文件夹', async function () {
       var res = await api.post('/workspace/pick-folder', { start: start || '' }, null, { timeoutMs: WS_PICK_TIMEOUT_MS });
@@ -2833,7 +3022,26 @@ function openWorkspaceFolderPicker(startPath, onPick) {
 }
 
 
+async function loadDesktopWorkspace() {
+  var st = null;
+  try { st = await localCall({ action: 'status' }); } catch (e) { paintWorkspaceBar(null); return; }
+  var folders = st && Array.isArray(st.folders) ? st.folders.filter(function (x) { return typeof x === 'string' && x; }) : [];
+  var mode = 'OFF', root = '';
+  try {
+    var savedMode = localStorage.getItem('zq.desktop.mode');
+    if (WS_MODE_ORDER.indexOf(savedMode) >= 0) mode = savedMode;
+    root = localStorage.getItem('zq.desktop.folder') || '';
+  } catch (e) { /* 没有就关着 */ }
+  if (folders.indexOf(root) < 0) root = folders[0] || '';
+  var available = !!(st && st.available);
+  paintWorkspaceBar({
+    selectedMode: mode, selectedRoot: root, folders: folders, desktop: true, available: available,
+    enabled: mode !== 'OFF' && !!root && available,
+    reason: mode !== 'OFF' && !root ? '先选一个项目文件夹' : (mode !== 'OFF' && !available ? '这台电脑没有本机代码助手' : null)
+  });
+}
 async function loadWorkspace() {
+  if (inDesktop()) { await loadDesktopWorkspace(); return; }
   var status = null;
   try {
     // /settings 只认本机的请求（第一百一十五轮起登录的用户都能用）：拿得到 = 在本机，选项目和档位就该显示（哪怕当前 close，要给他开的地方）。拿不到（403）= 非管理员，静默不显示

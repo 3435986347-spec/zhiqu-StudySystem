@@ -27,6 +27,7 @@ import com.zhiqu.service.AgentBlackboardService;
 import com.zhiqu.service.AgentTaskGraphService;
 import com.zhiqu.service.AiWorkspaceService;
 import com.zhiqu.service.ai.ChatImageAttachments;
+import com.zhiqu.service.ai.DesktopTurnFiles;
 import com.zhiqu.service.ai.PrivateUploadPathGuard;
 import com.zhiqu.service.RoutineService;
 import com.zhiqu.service.StudyTaskService;
@@ -83,6 +84,8 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     /** 会话临界区互斥(与 AiServiceImpl 共用):删除 Notebook 需与聊天落库串行 */
     private final ConversationLockRegistry conversationLocks;
     private final TransactionTemplate deleteTx;
+    /** 和 deleteTx 同一个事务管理器。桌面这一轮的落库用它，锁在事务外面 */
+    private final TransactionTemplate writeTx;
     private final KnowledgeSourceMapper knowledgeSourceMapper;
     private final KnowledgePatchSetMapper knowledgePatchSetMapper;
     private final UserKnowledgeRevisionMapper knowledgeRevisionMapper;
@@ -153,6 +156,7 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         this.conversationMapper = conversationMapper;
         this.conversationLocks = conversationLocks;
         this.deleteTx = new TransactionTemplate(transactionManager);
+        this.writeTx = new TransactionTemplate(transactionManager);
         this.knowledgeSourceMapper = knowledgeSourceMapper;
         this.knowledgePatchSetMapper = knowledgePatchSetMapper;
         this.knowledgeRevisionMapper = knowledgeRevisionMapper;
@@ -1055,6 +1059,14 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         if (files.isEmpty()) {
             throw new BusinessException("这份草稿没有要写入的文件");
         }
+        // 桌面应用的草稿写在用户自己的电脑上（外壳的 apply）。这里不碰服务器的磁盘。
+        // 没带 desktopApplied 就不标已确认：那是还没在桌面里写过。
+        if (Boolean.TRUE.equals(content.get("desktop"))) {
+            if (body == null || !Boolean.TRUE.equals(body.get("desktopApplied"))) {
+                throw new BusinessException("这份草稿要在桌面应用里确认，才会写进你的电脑");
+            }
+            return files;
+        }
         // 「先全部校验、再逐个写」的规则住在 WorkspaceService.writeAll 里，不在这里重写一遍。
         workspaces.service(userId).writeAll(files.stream()   // 写进确认的这个账号自己选的文件夹
                 .map(f -> new WorkspaceService.PendingWrite(
@@ -1396,6 +1408,71 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
         revision.setSourceMessageId(sourceMessageId);
         knowledgeRevisionMapper.insert(revision);
         return patchSet;
+    }
+
+    @Override
+    public Map<String, Object> archiveDesktopTurn(Long userId, Map<String, Object> body) {
+        DesktopTurnFiles.Parsed turn = DesktopTurnFiles.parse(body);
+        return conversationLocks.withUserLock(userId, () -> writeTx.execute(status -> insertDesktopTurn(userId, turn)));
+    }
+
+    /** 用户消息、回答、步骤，有草稿再挂一轮和一份只在桌面里确认的 CODE_DRAFT */
+    private Map<String, Object> insertDesktopTurn(Long userId, DesktopTurnFiles.Parsed turn) {
+        if (turn.notebookId() != null) {
+            ownedNotebook(userId, turn.notebookId());
+        }
+        String key = turn.notebookId() == null ? AiConversation.DEFAULT_KEY : AiConversation.notebookKey(turn.notebookId());
+        conversationMapper.upsertActive(userId, key,
+                turn.notebookId() == null ? "默认对话" : "Notebook " + turn.notebookId() + " 对话");
+        AiConversation conversation = conversationMapper.selectOne(new LambdaQueryWrapper<AiConversation>()
+                .eq(AiConversation::getUserId, userId)
+                .eq(AiConversation::getConversationKey, key));
+        if (conversation == null) {
+            throw new BusinessException("对话没有建起来");
+        }
+        AiMessage userMessage = doneMessage(userId, conversation.getId(), "user", turn.message());
+        String conclusion = turn.conclusion().isBlank() ? "（没有结论）" : turn.conclusion();
+        AiMessage assistant = doneMessage(userId, conversation.getId(), "assistant", conclusion);
+        messageMapper.saveSteps(assistant.getId(), userId, toJson(turn.steps()));
+        Long artifactId = null;
+        if (!turn.files().isEmpty()) {
+            Map<String, Object> options = new LinkedHashMap<>();
+            options.put("desktop", true);
+            if (!turn.command().isEmpty()) {
+                options.put("codeCommand", turn.command());
+            }
+            AiAgentRun run = beginRun(userId, turn.notebookId(), "AUTO", options, userMessage, assistant);
+            Map<String, Object> content = new LinkedHashMap<>();
+            content.put("desktop", true);
+            content.put("folder", turn.folder());
+            content.put("files", turn.files());
+            AiAgentArtifact artifact = createArtifact(run.getId(), null, "CODE_DRAFT",
+                    "改了 " + turn.files().size() + " 个文件", content, assistant.getId());
+            completeRun(run, assistant);
+            artifactId = artifact.getId();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("userMessageId", userMessage.getId());
+        out.put("assistantMessageId", assistant.getId());
+        if (artifactId != null) {
+            out.put("artifactId", artifactId);
+        }
+        return out;
+    }
+
+    private AiMessage doneMessage(Long userId, Long conversationId, String role, String content) {
+        AiMessage message = new AiMessage();
+        message.setUserId(userId);
+        message.setConversationId(conversationId);
+        message.setRole(role);
+        message.setContent(content);
+        message.setStatus("DONE");
+        message.setRequestId(UUID.randomUUID().toString());
+        message.setReasoningMode("OFF");
+        message.setWebSearchEnabled(false);
+        message.setCompletedAt(LocalDateTime.now());
+        messageMapper.insert(message);
+        return message;
     }
 
     private AiNotebook ownedNotebook(Long userId, Long id) {
