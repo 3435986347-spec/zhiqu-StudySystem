@@ -22,14 +22,12 @@ public record CodeLoopBudget(int rounds, long millis, int maxTokensPerCall, int 
      * 16384 token：一整个单文件小游戏（HTML + CSS + JS，带中文注释）要四五千 token，
      * 推理型模型还要先花 token 想。4096 是 2026-09-23 那次「写马里奥」被截断的原因之一。
      */
-    // 第一百二十八轮：240 秒、20 轮。线上一次「做一个游戏」第一下就想了 100 秒（思考档开着），写完核心和测试、改过一次就到了 180 秒，
-    // 页面、样式都没来得及写。整条流 300 秒（AiWorkspaceService.STREAM_TIMEOUT_MS）里要留出写回答的时间 —— 代码模式的回答就是
-    // 循环自己的结论（第一百二十一轮），不再另调模型，60 秒足够收尾。轮数原来的 10 轮比时间先用完（一轮读一个文件）
-    // 第一百三十二轮：20 → 40 轮（用户：「增加轮次，20 轮太少了」）。时间还是 240 秒 —— 一轮读一个文件时先撞到的是轮数，
-    // 不是时间；把轮数放开，让时间当唯一的闸门，不会把整条流撑过 300 秒。
-    // 第一百三十四轮：用户继续放宽，默认 80 轮 / 10 分钟；整条回答另留前置阶段和收尾时间。
-    // 桌面外壳和 JS 宿主也要同步，不然网页、桌面拿到的实际预算不同。
-    public static final CodeLoopBudget EXPLICIT = new CodeLoopBudget(80, 600_000L, 16384, 150_000);
+    // 第一百三十六轮：**0 轮 / 0 秒 = 不限**（用户：「每次做到一半，没有完全修复就暂停，下一次又得从头开始，
+    // 所以把限时和限轮次去掉吧」）。这一档是用户自己开着代码模式、明说要干活的：做到一半被掐断，
+    // 改过的文件、建好的临时脚本全废，下一轮还得从头看一遍 —— 比跑得久难受得多。
+    // 兜住死循环的是单次调用的读超时（callTimeoutCapMillis）和「连着重复同一个调用」的检测，不是墙钟。
+    // 桌面外壳（LocalAgent.swift）和 JS 宿主（code-host.js）同一个口径：0 = 不限。
+    public static final CodeLoopBudget EXPLICIT = new CodeLoopBudget(0, 0L, 16384, 150_000);
 
     public static CodeLoopBudget forRequest(boolean explicitCodeMode) {
         return explicitCodeMode ? EXPLICIT : KEYWORD;
@@ -40,10 +38,20 @@ public record CodeLoopBudget(int rounds, long millis, int maxTokensPerCall, int 
      *
      * <p>不能直接给单次上限：预算只在每一轮<b>开头</b>检查，第 179 秒开始的一轮若能再等 150 秒，
      * 整个循环会跑到 329 秒 —— 越过整条流 300 秒的超时，最终回答永远出不来。
+     *
+     * <p>不限总时长（{@code millis <= 0}）时没有「剩余」可算，单次就按单次上限 —— 一轮想 150 秒是正常的。
      */
     public ModelProviderClient.ToolTurnLimits turnLimits(long elapsedMillis) {
+        if (millis <= 0) {
+            return new ModelProviderClient.ToolTurnLimits(maxTokensPerCall, callTimeoutCapMillis);
+        }
         long remaining = millis - elapsedMillis;
         int timeout = (int) Math.max(5_000L, Math.min(callTimeoutCapMillis, remaining));
         return new ModelProviderClient.ToolTurnLimits(maxTokensPerCall, timeout);
+    }
+
+    /** 轮数 / 时长是不是不限（0 表示不限）。 */
+    public boolean unlimited() {
+        return rounds <= 0 && millis <= 0;
     }
 }

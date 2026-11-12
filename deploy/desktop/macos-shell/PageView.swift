@@ -242,7 +242,8 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
             if let failed = agent.start(req, root: LocalFolders.real(req.folder), onMessage: { [weak self] m in self?.emitLocal(runId, m) }) {
                 replyHandler(nil, failed)
             } else {
-                // 页面按外壳的真实预算等待，不再另存一份 250 秒的限额。
+                // 页面按外壳的真实预算等待：0 = 不限（第一百三十六轮，用户要把限时和限轮次去掉）。
+                // 页面拿到 0 就不再自己兜底掐断，等 result / fatal，或者用户点停。
                 replyHandler(["runId": runId, "timeoutMs": agent.config.timeoutMs, "maxRounds": agent.config.maxRounds], nil)
             }
         case "stop":

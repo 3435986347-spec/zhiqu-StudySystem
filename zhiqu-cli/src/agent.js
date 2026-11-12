@@ -24,6 +24,7 @@ import { ApiError } from './api.js';
 import { sleep } from './http.js';
 import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todoSchema, unfinished } from './todos.js';
 import { spillLongInput } from './longinput.js';
+import { progressBlock, readProgress, writeProgress } from './progress.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
@@ -1122,6 +1123,15 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   const content = spilled ? spilled.message : userText;
   if (spilled) ctx.ui.note(`· 这条消息很长（${spilled.chars} 字），原文存进了 ${spilled.files.join('、')}，模型会分段读`);
   if (!origin) ctx.request = { text: content };
+  // 上一轮没做完留下的进度（第一百三十六轮）：桌面版每一轮都是新进程，光靠 history 里那句结论
+  // 不知道临时脚本在哪、读到第几个文件 —— 于是每次重建一遍、从头再看一遍。开工前把它接上。
+  if (!origin && !ctx.subagent && ctx.root && !ctx.progressInjected) {
+    const previous = readProgress(ctx.root);
+    if (previous) {
+      record(ctx, { role: 'user', content: progressBlock(previous) }, 'system');
+      ctx.progressInjected = true;
+    }
+  }
   record(ctx, { role: 'user', content }, origin);
   if (ctx.session && ctx.store && !ctx.session.title) {
     ctx.session.title = userText.replace(/\s+/g, ' ').slice(0, 40);
@@ -1140,7 +1150,9 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   if (lead) ctx.agents.beginTurn(ctx, signal);
   if (quiet(ctx)) ctx.ui.startThinking();
   try {
-  const maxRounds = ctx.maxRounds || 60;
+  // 轮数：0 / 没填 = 不限（用户 2026-11-12：做到一半停下、下一次又从零开始，比跑得久难受得多）。
+  // 兜住死循环的是下面「连着重复同一个调用」的 REPEAT_STOP 和用户自己的停，不是轮数。
+  const maxRounds = Number(ctx.maxRounds) > 0 ? Number(ctx.maxRounds) : Infinity;
   for (let round = 0; round < maxRounds; round++) {
     if (signal && signal.aborted) break;
     const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
@@ -1298,6 +1310,18 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   }
   if (signal && signal.aborted) ctx.messages = dropDanglingToolCalls(ctx.messages);
   if (ctx.store && ctx.session) ctx.store.touch(ctx.session.id, { messages: ctx.messages.length, model: ctx.model ? ctx.model.label : null });
+  // 这一轮做到哪（第一百三十六轮）：没做完就留在项目里，下一轮开工接上；正常收尾就把旧笔记清掉。
+  // 只记真发生了的（改过的文件、做过的步骤），不让模型自己编。子 agent 不写（它的进度由父的步骤代表）。
+  if (!ctx.subagent && ctx.root) {
+    const said = String(finalText || '').trim();
+    const finished = !stalled && !exhausted && !(signal && signal.aborted) && Boolean(said);
+    writeProgress(ctx.root, {
+      done: finished,
+      files: [...(ctx.changedFiles || [])],
+      steps: ctx.steps || [],
+      lastStep: (ctx.steps && ctx.steps.length) ? ctx.steps[ctx.steps.length - 1] : '',
+    });
+  }
   return { finalText, stalled, exhausted, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats } };
 }
 
@@ -1434,13 +1458,15 @@ export async function verifyGoal(ctx, signal) {
  */
 export async function runGoal(ctx, { signal, maxTurns = DEFAULT_MAX_GOAL_TURNS, onTurn } = {}) {
   const ui = ctx.ui;
+  // 0 = 不限（用户 2026-11-12）：只有「宣告达成 + 核对通过」「宣告卡住」「Ctrl+C」三种停法
+  const limit = Number(maxTurns) > 0 ? Number(maxTurns) : Infinity;
   // 存到网站的步骤从这里开始记（目标的每一轮 origin 是 goal，runTurn 不替它清；每一轮存完 archiveTurn 自己清）：
   // 上一句被打断时没存档，它的步骤不能挂到目标第一轮的回答上面
   resetArchive(ctx);
   const goal = ctx.goal;
   ctx.goalChangedFiles = ctx.goalChangedFiles || new Set();
   let text = goal.turns === 0 ? `目标：${goal.text}\n开始做。` : `继续朝目标推进：${goal.text}`;
-  for (let i = 0; i < maxTurns; i++) {
+  for (let i = 0; i < limit; i++) {
     if (signal && signal.aborted) return 'aborted';
     goal.turns += 1;
     ui.note(`· 🎯 目标第 ${goal.turns} 轮`);
@@ -1471,9 +1497,13 @@ export async function runGoal(ctx, { signal, maxTurns = DEFAULT_MAX_GOAL_TURNS, 
     // 模型收尾了，但没宣告达成、也没宣告卡住 —— 不许停
     text = '目标还没有宣告完成。接着做；真做完了就调用 goal_update（status=achieved，附上验证证据），真卡住了就调用 goal_update（status=blocked，写清楚需要用户做什么）。';
   }
-  ui.warn(`已经朝目标连续推进了 ${maxTurns} 轮，先停在这里。/goal continue 接着追。`);
-  recordGoal(ctx);
-  return 'exhausted';
+  // 不限轮时走不到这里（只有达成 / 卡住 / Ctrl+C 会出去）
+  if (Number.isFinite(limit)) {
+    ui.warn(`已经朝目标连续推进了 ${limit} 轮，先停在这里。/goal continue 接着追。`);
+    recordGoal(ctx);
+    return 'exhausted';
+  }
+  return 'aborted';
 }
 
 export function hostName() {

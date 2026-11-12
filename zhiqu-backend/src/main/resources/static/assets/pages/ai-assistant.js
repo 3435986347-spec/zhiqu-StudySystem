@@ -1414,11 +1414,12 @@ function restorePendingSend() {
  * - 本标签页正在发送时不轮询（SSE 在跑，轮询只会和它抢着改同一批消息）。
  * - 切换了 notebook 就停：那是另一个会话，拉回来的消息会覆盖当前窗口。
  * - 有上限。后端进程若在生成中途被杀，这条消息会永远停在 STREAMING，
- *   没有上限的话这个页面会一直轮询到关闭为止。上限取 15 分钟，与 SSE 的
+ *   没有上限的话这个页面会一直轮询到关闭为止。上限与 SSE 的
  *   STREAM_TIMEOUT_MS 一致 —— 超过它，那条流无论如何都已经不在了。
  */
 var STREAM_POLL_INTERVAL_MS = 2000;
-var STREAM_POLL_MAX_ATTEMPTS = 450;   // 450 × 2s = 15min，与后端 STREAM_TIMEOUT_MS 对齐
+// 第一百三十六轮：代码循环不再限时，4 小时 = 后端 STREAM_TIMEOUT_MS。7200 × 2s = 4h
+var STREAM_POLL_MAX_ATTEMPTS = 7200;
 function stopStreamWatch() {
   if (state.streamPollTimer) { clearTimeout(state.streamPollTimer); state.streamPollTimer = null; }
 }
@@ -2211,17 +2212,18 @@ function growDraft() {
   paintSlash();
 }
 function waitLocal(runId, assistant, sameNb, timeoutMs) {
-  // 第一百三十四轮：预算由外壳回传；旧外壳没有这个字段时按 10 分钟兜底。
-  // 外壳在 T+15 秒叫停，再留 5+3 秒退进程，页面 T+30 秒才兜底，避免抢在 result 前面。
+  // 第一百三十六轮：外壳回 0 = 不限时（用户要把限时和限轮次去掉）—— 就不设兜底定时器，
+  // 等 result / fatal，或者用户点停（点停会走 localCall({action:'stop'})，外壳照实交 result）。
+  // 旧外壳没有这个字段时仍按 10 分钟兜底，免得真卡死时页面一直转圈。
   var budget = Number(timeoutMs);
-  if (!Number.isFinite(budget) || budget <= 0) budget = 600000;
+  if (!Number.isFinite(budget)) budget = 600000;
   return new Promise(function (resolve) {
     var done = false;
     function finish(d) {
       if (done) return;
       done = true;
       window.removeEventListener('zq-local', onEv);
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       resolve(d || { type: 'fatal', message: '本机代码助手没有交结果' });
     }
     function onEv(e) {
@@ -2233,10 +2235,12 @@ function waitLocal(runId, assistant, sameNb, timeoutMs) {
       }
       if (d.type === 'result' || d.type === 'fatal') finish(d);
     }
-    var timer = setTimeout(function () {
+    // 0 = 不限：不设 timer。原来 budget + 30000 到点就 stop 并报「这一轮太久了」，
+    // 一小时的活做到第 11 分钟被掐断，下一次还得从头再来。
+    var timer = budget > 0 ? setTimeout(function () {
       localCall({ action: 'stop' }).catch(function () {});
       finish({ type: 'fatal', message: '这一轮太久了，已经停下' });
-    }, budget + 30000);
+    }, budget + 30000) : null;
     window.addEventListener('zq-local', onEv);
   });
 }
@@ -2265,10 +2269,16 @@ async function sendDesktopTurn(txt, codeCommand) {
       var minted = await api.post('/access-tokens/desktop-code', {});
       var token = minted && minted.token;
       if (!token) throw requestError('没拿到本机代码的登录令牌');
-      var history = (state.messages || []).filter(function (m) {
+      // 压过就只带「摘要 + 压缩点之后的消息」，没压过还是最近 40 条（第一百三十六轮 /compact）
+      var packed = readCompact(sentNb);
+      var all = (state.messages || []).filter(function (m) {
         return m && m !== assistant && m._clientKey !== clientKey + '-user'
           && (m.role === 'user' || m.role === 'assistant') && m.content && m.status !== 'STREAMING';
-      }).slice(-40).map(function (m) { return { role: m.role, content: String(m.content).slice(0, 8000) }; });
+      });
+      var start = packed ? Math.min(Number(packed.count) || 0, all.length) : Math.max(0, all.length - 40);
+      var history = [];
+      if (packed) history.push({ role: 'user', content: '【前情摘要：前面 ' + packed.count + ' 条已压缩】\n' + packed.text });
+      history = history.concat(all.slice(start).map(function (m) { return { role: m.role, content: String(m.content).slice(0, 8000) }; }));
       var level = (wsStatus && wsStatus.selectedMode) || 'READ';
       if (codeCommand === 'review') level = 'READ';
       if (['READ', 'WRITE', 'EXEC'].indexOf(level) < 0) level = 'READ';
@@ -2740,6 +2750,37 @@ function codeModeOn() {
 // 用户 2026-11-07 在网页里要过这层面板。2026-11-12 改了：面板和选择文件夹只有桌面应用有，网页上打 / 就是一句话。
 // 只有第一个词正好是认识的命令才算命令：「/usr/bin 有问题」照常发给模型；不接参数的命令后面跟了字（「/init 是什么意思」）也是一句话。
 // 全部走现有的功能，这里不另存一份档位、模型。桌面里的档位和文件夹记在这台电脑上，不改服务器的工作区。
+// /compact（第一百三十六轮，用户：「为什么应用版没有 /compact」）。
+//
+// 后端在对话太长时会说「请先压缩（/compact）」，而页面上根本打不出这个命令 —— 命令表里没有。
+// 桌面路径的历史是这一页自己组装的（下面 sendDesktopTurn 里 slice(-40)），所以压缩也在这一页做：
+// 把较早的对话按原话摘成一段（用户的话留全一点，回答只留第一段），按 notebook 存进 localStorage，
+// 之后发送时用「摘要 + 压缩点之后的消息」代替「最近 40 条」。聊天记录一个字都不动。
+//
+// 不调模型：压缩本身不该再花一次调用，也不该因为模型挂了而失败。摘要说的都是原话，不编。
+var COMPACT_KEEP_RECENT = 12;
+function compactKey(nb) { return 'zhiqu.compact.' + (nb || 'none'); }
+function readCompact(nb) {
+  try {
+    var raw = localStorage.getItem(compactKey(nb));
+    var v = raw ? JSON.parse(raw) : null;
+    return v && v.text && Number(v.count) > 0 ? v : null;
+  } catch (e) { return null; }
+}
+function compactLine(m) {
+  var t = String(m.content || '').replace(/\r/g, '').trim();
+  var head = t.split(/\n\s*\n/)[0] || t;   // 第一段：后面的细节本来就压不住
+  var keep = m.role === 'user' ? 400 : 240;
+  if (head.length > keep) head = head.slice(0, keep) + '…';
+  return (m.role === 'user' ? '用户：' : '我：') + head.replace(/\s*\n\s*/g, ' ').trim();
+}
+function compactableMessages(exclude) {
+  return (state.messages || []).filter(function (m) {
+    return m && m !== exclude && (m.role === 'user' || m.role === 'assistant')
+      && m.content && String(m.status || '').toUpperCase() !== 'STREAMING';
+  });
+}
+
 var SLASH_COMMANDS = [
   { name: '/mode', args: 'close | plan | manual | auto', desc: '切换档位', choices: function () {
     return WS_MODE_ORDER.map(function (m) { return { value: WS_MODE_NAME[m], desc: WS_MODE_DESC[m] }; });
@@ -2751,6 +2792,7 @@ var SLASH_COMMANDS = [
   { name: '/project', args: '文件夹路径', desc: '选项目；不写路径就打开选择', folder: true },
   { name: '/web', args: 'on | off', desc: '联网搜索开 / 关', choices: function () { return [{ value: 'on', desc: '打开联网搜索' }, { value: 'off', desc: '关掉联网搜索' }]; } },
   { name: '/new', desc: '新建一个 Notebook', bare: true },
+  { name: '/compact', desc: '把较早的对话压成摘要（只影响发给模型的上下文，聊天记录不变）', bare: true },
   { name: '/init', desc: '读项目，写一份 ZHIQU.md 初稿', bare: true, turn: true, folder: true },
   { name: '/review', args: '[--base 分支 | --commit 提交] [说明]', desc: '只读地审查改动，按 P0–P3 列问题', turn: true, folder: true },
   { name: '/help', desc: '列出这些命令', bare: true },
@@ -2861,6 +2903,18 @@ var localSlashActions = {
     return true;
   },
   '/new': function () { $('#zq-new-notebook').click(); return true; },
+  '/compact': function () {
+    var msgs = compactableMessages(null);
+    if (msgs.length <= COMPACT_KEEP_RECENT + 2) return slashNo('对话还不长（' + msgs.length + ' 条），不用压');
+    var older = msgs.slice(0, msgs.length - COMPACT_KEEP_RECENT);
+    var lines = older.map(compactLine).filter(Boolean);
+    if (!lines.length) return slashNo('没有可压缩的内容');
+    try {
+      localStorage.setItem(compactKey(state.notebookId), JSON.stringify({ at: nowMs(), count: older.length, text: lines.join('\n') }));
+    } catch (e) { return slashNo('存不下（浏览器不让写本地存储）'); }
+    toast('已把前 ' + older.length + ' 条压成摘要：之后发给模型的上下文从这里接上，聊天记录不变');
+    return true;
+  },
   '/help': function () { return true; },
 };
 

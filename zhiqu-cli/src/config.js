@@ -161,7 +161,9 @@ export function resolveSettings(root, flags = {}) {
     sandboxNetwork: normalizeSandboxNetwork(flags.sandboxNetwork ?? user.sandboxNetwork) || 'on',
     // 子 agent 的开关和上限（第一百二十三轮）：同样只认用户级配置 —— 克隆下来的仓库不能替用户调高花费
     agents: agentLimits(user.agents),
-    maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 80),
+    // 一轮最多调几轮工具：0 = 不限（用户 2026-11-12）。原来默认 80，一个要改十来个文件的活做到一半就停，
+    // 下一次还得从头看一遍、临时脚本重建一遍。想自己设一个上限就写进配置。
+    maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 0),
     execTimeoutMs: Number(project.execTimeoutMs ?? user.execTimeoutMs ?? 120_000),
     allowedCommands: project.allowedCommands ?? user.allowedCommands ?? null,
     // 思考过程默认不显示（用户 2026-09-28）；/verbose 或 --verbose 打开，/verbose 会记进 ~/.zhiqu/config.json

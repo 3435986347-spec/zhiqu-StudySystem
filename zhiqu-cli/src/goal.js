@@ -6,9 +6,10 @@
 //   - 模型只有两种方式能停：goal_update 宣告「已达成（附验证过的证据）」或「卡住了（说明卡在哪、要用户做什么）」；
 //     没宣告就想收尾，命令行自动让它接着做；
 //   - 宣告已达成之后再过一道独立核对（不带工具，只看目标、证据、这一路的工具结果）；核对不过就带着缺口继续；
-//   - 轮数有上限，Ctrl+C 随时停；目标与状态记进会话记录，/goal continue、/resume 能接着追。
+//   - 轮数默认不限（用户 2026-11-12：限轮次等于把活切成半截），Ctrl+C 随时停；目标与状态记进会话记录，/goal continue、/resume 能接着追。
 export const GOAL_TOOL = 'goal_update';
-export const DEFAULT_MAX_GOAL_TURNS = 25;
+/** 0 = 不限：目标没达成、没宣告卡住就一直推进。原来 25 轮，一个像样的目标做到一半就撞上限。 */
+export const DEFAULT_MAX_GOAL_TURNS = 0;
 const MAX_VERIFY_FAILURES = 3;
 
 export function newGoal(text) {

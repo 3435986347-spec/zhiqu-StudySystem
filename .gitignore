@@ -69,3 +69,4 @@ application-local.yml
 
 # Python benchmark runtime cache
 tools/benchmarks/__pycache__/
+.zhiqu/progress.md

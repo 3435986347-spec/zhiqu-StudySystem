@@ -16,17 +16,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CodeLoopBudgetTest {
 
     @Test
-    @DisplayName("显式档：循环 + 收尾在整条流的超时之内；单次调用最多等到预算用完、不越过整条流")
-    void 预算在整条流之内() {
+    @DisplayName("显式档：不再限轮、不再限时（0 = 不限），但单次模型调用仍有上限")
+    void 显式档不再限时() {
         CodeLoopBudget b = CodeLoopBudget.EXPLICIT;
+        assertTrue(b.rounds() == 0, "显式档的轮数应当 0（不限），现在是 " + b.rounds() + "：做到一半停下，下一次又从零开始");
+        assertTrue(b.millis() == 0, "显式档的时长应当 0（不限），现在是 " + b.millis() + "ms");
+        assertTrue(b.unlimited(), "0 / 0 要认成不限");
+        // 不限总时长不等于单次调用可以无限等：一轮想 150 秒是正常的，卡住不能一直挂着
+        assertTrue(b.turnLimits(0).readTimeoutMillis() == b.callTimeoutCapMillis(), "不限时的单次调用要按单次上限走");
+        assertTrue(b.turnLimits(Long.MAX_VALUE / 4).readTimeoutMillis() == b.callTimeoutCapMillis(), "过了很久也还是单次上限");
+        assertTrue(b.callTimeoutCapMillis() > 0 && b.callTimeoutCapMillis() <= 300_000, "单次调用要有上限（防卡死）");
+    }
+
+    @Test
+    @DisplayName("关键词档仍然又小又短：过触发要便宜")
+    void 关键词档要小() {
+        CodeLoopBudget k = CodeLoopBudget.KEYWORD;
+        assertTrue(k.rounds() > 0 && k.rounds() <= 10, "关键词档轮数要小");
+        assertTrue(k.millis() > 0 && k.millis() <= 60_000, "关键词档时长要短");
+        assertTrue(k.maxTokensPerCall() < CodeLoopBudget.EXPLICIT.maxTokensPerCall(), "关键词档不能给大输出");
+    }
+
+    @Test
+    @DisplayName("整条流的上限仍然存在，且比单次调用长")
+    void 流的上限还在() {
         long stream = AiWorkspaceService.STREAM_TIMEOUT_MS;
-        assertTrue(b.millis() + 30_000 <= stream, "循环 " + b.millis() + "ms + 收尾 30 秒 超过整条流 " + stream + "ms：回答出不来");
-        assertTrue(b.millis() >= 600_000, "显式代码任务至少留 10 分钟，不能仍在 4 分钟被截断");
-        assertTrue(b.rounds() >= 80, "显式代码任务至少留 80 轮，不能仍在 40 轮被截断");
-        assertTrue(stream >= 900_000, "整条回答至少留 15 分钟，不能先于代码任务和收尾断开");
-        // 最后一刻开始的一次调用：读超时取剩余（至少 5 秒），不能再给它 150 秒
-        long last = b.turnLimits(b.millis() - 1_000).readTimeoutMillis();
-        assertTrue(b.millis() - 1_000 + last <= stream, "最后一刻开始的调用能等到 " + (b.millis() - 1_000 + last) + "ms，越过整条流");
-        assertTrue(CodeLoopBudget.KEYWORD.millis() < b.millis() && CodeLoopBudget.KEYWORD.rounds() < b.rounds(), "关键词档要比显式档小（过触发要便宜）");
+        assertTrue(stream >= 3_600_000, "不限时的代码任务要留够连接时间，现在只有 " + stream + "ms");
+        assertTrue(CodeLoopBudget.EXPLICIT.callTimeoutCapMillis() < stream, "单次调用不能比整条流还长");
     }
 }

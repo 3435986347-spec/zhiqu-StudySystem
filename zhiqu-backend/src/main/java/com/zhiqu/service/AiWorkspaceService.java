@@ -52,8 +52,9 @@ public interface AiWorkspaceService {
      * 按 120 去做任何护栏都会砍掉合法的慢轮次：一轮可能串起 wiki 工具循环（30s 预算）、
      * 流式回答（读超时 60s）、以及 POST_STREAM 那组并发调用。
      */
-    // 第一百三十四轮：代码任务最多 10 分钟，整条回答留 15 分钟（前置检索、收尾、存档也占时间）。
-    long STREAM_TIMEOUT_MS = 900_000L;
+    // 第一百三十六轮：代码循环不再限时（CodeLoopBudget.EXPLICIT 0 轮 / 0 秒 = 不限），这一条是**连接**的上限，
+    // 不再是任务的上限 —— 4 小时只是「别让一个没人看的 SSE 挂一整天」，正常的活早就做完了。
+    long STREAM_TIMEOUT_MS = 4 * 60 * 60 * 1000L;
 
     /** 建完图之后按真实形态订正 execution_mode（beginRun 时图还没建）。 */
     void markExecutionMode(AiAgentRun run, boolean parallel);

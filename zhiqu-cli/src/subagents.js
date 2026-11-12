@@ -341,7 +341,8 @@ export class SubAgents {
       request: null,
       claimCheck: null,
       subagent: { id: agent.id, role: agent.role },
-      maxRounds: explorer ? Math.min(this.limits.explorerRounds, parent.maxRounds || 60) : (parent.maxRounds || 60),
+      // 子 agent 跟着父的轮数走（0 = 不限）；探索型的另有自己的 explorerRounds 上限 —— 那是防花费，不是防做不完
+      maxRounds: explorer ? Math.min(this.limits.explorerRounds, parent.maxRounds || Infinity) : (parent.maxRounds || 0),
       usage: { prompt: 0, completion: 0, cached: 0 },
       onUsage: (u) => this.charge(agent, u),
       changedFiles: agent.changedFiles,

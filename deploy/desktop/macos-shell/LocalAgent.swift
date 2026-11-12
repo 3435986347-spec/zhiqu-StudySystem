@@ -110,18 +110,19 @@ final class LocalAgent {
         var server: URL
         var home: String
         var network: String
-        var timeoutMs = 600_000
-        /// 工具循环最多几轮。桌面这一轮在本机跑，服务器管不到它 —— 这个数必须和服务器那份
-        /// `CodeLoopBudget.EXPLICIT` 对齐，否则同一句话在网页上能做完、在桌面上半路停下。
-        /// 原来写死 20：服务器那边第一百三十二轮改成了 40，这里没跟上，用户在桌面上做到一半就撞
-        /// 「这一轮用完了 20 轮」。`defaults write com.zhiqu.quadrant maxRounds 60` 可以调（1–120）。
+        /// 这一轮的墙钟预算，毫秒。**0 = 不限**（用户 2026-11-12：每次做到一半就被掐断，下一次又从零开始，
+        /// 比跑得久难受得多）。真正兜住「卡死」的是单次模型调用的读超时，不是整轮的墙钟。
+        var timeoutMs = 0
+        /// 工具循环最多几轮。**0 = 不限**（同上）。原来写死 20、后来 80，用户在桌面上做到一半就撞
+        /// 「这一轮用完了 20 轮」，改完的文件、建好的临时脚本全废。`defaults write com.zhiqu.quadrant maxRounds N`
+        /// 想自己设一个上限才生效（1–100000）。
         var maxRounds = LocalAgent.roundsSetting()
     }
 
-    /// 轮数：默认 80（和服务器一致），`defaults write com.zhiqu.quadrant maxRounds N` 可以调（1–120）
+    /// 轮数：默认 0 = 不限。`defaults write com.zhiqu.quadrant maxRounds N` 可以自己设一个上限。
     static func roundsSetting(_ defaults: UserDefaults = .standard) -> Int {
         let v = defaults.integer(forKey: "maxRounds")
-        return v > 0 ? min(120, max(1, v)) : 80
+        return v > 0 ? v : 0
     }
 
     /// 联网档（用户 2026-11-10 定的「所有人都可以联网」：默认开）。`defaults write com.zhiqu.quadrant sandboxNetwork off` 关
@@ -252,11 +253,14 @@ final class LocalAgent {
             }
         }
         send(LocalAgent.payload(req, root: root, config: config))
-        // 宿主自己有时间预算；它要是卡住了（不该），外壳到点也叫停
-        let budget = Double(config.timeoutMs) / 1000 + 15
-        DispatchQueue.main.asyncAfter(deadline: .now() + budget) { [weak self] in
-            guard let self, gen == self.generation, self.running else { return }
-            self.stop()
+        // 宿主自己看着办；它要是卡住了（不该），外壳到点也叫停。不限时（timeoutMs 0）就不设这个看门狗 ——
+        // 用户随时可以点停，应用退出时 terminate() 也会收掉。
+        if config.timeoutMs > 0 {
+            let budget = Double(config.timeoutMs) / 1000 + 15
+            DispatchQueue.main.asyncAfter(deadline: .now() + budget) { [weak self] in
+                guard let self, gen == self.generation, self.running else { return }
+                self.stop()
+            }
         }
         return nil
     }

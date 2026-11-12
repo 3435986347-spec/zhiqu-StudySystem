@@ -226,7 +226,9 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
     },
     get: async () => { throw new ApiError('这里没有远程接口', { retryable: false }); } };
   const ctx = {
-    api, ui, root: local.root, mode: 'auto', maxRounds: Math.max(1, Math.min(120, Number(run.maxRounds) || 30)), local,
+    // 轮数：0 / 没填 = 不限（用户 2026-11-12：做到一半停下、下一次又从零开始，比跑得久难受得多）。
+    // 显式填了正数的（旧外壳、测试、后端起的那一份）照它算 —— 不悄悄改别人要的预算。
+    api, ui, root: local.root, mode: 'auto', maxRounds: Math.max(0, Number(run.maxRounds) || 0), local,
     store: null, session: { id: 'web-code-agent' }, archiveDisabled: true,
     messages: historyBlock(run.history),
     allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() }, usage: { prompt: 0, completion: 0, cached: 0 },
@@ -266,7 +268,9 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
     return null;
   };
   const controller = new AbortController();
-  const timer = run.timeoutMs ? setTimeout(() => controller.abort(), Number(run.timeoutMs)) : null;
+  // 时间预算：0 / 没填 = 不限（用户 2026-11-12）。真正兜住「卡死」的是单次模型调用的读超时和用户自己的停，
+  // 不是这一轮的墙钟 —— 到点掐断只会留下半成品，下一次还得从头再来。
+  const timer = Number(run.timeoutMs) > 0 ? setTimeout(() => controller.abort(), Number(run.timeoutMs)) : null;
   // 外壳叫停（桌面版）：和到点一样中断，照实交 result。后端起的那一份、测试里的假桥没有这个方法
   let stopped = false;
   if (typeof bridge.onStop === 'function') bridge.onStop(() => { stopped = true; controller.abort(); });
@@ -332,7 +336,8 @@ export function unfinishedReport({ local, steps, timedOut, stopped = false, erro
   // 几种停法分开说：到时间、真出错、轮数用尽、连着重复同一个调用被停下。原来只有前两种，用完轮数时 error 是 null，回答里会出现「半路出错停下了：null」
   // 用户在桌面上点了停（第一百二十九轮）也单说：不是到点，也不是出错
   const why = stopped ? '这一轮被你停下了'
-    : timedOut ? `这一轮到了时间上限（${Math.round(budgetMs / 1000)} 秒），停在了半路`
+    // 不限时（budgetMs 0）之后不该再走到 timedOut；真走到了也别说「0 秒」
+    : timedOut ? (budgetMs > 0 ? `这一轮到了时间上限（${Math.round(budgetMs / 1000)} 秒），停在了半路` : '这一轮停在了半路')
     : error ? `这一轮半路出错停下了：${error}`
       : exhausted ? `这一轮用完了 ${maxRounds} 轮，停在了半路`
         : stalled ? '这一轮停下了：模型连着发同一个调用，结果一直没变'

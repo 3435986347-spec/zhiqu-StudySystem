@@ -255,7 +255,13 @@ public class JsCodeAgent {
         Process child = process;
         Thread watchdog = new Thread(() -> {
             try {
-                if (!child.waitFor(budget.millis() + 5_000, TimeUnit.MILLISECONDS)) {
+                // 0 = 不限（第一百三十六轮，用户要把限时去掉）：等它自己结束，不再到点整组杀掉。
+                // 卡死由单次模型调用的读超时和用户点停兜住 —— 墙钟掐断只会留下半成品，下一次还得从头再来。
+                boolean overdue = budget.millis() > 0 && !child.waitFor(budget.millis() + 5_000, TimeUnit.MILLISECONDS);
+                if (budget.millis() <= 0) {
+                    child.waitFor();
+                }
+                if (overdue) {
                     log.warn("代码模式的 JS 循环超出时间预算，整组结束 userId={}", userId);
                     child.descendants().forEach(ProcessHandle::destroyForcibly);
                     child.destroyForcibly();
