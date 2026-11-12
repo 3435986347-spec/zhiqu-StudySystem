@@ -71,9 +71,14 @@ export function shoot({ chrome, url, out, width, height, timeoutMs = 30_000 }) {
   return new Promise((resolve) => {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-shot-'));
     const args = [
-      '--headless=new', '--disable-gpu', '--hide-scrollbars', '--mute-audio', '--no-first-run', '--no-default-browser-check',
+      '--headless=new',
+      // 不要 --disable-gpu：它会把 GPU 进程整个关掉，headless 里就等于没有 WebGL，3D 页面截出来是空白。
+      // 没有显卡 / 不允许用真 GPU 时让 ANGLE 走 SwiftShader 软件渲染；Chrome 129 起软件 WebGL 默认被禁，
+      // 必须显式 --enable-unsafe-swiftshader 才拿得到上下文（用户 2026-11-12：3D 画面看不到）。
+      '--enable-unsafe-swiftshader', '--use-gl=angle', `--use-angle=${process.env.ZHIQU_PREVIEW_GL || 'swiftshader'}`,
+      '--hide-scrollbars', '--mute-audio', '--no-first-run', '--no-default-browser-check',
       '--disable-extensions', '--disable-sync', '--disable-background-networking', '--disable-component-update',
-      '--run-all-compositor-stages-before-draw', '--virtual-time-budget=3000',
+      '--run-all-compositor-stages-before-draw', '--virtual-time-budget=5000',
       `--user-data-dir=${profile}`, `--window-size=${width},${height}`, `--screenshot=${out}`, url,
     ];
     let stderr = '';

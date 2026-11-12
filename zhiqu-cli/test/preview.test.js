@@ -83,3 +83,25 @@ test('目录：里面有 index.html 就截它', async () => {
   const shot = await screenshotPage({ root, rel: 'site', chrome: fakeChrome(tmpdir()) });
   assert.ok(shot.base64, JSON.stringify(shot));
 });
+
+test('浏览器参数：不能带 --disable-gpu（会关掉 WebGL），软件渲染要显式允许', async () => {
+  const root = tmpdir();
+  write(root, 'p.html', '<h1>x</h1>');
+  const dir = tmpdir();
+  // 假浏览器把收到的参数写下来
+  const chrome = path.join(dir, 'argv-chrome.mjs');
+  fs.writeFileSync(chrome, `#!/usr/bin/env node
+import fs from 'node:fs';
+const a = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(path.join(dir, 'argv.json'))}, JSON.stringify(a));
+const out = (a.find((x) => x.startsWith('--screenshot=')) || '').slice(13);
+fs.writeFileSync(out, Buffer.from('${PNG.toString('base64')}', 'base64'));
+`);
+  fs.chmodSync(chrome, 0o755);
+  await screenshotPage({ root, rel: 'p.html', chrome });
+  const argv = JSON.parse(fs.readFileSync(path.join(dir, 'argv.json'), 'utf8'));
+  assert.ok(!argv.includes('--disable-gpu'), '又带上了 --disable-gpu：GPU 进程被关掉，WebGL 页面会截成空白');
+  assert.ok(argv.includes('--enable-unsafe-swiftshader'), '没有允许软件渲染：Chrome 129+ 会直接不给 WebGL 上下文');
+  assert.ok(argv.some((a) => a.startsWith('--use-angle=swiftshader')), '没有指定 ANGLE 的软件后端');
+  assert.ok(argv.some((a) => a.startsWith('--virtual-time-budget=') && Number(a.split('=')[1]) >= 5000), '3D 场景给的时间太短');
+});
