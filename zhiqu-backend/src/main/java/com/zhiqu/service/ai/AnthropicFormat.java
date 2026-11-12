@@ -30,6 +30,70 @@ public final class AnthropicFormat {
     private AnthropicFormat() {
     }
 
+    /**
+     * user 消息的内容块（第一百三十四轮）：除了文本，还要认 {@code image_url}。
+     *
+     * <p>命令行的预览截图是一条带 {@code data:image/png;base64,…} 的 user 消息。Anthropic 收图的方式是
+     * {@code {type:"image", source:{type:"base64", media_type, data}}}，把整个 data URL 当文本发过去它只会
+     * 当成一段没用的字（还白烧几万 token）。这里按规矩拆开。
+     */
+    private static List<Object> userBlocks(Object content) {
+        List<Object> blocks = new ArrayList<>();
+        if (content instanceof List<?> parts) {
+            for (Object p : parts) {
+                if (!(p instanceof Map<?, ?> part)) continue;
+                if ("image_url".equals(String.valueOf(part.get("type")))) {
+                    Map<String, Object> image = dataImage(part.get("image_url"));
+                    if (image != null) blocks.add(image);
+                    continue;
+                }
+                Object text = part.get("text");
+                if (text != null && !String.valueOf(text).isBlank()) {
+                    Map<String, Object> block = new LinkedHashMap<>();
+                    block.put("type", "text");
+                    block.put("text", String.valueOf(text));
+                    blocks.add(block);
+                }
+            }
+        } else {
+            String text = textOf(content);
+            if (!text.isBlank()) {
+                Map<String, Object> block = new LinkedHashMap<>();
+                block.put("type", "text");
+                block.put("text", text);
+                blocks.add(block);
+            }
+        }
+        if (blocks.isEmpty()) {
+            Map<String, Object> block = new LinkedHashMap<>();
+            block.put("type", "text");
+            block.put("text", "（空）");
+            blocks.add(block);
+        }
+        return blocks;
+    }
+
+    /** {@code {url:"data:image/png;base64,…"}} 或直接一个 data URL 字符串 → Anthropic 的 image 块；认不出返回 null。 */
+    private static Map<String, Object> dataImage(Object raw) {
+        Object value = raw instanceof Map<?, ?> m ? m.get("url") : raw;
+        String url = value == null ? "" : String.valueOf(value);
+        if (!url.startsWith("data:")) return null;
+        int comma = url.indexOf(',');
+        if (comma < 0) return null;
+        String meta = url.substring(5, comma);
+        if (!meta.contains("base64")) return null;
+        String data = url.substring(comma + 1);
+        if (data.isEmpty()) return null;
+        Map<String, Object> source = new LinkedHashMap<>();
+        source.put("type", "base64");
+        source.put("media_type", meta.split(";")[0].isBlank() ? "image/png" : meta.split(";")[0]);
+        source.put("data", data);
+        Map<String, Object> block = new LinkedHashMap<>();
+        block.put("type", "image");
+        block.put("source", source);
+        return block;
+    }
+
     public record Request(String system, List<Map<String, Object>> messages) {
     }
 
@@ -56,11 +120,7 @@ public final class AnthropicFormat {
                     append(out, "user", new ArrayList<>(List.of(block)));
                 }
                 default -> {
-                    String text = textOf(m.get("content"));
-                    Map<String, Object> block = new LinkedHashMap<>();
-                    block.put("type", "text");
-                    block.put("text", text.isEmpty() ? "（空）" : text);
-                    append(out, "user", new ArrayList<>(List.of(block)));
+                    append(out, "user", userBlocks(m.get("content")));
                 }
             }
         }

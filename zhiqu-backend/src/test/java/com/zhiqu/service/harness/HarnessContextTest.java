@@ -81,4 +81,18 @@ class HarnessContextTest {
         assertTrue(kept >= 4, "最近的工具输出要原样保留：" + kept);
         assertEquals(HarnessContext.ELIDED, t.messages().get(2).get("content"), "最早的那条应当先被换掉");
     }
+
+    @Test
+    @DisplayName("带图的 user 消息：一张图按固定值估，不按 base64 的字数（否则一张截图就占满窗口，历史被整段裁掉）")
+    void 图片不按字数估() {
+        String base64 = "A".repeat(200_000);
+        Map<String, Object> withImage = Map.of("role", "user", "content", List.of(
+                Map.of("type", "text", "text", "看看这个页面"),
+                Map.of("type", "image_url", "image_url", Map.of("url", "data:image/png;base64," + base64))));
+        int tokens = HarnessContext.estimateMessage(withImage);
+        assertTrue(tokens < 2_000, "一张图被估成 " + tokens + " token：按 base64 字数算了");
+        assertTrue(tokens > HarnessContext.IMAGE_TOKENS, "图的成本完全没算");
+        Map<String, Object> textOnly = Map.of("role", "user", "content", List.of(Map.of("type", "text", "text", "代码".repeat(1000))));
+        assertTrue(HarnessContext.estimateMessage(textOnly) > 500, "数组里的文本没算进去");
+    }
 }

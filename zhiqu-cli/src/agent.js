@@ -13,7 +13,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
-import { localSchemas, READ_TOOLS, shellSchemas } from './tools/local.js';
+import { localSchemas, previewSchema, READ_TOOLS, shellSchemas } from './tools/local.js';
 import { patchFiles } from './tools/patch.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
 import { loadSkill, loadSkillSchema } from './skills.js';
@@ -166,6 +166,9 @@ export function toolset(ctx) {
   // 服务器上没有后台命令（第一百一十七轮）：要管它们活多久、占多少，先不给
   // 子 agent 也给（第一百二十六轮，用户定的：子 agent 能跑命令；但它停下之前，它自己起的后台命令要先停下 —— 见 subagents.js 的 settle）
   if (sandboxed) for (const t of shellSchemas({ background: offeredBackground(ctx) })) out.push({ schema: t, kind: 'local' });
+  // 预览截图（第一百三十四轮）：只在宿主机这一份给 —— 服务器 / 桌面后端那份（hosted）跑不了浏览器。
+  // plan 档不给：它要起浏览器，是「动手」不是「想一想」。
+  if (!plan && ctx.local && !ctx.local.hosted && ctx.local.chrome) out.push({ schema: previewSchema(), kind: 'local' });
   for (const t of ctx.remoteTools || []) {
     if (!plan || REMOTE_READ_TOOLS.has(t.function.name)) out.push({ schema: t, kind: 'remote' });
   }
@@ -817,6 +820,13 @@ async function runTool(ctx, call, offered, signal) {
 
   if (kind === 'local') {
     const local = ctx.local;
+    if (name === 'preview_page') {
+      const r = await local.previewPage(args);
+      if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
+      ui.result(r.summary);
+      stepNote(ctx, { summary: r.summary, title: '预览' });
+      return r.content;
+    }
     if (name === 'list_files' || name === 'read_file' || name === 'search') {
       // 读文件按这个模型一次能看的量给（留一点给头部）：否则它以为看全了，其实后半截被截断了
       const cap = toolOutputCap(ctx.model ? ctx.model.effectiveContextWindow : null) - 300;
@@ -1252,6 +1262,18 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       }
       if (reminders.length) content += reminders.map((r) => `\n\n【提醒】${r}`).join('');
       record(ctx, { role: 'tool', tool_call_id: call.id, content });
+      // 截图跟着工具结果走（第一百三十四轮）：工具消息只能是文本，图另起一条 user 消息 —— OpenAI 和
+      // Anthropic 都只在 user 里收图。模型下一轮就能看见自己写的页面长什么样。
+      const shot = ctx.local && ctx.local.takePendingImage ? ctx.local.takePendingImage() : null;
+      if (shot) {
+        record(ctx, {
+          role: 'user',
+          content: [
+            { type: 'text', text: '（这张图就是刚才渲染的页面。看清楚：排版有没有错位、有没有空白或重叠、颜色和文字对不对。要改就改完再截一张。）' },
+            { type: 'image_url', image_url: { url: `data:${shot.mediaType};base64,${shot.base64}` } },
+          ],
+        }, 'system');
+      }
     }
     if (ctx.repeat && ctx.repeat.count >= REPEAT_STOP) {
       stalled = true;

@@ -12,6 +12,7 @@ import { StringDecoder } from 'node:string_decoder';
 import vm from 'node:vm';
 import path from 'node:path';
 import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_BYTES } from './guard.js';
+import { findChrome, screenshotPage } from './preview.js';
 import { checkLocalCommand, describeRefusal, LOCAL_DEFAULT_COMMANDS, ExecRefusal, gitLaunch } from './execrules.js';
 import { planLaunch, resolveOnPath, runProcess } from './exec.js';
 import { describeBoundary, looksBlocked, plainLaunch, sandboxedLaunch, WORKSPACE_WRITE } from './sandbox.js';
@@ -193,6 +194,18 @@ function scanRegex(context, re, lines) {
   } catch { return null; } finally { context.lines = null; }
 }
 
+export function previewSchema() {
+  return fn('preview_page', [
+    '把工作区里的一个 .html 页面渲染出来截图，你自己看结果（排版、颜色、有没有空白或错位）。',
+    '写完页面先调它看一眼，再决定要不要改；它只读，不改任何文件。',
+    '目录的话里面要有 index.html；页面引用的 css / js / 图片一起能加载。',
+  ].join('\n'), {
+    path: { type: 'string', description: '相对工作区根的 .html 文件（或带 index.html 的目录）' },
+    width: { type: 'integer', description: '视口宽度，默认 1200（320–2000）' },
+    height: { type: 'integer', description: '视口高度，默认 900（240–2000）' },
+  }, ['path']);
+}
+
 export function localSchemas() {
   return [
     fn('list_files', '列出工作区里某个目录的文件和子目录（默认展开两层）。读不了的文件（密钥、证书这类）会标出来。',
@@ -286,6 +299,8 @@ export class LocalTools {
   constructor({ root, extensions, maxFileBytes, commands, execTimeoutMs = 120_000, sandbox = null, sandboxNetwork = 'off', home } = {}) {
     this.sandbox = sandbox;
     this.sandboxNetwork = sandboxNetwork;
+    // 预览截图用的浏览器（第一百三十四轮）：宿主进程里找。沙箱里跑不了 Chrome，所以 hosted（服务器 / 桌面后端那份）不给。
+    this.chrome = findChrome();
     // 沙箱要挡的家目录（第一百二十九轮）：不给就是这个进程的 HOME（命令行）。桌面外壳起的宿主自己的 HOME 是一个空目录，
     // 照它算会挡错地方 —— 家目录下的工具链读不到、工作区就是家目录时 ~/.ssh 漏出去 —— 所以外壳把真的家目录交过来
     this.home = home;
@@ -306,9 +321,30 @@ export class LocalTools {
     this.overlay = null;
   }
 
+  /**
+   * 预览截图（第一百三十四轮）：起一个只监听 127.0.0.1 的静态服务，让宿主机的无头 Chrome 截图，
+   * 图先挂在这里，由 agent 循环跟着工具结果补一条带图的 user 消息（工具结果本身只能是文本）。
+   */
+  async previewPage(args) {
+    if (!this.chrome) return { error: '这台机器上没找到 Chrome / Chromium（可以用环境变量 ZHIQU_CHROME 指定路径）' };
+    const rel = String((args && args.path) || '').trim();
+    if (!rel) return { error: '没说预览哪个页面' };
+    const shot = await screenshotPage({ root: this.root, rel, width: args.width, height: args.height, chrome: this.chrome });
+    if (shot.error) return { error: shot.error };
+    this.pendingImage = shot;
+    return { content: `已经把 ${rel} 渲染成一张图（${shot.width}×${shot.height}，${Math.round(shot.bytes / 1024)}KB），就是下面这张。`,
+      summary: `已截图 ${shot.width}×${shot.height}` };
+  }
+
+  /** 取走刚截的图（agent 循环用；没有就是 null） */
+  takePendingImage() {
+    const shot = this.pendingImage || null;
+    this.pendingImage = null;
+    return shot;
+  }
+
   /** 这个路径有草稿就返回它的绝对路径（路径照写入的规矩判过） */
-  draftOf(p) {
-    if (!this.overlay || !this.overlay.size || typeof p !== 'string' || !p) return null;
+  draftOf(p) {    if (!this.overlay || !this.overlay.size || typeof p !== 'string' || !p) return null;
     const w = this.guard.resolveWritable(p);
     return w.reason === Reason.OK && this.overlay.has(w.path) ? w.path : null;
   }

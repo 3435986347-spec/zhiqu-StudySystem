@@ -112,4 +112,23 @@ class AnthropicFormatTest {
         assertEquals("length", AnthropicFormat.finishReason("max_tokens"));
         assertEquals("tool_calls", AnthropicFormat.finishReason("tool_use"));
     }
+
+    @Test
+    @DisplayName("带图的 user 消息：data URL 拆成 Anthropic 的 image 块，不是整段 base64 当文本发过去")
+    void 截图按图片块发() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        Map<String, Object> user = Map.of("role", "user", "content", List.of(
+                Map.of("type", "text", "text", "看看这个页面"),
+                Map.of("type", "image_url", "image_url", Map.of("url", "data:image/png;base64,QUJD"))));
+        AnthropicFormat.Request req = AnthropicFormat.fromOpenAi(List.of(user), json);
+        List<?> blocks = (List<?>) req.messages().get(0).get("content");
+        assertEquals(2, blocks.size());
+        assertEquals("text", ((Map<?, ?>) blocks.get(0)).get("type"));
+        Map<?, ?> image = (Map<?, ?>) blocks.get(1);
+        assertEquals("image", image.get("type"));
+        Map<?, ?> source = (Map<?, ?>) image.get("source");
+        assertEquals("base64", source.get("type"));
+        assertEquals("image/png", source.get("media_type"));
+        assertEquals("QUJD", source.get("data"));
+    }
 }

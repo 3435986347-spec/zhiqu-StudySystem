@@ -60,8 +60,7 @@ public final class HarnessContext {
 
     public static int estimateMessage(Map<String, Object> m) {
         int n = 4;   // 角色与分隔符
-        Object content = m.get("content");
-        n += estimateTokens(content == null ? "" : content instanceof String s ? s : String.valueOf(content));
+        n += estimateContent(m.get("content"));
         Object calls = m.get("tool_calls");
         if (calls != null) {
             n += estimateTokens(String.valueOf(calls));
@@ -79,6 +78,35 @@ public final class HarnessContext {
         for (Map<String, Object> m : messages) n += estimateMessage(m);
         return n;
     }
+
+    /**
+     * 一条消息的内容按 token 估（第一百三十四轮）。
+     *
+     * <p>content 可以是字符串，也可以是内容块数组（带图的 user 消息）。<b>图片绝不能按 base64 的字数算</b>：
+     * 一张 200KB 的截图 base64 有 27 万字，按文本估是 7 万多 token —— 整个窗口会被一张图占满，
+     * 裁剪逻辑（trim）会以为上下文炸了，把正常的历史整段丢掉。这里给每张图一个固定的估值。
+     */
+    private static int estimateContent(Object content) {
+        if (content == null) return 0;
+        if (content instanceof String s) return estimateTokens(s);
+        if (content instanceof List<?> parts) {
+            int n = 0;
+            for (Object p : parts) {
+                if (p instanceof Map<?, ?> part) {
+                    Object type = part.get("type");
+                    if ("image_url".equals(String.valueOf(type)) || "image".equals(String.valueOf(type))) n += IMAGE_TOKENS;
+                    else if (part.get("text") != null) n += estimateTokens(String.valueOf(part.get("text")));
+                } else if (p != null) {
+                    n += estimateTokens(String.valueOf(p));
+                }
+            }
+            return n;
+        }
+        return estimateTokens(String.valueOf(content));
+    }
+
+    /** 一张图按多少 token 算：和主流供应商对一屏截图的计费量级一致，不按 base64 长度。 */
+    static final int IMAGE_TOKENS = 1_200;
 
     public record Trimmed(List<Map<String, Object>> messages, int droppedMessages, int elidedToolOutputs, int estimatedTokens) {
     }

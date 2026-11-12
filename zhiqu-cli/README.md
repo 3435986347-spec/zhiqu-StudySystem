@@ -88,6 +88,21 @@ zhiqu mcp                   当 MCP 服务器，见下面
 
 **子 agent**：说「派两个 agent 分头查」这类话时，它能派子 agent 在单独的上下文里并行做事，做完只交回一段结论 —— explorer 只读（读、搜、跑只读命令），worker 和主 agent 同一档；子 agent 不能再派子 agent。子 agent 也能起后台命令，但只管得了自己起的，它停下之前这些命令会先停掉（要一直跑的 dev server 让主 agent 起）。同时最多 3 个、一句话最多 8 个、一句话里子 agent 一共最多花 200 万 token（到了就全停）。`/agents` 看派过的、`/agents <编号>` 看结论。`~/.zhiqu/config.json` 里 `"agents": false` 关掉，或者 `"agents": { "maxConcurrent": 2 }` 这样调（项目里的 `.zhiqu/settings.json` 调不了，克隆下来的仓库不能替你多花钱）。行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事；它干活时可以接着打下一句，回车排队。
 
+## 让它自己看页面（预览截图）
+
+写完 HTML 想确认长什么样，可以让它截一张自己看：
+
+```
+› 写个 landing.html，然后用 preview_page 看一眼，排版不对就改
+```
+
+- 工具名 `preview_page`，参数 `path`（工作区里的 .html，或带 index.html 的目录）、`width` / `height`（默认 1200×900）。
+- 它起一个只监听 127.0.0.1 的静态服务，用**你电脑上的 Chrome** 无头渲染截图，图直接进模型上下文 —— 模型能看到排版、空白、错位。
+- 只读，不改文件；截图超过 1.5MB 会让它把窗口调小。
+- 找不到 Chrome 就不下发这个工具；装在别处用 `ZHIQU_CHROME=/path/to/chrome`。
+- 为什么不在沙箱里跑：沙箱不给 GUI 服务和家目录，Linux 那边还禁了嵌套命名空间（见 `docs/notes/code-workspace.md`），所以这一步在宿主进程里做。
+- 只在终端里的 `zhiqu` 有；桌面应用要重打包，网页 / 桌面后端的代码模式没有这个工具。
+
 ## 执行预算
 
 - 独立命令行每轮默认 **80 次模型/工具循环**，没有网页/桌面代码任务的整轮计时器。可在 `~/.zhiqu/config.json` 或项目 `.zhiqu/settings.json` 设置 `"maxRounds": 120`；已有设置优先于默认值。
