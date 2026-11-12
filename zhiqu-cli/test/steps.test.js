@@ -318,3 +318,30 @@ test('管道 / -p 里不补：非交互终端保持原来的安静', async () =>
   await runTurn(ctx, '读一下');
   assert.deepEqual(lines, []);
 });
+
+test('截图消息排在整批工具结果之后：assistant(tool_calls) 后面必须紧跟每一条 tool，否则供应商 400', async () => {
+  const root = tmpdir();
+  write(root, 'a.html', '<h1>x</h1>');
+  const local = new LocalTools({ root });
+  local.chrome = '/fake/chrome';   // 这台机器上不一定有 Chrome：只要工具被下发就行
+  local.previewPage = async () => {
+    local.pendingImage = { mediaType: 'image/png', base64: 'QUJD' };
+    return { content: '截好了', summary: '已截图 1200×900' };
+  };
+  const { ctx } = ctxWith([
+    { calls: [{ name: 'preview_page', args: { path: 'a.html' } }, { name: 'read_file', args: { path: 'a.html' } }] },
+    { text: '看过了，排版没问题' },
+  ], { root, local });
+  await runTurn(ctx, '看看这个页面');
+
+  const msgs = ctx.messages;
+  const at = msgs.findIndex((m) => (m.tool_calls || []).length === 2);
+  assert.ok(at >= 0, '没找到那条有两个调用的 assistant 消息：' + JSON.stringify(msgs.map((m) => m.role)));
+  const ids = msgs[at].tool_calls.map((c) => c.id);
+  const between = msgs.slice(at + 1, at + 1 + ids.length);
+  assert.deepEqual(between.map((m) => m.role), ['tool', 'tool'], '工具结果之间插了别的消息 —— 供应商会报 insufficient tool messages');
+  assert.deepEqual(between.map((m) => m.tool_call_id), ids, '工具结果的顺序和 id 对不上');
+  const after = msgs[at + 1 + ids.length];
+  assert.equal(after.role, 'user', '截图消息没排在工具结果之后');
+  assert.ok(Array.isArray(after.content) && after.content.some((p) => p.type === 'image_url'), '截图没跟上来');
+});

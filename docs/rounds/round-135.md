@@ -80,6 +80,19 @@ bwrap 的 `--disable-userns` 让 Chrome 的渲染进程建不了自己的命名�
 - `preview_page` 加参数 `timeout_seconds`（15–300，夹在工具层），3D 重页面让模型自己申请。
 - 判据：`DEFAULT_TIMEOUT_MS >= 90_000`。
 
+## 再补三：一次调两个工具时 400（insufficient tool messages）
+
+用户：「这一轮半路出错停下了：… An assistant message with 'tool_calls' must be followed by tool messages
+responding to each 'tool_call_id'」。
+
+这是我把截图插错了位置：一条 assistant 消息里调了 `preview_page` + `read_file` 时，
+图插在**第一个**工具结果后面，序列成了 `assistant(tool_calls) → tool → user(图) → tool`，
+而 OpenAI 要求 tool_calls 后面紧跟每一条 tool 结果。
+
+改成：截图先攒在 `shots` 里，这一批工具**全部**回完再补一条 user 消息（多张图放同一条）。
+判据 `steps.test.js.截图消息排在整批工具结果之后`：断言 tool 结果连续、id 顺序对、图在那之后。
+扰动（把 flush 挪回循环里）见过红，报的就是「工具结果之间插了别的消息」。
+
 ## 结果
 
 - 命令行全量：见下（本轮新增 4 条）。

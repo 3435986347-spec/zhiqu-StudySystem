@@ -1225,6 +1225,10 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     }
     prefetchRemoteReads(ctx, calls, offered, signal);
     const thought = (message.content || '').length;
+    // 截图先攒着，等这一批工具**全部**回完再补一条 user 消息（第一百三十五轮补）：
+    // OpenAI 要求 assistant(tool_calls) 后面紧跟每一条 tool 结果，中间插一条 user 就是
+    // 「insufficient tool messages following tool_calls」400。一条消息里调两个工具时原来必踩。
+    const shots = [];
     for (const [i, call] of calls.entries()) {
       if (signal && signal.aborted) break;
       const key = callKey(call);
@@ -1262,18 +1266,19 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       }
       if (reminders.length) content += reminders.map((r) => `\n\n【提醒】${r}`).join('');
       record(ctx, { role: 'tool', tool_call_id: call.id, content });
-      // 截图跟着工具结果走（第一百三十四轮）：工具消息只能是文本，图另起一条 user 消息 —— OpenAI 和
-      // Anthropic 都只在 user 里收图。模型下一轮就能看见自己写的页面长什么样。
+      // 截图跟着工具结果走：工具消息只能是文本，图另起一条 user 消息 —— OpenAI 和 Anthropic 都只在 user 里收图。
+      // 但要等这一批工具都回完（见上面 shots 的注释），否则会破坏 tool_calls 后面必须紧跟 tool 结果的规矩。
       const shot = ctx.local && ctx.local.takePendingImage ? ctx.local.takePendingImage() : null;
-      if (shot) {
-        record(ctx, {
-          role: 'user',
-          content: [
-            { type: 'text', text: '（这张图就是刚才渲染的页面。看清楚：排版有没有错位、有没有空白或重叠、颜色和文字对不对。要改就改完再截一张。）' },
-            { type: 'image_url', image_url: { url: `data:${shot.mediaType};base64,${shot.base64}` } },
-          ],
-        }, 'system');
-      }
+      if (shot) shots.push(shot);
+    }
+    if (shots.length) {
+      record(ctx, {
+        role: 'user',
+        content: [
+          { type: 'text', text: '（下面的图就是刚才渲染的页面。看清楚：排版有没有错位、有没有空白或重叠、颜色和文字对不对。要改就改完再截一张。）' },
+          ...shots.map((s) => ({ type: 'image_url', image_url: { url: `data:${s.mediaType};base64,${s.base64}` } })),
+        ],
+      }, 'system');
     }
     if (ctx.repeat && ctx.repeat.count >= REPEAT_STOP) {
       stalled = true;
