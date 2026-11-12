@@ -25,7 +25,9 @@ public record CodeLoopBudget(int rounds, long millis, int maxTokensPerCall, int 
     // 第一百二十八轮：240 秒、20 轮。线上一次「做一个游戏」第一下就想了 100 秒（思考档开着），写完核心和测试、改过一次就到了 180 秒，
     // 页面、样式都没来得及写。整条流 300 秒（AiWorkspaceService.STREAM_TIMEOUT_MS）里要留出写回答的时间 —— 代码模式的回答就是
     // 循环自己的结论（第一百二十一轮），不再另调模型，60 秒足够收尾。轮数原来的 10 轮比时间先用完（一轮读一个文件）
-    public static final CodeLoopBudget EXPLICIT = new CodeLoopBudget(20, 240_000L, 16384, 150_000);
+    // 第一百三十二轮：20 → 40 轮（用户：「增加轮次，20 轮太少了」）。时间还是 240 秒 —— 一轮读一个文件时先撞到的是轮数，
+    // 不是时间；把轮数放开，让时间当唯一的闸门，不会把整条流撑过 300 秒。
+    public static final CodeLoopBudget EXPLICIT = new CodeLoopBudget(40, 240_000L, 16384, 150_000);
 
     public static CodeLoopBudget forRequest(boolean explicitCodeMode) {
         return explicitCodeMode ? EXPLICIT : KEYWORD;

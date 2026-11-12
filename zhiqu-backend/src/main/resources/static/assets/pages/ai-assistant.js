@@ -1357,6 +1357,45 @@ async function loadAiMessages() {
   state.chatHasMore = state.messages.length >= CHAT_PAGE_SIZE;
   renderAiMessages();
   watchStreamingMessages();
+  restorePendingSend();
+}
+
+/**
+ * 「我发了、但没看到它进列表」的那一条（第一百三十二轮）。
+ *
+ * <p>用户：发出去一条，点进管理后台再回来，消息不见了，只剩输入框里的字；再发一次说「上一轮还没完」。
+ * 根因是这一轮在浏览器里被导航打断，请求根本没到服务器（或者到了但没存），而页面只在内存里记着它。
+ *
+ * <p>现在发送时在 sessionStorage 留一个记号，正常收到 userMessageId 就清掉。回到页面时如果记号还在、
+ * 而服务器那边又找不到这句话，就把它放回输入框并说清楚 —— 总比「字没了、也没有任何解释」强。
+ */
+var PENDING_SEND_KEY = 'zq.ai.pending';
+function markPendingSend(text) {
+  try { sessionStorage.setItem(PENDING_SEND_KEY, JSON.stringify({ nb: state.notebookId, text: text, at: Date.now() })); } catch (e) { /* 隐私模式 */ }
+}
+function clearPendingSend() {
+  try { sessionStorage.removeItem(PENDING_SEND_KEY); } catch (e) { /* 同上 */ }
+}
+function restorePendingSend() {
+  var raw = null;
+  try { raw = sessionStorage.getItem(PENDING_SEND_KEY); } catch (e) { return; }
+  if (!raw) return;
+  var mark;
+  try { mark = JSON.parse(raw); } catch (e) { clearPendingSend(); return; }
+  clearPendingSend();
+  if (!mark || mark.nb !== state.notebookId) return;
+  if (Date.now() - Number(mark.at || 0) > 10 * 60 * 1000) return;   // 十分钟前的不管了
+  var already = (state.messages || []).some(function (m) {
+    return m.role === 'user' && String(m.content || '').trim() === String(mark.text || '').trim();
+  });
+  if (already) return;
+  var inp = $('#zq-draft');
+  if (inp && !inp.value.trim()) {
+    inp.value = mark.text;
+    if (typeof growDraft === 'function') growDraft();
+    if (typeof paintSlash === 'function') paintSlash();
+  }
+  toast('上一条没发出去（这一页中途被切走过），已经放回输入框');
 }
 
 /**
@@ -2036,6 +2075,7 @@ async function streamAiChat(body, handlers) {
   if (token()) headers.Authorization = 'Bearer ' + token();
   // 响应头 30 秒不到也算连不上（服务器挂住时 fetch 会一直等）
   var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  state.streamAbort = ctrl;   // 界面上的「立即」要能打断它
   var headTimer = ctrl ? setTimeout(function () { ctrl.abort(); }, REQUEST_TIMEOUT_MS) : null;
   var res;
   try {
@@ -2173,7 +2213,7 @@ async function sendDesktopTurn(txt, codeCommand) {
   paintSlash();
   state.aiSending = true;
   var sendButton = $('#zq-send');
-  if (sendButton) { sendButton.disabled = true; sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中'); }
+  if (sendButton) { sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中（回车 = 排队）'); }
   var clientKey = 'local-' + Date.now();
   var assistant = { role: 'assistant', content: '', status: 'STREAMING', _clientKey: clientKey, _startedAt: nowMs(), steps: { steps: [] } };
   state.messages.push({ role: 'user', content: txt, _clientKey: clientKey + '-user' }, assistant);
@@ -2227,7 +2267,9 @@ async function sendDesktopTurn(txt, codeCommand) {
     });
   } finally {
     state.aiSending = false;
-    if (sendButton) { sendButton.disabled = false; sendButton.classList.remove('is-busy'); sendButton.setAttribute('aria-label', '发送（⌘/Ctrl + 回车）'); }
+    state.streamAbort = null;
+    if (stored) clearPendingSend();
+    if (sendButton) { sendButton.classList.remove('is-busy'); sendButton.setAttribute('aria-label', '发送（⌘/Ctrl + 回车）'); }
     if (!stored) {
       var at = state.messages.indexOf(assistant);
       if (at > 0 && state.messages[at - 1]._clientKey === clientKey + '-user') state.messages.splice(at - 1, 2);
@@ -2237,14 +2279,21 @@ async function sendDesktopTurn(txt, codeCommand) {
   }
 }
 
-async function sendAiMessage() {
-  var inp = $('#zq-draft'), txt = inp && inp.value.trim();
+async function sendAiMessage(queuedText) {
+  var inp = $('#zq-draft'), txt = String(queuedText != null ? queuedText : (inp && inp.value) || '').trim();
   if (!txt) return;
   // 斜杠命令和选文件夹只在桌面应用里（第一百三十一轮，用户：网页上没有）。网页里 / 开头就是一句话
-  var slash = inDesktop() ? parseSlash(inp.value) : null, codeCommand = null;
+  var slash = inDesktop() && queuedText == null ? parseSlash(inp.value) : null, codeCommand = null;
   closeSlashMenu();
   if (slash && !slash.def.turn) { runLocalSlash(slash); return; }
-  if (state.aiSending) return; // 发送中保护:双击/回车连发只算一次
+  // 正在回答时又发了一条（第一百三十二轮）：普通的话排进队列，这一轮结束自动发。
+  // 原来这里是 `if (state.aiSending) return;` —— 字被吃掉了，用户以为发出去了。
+  // 命令（/review 这种要起一轮的）不排：一轮没完不发新的一轮，字留着，等完了再按
+  if (state.aiSending) {
+    if (slash) { toast('正在回答，命令等这一轮完了再发'); return; }
+    enqueueSend(txt);
+    return;
+  }
   if (slash) {
     var blocked = slashBlocked(slash.def);
     if (blocked) { toast(blocked, 'error'); return; }   // 字留着，切好了接着发；没叫模型
@@ -2261,10 +2310,11 @@ async function sendAiMessage() {
   inp.style.height = DRAFT_BASE_HEIGHT + 'px'; // 收回单行，否则清空后仍撑着上一条的高度
   paintSlash();
   state.aiSending = true;
+  markPendingSend(txt);   // 中途被导航打断的话，回来能知道「这一条没落地」
   stopStreamWatch();   // SSE 接管，轮询再跑就会和它抢着改同一批消息
   var sendButton = $('#zq-send');
   // 发送键只有一个箭头（第四十四轮）：生成中换成转圈（样式表画），读屏念「生成中」
-  if (sendButton) { sendButton.disabled = true; sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中'); }
+  if (sendButton) { sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中（回车 = 排队）'); }
   var reasoningMode = reasoningModeForRequest();
   // READY（有分块，走检索）和 IMAGE（无分块，走视觉内容块）都要发给后端。
   // 只发 READY 的话图片就被挡在这一层，后端永远收不到它。
@@ -2452,7 +2502,7 @@ async function sendAiMessage() {
     });
   } finally {
     state.aiSending = false;
-    if (sendButton) { sendButton.disabled = false; sendButton.classList.remove('is-busy'); sendButton.setAttribute('aria-label', '发送（⌘/Ctrl + 回车）'); }
+    if (sendButton) { sendButton.classList.remove('is-busy'); sendButton.setAttribute('aria-label', '发送（⌘/Ctrl + 回车）'); }
     // 服务器没收到这句（没配模型、限流、根本没连上）：字放回输入框，草稿里也还在 —— 改一改就能再发。
     // 收到了（事件带过 userMessageId）的不放回：那会诱导再发一遍、存两条
     if (!stored && (failed || !gotEvent) && sameNb() && inp && !inp.value.trim()) {
@@ -2463,6 +2513,8 @@ async function sendAiMessage() {
     // 才会真的开始轮询，把后端继续生成的部分续上。不用用户手动刷新。
     // 网还断着的话这一下拉不到 —— 原来就停在这了；现在等网回来再拉（whenOnline）
     if (disconnected || notSent) whenOnline(function () { return sameNb() && !state.aiSending ? loadAiMessages() : null; });
+    // 排队的那几条：这一轮完了接着发（第一百三十二轮）
+    pumpSendQueue();
   }
 }
 /**
@@ -3048,6 +3100,76 @@ async function loadWorkspace() {
     status = await api.get('/workspace/settings');
   } catch (e) { /* 不显示 */ }
   paintWorkspaceBar(status);
+}
+
+/**
+ * 生成中又发了一条：排进队列（第一百三十二轮）。
+ * 原来 sendAiMessage 一开头就是  —— 字被静默吃掉，用户以为发出去了。
+ * 现在进队列，这一轮回答完自动发；每条可以「立即」（打断这一轮）或者「×」删掉。
+ */
+function enqueueSend(text) {
+  state.sendQueue = state.sendQueue || [];
+  state.sendQueue.push({ text: text, at: Date.now() });
+  var inp = $('#zq-draft');
+  if (inp) { inp.value = ''; inp.style.height = DRAFT_BASE_HEIGHT + 'px'; paintSlash(); }
+  if (state.chatDraft) state.chatDraft.flush();
+  renderSendQueue();
+  toast('已排队：这一轮回答完就发');
+}
+
+/** 排队条：在输入框上方，一行一条 */
+function renderSendQueue() {
+  var list = state.sendQueue || [];
+  var host = $('#zq-send-queue');
+  if (!host) {
+    var draft = $('#zq-draft');
+    if (!draft || !draft.parentNode) return;
+    host = document.createElement('div');
+    host.id = 'zq-send-queue';
+    host.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin:0 0 8px;';
+    draft.parentNode.insertBefore(host, draft);
+  }
+  host.innerHTML = '';
+  if (!list.length) { host.style.display = 'none'; return; }
+  host.style.display = 'flex';
+  list.forEach(function (item, i) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--zq-border-soft);border-radius:10px;background:var(--zq-card-soft);font-size:12px;color:var(--zq-text2);';
+    var label = document.createElement('span');
+    label.textContent = '排队 ' + (i + 1) + '：' + (item.text.length > 40 ? item.text.slice(0, 40) + '…' : item.text);
+    label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    var now = document.createElement('button');
+    now.type = 'button'; now.textContent = '立即';
+    now.style.cssText = 'border:none;background:transparent;color:var(--zq-primary,#2563eb);cursor:pointer;font:inherit;padding:0 4px;';
+    now.onclick = function () { sendQueuedNow(i); };
+    var del = document.createElement('button');
+    del.type = 'button'; del.textContent = '×';
+    del.style.cssText = 'border:none;background:transparent;color:var(--zq-text3);cursor:pointer;font:inherit;padding:0 2px;';
+    del.onclick = function () { state.sendQueue.splice(i, 1); renderSendQueue(); };
+    row.appendChild(label); row.appendChild(now); row.appendChild(del);
+    host.appendChild(row);
+  });
+}
+
+/** 「立即」：把它提到队首并打断当前这一轮；abort 之后 finally 里的 pumpSendQueue 会发出去 */
+function sendQueuedNow(i) {
+  var item = (state.sendQueue || [])[i];
+  if (!item) return;
+  state.sendQueue.splice(i, 1);
+  state.sendQueue.unshift(item);
+  renderSendQueue();
+  if (state.streamAbort) { try { state.streamAbort.abort(); } catch (e) { /* 已经断了 */ } }
+  else pumpSendQueue();
+}
+
+/** 这一轮结束了：把队首那条发出去 */
+function pumpSendQueue() {
+  if (state.aiSending) return;
+  state.sendQueue = state.sendQueue || [];
+  if (!state.sendQueue.length) return;
+  var next = state.sendQueue.shift();
+  renderSendQueue();
+  sendAiMessage(next.text);
 }
 
 // 给测试直接 import 的纯函数（第三十七轮）：step-note-check.js（执行轨迹里一条叙述的转义）、diff-check.js（改动草稿的逐行对比）。

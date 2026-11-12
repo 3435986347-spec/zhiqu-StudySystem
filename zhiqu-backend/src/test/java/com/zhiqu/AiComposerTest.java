@@ -88,7 +88,7 @@ class AiComposerTest {
         assertTrue(tools.contains("id=\"zq-effort-menu\" class=\"zq-tier-menu\" role=\"menu\""), "没有思考档位的面板");
         assertTrue(rule(css(), ".zq-tier.is-on").contains("background:var(--zq-tint)"), "开着思考时按钮要看得出来（和联网按下一个样子）");
         assertTrue(boot.contains("loadAiModelSelect()"), "打开页面没有取模型列表");
-        String send = SourceText.functionBody(js, "async function sendAiMessage()");
+        String send = SourceText.functionBody(js, "async function sendAiMessage(queuedText)");
         assertTrue(send.contains("var reasoningMode = reasoningModeForRequest();"), "发消息时没有用选的档位");
         assertEquals(2, send.split("reasoningMode: reasoningMode,", -1).length - 1, "乐观显示的消息和发给后端的请求都要带档位");
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/composer-prefs-check.js"), STATIC.resolve("assets/pages/ai-assistant.js")),
@@ -120,10 +120,11 @@ class AiComposerTest {
     @DisplayName("发送中：箭头换成转圈（样式表画）、读屏念「生成中」，回来换回；输入框的起始 / 最高高度和样式表一致")
     void 发送中() throws IOException {
         String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
-        String send = SourceText.functionBody(js, "async function sendAiMessage()");
-        assertTrue(send.contains("sendButton.disabled = true; sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中');"),
+        String send = SourceText.functionBody(js, "async function sendAiMessage(queuedText)");
+        assertTrue(send.contains("sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中（回车 = 排队）');"),
                 "发送时没有换成「生成中」的样子");
-        assertTrue(send.contains("sendButton.disabled = false; sendButton.classList.remove('is-busy');"), "回来之后没有换回发送键");
+        assertFalse(send.contains("sendButton.disabled = true"), "生成中把发送键禁掉了 —— 那样就没法排队发下一条");
+        assertTrue(send.contains("sendButton.classList.remove('is-busy');"), "回来之后没有换回发送键");
         assertFalse(send.contains("sendButton.textContent"), "又往发送键里写字了 —— 会把箭头图标冲掉");
         String css = css();
         assertEquals("display:none;", rule(css, ".zq-send.is-busy .zq-icon"), "发送中箭头没有藏起来");
