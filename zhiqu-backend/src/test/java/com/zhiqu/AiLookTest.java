@@ -46,7 +46,9 @@ class AiLookTest {
         Matcher write = Pattern.compile("\\.style\\.(\\w+)|cssText").matcher(js);
         List<String> writes = new ArrayList<>();
         while (write.find()) writes.add(write.group());
-        assertEquals(List.of(".style.height", ".style.height", ".style.height"), writes, "AI 助手又在 JS 里改样子了（只许输入框按内容长高）");
+        assertFalse(writes.isEmpty(), "一处样式都不改了？判据在空转");
+        assertEquals(writes.size(), (int) writes.stream().filter(".style.height"::equals).count(),
+                "AI 助手又在 JS 里改样子了（只许输入框按内容长高）：" + writes);
     }
 
     @Test

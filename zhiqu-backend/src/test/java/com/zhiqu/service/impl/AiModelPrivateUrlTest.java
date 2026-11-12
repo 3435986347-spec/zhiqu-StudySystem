@@ -41,7 +41,7 @@ class AiModelPrivateUrlTest {
                 provider, null, crypto, null, null, mock(PlatformTransactionManager.class),
                 false, "", "OPENAI_COMPATIBLE", "https://example.invalid/v1/chat/completions",
                 "test-model", "", "2023-06-01", "", false,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
         when(mapper.insert(any(AiModelConfig.class))).thenAnswer(invocation -> {
             AiModelConfig model = invocation.getArgument(0);
             model.setId(MODEL_ID);

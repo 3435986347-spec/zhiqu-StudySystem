@@ -1358,6 +1358,8 @@ async function loadAiMessages() {
   renderAiMessages();
   watchStreamingMessages();
   restorePendingSend();
+  // 上一轮还在服务端跑着的话，接上（第一百三十三轮）
+  reattachRunningTurn().catch(function () { /* 接不上就算了，轮询还在 */ });
 }
 
 /**
@@ -2091,6 +2093,16 @@ async function streamAiChat(body, handlers) {
   }
   if (res.status === 401 || res.status === 403) { redirectToLogin(); throw new Error('未登录或无权限'); }
   if (!res.ok || !res.body) throw new Error(res.status === 429 ? '请求过于频繁，请稍后再试' : '流式连接失败(' + res.status + ')');
+  await readSse(res, handlers);
+}
+
+/**
+ * 读一条 SSE 流，把每一帧交给 handlers。
+ *
+ * <p>发送（POST /ai/chat/stream）和「回来接上」（GET /ai/runs/stream?runId=…）读的是同一种帧，
+ * 所以只留这一份读取循环 —— 两份的话，接回来的那条迟早和正常发送长得不一样。
+ */
+async function readSse(res, handlers) {
   var reader = res.body.getReader(), decoder = new TextDecoder('utf-8'), buf = '';
   // 业务终止事件(done/error)送达后,个别容器/代理收尾时不发终止 chunk,读取器会报 network error;
   // 此时流在语义上已完整,按正常结束处理,不让收尾噪声打断发送方后续流程
@@ -2118,6 +2130,24 @@ async function streamAiChat(body, handlers) {
     }
   }
 }
+
+/**
+ * 回来接上还在跑的那一轮（第一百三十三轮）。
+ *
+ * <p>发送时用的是 POST /ai/chat/stream 这条一次性连接；页面被导航带走，那条连接就没了。
+ * 这里用发送时记下的 runId 重新挂上去：服务端先把它记下来的事件按序重放，然后接着直播。
+ * 生成从来没有停过 —— 停的只是浏览器这一头。
+ */
+async function streamRunStream(runId, after, handlers) {
+  var headers = { 'Accept': 'text/event-stream' };
+  if (token()) headers.Authorization = 'Bearer ' + token();
+  var res = await fetch(API + '/ai/runs/stream?runId=' + encodeURIComponent(runId) + '&after=' + (after || 0),
+    { method: 'GET', credentials: 'same-origin', headers: headers });
+  if (res.status === 401 || res.status === 403) { redirectToLogin(); throw new Error('未登录或无权限'); }
+  if (!res.ok || !res.body) throw requestError('接不回这一轮（' + res.status + '）', { network: true });
+  await readSse(res, handlers);
+}
+
 function upsertAgentStep(raw, done) {
   var step = raw.step || raw;
   var id = step.id || step.stepId || step.title || (state.agentSteps.length + 1);
@@ -2168,11 +2198,14 @@ var DRAFT_MAX_HEIGHT = 200;
  */
 /** 聊天框的草稿按 Notebook 分开存。 */
 function chatDraftKey() { return 'chat.' + (state.notebookId || 'none'); }
+/** 输入框高度只在这一处写（内联样式按文件只许降，见 InlineStyleRatchetTest）。 */
+function setDraftHeight(el, px) { el.style.height = px + 'px'; }
+
 function growDraft() {
   var el = $('#zq-draft');
   if (!el) return;
   el.style.height = 'auto';
-  el.style.height = Math.max(DRAFT_BASE_HEIGHT, Math.min(el.scrollHeight, DRAFT_MAX_HEIGHT)) + 'px';
+  setDraftHeight(el, Math.max(DRAFT_BASE_HEIGHT, Math.min(el.scrollHeight, DRAFT_MAX_HEIGHT)));
   paintSlash();
 }
 function waitLocal(runId, assistant, sameNb) {
@@ -2209,7 +2242,7 @@ async function sendDesktopTurn(txt, codeCommand) {
   if (state.chatDraft) state.chatDraft.flush();
   var draftKey = state.chatDraft ? state.chatDraft.key() : null;
   inp.value = '';
-  inp.style.height = DRAFT_BASE_HEIGHT + 'px';
+  setDraftHeight(inp, DRAFT_BASE_HEIGHT);
   paintSlash();
   state.aiSending = true;
   var sendButton = $('#zq-send');
@@ -2282,6 +2315,188 @@ async function sendDesktopTurn(txt, codeCommand) {
   }
 }
 
+/**
+ * 一轮回答的「记号」（第一百三十三轮）。
+ *
+ * <p>发送时记下 runId；页面被导航带走、再回来时靠它从 /ai/runs/stream?runId=… 接上。
+ * 正常收到 done / error 就清掉 —— 留着的话下次进页面会去接一轮早就结束的回答。
+ */
+var RUNNING_KEY = 'zq.ai.running';
+function markRunningTurn(runId, nb, messageId) {
+  try {
+    sessionStorage.setItem(RUNNING_KEY, JSON.stringify({ runId: runId, nb: nb || null, msg: messageId || null, at: Date.now() }));
+  } catch (e) { /* 隐私模式 */ }
+}
+function clearRunningTurn() {
+  try { sessionStorage.removeItem(RUNNING_KEY); } catch (e) { /* 同上 */ }
+}
+function runningTurn() {
+  var raw = null;
+  try { raw = sessionStorage.getItem(RUNNING_KEY); } catch (e) { return null; }
+  if (!raw) return null;
+  try {
+    var info = JSON.parse(raw);
+    // 服务端跑完只留 5 分钟，超过 10 分钟的一定不是还在跑的那一轮
+    if (!info || !info.runId || Date.now() - (info.at || 0) > 10 * 60 * 1000) { clearRunningTurn(); return null; }
+    return info;
+  } catch (e) { clearRunningTurn(); return null; }
+}
+
+/**
+ * 一条流事件的落地（第一百三十三轮）：发送时和「回来接上」时用的是同一份。
+ *
+ * <p>两份实现迟早分叉，而分叉的表现就是「刷新之后和没刷新长得不一样」—— 那正是这一轮要修的东西。
+ *
+ * <p>st：{ assistant, sameNb, reasoningMode, stored, dropped, completed, failed, marked }
+ */
+function makeStreamApplier(st) {
+  var assistant = st.assistant;
+  return function (event, data) {
+    // 第一条带 requestId 的事件就记下：回答里步骤的展开状态按它记，流式中和收尾重拉列表之后是同一个键
+    if (!assistant.requestId && data && data.requestId) assistant.requestId = data.requestId;
+    // 记下这一轮：页面被带走之后靠它接回来
+    if (!st.marked && data && data.agentRunId) {
+      st.marked = true;
+      markRunningTurn(data.agentRunId, state.notebookId, data.assistantMessageId || assistant.id);
+    }
+    if (!st.stored && data && data.userMessageId) {
+      st.stored = true;
+      if (st.onStored) st.onStored();
+    }
+    if (event === 'message.delta') {
+      assistant.content += (data.text || data.delta || data.content || '');
+      // 只改这一条气泡。退回全量渲染的两种情形：节点还没渲染出来（第一个增量），
+      // 或 DOM 不是预期形状。不假装成功，也不静默什么都不做。
+      if (st.sameNb() && !patchStreamingMessage(state.messages.indexOf(assistant))) renderAiMessages();
+    }
+    else if (event === 'reasoning.delta' && (assistant.reasoningMode || 'AUTO') !== 'OFF') {
+      assistant.reasoningSummary += (data.text || data.delta || '');
+      if (st.sameNb()) renderAiMessages();
+    }
+    else if (event === 'agent.step.start') { if (st.sameNb()) upsertAgentStep(data, false); }
+    else if (event === 'agent.step.done') { if (st.sameNb()) upsertAgentStep(data, true); }
+    else if (event === 'agent.step.note') { if (st.sameNb()) addAgentStepNote(data); }
+    else if (event === 'trace.step') {
+      mergeTraceStep(assistant, data && data.step);
+      if (st.sameNb() && !patchStreamingMessage(state.messages.indexOf(assistant))) renderAiMessages();
+    }
+    // 消息太长被截了中间（后端 UserMessageFit）：说给用户，而且多停一会儿 —— 这句话要读完
+    else if (event === 'message.notice') { toast((data && data.message) || '这条消息被截短了', data && data.level === 'error' ? 'error' : 'warn', 9000); }
+    else if (event === 'message.processing') {
+      if (!assistant._planDraftReady && assistant.status === 'STREAMING' && data && data.stage === 'PLAN_DRAFT') {
+        assistant._processing = data.message || '正在整理可确认的计划草稿…';
+        if (st.sameNb()) renderAiMessages();
+      }
+    }
+    else if (event === 'artifact.created') {
+      if (st.sameNb()) {
+        var incoming = receiveAgentArtifact(data);
+        if (incoming && isPlanDraft(incoming)) {
+          var readyItems = planDraftItems(incoming);
+          if (readyItems.tasks.length || readyItems.routines.length) {
+            assistant._planDraftReady = true;
+            assistant._processing = '';
+            renderAiMessages();
+          }
+        }
+      }
+    }
+    // 「立即」补进来的话（第一百三十三轮）：让用户看见它进了这一轮，不是凭空消失
+    else if (event === 'message.injected') {
+      toast('已补充给这一轮：' + String((data && data.text) || '').slice(0, 30));
+    }
+    // 服务端的缓冲丢过帧：正文以库里的为准，本地拼的这截先清掉，免得接出重复
+    else if (event === 'stream.reset') {
+      st.reset = true;
+      assistant.content = '';
+      if (st.sameNb()) renderAiMessages();
+    }
+    // 这一轮已经不在服务端内存里了（重启过 / 早就结束）：回去读消息列表
+    else if (event === 'stream.gone') {
+      clearRunningTurn();
+      st.gone = true;
+    }
+    else if (event === 'done') {
+      clearRunningTurn();
+      assistant._processing = '';
+      if (data && (data.dropped || data.status === 'CANCELED')) {
+        st.dropped = true;
+        assistant.status = '';
+        toast(data.message || 'Notebook 已删除，本轮回答未保存', 'error');
+      } else {
+        if (data && data.content && !assistant.content) assistant.content = data.content;
+        if ((assistant.reasoningMode || 'AUTO') !== 'OFF' && data && data.reasoningSummary) {
+          assistant.reasoningSummary = data.reasoningSummary;
+        }
+        if (data && data.assistantMessageId) assistant.id = data.assistantMessageId;
+        if (data && data.requestId) assistant.requestId = data.requestId;
+        if (data && data.steps && data.steps.steps) assistant.steps = data.steps;
+        if (data && data.notice) assistant.notice = data.notice;
+        assistant.status = '';
+        st.completed = true;
+        if (st.sameNb()) renderAiMessages();
+      }
+    }
+    else if (event === 'error') {
+      clearRunningTurn();
+      st.failed = true;
+      assistant._processing = '';
+      assistant.status = '';
+      // 已经收到的半截留着，原因另起一行说（原来有半截就不说原因 —— 看着像是模型说完了）
+      assistant.errorMessage = (data && data.message) || '未知错误';
+      if (st.sameNb()) renderAiMessages();
+    }
+  };
+}
+
+/**
+ * 页面回来时，如果上一轮还在服务端跑着，重新接上（第一百三十三轮）。
+ *
+ * <p>用户：「回答到一半我去查看索引了，回来就没了」。原来页面回来只能重新拉消息列表，
+ * 而那一轮还在生成 —— 列表里只有已经落库的半截，后面的永远接不回来。
+ */
+var reattaching = false;
+var reattachTried = {};
+async function reattachRunningTurn() {
+  if (reattaching || state.aiSending) return;
+  var info = runningTurn();
+  if (!info || info.nb !== state.notebookId) return;
+  if (reattachTried[info.runId]) return;   // 一次页面只试一次，失败就交给轮询
+  reattachTried[info.runId] = true;
+  // 本地要有那条消息可写；没有说明它没存上（或者被清空了），别接
+  var assistant = null;
+  for (var i = state.messages.length - 1; i >= 0; i--) {
+    var m = state.messages[i];
+    if (m.role !== 'assistant') continue;
+    if (info.msg && Number(m.id) === Number(info.msg)) { assistant = m; break; }
+    if (!info.msg && String(m.status || '').toUpperCase() === 'STREAMING') { assistant = m; break; }
+  }
+  if (!assistant) { clearRunningTurn(); return; }
+  reattaching = true;
+  state.aiSending = true;   // 别让轮询和它抢着改同一条消息
+  stopStreamWatch();
+  assistant.status = 'STREAMING';
+  assistant.content = '';   // 服务端会从第一帧重放；库里那份先清掉，免得接成两份
+  assistant.errorMessage = '';
+  renderAiMessages();
+  var st = { assistant: assistant, sameNb: function () { return info.nb === state.notebookId; },
+    stored: true, dropped: false, completed: false, failed: false, marked: true };
+  try {
+    await streamRunStream(info.runId, 0, makeStreamApplier(st));
+  } catch (e) {
+    // 接不上（服务重启过、网断了）：交给轮询，别把这一轮标成失败
+  } finally {
+    reattaching = false;
+    state.aiSending = false;
+    if (assistant.status === 'STREAMING') assistant.status = '';
+    renderAiMessages();
+    if (st.dropped) { if (st.sameNb()) setAiNotebookId(null); await loadAiNotebooks(); }
+    // 收尾对一次库：接上了就拿到最终那条（id / 状态 / 步骤），没接上（超时、断线）也把库里的半截铺出来
+    await loadAiMessages();
+    pumpSendQueue();
+  }
+}
+
 async function sendAiMessage(queuedText) {
   var inp = $('#zq-draft'), txt = String(queuedText != null ? queuedText : (inp && inp.value) || '').trim();
   if (!txt) return;
@@ -2307,10 +2522,9 @@ async function sendAiMessage(queuedText) {
   // 原来一按发送就清空：没配模型、被限流、一刷新，这句话就没了。
   if (state.chatDraft) state.chatDraft.flush();
   var draftKeyAtSend = state.chatDraft ? state.chatDraft.key() : null;
-  var stored = false;
   var gotEvent = false;
   inp.value = '';
-  inp.style.height = DRAFT_BASE_HEIGHT + 'px'; // 收回单行，否则清空后仍撑着上一条的高度
+  setDraftHeight(inp, DRAFT_BASE_HEIGHT); // 收回单行，否则清空后仍撑着上一条的高度
   paintSlash();
   state.aiSending = true;
   markPendingSend(txt);   // 中途被导航打断的话，回来能知道「这一条没落地」
@@ -2363,96 +2577,18 @@ async function sendAiMessage(queuedText) {
   // SSE 回调期间用户可能切换 notebook:快照发送时的 id,不再渲染/改写新窗口的全局流式状态
   var sentNb = state.notebookId;
   var sameNb = function () { return sentNb === state.notebookId; };
-  // 后端 done 事件带 dropped/CANCELED:notebook 在流式期间被删除(可能来自其他标签页/API),
-  // 本轮问答未入库——不能把已收到的回答当成功结果留在页面上
-  var dropped = false;
-  var completed = false;
-  // 本轮以 SSE error 收场。注意它与 catch(e) 那条路不同：error 事件是**流正常结束**，
-  // 不抛异常，所以下面的收尾照跑 —— 这正是错误文案被冲掉的原因，见末尾。
-  var failed = false;
   // 传输层断开（与 SSE 的 error 事件不同：那是流正常结束）。断了之后要去把
   // 后端已经落库的部分接回来，见下面的 finally。
   var disconnected = false;
   // 一个字都没收到就连不上（断着网点了发送）：多半根本没发出去
   var notSent = false;
+  var st = { assistant: assistant, sameNb: sameNb,
+    stored: false, dropped: false, completed: false, failed: false,
+    onStored: function () { if (draftKeyAtSend) drafts.clearIf(draftKeyAtSend, txt); } };
   try {
     await safe('AI 发送', async function () {
     try {
-      await streamAiChat(body, function (event, data) {
-        gotEvent = true;
-        // 第一条带 requestId 的事件就记下：回答里步骤的展开状态按它记，流式中和收尾重拉列表之后是同一个键
-        if (!assistant.requestId && data && data.requestId) assistant.requestId = data.requestId;
-        if (!stored && data && data.userMessageId) {
-          stored = true;
-          if (draftKeyAtSend) drafts.clearIf(draftKeyAtSend, txt);
-        }
-        if (event === 'message.delta') {
-          assistant.content += (data.text || data.delta || data.content || '');
-          // 只改这一条气泡。退回全量渲染的两种情形：节点还没渲染出来（第一个增量），
-          // 或 DOM 不是预期形状。不假装成功，也不静默什么都不做。
-          if (sameNb() && !patchStreamingMessage(state.messages.indexOf(assistant))) renderAiMessages();
-        }
-        else if (event === 'reasoning.delta' && reasoningMode !== 'OFF') {
-          assistant.reasoningSummary += (data.text || data.delta || '');
-          if (sameNb()) renderAiMessages();
-        }
-        else if (event === 'agent.step.start') { if (sameNb()) upsertAgentStep(data, false); }
-        else if (event === 'agent.step.done') { if (sameNb()) upsertAgentStep(data, true); }
-        else if (event === 'agent.step.note') { if (sameNb()) addAgentStepNote(data); }
-        else if (event === 'trace.step') {
-          mergeTraceStep(assistant, data && data.step);
-          if (sameNb() && !patchStreamingMessage(state.messages.indexOf(assistant))) renderAiMessages();
-        }
-        // 消息太长被截了中间（后端 UserMessageFit）：说给用户，而且多停一会儿 —— 这句话要读完
-        else if (event === 'message.notice') { toast((data && data.message) || '这条消息被截短了', data && data.level === 'error' ? 'error' : 'warn', 9000); }
-        else if (event === 'message.processing') {
-          if (!assistant._planDraftReady && assistant.status === 'STREAMING' && data && data.stage === 'PLAN_DRAFT') {
-            assistant._processing = data.message || '正在整理可确认的计划草稿…';
-            if (sameNb()) renderAiMessages();
-          }
-        }
-        else if (event === 'artifact.created') {
-          if (sameNb()) {
-            var incoming = receiveAgentArtifact(data);
-            if (incoming && isPlanDraft(incoming)) {
-              var readyItems = planDraftItems(incoming);
-              if (readyItems.tasks.length || readyItems.routines.length) {
-                assistant._planDraftReady = true;
-                assistant._processing = '';
-                renderAiMessages();
-              }
-            }
-          }
-        }
-        else if (event === 'done') {
-          assistant._processing = '';
-          if (data && (data.dropped || data.status === 'CANCELED')) {
-            dropped = true;
-            assistant.status = '';
-            toast(data.message || 'Notebook 已删除，本轮回答未保存', 'error');
-          } else {
-            if (data && data.content && !assistant.content) assistant.content = data.content;
-            if (reasoningMode !== 'OFF' && data && data.reasoningSummary) {
-              assistant.reasoningSummary = data.reasoningSummary;
-            }
-            if (data && data.assistantMessageId) assistant.id = data.assistantMessageId;
-            if (data && data.requestId) assistant.requestId = data.requestId;
-            if (data && data.steps && data.steps.steps) assistant.steps = data.steps;
-            if (data && data.notice) assistant.notice = data.notice;
-            assistant.status = '';
-            completed = true;
-            if (sameNb()) renderAiMessages();
-          }
-        }
-        else if (event === 'error') {
-          failed = true;
-          assistant._processing = '';
-          assistant.status = '';
-          // 已经收到的半截留着，原因另起一行说（原来有半截就不说原因 —— 看着像是模型说完了）
-          assistant.errorMessage = (data && data.message) || '未知错误';
-          if (sameNb()) renderAiMessages();
-        }
-      });
+      await streamAiChat(body, makeStreamApplier(st));
     } catch (e) {
       if (!gotEvent && e && e.beforeResponse) {
         // 断着网点了发送：原来这里也当成「流到一半断了」—— 气泡里写「（连接中断，正在尝试接回…）」，可根本没有什么可接的，
@@ -2479,7 +2615,7 @@ async function sendAiMessage(queuedText) {
       }
       throw e && e.network ? requestError('连接断了，网回来之后会把回答接上', { network: true }) : e;
     }
-    if (dropped) {
+    if (st.dropped) {
       // 当前会话若还挂在已删 notebook 上,回落到默认选择(与右键删除 notebook 的刷新流程一致);
       // 重新拉列表+消息会自然清掉未保存的临时问答
       if (sameNb()) setAiNotebookId(null);
@@ -2489,7 +2625,7 @@ async function sendAiMessage(queuedText) {
       return;
     }
     assistant.status = '';
-    if (completed && sameNb()) clearUsedPendingSources(selectedSourceIds);
+    if (st.completed && sameNb()) clearUsedPendingSources(selectedSourceIds);
     renderAiMessages();
     // 出错时**不能**重新拉取。streamChatInternal 的四道前置检查（requireModel / 空消息 /
     // 深度思考支持 / 联网搜索可用）全部跑在落库之前，任一道抛 BusinessException 就是
@@ -2500,7 +2636,7 @@ async function sendAiMessage(queuedText) {
     // 实测（未修时，全新用户无模型配置）：SSE 返回
     //   {"message":"请先在「设置 → AI 模型」里配置可用的 AI 模型","nonRetryable":true}
     // 随后 /ai/messages 返回 []，页面消息节点归零。
-    if (!failed) await loadAiMessages();
+    if (!st.failed) await loadAiMessages();
     await renderAgentPanels();
     });
   } finally {
@@ -2508,7 +2644,7 @@ async function sendAiMessage(queuedText) {
     if (sendButton) { sendButton.classList.remove('is-busy'); sendButton.setAttribute('aria-label', '发送（⌘/Ctrl + 回车）'); }
     // 服务器没收到这句（没配模型、限流、根本没连上）：字放回输入框，草稿里也还在 —— 改一改就能再发。
     // 收到了（事件带过 userMessageId）的不放回：那会诱导再发一遍、存两条
-    if (!stored && (failed || !gotEvent) && sameNb() && inp && !inp.value.trim()) {
+    if (!st.stored && (st.failed || !gotEvent) && sameNb() && inp && !inp.value.trim()) {
       inp.value = txt;
       growDraft();
     }
@@ -3114,13 +3250,13 @@ function enqueueSend(text) {
   state.sendQueue = state.sendQueue || [];
   state.sendQueue.push({ text: text, at: Date.now() });
   var inp = $('#zq-draft');
-  if (inp) { inp.value = ''; inp.style.height = DRAFT_BASE_HEIGHT + 'px'; paintSlash(); }
+  if (inp) { inp.value = ''; setDraftHeight(inp, DRAFT_BASE_HEIGHT); paintSlash(); }
   if (state.chatDraft) state.chatDraft.flush();
   renderSendQueue();
   toast('已排队：这一轮回答完就发');
 }
 
-/** 排队条：在输入框上方，一行一条 */
+/** 排队条：在输入框上方，一行一条（样式在 .zq-send-queue，JS 只挂 class） */
 function renderSendQueue() {
   var list = state.sendQueue || [];
   var host = $('#zq-send-queue');
@@ -3129,52 +3265,71 @@ function renderSendQueue() {
     if (!draft || !draft.parentNode) return;
     host = document.createElement('div');
     host.id = 'zq-send-queue';
-    host.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin:0 0 8px;';
+    host.className = 'zq-send-queue';
     draft.parentNode.insertBefore(host, draft);
   }
   host.innerHTML = '';
-  if (!list.length) { host.style.display = 'none'; return; }
-  host.style.display = 'flex';
+  // 样式全在 .zq-send-queue 那几条规则里：JS 只挂 class（AiLookTest 盯着，样式不许写在脚本里）
+  host.hidden = !list.length;
+  if (!list.length) return;
   list.forEach(function (item, i) {
     var row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--zq-border-soft);border-radius:10px;background:var(--zq-card-soft);font-size:12px;color:var(--zq-text2);';
+    row.className = 'zq-send-queue-row';
     var label = document.createElement('span');
+    label.className = 'zq-send-queue-text';
     label.textContent = '排队 ' + (i + 1) + '：' + (item.text.length > 40 ? item.text.slice(0, 40) + '…' : item.text);
-    label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
     var now = document.createElement('button');
-    now.type = 'button'; now.textContent = '立即';
-    now.style.cssText = 'border:none;background:transparent;color:var(--zq-primary,#2563eb);cursor:pointer;font:inherit;padding:0 4px;';
+    now.type = 'button'; now.className = 'zq-send-queue-now'; now.textContent = '立即';
     now.onclick = function () { sendQueuedNow(i); };
     var del = document.createElement('button');
-    del.type = 'button'; del.textContent = '×';
-    del.style.cssText = 'border:none;background:transparent;color:var(--zq-text3);cursor:pointer;font:inherit;padding:0 2px;';
+    del.type = 'button'; del.className = 'zq-send-queue-del';
+    del.innerHTML = icon('x');
+    del.setAttribute('aria-label', '取消这条排队');
     del.onclick = function () { state.sendQueue.splice(i, 1); renderSendQueue(); };
     row.appendChild(label); row.appendChild(now); row.appendChild(del);
     host.appendChild(row);
   });
 }
 
-/** 「立即」：把它提到队首并打断当前这一轮；abort 之后 finally 里的 pumpSendQueue 会发出去 */
+/**
+ * 「立即」：不是打断这一轮，而是把这句话补进这一轮的上下文（第一百三十三轮）。
+ *
+ * <p>用户：「不是要终止这一轮，是给模型补充信息」。原来这里是 abort 当前这条流 ——
+ * 用户看着出来的半截回答当场没了。现在先问服务端能不能补进这一轮：
+ * 能（还没开始写最终回答）→ 模型下一次调用就看得到；不能 → 留在队首，这一轮结束立刻发。
+ */
 function sendQueuedNow(i) {
   var item = (state.sendQueue || [])[i];
   if (!item) return;
-  state.sendQueue.splice(i, 1);
-  state.sendQueue.unshift(item);
-  renderSendQueue();
-  // 网页这一轮：有 AbortController，直接掐断，finally 里会接着发
-  if (state.streamAbort) {
-    try { state.streamAbort.abort(); } catch (e) { /* 已经断了 */ }
-    toast('已打断这一轮，接着发这条');
+  var info = runningTurn();
+  if (!info || !info.runId) {
+    // 没有可补的那一轮（桌面本机跑的那一轮、或者已经结束了）：排到最前面，等它结束
+    state.sendQueue.splice(i, 1);
+    state.sendQueue.unshift(item);
+    renderSendQueue();
+    toast('这一轮补不进去（不在服务端跑），已经排到最前面，它一结束就发');
+    if (!state.aiSending) pumpSendQueue();
     return;
   }
-  // 桌面应用这一轮走外壳（没有 AbortController）：让本机助手停下，它收尾时 finally 会接着发。
-  // 原来这里只试 streamAbort，桌面路径永远是 null —— 点了「立即」什么都不发生（用户实测）
-  if (inDesktop()) {
-    localCall({ action: 'stop' }).catch(function () {});
-    toast('已让本机助手停下，接着发这条');
-    return;
-  }
-  toast('这一轮还没真正开始，已经排在最前面，它一结束就发');
+  api.post('/ai/runs/' + info.runId + '/say', { text: item.text }).then(function (res) {
+    var delivered = res && res.delivered;
+    var at = (state.sendQueue || []).indexOf(item);
+    if (at >= 0) state.sendQueue.splice(at, 1);
+    if (delivered === 'current') {
+      renderSendQueue();
+      toast('已补充给这一轮，模型下一步就能看到');
+    } else {
+      state.sendQueue.unshift(item);
+      renderSendQueue();
+      toast('这一轮已经在写最终回答，这句会在它结束后立刻发出');
+    }
+  }).catch(function () {
+    var at = (state.sendQueue || []).indexOf(item);
+    if (at >= 0) state.sendQueue.splice(at, 1);
+    state.sendQueue.unshift(item);
+    renderSendQueue();
+    toast('没补进去，已经排到最前面', 'error');
+  });
 }
 
 /** 这一轮结束了：把队首那条发出去 */

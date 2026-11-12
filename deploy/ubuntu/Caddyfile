@@ -24,7 +24,7 @@ zhiqustudy.com {
     # SSE 不能被缓冲，否则用户看到的是「一直没反应，然后一次性全出来」：AI 助手的回答、命令行经服务器的模型网关、
     # 参考计划和后台的事件。Caddy 对 text/event-stream 有自动探测，这里显式写出来：响应头哪天不带那个类型，
     # 症状只是流式变成了一次性，没人会想到反向代理。后端新加一个流式接口，UbuntuDeployTest 会要求加到这里。
-    @sse path /api/ai/chat/stream /api/harness/model/stream /api/shared-plans/events /api/admin/events
+    @sse path /api/ai/chat/stream /api/ai/runs/stream /api/harness/model/stream /api/shared-plans/events /api/admin/events
     reverse_proxy @sse 127.0.0.1:8080 {
         flush_interval -1
     }

@@ -32,9 +32,11 @@ class MessageFailureRenderingTest {
     @DisplayName("流里来了 error：原因放进 errorMessage，不去改正文；done 带着的说明放进 notice")
     void 事件接线() throws Exception {
         String js = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
-        int at = js.indexOf("else if (event === 'error') {");
+        // 第一百三十三轮：事件落地收进 makeStreamApplier（发送和「回来接上」共用一份）
+        String applier = SourceText.functionBody(js, "function makeStreamApplier(st)");
+        int at = applier.indexOf("else if (event === 'error') {");
         assertTrue(at > 0, "找不到流里 error 事件的处理");
-        String onError = js.substring(at, js.indexOf("});", at));
+        String onError = applier.substring(at, applier.indexOf("\n    }", at));
         assertTrue(onError.contains("assistant.errorMessage = "), "error 事件没有把原因放到这条回答上：" + onError);
         assertFalse(onError.contains("assistant.content ="), "error 事件不该改正文 —— 已经出来的半截要留着：" + onError);
         assertTrue(js.contains("if (data && data.notice) assistant.notice = data.notice;"), "done 带着的说明没有放到这条回答上");

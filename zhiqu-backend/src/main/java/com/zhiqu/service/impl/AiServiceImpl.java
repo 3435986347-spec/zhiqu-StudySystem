@@ -76,6 +76,7 @@ import com.zhiqu.mapper.SysUserMapper;
 import com.zhiqu.service.memory.LongTermMemoryStore;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.service.support.ConversationLockRegistry;
+import com.zhiqu.service.support.ChatRunHub;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -109,6 +110,22 @@ public class AiServiceImpl implements AiService {
     private final AssistantTaskReader taskReader;
     /** 进行中的回答 / 执行记录的心跳（第二十八轮）。 */
     private final com.zhiqu.service.support.StreamLiveness streamLiveness;
+    /**
+     * 一轮回答的直播 + 回放（第一百三十三轮）。事件先记在这里，再推给当前挂着的那条 SSE ——
+     * 页面关掉连接不再等于这一轮没人看，回来还能从 {@code after=N} 接上。
+     */
+    private final com.zhiqu.service.support.ChatRunHub chatRunHub;
+    /**
+     * 跑回答的线程池。原来用 {@code CompletableFuture.runAsync} 的默认池（ForkJoinPool.commonPool），
+     * 那个池是 JVM 里所有人共用的 —— 别的并行流把线程占满时，一轮回答会排在后面不动。
+     * 这里给回答单独一组带名字的线程，日志里也看得出是谁。
+     */
+    private static final java.util.concurrent.ExecutorService CHAT_RUNS =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "chat-run");
+                t.setDaemon(true);
+                return t;
+            });
     /** create_study_plan 的 schema 与解析器（拆第六刀）。PLANNER 与 code agent 共用这一份。 */
     private final StudyPlanTool studyPlanTool;
     private static final Logger log = LoggerFactory.getLogger(AiServiceImpl.class);
@@ -305,12 +322,14 @@ public class AiServiceImpl implements AiService {
                          AssistantTaskReader taskReader,
                          com.zhiqu.service.support.StreamLiveness streamLiveness,
                          StudyPlanTool studyPlanTool,
-                         com.zhiqu.service.support.SseHeartbeats heartbeats) {
+                         com.zhiqu.service.support.SseHeartbeats heartbeats,
+                         com.zhiqu.service.support.ChatRunHub chatRunHub) {
         this.clock = clock;
         this.codeWorkspaceAgent = codeWorkspaceAgent;
         this.taskReader = taskReader;
         this.streamLiveness = streamLiveness;
         this.studyPlanTool = studyPlanTool;
+        this.chatRunHub = chatRunHub;
         this.configMapper = configMapper;
         this.modelConfigMapper = modelConfigMapper;
         this.conversationMapper = conversationMapper;
@@ -580,7 +599,8 @@ public class AiServiceImpl implements AiService {
         // 这一轮的数据库心跳（第二十八轮，StreamLiveness）：在 streamChatInternal 里建好回答和执行记录之后开始，这里的 finally 停 ——
         // 不管从哪条路出来（正常、业务错误、意外异常）都停
         List<AutoCloseable> leases = new java.util.concurrent.CopyOnWriteArrayList<>();
-        CompletableFuture.runAsync(() -> {
+        // 单独一组线程跑（不再用 JVM 共用的 ForkJoinPool.commonPool），见 CHAT_RUNS 的注释
+        CHAT_RUNS.execute(() -> {
             try {
                 streamChatInternal(emitter, userId, message, modelConfigId, enableWebSearch, reasoningMode,
                         notebookId, agentMode, contextOptions == null ? Map.of() : contextOptions, leases);
@@ -682,7 +702,20 @@ public class AiServiceImpl implements AiService {
                 assistantMessage
         );
         leases.add(streamLiveness.hold(assistantMessage.getId(), agentRun.getId()));
-        emitSse(emitter, "agent.run.start", Map.of(
+        AgentTraceRecorder trace = new AgentTraceRecorder(objectMapper, aiWorkspaceService,
+                agentTaskGraphService, requestId, agentRun);
+        StreamState state = new StreamState(trace, requestId, agentRun, config, userId, notebookId, limitedMessage,
+                contextOptions, Boolean.TRUE.equals(enableWebSearch), normalizedReasoningMode,
+                memoryText, writeContext.summary(), history, userMessage, assistantMessage);
+        // 这一轮从此刻起可以重连（第一百三十三轮）：事件先记进 hub，再推给当前这条连接。
+        // 页面关掉连接之后事件照样记、生成照样跑，回来 GET /api/ai/runs/{id}/stream?after=N 接着放。
+        ChatRunHub.LiveRun liveRun = chatRunHub == null ? null : chatRunHub.open(agentRun.getId(), state::inject);
+        // 收尾统一挂在 leases 上：正常、业务错误、装配失败、意外异常，哪条路出去都会把 hub 标成结束
+        if (chatRunHub != null) {
+            leases.add(() -> chatRunHub.finish(agentRun.getId()));
+        }
+        RunChannel channel = new RunChannel(liveRun, emitter);
+        channel.emit("agent.run.start", Map.of(
                 "requestId", requestId,
                 "runId", agentRun.getId(),
                 "agentRunId", agentRun.getId(),
@@ -694,16 +727,10 @@ public class AiServiceImpl implements AiService {
         start.put("status", "STREAMING");
         start.put("userMessageId", userMessage.getId());
         start.put("assistantMessageId", assistantMessage.getId());
-        emitSse(emitter, "stream.start", start);
+        channel.emit("stream.start", start);
         if (messageFit.truncated()) {
-            emitSse(emitter, "message.notice", Map.of("level", "warn", "message", messageFit.notice()));
+            channel.emit("message.notice", Map.of("level", "warn", "message", messageFit.notice()));
         }
-
-        AgentTraceRecorder trace = new AgentTraceRecorder(objectMapper, aiWorkspaceService,
-                agentTaskGraphService, requestId, agentRun);
-        StreamState state = new StreamState(trace, requestId, agentRun, config, userId, notebookId, limitedMessage,
-                contextOptions, Boolean.TRUE.equals(enableWebSearch), normalizedReasoningMode,
-                memoryText, writeContext.summary(), history, userMessage, assistantMessage);
         // 问到了安排、而用户关着开关：不读，但最终回答要知道为什么看不到任务（否则模型会编一份「你今天的任务」）
         state.taskReadDeclined = !tasksReadable && !"CHAT_ONLY".equals(normalizedAgentMode)
                 && AgentPlanDecision.taskReadIntent(limitedMessage);
@@ -759,7 +786,7 @@ public class AiServiceImpl implements AiService {
             aiWorkspaceService.markExecutionMode(agentRun,
                     taskGraph.stream().anyMatch(t -> "CONTEXT_RESEARCHER".equals(t.getAgentType()))
                             && taskGraph.stream().anyMatch(t -> "WEB_RESEARCHER".equals(t.getAgentType())));
-            ctx = new AgentRunContext(taskGraph, (name, payload) -> emitSse(emitter, name, payload));
+            ctx = new AgentRunContext(taskGraph, channel::emit);
         } catch (RuntimeException e) {
             // 装配失败是配置错误，不是用户输入的问题。三件事一件都不能少：
             // 记下来（否则查不到）、收掉这个 run（否则它永远 RUNNING）、
@@ -767,7 +794,15 @@ public class AiServiceImpl implements AiService {
             log.error("流式回合装配失败，runId={}：{}", agentRun.getId(), e.getMessage(), e);
             aiWorkspaceService.errorRun(agentRun, e);
             failAssistantMessage(assistantMessage, e);
-            throw e;
+            // 错误也要走 channel：这一轮已经进了 hub，只发给那条连接的话，
+            // 重连上来的页面会看到一轮永远不结束的直播（第一百三十三轮）
+            Map<String, Object> error = new LinkedHashMap<>();
+            error.put("requestId", requestId);
+            error.put("agentRunId", agentRun.getId());
+            error.put("message", e.getMessage() == null ? "AI 流式调用失败" : e.getMessage());
+            error.put("nonRetryable", false);
+            channel.emit("error", error);
+            return;
         }
         // 检索没跑时也要有个状态对象：这条状态今天在「跑了」和「跳过」两条分支上都会发。
         state.retrievalStatus = RetrievalPresentation.retrievalStatus(List.of());
@@ -1017,6 +1052,37 @@ public class AiServiceImpl implements AiService {
         private String finalReasoningSummary = "";
         /** 流式期间已经收到的正文。失败时它要留在那条消息上（原来失败一律把正文写成空：用户看着出来的半截回答，刷新就没了）。 */
         private final StringBuilder streamedReply = new StringBuilder();
+        /**
+         * 生成途中用户补进来的话（第一百三十三轮：「立即」不再是打断这一轮）。
+         *
+         * <p>原来「立即」是 abort 当前这条流，用户看到的半截回答当场没了。现在这句话先存在这里，
+         * 最终写作开始前并进这一轮的上下文 —— 模型下一次调用就看得到。已经在写最终回答时进不来了，
+         * 返回 false，页面把它留在队列里，这一轮完了立刻发。
+         */
+        private final List<String> injected = new ArrayList<>();
+        /** 最终写作是否已经动笔。动了笔再补话，这一次模型调用是看不到的。 */
+        private boolean finalWriterStarted;
+
+        /** @return true = 收下了、模型下一次调用能看到；false = 已经动笔了，只能等下一轮 */
+        private synchronized boolean inject(String text) {
+            if (finalWriterStarted || text == null || text.isBlank()) {
+                return false;
+            }
+            injected.add(text.trim());
+            return true;
+        }
+
+        /** 取走待补的话，并把「已经动笔」这个闸门关上（之后 inject 一律返回 false）。 */
+        private synchronized List<String> beginFinalWriting() {
+            finalWriterStarted = true;
+            if (injected.isEmpty()) {
+                return List.of();
+            }
+            List<String> out = new ArrayList<>(injected);
+            injected.clear();
+            return out;
+        }
+
         /** 回答能用但不完整时的说明，存进 ai_message.notice（V38）。 */
         private String finalNotice;
         private List<String> memoryItems = List.of();
@@ -1754,6 +1820,8 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void run(AgentRunContext ctx) {
+            // 从这里起模型就要写最终回答了：再补进来的话这一次调用看不到（inject 会返回 false，页面把它留到下一轮）
+            List<String> injected = s.beginFinalWriting();
             // 代码模式：回答就是代码 agent 自己的结论，和命令行一样，不再另调一次模型重写（第一百二十一轮）。
             // 线上撞到的：代码 agent 看了一眼空的工作区，问用户要写什么文件、一个都没写；重写的这一步照上一轮列过的选项替他选了一个，
             // 说「## 已写入文件」，连内容都编了出来。代码 agent 的结论是同一个模型在同一段上下文里、对着真的工具结果写的，
@@ -1762,6 +1830,12 @@ public class AiServiceImpl implements AiService {
             if (hasText(s.codeConclusion) && s.wikiAgent == null) {
                 String text = limitRawMarkdown(s.codeConclusion, REPLY_MAX_LENGTH);
                 s.streamedReply.append(text);
+                if (!injected.isEmpty()) {
+                    // 代码模式的回答是 agent 的结论，不是再调一次模型写的 —— 补进来的话这一轮用不上，说清楚，
+                    // 别让用户以为模型看过了
+                    ctx.emit("message.notice", Map.of("level", "warn",
+                            "message", "你补充的话没赶上这一轮（代码模式的回答已经写好了），它不会自动重发。"));
+                }
                 ctx.emit("message.delta", Map.of(
                         "requestId", s.requestId,
                         "agentRunId", s.agentRun.getId(),
@@ -1785,6 +1859,12 @@ public class AiServiceImpl implements AiService {
                 if (isChatRole(item.getRole()) && hasText(item.getContent())) {
                     messages.add(Map.of("role", normalizeChatRole(item.getRole()), "content", item.getContent()));
                 }
+            }
+            // 生成途中用户补进来的话（第一百三十三轮）：紧挨着这一轮的提问放，并标明是补充 ——
+            // 不标的话模型会把它当成一个新问题，回答就跑偏了
+            for (String extra : injected) {
+                messages.add(Map.of("role", "user", "content",
+                        "（用户在生成过程中补充的信息，请和上面的问题一并考虑）\n" + extra));
             }
             List<Long> wikiPendingIds = confirmedWikiPatchIds(s);
             if (s.wikiAgent != null || !wikiPendingIds.isEmpty()) {
@@ -2543,6 +2623,31 @@ public class AiServiceImpl implements AiService {
             emitter.send(SseEmitter.event().name(eventName).data(data));
         } catch (Exception ignored) {
             // The browser may have closed the stream; the async task will finish naturally.
+        }
+    }
+
+    /**
+     * 一轮回答的出事件通道（第一百三十三轮）。
+     *
+     * <p>先记进 {@link ChatRunHub}（页面回来能重放），再推给当前挂着的那条 SSE。
+     * 记和推都由 hub 做 —— 这里只负责「这一轮用哪条通道」，不重复实现一遍发送。
+     */
+    private final class RunChannel {
+        private final ChatRunHub.LiveRun live;
+        private final SseEmitter fallback;
+
+        private RunChannel(ChatRunHub.LiveRun live, SseEmitter fallback) {
+            this.live = live;
+            this.fallback = fallback;
+        }
+
+        private void emit(String name, Object data) {
+            if (live != null) {
+                logStreamEvent(name, data);
+                live.emit(name, data);
+                return;
+            }
+            emitSse(fallback, name, data);
         }
     }
 

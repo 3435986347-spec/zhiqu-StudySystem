@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -48,11 +49,16 @@ class DraftsTest {
     @DisplayName("聊天：服务器确认收到（带 userMessageId）才删草稿；没收到把字放回输入框；换 Notebook 换草稿")
     void 聊天接线() throws Exception {
         String code = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
-        String send = SourceText.functionBody(code, "async function sendAiMessage()");
-        int clearAt = send.indexOf("drafts.clearIf(draftKeyAtSend, txt)");
-        assertTrue(clearAt > 0 && send.lastIndexOf("data.userMessageId", clearAt) > 0, "删草稿要等事件里带 userMessageId（服务器存上了）");
-        assertTrue(send.indexOf("drafts.clear") == clearAt, "发送里还有别处在删草稿 —— 一按发送就删，没存上的那句就没了");
-        assertTrue(send.contains("if (!stored && (failed || !gotEvent) && sameNb() && inp && !inp.value.trim())") && send.contains("inp.value = txt;"),
+        String send = SourceText.functionBody(code, "async function sendAiMessage(queuedText)");
+        // 第一百三十三轮：事件落地收进 makeStreamApplier，删草稿挂在 onStored 上 ——
+        // 「服务器确认收到」这个条件要还在，不能变成「一按发送就删」
+        String applier = SourceText.functionBody(code, "function makeStreamApplier(st)");
+        assertTrue(applier.contains("if (!st.stored && data && data.userMessageId)") && applier.contains("st.onStored()"),
+                "删草稿要等事件里带 userMessageId（服务器存上了）");
+        assertTrue(send.contains("onStored: function () { if (draftKeyAtSend) drafts.clearIf(draftKeyAtSend, txt); }"),
+                "发送里没有把「收到确认才删草稿」接上");
+        assertEquals(send.indexOf("drafts.clearIf"), send.lastIndexOf("drafts.clearIf"), "发送里还有别处在删草稿 —— 一按发送就删，没存上的那句就没了");
+        assertTrue(send.contains("if (!st.stored && (st.failed || !gotEvent) && sameNb() && inp && !inp.value.trim())") && send.contains("inp.value = txt;"),
                 "服务器没收到时要把字放回输入框");
         assertTrue(code.contains("state.chatDraft = keepDraft(draft, chatDraftKey, growDraft);"), "聊天框没接草稿");
         assertTrue(SourceText.functionBody(code, "function renderNotebooks()").contains("state.chatDraft.reload()"), "换 Notebook 时没换草稿");

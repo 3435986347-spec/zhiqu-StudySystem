@@ -1642,6 +1642,15 @@ html.zq-desktop [data-zq-download]{display:none !important;}
 .zq-dl-sum>code{display:block;margin-top:4px;font-family:var(--zq-fontM);overflow-wrap:anywhere;user-select:all;}
 .zq-dl-note{margin:0;font-size:var(--zq-fs-xs);color:var(--zq-text3);line-height:1.6;}
 
+/* 生成中排队的那几条（第一百三十二轮）：一条一行，右边「立即」和「×」 */
+.zq-send-queue{display:flex;flex-direction:column;gap:6px;margin:0 0 8px;}
+.zq-send-queue[hidden]{display:none;}
+.zq-send-queue-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--zq-border-soft);border-radius:10px;background:var(--zq-card-soft);font-size:var(--zq-fs-sm);color:var(--zq-text2);}
+.zq-send-queue-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.zq-send-queue-now{border:none;background:transparent;color:var(--zq-primary);cursor:pointer;font:inherit;padding:0 4px;}
+.zq-send-queue-del{border:none;background:transparent;color:var(--zq-text3);cursor:pointer;font:inherit;padding:0 2px;display:inline-flex;align-items:center;}
+.zq-send-queue-del svg{width:12px;height:12px;}
+
 @media (max-width: 760px){
   /* 后台四页（第七十七轮）：六个数两个一排、两栏变一栏；账号一行叠成几行（不横着滚）；共享计划一列 */
   .zq-admin-metrics{grid-template-columns:repeat(2,minmax(0,1fr));}

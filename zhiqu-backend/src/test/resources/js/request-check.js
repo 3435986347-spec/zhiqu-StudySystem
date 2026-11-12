@@ -59,9 +59,11 @@ const fakeDocument = {
   body: { appendChild: (el) => { elements[el.id] = el; } },
 };
 const fakeButton = () => { const b = { attrs: {}, setAttribute(k, v) { b.attrs[k] = v; }, removeAttribute(k) { delete b.attrs[k]; } }; b.closest = () => b; return b; };
-const mod = new Function('API', 'token', 'redirectToLogin', 'isAuthFailure', 'fetch', 'window', 'document',
+// state：streamAiChat 要把 AbortController 交给界面（第一百三十二轮「立即」），这份假 state 接住它
+const fakeState = { streamAbort: null };
+const mod = new Function('API', 'token', 'redirectToLogin', 'isAuthFailure', 'fetch', 'window', 'document', 'state',
   reqSrc + '\n' + sseSrc + '\n' + streamSrc + '\n' + onlineSrc + '\nreturn { request, download, parseSseFrame, readWithIdleTimeout, streamAiChat, whenOnline };')(
-  env.API, env.token, env.redirectToLogin, env.isAuthFailure, env.fetch, fakeWindow, fakeDocument);
+  env.API, env.token, env.redirectToLogin, env.isAuthFailure, env.fetch, fakeWindow, fakeDocument, fakeState);
 
 const res = (status, body) => Promise.resolve({ status, text: () => Promise.resolve(body) });
 const ok = (data) => res(200, JSON.stringify({ code: 200, data }));

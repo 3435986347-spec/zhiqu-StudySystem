@@ -45,6 +45,7 @@ class CodeModeToggleWiringTest {
         assertFalse(html.contains("zq-code"), "「代码」按钮还在");
         String code = SourceText.stripComments(js());
         assertFalse(code.contains("zq-code") || code.contains("zq.codeMode"), "还在找按钮或者读它记的状态");
-        assertTrue(code.contains("function codeModeOn() { return !!(wsStatus && wsStatus.enabled); }"), "codeModeOn 不是看工作区是否生效了");
+        assertTrue(code.contains("function codeModeOn() {") && code.contains("if (!wsStatus || !wsStatus.enabled) return false;"),
+                "codeModeOn 不是看工作区是否生效了");
     }
 }

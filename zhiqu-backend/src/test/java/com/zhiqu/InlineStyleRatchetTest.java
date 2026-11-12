@@ -62,7 +62,7 @@ class InlineStyleRatchetTest {
      * zhiqu-ui.js 的 11 处都是定位 / 面板宽度（数据），看板 1 处是例行进度条的宽度（数据）。
      */
     private static final Map<String, Integer> STYLE_WRITES = new TreeMap<>(Map.ofEntries(
-            Map.entry("assets/pages/ai-assistant.js", 3),
+            Map.entry("assets/pages/ai-assistant.js", 2),
             Map.entry("assets/pages/dashboard.js", 1),
             Map.entry("assets/zhiqu-api.js", 5),
             Map.entry("assets/zhiqu-ui.js", 11)));

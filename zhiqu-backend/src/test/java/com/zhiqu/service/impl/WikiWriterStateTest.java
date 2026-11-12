@@ -148,7 +148,7 @@ class WikiWriterStateTest {
                 null, workspace, null, null, null, null, null, null, adapters, null,
                 provider, null, null, null, null, mock(PlatformTransactionManager.class),
                 false, "", "OPENAI_COMPATIBLE", "https://example.invalid/v1", "test", "", "2023-06-01", "", false,
-                clock, codeAgent, null, null, new StudyPlanTool(clock, mock(ReminderPlanService.class), json), null);
+                clock, codeAgent, null, null, new StudyPlanTool(clock, mock(ReminderPlanService.class), json), null, null);
     }
 
     private WikiToolAgent.WikiAgentResult result(String context, List<Long> ids) throws Exception {

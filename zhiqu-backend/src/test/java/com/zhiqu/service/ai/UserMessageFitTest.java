@@ -80,7 +80,9 @@ class UserMessageFitTest {
         assertTrue(handler.contains("toast(") && handler.contains("9000"), handler);
         String service = SourceText.stripComments(Files.readString(
                 Path.of("src/main/java/com/zhiqu/service/impl/AiServiceImpl.java")));
-        assertTrue(service.contains("emitSse(emitter, \"message.notice\""), "后端没把截断说出来");
+        // 第一百三十三轮：事件走 RunChannel（先记进 hub 再推给连接），不再是裸 emitter
+        assertTrue(service.contains("channel.emit(\"message.notice\"") && service.contains("messageFit.notice()"),
+                "后端没把截断说出来");
         assertFalse(service.contains("limitText(message,"), "用户消息又走回了会压平空白的 limitText");
     }
 }
