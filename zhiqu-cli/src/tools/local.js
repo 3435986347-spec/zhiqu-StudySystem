@@ -329,6 +329,8 @@ export class LocalTools {
     if (!this.chrome) return { error: '这台机器上没找到 Chrome / Chromium（可以用环境变量 ZHIQU_CHROME 指定路径）' };
     const rel = String((args && args.path) || '').trim();
     if (!rel) return { error: '没说预览哪个页面' };
+    // 桌面 / 网页的代码模式里改动只在草稿层：磁盘上还是旧内容，截出来的是上一版 —— 不如直接说清楚
+    if (this.draftOf(rel)) return { error: `${rel} 还只是草稿（没落盘），预览看到的是磁盘上的旧版本。先在草稿卡片上确认写入，再看。` };
     const shot = await screenshotPage({ root: this.root, rel, width: args.width, height: args.height, chrome: this.chrome });
     if (shot.error) return { error: shot.error };
     this.pendingImage = shot;
