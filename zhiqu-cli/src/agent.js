@@ -803,8 +803,13 @@ async function runTool(ctx, call, offered, signal) {
     return `参数不是合法的 JSON（${parsed.error}），没有执行。请重新调用。`;
   }
   const args = parsed.value;
-  ui.step(describeCall(name, args));
-  ctx.steps.push(describeCall(name, args));
+  const said = describeCall(name, args);
+  // 这一轮模型一个字都没写（常见：内容全在 reasoning 里，content 是空的）时，读 / 搜 / 列目录这些
+  // 安静模式下被藏起来的动作至少留一行 —— 否则一整轮屏幕上只有动画和最后那句，看着像卡死
+  // （用户 2026-11-12：「cli 还是没有显示」；翻了会话记录，19 次调工具 18 次没写字）
+  if (hush && QUIET_TOOLS.has(name) && !ctx.judged && ctx.ui && ctx.ui.interactive) ctx.ui.note(`· ${said}`);
+  ui.step(said);
+  ctx.steps.push(said);
   if (ctx.turnStats && QUIET_TOOLS.has(name)) {
     const key = name === 'read_file' || name === 'read_wiki_page' ? 'read' : name === 'list_files' ? 'list' : 'search';
     ctx.turnStats[key] += 1;
@@ -1146,7 +1151,8 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     if (ctx.stepLog && res.thought) ctx.stepLog.thinking(res.thought.chars, res.thought.ms, res.thought.text);
     // 调工具前的那一句（第一百三十轮）：有字就马上打一行，排在工具前面。结论还是只认最后那句（下面不调工具的那条）。
     // --verbose 边收边打过了，这里不重复打；步骤照样记（网页 / 存档要这一条）
-    if (calls.length) showJudgment(ctx, message.content);
+    // 记下这一轮有没有说过：没说的时候，读 / 搜这些安静模式藏起来的动作由 runTool 自己留一行（第一百三十二轮）
+    ctx.judged = calls.length ? showJudgment(ctx, message.content) : false;
     // 原地重复：历史和回答里只留开头一段
     const looping = res.finishReason === 'length' && !calls.length && repeating(message.content);
     if (looping) message.content = loopTrimmed(message.content);
@@ -1278,12 +1284,16 @@ export function recordExchange(ctx, userText, answer) {
   ctx.store.touch(ctx.session.id, { title: ctx.session.title, messages: ctx.messages.length });
 }
 
-/** 调工具前的那一句判断：安静模式打一行灰字；步骤里一条 note（点不开）。空白不打、不记。 */
+/**
+ * 调工具前的那一句判断：安静模式打一行灰字；步骤里一条 note（点不开）。空白不打、不记。
+ * 返回「说没说」：没说的时候，工具自己那一行要补上（见 runTool 的兜底）。
+ */
 function showJudgment(ctx, text) {
   const said = judgmentText(text);
-  if (!said) return;
+  if (!said) return false;
   if (quiet(ctx) && ctx.ui) ctx.ui.note(`· ${said}`);
   if (ctx.stepLog) ctx.stepLog.note(said);
+  return true;
 }
 
 /** 结论：一次整段打（按 Markdown 渲染）。 */

@@ -279,3 +279,42 @@ test('一轮超过 200 步：存前 200 步，没存的步数一起交上去（�
   assert.ok(!('stepsDropped' in posts[1].messages[1]), '上一轮的没存步数串到了下一轮');
   assert.equal(posts[1].messages[1].steps.length, 1);
 });
+
+test('模型没写判断时，读 / 搜各补一行（否则一整轮屏幕空白，看着像卡死）', async () => {
+  const root = tmpdir();
+  write(root, 'a.txt', 'hi\n');
+  const { ctx } = ctxWith([
+    { calls: [{ name: 'read_file', args: { path: 'a.txt' } }, { name: 'search', args: { query: 'hi' } }] },
+    { text: '好了' },
+  ], { root });
+  const lines = [];
+  ctx.ui.note = (t) => lines.push(t);
+  ctx.ui.interactive = true;   // 只在真终端里补（管道 / -p / exec 的输出不动）
+  await runTurn(ctx, '读一下');
+  assert.deepEqual(lines, ['· 读取 a.txt', '· 搜索「hi」']);
+});
+
+test('模型写了判断：只打那一句，不重复补工具那行', async () => {
+  const root = tmpdir();
+  write(root, 'a.txt', 'hi\n');
+  const { ctx } = ctxWith([
+    { text: '先看一眼 a.txt', calls: [{ name: 'read_file', args: { path: 'a.txt' } }] },
+    { text: '好了' },
+  ], { root });
+  const lines = [];
+  ctx.ui.note = (t) => lines.push(t);
+  ctx.ui.interactive = true;
+  await runTurn(ctx, '读一下');
+  assert.deepEqual(lines, ['· 先看一眼 a.txt']);
+});
+
+test('管道 / -p 里不补：非交互终端保持原来的安静', async () => {
+  const root = tmpdir();
+  write(root, 'a.txt', 'hi\n');
+  const { ctx } = ctxWith([{ calls: [{ name: 'read_file', args: { path: 'a.txt' } }] }, { text: '好了' }], { root });
+  const lines = [];
+  ctx.ui.note = (t) => lines.push(t);
+  ctx.ui.interactive = false;
+  await runTurn(ctx, '读一下');
+  assert.deepEqual(lines, []);
+});
