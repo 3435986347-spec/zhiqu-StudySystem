@@ -18,14 +18,21 @@ import java.util.Map;
 public class RagClient {
     private final RagProperties properties;
     private final RestClient client;
+    /** 建索引用：读超时按 {@code app.rag.index-timeout-ms}（默认 120 秒），不是查询那 1.8 秒 */
+    private final RestClient indexClient;
 
     public RagClient(RagProperties properties) {
         this.properties = properties;
         validateBaseUrl(properties.getBaseUrl());
+        this.client = build(properties.getReadTimeoutMs());
+        this.indexClient = build(properties.getIndexTimeoutMs());
+    }
+
+    private RestClient build(int readTimeoutMs) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(properties.getConnectTimeoutMs());
-        requestFactory.setReadTimeout(properties.getReadTimeoutMs());
-        this.client = RestClient.builder()
+        requestFactory.setReadTimeout(readTimeoutMs);
+        return RestClient.builder()
                 .baseUrl(properties.getBaseUrl())
                 .requestFactory(requestFactory)
                 .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
@@ -78,15 +85,15 @@ public class RagClient {
     }
 
     public Map<String, Object> query(Map<String, Object> body) {
-        return post("/v1/query", body);
+        return post(client, "/v1/query", body);
     }
 
     public Map<String, Object> indexSource(Map<String, Object> body) {
-        return post("/v1/index/sources", body);
+        return post(indexClient, "/v1/index/sources", body);
     }
 
     public Map<String, Object> deleteIndex(Map<String, Object> body) {
-        return post("/v1/index/delete", body);
+        return post(indexClient, "/v1/index/delete", body);
     }
 
     @SuppressWarnings("unchecked")
@@ -97,11 +104,11 @@ public class RagClient {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> post(String path, Map<String, Object> body) {
+    private Map<String, Object> post(RestClient http, String path, Map<String, Object> body) {
         if (!configured()) {
             throw new IllegalStateException("RAG service is disabled or its token is missing");
         }
-        Map<String, Object> result = client.post().uri(path)
+        Map<String, Object> result = http.post().uri(path)
                 .header(HttpHeaders.AUTHORIZATION, bearer())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)

@@ -100,8 +100,12 @@ async function bootAdminRag() {
   var jobs = status.jobs || {}, metrics = status.metrics || {};
   var deadJobs = Number(jobs.DEAD || 0) ? await api.get('/admin/rag/jobs?status=DEAD') : [];
   var generations = (status.generations || []).slice(0, 6);
-  var expected = Number(active.expectedSourceCount || 0);
-  var progress = expected ? Math.round(Number(active.indexedSourceCount || 0) / expected * 100) : 0;
+  // 正在重建时进度看那个 BUILDING 的代次：活动代次是上一次建好的（0/0），照它算永远是 0%，
+  // 而下面明明写着「BUILDING 3/4」—— 看着像卡死（第一百三十二轮）
+  var building = generations.filter(function (g) { return g.status === 'BUILDING'; })[0];
+  var counting = building || active;
+  var expected = Number(counting.expectedSourceCount || 0);
+  var progress = expected ? Math.round(Number(counting.indexedSourceCount || 0) / expected * 100) : 0;
   host.innerHTML = '<div class="zq-admin-tiles">'
     + ragMetric('服务状态', status.enabled ? (sidecar.ready ? '可用' : '未就绪') : '未启用', sidecar.ready ? 'ok' : 'warn')
     + ragMetric('活动索引', active.indexVersion || '尚未启用', '')

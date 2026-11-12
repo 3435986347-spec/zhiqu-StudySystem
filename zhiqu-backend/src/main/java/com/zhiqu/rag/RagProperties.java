@@ -13,6 +13,13 @@ public class RagProperties {
     private String serviceToken = "";
     private int connectTimeoutMs = 300;
     private int readTimeoutMs = 1800;
+    /**
+     * 建索引用多久算超时（第一百三十二轮）。**不能和 readTimeoutMs 共用一个值**：
+     * 那个 1.8 秒是查询的预算，而一批 8 个父块要现算 24 个向量 —— 实测一次 4.7 秒。
+     * 共用的时候，凡是块多的资料（704 块的笔记本、1.5MB）每一批都被掐断，作业 RETRY 到 DEAD，
+     * 代次永远停在 BUILDING；块少的碰运气能过，所以这个坑只在「大文件」上显形。
+     */
+    private int indexTimeoutMs = 120000;
     private int candidateK = 24;
     private int finalK = 8;
     private int maxContextChars = 10000;
