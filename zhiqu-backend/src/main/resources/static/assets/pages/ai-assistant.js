@@ -17,7 +17,9 @@ async function bootAiAssistant() {
   var webBtn = $('#zq-web'), effortBtn = $('#zq-effort'), sendBtn = $('#zq-send'), draft = $('#zq-draft');
   if (webBtn) webBtn.onclick = function () { aiToggle('web'); };
   if (effortBtn) effortBtn.onclick = toggleEffortMenu;
-  if (sendBtn) sendBtn.onclick = sendAiMessage;
+  // 必须包一层：直接写 sendBtn.onclick = sendAiMessage 会把点击事件当成 queuedText，
+  // 用户打的字变成 "[object PointerEvent]"（第一百三十四轮线上）
+  if (sendBtn) sendBtn.onclick = function () { sendAiMessage(); };
   if (draft) {
     if (inDesktop()) draft.placeholder = '给 AI 发消息（⌘/Ctrl + 回车发送，回车换行，/ 看命令）';
     state.chatDraft = keepDraft(draft, chatDraftKey, growDraft);
@@ -2502,6 +2504,8 @@ async function reattachRunningTurn() {
 }
 
 async function sendAiMessage(queuedText) {
+  // 只认字符串：DOM 事件、数字之类当没传（第一百三十四轮，点击发送时传进来的是 PointerEvent）
+  if (queuedText != null && typeof queuedText !== 'string') queuedText = null;
   var inp = $('#zq-draft'), txt = String(queuedText != null ? queuedText : (inp && inp.value) || '').trim();
   if (!txt) return;
   // 斜杠命令和选文件夹只在桌面应用里（第一百三十一轮，用户：网页上没有）。网页里 / 开头就是一句话

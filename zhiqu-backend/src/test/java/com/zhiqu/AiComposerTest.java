@@ -105,6 +105,20 @@ class AiComposerTest {
     }
 
     @Test
+    @DisplayName("点发送只发输入框里的字：按钮包一层，函数也只认字符串（线上出现过 [object PointerEvent]）")
+    void 点发送不发事件() throws IOException {
+        String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
+        String boot = SourceText.functionBody(js, "async function bootAiAssistant()");
+        assertFalse(boot.contains("sendBtn.onclick = sendAiMessage"),
+                "发送键直接绑了函数：点击事件会被当成要发的那句话，用户打的字被丢掉");
+        assertTrue(boot.contains("sendBtn.onclick = function () { sendAiMessage(); }"),
+                "发送键没有包一层，点一下发的不是输入框里的字");
+        String send = SourceText.functionBody(js, "async function sendAiMessage(queuedText)");
+        assertTrue(send.contains("typeof queuedText !== 'string'"),
+                "sendAiMessage 不挡非字符串：DOM 事件传进来就成了 [object PointerEvent]");
+    }
+
+    @Test
     @DisplayName("联网按下的样子只在样式表里（按 aria-pressed）；JS 不再写内联样式、不写死字重")
     void 开关的样子在样式表里() throws IOException {
         String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
