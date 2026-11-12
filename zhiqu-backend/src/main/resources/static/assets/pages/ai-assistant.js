@@ -2276,6 +2276,9 @@ async function sendDesktopTurn(txt, codeCommand) {
       renderAiMessages();
       if (inp && !inp.value.trim()) { inp.value = txt; growDraft(); }
     }
+    // 排队的那几条：桌面这一轮完了接着发（第一百三十二轮）。原来只有服务器那条路径有，桌面路径没有 ——
+    // 点了「立即」停下来了，队列却不动
+    pumpSendQueue();
   }
 }
 
@@ -3158,8 +3161,20 @@ function sendQueuedNow(i) {
   state.sendQueue.splice(i, 1);
   state.sendQueue.unshift(item);
   renderSendQueue();
-  if (state.streamAbort) { try { state.streamAbort.abort(); } catch (e) { /* 已经断了 */ } }
-  else pumpSendQueue();
+  // 网页这一轮：有 AbortController，直接掐断，finally 里会接着发
+  if (state.streamAbort) {
+    try { state.streamAbort.abort(); } catch (e) { /* 已经断了 */ }
+    toast('已打断这一轮，接着发这条');
+    return;
+  }
+  // 桌面应用这一轮走外壳（没有 AbortController）：让本机助手停下，它收尾时 finally 会接着发。
+  // 原来这里只试 streamAbort，桌面路径永远是 null —— 点了「立即」什么都不发生（用户实测）
+  if (inDesktop()) {
+    localCall({ action: 'stop' }).catch(function () {});
+    toast('已让本机助手停下，接着发这条');
+    return;
+  }
+  toast('这一轮还没真正开始，已经排在最前面，它一结束就发');
 }
 
 /** 这一轮结束了：把队首那条发出去 */
