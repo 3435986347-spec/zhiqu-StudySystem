@@ -1,6 +1,6 @@
 {
   "name": "zhiqu",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "知趣·象限的命令行 coding agent：循环与工具跑在你的电脑上，模型、登录、学习数据在服务器上",
   "type": "module",
   "bin": {
