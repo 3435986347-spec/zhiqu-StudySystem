@@ -92,13 +92,16 @@ function turn() {
   assert.ok(toasts.some((m) => m.includes('补充给这一轮')), '补充信息没有提示，用户会以为没发出去');
 }
 
-// 6) 太老的记号不认（服务端 5 分钟就清了，留着只会白等）
+// 6) 长任务的记号必须覆盖 15 分钟回答窗口；过期的仍清掉
 {
   markRunningTurn(81, 5, 902);
   const raw = JSON.parse(store.getItem('zq.ai.running'));
-  raw.at = Date.now() - 11 * 60 * 1000;
+  raw.at = Date.now() - 14 * 60 * 1000;
   store.setItem('zq.ai.running', JSON.stringify(raw));
-  assert.equal(runningTurn(), null, '十分钟前的记号还当成在跑');
+  assert.equal(runningTurn().runId, 81, '任务还在合法预算内，重连记号先过期了');
+  raw.at = Date.now() - 31 * 60 * 1000;
+  store.setItem('zq.ai.running', JSON.stringify(raw));
+  assert.equal(runningTurn(), null, '过期的记号还当成在跑');
 }
 
 // 7) 别的 notebook 的记号不接
@@ -109,4 +112,44 @@ function turn() {
   assert.equal(runningTurn(), null);
 }
 
-console.log('ALL-GREEN');
+// 8) 桌面页面按外壳预算等待，不能在旧的 250 秒就叫停；假时钟不需要真的等 10 分钟。
+const waitStart = src.indexOf('function waitLocal(');
+const waitEnd = src.indexOf('async function sendDesktopTurn(', waitStart);
+assert.ok(waitStart >= 0 && waitEnd > waitStart, '抠不到桌面等待函数');
+let nextTimer = 0;
+const timers = new Map();
+const listeners = new Set();
+let stopped = 0;
+const waitLocal = new Function('window', 'localCall', 'mergeTraceStep', 'renderAiMessages', 'setTimeout', 'clearTimeout',
+  src.slice(waitStart, waitEnd) + '\nreturn waitLocal;')(
+  { addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn) },
+  () => { stopped++; return Promise.resolve(); }, noop, noop,
+  (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
+  (id) => timers.delete(id));
+
+async function checkLocalWait() {
+  const pending = waitLocal('local-1', {}, () => true, 600000);
+  assert.equal([...timers.values()][0].ms, 630000, '外壳给了 10 分钟，页面仍在旧时限提前停止');
+  for (const fn of listeners) fn({ detail: { runId: 'other', type: 'result' } });
+  assert.equal(timers.size, 1, '别的任务结果结束了当前等待');
+  for (const fn of [...listeners]) fn({ detail: { runId: 'local-1', type: 'result', conclusion: '完成' } });
+  assert.equal((await pending).conclusion, '完成');
+  assert.equal(timers.size, 0, '完成后没有清理兜底计时器');
+  assert.equal(stopped, 0, '正常完成被当成超时叫停');
+
+  const custom = waitLocal('local-2', {}, () => true, 900000);
+  const timer = [...timers.values()][0];
+  assert.equal(timer.ms, 930000, '页面忽略了外壳传来的自定义预算');
+  timer.fn();
+  assert.equal((await custom).type, 'fatal');
+  assert.equal(stopped, 1, '到点没有叫停');
+  assert.equal(listeners.size, 0, '结束后还留着事件监听');
+
+  for (const value of [undefined, 'not-a-number', -1]) {
+    const old = waitLocal('local-old', {}, () => true, value);
+    assert.equal([...timers.values()][0].ms, 630000, '旧外壳或无效预算缺少兜底');
+    for (const fn of [...listeners]) fn({ detail: { runId: 'local-old', type: 'result' } });
+    await old;
+  }
+}
+checkLocalWait().then(() => console.log('ALL-GREEN')).catch((e) => { console.error(e); process.exitCode = 1; });

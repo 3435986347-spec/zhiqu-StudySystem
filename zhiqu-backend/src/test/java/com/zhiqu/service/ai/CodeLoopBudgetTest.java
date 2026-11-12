@@ -21,7 +21,9 @@ class CodeLoopBudgetTest {
         CodeLoopBudget b = CodeLoopBudget.EXPLICIT;
         long stream = AiWorkspaceService.STREAM_TIMEOUT_MS;
         assertTrue(b.millis() + 30_000 <= stream, "循环 " + b.millis() + "ms + 收尾 30 秒 超过整条流 " + stream + "ms：回答出不来");
-        assertTrue(b.millis() >= 240_000, "显式档又回到了 180 秒以下：想得久一点就做不完（第一百二十八轮线上）");
+        assertTrue(b.millis() >= 600_000, "显式代码任务至少留 10 分钟，不能仍在 4 分钟被截断");
+        assertTrue(b.rounds() >= 80, "显式代码任务至少留 80 轮，不能仍在 40 轮被截断");
+        assertTrue(stream >= 900_000, "整条回答至少留 15 分钟，不能先于代码任务和收尾断开");
         // 最后一刻开始的一次调用：读超时取剩余（至少 5 秒），不能再给它 150 秒
         long last = b.turnLimits(b.millis() - 1_000).readTimeoutMillis();
         assertTrue(b.millis() - 1_000 + last <= stream, "最后一刻开始的调用能等到 " + (b.millis() - 1_000 + last) + "ms，越过整条流");

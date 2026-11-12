@@ -39,7 +39,7 @@ class DesktopLocalRoundsTest {
     private static int group(Path file, String regex, String what) throws IOException {
         Matcher m = Pattern.compile(regex).matcher(Files.readString(file, StandardCharsets.UTF_8));
         assertTrue(m.find(), "找不到" + what + "（判据的锚点没了）：" + file);
-        return Integer.parseInt(m.group(1));
+        return Integer.parseInt(m.group(1).replace("_", ""));
     }
 
     @Test
@@ -53,6 +53,20 @@ class DesktopLocalRoundsTest {
                 "桌面本机那一轮只给 " + desktop + " 轮，服务器给 " + server + " 轮 —— 同一句话在桌面上会半路停下");
         assertTrue(hostCap >= desktop,
                 "宿主最多只认 " + hostCap + " 轮，桌面给的是 " + desktop + " —— 多出来的会被悄悄夹掉");
-        assertTrue(desktop > 20, "又回到 20 轮了（用户：「20 轮太少了」）：" + desktop);
+        int desktopCap = group(DESKTOP_AGENT, "return v > 0 \\? min\\((\\d+),", "桌面可配置的轮数上限");
+        assertTrue(hostCap >= desktopCap, "桌面允许配置 " + desktopCap + " 轮，但宿主只接受 " + hostCap);
+        assertTrue(desktop >= 80, "默认轮次仍小于用户要求放宽后的 80 轮：" + desktop);
+    }
+
+    @Test
+    @DisplayName("桌面时间与服务器一致，页面使用外壳返回的预算而不是旧的 250 秒")
+    void 三处时间对得上() throws IOException {
+        int server = group(SERVER_BUDGET, "EXPLICIT = new CodeLoopBudget\\(\\d+, ([\\d_]+)L", "服务器时间预算");
+        int desktop = group(DESKTOP_AGENT, "var timeoutMs = ([\\d_]+)", "桌面时间预算");
+        assertTrue(server >= 600_000 && desktop >= server, "代码任务没有同时获得 10 分钟预算");
+        String page = Files.readString(Path.of("src/main/resources/static/assets/pages/ai-assistant.js"));
+        assertTrue(page.contains("reply.timeoutMs"), "页面没有接外壳的预算，仍可能在 250 秒提前叫停");
+        String shell = Files.readString(Path.of("../deploy/desktop/macos-shell/PageView.swift"));
+        assertTrue(shell.contains("\"timeoutMs\": agent.config.timeoutMs"), "外壳没有把实际时间预算交给页面");
     }
 }

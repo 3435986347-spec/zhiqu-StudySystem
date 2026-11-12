@@ -87,6 +87,24 @@ function fakeBackend({ replies, exec = () => ({ exitCode: 0, output: 'ok', milli
 
 const MODEL = { id: 6, label: '测试模型', modelName: 'fake', effectiveContextWindow: 1_000_000 };
 
+for (const maxRounds of [80, 120]) {
+  test(`宿主接收 ${maxRounds} 轮预算：超过旧的 60 轮仍能执行并正常收尾`, async () => {
+    const root = tmpdir();
+    const replies = Array.from({ length: maxRounds - 1 }, (_, i) => {
+      const file = `part-${i}.txt`;
+      write(root, file, `part ${i}\n`);
+      return { calls: [{ name: 'read_file', args: { path: file } }] };
+    });
+    replies.push({ text: '所有文件已读完。' });
+    const { bridge, seen } = fakeBackend({ replies });
+    const result = await runHosted(bridge, { type: 'run', root, message: '逐份读完文件', maxRounds, model: MODEL });
+    assert.equal(seen.filter((m) => m.type === 'model').length, maxRounds, '预算被宿主悄悄夹到了较小轮数');
+    assert.equal(result.text, '所有文件已读完。');
+    assert.equal(result.error, null);
+    assert.equal(result.aborted, false);
+  });
+}
+
 test('协议：模型调用、跑命令都回到后端；轨迹一步一步交出去；结论、草稿、用量收尾交回；下发的工具只有后端允许的那几个', async () => {
   const root = tmpdir();
   write(root, 'calc.py', 'def add(a, b):\n    return a - b\n');

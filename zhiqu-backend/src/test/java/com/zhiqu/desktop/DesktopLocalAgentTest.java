@@ -66,6 +66,12 @@ class DesktopLocalAgentTest {
         for (String k : r.keySet()) assertFalse(k.startsWith("timeout."), "检查程序有一步没等到：" + k + "\n" + r);
         String gatewayUrl = "http://127.0.0.1:" + server.getAddress().getPort();
 
+        assertEquals("80", r.get("budget.defaultRounds"));
+        assertEquals("600000", r.get("budget.timeoutMs"));
+        assertEquals("120", r.get("budget.configuredRounds"));
+        assertEquals("120", r.get("budget.clampedRounds"));
+        assertTrue(r.get("bridge.run").contains("\"timeoutMs\":600000"), "桥没有回传真实时间预算：" + r.get("bridge.run"));
+
         // 一、一轮从起到交 result
         assertEquals("true", r.get("a.available"));
         assertEquals("HOME,LANG,PATH,TMPDIR", r.get("a.envKeys"), "宿主继承了外壳的环境变量");

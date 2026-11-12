@@ -30,10 +30,10 @@ public class IdempotencyService {
     /**
      * 锁只在进程没了时靠它过期（正常都在 finally 里放掉），所以要比最长的一次写请求还长：原来是 30 秒 —— 正好是页面的超时。
      * 第二十二轮起页面在超时之后用同一个键自动重来，锁要是跟着 30 秒到期，重来的那一下就会和还没做完的那一次<b>同时</b>执行，
-     * 写两遍。同步调用模型最长 60 秒、代码工作区的一整轮 5 分钟，取 6 分钟。代价：用着 Redis 时进程被杀，这个键最多 6 分钟里
+     * 写两遍。第一百三十四轮整条回答放宽到 15 分钟，锁取 20 分钟覆盖它。代价：用着 Redis 时进程被杀，这个键最多 20 分钟里
      * 回「上一次提交还在处理」（没有 Redis 时锁在进程里，跟着进程一起没了）。
      */
-    static final Duration LOCK_TTL = Duration.ofMinutes(6);
+    static final Duration LOCK_TTL = Duration.ofMinutes(20);
 
     private final StringRedisTemplate redisTemplate;
     private final RedisDistributedLockService lockService;

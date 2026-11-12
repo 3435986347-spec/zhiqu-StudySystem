@@ -1412,11 +1412,11 @@ function restorePendingSend() {
  * - 本标签页正在发送时不轮询（SSE 在跑，轮询只会和它抢着改同一批消息）。
  * - 切换了 notebook 就停：那是另一个会话，拉回来的消息会覆盖当前窗口。
  * - 有上限。后端进程若在生成中途被杀，这条消息会永远停在 STREAMING，
- *   没有上限的话这个页面会一直轮询到关闭为止。上限取 5 分钟，与 SSE 的
+ *   没有上限的话这个页面会一直轮询到关闭为止。上限取 15 分钟，与 SSE 的
  *   STREAM_TIMEOUT_MS 一致 —— 超过它，那条流无论如何都已经不在了。
  */
 var STREAM_POLL_INTERVAL_MS = 2000;
-var STREAM_POLL_MAX_ATTEMPTS = 150;   // 150 × 2s = 5min，与后端 STREAM_TIMEOUT_MS 对齐
+var STREAM_POLL_MAX_ATTEMPTS = 450;   // 450 × 2s = 15min，与后端 STREAM_TIMEOUT_MS 对齐
 function stopStreamWatch() {
   if (state.streamPollTimer) { clearTimeout(state.streamPollTimer); state.streamPollTimer = null; }
 }
@@ -2208,7 +2208,11 @@ function growDraft() {
   setDraftHeight(el, Math.max(DRAFT_BASE_HEIGHT, Math.min(el.scrollHeight, DRAFT_MAX_HEIGHT)));
   paintSlash();
 }
-function waitLocal(runId, assistant, sameNb) {
+function waitLocal(runId, assistant, sameNb, timeoutMs) {
+  // 第一百三十四轮：预算由外壳回传；旧外壳没有这个字段时按 10 分钟兜底。
+  // 外壳在 T+15 秒叫停，再留 5+3 秒退进程，页面 T+30 秒才兜底，避免抢在 result 前面。
+  var budget = Number(timeoutMs);
+  if (!Number.isFinite(budget) || budget <= 0) budget = 600000;
   return new Promise(function (resolve) {
     var done = false;
     function finish(d) {
@@ -2230,7 +2234,7 @@ function waitLocal(runId, assistant, sameNb) {
     var timer = setTimeout(function () {
       localCall({ action: 'stop' }).catch(function () {});
       finish({ type: 'fatal', message: '这一轮太久了，已经停下' });
-    }, 250000);
+    }, budget + 30000);
     window.addEventListener('zq-local', onEv);
   });
 }
@@ -2280,7 +2284,7 @@ async function sendDesktopTurn(txt, codeCommand) {
       var runId = reply && reply.runId;
       if (!runId) throw requestError('本机代码助手没有开始');
       assistant.requestId = runId;
-      var result = await waitLocal(runId, assistant, function () { return sentNb === state.notebookId; });
+      var result = await waitLocal(runId, assistant, function () { return sentNb === state.notebookId; }, reply.timeoutMs);
       assistant.status = '';
       var conclusion = result && (result.conclusion || (result.type === 'fatal' ? result.message : ''));
       assistant.content = String(conclusion || '').trim() || '（没有结论）';
@@ -2336,8 +2340,8 @@ function runningTurn() {
   if (!raw) return null;
   try {
     var info = JSON.parse(raw);
-    // 服务端跑完只留 5 分钟，超过 10 分钟的一定不是还在跑的那一轮
-    if (!info || !info.runId || Date.now() - (info.at || 0) > 10 * 60 * 1000) { clearRunningTurn(); return null; }
+    // 一轮允许 15 分钟，结束后 hub 还留 5 分钟；记号留 30 分钟，不在合法执行期内先忘掉。
+    if (!info || !info.runId || Date.now() - (info.at || 0) > 30 * 60 * 1000) { clearRunningTurn(); return null; }
     return info;
   } catch (e) { clearRunningTurn(); return null; }
 }

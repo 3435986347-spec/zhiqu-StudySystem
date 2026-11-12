@@ -30,6 +30,13 @@ app.setActivationPolicy(.accessory)
 let suite = "zhiqu-local-agent-check-\(ProcessInfo.processInfo.processIdentifier)"
 let defaults = UserDefaults(suiteName: suite)!
 let config = LocalAgent.Config(node: nodeURL, host: hostURL, server: gateway, home: LocalFolders.real(home.path), network: "off")
+out("budget.defaultRounds", LocalAgent.roundsSetting(defaults))
+out("budget.timeoutMs", config.timeoutMs)
+defaults.set(120, forKey: "maxRounds")
+out("budget.configuredRounds", LocalAgent.roundsSetting(defaults))
+defaults.set(999, forKey: "maxRounds")
+out("budget.clampedRounds", LocalAgent.roundsSetting(defaults))
+defaults.removeObject(forKey: "maxRounds")
 func request(_ message: String, level: String = "WRITE", folder: String = proj.path) -> LocalRunRequest {
     LocalRunRequest.parse(["folder": folder, "message": message, "level": level, "token": token, "model": 7]).0!
 }

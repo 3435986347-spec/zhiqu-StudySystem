@@ -161,7 +161,7 @@ export function resolveSettings(root, flags = {}) {
     sandboxNetwork: normalizeSandboxNetwork(flags.sandboxNetwork ?? user.sandboxNetwork) || 'on',
     // 子 agent 的开关和上限（第一百二十三轮）：同样只认用户级配置 —— 克隆下来的仓库不能替用户调高花费
     agents: agentLimits(user.agents),
-    maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 60),
+    maxRounds: Number(project.maxRounds ?? user.maxRounds ?? 80),
     execTimeoutMs: Number(project.execTimeoutMs ?? user.execTimeoutMs ?? 120_000),
     allowedCommands: project.allowedCommands ?? user.allowedCommands ?? null,
     // 思考过程默认不显示（用户 2026-09-28）；/verbose 或 --verbose 打开，/verbose 会记进 ~/.zhiqu/config.json

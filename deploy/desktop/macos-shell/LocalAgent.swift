@@ -110,7 +110,7 @@ final class LocalAgent {
         var server: URL
         var home: String
         var network: String
-        var timeoutMs = 240_000
+        var timeoutMs = 600_000
         /// 工具循环最多几轮。桌面这一轮在本机跑，服务器管不到它 —— 这个数必须和服务器那份
         /// `CodeLoopBudget.EXPLICIT` 对齐，否则同一句话在网页上能做完、在桌面上半路停下。
         /// 原来写死 20：服务器那边第一百三十二轮改成了 40，这里没跟上，用户在桌面上做到一半就撞
@@ -118,10 +118,10 @@ final class LocalAgent {
         var maxRounds = LocalAgent.roundsSetting()
     }
 
-    /// 轮数：默认 40（和服务器一致），`defaults write com.zhiqu.quadrant maxRounds N` 可以调
+    /// 轮数：默认 80（和服务器一致），`defaults write com.zhiqu.quadrant maxRounds N` 可以调（1–120）
     static func roundsSetting(_ defaults: UserDefaults = .standard) -> Int {
         let v = defaults.integer(forKey: "maxRounds")
-        return v > 0 ? min(120, max(1, v)) : 40
+        return v > 0 ? min(120, max(1, v)) : 80
     }
 
     /// 联网档（用户 2026-11-10 定的「所有人都可以联网」：默认开）。`defaults write com.zhiqu.quadrant sandboxNetwork off` 关

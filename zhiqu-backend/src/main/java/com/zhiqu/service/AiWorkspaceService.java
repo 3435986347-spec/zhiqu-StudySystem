@@ -52,7 +52,8 @@ public interface AiWorkspaceService {
      * 按 120 去做任何护栏都会砍掉合法的慢轮次：一轮可能串起 wiki 工具循环（30s 预算）、
      * 流式回答（读超时 60s）、以及 POST_STREAM 那组并发调用。
      */
-    long STREAM_TIMEOUT_MS = 300_000L;
+    // 第一百三十四轮：代码任务最多 10 分钟，整条回答留 15 分钟（前置检索、收尾、存档也占时间）。
+    long STREAM_TIMEOUT_MS = 900_000L;
 
     /** 建完图之后按真实形态订正 execution_mode（beginRun 时图还没建）。 */
     void markExecutionMode(AiAgentRun run, boolean parallel);

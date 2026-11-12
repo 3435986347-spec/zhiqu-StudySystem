@@ -74,6 +74,22 @@ test('项目 settings.json 里的 token 一律忽略并提示（这个文件可�
   assert.equal(resolveSettings(root, { server: 'http://flag/' }).server, 'http://flag');
 });
 
+test('CLI 默认 80 轮，用户和项目已有的轮数设置仍优先', () => {
+  const previousHome = process.env.ZHIQU_HOME;
+  process.env.ZHIQU_HOME = tmpdir();
+  try {
+    const root = tmpdir();
+    assert.equal(resolveSettings(root).maxRounds, 80);
+    write(process.env.ZHIQU_HOME, 'config.json', JSON.stringify({ maxRounds: 100 }));
+    assert.equal(resolveSettings(root).maxRounds, 100);
+    write(root, '.zhiqu/settings.json', JSON.stringify({ maxRounds: 90 }));
+    assert.equal(resolveSettings(root).maxRounds, 90);
+  } finally {
+    if (previousHome == null) delete process.env.ZHIQU_HOME;
+    else process.env.ZHIQU_HOME = previousHome;
+  }
+});
+
 test('系统内容：第一次写一份；没改过的副本跟着内置更新；改过的一个字不动并提示；工作区的优先', () => {
   process.env.ZHIQU_HOME = tmpdir();
   const root = tmpdir();

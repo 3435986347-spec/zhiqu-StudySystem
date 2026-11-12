@@ -7,12 +7,12 @@ package com.zhiqu.service.ai;
  * <ul>
  *   <li><b>关键词触发</b>：4 轮 / 30 秒。关键词门是刻意过触发的（见 {@code AgentPlanDecision.codeIntent}），
  *       「今天写了三小时代码」也会拉起它 —— 过触发必须便宜，所以预算要小。</li>
- *   <li><b>代码模式（用户选的档位开着）</b>（或者从 CLI 来）：10 轮 / 180 秒。他明说了要它干活，
+ *   <li><b>代码模式（用户选的档位开着）</b>：80 轮 / 600 秒。他明说了要它干活，
  *       「读几个文件 → 写一个完整的小游戏」在 4 轮 30 秒里做不完 —— 2026-09-23 之前
  *       只有前一档，它对显式请求来说是个会半途而废的上限。</li>
  * </ul>
  *
- * <p>显式档的时长必须小于整条流的超时（{@code AiWorkspaceService.STREAM_TIMEOUT_MS}，5 分钟）：
+ * <p>显式档的时长必须小于整条流的超时（{@code AiWorkspaceService.STREAM_TIMEOUT_MS}，15 分钟）：
  * 循环跑完之后还要写最终回答。{@code CodeLoopBudgetTest} 钉着这条。
  */
 public record CodeLoopBudget(int rounds, long millis, int maxTokensPerCall, int callTimeoutCapMillis) {
@@ -27,7 +27,9 @@ public record CodeLoopBudget(int rounds, long millis, int maxTokensPerCall, int 
     // 循环自己的结论（第一百二十一轮），不再另调模型，60 秒足够收尾。轮数原来的 10 轮比时间先用完（一轮读一个文件）
     // 第一百三十二轮：20 → 40 轮（用户：「增加轮次，20 轮太少了」）。时间还是 240 秒 —— 一轮读一个文件时先撞到的是轮数，
     // 不是时间；把轮数放开，让时间当唯一的闸门，不会把整条流撑过 300 秒。
-    public static final CodeLoopBudget EXPLICIT = new CodeLoopBudget(40, 240_000L, 16384, 150_000);
+    // 第一百三十四轮：用户继续放宽，默认 80 轮 / 10 分钟；整条回答另留前置阶段和收尾时间。
+    // 桌面外壳和 JS 宿主也要同步，不然网页、桌面拿到的实际预算不同。
+    public static final CodeLoopBudget EXPLICIT = new CodeLoopBudget(80, 600_000L, 16384, 150_000);
 
     public static CodeLoopBudget forRequest(boolean explicitCodeMode) {
         return explicitCodeMode ? EXPLICIT : KEYWORD;

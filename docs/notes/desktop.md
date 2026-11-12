@@ -127,6 +127,7 @@ dmg 一百多 MB，超过 GitHub 单个文件的上限，也不能进 `static/`�
 - 页面不可信，run 里要紧的字段外壳自己定：根目录只认用户在系统选框里选过的（`LocalFolders`，存偏好设置，不收 `/`、家目录和装着家目录的；路径用 `realpath` ——
   `URL.resolvingSymlinksInPath` 会把 `/private/var` 写回 `/var`）、服务器是 `Server.url`、家目录、联网档（`defaults write com.zhiqu.quadrant sandboxNetwork off|local|on`，默认 on）。
 - 宿主的环境只有 `PATH`、`HOME`、`TMPDIR`、`LANG`（HOME / TMPDIR 是这一轮自己的空目录）；沙箱挡的家目录经 `run.home` 另给 —— 照宿主自己的 HOME 算会挡错地方。
+- 执行预算（第一百三十四轮）：默认 80 轮 / 600 秒，与服务器显式代码任务一致；`defaults write com.zhiqu.quadrant maxRounds N` 可调 1–120，共用 JS 宿主也接受到 120。`run` 回包带 `timeoutMs` / `maxRounds`，页面按外壳预算 +30 秒等待，不再固定 250 秒；外壳在预算 +15 秒叫停。
 - 叫停：stdin 一行 `{"type":"stop"}` → 5 秒 SIGTERM → 3 秒 SIGKILL；宿主收到 stop / SIGTERM / stdin 关掉都中断、收掉后台命令、照实交 result。应用退出时 SIGTERM。
 - 桥 `zqLocal`（带回复）：`status` / `pick` / `run` / `stop` / `read` / `apply`；事件是 `window` 上的 `zq-local`（detail 是宿主的一行 + `runId`，最后一定有 `{type: 'exit'}`）。只认自己网站的主框架，只有主窗口接。
   `apply` 把确认过的草稿写进选过的文件夹：相对路径、基线（SHA-256，没有文件是 `ABSENT`）不符就一个都不写；软链指到外面的不写。已经是要写的内容再确认一次算成功。

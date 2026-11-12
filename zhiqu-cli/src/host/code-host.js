@@ -226,7 +226,7 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
     },
     get: async () => { throw new ApiError('这里没有远程接口', { retryable: false }); } };
   const ctx = {
-    api, ui, root: local.root, mode: 'auto', maxRounds: Math.max(1, Math.min(60, Number(run.maxRounds) || 30)), local,
+    api, ui, root: local.root, mode: 'auto', maxRounds: Math.max(1, Math.min(120, Number(run.maxRounds) || 30)), local,
     store: null, session: { id: 'web-code-agent' }, archiveDisabled: true,
     messages: historyBlock(run.history),
     allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() }, usage: { prompt: 0, completion: 0, cached: 0 },
