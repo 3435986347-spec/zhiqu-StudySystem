@@ -117,13 +117,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let drag = DragStrip(frame: NSRect(x: 0, y: frame.height - 28, width: frame.width, height: 28))
         drag.autoresizingMask = [.width, .minYMargin]
         content.addSubview(drag)
-        // 自更新的胶囊（第一百三十二轮）：左下角，没新版本时不出现；压在网页上面，只在自己那一块吃点击
+        // 自更新的胶囊（第一百三十二轮）：左下角，没新版本时不出现；压在网页上面，只在自己那一块吃点击。
+        // 往上让开侧栏底部那块（头像 + 用户名，约 44pt）：压在名字上会挡住「点开用户菜单」
         updateBadge = UpdateBadge()
         updateBadge.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(updateBadge)
         NSLayoutConstraint.activate([
             updateBadge.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            updateBadge.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+            updateBadge.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -72),
         ])
         window.contentView = content
         window.makeKeyAndOrderFront(nil)
