@@ -51,6 +51,27 @@ bwrap 的 `--disable-userns` 让 Chrome 的渲染进程建不了自己的命名�
 （本机没法真跑 Chrome 验证：我这个 shell 自己在沙箱里，Chrome 的 sandbox 初始化被拒。
 所以这一条是按已知的 headless 行为修的，靠判据钉住参数；用户下一次用 3D 页面验证。）
 
+## 再补：`浏览器退出码 null`
+
+用户贴回来的报错：`浏览器退出码 null：[…chrome/updater/event_history.cc…] Failed to write history event`。
+
+`null` 不是真的退出码 —— 它是**被信号杀掉**（我们自己的超时）。原因有两个：
+
+1. Chrome 会拉起更新器 / 崩溃上报这类子进程，它们**继承着我们的 stderr 管道**。代码只等 `close`，
+   而 `close` 要等所有 stdio 关闭：主进程早退了，管道还被孤儿攥着，事件永远不来 → 到点被 SIGKILL → `code` 是 null。
+   改成认 `exit`（主进程一退就到），并立刻 `stderr.destroy()`。
+2. 超时被杀时报「退出码 null」等于让人猜。现在照实说「渲染超时（N 秒）已经停下」，
+   并提示把窗口调小 / 先让页面停下来。
+
+顺带：`--disable-breakpad --disable-crash-reporter --disable-background-mode --no-pings --disable-logging --log-level=3`
+（那些 VERBOSE1 就是更新器倒进来的）；超时 30 → 45 秒；进程被杀但截图文件已经写好时算成功。
+
+判据 `preview.test.js` 加三条：
+- 假浏览器写图 → 起一个**继承 stderr 的孤儿**（`unref` 掉）→ 自己退出：必须 5 秒内返回。
+  扰动（把 `exit` 改回 `close`）复现了线上那句「等了 20 秒」。
+- 写完图后 `SIGKILL` 自己：文件在就算成功。
+- 永不结束的页面：报「渲染超时」，不报退出码。
+
 ## 结果
 
 - 命令行全量：见下（本轮新增 4 条）。

@@ -84,6 +84,63 @@ test('目录：里面有 index.html 就截它', async () => {
   assert.ok(shot.base64, JSON.stringify(shot));
 });
 
+test('浏览器进程没退干净：更新器子进程攥着 stderr 也不能把我们拖到超时', async () => {
+  const root = tmpdir();
+  write(root, 'p.html', '<h1>x</h1>');
+  const dir = tmpdir();
+  const pidFile = path.join(dir, 'orphan.pid');
+  const chrome = path.join(dir, 'orphan-chrome.mjs');
+  // 写图 → 起一个继承 stderr 的孤儿 → 自己退出。老代码等 close，会被这个孤儿拖死
+  fs.writeFileSync(chrome, `#!/usr/bin/env node
+import fs from 'node:fs';
+import { spawn } from 'node:child_process';
+const a = process.argv.slice(2);
+const out = (a.find((x) => x.startsWith('--screenshot=')) || '').slice(13);
+fs.writeFileSync(out, Buffer.from('${PNG.toString('base64')}', 'base64'));
+const kid = spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 30000)'], { stdio: ['ignore', 'ignore', 'inherit'] });
+kid.unref();   // 不 unref 的话父进程自己也不会退，测的就不是「管道没关」这件事了
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(kid.pid));
+`);
+  fs.chmodSync(chrome, 0o755);
+  const started = Date.now();
+  try {
+    const shot = await screenshotPage({ root, rel: 'p.html', chrome, timeoutMs: 20_000 });
+    assert.ok(shot.base64, JSON.stringify(shot));
+    assert.ok(Date.now() - started < 5_000, `等了 ${Date.now() - started}ms —— 还在等那个攥着管道的子进程`);
+  } finally {
+    try { process.kill(Number(fs.readFileSync(pidFile, 'utf8'))); } catch { /* 已经没了 */ }
+  }
+});
+
+test('截图写完但进程被信号杀掉：文件在就算成功，不报「退出码 null」', async () => {
+  const root = tmpdir();
+  write(root, 'p.html', '<h1>x</h1>');
+  const dir = tmpdir();
+  const chrome = path.join(dir, 'kill-chrome.mjs');
+  fs.writeFileSync(chrome, `#!/usr/bin/env node
+import fs from 'node:fs';
+const a = process.argv.slice(2);
+const out = (a.find((x) => x.startsWith('--screenshot=')) || '').slice(13);
+fs.writeFileSync(out, Buffer.from('${PNG.toString('base64')}', 'base64'));
+process.kill(process.pid, 'SIGKILL');
+`);
+  fs.chmodSync(chrome, 0o755);
+  const shot = await screenshotPage({ root, rel: 'p.html', chrome, timeoutMs: 10_000 });
+  assert.ok(shot.base64, JSON.stringify(shot));
+});
+
+test('页面一直不结束：到点说「渲染超时」，不说退出码', async () => {
+  const root = tmpdir();
+  write(root, 'p.html', '<h1>x</h1>');
+  const dir = tmpdir();
+  const chrome = path.join(dir, 'hang-chrome.mjs');
+  fs.writeFileSync(chrome, '#!/usr/bin/env node\nsetTimeout(() => {}, 60000);\n');
+  fs.chmodSync(chrome, 0o755);
+  const shot = await screenshotPage({ root, rel: 'p.html', chrome, timeoutMs: 800 });
+  assert.match(shot.error, /渲染超时/, shot.error);
+  assert.doesNotMatch(shot.error, /退出码 null/, shot.error);
+});
+
 test('浏览器参数：不能带 --disable-gpu（会关掉 WebGL），软件渲染要显式允许', async () => {
   const root = tmpdir();
   write(root, 'p.html', '<h1>x</h1>');

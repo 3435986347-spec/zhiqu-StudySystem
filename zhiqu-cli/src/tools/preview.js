@@ -66,8 +66,18 @@ export async function serveDir(root) {
   });
 }
 
-/** 跑一次无头 Chrome 截图。返回 { ok } 或 { error }。 */
-export function shoot({ chrome, url, out, width, height, timeoutMs = 30_000 }) {
+/**
+ * 跑一次无头 Chrome 截图。返回 { ok } 或 { error }。
+ *
+ * <p>两个坑（用户 2026-11-12 报「浏览器退出码 null」）：
+ * <ul>
+ *   <li>Chrome 会拉起更新器 / 崩溃上报这类子进程，它们<b>继承着我们的 stderr 管道</b>。只看 <code>close</code>
+ *       的话，主进程早退出了、管道还开着，事件永远不来 —— 只能等我们的超时把它杀掉，于是 code 是 null。
+ *       所以认 <code>exit</code>（主进程一退就到），并立刻把管道拆掉。</li>
+ *   <li>超时被杀要照实说「渲染超时」，不要报一个「退出码 null」让人猜。</li>
+ * </ul>
+ */
+export function shoot({ chrome, url, out, width, height, timeoutMs = 45_000 }) {
   return new Promise((resolve) => {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-shot-'));
     const args = [
@@ -78,19 +88,48 @@ export function shoot({ chrome, url, out, width, height, timeoutMs = 30_000 }) {
       '--enable-unsafe-swiftshader', '--use-gl=angle', `--use-angle=${process.env.ZHIQU_PREVIEW_GL || 'swiftshader'}`,
       '--hide-scrollbars', '--mute-audio', '--no-first-run', '--no-default-browser-check',
       '--disable-extensions', '--disable-sync', '--disable-background-networking', '--disable-component-update',
+      '--disable-breakpad', '--disable-crash-reporter', '--disable-background-mode', '--no-pings',
+      // 别把更新器 / 组件的日志倒进我们的管道（那些 VERBOSE1 就是它）
+      '--disable-logging', '--log-level=3',
       '--run-all-compositor-stages-before-draw', '--virtual-time-budget=5000',
       `--user-data-dir=${profile}`, `--window-size=${width},${height}`, `--screenshot=${out}`, url,
     ];
     let stderr = '';
+    let settled = false;
+    let timedOut = false;
     const child = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe'], env: { PATH: process.env.PATH || '/usr/bin:/bin' } });
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* 已经退了 */ } }, timeoutMs);
-    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
-    child.on('error', (e) => { clearTimeout(timer); resolve({ error: `起不来 ${chrome}：${e.message}` }); });
-    child.on('close', (code) => {
-      clearTimeout(timer);
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try { child.stderr.destroy(); } catch { /* 已经关了 */ }
       try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* 删不掉留着也没关系 */ }
-      if (code !== 0 && !fs.existsSync(out)) { resolve({ error: `浏览器退出码 ${code}${stderr ? `：${stderr.split('\n').filter(Boolean).slice(-2).join(' ')}` : ''}` }); return; }
-      resolve(fs.existsSync(out) ? { ok: true } : { error: '浏览器没有生成截图' });
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill('SIGKILL'); } catch { /* 已经退了 */ }
+      // 杀完再给一小会儿：文件可能已经写好了，只是进程没退干净
+      setTimeout(() => finish(judge(null, null)), 300);
+    }, timeoutMs);
+    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+    child.on('error', (e) => { clearTimeout(timer); finish({ error: `起不来 ${chrome}：${e.message}` }); });
+
+    function judge(code, signal) {
+      if (fs.existsSync(out)) return { ok: true };
+      if (timedOut) {
+        return { error: `渲染超时（${Math.round(timeoutMs / 1000)} 秒）已经停下。页面可能一直有动画或没完的请求；`
+          + '把 width / height 调小、或者先让页面在加载完后停下来，再试。' };
+      }
+      const tail = stderr.split('\n').filter(Boolean).slice(-2).join(' ');
+      const how = signal ? `被信号 ${signal} 结束` : `退出码 ${code}`;
+      return { error: `浏览器${how}${tail ? `：${tail}` : ''}` };
+    }
+
+    // exit 而不是 close：更新器子进程可能还攥着管道
+    child.on('exit', (code, signal) => {
+      clearTimeout(timer);
+      // 给它 150ms 把截图文件落盘，再判
+      setTimeout(() => finish(judge(code, signal)), 150);
     });
   });
 }
