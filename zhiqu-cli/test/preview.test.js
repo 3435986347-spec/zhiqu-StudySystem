@@ -187,6 +187,10 @@ fs.writeFileSync(out, Buffer.from('${PNG.toString('base64')}', 'base64'));
   assert.ok(argv.some((a) => a.startsWith('--crash-dumps-dir=') && a.slice('--crash-dumps-dir='.length).length > 0),
     '崩溃上报目录没指到可写的临时目录：目录不可写时 Chrome 直接起不来');
   assert.ok(argv.some((a) => a.startsWith('--virtual-time-budget=') && Number(a.split('=')[1]) >= 5000), '3D 场景给的时间太短');
+  // 用户 2026-11-13：「发起 preview_page 的时候提示找不到用于存储 chrome 的钥匙串」。
+  // 我们把 HOME 换成了临时目录，Chrome 找不到 ~/Library/Keychains 就会去要 Chrome Safe Storage。
+  assert.ok(argv.includes('--use-mock-keychain'), '没带 --use-mock-keychain：HOME 是临时目录，Chrome 会去找系统钥匙串并提示「找不到」');
+  assert.ok(argv.includes('--password-store=basic'), '没带 --password-store=basic：还是会去读系统钥匙串');
 });
 
 test('没有 Chrome 时用系统 WebKit：参数是网址和输出文件，不去编译一个假路径', async () => {

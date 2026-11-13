@@ -157,6 +157,10 @@ export function shoot({ chrome, url, out, width, height, timeoutMs = DEFAULT_TIM
       // 必须显式 --enable-unsafe-swiftshader 才拿得到上下文（用户 2026-11-12：3D 画面看不到）。
       '--enable-unsafe-swiftshader', '--use-gl=angle', `--use-angle=${process.env.ZHIQU_PREVIEW_GL || 'swiftshader'}`,
       '--hide-scrollbars', '--mute-audio', '--no-first-run', '--no-default-browser-check',
+      // HOME 在下面被换成了临时目录，Chrome 在 macOS 上会去 ~/Library/Keychains 找「Chrome Safe Storage」，
+      // 找不到就提示「找不到用于存储 chrome 的钥匙串」（用户 2026-11-13）。用内存里的假钥匙串 + basic
+      // 密码存储：完全不碰系统钥匙串，也不弹系统对话框。CI / 容器里跑无头 Chrome 也是这两条。
+      '--use-mock-keychain', '--password-store=basic',
       '--disable-extensions', '--disable-sync', '--disable-background-networking', '--disable-component-update',
       '--disable-breakpad', '--disable-crash-reporter', `--crash-dumps-dir=${crashes}`, '--disable-background-mode', '--no-pings',
       // 别把更新器 / 组件的日志倒进我们的管道（那些 VERBOSE1 就是它）
