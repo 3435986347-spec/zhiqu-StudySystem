@@ -97,11 +97,11 @@ zhiqu mcp                   当 MCP 服务器，见下面
 ```
 
 - 工具名 `preview_page`，参数 `path`（工作区里的 .html，或带 index.html 的目录）、`width` / `height`（默认 1200×900）。
-- 它起一个只监听 127.0.0.1 的静态服务，用**你电脑上的 Chrome** 无头渲染截图，图直接进模型上下文 —— 模型能看到排版、空白、错位。
-- 只读，不改文件；截图超过 1.5MB 会让它把窗口调小。
+- 它起一个只监听 127.0.0.1 的静态服务，用你电脑上的 Chrome 无头渲染截图；没有 Chrome.app 时，macOS 用系统自带的 WebKit（第一次要 swiftc 编译，缓存在 `~/.zhiqu/preview/`）。图直接进模型上下文 —— 模型能看到排版、空白、错位。
+- 只读，不改文件；截图超过 8MB 会让它把窗口调小。
 - 默认等 90 秒（软件渲染的 3D 慢）；3D 更重就让模型加 `timeout_seconds`，最多 300 秒。
 - **3D / WebGL 页面也能截**：默认用 ANGLE 的 SwiftShader 软件渲染（没有显卡也能出图，慢一些）。想用真 GPU：`ZHIQU_PREVIEW_GL=metal`（macOS）或 `ZHIQU_PREVIEW_GL=gl`（Linux）。
-- 找不到 Chrome 就不下发这个工具；装在别处用 `ZHIQU_CHROME=/path/to/chrome`。
+- 既没有 Chrome、又编译不了系统 WebKit 时，不下发这个工具；装在别处用 `ZHIQU_CHROME=/path/to/chrome`。
 - 为什么不在沙箱里跑：沙箱不给 GUI 服务和家目录，Linux 那边还禁了嵌套命名空间（见 `docs/notes/code-workspace.md`），所以这一步在宿主进程里做。
 - 只在终端里的 `zhiqu` 有；桌面应用要重打包，网页 / 桌面后端的代码模式没有这个工具。
 

@@ -166,7 +166,7 @@ export function toolset(ctx) {
   }
   // 服务器上没有后台命令（第一百一十七轮）：要管它们活多久、占多少，先不给
   // 子 agent 也给（第一百二十六轮，用户定的：子 agent 能跑命令；但它停下之前，它自己起的后台命令要先停下 —— 见 subagents.js 的 settle）
-  if (sandboxed) for (const t of shellSchemas({ background: offeredBackground(ctx) })) out.push({ schema: t, kind: 'local' });
+  if (sandboxed) for (const t of shellSchemas({ background: offeredBackground(ctx), preview: !plan && ctx.local && !ctx.local.hosted && ctx.local.chrome })) out.push({ schema: t, kind: 'local' });
   // 预览截图（第一百三十四轮）：只在宿主机这一份给 —— 服务器 / 桌面后端那份（hosted）跑不了浏览器。
   // plan 档不给：它要起浏览器，是「动手」不是「想一想」。
   if (!plan && ctx.local && !ctx.local.hosted && ctx.local.chrome) out.push({ schema: previewSchema(), kind: 'local' });

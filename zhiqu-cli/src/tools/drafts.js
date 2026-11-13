@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { LocalTools, READ_TOOLS, shellOutcome, shellSeconds } from './local.js';
 import { describeJob, MAX_WAIT_SECONDS, START_WAIT_MS } from './jobs.js';
-import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './sandbox.js';
+import { browserInSandbox, describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './sandbox.js';
 import { syntaxProblem } from './syntax.js';
 import { stat as diffStat } from '../render/diff.js';
 
@@ -88,6 +88,8 @@ export class DraftTools extends LocalTools {
 
   /** 后台命令也是后端起的（门在后端，一轮结束后端全部收掉） */
   async startJob(prep, { signal } = {}) {
+    const why = browserInSandbox(prep.command);
+    if (why) return { error: why };
     const r = await this.exec({ shell: true, background: true, command: prep.command, cwd: prep.cwd, waitMs: START_WAIT_MS }, { signal });
     if (r.error) return { error: r.error };
     this.ranCommand = true;
@@ -111,6 +113,8 @@ export class DraftTools extends LocalTools {
   }
 
   async commitShell(prep, { signal } = {}) {
+    const why = browserInSandbox(prep.command);
+    if (why) return { content: `$ ${prep.command}\n${why}${this.pendingNote()}`, summary: '没有运行', exitCode: 126, output: why, refused: true };
     const r = await this.exec({ shell: true, command: prep.command, cwd: prep.cwd, ...(prep.timeoutSeconds ? { timeoutMs: prep.timeoutSeconds * 1000 } : {}) }, { signal });
     if (r.error) return { content: `${r.error}${this.pendingNote()}`, summary: '没有运行', exitCode: -1, output: '' };
     this.ranCommand = true;
@@ -206,7 +210,7 @@ export class DesktopTools extends DraftTools {
   /** 档位只认外壳给的（shellWrite），不认调用方传的；不带沙箱再跑一次（ask 档的那条）这里没有 */
   async commitShell(prep, { signal, onOutput } = {}) {
     const r = await LocalTools.prototype.commitShell.call(this, prep, { policy: this.shellPolicy, unsandboxed: false, signal, onOutput });
-    this.ranCommand = true;
+    if (!r.refused) this.ranCommand = true;
     return { ...r, content: `${r.content}${this.pendingNote()}` };
   }
 

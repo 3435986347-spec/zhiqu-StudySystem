@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findChrome, screenshotPage, serveDir, DEFAULT_TIMEOUT_MS } from '../src/tools/preview.js';
+import { findChrome, screenshotPage, serveDir, DEFAULT_TIMEOUT_MS, MAX_PREVIEW_BYTES, webKitHelperPath } from '../src/tools/preview.js';
 import { tmpdir, write } from './helpers.js';
 
 // 1x1 的透明 PNG
@@ -30,9 +30,24 @@ fs.writeFileSync(out, Buffer.from('${bytes.toString('base64')}', 'base64'));`}
   return file;
 }
 
+/** 写出指定字节数的「截图」，用来卡上限，不必把整张图嵌进脚本。 */
+function sizedChrome(dir, size) {
+  const file = path.join(dir, `sized-${size}.mjs`);
+  fs.writeFileSync(file, `#!/usr/bin/env node
+import fs from 'node:fs';
+const out = (process.argv.slice(2).find((a) => a.startsWith('--screenshot=')) || '').slice(13);
+fs.writeFileSync(out, Buffer.alloc(${size}, 7));
+`);
+  fs.chmodSync(file, 0o755);
+  return file;
+}
+
 test('找浏览器：ZHIQU_CHROME 优先，找不到就是 null（这个工具不下发）', () => {
   assert.equal(findChrome({ env: { ZHIQU_CHROME: '/x/chrome' }, platform: 'darwin', exists: (p) => p === '/x/chrome' }), '/x/chrome');
   assert.equal(findChrome({ env: {}, platform: 'darwin', exists: () => false }), null);
+  const home = tmpdir();
+  const helper = findChrome({ env: {}, platform: 'darwin', homedir: () => home, exists: (p) => p === '/usr/bin/swiftc' });
+  assert.equal(helper, webKitHelperPath(() => home), '没有 Chrome.app 时应退回系统 WebKit');
   assert.equal(findChrome({ env: {}, platform: 'linux', exists: (p) => p === '/usr/bin/chromium' }), '/usr/bin/chromium');
 });
 
@@ -75,6 +90,11 @@ test('截图：真跑一遍「浏览器」把图写出来；不是 html、找不
 
   const broken = await screenshotPage({ root, rel: 'page.html', chrome: fakeChrome(tmpdir(), { fail: true }) });
   assert.match(broken.error, /退出码 7|boom/);
+
+  const okBig = await screenshotPage({ root, rel: 'page.html', chrome: sizedChrome(tmpdir(), 2_000_000) });
+  assert.equal(okBig.bytes, 2_000_000, '比 1.5MB 大的正常截图不该被拒');
+  const tooBig = await screenshotPage({ root, rel: 'page.html', chrome: sizedChrome(tmpdir(), MAX_PREVIEW_BYTES + 1) });
+  assert.match(tooBig.error, /太大/, tooBig.error);
 });
 
 test('目录：里面有 index.html 就截它', async () => {
@@ -164,5 +184,23 @@ fs.writeFileSync(out, Buffer.from('${PNG.toString('base64')}', 'base64'));
   assert.ok(!argv.includes('--disable-gpu'), '又带上了 --disable-gpu：GPU 进程被关掉，WebGL 页面会截成空白');
   assert.ok(argv.includes('--enable-unsafe-swiftshader'), '没有允许软件渲染：Chrome 129+ 会直接不给 WebGL 上下文');
   assert.ok(argv.some((a) => a.startsWith('--use-angle=swiftshader')), '没有指定 ANGLE 的软件后端');
+  assert.ok(argv.some((a) => a.startsWith('--crash-dumps-dir=') && a.slice('--crash-dumps-dir='.length).length > 0),
+    '崩溃上报目录没指到可写的临时目录：目录不可写时 Chrome 直接起不来');
   assert.ok(argv.some((a) => a.startsWith('--virtual-time-budget=') && Number(a.split('=')[1]) >= 5000), '3D 场景给的时间太短');
+});
+
+test('没有 Chrome 时用系统 WebKit：参数是网址和输出文件，不去编译一个假路径', async () => {
+  const root = tmpdir();
+  write(root, 'p.html', '<h1>x</h1>');
+  const dir = tmpdir();
+  const chrome = path.join(dir, 'zhiqu-webkit-shot');
+  fs.writeFileSync(chrome, `#!/usr/bin/env node
+import fs from 'node:fs';
+const [url, out] = process.argv.slice(2);
+if (!url.startsWith('http://127.0.0.1:') || !out.endsWith('.png')) { process.stderr.write('参数不对\\n'); process.exit(2); }
+fs.writeFileSync(out, Buffer.from('${PNG.toString('base64')}', 'base64'));
+`);
+  fs.chmodSync(chrome, 0o755);
+  const shot = await screenshotPage({ root, rel: 'p.html', chrome, timeoutMs: 10_000 });
+  assert.ok(shot.base64, JSON.stringify(shot));
 });

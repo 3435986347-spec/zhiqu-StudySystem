@@ -15,7 +15,7 @@ import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_
 import { findChrome, screenshotPage } from './preview.js';
 import { checkLocalCommand, describeRefusal, LOCAL_DEFAULT_COMMANDS, ExecRefusal, gitLaunch } from './execrules.js';
 import { planLaunch, resolveOnPath, runProcess } from './exec.js';
-import { describeBoundary, looksBlocked, plainLaunch, sandboxedLaunch, WORKSPACE_WRITE } from './sandbox.js';
+import { browserInSandbox, describeBoundary, looksBlocked, plainLaunch, sandboxedLaunch, WORKSPACE_WRITE } from './sandbox.js';
 import { describeJob, MAX_WAIT_SECONDS, ShellJobs, START_WAIT_MS } from './jobs.js';
 import { applyEdit, describeEditError } from './edit.js';
 import { applyHunks, describePatchError, parsePatch } from './patch.js';
@@ -150,9 +150,10 @@ export function shellSeconds(value) {
 }
 
 /** shell 工具（第一百零九轮）：有系统沙箱才下发，下发了就不再给 run_command（见 agent.js 的 toolset）。 */
-export function shellSchemas({ background = true } = {}) {
+export function shellSchemas({ background = true, preview = false } = {}) {
   const tools = [
-    fn('shell', '在工作区里运行一条 bash 命令：管道、重定向、&& 都能用。用来跑测试、构建、查 git、搜东西。命令跑在系统沙箱里，边界见「环境」一节。',
+    fn('shell', '在工作区里运行一条 bash 命令：管道、重定向、&& 都能用。用来跑测试、构建、查 git、搜东西。命令跑在系统沙箱里，边界见「环境」一节。'
+      + (preview ? '不要在这里起浏览器或 headless-gl（沙箱里起不来）；看页面用 preview_page。' : '不要在这里起浏览器或 headless-gl（沙箱里起不来）。'),
       { command: { type: 'string', description: '一整条 shell 命令，字符串' },
         cwd: { type: 'string', description: '在哪个子目录里运行，默认工作区根' },
         timeout_seconds: { type: 'number', description: `最多跑多久，默认 ${DEFAULT_SHELL_SECONDS}，最多 ${MAX_SHELL_SECONDS}。到点连子进程一起杀` },
@@ -196,8 +197,9 @@ function scanRegex(context, re, lines) {
 
 export function previewSchema() {
   return fn('preview_page', [
-    '把工作区里的一个 .html 页面渲染出来截图，你自己看结果（排版、颜色、有没有空白或错位）。',
+    '把工作区里的一个 .html 页面渲染出来截图，你自己看结果（排版、颜色、WebGL / 3D、有没有空白或错位）。',
     '写完页面先调它看一眼，再决定要不要改；它只读，不改任何文件。',
+    '在沙箱外面跑，软件渲染。不要用 shell 起 Playwright、Chrome、Chromium 或 headless-gl，那些在沙箱里会因崩溃上报目录和系统服务起不来。',
     '目录的话里面要有 index.html；页面引用的 css / js / 图片一起能加载。',
   ].join('\n'), {
     path: { type: 'string', description: '相对工作区根的 .html 文件（或带 index.html 的目录）' },
@@ -327,7 +329,7 @@ export class LocalTools {
    * 图先挂在这里，由 agent 循环跟着工具结果补一条带图的 user 消息（工具结果本身只能是文本）。
    */
   async previewPage(args) {
-    if (!this.chrome) return { error: '这台机器上没找到 Chrome / Chromium（可以用环境变量 ZHIQU_CHROME 指定路径）' };
+    if (!this.chrome) return { error: '这台机器上没找到 Chrome / Chromium，也没有系统 WebKit（macOS 需要 swiftc）。可以用环境变量 ZHIQU_CHROME 指定浏览器' };
     const rel = String((args && args.path) || '').trim();
     if (!rel) return { error: '没说预览哪个页面' };
     // 桌面 / 网页的代码模式里改动只在草稿层：磁盘上还是旧内容，截出来的是上一版 —— 不如直接说清楚
@@ -974,6 +976,10 @@ export class LocalTools {
 
   /** unsandboxed：只有 ask 档用户当场点了才有（agent.js 的 shell 分支） */
   async commitShell(prep, { policy = WORKSPACE_WRITE, unsandboxed = false, signal, onOutput } = {}) {
+    if (!unsandboxed) {
+      const why = browserInSandbox(prep.command);
+      if (why) return { content: `$ ${prep.command}\n${why}`, summary: '没有运行', exitCode: 126, output: why, blocked: false, refused: true };
+    }
     const launch = unsandboxed ? plainLaunch({ command: prep.command })
       : sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork, home: this.home });
     const timeoutMs = prep.timeoutSeconds ? prep.timeoutSeconds * 1000 : this.execTimeoutMs;
@@ -983,6 +989,8 @@ export class LocalTools {
 
   /** background: true。起完等一小会儿：立刻失败的（端口被占、命令写错）当场看得到 */
   async startJob(prep, { policy = WORKSPACE_WRITE, signal } = {}) {
+    const why = browserInSandbox(prep.command);
+    if (why) return { error: why };
     const launch = sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork, home: this.home });
     const started = this.jobs.start({ ...launch, cwd: prep.cwd, command: prep.command });
     if (started.error) return { error: started.error };

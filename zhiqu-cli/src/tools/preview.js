@@ -6,11 +6,13 @@
 //
 // 所以这一层跑在**宿主进程**里：命令行自己起一个只监听 127.0.0.1 的静态服务，再叫宿主机的无头
 // Chrome 截图。页面里的脚本是在一个没有任何登录态的临时 profile 里跑的，跑完就删。
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -23,16 +25,60 @@ const MIME = {
 const CHROME_PATHS = {
   darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'],
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    '/Applications/Arc.app/Contents/MacOS/Arc'],
   linux: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser'],
 };
 
-/** 宿主机的浏览器：`ZHIQU_CHROME` 指哪用哪，否则找常见安装位置。找不到返回 null（这个工具就不下发）。 */
-export function findChrome({ env = process.env, platform = process.platform, exists = fs.existsSync } = {}) {
+const WEBKIT_NAME = 'zhiqu-webkit-shot';
+const webKitSource = () => fileURLToPath(new URL('./webkit-shot.swift', import.meta.url));
+
+/** 系统 WebKit 截图程序的缓存位置。源码变了（戳对不上）就重新编译。 */
+export function webKitHelperPath(homedir = os.homedir) {
+  return path.join(homedir(), '.zhiqu', 'preview', WEBKIT_NAME);
+}
+
+function webKitStamp(dest) { return `${dest}.stamp`; }
+
+/**
+ * 没有 Chrome.app 时，macOS 用系统自带的 WebKit（Safari 那个引擎）。要有 swiftc，第一次编译后缓存。
+ * 返回缓存路径；还没编译也返回（真正截图时再编）。swiftc 和缓存都没有则返回 null。
+ */
+export function findWebKitHelper({ platform = process.platform, exists = fs.existsSync, homedir = os.homedir } = {}) {
+  if (platform !== 'darwin') return null;
+  const dest = webKitHelperPath(homedir);
+  if (exists(dest) || exists('/usr/bin/swiftc')) return dest;
+  return null;
+}
+
+/** 宿主机的浏览器：`ZHIQU_CHROME` 指哪用哪，否则找常见安装位置。都没有时，macOS 退回系统 WebKit。找不到返回 null。 */
+export function findChrome({ env = process.env, platform = process.platform, exists = fs.existsSync, homedir = os.homedir } = {}) {
   const custom = env.ZHIQU_CHROME;
   if (custom && exists(custom)) return custom;
   for (const p of CHROME_PATHS[platform] || []) if (exists(p)) return p;
-  return null;
+  return findWebKitHelper({ platform, exists, homedir });
+}
+
+export function isWebKitHelper(chrome) {
+  return path.basename(String(chrome || '')) === WEBKIT_NAME;
+}
+
+/** 编译系统 WebKit 截图程序。成功返回路径。 */
+export function compileWebKitHelper(dest = webKitHelperPath(), { exists = fs.existsSync, spawnCompiler = spawnSync } = {}) {
+  if (!exists('/usr/bin/swiftc')) return null;
+  const src = webKitSource();
+  if (!exists(src)) return null;
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(src)).digest('hex');
+  const stamp = webKitStamp(dest);
+  if (exists(dest) && exists(stamp)) {
+    try { if (fs.readFileSync(stamp, 'utf8') === hash) return dest; } catch { /* 重新编译 */ }
+  }
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const r = spawnCompiler('/usr/bin/swiftc', ['-O', '-framework', 'AppKit', '-framework', 'WebKit', '-o', dest, src], { stdio: 'ignore', timeout: 120_000 });
+  if (!r || r.status !== 0 || !exists(dest)) return null;
+  fs.writeFileSync(stamp, hash);
+  return dest;
 }
 
 const inside = (root, p) => p === root || p.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
@@ -72,6 +118,8 @@ export async function serveDir(root) {
  * 模型也能用 preview_page 的 timeout_seconds 单独申请更长（上限 300 秒）。
  */
 export const DEFAULT_TIMEOUT_MS = 90_000;
+/** 截图字节上限。图按固定 token 估，不按 base64 字数；1.5MB 会把正常的一屏拒掉（用户 2026-11-13）。 */
+export const MAX_PREVIEW_BYTES = 8_000_000;
 
 /**
  * 跑一次无头 Chrome 截图。返回 { ok } 或 { error }。
@@ -86,8 +134,23 @@ export const DEFAULT_TIMEOUT_MS = 90_000;
  */
 export function shoot({ chrome, url, out, width, height, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   return new Promise((resolve) => {
+    if (isWebKitHelper(chrome) && path.resolve(chrome) === path.resolve(webKitHelperPath())) {
+      const built = compileWebKitHelper(chrome);
+      if (!built) {
+        resolve({ error: '这台机器没有 Chrome，系统 WebKit 也编译不了（需要 Xcode 命令行工具里的 swiftc，或者设置 ZHIQU_CHROME）' });
+        return;
+      }
+      chrome = built;
+    }
+    const webkit = isWebKitHelper(chrome);
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-shot-'));
-    const args = [
+    // 崩溃上报不听 --disable-crash-reporter：目录不可写时 Chrome / Chromium 直接起不来
+    // （用户 2026-11-13）。指到这次自己的临时目录，HOME 也换过去，免得去写真实家目录。
+    const crashes = path.join(profile, 'crashes');
+    fs.mkdirSync(crashes, { recursive: true });
+    const args = webkit
+      ? [url, out, String(width), String(height), String(Math.ceil(timeoutMs / 1000))]
+      : [
       '--headless=new',
       // 不要 --disable-gpu：它会把 GPU 进程整个关掉，headless 里就等于没有 WebGL，3D 页面截出来是空白。
       // 没有显卡 / 不允许用真 GPU 时让 ANGLE 走 SwiftShader 软件渲染；Chrome 129 起软件 WebGL 默认被禁，
@@ -95,7 +158,7 @@ export function shoot({ chrome, url, out, width, height, timeoutMs = DEFAULT_TIM
       '--enable-unsafe-swiftshader', '--use-gl=angle', `--use-angle=${process.env.ZHIQU_PREVIEW_GL || 'swiftshader'}`,
       '--hide-scrollbars', '--mute-audio', '--no-first-run', '--no-default-browser-check',
       '--disable-extensions', '--disable-sync', '--disable-background-networking', '--disable-component-update',
-      '--disable-breakpad', '--disable-crash-reporter', '--disable-background-mode', '--no-pings',
+      '--disable-breakpad', '--disable-crash-reporter', `--crash-dumps-dir=${crashes}`, '--disable-background-mode', '--no-pings',
       // 别把更新器 / 组件的日志倒进我们的管道（那些 VERBOSE1 就是它）
       '--disable-logging', '--log-level=3',
       '--run-all-compositor-stages-before-draw', '--virtual-time-budget=5000',
@@ -104,7 +167,10 @@ export function shoot({ chrome, url, out, width, height, timeoutMs = DEFAULT_TIM
     let stderr = '';
     let settled = false;
     let timedOut = false;
-    const child = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe'], env: { PATH: process.env.PATH || '/usr/bin:/bin' } });
+    const child = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe'], env: {
+      PATH: process.env.PATH || '/usr/bin:/bin',
+      HOME: profile, TMPDIR: profile, XDG_CONFIG_HOME: profile, XDG_CACHE_HOME: profile,
+    } });
     const finish = (result) => {
       if (settled) return;
       settled = true;
@@ -163,8 +229,8 @@ export async function screenshotPage({ root, rel, width = 1200, height = 900, ch
     if (shot.error) return { error: shot.error };
     const buf = fs.readFileSync(out);
     if (!buf.length) return { error: '截图是空的' };
-    // 太大的图会把上下文吃掉：让模型自己缩小窗口再试，而不是硬塞
-    if (buf.length > 1_500_000) return { error: `截图 ${Math.round(buf.length / 1024)}KB，太大（上限 1.5MB）；把 width / height 调小再试` };
+    // 图按固定 token 估，不按 base64 字数。上限只挡异常的大图，正常一屏要过得去
+    if (buf.length > MAX_PREVIEW_BYTES) return { error: `截图 ${Math.round(buf.length / 1024)}KB，太大（上限 ${Math.round(MAX_PREVIEW_BYTES / 1_000_000)}MB）；把 width / height 调小再试` };
     return { mediaType: 'image/png', base64: buf.toString('base64'), bytes: buf.length, width: w, height: h };
   } finally {
     await site.close().catch(() => {});

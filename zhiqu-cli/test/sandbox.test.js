@@ -11,7 +11,7 @@ import { runTurn, toolset } from '../src/agent.js';
 import { runProcess } from '../src/tools/exec.js';
 import { LocalTools, shellOutcome } from '../src/tools/local.js';
 import { DraftTools } from '../src/tools/drafts.js';
-import { detectSandbox, gitReadRoots, looksBlocked, plainLaunch, READ_ONLY, repoAncestors, sandboxedLaunch, toolchainRoots, WORKSPACE_WRITE } from '../src/tools/sandbox.js';
+import { browserInSandbox, detectSandbox, gitReadRoots, looksBlocked, plainLaunch, READ_ONLY, repoAncestors, sandboxedLaunch, toolchainRoots, WORKSPACE_WRITE } from '../src/tools/sandbox.js';
 import { environmentBlock } from '../src/prompt.js';
 import { resolveSettings } from '../src/config.js';
 import { SessionStore } from '../src/session.js';
@@ -527,4 +527,30 @@ test('真的 zhiqu -p：命令行把系统沙箱接上了（模型拿到 shell�
   const bad = await run(['-p', '干活', '--sandbox-network', 'ultra']);
   assert.notEqual(bad.code, 0);
   assert.match(bad.out, /--sandbox-network 只接受/);
+});
+
+test('沙箱里不启动浏览器：Playwright / Chrome / headless-gl 直接拒绝，搜索里提到 chrome 不算', async () => {
+  assert.match(browserInSandbox('npx playwright test'), /preview_page/);
+  assert.match(browserInSandbox('chromium --headless'), /不要再试/);
+  assert.match(browserInSandbox('"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless'), /preview_page/);
+  assert.match(browserInSandbox('node -e "require(\'gl\')"'), /headless-gl/);
+  assert.equal(browserInSandbox('npm test'), null);
+  assert.equal(browserInSandbox('rg chrome src'), null);
+  assert.equal(browserInSandbox('echo playwright'), null);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-nobrowser-'));
+  const local = new LocalTools({ root, sandbox: { kind: 'seatbelt', binary: '/nope' } });
+  const refused = await local.commitShell(local.prepareShell({ command: 'npx playwright test' }));
+  assert.equal(refused.exitCode, 126);
+  assert.equal(refused.refused, true);
+  assert.match(refused.output, /preview_page/);
+
+  const sent = [];
+  const draft = new DraftTools({ root, exec: async (req) => { sent.push(req); return { exitCode: 0, output: 'ran', millis: 1 }; } });
+  const blocked = await draft.commitShell(draft.prepareShell({ command: 'npx playwright install chromium' }));
+  assert.equal(sent.length, 0, '拒绝之后还交给后端跑了');
+  assert.equal(blocked.exitCode, 126);
+  const ok = await draft.commitShell(draft.prepareShell({ command: 'npm test' }));
+  assert.equal(sent.length, 1);
+  assert.equal(ok.exitCode, 0);
 });

@@ -358,6 +358,39 @@ function detectHostedSandbox({ platform, env, probe, network = 'on' }) {
   }
 }
 
+/**
+ * 沙箱里起不了浏览器（用户 2026-11-13：Playwright、Chromium 因崩溃上报目录不可写而起不来，
+ * 换三个浏览器都是系统限制）。认出来就不要跑，免得再换 Firefox / headless-gl 各崩一次。
+ * headless-gl 也要 WindowServer 这些服务，在沙箱里一样起不来。看页面用 preview_page（沙箱外面、软件渲染）。
+ * 只认「像在启动」的写法：grep / rg 提到 chrome 不算。
+ */
+export function browserInSandbox(command) {
+  const s = String(command || '');
+  if (!launchesBrowser(s)) return null;
+  return '沙箱里起不了浏览器（Playwright、Chrome、Chromium、Firefox、WebKit 都一样）：崩溃上报目录写不进去，图形和崩溃上报用的系统服务也不给。换一个浏览器不会好，不要再试。'
+    + 'headless-gl 在沙箱里同样起不来。看页面（含 WebGL）用 preview_page：它在沙箱外面截图，用软件渲染。';
+}
+
+/** 一条命令被 ; && || | 拆开之后，某一段是不是在启动这个程序 */
+function segmentStarts(s, name) {
+  const re = new RegExp(`(?:^|[\\n;&|\`]|&&|\\|\\|)\\s*(?:sudo\\s+)?(?:[\\w./~-]+\\/)?${name}\\b`, 'i');
+  return re.test(s);
+}
+
+function launchesBrowser(s) {
+  if (/\b(?:npx|pnpm|yarn|bunx|bun)\b[^\n;&|]*\bplaywright\b/i.test(s)) return true;
+  if (/\bplaywright\s+(?:test|install|open|codegen|show-trace)\b/i.test(s)) return true;
+  if (/(?:^|[\n;&|`]|&&|\|\|)\s*(?:sudo\s+)?["'][^"'\n]*(?:Google Chrome|Chromium|Microsoft Edge)\.app\b/i.test(s)) return true;
+  if (segmentStarts(s, 'google-chrome(?:-stable)?') || segmentStarts(s, 'chromium(?:-browser)?')
+    || segmentStarts(s, 'chromedriver') || segmentStarts(s, 'firefox') || segmentStarts(s, 'msedge')
+    || segmentStarts(s, 'chrome')) return true;
+  if (/\b(?:playwright|puppeteer)\b[\s\S]{0,180}\.(?:launch|chromium|firefox|webkit)\b/.test(s)) return true;
+  if (/\brequire\(\s*['"](?:gl|headless-gl)['"]\s*\)/.test(s)) return true;
+  if (/\bfrom\s+['"](?:gl|headless-gl)['"]/.test(s)) return true;
+  if (/\bheadless-gl\b/.test(s) && /\b(?:node|npm|npx)\b/.test(s)) return true;
+  return false;
+}
+
 /** 这段输出像不像被沙箱挡了。猜错了只是多问一句 / 多提醒一句，所以宁可多猜。 */
 export function looksBlocked(output) {
   const text = String(output || '');
@@ -376,5 +409,5 @@ export function describeBoundary({ policy = WORKSPACE_WRITE, network = 'off', ho
   }
   const write = policy === READ_ONLY ? '只读（只能写临时目录 $TMPDIR）' : '能写工作区（.git、.zhiqu 除外）和临时目录 $TMPDIR，别处都不能写';
   const net = network === 'on' ? '能联网' : network === 'local' ? '只能连本机' : '不能联网（连本机也不行）';
-  return `${write}；${net}；家目录下除了工具链都读不到；临时文件放 $TMPDIR，不要放 /tmp；每条命令是一个新的 bash，cd、变量留不到下一条，& 起的进程随命令结束（要一直跑用 background: true）`;
+  return `${write}；${net}；家目录下除了工具链都读不到；临时文件放 $TMPDIR，不要放 /tmp；起不了浏览器（用 preview_page）；每条命令是一个新的 bash，cd、变量留不到下一条，& 起的进程随命令结束（要一直跑用 background: true）`;
 }
