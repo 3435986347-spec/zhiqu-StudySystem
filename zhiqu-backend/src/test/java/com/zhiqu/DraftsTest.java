@@ -55,10 +55,10 @@ class DraftsTest {
         String applier = SourceText.functionBody(code, "function makeStreamApplier(st)");
         assertTrue(applier.contains("if (!st.stored && data && data.userMessageId)") && applier.contains("st.onStored()"),
                 "删草稿要等事件里带 userMessageId（服务器存上了）");
-        assertTrue(send.contains("onStored: function () { if (draftKeyAtSend) drafts.clearIf(draftKeyAtSend, txt); }"),
+        assertTrue(send.contains("onStored: function () { clearPendingSend(sentNb); if (draftKeyAtSend) drafts.clearIf(draftKeyAtSend, txt); }"),
                 "发送里没有把「收到确认才删草稿」接上");
         assertEquals(send.indexOf("drafts.clearIf"), send.lastIndexOf("drafts.clearIf"), "发送里还有别处在删草稿 —— 一按发送就删，没存上的那句就没了");
-        assertTrue(send.contains("if (!st.stored && (st.failed || !gotEvent) && sameNb() && inp && !inp.value.trim())") && send.contains("inp.value = txt;"),
+        assertTrue(send.contains("if (!st.stored && (st.failed || !st.gotEvent) && sameNb() && inp && !inp.value.trim())") && send.contains("inp.value = txt;"),
                 "服务器没收到时要把字放回输入框");
         assertTrue(code.contains("state.chatDraft = keepDraft(draft, chatDraftKey, growDraft);"), "聊天框没接草稿");
         assertTrue(SourceText.functionBody(code, "function renderNotebooks()").contains("state.chatDraft.reload()"), "换 Notebook 时没换草稿");

@@ -70,7 +70,7 @@ class AiReattachTest {
     }
 
     @Test
-    @DisplayName("事件落地真跑：记号、增量、半截保留、reset、补充提示都对")
+    @DisplayName("发布实现真跑：切会话保留后台消息、导航补齐进度再接直播、重连不清空、桌面存档幂等、队列不串会话")
     void 事件落地() throws Exception {
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/stream-reattach-check.js"),
                         PAGE),

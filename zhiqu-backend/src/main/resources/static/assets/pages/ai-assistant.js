@@ -13,7 +13,9 @@ export function bind(sh) {
 export const boots = { 'ai-assistant.html': (sh) => { bind(sh); startWaitTicker(); return bootAiAssistant(); } };
 
 async function bootAiAssistant() {
+  bindTurnLifecycle();
   restoreAiToggles();
+  restoreSendQueue();
   var webBtn = $('#zq-web'), effortBtn = $('#zq-effort'), sendBtn = $('#zq-send'), draft = $('#zq-draft');
   if (webBtn) webBtn.onclick = function () { aiToggle('web'); };
   if (effortBtn) effortBtn.onclick = toggleEffortMenu;
@@ -675,6 +677,7 @@ function clearPlanModalQueue() {
 function setAiNotebookId(id) {
   if (state.notebookId === id) return;
   state.notebookId = id;
+  syncTurnUi();
   clearPlanModalQueue();
 }
 
@@ -1324,7 +1327,11 @@ async function renderAgentPanels() {
   if (nbId !== state.notebookId || revision !== (state.agentArtifactRevision || 0)) return;
   state.generatedFiles = Array.isArray(generated) ? generated : [];
   // 请求开始后若收到了新 SSE 产物，旧快照不能盖回去或弹出上一轮草稿。
-  renderSteps((detail && (detail.steps || detail.stepList)) || []);
+  var active = currentTurn(), pending = runningTurn();
+  state.agentSteps = active && active.agentSteps && active.agentSteps.length ? active.agentSteps
+    : pending && pending.agentSteps && pending.agentSteps.length ? pending.agentSteps
+    : (detail && (detail.steps || detail.stepList)) || [];
+  renderSteps(state.agentSteps);
   var artifacts = (detail && (detail.artifacts || detail.artifactList)) || [];
   artifacts = artifacts.map(function (raw) {
     var incoming = normalizeArtifact(raw);
@@ -1346,12 +1353,25 @@ async function renderAgentPanels() {
   if (freshCode) openCodeConfirmModal(freshCode);
 }
 var CHAT_PAGE_SIZE = 50;
+var messageLoadRevision = 0;
 async function loadAiMessages() {
+  var revision = ++messageLoadRevision;
   // 聊天记录按 notebook 隔离:后端会话 key = notebook-{id},切换 notebook 时重新拉取
   var nbId = state.notebookId;
+  if (!state.messages.length) {
+    state.messages = mergeRunningMessages([]);
+    if (state.messages.length) renderAiMessages(); // 本机中途消息先显示，不等云端返回上次的存档
+  }
   var list = await api.get('/ai/messages?limit=' + CHAT_PAGE_SIZE + (nbId ? '&notebookId=' + nbId : ''));
-  if (nbId !== state.notebookId) return; // 响应期间已切换 notebook,防止慢响应覆盖新窗口
-  state.messages = list || [];
+  if (nbId !== state.notebookId || revision !== messageLoadRevision) return; // 同会话重载也只认最新请求，旧回包不能盖掉存档后的终态
+  state.messages = mergeRunningMessages(list);
+  syncTurnUi();
+  var active = currentTurn(), pending = runningTurn();
+  if (active && active.agentSteps || pending && pending.agentSteps) {
+    state.agentSteps = active && active.agentSteps || pending.agentSteps;
+    renderSteps(state.agentSteps);
+  }
+  renderSendQueue();
   state.historyOf = { notebookId: nbId };   // 这个 notebook 的记录到手了 —— 此后空着才是真的空（见 historyLoaded）
   // 拿满一页 = 可能还有更早的。这是个上界判断，不是精确值：
   // 正好整页而其实没有更早的时候，用户点一次会拿到空列表，按钮随即消失。
@@ -1362,6 +1382,7 @@ async function loadAiMessages() {
   restorePendingSend();
   // 上一轮还在服务端跑着的话，接上（第一百三十三轮）
   reattachRunningTurn().catch(function () { /* 接不上就算了，轮询还在 */ });
+  pumpSendQueue();
 }
 
 /**
@@ -1374,15 +1395,28 @@ async function loadAiMessages() {
  * 而服务器那边又找不到这句话，就把它放回输入框并说清楚 —— 总比「字没了、也没有任何解释」强。
  */
 var PENDING_SEND_KEY = 'zq.ai.pending';
-function markPendingSend(text) {
-  try { sessionStorage.setItem(PENDING_SEND_KEY, JSON.stringify({ nb: state.notebookId, text: text, at: Date.now() })); } catch (e) { /* 隐私模式 */ }
+function pendingStorageKey(nb) {
+  return PENDING_SEND_KEY + '.' + String(state.user && state.user.id != null ? state.user.id : 'anonymous') + '.' + turnKey(nb);
 }
-function clearPendingSend() {
-  try { sessionStorage.removeItem(PENDING_SEND_KEY); } catch (e) { /* 同上 */ }
+function markPendingSend(text) {
+  try { sessionStorage.setItem(pendingStorageKey(state.notebookId), JSON.stringify({ nb: state.notebookId, text: text, at: Date.now() })); } catch (e) { /* 隐私模式 */ }
+}
+function clearPendingSend(nb) {
+  if (nb === undefined) nb = state.notebookId;
+  try { sessionStorage.removeItem(pendingStorageKey(nb)); } catch (e) { /* 同上 */ }
 }
 function restorePendingSend() {
   var raw = null;
-  try { raw = sessionStorage.getItem(PENDING_SEND_KEY); } catch (e) { return; }
+  try {
+    raw = sessionStorage.getItem(pendingStorageKey(state.notebookId));
+    if (!raw) {
+      var legacy = JSON.parse(sessionStorage.getItem(PENDING_SEND_KEY) || 'null');
+      if (legacy && legacy.nb === state.notebookId) {
+        raw = JSON.stringify(legacy);
+        sessionStorage.removeItem(PENDING_SEND_KEY);
+      }
+    }
+  } catch (e) { return; }
   if (!raw) return;
   var mark;
   try { mark = JSON.parse(raw); } catch (e) { clearPendingSend(); return; }
@@ -1392,8 +1426,15 @@ function restorePendingSend() {
   var already = (state.messages || []).some(function (m) {
     return m.role === 'user' && String(m.content || '').trim() === String(mark.text || '').trim();
   });
-  if (already) return;
   var inp = $('#zq-draft');
+  if (already) {
+    // 原页面没等到确认就离开：库里已经有这句话，不能又当未发送草稿塞回来。
+    drafts.clearIf(chatDraftKey(), mark.text);
+    if (inp && inp.value.trim() === String(mark.text || '').trim()) {
+      inp.value = ''; setDraftHeight(inp, DRAFT_BASE_HEIGHT); paintSlash();
+    }
+    return;
+  }
   if (inp && !inp.value.trim()) {
     inp.value = mark.text;
     if (typeof growDraft === 'function') growDraft();
@@ -1425,7 +1466,7 @@ function stopStreamWatch() {
 }
 function watchStreamingMessages(attempt) {
   stopStreamWatch();
-  if (state.aiSending) return;   // 本页正在流，SSE 会负责更新
+  if (state.aiSending) return;   // 当前会话正在流，SSE 会负责更新
   var pending = (state.messages || []).some(function (m) {
     return String(m.status || '').toUpperCase() === 'STREAMING';
   });
@@ -1436,13 +1477,18 @@ function watchStreamingMessages(attempt) {
   state.streamPollTimer = setTimeout(function () {
     state.streamPollTimer = null;
     if (state.aiSending || watchedNb !== state.notebookId) return;
-    var nbId = state.notebookId;
+    var nbId = state.notebookId, revision = ++messageLoadRevision;
     api.get('/ai/messages?limit=50' + (nbId ? '&notebookId=' + nbId : ''))
       .then(function (list) {
-        if (watchedNb !== state.notebookId || state.aiSending) return;
-        state.messages = list || [];
+        if (watchedNb !== state.notebookId || state.aiSending || revision !== messageLoadRevision) return;
+        state.messages = mergeRunningMessages(list);
         renderAiMessages({ keepScroll: !state.chatFollow });
         watchStreamingMessages(tries + 1);
+        if (!state.messages.some(function (m) { return m.status === 'STREAMING'; })) {
+          clearRunningTurn(watchedNb);
+          renderAgentPanels().catch(function () {});
+          pumpSendQueue();
+        }
       })
       .catch(function () { watchStreamingMessages(tries + 1); });
   }, STREAM_POLL_INTERVAL_MS);
@@ -2080,7 +2126,8 @@ async function streamAiChat(body, handlers) {
   if (token()) headers.Authorization = 'Bearer ' + token();
   // 响应头 30 秒不到也算连不上（服务器挂住时 fetch 会一直等）
   var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
-  state.streamAbort = ctrl;   // 界面上的「立即」要能打断它
+  var turn = chatTurns[turnKey(body.notebookId)];
+  if (turn) { turn.abort = ctrl; syncTurnUi(); }
   var headTimer = ctrl ? setTimeout(function () { ctrl.abort(); }, REQUEST_TIMEOUT_MS) : null;
   var res;
   try {
@@ -2110,6 +2157,7 @@ async function readSse(res, handlers) {
   // 业务终止事件(done/error)送达后,个别容器/代理收尾时不发终止 chunk,读取器会报 network error;
   // 此时流在语义上已完整,按正常结束处理,不让收尾噪声打断发送方后续流程
   var terminalSeen = false;
+  try {
   while (true) {
     var chunk;
     try {
@@ -2132,6 +2180,11 @@ async function readSse(res, handlers) {
       if (parsed.event === 'done' || parsed.event === 'error') terminalSeen = true;
     }
   }
+  } finally {
+    // 只关闭观察连接，不取消后台生成。事件回放缺帧或处理失败时不能留下一个无人读取的流。
+    try { await reader.cancel(); } catch (e) { /* 已关闭 */ }
+    try { reader.releaseLock(); } catch (e) { /* 已释放 */ }
+  }
 }
 
 /**
@@ -2141,20 +2194,27 @@ async function readSse(res, handlers) {
  * 这里用发送时记下的 runId 重新挂上去：服务端先把它记下来的事件按序重放，然后接着直播。
  * 生成从来没有停过 —— 停的只是浏览器这一头。
  */
-async function streamRunStream(runId, after, handlers) {
+async function streamRunStream(runId, after, handlers, st) {
   var headers = { 'Accept': 'text/event-stream' };
   if (token()) headers.Authorization = 'Bearer ' + token();
-  var res = await fetch(API + '/ai/runs/stream?runId=' + encodeURIComponent(runId) + '&after=' + (after || 0),
-    { method: 'GET', credentials: 'same-origin', headers: headers });
+  var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  if (st) { st.abort = ctrl; syncTurnUi(); }
+  var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, REQUEST_TIMEOUT_MS) : null;
+  var res;
+  try {
+    res = await fetch(API + '/ai/runs/stream?runId=' + encodeURIComponent(runId) + '&after=' + (after || 0),
+      { method: 'GET', credentials: 'same-origin', headers: headers, signal: ctrl ? ctrl.signal : undefined });
+  } finally { if (timer) clearTimeout(timer); }
   if (res.status === 401 || res.status === 403) { redirectToLogin(); throw new Error('未登录或无权限'); }
   if (!res.ok || !res.body) throw requestError('接不回这一轮（' + res.status + '）', { network: true });
   await readSse(res, handlers);
 }
 
-function upsertAgentStep(raw, done) {
+function upsertAgentStep(raw, done, steps, show) {
+  var list = steps || state.agentSteps;
   var step = raw.step || raw;
-  var id = step.id || step.stepId || step.title || (state.agentSteps.length + 1);
-  var existing = state.agentSteps.find(function (s) { return s._id === id; });
+  var id = step.id || step.stepId || step.title || (list.length + 1);
+  var existing = list.find(function (s) { return s._id === id; });
   // 流式事件带的是 publicSummary / agentType，不是 title —— 原来只取 title，
   // 于是实时显示的轨迹是「步骤 1、步骤 2」，要等刷新重载才有名字。
   if (existing) {
@@ -2162,11 +2222,11 @@ function upsertAgentStep(raw, done) {
     if (step.title) existing.title = step.title;
     if (step.publicSummary) existing.publicSummary = step.publicSummary;
   } else {
-    state.agentSteps.push({ _id: id, title: step.title || step.name || step.stepType || ('步骤 ' + (state.agentSteps.length + 1)),
+    list.push({ _id: id, title: step.title || step.name || step.stepType || ('步骤 ' + (list.length + 1)),
       publicSummary: step.publicSummary || '', agentType: step.agentType || '',
       status: done ? 'DONE' : (step.status || 'RUNNING'), notes: [] });
   }
-  renderSteps(state.agentSteps);
+  if (show !== false) renderSteps(list);
 }
 /**
  * coding agent 的逐步叙述（agent.step.note）：读了哪个文件、跑了什么命令、输出是什么。
@@ -2174,14 +2234,15 @@ function upsertAgentStep(raw, done) {
  * 每步最多留 NOTE_CAP 条：一个 10 轮的循环可能有几十次调用，全留会把轨迹栏撑爆。
  */
 var NOTE_CAP = 40;
-function addAgentStepNote(data) {
+function addAgentStepNote(data, steps, show) {
   if (!data || !data.message) return;
-  var step = state.agentSteps.find(function (s) { return s._id === data.stepId; });
+  var list = steps || state.agentSteps;
+  var step = list.find(function (s) { return s._id === data.stepId; });
   if (!step) return;
   step.notes = step.notes || [];
   step.notes.push({ phase: data.phase || '', message: String(data.message) });
   if (step.notes.length > NOTE_CAP) step.notes.splice(0, step.notes.length - NOTE_CAP);
-  renderSteps(state.agentSteps);
+  if (show !== false) renderSteps(list);
 }
 /** 一条叙述的 HTML。命令输出可能含任意字符（包括 HTML），一律 esc —— 它来自用户机器上跑出来的东西。 */
 function stepNoteHtml(n) {
@@ -2211,14 +2272,14 @@ function growDraft() {
   setDraftHeight(el, Math.max(DRAFT_BASE_HEIGHT, Math.min(el.scrollHeight, DRAFT_MAX_HEIGHT)));
   paintSlash();
 }
-function waitLocal(runId, assistant, sameNb, timeoutMs) {
+function waitLocal(runId, assistant, sameNb, timeoutMs, st) {
   // 第一百三十六轮：外壳回 0 = 不限时（用户要把限时和限轮次去掉）—— 就不设兜底定时器，
   // 等 result / fatal，或者用户点停（点停会走 localCall({action:'stop'})，外壳照实交 result）。
   // 旧外壳没有这个字段时仍按 10 分钟兜底，免得真卡死时页面一直转圈。
   var budget = Number(timeoutMs);
-  if (!Number.isFinite(budget)) budget = 600000;
+  if (!Number.isFinite(budget) || budget < 0) budget = 600000;
   return new Promise(function (resolve) {
-    var done = false;
+    var done = false, liveStepIds = new Set(), replayPending = true, terminal = null;
     function finish(d) {
       if (done) return;
       done = true;
@@ -2230,10 +2291,16 @@ function waitLocal(runId, assistant, sameNb, timeoutMs) {
       var d = (e && e.detail) || {};
       if (d.runId !== runId) return;
       if (d.type === 'trace' && d.step) {
+        liveStepIds.add(d.step.id);
         mergeTraceStep(assistant, d.step);
+        if (st) persistTurn(st);
         if (sameNb()) renderAiMessages();
       }
-      if (d.type === 'result' || d.type === 'fatal') finish(d);
+      if (d.type === 'result' || d.type === 'fatal') {
+        // result 可能在 resume 的应答之前到；先补齐历史步骤，再交给存档，不能抢先 ack 掉缓存。
+        terminal = d;
+        if (!replayPending) finish(d);
+      }
     }
     // 0 = 不限：不设 timer。原来 budget + 30000 到点就 stop 并报「这一轮太久了」，
     // 一小时的活做到第 11 分钟被掐断，下一次还得从头再来。
@@ -2242,91 +2309,144 @@ function waitLocal(runId, assistant, sameNb, timeoutMs) {
       finish({ type: 'fatal', message: '这一轮太久了，已经停下' });
     }, budget + 30000) : null;
     window.addEventListener('zq-local', onEv);
+    // 先监听，再取快照。离开期间的步骤 / 结果由外壳保留，回放与之后直播之间没有空档。
+    localCall({ action: 'resume', runId: runId }).then(function (snapshot) {
+      if (done) return;
+      if (!snapshot) { replayPending = false; if (terminal) finish(terminal); return; }
+      if (snapshot.found === false) {
+        finish({ type: 'fatal', message: '本机任务已不在此窗口中，保留已收到的进度', missing: true }); return;
+      }
+      if (snapshot.found && st) clearSentDesktopDraft(st);
+      // 快照取得期间直播可能更新同一步，不能用更旧的版本覆盖它。
+      (snapshot.events || []).forEach(function (event) {
+        if (event.step && !liveStepIds.has(event.step.id)) onEv({ detail: event });
+      });
+      if (snapshot.result) terminal = terminal || snapshot.result;
+      replayPending = false;
+      if (terminal) finish(terminal);
+    }).catch(function () {
+      // 旧外壳没有 resume，仍可接直播；不能让已收到的终态被挂起。
+      replayPending = false;
+      if (terminal) finish(terminal);
+    });
   });
 }
 /** 桌面应用里档位开着、选了文件夹：这一轮交给外壳，不走服务器的工作区（那碰不到这台电脑） */
 async function sendDesktopTurn(txt, codeCommand) {
-  var inp = $('#zq-draft');
-  var folder = wsStatus && wsStatus.selectedRoot;
+  var inp = $('#zq-draft'), folder = wsStatus && wsStatus.selectedRoot;
   if (!folder) { toast('先选一个项目文件夹', 'error'); return; }
   if (state.chatDraft) state.chatDraft.flush();
-  var draftKey = state.chatDraft ? state.chatDraft.key() : null;
-  inp.value = '';
-  setDraftHeight(inp, DRAFT_BASE_HEIGHT);
-  paintSlash();
-  state.aiSending = true;
-  var sendButton = $('#zq-send');
-  if (sendButton) { sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中（回车 = 排队）'); }
-  var clientKey = 'local-' + Date.now();
-  var assistant = { role: 'assistant', content: '', status: 'STREAMING', _clientKey: clientKey, _startedAt: nowMs(), steps: { steps: [] } };
-  state.messages.push({ role: 'user', content: txt, _clientKey: clientKey + '-user' }, assistant);
+  var draftKey = state.chatDraft ? state.chatDraft.key() : null, sentNb = state.notebookId;
+  // 所有请求上下文在第一个 await 前取快照，切去 B 不能让 A 带上 B 的历史、模型和档位。
+  var packed = readCompact(sentNb);
+  var all = (state.messages || []).filter(function (m) {
+    return m && (m.role === 'user' || m.role === 'assistant') && m.content && m.status !== 'STREAMING';
+  });
+  var start = packed ? Math.min(Number(packed.count) || 0, all.length) : Math.max(0, all.length - 40);
+  var history = packed ? [{ role: 'user', content: '【前情摘要：前面 ' + packed.count + ' 条已压缩】\n' + packed.text }] : [];
+  history = history.concat(all.slice(start).map(function (m) { return { role: m.role, content: String(m.content).slice(0, 8000) }; }));
+  var level = codeCommand === 'review' ? 'READ' : (wsStatus && wsStatus.selectedMode) || 'READ';
+  if (['READ', 'WRITE', 'EXEC'].indexOf(level) < 0) level = 'READ';
+  var modelSel = $('#zq-model');
+  var body = { action: 'run', folder: folder, message: txt, history: history,
+    model: modelSel && modelSel.value ? Number(modelSel.value) : null, effort: aiEffort, level: level };
+  if (codeCommand) body.command = codeCommand;
+  var clientKey = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+  var user = { role: 'user', content: txt, _clientKey: clientKey + '-user' };
+  var assistant = { role: 'assistant', content: '', status: 'STREAMING', _clientKey: clientKey,
+    requestId: clientKey, _startedAt: nowMs(), steps: { steps: [] } };
+  var st = { nb: sentNb, assistant: assistant, user: user, sameNb: function () { return sentNb === state.notebookId; },
+    desktopInfo: { folder: folder, message: txt, command: codeCommand || '', draftKey: draftKey, timeoutMs: 0 } };
+  inp.value = ''; setDraftHeight(inp, DRAFT_BASE_HEIGHT); paintSlash();
+  state.messages.push(user, assistant);
   state.chatFollow = true;
-  renderAiMessages();
-  var stored = false;
-  var sentNb = state.notebookId;
+  beginTurn(st); renderAiMessages();
   try {
     await safe('本机代码', async function () {
       var minted = await api.post('/access-tokens/desktop-code', {});
-      var token = minted && minted.token;
-      if (!token) throw requestError('没拿到本机代码的登录令牌');
-      // 压过就只带「摘要 + 压缩点之后的消息」，没压过还是最近 40 条（第一百三十六轮 /compact）
-      var packed = readCompact(sentNb);
-      var all = (state.messages || []).filter(function (m) {
-        return m && m !== assistant && m._clientKey !== clientKey + '-user'
-          && (m.role === 'user' || m.role === 'assistant') && m.content && m.status !== 'STREAMING';
-      });
-      var start = packed ? Math.min(Number(packed.count) || 0, all.length) : Math.max(0, all.length - 40);
-      var history = [];
-      if (packed) history.push({ role: 'user', content: '【前情摘要：前面 ' + packed.count + ' 条已压缩】\n' + packed.text });
-      history = history.concat(all.slice(start).map(function (m) { return { role: m.role, content: String(m.content).slice(0, 8000) }; }));
-      var level = (wsStatus && wsStatus.selectedMode) || 'READ';
-      if (codeCommand === 'review') level = 'READ';
-      if (['READ', 'WRITE', 'EXEC'].indexOf(level) < 0) level = 'READ';
-      var modelSel = $('#zq-model');
-      var effortName = $('#zq-effort-name');
-      var effortText = effortName && effortName.textContent ? String(effortName.textContent).trim() : '';
-      var effort = AI_EFFORTS.indexOf(effortText) >= 0 ? effortText : 'instant';
-      var body = {
-        action: 'run', folder: folder, message: txt, history: history,
-        model: modelSel && modelSel.value ? Number(modelSel.value) : null,
-        effort: effort, level: level, token: token
-      };
-      if (codeCommand) body.command = codeCommand;
-      var reply = await localCall(body);
-      var runId = reply && reply.runId;
-      if (!runId) throw requestError('本机代码助手没有开始');
-      assistant.requestId = runId;
-      var result = await waitLocal(runId, assistant, function () { return sentNb === state.notebookId; }, reply.timeoutMs);
-      assistant.status = '';
-      var conclusion = result && (result.conclusion || (result.type === 'fatal' ? result.message : ''));
-      assistant.content = String(conclusion || '').trim() || '（没有结论）';
-      if (result && result.type === 'fatal') assistant.errorMessage = result.message || '本机代码助手没有做完';
-      renderAiMessages();
-      var saved = await api.post('/ai/desktop-turn', {
-        notebookId: sentNb || null, message: txt, conclusion: assistant.content,
-        steps: assistant.steps || { steps: [] }, drafts: (result && result.drafts) || [],
-        folder: folder, command: codeCommand || ''
-      });
-      if (saved && saved.userMessageId && draftKey) drafts.clearIf(draftKey, txt);
-      stored = true;
-      if (sentNb === state.notebookId) {
-        await loadAiMessages();
-        await renderAgentPanels();
-      }
+      if (!minted || !minted.token) throw requestError('没拿到本机代码的登录令牌');
+      body.token = minted.token;
+      body.clientRunId = clientKey;
+      // 编号在调用外壳前写下；即使原页面没等到回复就离开，新页面仍能找到已经启动的任务。
+      st.runId = clientKey;
+      persistTurn(st, true);
+      var reply;
+      try { reply = await localCall(body); }
+      catch (e) { clearRunningTurn(sentNb, st.runId); st.runId = null; throw e; }
+      if (!reply || !reply.runId) { clearRunningTurn(sentNb, st.runId); st.runId = null; throw requestError('本机代码助手没有开始'); }
+      st.runId = reply.runId; assistant.requestId = reply.runId;
+      st.desktopInfo.timeoutMs = reply.timeoutMs;
+      persistTurn(st, true);
+      clearSentDesktopDraft(st); // 外壳确认启动就清草稿，不能直到 done 才清
+      var result = await waitLocal(st.runId, assistant, st.sameNb, reply.timeoutMs, st);
+      await finishDesktopTurn(st, result);
     });
   } finally {
-    state.aiSending = false;
-    state.streamAbort = null;
-    if (stored) clearPendingSend();
-    if (sendButton) { sendButton.classList.remove('is-busy'); sendButton.setAttribute('aria-label', '发送（⌘/Ctrl + 回车）'); }
-    if (!stored) {
+    persistTurn(st, true);
+    endTurn(st);
+    if (!st.runId && st.sameNb()) {
       var at = state.messages.indexOf(assistant);
-      if (at > 0 && state.messages[at - 1]._clientKey === clientKey + '-user') state.messages.splice(at - 1, 2);
+      if (at > 0 && state.messages[at - 1] === user) state.messages.splice(at - 1, 2);
       renderAiMessages();
       if (inp && !inp.value.trim()) { inp.value = txt; growDraft(); }
     }
-    // 排队的那几条：桌面这一轮完了接着发（第一百三十二轮）。原来只有服务器那条路径有，桌面路径没有 ——
-    // 点了「立即」停下来了，队列却不动
+    pumpSendQueue();
+  }
+}
+function clearSentDesktopDraft(st) {
+  var info = st.desktopInfo;
+  if (info.draftKey) drafts.clearIf(info.draftKey, info.message);
+  var inp = $('#zq-draft');
+  // 恢复草稿可能先于 resume。已发送的同一段字不能重新躺进输入框，新写的草稿则不动。
+  if (st.sameNb() && inp && inp.value.trim() === String(info.message || '').trim()) {
+    inp.value = ''; setDraftHeight(inp, DRAFT_BASE_HEIGHT); paintSlash();
+  }
+}
+// 完成只负责存档；任务及事件由外壳持有。存档回应丢失也用同一个幂等键重试，不造第二份对话。
+async function finishDesktopTurn(st, result) {
+  var assistant = st.assistant, info = st.desktopInfo;
+  if (!result.missing) {
+    assistant.content = String(result.conclusion || (result.type === 'fatal' ? result.message : '') || '').trim() || '（没有结论）';
+  }
+  assistant.status = result.type === 'fatal' ? 'ERROR' : 'DONE';
+  if (result.type === 'fatal') assistant.errorMessage = result.message || '本机代码助手没有做完';
+  info.result = result;
+  persistTurn(st, true); // 未存档成功的终态也保留，离页回来还能继续存档
+  if (st.sameNb()) renderAiMessages();
+  var saved = await api.post('/ai/desktop-turn', {
+    notebookId: st.nb || null, message: info.message, conclusion: assistant.content,
+    steps: assistant.steps || { steps: [] }, drafts: result.drafts || [], folder: info.folder, command: info.command
+  }, { 'Idempotency-Key': 'desktop-turn-' + st.runId });
+  if (!saved || !saved.userMessageId) throw requestError('结果已保留，聊天存档未确认，请稍后回来同步');
+  clearSentDesktopDraft(st);
+  st.completed = true;
+  clearRunningTurn(st.nb, st.runId);
+  localCall({ action: 'ack', runId: st.runId }).catch(function () {});
+  endTurn(st);
+  if (st.sameNb()) { await loadAiMessages(); await renderAgentPanels(); }
+}
+async function resumeDesktopTurn(info) {
+  if (!inDesktop() || currentTurn()) return;
+  var assistant = state.messages.find(function (m) {
+    return m.role === 'assistant' && m._clientKey === (info.assistant && info.assistant._clientKey);
+  }) || info.assistant;
+  if (!assistant) return;
+  var st = { nb: info.nb, runId: info.runId, assistant: assistant, user: info.user,
+    desktopInfo: { folder: info.folder, message: info.message, command: info.command || '', draftKey: info.draftKey,
+      timeoutMs: info.timeoutMs, result: info.result }, sameNb: function () { return info.nb === state.notebookId; } };
+  beginTurn(st);
+  state.messages = mergeRunningMessages(state.messages);
+  renderAiMessages();
+  try {
+    if (info.result) clearSentDesktopDraft(st);
+    var result = info.result || await waitLocal(st.runId, assistant, st.sameNb, info.timeoutMs, st);
+    await finishDesktopTurn(st, result);
+  } catch (e) {
+    toast('本机进度已保留，暂时没能同步聊天存档', 'warn');
+  } finally {
+    persistTurn(st, true);
+    endTurn(st);
+    if (st.sameNb()) renderAiMessages();
     pumpSendQueue();
   }
 }
@@ -2338,24 +2458,130 @@ async function sendDesktopTurn(txt, codeCommand) {
  * 正常收到 done / error 就清掉 —— 留着的话下次进页面会去接一轮早就结束的回答。
  */
 var RUNNING_KEY = 'zq.ai.running';
+// 运行属于会话，不属于当前页面。切换只换观察窗口，不结束任务、不替换流持有的消息对象。
+var chatTurns = {};
+function turnKey(nb) { return String(nb == null ? 'none' : nb); }
+function runningStorageKey(nb) {
+  return RUNNING_KEY + '.' + String(state.user && state.user.id != null ? state.user.id : 'anonymous') + '.' + turnKey(nb);
+}
+function runningTurn(nb) {
+  if (nb === undefined) nb = state.notebookId;
+  try {
+    var key = runningStorageKey(nb), raw = sessionStorage.getItem(key);
+    // 接住旧版单个记号；新版按用户、会话分开，不会被另一个后台任务覆盖。
+    if (!raw) {
+      var legacy = JSON.parse(sessionStorage.getItem(RUNNING_KEY) || 'null');
+      if (legacy && legacy.nb === nb) {
+        raw = JSON.stringify(legacy);
+        sessionStorage.setItem(key, raw);
+        sessionStorage.removeItem(RUNNING_KEY);
+      }
+    }
+    if (!raw) return null;
+    var info = JSON.parse(raw);
+    // 服务器流是 4 小时，结束后重放保留 5 分钟；本机不限时，以外壳的任务状态为准。
+    if (!info || !info.runId || info.nb !== (nb || null)
+        || (info.kind !== 'desktop' && Date.now() - Number(info.at || 0) > 245 * 60 * 1000)) {
+      sessionStorage.removeItem(key); return null;
+    }
+    return info;
+  } catch (e) { return null; }
+}
 function markRunningTurn(runId, nb, messageId) {
   try {
-    sessionStorage.setItem(RUNNING_KEY, JSON.stringify({ runId: runId, nb: nb || null, msg: messageId || null, at: Date.now() }));
+    var old = runningTurn(nb);
+    var info = old && String(old.runId) === String(runId) ? old : { runId: runId, nb: nb || null, at: Date.now() };
+    info.msg = messageId || info.msg || null;
+    sessionStorage.setItem(runningStorageKey(nb), JSON.stringify(info));
   } catch (e) { /* 隐私模式 */ }
 }
-function clearRunningTurn() {
-  try { sessionStorage.removeItem(RUNNING_KEY); } catch (e) { /* 同上 */ }
-}
-function runningTurn() {
-  var raw = null;
-  try { raw = sessionStorage.getItem(RUNNING_KEY); } catch (e) { return null; }
-  if (!raw) return null;
+function clearRunningTurn(nb, runId) {
+  if (nb === undefined) nb = state.notebookId;
   try {
-    var info = JSON.parse(raw);
-    // 一轮允许 15 分钟，结束后 hub 还留 5 分钟；记号留 30 分钟，不在合法执行期内先忘掉。
-    if (!info || !info.runId || Date.now() - (info.at || 0) > 30 * 60 * 1000) { clearRunningTurn(); return null; }
-    return info;
-  } catch (e) { clearRunningTurn(); return null; }
+    var info = runningTurn(nb);
+    if (!runId || !info || String(info.runId) === String(runId)) sessionStorage.removeItem(runningStorageKey(nb));
+  } catch (e) { /* 同上 */ }
+}
+function persistTurn(st, force) {
+  if (!st || !st.runId || st.completed || st.dropped || st.failed) return;
+  if (!force && Date.now() - (st.persistedAt || 0) < 500) return;
+  st.persistedAt = Date.now();
+  try {
+    var old = runningTurn(st.nb);
+    var info = old && String(old.runId) === String(st.runId) ? old : { runId: st.runId, nb: st.nb || null, at: Date.now() };
+    info.runId = st.runId;
+    info.msg = st.assistant.id || null;
+    info.assistant = st.assistant;
+    info.user = st.user || null;
+    info.agentSteps = st.agentSteps || [];
+    if (st.desktopInfo) Object.assign(info, st.desktopInfo, { kind: 'desktop' });
+    sessionStorage.setItem(runningStorageKey(st.nb), JSON.stringify(info));
+  } catch (e) { /* 存储满时仍由后台任务 / 服务端消息列表恢复，不取消任务 */ }
+}
+function currentTurn() { return chatTurns[turnKey(state.notebookId)]; }
+function syncTurnUi() {
+  var st = currentTurn();
+  state.aiSending = !!st;
+  state.streamAbort = st && st.abort || null;
+  var button = $('#zq-send');
+  if (button) {
+    button.classList.toggle('is-busy', !!st);
+    button.setAttribute('aria-label', st ? '生成中（回车 = 排队）' : '发送（⌘/Ctrl + 回车）');
+  }
+}
+function beginTurn(st) {
+  chatTurns[turnKey(st.nb)] = st;
+  syncTurnUi();
+  if (st.sameNb()) stopStreamWatch();
+}
+function endTurn(st) {
+  if (chatTurns[turnKey(st.nb)] === st) delete chatTurns[turnKey(st.nb)];
+  syncTurnUi();
+}
+function mergeRunningMessages(list) {
+  var out = (list || []).slice(), st = currentTurn(), info = runningTurn();
+  var assistant = st ? st.assistant : info && info.assistant;
+  var user = st ? st.user : info && info.user;
+  if (!assistant) return out;
+  [user, assistant].forEach(function (live) {
+    if (!live) return;
+    var at = out.findIndex(function (m) {
+      return (live.id != null && String(m.id) === String(live.id))
+        || (live._clientKey && m._clientKey === live._clientKey);
+    });
+    if (at < 0) {
+      // 本机任务还没写完，云端自然没有这两条；后台仍在跑，就保留它们。
+      if (st || info && info.kind === 'desktop') out.push(live);
+      return;
+    }
+    var saved = out[at];
+    if (String(saved.status || '').toUpperCase() !== 'STREAMING' && live.role === 'assistant') return;
+    if (st) {
+      // SSE 必须继续写同一个对象。列表回包即使慢一拍也不能覆盖已渲染的进度。
+      live.id = saved.id;
+      out[at] = live;
+    } else {
+      if (String(live.content || '').length > String(saved.content || '').length) saved.content = live.content;
+      if (String(live.reasoningSummary || '').length > String(saved.reasoningSummary || '').length) saved.reasoningSummary = live.reasoningSummary;
+      (live.steps && live.steps.steps || []).forEach(function (step) {
+        var current = (saved.steps && saved.steps.steps || []).find(function (s) { return s.id === step.id; });
+        // 库里的步骤可能已比离页快照更新；同一步以库为准，只补快照独有的步骤。
+        if (!current) mergeTraceStep(saved, step);
+      });
+    }
+  });
+  return out;
+}
+var turnLifecycleBound = false;
+function bindTurnLifecycle() {
+  if (turnLifecycleBound) return;
+  turnLifecycleBound = true;
+  window.addEventListener('pagehide', function () {
+    Object.keys(chatTurns).forEach(function (key) { persistTurn(chatTurns[key], true); });
+  });
+  window.addEventListener('pageshow', function (event) {
+    if (event.persisted) loadAiMessages().then(renderAgentPanels).catch(function () {});
+  });
 }
 
 /**
@@ -2367,33 +2593,59 @@ function runningTurn() {
  */
 function makeStreamApplier(st) {
   var assistant = st.assistant;
+  st.agentSteps = st.agentSteps || [];
+  if (st.nb === undefined) st.nb = state.notebookId;
   return function (event, data) {
-    // 第一条带 requestId 的事件就记下：回答里步骤的展开状态按它记，流式中和收尾重拉列表之后是同一个键
-    if (!assistant.requestId && data && data.requestId) assistant.requestId = data.requestId;
-    // 记下这一轮：页面被带走之后靠它接回来
-    if (!st.marked && data && data.agentRunId) {
+    data = data || {};
+    st.gotEvent = true;
+    // 第一条事件就绑定数据库 ID，而不是等 done；切回会话时靠 ID 把流和列表里的消息对上。
+    if (data.assistantMessageId) assistant.id = data.assistantMessageId;
+    if (data.userMessageId && st.user) st.user.id = data.userMessageId;
+    if (!assistant.requestId && data.requestId) assistant.requestId = data.requestId;
+    if (!st.marked && data.agentRunId) {
       st.marked = true;
-      markRunningTurn(data.agentRunId, state.notebookId, data.assistantMessageId || assistant.id);
+      st.runId = data.agentRunId;
+      assistant.agentRunId = data.agentRunId;
+      markRunningTurn(data.agentRunId, st.nb, data.assistantMessageId || assistant.id);
     }
     if (!st.stored && data && data.userMessageId) {
       st.stored = true;
       if (st.onStored) st.onStored();
     }
     if (event === 'message.delta') {
-      assistant.content += (data.text || data.delta || data.content || '');
+      var text = data.text || data.delta || data.content || '';
+      if (st.replay) {
+        st.replayContent = (st.replayContent || '') + text;
+        // 全量重放在旁边累计，追上快照之后才替换；不先清空、不重复追加已看过的内容。
+        if (st.replayContent.length >= String(assistant.content || '').length) assistant.content = st.replayContent;
+      } else assistant.content = (assistant.content || '') + text;
       // 只改这一条气泡。退回全量渲染的两种情形：节点还没渲染出来（第一个增量），
       // 或 DOM 不是预期形状。不假装成功，也不静默什么都不做。
       if (st.sameNb() && !patchStreamingMessage(state.messages.indexOf(assistant))) renderAiMessages();
     }
     else if (event === 'reasoning.delta' && (assistant.reasoningMode || 'AUTO') !== 'OFF') {
-      assistant.reasoningSummary += (data.text || data.delta || '');
+      var reasoning = data.text || data.delta || '';
+      if (st.replay) {
+        st.replayReasoning = (st.replayReasoning || '') + reasoning;
+        if (st.replayReasoning.length >= String(assistant.reasoningSummary || '').length) assistant.reasoningSummary = st.replayReasoning;
+      } else assistant.reasoningSummary = (assistant.reasoningSummary || '') + reasoning;
       if (st.sameNb()) renderAiMessages();
     }
-    else if (event === 'agent.step.start') { if (st.sameNb()) upsertAgentStep(data, false); }
-    else if (event === 'agent.step.done') { if (st.sameNb()) upsertAgentStep(data, true); }
-    else if (event === 'agent.step.note') { if (st.sameNb()) addAgentStepNote(data); }
+    else if (event === 'agent.step.start' || event === 'agent.step.done' || event === 'agent.step.note') {
+      if (st.sameNb()) {
+        state.agentSteps = st.agentSteps;
+        state.agentArtifactRevision = (state.agentArtifactRevision || 0) + 1;
+      }
+      if (event === 'agent.step.note') addAgentStepNote(data, st.agentSteps, st.sameNb());
+      else upsertAgentStep(data, event === 'agent.step.done', st.agentSteps, st.sameNb());
+    }
     else if (event === 'trace.step') {
-      mergeTraceStep(assistant, data && data.step);
+      var step = data.step;
+      var prior = (assistant.steps && assistant.steps.steps || []).find(function (s) { return step && s.id === step.id; });
+      // 已知完成的步骤不能在补齐旧事件时倒退成运行中；快照只有摘要时仍补上重放里的细节。
+      var oldTerminal = prior && /^(DONE|FAILED|ERROR|CANCELED)$/.test(String(prior.status || '').toUpperCase());
+      var newTerminal = step && /^(DONE|FAILED|ERROR|CANCELED)$/.test(String(step.status || '').toUpperCase());
+      if (!st.replay || !oldTerminal || newTerminal) mergeTraceStep(assistant, step);
       if (st.sameNb() && !patchStreamingMessage(state.messages.indexOf(assistant))) renderAiMessages();
     }
     // 消息太长被截了中间（后端 UserMessageFit）：说给用户，而且多停一会儿 —— 这句话要读完
@@ -2421,19 +2673,18 @@ function makeStreamApplier(st) {
     else if (event === 'message.injected') {
       toast('已补充给这一轮：' + String((data && data.text) || '').slice(0, 30));
     }
-    // 服务端的缓冲丢过帧：正文以库里的为准，本地拼的这截先清掉，免得接出重复
+    // 缓冲缺了前半段就不拼残缺正文；保留已显示的内容，断开观察连接并从库里跟进最新快照。
     else if (event === 'stream.reset') {
       st.reset = true;
-      assistant.content = '';
-      if (st.sameNb()) renderAiMessages();
+      throw requestError('正在同步最新进度', { resync: true });
     }
     // 这一轮已经不在服务端内存里了（重启过 / 早就结束）：回去读消息列表
     else if (event === 'stream.gone') {
-      clearRunningTurn();
+      clearRunningTurn(st.nb, st.runId);
       st.gone = true;
     }
     else if (event === 'done') {
-      clearRunningTurn();
+      clearRunningTurn(st.nb, st.runId);
       assistant._processing = '';
       if (data && (data.dropped || data.status === 'CANCELED')) {
         st.dropped = true;
@@ -2454,7 +2705,7 @@ function makeStreamApplier(st) {
       }
     }
     else if (event === 'error') {
-      clearRunningTurn();
+      clearRunningTurn(st.nb, st.runId);
       st.failed = true;
       assistant._processing = '';
       assistant.status = '';
@@ -2462,6 +2713,7 @@ function makeStreamApplier(st) {
       assistant.errorMessage = (data && data.message) || '未知错误';
       if (st.sameNb()) renderAiMessages();
     }
+    persistTurn(st);
   };
 }
 
@@ -2471,45 +2723,41 @@ function makeStreamApplier(st) {
  * <p>用户：「回答到一半我去查看索引了，回来就没了」。原来页面回来只能重新拉消息列表，
  * 而那一轮还在生成 —— 列表里只有已经落库的半截，后面的永远接不回来。
  */
-var reattaching = false;
 var reattachTried = {};
 async function reattachRunningTurn() {
-  if (reattaching || state.aiSending) return;
+  if (currentTurn()) return;
   var info = runningTurn();
-  if (!info || info.nb !== state.notebookId) return;
-  if (reattachTried[info.runId]) return;   // 一次页面只试一次，失败就交给轮询
-  reattachTried[info.runId] = true;
-  // 本地要有那条消息可写；没有说明它没存上（或者被清空了），别接
-  var assistant = null;
-  for (var i = state.messages.length - 1; i >= 0; i--) {
-    var m = state.messages[i];
-    if (m.role !== 'assistant') continue;
-    if (info.msg && Number(m.id) === Number(info.msg)) { assistant = m; break; }
-    if (!info.msg && String(m.status || '').toUpperCase() === 'STREAMING') { assistant = m; break; }
+  if (info && info.kind === 'desktop') return resumeDesktopTurn(info);
+  // 不依赖浏览器记号：即使发送时还没收到 runId 就切页，列表里的运行编号仍能找到后台任务。
+  var assistant = (state.messages || []).slice().reverse().find(function (m) {
+    return m.role === 'assistant' && String(m.status || '').toUpperCase() === 'STREAMING'
+      && (info && info.msg ? String(m.id) === String(info.msg) : !!m.agentRunId);
+  });
+  if (!assistant) { if (info) clearRunningTurn(info.nb, info.runId); return; }
+  if (!info) {
+    markRunningTurn(assistant.agentRunId, state.notebookId, assistant.id);
+    info = runningTurn() || { runId: assistant.agentRunId, nb: state.notebookId };
   }
-  if (!assistant) { clearRunningTurn(); return; }
-  reattaching = true;
-  state.aiSending = true;   // 别让轮询和它抢着改同一条消息
-  stopStreamWatch();
-  assistant.status = 'STREAMING';
-  assistant.content = '';   // 服务端会从第一帧重放；库里那份先清掉，免得接成两份
-  assistant.errorMessage = '';
-  renderAiMessages();
-  var st = { assistant: assistant, sameNb: function () { return info.nb === state.notebookId; },
+  if (reattachTried[info.runId]) return;   // 每个运行在此文档只接一次；失败后由快照轮询跟进
+  reattachTried[info.runId] = true;
+  var st = { nb: info.nb, runId: info.runId, assistant: assistant,
+    sameNb: function () { return info.nb === state.notebookId; }, replay: true,
     stored: true, dropped: false, completed: false, failed: false, marked: true };
+  beginTurn(st);
+  renderAiMessages();
   try {
-    await streamRunStream(info.runId, 0, makeStreamApplier(st));
+    await streamRunStream(info.runId, 0, makeStreamApplier(st), st);
   } catch (e) {
-    // 接不上（服务重启过、网断了）：交给轮询，别把这一轮标成失败
+    // 观察连接失败不等于任务失败；保留半截和生成状态，退回每两秒同步。
   } finally {
-    reattaching = false;
-    state.aiSending = false;
-    if (assistant.status === 'STREAMING') assistant.status = '';
-    renderAiMessages();
+    persistTurn(st, true);
+    endTurn(st);
     if (st.dropped) { if (st.sameNb()) setAiNotebookId(null); await loadAiNotebooks(); }
-    // 收尾对一次库：接上了就拿到最终那条（id / 状态 / 步骤），没接上（超时、断线）也把库里的半截铺出来
-    await loadAiMessages();
-    pumpSendQueue();
+    if (st.sameNb()) {
+      await loadAiMessages();
+      await renderAgentPanels();
+      pumpSendQueue();
+    }
   }
 }
 
@@ -2525,7 +2773,10 @@ async function sendAiMessage(queuedText) {
   // 正在回答时又发了一条（第一百三十二轮）：普通的话排进队列，这一轮结束自动发。
   // 原来这里是 `if (state.aiSending) return;` —— 字被吃掉了，用户以为发出去了。
   // 命令（/review 这种要起一轮的）不排：一轮没完不发新的一轮，字留着，等完了再按
-  if (state.aiSending) {
+  var pendingRun = runningTurn();
+  if (state.aiSending || (pendingRun && pendingRun.kind === 'desktop')
+      || (state.messages || []).some(function (m) { return m.status === 'STREAMING'; })) {
+    if (pendingRun && pendingRun.kind === 'desktop' && !currentTurn()) resumeDesktopTurn(pendingRun);
     if (slash) { toast('正在回答，命令等这一轮完了再发'); return; }
     enqueueSend(txt);
     return;
@@ -2540,7 +2791,6 @@ async function sendAiMessage(queuedText) {
   // 原来一按发送就清空：没配模型、被限流、一刷新，这句话就没了。
   if (state.chatDraft) state.chatDraft.flush();
   var draftKeyAtSend = state.chatDraft ? state.chatDraft.key() : null;
-  var gotEvent = false;
   inp.value = '';
   setDraftHeight(inp, DRAFT_BASE_HEIGHT); // 收回单行，否则清空后仍撑着上一条的高度
   paintSlash();
@@ -2600,15 +2850,16 @@ async function sendAiMessage(queuedText) {
   var disconnected = false;
   // 一个字都没收到就连不上（断着网点了发送）：多半根本没发出去
   var notSent = false;
-  var st = { assistant: assistant, sameNb: sameNb,
+  var st = { nb: sentNb, assistant: assistant, user: state.messages[state.messages.length - 2], sameNb: sameNb,
     stored: false, dropped: false, completed: false, failed: false,
-    onStored: function () { if (draftKeyAtSend) drafts.clearIf(draftKeyAtSend, txt); } };
+    onStored: function () { clearPendingSend(sentNb); if (draftKeyAtSend) drafts.clearIf(draftKeyAtSend, txt); } };
+  beginTurn(st);
   try {
     await safe('AI 发送', async function () {
     try {
       await streamAiChat(body, makeStreamApplier(st));
     } catch (e) {
-      if (!gotEvent && e && e.beforeResponse) {
+      if (!st.gotEvent && e && e.beforeResponse) {
         // 断着网点了发送：原来这里也当成「流到一半断了」—— 气泡里写「（连接中断，正在尝试接回…）」，可根本没有什么可接的，
         // 而且一直挂在那（第二十二轮断网实测）。本地先摆上的这两条撤掉，字放回输入框（finally），照实说没发出去。
         // 万一其实发到了（回应丢在路上）：网回来之后拉一次消息，那两条会从服务器那边回来
@@ -2623,10 +2874,10 @@ async function sendAiMessage(queuedText) {
       // false，watchStreamingMessages 才会真的开始轮询（它见 aiSending 为真就直接返回）。
       // 在这里拉的话，轮询会被自己的「本页正在流」判断挡掉，接回悄悄失效。
       disconnected = true;
-      assistant.status = '';
-      if (!assistant.content) assistant.content = '（连接中断，正在尝试接回…）';
+      // 断的是观察连接，后台仍在跑；保留 STREAMING，让回来后的快照同步继续更新。
+      assistant.status = 'STREAMING';
       renderAiMessages();
-      if (!gotEvent && e && e.timedOut) {
+      if (!st.gotEvent && e && e.timedOut) {
         // 服务器等满 30 秒都没回应：这句可能已经存上了、正在回答。不说「没发出去」（那会诱导再发一遍、问两次），
         // 等一下从服务器拉一次（finally 里的 whenOnline）：存上了就接着显示，没存上那两条会自己消失
         throw requestError(e.message + '，不确定这句发出去没有 —— 稍后会从服务器拉一次，先别重发', { network: true });
@@ -2654,15 +2905,16 @@ async function sendAiMessage(queuedText) {
     // 实测（未修时，全新用户无模型配置）：SSE 返回
     //   {"message":"请先在「设置 → AI 模型」里配置可用的 AI 模型","nonRetryable":true}
     // 随后 /ai/messages 返回 []，页面消息节点归零。
-    if (!st.failed) await loadAiMessages();
-    await renderAgentPanels();
+    endTurn(st);
+    if (!st.failed && sameNb()) await loadAiMessages();
+    if (sameNb()) await renderAgentPanels();
     });
   } finally {
-    state.aiSending = false;
-    if (sendButton) { sendButton.classList.remove('is-busy'); sendButton.setAttribute('aria-label', '发送（⌘/Ctrl + 回车）'); }
+    persistTurn(st, true);
+    endTurn(st);
     // 服务器没收到这句（没配模型、限流、根本没连上）：字放回输入框，草稿里也还在 —— 改一改就能再发。
     // 收到了（事件带过 userMessageId）的不放回：那会诱导再发一遍、存两条
-    if (!st.stored && (st.failed || !gotEvent) && sameNb() && inp && !inp.value.trim()) {
+    if (!st.stored && (st.failed || !st.gotEvent) && sameNb() && inp && !inp.value.trim()) {
       inp.value = txt;
       growDraft();
     }
@@ -3335,9 +3587,23 @@ async function loadWorkspace() {
  * 原来 sendAiMessage 一开头就是  —— 字被静默吃掉，用户以为发出去了。
  * 现在进队列，这一轮回答完自动发；每条可以「立即」（打断这一轮）或者「×」删掉。
  */
+function queueStorageKey() {
+  return 'zq.ai.queue.' + String(state.user && state.user.id != null ? state.user.id : 'anonymous');
+}
+function restoreSendQueue() {
+  try {
+    var list = JSON.parse(sessionStorage.getItem(queueStorageKey()) || '[]');
+    state.sendQueue = Array.isArray(list) ? list.filter(function (item) {
+      return item && typeof item.text === 'string' && item.text.trim() && Date.now() - Number(item.at || 0) < 24 * 60 * 60 * 1000;
+    }) : [];
+  } catch (e) { state.sendQueue = []; }
+}
+function saveSendQueue() {
+  try { sessionStorage.setItem(queueStorageKey(), JSON.stringify(state.sendQueue || [])); } catch (e) { /* 隐私模式 */ }
+}
 function enqueueSend(text) {
   state.sendQueue = state.sendQueue || [];
-  state.sendQueue.push({ text: text, at: Date.now() });
+  state.sendQueue.push({ text: text, nb: state.notebookId || null, at: Date.now() });
   var inp = $('#zq-draft');
   if (inp) { inp.value = ''; setDraftHeight(inp, DRAFT_BASE_HEIGHT); paintSlash(); }
   if (state.chatDraft) state.chatDraft.flush();
@@ -3347,7 +3613,9 @@ function enqueueSend(text) {
 
 /** 排队条：在输入框上方，一行一条（样式在 .zq-send-queue，JS 只挂 class） */
 function renderSendQueue() {
-  var list = state.sendQueue || [];
+  saveSendQueue();
+  var list = (state.sendQueue || []).map(function (item, i) { return { item: item, index: i }; })
+    .filter(function (entry) { return entry.item.nb === (state.notebookId || null); });
   var host = $('#zq-send-queue');
   if (!host) {
     var draft = $('#zq-draft');
@@ -3361,12 +3629,13 @@ function renderSendQueue() {
   // 样式全在 .zq-send-queue 那几条规则里：JS 只挂 class（AiLookTest 盯着，样式不许写在脚本里）
   host.hidden = !list.length;
   if (!list.length) return;
-  list.forEach(function (item, i) {
+  list.forEach(function (entry, n) {
+    var item = entry.item, i = entry.index;
     var row = document.createElement('div');
     row.className = 'zq-send-queue-row';
     var label = document.createElement('span');
     label.className = 'zq-send-queue-text';
-    label.textContent = '排队 ' + (i + 1) + '：' + (item.text.length > 40 ? item.text.slice(0, 40) + '…' : item.text);
+    label.textContent = '排队 ' + (n + 1) + '：' + (item.text.length > 40 ? item.text.slice(0, 40) + '…' : item.text);
     var now = document.createElement('button');
     now.type = 'button'; now.className = 'zq-send-queue-now'; now.textContent = '立即';
     now.onclick = function () { sendQueuedNow(i); };
@@ -3391,7 +3660,7 @@ function sendQueuedNow(i) {
   var item = (state.sendQueue || [])[i];
   if (!item) return;
   var info = runningTurn();
-  if (!info || !info.runId) {
+  if (!info || !info.runId || info.kind === 'desktop' || info.nb !== item.nb) {
     // 没有可补的那一轮（桌面本机跑的那一轮、或者已经结束了）：排到最前面，等它结束
     state.sendQueue.splice(i, 1);
     state.sendQueue.unshift(item);
@@ -3423,10 +3692,13 @@ function sendQueuedNow(i) {
 
 /** 这一轮结束了：把队首那条发出去 */
 function pumpSendQueue() {
-  if (state.aiSending) return;
+  var info = runningTurn();
+  if (state.aiSending || (info && info.kind === 'desktop')
+      || (state.messages || []).some(function (m) { return m.status === 'STREAMING'; })) return;
   state.sendQueue = state.sendQueue || [];
-  if (!state.sendQueue.length) return;
-  var next = state.sendQueue.shift();
+  var at = state.sendQueue.findIndex(function (item) { return item.nb === (state.notebookId || null); });
+  if (at < 0) return;
+  var next = state.sendQueue.splice(at, 1)[0];
   renderSendQueue();
   sendAiMessage(next.text);
 }

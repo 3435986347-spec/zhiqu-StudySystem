@@ -20,7 +20,7 @@ try! "HOME-SECRET\n".write(to: home.appendingPathComponent("secret.txt"), atomic
 
 func out(_ key: String, _ value: Any) { print("\(key)=\(value)"); fflush(stdout) }
 func json(_ v: Any) -> String {
-    guard let d = try? JSONSerialization.data(withJSONObject: v), let s = String(data: d, encoding: .utf8) else { return "\(v)" }
+    guard let d = try? JSONSerialization.data(withJSONObject: v, options: [.fragmentsAllowed]), let s = String(data: d, encoding: .utf8) else { return "\(v)" }
     return s
 }
 
@@ -29,7 +29,7 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let suite = "zhiqu-local-agent-check-\(ProcessInfo.processInfo.processIdentifier)"
 let defaults = UserDefaults(suiteName: suite)!
-let config = LocalAgent.Config(node: nodeURL, host: hostURL, server: gateway, home: LocalFolders.real(home.path), network: "off")
+let config = LocalAgent.Config(node: nodeURL, host: hostURL, server: gateway, home: LocalFolders.real(home.path), network: "off", maxRounds: 0)
 out("budget.defaultRounds", LocalAgent.roundsSetting(defaults))
 out("budget.timeoutMs", config.timeoutMs)
 defaults.set(120, forKey: "maxRounds")
@@ -214,6 +214,175 @@ step("run.report", {
     }).sorted().joined(separator: ","))
 }, until: { true })
 
+// —— 六、真实导航销毁文档后恢复：假宿主只在测试临时目录运行，不调用模型或用户命令 ——
+let snapshotHost = tmp.appendingPathComponent("snapshot.mjs")
+let snapshotStarts = tmp.appendingPathComponent("snapshot-starts.txt")
+try! """
+import readline from 'node:readline';
+import fs from 'node:fs';
+const rl = readline.createInterface({ input: process.stdin });
+const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');
+let run;
+const finish = () => {
+  send(run.message === 'FATAL'
+    ? {type:'fatal', message:'snapshot fatal ' + run.local.token}
+    : {type:'result', conclusion:'导航后完成 ' + run.local.token, drafts:[]});
+  rl.close();
+  process.stdin.destroy();
+};
+rl.on('line', (line) => {
+  const m = JSON.parse(line);
+  if (m.type === 'stop') { finish(); return; }
+  if (m.type !== 'run') return;
+  run = m;
+  fs.appendFileSync(\(json(snapshotStarts.path)), run.message + '\\n');
+  const count = run.message === 'NAV' ? 405 : 1;
+  for (let i = 0; i < count; i++) send({type:'trace', step:{id:'s-' + i, status:'running', text:run.local.token}});
+  if (count > 100) send({type:'trace', step:{id:'s-100', status:'done', text:'中间更新'}});
+  send({type:'trace', step:{id:'s-' + (count - 1), status:'done', text:'最新版本'}});
+  if (run.message !== 'NAV') finish();
+});
+""".write(to: snapshotHost, atomically: true, encoding: .utf8)
+var snapshotConfig = config
+snapshotConfig.host = snapshotHost
+func bridgeCall(_ tag: String, _ body: [String: Any]) { js("call(\(json(tag)), \(json(body)))") }
+func snapshotRun(_ id: String?, _ text: String = "FAST") -> [String: Any] {
+    var body: [String: Any] = ["action": "run", "folder": projPath, "message": text, "level": "READ", "token": token,
+                               "history": [["role": "user", "content": "REQUEST-HISTORY-SECRET"]]]
+    if let id { body["clientRunId"] = id }
+    return body
+}
+func replyBody(_ tag: String) -> [String: Any] {
+    let value = message(tag + ":ok:").dropFirst((tag + ":ok:").count)
+    guard let data = value.data(using: .utf8) else { return [:] }
+    return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
+}
+func reportSnapshot(_ tag: String) { out("snapshot." + tag, message(tag + ":")) }
+func navigate(_ page: String) { web.load(URLRequest(url: gateway.appendingPathComponent("desktop-local-check/" + page))) }
+step("snapshot.original", {
+    web.localAgent = LocalAgent(config: snapshotConfig)
+    navigate("original")
+}, until: { has("doc:original") })
+for (i, bad) in ["local_bad", "local-x\n", String(repeating: "a", count: 101), "本机-1", ""].enumerated() {
+    let tag = "invalid\(i)"
+    step(tag, { bridgeCall(tag, snapshotRun(bad)) }, until: { has(tag + ":") && web.localAgent?.running == false })
+    step(tag + ".report", { reportSnapshot(tag) }, until: { true })
+}
+step("snapshot.start", { bridgeCall("navRun", snapshotRun("local-navigation", "NAV")) }, until: {
+    has("navRun:") && inbox.messages.contains { $0.hasPrefix("ev:") && $0.contains("s-404") }
+})
+step("snapshot.duplicate", {
+    web.localAgent?.config.timeoutMs = 555
+    web.localAgent?.config.maxRounds = 55
+    bridgeCall("duplicate", snapshotRun("local-navigation", "NAV"))
+}, until: { has("duplicate:") })
+step("snapshot.busy", {
+    web.localAgent?.config = snapshotConfig
+    bridgeCall("busyRun", snapshotRun("local-other"))
+}, until: { has("busyRun:") })
+step("snapshot.busyResume", { bridgeCall("busyResume", ["action": "resume", "runId": "local-other"]) }, until: { has("busyResume:") })
+step("snapshot.away", { navigate("away") }, until: { has("doc:away") })
+step("snapshot.destroyed", { js("say('destroyed:' + (typeof window.oldDocument === 'undefined'))") }, until: { has("destroyed:") })
+step("snapshot.running", { bridgeCall("runningResume", ["action": "resume", "runId": "local-navigation"]) }, until: { has("runningResume:") })
+step("snapshot.ackRunning", { bridgeCall("ackRunning", ["action": "ack", "runId": "local-navigation"]) }, until: { has("ackRunning:") })
+step("snapshot.afterAckRunning", { bridgeCall("afterAckRunning", ["action": "resume", "runId": "local-navigation"]) }, until: { has("afterAckRunning:") })
+step("snapshot.blank", { web.loadHTMLString("<script>webkit.messageHandlers.t.postMessage('doc:blank')</script>", baseURL: nil) }, until: { has("doc:blank") })
+step("snapshot.blankSecurity", {
+    js("webkit.messageHandlers.zqLocal.postMessage({action:'resume',runId:'local-navigation'}).then(r=>webkit.messageHandlers.t.postMessage('blank:ok'),e=>webkit.messageHandlers.t.postMessage('blank:err:' + e.message))")
+}, until: { has("blank:") })
+step("snapshot.finishOffSite", { web.localAgent?.stop() }, until: { web.localAgent?.running == false })
+step("snapshot.restore", { navigate("restored") }, until: { has("doc:restored") })
+step("snapshot.resume", { bridgeCall("resume", ["action": "resume", "runId": "local-navigation"]) }, until: { has("resume:") })
+step("snapshot.other", { bridgeCall("other", ["action": "resume", "runId": "local-unrelated"]) }, until: { has("other:") })
+step("snapshot.duplicateDone", { bridgeCall("duplicateDone", snapshotRun("local-navigation", "NAV")) }, until: { has("duplicateDone:") })
+step("snapshot.duplicateSecurity", {
+    var body = snapshotRun("local-navigation")
+    body["token"] = "invalid"
+    bridgeCall("duplicateBadToken", body)
+}, until: { has("duplicateBadToken:") })
+step("snapshot.duplicateFolder", {
+    var body = snapshotRun("local-navigation")
+    body["folder"] = outside.path
+    bridgeCall("duplicateBadFolder", body)
+}, until: { has("duplicateBadFolder:") })
+step("snapshot.report", {
+    for tag in ["navRun", "duplicate", "busyRun", "busyResume", "other", "duplicateDone", "duplicateBadToken", "duplicateBadFolder"] { reportSnapshot(tag) }
+    let resumed = replyBody("resume"), running = replyBody("runningResume")
+    out("snapshot.destroyed", message("destroyed:"))
+    out("snapshot.blankSecurity", message("blank:"))
+    out("snapshot.frameSecurity", message("snapshotFrame:"))
+    out("snapshot.ackFrameSecurity", message("snapshotAckFrame:"))
+    out("snapshot.resumeFound", resumed["found"] as? Bool ?? false)
+    out("snapshot.running", running["running"] as? Bool ?? false)
+    out("snapshot.runningResultNull", running["result"] is NSNull)
+    out("snapshot.ackRunningKept", replyBody("afterAckRunning")["found"] as? Bool ?? false)
+    out("snapshot.finished", resumed["running"] as? Bool ?? true)
+    let events = (resumed["events"] as? [[String: Any]]) ?? []
+    out("snapshot.traceCount", events.count)
+    out("snapshot.traceFirst", (events.first?["step"] as? [String: Any])?["id"] ?? "none")
+    out("snapshot.traceLast", (events.last?["step"] as? [String: Any])?["id"] ?? "none")
+    out("snapshot.traceLatest", (events.last?["step"] as? [String: Any])?["status"] ?? "none")
+    let middle = events.count > 95 ? events[95]["step"] as? [String: Any] : nil
+    out("snapshot.traceMiddle", "\(middle?["id"] ?? "none"):\(middle?["status"] ?? "none")")
+    out("snapshot.traceRunIds", Set(events.compactMap { $0["runId"] as? String }).sorted().joined(separator: ","))
+    out("snapshot.terminal", json(resumed["result"] ?? [:]))
+    out("snapshot.leak", json(resumed).contains(token) || json(resumed).contains("REQUEST-HISTORY-SECRET") || resumed["folder"] != nil || resumed["token"] != nil)
+    out("snapshot.starts", ((try? String(contentsOf: snapshotStarts, encoding: .utf8)) ?? "").split(separator: "\n").count)
+    let actualRunId = replyBody("navRun")["runId"] as? String ?? "none"
+    out("snapshot.noTerminalEvent", !inbox.messages.contains { $0.hasPrefix("ev:") && $0.contains("\"runId\":\"\(actualRunId)\"") && $0.contains("\"type\":\"result\"") })
+}, until: { true })
+step("snapshot.ack", { bridgeCall("ack", ["action": "ack", "runId": "local-navigation"]) }, until: { has("ack:") })
+step("snapshot.ackedResume", { bridgeCall("ackedResume", ["action": "resume", "runId": "local-navigation"]) }, until: { has("ackedResume:") })
+step("snapshot.acked.report", { reportSnapshot("ackedResume") }, until: { true })
+// 启动失败不能留下缓存；即刻输出的 result/fatal 不能被 exit 覆盖。
+step("snapshot.missing", {
+    web.localAgent = LocalAgent(config: missing)
+    bridgeCall("missingRun", snapshotRun("local-missing"))
+}, until: { has("missingRun:") })
+step("snapshot.missingResume", { bridgeCall("missingResume", ["action": "resume", "runId": "local-missing"]) }, until: { has("missingResume:") })
+step("snapshot.fatal", {
+    web.localAgent = LocalAgent(config: snapshotConfig)
+    bridgeCall("fatalRun", snapshotRun("local-fatal", "FATAL"))
+}, until: { has("fatalRun:") && web.localAgent?.running == false })
+step("snapshot.fatalResume", { bridgeCall("fatalResume", ["action": "resume", "runId": "local-fatal"]) }, until: { has("fatalResume:") })
+step("snapshot.failure.report", { reportSnapshot("missingRun"); reportSnapshot("missingResume"); reportSnapshot("fatalResume") }, until: { true })
+// clientRunId 与 legacy 编号相撞时，legacy 仍给 local-<seq>，但不能覆盖旧快照。
+step("snapshot.collision", { bridgeCall("collision", snapshotRun("local-2")) }, until: { has("collision:") && web.localAgent?.running == false })
+step("snapshot.legacy", { bridgeCall("legacy", snapshotRun(nil)) }, until: { has("legacy:") && web.localAgent?.running == false })
+step("snapshot.legacy.report", { reportSnapshot("legacy") }, until: { true })
+for i in 0..<9 {
+    let tag = "cache\(i)"
+    step(tag, { bridgeCall(tag, snapshotRun("local-cache-\(i)")) }, until: { has(tag + ":") && web.localAgent?.running == false })
+}
+for i in 0..<9 {
+    let tag = "cached\(i)"
+    step(tag, { bridgeCall(tag, ["action": "resume", "runId": "local-cache-\(i)"]) }, until: { has(tag + ":") })
+    step(tag + ".report", { reportSnapshot(tag) }, until: { true })
+}
+
+step("snapshot.fullLive", { bridgeCall("fullLive", snapshotRun("local-cache-live", "NAV")) }, until: { has("fullLive:") && web.localAgent?.running == true })
+step("snapshot.fullBusy", { bridgeCall("fullBusy", snapshotRun("local-cache-rejected")) }, until: { has("fullBusy:") })
+for (tag, id) in [("fullLiveResume", "local-cache-live"), ("fullEvicted", "local-cache-1"),
+                  ("fullKept", "local-cache-2"), ("fullRejected", "local-cache-rejected")] {
+    step(tag, { bridgeCall(tag, ["action": "resume", "runId": id]) }, until: { has(tag + ":") })
+    step(tag + ".report", { reportSnapshot(tag) }, until: { true })
+}
+step("snapshot.fullStop", { bridgeCall("fullStop", ["action": "stop"]) }, until: { has("fullStop:") && web.localAgent?.running == false })
+step("snapshot.fullMissing", {
+    web.localAgent?.config.node = missing.node
+    bridgeCall("fullMissing", snapshotRun("local-cache-missing"))
+}, until: { has("fullMissing:") })
+step("snapshot.fullMissingResume", { bridgeCall("fullMissingResume", ["action": "resume", "runId": "local-cache-missing"]) }, until: { has("fullMissingResume:") })
+step("snapshot.fullKeptAfterFailure", { bridgeCall("fullKeptAfterFailure", ["action": "resume", "runId": "local-cache-2"]) }, until: { has("fullKeptAfterFailure:") })
+step("snapshot.full.report", {
+    for tag in ["fullBusy", "fullMissing", "fullMissingResume", "fullKeptAfterFailure"] { reportSnapshot(tag) }
+    web.localAgent?.config = snapshotConfig
+}, until: { true })
+// 100 个 ASCII 字符仍是合法的任务编号。
+let boundaryId = String(repeating: "a", count: 100)
+step("snapshot.boundary", { bridgeCall("boundary", snapshotRun(boundaryId)) }, until: { has("boundary:") && web.localAgent?.running == false })
+step("snapshot.boundary.report", { reportSnapshot("boundary") }, until: { true })
+
 // 迷你窗那样没设 localAgent 的页面：一律说没有
 let mini = PageView(frame: NSRect(x: 0, y: 0, width: 300, height: 68), persistent: false)
 let miniInbox = Inbox()
@@ -223,6 +392,12 @@ step("mini", {
                         baseURL: URL(string: "http://127.0.0.1:47615/"))
 }, until: { !miniInbox.messages.isEmpty })
 step("mini.report", { out("bridge.mini", miniInbox.messages.first ?? "none") }, until: { true })
+for action in ["resume", "ack"] {
+    step("mini." + action, {
+        mini.evaluateJavaScript("webkit.messageHandlers.zqLocal.postMessage({action:'\(action)',runId:'local-cache-live'}).then(r=>webkit.messageHandlers.t.postMessage('\(action):ok'),e=>webkit.messageHandlers.t.postMessage('\(action):err:' + e.message)); 0") { _, _ in }
+    }, until: { miniInbox.messages.contains { $0.hasPrefix(action + ":") } })
+    step("mini." + action + ".report", { out("snapshot.mini." + action, miniInbox.messages.first { $0.hasPrefix(action + ":") } ?? "none") }, until: { true })
+}
 
 var index = 0
 var started = Date()

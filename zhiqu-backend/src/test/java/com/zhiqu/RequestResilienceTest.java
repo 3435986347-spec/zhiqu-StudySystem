@@ -63,13 +63,13 @@ class RequestResilienceTest {
         String js = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
         int at = js.indexOf("async function sendAiMessage(queuedText)");
         String send = js.substring(at, js.indexOf("function whenOnline(fn)", at));
-        assertTrue(send.contains("if (!gotEvent && e && e.beforeResponse) {") && send.contains("state.messages.splice(at - 1, 2);")
+        assertTrue(send.contains("if (!st.gotEvent && e && e.beforeResponse) {") && send.contains("state.messages.splice(at - 1, 2);")
                 && send.contains("这句没发出去"), "断着网点发送时没撤掉本地那两条 / 没说没发出去：\n" + send);
         assertTrue(send.contains("if (disconnected || notSent) whenOnline("), "断线接回只试一次（网还断着就停在那）");
     }
 
     @Test
-    @DisplayName("幂等键交给 request()；套用参考计划、番茄钟待补记和 ZIP 确认导入持有跨重试稳定键")
+    @DisplayName("幂等键交给 request()；套用计划、番茄钟、ZIP 导入及本机聊天存档持有跨重试稳定键")
     void 键交给request() throws Exception {
         Path root = Path.of("src/main/resources/static");
         // assets 下的脚本一个不落（第三十轮起拆出去的模块也是活的前端：原来只列壳和 zhiqu-ui.js，模块里直接 fetch 写操作 / 现生成键都看不见）
@@ -91,9 +91,10 @@ class RequestResilienceTest {
         }
         // 按文件名排了再比：扫的是整个 assets 目录，先后跟着目录结构走，不是这条判据关心的
         assertTrue(found.stream().sorted().toList().equals(List.of(
+                        "ai-assistant.js：{ 'Idempotency-Key': 'desktop-turn-' + st.runId }",
                         "knowledge-wiki.js：{ 'Idempotency-Key': confirmedKey }",
                         "shared-plans.js：{ 'Idempotency-Key': applyKey + ':' + startDate.trim() }",
                         "zhiqu-api.js：{ 'Idempotency-Key': x.key }")),
-                "自己带键的写请求应当只有 ZIP 确认导入、套用参考计划和番茄钟待补记，实际：\n" + String.join("\n", found));
+                "自己带键的写请求应当只有 ZIP 导入、套用计划、番茄钟待补记及跨页面本机聊天存档，实际：\n" + String.join("\n", found));
     }
 }

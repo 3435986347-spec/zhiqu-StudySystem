@@ -138,7 +138,10 @@ class AiComposerTest {
         assertTrue(send.contains("sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中（回车 = 排队）');"),
                 "发送时没有换成「生成中」的样子");
         assertFalse(send.contains("sendButton.disabled = true"), "生成中把发送键禁掉了 —— 那样就没法排队发下一条");
-        assertTrue(send.contains("sendButton.classList.remove('is-busy');"), "回来之后没有换回发送键");
+        assertTrue(send.contains("endTurn(st)"), "收尾没有解除这一轮的生成状态");
+        String sync = SourceText.functionBody(js, "function syncTurnUi()");
+        assertTrue(sync.contains("button.classList.toggle('is-busy', !!st)") && sync.contains("生成中（回车 = 排队）")
+                && sync.contains("发送（⌘/Ctrl + 回车）"), "发送键没有根据当前会话而不是后台旧会话同步状态");
         assertFalse(send.contains("sendButton.textContent"), "又往发送键里写字了 —— 会把箭头图标冲掉");
         String css = css();
         assertEquals("display:none;", rule(css, ".zq-send.is-busy .zq-icon"), "发送中箭头没有藏起来");

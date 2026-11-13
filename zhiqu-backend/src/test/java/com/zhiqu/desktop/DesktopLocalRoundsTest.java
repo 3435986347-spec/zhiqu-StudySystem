@@ -46,16 +46,12 @@ class DesktopLocalRoundsTest {
     @DisplayName("桌面本机那一轮的轮数不比服务器少；宿主的夹取上限也不比它少")
     void 三处轮数对得上() throws IOException {
         int server = group(SERVER_BUDGET, "EXPLICIT = new CodeLoopBudget\\((\\d+),", "服务器那份轮数");
-        int desktop = group(DESKTOP_AGENT, "return v > 0 \\? min\\(120, max\\(1, v\\)\\) : (\\d+)", "桌面那份轮数");
-        int hostCap = group(HOST, "Math\\.min\\((\\d+), Number\\(run\\.maxRounds\\)", "宿主的上限");
-
-        assertTrue(desktop >= server,
-                "桌面本机那一轮只给 " + desktop + " 轮，服务器给 " + server + " 轮 —— 同一句话在桌面上会半路停下");
-        assertTrue(hostCap >= desktop,
-                "宿主最多只认 " + hostCap + " 轮，桌面给的是 " + desktop + " —— 多出来的会被悄悄夹掉");
-        int desktopCap = group(DESKTOP_AGENT, "return v > 0 \\? min\\((\\d+),", "桌面可配置的轮数上限");
-        assertTrue(hostCap >= desktopCap, "桌面允许配置 " + desktopCap + " 轮，但宿主只接受 " + hostCap);
-        assertTrue(desktop >= 80, "默认轮次仍小于用户要求放宽后的 80 轮：" + desktop);
+        String desktop = Files.readString(DESKTOP_AGENT);
+        String host = Files.readString(HOST);
+        assertTrue(server == 0, "服务器显式代码模式应按第136轮约定不限轮数");
+        assertTrue(desktop.contains("return v > 0 ? v : 0"), "桌面默认 0 应不限轮数，配置的正数不能再夹取");
+        assertTrue(host.contains("maxRounds: Math.max(0, Number(run.maxRounds) || 0)"),
+                "宿主应原样接受外壳的 0（不限）或用户自设轮数，不能另加隐藏上限");
     }
 
     @Test
@@ -63,10 +59,11 @@ class DesktopLocalRoundsTest {
     void 三处时间对得上() throws IOException {
         int server = group(SERVER_BUDGET, "EXPLICIT = new CodeLoopBudget\\(\\d+, ([\\d_]+)L", "服务器时间预算");
         int desktop = group(DESKTOP_AGENT, "var timeoutMs = ([\\d_]+)", "桌面时间预算");
-        assertTrue(server >= 600_000 && desktop >= server, "代码任务没有同时获得 10 分钟预算");
+        assertTrue(server == 0 && desktop == 0, "第136轮约定显式代码模式默认 0 = 不限时，页面切走不能改变预算");
         String page = Files.readString(Path.of("src/main/resources/static/assets/pages/ai-assistant.js"));
         assertTrue(page.contains("reply.timeoutMs"), "页面没有接外壳的预算，仍可能在 250 秒提前叫停");
         String shell = Files.readString(Path.of("../deploy/desktop/macos-shell/PageView.swift"));
-        assertTrue(shell.contains("\"timeoutMs\": agent.config.timeoutMs"), "外壳没有把实际时间预算交给页面");
+        assertTrue(shell.contains("LocalSnapshot(agent.config)") && shell.contains("replyHandler(snapshot.budget(runId), nil)"),
+                "外壳必须把启动时的真实预算交给页面（重连不能变回旧的10分钟）");
     }
 }

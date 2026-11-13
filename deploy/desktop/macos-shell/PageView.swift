@@ -143,6 +143,34 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         }
     }
     private var localRunSeq = 0
+    /// 只持有已脱敏的 trace / terminal 和预算；进程仍归 LocalAgent，导航不影响这一份内存快照。
+    private final class LocalSnapshot {
+        var events: [[String: Any]] = []
+        var result: [String: Any]?
+        var running = true
+        let timeoutMs: Int
+        let maxRounds: Int
+        init(_ config: LocalAgent.Config) {
+            timeoutMs = config.timeoutMs
+            maxRounds = config.maxRounds
+        }
+        func budget(_ runId: String) -> [String: Any] {
+            ["runId": runId, "timeoutMs": timeoutMs, "maxRounds": maxRounds]
+        }
+    }
+    private var localSnapshots: [String: LocalSnapshot] = [:]
+    private var localSnapshotOrder: [String] = []
+
+    private func localRunId(_ value: Any?) -> String? {
+        guard let id = value as? String, !id.isEmpty, id.utf8.count <= 100,
+              id.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 }) else { return nil }
+        return id
+    }
+
+    private func removeLocalSnapshot(_ runId: String) {
+        localSnapshots[runId] = nil
+        localSnapshotOrder.removeAll { $0 == runId }
+    }
 
     /// persistent = false 只给检查程序用：不碰真实的 localStorage（登录态存在那里）。
     /// dataStore 也只给检查程序用：两个页面共用一份不落盘的网站数据，像主窗口和迷你窗共用 .default() 那样。
@@ -203,7 +231,9 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
     /// 页面经 zqLocal 问的（带回复，页面那边是 await postMessage(...)）：
     ///   {action: "status"} → {available, running, folders, network}
     ///   {action: "pick"} → 系统的选文件夹框 → {folder} / {cancelled: true}
-    ///   {action: "run", folder, message, history, model, effort, level, command, token} → {runId}；之后每一行经 zq-local 事件到页面
+    ///   {action: "run", clientRunId?, folder, message, history, model, effort, level, command, token} → {runId, timeoutMs, maxRounds}；之后每一行经 zq-local 事件到页面
+    ///   {action: "resume", runId} → {found: true, events, result, running} / {found: false}（先监听事件再恢复，避免漏掉终态）
+    ///   {action: "ack", runId} → {acknowledged}（只有 terminal 已到才删除快照）
     ///   {action: "stop"} → {stopping: true}
     ///   {action: "read", folder, path} → {content, absent}（确认框里看 diff；只读选过的文件夹里的相对路径）
     ///   {action: "apply", folder, files:[{path, content, baseline}]} → {written}（基线不符一个都不写；路径出不了选过的文件夹）
@@ -237,15 +267,46 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
             let (parsed, problem) = LocalRunRequest.parse(body)
             guard let req = parsed else { replyHandler(nil, problem ?? "认不出的请求"); return }
             guard localFolders.contains(req.folder) else { replyHandler(nil, "这个文件夹还没在「选文件夹」里选过"); return }
-            localRunSeq += 1
-            let runId = "local-\(localRunSeq)"
-            if let failed = agent.start(req, root: LocalFolders.real(req.folder), onMessage: { [weak self] m in self?.emitLocal(runId, m) }) {
+            let runId: String
+            if let supplied = body["clientRunId"] {
+                guard let id = localRunId(supplied) else { replyHandler(nil, "本机任务编号只能用字母、数字、连字符，最多 100 字符"); return }
+                runId = id
+                // 重试也要先通过来源、令牌、档位和选过的文件夹校验；只回原预算，不再起进程。
+                if let snapshot = localSnapshots[runId] { replyHandler(snapshot.budget(runId), nil); return }
+            } else {
+                repeat { localRunSeq += 1 } while localSnapshots["local-\(localRunSeq)"] != nil
+                runId = "local-\(localRunSeq)"
+            }
+            guard !agent.running else { replyHandler(nil, "上一轮还没完，先停下它"); return }
+            let evict = localSnapshotOrder.first { id in
+                guard let snapshot = localSnapshots[id] else { return false }
+                return snapshot.result != nil && !snapshot.running
+            }
+            guard localSnapshots.count < 8 || evict != nil else { replyHandler(nil, "本机任务快照已满，未结束的任务不能覆盖"); return }
+            let snapshot = LocalSnapshot(agent.config)
+            // start 的回调可能先于回复；预留快照再启动，失败即清掉，不驱逐此前成功的一轮。
+            localSnapshots[runId] = snapshot
+            if let failed = agent.start(req, root: LocalFolders.real(req.folder), onMessage: { [weak self, weak snapshot] m in
+                guard let snapshot else { return }
+                self?.emitLocal(runId, m, snapshot)
+            }) {
+                removeLocalSnapshot(runId)
                 replyHandler(nil, failed)
             } else {
-                // 页面按外壳的真实预算等待：0 = 不限（第一百三十六轮，用户要把限时和限轮次去掉）。
-                // 页面拿到 0 就不再自己兜底掐断，等 result / fatal，或者用户点停。
-                replyHandler(["runId": runId, "timeoutMs": agent.config.timeoutMs, "maxRounds": agent.config.maxRounds], nil)
+                if localSnapshots.count > 8, let evict { removeLocalSnapshot(evict) }
+                localSnapshotOrder.append(runId)
+                // 0 = 不限；保持这一轮启动时的真实预算，重复请求也不会被之后的配置影响。
+                replyHandler(snapshot.budget(runId), nil)
             }
+        case "resume":
+            guard let runId = localRunId(body["runId"]) else { replyHandler(nil, "本机任务编号不对"); return }
+            guard let snapshot = localSnapshots[runId] else { replyHandler(["found": false], nil); return }
+            replyHandler(["found": true, "events": snapshot.events, "result": snapshot.result as Any? ?? NSNull(), "running": snapshot.running], nil)
+        case "ack":
+            guard let runId = localRunId(body["runId"]) else { replyHandler(nil, "本机任务编号不对"); return }
+            let acknowledged = localSnapshots[runId]?.result != nil
+            if acknowledged { removeLocalSnapshot(runId) }
+            replyHandler(["acknowledged": acknowledged], nil)
         case "stop":
             agent.stop()
             replyHandler(["stopping": true], nil)
@@ -268,11 +329,30 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         }
     }
 
-    /// 宿主的一行交给页面：window 上一个 zq-local 事件（detail 是那一行，加上 runId）。页面已经不是自己的网站了就不给
-    private func emitLocal(_ runId: String, _ message: [String: Any]) {
-        guard let url, isOwnSite(scheme: url.scheme, host: url.host) else { return }
+    /// 先记住宿主已脱敏的一行，再通知当前主文档；离页后的 trace / terminal 仍能 resume。
+    private func emitLocal(_ runId: String, _ message: [String: Any], _ snapshot: LocalSnapshot) {
+        // ack 后的晚到回调不能重建缓存，也不能串到之后复用同一编号的一轮。
+        guard localSnapshots[runId] === snapshot else { return }
         var detail = message
         detail["runId"] = runId
+        switch message["type"] as? String {
+        case "trace":
+            if let step = message["step"] as? [String: Any], let id = step["id"] as? String {
+                if let index = snapshot.events.firstIndex(where: { ($0["step"] as? [String: Any])?["id"] as? String == id }) {
+                    snapshot.events[index] = detail
+                } else {
+                    snapshot.events.append(detail)
+                    if snapshot.events.count > 400 { snapshot.events.removeFirst() }
+                }
+            }
+        case "result", "fatal":
+            snapshot.result = detail
+        case "exit":
+            snapshot.running = false
+        default:
+            break
+        }
+        guard let url, isOwnSite(scheme: url.scheme, host: url.host) else { return }
         guard let data = try? JSONSerialization.data(withJSONObject: detail), let json = String(data: data, encoding: .utf8) else { return }
         evaluateJavaScript("window.dispatchEvent(new CustomEvent('zq-local', { detail: \(json) })); 0") { _, _ in }
     }

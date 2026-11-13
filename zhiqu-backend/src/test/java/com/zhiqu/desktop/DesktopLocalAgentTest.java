@@ -64,13 +64,15 @@ class DesktopLocalAgentTest {
     void 本机代码助手() throws Exception {
         Map<String, String> r = runCheck();
         for (String k : r.keySet()) assertFalse(k.startsWith("timeout."), "检查程序有一步没等到：" + k + "\n" + r);
+        assertSnapshotContract(r);
         String gatewayUrl = "http://127.0.0.1:" + server.getAddress().getPort();
 
-        assertEquals("80", r.get("budget.defaultRounds"));
-        assertEquals("600000", r.get("budget.timeoutMs"));
+        // 第一百三十六轮：默认预算 0 = 不限，显式设置的轮数不再截到 120。
+        assertEquals("0", r.get("budget.defaultRounds"));
+        assertEquals("0", r.get("budget.timeoutMs"));
         assertEquals("120", r.get("budget.configuredRounds"));
-        assertEquals("120", r.get("budget.clampedRounds"));
-        assertTrue(r.get("bridge.run").contains("\"timeoutMs\":600000"), "桥没有回传真实时间预算：" + r.get("bridge.run"));
+        assertEquals("999", r.get("budget.clampedRounds"));
+        assertTrue(r.get("bridge.run").contains("\"timeoutMs\":0"), "桥没有回传真实时间预算：" + r.get("bridge.run"));
 
         // 一、一轮从起到交 result
         assertEquals("true", r.get("a.available"));
@@ -88,7 +90,7 @@ class DesktopLocalAgentTest {
         List<String[]> streams = seen.stream().filter(s -> s[1].startsWith("/api/harness/model/stream")).toList();
         assertTrue(streams.size() >= 4, "网关收到的模型调用太少：" + streams.size());
         for (String[] s : seen) {
-            if (s[1].equals("/__never__")) continue;
+            if (s[1].equals("/__never__") || s[1].startsWith("/desktop-local-check/")) continue;
             assertEquals("Bearer " + TOKEN, s[2], s[0] + " " + s[1] + " 没带令牌");
             assertFalse(s[3].contains(TOKEN), s[1] + " 的正文里带了令牌");
         }
@@ -167,6 +169,66 @@ class DesktopLocalAgentTest {
         assertTrue(script.contains("macos-shell/LocalAgent.swift\""), "打包脚本没把 LocalAgent.swift 编进外壳");
     }
 
+    private static void assertSnapshotContract(Map<String, String> r) throws IOException {
+        assertEquals("destroyed:true", r.get("snapshot.destroyed"), "没有真正导航销毁旧文档");
+        assertEquals("true", r.get("snapshot.noTerminalEvent"), "结果仍被旧文档事件接收，没有复现离页丢结果");
+        assertEquals("true", r.get("snapshot.resumeFound"), "导航后 resume 没找回本机任务快照：" + r.get("snapshot.terminal"));
+        assertEquals("true", r.get("snapshot.running"));
+        assertEquals("true", r.get("snapshot.runningResultNull"));
+        assertEquals("true", r.get("snapshot.ackRunningKept"), "ack 删除了未结束任务");
+        assertEquals("false", r.get("snapshot.finished"));
+        assertEquals("400", r.get("snapshot.traceCount"));
+        assertEquals("s-5", r.get("snapshot.traceFirst"));
+        assertEquals("s-404", r.get("snapshot.traceLast"));
+        assertEquals("done", r.get("snapshot.traceLatest"), "同 step.id 的更新没有原位替换");
+        assertEquals("local-navigation", r.get("snapshot.traceRunIds"));
+        assertEquals("s-100:done", r.get("snapshot.traceMiddle"), "更新中间步骤破坏了原顺序");
+        JsonNode terminal = JSON.readTree(r.get("snapshot.terminal"));
+        assertEquals("result", terminal.path("type").asText(), "exit 覆盖了 terminal");
+        assertEquals("local-navigation", terminal.path("runId").asText());
+        assertTrue(terminal.path("conclusion").asText().contains("导航后完成"));
+        assertEquals("false", r.get("snapshot.leak"), "快照缓存泄漏 token 或请求/history/folder");
+        assertEquals("1", r.get("snapshot.starts"), "重复 clientRunId 再次执行了宿主");
+        for (String tag : new String[]{"navRun", "duplicate", "duplicateDone"}) {
+            String value = r.get("snapshot." + tag);
+            assertTrue(value.startsWith(tag + ":ok:") && value.contains("\"runId\":\"local-navigation\"")
+                    && value.contains("\"timeoutMs\":0") && value.contains("\"maxRounds\":0"), value);
+        }
+        for (String tag : new String[]{"other", "busyResume", "ackedResume", "missingResume", "cached0"}) {
+            assertEquals(tag + ":ok:{\"found\":false}", r.get("snapshot." + tag), "其他 runId 获得了结果或缓存未清除");
+        }
+        assertTrue(r.get("snapshot.busyRun").startsWith("busyRun:err:"));
+        assertTrue(r.get("snapshot.missingRun").startsWith("missingRun:err:"));
+        assertTrue(r.get("snapshot.duplicateBadToken").contains("令牌"), "重复 run 跳过了 token 校验");
+        assertTrue(r.get("snapshot.duplicateBadFolder").contains("选过"), "重复 run 跳过了选过的文件夹校验");
+        assertTrue(r.get("snapshot.ackFrameSecurity").startsWith("snapshotAckFrame:err:"));
+        for (String action : new String[]{"resume", "ack"}) {
+            assertTrue(r.get("snapshot.mini." + action).contains("没有本机代码助手"), "迷你窗接受了新 action " + action);
+        }
+        assertTrue(r.get("snapshot.blankSecurity").startsWith("blank:err:") && r.get("snapshot.blankSecurity").contains("不认"));
+        assertTrue(r.get("snapshot.frameSecurity").startsWith("snapshotFrame:err:") && r.get("snapshot.frameSecurity").contains("不认"));
+        for (int i = 0; i < 5; i++) assertTrue(r.get("snapshot.invalid" + i).startsWith("invalid" + i + ":err:"), "接受了非法 clientRunId");
+        String fatal = r.get("snapshot.fatalResume");
+        assertTrue(fatal.contains("\"type\":\"fatal\"") && fatal.contains("snapshot fatal") && !fatal.contains(TOKEN), fatal);
+        assertTrue(r.get("snapshot.legacy").contains("\"runId\":\"local-3\""), "legacy 编号覆盖了已有 local-2 快照");
+        for (int i = 1; i < 9; i++) {
+            String cached = r.get("snapshot.cached" + i);
+            assertTrue(cached.contains("\"found\":true") && cached.contains("\"type\":\"result\"")
+                    && cached.contains("\"runId\":\"local-cache-" + i + "\""), cached);
+        }
+        assertTrue(r.get("snapshot.fullBusy").startsWith("fullBusy:err:"));
+        assertEquals("fullRejected:ok:{\"found\":false}", r.get("snapshot.fullRejected"));
+        assertEquals("fullEvicted:ok:{\"found\":false}", r.get("snapshot.fullEvicted"), "满缓存没有优先驱逐最旧完成任务");
+        String live = r.get("snapshot.fullLiveResume");
+        assertTrue(live.contains("\"found\":true") && live.contains("\"running\":true") && live.contains("\"result\":null"), "未结束任务被覆盖：" + live);
+        for (String tag : new String[]{"fullKept", "fullKeptAfterFailure"}) {
+            assertTrue(r.get("snapshot." + tag).contains("\"found\":true"), "启动失败驱逐了此前的快照：" + tag);
+        }
+        assertTrue(r.get("snapshot.fullMissing").startsWith("fullMissing:err:"));
+        assertEquals("fullMissingResume:ok:{\"found\":false}", r.get("snapshot.fullMissingResume"));
+        assertTrue(r.get("snapshot.boundary").contains("\"runId\":\"" + "a".repeat(100) + "\""), "拒绝了合法 100 字符编号");
+    }
+
     private Map<String, String> runCheck() throws Exception {
         Assumptions.assumeTrue(System.getProperty("os.name", "").toLowerCase().contains("mac"), "外壳只在 macOS 上编译");
         Assumptions.assumeFalse(Boolean.getBoolean("zhiqu.skipSwiftTests"), "按 -Dzhiqu.skipSwiftTests=true 跳过");
@@ -223,6 +285,25 @@ class DesktopLocalAgentTest {
         String path = ex.getRequestURI().getPath();
         String auth = ex.getRequestHeaders().getFirst("Authorization");
         seen.add(new String[]{ex.getRequestMethod(), path, auth == null ? "" : auth, body});
+        if (path.startsWith("/desktop-local-check/")) {
+            String page = path.substring("/desktop-local-check/".length());
+            String html = """
+                    <!doctype html><html><body><script>
+                    const say = s => webkit.messageHandlers.t.postMessage(s);
+                    async function call(tag, body) {
+                      try { say(tag + ':ok:' + JSON.stringify(await webkit.messageHandlers.zqLocal.postMessage(body))); }
+                      catch (e) { say(tag + ':err:' + (e && e.message || e)); }
+                    }
+                    window.addEventListener('zq-local', e => say('ev:' + JSON.stringify(e.detail)));
+                    %s
+                    say('doc:%s');
+                    </script><iframe srcdoc="<script>webkit.messageHandlers.zqLocal.postMessage({action:'resume',runId:'local-navigation'}).then(r=>webkit.messageHandlers.t.postMessage('snapshotFrame:ok'),e=>webkit.messageHandlers.t.postMessage('snapshotFrame:err:' + e.message));</script>"></iframe>
+                    <iframe srcdoc="<script>webkit.messageHandlers.zqLocal.postMessage({action:'ack',runId:'local-navigation'}).then(r=>webkit.messageHandlers.t.postMessage('snapshotAckFrame:ok'),e=>webkit.messageHandlers.t.postMessage('snapshotAckFrame:err:' + e.message));</script>"></iframe>
+                    </body></html>
+                    """.formatted("original".equals(page) ? "window.oldDocument = true;" : "", page);
+            reply(ex, 200, "text/html; charset=utf-8", html);
+            return;
+        }
         if (!("Bearer " + TOKEN).equals(auth)) {
             reply(ex, 401, "application/json", "{\"code\":401,\"message\":\"未登录\"}");
             return;

@@ -30,10 +30,11 @@ const state = { notebookId: 5, messages: [] };
 const noop = () => {};
 const factory = new Function(
   'state', 'toast', 'renderAiMessages', 'patchStreamingMessage', 'upsertAgentStep', 'addAgentStepNote',
-  'mergeTraceStep', 'receiveAgentArtifact', 'isPlanDraft', 'planDraftItems', 'sessionStorage',
-  src.slice(a, b) + '\nreturn { makeStreamApplier, runningTurn, markRunningTurn, clearRunningTurn };');
-const { makeStreamApplier, runningTurn, markRunningTurn, clearRunningTurn } = factory(
-  state, (m) => toasts.push(m), noop, () => true, noop, noop, noop, noop, noop, noop, store);
+  'mergeTraceStep', 'receiveAgentArtifact', 'isPlanDraft', 'planDraftItems', 'sessionStorage', 'requestError',
+  src.slice(a, b) + '\nreturn { makeStreamApplier, runningTurn, markRunningTurn, clearRunningTurn, runningStorageKey };');
+const { makeStreamApplier, runningTurn, markRunningTurn, clearRunningTurn, runningStorageKey } = factory(
+  state, (m) => toasts.push(m), noop, () => true, noop, noop, noop, noop, noop, noop, store,
+  (msg, flags) => Object.assign(new Error(msg), flags));
 
 function turn() {
   const assistant = { role: 'assistant', content: '', reasoningSummary: '', status: 'STREAMING' };
@@ -46,13 +47,13 @@ function turn() {
 {
   const t = turn();
   t.apply('stream.start', { agentRunId: 77, assistantMessageId: 900, userMessageId: 899 });
-  assert.equal(JSON.parse(store.getItem('zq.ai.running')).runId, 77, '发送时没记下 runId —— 页面走了就再也接不回来');
+  assert.equal(JSON.parse(store.getItem(runningStorageKey(5))).runId, 77, '发送时没记下 runId —— 页面走了就再也接不回来');
   t.apply('message.delta', { text: '第一段' });
   t.apply('message.delta', { text: '，第二段' });
   assert.equal(t.assistant.content, '第一段，第二段', '增量没有拼起来');
   t.apply('done', { status: 'DONE', assistantMessageId: 900 });
   assert.equal(t.st.completed, true, 'done 没被认出来');
-  assert.equal(store.getItem('zq.ai.running'), null, 'done 之后记号还在 —— 下次进页面会去接一轮早就结束的回答');
+  assert.equal(store.getItem(runningStorageKey(5)), null, 'done 之后记号还在 —— 下次进页面会去接一轮早就结束的回答');
 }
 
 // 2) error：半截正文留着，原因另起一行；记号也清掉
@@ -64,7 +65,7 @@ function turn() {
   assert.equal(t.st.failed, true);
   assert.equal(t.assistant.content, '说到一半', '出错时把已经出来的半截丢了');
   assert.equal(t.assistant.errorMessage, '模型超时');
-  assert.equal(store.getItem('zq.ai.running'), null, 'error 之后记号还在');
+  assert.equal(store.getItem(runningStorageKey(5)), null, 'error 之后记号还在');
 }
 
 // 3) 服务端缓冲丢过帧：正文清空，等页面按库里的那份重铺
@@ -72,8 +73,8 @@ function turn() {
   const t = turn();
   t.apply('stream.start', { agentRunId: 79 });
   t.apply('message.delta', { text: '旧的' });
-  t.apply('stream.reset', { reason: 'buffer-dropped' });
-  assert.equal(t.assistant.content, '', 'reset 之后本地还留着正文，会接成两份');
+  assert.throws(() => t.apply('stream.reset', { reason: 'buffer-dropped' }), (e) => e.resync === true);
+  assert.equal(t.assistant.content, '旧的', '缺帧同步不能先清空已经看到的正文');
 }
 
 // 4) 这一轮不在服务端内存里了：记号清掉，交给消息列表
@@ -81,7 +82,7 @@ function turn() {
   const t = turn();
   markRunningTurn(80, 5, 901);
   t.apply('stream.gone', { reason: 'expired' });
-  assert.equal(store.getItem('zq.ai.running'), null, 'stream.gone 之后记号还在，页面会一直等');
+  assert.equal(store.getItem(runningStorageKey(5)), null, 'stream.gone 之后记号还在，页面会一直等');
 }
 
 // 5) 「立即」补进来的话要看得见
@@ -95,21 +96,22 @@ function turn() {
 // 6) 长任务的记号必须覆盖 15 分钟回答窗口；过期的仍清掉
 {
   markRunningTurn(81, 5, 902);
-  const raw = JSON.parse(store.getItem('zq.ai.running'));
-  raw.at = Date.now() - 14 * 60 * 1000;
-  store.setItem('zq.ai.running', JSON.stringify(raw));
+  const raw = JSON.parse(store.getItem(runningStorageKey(5)));
+  raw.at = Date.now() - 239 * 60 * 1000;
+  store.setItem(runningStorageKey(5), JSON.stringify(raw));
   assert.equal(runningTurn().runId, 81, '任务还在合法预算内，重连记号先过期了');
-  raw.at = Date.now() - 31 * 60 * 1000;
-  store.setItem('zq.ai.running', JSON.stringify(raw));
+  raw.at = Date.now() - 246 * 60 * 1000;
+  store.setItem(runningStorageKey(5), JSON.stringify(raw));
   assert.equal(runningTurn(), null, '过期的记号还当成在跑');
 }
 
 // 7) 别的 notebook 的记号不接
 {
   markRunningTurn(82, 6, 903);
-  assert.equal(runningTurn().nb, 6);
-  clearRunningTurn();
-  assert.equal(runningTurn(), null);
+  assert.equal(runningTurn(6).nb, 6);
+  assert.equal(runningTurn(), null, '不能把 B 的运行当成 A');
+  clearRunningTurn(6);
+  assert.equal(runningTurn(6), null);
 }
 
 // 8) 桌面页面按外壳预算等待，不能在旧的 250 秒就叫停；假时钟不需要真的等 10 分钟。
@@ -123,7 +125,7 @@ let stopped = 0;
 const waitLocal = new Function('window', 'localCall', 'mergeTraceStep', 'renderAiMessages', 'setTimeout', 'clearTimeout',
   src.slice(waitStart, waitEnd) + '\nreturn waitLocal;')(
   { addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn) },
-  () => { stopped++; return Promise.resolve(); }, noop, noop,
+  (body) => { if (body.action === 'stop') stopped++; return Promise.resolve(); }, noop, noop,
   (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
   (id) => timers.delete(id));
 
@@ -152,4 +154,220 @@ async function checkLocalWait() {
     await old;
   }
 }
-checkLocalWait().then(() => console.log('ALL-GREEN')).catch((e) => { console.error(e); process.exitCode = 1; });
+// 真跑发布模块的发送、列表重载与恢复，而不只是断言源码里出现了函数名。
+const vm = require('vm');
+function harness(sharedStore = store) {
+  const input = { value: '', style: {}, scrollHeight: 44 };
+  const s = { user: { id: 1 }, notebookId: 5, messages: [], pendingSources: [],
+    agentSteps: [], agentArtifacts: [], sendQueue: [], chatFollow: true };
+  const renders = [], events = new Map();
+  const ctx = vm.createContext({ console, Date, Promise, setTimeout, clearTimeout, setInterval, clearInterval,
+    sessionStorage: sharedStore, localStorage: sharedStore, AbortController, TextDecoder, TextEncoder,
+    window: { addEventListener: (name, fn) => { if (!events.has(name)) events.set(name, new Set()); events.get(name).add(fn); },
+      removeEventListener: (name, fn) => events.get(name)?.delete(fn) }, document: { getElementById: () => null } });
+  vm.runInContext(src.replace(/^export function /gm, 'function ').replace(/^export const /gm, 'const ')
+    .replace(/^export \{[^\n]*\};/gm, ''), ctx);
+  const sh = { state: s, API: '/api', REQUEST_TIMEOUT_MS: 30, token: () => null,
+    api: { get: async () => [], post: async () => ({}) }, $: (sel) => sel === '#zq-draft' ? input : null,
+    $all: () => [], nowMs: Date.now, requestError: (msg, flags) => Object.assign(new Error(msg), flags),
+    toast: noop, safe: async (_, fn) => fn(), drafts: { clearIf: noop }, icon: () => '' };
+  ctx.bind(sh);
+  ctx.renderAiMessages = () => renders.push(s.messages.map((m) => ({ content: m.content, status: m.status })));
+  ctx.patchStreamingMessage = () => { ctx.renderAiMessages(); return true; };
+  ctx.renderAgentPanels = async () => {};
+  ctx.renderNotebooks = noop;
+  ctx.renderSteps = noop; ctx.renderArtifacts = noop; ctx.paintSlash = noop;
+  ctx.stopStreamWatch = noop; ctx.watchStreamingMessages = noop;
+  ctx.renderSendQueue = noop;
+  return { ctx, s, input, sh, renders, events,
+    emit: (name, detail) => { for (const fn of [...events.get(name) || []]) fn({ detail }); } };
+}
+async function checkNavigation() {
+  // A -> B -> A：后台收到的第二段必须落在回来后显示的对象上，而不是一份脱离列表的旧对象。
+  const h = harness();
+  let apply, finish;
+  h.ctx.streamAiChat = async (_, handlers) => { apply = handlers; await new Promise((r) => { finish = r; }); };
+  h.input.value = '问题 A';
+  const pending = h.ctx.sendAiMessage();
+  apply('stream.start', { agentRunId: 501, assistantMessageId: 9001, userMessageId: 9000 });
+  apply('message.delta', { text: '第一段' });
+  apply('agent.step.start', { id: 'agent-a', publicSummary: '读取资料' });
+  h.ctx.setAiNotebookId(6); h.s.messages = []; h.s.agentSteps = [];
+  assert.equal(h.s.aiSending, false, 'A 在后台运行不能把 B 的输入状态锁成生成中');
+  apply('message.delta', { text: '，后台第二段' });
+  apply('agent.step.done', { id: 'agent-a', publicSummary: '后台已读完资料' });
+  apply('agent.step.note', { stepId: 'agent-a', message: '离开期间的检索结果' });
+  assert.equal(h.s.messages.length, 0, 'A 的后台消息串到了 B');
+  assert.equal(h.s.agentSteps.length, 0, 'A 的后台步骤串到了 B');
+  h.ctx.setAiNotebookId(5);
+  h.sh.api.get = async () => [{ id: 9000, role: 'user', content: '问题 A' },
+    { id: 9001, role: 'assistant', agentRunId: 501, status: 'STREAMING', content: '第一段' }];
+  await h.ctx.loadAiMessages();
+  assert.equal(h.s.messages.at(-1).content, '第一段，后台第二段', '切回 A 被过时的列表回包覆盖，最新进度丢了');
+  assert.equal(h.s.agentSteps[0].publicSummary, '后台已读完资料', '离开期间的 agent 步骤更新丢了');
+  assert.equal(h.s.agentSteps[0].notes[0].message, '离开期间的检索结果');
+  apply('message.delta', { text: '，第三段' });
+  assert.equal(h.s.messages.at(-1).content, '第一段，后台第二段，第三段', '回来后 SSE 仍写旧对象，气泡不再更新');
+  h.sh.api.get = async () => [{ id: 9001, role: 'assistant', status: 'DONE', content: '第一段，后台第二段，第三段' }];
+  apply('done', { assistantMessageId: 9001 }); finish(); await pending;
+}
+async function settle() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
+async function checkReplay() {
+  const h = harness();
+  const old = '已经生成的内容';
+  h.s.messages = [{ id: 9101, role: 'assistant', agentRunId: 601, status: 'STREAMING', content: old }];
+  // 没有本地记号也必须从消息列表的 agentRunId 找回后台运行。
+  let replayed = 0, replayFailure;
+  h.ctx.streamRunStream = async (id, after, apply) => {
+    replayed++;
+    try {
+    assert.equal(id, 601); assert.equal(after, 0);
+    apply('message.delta', { text: '已经' });
+    assert.equal(h.s.messages[0].content, old, '重连先清空/倒退到重放的第一截');
+    apply('message.delta', { text: '生成的内容，离开期间继续' });
+    assert.equal(h.s.messages[0].content, old + '，离开期间继续', '没补齐离开期间正文，或者重复拼接了旧正文');
+    apply('trace.step', { step: { id: 'replay-step', status: 'DONE', title: '离开期间完成的步骤' } });
+    assert.equal(h.s.messages[0].steps.steps[0].title, '离开期间完成的步骤');
+    apply('message.delta', { text: '，回来后实时内容' });
+    apply('done', { assistantMessageId: 9101 });
+    } catch (e) { replayFailure = e; throw e; }
+  };
+  h.sh.api.get = async () => [{ id: 9101, role: 'assistant', status: 'DONE', content: old + '，离开期间继续，回来后实时内容' }];
+  await h.ctx.reattachRunningTurn();
+  // 实现会吞传输错误、退回读库；判据中的断言不能一起被吞掉，最后拿到正确终态不等于中途没倒退。
+  if (replayFailure) throw replayFailure;
+  assert.equal(replayed, 1, '重连判据没有实际跑过事件回放');
+  assert.equal(h.s.messages[0].content, old + '，离开期间继续，回来后实时内容');
+  assert.equal(h.s.aiSending, false);
+  assert.ok(h.renders.every((r) => r[0]?.content), '重连期间出现空白气泡');
+}
+async function checkHeaderTimeout() {
+  const h = harness();
+  h.s.messages = [{ id: 9201, role: 'assistant', agentRunId: 701, status: 'STREAMING', content: '已收到正文' }];
+  let signal, polled = 0;
+  h.ctx.fetch = async (_, opts) => new Promise((_, reject) => {
+    signal = opts.signal;
+    signal.addEventListener('abort', () => reject(new Error('aborted')));
+  });
+  h.sh.api.get = async () => [{ id: 9201, role: 'assistant', agentRunId: 701, status: 'STREAMING', content: '后台继续生成的最新正文' }];
+  h.ctx.watchStreamingMessages = () => { polled++; };
+  await h.ctx.reattachRunningTurn();
+  assert.ok(signal.aborted, '重连响应头挂住时没有超时，轮询永远无法接管');
+  assert.ok(polled > 0, '重连失败没有退回快照同步');
+  assert.equal(h.s.aiSending, false);
+  assert.equal(h.s.messages[0].status, 'STREAMING', '观察连接失败不能把后台任务当成结束');
+  assert.equal(h.s.messages[0].content, '后台继续生成的最新正文');
+}
+async function checkDesktopReturn() {
+  const h = harness();
+  h.ctx.inDesktop = () => true;
+  h.ctx.wsStatus = { selectedRoot: '/test/project', selectedMode: 'READ' };
+  let runId, archive = [], archivedRows = [], shellSteps = [];
+  h.sh.api.post = async (path, body, headers) => {
+    if (path === '/access-tokens/desktop-code') return { token: 'fake-test-token' };
+    assert.equal(path, '/ai/desktop-turn'); archive.push({ body, headers });
+    archivedRows = [{ id: 9301, role: 'user', content: body.message },
+      { id: 9302, role: 'assistant', status: 'DONE', content: body.conclusion, steps: body.steps }];
+    return { userMessageId: 9301, assistantMessageId: 9302 };
+  };
+  h.sh.api.get = async () => archivedRows;
+  h.ctx.localCall = async (body) => {
+    if (body.action === 'run') { runId = body.clientRunId; return { runId, timeoutMs: 0 }; }
+    if (body.action === 'resume') return { found: true, events: shellSteps, result: null, running: true };
+    return {};
+  };
+  h.input.value = '本机长任务';
+  const firstPage = h.ctx.sendDesktopTurn('本机长任务');
+  await settle();
+  assert.ok(runId, '本机任务没有启动');
+  const t1 = { runId, type: 'trace', step: { id: 'step-1', title: '第一步', status: 'RUNNING' } };
+  h.emit('zq-local', t1);
+  h.ctx.bindTurnLifecycle(); h.emit('pagehide');
+  // 销毁第一份页面的所有监听。任务继续在外壳，页面上的存档协程不可能执行了。
+  h.events.clear();
+  shellSteps = [
+    { runId, type: 'trace', step: { id: 'step-1', title: '离开后第一步已完成', status: 'DONE' } },
+    { runId, type: 'trace', step: { id: 'step-2', title: '离开期间第二步', status: 'RUNNING' } }
+  ];
+  const back = harness(h.ctx.sessionStorage);
+  back.input.value = '本机长任务'; // 旧页面发送时未清除的草稿不能误导用户再发一遍
+  back.ctx.inDesktop = () => true; back.ctx.localCall = h.ctx.localCall;
+  back.sh.api = h.sh.api; back.ctx.bind(back.sh);
+  await back.ctx.loadAiMessages(); await settle();
+  assert.equal(archive.length, 0, '不能等 done 才恢复中间步骤');
+  assert.equal(back.s.messages[0].content, '本机长任务', '返回后用户消息消失');
+  assert.equal(back.input.value, '', '已经启动的本机任务仍作为未发送草稿留在输入框');
+  assert.equal(back.s.messages[1].steps.steps.length, 2, '离开期间新增步骤没补齐');
+  assert.equal(back.s.messages[1].steps.steps[0].title, '离开后第一步已完成', '旧步骤状态没有同步外壳最新快照');
+  back.emit('zq-local', { runId, type: 'trace', step: { id: 'step-3', title: '回来后第三步', status: 'DONE' } });
+  assert.equal(back.s.messages[1].steps.steps.length, 3, '补齐之后没接上后续实时消息');
+  back.emit('zq-local', { runId, type: 'result', conclusion: '全部完成', drafts: [] });
+  await settle();
+  assert.equal(archive.length, 1, '导航后最终结果未存档或存了两次');
+  assert.equal(archive[0].body.steps.steps.length, 3);
+  assert.equal(archive[0].headers['Idempotency-Key'], 'desktop-turn-' + runId);
+  assert.equal(back.s.messages.at(-1).content, '全部完成');
+  assert.equal(back.ctx.runningTurn(), null, '存档成功还残留运行记号');
+  // 原页面 promise 被销毁的模拟无需等待；它没有真实定时器或 I/O，不会妨碍进程退出。
+  void firstPage;
+}
+async function checkQueueIsolation() {
+  const h = harness();
+  h.ctx.enqueueSend('留在 A 的排队消息');
+  h.ctx.saveSendQueue();
+  h.ctx.setAiNotebookId(6); h.s.messages = [];
+  let sent = [];
+  h.ctx.sendAiMessage = (text) => sent.push(text);
+  h.ctx.pumpSendQueue();
+  assert.equal(sent.length, 0, 'A 的排队消息错误发给 B');
+  h.ctx.setAiNotebookId(5); h.ctx.restoreSendQueue(); h.ctx.pumpSendQueue();
+  assert.deepEqual(sent, ['留在 A 的排队消息'], '队列未跨导航保存');
+}
+async function checkRaces() {
+  // 同一个 notebook 的旧 GET 回来得比完成后的新 GET 晚，也不能擦掉最新结果。
+  const h = harness();
+  let oldReply, calls = 0;
+  h.sh.api.get = async () => ++calls === 1 ? new Promise((r) => { oldReply = r; })
+    : [{ id: 9401, role: 'assistant', status: 'DONE', content: '最终存档' }];
+  const old = h.ctx.loadAiMessages();
+  await h.ctx.loadAiMessages(); oldReply([]); await old;
+  assert.equal(h.s.messages.length, 1, '旧的存档前回包清空了刚完成的回答');
+  assert.equal(h.s.messages[0].content, '最终存档', '旧的存档前回包覆盖了刚完成的回答');
+
+  // 旧快照里 RUNNING，库里同一步已经 DONE；恢复不能倒退状态 / 丢掉新版细节。
+  h.ctx.markRunningTurn(801, 5, 9401);
+  const mark = h.ctx.runningTurn();
+  mark.assistant = { id: 9401, role: 'assistant', status: 'STREAMING', content: '',
+    steps: { steps: [{ id: 'same', status: 'RUNNING', title: '旧步骤' }] } };
+  h.ctx.sessionStorage.setItem(h.ctx.runningStorageKey(5), JSON.stringify(mark));
+  const merged = h.ctx.mergeRunningMessages([{ id: 9401, role: 'assistant', status: 'STREAMING', content: '',
+    steps: { steps: [{ id: 'same', status: 'DONE', title: '已经完成', output: '新版细节' }] } }]);
+  assert.equal(merged[0].steps.steps[0].status, 'DONE', '旧离页快照把库里的终态步骤倒退了');
+  assert.equal(merged[0].steps.steps[0].output, '新版细节');
+
+  // result 在 resume 应答之前先到，仍必须等历史步骤补齐才交结果存档。
+  const d = harness();
+  let release;
+  d.ctx.localCall = () => new Promise((r) => { release = r; });
+  const assistant = { role: 'assistant', content: '', steps: { steps: [] } };
+  let done = false;
+  const pending = d.ctx.waitLocal('local-race', assistant, () => true, 0).then((r) => { done = true; return r; });
+  d.emit('zq-local', { runId: 'local-race', type: 'result', conclusion: '已完成' });
+  await settle();
+  assert.equal(done, false, '终态抢先结束等待，离开期间步骤还没有同步就去存档/ack');
+  release({ found: true, events: [{ runId: 'local-race', type: 'trace', step: { id: 'missed', status: 'DONE' } }], result: null });
+  assert.equal((await pending).conclusion, '已完成');
+  assert.equal(assistant.steps.steps.length, 1, '终态先到导致历史步骤永久漏掉');
+
+  // 新任务写快照不能继承旧任务还没存档的 result。
+  const p = harness();
+  p.ctx.sessionStorage.setItem(p.ctx.runningStorageKey(5), JSON.stringify({ runId: 'old-local', nb: 5, kind: 'desktop', result: { conclusion: '旧结论' } }));
+  p.ctx.persistTurn({ nb: 5, runId: 'new-local', assistant: { content: '' },
+    desktopInfo: { message: '新问题', folder: '/test' } }, true);
+  assert.equal(p.ctx.runningTurn().result, undefined, '新任务继承旧终态，会把新问题和旧结论配对存档');
+}
+(async () => {
+  await checkNavigation(); await checkReplay(); await checkHeaderTimeout();
+  await checkDesktopReturn(); await checkQueueIsolation(); await checkRaces(); await checkLocalWait();
+  console.log('ALL-GREEN');
+})().catch((e) => { console.error(e); process.exitCode = 1; });
