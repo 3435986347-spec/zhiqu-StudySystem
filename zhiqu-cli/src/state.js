@@ -49,7 +49,7 @@ export function sameItem(a, b) {
 
 const empty = () => ({
   v: 1, said: [], todos: [], done: [], notes: { decision: [], dead_end: [], anchor: [], temp: [] },
-  files: {}, created: [], churn: {}, steps: [], focus: [], turn: { status: 'idle', at: null },
+  files: {}, created: [], churn: {}, steps: [], focus: [], turn: { status: 'idle', at: null }, answer: '',
 });
 
 export function noteSchema() {
@@ -138,8 +138,10 @@ export class WorkState {
   }
 
   /** finished：这一句正常说完了。没说完的留着 'unfinished'；进程直接没了就一直是 'running' —— 下次开工都算没做完 */
-  endTurn(finished, { discardWhenDone = false } = {}) {
+  endTurn(finished, { discardWhenDone = false, answer = '' } = {}) {
     this.data.turn = { status: finished ? 'done' : 'unfinished', at: this.stamp() };
+    // 这一句最后的回答（开头一段）：以后的会话问「上次做到哪」时，摘要里用它（第一百四十一轮）
+    if (answer) this.data.answer = String(answer).trim().slice(0, 800);
     // 没有会话记录的那一份（桌面 / 网页，文件在项目的 .zhiqu/ 里）：这件事做完了就不留，目录空了也收掉 ——
     // 生成到产物的临时空间里不该多出一个 .zhiqu
     if (discardWhenDone && this.file && !this.unfinished()) {

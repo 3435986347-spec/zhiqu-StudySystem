@@ -29,6 +29,7 @@ import { McpManager } from './mcp.js';
 import { BUILTIN_SYSTEM_PROMPT } from './prompt.js';
 import { hunks } from './render/diff.js';
 import { terminalWarnings } from './render/term.js';
+import { otherSessions } from './recall.js';
 import { SessionStore } from './session.js';
 import { discoverSkills, skillsBlock } from './skills.js';
 import { LocalTools } from './tools/local.js';
@@ -324,7 +325,7 @@ function loadContext(ctx) {
   ctx.skillsText = skillsBlock(ctx.skills);
 }
 
-function openSession(ctx, flags) {
+export function openSession(ctx, flags) {
   if (flags.continue || flags.resume) {
     const id = typeof flags.resume === 'string' ? flags.resume : (ctx.store.last() || {}).id;
     if (!id) {
@@ -338,6 +339,17 @@ function openSession(ctx, flags) {
   ctx.messages = [];
   ctx.todos = [];
   ctx.request = null;
+  noteUnfinished(ctx);
+}
+
+/** 新开一段会话时跟人说一声：这个项目里上一段没做完（包括进程没正常退出）。模型那边开工时也会被告知（agent.js 的 inheritedCard）。 */
+export function noteUnfinished(ctx) {
+  if (ctx.exec) return;
+  let last = null;
+  try { [last] = otherSessions(ctx.store, ctx.session, ctx.root, 1); } catch { return; }
+  if (!last || (last.status !== 'unfinished' && last.status !== 'crashed')) return;
+  ctx.ui.note(`· 上一段会话「${last.title || '无标题'}」${last.status === 'crashed' ? '没正常结束（进程中途没了）' : '没做完'}`
+    + `${last.todosLeft.length ? `，清单还剩 ${last.todosLeft.length} 项` : ''}：/resume 接着那一段，或者直接说要做什么（它做到哪，新会话知道）`);
 }
 
 export function resumeInto(ctx, id) {

@@ -26,6 +26,7 @@ import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todo
 import { spillLongInput } from './longinput.js';
 import fs from 'node:fs';
 import { stat as diffStat } from './render/diff.js';
+import { otherSessions, readSession, recentBlock, searchSessions, sessionSchemas } from './recall.js';
 import { firstChangedLine, listFiles, NOTE_TOOL, noteSchema, statePath, WorkState } from './state.js';
 import { estimateMessages, estimateTokens } from './compact.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
@@ -42,7 +43,7 @@ export const REMOTE_DIRECT_WRITE_TOOLS = new Set(['update_task_status']);
  * 模型写在工具调用之间的字、读 / 搜 / 列目录这几步，只在状态行的「思考中」后面一闪（ui.startThinking）。
  * ctx.verbose（/verbose、配置 showThinking）切回全显示。
  */
-export const QUIET_TOOLS = new Set([...READ_TOOLS, ...REMOTE_READ_TOOLS, 'load_skill', 'find_mcp_tool']);
+export const QUIET_TOOLS = new Set([...READ_TOOLS, ...REMOTE_READ_TOOLS, 'load_skill', 'find_mcp_tool', 'search_sessions', 'read_session']);
 const quiet = (ctx) => !ctx.verbose;
 
 /**
@@ -151,6 +152,17 @@ function shellPolicy(ctx) {
   return ctx.mode === 'plan' ? READ_ONLY : WORKSPACE_WRITE;
 }
 
+/** 这个项目里有没有别的会话可查。一段会话里只看一次。 */
+function hasPastSessions(ctx) {
+  if (ctx.subagent || !ctx.store || !ctx.session || String(ctx.session.id).startsWith('ephemeral-')) return false;
+  if (!ctx.pastSessions || ctx.pastSessions.id !== ctx.session.id) {
+    let any = false;
+    try { any = otherSessions(ctx.store, ctx.session, ctx.root, 1).length > 0; } catch { any = false; }
+    ctx.pastSessions = { id: ctx.session.id, any };
+  }
+  return ctx.pastSessions.any;
+}
+
 /** 这一轮给模型哪些工具。 */
 /** 这一次下发的 shell 有没有 background（toolset 里同一个条件） */
 const offeredBackground = (ctx) => Boolean(ctx.local && ctx.local.sandbox && !ctx.local.hosted);
@@ -180,6 +192,9 @@ export function toolset(ctx) {
   out.push({ schema: todoSchema(), kind: 'todo' });   // 三档都有：plan 档列计划正用得上
   // 往工作状态里记一条（第一百三十八轮）：只写状态卡，碰不到工作区，所以三档都给；子 agent 的状态不留，不给
   if (!ctx.subagent) out.push({ schema: noteSchema(), kind: 'note' });
+  // 查这个项目以前的会话（第一百四十一轮）：只读，三档都给。这个项目里有别的会话才给 —— 没有就没什么可查，白占工具表；
+  // 一段会话里只看一次（工具表半路变了，缓存跟着重来）
+  if (hasPastSessions(ctx)) for (const t of sessionSchemas()) out.push({ schema: t, kind: 'session' });
   if (ctx.mcp) {
     const mcp = ctx.mcp.schemas({ readOnlyOnly: plan });
     if (mcp.length && mcpOverBudget(ctx, mcp)) {
@@ -667,6 +682,8 @@ export function describeCall(name, args) {
     case 'exit_plan_mode': return '提交计划';
     case 'spawn_agent': case 'wait_agent': case 'send_input': case 'close_agent': return describeAgentCall(name, args);
     case TODO_TOOL: return '更新任务清单';
+    case 'search_sessions': return `在以前的会话里找「${args.query}」`;
+    case 'read_session': return `读以前的会话 ${String(args.id || '').slice(0, 20)}${args.part && args.part !== 'digest' ? `（${args.part}）` : ''}`;
     case NOTE_TOOL: return `记一条：${String(args.text || '').replace(/\s+/g, ' ').slice(0, 60)}`;
     case GOAL_TOOL: return `目标状态：${args.status}`;
     case 'search_wiki': return wikiSearchLabel(args);
@@ -1166,6 +1183,13 @@ async function runTool(ctx, call, offered, signal) {
     if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'todos', todos: ctx.todos });
     return todoReply(r.todos) + ledgerNote(ledger);
   }
+  if (kind === 'session') {
+    const r = name === 'search_sessions' ? searchSessions(ctx.store, ctx.session, ctx.root, args) : readSession(ctx.store, ctx.session, ctx.root, args);
+    if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
+    ui.result(r.summary);
+    stepNote(ctx, { summary: r.summary });
+    return r.content;
+  }
   if (kind === 'note') {
     const r = workOf(ctx).note(args);
     if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
@@ -1630,7 +1654,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       const now = listFiles(ctx.root);
       if (now) work.addCreated([...now].filter((f) => !ctx.filesAtStart.has(f)).slice(0, 80));
     }
-    work.endTurn(finished, { discardWhenDone: !ctx.store });
+    work.endTurn(finished, { discardWhenDone: !ctx.store, answer: finished ? said : '' });
     // 旧版留下的进度笔记：状态卡接手了，清掉免得两份说法
     if (ctx.root) { try { fs.rmSync(path.join(ctx.root, '.zhiqu', 'progress.md'), { force: true }); } catch { /* 忽略 */ } }
   }
@@ -1654,13 +1678,15 @@ function inheritedCard(ctx, work) {
   if (!work.isEmpty() || !ctx.session) return null;
   let sessions = [];
   try { sessions = ctx.store.list(); } catch { return null; }
+  // 最近的那一段没做完：给它整张状态卡；更早的几段各两三行（第一百四十一轮）。都做完了：最近三段各两三行
   for (const s of sessions) {
     if (s.id === ctx.session.id) continue;
     const prev = WorkState.open(statePath({ store: ctx.store, session: s, root: ctx.root }));
-    if (!prev.inherited || prev.isEmpty()) return null;   // 只看最近的那一段
-    return `（上一段会话「${s.title || '无标题'}」没做完${prev.data.turn.status === 'running' ? '：进程没正常退出' : ''}。下面是它留下的工作状态；用户这次说的要是同一件事就接着做，不是就不用管。/resume 可以把那段会话整个接回来。）\n\n${prev.card()}\n\n${tail}`;
+    if (!prev.inherited || prev.isEmpty()) break;   // 只看最近的那一段
+    const older = recentBlock(ctx.store, ctx.session, ctx.root, { skip: 1 });
+    return `（上一段会话「${s.title || '无标题'}」没做完${prev.data.turn.status === 'running' ? '：进程没正常退出' : ''}。下面是它留下的工作状态；用户这次说的要是同一件事就接着做，不是就不用管。/resume 可以把那段会话整个接回来。）\n\n${prev.card()}\n\n${tail}${older ? `\n\n${older}` : ''}`;
   }
-  return null;
+  return recentBlock(ctx.store, ctx.session, ctx.root) || null;
 }
 
 /** 在会话历史后面追加一问一答，不走模型（/review 的结论放回会话，才能接着说「修第 1 条」）。历史只追加。 */
