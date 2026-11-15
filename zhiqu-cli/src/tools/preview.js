@@ -211,6 +211,56 @@ export function shoot({ chrome, url, out, width, height, timeoutMs = DEFAULT_TIM
   });
 }
 
+/** 进上下文的图多大算「不用压」。 */
+export const CONTEXT_IMAGE_BYTES = 400_000;
+/** 压不了（没有转换工具）时，原图不超过这么大照样给；再大就让模型把窗口调小。 */
+export const UNSHRUNK_MAX_BYTES = 1_500_000;
+const SHRINK_STEPS = [[1280, 80], [1280, 60], [1024, 55], [800, 50]];
+
+/** 用系统自带的工具把图缩小、转成 JPEG：macOS 是 sips，别处找 ImageMagick。没有就返回 null。 */
+export function shrinkImage(input, output, edge, quality, { platform = process.platform, run = spawnSync } = {}) {
+  const tries = platform === 'darwin'
+    ? [['/usr/bin/sips', ['-Z', String(edge), '-s', 'format', 'jpeg', '-s', 'formatOptions', String(quality), input, '--out', output]]]
+    : [['magick', [input, '-resize', `${edge}x${edge}>`, '-quality', String(quality), output]],
+      ['convert', [input, '-resize', `${edge}x${edge}>`, '-quality', String(quality), output]]];
+  for (const [bin, args] of tries) {
+    try {
+      const r = run(bin, args, { stdio: 'ignore', timeout: 30_000 });
+      if (r && r.status === 0 && fs.existsSync(output) && fs.statSync(output).size > 0) return output;
+    } catch { /* 下一个 */ }
+  }
+  return null;
+}
+
+/**
+ * 截出来的图进上下文之前压小（第一百三十七轮，用户 2026-11-15 定的：压成 JPEG）。
+ * 截图上限放宽到 8MB 以后，一张 6.8MB 的 PNG 每次请求都要整张再传一遍；模型看排版、看明暗用不着这么大。
+ * 小图原样给；大图缩到长边 1280、转 JPEG，还大就再降一档；这台机器压不了的，1.5MB 以内原样给，再大照实说。
+ * 返回 { mediaType, base64, bytes, width, height, originalBytes } 或 { error }。
+ */
+export function forContext(shot, { shrink = shrinkImage, maxBytes = CONTEXT_IMAGE_BYTES } = {}) {
+  if (!shot || shot.error || shot.bytes <= maxBytes) return shot;
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-shrink-'));
+  try {
+    const input = path.join(work, 'in.png');
+    fs.writeFileSync(input, Buffer.from(shot.base64, 'base64'));
+    let best = null;
+    for (const [edge, quality] of SHRINK_STEPS) {
+      const out = shrink(input, path.join(work, `out-${edge}-${quality}.jpg`), edge, quality);
+      if (!out) break;
+      best = fs.readFileSync(out);
+      if (best.length <= maxBytes) break;
+    }
+    if (best && best.length < shot.bytes) {
+      return { ...shot, mediaType: 'image/jpeg', base64: best.toString('base64'), bytes: best.length, originalBytes: shot.bytes };
+    }
+    if (shot.bytes <= UNSHRUNK_MAX_BYTES) return shot;
+    return { error: `截图 ${Math.round(shot.bytes / 1024)}KB，这台机器上没有能把它压小的工具（macOS 的 sips 或 ImageMagick）；把 width / height 调小再试` };
+  } finally {
+    try { fs.rmSync(work, { recursive: true, force: true }); } catch { /* 留着也没关系 */ }
+  }
+}
+
 /**
  * 截一张页面。rel 相对工作区，可以是 .html 文件，也可以是带 index.html 的目录。
  * 返回 { mediaType, base64, bytes, width, height } 或 { error }。

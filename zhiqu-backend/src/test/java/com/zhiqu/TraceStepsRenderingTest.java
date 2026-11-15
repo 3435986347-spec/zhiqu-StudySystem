@@ -36,8 +36,10 @@ class TraceStepsRenderingTest {
     void 接线() throws Exception {
         String js = page();
         assertEquals(1, count(js, "else if (event === 'trace.step') {"), "流式处理里没有（或者有两处）trace.step 的分支");
-        String branch = js.substring(js.indexOf("else if (event === 'trace.step') {"), js.indexOf("else if (event === 'trace.step') {") + 260);
-        assertTrue(branch.contains("mergeTraceStep(assistant, data && data.step)"), "trace.step 没合进正在生成的这条回答：\n" + branch);
+        // 提交 051b084 起这一支先看「重放时别把做完的步骤退回进行中」再合并，分支变长了（原来只截 260 字、钉 data && data.step）；
+        // 这条判据从那时红到第一百三十八轮才对上
+        String branch = js.substring(js.indexOf("else if (event === 'trace.step') {"), js.indexOf("else if (event === 'message.notice')"));
+        assertTrue(branch.contains("var step = data.step;") && branch.contains("mergeTraceStep(assistant, step);"), "trace.step 没合进正在生成的这条回答：\n" + branch);
         assertTrue(branch.contains("patchStreamingMessage(state.messages.indexOf(assistant))"), "trace.step 来一次重画整个聊天区（几十步就是几十次全量重画）：\n" + branch);
         assertTrue(js.contains("if (data && data.steps && data.steps.steps) assistant.steps = data.steps;"), "done 带回来的步骤（库里存的那份）没用上");
         String body = js.substring(js.indexOf("function messageBodyHtml(m, i) {"), js.indexOf("function waitSince(m)"));
@@ -50,7 +52,7 @@ class TraceStepsRenderingTest {
         String full = js.substring(js.indexOf("function renderAiMessages(opts) {"), js.indexOf("function renderAiMessages(opts) {") + 3000);
         assertTrue(full.contains("bindTraceToggles(host);"), "全量重画之后没绑步骤的展开");
         assertTrue(js.contains("var traceKey = String(m.requestId || reasonKey);")
-                        && js.contains("if (!assistant.requestId && data && data.requestId) assistant.requestId = data.requestId;"),
+                        && js.contains("if (!assistant.requestId && data.requestId) assistant.requestId = data.requestId;"),
                 "展开状态的键不是 requestId：流式时是 _clientKey、收尾重拉之后是 id，点开的步骤一收尾就合上");
     }
 

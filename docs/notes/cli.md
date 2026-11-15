@@ -40,6 +40,14 @@
 - **历史只追加，缓存才命中**（第一百零四轮，`cache-prefix.test.js`）：缓存是前缀匹配，前面改一个字后面全部失效。发给模型的消息里，前一次请求的内容必须原样是下一次的开头。
   常变的东西不进系统提示：任务清单隔 8 轮附在工具结果后面（记进历史），压缩掉了补一条；省略旧思考（`slimThinking`）只在上下文过半时做。要往系统提示里加东西之前先想这一条。
   Claude 只缓存标过 `cache_control` 的部分（网关 `PromptCacheMarks`：Anthropic 接口和模型名带 claude 的中转；不认就去掉、记住），DeepSeek 是自动的。
+- **压缩的记账和保险**（第一百三十七轮，`memory-accounting.test.js`，方案在 `docs/memory-plan.md`）：图按张算（`IMAGE_TOKENS`，和服务端 `HarnessContext` 同一个数，`test/fixtures/token-estimate.json` 两边对拍 —— **这个公式有两份，改一边要改另一边**）；
+  「最近几步」按 `splitRounds` 切（用户真说的一句、模型的一次回复各算一步，命令行补的 user 消息不算开头）；摘要那次调用明说 `instant`、不跟用户的档位，空摘要重来一次、还空就不替换历史；
+  给摘要模型的记录里命令行补的话标【系统提醒】；「用户原话」第一句永远留着；压完还超就 `shedLargest`，连着 3 轮都在压缩就停。
+  会话记录里图存成 `sessions/<id>/blobs/` 的文件、行里只留 `image_ref`，`load()` 时换回去；读文件用 `eachLine`，不要再 `readFileSync` 整个读（超过 512MB 就读不回来）。
+  **挂在这句话的中断信号上的监听用完要摘**（`http.js`）：信号活一整句话，监听攥着的东西就活一整句话。
+- **工作状态卡**（第一百三十八轮，`src/state.js`，`work-state.test.js`）：压缩压不掉、进程崩了也在的那一份，每变一次落盘。有会话记录时在 `sessions/<id>.state.json`，没有（桌面 / 网页那一份）在项目的 `.zhiqu/state.json`、做完就删。
+  事实由命令行记（原话、清单和**做完的记录**、改过 / 新建的文件、同一处改了几回、最近几步、在看哪），判断由模型用 `note` 记。`ctx.todos` 还是给模型复述用的那份，记账在 `workOf(ctx).setTodos`。
+  什么时候进上下文：压缩之后（`restoreAfterCompaction`，连同刚在看的代码）、上一轮 / 上一段没做完的开工时（`inheritedCard`）。**不进系统提示**。这几条消息的开头在 `origins.js` 的 `LEGACY_SYSTEM` 里登记着，不然会被当成用户的原话。
 - **子进程与 MCP 服务器都不继承命令行的环境**（那里有 `ZHIQU_TOKEN`）。子进程的 HOME 是这个进程自己的空目录（`childHome`，第九十轮；原来是工作区，仓库里带的 `.gitconfig`、Python 用户 site 里的 `sitecustomize.py` 会被当成用户自己的配置执行）。超时杀整个进程组（`detached` + `kill(-pid)`）：
   只杀父进程的话孙子进程攥着管道，close 永远等不到 —— 这条判据因此自带 15 秒时限。
 - **配置在 `.zhiqu/`**：`~/.zhiqu/config.json`（600）、`system.md`（第一次写一份内置系统提示，没改过的跟着内置更新，

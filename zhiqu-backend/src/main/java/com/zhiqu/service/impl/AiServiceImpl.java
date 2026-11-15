@@ -714,6 +714,10 @@ public class AiServiceImpl implements AiService {
         if (chatRunHub != null) {
             leases.add(() -> chatRunHub.finish(agentRun.getId()));
         }
+        // 发消息的这条连接先挂上（第一百三十八轮）：不挂的话事件只进 hub，这条连接一帧都收不到
+        if (liveRun != null) {
+            liveRun.adopt(emitter);
+        }
         RunChannel channel = new RunChannel(liveRun, emitter);
         channel.emit("agent.run.start", Map.of(
                 "requestId", requestId,

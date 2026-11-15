@@ -193,15 +193,17 @@ test('小窗口模型压缩时，摘要的输出上限跟着窗口缩（窗口 8
   assert.ok(summaryCall.maxTokens <= 8000 * 0.12, `摘要上限 ${summaryCall.maxTokens}`);
 });
 
-test('原话有预算：每条太长只留头尾，太多就丢最早的并说出来（不悄悄少几条）', async () => {
+test('原话有预算：每条太长只留头尾，太多就丢中间的并说出来（不悄悄少几条）；第一句永远留着', async () => {
   const { userQuotes } = await import('../src/compact.js');
   const msgs = [];
   for (let i = 0; i < 30; i++) msgs.push({ role: 'user', content: `第 ${i} 条：${'要'.repeat(3000)}结尾${i}` }, { role: 'assistant', content: '好' });
   msgs.push({ role: 'user', content: '（任务清单里还有 2 项没做完：…）' });
   const q = userQuotes(msgs, 64_000);
-  assert.match(q, /（更早的 \d+ 条原话略去）/);
+  assert.match(q, /（中间的 \d+ 条原话略去/);
   assert.ok(q.includes('结尾29'), '最近的一条要在，而且结尾不能被截掉');
-  assert.ok(!q.includes('第 0 条'), '超预算时先丢最早的');
+  // 第一百三十七轮：第一句是这件事的出处，永远留着；超预算时丢的是中间的（原来从最早的丢起）
+  assert.ok(q.includes('第 0 条') && q.includes('结尾0'), '第一句要在');
+  assert.ok(!q.includes('第 1 条：'), '超预算时先丢中间靠前的');
   assert.ok(!q.includes('任务清单里还有'), '命令行自己补的话不算用户的原话');
   for (const block of q.split(/^—— \d+ ——$/m).slice(1)) assert.ok(block.length < 1600, `一条留了 ${block.length} 字`);
 });

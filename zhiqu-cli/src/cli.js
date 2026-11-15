@@ -15,7 +15,7 @@ import path from 'node:path';
 import { Api, ApiError } from './api.js';
 import { DirectModel } from './direct.js';
 import { StepLog } from './steps.js';
-import { archiveStep, archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote } from './agent.js';
+import { archiveStep, archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote, workOf } from './agent.js';
 import { SubAgents } from './subagents.js';
 import { newGoal } from './goal.js';
 import { generatedOrigin } from './origins.js';
@@ -878,6 +878,12 @@ export async function slash(ctx, text) {
       saveUserConfig({ showThinking: ctx.verbose });
       ui.line(ctx.verbose ? '显示思考过程：模型的每一段分析、每一次读文件都打印出来（再输一次 /verbose 关掉）'
         : '隐藏思考过程：只显示结论和改了什么，思考时状态行是一个动的小图案（再输一次 /verbose 打开）');
+      return null;
+    }
+    case '/state': {
+      const work = workOf(ctx);
+      if (work.isEmpty()) ui.line('这段会话还没有记下什么。');
+      else { const md = ui.markdown(); md.feed(`${work.card()}\n`); md.finish(); }
       return null;
     }
     case '/usage': {

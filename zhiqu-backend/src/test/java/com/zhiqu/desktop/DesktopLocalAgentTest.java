@@ -131,6 +131,9 @@ class DesktopLocalAgentTest {
         assertTrue(r.get("bridge.badToken").startsWith("badToken:err") && r.get("bridge.badToken").contains("令牌"), r.get("bridge.badToken"));
         assertTrue(r.get("bridge.run").startsWith("run:ok") && r.get("bridge.run").contains("local-1"), r.get("bridge.run"));
         assertTrue(r.get("bridge.result").contains("桥那边好了"), "桥那一轮的结果没到页面：" + r.get("bridge.result"));
+        // 被叫停的那一轮没做完：同一个文件夹里的下一轮开头要带上它的工作状态（第一百三十八轮，取代 progress.md）
+        assertTrue(seen.stream().anyMatch(s -> s[1].startsWith("/api/harness/model/stream") && s[3].contains("BRIDGE")
+                && s[3].contains("上一轮在这个项目里没做完") && s[3].contains("HANG")), "下一轮没接上被叫停那一轮的状态卡");
         assertEquals("false", r.get("bridge.eventLeak"));
         assertEquals("local-1", r.get("bridge.runIds"));
         assertTrue(r.get("bridge.applyEscape").startsWith("applyEscape:err") && r.get("bridge.applyEscape").contains("不能写"),
@@ -323,7 +326,14 @@ class DesktopLocalAgentTest {
         for (JsonNode m : req.path("messages")) if ("tool".equals(m.path("role").asText())) round++;
         String home = tmp.resolve("work/home").toString();
         String reply;
-        if (body.contains("HANG")) {
+        // 记号只认用户最后说的那一句（第一百三十八轮）：上一轮没做完时，下一轮开头会带上状态卡，里面有上一轮用户说过的话 ——
+        // 在整个请求体里找记号的话，被叫停的 HANG 那一轮会把后面每一轮都带成「一直不回」
+        String said = "";
+        for (JsonNode m : req.path("messages")) {
+            String text = m.path("content").isTextual() ? m.path("content").asText() : "";
+            if ("user".equals(m.path("role").asText()) && !text.startsWith("（") && !text.startsWith("【")) said = text;
+        }
+        if (said.contains("HANG")) {
             ex.getResponseHeaders().set("Content-Type", "text/event-stream");
             ex.sendResponseHeaders(200, 0);
             ex.getResponseBody().flush();
@@ -334,11 +344,11 @@ class DesktopLocalAgentTest {
             }
             ex.close();
             return;
-        } else if (body.contains("A-RUN") && round == 0) {
+        } else if (said.contains("A-RUN") && round == 0) {
             reply = call("shell", Map.of("command", "cat " + home + "/secret.txt; echo rc=$?"));
-        } else if (body.contains("A-RUN") && round == 1) {
+        } else if (said.contains("A-RUN") && round == 1) {
             reply = call("write_file", Map.of("path", "new.txt", "content", "draft-content\n"));
-        } else if (body.contains("A-RUN")) {
+        } else if (said.contains("A-RUN")) {
             reply = text("A 做完了");
         } else {
             reply = text("桥那边好了");

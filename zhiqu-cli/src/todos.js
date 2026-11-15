@@ -18,7 +18,8 @@ export function todoSchema() {
       description: [
         '维护这件事的任务清单（整份替换：每次都传完整的清单）。',
         '三步以上的活先列清单再动手：每一项是一件能验证的事（例如「给 login 加限流，并让 auth 测试通过」），不要写「看看代码」这种空话。',
-        '开始做某一项时把它标成 in_progress，做完并验证过才标 completed；发现要多做一步就加进去，不需要的就删掉。',
+        '开始做某一项时把它标成 in_progress，做完并验证过才标 completed（带一句 evidence：怎么验证的）；发现要多做一步就加进去，不需要的就删掉。',
+        '做完的项命令行另外记着，不会因为你重列清单就丢 —— 不要把做完的事再列成没做的。',
         '只有一两步的小事不用列。',
       ].join('\n'),
       parameters: {
@@ -32,6 +33,7 @@ export function todoSchema() {
               properties: {
                 content: { type: 'string', description: '这一步要做成什么' },
                 status: { type: 'string', enum: STATUSES, description: 'pending / in_progress / completed' },
+                evidence: { type: 'string', description: '标 completed 时写一句：怎么验证的（跑了什么、看到什么）。命令行会记着，对话压缩之后你还看得到' },
               },
               required: ['content', 'status'],
             },
@@ -54,7 +56,8 @@ export function parseTodos(args) {
     const content = String(t.content || '').trim();
     if (!content) return { error: `第 ${i + 1} 项没有 content。` };
     if (!STATUSES.includes(t.status)) return { error: `第 ${i + 1} 项的 status 是「${t.status}」—— 只能是 pending / in_progress / completed。` };
-    todos.push({ content: content.length > 300 ? `${content.slice(0, 300)}…` : content, status: t.status });
+    const evidence = typeof t.evidence === 'string' ? t.evidence.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+    todos.push({ content: content.length > 300 ? `${content.slice(0, 300)}…` : content, status: t.status, ...(evidence ? { evidence } : {}) });
   }
   return { todos };
 }

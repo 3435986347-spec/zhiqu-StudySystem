@@ -165,7 +165,7 @@ export async function runTask(payload, { api: suppliedApi } = {}) {
   const store = new SessionStore(workspace);
   const ctx = {
     api, ui, root: workspace, mode: 'auto', maxRounds,
-    local: new LocalTools({ root: workspace, execTimeoutMs: Math.min(120_000, timeoutMs) }),
+    local: withoutPreview(new LocalTools({ root: workspace, execTimeoutMs: Math.min(120_000, timeoutMs) })),
     store, session: store.create({ model: payload.model.label }), messages: [],
     allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
@@ -263,4 +263,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     process.stderr.write('HumanEval worker could not initialize; check the public payload and workspace.\n');
     process.exitCode = 1;
   });
+}
+
+/**
+ * 评测里不给预览截图（第一百三十七轮）：`preview_page` 只在这台机器找得到浏览器时才下发（第一百三十五轮），
+ * 工具表就跟着机器变了 —— 有 Chrome 的电脑上多一个工具，同一份评测配置跑出来不是同一个 agent。
+ */
+function withoutPreview(local) {
+  local.chrome = null;
+  return local;
 }

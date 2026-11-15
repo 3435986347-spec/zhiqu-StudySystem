@@ -60,6 +60,9 @@ public class HarnessModelGateway {
     static final int MAX_MESSAGES = 4_000;
     static final int MAX_TOTAL_CHARS = 8_000_000;
     static final int MAX_TOOLS = 256;
+    /** 图单独限（第一百三十七轮）：一次请求里最多这么多张、每张 base64 最多这么多字（约 8MB 的图）。 */
+    static final int MAX_IMAGES = 40;
+    static final int MAX_IMAGE_CHARS = 11_500_000;
     /** 工具参数进度最多隔这么多字报一次。 */
     static final int PROGRESS_STEP_CHARS = 2_048;
     private static final Set<String> ROLES = Set.of("system", "user", "assistant", "tool");
@@ -147,6 +150,7 @@ public class HarnessModelGateway {
         }
         List<Map<String, Object>> out = new ArrayList<>();
         long chars = 0;
+        int images = 0;
         for (Object item : list) {
             if (!(item instanceof Map<?, ?> m)) {
                 throw new BusinessException("messages 里每一项都要是对象");
@@ -156,7 +160,8 @@ public class HarnessModelGateway {
                 throw new BusinessException("不认识的消息角色：" + role);
             }
             Object content = m.get("content");
-            chars += content == null ? 0 : String.valueOf(content).length();
+            chars += textChars(content);
+            images += imageCount(content);
             Object calls = m.get("tool_calls");
             chars += calls == null ? 0 : String.valueOf(calls).length();
             Object thought = m.get(ReasoningHistory.CONTENT);
@@ -166,7 +171,61 @@ public class HarnessModelGateway {
         if (chars > MAX_TOTAL_CHARS) {
             throw new BusinessException("对话内容太大，请先压缩（/compact）");
         }
+        if (images > MAX_IMAGES) {
+            throw new BusinessException("对话里的图太多（" + images + " 张，最多 " + MAX_IMAGES + " 张），请先压缩（/compact）");
+        }
         return out;
+    }
+
+    /**
+     * 内容里的文字有多少字。<b>图的 base64 不算</b>（第一百三十七轮）：原来对内容块数组直接 String.valueOf 再数长度，
+     * 一张 6.8MB 的截图是 932 万字，一张就超过 {@link #MAX_TOTAL_CHARS}，回「对话内容太大，请先压缩」——
+     * 而压缩压不掉最近那张图，用户每说一次「继续」都原地打转。图另有张数和单张大小的上限。
+     */
+    static long textChars(Object content) {
+        if (content == null) return 0;
+        if (content instanceof String s) return s.length();
+        if (content instanceof List<?> parts) {
+            long n = 0;
+            for (Object p : parts) {
+                if (p instanceof Map<?, ?> part) {
+                    if (isImage(part)) {
+                        int size = imageChars(part);
+                        if (size > MAX_IMAGE_CHARS) {
+                            throw new BusinessException("有一张图太大（约 " + (size / 1_400_000) + "MB），把截图的宽高调小再试");
+                        }
+                    } else if (part.get("text") != null) {
+                        n += String.valueOf(part.get("text")).length();
+                    } else {
+                        n += String.valueOf(part).length();
+                    }
+                } else if (p != null) {
+                    n += String.valueOf(p).length();
+                }
+            }
+            return n;
+        }
+        return String.valueOf(content).length();
+    }
+
+    private static boolean isImage(Map<?, ?> part) {
+        String type = String.valueOf(part.get("type"));
+        return "image_url".equals(type) || "image".equals(type);
+    }
+
+    private static int imageChars(Map<?, ?> part) {
+        Object url = part.get("image_url") instanceof Map<?, ?> u ? u.get("url") : null;
+        if (url == null && part.get("source") instanceof Map<?, ?> src) url = src.get("data");
+        return url == null ? 0 : String.valueOf(url).length();
+    }
+
+    static int imageCount(Object content) {
+        if (!(content instanceof List<?> parts)) return 0;
+        int n = 0;
+        for (Object p : parts) {
+            if (p instanceof Map<?, ?> part && isImage(part)) n++;
+        }
+        return n;
     }
 
     @SuppressWarnings("unchecked")

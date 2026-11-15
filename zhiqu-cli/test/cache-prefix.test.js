@@ -59,13 +59,18 @@ test('清单隔几轮再说一遍：附在工具结果后面（记进历史）�
   assert.match(tools[7], /\[~\] 改接口/);
   assert.match(tools[7], /\[ \] 跑测试/);
 
-  const done = makeCtx({ root, replies: [todos(['改接口', 'completed']), ...reads(100, 12), { text: '好' }] });
+  // 各用各的目录（第一百三十八轮）：同一个项目里上一段会话没做完，新会话开工时会被告知，那一条里有清单
+  const root2 = tmpdir();
+  write(root2, 'a.js', 'x\n'.repeat(300));
+  const done = makeCtx({ root: root2, replies: [todos(['改接口', 'completed']), ...reads(100, 12), { text: '好' }] });
   await runTurn(done, '做');
   assert.ok(!done.messages.some((m) => /## 任务清单/.test(String(m.content))), '做完了不用再说');
   assert.ok(!done.messages.some((m) => /【提醒】\s*$/.test(String(m.content))), '做完了连空的提醒也不该有');
 
   // 中途改过清单：从改的那一轮重新数（第 6 轮改的，第 13 轮才说，不是第 8 轮）
-  const again = makeCtx({ root, replies: [todos(['a', 'in_progress']), ...reads(200, 4), todos(['a', 'in_progress'], ['b', 'pending']), ...reads(210, 7), { text: '清单还没做完？' }] });
+  const root3 = tmpdir();
+  write(root3, 'a.js', 'x\n'.repeat(300));
+  const again = makeCtx({ root: root3, replies: [todos(['a', 'in_progress']), ...reads(200, 4), todos(['a', 'in_progress'], ['b', 'pending']), ...reads(210, 7), { text: '清单还没做完？' }] });
   await runTurn(again, '做');
   const times = again.messages.filter((m) => m.role === 'tool').map((m, i) => (/【提醒】## 任务清单/.test(m.content) ? i : -1)).filter((i) => i >= 0);
   assert.deepEqual(times, [12], `改过清单应当重新数：${times}`);

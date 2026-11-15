@@ -32,6 +32,7 @@ public class IdempotencyService {
      * 第二十二轮起页面在超时之后用同一个键自动重来，锁要是跟着 30 秒到期，重来的那一下就会和还没做完的那一次<b>同时</b>执行，
      * 写两遍。第一百三十四轮整条回答放宽到 15 分钟，锁取 20 分钟覆盖它。代价：用着 Redis 时进程被杀，这个键最多 20 分钟里
      * 回「上一次提交还在处理」（没有 Redis 时锁在进程里，跟着进程一起没了）。
+     * 流式回答不走这把锁（切面只管回 Result 的）：它现在能跑几个小时，不用、也不该拿这个数去盖它（第一百三十八轮，IdempotencyLockSpanTest）。
      */
     static final Duration LOCK_TTL = Duration.ofMinutes(20);
 

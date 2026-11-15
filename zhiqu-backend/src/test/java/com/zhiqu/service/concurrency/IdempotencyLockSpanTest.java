@@ -30,7 +30,7 @@ class IdempotencyLockSpanTest {
     }
 
     @Test
-    @DisplayName("锁比页面一整轮自动重来（每次都等满超时）长，也比服务器上最长的一次写（代码工作区一整轮）长")
+    @DisplayName("锁比页面一整轮自动重来（每次都等满超时）长；流式回答不走这把锁（它能跑几个小时）")
     void 锁够长() throws Exception {
         String js = Files.readString(NodeRunner.API_JS);
         long timeout = number(js, "var REQUEST_TIMEOUT_MS = (\\d+);");
@@ -40,7 +40,22 @@ class IdempotencyLockSpanTest {
         long pageSpan = timeout * (waits.length + 1) + Arrays.stream(waits).sum();
         long lock = IdempotencyService.LOCK_TTL.toMillis();
         assertTrue(lock > pageSpan, "锁 " + lock + "ms 不比页面自动重来的一整轮 " + pageSpan + "ms 长");
-        assertTrue(lock > AiWorkspaceService.STREAM_TIMEOUT_MS, "锁 " + lock + "ms 不比最长的一次写 " + AiWorkspaceService.STREAM_TIMEOUT_MS + "ms 长");
+        // 第一百三十八轮（用户 2026-11-15 定的「改判据」）：原来还比 lock > AiWorkspaceService.STREAM_TIMEOUT_MS。
+        // 那个数第一百三十六轮放到了 4 小时，意思也变了 —— 是「一条没人看的连接最多挂多久」，不再是一次写的上限；
+        // 而流式回答从来不走这把锁（切面只管回 Result 的），拿它比本来就比错了对象。
+        // 所以改成钉住那个前提：回 SseEmitter 的写接口，切面不接。哪天有人让它接了，锁就真的要比几个小时长，这里会红。
+        // 留着的缺口：带锁的写（非流式的那些）最长能跑多久，现在没有一个明确的数可以比。
+        int streaming = 0;
+        for (Class<?> controller : new Class<?>[] {com.zhiqu.controller.AiController.class, com.zhiqu.controller.HarnessController.class}) {
+            for (java.lang.reflect.Method m : controller.getDeclaredMethods()) {
+                if (!org.springframework.web.servlet.mvc.method.annotation.SseEmitter.class.isAssignableFrom(m.getReturnType())) continue;
+                if (m.getAnnotation(org.springframework.web.bind.annotation.PostMapping.class) == null) continue;
+                streaming++;
+                assertTrue(!IdempotentWriteAspect.covers(m), controller.getSimpleName() + "." + m.getName()
+                        + " 是流式的写接口，却走了幂等锁：它能跑到 " + AiWorkspaceService.STREAM_TIMEOUT_MS + "ms，锁只有 " + lock + "ms");
+            }
+        }
+        assertTrue(streaming >= 2, "没找到流式的写接口（扫空了）：" + streaming);
     }
 
     /** 「10 * 60 * 1000」「60_000」这样写的常量。 */

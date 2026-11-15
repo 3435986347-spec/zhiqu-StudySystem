@@ -65,9 +65,11 @@ test('压缩：保留最近一轮原文，更早的变成「摘要 + 确认」�
   const r = await compactMessages(msgs, 8000, async (t) => { seen = t; return '## 目标\n读 a'; });
   assert.match(seen, /【调用 read_file a\.js】/);
   assert.ok(seen.length < big.length, '工具输出在记录里只留开头');
+  // 第一百三十七轮起按「一步」切：模型最后那句「读完了」放得下，也留着；留下的从助手开头，不再垫一句「好的」
   assert.deepEqual(r.messages.map((m) => m.role), ['user', 'assistant', 'user']);
   assert.match(r.messages[0].content, /之前对话的摘要/);
-  assert.equal(r.summarized, 4);
+  assert.equal(r.messages[1].content, '读完了');
+  assert.equal(r.summarized, 3);
   let called = false;
   const one = await compactMessages([{ role: 'user', content: 'x' }], 8000, async () => { called = true; return ''; });
   assert.equal(called, false);

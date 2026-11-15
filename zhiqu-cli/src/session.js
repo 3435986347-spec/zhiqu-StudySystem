@@ -11,6 +11,41 @@ import { monotonic } from './clock.js';
 
 const GITIGNORE = '# zhiqu：个人的聊天记录与本机设置不进仓库；skills/、mcp.json、settings.json 可以提交共享\nsessions/\nsetup.json\nsettings.local.json\n';
 
+/**
+ * 一行一行地读，不把整个文件读成一个字符串（第一百三十七轮）：原来 readFileSync(file, 'utf8')，
+ * 文件超过 512MB（V8 一个字符串的上限）就 ERR_STRING_TOO_LONG —— 用户那段带截图的会话 555MB，/resume 读不回来。
+ * 同步的（load / transcript 的调用方都是同步的）。一行本身多长都行，按块攒。
+ */
+export function eachLine(file, fn, chunkBytes = 1 << 20) {
+  let fd;
+  try { fd = fs.openSync(file, 'r'); } catch { return; }
+  try {
+    const buf = Buffer.allocUnsafe(chunkBytes);
+    let pending = [];
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, chunkBytes, null);
+      if (n <= 0) break;
+      let start = 0;
+      for (;;) {
+        const nl = buf.indexOf(10, start);
+        if (nl < 0 || nl >= n) break;
+        pending.push(Buffer.from(buf.subarray(start, nl)));
+        fn(pending.length === 1 ? pending[0].toString('utf8') : Buffer.concat(pending).toString('utf8'));
+        pending = [];
+        start = nl + 1;
+      }
+      if (start < n) pending.push(Buffer.from(buf.subarray(start, n)));
+    }
+    if (pending.length) fn(Buffer.concat(pending).toString('utf8'));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+const DATA_URL = /^data:([a-z0-9.+/-]+);base64,/i;
+const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+const GONE = { type: 'text', text: '（这张截图的文件已经不在了）' };
+
 export function newSessionId(now = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
@@ -58,17 +93,17 @@ export class SessionStore {
       let mtime;
       try {
         mtime = fs.statSync(file).mtime.toISOString();
-        for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-          if (!line) continue;
+        eachLine(file, (line) => {
+          if (!line) return;
           let e;
-          try { e = JSON.parse(line); } catch { continue; }
+          try { e = JSON.parse(line); } catch { return; }
           if (!createdAt && e.at) createdAt = e.at;
           if (e.type === 'message' && e.message) {
             messages += 1;
             const m = e.message;
             if (!title && m.role === 'user' && typeof m.content === 'string' && !e.origin && !m.origin) title = m.content.trim().slice(0, 40);
           }
-        }
+        });
       } catch { continue; }
       out.push({ id, title: title || '（从记录里找回的会话）', createdAt: createdAt || mtime, updatedAt: mtime, messages, model: null, recovered: true });
     }
@@ -131,9 +166,59 @@ export class SessionStore {
     return path.join(this.sessionsDir, `${id}.jsonl`);
   }
 
+  /** 这段会话的图放哪：sessions/<id>/blobs/（跟着 sessions/ 一起被 .gitignore 忽略） */
+  blobDir(id) {
+    return path.join(this.file(id).slice(0, -'.jsonl'.length), 'blobs');
+  }
+
+  /**
+   * 图不进记录正文（第一百三十七轮）：base64 存成旁边的文件（按内容取名，同一张只存一份），记录里只留引用。
+   * 原来图以 base64 躺在每条消息里，每次压缩又把整份留下的消息（连图）再存一遍 —— 96 张图的会话文件 555MB。
+   */
+  externalize(id, message) {
+    if (!message || !Array.isArray(message.content)) return message;
+    let changed = false;
+    const content = message.content.map((p) => {
+      const url = p && p.type === 'image_url' && p.image_url && typeof p.image_url.url === 'string' ? p.image_url.url : null;
+      const m = url && DATA_URL.exec(url);
+      if (!m) return p;
+      try {
+        const bytes = Buffer.from(url.slice(m[0].length), 'base64');
+        const mediaType = m[1].toLowerCase();
+        const name = `${crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 24)}.${EXT[mediaType] || 'bin'}`;
+        const dir = this.blobDir(id);
+        const file = path.join(dir, name);
+        if (!fs.existsSync(file)) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, bytes); }
+        changed = true;
+        return { type: 'image_ref', blob: name, mediaType, bytes: bytes.length };
+      } catch {
+        return p;   // 存不了就照原样记：宁可文件大，不能丢图
+      }
+    });
+    return changed ? { ...message, content } : message;
+  }
+
+  /** 读回来时把引用换回图；文件不在了换成一句话（结构不变，发给模型不会被拒）。 */
+  hydrate(id, message) {
+    if (!message || !Array.isArray(message.content) || !message.content.some((p) => p && p.type === 'image_ref')) return message;
+    return { ...message, content: message.content.map((p) => {
+      if (!p || p.type !== 'image_ref') return p;
+      if (!/^[a-f0-9]{8,64}\.[a-z0-9]{1,5}$/.test(String(p.blob))) return GONE;
+      try {
+        const bytes = fs.readFileSync(path.join(this.blobDir(id), p.blob));
+        return { type: 'image_url', image_url: { url: `data:${p.mediaType || 'image/png'};base64,${bytes.toString('base64')}` } };
+      } catch {
+        return GONE;
+      }
+    }) };
+  }
+
   append(id, entry) {
     this.ensure();
-    fs.appendFileSync(this.file(id), `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+    let row = entry;
+    if (entry && entry.message) row = { ...entry, message: this.externalize(id, entry.message) };
+    else if (entry && Array.isArray(entry.messages)) row = { ...entry, messages: entry.messages.map((m) => this.externalize(id, m)) };
+    fs.appendFileSync(this.file(id), `${JSON.stringify({ at: new Date().toISOString(), ...row })}\n`);
   }
 
   touch(id, patch = {}) {
@@ -165,18 +250,18 @@ export class SessionStore {
     let goal = null;
     let todos = [];
     let broken = 0;
-    const text = fs.existsSync(this.file(id)) ? fs.readFileSync(this.file(id), 'utf8') : '';
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
+    eachLine(this.file(id), (line) => {
+      if (!line.trim()) return;
       let e;
-      try { e = JSON.parse(line); } catch { broken++; continue; }
+      try { e = JSON.parse(line); } catch { broken++; return; }
       if (e.type === 'message' && e.message) messages.push(e.message);
       else if (e.type === 'compact' && Array.isArray(e.messages)) messages = e.messages;
       else if (e.type === 'mode' && e.mode) mode = e.mode;
       else if (e.type === 'goal') goal = e.goal || null;
       else if (e.type === 'todos' && Array.isArray(e.todos)) todos = e.todos;
-    }
-    return { meta, messages: dropDanglingToolCalls(messages), mode, goal, todos, broken };
+    });
+    // 图只给最后留下来的那几条换回去（中间被压缩掉的不用读）
+    return { meta, messages: dropDanglingToolCalls(messages).map((m) => this.hydrate(id, m)), mode, goal, todos, broken };
   }
 
   /**
@@ -184,18 +269,23 @@ export class SessionStore {
    * （压缩只影响发给模型的那一份；用户翻回去要看的是原话），只在压缩发生的位置留一个标记。
    */
   transcript(id) {
-    const text = fs.existsSync(this.file(id)) ? fs.readFileSync(this.file(id), 'utf8') : '';
     const out = [];
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
+    eachLine(this.file(id), (line) => {
+      if (!line.trim()) return;
       let e;
-      try { e = JSON.parse(line); } catch { continue; }
-      if (e.type === 'message' && e.message) out.push({ kind: 'message', message: e.message, origin: e.origin || null, at: e.at });
+      try { e = JSON.parse(line); } catch { return; }
+      // 给人看的记录不带图的字节（旧记录里图是整段 base64：几百张就是几百 MB，全攒在内存里）
+      if (e.type === 'message' && e.message) out.push({ kind: 'message', message: withoutImageBytes(e.message), origin: e.origin || null, at: e.at });
       else if (e.type === 'compact') out.push({ kind: 'compact', at: e.at });
       else if (e.type === 'mode' && e.mode) out.push({ kind: 'mode', mode: e.mode, at: e.at });
-    }
+    });
     return out;
   }
+}
+
+function withoutImageBytes(message) {
+  if (!Array.isArray(message.content)) return message;
+  return { ...message, content: message.content.map((p) => (p && p.type === 'image_url' ? { type: 'image_ref', blob: null } : p)) };
 }
 
 /**

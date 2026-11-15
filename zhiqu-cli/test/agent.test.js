@@ -30,7 +30,7 @@ test('plan 档只下发读 / 搜 / 查（含远程只读）和 exit_plan_mode；
   const plan = names(makeCtx({ mode: 'plan' }));
   // update_todos 三档都有（第九轮）：只动命令行自己记的清单，不碰文件
   // list_tasks 是读（第二十九轮），update_task_status 直接生效、plan 档不给
-  assert.deepEqual(plan, ['list_files', 'read_file', 'search', 'search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks', 'update_todos', 'exit_plan_mode']);
+  assert.deepEqual(plan, ['list_files', 'read_file', 'search', 'search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks', 'update_todos', 'note', 'exit_plan_mode']);   // note 只写状态卡（第一百三十八轮）
   for (const mode of ['ask', 'auto']) {
     const all = names(makeCtx({ mode }));
     for (const n of ['write_file', 'edit_file', 'run_command', 'create_study_plan', 'propose_memory']) assert.ok(all.includes(n), `${mode} 缺 ${n}`);

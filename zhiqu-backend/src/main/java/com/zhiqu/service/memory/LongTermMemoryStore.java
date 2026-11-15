@@ -1,6 +1,7 @@
 package com.zhiqu.service.memory;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.zhiqu.common.BusinessException;
 import com.zhiqu.entity.UserAiMemory;
 import com.zhiqu.mapper.SysUserMapper;
 import com.zhiqu.mapper.UserAiMemoryMapper;
@@ -8,7 +9,6 @@ import com.zhiqu.service.privacy.SensitiveCryptoService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -93,27 +93,43 @@ public class LongTermMemoryStore {
     @Transactional
     public String appendItems(Long userId, List<String> items) {
         userMapper.lockMemoryOwner(userId);
+        String existing = decrypt(memoryMapper.selectForUpdate(userId));
+        String merged = mergeItems(existing, items);
+        if (!merged.equals(normalize(existing))) {
+            write(userId, merged);
+        }
+        return merged;
+    }
+
+    /**
+     * 把条目并进现有全文（纯函数，判据直接喂）。<b>放不下就拒绝，不截断</b>（第一百三十七轮）：
+     * 原来合并后 {@code substring(0, 2000)} —— 新条目排在最后，满了以后被截掉的正是用户刚勾选确认的那几条
+     * （还可能截在半句上），接口照样回成功、草稿标成「已确认」。
+     */
+    static String mergeItems(String existing, List<String> items) {
         Set<String> lines = new LinkedHashSet<>();
-        for (String line : decrypt(memoryMapper.selectForUpdate(userId)).split("\\R")) {
+        for (String line : (existing == null ? "" : existing).split("\\R")) {
             if (!line.isBlank()) {
                 lines.add(line.strip());
             }
         }
-        List<String> added = new ArrayList<>();
+        int before = lines.size();
         for (String item : items) {
             if (item == null || item.isBlank()) {
                 continue;
             }
-            String line = item.strip().startsWith("-") ? item.strip() : "- " + item.strip();
-            if (lines.add(line)) {
-                added.add(line);
-            }
+            lines.add(item.strip().startsWith("-") ? item.strip() : "- " + item.strip());
         }
-        String merged = limit(String.join("\n", lines));
-        if (!added.isEmpty()) {
-            write(userId, merged);
+        String merged = String.join("\n", lines);
+        if (lines.size() > before && merged.length() > MAX_LENGTH) {
+            throw new BusinessException("长期记忆放不下了：现在加上这几条一共 " + merged.length() + " 字，上限 " + MAX_LENGTH
+                    + " 字。先到「设置 → 长期记忆」里删掉或合并一些，再来确认；这几条草稿还留着，一条都没写进去。");
         }
         return merged;
+    }
+
+    private static String normalize(String text) {
+        return mergeItems(text, List.of());
     }
 
     private String limit(String value) {

@@ -144,6 +144,20 @@ public class ChatRunHub {
         }
 
         /**
+         * 发消息的那条连接（POST /ai/chat/stream）：这一轮一开就挂上，还没有事件可重放。
+         *
+         * <p>第一百三十八轮补的：第一百三十三轮把事件改成「先记进这里、再推给挂着的连接」，却没有把发消息的那条连接挂上来 ——
+         * 它从头到尾一帧都收不到（200、正文 0 字节），页面只能等轮询。{@code ModelMisbehaviorIntegrationTest} 12 条因此红着。
+         * 不在这里注册 onCompletion / onTimeout：那条连接上已经有心跳注册过的回调，再注册会把它顶掉；
+         * 连接断了由 {@link #send} 失败时摘掉。
+         */
+        public synchronized void adopt(SseEmitter emitter) {
+            if (!finished && attached == null) {
+                attached = emitter;
+            }
+        }
+
+        /**
          * 把 {@code after} 之后的事件重放一遍，然后挂上去。
          *
          * <p>重放和挂载在同一把锁里：中间插进来的事件要么在重放里、要么走直播，不会两头都漏。

@@ -12,7 +12,7 @@ import { StringDecoder } from 'node:string_decoder';
 import vm from 'node:vm';
 import path from 'node:path';
 import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_BYTES } from './guard.js';
-import { findChrome, screenshotPage } from './preview.js';
+import { findChrome, forContext, screenshotPage } from './preview.js';
 import { checkLocalCommand, describeRefusal, LOCAL_DEFAULT_COMMANDS, ExecRefusal, gitLaunch } from './execrules.js';
 import { planLaunch, resolveOnPath, runProcess } from './exec.js';
 import { browserInSandbox, describeBoundary, looksBlocked, plainLaunch, sandboxedLaunch, WORKSPACE_WRITE } from './sandbox.js';
@@ -338,8 +338,11 @@ export class LocalTools {
       // 模型可以单独申请更长（15–300 秒）；不给就用默认的 90 秒
       timeoutMs: args.timeout_seconds ? Math.min(300, Math.max(15, Number(args.timeout_seconds) || 0)) * 1000 : undefined });
     if (shot.error) return { error: shot.error };
-    this.pendingImage = shot;
-    return { content: `已经把 ${rel} 渲染成一张图（${shot.width}×${shot.height}，${Math.round(shot.bytes / 1024)}KB），就是下面这张。`,
+    // 进上下文之前压小（第一百三十七轮）；压不了又太大的照实说
+    const small = forContext(shot);
+    if (small.error) return { error: small.error };
+    this.pendingImage = small;
+    return { content: `已经把 ${rel} 渲染成一张图（${shot.width}×${shot.height}，${Math.round(shot.bytes / 1024)}KB${small.originalBytes ? `，给你看的是压小到 ${Math.round(small.bytes / 1024)}KB 的 JPEG` : ''}），就是下面这张。`,
       summary: `已截图 ${shot.width}×${shot.height}` };
   }
 

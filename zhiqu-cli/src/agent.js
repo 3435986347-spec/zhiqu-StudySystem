@@ -18,13 +18,16 @@ import { patchFiles } from './tools/patch.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
 import { loadSkill, loadSkillSchema } from './skills.js';
 import { buildSystemMessage, environmentBlock, today } from './prompt.js';
-import { compactMessages, needsCompaction, SUMMARY_INSTRUCTIONS } from './compact.js';
+import { compactMessages, needsCompaction, shedLargest, SUMMARY_INSTRUCTIONS } from './compact.js';
 import { dropDanglingToolCalls } from './session.js';
 import { ApiError } from './api.js';
 import { sleep } from './http.js';
 import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todoSchema, unfinished } from './todos.js';
 import { spillLongInput } from './longinput.js';
-import { progressBlock, readProgress, writeProgress } from './progress.js';
+import fs from 'node:fs';
+import { stat as diffStat } from './render/diff.js';
+import { firstChangedLine, listFiles, NOTE_TOOL, noteSchema, statePath, WorkState } from './state.js';
+import { estimateTokens } from './compact.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
@@ -175,6 +178,8 @@ export function toolset(ctx) {
   }
   if (ctx.skills && ctx.skills.length) out.push({ schema: loadSkillSchema(), kind: 'skill' });
   out.push({ schema: todoSchema(), kind: 'todo' });   // 三档都有：plan 档列计划正用得上
+  // 往工作状态里记一条（第一百三十八轮）：只写状态卡，碰不到工作区，所以三档都给；子 agent 的状态不留，不给
+  if (!ctx.subagent) out.push({ schema: noteSchema(), kind: 'note' });
   if (ctx.mcp) {
     const mcp = ctx.mcp.schemas({ readOnlyOnly: plan });
     if (mcp.length && mcpOverBudget(ctx, mcp)) {
@@ -307,7 +312,7 @@ async function callModel(ctx, tools, signal, opts = {}) {
   }
 }
 
-async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DEFAULT_MAX_TOKENS, messages } = {}) {
+async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DEFAULT_MAX_TOKENS, messages, effort } = {}) {
   const ui = ctx.ui;
   // 安静模式：不边收边打（收完才知道这是结论还是调工具前的思考 —— 见 runTurn），状态行是「思考中」
   const hush = render && quiet(ctx);
@@ -326,7 +331,9 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     tools: tools.map((t) => t.schema),
     maxTokens,
   };
-  if (ctx.effort) body.reasoning = ctx.effort;   // 不说就听服务端的默认
+  // 不说就听服务端的默认。opts.effort：这一次单独定（摘要那一次明说不思考，不跟用户的档位，见 compactNow）
+  const reasoning = effort !== undefined ? effort : ctx.effort;
+  if (reasoning) body.reasoning = reasoning;
   let thought = 0;
   let thinkingFrom = null;
   let thinkingMs = 0;
@@ -556,6 +563,7 @@ export function describeCall(name, args) {
     case 'exit_plan_mode': return '提交计划';
     case 'spawn_agent': case 'wait_agent': case 'send_input': case 'close_agent': return describeAgentCall(name, args);
     case TODO_TOOL: return '更新任务清单';
+    case NOTE_TOOL: return `记一条：${String(args.text || '').replace(/\s+/g, ' ').slice(0, 60)}`;
     case GOAL_TOOL: return `目标状态：${args.status}`;
     case 'search_wiki': return wikiSearchLabel(args);
     case 'read_wiki_page': return `读知识库「${args.title}」`;
@@ -814,6 +822,7 @@ async function runTool(ctx, call, offered, signal) {
   if (hush && QUIET_TOOLS.has(name) && !ctx.judged && ctx.ui && ctx.ui.interactive) ctx.ui.note(`· ${said}`);
   ui.step(said);
   ctx.steps.push(said);
+  if (name !== NOTE_TOOL && name !== TODO_TOOL) workOf(ctx).step(said);
   if (ctx.turnStats && QUIET_TOOLS.has(name)) {
     const key = name === 'read_file' || name === 'read_wiki_page' ? 'read' : name === 'list_files' ? 'list' : 'search';
     ctx.turnStats[key] += 1;
@@ -834,6 +843,8 @@ async function runTool(ctx, call, offered, signal) {
       const r = name === 'list_files' ? local.listFiles(args) : name === 'read_file' ? local.readFile(args, { maxChars: cap }) : local.search(args);
       if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
       ui.result(r.summary);
+      // 刚才在看哪一段：压缩之后把它还回去（第一百三十八轮）
+      if (name === 'read_file' && typeof args.path === 'string') workOf(ctx).focus(args.path.replace(/^\.\//, ''), args.offset, args.limit);
       // list_files 的头一行是「src：」这样的说明，search 没有（review：原来一律去掉头一行，搜索的第一条命中没了）
       stepNote(ctx, () => ({ summary: r.summary, detail: name === 'read_file' ? { path: String(args.path || '') }
         : listDetail(name === 'list_files' ? r.content.split('\n').slice(1).join('\n') : r.content) }));
@@ -858,7 +869,7 @@ async function runTool(ctx, call, offered, signal) {
         summary: `+${r.added} -${r.removed}${isDraft(local) ? '（草稿）' : ''}${r.syntax ? '，语法错误' : ''}`, ok: !r.syntax, detail: writeDetail(prep, r) }));
       ui.result(ui.paint.green(`✓ ${r.content.split('（')[0]}  +${r.added} -${r.removed}`));
       if (r.syntax) ui.result(`语法错误：${r.syntax.split('\n')[0]}`, false);
-      return r.content;
+      return withChurn(r.content, [workOf(ctx).edited(prep.rel, { creating: Boolean(prep.creating), added: r.added, removed: r.removed, line: firstChangedLine(prep.oldText, prep.newText) })]);
     }
     if (name === 'apply_patch') {
       const spinKey = `patch:${String(args.patch || '').slice(0, 300)}`;
@@ -877,7 +888,10 @@ async function runTool(ctx, call, offered, signal) {
       stepNote(ctx, () => ({ summary: `${r.summary}${isDraft(local) ? '（草稿）' : ''}${r.syntax ? '，语法错误' : ''}`, ok: !r.syntax, detail: patchDetail(prep) }));
       ui.result(ui.paint.green(`✓ ${r.summary}`));
       if (r.syntax) ui.result(`语法错误：${r.syntax.split('\n')[0]}`, false);
-      return r.content;
+      return withChurn(r.content, prep.writes.map((w) => {
+        const st = diffStat(w.oldText || '', w.newText || '');
+        return workOf(ctx).edited(w.rel, { creating: Boolean(w.creating), added: st.added, removed: st.removed, line: firstChangedLine(w.oldText, w.newText) });
+      }));
     }
     if (name === 'delete_file') {
       const prep = local.prepareDelete(args);
@@ -1035,7 +1049,10 @@ async function runTool(ctx, call, offered, signal) {
   if (kind === 'todo') {
     const r = parseTodos(args);
     if (r.error) { ui.result(r.error, false); return r.error; }
-    ctx.todos = r.todos;
+    // 清单记账（第一百三十八轮）：做完的项不会因为模型重列清单就丢
+    const ledger = workOf(ctx).setTodos(r.todos);
+    if (ledger.justCompleted.length) ctx.todoJustCompleted = true;
+    ctx.todos = r.todos.map((t) => ({ content: t.content, status: t.status }));
     ctx.roundsSinceTodo = 0;
     const [head, ...items] = todoLines(r.todos, ui.paint);
     ui.result(head);
@@ -1043,7 +1060,14 @@ async function runTool(ctx, call, offered, signal) {
     stepNote(ctx, { summary: head, detail: { todos: r.todos.slice(0, 30).map((t) => ({ content: String(t.content).slice(0, 300), status: t.status })) } });
     for (const l of items) ui.line(`  ${l}`);
     if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'todos', todos: ctx.todos });
-    return todoReply(r.todos);
+    return todoReply(r.todos) + ledgerNote(ledger);
+  }
+  if (kind === 'note') {
+    const r = workOf(ctx).note(args);
+    if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
+    ui.result(r.summary);
+    stepNote(ctx, { summary: r.summary, title: '记一条' });
+    return r.content;
   }
   if (kind === 'goal') {
     const reply = applyGoalUpdate(ctx.goal, args);
@@ -1071,26 +1095,117 @@ export function prefetchRemoteReads(ctx, calls, offered, signal) {
   }
 }
 
+// ── 工作状态卡（第一百三十八轮，见 state.js）──────────────────────────────
+
+/**
+ * 这段会话的状态卡。跟着会话走：换了会话（/new、/resume）就换一份。
+ * 子 agent 的不留（它的进度由父 agent 的步骤代表），给它一份只在内存里的。
+ */
+export function workOf(ctx) {
+  if (ctx.subagent) {
+    if (!ctx.subWork || ctx.subWorkFor !== ctx.subagent.id) { ctx.subWork = new WorkState(null); ctx.subWorkFor = ctx.subagent.id; }
+    return ctx.subWork;
+  }
+  const file = statePath({ store: ctx.store, session: ctx.session, root: ctx.root });
+  if (!ctx.work || ctx.workFile !== file) {
+    let work = WorkState.open(file);
+    // 没有会话记录的那一份（桌面 / 网页每一轮是新进程，同一个文件）：上一件事做完了、或者太旧了，就从头记
+    if (!ctx.store && !work.inherited) work = new WorkState(file);
+    ctx.work = work;
+    ctx.workFile = file;
+  }
+  return ctx.work;
+}
+
+const churnReminder = (w) => `\`${w.rel}\` 第 ${w.from}–${w.to} 行这一段，这段会话里已经改了 ${w.count} 回。停一下：这一处要改成什么样才算对？`
+  + '写下一条能检查的标准（拿不准就问用户），照它验一次；如果是这条路走不通，用 note 记一条 dead_end 再换做法，不要接着一版一版地试。';
+function withChurn(content, warns) {
+  const hit = warns.filter(Boolean);
+  return hit.length ? `${content}${hit.map((w) => `\n\n【提醒】${churnReminder(w)}`).join('')}` : content;
+}
+
+/** 清单记账之后补给模型的话：做完的还记着、这一项做过。 */
+function ledgerNote(ledger) {
+  const lines = [];
+  if (ledger.forgotten.length) {
+    lines.push(`已经做完的 ${ledger.forgotten.length} 项不在这份清单里，命令行还记着，不用重做：${ledger.forgotten.slice(-6).map((x) => `「${x.content}」`).join('、')}。`);
+  }
+  for (const r of ledger.redo.slice(0, 3)) {
+    lines.push(`「${r.item}」这一项之前标过完成${r.done.evidence ? `（验证：${r.done.evidence}）` : ''}。真要重做就先说清为什么上次不算数；只是重列清单的话把它标成 completed。`);
+  }
+  return lines.length ? `\n${lines.join('\n')}` : '';
+}
+
+/** 压缩之后还回去的代码最多占窗口的多少、最多几段 */
+export const RESTORE_SHARE = 0.15;
+const RESTORE_HEADER = '（对话刚压缩过。下面是命令行记着的工作状态，和压缩之前你正在看的代码现在的内容 —— 接着做，不用从头再读一遍。）';
+
+/**
+ * 压完还回去（第一百三十八轮）：状态卡 + 压缩前最后在看 / 在改的那几段代码的当前内容，作为命令行自己的一条消息追加进历史。
+ * 原来压完只剩摘要：用户那段会话每次压缩之后要先重新看 12 步才第一次动手。
+ */
+export function restoreAfterCompaction(ctx, window) {
+  const work = workOf(ctx);
+  if (work.isEmpty()) return false;
+  const parts = [RESTORE_HEADER, '', work.card()];
+  let budget = Math.floor(window * RESTORE_SHARE);
+  const shown = [];
+  for (const f of [...work.data.focus].reverse()) {
+    if (budget <= 200 || !ctx.local || !ctx.local.readFile) break;
+    let r;
+    try { r = ctx.local.readFile({ path: f.path, offset: f.from, limit: f.to - f.from + 1 }, { maxChars: 400_000 }); } catch { continue; }
+    // 放不下的那一段整段不给（不给半截：模型会以为看全了）
+    if (!r || r.error || !r.content) continue;
+    const cost = estimateTokens(r.content);
+    if (cost > budget) continue;
+    budget -= cost;
+    shown.unshift(r.content);
+  }
+  if (shown.length) parts.push('', '### 压缩之前正在看的代码（现在的内容）', ...shown);
+  record(ctx, { role: 'user', content: parts.join('\n') }, 'system');
+  return true;
+}
+
 // ── 压缩 ────────────────────────────────────────────────────────────────
+
+export const SUMMARY_MAX_TOKENS = 12_000;
+export const SUMMARY_EFFORT = 'instant';
+/** 连着这么多轮都在压缩就停下（压不动了：摘要一直写不成，或者留下的那一步自己就超了）。原来一轮一压、原地转 */
+export const COMPACT_STREAK_STOP = 3;
+/** 一项清单刚做完时，占用过了这么多就顺势压缩 */
+export const BOUNDARY_THRESHOLD = 0.6;
 
 export async function compactNow(ctx, signal, { manual = false } = {}) {
   const ui = ctx.ui;
   const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
   if (manual) ui.step('压缩对话');
+  let announced = false;
   const result = await compactMessages(ctx.messages, window, async (transcriptText) => {
     // 真要调模型压摘要时才说：自动触发、又只有最近一轮可留的时候，这里一句话都不该打
-    if (!manual) {
+    if (!manual && !announced) {
+      announced = true;
       ui.step(`对话快到上下文上限（窗口 ${window} token 的 80%），把较早的部分压成摘要`);
       // 用户 2026-09-28：1M 的模型被按默认 64000 算、压缩了两次 —— 没填窗口时这里要说出来
       if (ctx.model && !ctx.model.contextWindowTokens) ui.note('    （这个模型没填上下文窗口，按默认算的；它实际更大的话用 /window 设，比如 /window 1m）');
     }
     // 摘要的输出上限随窗口走：窗口 8000 的模型写一份 4096 token 的摘要，压完比压之前还挤，下一轮又要压
+    // 明说不思考（第一百三十七轮）：原来跟着用户的档位，/effort max 时模型把输出额度想完、正文是空的，
+    // 这里就把「（摘要为空）」写进历史、把原文全换掉（用户那段会话 105 次里 11 次）。空不空由 compactMessages 校验，这里照实交。
+    // 上限 4096 → 12000：1M 的窗口里几个小时的活，3000 字写不下
     const r = await callModel(ctx, [], signal, {
-      render: false, maxTokens: Math.max(512, Math.min(4096, Math.floor(window * 0.12))),
+      render: false, maxTokens: Math.max(512, Math.min(SUMMARY_MAX_TOKENS, Math.floor(window * 0.12))), effort: SUMMARY_EFFORT,
       messages: [{ role: 'system', content: SUMMARY_INSTRUCTIONS }, { role: 'user', content: transcriptText }],
     });
-    return r.text.trim() || '（摘要为空）';
+    return r.text.trim();
   });
+  if (result.failed) {
+    ui.warn(`这次摘要没写成（${result.failed}），没有压缩${result.elided ? `，只省略了 ${result.elided} 段旧的工具输出` : ''}`);
+    if (result.elided) {
+      ctx.messages = result.messages;
+      if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages, before: result.before, after: result.after });
+    }
+    return result;
+  }
   if (!result.summarized && !result.elided) {
     if (manual) ui.result('没什么可压缩的（只有最近的一两轮）');
     return result;
@@ -1101,6 +1216,7 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
     ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages, before: result.before, after: result.after });
   }
   ui.result(`压掉 ${result.summarized} 条${result.elided ? `、省略 ${result.elided} 段旧的工具输出` : ''}，约 ${result.before} → ${result.after} token`);
+  if (result.summarized) restoreAfterCompaction(ctx, window);
   return result;
 }
 
@@ -1125,12 +1241,17 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   if (!origin) ctx.request = { text: content };
   // 上一轮没做完留下的进度（第一百三十六轮）：桌面版每一轮都是新进程，光靠 history 里那句结论
   // 不知道临时脚本在哪、读到第几个文件 —— 于是每次重建一遍、从头再看一遍。开工前把它接上。
-  if (!origin && !ctx.subagent && ctx.root && !ctx.progressInjected) {
-    const previous = readProgress(ctx.root);
-    if (previous) {
-      record(ctx, { role: 'user', content: progressBlock(previous) }, 'system');
-      ctx.progressInjected = true;
-    }
+  // 第一百三十八轮起接的是状态卡（清单、做完的、定过的事、改过和新建的文件、最近几步），进程崩了、被杀了它也在。
+  const work = workOf(ctx);
+  if (!origin && !ctx.subagent && !ctx.progressInjected) {
+    ctx.progressInjected = true;
+    const carried = inheritedCard(ctx, work);
+    if (carried) record(ctx, { role: 'user', content: carried }, 'system');
+  }
+  if (!ctx.subagent) {
+    work.beginTurn(origin ? null : content);
+    // 开工时的文件清单：结束时比出这一句新建的文件（shell 建的，工具那边看不到）
+    if (ctx.root && ctx.filesAtStart === undefined) ctx.filesAtStart = listFiles(ctx.root);
   }
   record(ctx, { role: 'user', content }, origin);
   if (ctx.session && ctx.store && !ctx.session.title) {
@@ -1143,6 +1264,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   let continuations = 0;
   let nudged = false;
   let claimChecked = false;
+  let compactStreak = 0;
   ctx.turnStats = { read: 0, search: 0, list: 0 };
   ctx.readStreak = 0;
   ctx.readWindows = new Map(); ctx.readHinted = new Set();
@@ -1156,7 +1278,28 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   for (let round = 0; round < maxRounds; round++) {
     if (signal && signal.aborted) break;
     const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
-    if (needsCompaction(systemText(ctx), ctx.messages, window)) await compactNow(ctx, signal);
+    // 挑时机（第一百三十八轮）：过了六成、又正好有一项清单刚标完成，就在这里压 —— 这时的摘要最干净；否则等到八成
+    const boundary = ctx.todoJustCompleted && needsCompaction(systemText(ctx), ctx.messages, window, BOUNDARY_THRESHOLD);
+    ctx.todoJustCompleted = false;
+    if (boundary || needsCompaction(systemText(ctx), ctx.messages, window)) {
+      await compactNow(ctx, signal);
+      // 压过了还超：把最大的几条换成占位，不留到下一轮再压一次（第一百三十七轮）
+      let shed = 0;
+      while (shed < 8 && needsCompaction(systemText(ctx), ctx.messages, window) && shedLargest(ctx.messages) > 0) shed++;
+      if (shed) {
+        ctx.ui.note(`· 压缩之后还是放不下：把最大的 ${shed} 条内容从上下文里拿掉了（需要的话模型会重新读 / 重新跑）`);
+        if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages });
+      }
+      compactStreak++;
+      if (compactStreak >= COMPACT_STREAK_STOP) {
+        stalled = true;
+        finalText = `已经停下：连着 ${compactStreak} 轮都在压缩对话，还是放不下（上下文窗口 ${window} token）。可以 /compact 手动压一次、换个窗口更大的模型，或者开一段新会话接着做。`;
+        ctx.ui.warn(finalText);
+        break;
+      }
+    } else {
+      compactStreak = 0;
+    }
     // 清单不在历史里了（压缩掉了、接回一段压缩过的会话）：补一条
     if (unfinished(ctx.todos).length && !todoInHistory(ctx.messages)) {
       record(ctx, { role: 'user', content: `（任务清单里还有 ${unfinished(ctx.todos).length} 项没做完，对话压缩过，再说一遍）\n\n${todoBlock(ctx.todos)}` }, 'system');
@@ -1310,19 +1453,45 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   }
   if (signal && signal.aborted) ctx.messages = dropDanglingToolCalls(ctx.messages);
   if (ctx.store && ctx.session) ctx.store.touch(ctx.session.id, { messages: ctx.messages.length, model: ctx.model ? ctx.model.label : null });
-  // 这一轮做到哪（第一百三十六轮）：没做完就留在项目里，下一轮开工接上；正常收尾就把旧笔记清掉。
-  // 只记真发生了的（改过的文件、做过的步骤），不让模型自己编。子 agent 不写（它的进度由父的步骤代表）。
-  if (!ctx.subagent && ctx.root) {
+  // 这一句做到哪（第一百三十六轮起记；第一百三十八轮改成状态卡）：正常说完记 done，没说完记 unfinished，下一次开工接上。
+  // 进程直接没了的话状态停在 running —— 一样算没做完。子 agent 不记。
+  if (!ctx.subagent) {
     const said = String(finalText || '').trim();
     const finished = !stalled && !exhausted && !(signal && signal.aborted) && Boolean(said);
-    writeProgress(ctx.root, {
-      done: finished,
-      files: [...(ctx.changedFiles || [])],
-      steps: ctx.steps || [],
-      lastStep: (ctx.steps && ctx.steps.length) ? ctx.steps[ctx.steps.length - 1] : '',
-    });
+    if (ctx.root && ctx.filesAtStart) {
+      const now = listFiles(ctx.root);
+      if (now) work.addCreated([...now].filter((f) => !ctx.filesAtStart.has(f)).slice(0, 80));
+    }
+    work.endTurn(finished, { discardWhenDone: !ctx.store });
+    // 旧版留下的进度笔记：状态卡接手了，清掉免得两份说法
+    if (ctx.root) { try { fs.rmSync(path.join(ctx.root, '.zhiqu', 'progress.md'), { force: true }); } catch { /* 忽略 */ } }
   }
   return { finalText, stalled, exhausted, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats } };
+}
+
+/**
+ * 开工时要不要接上没做完的活：返回要追加的那条消息（没有就是 null）。
+ *   - 没有会话记录的那一份（桌面 / 网页，每一轮是新进程）：同一个状态文件里上一轮没做完 → 接上，清单也带回来；
+ *   - 命令行新开的会话：看这个项目里上一段会话的状态卡，没做完（包括进程没正常退出）就说一声。只是告诉它，不替它接管那段会话。
+ */
+function inheritedCard(ctx, work) {
+  const tail = '接着做的话：先看一眼上面这些文件现在长什么样（读一次就够），不要从头再通读整个项目，也不要重建已经有的临时文件。';
+  if (!ctx.store) {
+    if (!work.inherited || work.isEmpty()) return null;
+    work.inherited = false;
+    if (!(ctx.todos && ctx.todos.length) && work.data.todos.length) ctx.todos = work.data.todos.map((t) => ({ ...t }));
+    return `（上一轮在这个项目里没做完${work.data.turn.status === 'running' ? '：进程没正常结束' : ''}。下面是命令行记着的工作状态。）\n\n${work.card()}\n\n${tail}`;
+  }
+  if (!work.isEmpty() || !ctx.session) return null;
+  let sessions = [];
+  try { sessions = ctx.store.list(); } catch { return null; }
+  for (const s of sessions) {
+    if (s.id === ctx.session.id) continue;
+    const prev = WorkState.open(statePath({ store: ctx.store, session: s, root: ctx.root }));
+    if (!prev.inherited || prev.isEmpty()) return null;   // 只看最近的那一段
+    return `（上一段会话「${s.title || '无标题'}」没做完${prev.data.turn.status === 'running' ? '：进程没正常退出' : ''}。下面是它留下的工作状态；用户这次说的要是同一件事就接着做，不是就不用管。/resume 可以把那段会话整个接回来。）\n\n${prev.card()}\n\n${tail}`;
+  }
+  return null;
 }
 
 /** 在会话历史后面追加一问一答，不走模型（/review 的结论放回会话，才能接着说「修第 1 条」）。历史只追加。 */

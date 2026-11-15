@@ -35,7 +35,9 @@ class StepNoteRenderingTest {
         String js = SourceText.pageModule("ai-assistant.js");   // 第三十七轮起 AI 助手是模块
         // 第一百三十三轮：事件落地收进了 makeStreamApplier（发送和「回来接上」共用一份）
         String applier = SourceText.functionBody(js, "function makeStreamApplier(st)");
-        assertTrue(applier.contains("event === 'agent.step.note') { if (st.sameNb()) addAgentStepNote(data); }"),
+        // 提交 051b084（桌面本机任务切回来能接上）起步骤记在这一轮自己的 st.agentSteps 上，分派的写法跟着变了；
+        // 这条判据从那时红到第一百三十八轮才对上。钉的还是同一件事：这个事件要交到 addAgentStepNote 手里
+        assertTrue(applier.contains("if (event === 'agent.step.note') addAgentStepNote(data, st.agentSteps, st.sameNb());"),
                 "流式处理里没有把 agent.step.note 交给 addAgentStepNote —— 叙述到了前端就被丢掉");
         int at = js.indexOf("function renderSteps(");
         assertTrue(at > 0, "找不到 renderSteps");

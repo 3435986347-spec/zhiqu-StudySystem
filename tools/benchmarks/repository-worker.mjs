@@ -238,7 +238,7 @@ export async function runRepositoryTask(payload, { api: suppliedApi } = {}) {
   const instructions = { ...loaded, files: loaded.files.filter((file) => file.file.startsWith(`${baseRepo}${path.sep}`)),
     skipped: loaded.skipped.filter((file) => file.startsWith(`${baseRepo}${path.sep}`)) };
   const ctx = { api, ui, root: baseRepo, mode: 'auto', maxRounds: limits.maxRounds,
-    local: new LocalTools({ root: baseRepo, execTimeoutMs: limits.execTimeoutMs }),
+    local: withoutPreview(new LocalTools({ root: baseRepo, execTimeoutMs: limits.execTimeoutMs })),
     store, session: store.create({ model: model.label || model.modelName }), messages: [],
     allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0 }, changedFiles: new Set(), todos: [],
@@ -308,4 +308,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     process.stderr.write('Repository worker could not initialize; check the public payload and exported workspace.\n');
     process.exitCode = 1;
   });
+}
+
+/**
+ * 评测里不给预览截图（第一百三十七轮）：`preview_page` 只在这台机器找得到浏览器时才下发（第一百三十五轮），
+ * 工具表就跟着机器变了 —— 有 Chrome 的电脑上多一个工具，同一份评测配置跑出来不是同一个 agent。
+ */
+function withoutPreview(local) {
+  local.chrome = null;
+  return local;
 }

@@ -1,0 +1,10 @@
+{
+  "_": "命令行 compact.js 的 estimateMessage 和服务器 HarnessContext.estimateMessage 用同一份样例对拍（第一百三十七轮）：两边各抄了一份公式，只修了一份，图在客户端被按 base64 字数算了几个月。只放 content（tool_calls 两边序列化不一样，不对拍）。IMAGE_B64_CHARS 是把图的 url 换成这么多个 A。",
+  "cases": [
+    { "name": "中文", "message": { "role": "user", "content": "把画面做成白天的" }, "tokens": 12 },
+    { "name": "英文", "message": { "role": "tool", "content": "abcdefg" }, "tokens": 6 },
+    { "name": "空", "message": { "role": "assistant", "content": "" }, "tokens": 4 },
+    { "name": "一张 1MB 的图 + 一句话", "imageB64Chars": 1400000, "message": { "role": "user", "content": [ { "type": "text", "text": "看图" }, { "type": "image_url", "image_url": { "url": "data:image/png;base64," } } ] }, "tokens": 1206 },
+    { "name": "两张图", "imageB64Chars": 9000000, "message": { "role": "user", "content": [ { "type": "image_url", "image_url": { "url": "data:image/png;base64," } }, { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64," } } ] }, "tokens": 2404 }
+  ]
+}

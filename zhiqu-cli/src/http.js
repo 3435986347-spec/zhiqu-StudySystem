@@ -49,7 +49,14 @@ function open(urlString, { method = 'GET', headers = {}, body, signal }) {
   });
   if (signal) {
     if (signal.aborted) req.destroy(abortError(signal));
-    else signal.addEventListener('abort', () => req.destroy(abortError(signal)), { once: true });
+    else {
+      // 用完要摘（第一百三十七轮）：一句话从头到尾是同一个 signal，监听攥着 req，req 的回调又攥着整份请求体 ——
+      // 不摘的话每发一次请求就留住一份（实测 4MB 的请求体留住 4.00MB）。去掉轮数上限以后一句话能跑几个小时，
+      // 用户那段会话跑到 8.4 小时堆满 4GB 就是这么来的。
+      const onAbort = () => req.destroy(abortError(signal));
+      signal.addEventListener('abort', onAbort, { once: true });
+      req.once('close', () => signal.removeEventListener('abort', onAbort));
+    }
   }
   if (payload) req.write(payload);
   req.end();
@@ -122,8 +129,10 @@ export function openStream(url, { method = 'POST', headers, body, signal, idleTi
 }
 
 export const sleep = (ms, signal) => new Promise((resolve, reject) => {
-  const t = setTimeout(resolve, ms);
-  if (signal) signal.addEventListener('abort', () => { clearTimeout(t); reject(abortError(signal)); }, { once: true });
+  if (!signal) { setTimeout(resolve, ms); return; }
+  const onAbort = () => { clearTimeout(t); reject(abortError(signal)); };
+  const t = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, ms);
+  signal.addEventListener('abort', onAbort, { once: true });
 });
 
 /** Retry-After（秒）→ 毫秒；没给就用默认。 */
