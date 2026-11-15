@@ -18,7 +18,7 @@ import { patchFiles } from './tools/patch.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
 import { loadSkill, loadSkillSchema } from './skills.js';
 import { buildSystemMessage, environmentBlock, today } from './prompt.js';
-import { compactMessages, needsCompaction, shedLargest, SUMMARY_INSTRUCTIONS } from './compact.js';
+import { clearStale, compactMessages, minClear, needsCompaction, shedLargest, softLimit, SUMMARY_INSTRUCTIONS } from './compact.js';
 import { dropDanglingToolCalls } from './session.js';
 import { ApiError } from './api.js';
 import { sleep } from './http.js';
@@ -1136,6 +1136,30 @@ function ledgerNote(ledger) {
   return lines.length ? `\n${lines.join('\n')}` : '';
 }
 
+/**
+ * 先清（第一百三十九轮，见 compact.js 的 clearStale）：占用过了软上限，把旧的工具输出、旧截图成批换成占位。不调模型。
+ * 清掉的命令输出另存一份（有会话记录时），占位里写着路径 —— 命令不一定能重跑。
+ */
+export function clearNow(ctx, window) {
+  const system = estimateTokens(systemText(ctx));
+  let n = 0;
+  const canSpill = ctx.store && ctx.session && ctx.root && !String(ctx.session.id).startsWith('ephemeral-');
+  const spill = canSpill ? (text) => {
+    const dir = path.join(ctx.store.sessionsDir, ctx.session.id, 'out');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${String(Date.now()).slice(-9)}-${++n}.txt`);
+    fs.writeFileSync(file, text);
+    return path.relative(ctx.root, file).split(path.sep).join('/');
+  } : null;
+  const r = clearStale(ctx.messages, { limit: Math.max(1_000, softLimit(window) - system), minFree: minClear(window), spill });
+  if (!r.cleared && !r.images) return r;
+  ctx.messages = r.messages;
+  if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages });
+  const bits = [r.cleared ? `${r.cleared} 段旧的工具输出` : '', r.images ? `${r.images} 张旧截图` : ''].filter(Boolean).join('、');
+  ctx.ui.note(`· 上下文占用过了 ${softLimit(window)} token：清理了 ${bits}（约 ${r.freed} token），要用时模型会重新读`);
+  return r;
+}
+
 /** 压缩之后还回去的代码最多占窗口的多少、最多几段 */
 export const RESTORE_SHARE = 0.15;
 const RESTORE_HEADER = '（对话刚压缩过。下面是命令行记着的工作状态，和压缩之前你正在看的代码现在的内容 —— 接着做，不用从头再读一遍。）';
@@ -1278,6 +1302,8 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   for (let round = 0; round < maxRounds; round++) {
     if (signal && signal.aborted) break;
     const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
+    // 先清再摘（第一百三十九轮）：不调模型、能取回的清理先做；还不够才轮到下面的摘要
+    clearNow(ctx, window);
     // 挑时机（第一百三十八轮）：过了六成、又正好有一项清单刚标完成，就在这里压 —— 这时的摘要最干净；否则等到八成
     const boundary = ctx.todoJustCompleted && needsCompaction(systemText(ctx), ctx.messages, window, BOUNDARY_THRESHOLD);
     ctx.todoJustCompleted = false;

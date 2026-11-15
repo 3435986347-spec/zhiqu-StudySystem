@@ -114,8 +114,9 @@ test('摘要是空的：重来一次；还是空的就不替换历史，照实�
 
 test('一句话里：空摘要进不了历史；摘要那次调用明说不思考（不跟 /effort max），上限不止 4096', async () => {
   const ctx = makeCtx({ window: 1_000_000, effort: 'max', replies: [{ text: '' }, { text: '' }, { text: '做完了' }] });
+  // 助手自己的长回复清不掉（第一百三十九轮的「先清」只清工具输出），所以这一份只能靠摘要
   ctx.messages = [{ role: 'user', content: '改天空' }];
-  for (let i = 0; i < 400; i++) ctx.messages.push(...round(i, 9000));
+  for (let i = 0; i < 400; i++) ctx.messages.push({ role: 'assistant', content: `第 ${i} 步的说明 ${'x'.repeat(9000)}` }, { role: 'user', content: `接着做第 ${i + 1} 步` });
   await runTurn(ctx, '接着做');
   const summaryCalls = ctx.api.requests.filter((r) => r.tools.length === 0);
   assert.equal(summaryCalls.length, 2);

@@ -158,8 +158,9 @@ test('压缩：记录太长时分块滚动摘要，中间一段都不丢（原�
   assert.ok(r.summarized > 60, `只压了 ${r.summarized} 条`);
   // 每一条要求要么进了摘要的输入，要么在原样保留的最近几轮里
   for (let i = 0; i < 40; i++) assert.ok(inputs.some((t) => t.includes(`要求 ${i}：`)) || kept.includes(`要求 ${i}：`), `要求 ${i} 两边都没有`);
-  assert.match(inputs[1], /【到目前为止的摘要】\n摘要到第 1 块/);
-  assert.match(r.messages[0].content, new RegExp(`摘要到第 ${inputs.length} 块`));
+  // 第一百三十九轮起是锚定增量：前面几块写好的摘要原样带着走（给模型只作参考），每一块各成一段，不再合并重写
+  assert.match(inputs[1], /【到目前为止的摘要】\n## 其它要点\n摘要到第 1 块/);
+  for (let i = 1; i <= inputs.length; i++) assert.match(r.messages[0].content, new RegExp(`#### 第 ${i} 段\n## 其它要点\n摘要到第 ${i} 块`), `第 ${i} 块的摘要没原样留下`);
 });
 
 test('压缩：用户说过的原话逐字留在摘要消息里；再压一次也还在', async () => {

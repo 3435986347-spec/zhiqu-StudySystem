@@ -166,17 +166,16 @@ test('压完还回去：状态卡 + 压缩前在看的那几段代码的当前�
 });
 
 test('挑时机：过了六成、又正好有一项刚标完成，就在这里压；没有刚做完的不压', async () => {
-  const root = tmpdir();
-  write(root, 'a.js', 'x\n'.repeat(2500));
-  const read = (i) => call('read_file', { path: 'a.js', offset: 1, limit: 2000 + i });
-  const base = [todos(['读', 'in_progress'], ['改', 'pending']), ...Array.from({ length: 6 }, (_, i) => read(i))];
-  const plain = makeCtx({ root, window: 12_000, replies: [...base, read(9), { text: '读完了，还要问你？' }] });
+  // 清不掉的内容（助手自己的话）占到六成多：「先清」帮不上，要不要压只看有没有一项刚做完
+  const filled = (replies) => {
+    const ctx = answerSummaries(makeCtx({ window: 12_000, replies }));
+    for (let i = 0; i < 6; i++) ctx.messages.push({ role: 'user', content: `第 ${i} 件事` }, { role: 'assistant', content: `说明 ${'字'.repeat(1250)}` });
+    return ctx;
+  };
+  const plain = filled([todos(['读', 'in_progress'], ['改', 'pending']), { text: '读完了，还要问你？' }]);
   await runTurn(plain, '读');
-  assert.equal(plain.api.requests.filter((r) => !r.tools.length).length, 0, '没到八成、也没有刚做完的项：不压');
-  const root2 = tmpdir();
-  write(root2, 'a.js', 'x\n'.repeat(2500));
-  const timed = makeCtx({ root: root2, window: 12_000, replies: [...base, todos(['读', 'completed'], ['改', 'in_progress']), { text: '接着改，要问你？' }] });
-  answerSummaries(timed);
+  assert.equal(plain.summaries, 0, '没到八成、也没有刚做完的项：不压');
+  const timed = filled([todos(['读', 'completed'], ['改', 'in_progress']), { text: '接着改，要问你？' }]);
   await runTurn(timed, '读');
   assert.equal(timed.summaries, 1, `一项刚做完、占用过六成：${timed.ui.text()}`);
 });
