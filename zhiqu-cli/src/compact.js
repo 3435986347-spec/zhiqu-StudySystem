@@ -455,7 +455,7 @@ export function foldSegments(segments, window) {
  * 压缩。summarize(text) 由调用方给（它去调模型）；这里只管切、拼、换。
  * 返回 { messages, summarized: 被压掉的消息条数, elided, before, after }；没什么可压时 summarized = 0。
  */
-export async function compactMessages(messages, window, summarize) {
+export async function compactMessages(messages, window, summarize, { whole = null } = {}) {
   const before = estimateMessages(messages);
   const turns = splitRounds(messages);
   const keptCount = pickKept(turns, Math.floor(window * 0.3));
@@ -473,7 +473,15 @@ export async function compactMessages(messages, window, summarize) {
   let segments = carried ? summarySegments(splitQuotes(old[0].content).body) : [];
   const ackAfter = carried && old[1] && old[1].role === 'assistant' && !old[1].tool_calls && /^好的，我已经了解之前的进展/.test(String(old[1].content || ''));
   const fresh = carried ? old.slice(ackAfter ? 2 : 1) : old;
-  const chunks = transcriptChunks(fresh, Math.floor(window * 0.5 * 3));
+  // whole（第一百四十轮，可选）：调用方接在原来的前缀后面一次问出整段的摘要（前面的内容按缓存命中价算）。
+  // 写成了就用它当这一次的一段；空的、模型没照做（返回空）就退回下面按记录分块的老办法
+  let wholePiece = null;
+  if (whole && fresh.length) {
+    try { wholePiece = await whole(); } catch { wholePiece = null; }
+    if (summaryProblem(wholePiece)) wholePiece = null;
+  }
+  if (wholePiece) segments = [...segments.map(withoutNext).filter(Boolean), shaped(String(wholePiece).trim())];
+  const chunks = wholePiece ? [] : transcriptChunks(fresh, Math.floor(window * 0.5 * 3));
   for (let i = 0; i < chunks.length; i++) {
     const input = segments.length ? `【到目前为止的摘要】\n${segments.join('\n\n')}\n\n【接下来的记录】\n${chunks[i]}` : chunks[i];
     let piece = await summarize(input, { retry: false });

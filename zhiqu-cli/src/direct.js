@@ -43,6 +43,58 @@ function toolSink() {
   };
 }
 
+// ── 缓存断点（第一百四十轮）────────────────────────────────────────────
+//
+// Claude 只缓存请求里标过 cache_control 的部分，不标就是全价。经服务器网关的那条路第一百零四轮就标了（PromptCacheMarks），
+// 直连这条路一个都没标。这里照网关同一套标三处：系统提示（开工后不变，1 小时）、上一次压缩留下的那一段的结尾、最后一条（滚动）。
+// 不认 1 小时的先退回 5 分钟，还不认就去掉，记在这个对象上（一段会话一个）。DeepSeek 这类自动缓存的不标。
+const EPHEMERAL = { type: 'ephemeral' };
+const EPHEMERAL_1H = { type: 'ephemeral', ttl: '1h' };
+const SUMMARY_START = '【之前对话的摘要';
+const RESTORE_START = '（对话刚压缩过';
+const firstText = (content) => (typeof content === 'string' ? content : Array.isArray(content) && content[0] && content[0].text != null ? String(content[0].text) : null);
+
+/** 上一次压缩留下的那一段在哪结束（和网关的 PromptCacheMarks.boundary 同一个规矩）：没有、或者它就是最后一条，返回 -1。 */
+export function cacheBoundary(messages) {
+  let at = -1;
+  let restore = false;
+  messages.forEach((m, i) => {
+    const text = m.role === 'user' ? firstText(m.content) : null;
+    if (text == null) return;
+    if (text.startsWith(RESTORE_START)) { at = i; restore = true; } else if (text.startsWith(SUMMARY_START) && !restore) at = i;
+  });
+  return at >= 0 && at < messages.length - 1 ? at : -1;
+}
+
+const markLastBlock = (m) => {
+  if (!Array.isArray(m.content) || !m.content.length) return m;
+  const blocks = m.content.slice();
+  blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: EPHEMERAL };
+  return { ...m, content: blocks };
+};
+/** Anthropic 的请求体：system 变成带标记的块，历史里标两处。不动传进来的那一份。 */
+export function markAnthropic(payload, longTtl) {
+  const out = { ...payload };
+  if (typeof out.system === 'string' && out.system) out.system = [{ type: 'text', text: out.system, cache_control: longTtl ? EPHEMERAL_1H : EPHEMERAL }];
+  const messages = (out.messages || []).slice();
+  const boundary = cacheBoundary(messages);
+  if (boundary >= 0) messages[boundary] = markLastBlock(messages[boundary]);
+  if (messages.length) messages[messages.length - 1] = markLastBlock(messages[messages.length - 1]);
+  out.messages = messages;
+  return out;
+}
+const markText = (m, control) => (typeof m.content === 'string' && m.content.trim() ? { ...m, content: [{ type: 'text', text: m.content, cache_control: control }] } : m);
+/** OpenAI 兼容的请求体（中转的 Claude）：系统提示、压缩留下的那一段、最后一条的文字拆成带标记的块。 */
+export function markOpenAi(payload, longTtl) {
+  const messages = (payload.messages || []).slice();
+  if (!messages.length) return payload;
+  const boundary = cacheBoundary(messages);
+  if (messages[0].role === 'system') messages[0] = markText(messages[0], longTtl ? EPHEMERAL_1H : EPHEMERAL);
+  if (boundary > 0) messages[boundary] = markText(messages[boundary], EPHEMERAL);
+  if (messages.length > 1) messages[messages.length - 1] = markText(messages[messages.length - 1], EPHEMERAL);
+  return { ...payload, messages };
+}
+
 export class DirectModel {
   /**
    * @param {{ protocol?: 'openai'|'anthropic', url: string, key?: string, model: string, maxTokens?: number }} cfg
@@ -53,6 +105,14 @@ export class DirectModel {
     this.key = key;
     this.model = model;
     this.maxTokens = maxTokens;
+    /** 2 = 标断点、最前一段 1 小时；1 = 标断点、都是 5 分钟；0 = 不标。被拒了往下退并记住 */
+    this.cacheMode = this.protocol === 'anthropic' || /claude/i.test(String(model || '')) ? 2 : 0;
+  }
+
+  payload(body, mode) {
+    const plain = this.protocol === 'anthropic' ? anthropicBody(this, body) : openaiBody(this, body);
+    if (!mode) return plain;
+    return this.protocol === 'anthropic' ? markAnthropic(plain, mode === 2) : markOpenAi(plain, mode === 2);
   }
 
   /** 给界面上看的：直连哪家、哪个模型 */
@@ -73,21 +133,24 @@ export class DirectModel {
 
   /** 和 Api.stream 一个签名：body 里的 modelId 不用，模型名来自配置 */
   async stream(body, onEvent, { signal } = {}) {
-    const payload = this.protocol === 'anthropic' ? anthropicBody(this, body) : openaiBody(this, body);
     const host = hostOf(this.url);
+    const started = this.cacheMode;
     let res;
-    try {
-      res = await openStream(this.url, { headers: this.headers(), body: JSON.stringify(payload), signal });
-    } catch (e) {
-      if (e && e.name === 'AbortError') throw e;
-      // 和 Api.networkError 一个口径：连不上/断了可以重来，地址写错（ECONNREFUSED）也照实说
-      const code = e instanceof HttpError ? e.code : null;
-      const why = code === 'ECONNREFUSED' ? '连接被拒绝，这个地址上没有服务在听？'
-        : code === 'NO_RESPONSE' || code === 'IDLE_TIMEOUT' ? e.message : code || e.message;
-      throw new ApiError(`连不上 ${host}（${why}）—— 地址是 ${this.url}`, { retryable: e instanceof HttpError ? e.retryable : false, code });
-    }
-    if (res.status !== 200) {
+    for (let mode = started; ; mode--) {
+      try {
+        res = await openStream(this.url, { headers: this.headers(), body: JSON.stringify(this.payload(body, mode)), signal });
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw e;
+        // 和 Api.networkError 一个口径：连不上/断了可以重来，地址写错（ECONNREFUSED）也照实说
+        const code = e instanceof HttpError ? e.code : null;
+        const why = code === 'ECONNREFUSED' ? '连接被拒绝，这个地址上没有服务在听？'
+          : code === 'NO_RESPONSE' || code === 'IDLE_TIMEOUT' ? e.message : code || e.message;
+        throw new ApiError(`连不上 ${host}（${why}）—— 地址是 ${this.url}`, { retryable: e instanceof HttpError ? e.retryable : false, code });
+      }
+      if (res.status === 200) { this.cacheMode = mode; break; }   // 退了一档才成：这家不认，记住
       const text = await res.readAll().catch(() => '');
+      // 带着缓存标记被 400：先退回 5 分钟，再去掉，各重试一次（中转报的错不一定提到它）。去掉了还是 400 就照常报错，也不记
+      if (mode > 0 && (res.status === 400 || res.status === 422)) continue;
       throw new ApiError(httpMessage(res.status, text), { status: res.status, retryable: res.status === 429 || RETRYABLE_STATUS.has(res.status) });
     }
     onEvent('start', { contextWindow: null, droppedMessages: 0, elidedToolOutputs: 0 });

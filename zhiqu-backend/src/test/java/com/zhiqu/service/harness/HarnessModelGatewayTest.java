@@ -486,6 +486,49 @@ class HarnessModelGatewayTest {
     }
 
     @Test
+    @DisplayName("第三处断点和 1 小时：系统提示用 1 小时；上一次压缩留下的那一段（摘要 + 还回去的工作状态）的结尾标一处；最后一条照旧。只认 5 分钟的中转退回去并记住")
+    void 三处断点和一小时() throws Exception {
+        String url = fakeModel(b -> b.toString().contains("\"ttl\"")
+                ? new Object[]{400, "{\"error\":{\"message\":\"cache_control.ttl: Extra inputs are not permitted\"}}"}
+                : new Object[]{200, sse(
+                "{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10}}}",
+                "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"好\"}}",
+                "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}")});
+        model("ANTHROPIC", url, null);
+        List<Map<String, Object>> compacted = new ArrayList<>();
+        compacted.add(Map.of("role", "system", "content", "你是 zhiqu"));
+        compacted.add(Map.of("role", "user", "content", "【之前对话的摘要（已压缩，原文 40 条）】\n#### 第 1 段\n## 目标\n改天空"));
+        compacted.add(Map.of("role", "assistant", "content", "好的，我已经了解之前的进展，接着做。"));
+        compacted.add(Map.of("role", "user", "content", "（对话刚压缩过。下面是命令行记着的工作状态……）\n\n## 工作状态"));
+        compacted.add(Map.of("role", "assistant", "content", "接着改"));
+        compacted.add(Map.of("role", "user", "content", "继续"));
+        HarnessModelGateway gateway = gateway();
+        gateway.stream(1L, body(compacted), sink());
+        assertEquals(2, requests.size(), "带 1 小时被拒，退回 5 分钟就成了");
+        JsonNode first = requests.get(0);
+        assertEquals("1h", first.path("system").path(0).path("cache_control").path("ttl").asText(), "系统提示那一段用 1 小时：" + first);
+        JsonNode sent = requests.get(1);
+        assertTrue(sent.path("system").path(0).path("cache_control").path("ttl").isMissingNode(), "退回 5 分钟：不带 ttl");
+        assertEquals(3, marks(sent), "三处：系统提示、压缩留下的那一段的结尾、最后一条：" + sent);
+        JsonNode messages = sent.path("messages");
+        int marked = -1;
+        for (int i = 0; i < messages.size() - 1; i++) {
+            if (messages.path(i).toString().contains("cache_control")) marked = i;
+        }
+        assertTrue(messages.path(marked).toString().contains("对话刚压缩过"), "第三处要标在还回去的工作状态那条上（它后面才是会变的）：" + messages.path(marked));
+        assertTrue(first.path("messages").toString().contains("cache_control") && !first.path("messages").toString().contains("\"ttl\""),
+                "历史里的断点还是 5 分钟（用户定的：整段用不用 1 小时量过再定）");
+        gateway.stream(1L, body(compacted), sink());
+        assertEquals(3, requests.size(), "记住了：这家不认 1 小时，下一次直接带 5 分钟的");
+        assertEquals(3, marks(requests.get(2)));
+        assertFalse(requests.get(2).toString().contains("\"ttl\""));
+        // 没压缩过的对话：没有第三处
+        assertEquals(-1, PromptCacheMarks.boundary(toolLoop()));
+        // 只有摘要、没有还回去的那条（没有工作状态时）：标在摘要上
+        assertEquals(1, PromptCacheMarks.boundary(compacted.subList(0, 3)));
+    }
+
+    @Test
     @DisplayName("DeepSeek 这类自动缓存的不标：请求和原来一模一样")
     void 别的模型不标() throws Exception {
         String url = fakeModel(b -> new Object[]{200, sse(OK_CHUNK)});
@@ -504,11 +547,13 @@ class HarnessModelGatewayTest {
         model("OPENAI_COMPATIBLE", url, null).setModelName("claude-opus-5-5");
         HarnessModelGateway gateway = gateway();
         gateway.stream(1L, body(ASK), sink());
-        assertEquals(2, requests.size(), "一次带标记、一次不带");
+        // 第一百四十轮起先退回 5 分钟再去掉：带 1 小时、带 5 分钟、不带
+        assertEquals(3, requests.size(), "一次带 1 小时、一次带 5 分钟、一次不带");
+        assertTrue(requests.get(0).toString().contains("\"ttl\":\"1h\"") && !requests.get(1).toString().contains("ttl") && marks(requests.get(1)) > 0);
         assertFalse(events.contains("error"));
         gateway.stream(1L, body(ASK), sink());
-        assertEquals(3, requests.size(), "记住了：这次一上来就不带，不再挨 400");
-        assertEquals(0, marks(requests.get(2)));
+        assertEquals(4, requests.size(), "记住了：这次一上来就不带，不再挨 400");
+        assertEquals(0, marks(requests.get(3)));
     }
 
     @Test
@@ -518,9 +563,9 @@ class HarnessModelGatewayTest {
         model("OPENAI_COMPATIBLE", url, null).setModelName("claude-opus-5-5");
         HarnessModelGateway gateway = gateway();
         assertThrows(RuntimeException.class, () -> gateway.stream(1L, body(ASK), sink()));
-        assertEquals(2, requests.size());
+        assertEquals(3, requests.size());
         assertThrows(RuntimeException.class, () -> gateway.stream(1L, body(ASK), sink()));
-        assertTrue(marks(requests.get(2)) > 0, "不该记住：下一次还带标记");
+        assertTrue(marks(requests.get(3)) > 0 && requests.get(3).toString().contains("\"ttl\":\"1h\""), "不该记住：下一次还带标记，1 小时也还带");
     }
 
     @Test

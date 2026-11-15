@@ -114,6 +114,8 @@ public class HarnessModelGateway {
     /** 这个进程里被供应商拒过的：不再发 temperature / 缓存标记（键是模型 ID + 地址 + 模型名，改了配置就重新试） */
     private final Set<String> noTemperature = ConcurrentHashMap.newKeySet();
     private final Set<String> noCacheMarks = ConcurrentHashMap.newKeySet();
+    /** 同上：不认 1 小时 TTL 的（第一百四十轮）—— 退回 5 分钟，标记照留 */
+    private final Set<String> noLongTtl = ConcurrentHashMap.newKeySet();
     /** 同上：思考参数不收的（第一百零八轮）、回放思考被拒的（历史改过、签名失效，再带也是 400） */
     private final Set<String> noReasoning = ConcurrentHashMap.newKeySet();
     private final Set<String> noReplay = ConcurrentHashMap.newKeySet();
@@ -313,12 +315,15 @@ public class HarnessModelGateway {
         if (noTemperature.contains(remembered)) temperature = null;
         boolean cacheMarks = PromptCacheMarks.applies(type, config.getModelName()) && !noCacheMarks.contains(remembered);
         boolean droppedMarks = false;
+        boolean longTtl = cacheMarks && !noLongTtl.contains(remembered);
+        boolean droppedTtl = false;
         List<Integer> limits = OutputLimits.fallbackLimits(maxTokens);
         for (int i = 0; i < limits.size(); i++) {
             int limit = limits.get(i);
             try {
                 usedMaxTokens = limit;
-                call(config, type, trimmed.messages(), tools, limit, temperature, cacheMarks, effort, replay, acc);
+                call(config, type, trimmed.messages(), tools, limit, temperature, cacheMarks, longTtl, effort, replay, acc);
+                if (droppedTtl && !droppedMarks) noLongTtl.add(remembered);   // 退回 5 分钟就成了：这家不认 1 小时
                 if (droppedMarks) noCacheMarks.add(remembered);   // 去掉标记才成功：这个供应商不收，以后不再标
                 last = null;
                 break;
@@ -355,6 +360,14 @@ public class HarnessModelGateway {
                     continue;
                 }
                 // 中转不一定认缓存标记，报的错也不一定提到它：带着标记被 400 就去掉重试一次，还是 400 就照常报错
+                // 先退回 5 分钟（1 小时是后来才有的，中转不一定认），还不行才整个去掉
+                if (cacheMarks && longTtl && (e.getStatusCode().value() == 400 || e.getStatusCode().value() == 422) && acc.outputChars() == 0) {
+                    log.info("带 1 小时缓存标记被拒，退回 5 分钟重试：{}", detail);
+                    longTtl = false;
+                    droppedTtl = true;
+                    i--;
+                    continue;
+                }
                 if (cacheMarks && (e.getStatusCode().value() == 400 || e.getStatusCode().value() == 422) && acc.outputChars() == 0) {
                     log.info("带缓存标记被拒，去掉它重试：{}", detail);
                     cacheMarks = false;
@@ -411,15 +424,15 @@ public class HarnessModelGateway {
     }
 
     private void call(AiModelConfig config, String type, List<Map<String, Object>> messages,
-                      List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks,
+                      List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks, boolean longTtl,
                       String effort, boolean replay, ToolStreamAccumulator acc) {
         // URL 格式校验：API URL 是用户自己填的。与其它出站请求一样，校验放在真正发请求的这一层
         provider.validateProviderRequestUrl(config.getApiUrl());
         if ("ANTHROPIC".equals(type)) {
-            streamAnthropic(config, ReasoningHistory.forAnthropic(messages, config.getModelName(), replay), tools, maxTokens, temperature, cacheMarks, effort, acc);
+            streamAnthropic(config, ReasoningHistory.forAnthropic(messages, config.getModelName(), replay), tools, maxTokens, temperature, cacheMarks, longTtl, effort, acc);
         } else if ("OPENAI_COMPATIBLE".equals(type) || "VLLM_OPENAI_COMPATIBLE".equals(type) || "OLLAMA".equals(type)) {
             streamOpenAi(config, ReasoningHistory.forOpenAi(messages, config.getModelName(),
-                    ReasoningHistory.mustEcho(config.getModelName(), effort)), tools, maxTokens, temperature, cacheMarks, effort, acc);
+                    ReasoningHistory.mustEcho(config.getModelName(), effort)), tools, maxTokens, temperature, cacheMarks, longTtl, effort, acc);
         } else {
             // 其余协议（Gemini、Responses…）只走纯文本：上面已经保证了这里 tools 为空
             adapters.getAdapter(type).stream(
@@ -432,11 +445,11 @@ public class HarnessModelGateway {
     }
 
     private void streamOpenAi(AiModelConfig config, List<Map<String, Object>> messages,
-                              List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks,
+                              List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks, boolean longTtl,
                               String effort, ToolStreamAccumulator acc) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
-        body.put("messages", cacheMarks ? PromptCacheMarks.markOpenAi(messages) : messages);
+        body.put("messages", cacheMarks ? PromptCacheMarks.markOpenAi(messages, longTtl) : messages);
         body.put("max_tokens", maxTokens);
         body.put("stream", true);
         if (!tools.isEmpty()) {
@@ -459,14 +472,14 @@ public class HarnessModelGateway {
     }
 
     private void streamAnthropic(AiModelConfig config, List<Map<String, Object>> messages,
-                                 List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks,
+                                 List<Map<String, Object>> tools, int maxTokens, Double temperature, boolean cacheMarks, boolean longTtl,
                                  String effort, ToolStreamAccumulator acc) {
         AnthropicFormat.Request converted = AnthropicFormat.fromOpenAi(messages, json);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModelName());
         body.put("max_tokens", maxTokens);
         if (!converted.system().isBlank()) {
-            body.put("system", cacheMarks ? PromptCacheMarks.markedSystem(converted.system()) : converted.system());
+            body.put("system", cacheMarks ? PromptCacheMarks.markedSystem(converted.system(), longTtl) : converted.system());
         }
         body.put("messages", cacheMarks ? PromptCacheMarks.markLastAnthropic(converted.messages()) : converted.messages());
         if (!tools.isEmpty()) {

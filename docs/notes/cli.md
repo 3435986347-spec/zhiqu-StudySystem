@@ -45,6 +45,10 @@
   给摘要模型的记录里命令行补的话标【系统提醒】；「用户原话」第一句永远留着；压完还超就 `shedLargest`，连着 3 轮都在压缩就停。
   会话记录里图存成 `sessions/<id>/blobs/` 的文件、行里只留 `image_ref`，`load()` 时换回去；读文件用 `eachLine`，不要再 `readFileSync` 整个读（超过 512MB 就读不回来）。
   **挂在这句话的中断信号上的监听用完要摘**（`http.js`）：信号活一整句话，监听攥着的东西就活一整句话。
+- **缓存和用量**（第一百四十轮，`cache-usage.test.js`）：每次调用的用量进会话记录（`type: 'usage'`），每句话结束报输入和命中，连着 5 次低命中提醒。压缩的判断走 `usedTokens`（供应商报的实际值 + 之后新增的估算），不要再直接拿 `needsCompaction` 判。
+  **系统提示这段会话里不改**：档位和日期开工时定下（`frozenEnv`），变了由 `announceEnvChange` 追加一条；压缩后的原话跟状态卡回历史，不置顶。往系统提示里加会变的东西之前先想这一条。
+  断点三处（系统提示 1 小时、压缩留下的那一段的结尾、最后一条）：网关是 `PromptCacheMarks`，直连是 `direct.js` 的 `markAnthropic` / `markOpenAi`，**两边同一个规矩，改一边要改另一边**；认「压缩留下的那一段」靠那两条消息的固定开头。被拒逐级退回并记住。
+  服务器裁过（`start` 里的 `droppedMessages`）是信号：下一轮自己压，并记下 `serverBudget`。「摘要接在原前缀后面」（`summaryOnPrefix`）默认关。
 - **先清再摘**（第一百三十九轮，`clear-and-summary.test.js`）：过了软上限（`softLimit`，不等于窗口）先 `clearStale` —— 旧的工具输出、旧截图成批换成占位，占位里写着怎么取回（读取写参数，命令输出另存到 `sessions/<id>/out/`）。**改历史就打断缓存**，所以清不出一大块（`minClear`，且至少现在占用的四分之一）就不清；调这几个数之前先拿真实会话回放量。
   摘要是锚定增量：以前写好的各段（`#### 第 N 段`）原样带着走，只追加新的一段，总长封顶（`foldSegments`）；不要再把上一次的摘要交给模型重写。新加的占位 / 提醒的开头要在 `origins.js` 登记。
 - **工作状态卡**（第一百三十八轮，`src/state.js`，`work-state.test.js`）：压缩压不掉、进程崩了也在的那一份，每变一次落盘。有会话记录时在 `sessions/<id>.state.json`，没有（桌面 / 网页那一份）在项目的 `.zhiqu/state.json`、做完就删。

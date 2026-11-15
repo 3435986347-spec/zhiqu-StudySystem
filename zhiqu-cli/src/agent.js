@@ -27,7 +27,7 @@ import { spillLongInput } from './longinput.js';
 import fs from 'node:fs';
 import { stat as diffStat } from './render/diff.js';
 import { firstChangedLine, listFiles, NOTE_TOOL, noteSchema, statePath, WorkState } from './state.js';
-import { estimateTokens } from './compact.js';
+import { estimateMessages, estimateTokens } from './compact.js';
 import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
@@ -204,12 +204,51 @@ export function toolset(ctx) {
   return out.filter((t) => (seen.has(t.schema.function.name) ? false : seen.add(t.schema.function.name)));
 }
 
+/** 现在实际的档位（系统提示里那一行用的写法） */
+const liveMode = (ctx) => (ctx.execReadOnly ? 'exec-read' : ctx.mode);
+
+/**
+ * 系统提示里的「今天」「当前档位」开工时定下，这段会话里不再改（第一百四十轮）：系统提示排在所有历史前面，
+ * 改一个字后面的缓存全部重来。之后变了（用户 /mode、计划被批准、过了零点）由 announceEnvChange 追加一条消息说。
+ * 跟着会话走：换了会话、子 agent 各定各的。
+ */
+function frozenEnv(ctx) {
+  const key = `${ctx.session ? ctx.session.id : ''}|${ctx.subagent ? ctx.subagent.id : ''}`;
+  if (!ctx.envFrozen || ctx.envFrozen.key !== key) {
+    ctx.envFrozen = { key, mode: liveMode(ctx), today: today(), saidMode: liveMode(ctx), saidToday: today() };
+  }
+  return ctx.envFrozen;
+}
+
+/** 档位或日期和上一次说的不一样了：追加一条命令行自己的消息（历史只追加）。在一轮的开头叫，不会插在工具调用和结果中间。 */
+export function announceEnvChange(ctx) {
+  const env = frozenEnv(ctx);
+  const lines = [];
+  if (liveMode(ctx) !== env.saidMode) {
+    env.saidMode = liveMode(ctx);
+    lines.push(`（档位变了，以这一条为准：现在是 ${MODE_NOW[env.saidMode] || env.saidMode}）`);
+  }
+  if (today() !== env.saidToday) {
+    env.saidToday = today();
+    lines.push(`（日期变了：现在是 ${env.saidToday}）`);
+  }
+  if (lines.length) record(ctx, { role: 'user', content: lines.join('\n') }, 'system');
+  return lines.length > 0;
+}
+const MODE_NOW = {
+  plan: 'plan（只读）：只能读、搜、查，不能写文件；想清楚之后用 exit_plan_mode 提交计划',
+  ask: 'ask（逐个确认）：写文件、跑命令会先问用户',
+  auto: 'auto（全自动）：写文件、跑命令不再逐个问',
+  'exec-read': 'exec（只读，没有人在看）：改不了文件',
+};
+
 export function systemText(ctx) {
+  const frozen = frozenEnv(ctx);
   const env = environmentBlock({
-    root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: ctx.execReadOnly ? 'exec-read' : ctx.mode, commands: ctx.local.commands,
+    root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: frozen.mode, commands: ctx.local.commands,
     shell: ctx.local.sandbox ? describeBoundary({ policy: shellPolicy(ctx), network: ctx.local.sandboxNetwork, hosted: ctx.local.hosted }) : null,
     shellWrites: Boolean(ctx.local.sandbox) && shellPolicy(ctx) === WORKSPACE_WRITE,
-    today: today(), draft: Boolean(ctx.local.drafts), artifact: Boolean(ctx.local.artifact),
+    today: frozen.today, draft: Boolean(ctx.local.drafts), artifact: Boolean(ctx.local.artifact),
   });
   // 目标、用户这次的原话置顶：在系统内容之后、其它一切之前 —— 每一轮都在，压缩也压不掉。
   // 系统提示排在所有历史前面，改一个字后面的缓存全部失效（第一百零四轮）：这两样很少变；任务清单常变，不放这里，见 TODO_REMIND_ROUNDS
@@ -254,6 +293,9 @@ const repeatRefusal = (n) => `没有执行：这是连续第 ${n} 次发一模�
 export function requestBlock(ctx) {
   const text = ctx.request && ctx.request.text;
   if (!text) return '';
+  // 第一百四十轮：状态卡里记着用户说过的每一句，压缩之后跟着状态卡还回历史里（restoreAfterCompaction），就不再往系统提示里放 ——
+  // 放了系统提示就变了，最前面那一段缓存跟着重来。只有没有状态卡的（第一百三十八轮之前开始的会话、子 agent、审查的上下文）还走这里
+  if (!ctx.subagent && ctx.work && ctx.work.data.said.length) return '';
   if (ctx.messages.some((m) => m.role === 'user' && m.content === text)) return '';
   const shown = text.length > REQUEST_PIN_CHARS
     ? `${text.slice(0, REQUEST_PIN_CHARS - 1500)}\n…（中间略）…\n${text.slice(-1500)}`
@@ -334,6 +376,8 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   // 不说就听服务端的默认。opts.effort：这一次单独定（摘要那一次明说不思考，不跟用户的档位，见 compactNow）
   const reasoning = effort !== undefined ? effort : ctx.effort;
   if (reasoning) body.reasoning = reasoning;
+  // 这一次发出去的那份历史估出来是多少（只在发的是会话本身的历史时记）：回包里有供应商报的实际数，两个一比就能校准
+  const sent = messages ? null : { ref: ctx.messages, len: ctx.messages.length, est: estimateTokens(body.messages[0].content) + estimateMessages(ctx.messages) };
   let thought = 0;
   let thinkingFrom = null;
   let thinkingMs = 0;
@@ -359,6 +403,14 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
   const onEvent = (name, data) => {
     if (name !== 'start') stopWaiting();
     if (name === 'start') {
+      // 服务器替我们裁了：说明这边估少了。当成信号 —— 下一轮开头马上自己压缩，不再照原样发（第一百四十轮）。
+      // 原来只打一行字：每一次请求服务器都在悄悄丢最早的几轮，被丢的第一轮正是摘要
+      if (!messages && (data.droppedMessages > 0 || data.elidedToolOutputs > 0)) {
+        ctx.serverTrimmed = true;
+        // 服务器裁到多少就是它那边放得下的量（窗口 − 输出上限 − 余量；开着思考时输出上限翻倍，64K 的窗口只剩三万出头，
+        // 比这边「八成」的线低得多）：记下来，以后到它之前就自己压，不再等它裁
+        if (data.estimatedPromptTokens > 0) ctx.serverBudget = data.estimatedPromptTokens;
+      }
       if (data.droppedMessages > 0 || data.elidedToolOutputs > 0) {
         ui.note(`· 服务器按上下文窗口（${data.contextWindow} token）裁掉了最早的 ${data.droppedMessages} 条消息`
           + `${data.elidedToolOutputs ? `、省略了 ${data.elidedToolOutputs} 段旧的工具输出` : ''}`);
@@ -411,9 +463,61 @@ async function callModelOnce(ctx, tools, signal, { render = true, maxTokens = DE
     ctx.usage.cached = (ctx.usage.cached || 0) + (done.usage ? done.usage.cachedTokens || 0 : 0);
   }
   if (ctx.onUsage && done.usage) ctx.onUsage(done.usage);
+  noteUsage(ctx, done.usage, sent);
   // 这一次想了多久（第一百二十七轮：网页回答里「思考 N 秒」那一步）—— 从第一个思考字到第一个正文 / 工具调用
   stopThinking();
   return { ...done, text, maxTokens: done.maxTokens || maxTokens, thought: { chars: thought, ms: thinkingMs, text: thinkingText } };
+}
+
+/** 连着这么多次请求缓存都没怎么命中就提醒一次（前缀在变） */
+export const LOW_HIT_STREAK = 5;
+export const LOW_HIT_RATIO = 0.3;
+const LOW_HIT_MIN_PROMPT = 4_000;
+
+/**
+ * 每次模型调用的用量（第一百四十轮）：记进会话记录（以后能回头算这段会话命中了多少 —— 用户那段 23 小时的会话就查不出来）、
+ * 攒成这一句的合计、盯着命中率、留下「实际值」给压缩的判断用。
+ */
+function noteUsage(ctx, usage, sent) {
+  if (!usage) return;
+  const prompt = usage.promptTokens || 0;
+  const cached = usage.cachedTokens;   // 没有这个字段 = 供应商没报，不是没命中
+  const t = ctx.turnUsage || (ctx.turnUsage = { prompt: 0, completion: 0, cached: 0, reported: false, calls: 0 });
+  t.prompt += prompt; t.completion += usage.completionTokens || 0; t.calls += 1;
+  if (cached != null) { t.cached += cached; t.reported = true; }
+  if (ctx.store && ctx.session && !ctx.subagent) {
+    ctx.store.append(ctx.session.id, { type: 'usage', prompt, completion: usage.completionTokens || 0, cached: cached ?? null, estimated: Boolean(usage.estimated) });
+  }
+  if (cached != null && prompt >= LOW_HIT_MIN_PROMPT) {
+    ctx.lowHit = cached / prompt < LOW_HIT_RATIO ? (ctx.lowHit || 0) + 1 : 0;
+    if (ctx.lowHit === LOW_HIT_STREAK && ctx.ui) {
+      ctx.ui.note(`· 连着 ${LOW_HIT_STREAK} 次请求缓存都没怎么命中（不到 ${Math.round(LOW_HIT_RATIO * 100)}%）：前面的内容多半每次都在变，这样每次都按全价算。/usage 看合计`);
+    }
+  }
+  // 以实际为准：估算器不知道工具表占多少、也可能估偏。偏得离谱的（假的、供应商自己估的）不信
+  if (sent && !usage.estimated && prompt > 0 && sent.est > 0) {
+    const ratio = prompt / sent.est;
+    ctx.actual = ratio >= 0.5 && ratio <= 3 ? { ref: sent.ref, len: sent.len, prompt } : null;
+  }
+}
+
+/** 现在背着多少 token：有上一次的实际值就用「实际值 + 之后新增的估算」，没有就全靠估。历史被换过（压缩、清理）实际值就作废。 */
+export function usedTokens(ctx) {
+  const a = ctx.actual;
+  if (a && a.ref === ctx.messages && ctx.messages.length >= a.len) return a.prompt + estimateMessages(ctx.messages.slice(a.len));
+  return estimateTokens(systemText(ctx)) + estimateMessages(ctx.messages);
+}
+const over = (ctx, window, threshold = 0.8) => usedTokens(ctx) > (threshold >= 0.8 && ctx.serverBudget ? Math.min(window * threshold, ctx.serverBudget * 0.95) : window * threshold);
+
+/** 一句话结束时那一句：这一句的输入、命中多少、压缩和清理了几次。供应商没报命中就不说命中。 */
+export function usageNote(result) {
+  const u = result && result.usage;
+  if (!u || !u.calls) return '';
+  const k = (n) => (n >= 10_000 ? `${Math.round(n / 1000)}K` : String(n));
+  const bits = [`输入 ${k(u.prompt)}${u.reported && u.prompt ? `（缓存命中 ${Math.round((u.cached / u.prompt) * 100)}%）` : ''}`];
+  if (result.compactions) bits.push(`压缩 ${result.compactions} 次`);
+  if (result.clears) bits.push(`清理 ${result.clears} 批`);
+  return `· 这一句${bits.join('，')}`;
 }
 
 /** /usage 里输入后面那一句「（缓存命中 N，P%）」；没命中、供应商没报就不说。 */
@@ -1193,6 +1297,32 @@ export function restoreAfterCompaction(ctx, window) {
 // ── 压缩 ────────────────────────────────────────────────────────────────
 
 export const SUMMARY_MAX_TOKENS = 12_000;
+/**
+ * 摘要接在原来的前缀后面问（第一百四十轮）：同一份系统提示、同一份工具表、同一份历史，最后加一句「写摘要」——
+ * 前面的全部按缓存命中价算。原来另起一份提示词、把要压的内容按未命中价再算一遍。
+ * **默认关**：模型会不会老实写摘要而不是接着调工具、命中率到底多少，要拿真模型量（花钱，用户说了再量）。
+ * 开：环境变量 ZHIQU_SUMMARY_ON_PREFIX=1，或者 settings.json 里 "summaryOnPrefix": true。没写成就退回老办法，多花一次调用。
+ */
+export function summaryOnPrefix(ctx) {
+  if (ctx.summaryOnPrefix != null) return Boolean(ctx.summaryOnPrefix);
+  return process.env.ZHIQU_SUMMARY_ON_PREFIX === '1' || Boolean(ctx.settings && ctx.settings.summaryOnPrefix);
+}
+export const PREFIX_SUMMARY_ASK = [
+  '（先停一下手上的活：对话快到上下文上限了，前面的内容要压成摘要。这一次**不要调用任何工具**，只写摘要。）',
+  '为上面的对话写一段摘要，让你自己在看不到原文时也能接着做。开头如果已经有【之前对话的摘要】，那几段会原样保留：不要重写、不要复述，只写它之后的内容。',
+  '用这几个小标题，每项简短、具体（文件名、行号、命令、数字）：',
+  '## 目标', '## 关键决定和原因', '## 试过不行的', '## 当前进展和下一步', '## 其它要点',
+  '改过哪些文件、任务清单做到哪、建了哪些临时文件，命令行另外记着，不用抄。任务清单是你自己列的、带括号的提醒是命令行补的，都不要写成用户的要求。',
+].join('\n');
+async function summarizeOnPrefix(ctx, window, signal) {
+  const r = await callModel(ctx, toolset(ctx), signal, {
+    render: false, maxTokens: Math.max(512, Math.min(SUMMARY_MAX_TOKENS, Math.floor(window * 0.12))), effort: SUMMARY_EFFORT,
+    messages: [{ role: 'system', content: systemText(ctx) }, ...ctx.messages, { role: 'user', content: PREFIX_SUMMARY_ASK }],
+  });
+  // 它没照做（调了工具）：当没写成，退回老办法；那几个工具调用不执行
+  const calls = r.message && Array.isArray(r.message.tool_calls) ? r.message.tool_calls : [];
+  return calls.length ? '' : r.text.trim();
+}
 export const SUMMARY_EFFORT = 'instant';
 /** 连着这么多轮都在压缩就停下（压不动了：摘要一直写不成，或者留下的那一步自己就超了）。原来一轮一压、原地转 */
 export const COMPACT_STREAK_STOP = 3;
@@ -1221,7 +1351,7 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
       messages: [{ role: 'system', content: SUMMARY_INSTRUCTIONS }, { role: 'user', content: transcriptText }],
     });
     return r.text.trim();
-  });
+  }, { whole: summaryOnPrefix(ctx) ? () => summarizeOnPrefix(ctx, window, signal) : null });
   if (result.failed) {
     ui.warn(`这次摘要没写成（${result.failed}），没有压缩${result.elided ? `，只省略了 ${result.elided} 段旧的工具输出` : ''}`);
     if (result.elided) {
@@ -1289,6 +1419,9 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   let nudged = false;
   let claimChecked = false;
   let compactStreak = 0;
+  let turnCompactions = 0;
+  let turnClears = 0;
+  ctx.turnUsage = { prompt: 0, completion: 0, cached: 0, reported: false, calls: 0 };
   ctx.turnStats = { read: 0, search: 0, list: 0 };
   ctx.readStreak = 0;
   ctx.readWindows = new Map(); ctx.readHinted = new Set();
@@ -1302,13 +1435,22 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
   for (let round = 0; round < maxRounds; round++) {
     if (signal && signal.aborted) break;
     const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
+    // 档位、日期变了：追加一条说明（系统提示不改，见 frozenEnv）
+    announceEnvChange(ctx);
     // 先清再摘（第一百三十九轮）：不调模型、能取回的清理先做；还不够才轮到下面的摘要
-    clearNow(ctx, window);
+    const swept = clearNow(ctx, window);
+    if (swept.cleared || swept.images) turnClears++;
+    // 服务器上一次替我们裁过：这边估少了，马上自己压（见 callModelOnce 里 start 那一支）
+    const forced = Boolean(ctx.serverTrimmed);
+    ctx.serverTrimmed = false;
     // 挑时机（第一百三十八轮）：过了六成、又正好有一项清单刚标完成，就在这里压 —— 这时的摘要最干净；否则等到八成
-    const boundary = ctx.todoJustCompleted && needsCompaction(systemText(ctx), ctx.messages, window, BOUNDARY_THRESHOLD);
+    const boundary = ctx.todoJustCompleted && over(ctx, window, BOUNDARY_THRESHOLD);
     ctx.todoJustCompleted = false;
-    if (boundary || needsCompaction(systemText(ctx), ctx.messages, window)) {
-      await compactNow(ctx, signal);
+    if (forced || boundary || over(ctx, window)) {
+      const squeezed = await compactNow(ctx, signal);
+      if (squeezed.summarized) turnCompactions++;
+      // 服务器裁过、这边却没什么可压的（最近一步自己就太大）：把最大的那一条拿掉，不然下一次它还得裁
+      if (forced && !squeezed.summarized && !squeezed.elided) shedLargest(ctx.messages);
       // 压过了还超：把最大的几条换成占位，不留到下一轮再压一次（第一百三十七轮）
       let shed = 0;
       while (shed < 8 && needsCompaction(systemText(ctx), ctx.messages, window) && shedLargest(ctx.messages) > 0) shed++;
@@ -1333,7 +1475,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     const tools = toolset(ctx);
     const offered = new Map(tools.map((t) => [t.schema.function.name, t.kind]));
     // 省略旧思考是改写历史，从那条起缓存全部失效（评测上约 1.6 个点，按价算约一成花费）；省下的那点 token 按命中价不值 —— 吃紧了才做
-    if (needsCompaction(systemText(ctx), ctx.messages, window, SLIM_THRESHOLD)) slimThinking(ctx.messages);
+    if (over(ctx, window, SLIM_THRESHOLD)) slimThinking(ctx.messages);
     const res = await callModel(ctx, tools, signal);
     const message = res.message || { role: 'assistant', content: res.text };
     const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
@@ -1492,7 +1634,8 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     // 旧版留下的进度笔记：状态卡接手了，清掉免得两份说法
     if (ctx.root) { try { fs.rmSync(path.join(ctx.root, '.zhiqu', 'progress.md'), { force: true }); } catch { /* 忽略 */ } }
   }
-  return { finalText, stalled, exhausted, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats } };
+  return { finalText, stalled, exhausted, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats },
+    usage: { ...ctx.turnUsage }, compactions: turnCompactions, clears: turnClears };
 }
 
 /**

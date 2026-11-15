@@ -89,7 +89,9 @@ test('Anthropic：system 提到顶层、tool_use 的 input 由分片拼回来、
     assert.equal(done.finishReason, 'tool_use');
     assert.equal(done.usage.promptTokens, 10);
     const body = p.seen[0].body;
-    assert.equal(body.system, '你是助手');
+    // 第一百四十轮起直连也标缓存断点：system 是一个带 cache_control 的块（原来是字符串、一个标记都没有，全价）
+    assert.equal(body.system[0].text, '你是助手');
+    assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '1h' });
     assert.equal(body.max_tokens, 1234);
     assert.equal(body.tools[0].input_schema.type, 'object', '工具要翻成 input_schema');
     assert.equal(p.seen[0].headers['x-api-key'], 'ak-1');

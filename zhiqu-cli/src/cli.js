@@ -15,7 +15,7 @@ import path from 'node:path';
 import { Api, ApiError } from './api.js';
 import { DirectModel } from './direct.js';
 import { StepLog } from './steps.js';
-import { archiveStep, archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote, workOf } from './agent.js';
+import { archiveStep, archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote, usageNote, workOf } from './agent.js';
 import { SubAgents } from './subagents.js';
 import { newGoal } from './goal.js';
 import { generatedOrigin } from './origins.js';
@@ -709,6 +709,9 @@ async function reviewTurn(ctx, spec, setRunning) {
 function turnNote(ctx, result) {
   const note = !ctx.verbose && result ? statsNote(result.stats) : '';
   if (note) ctx.ui.note(note);
+  // 这一句的输入、命中多少、压缩和清理了几次（第一百四十轮）：命中率塌了、压缩成了风暴，当场看得见
+  const used = result ? usageNote(result) : '';
+  if (used && (result.usage.reported || result.compactions || result.clears)) ctx.ui.note(used);
 }
 
 export async function slash(ctx, text) {
