@@ -161,3 +161,4 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
   用户看到的是「一直卡在同一步」。现在抛 `ToolTurnTruncatedException`，code agent 叙述出来并让模型拆小文件重写。
 - **工作区可以新建上级目录了，但不静默**：`newDirectoriesFor` 先报出要建哪些，草稿带着 `newDirectories`，确认框里写出来。
   原先「不替用户建目录」让「放在 test 文件夹里」这种请求直接写失败。
+- **用户的长期记忆开工时带上**（第一百四十三轮，`test/user-memory.test.js`）：`GET /api/harness/memory/brief` 给的一段（服务器按预算挑过：置顶的 + 最近改过 / 用到的，约 1200 字），`userMemoryBlock` 写进系统提示、这段会话里不再变（`frozenEnv` 里和项目笔记一起）。开关在网页「设置 → AI 模型」（`sys_user.ai_cli_memory`，空 = 开）；关着、老服务器 404、直连都没有这一段，开工不受影响。`read_memory` 带 `query`、一条一行带 #编号；`propose_memory` 能 `updates`（「#编号 改成的那一句」）/ `invalidate`，只成草稿。

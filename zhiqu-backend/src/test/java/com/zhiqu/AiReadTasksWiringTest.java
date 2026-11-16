@@ -52,6 +52,22 @@ class AiReadTasksWiringTest {
     }
 
     @Test
+    @DisplayName("命令行开工时带上长期记忆的开关（第一百四十三轮，和上面那个并排）：按 /auth/info 画、点了存到 /user/ai-cli-memory；空 = 开")
+    void 命令行带记忆的开关() throws Exception {
+        String settings = SourceText.stripComments(read("assets/settings.js"));
+        assertTrue(settings.contains("TOGGLE('zq-ai-cli-memory', '命令行开工时带上长期记忆')"), "设置里没有这个开关");
+        assertTrue(settings.contains("setToggle(cliMemory, u.aiCliMemory !== false);"), "开关要按服务端的值画（没有这个字段时当开）");
+        assertTrue(settings.contains("await sh.api.put('/user/ai-cli-memory?enabled=' + next);"), "点了要保存");
+        String auth = SourceText.stripComments(Files.readString(
+                Path.of("src/main/java/com/zhiqu/service/impl/AuthServiceImpl.java"), StandardCharsets.UTF_8));
+        assertTrue(auth.contains("data.put(\"aiCliMemory\", user.cliCarriesMemory());"), "/auth/info 要带回开关的状态");
+        SysUser user = new SysUser();
+        assertTrue(user.cliCarriesMemory(), "空 = 开（用户定的「自动带上」）");
+        user.setAiCliMemory(0);
+        assertTrue(!user.cliCarriesMemory());
+    }
+
+    @Test
     @DisplayName("看板「让 AI 排一下今天」带过去的那句话真的会让 AI 读任务；AI 页在载入 Notebook 之后才填它")
     void 看板的入口() throws Exception {
         Matcher link = Pattern.compile("href=\"ai-assistant\\.html\\?ask=([^\"]+)\"").matcher(read("dashboard.html"));

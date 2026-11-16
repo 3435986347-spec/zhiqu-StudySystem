@@ -74,6 +74,7 @@ import com.zhiqu.service.ai.stream.ModelStreamResult;
 import com.zhiqu.service.ai.stream.NormalizedStreamEvent;
 import com.zhiqu.mapper.SysUserMapper;
 import com.zhiqu.service.memory.LongTermMemoryStore;
+import com.zhiqu.service.memory.MemoryDraftRows;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.service.support.ConversationLockRegistry;
 import com.zhiqu.service.support.ChatRunHub;
@@ -143,7 +144,6 @@ public class AiServiceImpl implements AiService {
      * 而且这九处里有一半（视觉、计划工具调用）根本不在 agent run 的上下文里。V33 退掉那一列。
      */
 
-    private static final int MEMORY_MAX_LENGTH = 2000;
     /**
      * 回答入库的上限。原来和用户消息共用 12000 —— 流式时用户看到的是全文，刷新之后后半截没了（第九轮改）。
      * 列是 MEDIUMTEXT（16MB），这个数只是防一个失控的模型把库写爆。用户消息的上限见 {@link UserMessageFit}。
@@ -1089,7 +1089,7 @@ public class AiServiceImpl implements AiService {
 
         /** 回答能用但不完整时的说明，存进 ai_message.notice（V38）。 */
         private String finalNotice;
-        private List<String> memoryItems = List.of();
+        private List<Map<String, Object>> memoryItems = List.of();
         private Map<String, Object> suggestedPlan = emptyPlan();
         private Map<String, Object> planArtifactContent = new LinkedHashMap<>();
         /**
@@ -2086,8 +2086,10 @@ public class AiServiceImpl implements AiService {
             s.trace.startTask(ctx, task);
             AiAgentStep step = s.trace.startStep(ctx, task, "MEMORY_CURATOR", 33, "正在整理记忆草稿");
             List<Map<String, Object>> rows = new ArrayList<>();
-            for (String item : s.memoryItems) {
-                rows.add(Map.of("text", item, "sourceMessageId", s.liveUser.getId()));
+            for (Map<String, Object> item : s.memoryItems) {
+                Map<String, Object> row = new LinkedHashMap<>(item);
+                row.put("sourceMessageId", s.liveUser.getId());
+                rows.add(row);
             }
             AiAgentArtifact artifact = aiWorkspaceService.createArtifact(
                     s.agentRun.getId(), step.getId(), "MEMORY_DRAFT", "AI 记忆草稿",
@@ -3067,7 +3069,6 @@ public class AiServiceImpl implements AiService {
 
     @Override
     public Map<String, Object> getMemory(Long userId) {
-        UserAiMemory memory = getMemoryEntity(userId);
         // 会话已按 notebook 拆分:个人中心的统计与预览跨全部会话按用户维度汇总
         long messageCount = messageMapper.selectCount(
                 new LambdaQueryWrapper<AiMessage>().eq(AiMessage::getUserId, userId)
@@ -3084,7 +3085,21 @@ public class AiServiceImpl implements AiService {
             recentMessages.add(messageRow(item));
         }
         Map<String, Object> result = new HashMap<>();
-        result.put("memoryText", decryptMemory(memory));
+        // 拼回来的全文照旧给（老页面只认它），另给逐条（第一百四十三轮）
+        List<LongTermMemoryStore.Item> items = memoryStore.items(userId);
+        result.put("memoryText", items.stream().map(LongTermMemoryStore.Item::text).collect(java.util.stream.Collectors.joining("\n")));
+        List<Map<String, Object>> itemRows = new ArrayList<>();
+        for (LongTermMemoryStore.Item item : items) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", item.id());
+            row.put("text", item.plain());
+            row.put("source", item.source());
+            row.put("pinned", item.pinned());
+            row.put("updatedAt", item.updatedAt());
+            row.put("lastUsedAt", item.lastUsedAt());
+            itemRows.add(row);
+        }
+        result.put("items", itemRows);
         result.put("messageCount", messageCount);
         result.put("recentMessages", recentMessages);
         return result;
@@ -3178,7 +3193,8 @@ public class AiServiceImpl implements AiService {
 
     @Override
     public void saveMemory(Long userId, String memoryText) {
-        upsertMemory(userId, limitText(memoryText, MEMORY_MAX_LENGTH));
+        // 不再悄悄截到 2000 字（第一百四十三轮）：逐条存，太长的由 write 照实拒绝
+        upsertMemory(userId, memoryText);
     }
 
     @Override
@@ -3188,10 +3204,8 @@ public class AiServiceImpl implements AiService {
             // 纪元 +1 与删除同事务：在途的 run 拿的是旧纪元，它们的记忆草稿确认时会被拦下。
             // V27 建了这一列就没再接线，「清空必须获胜」一直只是迁移注释里的一句话。
             userMapper.bumpMemoryEpoch(userId);
-            UserAiMemory memory = getMemoryEntity(userId);
-            if (memory != null) {
-                memoryMapper.deleteById(memory.getId());
-            }
+            // 逐条的连同作废的一起删，那块文本也删（第一百四十三轮）
+            memoryStore.clear(userId);
             // 会话已按 notebook 拆分:"清空记忆"语义保持清空该用户的全部会话与消息
             List<AiConversation> conversations = conversationMapper.selectList(
                     new LambdaQueryWrapper<AiConversation>().eq(AiConversation::getUserId, userId)
@@ -3554,18 +3568,14 @@ public class AiServiceImpl implements AiService {
         return Set.of("STREAMING", "DONE", "ERROR", "ABORTED").contains(value) ? value : "DONE";
     }
 
-    private UserAiMemory getMemoryEntity(Long userId) {
-        return memoryStore.find(userId);
-    }
-
     private String getMemoryText(Long userId) {
         return getMemoryText(userId, "");
     }
 
     private String getMemoryText(Long userId, String queryText) {
-        UserAiMemory memory = getMemoryEntity(userId);
         List<String> parts = new ArrayList<>();
-        String manual = decryptMemory(memory);
+        // 逐条拼回来的（作废、被改掉的不在里面）
+        String manual = memoryStore.read(userId);
         if (hasText(manual)) {
             parts.add("手动长期记忆：\n" + manual);
         }
@@ -3593,10 +3603,6 @@ public class AiServiceImpl implements AiService {
 
     private void upsertMemory(Long userId, String memoryText) {
         memoryStore.write(userId, memoryText);
-    }
-
-    private String decryptMemory(UserAiMemory memory) {
-        return memoryStore.decrypt(memory);
     }
 
     private String limitedQuery(String message) {
@@ -3848,17 +3854,24 @@ public class AiServiceImpl implements AiService {
      * <p>是否该跑由 {@link AgentPlanDecision#needsMemoryDraft()} 决定（此前是这里的
      * {@code looksMemoryWorthy}）—— 建图与执行读同一个判定，不各算一套。
      */
-    private List<String> computeMemoryDraftItems(AiModelConfig config, Long userId,
-                                                 String userMessage, String assistantReply) {
+    /**
+     * 记忆整理器（第一百四十三轮起出「加 / 改 / 作废」）：拿到现有条目（带 #编号），说这一轮要新增哪几条、
+     * 把哪一条改成什么、哪一条不再成立。只出草稿，用户逐条勾了才写（{@link MemoryDraftRows}）。
+     */
+    private List<Map<String, Object>> computeMemoryDraftItems(AiModelConfig config, Long userId,
+                                                              String userMessage, String assistantReply) {
         try {
-            String currentMemory = getMemoryText(userId);
+            List<LongTermMemoryStore.Item> current = memoryStore.items(userId);
             String prompt = """
-                    你是长期记忆整理器。从用户的新消息里挑出值得长期记住的事实，逐条列出。
+                    你是长期记忆整理器。对照「当前长期记忆」（每条前面是 #编号），看用户的新消息里有没有值得长期记住的事实。
                     只记录长期稳定信息，例如长期目标、负责的项目、工作节奏、时间偏好、提醒偏好、常用的格式和工具。
                     不记录一次性问题、闲聊、隐私敏感内容、临时情绪。
-                    已经出现在「当前长期记忆」里的内容不要重复列出。
-                    只输出 JSON 数组，每个元素是一句话，例如 ["负责公司官网改版项目，年底上线", "上午不安排会议，留给需要专注的工作"]。
-                    没有值得记录的新信息就输出 []。
+                    输出一个 JSON 数组，每个元素是下面三种之一：
+                    - 新增：{"op":"add","text":"一句话"}
+                    - 已有的一条说法变了（更具体了、改了主意）：{"op":"update","id":编号,"text":"改成的那一句"} —— 不要另加一条和它打架的
+                    - 已有的一条不再成立（用户说不再这样了）：{"op":"invalidate","id":编号}
+                    已经记着、意思没变的不要再列。没有要改的就输出 []。
+                    例：当前有「#12 上午不开会」，用户说「其实只有周三上午不开会」→ [{"op":"update","id":12,"text":"周三上午不开会"}]
                     """;
             String input = """
                     当前长期记忆：
@@ -3870,39 +3883,15 @@ public class AiServiceImpl implements AiService {
                     助手回复摘要：
                     %s
                     """.formatted(
-                    hasText(currentMemory) ? currentMemory : "",
+                    current.isEmpty() ? "（还没有）" : MemoryDraftRows.listing(current),
                     userMessage,
                     limitText(assistantReply, 1000)
             );
-            return parseMemoryItems(callAiApi(config, prompt, input));
+            String raw = cleanMemoryText(callAiApi(config, prompt, input));
+            return MemoryDraftRows.parse(MemoryDraftRows.arrayIn(objectMapper, raw), current, 200).stream()
+                    .limit(12).toList();
         } catch (Exception ignored) {
             // 记忆整理失败不影响主聊天。
-            return List.of();
-        }
-    }
-
-    /** 解析模型返回的条目数组；解析不出来就当作「本轮没有值得记住的」，不阻断回答。 */
-    private List<String> parseMemoryItems(String raw) {
-        if (!hasText(raw)) {
-            return List.of();
-        }
-        String text = raw.trim();
-        int start = text.indexOf('[');
-        int end = text.lastIndexOf(']');
-        if (start < 0 || end <= start) {
-            return List.of();
-        }
-        try {
-            List<?> parsed = objectMapper.readValue(text.substring(start, end + 1), List.class);
-            List<String> items = new ArrayList<>();
-            for (Object item : parsed) {
-                String line = item == null ? "" : cleanMemoryText(String.valueOf(item)).trim();
-                if (hasText(line) && items.size() < 12) {
-                    items.add(limitText(line, 200));
-                }
-            }
-            return List.copyOf(items);
-        } catch (Exception ignored) {
             return List.of();
         }
     }

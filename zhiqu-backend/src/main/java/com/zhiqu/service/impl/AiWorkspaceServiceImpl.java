@@ -34,6 +34,7 @@ import com.zhiqu.service.StudyTaskService;
 import com.zhiqu.service.ai.WebResearchService;
 import com.zhiqu.service.ai.WebSearchProvider;
 import com.zhiqu.service.memory.LongTermMemoryStore;
+import com.zhiqu.service.memory.MemoryDraftRows;
 import com.zhiqu.service.privacy.SensitiveCryptoService;
 import com.zhiqu.service.support.ConversationLockRegistry;
 import com.zhiqu.util.FileParseUtil;
@@ -992,12 +993,14 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
             }
             // 与计划草稿同一条纪律：确认之前 user_ai_memory 一字不动。
             // 用户在弹窗里逐条勾选，这里以提交的条目为准；没带 body 就整份接受。
-            List<String> items = memoryItemsToWrite(artifact, editedPlan);
-            if (!items.isEmpty()) {
-                memoryStore.appendItems(userId, items);
-            }
-            artifact.setContentJson(toJson(merge(parseMap(artifact.getContentJson()),
-                    Map.of("confirmedItems", items))));
+            // 草稿是加 / 改 / 作废（第一百四十三轮，MemoryDraftRows）；请求体只能在草稿里挑，不能多出别的改动
+            Map<String, Object> draftContent = parseMap(artifact.getContentJson());
+            List<?> draftRows = draftContent.get("items") instanceof List<?> l ? l : List.of();
+            List<LongTermMemoryStore.Change> changes = MemoryDraftRows.changes(draftRows,
+                    editedPlan == null ? null : editedPlan.get("items"));
+            String source = "CLI".equals(draftContent.get("source")) ? LongTermMemoryStore.SOURCE_CLI : LongTermMemoryStore.SOURCE_WEB;
+            List<String> done = changes.isEmpty() ? List.of() : memoryStore.apply(userId, changes, source);
+            artifact.setContentJson(toJson(merge(draftContent, Map.of("confirmedItems", done))));
             artifact.setTargetType("USER_AI_MEMORY");
             artifact.setTargetId(artifact.getId());
         } else {
@@ -1010,14 +1013,6 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     }
 
     /**
-     * 记忆草稿实际要写进长期记忆的条目。
-     *
-     * <p>请求体带 {@code items} 时以它为准（用户逐条勾选后的结果），否则整份接受 ——
-     * 与计划草稿「省略 body 即按原样应用」的既有约定一致。
-     * 只接受字符串条目，不接受任意结构：写进去的是给模型看的长期记忆，
-     * 让请求体决定它的形状等于开了一个注入口。
-     */
-/**
      * 把代码草稿落到磁盘上。
      *
      * <h2>一个文件写失败时，整批都不写</h2>
@@ -1080,23 +1075,6 @@ public class AiWorkspaceServiceImpl implements AiWorkspaceService {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> castRow(Map<?, ?> map) {
         return (Map<String, Object>) map;
-    }
-
-    private List<String> memoryItemsToWrite(AiAgentArtifact artifact, Map<String, Object> body) {
-
-        Object source = body == null ? null : body.get("items");
-        if (!(source instanceof List<?>)) {
-            source = parseMap(artifact.getContentJson()).get("items");
-        }
-        List<?> list = source instanceof List<?> rows ? rows : List.of();
-        List<String> items = new ArrayList<>();
-        for (Object row : list) {
-            String value = row instanceof Map<?, ?> map ? text(map.get("text"), "") : text(row, "");
-            if (!value.isBlank()) {
-                items.add(value.trim());
-            }
-        }
-        return items;
     }
 
     /**

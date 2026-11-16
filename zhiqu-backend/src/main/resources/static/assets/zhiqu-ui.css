@@ -1048,6 +1048,7 @@ button.zq-trace-more:hover{color:var(--zq-text);}
 .zq-plan-group.is-code .zq-plan-row{align-items:center;}
 .zq-plan-tag{margin-left:6px;font-size:var(--zq-fs-2xs);color:var(--zq-q2);}
 .zq-plan-tag[data-state="bad"]{color:var(--zq-bad);}
+.zq-mem-op{margin:0 6px 0 0;}
 .zq-diff{max-height:46vh;overflow:auto;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rs);background:var(--zq-card-soft);font-size:var(--zq-fs-xs);line-height:1.55;}
 .zq-diff-row{display:flex;color:var(--zq-text3);}
 .zq-diff-row[data-op="add"]{background:color-mix(in srgb, var(--zq-q2) 12%, transparent);color:var(--zq-q2);}

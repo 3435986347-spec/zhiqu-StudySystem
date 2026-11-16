@@ -47,6 +47,13 @@ public class SysUser {
         return aiReadTasks == null || aiReadTasks != 0;
     }
 
+    /** 命令行开工时带不带上长期记忆（V49，第一百四十三轮；用户 2026-11-15 定的「自动带上」，给开关）。空 = 开。 */
+    private Integer aiCliMemory;
+
+    public boolean cliCarriesMemory() {
+        return aiCliMemory == null || aiCliMemory != 0;
+    }
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

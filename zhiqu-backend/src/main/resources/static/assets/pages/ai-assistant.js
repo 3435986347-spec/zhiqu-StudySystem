@@ -793,9 +793,17 @@ function isMemoryDraft(artifact) {
 function memoryDraftItems(artifact) {
   var content = artifactContent(artifact);
   var items = Array.isArray(content.items) ? content.items : [];
+  // 第一百四十三轮起一行是加 / 改 / 作废（op）；老草稿只有 text，当成加
   return items.map(function (item) {
-    return typeof item === 'string' ? { text: item } : Object.assign({}, item);
-  }).filter(function (item) { return String(item.text || '').trim(); });
+    return typeof item === 'string' ? { op: 'add', text: item } : Object.assign({ op: 'add' }, item);
+  }).filter(function (item) { return item.op === 'invalidate' ? item.id != null : String(item.text || '').trim(); });
+}
+
+/** 一行草稿给人看的那句：改的写「旧 → 新」，作废的写「不再记」 */
+function memoryRowHtml(item) {
+  if (item.op === 'update') return '<span class="zq-plan-tag zq-mem-op">改</span>' + esc(String(item.oldText || ('#' + item.id))) + ' → ' + esc(String(item.text));
+  if (item.op === 'invalidate') return '<span class="zq-plan-tag zq-mem-op">不再记</span><s>' + esc(String(item.oldText || ('#' + item.id))) + '</s>';
+  return esc(String(item.text));
 }
 
 function openMemoryConfirmModal(artifact) {
@@ -812,7 +820,7 @@ function openMemoryConfirmModal(artifact) {
     items.forEach(function (item, i) {
       html += '<label class="zq-plan-row">'
         + '<input type="checkbox" data-pick="' + i + '"' + (picked[i] ? ' checked' : '') + '>'
-        + '<div class="zq-plan-row-body"><div class="zq-plan-name">' + esc(String(item.text)) + '</div></div>'
+        + '<div class="zq-plan-row-body"><div class="zq-plan-name">' + memoryRowHtml(item) + '</div></div>'
         + '</label>';
     });
     html += '</div><div class="zq-plan-actions">'

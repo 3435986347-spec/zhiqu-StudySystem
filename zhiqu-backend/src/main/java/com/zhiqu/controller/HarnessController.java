@@ -245,6 +245,13 @@ public class HarnessController {
         return Result.success(remoteTools.tools());
     }
 
+    /** 命令行开工时带上的长期记忆（第一百四十三轮）。关着就只回 enabled=false。 */
+    @GetMapping("/memory/brief")
+    public Result<Map<String, Object>> memoryBrief() {
+        Long userId = SecurityUtils.getCurrentUserId();
+        return Result.success(remoteTools.memoryBrief(userId));
+    }
+
     @PostMapping("/tools/call")
     public Result<Map<String, Object>> callTool(@RequestBody Map<String, Object> body) {
         Long userId = SecurityUtils.getCurrentUserId();

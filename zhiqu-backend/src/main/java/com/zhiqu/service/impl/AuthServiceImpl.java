@@ -143,6 +143,7 @@ public class AuthServiceImpl implements AuthService {
         data.put("totalStudyMinutes", user.getTotalStudyMinutes() == null ? 0 : user.getTotalStudyMinutes());
         data.put("consecutiveDays", user.getConsecutiveDays() == null ? 0 : user.getConsecutiveDays());
         data.put("aiReadTasks", user.aiReadsTasks());
+        data.put("aiCliMemory", user.cliCarriesMemory());
         return data;
     }
 

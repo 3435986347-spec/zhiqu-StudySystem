@@ -69,7 +69,7 @@ export function fakeApi(replies, { remote = {} } = {}) {
 }
 
 /** 假服务器：replies 依次是模型的回答 */
-export async function fakeServer(t, replies) {
+export async function fakeServer(t, replies, { memoryBrief = null } = {}) {
   const seen = [];
   const srv = http.createServer((req, res) => {
     let raw = '';
@@ -78,6 +78,10 @@ export async function fakeServer(t, replies) {
       const json = (v) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ code: 200, data: v })); };
       if (req.url.startsWith('/api/harness/models')) return json({ models: [{ id: 1, label: 'm', modelName: 'm', toolCalling: true, effectiveContextWindow: 100000 }], defaultModelId: 1 });
       if (req.url.startsWith('/api/harness/tools')) return json([]);
+      if (req.url.startsWith('/api/harness/memory/brief')) {
+        if (!memoryBrief) { res.statusCode = 404; return res.end('{}'); }   // 老服务器没有这个接口
+        return json(memoryBrief);
+      }
       if (req.url.startsWith('/api/harness/model/stream')) {
         const body = JSON.parse(raw);
         seen.push(body);

@@ -205,3 +205,24 @@ export function topDirs(root) {
     return new Set();
   }
 }
+
+/** 开工那一段长期记忆最多多少字（服务器已经按预算挑过；这里再挡一道，防服务器给多了把前缀撑大）。 */
+export const USER_MEMORY_CHARS = 2000;
+
+/**
+ * 用户的长期记忆（服务器上的那一份，第一百四十三轮）：开工时 `/api/harness/memory/brief` 给的一段，进系统提示、这段会话里不再变。
+ * 开关关着（`enabled: false`）、没有条目、拿不到（老服务器、直连）：没有这一段。
+ * 没放进来的说条数，让模型知道该用 read_memory 查，而不是以为就这些。
+ */
+export function userMemoryBlock(brief) {
+  if (!brief || brief.enabled === false) return '';
+  const text = String(brief.text || '').trim();
+  if (!text) return '';
+  const body = text.length > USER_MEMORY_CHARS ? text.slice(0, text.lastIndexOf('\n', USER_MEMORY_CHARS) > 0 ? text.lastIndexOf('\n', USER_MEMORY_CHARS) : USER_MEMORY_CHARS) : text;
+  const total = Number(brief.total) || 0;
+  const included = Number(brief.included) || 0;
+  const rest = total > included ? `\n（还有 ${total - included} 条没放进来；用到时用 read_memory 按关键字查。）` : '';
+  return '## 用户的长期记忆（用户在知趣·象限里确认过的偏好、目标、习惯）\n'
+    + '是用户以前说过、确认过的，不保证现在还对；和用户这次说的冲突时听这次的。要改或作废某条用 propose_memory（只成草稿）。\n'
+    + body + rest;
+}

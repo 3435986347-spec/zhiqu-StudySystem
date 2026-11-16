@@ -26,7 +26,7 @@ import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todo
 import { spillLongInput } from './longinput.js';
 import fs from 'node:fs';
 import { stat as diffStat } from './render/diff.js';
-import { projectMemory, topDirs } from './memory.js';
+import { projectMemory, topDirs, userMemoryBlock } from './memory.js';
 import { otherSessions, readSession, recentBlock, searchSessions, sessionSchemas } from './recall.js';
 import { firstChangedLine, listFiles, NOTE_TOOL, noteSchema, statePath, WorkState } from './state.js';
 import { estimateMessages, estimateTokens } from './compact.js';
@@ -233,6 +233,7 @@ function frozenEnv(ctx) {
   if (!ctx.envFrozen || ctx.envFrozen.key !== key) {
     let memory = '';
     try { const mem = projectMemory(ctx); memory = mem ? mem.block() : ''; } catch { memory = ''; }
+    memory = [userMemoryBlock(ctx.userMemory), memory].filter(Boolean).join('\n\n');
     ctx.envFrozen = { key, mode: liveMode(ctx), today: today(), saidMode: liveMode(ctx), saidToday: today(), memory };
   }
   return ctx.envFrozen;

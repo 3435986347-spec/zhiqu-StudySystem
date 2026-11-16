@@ -157,3 +157,16 @@ node tools/benchmarks/repository-docker.mjs grade   --eval-dir /Users/me/zhiqu-r
 ```
 
 这台 Mac 上的已知限制：Docker Desktop 经系统代理替容器转发外网，到 httpbin.org 约 4% 回 502 —— requests 两题的测试连 httpbin，gold 每遍挂几条、每遍不一样；给评分容器设代理变量会改变老版本 requests 的行为（试过、不用）。
+
+## 尺子：记忆第 8 步的量法（第一百四十四轮）
+
+`ruler/ruler.mjs` 加了 `--window <token>`（把窗口改小，逼它压缩）和一道长活题 `long-shop`（7 个文件、近 2 万字的源码，3.2 万窗口下读完就得压缩）。
+每一遍从这段会话的记录里算（`ruler/memory-metrics.mjs`，判据 `ruler-metrics.test.mjs`）：压缩几次、每次压完隔几步才动手（写文件或跑命令）、
+重复读取（同一段在没改过它之前又读一遍）占全部读取的比例、清单倒退（标过完成的又不是完成）、命中率、花费。
+
+直连（不经网关）：`setup.json` 里写 `{"direct": {"url": "...", "model": "...", "protocol": "openai", "keyFile": "<只有自己能读的文件>"}, "price": {"hit": 0.2, "miss": 2, "output": 3}}`，
+key 放在单独的文件里，不进 setup.json、不进结果。直连 OpenAI 兼容接口时尺子自己补上 `stream_options.include_usage` 和温度 0（命令行的直连没要用量，第一百四十轮记下的）。
+
+```bash
+node tools/benchmarks/ruler/ruler.mjs --cli zhiqu-cli --setup setup.json --window 32000 --tasks long-shop,inventory,user-cache --runs 3 --label now --out ruler.jsonl
+```

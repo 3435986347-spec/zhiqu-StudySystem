@@ -473,6 +473,9 @@ async function runAgent(cwd, flags) {
         api.get('/api/harness/tools', { timeoutMs: STARTUP_TIMEOUT_MS }).catch((e) => { if (e.status) ui.warn(`远程工具（Wiki / 计划 / 记忆）拿不到：${e.message}`); return []; }),
       ]);
       ctx.remoteTools = remote;
+      // 开工时带上长期记忆（第一百四十三轮；用户定的「自动带上」，开关在网页「设置 → AI 模型」）。拿不到不挡开工：
+      // 老服务器没有这个接口（404）、网络抖一下，都只是这一段没有，模型照旧能用 read_memory 查
+      ctx.userMemory = await api.get('/api/harness/memory/brief', { timeoutMs: STARTUP_TIMEOUT_MS }).catch(() => null);
     } catch (e) {
       if (e instanceof ApiError && e.auth) { ui.error(e.message); return 1; }
       throw e;

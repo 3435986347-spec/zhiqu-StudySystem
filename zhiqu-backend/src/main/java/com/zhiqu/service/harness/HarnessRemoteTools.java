@@ -8,6 +8,7 @@ import com.zhiqu.service.ai.StudyPlanTool;
 import com.zhiqu.service.ai.ToolSchemas;
 import com.zhiqu.service.ai.WikiToolAgent;
 import com.zhiqu.service.memory.LongTermMemoryStore;
+import com.zhiqu.service.memory.MemoryDraftRows;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -45,6 +46,8 @@ public class HarnessRemoteTools {
     static final String PROPOSE_MEMORY = "propose_memory";
     static final int MAX_MEMORY_ITEMS = 20;
     static final int MAX_MEMORY_ITEM_CHARS = 200;
+    static final int MAX_READ_CHARS = 6000;
+    private static final java.util.regex.Pattern UPDATE_LINE = java.util.regex.Pattern.compile("\\s*#?(\\d+)\\s*[:：]?\\s*(.+)", java.util.regex.Pattern.DOTALL);
     private static final long STATE_TTL_MS = 6 * 3600_000L;
 
     private final WikiToolAgent wiki;
@@ -89,15 +92,22 @@ public class HarnessRemoteTools {
         out.add(ToolSchemas.functionTool(UPDATE_TASK_STATUS,
                 "把一条任务标成待办 / 进行中 / 已完成。直接生效，不是草稿。新建任务用 create_study_plan（草稿，用户在网页确认）。",
                 statusProps, List.of("task_id", "status")));
+        Map<String, Object> readProps = new LinkedHashMap<>();
+        readProps.put("query", ToolSchemas.schemaProp("string", "关键字（空格分开的词都要出现）；不给就列出全部"));
         out.add(ToolSchemas.functionTool(READ_MEMORY,
-                "读取用户在知趣·象限里保存的长期记忆（偏好、目标、习惯）。回答涉及「我之前说过」「按我的习惯」时先读。",
-                new LinkedHashMap<>(), List.of()));
+                "读取用户在知趣·象限里保存的长期记忆（偏好、目标、习惯），一条一行、带 #编号。"
+                        + "开工时已经给过一段；那里说还有没放进来的、或者问到「我之前说过」时再用关键字查。",
+                readProps, List.of()));
         Map<String, Object> memoryProps = new LinkedHashMap<>();
         memoryProps.put("items", ToolSchemas.schemaArray("string",
-                "要记住的条目，每条一句话、独立成立（如「偏好用 Python 做算法题」）"));
+                "要新记住的条目，每条一句话、独立成立（如「偏好用 Python 做算法题」）"));
+        memoryProps.put("updates", ToolSchemas.schemaArray("string",
+                "要改的已有条目，每个写成「#编号 改成的那一句」（编号是 read_memory 给的）"));
+        memoryProps.put("invalidate", ToolSchemas.schemaArray("integer", "不再成立的已有条目的编号"));
         out.add(ToolSchemas.functionTool(PROPOSE_MEMORY,
-                "把值得长期记住的事实提议写进长期记忆。只会生成草稿，用户在网页确认后才写入；不要记一次性的细节。",
-                memoryProps, List.of("items")));
+                "提议改长期记忆：新增、把已有的一条改掉（说法变了就改，不要另加一条打架的）、作废不再成立的。"
+                        + "只会生成草稿，用户在网页确认后才写入；不要记一次性的细节。",
+                memoryProps, List.of()));
         return out;
     }
 
@@ -126,9 +136,7 @@ public class HarnessRemoteTools {
             return LIST_TASKS.equals(name) ? result(taskReader.read(userId, true).block()) : updateTaskStatus(userId, args);
         }
         if (READ_MEMORY.equals(name)) {
-            String text = memory.read(userId);
-            return result(text == null || text.isBlank() ? "（用户还没有保存任何长期记忆）"
-                    : text.length() > 4000 ? text.substring(0, 4000) + "\n…（已截断）" : text);
+            return readMemory(userId, args);
         }
         if (PROPOSE_MEMORY.equals(name)) {
             return proposeMemory(userId, clientSessionId, args);
@@ -220,30 +228,87 @@ public class HarnessRemoteTools {
         return out;
     }
 
-    private Map<String, Object> proposeMemory(Long userId, String clientSessionId, String args) {
-        List<String> items = new ArrayList<>();
+    /** 一条一行带 #编号；按关键字查时记一下用到的时间（开工那一段按「最近用到」排）。最多 6000 字，多了说还有几条。 */
+    private Map<String, Object> readMemory(Long userId, String args) {
+        String query = "";
         try {
-            Object raw = json.readValue(args, Map.class).get("items");
-            if (raw instanceof List<?> list) {
+            Object q = json.readValue(args, Map.class).get("query");
+            query = q == null ? "" : String.valueOf(q);
+        } catch (Exception ignored) {
+            // 没参数就是列出全部
+        }
+        List<LongTermMemoryStore.Item> hits = memory.search(userId, query);
+        if (hits.isEmpty()) {
+            return result(query.isBlank() ? "（用户还没有保存任何长期记忆）" : "（长期记忆里没有含「" + query.trim() + "」的条目）");
+        }
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (LongTermMemoryStore.Item i : hits) {
+            String line = "#" + i.id() + " " + i.plain();
+            if (sb.length() + line.length() > MAX_READ_CHARS) break;
+            if (!sb.isEmpty()) sb.append('\n');
+            sb.append(line);
+            shown++;
+        }
+        if (shown < hits.size()) {
+            sb.append("\n…还有 ").append(hits.size() - shown).append(" 条没列出来，换个关键字查");
+        }
+        return result(sb.toString());
+    }
+
+    /** 开工那一段放多少字（约 600–800 token）。 */
+    static final int BRIEF_CHARS = 1200;
+
+    /**
+     * 命令行开工时带上的那一段（第一百四十三轮；用户定的「自动带上」，开关在「设置 → AI 模型」）。
+     * 关着：{@code enabled=false}、不给正文。置顶的 + 最近改过 / 用到的，放到预算为止；没放进来的说条数。
+     */
+    public Map<String, Object> memoryBrief(Long userId) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        com.zhiqu.entity.SysUser user = users.selectById(userId);
+        boolean enabled = user != null && user.cliCarriesMemory();
+        out.put("enabled", enabled);
+        if (!enabled) {
+            return out;
+        }
+        LongTermMemoryStore.Budgeted b = memory.budgeted(userId, BRIEF_CHARS);
+        out.put("text", b.text());
+        out.put("included", b.included());
+        out.put("total", b.total());
+        return out;
+    }
+
+    private Map<String, Object> proposeMemory(Long userId, String clientSessionId, String args) {
+        List<Object> raw = new ArrayList<>();
+        try {
+            Map<?, ?> parsed = json.readValue(args, Map.class);
+            if (parsed.get("items") instanceof List<?> list) {
+                for (Object o : list) raw.add(Map.of("op", "add", "text", o == null ? "" : String.valueOf(o)));
+            }
+            if (parsed.get("updates") instanceof List<?> list) {
                 for (Object o : list) {
-                    String s = o == null ? "" : String.valueOf(o).replaceAll("\\s+", " ").trim();
-                    if (!s.isEmpty()) items.add(s.length() > MAX_MEMORY_ITEM_CHARS ? s.substring(0, MAX_MEMORY_ITEM_CHARS) : s);
+                    java.util.regex.Matcher m = UPDATE_LINE.matcher(o == null ? "" : String.valueOf(o));
+                    if (m.matches()) raw.add(Map.of("op", "update", "id", Long.parseLong(m.group(1)), "text", m.group(2)));
                 }
             }
+            if (parsed.get("invalidate") instanceof List<?> list) {
+                for (Object o : list) raw.add(Map.of("op", "invalidate", "id", o == null ? "" : String.valueOf(o)));
+            }
         } catch (Exception e) {
-            return result("参数不对：items 应当是字符串数组");
+            return result("参数不对：items 是字符串数组，updates 是「#编号 改成的那一句」的数组，invalidate 是编号数组");
         }
-        if (items.isEmpty()) {
-            return result("参数不对：items 为空，没有要记住的内容");
+        List<Map<String, Object>> rows = MemoryDraftRows.parse(raw, memory.items(userId), MAX_MEMORY_ITEM_CHARS);
+        if (rows.isEmpty()) {
+            return result(raw.isEmpty() ? "参数不对：没有要记住、要改或要作废的内容"
+                    : "没有生成草稿：新增的都已经记着了，要改 / 作废的编号不在（先用 read_memory 看编号）。");
         }
-        if (items.size() > MAX_MEMORY_ITEMS) {
-            items = items.subList(0, MAX_MEMORY_ITEMS);
+        if (rows.size() > MAX_MEMORY_ITEMS) {
+            rows = rows.subList(0, MAX_MEMORY_ITEMS);
         }
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (String item : items) rows.add(Map.of("text", item));
         Long runId = sessions.draftRun(userId, clientSessionId);
-        AiAgentArtifact a = workspace.createArtifact(runId, null, "MEMORY_DRAFT", "AI 记忆草稿", Map.of("items", rows), null);
-        Map<String, Object> out = result("已生成记忆草稿（" + rows.size() + " 条）。还没有写入长期记忆 —— 用户在网页确认后才会写入。");
+        AiAgentArtifact a = workspace.createArtifact(runId, null, "MEMORY_DRAFT", "AI 记忆草稿",
+                Map.of("items", rows, "source", "CLI"), null);
+        Map<String, Object> out = result("已生成记忆草稿（" + rows.size() + " 条改动）。还没有写入长期记忆 —— 用户在网页确认后才会写入。");
         out.put("drafts", List.of(draftRow(a)));
         return out;
     }

@@ -152,6 +152,9 @@ const PANES = {
     // 第二十七轮：AI 读不读得到你的任务（用户定的「让它读，给一个开关」；默认开）。说清楚打开时什么会发给谁。
     + '<div class="zq-set-row"><span class="zq-set-row-text"><b>让 AI 读我的任务</b>：问到今天、这周怎么安排时，AI 先看一眼你没完成的任务（标题、时间、象限）再回答。打开时，这些内容会发给你配置的模型供应商。</span>'
     + TOGGLE('zq-ai-read-tasks', '让 AI 读我的任务') + '</div>'
+    // 第一百四十三轮：命令行开工时带上长期记忆（用户 2026-11-15 定的「自动带上」，和上面那个并排；默认开）
+    + '<div class="zq-set-row"><span class="zq-set-row-text"><b>命令行开工时带上长期记忆</b>：用 zhiqu 命令行时，开工就把你的长期记忆（置顶的和最近用到的，约一千字）放进去，不用它自己想起来去查。打开时，这些内容会发给你配置的模型供应商。</span>'
+    + TOGGLE('zq-ai-cli-memory', '命令行开工时带上长期记忆') + '</div>'
     + '<div id="zq-models" class="zq-set-models"></div>'
     + '<div id="zq-model-form" class="zq-set-form">'
     // 表单在新建还是在改哪一个，写在标题上（原来只弹一下提示，表单本身看不出来）
@@ -266,6 +269,17 @@ function bindModels(sh, root) {
       sh.state.user.aiReadTasks = next;
       setToggle(readTasks, next);
       sh.toast(next ? '已打开：问到安排时 AI 会先看你的任务' : '已关闭：AI 不再读你的任务');
+    });
+  };
+  var cliMemory = $('#zq-ai-cli-memory');
+  setToggle(cliMemory, u.aiCliMemory !== false);
+  cliMemory.onclick = function () {
+    var next = !toggleOn(cliMemory);
+    sh.safe('保存设置', async function () {
+      await sh.api.put('/user/ai-cli-memory?enabled=' + next);
+      sh.state.user.aiCliMemory = next;
+      setToggle(cliMemory, next);
+      sh.toast(next ? '已打开：命令行开工时会带上你的长期记忆' : '已关闭：命令行要用时才去查');
     });
   };
 

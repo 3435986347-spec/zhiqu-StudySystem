@@ -128,6 +128,55 @@ class HarnessRemoteToolsTest {
     }
 
     @Test
+    @DisplayName("记忆（第一百四十三轮）：propose_memory 能改 / 作废已有的（编号要真有），草稿标出自命令行；编的编号、全是重复的不建")
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void 记忆的改和作废() {
+        java.time.LocalDateTime t = java.time.LocalDateTime.of(2026, 11, 1, 0, 0);
+        when(memory.items(1L)).thenReturn(List.of(new LongTermMemoryStore.Item(12L, "- 上午不开会", null, "MANUAL", false, t, t, null)));
+        Map<String, Object> none = tools.call(1L, "s1", HarnessRemoteTools.PROPOSE_MEMORY,
+                Map.of("items", List.of("上午不开会"), "updates", List.of("#99 编的")));
+        assertTrue(String.valueOf(none.get("content")).contains("没有生成草稿"), String.valueOf(none.get("content")));
+        verify(workspace, never()).createArtifact(anyLong(), any(), anyString(), anyString(), any(), any());
+        tools.call(1L, "s1", HarnessRemoteTools.PROPOSE_MEMORY,
+                Map.of("updates", List.of("#12 周三上午不开会"), "invalidate", List.of(12)));
+        org.mockito.ArgumentCaptor<Map> content = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(workspace).createArtifact(eq(77L), any(), eq("MEMORY_DRAFT"), anyString(), content.capture(), any());
+        Map<String, Object> c = (Map<String, Object>) content.getValue();
+        assertEquals("CLI", c.get("source"));
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) c.get("items");
+        assertEquals(1, rows.size(), "同一条既改又作废只留第一个：" + rows);
+        assertEquals("update", rows.get(0).get("op"));
+        assertEquals("上午不开会", rows.get(0).get("oldText"));
+    }
+
+    @Test
+    @DisplayName("开工那一段（第一百四十三轮）：开关关着只回 enabled=false、不读记忆；开着（含空 = 开）给预算内的那段")
+    void 开工那一段() {
+        com.zhiqu.entity.SysUser off = userWithSwitch(null);
+        off.setAiCliMemory(0);
+        when(users.selectById(1L)).thenReturn(off);
+        Map<String, Object> closed = tools.memoryBrief(1L);
+        assertEquals(Map.of("enabled", false), closed);
+        verify(memory, never()).budgeted(anyLong(), org.mockito.ArgumentMatchers.anyInt());
+        when(users.selectById(1L)).thenReturn(userWithSwitch(null));
+        when(memory.budgeted(1L, HarnessRemoteTools.BRIEF_CHARS)).thenReturn(new LongTermMemoryStore.Budgeted("- 上午不开会", 1, 3));
+        Map<String, Object> open = tools.memoryBrief(1L);
+        assertEquals(true, open.get("enabled"));
+        assertEquals("- 上午不开会", open.get("text"));
+        assertEquals(3, open.get("total"));
+    }
+
+    @Test
+    @DisplayName("read_memory（第一百四十三轮）：一条一行带 #编号，按关键字查")
+    void 读记忆() {
+        java.time.LocalDateTime t = java.time.LocalDateTime.of(2026, 11, 1, 0, 0);
+        when(memory.search(1L, "上午")).thenReturn(List.of(new LongTermMemoryStore.Item(12L, "- 上午不开会", null, "MANUAL", false, t, t, null)));
+        assertEquals("#12 上午不开会", tools.call(1L, "s1", HarnessRemoteTools.READ_MEMORY, Map.of("query", "上午")).get("content"));
+        when(memory.search(1L, "")).thenReturn(List.of());
+        assertTrue(String.valueOf(tools.call(1L, "s1", HarnessRemoteTools.READ_MEMORY, "{}").get("content")).contains("还没有保存"));
+    }
+
+    @Test
     @DisplayName("不认识的工具名、不合法的会话 id 都拒")
     void 拒绝() {
         assertThrows(BusinessException.class, () -> tools.call(1L, "s1", "rm_rf", "{}"));

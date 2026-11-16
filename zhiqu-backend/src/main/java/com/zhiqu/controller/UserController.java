@@ -40,6 +40,12 @@ public class UserController {
         return Result.success(userService.setAiReadTasks(SecurityUtils.getCurrentUserId(), enabled));
     }
 
+    /** 命令行开工时带不带上长期记忆（第一百四十三轮）。 */
+    @PutMapping("/ai-cli-memory")
+    public Result<Map<String, Object>> setAiCliMemory(@RequestParam boolean enabled) {
+        return Result.success(userService.setAiCliMemory(SecurityUtils.getCurrentUserId(), enabled));
+    }
+
     /**
      * 改密码：别的设备上的登录、被偷走的令牌一并失效；这个会话拿到一张新令牌（到期时间不变）。
      * 这次请求带着「记住我」的 Cookie 的话也换成新令牌 —— 否则 Cookie 里是作废的旧令牌。

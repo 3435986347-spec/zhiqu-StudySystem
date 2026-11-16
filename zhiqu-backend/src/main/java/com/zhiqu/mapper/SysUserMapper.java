@@ -62,6 +62,10 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
     @Update("UPDATE sys_user SET ai_read_tasks = #{enabled} WHERE id = #{userId} AND deleted = 0")
     int updateAiReadTasks(@Param("userId") Long userId, @Param("enabled") int enabled);
 
+    /** 同上，命令行开工时带不带长期记忆（第一百四十三轮）。 */
+    @Update("UPDATE sys_user SET ai_cli_memory = #{enabled} WHERE id = #{userId} AND deleted = 0")
+    int updateAiCliMemory(@Param("userId") Long userId, @Param("enabled") int enabled);
+
     @Update("UPDATE sys_user SET avatar = #{avatar} WHERE id = #{userId} AND deleted = 0")
     int updateAvatar(@Param("userId") Long userId, @Param("avatar") String avatar);
 

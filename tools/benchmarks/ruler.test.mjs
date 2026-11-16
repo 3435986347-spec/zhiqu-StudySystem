@@ -9,8 +9,8 @@ import { listTasks, prepareWorkspace, runHidden, runVisible } from './ruler/rule
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const tasks = listTasks();
 
-test('尺子有 14 道题，每题都有问题描述、公开 / 隐藏测试的跑法', () => {
-  assert.equal(tasks.length, 14, tasks.map((t) => t.name).join(','));
+test('尺子有 15 道题（第一百四十四轮加了一道长活题 long-shop），每题都有问题描述、公开 / 隐藏测试的跑法', () => {
+  assert.equal(tasks.length, 15, tasks.map((t) => t.name).join(','));
   for (const t of tasks) {
     assert.ok(t.issue.length > 40, `${t.name} 的问题描述太短`);
     assert.ok(Array.isArray(t.run) && Array.isArray(t.visible), t.name);
@@ -33,3 +33,11 @@ for (const t of tasks) {
     assert.ok(hg.pass, `${t.name}：参考答案过不了隐藏测试：\n${hg.output}`);
   });
 }
+
+test('long-shop 是长活题：仓库源码超过 1.5 万字（3.2 万窗口下读完就得压缩），task.json 标了 long', () => {
+  const t = tasks.find((x) => x.name === 'long-shop');
+  assert.ok(t && t.long === true);
+  const dir = path.join(t.root, 'repo', 'shop');
+  const chars = fs.readdirSync(dir).reduce((n, f) => n + fs.readFileSync(path.join(dir, f), 'utf8').length, 0);
+  assert.ok(chars > 15_000, String(chars));
+});
