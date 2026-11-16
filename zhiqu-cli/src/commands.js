@@ -22,6 +22,7 @@ export const SLASH_COMMANDS = [
   { name: '/system', args: '[path|diff|reset]', desc: '系统内容（~/.zhiqu/system.md）' },
   { name: '/verbose', desc: '显示 / 隐藏思考过程（默认隐藏：只显示结论和改了什么）' },
   { name: '/usage', desc: '这次会话与今天的用量' },
+  { name: '/memory', args: '[rm <编号>]', desc: '项目笔记：zhiqu 在这个项目里自己记的约定、坑、地图（.zhiqu/memory/，不进 git）' },
   { name: '/state', desc: '工作状态：清单、做完的、定过的事、改过和新建的文件（压缩和重启都不丢的那一份）' },
   { name: '/help', desc: '列出这些命令' },
   { name: '/exit', desc: '退出（也可以 Ctrl+D）' },

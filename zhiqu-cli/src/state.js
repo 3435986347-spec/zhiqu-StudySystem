@@ -62,11 +62,14 @@ export function noteSchema() {
         'decision 定过的事和原因（「天空用体积云，不用贴图：贴图在 4K 下糊」）；dead_end 试过不行的路（「把曝光调到 1.6 整屏发白」），免得压缩之后再试一遍；',
         'anchor 一个位置（path + line：「FS_SKY 着色器从这里开始」）；temp 你建的临时文件（path），收尾时好删。',
         '一条一句话，不超过 300 字。改了哪些文件、跑了什么、清单做到哪，命令行自己记着，不用你记。',
+        '上面四种只管这段会话。**以后每次在这个项目里开工都该知道的事**（约定、坑、定过的事、常用命令）用 kind: project：给一个 topic（短标题，同一个 topic 再记是更新）和 type，最多 600 字。它直接写进项目的 .zhiqu/memory/，不进 git。',
       ].join('\n'),
       parameters: {
         type: 'object',
         properties: {
-          kind: { type: 'string', enum: NOTE_KINDS, description: 'decision / dead_end / anchor / temp' },
+          kind: { type: 'string', enum: [...NOTE_KINDS, 'project'], description: 'decision / dead_end / anchor / temp（这段会话）；project（这个项目，跨会话）' },
+          topic: { type: 'string', description: 'project 用：短标题，比如「测试怎么跑」' },
+          type: { type: 'string', enum: ['convention', 'pitfall', 'decision', 'command'], description: 'project 用：约定 / 坑 / 定过的事 / 常用命令' },
           text: { type: 'string', description: '要记的那句话' },
           path: { type: 'string', description: 'anchor、temp 用：相对工作区的路径' },
           line: { type: 'integer', description: 'anchor 用：行号' },

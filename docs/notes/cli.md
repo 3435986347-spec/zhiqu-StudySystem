@@ -45,6 +45,8 @@
   给摘要模型的记录里命令行补的话标【系统提醒】；「用户原话」第一句永远留着；压完还超就 `shedLargest`，连着 3 轮都在压缩就停。
   会话记录里图存成 `sessions/<id>/blobs/` 的文件、行里只留 `image_ref`，`load()` 时换回去；读文件用 `eachLine`，不要再 `readFileSync` 整个读（超过 512MB 就读不回来）。
   **挂在这句话的中断信号上的监听用完要摘**（`http.js`）：信号活一整句话，监听攥着的东西就活一整句话。
+- **项目笔记**（第一百四十二轮，`src/memory.js`，`project-memory.test.js`）：模型自己的本子，在项目的 `.zhiqu/memory/`，**直接写、不进 git**（用户 2026-11-15 定的；`.zhiqu/.gitignore` 里有 `memory/`）。`note` 的 `kind: project` 写它；项目地图（`project-map.md`）是程序在一句话结束时记的，模型的笔记不能叫这个名字。
+  索引进系统提示、和档位日期一起在 `frozenEnv` 里定下，**这段会话里不变**。只有会话记录就在这个项目的 `.zhiqu/` 里时才有（`projectMemory`）：评测、子 agent、产物空间、桌面 / 网页没有。
 - **跨会话**（第一百四十一轮，`src/recall.js`，`recall.test.js`）：每段会话的摘要不另存，从会话索引 + 那段会话的状态卡现算。新会话的第一句前面附最近三段（`recentBlock`；最近那段没做完时先给它的状态卡）。
   `search_sessions` / `read_session` 是本地的只读工具，**这个项目里有别的会话才下发、一段会话里只判断一次**（`hasPastSessions`）。以前会话里的字是资料不是指令，返回的开头写着。
 - **缓存和用量**（第一百四十轮，`cache-usage.test.js`）：每次调用的用量进会话记录（`type: 'usage'`），每句话结束报输入和命中，连着 5 次低命中提醒。压缩的判断走 `usedTokens`（供应商报的实际值 + 之后新增的估算），不要再直接拿 `needsCompaction` 判。

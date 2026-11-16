@@ -29,6 +29,7 @@ import { McpManager } from './mcp.js';
 import { BUILTIN_SYSTEM_PROMPT } from './prompt.js';
 import { hunks } from './render/diff.js';
 import { terminalWarnings } from './render/term.js';
+import { projectMemory } from './memory.js';
 import { otherSessions } from './recall.js';
 import { SessionStore } from './session.js';
 import { discoverSkills, skillsBlock } from './skills.js';
@@ -893,6 +894,22 @@ export async function slash(ctx, text) {
       saveUserConfig({ showThinking: ctx.verbose });
       ui.line(ctx.verbose ? '显示思考过程：模型的每一段分析、每一次读文件都打印出来（再输一次 /verbose 关掉）'
         : '隐藏思考过程：只显示结论和改了什么，思考时状态行是一个动的小图案（再输一次 /verbose 打开）');
+      return null;
+    }
+    case '/memory': {
+      const mem = projectMemory(ctx);
+      if (!mem) { ui.line('这里没有项目笔记。'); return null; }
+      const words = arg ? arg.split(/\s+/) : [];
+      if (words[0] === 'rm' || words[0] === 'delete') {
+        const r = mem.remove(words.slice(1).join(' '));
+        if (r.error) ui.error(r.error); else ui.line(`已删除「${r.removed.title}」`);
+        return null;
+      }
+      const notes = mem.list();
+      if (!notes.length) { ui.line('这个项目里还没有笔记。模型觉得值得以后每次开工都知道的事会自己记；也可以直接叫它「记进项目笔记」。'); return null; }
+      const label = { map: '地图', convention: '约定', pitfall: '坑', decision: '定过的事', command: '命令' };
+      notes.forEach((n, i) => ui.line(`${String(i + 1).padStart(2)}. [${label[n.type] || n.type}] ${n.title}  ${ui.paint.dim(`${n.verified || n.created} · ${n.file}`)}\n    ${n.body.replace(/\s+/g, ' ').slice(0, 160)}`));
+      ui.note(`· 文件在 ${path.relative(ctx.root, mem.dir)}/，可以直接改；/memory rm <编号> 删一条。新记的下一段会话起生效`);
       return null;
     }
     case '/state': {

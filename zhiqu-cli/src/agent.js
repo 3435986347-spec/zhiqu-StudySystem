@@ -26,6 +26,7 @@ import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todo
 import { spillLongInput } from './longinput.js';
 import fs from 'node:fs';
 import { stat as diffStat } from './render/diff.js';
+import { projectMemory, topDirs } from './memory.js';
 import { otherSessions, readSession, recentBlock, searchSessions, sessionSchemas } from './recall.js';
 import { firstChangedLine, listFiles, NOTE_TOOL, noteSchema, statePath, WorkState } from './state.js';
 import { estimateMessages, estimateTokens } from './compact.js';
@@ -230,7 +231,9 @@ const liveMode = (ctx) => (ctx.execReadOnly ? 'exec-read' : ctx.mode);
 function frozenEnv(ctx) {
   const key = `${ctx.session ? ctx.session.id : ''}|${ctx.subagent ? ctx.subagent.id : ''}`;
   if (!ctx.envFrozen || ctx.envFrozen.key !== key) {
-    ctx.envFrozen = { key, mode: liveMode(ctx), today: today(), saidMode: liveMode(ctx), saidToday: today() };
+    let memory = '';
+    try { const mem = projectMemory(ctx); memory = mem ? mem.block() : ''; } catch { memory = ''; }
+    ctx.envFrozen = { key, mode: liveMode(ctx), today: today(), saidMode: liveMode(ctx), saidToday: today(), memory };
   }
   return ctx.envFrozen;
 }
@@ -268,7 +271,9 @@ export function systemText(ctx) {
   // 目标、用户这次的原话置顶：在系统内容之后、其它一切之前 —— 每一轮都在，压缩也压不掉。
   // 系统提示排在所有历史前面，改一个字后面的缓存全部失效（第一百零四轮）：这两样很少变；任务清单常变，不放这里，见 TODO_REMIND_ROUNDS
   const pinned = [goalBlock(ctx.goal), requestBlock(ctx)].filter(Boolean).join('\n\n');
-  return buildSystemMessage({ systemText: pinned ? `${ctx.system.text.trim()}\n\n${pinned}` : ctx.system.text, env, instructions: ctx.instructionsText, skills: ctx.skillsText });
+  // 项目笔记的索引排在最后（第一百四十二轮）：开工时读一次、这段会话里不再变 —— 中途新记的不改系统提示，下一段会话才看得到
+  return buildSystemMessage({ systemText: pinned ? `${ctx.system.text.trim()}\n\n${pinned}` : ctx.system.text, env, instructions: ctx.instructionsText,
+    skills: [ctx.skillsText, frozen.memory].filter(Boolean).join('\n\n') });
 }
 
 const REQUEST_PIN_CHARS = 6000;
@@ -1190,6 +1195,21 @@ async function runTool(ctx, call, offered, signal) {
     stepNote(ctx, { summary: r.summary });
     return r.content;
   }
+  if (kind === 'note' && args.kind === 'project') {
+    // 项目笔记（第一百四十二轮）：直接写进 .zhiqu/memory/，不走草稿（用户定的）；每次写都说一声
+    const mem = projectMemory(ctx);
+    if (!mem) {
+      const msg = '这里没有项目笔记（不是在项目自己的 .zhiqu/ 里记会话的地方）。这段会话里要记的用 decision / dead_end / anchor / temp。';
+      ui.result(msg, false); stepNote(ctx, { ok: false, summary: msg });
+      return msg;
+    }
+    const r = mem.write({ type: args.type, title: args.topic, text: args.text, source: ctx.session ? ctx.session.id : '' });
+    if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
+    const said = `${r.updated ? '更新了' : '记下了'}项目笔记「${r.title}」→ .zhiqu/memory/${r.file}`;
+    ui.result(said);
+    stepNote(ctx, { summary: said, title: '项目笔记' });
+    return `${said}。以后在这个项目里开工都看得到它（这段会话的系统提示不变，下一段起生效）；用户可以用 /memory 看和删。`;
+  }
   if (kind === 'note') {
     const r = workOf(ctx).note(args);
     if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
@@ -1430,6 +1450,8 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     work.beginTurn(origin ? null : content);
     // 开工时的文件清单：结束时比出这一句新建的文件（shell 建的，工具那边看不到）
     if (ctx.root && ctx.filesAtStart === undefined) ctx.filesAtStart = listFiles(ctx.root);
+    // 开工时有哪些顶层目录：结束时多出来的记进项目地图
+    if (ctx.root && !ctx.dirsAtStart) ctx.dirsAtStart = topDirs(ctx.root);
   }
   record(ctx, { role: 'user', content }, origin);
   if (ctx.session && ctx.store && !ctx.session.title) {
@@ -1655,6 +1677,19 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
       if (now) work.addCreated([...now].filter((f) => !ctx.filesAtStart.has(f)).slice(0, 80));
     }
     work.endTurn(finished, { discardWhenDone: !ctx.store, answer: finished ? said : '' });
+    // 项目地图（第一百四十二轮）：这一句里多出来的顶层目录记一行，哪天建的、出自哪段会话。程序记，不调模型
+    try {
+      const mem = projectMemory(ctx);
+      if (mem && ctx.dirsAtStart) {
+        const now = topDirs(ctx.root);
+        const fresh = [...now].filter((d) => !ctx.dirsAtStart.has(d));
+        if (fresh.length) {
+          const added = mem.mapAdd(fresh.map((dir) => ({ dir, title: ctx.session && ctx.session.title })), { source: ctx.session ? ctx.session.id : '' });
+          if (added.length && ctx.ui) ctx.ui.note(`· 项目地图里记下了新目录：${added.map((d) => `${d}/`).join('、')}（.zhiqu/memory/，/memory 看）`);
+        }
+        ctx.dirsAtStart = now;
+      }
+    } catch { /* 记不上不能把这一句弄挂 */ }
     // 旧版留下的进度笔记：状态卡接手了，清掉免得两份说法
     if (ctx.root) { try { fs.rmSync(path.join(ctx.root, '.zhiqu', 'progress.md'), { force: true }); } catch { /* 忽略 */ } }
   }

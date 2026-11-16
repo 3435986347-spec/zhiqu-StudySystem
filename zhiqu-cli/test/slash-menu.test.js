@@ -166,8 +166,8 @@ test('窄终端：长说明截断成一行（一项一行，菜单不散），�
   await type(input, 'm');
   const lines = vt.lines();
   assert.equal(lines[0], '上面的输出');
-  assert.deepEqual(menuRows(vt).map((l) => l.split(/\s+/)[1]), ['/mode', '/model', '/mcp']);
-  assert.equal(lines.length, 1 + 3 + 1 + 1, `一项一行（上面的输出 + 3 项 + 提示 + 输入行），说明折行了：\n${lines.join('\n')}`);
+  assert.deepEqual(menuRows(vt).map((l) => l.split(/\s+/)[1]), ['/mode', '/model', '/mcp', '/memory']);   // /memory：第一百四十二轮
+  assert.equal(lines.length, 1 + 4 + 1 + 1, `一项一行（上面的输出 + 4 项 + 提示 + 输入行），说明折行了：\n${lines.join('\n')}`);
   assert.ok(menuRows(vt).every((l) => l.endsWith('…')), '长说明要截断并标出来');
   assert.equal(lines.filter((l) => l.startsWith('› ')).length, 1, `输入行留下了碎片：\n${lines.join('\n')}`);
   ui.close();

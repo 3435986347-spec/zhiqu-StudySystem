@@ -9,7 +9,7 @@ import path from 'node:path';
 import { writeFileAtomic } from './config.js';
 import { monotonic } from './clock.js';
 
-const GITIGNORE = '# zhiqu：个人的聊天记录与本机设置不进仓库；skills/、mcp.json、settings.json 可以提交共享\nsessions/\nsetup.json\nsettings.local.json\n';
+const GITIGNORE = '# zhiqu：个人的聊天记录与本机设置不进仓库；skills/、mcp.json、settings.json 可以提交共享\nsessions/\nsetup.json\nsettings.local.json\nmemory/\n';
 
 /**
  * 一行一行地读，不把整个文件读成一个字符串（第一百三十七轮）：原来 readFileSync(file, 'utf8')，
