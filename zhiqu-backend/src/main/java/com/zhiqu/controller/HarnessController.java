@@ -268,6 +268,18 @@ public class HarnessController {
         return Result.success(out);
     }
 
+    /** 应用里的对话（命令行 /resume 的第二段，第一百四十七轮）。桌面那种 12 小时的令牌不认（HarnessPaths 的白名单里没有） */
+    @GetMapping("/conversations")
+    public Result<List<Map<String, Object>>> conversations() {
+        return Result.success(sessions.conversations(SecurityUtils.getCurrentUserId()));
+    }
+
+    /** 一个对话的文字版：摘要 + 最近的问答。id 是对话号或 default */
+    @GetMapping("/conversations/{id}/messages")
+    public Result<Map<String, Object>> conversationMessages(@PathVariable String id) {
+        return Result.success(sessions.handoff(SecurityUtils.getCurrentUserId(), id));
+    }
+
     @GetMapping("/sessions")
     public Result<List<Map<String, Object>>> listSessions() {
         return Result.success(sessions.list(SecurityUtils.getCurrentUserId()));

@@ -90,6 +90,13 @@ public interface AiService {
      */
     List<Map<String, Object>> getRecentChatMessages(Long userId, Long notebookId, int limit, Long before);
 
+    /**
+     * 命令行接着应用里的对话（第一百四十七轮，docs/app-resume-plan.md 第 3 步）：只有文字 ——
+     * 还能用的滚动摘要（{@code summary}，没有就是 null），加上它没覆盖到的最近几条问答（{@code messages}：id、role、content，按时间顺序）。
+     * notebookId 为 null 是默认对话。不是这个用户的对话抛 {@link com.zhiqu.common.BusinessException}。
+     */
+    Map<String, Object> conversationHandoff(Long userId, Long notebookId, int limit);
+
     /** 一条回答的全部步骤（带每一步的细节：命令输出、diff）。列表接口里只有一行一步（第一百二十七轮）；只认自己的消息 */
     Map<String, Object> getMessageSteps(Long userId, Long messageId);
 

@@ -33,6 +33,8 @@ import java.util.regex.Pattern;
 public class HarnessSessionService {
 
     private static final Pattern CLIENT_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
+    /** 应用里发起的会话（第一百四十五轮）：桌面应用的本机代码助手用 app-<Notebook 号> 当会话记录的 id */
+    private static final Pattern APP_ID = Pattern.compile("app-([1-9][0-9]{0,17})");
 
     private final HarnessSessionMapper mapper;
     private final AiWorkspaceService workspace;
@@ -61,6 +63,15 @@ public class HarnessSessionService {
         return out.length() > 120 ? out.substring(0, 120) : out;
     }
 
+    /** 应用里的「默认对话」（不是 Notebook）：会话记录 id 是 app-default，存档直接写进默认对话，不建 harness_session 那一行（那一列不许空） */
+    static final String APP_DEFAULT = "app-default";
+
+    /** app-<号> 里的 Notebook 号；不是这种 id 返回 null */
+    static Long appNotebookId(String clientSessionId) {
+        java.util.regex.Matcher m = clientSessionId == null ? null : APP_ID.matcher(clientSessionId);
+        return m != null && m.matches() ? Long.valueOf(m.group(1)) : null;
+    }
+
     private HarnessSession find(Long userId, String clientSessionId) {
         return mapper.selectOne(new LambdaQueryWrapper<HarnessSession>()
                 .eq(HarnessSession::getUserId, userId)
@@ -87,6 +98,13 @@ public class HarnessSessionService {
     /** 打开（没有就建）一段会话。同一个 id 重复打开是幂等的；用户在网页里删了那个 Notebook 就再建一个。 */
     public HarnessSession open(Long userId, String clientSessionId, String title, String workspaceName) {
         requireClientId(clientSessionId);
+        if (APP_DEFAULT.equals(clientSessionId)) {
+            // 默认对话：不落 harness_session（notebook_id 不许空），给一个只在内存里的
+            HarnessSession s = new HarnessSession();
+            s.setUserId(userId);
+            s.setClientSessionId(clientSessionId);
+            return s;
+        }
         HarnessSession session = find(userId, clientSessionId);
         if (session != null) {
             if (!notebookAlive(userId, session.getNotebookId())) {
@@ -102,15 +120,22 @@ public class HarnessSessionService {
         session.setClientSessionId(clientSessionId);
         session.setTitle(title == null ? null : title.length() > 200 ? title.substring(0, 200) : title);
         session.setWorkspaceName(workspaceName == null ? null : workspaceName.length() > 200 ? workspaceName.substring(0, 200) : workspaceName);
-        session.setNotebookId(newNotebook(userId, clientSessionId, workspaceName, title));
+        // 应用里发起的会话在命令行里接着说（第一百四十五轮）：存档回到原来那个对话，不另建「命令行 · …」。
+        // 只认这个用户自己的、还在的 Notebook —— 别人的号照旧新建一个，不串、也不说那个号存不存在
+        Long app = appNotebookId(clientSessionId);
+        boolean bound = app != null && notebookAlive(userId, app);
+        session.setNotebookId(bound ? app : newNotebook(userId, clientSessionId, workspaceName, title));
         session.setCreatedAt(LocalDateTime.now());
         session.setUpdatedAt(LocalDateTime.now());
         try {
             mapper.insert(session);
             return session;
         } catch (DuplicateKeyException e) {
-            // 并发打开同一个 id：另一个请求先插进去了。多建的那个 Notebook 删掉，用对方的
-            workspace.deleteNotebook(userId, session.getNotebookId());
+            // 并发打开同一个 id：另一个请求先插进去了。多建的那个 Notebook 删掉，用对方的 ——
+            // 绑上的是用户自己原来的对话，不是这里建的，不能删
+            if (!bound) {
+                workspace.deleteNotebook(userId, session.getNotebookId());
+            }
             return find(userId, clientSessionId);
         }
     }
@@ -123,9 +148,12 @@ public class HarnessSessionService {
     public Map<String, Object> append(Long userId, String clientSessionId, String title, String workspaceName,
                                       List<Map<String, Object>> messages) {
         HarnessSession session = open(userId, clientSessionId, title, workspaceName);
+        // 默认对话（app-default）的 notebookId 是 null：写进默认对话；它没有 harness_session 那一行，不写库
         List<Long> ids = aiService.appendArchivedMessages(userId, session.getNotebookId(), messages);
         session.setUpdatedAt(LocalDateTime.now());
-        mapper.updateById(session);
+        if (session.getId() != null) {
+            mapper.updateById(session);
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("notebookId", session.getNotebookId());
         out.put("messageIds", ids);
@@ -143,12 +171,85 @@ public class HarnessSessionService {
         workspace.completeRun(run, null);
         session.setAgentRunId(run.getId());
         session.setUpdatedAt(LocalDateTime.now());
-        mapper.updateById(session);
+        // 默认对话没有那一行，记不住「哪一轮挂草稿」：每次开一轮（网页的执行面板看的是最新的一轮）
+        if (session.getId() != null) {
+            mapper.updateById(session);
+        }
         return run.getId();
     }
 
     public HarnessSession describe(Long userId, String clientSessionId) {
         return open(userId, clientSessionId, null, null);
+    }
+
+    /**
+     * 对话号 → 命令行会话的 id（第一百四十六轮）：应用里打开一个「命令行 · …」的对话接着说，
+     * 本机代码助手用的是那段命令行会话自己的记录，不另起一份 app-<号>。app-<号> 绑在自己那个号上的不列（页面本来就这么叫它）。
+     */
+    public Map<Long, String> clientIdsByNotebook(Long userId) {
+        Map<Long, String> out = new LinkedHashMap<>();
+        for (HarnessSession s : mapper.selectList(new LambdaQueryWrapper<HarnessSession>()
+                .eq(HarnessSession::getUserId, userId)
+                .orderByAsc(HarnessSession::getUpdatedAt))) {
+            // app-<号> 绑在它自己那个号上的不列（页面本来就这么叫它）；原来的对话被删、改挂到新对话上的要列 ——
+            // 不然应用里打开那个新对话会另起一份 app-<新号>，接不上原来那份记录（第一百四十八轮在本机后端上撞到的）
+            if (s.getNotebookId() != null && !s.getNotebookId().equals(appNotebookId(s.getClientSessionId()))) {
+                out.put(s.getNotebookId(), s.getClientSessionId());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 应用里的对话，给命令行 /resume 的第二段（第一百四十七轮）：最近的对话（含默认对话，有消息才列），
+     * 每个带上命令行那边用的会话 id（命令行来的是它自己的，别的是 app-<号> / app-default），命令行据此认出「这个文件夹里已经有了」。
+     */
+    public List<Map<String, Object>> conversations(Long userId) {
+        Map<Long, String> cli = clientIdsByNotebook(userId);
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (!aiService.getRecentChatMessages(userId, null, 1).isEmpty()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", "default");
+            row.put("sessionId", APP_DEFAULT);
+            row.put("title", "默认对话");
+            row.put("fromCli", false);
+            out.add(row);
+        }
+        for (Map<String, Object> nb : workspace.listNotebooks(userId)) {
+            if (out.size() >= 50) {
+                break;
+            }
+            Long id = nb.get("id") instanceof Number n ? n.longValue() : null;
+            if (id == null) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", id);
+            row.put("sessionId", cli.getOrDefault(id, "app-" + id));
+            row.put("title", nb.get("title"));
+            row.put("updatedAt", nb.get("updatedAt"));
+            row.put("fromCli", cli.containsKey(id));
+            out.add(row);
+        }
+        return out;
+    }
+
+    /** 一个对话的文字版（摘要 + 最近的问答），id 是对话号或 default */
+    public Map<String, Object> handoff(Long userId, String id) {
+        Long notebookId;
+        if ("default".equals(id)) {
+            notebookId = null;
+        } else {
+            try {
+                notebookId = Long.valueOf(id);
+            } catch (NumberFormatException e) {
+                throw new BusinessException("对话号不对");
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>(aiService.conversationHandoff(userId, notebookId, 40));
+        String sessionId = notebookId == null ? APP_DEFAULT : clientIdsByNotebook(userId).getOrDefault(notebookId, "app-" + notebookId);
+        out.put("sessionId", sessionId);
+        return out;
     }
 
     public List<Map<String, Object>> list(Long userId) {

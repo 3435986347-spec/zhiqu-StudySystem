@@ -84,13 +84,15 @@ class AccessTokenScopeTest {
     void 本机代码令牌的范围() throws Exception {
         String desk = AccessTokenService.SCOPE_DESKTOP_CODE;
         for (String[] ok : new String[][]{{"GET", "/api/harness/models"}, {"POST", "/api/harness/model/stream"},
-                {"GET", "/api/harness/tools"}, {"POST", "/api/harness/tools/call"}}) {
+                {"GET", "/api/harness/tools"}, {"POST", "/api/harness/tools/call"}, {"GET", "/api/harness/memory/brief"}}) {
             Authentication auth = run(ok[0], ok[1], desk);
             assertTrue(auth != null && Long.valueOf(42L).equals(auth.getPrincipal()), "本机代码要用 " + ok[0] + " " + ok[1] + "，令牌却不认");
         }
         for (String[] no : new String[][]{{"GET", "/api/harness/me"}, {"GET", "/api/harness/usage"}, {"GET", "/api/harness/sessions"},
                 {"POST", "/api/harness/sessions"}, {"POST", "/api/harness/sessions/s1/messages"}, {"POST", "/api/harness/models/1/context-window"},
-                {"GET", "/api/harness/model/stream"}, {"DELETE", "/api/harness/tools/call"}, {"GET", "/api/harness/models/"}}) {
+                {"GET", "/api/harness/model/stream"}, {"DELETE", "/api/harness/tools/call"}, {"GET", "/api/harness/models/"},
+                // 第一百四十七轮：应用里的对话（命令行 /resume 的第二段）读得到聊天原文，本机代码的令牌不认
+                {"GET", "/api/harness/conversations"}, {"GET", "/api/harness/conversations/12/messages"}}) {
             assertNull(run(no[0], no[1], desk), "本机代码的令牌不该在 " + no[0] + " " + no[1] + " 被认");
             assertTrue(run(no[0], no[1], AccessTokenService.SCOPE_HARNESS) != null, "对照组：命令行的令牌在 " + no[1] + " 照样认");
         }

@@ -45,6 +45,7 @@ public class AiController {
     private final IdempotencyService idempotencyService;
     private final WebResearchService webResearchService;
     private final AdminGuard adminGuard;
+    private final com.zhiqu.service.harness.HarnessSessionService harnessSessions;
 
     public AiController(AiService aiService,
                         AiWorkspaceService aiWorkspaceService,
@@ -52,7 +53,8 @@ public class AiController {
                         RoutineService routineService,
                         IdempotencyService idempotencyService,
                         WebResearchService webResearchService,
-                        AdminGuard adminGuard) {
+                        AdminGuard adminGuard,
+                        com.zhiqu.service.harness.HarnessSessionService harnessSessions) {
         this.aiService = aiService;
         this.aiWorkspaceService = aiWorkspaceService;
         this.studyTaskService = studyTaskService;
@@ -60,6 +62,7 @@ public class AiController {
         this.idempotencyService = idempotencyService;
         this.webResearchService = webResearchService;
         this.adminGuard = adminGuard;
+        this.harnessSessions = harnessSessions;
     }
 
     /**
@@ -180,7 +183,20 @@ public class AiController {
 
     @GetMapping("/notebooks")
     public Result<List<Map<String, Object>>> listNotebooks() {
-        return Result.success(aiWorkspaceService.listNotebooks(SecurityUtils.getCurrentUserId()));
+        Long userId = SecurityUtils.getCurrentUserId();
+        List<Map<String, Object>> rows = aiWorkspaceService.listNotebooks(userId);
+        // 命令行来的对话带上那段会话的 id（第一百四十六轮）：桌面应用里接着说时，本机代码助手接的是同一份记录
+        Map<Long, String> clientIds = harnessSessions.clientIdsByNotebook(userId);
+        if (!clientIds.isEmpty()) {
+            for (Map<String, Object> row : rows) {
+                Object id = row.get("id");
+                String clientId = id instanceof Number n ? clientIds.get(n.longValue()) : null;
+                if (clientId != null) {
+                    row.put("clientSessionId", clientId);
+                }
+            }
+        }
+        return Result.success(rows);
     }
 
     @PostMapping("/notebooks")

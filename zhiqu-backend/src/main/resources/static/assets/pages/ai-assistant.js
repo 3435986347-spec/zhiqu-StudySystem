@@ -2352,11 +2352,20 @@ async function sendDesktopTurn(txt, codeCommand) {
   });
   var start = packed ? Math.min(Number(packed.count) || 0, all.length) : Math.max(0, all.length - 40);
   var history = packed ? [{ role: 'user', content: '【前情摘要：前面 ' + packed.count + ' 条已压缩】\n' + packed.text }] : [];
-  history = history.concat(all.slice(start).map(function (m) { return { role: m.role, content: String(m.content).slice(0, 8000) }; }));
+  // 带上消息号（第一百四十五轮）：本机代码助手在项目里记着这段对话的会话记录，拿消息号对账 —— 记录里有的不再拍扁放一遍
+  history = history.concat(all.slice(start).map(function (m) {
+    var item = { role: m.role, content: String(m.content).slice(0, 8000) };
+    if (m.id != null) item.id = m.id;
+    return item;
+  }));
   var level = codeCommand === 'review' ? 'READ' : (wsStatus && wsStatus.selectedMode) || 'READ';
   if (['READ', 'WRITE', 'EXEC'].indexOf(level) < 0) level = 'READ';
   var modelSel = $('#zq-model');
-  var body = { action: 'run', folder: folder, message: txt, history: history,
+  // 这段对话在项目里的会话记录（第一百四十五轮）：一个对话一份，命令行 /resume 看得见、接得上；「默认对话」没有 Notebook 号。
+  // 命令行来的对话（第一百四十六轮）用那段命令行会话自己的 id：接着的是同一份记录
+  var nbRow = (state.notebooks || []).find(function (x) { return sentNb != null && Number(x.id) === Number(sentNb); });
+  var sessionId = nbRow && nbRow.clientSessionId ? String(nbRow.clientSessionId) : 'app-' + (sentNb == null ? 'default' : sentNb);
+  var body = { action: 'run', folder: folder, message: txt, history: history, sessionId: sessionId,
     model: modelSel && modelSel.value ? Number(modelSel.value) : null, effort: aiEffort, level: level };
   if (codeCommand) body.command = codeCommand;
   var clientKey = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
@@ -2413,6 +2422,24 @@ function clearSentDesktopDraft(st) {
 // 完成只负责存档；任务及事件由外壳持有。存档回应丢失也用同一个幂等键重试，不造第二份对话。
 async function finishDesktopTurn(st, result) {
   var assistant = st.assistant, info = st.desktopInfo;
+  // 这段会话在命令行里正在跑一轮（第一百四十六轮，宿主拿不到锁）：这一句没发出去，不存进对话 ——
+  // 存了的话，下一轮宿主对账时会把它当成「别处说过的话」补进会话。字放回输入框，说一声
+  if (result && result.busy) {
+    st.completed = true;
+    clearRunningTurn(st.nb, st.runId);
+    localCall({ action: 'ack', runId: st.runId }).catch(function () {});
+    endTurn(st);
+    if (st.sameNb()) {
+      var at = state.messages.indexOf(assistant);
+      if (at > 0 && state.messages[at - 1] === st.user) state.messages.splice(at - 1, 2);
+      else if (at >= 0) state.messages.splice(at, 1);
+      var inp = $('#zq-draft');
+      if (inp && !inp.value.trim()) { inp.value = info.message; growDraft(); }
+      renderAiMessages();
+    }
+    toast(String(result.conclusion || '这段会话在别处正在跑一轮，等它说完再发'), 'warn');
+    return;
+  }
   if (!result.missing) {
     assistant.content = String(result.conclusion || (result.type === 'fatal' ? result.message : '') || '').trim() || '（没有结论）';
   }

@@ -79,6 +79,12 @@ class DesktopLocalAgentTest {
         assertEquals("HOME,LANG,PATH,TMPDIR", r.get("a.envKeys"), "宿主继承了外壳的环境变量");
         assertEquals("ok", r.get("a.started"));
         assertEquals(gatewayUrl, r.get("a.payloadServer"), "交给宿主的服务器不是外壳自己的那个");
+        // 第一百四十五轮：会话记录的 id、消息号照传给宿主；认不出的不传（id 拼进文件名）
+        assertEquals("app-12", r.get("a.sessionId"), "会话 id 没交给宿主：命令行的 /resume 看不见应用里的会话");
+        assertEquals("31", r.get("a.historyId"), "消息号没交给宿主：没法和会话记录对账");
+        assertEquals("77", r.get("a.historyIdText"));
+        assertEquals("null,null,null,null,null", r.get("a.badSessionIds"), "认不出的会话 id 也交给了宿主");
+        assertEquals("none,none,none", r.get("a.badHistoryIds"));
         assertEquals("A 做完了", r.get("a.conclusion"), r.toString());
         assertEquals("none", r.get("a.error"));
         assertEquals("new.txt", r.get("a.drafts"), "写文件没成草稿");

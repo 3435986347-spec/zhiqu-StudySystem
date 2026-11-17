@@ -72,6 +72,9 @@ struct LocalRunRequest {
     let level: String
     let command: String?
     let token: String
+    /// 这段对话的会话记录叫什么（第一百四十五轮）：宿主在项目的 .zhiqu/sessions/ 里开同名的记录，命令行的 /resume 看得见。
+    /// 只认 [A-Za-z0-9_-]{1,64}（拼进文件名），认不出就当没给 —— 宿主照旧不记
+    var sessionId: String? = nil
 
     static let levels = ["READ", "WRITE", "EXEC"]
     static let efforts = ["instant", "medium", "high", "extra", "max"]
@@ -93,12 +96,18 @@ struct LocalRunRequest {
         for item in ((body["history"] as? [Any]) ?? []).suffix(maxHistory) {
             guard let m = item as? [String: Any], let role = m["role"] as? String, ["user", "assistant"].contains(role),
                   let content = m["content"] as? String else { continue }
-            history.append(["role": role, "content": String(content.prefix(maxMessage))])
+            var entry = ["role": role, "content": String(content.prefix(maxMessage))]
+            // 消息号（第一百四十五轮）：宿主拿它和会话记录对账，只认正整数
+            if let n = (m["id"] as? NSNumber)?.int64Value ?? (m["id"] as? String).flatMap({ Int64($0) }), n > 0 { entry["id"] = String(n) }
+            history.append(entry)
         }
         let modelId: Int? = (body["model"] as? Int) ?? (body["model"] as? String).flatMap { Int($0) }
         let effort = (body["effort"] as? String).flatMap { efforts.contains($0) ? $0 : nil }
+        let sessionId = (body["sessionId"] as? String).flatMap {
+            $0.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil ? $0 : nil
+        }
         return (LocalRunRequest(folder: folder, message: message, history: history, modelId: modelId, effort: effort,
-                                level: level, command: command, token: token), nil)
+                                level: level, command: command, token: token, sessionId: sessionId), nil)
     }
 }
 
@@ -171,7 +180,7 @@ final class LocalAgent {
         let write = req.level != "READ" && req.command != "review"
         return [
             "type": "run", "root": root, "home": config.home, "message": req.message, "history": req.history,
-            "command": req.command ?? NSNull(),
+            "command": req.command ?? NSNull(), "sessionId": req.sessionId ?? NSNull(),
             // 没有系统沙箱宿主自己不给命令（canShell 只是「可以给」）；从来不给白名单命令和删除
             "canWrite": write, "canExec": false, "canShell": true, "shellWrite": write && req.level == "EXEC",
             "sandboxNetwork": config.network, "maxRounds": config.maxRounds, "timeoutMs": config.timeoutMs,

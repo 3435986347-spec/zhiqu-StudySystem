@@ -115,6 +115,69 @@ class HarnessUsageIntegrationTest {
         assertTrue(rows.get(rows.size() - 1).get("steps") != null, "消息列表没带步骤：" + rows);
     }
 
+    /**
+     * 第一百四十五轮：应用里发起的会话（会话记录 id 是 app-<Notebook 号>）在命令行里接着说，存档回到原来那个对话，
+     * 不另建「命令行 · …」；别人的对话号照旧新建，原来那个对话里一条都不多。
+     */
+    @Test
+    @DisplayName("命令行接着应用的会话说：存档落在原来那个对话里；别人的对话号不绑")
+    void 应用的会话存档回原对话(@Autowired com.zhiqu.service.AiWorkspaceService ws, @Autowired com.zhiqu.service.AiService ai) throws Exception {
+        jdbc.update("INSERT INTO sys_user(username, password, nickname, role, status, deleted) VALUES ('app-me', 'x', 'app-me', 'USER', 1, 0)");
+        jdbc.update("INSERT INTO sys_user(username, password, nickname, role, status, deleted) VALUES ('app-other', 'x', 'app-other', 'USER', 1, 0)");
+        Long me = jdbc.queryForObject("SELECT id FROM sys_user WHERE username = 'app-me'", Long.class);
+        Long other = jdbc.queryForObject("SELECT id FROM sys_user WHERE username = 'app-other'", Long.class);
+        Long nb = ((Number) ws.createNotebook(me, java.util.Map.of("title", "应用里的对话")).get("id")).longValue();
+        Long theirs = ((Number) ws.createNotebook(other, java.util.Map.of("title", "别人的")).get("id")).longValue();
+        String token = jwt.generateToken(me, "app-me", 0, 3_600_000L);
+        int before = jdbc.queryForObject("SELECT COUNT(*) FROM ai_notebook WHERE user_id = ? AND deleted = 0", Integer.class, me);
+        for (String id : new String[]{"app-" + nb, "app-" + theirs}) {
+            String body = json.writeValueAsString(java.util.Map.of("title", "接着说", "workspace", "game", "messages", java.util.List.of(
+                    java.util.Map.of("role", "user", "content", "命令行里接着说 " + id), java.util.Map.of("role", "assistant", "content", "好的"))));
+            JsonNode r = json.readTree(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/harness/sessions/" + id + "/messages")
+                            .header("Authorization", "Bearer " + token).header("Idempotency-Key", java.util.UUID.randomUUID().toString())
+                            .contentType("application/json").content(body)
+                            .with(req -> { req.setRemoteAddr("100.64.9.9"); return req; }))
+                    .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+            assertEquals(200, r.path("code").asInt(), r.toString());
+        }
+        assertEquals(nb, jdbc.queryForObject("SELECT notebook_id FROM harness_session WHERE user_id = ? AND client_session_id = ?", Long.class, me, "app-" + nb));
+        java.util.List<java.util.Map<String, Object>> rows = ai.getRecentChatMessages(me, nb, 10, null);
+        assertTrue(rows.stream().anyMatch(m -> ("命令行里接着说 app-" + nb).equals(m.get("content"))), "存档没落在原来那个对话里：" + rows);
+        assertEquals(before + 1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_notebook WHERE user_id = ? AND deleted = 0", Integer.class, me),
+                "只有别人的那个号该新建一个对话");
+        Long boundTheirs = jdbc.queryForObject("SELECT notebook_id FROM harness_session WHERE user_id = ? AND client_session_id = ?", Long.class, me, "app-" + theirs);
+        assertTrue(!theirs.equals(boundTheirs), "绑到了别人的对话上");
+        assertTrue(ai.getRecentChatMessages(other, theirs, 10, null).isEmpty(), "别人的对话里多了消息");
+    }
+
+    /** 第一百四十七轮：命令行 /resume 第二段 —— 应用里的对话列得出、文字版读得回（按时间顺序）；别人的对话读不到 */
+    @Test
+    @DisplayName("应用里的对话：列表里有、文字版读得回；别人的对话号读不到")
+    void 应用里的对话给命令行(@Autowired com.zhiqu.service.AiWorkspaceService ws, @Autowired com.zhiqu.service.AiService ai) throws Exception {
+        jdbc.update("INSERT INTO sys_user(username, password, nickname, role, status, deleted) VALUES ('handoff-me', 'x', 'handoff-me', 'USER', 1, 0)");
+        jdbc.update("INSERT INTO sys_user(username, password, nickname, role, status, deleted) VALUES ('handoff-other', 'x', 'handoff-other', 'USER', 1, 0)");
+        Long me = jdbc.queryForObject("SELECT id FROM sys_user WHERE username = 'handoff-me'", Long.class);
+        Long other = jdbc.queryForObject("SELECT id FROM sys_user WHERE username = 'handoff-other'", Long.class);
+        Long nb = ((Number) ws.createNotebook(me, java.util.Map.of("title", "聊过的对话")).get("id")).longValue();
+        Long theirs = ((Number) ws.createNotebook(other, java.util.Map.of("title", "别人的")).get("id")).longValue();
+        ai.appendArchivedMessages(me, nb, java.util.List.of(java.util.Map.of("role", "user", "content", "第一问 OMICRON"),
+                java.util.Map.of("role", "assistant", "content", "第一答 OMICRON")));
+        String token = jwt.generateToken(me, "handoff-me", 0, 3_600_000L);
+        JsonNode list = json.readTree(mvc.perform(get("/api/harness/conversations").header("Authorization", "Bearer " + token)
+                .with(req -> { req.setRemoteAddr("100.64.9.9"); return req; })).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertEquals(200, list.path("code").asInt(), list.toString());
+        assertTrue(list.toString().contains("\"app-" + nb + "\""), "列表里没有这个对话：" + list);
+        JsonNode one = json.readTree(mvc.perform(get("/api/harness/conversations/" + nb + "/messages").header("Authorization", "Bearer " + token)
+                .with(req -> { req.setRemoteAddr("100.64.9.9"); return req; })).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        JsonNode msgs = one.path("data").path("messages");
+        assertEquals(2, msgs.size(), one.toString());
+        assertEquals("第一问 OMICRON", msgs.get(0).path("content").asText());
+        assertEquals("assistant", msgs.get(1).path("role").asText());
+        JsonNode denied = json.readTree(mvc.perform(get("/api/harness/conversations/" + theirs + "/messages").header("Authorization", "Bearer " + token)
+                .with(req -> { req.setRemoteAddr("100.64.9.9"); return req; })).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertTrue(denied.path("code").asInt() != 200, "读到了别人的对话：" + denied);
+    }
+
     /** 一次请求成没成：HTTP 200 而且业务码 200（没登录时是 401 / 403，或者 200 + 业务码不是 200） */
     private JsonNode call(String method, String path, String token) throws Exception {
         org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder b =

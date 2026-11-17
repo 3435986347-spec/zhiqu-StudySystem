@@ -37,7 +37,7 @@ class El {
   getBoundingClientRect() { return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 }; }
 }
 
-let els, toasts, puts, sent, state, keyPrefs, localCalls;
+let els, toasts, puts, sent, state, keyPrefs, localCalls, busyNext = false;
 function $(sel) {
   if (!(sel in els)) els[sel] = new El(sel);
   return els[sel];
@@ -81,9 +81,16 @@ function armDesktop(on) {
   window.webkit = { messageHandlers: { zqLocal: { postMessage: async (body) => {
     localCalls.push(body);
     if (body.action === 'run') {
-      setTimeout(() => window.dispatchEvent({ type: 'zq-local', detail: { runId: 'local-1', type: 'result', conclusion: '好了', drafts: [] } }), 0);
+      const detail = busyNext ? { runId: 'local-1', type: 'result', conclusion: '这段会话在命令行里正在跑一轮，等它说完再发（这一句没发出去，什么都没改）。', error: 'x', busy: true, drafts: [] }
+        : { runId: 'local-1', type: 'result', conclusion: '好了', drafts: [] };
+      setTimeout(() => window.dispatchEvent({ type: 'zq-local', detail }), 0);
       return { runId: 'local-1' };
     }
+    // 页面开始等结果时先要一份快照（第一百三十三轮起）：这里直接给终态。原来回 {}，上一轮永远收不了尾、
+    // 「正在回答」漏到下一条检查里（这两条因此一直红着，第一百四十七轮才发现）
+    if (body.action === 'resume') return { events: [], result: busyNext
+      ? { runId: body.runId, type: 'result', conclusion: '这段会话在命令行里正在跑一轮，等它说完再发（这一句没发出去，什么都没改）。', error: 'x', busy: true, drafts: [] }
+      : { runId: body.runId, type: 'result', conclusion: '好了', drafts: [] } };
     if (body.action === 'pick') return { folder: '/tmp/picked' };
     if (body.action === 'status') return { available: true, running: false, folders: [], network: 'on' };
     return {};
@@ -392,6 +399,49 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     assert.equal(sent.length, 0, '/re 不能当一句话发出去');
     assert.equal(toasts.length, 1, '只提示一次：两处按键处理的话会各来一遍');
     assert.match(toasts[0].t, /要先选项目/);
+  });
+
+  await check('交给本机的一轮带着这段对话的会话 id 和每条消息的号（第一百四十五轮：命令行 /resume 接得上、宿主拿号对账）', async () => {
+    fresh();
+    state.messages = [{ id: 31, role: 'user', content: '前一句', status: 'DONE' }, { id: 32, role: 'assistant', content: '前一答', status: 'DONE' }];
+    type('接着做');
+    await mod.sendAiMessage();
+    await tick();
+    const run = localCalls.find((b) => b.action === 'run');
+    assert.equal(run.sessionId, 'app-5', '没带会话 id');
+    assert.deepEqual(run.history.map((m) => m.id), [31, 32], '历史里没带消息号');
+    fresh();
+    state.notebookId = null;
+    type('默认对话里');
+    await mod.sendAiMessage();
+    await tick();
+    assert.equal(localCalls.find((b) => b.action === 'run').sessionId, 'app-default', '「默认对话」的会话 id 不对');
+    // 命令行来的对话（第一百四十六轮）：用那段命令行会话自己的 id
+    fresh();
+    state.notebooks = [{ id: 4, clientSessionId: 'other-1' }, { id: 5, clientSessionId: '20261117-101010-abcd' }];
+    type('接着命令行的');
+    await mod.sendAiMessage();
+    await tick();
+    assert.equal(localCalls.find((b) => b.action === 'run').sessionId, '20261117-101010-abcd', '接着命令行来的对话却另起了一份记录');
+  });
+
+  await check('本机代码助手说「这段会话在命令行里正在跑」：这一句不存进对话、字放回输入框、提示一声（第一百四十六轮）', async () => {
+    fresh();
+    busyNext = true;
+    type('撞上了的一句');
+    await mod.sendAiMessage();
+    for (let i = 0; i < 5; i++) await tick();
+    assert.equal(sent.filter((s) => s.url === '/ai/desktop-turn').length, 0, '没发出去的一句存进了对话');
+    assert.equal(draft().value, '撞上了的一句', '字没放回输入框');
+    assert.ok(toasts.some((t) => /命令行里正在跑/.test(t.t)), '没提示：' + JSON.stringify(toasts));
+    assert.ok(!state.messages.some((m) => m.content === '撞上了的一句'), '列表里还挂着这一句');
+    busyNext = false;
+    // 对照组：正常的一轮存进对话
+    fresh();
+    type('正常的一句');
+    await mod.sendAiMessage();
+    for (let i = 0; i < 5; i++) await tick();
+    assert.equal(sent.filter((s) => s.url === '/ai/desktop-turn').length, 1, '对照组不成立：正常的一轮也没存');
   });
 
   await check('不是命令的话：照常发，不带 codeCommand', async () => {

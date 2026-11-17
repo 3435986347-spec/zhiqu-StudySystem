@@ -27,7 +27,9 @@ public final class HarnessPaths {
             "GET /api/harness/models",
             "POST /api/harness/model/stream",
             "GET /api/harness/tools",
-            "POST /api/harness/tools/call");
+            "POST /api/harness/tools/call",
+            // 开工时带上的长期记忆（第一百四十八轮）：应用里开的会话也要有。读的就是 read_memory 远程工具本来就能读的那些，范围没变大
+            "GET /api/harness/memory/brief");
 
     private HarnessPaths() {
     }

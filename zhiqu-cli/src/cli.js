@@ -15,7 +15,8 @@ import path from 'node:path';
 import { Api, ApiError } from './api.js';
 import { DirectModel } from './direct.js';
 import { StepLog } from './steps.js';
-import { archiveStep, archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote, usageNote, workOf } from './agent.js';
+import { archiveStep, archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote, TurnBusyError, usageNote, workOf } from './agent.js';
+import { appFolders, openAppSession } from './handoff.js';
 import { SubAgents } from './subagents.js';
 import { newGoal } from './goal.js';
 import { generatedOrigin } from './origins.js';
@@ -351,6 +352,67 @@ export function noteUnfinished(ctx) {
   if (!last || (last.status !== 'unfinished' && last.status !== 'crashed')) return;
   ctx.ui.note(`· 上一段会话「${last.title || '无标题'}」${last.status === 'crashed' ? '没正常结束（进程中途没了）' : '没做完'}`
     + `${last.todosLeft.length ? `，清单还剩 ${last.todosLeft.length} 项` : ''}：/resume 接着那一段，或者直接说要做什么（它做到哪，新会话知道）`);
+}
+
+/**
+ * 应用里的对话（第一百四十七轮，docs/app-resume-plan.md 第 3 步）：服务器上的、这个文件夹里还没有记录的，最多 20 个。
+ * 直连（没有服务器）、断网、旧服务器没有这个接口：空的，不挡本地那一段。
+ */
+export async function appConversations(ctx) {
+  if (!ctx.api || typeof ctx.api.get !== 'function') return [];
+  const local = new Set(ctx.store.list().map((s) => s.id));
+  try {
+    const rows = await ctx.api.get('/api/harness/conversations', { timeoutMs: 10_000 });
+    return (Array.isArray(rows) ? rows : [])
+      .filter((r) => r && typeof r.sessionId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(r.sessionId) && !local.has(r.sessionId))
+      .slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 把一段应用里的对话接进这个文件夹（只有文字）：在这里开一份同 id 的会话记录，前面的问答（和服务器上的摘要）拍扁成「供参考」放进去，
+ * 和桌面应用的本机代码助手走同一条路（handoff.js 的 openAppSession）。之后在这里说的每一轮存档回原来那个对话；
+ * 之后在桌面应用里选这个文件夹接着说，接的也是这一份。
+ * 这段对话在别的文件夹里有完整记录（本机的 ~/.zhiqu/app-sessions.json 记着）：先指路，问一句要不要仍在这里接文字版。
+ */
+export async function importConversation(ctx, row) {
+  const { ui } = ctx;
+  const sid = row.sessionId;
+  const elsewhere = appFolders(path.join(userDir(), 'app-sessions.json'))[sid];
+  if (elsewhere && typeof elsewhere.root === 'string' && path.resolve(elsewhere.root) !== path.resolve(ctx.root)
+    && fs.existsSync(path.join(elsewhere.root, '.zhiqu', 'sessions', `${sid}.jsonl`))) {
+    const shown = elsewhere.root.startsWith(os.homedir() + path.sep) ? `~/${path.relative(os.homedir(), elsewhere.root)}` : elsewhere.root;
+    ui.note(`· 这段对话在 ${shown} 里有完整的记录（带工具调用）：cd 过去再 /resume，接上的是那一份`);
+    const yes = await ui.ask('仍要在这里接一份只有文字的？[y/N] › ');
+    if (!/^y(es)?$/i.test(String(yes || '').trim())) return false;
+  }
+  let data;
+  try {
+    data = await ctx.api.get(`/api/harness/conversations/${encodeURIComponent(String(row.id))}/messages`, { timeoutMs: 15_000 });
+  } catch (e) {
+    ui.error(`没取到这段对话：${e.message}`);
+    return false;
+  }
+  const history = [];
+  if (data && typeof data.summary === 'string' && data.summary.trim()) history.push({ role: 'user', content: `【前情摘要】\n${data.summary}` });
+  for (const m of (data && Array.isArray(data.messages) ? data.messages : [])) {
+    if (m && ['user', 'assistant'].includes(m.role) && typeof m.content === 'string') history.push({ id: m.id, role: m.role, content: m.content });
+  }
+  // 应用（同一台电脑上的桌面应用）可能正在这个文件夹里跑这段对话
+  const lock = ctx.store.lockTurn(sid, 'cli');
+  if (lock.busy) { ui.error(new TurnBusyError(lock.busy).message); return false; }
+  try {
+    openAppSession(ctx.root, sid, history);
+  } finally {
+    lock.release();
+  }
+  if (row.title) ctx.store.touch(sid, { title: String(row.title).slice(0, 40) });
+  resumeInto(ctx, sid);
+  const turns = history.filter((m) => m.role === 'user' && m.id != null).length;
+  ui.note(`· 从应用接过来「${row.title || '无标题'}」：前面 ${turns} 句问答${history.length && history[0].id == null ? '和一段摘要' : ''}，只有文字，没有工具记录`);
+  return true;
 }
 
 export function resumeInto(ctx, id) {
@@ -838,18 +900,29 @@ export async function slash(ctx, text) {
       ui.line('已开一段新会话');
       return null;
     case '/resume': case '/sessions': {
-      const list = ctx.store.list().filter((s) => s.id !== ctx.session.id);
-      if (!list.length) { ui.line('这个工作区没有别的会话'); return null; }
+      // 两段（第一百四十七轮）：这个文件夹里的会话记录（带工具调用）；服务器上应用里的对话、这里还没有记录的（只有文字）
+      const shown = ctx.store.list().filter((s) => s.id !== ctx.session.id).slice(0, 20);
+      const here = shown.find((s) => s.id === arg);
+      if (here) { resumeInto(ctx, here.id); return null; }
+      if (arg && /^\d+$/.test(arg) && Number(arg) >= 1 && Number(arg) <= shown.length) { resumeInto(ctx, shown[Number(arg) - 1].id); return null; }
+      const remote = await appConversations(ctx);
       if (arg) {
-        const hit = /^\d+$/.test(arg) && Number(arg) <= list.length ? list[Number(arg) - 1] : list.find((s) => s.id === arg);
-        if (!hit) { ui.error(`没有 ${arg} 这段会话`); return null; }
-        resumeInto(ctx, hit.id);
+        const n = Number(arg);
+        const row = /^\d+$/.test(arg) ? remote[n - shown.length - 1] : remote.find((r) => r.sessionId === arg);
+        if (!row) { ui.error(`没有 ${arg} 这段会话`); return null; }
+        await importConversation(ctx, row);
         return null;
       }
-      list.slice(0, 20).forEach((s, i) => ui.line(`${String(i + 1).padStart(2)}. ${s.title || '（无标题）'}  ${ui.paint.dim(`${localTime(s.updatedAt)} · ${s.messages || 0} 条`)}`));
+      if (!shown.length && !remote.length) { ui.line('这个工作区没有别的会话，应用里也没有可以接的对话'); return null; }
+      shown.forEach((s, i) => ui.line(`${String(i + 1).padStart(2)}. ${s.via === 'app' ? ui.paint.dim('[应用] ') : ''}${s.title || '（无标题）'}  ${ui.paint.dim(`${localTime(s.updatedAt)} · ${s.messages || 0} 条`)}`));
+      if (remote.length) {
+        ui.line(ui.paint.dim('应用里的对话（这个文件夹里没有记录：接过来只有文字，没有工具记录）'));
+        remote.forEach((r, i) => ui.line(`${String(shown.length + i + 1).padStart(2)}. ${r.title || '（无标题）'}${r.fromCli ? ui.paint.dim('  命令行来的') : ''}  ${ui.paint.dim(r.updatedAt ? localTime(r.updatedAt) : '')}`));
+      }
       const pick = await ui.ask('接着哪一段？输入编号（回车取消）› ');
       const n = Number((pick || '').trim());
-      if (n >= 1 && n <= list.length) resumeInto(ctx, list[n - 1].id);
+      if (n >= 1 && n <= shown.length) resumeInto(ctx, shown[n - 1].id);
+      else if (n > shown.length && n <= shown.length + remote.length) await importConversation(ctx, remote[n - shown.length - 1]);
       return null;
     }
     case '/compact':

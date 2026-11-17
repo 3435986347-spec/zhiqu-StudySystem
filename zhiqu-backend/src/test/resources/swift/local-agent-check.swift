@@ -53,6 +53,18 @@ step("a", timeout: 40, {
     // 宿主看到的环境只有这四个（不继承外壳的：令牌、代理、别的应用塞进来的变量都不给）
     out("a.envKeys", LocalAgent.environment(node: nodeURL, home: tmp, tmp: tmp, userHome: home.path).keys.sorted().joined(separator: ","))
     out("a.payloadServer", ((LocalAgent.payload(request("x"), root: proj.path, config: config)["local"] as? [String: Any])?["server"] as? String) ?? "")
+    // 会话记录的 id 和消息号（第一百四十五轮）：合规的照传，认不出的当没给
+    func sessionPayload(_ id: Any, _ msgId: Any) -> [String: Any] {
+        let req = LocalRunRequest.parse(["folder": proj.path, "message": "x", "level": "READ", "token": token, "sessionId": id,
+                                         "history": [["role": "user", "content": "h", "id": msgId]]]).0!
+        return LocalAgent.payload(req, root: proj.path, config: config)
+    }
+    let good = sessionPayload("app-12", 31)
+    out("a.sessionId", (good["sessionId"] as? String) ?? "none")
+    out("a.historyId", ((good["history"] as? [[String: String]])?.first?["id"]) ?? "none")
+    out("a.historyIdText", ((sessionPayload("app-12", "77")["history"] as? [[String: String]])?.first?["id"]) ?? "none")
+    out("a.badSessionIds", ["../x", "a/b", "", String(repeating: "a", count: 65), "app 1"].map { sessionPayload($0, 1)["sessionId"] is NSNull ? "null" : "kept" }.joined(separator: ","))
+    out("a.badHistoryIds", [-1, 0, "x"].map { (sessionPayload("app-1", $0)["history"] as? [[String: String]])?.first?["id"] ?? "none" }.joined(separator: ","))
     let failed = agent.start(request("A-RUN"), root: LocalFolders.real(proj.path)) { runA.append($0) }
     out("a.started", failed ?? "ok")
 }, until: { runA.contains { $0["type"] as? String == "exit" } })

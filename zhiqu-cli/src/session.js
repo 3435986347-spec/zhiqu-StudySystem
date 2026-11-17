@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeFileAtomic } from './config.js';
 import { monotonic } from './clock.js';
+import { generatedOrigin } from './origins.js';
 
 const GITIGNORE = '# zhiqu：个人的聊天记录与本机设置不进仓库；skills/、mcp.json、settings.json 可以提交共享\nsessions/\nsetup.json\nsettings.local.json\nmemory/\n';
 
@@ -46,6 +47,10 @@ const DATA_URL = /^data:([a-z0-9.+/-]+);base64,/i;
 const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
 const GONE = { type: 'text', text: '（这张截图的文件已经不在了）' };
 
+/** 一轮的锁（第一百四十五轮起，docs/app-resume-plan.md 第 2 步）：拿着的进程每 LOCK_BEAT_MS 碰一下文件；超过 LOCK_STALE_MS 没碰、或者进程没了，算崩了留下的 */
+export const LOCK_BEAT_MS = 10_000;
+export const LOCK_STALE_MS = 30_000;
+
 export function newSessionId(now = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
@@ -57,6 +62,8 @@ export class SessionStore {
     this.dir = path.join(root, '.zhiqu');
     this.sessionsDir = path.join(this.dir, 'sessions');
     this.index = path.join(this.dir, 'setup.json');
+    /** 每段会话的记录文件、这个进程最后知道的长度：比它长了就是别人（应用、另一个命令行）接着写过 */
+    this.marks = new Map();
   }
 
   ensure() {
@@ -158,6 +165,30 @@ export class SessionStore {
       index.lastSessionId = meta.id;
       this.writeIndex(index);
     });
+    this.mark(meta.id);
+    return meta;
+  }
+
+  /**
+   * 用给定的 id 打开一段会话，索引里没有就补一条（第一百四十五轮）：桌面应用的本机代码助手每一轮是新进程，
+   * 同一个对话（Notebook）要落在同一份记录里，id 由页面给（app-<notebookId>），不能每轮新起一个。
+   * 已经在索引里的原样返回（标题等不动）。
+   */
+  adopt(id, { title = '', model = null, via = null } = {}) {
+    this.file(id);   // 只认合规的 id
+    this.ensure();
+    let meta = null;
+    this.withIndexLock(() => {
+      const index = this.readIndex();
+      meta = index.sessions.find((s) => s.id === id) || null;
+      if (meta) return;
+      const now = new Date().toISOString();
+      meta = { id, title, createdAt: now, updatedAt: now, messages: 0, model, ...(via ? { via } : {}) };
+      index.sessions.push(meta);
+      index.lastSessionId = id;
+      this.writeIndex(index);
+    });
+    this.mark(id);
     return meta;
   }
 
@@ -219,6 +250,83 @@ export class SessionStore {
     if (entry && entry.message) row = { ...entry, message: this.externalize(id, entry.message) };
     else if (entry && Array.isArray(entry.messages)) row = { ...entry, messages: entry.messages.map((m) => this.externalize(id, m)) };
     fs.appendFileSync(this.file(id), `${JSON.stringify({ at: new Date().toISOString(), ...row })}\n`);
+    if (this.marks.has(id)) this.mark(id);
+  }
+
+  /** 记下这段记录现在多长（打开、续接时；之后自己每写一行跟着挪） */
+  mark(id) {
+    let size = 0;
+    try { size = fs.statSync(this.file(id)).size; } catch { /* 还没有文件：0 */ }
+    this.marks.set(id, size);
+  }
+
+  /**
+   * 上次记下之后别人往这段记录里追加的那几行（解析好的）；没变、没记过号返回 null。读完把记号挪到末尾。
+   * 文件变短了（被人截过）：返回空数组 —— 调用方照样整份重读。
+   */
+  appendedElsewhere(id) {
+    if (!this.marks.has(id)) return null;
+    const from = this.marks.get(id);
+    let size;
+    try { size = fs.statSync(this.file(id)).size; } catch { return null; }
+    if (size === from) return null;
+    this.marks.set(id, size);
+    if (size < from) return [];
+    const out = [];
+    let fd;
+    try {
+      fd = fs.openSync(this.file(id), 'r');
+      const buf = Buffer.alloc(size - from);
+      fs.readSync(fd, buf, 0, buf.length, from);
+      for (const line of buf.toString('utf8').split('\n')) {
+        if (!line.trim()) continue;
+        try { out.push(JSON.parse(line)); } catch { /* 半行：下次整份重读时会读到 */ }
+      }
+    } catch { /* 读不了也算变了 */ } finally {
+      if (fd != null) fs.closeSync(fd);
+    }
+    return out;
+  }
+
+  /**
+   * 拿这段会话的「一轮」锁（第二步）：同一时刻只有一边（应用的本机代码助手、某一个命令行）在往这段记录里跑一轮。
+   * 拿到返回 { release }；别人拿着返回 { busy: { who, pid, at } }。锁文件在 sessions/<id>.turn.lock，拿着时每 beatMs 碰一下。
+   * 遗留的（超过 staleMs 没碰、或者那个进程已经没了、或者就是这个进程自己留下的）清掉再拿。
+   * 建不了锁文件（只读的盘之类）：照跑，不能因为锁把人挡在外面。
+   */
+  lockTurn(id, who, { beatMs = LOCK_BEAT_MS, staleMs = LOCK_STALE_MS } = {}) {
+    const file = `${this.file(id).slice(0, -'.jsonl'.length)}.turn.lock`;
+    try { this.ensure(); } catch { return { release() {} }; }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let fd;
+      try {
+        fd = fs.openSync(file, 'wx');
+      } catch (e) {
+        if (e.code !== 'EEXIST') return { release() {} };
+        let info = null;
+        let stale = false;
+        try { info = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* 刚建、还没写完；或者坏了 */ }
+        try { stale = Date.now() - fs.statSync(file).mtimeMs > staleMs; } catch { continue; }   // 刚被放掉：再试
+        const pid = info && Number.isSafeInteger(info.pid) ? info.pid : null;
+        if (!stale && pid === process.pid) stale = true;
+        if (!stale && pid) { try { process.kill(pid, 0); } catch (err) { if (err.code === 'ESRCH') stale = true; } }
+        if (stale) { try { fs.rmSync(file, { force: true }); } catch { /* 下一圈再看 */ } continue; }
+        return { busy: { who: (info && info.who) || null, pid, at: (info && info.at) || null } };
+      }
+      try { fs.writeSync(fd, JSON.stringify({ pid: process.pid, who, at: new Date().toISOString() })); } finally { fs.closeSync(fd); }
+      const beat = setInterval(() => { try { const t = new Date(); fs.utimesSync(file, t, t); } catch { /* 下次再碰 */ } }, beatMs);
+      if (beat.unref) beat.unref();
+      let held = true;
+      return {
+        release() {
+          if (!held) return;
+          held = false;
+          clearInterval(beat);
+          try { if (JSON.parse(fs.readFileSync(file, 'utf8')).pid === process.pid) fs.rmSync(file, { force: true }); } catch { /* 已经没了 */ }
+        },
+      };
+    }
+    return { busy: { who: null, pid: null, at: null } };
   }
 
   touch(id, patch = {}) {
@@ -250,18 +358,33 @@ export class SessionStore {
     let goal = null;
     let todos = [];
     let broken = 0;
+    // 和应用对过账的位置（第一百四十五轮）：最后一次 sync 记的 Notebook 消息号，和那之后这份记录里人说过的话（按顺序）
+    let sync = null;
+    let said = [];
     eachLine(this.file(id), (line) => {
       if (!line.trim()) return;
       let e;
       try { e = JSON.parse(line); } catch { broken++; return; }
-      if (e.type === 'message' && e.message) messages.push(e.message);
+      if (e.type === 'message' && e.message) {
+        messages.push(e.message);
+        const m = e.message;
+        if (m.role === 'user' && !e.origin && typeof m.content === 'string' && !generatedOrigin(m.content)) said.push({ text: m.content, pending: true });
+        else if (said.length && said[said.length - 1].pending) said[said.length - 1] = { text: said[said.length - 1].text };
+      }
       else if (e.type === 'compact' && Array.isArray(e.messages)) messages = e.messages;
       else if (e.type === 'mode' && e.mode) mode = e.mode;
       else if (e.type === 'goal') goal = e.goal || null;
       else if (e.type === 'todos' && Array.isArray(e.todos)) todos = e.todos;
+      else if (e.type === 'sync') { sync = Number.isSafeInteger(e.upto) ? e.upto : null; said = []; }
+      // 人说的一句：said 行是原话（runTurn 记在那条消息后面）；没有 said 行的老记录（第一百四十五轮以前）退回用那条消息本身
+      else if (e.type === 'said' && typeof e.text === 'string') {
+        if (said.length && said[said.length - 1].pending) said[said.length - 1] = { text: e.text };
+        else said.push({ text: e.text });
+      }
     });
     // 图只给最后留下来的那几条换回去（中间被压缩掉的不用读）
-    return { meta, messages: dropDanglingToolCalls(messages).map((m) => this.hydrate(id, m)), mode, goal, todos, broken };
+    this.mark(id);   // 读到这里为止：之后变长的是别人写的
+    return { meta, messages: dropDanglingToolCalls(messages).map((m) => this.hydrate(id, m)), mode, goal, todos, broken, sync, said: said.map((x) => x.text) };
   }
 
   /**
@@ -275,12 +398,24 @@ export class SessionStore {
       let e;
       try { e = JSON.parse(line); } catch { return; }
       // 给人看的记录不带图的字节（旧记录里图是整段 base64：几百张就是几百 MB，全攒在内存里）
-      if (e.type === 'message' && e.message) out.push({ kind: 'message', message: withoutImageBytes(e.message), origin: e.origin || null, at: e.at });
+      if (e.type === 'message' && e.message) out.push({ kind: 'message', message: briefToolOutput(withoutImageBytes(e.message)), origin: e.origin || null, at: e.at });
       else if (e.type === 'compact') out.push({ kind: 'compact', at: e.at });
       else if (e.type === 'mode' && e.mode) out.push({ kind: 'mode', mode: e.mode, at: e.at });
     });
     return out;
   }
+}
+
+/**
+ * 给人看的记录里，工具的输出只留开头（第一百四十八轮）：回放只画它的第一行，原来整段攒在内存里 ——
+ * 600MB 的记录（几百段 2MB 的读文件结果）续接时命令行占了 609MB。人说的、助手答的照原样留。
+ */
+export const TRANSCRIPT_TOOL_CHARS = 4000;
+function briefToolOutput(message) {
+  if (message.role !== 'tool' || typeof message.content !== 'string' || message.content.length <= TRANSCRIPT_TOOL_CHARS) return message;
+  // 真拷一份开头：slice 切出来的是引用原串的一段（V8 的 SlicedString），原来那 2MB 照样留在内存里
+  const head = Buffer.from(message.content.slice(0, TRANSCRIPT_TOOL_CHARS), 'utf8').toString('utf8');
+  return { ...message, content: `${head}…（共 ${message.content.length} 字，记录里有全文）` };
 }
 
 function withoutImageBytes(message) {

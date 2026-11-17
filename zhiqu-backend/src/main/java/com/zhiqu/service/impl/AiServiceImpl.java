@@ -3131,6 +3131,34 @@ public class AiServiceImpl implements AiService {
     }
 
     @Override
+    public Map<String, Object> conversationHandoff(Long userId, Long notebookId, int limit) {
+        requireOwnedNotebookIfPresent(userId, notebookId);
+        Map<String, Object> out = new LinkedHashMap<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        out.put("summary", null);
+        out.put("messages", rows);
+        AiConversation conversation = getConversation(userId, notebookId);
+        if (conversation == null) {
+            return out;
+        }
+        String summary = usableSummary(userId, conversation);
+        Long upto = summary == null ? null : conversation.getSummaryUptoMessageId();
+        out.put("summary", summary);
+        for (AiMessage item : getRecentMessages(userId, conversation.getId(), Math.min(Math.max(limit, 1), 100), null)) {
+            // 摘要已经覆盖的不再给；还在生成 / 出错没有正文的不给（命令行那边拿的是「说过什么」）
+            if (!isChatRole(item.getRole()) || !hasText(item.getContent()) || (upto != null && item.getId() <= upto)) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", item.getId());
+            row.put("role", item.getRole());
+            row.put("content", item.getContent());
+            rows.add(row);
+        }
+        return out;
+    }
+
+    @Override
     public Map<String, Object> getMessageSteps(Long userId, Long messageId) {
         // 只认自己的、没删的（stepsOf 的 WHERE 里有 user_id 和 deleted）
         for (Map<String, Object> row : messageMapper.stepsOf(userId, List.of(messageId))) {

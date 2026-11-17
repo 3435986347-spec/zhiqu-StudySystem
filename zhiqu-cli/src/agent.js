@@ -1421,7 +1421,49 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
 
 // ── 一轮 ────────────────────────────────────────────────────────────────
 
-export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
+/** 这段会话别处正在跑一轮（第二步的锁）：这一句没发出去，原话照样留给人 */
+export class TurnBusyError extends Error {
+  constructor(busy = {}) {
+    super(`这段会话${busy.who === 'app' ? '在应用里' : busy.who === 'cli' ? '在另一个命令行里' : '在别处'}正在跑一轮，等它说完再说（这一句没发出去）`);
+    this.name = 'TurnBusyError';
+    this.busy = busy;
+  }
+}
+
+/**
+ * 一轮（第一百四十五轮起套一层锁，docs/app-resume-plan.md 第 2 步）：同一段会话应用和命令行都能接着说，
+ * 一次只有一边在跑一轮 —— 拿不到锁就抛 TurnBusyError，记录一个字都不写。拿到了先把别处在这期间说的读进来，再跑。
+ * 子 agent、临时会话、没有记录的（网页那一份）、调用方已经拿着锁的（桌面宿主在动记录之前就拿了）不再拿。
+ */
+export async function runTurn(ctx, userText, opts = {}) {
+  if (ctx.subagent || !ctx.store || !ctx.session || ctx.heldLock || String(ctx.session.id).startsWith('ephemeral-')) return runTurnBody(ctx, userText, opts);
+  const lock = ctx.store.lockTurn(ctx.session.id, ctx.lockWho || 'cli');
+  if (lock.busy) throw new TurnBusyError(lock.busy);
+  ctx.heldLock = lock;
+  try {
+    catchUp(ctx);
+    return await runTurnBody(ctx, userText, opts);
+  } finally {
+    ctx.heldLock = null;
+    lock.release();
+  }
+}
+
+/** 上次之后别处（应用、另一个命令行）往这段记录里接着说过：整份重读，说一声 */
+function catchUp(ctx) {
+  const fresh = ctx.store.appendedElsewhere(ctx.session.id);
+  if (!fresh) return;
+  const said = fresh.filter((e) => e.type === 'said');
+  const loaded = ctx.store.load(ctx.session.id);
+  ctx.messages = loaded.messages;
+  ctx.todos = loaded.todos || [];
+  ctx.work = null;   // 状态卡也是别处刚写过的：下一次 workOf 重新从盘上读
+  ctx.workFile = null;
+  const where = said.length && said.every((e) => e.via === 'app') ? '在应用里' : '在别处';
+  if (ctx.ui) ctx.ui.note(`· 这段会话${where}接着说了 ${said.length} 句，已经读进来`);
+}
+
+async function runTurnBody(ctx, userText, { signal, origin = null } = {}) {
   ctx.steps = [];
   // 网页存档的步骤每一轮（主 agent）重开一份：上一轮被 Ctrl+C 打断 / 模型出错时 archiveTurn 没跑，
   // 步骤会留在数组里，被下一轮的成功存档一起发上去 —— 网页上下一轮的回答上方会多出上一轮的步骤。
@@ -1455,6 +1497,7 @@ export async function runTurn(ctx, userText, { signal, origin = null } = {}) {
     if (ctx.root && !ctx.dirsAtStart) ctx.dirsAtStart = topDirs(ctx.root);
   }
   record(ctx, { role: 'user', content }, origin);
+  if (!origin && !ctx.subagent) noteSaid(ctx, userText);
   if (ctx.session && ctx.store && !ctx.session.title) {
     ctx.session.title = userText.replace(/\s+/g, ' ').slice(0, 40);
     ctx.store.touch(ctx.session.id, { title: ctx.session.title });
@@ -1725,10 +1768,21 @@ function inheritedCard(ctx, work) {
   return recentBlock(ctx.store, ctx.session, ctx.root) || null;
 }
 
+/**
+ * 记录里记一行「人这一句说了什么」（第一百四十五轮），原样、不经长输入存盘那一步改写。
+ * 同一段会话两边都能接着说（桌面应用、命令行）：应用每一轮把 Notebook 里的问答带来，宿主拿它和这几行对账，
+ * 记录里已经有的那几轮不再拍扁成「供参考」再放一遍。
+ */
+function noteSaid(ctx, text) {
+  if (!ctx.store || !ctx.session) return;
+  try { ctx.store.append(ctx.session.id, { type: 'said', text: String(text), via: ctx.lockWho || 'cli' }); } catch { /* 记不上不能把这一句弄挂 */ }
+}
+
 /** 在会话历史后面追加一问一答，不走模型（/review 的结论放回会话，才能接着说「修第 1 条」）。历史只追加。 */
 export function recordExchange(ctx, userText, answer) {
   const silent = { ...ctx, emit: null };   // 事件流里的结论由调用方说，这里不再冒一条 agent_message
   record(silent, { role: 'user', content: userText });
+  noteSaid(ctx, userText);   // 紧跟在那条消息后面：读记录时按这个配对（session.js 的 load）
   record(silent, { role: 'assistant', content: answer });
   if (!ctx.store || !ctx.session) return;
   if (!ctx.session.title) ctx.session.title = userText.replace(/\s+/g, ' ').slice(0, 40);

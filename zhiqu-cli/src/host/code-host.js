@@ -17,9 +17,11 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { PassThrough, Writable } from 'node:stream';
 import { Api, ApiError } from '../api.js';
-import { REMOTE_READ_TOOLS, runTurn } from '../agent.js';
+import { recordExchange, REMOTE_READ_TOOLS, runTurn } from '../agent.js';
 import { initPrompt } from '../instructions.js';
 import { StepLog } from '../steps.js';
+import { SessionStore } from '../session.js';
+import { historyBlock, openAppSession, recordAppFolder } from '../handoff.js';
 import { BUILTIN_SYSTEM_PROMPT } from '../prompt.js';
 import { collectChanges, nothingReport, parseReviewWords, renderReport, reviewSpec, runReview } from '../review.js';
 import { detectSandbox } from '../tools/sandbox.js';
@@ -133,16 +135,18 @@ export const CLAIMS_FILE = /(已经?|成功)(写入|写好|写进|新建|创建|
 // 「预期输出：」「应该输出：」是教用户怎么验，不是说跑过了（第九十九轮 review）
 export const CLAIMS_RUN = /退出码\s*-?\d|(跑|运行)(了|过了|的是)[^。\n]{0,24}(test|测试|\.py|\.js|\.java)|(?<!预期|应该|应当|会)输出(是|为)?[:：]/;
 
+export { appGap, historyBlock, maxMessageId, openAppSession } from '../handoff.js';
+
 /**
- * 前面的对话（第九十五轮）：网页给的只有每一轮的问和最终回答 —— 原样当成一问一答放进去，模型学的是「不调工具直接答」，
- * 两回照着上一次的结果编了这一次的（0 轮）。命令行的历史里有真的工具调用，没有这个问题。所以合成一段带标注的参考，不当成示范。
+ * 桌面应用的本机代码助手写会话记录（第一百四十五轮，docs/app-resume-plan.md 第 1 步）：页面给这段对话的 id（app-<notebookId>），
+ * 宿主在项目的 .zhiqu/sessions/ 里开一份和命令行一模一样的记录。原来 store 是 null —— 每一轮只拿到拍扁的问答，
+ * 命令行的 /resume 看不见应用里的会话，跨会话、项目笔记这些要会话记录的记忆一样都没有。
+ * 不是桌面版、id 不合规、是临时的（ephemeral-）：返回 null，照旧没有记录。
  */
-export function historyBlock(history) {
-  const turns = (Array.isArray(history) ? history : []).filter((m) => m && ['user', 'assistant'].includes(m.role) && typeof m.content === 'string' && m.content.trim());
-  if (!turns.length) return [];
-  const text = turns.map((m) => `${m.role === 'user' ? '用户' : '助手'}：${m.content.trim()}`).join('\n\n');
-  return [{ role: 'user', content: `【前面的对话，供参考 —— 里面说到的文件内容、命令结果都是当时的，文件可能已经变了；这一次要的结果用工具重新查、重新跑，不要照抄】\n${text}` },
-    { role: 'assistant', content: '好的，前面的对话我当参考；这一次要的结果我用工具重新查。' }];
+export function appSessionId(run, desktop) {
+  const id = run && run.sessionId;
+  if (!desktop || typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || id.startsWith('ephemeral-')) return null;
+  return id;
 }
 
 /**
@@ -230,7 +234,7 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
     // 显式填了正数的（旧外壳、测试、后端起的那一份）照它算 —— 不悄悄改别人要的预算。
     api, ui, root: local.root, mode: 'auto', maxRounds: Math.max(0, Number(run.maxRounds) || 0), local,
     store: null, session: { id: 'web-code-agent' }, archiveDisabled: true,
-    messages: historyBlock(run.history),
+    messages: [],
     allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() }, usage: { prompt: 0, completion: 0, cached: 0 },
     changedFiles: new Set(), todos: [], system: { text: BUILTIN_SYSTEM_PROMPT }, instructionsText: '', skillsText: '', skills: [],
     verbose: true, model: run.model, stepLog,
@@ -280,15 +284,48 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
   // /init、/review 要项目文件夹：页面已经拦过，这里是最后一道（生成到产物时根目录是临时空间，没什么可看、写了也没人读）
   const command = run.command === 'init' || run.command === 'review' ? run.command : null;
   const needsFolder = command && run.artifact;
+  // 有记录的（桌面应用给了这段对话的 id）：记录在 .zhiqu/sessions/，前面的对话从记录里来；没有的照旧拍扁问答。
+  // 存档（archiveDisabled）照旧关着：这一轮的问答由页面存进那个对话，这里再存一份就重了
+  const sessionId = appSessionId(run, desktop);
+  let opened = null;
+  let lock = null;
+  if (sessionId) {
+    // 一轮的锁（第二步）：在动记录之前拿 —— 命令行正在这段会话里跑一轮时，连对账、补前情都不能往里写
+    try { lock = new SessionStore(local.root).lockTurn(sessionId, 'app'); } catch (e) { ui.note(`（会话记录打不开，这一轮不记：${e.message}）`); }
+    if (lock && lock.busy) {
+      if (timer) clearTimeout(timer);
+      if (typeof bridge.onStop === 'function') bridge.onStop(null);
+      const said = lock.busy.who === 'app' ? '这段会话在应用里正在跑一轮' : '这段会话在命令行里正在跑一轮';
+      const busy = `${said}，等它说完再发（这一句没发出去，什么都没改）。`;
+      return { type: 'result', text: '', conclusion: busy, context: '', drafts: [], writeCalls: 0, usage: { prompt: 0, completion: 0, cached: 0 },
+        rounds: 0, aborted: false, error: busy, busy: true };
+    }
+    if (lock) {
+      try { opened = openAppSession(local.root, sessionId, run.history); } catch (e) { ui.note(`（会话记录打不开，这一轮不记：${e.message}）`); }
+    }
+  }
+  // lockWho / heldLock：runTurn 不再自己拿锁（已经拿着了），记 said 时标「应用」
+  if (opened) Object.assign(ctx, { store: opened.store, session: opened.session, messages: opened.messages, todos: opened.todos, lockWho: 'app', heldLock: lock });
+  // 本机的小索引（第一百四十七轮）：这段对话的记录在这个文件夹里 —— 命令行在别的文件夹里 /resume 它时据此指路。
+  // 用外壳给的家目录（宿主自己的 HOME 是这一轮的空目录）
+  if (opened) recordAppFolder(path.join(run.home, '.zhiqu', 'app-sessions.json'), sessionId, local.root);
+  else ctx.messages = historyBlock(run.history);
   const before = ctx.messages.length;
   try {
     if (desktop) {
       ctx.model = await desktopModel(api, run.model, controller.signal);
       const remote = await api.get('/api/harness/tools', { signal: controller.signal, timeoutMs: 15_000 }).catch((e) => { if (e && e.auth) throw e; return []; });
       ctx.remoteTools = (Array.isArray(remote) ? remote : []).filter((t) => run.canWrite || REMOTE_READ_TOOLS.has(t && t.function && t.function.name));
+      // 开工时带上用户的长期记忆（第一百四十八轮；记忆第 7 步命令行有、桌面宿主原来没有）：和命令行同一个接口、同一段写法（memory.js 的 userMemoryBlock）。
+      // 拿不到就没有这一段，不挡开工 —— 包括 403：服务器还没部署新的桌面令牌白名单时就是 403，不能当成令牌失效把这一轮停掉
+      ctx.userMemory = await api.get('/api/harness/memory/brief', { signal: controller.signal, timeoutMs: 15_000 }).catch(() => null);
     }
     if (needsFolder) reviewed = `/${command} 要先选一个项目文件夹，现在是生成到产物，没有项目可看。`;
-    else if (command === 'review') reviewed = await reviewHosted(ctx, String(run.message || ''), controller.signal, typeof run.home === 'string' ? run.home : undefined);
+    else if (command === 'review') {
+      reviewed = await reviewHosted(ctx, String(run.message || ''), controller.signal, typeof run.home === 'string' ? run.home : undefined);
+      // 审查的结论放回会话（和命令行的 /review 一样），之后接着说「修第 1 条」才接得上
+      if (ctx.store) recordExchange(ctx, String(run.message || '/review'), reviewed);
+    }
     else turn = await runTurn(ctx, command === 'init' ? initPrompt(fs.existsSync(path.join(local.root, 'ZHIQU.md'))) : String(run.message || ''), { signal: controller.signal });
   } catch (e) {
     // 桌面版的令牌失效（过期 / 撤销）：命令行那句「请运行 zhiqu login」在这里没用
@@ -298,6 +335,7 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
   } finally {
     if (timer) clearTimeout(timer);
     if (typeof bridge.onStop === 'function') bridge.onStop(null);
+    if (lock && lock.release) lock.release();
     // 后台命令随这一轮收掉（桌面版：这个进程交完结果就退，留下的就没人管了；后端那一份由后端收）
     if (desktop && local.jobs) local.jobs.stopAll();
   }
