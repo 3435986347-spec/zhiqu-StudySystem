@@ -1116,6 +1116,30 @@ public class AiServiceImpl implements AiService {
             }
         }
 
+        /**
+         * Wiki 工具循环途中读到的补充（第一百五十四轮）：模型已经看过、页面已经收到「送达」。
+         * 最终回答照样要按它写，所以还给模型看，但不再发一次送达。
+         */
+        private final List<String> steeredEarly = new ArrayList<>();
+
+        /**
+         * Wiki 工具循环每次调模型之前取：最终回答没动笔、代码 agent 没开口子（开着时补充归宿主）时，取走收着的补充。
+         * 取走就算读到了（调用方发 delivered），之后不会再还回来。
+         */
+        private synchronized List<String> takeForTools() {
+            if (finalWriterStarted || codePort != null || injected.isEmpty()) {
+                return List.of();
+            }
+            List<String> out = new ArrayList<>(injected);
+            injected.clear();
+            steeredEarly.addAll(out);
+            return out;
+        }
+
+        private synchronized List<String> steeredEarly() {
+            return List.copyOf(steeredEarly);
+        }
+
         /** 取走待补的话，并把「已经动笔」这个闸门关上（之后 inject 一律返回 false）。 */
         private synchronized List<String> beginFinalWriting() {
             finalWriterStarted = true;
@@ -1640,8 +1664,20 @@ public class AiServiceImpl implements AiService {
 
         @Override
         public void run(AgentRunContext ctx) {
+            // 中途补充（第一百五十四轮）：循环每次调模型之前取一次；取到的就是这次调用看得到的 —— 页面从「待送达」里拿掉，回答里记一步「你补充」
+            java.util.concurrent.atomic.AtomicInteger steerSeq = new java.util.concurrent.atomic.AtomicInteger();
+            WikiToolAgent.Steer steer = () -> {
+                List<String> said = s.takeForTools();
+                if (!said.isEmpty()) {
+                    for (String text : said) {
+                        emitTraceStep(ctx, s, TraceSteps.step("wiki-steer-" + steerSeq.incrementAndGet(), "steer", "你补充", text, "", true));
+                    }
+                    ctx.emit("message.steer.delivered", Map.of("texts", said));
+                }
+                return said;
+            };
             s.wikiAgent = wikiToolAgent.runWikiToolAgent(s.config, s.userId, s.limitedMessage,
-                    ContextBudget.forWindow(s.config.getContextWindowTokens()).wikiContextChars());
+                    ContextBudget.forWindow(s.config.getContextWindowTokens()).wikiContextChars(), steer);
             boolean wrote = s.wikiAgent != null && s.wikiAgent.wrotePatch;
             boolean writeRequested = s.wikiAgent != null && s.wikiAgent.writeRequested;
             List<Long> pendingIds = s.wikiAgent == null ? List.of() : s.wikiAgent.pendingPatchIds;
@@ -1918,6 +1954,11 @@ public class AiServiceImpl implements AiService {
             }
             // 生成途中用户补进来的话（第一百三十三轮）：紧挨着这一轮的提问放，并标明是补充 ——
             // 不标的话模型会把它当成一个新问题，回答就跑偏了
+            // Wiki 工具循环里已经读到的（第一百五十四轮）也放进来：最终回答要按它写；送达只在下面对新的这几句发
+            for (String extra : s.steeredEarly()) {
+                messages.add(Map.of("role", "user", "content",
+                        "（用户在生成过程中补充的信息，请和上面的问题一并考虑）\n" + extra));
+            }
             for (String extra : injected) {
                 messages.add(Map.of("role", "user", "content",
                         "（用户在生成过程中补充的信息，请和上面的问题一并考虑）\n" + extra));

@@ -138,12 +138,61 @@ public class WikiToolAgent {
 
     /** 同上；{@code contextLimit} 由模型的上下文窗口决定（见 ContextBudget）。 */
     public WikiAgentResult runWikiToolAgent(AiModelConfig config, Long userId, String userMessage, int contextLimit) {
+        return runWikiToolAgent(config, userId, userMessage, contextLimit, Steer.NONE);
+    }
+
+    /**
+     * 用户在这一轮生成途中补的话（第一百五十四轮，docs/steer-plan.md 第 5 步）。循环每次调模型之前取一次：
+     * 取走的就算「模型读到了」（调用方据此告诉页面已送达），不会再还回去。
+     */
+    @FunctionalInterface
+    public interface Steer {
+        List<String> take();
+
+        Steer NONE = List::of;
+    }
+
+    /** 补充那条消息的开头：不标的话模型会把它当成新问题、丢下手上的活（和命令行 steer.js 的 STEER_LEAD 同一个意思） */
+    static final String STEER_LEAD = "（用户在你干活的过程中补充了下面的话。它比原来的要求新：有冲突以它为准，不冲突就一并做到。"
+            + "做到一半的事先想清楚还要不要接着做，不要从头再来。）";
+
+    static String steerText(List<String> items) {
+        return STEER_LEAD + "\n\n" + String.join("\n\n", items);
+    }
+
+    private static List<String> takeSteer(Steer steer) {
+        List<String> items = steer == null ? null : steer.take();
+        return items == null ? List.of() : items;
+    }
+
+    /** Anthropic：补充并进最后那条 user 消息（tool_result 后面跟一个文本块），不造连着的两条 user */
+    @SuppressWarnings("unchecked")
+    static void appendAnthropicSteer(List<Map<String, Object>> messages, List<String> items) {
+        Map<String, Object> text = Map.of("type", "text", "text", steerText(items));
+        int last = messages.size() - 1;
+        if (last >= 0 && "user".equals(messages.get(last).get("role"))) {
+            Object content = messages.get(last).get("content");
+            List<Object> blocks = new ArrayList<>();
+            if (content instanceof List<?> list) {
+                blocks.addAll((List<Object>) list);
+            } else if (content != null) {
+                blocks.add(Map.of("type", "text", "text", String.valueOf(content)));
+            }
+            blocks.add(text);
+            messages.set(last, Map.of("role", "user", "content", blocks));
+        } else {
+            messages.add(Map.of("role", "user", "content", List.of(text)));
+        }
+    }
+
+    /** 同上；{@code steer} 是这一轮生成途中用户补的话 */
+    public WikiAgentResult runWikiToolAgent(AiModelConfig config, Long userId, String userMessage, int contextLimit, Steer steer) {
         boolean canWrite = AgentPlanDecision.wikiWriteIntent(userMessage);
         if (!AgentPlanDecision.wikiToolIntent(userMessage) || !provider.supportsToolCalling(config)) {
             return canWrite ? new WikiAgentResult("", true, List.of()) : WikiAgentResult.EMPTY;
         }
         if (provider.isAnthropicProvider(config)) {
-            return runWikiToolAgentAnthropic(config, userId, userMessage, contextLimit);
+            return runWikiToolAgentAnthropic(config, userId, userMessage, contextLimit, steer);
         }
         StringBuilder context = new StringBuilder();
         boolean wrotePatch = false;
@@ -163,6 +212,11 @@ public class WikiToolAgent {
                     log.warn("Wiki 工具循环超时预算，提前结束 userId={} round={}", userId, round);
                     break;
                 }
+                // 中途补充：整批 tool 结果之后（OpenAI 要求 tool_calls 后面紧跟每一条结果）、这次调用之前
+                List<String> said = takeSteer(steer);
+                if (!said.isEmpty()) {
+                    messages.add(Map.of("role", "user", "content", steerText(said)));
+                }
                 JsonNode message = provider.callOpenAiToolTurn(config, messages, tools);
                 if (message == null) {
                     break;
@@ -171,6 +225,10 @@ public class WikiToolAgent {
                 messages.add(objectMapper.convertValue(message, new TypeReference<Map<String, Object>>() {}));
                 JsonNode toolCalls = message.path("tool_calls");
                 if (!toolCalls.isArray() || toolCalls.isEmpty()) {
+                    // 要收尾了，用户正好补了话：不收尾，带上接着做（下一轮开头会取到）。最后一轮之后没有下一次调用，不取 —— 留给最终回答
+                    if (round < 3 && peekSteer(steer, messages, false)) {
+                        continue;
+                    }
                     if (canWrite && !wrotePatch && !reminded && round < 3) {
                         messages.add(Map.of("role", "user", "content", missingWikiWriteReminder()));
                         reminded = true;
@@ -207,7 +265,7 @@ public class WikiToolAgent {
     }
 
     /** Anthropic 原生工具循环版：读工具→tool_result 回填→最终答复，与 OpenAI 版等价但用 Anthropic 协议。 */
-    private WikiAgentResult runWikiToolAgentAnthropic(AiModelConfig config, Long userId, String userMessage, int contextLimit) {
+    private WikiAgentResult runWikiToolAgentAnthropic(AiModelConfig config, Long userId, String userMessage, int contextLimit, Steer steer) {
         StringBuilder context = new StringBuilder();
         boolean wrotePatch = false;
         boolean canWrite = AgentPlanDecision.wikiWriteIntent(userMessage);
@@ -224,6 +282,10 @@ public class WikiToolAgent {
                     log.warn("Wiki 工具循环(Anthropic)超时预算，提前结束 userId={} round={}", userId, round);
                     break;
                 }
+                List<String> said = takeSteer(steer);
+                if (!said.isEmpty()) {
+                    appendAnthropicSteer(messages, said);
+                }
                 JsonNode content = provider.callAnthropicToolTurn(config, system, messages, tools);
                 if (content == null || !content.isArray()) {
                     break;
@@ -238,6 +300,9 @@ public class WikiToolAgent {
                 }
                 messages.add(Map.of("role", "assistant", "content", assistantBlocks));
                 if (toolUses.isEmpty()) {
+                    if (round < 3 && peekSteer(steer, messages, true)) {
+                        continue;
+                    }
                     if (canWrite && !wrotePatch && !reminded && round < 3) {
                         messages.add(Map.of("role", "user", "content", missingWikiWriteReminder()));
                         reminded = true;
@@ -272,6 +337,23 @@ public class WikiToolAgent {
         }
         return new WikiAgentResult(com.zhiqu.common.Texts.limitRaw(context.toString(), contextLimit), canWrite,
                 new ArrayList<>(state.pendingPatchIdsByTitle.values()));
+    }
+
+    /**
+     * 模型要收尾时看一眼有没有补充：有就取走、追加，返回 true（循环接着调一次）。
+     * 取走就算读到了 —— 所以只在确定还会再调一次模型的时候取（调用方保证 round &lt; 3）
+     */
+    private static boolean peekSteer(Steer steer, List<Map<String, Object>> messages, boolean anthropic) {
+        List<String> said = takeSteer(steer);
+        if (said.isEmpty()) {
+            return false;
+        }
+        if (anthropic) {
+            appendAnthropicSteer(messages, said);
+        } else {
+            messages.add(Map.of("role", "user", "content", steerText(said)));
+        }
+        return true;
     }
 
     private String missingWikiWriteReminder() {
