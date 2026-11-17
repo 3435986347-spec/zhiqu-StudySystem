@@ -1,7 +1,7 @@
 // AI 助手 —— 第三十七轮从 zhiqu-api.js 挪过来的页面模块（方案第 4 步的最后一块）。形状见 pages/admin.js 的开头。
 // Notebook 与资料、聊天与流式（含断线从库里接回、断网发送）、执行轨迹、计划草稿确认、代码工作区面板。
 // 留在壳里、经 zqShared 给的：请求与它的错误、登录跳转、业务时钟、草稿、弹窗与提示、Markdown 渲染、右键菜单（Wiki 也用）。
-// 另外导出给测试直接 import 的纯函数（parseSseFrame、stepNoteHtml、messageBodyHtml …），见文件末尾。
+// 另外导出给测试直接 import 的纯函数（parseSseFrame、messageBodyHtml …），见文件末尾。
 
 let API, REQUEST_TIMEOUT_MS, api, token, role, requestError, redirectToLogin, nowMs, serverTime, state, esc, $, $all, empty, safe, toast, notice,
   askConfirm, askText, openModal, popMenu, drafts, keepDraft, freqLabel, normalizeModelList, renderMarkdown, renderMathIn, icon;
@@ -535,19 +535,6 @@ function mergeTraceStep(m, step) {
     if (list[i].id === step.id) { list[i] = step; return; }
   }
   list.push(step);
-}
-
-function renderSteps(steps) {
-  var host = $('#zq-steps'); if (!host) return;
-  host.innerHTML = steps.length ? steps.map(function (s, i) {
-    var status = (s.status || 'DONE').toUpperCase();
-    var tone = status === 'DONE' || status === 'COMPLETED' ? 'ok' : status === 'FAILED' ? 'bad' : '';
-    var last = i === steps.length - 1;
-    var stepName = s.publicSummary || s.title || s.name || s.agentType || ('步骤 ' + (i + 1));
-    var metaLine = (s.agentType && s.publicSummary ? s.agentType + ' · ' : '') + status;
-    return '<div class="zq-step" data-state="' + tone + '"><div class="zq-step-rail"><span class="zq-step-dot"></span>' + (last ? '' : '<span class="zq-step-line"></span>') + '</div>'
-      + '<div class="zq-step-body"><div class="zq-step-name">' + esc(stepName) + '</div><div class="zq-mono zq-step-meta">' + esc(metaLine) + '</div>' + (s.notes || []).map(stepNoteHtml).join('') + '</div></div>';
-  }).join('') : empty('暂无执行记录');
 }
 
 function artifactTypeLabel(type) {
@@ -1320,7 +1307,7 @@ function renderArtifacts(artifacts) {
   $all('[data-art-no]', host).forEach(function (b) { b.onclick = function () { safe('忽略产物', async function () { await api.post('/ai/artifacts/' + b.dataset.artNo + '/discard', {}); toast('已忽略'); await renderAgentPanels(); }); }; });
 }
 async function renderAgentPanels() {
-  if (!$('#zq-steps') && !$('#zq-artifacts')) return;
+  if (!$('#zq-artifacts')) return;
   var nbId = state.notebookId;
   var revision = state.agentArtifactRevision || 0;
   var runs = await safe('执行轨迹', function () { return api.get('/ai/agent-runs' + (nbId ? '?notebookId=' + nbId : '')); });
@@ -1336,10 +1323,6 @@ async function renderAgentPanels() {
   state.generatedFiles = Array.isArray(generated) ? generated : [];
   // 请求开始后若收到了新 SSE 产物，旧快照不能盖回去或弹出上一轮草稿。
   var active = currentTurn(), pending = runningTurn();
-  state.agentSteps = active && active.agentSteps && active.agentSteps.length ? active.agentSteps
-    : pending && pending.agentSteps && pending.agentSteps.length ? pending.agentSteps
-    : (detail && (detail.steps || detail.stepList)) || [];
-  renderSteps(state.agentSteps);
   var artifacts = (detail && (detail.artifacts || detail.artifactList)) || [];
   artifacts = artifacts.map(function (raw) {
     var incoming = normalizeArtifact(raw);
@@ -1375,10 +1358,6 @@ async function loadAiMessages() {
   state.messages = mergeRunningMessages(list);
   syncTurnUi();
   var active = currentTurn(), pending = runningTurn();
-  if (active && active.agentSteps || pending && pending.agentSteps) {
-    state.agentSteps = active && active.agentSteps || pending.agentSteps;
-    renderSteps(state.agentSteps);
-  }
   renderSendQueue();
   state.historyOf = { notebookId: nbId };   // 这个 notebook 的记录到手了 —— 此后空着才是真的空（见 historyLoaded）
   // 拿满一页 = 可能还有更早的。这是个上界判断，不是精确值：
@@ -1887,7 +1866,6 @@ async function loadAiNotebooks() {
     clearPendingSources();
     renderNotebooks();
     await loadAiSources();
-    renderSteps([]);
     renderArtifacts([]);
     return;
   }
@@ -1938,7 +1916,6 @@ function renderNotebooks() {
       state.messages = [];
       renderNotebooks();
       renderAiMessages();
-      renderSteps([]);
       renderArtifacts([]);
       loadAiSources();
       renderAgentPanels();
@@ -1960,7 +1937,6 @@ function renderNotebooks() {
                 state.messages = [];
                 clearPendingSources();
                 renderAiMessages();
-                renderSteps([]);
                 renderArtifacts([]);
               }
               toast('已删除');
@@ -2218,49 +2194,6 @@ async function streamRunStream(runId, after, handlers, st) {
   await readSse(res, handlers);
 }
 
-function upsertAgentStep(raw, done, steps, show) {
-  var list = steps || state.agentSteps;
-  var step = raw.step || raw;
-  var id = step.id || step.stepId || step.title || (list.length + 1);
-  var existing = list.find(function (s) { return s._id === id; });
-  // 流式事件带的是 publicSummary / agentType，不是 title —— 原来只取 title，
-  // 于是实时显示的轨迹是「步骤 1、步骤 2」，要等刷新重载才有名字。
-  if (existing) {
-    existing.status = done ? 'DONE' : (step.status || existing.status);
-    if (step.title) existing.title = step.title;
-    if (step.publicSummary) existing.publicSummary = step.publicSummary;
-  } else {
-    list.push({ _id: id, title: step.title || step.name || step.stepType || ('步骤 ' + (list.length + 1)),
-      publicSummary: step.publicSummary || '', agentType: step.agentType || '',
-      status: done ? 'DONE' : (step.status || 'RUNNING'), notes: [] });
-  }
-  if (show !== false) renderSteps(list);
-}
-/**
- * coding agent 的逐步叙述（agent.step.note）：读了哪个文件、跑了什么命令、输出是什么。
- * 挂在对应步骤下面。命令行 zhiqu 读的是同一份事件 —— 两边说同样的话。
- * 每步最多留 NOTE_CAP 条：一个 10 轮的循环可能有几十次调用，全留会把轨迹栏撑爆。
- */
-var NOTE_CAP = 40;
-function addAgentStepNote(data, steps, show) {
-  if (!data || !data.message) return;
-  var list = steps || state.agentSteps;
-  var step = list.find(function (s) { return s._id === data.stepId; });
-  if (!step) return;
-  step.notes = step.notes || [];
-  step.notes.push({ phase: data.phase || '', message: String(data.message) });
-  if (step.notes.length > NOTE_CAP) step.notes.splice(0, step.notes.length - NOTE_CAP);
-  if (show !== false) renderSteps(list);
-}
-/** 一条叙述的 HTML。命令输出可能含任意字符（包括 HTML），一律 esc —— 它来自用户机器上跑出来的东西。 */
-function stepNoteHtml(n) {
-  if (n.phase === 'result') {
-    var lines = n.message.split('\n');
-    var shown = lines.slice(0, 6).join('\n') + (lines.length > 6 ? '\n…' : '');
-    return '<pre class="zq-mono zq-step-out">' + esc(shown) + '</pre>';
-  }
-  return '<div class="zq-mono zq-step-note" data-state="' + (n.phase === 'error' ? 'bad' : n.phase === 'budget' ? 'warn' : '') + '">⎿ ' + esc(n.message) + '</div>';
-}
 /** 单行时的高度，与同排按钮对齐；也是清空后要回到的高度。 */
 var DRAFT_BASE_HEIGHT = 44;   // 两行（输入框行高 22px，第四十四轮起没有上下内边距和边框 —— 框是外面那一层 .zq-composer）
 var DRAFT_MAX_HEIGHT = 200;
@@ -2548,7 +2481,6 @@ function persistTurn(st, force) {
     info.msg = st.assistant.id || null;
     info.assistant = st.assistant;
     info.user = st.user || null;
-    info.agentSteps = st.agentSteps || [];
     if (st.desktopInfo) Object.assign(info, st.desktopInfo, { kind: 'desktop' });
     sessionStorage.setItem(runningStorageKey(st.nb), JSON.stringify(info));
   } catch (e) { /* 存储满时仍由后台任务 / 服务端消息列表恢复，不取消任务 */ }
@@ -2628,7 +2560,6 @@ function bindTurnLifecycle() {
  */
 function makeStreamApplier(st) {
   var assistant = st.assistant;
-  st.agentSteps = st.agentSteps || [];
   if (st.nb === undefined) st.nb = state.notebookId;
   return function (event, data) {
     data = data || {};
@@ -2667,12 +2598,9 @@ function makeStreamApplier(st) {
       if (st.sameNb()) renderAiMessages();
     }
     else if (event === 'agent.step.start' || event === 'agent.step.done' || event === 'agent.step.note') {
-      if (st.sameNb()) {
-        state.agentSteps = st.agentSteps;
-        state.agentArtifactRevision = (state.agentArtifactRevision || 0) + 1;
-      }
-      if (event === 'agent.step.note') addAgentStepNote(data, st.agentSteps, st.sameNb());
-      else upsertAgentStep(data, event === 'agent.step.done', st.agentSteps, st.sameNb());
+      // 右侧的「执行轨迹」去掉了（第一百四十九轮，用户：每一步已经按顺序列在回答里）。这几个事件只剩一个用处：
+      // 这一轮还在动，「产物」那块正在取的旧快照不能盖回去（renderAgentPanels 比这个版本号）
+      if (st.sameNb()) state.agentArtifactRevision = (state.agentArtifactRevision || 0) + 1;
     }
     else if (event === 'trace.step') {
       var step = data.step;
@@ -2858,10 +2786,10 @@ async function sendAiMessage(queuedText) {
   // 用户刚按下发送，这是他自己的动作：无条件回到底部，之后再由他的滚动决定跟不跟随
   state.chatFollow = true;
   renderAiMessages();
-  state.agentSteps = []; state.agentArtifacts = [];
+  state.agentArtifacts = [];
   clearPlanModalQueue();
   state.agentArtifactRevision = (state.agentArtifactRevision || 0) + 1;
-  renderSteps([]); renderArtifacts([]);
+  renderArtifacts([]);
   var modelSel = $('#zq-model');
   var body = {
     message: txt,
@@ -3740,4 +3668,4 @@ function pumpSendQueue() {
 
 // 给测试直接 import 的纯函数（第三十七轮）：step-note-check.js（执行轨迹里一条叙述的转义）、diff-check.js（改动草稿的逐行对比）。
 // 它们只用到 esc —— 测试 bind 一个只有 esc 的 sh 就能跑。
-export { traceStepsHtml, mergeTraceStep, stepNoteHtml, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard, parseSlash, slashMatches, slashBlocked, bindSlash, paintSlash, sendAiMessage, paintWorkspaceBar };
+export { traceStepsHtml, mergeTraceStep, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard, parseSlash, slashMatches, slashBlocked, bindSlash, paintSlash, sendAiMessage, paintWorkspaceBar };

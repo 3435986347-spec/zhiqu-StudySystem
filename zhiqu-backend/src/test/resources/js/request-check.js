@@ -25,7 +25,8 @@ function sliceMod(startMark, endMark) {
   return modSrc.slice(a, b);
 }
 let sseSrc = sliceMod('function parseSseFrame(frame) {', '\nasync function streamAiChat(');
-const streamSrc = sliceMod('\nasync function streamAiChat(', '\nfunction upsertAgentStep(');
+// 终点原来是 upsertAgentStep（第一百四十九轮随右侧的执行轨迹删了），切的还是 streamAiChat … streamRunStream 那一段
+const streamSrc = sliceMod('\nasync function streamAiChat(', '\n/** 单行时的高度');
 const onlineSrc = sliceMod('function whenOnline(fn) {', '\n}\n') + '\n}\n';
 // 把等待调短 —— 替换必须真的落地，否则这份判据会在 30 秒超时上等很久，或者测的根本不是改过的常量
 for (const [from, to] of [['var REQUEST_TIMEOUT_MS = 30000;', 'var REQUEST_TIMEOUT_MS = 60;'], ['var RETRY_WAITS_MS = [700, 2000];', 'var RETRY_WAITS_MS = [5, 5];']]) {

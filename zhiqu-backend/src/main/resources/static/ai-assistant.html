@@ -6,11 +6,11 @@
   <title>AI 助手 - 知趣·象限 AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261117-r148" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261117-r148">
-  <link rel="manifest" href="manifest.json?v=20261117-r148">
-  <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261117-r148">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261117-r149" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261117-r149">
+  <link rel="manifest" href="manifest.json?v=20261117-r149">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261117-r149">
 </head>
 <body>
   <div class="zq-app">
@@ -104,12 +104,8 @@
               <div id="zq-drop-overlay" class="zq-drop-overlay" aria-hidden="true"><span data-zq-icon="paperclip"></span>松开即可上传到当前 Notebook · 支持图片、PDF、Excel、文本</div>
             </div>
 
-            <aside data-zq-collapse="right" data-zq-label="执行轨迹 · 产物" class="zq-ai-side">
-              <div class="zq-ai-trace">
-                <strong class="zq-ai-side-title">执行轨迹</strong>
-                <span class="zq-ai-side-sub">Agent Pipeline</span>
-                <div id="zq-steps" class="zq-ai-steps"></div>
-              </div>
+            <!-- 右侧只留「产物」（来源、草稿与确认结果）。「执行轨迹」第一百四十九轮去掉：每一步已经按顺序列在回答里（第一百二十七轮） -->
+            <aside data-zq-collapse="right" data-zq-label="产物" class="zq-ai-side">
               <div class="zq-ai-products">
                 <strong class="zq-ai-side-title">产物</strong>
                 <span class="zq-ai-side-sub">来源、草稿与确认结果</span>
@@ -122,7 +118,7 @@
     </main>
   </div>
 
-  <script src="assets/zhiqu-ui.js?v=20261117-r148"></script>
-  <script src="assets/zhiqu-api.js?v=20261117-r148"></script>
+  <script src="assets/zhiqu-ui.js?v=20261117-r149"></script>
+  <script src="assets/zhiqu-api.js?v=20261117-r149"></script>
 </body>
 </html>

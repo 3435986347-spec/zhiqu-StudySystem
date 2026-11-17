@@ -88,7 +88,7 @@ class WebAppManifestTest {
     @Test
     @DisplayName("浏览器边框的颜色和界面的底色一致：manifest、各页浅 / 深两个 theme-color")
     void 主题色不能和界面分叉() throws IOException {
-        // 第四十轮起是中性配色：状态栏、标签栏跟着页面底色走（浅色 #FAFAFA、深色近黑），不再用强调色 ——
+        // 第四十轮起是中性配色：状态栏、标签栏跟着页面底色走（浅色第一百四十九轮起是白、深色近黑），不再用强调色 ——
         // 原来这里比的是 --zq-primary（那时状态栏用的是主题蓝）。分叉的表现照旧：装成 PWA 之后状态栏和应用里的颜色对不上。
         JsonNode manifest = new ObjectMapper()
                 .readTree(Files.readString(STATIC.resolve("manifest.json"), StandardCharsets.UTF_8));

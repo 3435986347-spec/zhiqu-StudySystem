@@ -29,11 +29,11 @@ const toasts = [];
 const state = { notebookId: 5, messages: [] };
 const noop = () => {};
 const factory = new Function(
-  'state', 'toast', 'renderAiMessages', 'patchStreamingMessage', 'upsertAgentStep', 'addAgentStepNote',
+  'state', 'toast', 'renderAiMessages', 'patchStreamingMessage',
   'mergeTraceStep', 'receiveAgentArtifact', 'isPlanDraft', 'planDraftItems', 'sessionStorage', 'requestError',
   src.slice(a, b) + '\nreturn { makeStreamApplier, runningTurn, markRunningTurn, clearRunningTurn, runningStorageKey };');
 const { makeStreamApplier, runningTurn, markRunningTurn, clearRunningTurn, runningStorageKey } = factory(
-  state, (m) => toasts.push(m), noop, () => true, noop, noop, noop, noop, noop, noop, store,
+  state, (m) => toasts.push(m), noop, () => true, noop, noop, noop, noop, store,
   (msg, flags) => Object.assign(new Error(msg), flags));
 
 function turn() {
@@ -176,7 +176,7 @@ function harness(sharedStore = store) {
   ctx.patchStreamingMessage = () => { ctx.renderAiMessages(); return true; };
   ctx.renderAgentPanels = async () => {};
   ctx.renderNotebooks = noop;
-  ctx.renderSteps = noop; ctx.renderArtifacts = noop; ctx.paintSlash = noop;
+  ctx.renderArtifacts = noop; ctx.paintSlash = noop;
   ctx.stopStreamWatch = noop; ctx.watchStreamingMessages = noop;
   ctx.renderSendQueue = noop;
   return { ctx, s, input, sh, renders, events,
@@ -192,20 +192,18 @@ async function checkNavigation() {
   apply('stream.start', { agentRunId: 501, assistantMessageId: 9001, userMessageId: 9000 });
   apply('message.delta', { text: '第一段' });
   apply('agent.step.start', { id: 'agent-a', publicSummary: '读取资料' });
-  h.ctx.setAiNotebookId(6); h.s.messages = []; h.s.agentSteps = [];
+  h.ctx.setAiNotebookId(6); h.s.messages = [];
   assert.equal(h.s.aiSending, false, 'A 在后台运行不能把 B 的输入状态锁成生成中');
   apply('message.delta', { text: '，后台第二段' });
   apply('agent.step.done', { id: 'agent-a', publicSummary: '后台已读完资料' });
   apply('agent.step.note', { stepId: 'agent-a', message: '离开期间的检索结果' });
   assert.equal(h.s.messages.length, 0, 'A 的后台消息串到了 B');
-  assert.equal(h.s.agentSteps.length, 0, 'A 的后台步骤串到了 B');
   h.ctx.setAiNotebookId(5);
   h.sh.api.get = async () => [{ id: 9000, role: 'user', content: '问题 A' },
     { id: 9001, role: 'assistant', agentRunId: 501, status: 'STREAMING', content: '第一段' }];
   await h.ctx.loadAiMessages();
   assert.equal(h.s.messages.at(-1).content, '第一段，后台第二段', '切回 A 被过时的列表回包覆盖，最新进度丢了');
-  assert.equal(h.s.agentSteps[0].publicSummary, '后台已读完资料', '离开期间的 agent 步骤更新丢了');
-  assert.equal(h.s.agentSteps[0].notes[0].message, '离开期间的检索结果');
+  // 右侧的执行轨迹第一百四十九轮去掉了：agent.step 事件照样会来，只是不再记步骤（不能因此出错、不能串到 B）
   apply('message.delta', { text: '，第三段' });
   assert.equal(h.s.messages.at(-1).content, '第一段，后台第二段，第三段', '回来后 SSE 仍写旧对象，气泡不再更新');
   h.sh.api.get = async () => [{ id: 9001, role: 'assistant', status: 'DONE', content: '第一段，后台第二段，第三段' }];

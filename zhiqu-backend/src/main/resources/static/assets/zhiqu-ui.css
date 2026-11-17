@@ -13,7 +13,7 @@
 
 :root{
   /* 灰阶（浅色） */
-  --zq-bg: #FAFAFA;
+  --zq-bg: #FFFFFF;   /* 第一百四十九轮：#FAFAFA → 白（用户拿 Claude 的白底比过：我们的灰一层像蒙了雾）。卡片靠描边分，不靠底色 */
   --zq-card: #FFFFFF;
   --zq-cmd: #1D4ED8;   /* 第一百一十八轮：输入框和面板里的 / 命令 */
   --zq-card-soft: #F4F4F5;
@@ -1024,25 +1024,8 @@ button.zq-trace-more:hover{color:var(--zq-text);}
 .zq-ai-empty-actions.is-examples{display:flex;flex-direction:column;gap:8px;}
 .zq-ai-empty-actions.is-examples .zq-btn-ghost{justify-content:flex-start;height:auto;min-height:34px;white-space:normal;text-align:left;}
 /* 右边：执行轨迹、产物 */
-.zq-ai-trace{padding:12px 14px;border-bottom:1px solid var(--zq-border-soft);}
 .zq-ai-products{padding:12px 14px;}
-.zq-ai-steps{display:flex;flex-direction:column;margin-top:10px;}
 .zq-ai-artifacts{display:flex;flex-direction:column;gap:7px;margin-top:10px;}
-.zq-step{display:flex;gap:9px;padding:5px 0;}
-.zq-step-rail{display:flex;flex-direction:column;align-items:center;flex:none;width:10px;}
-.zq-step-dot{width:8px;height:8px;margin-top:4px;border-radius:50%;background:var(--zq-text3);}
-.zq-step-line{flex:1;width:1px;margin-top:2px;background:var(--zq-border-soft);}
-.zq-step-body{min-width:0;padding-bottom:6px;}
-.zq-step-name{font-size:var(--zq-fs-xs);font-weight:var(--zq-fw-medium);line-height:1.45;}
-.zq-step-meta{margin-top:1px;font-size:var(--zq-fs-2xs);color:var(--zq-text3);}
-.zq-step[data-state="ok"] .zq-step-dot{background:var(--zq-ok);}
-.zq-step[data-state="ok"] .zq-step-meta{color:var(--zq-ok);}
-.zq-step[data-state="bad"] .zq-step-dot{background:var(--zq-bad);}
-.zq-step[data-state="bad"] .zq-step-meta{color:var(--zq-bad);}
-.zq-step-note{margin-top:2px;font-size:var(--zq-fs-2xs);color:var(--zq-text2);word-break:break-all;}
-.zq-step-note[data-state="bad"]{color:var(--zq-bad);}
-.zq-step-note[data-state="warn"]{color:var(--zq-warn);}
-.zq-step-out{margin:2px 0 3px 12px;padding:4px 6px;border-radius:4px;background:var(--zq-card-soft);color:var(--zq-text2);font-size:var(--zq-fs-2xs);line-height:1.4;white-space:pre-wrap;word-break:break-all;}
 /* 代码改动草稿的逐行对比：新增 --zq-q2、删除 --zq-bad，底色是同色 12% */
 .zq-plan-group.is-code{margin-bottom:10px;}
 .zq-plan-group.is-code .zq-plan-row{align-items:center;}
@@ -1182,20 +1165,20 @@ button.zq-trace-more:hover{color:var(--zq-text);}
 .zq-prose .zq-wiki-empty{color:var(--zq-text3);}
 /* ── 知识 Wiki 的骨架（第七十九轮从 knowledge-wiki.html 的内联挪进来）：目录、正文卡片、页面检查三栏 ── */
 .zq-wiki-pending{border-color:var(--zq-tint-strong);background:var(--zq-tint);color:var(--zq-primary);font-weight:var(--zq-fw-medium);}
-.zq-wiki-cols{display:flex;gap:12px;align-items:stretch;margin:0 -8px;flex:1;min-height:0;}
+/* 第一百四十九轮：照 Obsidian 平铺 —— 三栏拼成一整块（一道外框、栏之间一条细线），不再是灰底上浮三张带阴影的卡片 */
+.zq-wiki-cols{display:flex;gap:0;align-items:stretch;margin:0;flex:1;min-height:0;overflow:hidden;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);}
 /* 两侧面板：展开的宽度只写在这里（setupPanels 读算出来的 flex-basis） */
-.zq-wiki-side{flex:0 0 210px;align-self:stretch;overflow:hidden;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh1);}
-.zq-wiki-side[data-zq-collapse="right"]{flex-basis:250px;}
+.zq-wiki-side{flex:0 0 210px;align-self:stretch;overflow:hidden;border:0;border-right:1px solid var(--zq-border-soft);background:var(--zq-sb-bg);}
+.zq-wiki-side[data-zq-collapse="right"]{flex-basis:250px;border-right:0;border-left:1px solid var(--zq-border-soft);}
 .zq-wiki-side-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--zq-border-soft);}
-.zq-wiki-side[data-zq-collapse="right"] .zq-wiki-side-head{background:var(--zq-card-soft);}
 .zq-wiki-side-head h2{margin:0;font-size:var(--zq-fs-base);font-weight:var(--zq-fw-medium);}
 #zq-tree-count{font-size:var(--zq-fs-xs);color:var(--zq-text3);}
 .zq-wiki-filter{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-bottom:1px solid var(--zq-border-soft);}
 .zq-wiki-filter .zq-input,.zq-wiki-filter .zq-select{height:28px;font-size:var(--zq-fs-xs);}
 #zq-tree{display:flex;flex-direction:column;gap:2px;padding:8px;}
 /* 正文卡片：flex 列 + min-height:0，#zq-doc 在里面滚，不把整页撑长 */
-.zq-wiki-doc{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;overflow:hidden;border:1px solid var(--zq-border-soft);border-radius:var(--zq-rm);background:var(--zq-card);box-shadow:var(--zq-sh2);}
-.zq-wiki-tabbar{display:flex;align-items:stretch;border-bottom:1px solid var(--zq-border-soft);background:var(--zq-card-soft);}
+.zq-wiki-doc{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;overflow:hidden;border:0;border-radius:0;background:var(--zq-card);}
+.zq-wiki-tabbar{display:flex;align-items:stretch;border-bottom:1px solid var(--zq-border-soft);background:var(--zq-sb-bg);}
 /* 标签栏左内边距 = 0：第一个标签贴着卡片的左边缘（WikiTabsTest.第一个标签贴卡片左边缘） */
 #zq-wiki-tabs{display:flex;align-items:stretch;flex:1;min-width:0;padding-left:0;overflow-x:auto;scrollbar-width:thin;}
 .zq-wiki-nav{display:flex;align-items:center;gap:2px;flex:none;padding:0 12px 0 6px;}
@@ -1214,7 +1197,8 @@ button.zq-trace-more:hover{color:var(--zq-text);}
 .zq-wiki-item[aria-current="page"]{background:var(--zq-tint);}
 .zq-wiki-item[aria-current="page"]>span{font-weight:var(--zq-fw-medium);}
 .zq-wiki-tab{display:flex;align-items:center;gap:6px;max-width:190px;padding:7px 8px 7px 12px;border-right:1px solid var(--zq-border-soft);color:var(--zq-text2);font-size:var(--zq-fs-sm);white-space:nowrap;cursor:pointer;}
-.zq-wiki-tab[aria-current="page"]{background:var(--zq-card);color:var(--zq-text);font-weight:var(--zq-fw-medium);box-shadow:inset 0 2px 0 var(--zq-primary);}
+/* 当前标签和正文连成一片（白、压住下面那条线），不再在上沿压一道黑线 —— 照 Obsidian */
+.zq-wiki-tab[aria-current="page"]{background:var(--zq-card);color:var(--zq-text);font-weight:var(--zq-fw-medium);margin-bottom:-1px;}
 .zq-wiki-tab-name{overflow:hidden;text-overflow:ellipsis;}
 .zq-wiki-tab-x{flex:none;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--zq-text3);}
 .zq-wiki-tab-x:hover{background:var(--zq-sb-active-bg);color:var(--zq-text);}

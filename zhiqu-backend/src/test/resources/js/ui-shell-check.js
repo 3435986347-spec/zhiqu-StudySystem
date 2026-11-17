@@ -141,10 +141,10 @@ function panel(dir, label) {
   p.setAttribute('data-zq-label', label);
   return p;
 }
-const left = panel('left', 'Notebook · 资料'), rightP = panel('right', '执行轨迹 · 产物');
+const left = panel('left', 'Notebook · 资料'), rightP = panel('right', '产物');
 r = load('/ai-assistant.html', { token }, {}, [left, rightP]);
 const stripTags = (h) => String(h).replace(/<[^>]*>/g, '').trim();
-for (const [p, dir, label] of [[left, 'left', 'Notebook · 资料'], [rightP, 'right', '执行轨迹 · 产物']]) {
+for (const [p, dir, label] of [[left, 'left', 'Notebook · 资料'], [rightP, 'right', '产物']]) {
   const cbtn = p.children.find((c) => c.className === 'zq-cbtn');
   const rail = p.children.find((c) => c.className === 'zq-rail');
   judge(dir + '：面板上装好了收起按钮和收起后的竖条', !!cbtn && !!rail, p.children.map((c) => c.className));

@@ -2,8 +2,8 @@
 //
 //   node deploy/desktop/shots/seed-demo.js <令牌写到哪个文件>
 //   swiftc -O -o /tmp/Snapshot deploy/desktop/shots/Snapshot.swift
-//   浅色、深色各一套（第四十六轮起首页跟着页面的明暗换图）；AI 助手展开右边的执行轨迹、Wiki 展开目录：
-//   SNAP_THEME=light SNAP_STORAGE='{"zq.c.执行轨迹 · 产物":"0","zq.c.zq-wiki-toc":"0"}' \
+//   浅色、深色各一套（第四十六轮起首页跟着页面的明暗换图）；AI 助手展开右边的产物（第一百四十九轮起右边只有产物）、Wiki 展开目录：
+//   SNAP_THEME=light SNAP_STORAGE='{"zq.c.产物":"0","zq.c.zq-wiki-toc":"0"}' \
 //     /tmp/Snapshot @<令牌文件> <输出目录> http://127.0.0.1:18080 /ai-assistant.html /dashboard.html /tasks.html /knowledge-wiki.html
 //   SNAP_THEME=dark …（同上）
 //   cwebp -q 80 -resize 2048 1280 <输出目录>/<页>-<light|dark>.png -o zhiqu-backend/src/main/resources/static/assets/shots/<页>-<light|dark>.webp

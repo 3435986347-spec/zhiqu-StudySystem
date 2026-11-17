@@ -176,7 +176,10 @@ class WikiLookTest {
         assertTrue(js.contains("doc.setAttribute('aria-readonly', locked || unavailable ? 'true' : 'false')"), "正文不再写 aria-readonly —— 光标跟不上只读");
         String css = css();
         assertTrue(rule(css, ".zq-wiki-item[aria-current=\"page\"]").contains("background:var(--zq-tint)"), "目录的当前页没有底色");
-        assertTrue(rule(css, ".zq-wiki-tab[aria-current=\"page\"]").contains("box-shadow:inset 0 2px 0 var(--zq-primary)"), "当前标签上沿没有那条强调色");
+        // 第一百四十九轮照 Obsidian：当前标签和正文连成一片（同一种白、压住下面那条线），上沿不再压一道黑线
+        String tab = rule(css, ".zq-wiki-tab[aria-current=\"page\"]");
+        assertTrue(tab.contains("background:var(--zq-card)") && tab.contains("margin-bottom:-1px"), "当前标签没和正文连成一片：" + tab);
+        assertFalse(tab.contains("box-shadow"), "当前标签上沿又压了一道线：" + tab);
         assertEquals("default", prop(rule(css, "#zq-doc[aria-readonly=\"true\"]"), "cursor"), "只读时正文还是文字光标");
         assertEquals("text", prop(rule(css, ".zq-wiki-inline-title[contenteditable=\"plaintext-only\"],.zq-wiki-inline-title[contenteditable=\"true\"]"), "cursor"), "能改名时页名不是文字光标（第八十四轮：在页名上直接改）");
         assertEquals("default", prop(rule(css, ".zq-wiki-inline-title"), "cursor"), "不能改名时（只读、系统页）页名还是文字光标");
@@ -205,5 +208,26 @@ class WikiLookTest {
         }
         assertTrue(rules >= 60, "只扫到 " + rules + " 条 Wiki 的规则 —— 扫空了？");
         assertEquals(List.of(), literal, "Wiki 的规则里又写死了字号");
+    }
+
+    /**
+     * 第一百四十九轮（用户拿 Obsidian 比：「知识 wiki 库颜色 obsidian 看起来更加流畅好写」）：原来是灰底上浮三张带阴影的圆角卡片，
+     * 侧栏、目录、标签栏、正文四种灰白叠着。改成平铺的一整块：一道外框、栏之间一条细线、两侧和标签栏一种浅灰（应用侧栏那种）、正文白，没有阴影。
+     */
+    @Test
+    @DisplayName("Wiki 照 Obsidian 平铺：三栏拼成一块（外框一道、栏间一条线）、两侧浅灰正文白、没有阴影和浮起的卡片")
+    void 照Obsidian平铺() throws IOException {
+        String css = css();
+        String cols = rule(css, ".zq-wiki-cols");
+        assertTrue(cols.contains("gap:0") && cols.contains("border:1px solid var(--zq-border-soft)") && cols.contains("overflow:hidden"), "三栏没拼成一块：" + cols);
+        String side = rule(css, ".zq-wiki-side");
+        assertTrue(side.contains("background:var(--zq-sb-bg)") && side.contains("border-right:1px solid var(--zq-border-soft)"), "目录栏不是浅灰 + 一条线：" + side);
+        assertTrue(rule(css, ".zq-wiki-side[data-zq-collapse=\"right\"]").contains("border-left:1px solid var(--zq-border-soft)"), "右栏和正文之间没有那条线");
+        String doc = rule(css, ".zq-wiki-doc");
+        assertTrue(doc.contains("background:var(--zq-card)"), "正文不是白的：" + doc);
+        assertTrue(rule(css, ".zq-wiki-tabbar").contains("background:var(--zq-sb-bg)"), "标签栏和两侧不是同一种浅灰");
+        for (String r : List.of(side, doc)) {
+            assertFalse(r.contains("box-shadow") || r.contains("border-radius:var("), "又成了浮起的卡片：" + r);
+        }
     }
 }

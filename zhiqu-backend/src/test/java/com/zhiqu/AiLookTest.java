@@ -106,16 +106,11 @@ class AiLookTest {
     }
 
     @Test
-    @DisplayName("执行轨迹、消息的提示、资料的状态点：颜色看 data-state，在样式表里")
+    @DisplayName("消息的提示、资料的状态点：颜色看 data-state，在样式表里")
     void 颜色看数据() throws IOException {
         String js = SourceText.pageModule("ai-assistant.js");
-        String steps = SourceText.functionBody(js, "function renderSteps(");
-        assertTrue(steps.contains("'<div class=\"zq-step\" data-state=\"' + tone + '\">"), "执行轨迹的一步不是按 data-state 上色");
-        assertFalse(steps.contains("var(--zq-"), "执行轨迹又在 JS 里拼颜色");
         String css = css();
         for (String r : List.of(
-                ".zq-step[data-state=\"ok\"] .zq-step-dot{background:var(--zq-ok);}",
-                ".zq-step[data-state=\"bad\"] .zq-step-dot{background:var(--zq-bad);}",
                 ".zq-msg-note[data-state=\"bad\"]{color:var(--zq-bad);}",
                 ".zq-msg-note[data-state=\"warn\"]{color:var(--zq-warn);}",
                 ".zq-src-dot[data-state=\"ok\"]{background:var(--zq-ok);}",
@@ -125,5 +120,25 @@ class AiLookTest {
         }
         assertTrue(js.contains("<div data-msg-error class=\"zq-msg-note\" data-state=\"bad\">") && js.contains("<div data-msg-notice class=\"zq-msg-note\" data-state=\"warn\">"),
                 "消息的出错 / 不完整提示没有按 data-state 上色");
+    }
+
+    /**
+     * 第一百四十九轮（用户：「ai 助手右侧的执行轨迹去掉」）：每一步已经按顺序列在回答里（第一百二十七轮），右边那份是重复的。
+     * 右侧只留「产物」（来源、草稿、确认 —— 草稿要在这里确认，不能跟着去掉）；只为那块服务的代码、样式一起没了。
+     */
+    @Test
+    @DisplayName("右侧没有执行轨迹，只留产物；只为它服务的代码和样式也没了")
+    void 右侧没有执行轨迹() throws IOException {
+        String html = Files.readString(STATIC.resolve("ai-assistant.html"), StandardCharsets.UTF_8);
+        assertFalse(html.contains("id=\"zq-steps\"") || html.contains("执行轨迹</strong>") || html.contains("执行轨迹 · 产物"), "右侧还有执行轨迹");
+        assertTrue(html.contains("id=\"zq-artifacts\""), "产物也跟着去掉了 —— 草稿没地方确认");
+        assertTrue(html.contains("data-zq-label=\"产物\""), "右侧收起后的名字还是旧的");
+        String js = SourceText.pageModule("ai-assistant.js");
+        for (String gone : List.of("function renderSteps(", "function upsertAgentStep(", "function addAgentStepNote(", "function stepNoteHtml(", "agentSteps")) {
+            assertFalse(js.contains(gone), "只为执行轨迹服务的 " + gone + " 还在");
+        }
+        assertTrue(SourceText.functionBody(js, "function makeStreamApplier(st)").contains("state.agentArtifactRevision = (state.agentArtifactRevision || 0) + 1"),
+                "agent.step 事件不再推产物的版本号 —— 正在取的旧快照会盖掉这一轮的新草稿");
+        assertFalse(css().contains(".zq-step") || css().contains(".zq-ai-trace"), "执行轨迹的样式还在");
     }
 }
