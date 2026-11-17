@@ -395,6 +395,68 @@ let boundaryId = String(repeating: "a", count: 100)
 step("snapshot.boundary", { bridgeCall("boundary", snapshotRun(boundaryId)) }, until: { has("boundary:") && web.localAgent?.running == false })
 step("snapshot.boundary.report", { reportSnapshot("boundary") }, until: { true })
 
+// —— 七、干活中途补充（第一百五十三轮）：真宿主、假网关。STEER-RUN 的第一次模型调用停 2.5 秒，这时补一句；
+// 看到补充（STEER-ADD）的那次调用把它说出来。外壳要把 say 交给宿主、把 say_ack 交回页面、把 steered 转给页面并记进快照 ——
+web.localAgent?.config = config
+func sayBody(_ runId: String, _ text: String) -> [String: Any] { ["action": "say", "runId": runId, "text": text] }
+step("steer.start", {
+    web.localAgent = LocalAgent(config: config)
+    var body = snapshotRun("local-steer", "STEER-RUN")
+    body["model"] = 7
+    bridgeCall("steerRun", body)
+}, until: { has("steerRun:") && web.localAgent?.running == true })
+step("steer.wrong", { bridgeCall("steerWrong", sayBody("local-other", "别的那一轮")) }, until: { has("steerWrong:") })
+step("steer.empty", { bridgeCall("steerEmpty", sayBody("local-steer", "   ")) }, until: { has("steerEmpty:") })
+step("steer.long", { bridgeCall("steerLong", sayBody("local-steer", String(repeating: "长", count: 4001))) }, until: { has("steerLong:") })
+var steerAsked = Date()
+var steerAnswered = 0.0
+step("steer.say", { steerAsked = Date(); bridgeCall("steerSay", sayBody("local-steer", "STEER-ADD 用 pytest")) }, until: { has("steerSay:") })
+step("steer.sayTime", { steerAnswered = Date().timeIntervalSince(steerAsked) }, until: { true })
+step("steer.finish", timeout: 30, {}, until: {
+    inbox.messages.contains { $0.hasPrefix("ev:") && $0.contains("\"runId\":\"local-steer\"") && $0.contains("\"type\":\"exit\"") }
+})
+step("steer.after", { bridgeCall("steerAfter", sayBody("local-steer", "收尾之后")) }, until: { has("steerAfter:") })
+step("steer.resume", { bridgeCall("steerResume", ["action": "resume", "runId": "local-steer"]) }, until: { has("steerResume:") })
+step("steer.report", {
+    for tag in ["steerRun", "steerWrong", "steerEmpty", "steerLong", "steerSay", "steerAfter"] { out("steer." + tag, message(tag + ":")) }
+    // 模型调用停着的时候就该知道收没收下（宿主读输入不等模型），远不到 2.5 秒
+    out("steer.sayFast", steerAnswered < 2)
+    let events = inbox.messages.filter { $0.hasPrefix("ev:") && $0.contains("\"runId\":\"local-steer\"") }
+    out("steer.steeredEvent", events.first { $0.contains("\"type\":\"steered\"") } ?? "none")
+    out("steer.steerStep", events.contains { $0.contains("\"kind\":\"steer\"") })
+    out("steer.ackLeak", events.contains { $0.contains("say_ack") })
+    out("steer.result", (events.first { $0.contains("\"type\":\"result\"") } ?? "none").replacingOccurrences(of: "\n", with: " "))
+    let resumed = replyBody("steerResume")
+    out("steer.snapshotSteered", ((resumed["events"] as? [[String: Any]]) ?? []).contains { $0["type"] as? String == "steered" })
+}, until: { true })
+// 宿主不回音（假宿主只认 run / stop）：到点当没收下；没在跑的时候直接 false
+var silentConfig = snapshotConfig
+silentConfig.sayTimeout = 1
+let silent = LocalAgent(config: silentConfig)
+var silentAccepted: [Bool] = []
+var silentAt = Date()
+var silentSeconds = 0.0
+step("steer.idle", { silent.say("没在跑") { silentAccepted.append($0) } }, until: { silentAccepted.count == 1 })
+step("steer.silentStart", { out("steer.silentStarted", silent.start(request("NAV", level: "READ"), root: projPath) { _ in } ?? "ok") }, until: { silent.running })
+step("steer.silent", timeout: 6, { silentAt = Date(); silent.say("没人回") { silentAccepted.append($0); silentSeconds = Date().timeIntervalSince(silentAt) } },
+     until: { silentAccepted.count == 2 })
+step("steer.silentStop", timeout: 10, { silent.stop() }, until: { !silent.running })
+step("steer.silent.report", {
+    out("steer.silentAccepted", silentAccepted.map { "\($0)" }.joined(separator: ","))
+    out("steer.silentSeconds", String(format: "%.1f", silentSeconds))
+}, until: { true })
+// 等着回音的时候宿主退了（叫停）：收尾时一律当没收下，不能等到 30 秒的超时
+var patientConfig = snapshotConfig
+patientConfig.sayTimeout = 30
+let patient = LocalAgent(config: patientConfig)
+var patientAccepted: [Bool] = []
+step("steer.patientStart", { _ = patient.start(request("NAV", level: "READ"), root: projPath) { _ in } }, until: { patient.running })
+step("steer.patient", timeout: 12, {
+    patient.say("退了还在等") { patientAccepted.append($0) }
+    patient.stop()
+}, until: { !patientAccepted.isEmpty && !patient.running })
+step("steer.patient.report", { out("steer.patientAccepted", patientAccepted.map { "\($0)" }.joined(separator: ",")) }, until: { true })
+
 // 迷你窗那样没设 localAgent 的页面：一律说没有
 let mini = PageView(frame: NSRect(x: 0, y: 0, width: 300, height: 68), persistent: false)
 let miniInbox = Inbox()

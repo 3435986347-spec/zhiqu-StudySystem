@@ -1,7 +1,8 @@
 // 本机代码助手（第一百二十九轮，docs/desktop-remote-plan.md 第 2 步）：外壳按需起包里的 node，跑命令行那一份宿主
 // （Resources/zhiqu-cli/src/host/code-host.js），在用户自己的磁盘上读、在系统沙箱里跑命令；模型和远程工具走服务器的网关，
 // 用页面签来的一张「本机代码」令牌（12 小时，只认那几个接口）。协议和后端起它的那一份同一个：stdin 一行 run，stdout 一行一个 JSON
-// （step / trace / result / fatal），叫停是一行 {"type":"stop"}。
+// （step / trace / result / fatal），叫停是一行 {"type":"stop"}。干活中途补充（第一百五十三轮，docs/steer-plan.md 第 4 步）：
+// 外壳写一行 {"type":"say", id, text}，宿主回 say_ack { id, accepted }；模型读到时宿主说 steered { texts }，没读到的随 result.leftover 交回。
 //
 // 页面从服务器来，里面有 AI 写的和导入的内容，不全信：run 里要紧的字段外壳自己定 ——
 //   - 根目录只认用户在系统选框里选过的文件夹（LocalFolders），页面说不出别的路径；
@@ -126,6 +127,8 @@ final class LocalAgent {
         /// 「这一轮用完了 20 轮」，改完的文件、建好的临时脚本全废。`defaults write com.zhiqu.quadrant maxRounds N`
         /// 想自己设一个上限才生效（1–100000）。
         var maxRounds = LocalAgent.roundsSetting()
+        /// 中途补的一句等宿主回音（say_ack）最多几秒。宿主读输入是单独的事件循环、马上就回；等不到只可能是卡死了 —— 当没收下，页面排队
+        var sayTimeout: Double = 5
     }
 
     /// 轮数：默认 0 = 不限。`defaults write com.zhiqu.quadrant maxRounds N` 可以自己设一个上限。
@@ -164,6 +167,9 @@ final class LocalAgent {
     private var work: URL?
     private var onMessage: (([String: Any]) -> Void)?
     private var generation = 0
+    /// 等 say_ack 的：编号 → 交回收没收下。这一轮收尾时没等到的一律 false
+    private var sayWaiters: [Int: (Bool) -> Void] = [:]
+    private var saySeq = 0
 
     init(config: Config) {
         self.config = config
@@ -280,6 +286,19 @@ final class LocalAgent {
         try? input.write(contentsOf: data + Data("\n".utf8))
     }
 
+    /// 干活中途补的一句（第一百五十三轮）：交给正在跑的这一轮的宿主，宿主回音了才知道收没收下（它在收尾时不收）。
+    /// done 一定恰好调一次、在主线程：收下 true；没在跑、宿主不回音、宿主退了都是 false（页面把这句排到下一轮）
+    func say(_ text: String, done: @escaping (Bool) -> Void) {
+        guard running, input != nil else { done(false); return }
+        saySeq += 1
+        let id = saySeq
+        sayWaiters[id] = done
+        send(["type": "say", "id": id, "text": text])
+        DispatchQueue.main.asyncAfter(deadline: .now() + config.sayTimeout) { [weak self] in
+            self?.sayWaiters.removeValue(forKey: id)?(false)
+        }
+    }
+
     /// 叫停：先说 stop（宿主中断、收掉后台命令、照实交 result），5 秒还没退就 SIGTERM，再 3 秒 SIGKILL
     func stop() {
         guard running, let p = process else { return }
@@ -321,8 +340,14 @@ final class LocalAgent {
     private func handle(_ line: Data) {
         guard !line.isEmpty, let msg = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any], let type = msg["type"] as? String else { return }
         switch type {
-        case "step", "trace":
+        case "step", "trace", "steered":
+            // steered：模型读到了哪几句补充（原话）。页面据此把「待送达」那几行拿掉
             deliver(msg)
+        case "say_ack":
+            // 外壳自己等的回音，不转给页面
+            if let id = (msg["id"] as? NSNumber)?.intValue, let waiter = sayWaiters.removeValue(forKey: id) {
+                waiter((msg["accepted"] as? Bool) == true)
+            }
         case "result", "fatal":
             gotResult = true
             deliver(msg)
@@ -369,6 +394,9 @@ final class LocalAgent {
 
     private func finishIfDone() {
         guard !finishedRun, stdoutDone, let status = exited else { return }
+        let waiting = sayWaiters
+        sayWaiters = [:]
+        for (_, waiter) in waiting { waiter(false) }
         if !gotResult {
             let tail = String(decoding: stderrTail, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             deliver(["type": "fatal", "message": "本机代码助手意外退出了（退出码 \(status)）" + (tail.isEmpty ? "" : "：\(String(tail.suffix(600)))")])

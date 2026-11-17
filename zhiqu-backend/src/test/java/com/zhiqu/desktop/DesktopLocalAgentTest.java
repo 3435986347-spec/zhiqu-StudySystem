@@ -158,6 +158,7 @@ class DesktopLocalAgentTest {
                 "没选过的文件夹也能写：" + r.get("bridge.applyOther"));
         assertTrue(seen.stream().anyMatch(s -> s[1].startsWith("/api/harness/model/stream") && s[3].contains("BRIDGE")),
                 "桥那一轮没到外壳自己的网关（页面塞的 http://127.0.0.1:1 被用上了？）");
+        assertSteer(r);
         assertTrue(r.get("bridge.mini").startsWith("mini:err") && r.get("bridge.mini").contains("没有本机代码助手"), "迷你窗也接了本机代码：" + r.get("bridge.mini"));
     }
 
@@ -176,6 +177,30 @@ class DesktopLocalAgentTest {
         assertTrue(script.contains("cp \"$ROOT/zhiqu-cli/package.json\" \"$APP/Contents/Resources/zhiqu-cli/package.json\""),
                 "没带 package.json：宿主是 ES 模块（type: module），少了它 node 不认 import");
         assertTrue(script.contains("macos-shell/LocalAgent.swift\""), "打包脚本没把 LocalAgent.swift 编进外壳");
+    }
+
+    /** 干活中途补充（第一百五十三轮，docs/steer-plan.md 第 4 步）：页面 → 外壳 → 宿主 → 下一次模型调用；回音、送达、快照 */
+    private void assertSteer(Map<String, String> r) {
+        assertTrue(r.get("steer.steerRun").startsWith("steerRun:ok"), r.get("steer.steerRun"));
+        assertEquals("steerSay:ok:{\"accepted\":true}", r.get("steer.steerSay"), "正在跑的那一轮没收下补充");
+        assertEquals("true", r.get("steer.sayFast"), "模型调用还停着就该知道收没收下（回音被卡在模型调用后面？）");
+        assertTrue(seen.stream().anyMatch(s -> s[1].startsWith("/api/harness/model/stream") && s[3].contains("STEER-RUN") && s[3].contains("STEER-ADD")),
+                "补的那句没进下一次模型请求");
+        assertTrue(r.get("steer.result").contains("读到补充"), "这一轮在模型读到补充之前就收尾了：" + r.get("steer.result"));
+        assertTrue(r.get("steer.steeredEvent").contains("STEER-ADD 用 pytest"), "宿主说读到了哪几句，外壳没转给页面：" + r.get("steer.steeredEvent"));
+        assertEquals("true", r.get("steer.steerStep"), "回答里没有「你补充」那一步");
+        assertEquals("false", r.get("steer.ackLeak"), "外壳自己等的回音转给了页面");
+        assertEquals("true", r.get("steer.snapshotSteered"), "快照里没有 steered：离页回来会把读到过的话又发一遍");
+        assertEquals("steerWrong:ok:{\"accepted\":false}", r.get("steer.steerWrong"), "不是正在跑的那一轮也收下了");
+        assertEquals("steerAfter:ok:{\"accepted\":false}", r.get("steer.steerAfter"), "这一轮结束了还收下补充（会悄悄丢掉）");
+        assertTrue(r.get("steer.steerEmpty").startsWith("steerEmpty:err"), r.get("steer.steerEmpty"));
+        assertTrue(r.get("steer.steerLong").startsWith("steerLong:err") && r.get("steer.steerLong").contains("4000"), r.get("steer.steerLong"));
+        assertEquals("ok", r.get("steer.silentStarted"));
+        assertEquals("false,false", r.get("steer.silentAccepted"), "没在跑 / 宿主不回音时要当没收下");
+        double secs = Double.parseDouble(r.get("steer.silentSeconds"));
+        assertTrue(secs >= 0.8 && secs < 3, "宿主不回音时没按时当没收下：" + secs);
+        assertEquals("false", r.get("steer.patientAccepted"), "宿主退了，等着的回音没有当没收下（页面会一直等）");
+        assertFalse(seen.stream().anyMatch(s -> s[3].contains("收尾之后") || s[3].contains("别的那一轮")), "没收下的话进了模型请求");
     }
 
     private static void assertSnapshotContract(Map<String, String> r) throws IOException {
@@ -356,6 +381,17 @@ class DesktopLocalAgentTest {
             reply = call("write_file", Map.of("path", "new.txt", "content", "draft-content\n"));
         } else if (said.contains("A-RUN")) {
             reply = text("A 做完了");
+        } else if (said.contains("STEER-RUN") && body.contains("STEER-ADD")) {
+            // 中途补充（第一百五十三轮）：补的那句进了这次请求
+            reply = text("读到补充：STEER-ADD");
+        } else if (said.contains("STEER-RUN")) {
+            // 第一次调用停 2.5 秒：外壳在这时候把补充交给宿主
+            try {
+                Thread.sleep(2500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            reply = text("先说一句");
         } else {
             reply = text("桥那边好了");
         }

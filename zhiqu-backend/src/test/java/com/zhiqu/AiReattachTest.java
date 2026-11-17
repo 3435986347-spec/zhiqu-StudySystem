@@ -67,7 +67,12 @@ class AiReattachTest {
         assertFalse(now.contains(".abort("),
                 "「立即」又在打断这一轮了 —— 用户看到的是半截回答当场消失");
         String say = SourceText.functionBody(js, "function steerItem(item)");
-        assertTrue(say.contains("/ai/runs/") && say.contains("/say"), "补充没有走补充信息的接口");
+        // 第一百五十三轮：发给谁挪进了 steerCall（服务端那一轮问 /say，桌面本机那一轮问外壳的 say）
+        assertTrue(say.contains("steerCall(info, item.text)"), "补充没有走 steerCall");
+        String call = SourceText.functionBody(js, "function steerCall(info, text)");
+        assertTrue(call.contains("/ai/runs/") && call.contains("/say"), "补充没有走补充信息的接口");
+        assertTrue(call.contains("action: 'say'"), "桌面本机那一轮的补充没有交给外壳");
+        assertFalse(call.contains(".abort("), "补充在打断这一轮");
         assertFalse(say.contains(".abort("), "补充在打断这一轮");
         assertTrue(say.contains("delivered === 'current'"), "没有区分「补进去了」和「只能等下一轮」");
     }

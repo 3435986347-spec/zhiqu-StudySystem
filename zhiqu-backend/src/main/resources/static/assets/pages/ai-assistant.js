@@ -2238,6 +2238,10 @@ function waitLocal(runId, assistant, sameNb, timeoutMs, st) {
         if (st) persistTurn(st);
         if (sameNb()) renderAiMessages();
       }
+      // 中途补充（第一百五十三轮）：模型读到了哪几句。回放快照时也走这里（已经处理过的不再提示）
+      if (d.type === 'steered') {
+        if (steerSettled(d.texts || [], 'delivered')) toast('模型已读到你的补充');
+      }
       if (d.type === 'result' || d.type === 'fatal') {
         // result 可能在 resume 的应答之前到；先补齐历史步骤，再交给存档，不能抢先 ack 掉缓存。
         terminal = d;
@@ -2261,7 +2265,7 @@ function waitLocal(runId, assistant, sameNb, timeoutMs, st) {
       if (snapshot.found && st) clearSentDesktopDraft(st);
       // 快照取得期间直播可能更新同一步，不能用更旧的版本覆盖它。
       (snapshot.events || []).forEach(function (event) {
-        if (event.step && !liveStepIds.has(event.step.id)) onEv({ detail: event });
+        if ((event.step && !liveStepIds.has(event.step.id)) || event.type === 'steered') onEv({ detail: event });
       });
       if (snapshot.result) terminal = terminal || snapshot.result;
       replayPending = false;
@@ -2356,6 +2360,10 @@ function clearSentDesktopDraft(st) {
 // 完成只负责存档；任务及事件由外壳持有。存档回应丢失也用同一个幂等键重试，不造第二份对话。
 async function finishDesktopTurn(st, result) {
   var assistant = st.assistant, info = st.desktopInfo;
+  // 补了但模型没读到的（最后一刻才到、宿主在收尾）：变回排队、排到最前面，这一轮存完档就发（第一百五十三轮）
+  if (result && Array.isArray(result.leftover) && steerSettled(result.leftover, 'returned')) {
+    toast('补充没赶上这一轮，它一结束就发');
+  }
   // 这段会话在命令行里正在跑一轮（第一百四十六轮，宿主拿不到锁）：这一句没发出去，不存进对话 ——
   // 存了的话，下一轮宿主对账时会把它当成「别处说过的话」补进会话。字放回输入框，说一声
   if (result && result.busy) {
@@ -2746,7 +2754,8 @@ async function sendAiMessage(queuedText) {
       || (state.messages || []).some(function (m) { return m.status === 'STREAMING'; })) {
     if (pendingRun && pendingRun.kind === 'desktop' && !currentTurn()) resumeDesktopTurn(pendingRun);
     if (slash) { toast('正在回答，命令等这一轮完了再发'); return; }
-    // 默认补充给这一轮（第一百五十二轮，用户定的）：模型跑完当前这一步就读到。补不了的（桌面本机那一轮、还没拿到这一轮的编号）照旧排队
+    // 默认补充给这一轮（第一百五十二轮，用户定的）：模型跑完当前这一步就读到。补不了的（还没拿到这一轮的编号、别的对话的）照旧排队；
+    // 桌面本机那一轮第一百五十三轮起也能补（经外壳交给宿主）
     if (canSteer(pendingRun)) steerSend(txt);
     else enqueueSend(txt);
     return;
@@ -3581,9 +3590,21 @@ function enqueueSend(text) {
   toast('已排队：这一轮回答完就发');
 }
 
-/** 这一轮能不能补充：在服务端跑、拿到了编号、就是这个对话的（桌面本机那一轮第 4 步再接） */
+/** 这一轮能不能补充：拿到了编号、就是这个对话的。桌面本机那一轮（第一百五十三轮）要在桌面应用里（经外壳交给宿主） */
 function canSteer(info) {
-  return !!(info && info.runId && info.kind !== 'desktop' && info.nb === (state.notebookId || null));
+  return !!(info && info.runId && (info.kind !== 'desktop' || inDesktop()) && info.nb === (state.notebookId || null));
+}
+/** 把一句补充交给这一轮，回 { delivered: 'current' | 'next' }：服务端那一轮问 /say，桌面本机那一轮问外壳 */
+function steerCall(info, text) {
+  if (info.kind !== 'desktop') return api.post('/ai/runs/' + info.runId + '/say', { text: text });
+  return localCall({ action: 'say', runId: info.runId, text: text }).then(function (res) {
+    return { delivered: res && res.accepted === true ? 'current' : 'next' };
+  }, function (e) {
+    // 旧外壳不认 say：不是出错，是这个版本补不了 —— 排队，告诉用户更新
+    var msg = String((e && e.message) || e || '');
+    if (msg.indexOf('认不出') >= 0) return { delivered: 'next', outdated: true };
+    throw e;
+  });
 }
 
 /**
@@ -3605,13 +3626,13 @@ function steerItem(item) {
   if (!canSteer(info) || info.nb !== item.nb) { delete item.steer; renderSendQueue(); return; }
   item.steer = 'sending';
   renderSendQueue();
-  api.post('/ai/runs/' + info.runId + '/say', { text: item.text }).then(function (res) {
+  steerCall(info, item.text).then(function (res) {
     if (item.steer !== 'sending') return;   // 等回音的时候已经送达 / 被交回了
     if (res && res.delivered === 'current') {
       item.steer = 'pending';
     } else {
       delete item.steer;
-      toast('这一轮已经在收尾，这句排到它结束后立刻发');
+      toast(res && res.outdated ? '更新桌面应用后才能中途补充，这句排到这一轮结束后发' : '这一轮已经在收尾，这句排到它结束后立刻发');
     }
     renderSendQueue();
     if (!item.steer && !state.aiSending) pumpSendQueue();
@@ -3700,11 +3721,11 @@ function sendQueuedNow(i) {
   if (!item) return;
   var info = runningTurn();
   if (!canSteer(info) || info.nb !== item.nb) {
-    // 没有可补的那一轮（桌面本机跑的那一轮、或者已经结束了）：排到最前面，等它结束
+    // 没有可补的那一轮（已经结束了、不在桌面应用里接着的本机那一轮）：排到最前面，等它结束
     state.sendQueue.splice(i, 1);
     state.sendQueue.unshift(item);
     renderSendQueue();
-    toast('这一轮补不进去（不在服务端跑），已经排到最前面，它一结束就发');
+    toast('这一轮补不进去，已经排到最前面，它一结束就发');
     if (!state.aiSending) pumpSendQueue();
     return;
   }

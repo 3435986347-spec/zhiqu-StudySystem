@@ -410,8 +410,80 @@ async function checkSteer() {
   assert.deepEqual(h.s.sendQueue.map((q) => [q.text, q.steer]), [['还有文档', undefined], ['最后一句', undefined]], '没送到的「待送达」没有变回排队');
   apply('done', {}); finish();
 }
+// 桌面本机那一轮也能中途补充（第一百五十三轮）：生成中发送 → 外壳的 say；steered 送达（回放里的也算）；
+// result.leftover 交回、排最前；外壳说这一轮不在跑 → 排队；旧外壳不认 say → 排队并提示更新
+async function checkDesktopSteer() {
+  const h = harness();
+  const toasts = [];
+  h.sh.toast = (m) => toasts.push(m);
+  h.ctx.inDesktop = () => true;
+  h.ctx.wsStatus = { selectedRoot: '/test/project', selectedMode: 'WRITE' };
+  let runId, sayReply = { accepted: true }, sayError = null, snapshotEvents = [];
+  const says = [], sent = [];
+  h.sh.api.post = async (path, body) => {
+    if (path === '/access-tokens/desktop-code') return { token: 'fake-test-token' };
+    if (path === '/ai/desktop-turn') return { userMessageId: 9501, assistantMessageId: 9502 };
+    throw new Error('桌面那一轮的补充不该走服务端：' + path);
+  };
+  h.ctx.bind(h.sh);
+  h.ctx.localCall = async (body) => {
+    if (body.action === 'run') { runId = body.clientRunId; sent.push(body.message); return { runId, timeoutMs: 0 }; }
+    if (body.action === 'resume') return { found: true, events: snapshotEvents, result: null, running: true };
+    if (body.action === 'say') { says.push([body.runId, body.text]); if (sayError) throw new Error(sayError); return sayReply; }
+    return {};
+  };
+  h.input.value = '本机改代码';
+  const turn = h.ctx.sendDesktopTurn('本机改代码');
+  await settle();
+  assert.ok(runId, '本机任务没有启动');
+
+  h.input.value = '别动测试';
+  await h.ctx.sendAiMessage(); await settle();
+  assert.deepEqual(says, [[runId, '别动测试']], '桌面里生成中发送没有交给外壳（还在排队）');
+  assert.deepEqual(h.s.sendQueue.map((q) => [q.text, q.steer]), [['别动测试', 'pending']], '外壳收下了要显示「待送达」');
+  h.emit('zq-local', { runId, type: 'steered', texts: ['别动测试'] });
+  assert.deepEqual(h.s.sendQueue, [], '宿主说读到了，「待送达」那行还在');
+  assert.ok(toasts.some((m) => m.includes('已读到')), toasts.join('|'));
+
+  sayReply = { accepted: false };
+  h.input.value = '外壳说不在跑';
+  await h.ctx.sendAiMessage(); await settle();
+  assert.deepEqual(h.s.sendQueue.map((q) => [q.text, q.steer]), [['外壳说不在跑', undefined]], '外壳没收下的要变回排队');
+
+  sayError = '认不出的请求';
+  toasts.length = 0;
+  h.input.value = '旧外壳';
+  await h.ctx.sendAiMessage(); await settle();
+  assert.deepEqual(h.s.sendQueue.map((q) => [q.text, q.steer]), [['外壳说不在跑', undefined], ['旧外壳', undefined]], '旧外壳不认 say 时没有退回排队');
+  assert.ok(toasts.some((m) => m.includes('更新桌面应用')), '旧外壳没提示更新：' + toasts.join('|'));
+
+  sayError = null; sayReply = { accepted: true };
+  h.input.value = '最后一刻';
+  await h.ctx.sendAiMessage(); await settle();
+  assert.equal(h.s.sendQueue.at(-1).steer, 'pending');
+  // 宿主收尾时没读到的交回：排到最前面，存完档先发它（下一轮怎么发不归这里管，记下发的是哪句）
+  // 真的发出去就有一轮在生成：再到的 pump 不会接着发第二句（这里用一条生成中的消息顶上）
+  h.ctx.sendAiMessage = (text) => { sent.push(text); h.s.messages.push({ role: 'assistant', status: 'STREAMING', content: '' }); };
+  h.emit('zq-local', { runId, type: 'result', conclusion: '改完了', drafts: [], leftover: ['最后一刻'] });
+  await turn; await settle();
+  assert.equal(sent[1], '最后一刻', '交回的补充没有排到最前面、这一轮结束先发：' + JSON.stringify(sent));
+  assert.deepEqual(h.s.sendQueue.map((q) => q.text), ['外壳说不在跑', '旧外壳'], '交回之后的排队顺序不对：' + JSON.stringify(sent));
+
+  // 离页回来：快照里的 steered 也算送达，不能这一轮结束又发一遍
+  const h2 = harness();
+  h2.ctx.inDesktop = () => true;
+  let resumed = null;
+  h2.ctx.localCall = async (body) => body.action === 'resume'
+    ? { found: true, events: [{ runId: 'local-back', type: 'steered', texts: ['离开时补的'] }], result: null, running: true } : {};
+  h2.s.sendQueue = [{ text: '离开时补的', nb: 5, at: 1, steer: 'pending' }];
+  resumed = h2.ctx.waitLocal('local-back', { steps: { steps: [] } }, () => true, 0, null);
+  await settle();
+  assert.deepEqual(h2.s.sendQueue, [], '回放快照里的 steered 没算送达：这一轮结束会把读到过的话又发一遍');
+  h2.emit('zq-local', { runId: 'local-back', type: 'result', conclusion: 'ok' });
+  await resumed;
+}
 (async () => {
-  await checkSteer();
+  await checkSteer(); await checkDesktopSteer();
   await checkNavigation(); await checkReplay(); await checkHeaderTimeout();
   await checkDesktopReturn(); await checkQueueIsolation(); await checkRaces(); await checkLocalWait();
   console.log('ALL-GREEN');

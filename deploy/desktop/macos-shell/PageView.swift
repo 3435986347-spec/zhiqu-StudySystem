@@ -159,6 +159,10 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         }
     }
     private var localSnapshots: [String: LocalSnapshot] = [:]
+    /// 正在跑的那一轮的编号（起成功时记、宿主退了清）：中途补充只交给它
+    private var localCurrentRunId: String?
+    /// 中途补的一句最多几个字（和网页 /say、命令行的 STEER_CHARS 一致）
+    static let maxSay = 4000
     private var localSnapshotOrder: [String] = []
 
     private func localRunId(_ value: Any?) -> String? {
@@ -235,6 +239,7 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
     ///   {action: "resume", runId} → {found: true, events, result, running} / {found: false}（先监听事件再恢复，避免漏掉终态）
     ///   {action: "ack", runId} → {acknowledged}（只有 terminal 已到才删除快照）
     ///   {action: "stop"} → {stopping: true}
+    ///   {action: "say", runId, text} → {accepted}（第一百五十三轮：干活中途补的一句；不是正在跑的那一轮、宿主在收尾 / 不回音 → false，页面排到下一轮）
     ///   {action: "read", folder, path} → {content, absent}（确认框里看 diff；只读选过的文件夹里的相对路径）
     ///   {action: "apply", folder, files:[{path, content, baseline}]} → {written}（基线不符一个都不写；路径出不了选过的文件夹）
     /// 和别的桥一样只认自己网站的主框架；根目录只认选过的文件夹，服务器地址用外壳自己的（见 LocalAgent.swift 开头）
@@ -295,6 +300,8 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
             } else {
                 if localSnapshots.count > 8, let evict { removeLocalSnapshot(evict) }
                 localSnapshotOrder.append(runId)
+                // 回调里的 exit 可能先于这里（宿主一起来就退）：那时快照已经不在跑了，不记
+                if snapshot.running { localCurrentRunId = runId }
                 // 0 = 不限；保持这一轮启动时的真实预算，重复请求也不会被之后的配置影响。
                 replyHandler(snapshot.budget(runId), nil)
             }
@@ -310,6 +317,16 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
         case "stop":
             agent.stop()
             replyHandler(["stopping": true], nil)
+        case "say":
+            guard let runId = localRunId(body["runId"]) else { replyHandler(nil, "本机任务编号不对"); return }
+            let text = ((body["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { replyHandler(nil, "没有要补充的话"); return }
+            guard text.count <= PageView.maxSay else { replyHandler(nil, "补充最多 \(PageView.maxSay) 字"); return }
+            // 不是正在跑的那一轮（已经结束、别的对话的、页面记错了）：不是错，这句留到下一轮
+            guard runId == localCurrentRunId, localSnapshots[runId]?.running == true, agent.running else {
+                replyHandler(["accepted": false], nil); return
+            }
+            agent.say(text) { accepted in replyHandler(["accepted": accepted], nil) }
         case "read":
             guard let folder = body["folder"] as? String, localFolders.contains(folder) else {
                 replyHandler(nil, "这个文件夹还没在「选文件夹」里选过"); return
@@ -345,10 +362,15 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
                     if snapshot.events.count > 400 { snapshot.events.removeFirst() }
                 }
             }
+        case "steered":
+            // 记进快照：离页再回来，resume 的回放里看得出哪几句已经读到了（不然会当成没送到、这一轮结束又发一遍）
+            snapshot.events.append(detail)
+            if snapshot.events.count > 400 { snapshot.events.removeFirst() }
         case "result", "fatal":
             snapshot.result = detail
         case "exit":
             snapshot.running = false
+            if localCurrentRunId == runId { localCurrentRunId = nil }
         default:
             break
         }
