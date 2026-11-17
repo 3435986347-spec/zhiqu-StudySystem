@@ -3,7 +3,7 @@
 // 和 LocalTools 只差三处 —— 规矩、参数、拒绝的说法全是同一份：
 //   - write_file / edit_file 不落盘：改动记进草稿层（LocalTools.overlay），之后读、改、搜同一个文件看到的是草稿，
 //     同一个文件改几处叠在一份草稿上。收尾时交给后端成一份 CODE_DRAFT，用户看过 diff、确认了才写进磁盘（「AI 写的东西一律先成草稿」）。
-//   - 没有 delete_file（网页从来没给过删除）。
+//   - 没有 delete_file（网页从来没给过删除）。多一个 discard_draft：撤回这一轮自己生成的草稿（第一百五十六轮）。
 //   - 跑命令交回后端的 WorkspaceExecutor：服务器上执行命令只有那一处（行内代码开关、超时、输出上限、不继承环境变量都在它里面）。
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -12,11 +12,28 @@ import { describeJob, MAX_WAIT_SECONDS, START_WAIT_MS } from './jobs.js';
 import { browserInSandbox, describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './sandbox.js';
 import { syntaxProblem } from './syntax.js';
 import { stat as diffStat } from '../render/diff.js';
+import { describe, Reason } from './guard.js';
 
 /** 和后端 WorkspaceService.baselineOf 同一个算法：文件字节的 SHA-256（小写十六进制），没有这个文件是 ABSENT */
 export const ABSENT = 'ABSENT';
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const lineCount = (s) => (s === '' ? 0 : s.split('\n').length - (s.endsWith('\n') ? 1 : 0));
+
+/** discard_draft 的声明：只在草稿模式、给了写的时候下发（agent.js 的 toolset 按 allowedTools 认） */
+export function draftSchemas() {
+  return [{
+    type: 'function',
+    function: {
+      name: 'discard_draft',
+      description: [
+        '撤回这一轮你给一个文件生成的草稿：新建的就当没建过（用户确认时不会有它），改过的回到磁盘上的样子。',
+        '用户中途改主意说「这个文件不要了」，或者你发现这份草稿本来就不该写，就用它。不要用「把内容改成空」代替撤回 —— 确认一份空的新建草稿会写出一个空文件。',
+        '之前几轮生成的草稿已经交给页面了，这里撤不了，要让用户在页面上拒绝。',
+      ].join('\n'),
+      parameters: { type: 'object', properties: { path: { type: 'string', description: '相对工作区根的路径' } }, required: ['path'] },
+    },
+  }];
+}
 
 export class DraftTools extends LocalTools {
   /**
@@ -28,7 +45,7 @@ export class DraftTools extends LocalTools {
   constructor({ root, exec, canWrite = false, canExec = false, commands = [], canShell = false, shellWrite = false, sandboxNetwork = 'off' }) {
     super({ root, commands: canExec ? commands : [], sandbox: canShell ? { kind: 'backend' } : null, sandboxNetwork });
     this.shellPolicy = shellWrite ? WORKSPACE_WRITE : READ_ONLY;
-    this.allowedTools = new Set([...READ_TOOLS, ...(canWrite ? ['write_file', 'edit_file', 'apply_patch'] : []), ...(canExec ? ['run_command'] : [])]);
+    this.allowedTools = new Set([...READ_TOOLS, ...(canWrite ? ['write_file', 'edit_file', 'apply_patch', 'discard_draft'] : []), ...(canExec ? ['run_command'] : [])]);
     this.overlay = new Map();
     /** rel → { path, content, baseline, creating, newDirectories }：交给后端的草稿，baseline 是第一次改它时磁盘上的指纹 */
     this.drafts = new Map();
@@ -75,7 +92,38 @@ export class DraftTools extends LocalTools {
   }
 
   prepareDelete() {
-    return { error: '这里不能删除文件（网页 / 桌面应用的代码模式只生成草稿）。要删的话告诉用户删哪个、为什么，让用户自己删。' };
+    return { error: '这里不能删除文件（网页 / 桌面应用的代码模式只生成草稿）。要删的话告诉用户删哪个、为什么，让用户自己删。'
+      + '这一轮你自己生成的草稿不想要了，用 discard_draft 撤回（新建的就当没建过）。' };
+  }
+
+  /**
+   * 撤回这一轮给一个文件生成的草稿（第一百五十六轮，用户要的）。真 DeepSeek 那一遍：写完 test_calc.py 的草稿用户说「不要了」，
+   * 模型没办法撤，一遍说「请你在页面上拒绝」，一遍把它改成空内容的草稿、还说确认后磁盘上不会有这个文件 —— 确认一份空的新建草稿是写出一个空文件。
+   * 新建的：草稿和草稿层里的那份都去掉，就当没建过；改过的：回到磁盘上的样子（之后要改先重新读）。前几轮的草稿已经交给页面了，碰不到
+   */
+  discardDraft(args = {}) {
+    if (typeof args.path !== 'string' || !args.path.trim()) return { error: '没有给出要撤回哪个文件的草稿（path）' };
+    args = this.inWorkspace(args, 'path');
+    const w = this.guard.resolveWritable(args.path);
+    if (w.reason !== Reason.OK) return { error: describe(w.reason, args.path, this.guard.maxFileBytes) };
+    const rel = this.guard.display(w.path);
+    const d = this.drafts.get(rel);
+    if (!d) {
+      const mine = [...this.drafts.keys()];
+      return { error: `这一轮没有给 ${rel} 生成过草稿，没什么可撤回的${mine.length ? `（这一轮的草稿：${mine.slice(0, 8).join('、')}）` : ''}。`
+        + '之前几轮生成的草稿已经交给页面了，这里撤不了 —— 告诉用户在页面上把那一条拒绝掉。' };
+    }
+    this.drafts.delete(rel);
+    this.overlay.delete(w.path);
+    this.known.delete(rel);
+    const creating = d.baseline === ABSENT;
+    return {
+      rel, creating,
+      summary: creating ? '撤回了新建的草稿' : '撤回了草稿，回到磁盘上的样子',
+      content: creating
+        ? `已撤回 ${rel} 的草稿：这个文件就当没建过，用户确认时不会有它，磁盘上也没有。`
+        : `已撤回 ${rel} 的草稿：这一轮对它的改动全部去掉了，现在读到的是磁盘上的样子（要再改先重新 read_file）。`,
+    };
   }
 
   /** 只查形状；能不能跑、工作目录、沙箱都在后端 */
@@ -169,6 +217,8 @@ export class ArtifactTools extends DraftTools {
   constructor(options) {
     super(options);
     this.artifact = true;
+    // 写的是临时空间里的真文件、没有草稿：没有可撤回的
+    this.allowedTools.delete('discard_draft');
     this.hosted = Boolean(options.hosted);   // 服务器上：另一份沙箱，没有后台命令
     this.wrote = new Set();
     // 扩展名白名单防的是把用户的 .env、.pem 读进上下文。临时空间里只有模型自己写的东西，拦着只会让 .svg、.drawio 这些写不了

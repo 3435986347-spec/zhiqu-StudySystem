@@ -253,19 +253,62 @@ function anthropicBody(self, body) {
 /**
  * 我们历史里的形状（OpenAI 那套）翻成 Anthropic 的：
  *   system 提到顶层；assistant 的 tool_calls 变 tool_use 块；role:'tool' 变 user 的 tool_result 块。
- * 连着几条 tool 结果要并进同一条 user 消息 —— Anthropic 要求 user/assistant 交替；紧跟着的一条 user 文本也并进去（排在结果后面）。
+ * 相邻的 user 并成一条（工具结果、截图、补充），tool_result 排在前面 —— Anthropic 要求 user/assistant 交替。
  */
+/** {url:'data:image/png;base64,…'} → Anthropic 的 image 块；不是 base64 的 data URL（外链等）返回 null（和后端 AnthropicFormat.dataImage 同一个规矩） */
+function dataImage(raw) {
+  const url = String((raw && typeof raw === 'object' ? raw.url : raw) ?? '');
+  if (!url.startsWith('data:')) return null;
+  const comma = url.indexOf(',');
+  if (comma < 0) return null;
+  const meta = url.slice(5, comma);
+  const data = url.slice(comma + 1);
+  if (!meta.includes('base64') || !data) return null;
+  return { type: 'image', source: { type: 'base64', media_type: meta.split(';')[0] || 'image/png', data } };
+}
+
+/**
+ * user 消息的内容块。content 可以是数组（预览截图那条：一段文字 + 几张 data URL 的图，agent.js）——
+ * 原来一律 String(m.content)，数组成了「[object Object],[object Object]」，直连 Claude 时图根本没发出去（第一百五十轮记下的）。
+ * 照后端 AnthropicFormat.userBlocks：文字照发、图拆成 image 块，认不出的（压缩留下的图占位）不发；什么都没有时给一个「（空）」—— Anthropic 不收空文本块
+ */
+function userBlocks(content) {
+  const blocks = [];
+  if (Array.isArray(content)) {
+    for (const p of content) {
+      if (!p || typeof p !== 'object') continue;
+      if (p.type === 'image_url') { const image = dataImage(p.image_url); if (image) blocks.push(image); continue; }
+      if (typeof p.text === 'string' && p.text.trim()) blocks.push({ type: 'text', text: p.text });
+    }
+  } else {
+    const text = String(content ?? '');
+    if (text.trim()) blocks.push({ type: 'text', text });
+  }
+  return blocks.length ? blocks : [{ type: 'text', text: '（空）' }];
+}
+
 export function toAnthropicMessages(messages) {
   const system = messages.filter((m) => m.role === 'system').map((m) => String(m.content || '')).filter(Boolean).join('\n\n');
   const out = [];
-  const isResults = (m) => m && m.role === 'user' && Array.isArray(m.content) && m.content.length && m.content.every((b) => b.type === 'tool_result');
+  // 相邻的 user 并成一条（后端 AnthropicFormat.append 同一个规矩）：工具结果、紧跟着的截图、再紧跟着的补充，
+  // 原来只并「整条都是 tool_result」的那一下 —— 截图并进去之后下一条 user 就并不上，成了连着两条 user，Anthropic 直接拒。
+  // tool_result 排在其它内容前面。
+  const pushUser = (blocks) => {
+    const last = out[out.length - 1];
+    if (last && last.role === 'user') {
+      last.content.push(...blocks);
+      const results = [];
+      const rest = [];
+      for (const b of last.content) (b.type === 'tool_result' ? results : rest).push(b);
+      last.content = results.concat(rest);
+      return;
+    }
+    out.push({ role: 'user', content: blocks });
+  };
   for (const m of messages) {
     if (m.role === 'system') continue;
     if (m.role === 'tool') {
-      const block = { type: 'tool_result', tool_use_id: m.tool_call_id, content: String(m.content ?? '') };
-      const last = out[out.length - 1];
-      if (isResults(last)) last.content.push(block);
-      else out.push({ role: 'user', content: [block] });
+      pushUser([{ type: 'tool_result', tool_use_id: m.tool_call_id, content: String(m.content ?? '') }]);
       continue;
     }
     if (m.role === 'assistant') {
@@ -279,12 +322,7 @@ export function toAnthropicMessages(messages) {
       if (blocks.length) out.push({ role: 'assistant', content: blocks });
       continue;
     }
-    const block = { type: 'text', text: String(m.content ?? '') };
-    // 紧跟在工具结果后面的一条 user（干活中途的补充、命令行补的提醒，第一百五十轮）：并进那条结果消息、排在结果后面 ——
-    // 不并就是连着两条 user；后端 AnthropicFormat 也是这么并的（tool_result 要排在其它内容前面）
-    const last = out[out.length - 1];
-    if (isResults(last)) last.content.push(block);
-    else out.push({ role: 'user', content: [block] });
+    pushUser(userBlocks(m.content));
   }
   return { system, messages: out };
 }

@@ -51,7 +51,7 @@ test('草稿层：没给的工具不下发（没有写意图不给写、不能�
   write(root, 'a.js', 'x\n');
   assert.deepEqual([...new DraftTools({ root }).allowedTools].sort(), ['list_files', 'read_file', 'search']);
   assert.deepEqual([...new DraftTools({ root, canWrite: true, canExec: true }).allowedTools].sort(),
-    ['apply_patch', 'edit_file', 'list_files', 'read_file', 'run_command', 'search', 'write_file']);
+    ['apply_patch', 'discard_draft', 'edit_file', 'list_files', 'read_file', 'run_command', 'search', 'write_file']);
   const t = new DraftTools({ root, canWrite: true });
   assert.match(t.prepareDelete({ path: 'a.js' }).error, /不能删除文件/);
   t.readFile({ path: 'a.js' });

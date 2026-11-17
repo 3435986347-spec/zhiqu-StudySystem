@@ -130,6 +130,43 @@ test('toAnthropicMessages：system 提出来、tool_calls 变 tool_use 块', () 
   assert.deepEqual(messages[1].content[1].input, { x: 1 });
 });
 
+test('toAnthropicMessages：截图那条 user 的 content 是数组 —— 文本块照发、data URL 拆成 image 块（原来被 String() 成 [object Object]，图没发出去）', () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const { messages } = toAnthropicMessages([
+    { role: 'user', content: '看看页面' },
+    { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'preview_page', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'c1', content: '截好了' },
+    { role: 'user', content: [{ type: 'text', text: '（下面的图就是刚才渲染的页面）' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${png}` } }] },
+  ]);
+  assert.equal(JSON.stringify(messages).includes('[object Object]'), false, '数组内容被拼成了 [object Object]');
+  const last = messages.at(-1);
+  assert.equal(messages.length, 3, '截图那条要并进工具结果那条 user（不造连着的两条 user）');
+  assert.deepEqual(last.content.map((b) => b.type), ['tool_result', 'text', 'image'], '工具结果排最前，文本、图跟在后面');
+  assert.equal(last.content[1].text, '（下面的图就是刚才渲染的页面）');
+  assert.deepEqual(last.content[2].source, { type: 'base64', media_type: 'image/png', data: png });
+  // 单独一条（前面不是工具结果）也一样；认不出的块（压缩留下的图占位）不发，全都认不出时不发空文本块（Anthropic 拒收空文本）
+  const alone = toAnthropicMessages([
+    { role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${png}` } }, { type: 'image_ref', blob: null }] },
+    { role: 'assistant', content: '好' },
+    { role: 'user', content: [{ type: 'image_ref', blob: null }] },
+  ]).messages;
+  assert.deepEqual(alone[0].content.map((b) => [b.type, b.source && b.source.media_type]), [['image', 'image/jpeg']]);
+  assert.deepEqual(alone[2].content, [{ type: 'text', text: '（空）' }]);
+  // 不是 base64 的 data URL / 外链：不当图发
+  const odd = toAnthropicMessages([{ role: 'user', content: [{ type: 'text', text: 'x' }, { type: 'image_url', image_url: { url: 'https://example.com/a.png' } }] }]).messages;
+  assert.deepEqual(odd[0].content.map((b) => b.type), ['text']);
+  // 截图并进工具结果之后，再来一条 user（补充）：还是同一条，tool_result 排最前。原来并完截图 isResults 就不成立，补充另起一条 user
+  const followed = toAnthropicMessages([
+    { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'preview_page', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'c1', content: '截好了' },
+    { role: 'user', content: [{ type: 'text', text: '（下面的图就是刚才渲染的页面）' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${png}` } }] },
+    { role: 'user', content: '不要这个文件了' },
+  ]).messages;
+  assert.deepEqual(followed.map((m) => m.role), ['assistant', 'user'], '截图后面的补充成了连着的第二条 user');
+  assert.deepEqual(followed[1].content.map((b) => b.type), ['tool_result', 'text', 'image', 'text']);
+  assert.equal(followed[1].content[3].text, '不要这个文件了');
+});
+
 test('配置：没 url 或没模型名就当没配；地址不校验格式（内网 http 照收）；只认用户级', () => {
   assert.equal(normalizeDirect(null), null);
   assert.equal(normalizeDirect({ url: 'http://x' }), null, '没有模型名用不了');

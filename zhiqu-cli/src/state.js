@@ -264,6 +264,19 @@ export class WorkState {
     return warn;
   }
 
+  /** 撤回了这个文件的草稿（第一百五十六轮）：从「改过的文件」「新建的文件」「同一处改得多」「正在看的那段」里拿掉 —— 不然压缩之后卡上还写着改过它、还把它的内容塞回去 */
+  discarded(rel) {
+    const d = this.data;
+    delete d.files[rel];
+    d.created = d.created.filter((x) => x !== rel);
+    d.focus = d.focus.filter((x) => x.path !== rel);
+    for (const key of Object.keys(d.churn)) {
+      const at = key.lastIndexOf(':');
+      if (at > 0 && key.slice(0, at) === rel) delete d.churn[key];
+    }
+    this.save();
+  }
+
   /** 刚才在看 / 在改哪一段（压缩之后把这几段的当前内容还回去）。同一个文件挨着的段合成一条，只留最近几条。 */
   focus(rel, offset = 1, limit = 200) {
     const d = this.data;

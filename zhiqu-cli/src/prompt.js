@@ -81,7 +81,9 @@ function draftEnvironment({ root, workspaceName, commands, os, today, shell = nu
     `- 系统：${os}；今天：${today}`,
     '- 改动只生成草稿：write_file / edit_file / apply_patch 不落盘，用户在页面上看过 diff、点了确认才写进磁盘。调了这些工具、结果说「已生成草稿」才有草稿 —— '
       + '没调就没有，不要在回答里说生成了；有草稿时说清是草稿、确认后才生效，不要说「已经改好了」。'
-      + '这里没有 delete_file（apply_patch 也不能删、不能改名），也不要建临时文件（建了就会出现在用户要确认的草稿里）。',
+      + '这里没有 delete_file（apply_patch 也不能删、不能改名）。这一轮自己生成的草稿要撤回，用 discard_draft：新建的就当没建过，改过的回到磁盘上的样子；'
+      + '不要把内容改成空文件来代替 —— 确认一份空的新建草稿会写出一个空文件。之前几轮已经交给页面的草稿这里撤不了，让用户在页面上拒绝。'
+      + '也不要建临时文件（建了就会出现在用户要确认的草稿里）。',
     shell
       ? `- shell 跑一条 bash 命令，管道、重定向、&& 都能用。命令跑在系统沙箱里：${shell}。被挡住了就换个做法，或者说清楚缺什么权限，不要换着花样绕。`
         + (shellWrites ? '改代码只用 write_file / edit_file / apply_patch：shell 写的东西直接落到磁盘，不经过草稿，用户看不到 diff。shell 用来跑测试、构建、查东西。' : '')

@@ -14,6 +14,7 @@ import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
 import { localSchemas, previewSchema, READ_TOOLS, shellSchemas } from './tools/local.js';
+import { draftSchemas } from './tools/drafts.js';
 import { patchFiles } from './tools/patch.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
 import { loadSkill, loadSkillSchema } from './skills.js';
@@ -183,6 +184,8 @@ export function toolset(ctx) {
   }
   // 服务器上没有后台命令（第一百一十七轮）：要管它们活多久、占多少，先不给
   // 子 agent 也给（第一百二十六轮，用户定的：子 agent 能跑命令；但它停下之前，它自己起的后台命令要先停下 —— 见 subagents.js 的 settle）
+  // 撤回草稿（第一百五十六轮）：只有草稿模式有草稿，按 allowedTools 认 —— 下发的和能执行的同一份清单
+  if (allowed && allowed.has('discard_draft') && !plan) for (const t of draftSchemas()) out.push({ schema: t, kind: 'local' });
   if (sandboxed) for (const t of shellSchemas({ background: offeredBackground(ctx), preview: !plan && ctx.local && !ctx.local.hosted && ctx.local.chrome })) out.push({ schema: t, kind: 'local' });
   // 预览截图（第一百三十四轮）：只在宿主机这一份给 —— 服务器 / 桌面后端那份（hosted）跑不了浏览器。
   // plan 档不给：它要起浏览器，是「动手」不是「想一想」。
@@ -680,6 +683,7 @@ export function describeCall(name, args) {
     case 'edit_file': return `修改 ${args.path}`;
     case 'apply_patch': { const files = patchFiles(args.patch); return `打补丁 ${files.slice(0, 3).join('、')}${files.length > 3 ? ` 等 ${files.length} 个文件` : ''}`; }
     case 'delete_file': return `删除 ${args.path}`;
+    case 'discard_draft': return `撤回 ${args.path} 的草稿`;
     case 'run_command': return `运行 ${[args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' ')}`;
     case 'shell': return `${args.background ? '后台运行' : '运行'} ${args.command}`;
     case 'shell_output': return `看 ${args.id} 的输出`;
@@ -1034,6 +1038,16 @@ async function runTool(ctx, call, offered, signal) {
       ctx.changedFiles.add(`${prep.rel}（已删除）`);
       stepNote(ctx, { summary: `${prep.lines} 行，挪进 .zhiqu/trash/` });
       ui.result(ui.paint.green(`✓ 已删除 ${prep.rel}`) + ui.paint.dim(`  → ${r.trashed}`));
+      return r.content;
+    }
+    if (name === 'discard_draft') {
+      const r = local.allowedTools && local.allowedTools.has('discard_draft') && typeof local.discardDraft === 'function'
+        ? local.discardDraft(args) : { error: '这里没有草稿可撤回（写文件是直接写的）。' };
+      if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
+      ctx.changedFiles.delete(r.rel);
+      workOf(ctx).discarded(r.rel);
+      stepNote(ctx, { summary: r.summary });
+      ui.result(ui.paint.green(`✓ ${r.summary}`));
       return r.content;
     }
     if (name === 'shell') {

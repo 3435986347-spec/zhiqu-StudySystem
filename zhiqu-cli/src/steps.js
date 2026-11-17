@@ -54,7 +54,7 @@ export function fileChange(path, oldText, newText, { added, removed } = {}) {
 
 const KIND_OF = {
   list_files: 'list', read_file: 'read', search: 'search',
-  write_file: 'create', edit_file: 'edit', apply_patch: 'patch', delete_file: 'delete',
+  write_file: 'create', edit_file: 'edit', apply_patch: 'patch', delete_file: 'delete', discard_draft: 'delete',
   shell: 'run', run_command: 'run', shell_output: 'run', shell_stop: 'run',
   search_wiki: 'wiki', read_wiki_page: 'wiki', create_wiki_patch: 'wiki',
   create_study_plan: 'plan', list_tasks: 'tasks', update_task_status: 'tasks',
@@ -78,6 +78,7 @@ export function titleOf(name, args = {}) {
     case 'edit_file': return { title: '修改', target: String(args.path || '') };
     case 'apply_patch': return { title: '改动', target: '' };
     case 'delete_file': return { title: '删除', target: String(args.path || '') };
+    case 'discard_draft': return { title: '撤回草稿', target: String(args.path || '') };
     case 'shell': return { title: args.background ? '后台运行' : '运行', target: clip(args.command, 500) };
     case 'run_command': return { title: '运行', target: clip([args.command, ...(Array.isArray(args.args) ? args.args : [])].join(' '), 500) };
     case 'shell_output': return { title: '看输出', target: String(args.id || '') };
