@@ -16,6 +16,7 @@ import { Api, ApiError } from './api.js';
 import { DirectModel } from './direct.js';
 import { StepLog } from './steps.js';
 import { archiveStep, archiveTurn, cacheNote, compactNow, flushArchive, hostName, recordGoal, runGoal, runTurn, setMode, statsNote, TurnBusyError, usageNote, workOf } from './agent.js';
+import { Inbox } from './steer.js';
 import { appFolders, openAppSession } from './handoff.js';
 import { SubAgents } from './subagents.js';
 import { newGoal } from './goal.js';
@@ -666,6 +667,7 @@ export function interruptHandler(ui, running, clock = Date.now) {
       if (controller.signal.aborted) return;
       ui.cancelQuestion();
       controller.abort();
+      ui.reclaimSteers();   // 补了还没读到的：和排队的一起放回输入框，不发
       ui.unqueue();
       lastAbort = clock();
       ui.line(ui.paint.yellow('\n（已中断）'));
@@ -749,13 +751,18 @@ async function pursue(ctx, setRunning) {
   }
 }
 
-async function turn(ctx, text, setRunning) {
+export async function turn(ctx, text, setRunning) {
   const controller = new AbortController();
   setRunning(controller);
+  // 干活中途补充（第一百五十一轮）：这一轮的收件箱在这里建好交给循环 —— 等 MCP 启动那会儿打的字也能补进来。
+  // 回车 = 补充给这一轮、Tab = 排到下一轮（ui.js）；模型读到时 onSteer 在输出里留一行；收尾没读到的放回排队最前面，成为下一句
+  const inbox = new Inbox();
+  ctx.ui.steerTo = (t) => inbox.push(t);
+  ctx.onSteer = (items) => ctx.ui.steerDelivered(items);
   ctx.ui.beginLive();      // 干活时输入框一直在（见 ui.js）—— 等 MCP 启动的那一段也在
-  await mcpStarted(ctx);
   try {
-    const result = await runTurn(ctx, text, { signal: controller.signal });
+    await mcpStarted(ctx);
+    const result = await runTurn(ctx, text, { signal: controller.signal, inbox });
     if (controller.signal.aborted) return;
     if (result.changedFiles.length) ctx.ui.note(`· 这一轮改动的文件：${result.changedFiles.join('、')}`);
     ctx.changedFiles = new Set();
@@ -765,6 +772,10 @@ async function turn(ctx, text, setRunning) {
     if (controller.signal.aborted || (e && e.name === 'AbortError')) return;
     ctx.ui.error(e.message);
     if (e instanceof ApiError && e.auth) ctx.ui.note('（令牌失效了：退出后运行 zhiqu login）');
+  } finally {
+    inbox.close();
+    ctx.onSteer = null;
+    ctx.ui.reclaimSteers();
   }
 }
 

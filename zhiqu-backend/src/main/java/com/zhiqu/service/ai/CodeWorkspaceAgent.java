@@ -184,6 +184,13 @@ public class CodeWorkspaceAgent {
     public Result run(AiModelConfig config, Long userId, Long conversationId, String userMessage, List<Map<String, Object>> history,
                       Map<String, Object> contextOptions, ContextBudget contextBudget, String reasoningMode,
                       Consumer<Map<String, Object>> onStep) {
+        return run(config, userId, conversationId, userMessage, history, contextOptions, contextBudget, reasoningMode, onStep, null);
+    }
+
+    /** steer：用户干活中途补的话递给宿主的口子（第一百五十二轮，{@link SteerPort}）；没起宿主时它原样留着，调用方收回去 */
+    public Result run(AiModelConfig config, Long userId, Long conversationId, String userMessage, List<Map<String, Object>> history,
+                      Map<String, Object> contextOptions, ContextBudget contextBudget, String reasoningMode,
+                      Consumer<Map<String, Object>> onStep, SteerPort steer) {
         ContextBudget limits = contextBudget == null ? ContextBudget.DEFAULT : contextBudget;
         if (!AgentPlanDecision.codeAgentIntent(userMessage, contextOptions) || !provider.supportsToolCalling(config)) {
             return Result.EMPTY;
@@ -205,7 +212,7 @@ public class CodeWorkspaceAgent {
         Result viaJs = jsEngine == null || !jsEngine.enabled() ? null
                 : jsEngine.run(config, userId, userMessage, recentHistory(history, limits.codeHistoryChars()),
                         canWrite, canExec, budget, limits, onStep, review ? null : remoteTools(userId, loop, canPlanMilestones), reasoningMode, conversationId,
-                        AgentPlanDecision.codeCommand(contextOptions));
+                        AgentPlanDecision.codeCommand(contextOptions), steer);
         if (viaJs == null) {
             // 第九十七轮删了 Java 的循环，没有后路了：说清楚缺什么，主回答照常
             log.warn("代码模式起不来（找不到 node 或命令行源码），这一轮没有读工作区 userId={}", userId);

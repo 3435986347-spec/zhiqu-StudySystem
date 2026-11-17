@@ -33,7 +33,13 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
@@ -223,6 +229,17 @@ public class JsCodeAgent {
                                          boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
                                          Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode, Long conversationId,
                                          String command) {
+        return run(config, userId, userMessage, history, canWrite, canExec, budget, limits, onStep, remote, reasoningMode, conversationId, command, null);
+    }
+
+    /**
+     * steer：用户干活中途补的话从这里递给宿主（第一百五十二轮，{@link SteerPort}）。null = 这一轮不收补充。
+     * 宿主读到时交来一行 steered，转成 {@code phase=steered} 的叙述（调用方据此告诉页面「已送达」）。
+     */
+    public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
+                                         boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
+                                         Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode, Long conversationId,
+                                         String command, SteerPort steer) {
         Path script = hostScript();
         String nodeBin = nodeBinary();
         // 这个账号自己的文件夹和档位（第一百一十五轮起分账号），或者这段对话的临时空间，这一轮从头到尾用同一份
@@ -306,14 +323,69 @@ public class JsCodeAgent {
         run.put("remoteToolsAfterRun", remote == null ? List.of() : remote.afterRun());
 
         Map<String, WorkspaceExecutor.Background> jobs = new LinkedHashMap<>();
+        Map<String, CompletableFuture<Boolean>> acks = new ConcurrentHashMap<>();
         JsonNode result = null;
-        try (BufferedWriter out = new BufferedWriter(new OutputStreamWriter(child.getOutputStream(), StandardCharsets.UTF_8));
-             BufferedReader in = new BufferedReader(new InputStreamReader(child.getInputStream(), StandardCharsets.UTF_8))) {
+        // 读的那一头归下面的读线程：它读到结束（宿主退出 / 被杀）自己关。不放进 try-with-resources ——
+        // 主线程走出这里时要关它，而读线程正卡在 readLine 里攥着同一把锁，宿主又要到 finally 才被杀：两边互等，永远不结束（第一百五十二轮自己撞到的）
+        BufferedReader in = new BufferedReader(new InputStreamReader(child.getInputStream(), StandardCharsets.UTF_8));
+        try (BufferedWriter out = new BufferedWriter(new OutputStreamWriter(child.getOutputStream(), StandardCharsets.UTF_8))) {
             Channel channel = new Channel(out);
-            channel.send(run);
+            if (steer == null) {
+                run.put("steer", List.of());
+                channel.send(run);
+            } else {
+                // 起来之前收着的补充随 run 交过去；从这里起补的话直接说给宿主（HTTP 线程写一行 say，等这个读循环交来 say_ack）
+                IOException[] failed = {null};
+                steer.start(initial -> {
+                    run.put("steer", initial);
+                    try {
+                        channel.send(run);
+                    } catch (IOException e) {
+                        failed[0] = e;
+                    }
+                }, text -> sayToHost(channel, acks, text));
+                if (failed[0] != null) {
+                    throw failed[0];
+                }
+            }
             boolean[] ranCommand = {false};
-            String line;
-            while ((line = in.readLine()) != null) {
+            // 读宿主的输出单独一个线程（第一百五十二轮）。下面这个循环替宿主调模型、跑命令时是阻塞的（一次几十秒到几分钟），
+            // 宿主早就回了 say_ack，可那期间没人读 —— 等不到就当「没收下」，页面把话排进队列、这一轮结束又发一遍，
+            // 而宿主其实收下了、模型也读到了（本机后端 + 真浏览器里撞到的：同一句话进了这一轮，又成了下一轮）。
+            // 这里 say_ack 一到就交接；别的行照原来的顺序交给下面的循环
+            BlockingQueue<String> lines = new LinkedBlockingQueue<>();
+            String eof = new String("eof");   // 只认这一个对象（宿主写一行 "eof" 不算）
+            AtomicReference<IOException> readFailed = new AtomicReference<>();
+            Thread reader = new Thread(() -> {
+                try {
+                    String l;
+                    while ((l = in.readLine()) != null) {
+                        if (l.length() <= MAX_LINE_CHARS && l.contains("\"say_ack\"") && takeAck(l, acks)) {
+                            continue;
+                        }
+                        lines.add(l);
+                    }
+                } catch (IOException e) {
+                    readFailed.set(e);
+                } finally {
+                    lines.add(eof);
+                    try {
+                        in.close();
+                    } catch (IOException ignored) {
+                        // 已经断了
+                    }
+                }
+            }, "code-host-reader");
+            reader.setDaemon(true);
+            reader.start();
+            while (true) {
+                String line = lines.take();
+                if (line == eof) {
+                    if (readFailed.get() != null) {
+                        throw readFailed.get();
+                    }
+                    break;
+                }
                 if (line.length() > MAX_LINE_CHARS) {
                     throw new IllegalStateException("子进程的一行太长");
                 }
@@ -346,6 +418,9 @@ public class JsCodeAgent {
                     if (traced != null) {
                         narrate(onStep, Map.of("phase", "trace", "trace", traced));
                     }
+                } else if ("steered".equals(type)) {
+                    // 模型读到了这几句补充（原话）：调用方告诉页面「已送达」
+                    narrate(onStep, Map.of("phase", "steered", "texts", texts(msg.path("texts"))));
                 } else if ("result".equals(type)) {
                     result = msg;
                     break;
@@ -367,6 +442,11 @@ public class JsCodeAgent {
             log.warn("代码模式的 JS 循环失败（不影响主回答） userId={} err={}", userId, e.toString());
             narrate(onStep, Map.of("phase", "error", "message", "工具循环中断：" + e.getMessage()));
         } finally {
+            // 补充的口子收掉：宿主交回的没读到的放回去（调用方交给最终回答那一步）；还在等回音的一律当没收下
+            if (steer != null) {
+                steer.finish(result == null ? List.of() : texts(result.path("leftover")));
+            }
+            acks.values().forEach(ack -> ack.complete(false));
             // 这一轮起的后台命令不留过夜（网页没有 /ps，留着就没人管了）
             jobs.values().forEach(WorkspaceExecutor.Background::stop);
             child.descendants().forEach(ProcessHandle::destroyForcibly);
@@ -395,6 +475,62 @@ public class JsCodeAgent {
                 target.artifact() ? ArtifactFiles.changes(root, before) : List.of(),
                 // 宿主只给这一次新说的、没出错没被打断的结论（code-host.js）；最终回答原样用它
                 Texts.limitRaw(result.path("conclusion").asText(""), limits.codeContextChars()));
+    }
+
+    /** 等宿主回 say_ack 最多这么久。它读 stdin 是事件循环里的一件小事，正常是毫秒级；等不到当没收下（话留在页面的队列里，不丢） */
+    static final long SAY_ACK_MS = 5_000;
+    private static final AtomicLong SAY_SEQ = new AtomicLong();
+
+    /** 往宿主说一句，等它回 say_ack。不抛：写不进去、超时、被打断都算没收下 */
+    private boolean sayToHost(Channel channel, Map<String, CompletableFuture<Boolean>> acks, String text) {
+        String id = "say" + SAY_SEQ.incrementAndGet();
+        CompletableFuture<Boolean> ack = new CompletableFuture<>();
+        acks.put(id, ack);
+        try {
+            Map<String, Object> say = new LinkedHashMap<>();
+            say.put("type", "say");
+            say.put("id", id);
+            say.put("text", text);
+            channel.send(say);
+            return Boolean.TRUE.equals(ack.get(SAY_ACK_MS, TimeUnit.MILLISECONDS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            acks.remove(id);
+        }
+    }
+
+    /** 读线程上：这一行是宿主的 say_ack 就交给等着的那一句（返回 true = 处理掉了，不进主循环） */
+    private boolean takeAck(String line, Map<String, CompletableFuture<Boolean>> acks) {
+        try {
+            JsonNode msg = json.readTree(line);
+            if (!"say_ack".equals(msg.path("type").asText(""))) {
+                return false;
+            }
+            CompletableFuture<Boolean> ack = acks.remove(msg.path("id").asText(""));
+            if (ack != null) {
+                ack.complete(msg.path("accepted").asBoolean(false));
+            }
+            return true;
+        } catch (IOException e) {
+            return false;   // 不是 JSON：交给主循环照原来的规矩停
+        }
+    }
+
+    /** 宿主交来的一串原话（不是数组就当没有；每句按补充的上限截） */
+    private static List<String> texts(JsonNode node) {
+        List<String> out = new ArrayList<>();
+        if (node != null && node.isArray()) {
+            for (JsonNode t : node) {
+                if (t.isTextual() && !t.asText().isBlank()) {
+                    out.add(Texts.limitRaw(t.asText(), 4000));
+                }
+            }
+        }
+        return out;
     }
 
     /** 一行一个 JSON 写给子进程（模型的事件和命令的结果都从这里走） */

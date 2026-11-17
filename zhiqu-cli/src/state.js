@@ -130,14 +130,24 @@ export class WorkState {
   // ── 一句话的开头和结尾 ─────────────────────────────────────────────────
 
   beginTurn(text) {
-    const d = this.data;
-    if (text) {
-      d.said.push({ at: this.stamp(), text: String(text).length > SAID_CHARS ? `${String(text).slice(0, SAID_CHARS - 300)}\n…（略）…\n${String(text).slice(-300)}` : String(text) });
-      // 太多时留第一句和最近的（第一句是这件事的出处）
-      if (d.said.length > MAX_SAID) d.said = [d.said[0], ...d.said.slice(-(MAX_SAID - 1))];
-    }
-    d.turn = { status: 'running', at: this.stamp() };
+    if (text) this.addSaid(text);
+    this.data.turn = { status: 'running', at: this.stamp() };
     this.save();
+  }
+
+  /** 干活中途用户补的一句（第一百五十轮）：和开头那句一样逐字记着 —— 压缩会把中间的 user 消息摘掉，卡不会 */
+  steer(text) {
+    if (!text) return;
+    this.addSaid(text, { steer: true });
+    this.save();
+  }
+
+  addSaid(text, { steer = false } = {}) {
+    const d = this.data;
+    const s = String(text);
+    d.said.push({ at: this.stamp(), text: s.length > SAID_CHARS ? `${s.slice(0, SAID_CHARS - 300)}\n…（略）…\n${s.slice(-300)}` : s, ...(steer ? { steer: true } : {}) });
+    // 太多时留第一句和最近的（第一句是这件事的出处）
+    if (d.said.length > MAX_SAID) d.said = [d.said[0], ...d.said.slice(-(MAX_SAID - 1))];
   }
 
   /** finished：这一句正常说完了。没说完的留着 'unfinished'；进程直接没了就一直是 'running' —— 下次开工都算没做完 */
@@ -286,7 +296,7 @@ export class WorkState {
     if (reason) out.push(reason);
     if (d.said.length) {
       out.push('', '### 用户说过的话（逐字，按先后）');
-      d.said.forEach((s, i) => out.push(`${i + 1}. ${s.text}`));
+      d.said.forEach((s, i) => out.push(`${i + 1}. ${s.steer ? '（干活中途补充）' : ''}${s.text}`));
     }
     if (d.todos.length) {
       const box = { completed: '[x]', in_progress: '[~]', pending: '[ ]' };

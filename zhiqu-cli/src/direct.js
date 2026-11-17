@@ -253,7 +253,7 @@ function anthropicBody(self, body) {
 /**
  * 我们历史里的形状（OpenAI 那套）翻成 Anthropic 的：
  *   system 提到顶层；assistant 的 tool_calls 变 tool_use 块；role:'tool' 变 user 的 tool_result 块。
- * 连着几条 tool 结果要并进同一条 user 消息 —— Anthropic 要求 user/assistant 交替。
+ * 连着几条 tool 结果要并进同一条 user 消息 —— Anthropic 要求 user/assistant 交替；紧跟着的一条 user 文本也并进去（排在结果后面）。
  */
 export function toAnthropicMessages(messages) {
   const system = messages.filter((m) => m.role === 'system').map((m) => String(m.content || '')).filter(Boolean).join('\n\n');
@@ -279,7 +279,12 @@ export function toAnthropicMessages(messages) {
       if (blocks.length) out.push({ role: 'assistant', content: blocks });
       continue;
     }
-    out.push({ role: 'user', content: [{ type: 'text', text: String(m.content ?? '') }] });
+    const block = { type: 'text', text: String(m.content ?? '') };
+    // 紧跟在工具结果后面的一条 user（干活中途的补充、命令行补的提醒，第一百五十轮）：并进那条结果消息、排在结果后面 ——
+    // 不并就是连着两条 user；后端 AnthropicFormat 也是这么并的（tool_result 要排在其它内容前面）
+    const last = out[out.length - 1];
+    if (isResults(last)) last.content.push(block);
+    else out.push({ role: 'user', content: [block] });
   }
   return { system, messages: out };
 }

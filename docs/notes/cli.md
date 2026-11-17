@@ -118,6 +118,11 @@
 - **`/resume` 把那段会话的聊天记录原样显示出来**（用户要的）：读 `SessionStore.transcript()`，不是 `load()` ——
   后者是发给模型的那一份，压缩过就只剩摘要。不是用户打的 user 消息（goal 推的每一轮、截断时补的说明）记录时带
   `origin`，回放时不冒充「› …」；旧记录没有标记，靠那几句固定开头认。
+- **干活中途补充**（第一百五十、一百五十一轮，`docs/steer-plan.md`）：一轮在跑时回车 = 补充给这一轮、Tab = 排到下一轮（`/` 开头的命令照旧排队）。
+  `cli.js` 的 `turn()` 建好这一轮的 `Inbox`（`src/steer.js`）交给 `runTurn`，`ui.steerTo` 往里放；循环每次问模型之前倒进上下文（整批工具结果之后），
+  要收尾时箱子里有话就不收尾。模型读到时 `ctx.onSteer` → 输出里一行「↳ 补充：…」；收尾没读到的放到排队最前面（成为下一句），
+  Ctrl+C 时连同排队的放回输入框。`/goal`、`/review` 不给 `steerTo`，回车还是排队。子 agent 不收。
+  网页代码模式（第一百五十二轮）：宿主的桥认 `say` / `say_ack`，读到时发 `steered` 并记一步 `steer`，没读到的放 `result.leftover`；后端经 `SteerPort` 递话，读宿主输出单独一个线程（主循环调模型时阻塞，回音不能等它）。
 - **`zhiqu mcp`**（第二十九轮，`src/mcp-server.js`）：把远程工具里的八个（Wiki 三个、`list_tasks` / `update_task_status`、`create_study_plan`、记忆两个）
   做成 stdio MCP 服务器给 Claude Code / Cursor 用，令牌用 `zhiqu login` 存的。**stdout 只走协议**（写一个字的日志客户端就断开 —— 真起进程的判据钉着）；
   工具出错回 `isError` 而不是协议错误；转哪些工具是 `EXPOSED_TOOLS` 一个一个列的，服务器新加的远程工具不会自动转出去。

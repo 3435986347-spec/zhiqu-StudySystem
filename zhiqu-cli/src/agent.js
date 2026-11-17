@@ -34,6 +34,7 @@ import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSche
 import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
 import { judgmentText, listDetail, patchDetail, runDetail, writeDetail } from './steps.js';
+import { Inbox, steerMessage } from './steer.js';
 
 export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks']);
 /** 远程工具里**直接生效**的（不是草稿）：plan 档不给，ask 档先问（第二十九轮，用户定的「改状态直接做」）。 */
@@ -1463,7 +1464,7 @@ function catchUp(ctx) {
   if (ctx.ui) ctx.ui.note(`· 这段会话${where}接着说了 ${said.length} 句，已经读进来`);
 }
 
-async function runTurnBody(ctx, userText, { signal, origin = null } = {}) {
+async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given = null } = {}) {
   ctx.steps = [];
   // 网页存档的步骤每一轮（主 agent）重开一份：上一轮被 Ctrl+C 打断 / 模型出错时 archiveTurn 没跑，
   // 步骤会留在数组里，被下一轮的成功存档一起发上去 —— 网页上下一轮的回答上方会多出上一轮的步骤。
@@ -1517,6 +1518,12 @@ async function runTurnBody(ctx, userText, { signal, origin = null } = {}) {
   ctx.readWindows = new Map(); ctx.readHinted = new Set();
   const lead = ctx.agents && !ctx.subagent;   // 主 agent 的一句话：管着这一句派出去的子 agent
   if (lead) ctx.agents.beginTurn(ctx, signal);
+  // 这一句的收件箱（第一百五十轮，docs/steer-plan.md）：干活中途用户说的话放这里，循环在缝上倒进上下文。
+  // 子 agent 没有 —— 它的 ctx 是父 ctx 浅拷贝来的，看得见父亲的 ctx.inbox，所以这里用局部变量，不读 ctx.inbox
+  // 入口可以自己先建好交进来（命令行：等 MCP 启动那会儿打的字也要能补进这一轮），没给就新建一个
+  const inbox = ctx.subagent ? null : given || new Inbox();
+  if (inbox) ctx.inbox = inbox;
+  let leftover = [];
   if (quiet(ctx)) ctx.ui.startThinking();
   try {
   // 轮数：0 / 没填 = 不限（用户 2026-11-12：做到一半停下、下一次又从零开始，比跑得久难受得多）。
@@ -1524,6 +1531,9 @@ async function runTurnBody(ctx, userText, { signal, origin = null } = {}) {
   const maxRounds = Number(ctx.maxRounds) > 0 ? Number(ctx.maxRounds) : Infinity;
   for (let round = 0; round < maxRounds; round++) {
     if (signal && signal.aborted) break;
+    // 缝：每一次去问模型之前（上一批工具全部回完、截图那条也记了，或者刚被推回去 / 续写）。
+    // 放在这里一处就盖住了所有 continue 的路；被停下的不倒（上面 break 了），原话由收尾交回
+    if (inbox && inbox.size()) deliverSteer(ctx, work, inbox.take());
     const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
     // 档位、日期变了：追加一条说明（系统提示不改，见 frozenEnv）
     announceEnvChange(ctx);
@@ -1608,12 +1618,16 @@ async function runTurnBody(ctx, userText, { signal, origin = null } = {}) {
       }
       if (looping && quiet(ctx)) showAnswer(ctx, message.content);
       finalText = message.content || '';
+      if (inbox && inbox.size()) continue;   // 用户中途补了话：带着它接着做
       break;
     }
 
     record(ctx, message);
     if (!calls.length) {
       finalText = message.content || '';
+      // 要收尾了，可用户在这次调用的过程中补了话：这句回答留在历史里（一段阶段性的结论），带着补充接着做，
+      // 最后说的那句才是结论（第一百五十轮，用户定的「不收尾、接着做」）。最后一轮 continue 就出了循环，没取走的由收尾交回、当下一句
+      if (inbox && inbox.size()) continue;
       // 清单没做完就收尾：推一次（pendingNudge）
       if (nudge === 'todo') {
         nudged = true;
@@ -1693,7 +1707,8 @@ async function runTurnBody(ctx, userText, { signal, origin = null } = {}) {
         ],
       }, 'system');
     }
-    if (ctx.repeat && ctx.repeat.count >= REPEAT_STOP) {
+    // 用户这时候补了话：先别停，下一次带着它问（倒入时 repeat 清零）
+    if (ctx.repeat && ctx.repeat.count >= REPEAT_STOP && !(inbox && inbox.size())) {
       stalled = true;
       finalText = `已经停下：模型连续 ${ctx.repeat.count} 次发同一个调用（${ctx.repeat.key.split('\n')[0]}），结果一直没变。说说接下来想怎么做，或者换个模型试试。`;
       ctx.ui.warn(finalText);
@@ -1705,6 +1720,9 @@ async function runTurnBody(ctx, userText, { signal, origin = null } = {}) {
     }
   }
   } finally {
+    // 关箱：之后再放一律 false；没取走的原话交回入口，变成下一句（被停下、最后一刻才到、最后一轮）。
+    // 入口交进来的箱子由入口关（它要收走剩下的）：这里关了、取空了，入口再关拿到的就是空的 —— 补充悄悄丢了（第一百五十二轮宿主那条判据照出来的）
+    if (inbox) leftover = given ? inbox.items.slice() : inbox.close();
     // 这一句结束时还在跑的子 agent 停掉，不留到下一句（Codex 有完成了的子 agent 一直占名额的 issue）
     if (lead) await ctx.agents.endTurn(ctx);
     ctx.ui.stopThinking();
@@ -1738,7 +1756,25 @@ async function runTurnBody(ctx, userText, { signal, origin = null } = {}) {
     if (ctx.root) { try { fs.rmSync(path.join(ctx.root, '.zhiqu', 'progress.md'), { force: true }); } catch { /* 忽略 */ } }
   }
   return { finalText, stalled, exhausted, steps: ctx.steps.slice(), changedFiles: [...ctx.changedFiles], stats: { ...ctx.turnStats },
-    usage: { ...ctx.turnUsage }, compactions: turnCompactions, clears: turnClears };
+    usage: { ...ctx.turnUsage }, compactions: turnCompactions, clears: turnClears, leftover };
+}
+
+/**
+ * 把用户中途补的话倒进上下文：一条 user 消息（origin 'steer'），状态卡和会话记录各记一笔。
+ * 重复检测清零：用户说了新话之后同一个调用再发一次是合理的，不算原地打转。
+ */
+function deliverSteer(ctx, work, items) {
+  if (!items.length) return;
+  record(ctx, { role: 'user', content: steerMessage(items) }, 'steer');
+  for (const text of items) {
+    work.steer(text);
+    if (ctx.store && ctx.session) {
+      try { ctx.store.append(ctx.session.id, { type: 'steer', text, via: ctx.lockWho || 'cli' }); } catch { /* 记不上不能把这一句弄挂 */ }
+    }
+  }
+  ctx.repeat = null;
+  if (ctx.onSteer) ctx.onSteer(items);
+  else if (ctx.ui) ctx.ui.note(`· 读到了你的补充：${items.map((t) => t.split('\n')[0].slice(0, 60)).join(' / ')}`);
 }
 
 /**

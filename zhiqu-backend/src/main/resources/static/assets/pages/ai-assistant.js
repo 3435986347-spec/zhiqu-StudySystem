@@ -413,7 +413,7 @@ function aiEmptyState() {
 var TRACE_ICON = {
   thinking: 'brain', list: 'folder', read: 'file', search: 'search', run: 'terminal', create: 'file-plus', edit: 'pencil', patch: 'pencil',
   delete: 'trash-2', web: 'globe', retrieve: 'book-open', tasks: 'list-checks', wiki: 'book-marked', plan: 'clipboard-check',
-  memory: 'lightbulb', check: 'check', agent: 'users', todo: 'list-checks', other: 'sparkles'
+  memory: 'lightbulb', check: 'check', agent: 'users', todo: 'list-checks', steer: 'message-square', other: 'sparkles'
 };
 var TRACE_SHOWN = 60;   // 一条回答默认列多少步；再多的折成「还有 N 步」，点开再看（上百步的一轮不把页面撑到几屏长）
 function traceDuration(ms) {
@@ -480,7 +480,8 @@ function traceStepHtml(s, key) {
   var kind = TRACE_ICON[s.kind] ? s.kind : 'other';
   var line = '<span class="zq-trace-icon">' + icon(TRACE_ICON[kind]) + '</span>'
     + '<span class="zq-trace-title">' + esc(s.title || '') + '</span>'
-    + (s.target ? '<span class="zq-mono zq-trace-target">' + esc(s.target) + '</span>' : '')
+    // 你补充的那句话是一句话，不是文件名 / 命令：不用等宽字（第一百五十二轮）
+    + (s.target ? '<span class="' + (s.kind === 'steer' ? '' : 'zq-mono ') + 'zq-trace-target">' + esc(s.target) + '</span>' : '')
     + (s.summary ? '<span class="zq-trace-summary">' + esc(s.summary) + '</span>' : '')
     + (traceDuration(s.ms) && s.kind !== 'thinking' ? '<span class="zq-trace-time">' + esc(traceDuration(s.ms)) + '</span>' : '');
   // 有细节才能点开：流式时细节在手上（s.detail），刷新后列表里只有一行一步（s.hasDetail），点开时再去拿（loadTraceDetail）
@@ -2493,7 +2494,7 @@ function syncTurnUi() {
   var button = $('#zq-send');
   if (button) {
     button.classList.toggle('is-busy', !!st);
-    button.setAttribute('aria-label', st ? '生成中（回车 = 排队）' : '发送（⌘/Ctrl + 回车）');
+    button.setAttribute('aria-label', st ? '生成中（发送 = 补充给这一轮）' : '发送（⌘/Ctrl + 回车）');
   }
 }
 function beginTurn(st) {
@@ -2632,9 +2633,13 @@ function makeStreamApplier(st) {
         }
       }
     }
-    // 「立即」补进来的话（第一百三十三轮）：让用户看见它进了这一轮，不是凭空消失
-    else if (event === 'message.injected') {
-      toast('已补充给这一轮：' + String((data && data.text) || '').slice(0, 30));
+    // 中途补充（第一百五十二轮）：收下了不等于模型看到了 —— 排队条里那一行写「待送达」，
+    // 读到了（delivered）才拿掉；这一轮用不上的（returned）变回排队、排到最前面，这一轮结束就发
+    else if (event === 'message.steer.delivered') {
+      if (steerSettled((data && data.texts) || [], 'delivered')) toast('模型已读到你的补充');
+    }
+    else if (event === 'message.steer.returned') {
+      if (steerSettled((data && data.texts) || [], 'returned')) toast('补充没赶上这一轮，它一结束就发');
     }
     // 缓冲缺了前半段就不拼残缺正文；保留已显示的内容，断开观察连接并从库里跟进最新快照。
     else if (event === 'stream.reset') {
@@ -2741,7 +2746,9 @@ async function sendAiMessage(queuedText) {
       || (state.messages || []).some(function (m) { return m.status === 'STREAMING'; })) {
     if (pendingRun && pendingRun.kind === 'desktop' && !currentTurn()) resumeDesktopTurn(pendingRun);
     if (slash) { toast('正在回答，命令等这一轮完了再发'); return; }
-    enqueueSend(txt);
+    // 默认补充给这一轮（第一百五十二轮，用户定的）：模型跑完当前这一步就读到。补不了的（桌面本机那一轮、还没拿到这一轮的编号）照旧排队
+    if (canSteer(pendingRun)) steerSend(txt);
+    else enqueueSend(txt);
     return;
   }
   if (slash) {
@@ -2762,7 +2769,7 @@ async function sendAiMessage(queuedText) {
   stopStreamWatch();   // SSE 接管，轮询再跑就会和它抢着改同一批消息
   var sendButton = $('#zq-send');
   // 发送键只有一个箭头（第四十四轮）：生成中换成转圈（样式表画），读屏念「生成中」
-  if (sendButton) { sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中（回车 = 排队）'); }
+  if (sendButton) { sendButton.classList.add('is-busy'); sendButton.setAttribute('aria-label', '生成中（发送 = 补充给这一轮）'); }
   var reasoningMode = reasoningModeForRequest();
   // READY（有分块，走检索）和 IMAGE（无分块，走视觉内容块）都要发给后端。
   // 只发 READY 的话图片就被挡在这一层，后端永远收不到它。
@@ -3574,6 +3581,64 @@ function enqueueSend(text) {
   toast('已排队：这一轮回答完就发');
 }
 
+/** 这一轮能不能补充：在服务端跑、拿到了编号、就是这个对话的（桌面本机那一轮第 4 步再接） */
+function canSteer(info) {
+  return !!(info && info.runId && info.kind !== 'desktop' && info.nb === (state.notebookId || null));
+}
+
+/**
+ * 补充给正在跑的这一轮（第一百五十二轮，docs/steer-plan.md 第 3 步）：排队条里先放一行「待送达」，问服务端收不收。
+ * 收下（current）：等 message.steer.delivered 再拿掉；接不了（next：已经在写最终回答 / 收尾了）：变回排队，这一轮结束就发。
+ */
+function steerSend(text) {
+  state.sendQueue = state.sendQueue || [];
+  var item = { text: text, nb: state.notebookId || null, at: Date.now(), steer: 'sending' };
+  state.sendQueue.push(item);
+  var inp = $('#zq-draft');
+  if (inp) { inp.value = ''; setDraftHeight(inp, DRAFT_BASE_HEIGHT); paintSlash(); }
+  if (state.chatDraft) state.chatDraft.flush();
+  renderSendQueue();
+  steerItem(item);
+}
+function steerItem(item) {
+  var info = runningTurn();
+  if (!canSteer(info) || info.nb !== item.nb) { delete item.steer; renderSendQueue(); return; }
+  item.steer = 'sending';
+  renderSendQueue();
+  api.post('/ai/runs/' + info.runId + '/say', { text: item.text }).then(function (res) {
+    if (item.steer !== 'sending') return;   // 等回音的时候已经送达 / 被交回了
+    if (res && res.delivered === 'current') {
+      item.steer = 'pending';
+    } else {
+      delete item.steer;
+      toast('这一轮已经在收尾，这句排到它结束后立刻发');
+    }
+    renderSendQueue();
+    if (!item.steer && !state.aiSending) pumpSendQueue();
+  }).catch(function () {
+    delete item.steer;
+    renderSendQueue();
+    toast('没补进去，已经排队，这一轮结束就发', 'error');
+  });
+}
+/** 送达 / 交回：按原话找排队条里「待送达」的那一行。返回有没有对上的（重放时早就处理过的不再提示） */
+function steerSettled(texts, how) {
+  var hit = false;
+  (texts || []).forEach(function (text) {
+    var list = state.sendQueue || [];
+    var at = list.findIndex(function (item) { return item.steer && item.text === String(text); });
+    if (at < 0) return;
+    hit = true;
+    var item = list.splice(at, 1)[0];
+    if (how === 'returned') {
+      delete item.steer;
+      list.unshift(item);
+    }
+  });
+  if (hit) renderSendQueue();
+  return hit;
+}
+
 /** 排队条：在输入框上方，一行一条（样式在 .zq-send-queue，JS 只挂 class） */
 function renderSendQueue() {
   saveSendQueue();
@@ -3592,15 +3657,26 @@ function renderSendQueue() {
   // 样式全在 .zq-send-queue 那几条规则里：JS 只挂 class（AiLookTest 盯着，样式不许写在脚本里）
   host.hidden = !list.length;
   if (!list.length) return;
-  list.forEach(function (entry, n) {
+  var queued = 0;
+  list.forEach(function (entry) {
     var item = entry.item, i = entry.index;
     var row = document.createElement('div');
     row.className = 'zq-send-queue-row';
     var label = document.createElement('span');
     label.className = 'zq-send-queue-text';
-    label.textContent = '排队 ' + (n + 1) + '：' + (item.text.length > 40 ? item.text.slice(0, 40) + '…' : item.text);
+    var brief = item.text.length > 40 ? item.text.slice(0, 40) + '…' : item.text;
+    // 补给这一轮、还没被读到的：撤不回来（已经在服务端 / 宿主手里），只写状态，没有按钮
+    if (item.steer) {
+      row.setAttribute('data-state', 'steer');
+      label.textContent = (item.steer === 'sending' ? '补充 · 发送中：' : '补充 · 待送达：') + brief;
+      row.appendChild(label);
+      host.appendChild(row);
+      return;
+    }
+    label.textContent = '排队 ' + (++queued) + '：' + brief;
     var now = document.createElement('button');
-    now.type = 'button'; now.className = 'zq-send-queue-now'; now.textContent = '立即';
+    now.type = 'button'; now.className = 'zq-send-queue-now'; now.textContent = '立即补充';
+    now.title = '补给正在回答的这一轮：跑完当前这一步就读到';
     now.onclick = function () { sendQueuedNow(i); };
     var del = document.createElement('button');
     del.type = 'button'; del.className = 'zq-send-queue-del';
@@ -3613,17 +3689,17 @@ function renderSendQueue() {
 }
 
 /**
- * 「立即」：不是打断这一轮，而是把这句话补进这一轮的上下文（第一百三十三轮）。
+ * 「立即补充」：不是打断这一轮，而是把这句话补进这一轮的上下文（第一百三十三轮；第一百五十二轮起代码模式也读得到）。
  *
  * <p>用户：「不是要终止这一轮，是给模型补充信息」。原来这里是 abort 当前这条流 ——
- * 用户看着出来的半截回答当场没了。现在先问服务端能不能补进这一轮：
- * 能（还没开始写最终回答）→ 模型下一次调用就看得到；不能 → 留在队首，这一轮结束立刻发。
+ * 用户看着出来的半截回答当场没了。现在先问服务端能不能补进这一轮（delivered === 'current' 才算收下），
+ * 收下了等送达；接不了就留在排队里，这一轮结束立刻发。
  */
 function sendQueuedNow(i) {
   var item = (state.sendQueue || [])[i];
   if (!item) return;
   var info = runningTurn();
-  if (!info || !info.runId || info.kind === 'desktop' || info.nb !== item.nb) {
+  if (!canSteer(info) || info.nb !== item.nb) {
     // 没有可补的那一轮（桌面本机跑的那一轮、或者已经结束了）：排到最前面，等它结束
     state.sendQueue.splice(i, 1);
     state.sendQueue.unshift(item);
@@ -3632,25 +3708,7 @@ function sendQueuedNow(i) {
     if (!state.aiSending) pumpSendQueue();
     return;
   }
-  api.post('/ai/runs/' + info.runId + '/say', { text: item.text }).then(function (res) {
-    var delivered = res && res.delivered;
-    var at = (state.sendQueue || []).indexOf(item);
-    if (at >= 0) state.sendQueue.splice(at, 1);
-    if (delivered === 'current') {
-      renderSendQueue();
-      toast('已补充给这一轮，模型下一步就能看到');
-    } else {
-      state.sendQueue.unshift(item);
-      renderSendQueue();
-      toast('这一轮已经在写最终回答，这句会在它结束后立刻发出');
-    }
-  }).catch(function () {
-    var at = (state.sendQueue || []).indexOf(item);
-    if (at >= 0) state.sendQueue.splice(at, 1);
-    state.sendQueue.unshift(item);
-    renderSendQueue();
-    toast('没补进去，已经排到最前面', 'error');
-  });
+  steerItem(item);
 }
 
 /** 这一轮结束了：把队首那条发出去 */
@@ -3659,8 +3717,10 @@ function pumpSendQueue() {
   if (state.aiSending || (info && info.kind === 'desktop')
       || (state.messages || []).some(function (m) { return m.status === 'STREAMING'; })) return;
   state.sendQueue = state.sendQueue || [];
+  // 这一轮已经结束：还写着「待送达」的（交回的事件没赶上、刷新过页面）就是没读到 —— 变回排队，照顺序发（用户定的：没赶上就接着发）
+  state.sendQueue.forEach(function (item) { if (item.steer) delete item.steer; });
   var at = state.sendQueue.findIndex(function (item) { return item.nb === (state.notebookId || null); });
-  if (at < 0) return;
+  if (at < 0) { renderSendQueue(); return; }
   var next = state.sendQueue.splice(at, 1)[0];
   renderSendQueue();
   sendAiMessage(next.text);

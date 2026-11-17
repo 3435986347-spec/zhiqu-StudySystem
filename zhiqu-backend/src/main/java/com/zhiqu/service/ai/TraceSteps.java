@@ -23,7 +23,7 @@ import java.util.Set;
 public final class TraceSteps {
 
     public static final Set<String> KINDS = Set.of("thinking", "list", "read", "search", "run", "create", "edit", "patch", "delete",
-            "web", "retrieve", "tasks", "wiki", "plan", "memory", "check", "agent", "todo", "note", "other");
+            "web", "retrieve", "tasks", "wiki", "plan", "memory", "check", "agent", "todo", "note", "steer", "other");
     private static final Set<String> STATUSES = Set.of("running", "ok", "error");
 
     /** 一轮最多存多少步；再多的只记个数（页面上说「后面还有 N 步没列出」） */

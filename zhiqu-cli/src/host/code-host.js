@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // 网页 / 桌面应用的代码模式跑的就是命令行这一份循环（第九十四轮，用户 2026-11-02 定的「一份 JS，后端用子进程跑」）。
 // 后端（Java 的 JsCodeAgent）起这个进程，stdin / stdout 一行一个 JSON：
-//   后端 → 这里：run（开始）、event / error（模型调用的回音）、exec_result（命令跑完了）、tool_result（远程工具的结果）
+//   后端 → 这里：run（开始）、event / error（模型调用的回音）、exec_result（命令跑完了）、tool_result（远程工具的结果）、
+//                say（用户干活中途补的一句，第一百五十二轮；回 say_ack { id, accepted }）
 //   这里 → 后端：model（请后端调一次模型）、exec（请后端跑一条命令）、tool（请后端执行一个 Wiki / 里程碑工具，第九十五轮）、
-//                step（轨迹里的一句）、trace（回答里按顺序列出的一步，第一百二十七轮，形状见 steps.js）、result（收尾）、fatal（出错了）
+//                step（轨迹里的一句）、trace（回答里按顺序列出的一步，第一百二十七轮，形状见 steps.js）、result（收尾）、fatal（出错了）、
+//                say_ack（收没收下那句补充）、steered（模型读到了哪几句补充，原话）
 // 门（是不是管理员、工作区档位、写意图、能不能执行）后端判好了才起这个进程；模型和命令都回到后端去做 —— 这里只有循环和工作区的读、草稿。
 // 认不出的消息就停，不猜。
 //
@@ -28,6 +30,7 @@ import { detectSandbox } from '../tools/sandbox.js';
 import { ArtifactTools, DesktopTools, DraftTools } from '../tools/drafts.js';
 import { NETWORK_MODES } from '../tools/sandbox.js';
 import { Ui } from '../ui.js';
+import { Inbox } from '../steer.js';
 
 /** 一行一个 JSON 的两头。send 写给后端；pending 等后端回音 */
 export function createBridge({ input, output }) {
@@ -37,6 +40,9 @@ export function createBridge({ input, output }) {
   const retired = new Set();
   let onRun = null;
   let onStop = null;
+  let onSay = null;
+  // run 已经到了、runHosted 还没挂上收件箱时到的 say（和 run 落在同一块数据里时，readline 会在 run 的回调跑之前把下一行也交出来）
+  let early = null;
   let closed = false;
   // 不能出现在任何一行里的字（桌面版的令牌）：多一道，万一哪条报错把它带出来，换成 zqp_…
   const secrets = [];
@@ -52,9 +58,17 @@ export function createBridge({ input, output }) {
   lines.on('line', (line) => {
     let msg;
     try { msg = JSON.parse(line); } catch { fail('收到的不是 JSON'); return; }
-    if (msg.type === 'run' && onRun) { const f = onRun; onRun = null; f(msg); return; }
+    if (msg.type === 'run' && onRun) { const f = onRun; onRun = null; early = []; f(msg); return; }
     // 叫停（第一百二十九轮，桌面外壳）：后端从来不发，发了也只是中断这一轮
     if (msg.type === 'stop') { stop(); return; }
+    // 干活中途补的一句（第一百五十二轮）：交给这一轮的收件箱。这一轮还没开始 / 已经在收尾时不收（accepted: false），
+    // 对面把它留到下一轮。后端和外壳发 say 之前都等着这个回音，所以一定回一句
+    if (msg.type === 'say') {
+      const text = String(msg.text ?? '');
+      const accepted = onSay ? onSay(text) === true : early ? (early.push(text), true) : false;
+      send({ type: 'say_ack', id: msg.id, accepted });
+      return;
+    }
     if (retired.has(msg.id) && ['event', 'error', 'exec_result', 'tool_result'].includes(msg.type)) return;
     const waiter = pending.get(msg.id);
     if (!waiter || !['event', 'error', 'exec_result', 'tool_result'].includes(msg.type)) { fail(`认不出的消息：${String(msg.type).slice(0, 40)}`); return; }
@@ -70,6 +84,14 @@ export function createBridge({ input, output }) {
     redact: (s) => { if (typeof s === 'string' && s.length >= 8) secrets.push(s); },
     /** 外壳叫停时做什么（只有桌面版设）；SIGTERM 也走这里 */
     onStop: (f) => { onStop = f; },
+    /** 用户中途补的话交给谁（runHosted 在一轮里挂上收件箱，收尾摘掉）；返回 true = 收下了 */
+    onSay: (f) => {
+      onSay = f;
+      // 挂上时把先到的交进去；摘掉（这一轮收尾）之后再来的一律不收
+      const pending = early || [];
+      early = null;
+      if (f) for (const t of pending) f(t);
+    },
     requestStop: stop,
     nextRun: () => new Promise((resolve) => { onRun = resolve; }),
     /** 和 Api.stream 一样的样子：事件一个个交给 onEvent，done 之后返回；出错抛 ApiError（循环据此决定重不重试） */
@@ -195,11 +217,18 @@ async function desktopModel(api, wanted, signal) {
 
 /** 跑一轮：run 消息 → 循环 → result。返回 result（测试直接调） */
 export async function runHosted(bridge, run, { detectBox = detectSandbox } = {}) {
+  // 干活中途补充（第一百五十二轮，docs/steer-plan.md 第 3 步）：这一轮的收件箱，最先挂上。run 里带来的是循环起来之前用户就补了的（后端收着、交过来）；
+  // 之后的经 say 来。模型读到时记一步（回答里按顺序看得见）并告诉后端读到了哪几句原话；收尾没读到的放进 result.leftover 交回
+  const inbox = new Inbox();
+  for (const t of Array.isArray(run.steer) ? run.steer : []) inbox.push(String(t ?? ''));
+  if (typeof bridge.onSay === 'function') bridge.onSay((t) => inbox.push(t));
   let desktop = null;
   try {
     desktop = desktopTarget(run);
   } catch (e) {
-    return { type: 'result', text: '', conclusion: String(e.message || e), context: '', drafts: [], writeCalls: 0, usage: { prompt: 0, completion: 0, cached: 0 }, rounds: 0, aborted: false, error: String(e.message || e) };
+    if (typeof bridge.onSay === 'function') bridge.onSay(null);
+    return { type: 'result', text: '', conclusion: String(e.message || e), context: '', drafts: [], writeCalls: 0, usage: { prompt: 0, completion: 0, cached: 0 }, rounds: 0, aborted: false, error: String(e.message || e),
+      leftover: inbox.close() };
   }
   if (desktop) bridge.redact(desktop.token);
   const network = typeof run.sandboxNetwork === 'string' ? run.sandboxNetwork : 'off';
@@ -278,6 +307,10 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
   // 外壳叫停（桌面版）：和到点一样中断，照实交 result。后端起的那一份、测试里的假桥没有这个方法
   let stopped = false;
   if (typeof bridge.onStop === 'function') bridge.onStop(() => { stopped = true; controller.abort(); });
+  ctx.onSteer = (items) => {
+    for (const t of items) stepLog.steer(t);
+    bridge.send({ type: 'steered', texts: items });
+  };
   let error = null;
   let reviewed = null;
   let turn = null;
@@ -295,10 +328,11 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
     if (lock && lock.busy) {
       if (timer) clearTimeout(timer);
       if (typeof bridge.onStop === 'function') bridge.onStop(null);
+      if (typeof bridge.onSay === 'function') bridge.onSay(null);
       const said = lock.busy.who === 'app' ? '这段会话在应用里正在跑一轮' : '这段会话在命令行里正在跑一轮';
       const busy = `${said}，等它说完再发（这一句没发出去，什么都没改）。`;
       return { type: 'result', text: '', conclusion: busy, context: '', drafts: [], writeCalls: 0, usage: { prompt: 0, completion: 0, cached: 0 },
-        rounds: 0, aborted: false, error: busy, busy: true };
+        rounds: 0, aborted: false, error: busy, busy: true, leftover: inbox.close() };
     }
     if (lock) {
       try { opened = openAppSession(local.root, sessionId, run.history); } catch (e) { ui.note(`（会话记录打不开，这一轮不记：${e.message}）`); }
@@ -326,7 +360,7 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
       // 审查的结论放回会话（和命令行的 /review 一样），之后接着说「修第 1 条」才接得上
       if (ctx.store) recordExchange(ctx, String(run.message || '/review'), reviewed);
     }
-    else turn = await runTurn(ctx, command === 'init' ? initPrompt(fs.existsSync(path.join(local.root, 'ZHIQU.md'))) : String(run.message || ''), { signal: controller.signal });
+    else turn = await runTurn(ctx, command === 'init' ? initPrompt(fs.existsSync(path.join(local.root, 'ZHIQU.md'))) : String(run.message || ''), { signal: controller.signal, inbox });
   } catch (e) {
     // 桌面版的令牌失效（过期 / 撤销）：命令行那句「请运行 zhiqu login」在这里没用
     error = desktop && e && e.auth ? '本机代码助手的登录令牌失效了（过期或被撤销），重新发一次就会换一张新的。' : String((e && e.message) || e);
@@ -335,6 +369,7 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
   } finally {
     if (timer) clearTimeout(timer);
     if (typeof bridge.onStop === 'function') bridge.onStop(null);
+    if (typeof bridge.onSay === 'function') bridge.onSay(null);
     if (lock && lock.release) lock.release();
     // 后台命令随这一轮收掉（桌面版：这个进程交完结果就退，留下的就没人管了；后端那一份由后端收）
     if (desktop && local.jobs) local.jobs.stopAll();
@@ -361,8 +396,10 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
     conclusion ? `【代码 agent 的结论】\n${conclusion}` : ''].filter(Boolean).join('\n\n');
   // 调过几次写文件的工具（不管成没成）：后端据此决定最终回答能不能说「这一轮没写成」
   const writeCalls = ctx.messages.reduce((n, m) => n + (m.role === 'assistant' ? (m.tool_calls || []).filter((c) => ['write_file', 'edit_file', 'apply_patch'].includes(c.function.name)).length : 0), 0);
+  // 没读到的补充（/review、/init 不跑循环的那几种、最后一刻才到的、被停下的）：原话交回，对面当下一句
+  const leftover = inbox.close();
   return { type: 'result', text, conclusion, context, drafts: local.draftList(), writeCalls, usage: ctx.usage,
-    rounds,
+    rounds, leftover,
     aborted: controller.signal.aborted, error, ...(stopped ? { stopped: true } : {}) };
 }
 

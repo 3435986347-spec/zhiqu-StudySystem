@@ -61,12 +61,15 @@ class AiReattachTest {
     @DisplayName("「立即」是补充信息，不是打断这一轮")
     void 立即不是打断() throws IOException {
         String js = page();
+        // 第一百五十二轮起发 /say 的是 steerItem（生成中按发送、排队条的「立即补充」都走它），sendQueuedNow 交给它
         String now = SourceText.functionBody(js, "function sendQueuedNow(i)");
-        assertTrue(now.contains("/ai/runs/") && now.contains("/say"),
-                "「立即」没有走补充信息的接口");
+        assertTrue(now.contains("steerItem(item)"), "「立即补充」没有走补充那一条路");
         assertFalse(now.contains(".abort("),
                 "「立即」又在打断这一轮了 —— 用户看到的是半截回答当场消失");
-        assertTrue(now.contains("delivered === 'current'"), "没有区分「补进去了」和「只能等下一轮」");
+        String say = SourceText.functionBody(js, "function steerItem(item)");
+        assertTrue(say.contains("/ai/runs/") && say.contains("/say"), "补充没有走补充信息的接口");
+        assertFalse(say.contains(".abort("), "补充在打断这一轮");
+        assertTrue(say.contains("delivered === 'current'"), "没有区分「补进去了」和「只能等下一轮」");
     }
 
     @Test

@@ -69,7 +69,7 @@ test('确认提问时 Ctrl+D：按不同意算；之后这一轮照常收尾，�
 test('连按 Ctrl+C 想让它停下：第一下停下这一轮，紧跟着的几下不算退出；已经在停了不重复打「已中断」', () => {
   const lines = [];
   let closed = 0;
-  const ui = { line: (t) => lines.push(t.trim()), close: () => { closed += 1; }, cancelQuestion: () => {}, unqueue: () => {}, paint: { yellow: (t) => t, dim: (t) => t } };
+  const ui = { line: (t) => lines.push(t.trim()), close: () => { closed += 1; }, cancelQuestion: () => {}, reclaimSteers: () => {}, unqueue: () => {}, paint: { yellow: (t) => t, dim: (t) => t } };
   let now = 1000;
   let running = new AbortController();
   const onCtrlC = interruptHandler(ui, () => running, () => now);
@@ -89,7 +89,7 @@ test('连按 Ctrl+C 想让它停下：第一下停下这一轮，紧跟着的几
 test('空闲时按一下提示、隔很久再按一下还是提示（不是退出）', () => {
   const lines = [];
   let closed = 0;
-  const ui = { line: (t) => lines.push(t.trim()), close: () => { closed += 1; }, cancelQuestion: () => {}, unqueue: () => {}, paint: { yellow: (t) => t, dim: (t) => t } };
+  const ui = { line: (t) => lines.push(t.trim()), close: () => { closed += 1; }, cancelQuestion: () => {}, reclaimSteers: () => {}, unqueue: () => {}, paint: { yellow: (t) => t, dim: (t) => t } };
   let now = 1000;
   const onCtrlC = interruptHandler(ui, () => null, () => now);
   onCtrlC();

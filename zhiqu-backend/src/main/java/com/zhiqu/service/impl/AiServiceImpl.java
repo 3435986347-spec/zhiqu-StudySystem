@@ -40,6 +40,7 @@ import org.springframework.context.annotation.Lazy;
 import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.CodeContextPrompt;
 import com.zhiqu.service.ai.CodeWorkspaceAgent;
+import com.zhiqu.service.ai.SteerPort;
 import com.zhiqu.service.ai.TraceSteps;
 import com.zhiqu.service.workspace.ArtifactFiles;
 import com.zhiqu.service.ai.AssistantTaskContext;
@@ -1067,13 +1068,52 @@ public class AiServiceImpl implements AiService {
         /** 最终写作是否已经动笔。动了笔再补话，这一次模型调用是看不到的。 */
         private boolean finalWriterStarted;
 
-        /** @return true = 收下了、模型下一次调用能看到；false = 已经动笔了，只能等下一轮 */
-        private synchronized boolean inject(String text) {
-            if (finalWriterStarted || text == null || text.isBlank()) {
+        /**
+         * 代码 agent 正在跑时补充递给宿主的口子（第一百五十二轮，docs/steer-plan.md 第 3 步）。原来补的话只有最终写作用得上，
+         * 而代码模式的最终回答是 agent 自己的结论、不再调模型 —— 补进来的话一律没用上。
+         */
+        private SteerPort codePort;
+
+        /**
+         * @return true = 收下了（代码 agent 在跑：宿主收进了它的收件箱，跑完当前这一步就读到；否则最终写作时并进去）；
+         *         false = 已经动笔了 / 宿主在收尾，只能等下一轮
+         */
+        private boolean inject(String text) {
+            if (text == null || text.isBlank()) {
                 return false;
             }
-            injected.add(text.trim());
-            return true;
+            SteerPort port;
+            synchronized (this) {
+                if (finalWriterStarted) {
+                    return false;
+                }
+                port = codePort;
+                if (port == null) {
+                    injected.add(text.trim());
+                    return true;
+                }
+            }
+            // 锁外等宿主的回音：读宿主输出的那个线程要交回音、要发事件，不能被这里攥着的锁卡住
+            return port.say(text.trim());
+        }
+
+        /** 代码 agent 开跑前：已经收着的补充交给口子（随 run 一起给宿主），之后的补充走口子 */
+        private synchronized SteerPort openCodePort() {
+            codePort = new SteerPort(new ArrayList<>(injected));
+            injected.clear();
+            return codePort;
+        }
+
+        /** 代码 agent 跑完：口子关上，谁都没收走的放回来（排在前面），交给最终回答那一步 */
+        private void closeCodePort(SteerPort port) {
+            port.finish(List.of());
+            List<String> back = port.unconsumed();
+            synchronized (this) {
+                if (codePort == port) {
+                    codePort = null;
+                }
+                injected.addAll(0, back);
+            }
         }
 
         /** 取走待补的话，并把「已经动笔」这个闸门关上（之后 inject 一律返回 false）。 */
@@ -1653,23 +1693,36 @@ public class AiServiceImpl implements AiService {
             }
             Long conversationId = s.assistantMessage == null ? null : s.assistantMessage.getConversationId();
             aiWorkspaceService.prepareArtifactSpace(s.userId, conversationId);
-            CodeWorkspaceAgent.Result codeResult = codeWorkspaceAgent.run(s.config, s.userId, conversationId, s.limitedMessage,
-                    chatHistory, s.contextOptions, ContextBudget.forWindow(s.config.getContextWindowTokens()), s.reasoningMode,
-                    note -> {
-                        // 回答里按顺序列出的一步（第一百二十七轮）：单独一个事件、记进这一轮的步骤（收尾时存库）
-                        if (note.get("trace") instanceof Map<?, ?> traced) {
-                            @SuppressWarnings("unchecked") Map<String, Object> step = (Map<String, Object>) traced;
-                            emitTraceStep(ctx, s, step);
-                            return;
-                        }
-                        Map<String, Object> payload = new LinkedHashMap<>();
-                        payload.put("requestId", s.requestId);
-                        payload.put("agentRunId", s.agentRun.getId());
-                        payload.put("stepId", s.codeAgentStep == null ? null : s.codeAgentStep.getId());
-                        payload.put("agentType", "CODE_AGENT");
-                        payload.putAll(note);
-                        ctx.emit("agent.step.note", payload);
-                    });
+            // 用户干活中途补的话（第一百五十二轮）：这一段由宿主收，跑完当前这一步就读到
+            SteerPort steer = s.openCodePort();
+            CodeWorkspaceAgent.Result codeResult;
+            try {
+                codeResult = codeWorkspaceAgent.run(s.config, s.userId, conversationId, s.limitedMessage,
+                        chatHistory, s.contextOptions, ContextBudget.forWindow(s.config.getContextWindowTokens()), s.reasoningMode,
+                        note -> {
+                            // 模型读到了这几句补充（原话）：页面把它们从「待送达」里拿掉
+                            if ("steered".equals(note.get("phase"))) {
+                                ctx.emit("message.steer.delivered", Map.of("texts", note.get("texts")));
+                                return;
+                            }
+                            // 回答里按顺序列出的一步（第一百二十七轮）：单独一个事件、记进这一轮的步骤（收尾时存库）
+                            if (note.get("trace") instanceof Map<?, ?> traced) {
+                                @SuppressWarnings("unchecked") Map<String, Object> step = (Map<String, Object>) traced;
+                                emitTraceStep(ctx, s, step);
+                                return;
+                            }
+                            Map<String, Object> payload = new LinkedHashMap<>();
+                            payload.put("requestId", s.requestId);
+                            payload.put("agentRunId", s.agentRun.getId());
+                            payload.put("stepId", s.codeAgentStep == null ? null : s.codeAgentStep.getId());
+                            payload.put("agentType", "CODE_AGENT");
+                            payload.putAll(note);
+                            ctx.emit("agent.step.note", payload);
+                        }, steer);
+            } finally {
+                // 宿主没读到的、宿主没起来时收着的：放回去，最终回答那一步用得上就用，用不上就交回页面
+                s.closeCodePort(steer);
+            }
             s.codeContext = codeResult.context();
             s.codeConclusion = codeResult.conclusion();
             s.codeDrafts = codeResult.drafts();
@@ -1835,10 +1888,9 @@ public class AiServiceImpl implements AiService {
                 String text = limitRawMarkdown(s.codeConclusion, REPLY_MAX_LENGTH);
                 s.streamedReply.append(text);
                 if (!injected.isEmpty()) {
-                    // 代码模式的回答是 agent 的结论，不是再调一次模型写的 —— 补进来的话这一轮用不上，说清楚，
-                    // 别让用户以为模型看过了
-                    ctx.emit("message.notice", Map.of("level", "warn",
-                            "message", "你补充的话没赶上这一轮（代码模式的回答已经写好了），它不会自动重发。"));
+                    // 代码模式的回答是 agent 的结论，不是再调一次模型写的 —— 宿主收尾之后才到的补充这一轮用不上。
+                    // 交回页面：排到最前面，这一轮结束立刻发（第一百五十二轮；原来只说一句「不会自动重发」，话就没了）
+                    ctx.emit("message.steer.returned", Map.of("texts", injected));
                 }
                 ctx.emit("message.delta", Map.of(
                         "requestId", s.requestId,
@@ -1869,6 +1921,10 @@ public class AiServiceImpl implements AiService {
             for (String extra : injected) {
                 messages.add(Map.of("role", "user", "content",
                         "（用户在生成过程中补充的信息，请和上面的问题一并考虑）\n" + extra));
+            }
+            if (!injected.isEmpty()) {
+                // 这一次调用看得到它们了：页面从「待送达」里拿掉
+                ctx.emit("message.steer.delivered", Map.of("texts", injected));
             }
             List<Long> wikiPendingIds = confirmedWikiPatchIds(s);
             if (s.wikiAgent != null || !wikiPendingIds.isEmpty()) {

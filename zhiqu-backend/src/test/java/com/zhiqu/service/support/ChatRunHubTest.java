@@ -165,6 +165,29 @@ class ChatRunHubTest {
     }
 
     @Test
+    void 补充等回音时不攥着这一轮的锁_另一个线程照样能发事件() throws Exception {
+        // 代码模式（第一百五十二轮）：inject 要等宿主回音，而回音由读宿主输出的线程交来 —— 那个线程同时还要 emit 事件。
+        // 原来 inject 是 synchronized、emit 也是：攥着锁等就是两边互等到超时
+        java.util.concurrent.CountDownLatch emitted = new java.util.concurrent.CountDownLatch(1);
+        ChatRunHub.LiveRun[] holder = new ChatRunHub.LiveRun[1];
+        holder[0] = hub.open(15L, text -> {
+            Thread reader = new Thread(() -> {
+                holder[0].emit("trace.step", Map.of("id", "s1"));
+                emitted.countDown();
+            });
+            reader.start();
+            try {
+                return emitted.await(2, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                return false;
+            }
+        });
+        long t0 = System.nanoTime();
+        assertEquals("current", hub.say(15L, "补一句"));
+        assertTrue((System.nanoTime() - t0) / 1_000_000 < 1500, "等到超时才回：inject 攥着锁，发事件的线程进不来");
+    }
+
+    @Test
     void 跑完之后的补充只能算下一轮() {
         ChatRunHub.LiveRun run = hub.open(13L, text -> true);
         run.finish();

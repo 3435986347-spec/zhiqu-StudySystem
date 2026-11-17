@@ -94,7 +94,11 @@ export class Ui {
     this.pasting = null;     // 括号粘贴进行中攒的文字
     this.pastes = new Map(); // 占位编号 → 原文
     this.pasteSeq = 0;
-    this.burst = null;       // 同一批到达的几行（终端不支持括号粘贴时的兜底）：{ waiter, lines } 或 { queued: true }
+    this.burst = null;       // 同一批到达的几行（终端不支持括号粘贴时的兜底）：{ waiter, lines } 或 { queued: true } 或 { steer: true, lines }
+    // 干活中途补充（第一百五十一轮，docs/steer-plan.md 第 2 步）：一轮在跑、调用方给了 steerTo 时，回车 = 补充给这一轮，Tab = 排到下一轮。
+    // steerTo(text) 返回 false（这一轮在收尾，箱子关了）就退回排队。steering：已经补进去、模型还没读到的（显示在输入框上方）
+    this.steerTo = null;
+    this.steering = [];
     this.framing = false;
     const self = this;
     this.status = {
@@ -135,6 +139,7 @@ export class Ui {
       if (this.closed) return;
       if (this.pasteKey(s, key || {})) return;
       if (this.menuKey(key || {})) return;
+      if (this.liveKey(key || {})) return;
       for (const listener of originals) listener.call(input, s, key);
       this.afterKey();
     });
@@ -353,7 +358,10 @@ export class Ui {
         w.resolve(line);
         return;
       }
-      if (line.trim() || (this.burst && this.burst.queued)) this.enqueue(line);
+      // 回车 = 补充给这一轮（命令和同一批里跟在排队后面的那几行照旧排队）
+      const steerable = this.steerTo && !(this.burst && this.burst.queued) && !line.trim().startsWith('/');
+      if (steerable && (line.trim() || (this.burst && this.burst.steer))) this.steer(line);
+      else if (line.trim() || (this.burst && this.burst.queued)) this.enqueue(line);
       this.drawLive();
       return;
     }
@@ -369,6 +377,67 @@ export class Ui {
       this.burst = null;
       b.waiter.resolve(b.lines.join('\n'));
     });
+  }
+
+  /**
+   * 补充给这一轮。同一批到达的几行（终端不支持括号粘贴时粘进来的）合成一句再交：攒到下一个 setImmediate。
+   * 交不进去（这一轮在收尾）就排队，成为下一句。
+   */
+  steer(line) {
+    if (this.burst && this.burst.steer) { this.burst.lines.push(line); return; }
+    const mark = { steer: true, lines: [line] };
+    this.burst = mark;
+    this.steering.push(mark);
+    setImmediate(() => {
+      if (this.burst === mark) this.burst = null;
+      const text = mark.lines.join('\n').trim();
+      mark.lines = [text];
+      const accepted = Boolean(text) && Boolean(this.steerTo) && this.steerTo(text) !== false;
+      if (!accepted) {
+        this.steering.splice(this.steering.indexOf(mark), 1);
+        if (text) this.queue.push(text);
+      } else {
+        mark.sent = true;
+      }
+      if (this.live) this.frame(() => { this.eraseLive(); this.drawLive(); });
+    });
+  }
+
+  /** 模型读到了（循环把它们倒进了上下文）：从输入框上方拿掉，在输出里留一行「↳ 补充：…」 */
+  steerDelivered(items) {
+    this.frame(() => {
+      for (const text of items) {
+        const at = this.steering.findIndex((m) => m.sent);
+        if (at >= 0) this.steering.splice(at, 1);
+        const first = String(text).split('\n')[0];
+        this.writeNow(`${this.paint.dim('↳ 补充：')}${termSafe(first.length > 120 ? `${first.slice(0, 120)}…` : first, { singleLine: true })}${String(text).includes('\n') ? this.paint.dim('（多行）') : ''}\n`);
+      }
+    });
+  }
+
+  /**
+   * 这一轮结束（或被停下）了还没读到的补充：放到排队的最前面。正常结束时它们就是下一句（用户定的：没赶上就接着发）；
+   * Ctrl+C 时调用方紧接着 unqueue，连同排队的一起放回输入框、不发。之后回车就是排队（不再补给这一轮）。
+   */
+  reclaimSteers() {
+    this.steerTo = null;
+    const left = this.steering.splice(0).map((m) => m.lines.join('\n').trim()).filter(Boolean);
+    if (this.burst && this.burst.steer) this.burst = null;
+    if (left.length) this.queue.unshift(...left);
+  }
+
+  /** 干活时的 Tab：把正在打的这句排到下一轮（不补给这一轮）。菜单开着时 Tab 是补全，轮不到这里 */
+  liveKey(key) {
+    if (key.name !== 'tab' || !this.live || this.live.question) return false;
+    const line = this.expandPastes(this.rl.line || '');
+    if (!line.trim()) return true;   // 空的：吞掉，不往输入行里插一个制表符
+    this.frame(() => {
+      this.setLine('');
+      this.queue.push(line);
+      this.eraseLive();
+      this.drawLive();
+    });
+    return true;
   }
 
   /** 排队；同一批到达的几行并进上一条。 */
@@ -445,7 +514,8 @@ export class Ui {
         });
       } else if (this.interactive) {
         this.rl.setPrompt(prompt || this.prompt);
-        this.rl.prompt();
+        // 保留光标（第一百五十一轮）：Ctrl+C 放回输入框的字（排队的、没送到的补充）光标原来回到行首，接着打的字跑到前面去
+        this.rl.prompt(true);
       } else if (prompt) {
         this.output.write(prompt);
       }
@@ -561,6 +631,8 @@ export class Ui {
     const lines = [];
     if (l.partial) lines.push(l.partial);
     // 多行的（粘贴的）只显示一行摘要：原文里的换行会把活动区撑乱（擦的时候按一行算）
+    const brief = (q) => (q.includes('\n') ? briefInput(q) : q.length > 60 ? `${q.slice(0, 60)}…` : q);
+    if (this.live) for (const m of this.steering) lines.push(this.paint.dim(`↳ 补充（下一步送到）：${brief(m.lines.join('\n'))}`));
     if (this.live) for (const q of this.queue) lines.push(this.paint.dim(`⋯ 排队：${q.includes('\n') ? briefInput(q) : q.length > 60 ? `${q.slice(0, 60)}…` : q}`));
     if (l.status) lines.push(l.status);
     return lines.concat(this.menuLines());

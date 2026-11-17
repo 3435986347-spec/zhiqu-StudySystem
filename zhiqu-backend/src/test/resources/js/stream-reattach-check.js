@@ -85,13 +85,7 @@ function turn() {
   assert.equal(store.getItem(runningStorageKey(5)), null, 'stream.gone 之后记号还在，页面会一直等');
 }
 
-// 5) 「立即」补进来的话要看得见
-{
-  const t = turn();
-  toasts.length = 0;
-  t.apply('message.injected', { text: '我用的是 Java 17' });
-  assert.ok(toasts.some((m) => m.includes('补充给这一轮')), '补充信息没有提示，用户会以为没发出去');
-}
+// 5) 中途补充（第一百五十二轮）：收下不等于读到 —— 真跑整页的那一段见 checkSteer
 
 // 6) 长任务的记号必须覆盖 15 分钟回答窗口；过期的仍清掉
 {
@@ -364,7 +358,60 @@ async function checkRaces() {
     desktopInfo: { message: '新问题', folder: '/test' } }, true);
   assert.equal(p.ctx.runningTurn().result, undefined, '新任务继承旧终态，会把新问题和旧结论配对存档');
 }
+// 中途补充（第一百五十二轮，docs/steer-plan.md 第 3 步）：生成中按发送 = 补充给这一轮。
+// 排队条里先是「待送达」，读到了（steer.delivered）才拿掉；用不上的（steer.returned）、接不了的（next）变回排队；
+// 这一轮结束还写着「待送达」的照顺序发出去。真跑发布的 sendAiMessage / makeStreamApplier / pumpSendQueue。
+async function checkSteer() {
+  const h = harness();
+  const toasts = [];
+  h.sh.toast = (m) => toasts.push(m); h.ctx.bind(h.sh);   // bind 只是解构：换了 toast 要重新 bind 一次才算数
+  const posts = [];
+  let reply = { delivered: 'current' };
+  h.sh.api.post = async (url, body) => { posts.push({ url, body }); return reply; };
+  let apply, finish;
+  const sent = [];
+  h.ctx.streamAiChat = async (body, handlers) => { sent.push(body); apply = handlers; await new Promise((r) => { finish = r; }); };
+  h.input.value = '写个脚本';
+  const first = h.ctx.sendAiMessage();
+  apply('stream.start', { agentRunId: 701, assistantMessageId: 9301, userMessageId: 9300 });
+
+  h.input.value = '用 Python';
+  await h.ctx.sendAiMessage();
+  await settle();
+  assert.deepEqual(posts.map((p) => [p.url, p.body.text]), [['/ai/runs/701/say', '用 Python']], '生成中发送没有补给这一轮（还在排队）');
+  assert.equal(h.input.value, '', '补出去的字还留在输入框');
+  assert.deepEqual(h.s.sendQueue.map((q) => [q.text, q.steer]), [['用 Python', 'pending']], '收下了要显示「待送达」，不是消失也不是排队');
+
+  apply('message.steer.delivered', { texts: ['用 Python'] });
+  assert.deepEqual(h.s.sendQueue, [], '模型读到了，「待送达」那行还在');
+  assert.ok(toasts.some((m) => m.includes('已读到')));
+  toasts.length = 0;
+  apply('message.steer.delivered', { texts: ['用 Python'] });   // 重放（接回来时从头放一遍）：已经处理过的不再提示
+  assert.equal(toasts.length, 0, '重放的送达事件又提示了一遍');
+
+  h.input.value = '再加个测试';
+  await h.ctx.sendAiMessage(); await settle();
+  apply('message.steer.returned', { texts: ['再加个测试'] });
+  assert.deepEqual(h.s.sendQueue.map((q) => [q.text, q.steer]), [['再加个测试', undefined]], '交回的要变回排队');
+
+  reply = { delivered: 'next' };
+  h.input.value = '还有文档';
+  await h.ctx.sendAiMessage(); await settle();
+  assert.deepEqual(h.s.sendQueue.map((q) => [q.text, q.steer]), [['再加个测试', undefined], ['还有文档', undefined]], '接不了（在写最终回答）的要变回排队');
+
+  // 一条收下了、但送达 / 交回的事件都没赶上（刷新过）：这一轮结束时变回排队，照顺序发
+  reply = { delivered: 'current' };
+  h.input.value = '最后一句';
+  await h.ctx.sendAiMessage(); await settle();
+  assert.equal(h.s.sendQueue.at(-1).steer, 'pending');
+  apply('done', { assistantMessageId: 9301 }); finish(); await first; await settle();
+  assert.equal(sent.length, 2, '这一轮结束没有接着发排队的');
+  assert.equal(sent[1].message, '再加个测试', '发出去的不是排在最前面的那句');
+  assert.deepEqual(h.s.sendQueue.map((q) => [q.text, q.steer]), [['还有文档', undefined], ['最后一句', undefined]], '没送到的「待送达」没有变回排队');
+  apply('done', {}); finish();
+}
 (async () => {
+  await checkSteer();
   await checkNavigation(); await checkReplay(); await checkHeaderTimeout();
   await checkDesktopReturn(); await checkQueueIsolation(); await checkRaces(); await checkLocalWait();
   console.log('ALL-GREEN');

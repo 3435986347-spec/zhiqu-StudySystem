@@ -44,6 +44,7 @@ export function slashHelp(commands = SLASH_COMMANDS) {
     if (c.name === '/goal') lines.push(`${'/goal'.padEnd(width)}看当前目标；/goal continue 接着追；/goal clear 放下`);
   }
   lines.push('输入 / 会弹出命令菜单：↑↓ 选、回车执行、Tab 补全后接着打参数、Esc 关掉。');
+  lines.push('它干活时接着打字：回车 = 补充给这一轮（跑完当前这一步就读到），Tab = 排到下一轮；Ctrl+C 停下，没送到的放回输入框。');
   lines.push('行尾加 \\ 可以换行接着输入。Ctrl+C 打断正在做的事。');
   return lines.join('\n');
 }

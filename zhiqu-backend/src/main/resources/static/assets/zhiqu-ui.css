@@ -1635,6 +1635,7 @@ html.zq-desktop [data-zq-download]{display:none !important;}
 .zq-send-queue-now{border:none;background:transparent;color:var(--zq-primary);cursor:pointer;font:inherit;padding:0 4px;}
 .zq-send-queue-del{border:none;background:transparent;color:var(--zq-text3);cursor:pointer;font:inherit;padding:0 2px;display:inline-flex;align-items:center;}
 .zq-send-queue-del svg{width:12px;height:12px;}
+.zq-send-queue-row[data-state="steer"]{border-style:dashed;color:var(--zq-text3);}
 
 @media (max-width: 760px){
   /* 后台四页（第七十七轮）：六个数两个一排、两栏变一栏；账号一行叠成几行（不横着滚）；共享计划一列 */

@@ -13,11 +13,12 @@
 //     list / search  { items: [行], omitted }
 //     thinking { chars, text?, omitted? }   text 是思考原文（遮过密钥，最多 THINKING_KEEP 字），omitted = 没存下的字数
 //     note   没有 detail。调工具前的一句判断（第一百三十轮）：title 是那一句，点不开
+//     steer  没有 detail。用户干活中途补的一句被模型读到了（第一百五十二轮）：target 是那句话（截到 TARGET_CHARS），排在它被读到的位置
 //   这里出的东西会进库、会给人看：每一样都有上限，超了说省掉了多少；命令输出、文件内容是不可信的 —— 只存字，前端一律转义。
 import { hunks, stat } from './render/diff.js';
 
 export const KINDS = Object.freeze(['thinking', 'list', 'read', 'search', 'run', 'create', 'edit', 'patch', 'delete',
-  'web', 'retrieve', 'tasks', 'wiki', 'plan', 'memory', 'check', 'agent', 'todo', 'note', 'other']);
+  'web', 'retrieve', 'tasks', 'wiki', 'plan', 'memory', 'check', 'agent', 'todo', 'note', 'steer', 'other']);
 
 /** 调工具前那一句判断最多留这么多字（和系统提示里说的一样；再长的截断）。后端 TraceSteps 的标题上限也是这个数 */
 export const NOTE_CHARS = 40;
@@ -118,6 +119,13 @@ export class StepLog {
     const shown = judgmentText(text);
     if (!shown) return;
     this.emit({ id: `s${++this.seq}`, kind: 'note', title: shown, target: '', summary: '', status: 'ok' });
+  }
+
+  /** 用户干活中途补的一句，模型这时候读到了（第一百五十二轮）。原话放 target：后端按 500 字截，页面原样转义 */
+  steer(text) {
+    const said = String(text || '').trim();
+    if (!said) return;
+    this.emit({ id: `s${++this.seq}`, kind: 'steer', title: '你补充', target: said.length > 500 ? `${said.slice(0, 499)}…` : said, summary: '', status: 'ok' });
   }
 
   /** 一段思考（模型这一次在想、没出字）：字数、用了多久 */

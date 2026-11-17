@@ -10,6 +10,7 @@
 //   - <b>用户说过的原话逐字保留</b>在摘要消息后面（有预算，超了先丢最早的，并且说出来）。摘要是转述，
 //     「但 localhost 的不要动」这种约束在转述里最容易丢；再压一次时，上一次留下的原话接着带上。
 import { generatedOrigin, SUMMARY_PREFIX } from './origins.js';
+import { steerText } from './steer.js';
 import { patchFiles } from './tools/patch.js';
 
 export const THRESHOLD = 0.8;
@@ -326,7 +327,9 @@ export function userQuotes(messages, window) {
     if (m.role !== 'user' || typeof m.content !== 'string') continue;
     if (m.content.startsWith(SUMMARY_PREFIX)) { all.push(...splitQuotes(m.content).quotes); continue; }
     if (generatedOrigin(m.content)) continue;
-    all.push(clip(m.content));
+    // 干活中途补的话也是用户的原话（第一百五十轮）：去掉给模型看的那句开头，标一下
+    const steer = steerText(m.content);
+    all.push(clip(steer == null ? m.content : `（干活中途补充）${steer}`));
   }
   if (!all.length) return '';
   const budget = window * QUOTES_SHARE;

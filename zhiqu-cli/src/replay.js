@@ -9,6 +9,7 @@
 import { describeCall, parseArgs, QUIET_TOOLS } from './agent.js';
 import { judgmentText } from './steps.js';
 import { generatedOrigin } from './origins.js';
+import { steerText } from './steer.js';
 
 const RESULT_CHARS = 120;
 
@@ -67,6 +68,12 @@ export function replayTranscript(ui, entries, { verbose = false, lastTurns = REP
       const origin = originOf(e);
       if (origin === 'system') continue;
       const text = textOf(m.content);
+      // 干活中途补的话（第一百五十轮）：不是新的一句，挂在这一轮里显示
+      const steer = steerText(text);
+      if (origin === 'steer' || steer != null) {
+        ui.note(`↳ 补充：${firstLine(steer ?? text)}`);
+        continue;
+      }
       if (origin === 'goal') {
         ui.note(`· 🎯 ${firstLine(text)}`);
         continue;

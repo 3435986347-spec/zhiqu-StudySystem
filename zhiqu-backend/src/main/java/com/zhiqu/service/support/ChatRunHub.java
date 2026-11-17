@@ -222,12 +222,21 @@ public class ChatRunHub {
             return Attach.FINISHED;
         }
 
-        /** 「立即」：把这句话补进这一轮的上下文。返回 true 表示模型下一次调用就能看到。 */
-        public synchronized boolean inject(String text) {
-            if (finished || turn == null) {
-                return false;
+        /**
+         * 「立即」：把这句话补进这一轮的上下文。返回 true 表示收下了。
+         *
+         * <p>锁里只取 turn，锁外交给它（第一百五十二轮）：代码模式下 turn.inject 要等宿主回音（最多几秒），
+         * 而读宿主输出的那个线程要经 {@link #emit} 发事件 —— 同一把锁，攥着它等就是两边互等到超时。
+         */
+        public boolean inject(String text) {
+            Turn target;
+            synchronized (this) {
+                if (finished || turn == null) {
+                    return false;
+                }
+                target = turn;
             }
-            return turn.inject(text);
+            return target.inject(text);
         }
 
         /** 这一轮结束了：收掉连接，留着缓冲等页面回来重放，过一会儿再清。 */
