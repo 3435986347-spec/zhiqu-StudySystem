@@ -92,10 +92,30 @@ ssh -t -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 "sudo mysql zhiqu_db -e \"U
 
 ## 桌面应用
 
-Mac 桌面应用（第一百二十五轮起）窗口里打开的就是这个网站，数据走网站的接口，不连这台的库 —— 主密钥、数据库密码不进任何安装包（`docs/desktop-remote-plan.md`）。
-安装包放在 `data/downloads`（`app.desktop-downloads-dir`），网页上「下载桌面版」从这里拿。
+两个平台的桌面应用现在都是**原生外壳打开这个网站**，数据走网站的接口，不连这台的库 —— 主密钥、数据库密码不进任何安装包（`docs/desktop-remote-plan.md`）：
 
-Windows 桌面应用还带着自己的后端：MySQL 只听本机、不开到公网，所以它连的是本机的库。
+- **macOS**：Swift + WKWebView（第一百二十五轮起），`.dmg`。
+- **Windows**：C# + WebView2（第一百五十七轮起），**单文件 `.exe`**，包里不带 Java / JRE / MySQL。
+  用户机器上有 .NET Framework 4.8 和 WebView2 运行时（Windows 10 / 11 都自带）就能双击运行。
+
+安装包放在 `data/downloads`（`app.desktop-downloads-dir`），网页上「下载桌面版」从这里拿**最新修改的那个**
+（macOS 认 `.dmg`，Windows 认 `.exe / .msi / .zip`）。文件名里的 `1.5.5` 会显示在页面上，所以版本号要写进文件名。
+
+传一个新的：
+
+```bash
+scp -i ~/.ssh/zhiqu_server 知趣象限-1.5.5-win-x64.exe ubuntu@134.175.110.207:incoming/
+ssh -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 'sudo mv ~/incoming/知趣象限-1.5.5-win-x64.exe /home/ubuntu/zhiqu-StudySystem/data/downloads/ && sudo chown zhiqu:zhiqu /home/ubuntu/zhiqu-StudySystem/data/downloads/知趣象限-1.5.5-win-x64.exe && sudo chmod 644 /home/ubuntu/zhiqu-StudySystem/data/downloads/知趣象限-1.5.5-win-x64.exe'
+```
+
+`data/downloads` 是 `zhiqu:zhiqu 750`，`ubuntu` 写不进去 —— 先传到自己家目录的 `incoming/`，再用 `sudo` 搬进去；
+搬完要是 `zhiqu` 的、644，后端才读得到。**不用重启后端**：每次列下载都现读目录。
+
+Windows 安装包没有代码签名（没有证书），下载后 SmartScreen 会拦一下（「更多信息 → 仍要运行」）。
+本机要验一下服务端发的确实是这一份：`curl -s https://zhiqustudy.com/api/desktop/downloads | ...` 里的 `sha256` 和 `sha256sum` 对得上就行。
+
+Windows 版还没有本机代码助手（macOS 第 129–131 轮那套 zqLocal 桥），所以桌面里的代码模式和网页一样只生成到产物；
+要在本机项目上用，还是命令行 `zhiqu`。
 
 ## 以后更新
 

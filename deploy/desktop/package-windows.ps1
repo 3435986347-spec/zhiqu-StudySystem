@@ -1,4 +1,4 @@
-# 把后端打成 Windows 桌面应用（.exe）。
+﻿# 把后端打成 Windows 桌面应用（.exe）。
 #
 # 只能在 Windows 上跑 —— jpackage 不做跨平台：Windows 安装包必须在 Windows 上、
 # 用带 jpackage 的 JDK 17 构建（macOS 上打不出 .exe）。

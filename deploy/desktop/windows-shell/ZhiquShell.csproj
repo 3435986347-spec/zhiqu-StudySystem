@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    知趣象限 —— Windows 原生外壳（WebView2）。
+
+    和 macOS 外壳（../macos-shell，Swift + WKWebView）是同一个形状：窗口里打开这个应用的网站
+    （默认 https://zhiqustudy.com），包里不带 Java、JRE、JAR，也不需要 MySQL —— 数据只在服务器上。
+    理由见 docs/desktop-remote-plan.md（2026-11-08 用户定的 A 方案）和那一份的第 5 步「Windows 也做原生窗口」。
+
+    为什么是 .NET Framework 4.8 而不是 .NET 8：
+    Windows 10 / 11 自带 4.8，WebView2 运行时又随 Edge 一起装（Evergreen），所以打出来的包只有几 MB，
+    用户不用先装 .NET 运行时。.NET 8 自包含版要多带 ~150MB 运行时，和「包里不带 Java」的理由正好相反。
+    代价是构建时要 Microsoft.NETFramework.ReferenceAssemblies（下面那个 PrivateAssets=all 的包）——
+    它只提供编译用的引用程序集，不进产物。
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ZhiquShell</AssemblyName>
+    <RootNamespace>Zhiqu.Desktop</RootNamespace>
+    <ApplicationIcon>..\icon\zhiqu.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- exe 的「属性 → 详细信息」里显示的这几项 -->
+    <AssemblyTitle>知趣象限</AssemblyTitle>
+    <Product>知趣象限</Product>
+    <Company>zhiqu</Company>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <!-- 绑定重定向：WebView2 的托管程序集带 NuGet 依赖，不生成的话运行时报「版本不匹配」 -->
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <!-- 构建目录不进包：publish 只带运行时真正需要的文件 -->
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WebView2 的 SDK：托管层 + WebView2Loader.dll（原生）。运行时不随包发，用系统上 Edge 带的 Evergreen 运行时 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" GeneratePathProperty="true" />
+    <!-- 只给编译用：这台机器上没装 .NET Framework 的开发包时，dotnet build 靠它拿到引用程序集 -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- 把托管程序集和上面的原生 loader 一起塞进一个 exe（FodyWeavers.xml） -->
+    <PackageReference Include="Costura.Fody" Version="5.7.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      WebView2Loader.dll 是原生 DLL，Costura 只认 costura64.<名字> 这种资源名，
+      所以从 NuGet 包里按 LogicalName 直接嵌进去（运行时它会解到临时目录并预先 LoadLibrary，
+      之后 WebView2 托管层按名字 P/Invoke 就找得到）。
+    -->
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-x64\native\WebView2Loader.dll">
+      <LogicalName>costura64.WebView2Loader.dll</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      窗口图标（标题栏、任务栏、Alt+Tab）也从设计稿来，和 exe 的资源图标是同一份 zhiqu.ico。
+      为什么还要嵌一份：WinForms 的 Form.Icon 默认是 System.Windows.Forms 自带的那个彩色方块图标
+      （第七十二轮换图标时漏了这一层的话，exe 在资源管理器里是对的、打开以后标题栏是 WinForms 的默认图标）。
+    -->
+    <EmbeddedResource Include="..\icon\zhiqu.ico">
+      <LogicalName>Zhiqu.Desktop.zhiqu.ico</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,8 @@
+<Weavers xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="FodyWeavers.xsd">
+  <!--
+    打成一个 exe（第一百五十七轮）：网页版「下载桌面版」发的是单个文件，用户下载下来双击就能用，
+    不用解压一个目录。Costura 把引用的托管程序集和 WebView2Loader.dll 嵌进 exe，运行时解到临时目录再加载。
+    调试符号不进包（客户用不到，多几 MB）。
+  -->
+  <Costura IncludeDebugSymbols="false" />
+</Weavers>

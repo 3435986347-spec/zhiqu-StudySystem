@@ -4,7 +4,12 @@
 数据只在服务器上：和网页版用同一个账号登录，就是同一份数据；断网时看不了（用户 2026-11-08 定的，见 `docs/desktop-remote-plan.md`）。
 包里不带 Java、JRE，也不需要 MySQL。比网页多的：系统通知、缩到桌面上的迷你番茄钟、文件选择和下载走系统的面板。
 
-**Windows** 现在还是老样子：包里带一个完整的后端（jpackage），连一个 MySQL，在默认浏览器里打开。原生窗口（WebView2）排在 macOS 的几步之后。
+**Windows**（第一百五十七轮起）：和 macOS 一样是原生窗口 —— C# + WebView2（`windows-shell/`），窗口里打开的也是网站，
+包里不带 Java、JRE、JAR，也不需要 MySQL。打出来是**一个 exe**（约 0.6MB），用户机器上有 .NET Framework 4.8 和
+WebView2 运行时（Windows 10 / 11 都自带）就能双击运行。本机代码助手还没接（见下面「已知现状」）。
+
+> 第一百五十七轮之前 Windows 走的是另一条路：jpackage 把整个 Java 后端打进安装包、连用户自己装的 MySQL，
+> 界面开在默认浏览器里（`package-windows.ps1`，留着作历史，不再发版）。
 
 ## 本机代码
 
@@ -50,22 +55,30 @@ NODE_BIN=/绝对路径/node-v22.23.2-darwin-arm64/bin/node bash deploy/desktop/p
 > 第一百二十五轮之前包里还有瘦 JAR + jlink 裁的 JRE + 启动加速的类归档（`~/.zhiqu/app`、`~/.zhiqu/cds`，共约 160MB）。
 > 装过旧版的，这两个目录可以删掉；`~/.zhiqu/application.yml`、本机的 MySQL 新版都不读了（旧数据用户定了不要，库留着不动）。
 
-**Windows —— `.exe`**：只能在 Windows 上打（jpackage 不做跨平台，macOS 上打不出 .exe）。
-在那台 Windows 机器上，装好 JDK 17（Temurin）并设好 `JAVA_HOME`，然后：
+**Windows —— 单个 `.exe`**：只能在 Windows 上打。和 macOS 那份一样，包里只有外壳，打开的是网站。
 
 ```powershell
 cd deploy\desktop
-.\package-windows.ps1            # 版本默认 1.0.0
+.\package-windows-native.ps1            # 版本默认 1.0.0；发版时写当前版本
 ```
 
-第一次打包会联网下载 Maven 依赖（之后走本地缓存）；`mvn` 或 `jpackage` 任何一步失败，脚本会带着退出码停下，
-不会打印「完成」。内置的 Java 运行时用 jpackage 的默认模块集（已实测包含 `jdk.charsets` 与 `jdk.crypto.ec`，
-不会出现 macOS 版踩过的中文乱码 / HTTPS 握手失败），所以比 macOS 版大一些（运行时约 130MB）。
+产物：`build\desktop-windows-native\知趣象限-<版本>-win-x64.exe`，一个文件，双击即运行。
+构建要 .NET SDK 8（`DOTNET_EXE` 指过去；编出来的是 .NET Framework 4.8，用户不用装 .NET）；
+第一次会联网取 NuGet（`Microsoft.Web.WebView2`、`Costura.Fody`），之后走本机缓存。
+托管程序集和 `WebView2Loader.dll` 由 Costura 嵌进 exe（`windows-shell/FodyWeavers.xml`），
+脚本会检查输出里真的没有剩下 dll，并试跑 3 秒确认起得来。
 
-装了 WiX Toolset 就出单文件安装程序 `知趣象限-1.0.0.exe`；没装则出一个免安装目录，
-里面的 `知趣象限.exe` 双击即运行。Windows 版双击后在**默认浏览器**里打开界面 —— 要做成
-和 macOS 一样的无边框原生窗口需要 WebView2 外壳（C#），单独做。固定端口（记住登录）、
-headless、图标这些修复 Windows 版都有。
+图标、窗口标题、记住窗口大小位置、站外链接交给系统浏览器、站内 `target=_blank` 留在窗口里、
+断网时说明 + 「重试」—— 这些都在 `windows-shell/ShellForm.cs` 里。要指到本机后端：
+
+```powershell
+set ZHIQU_DESKTOP_SERVER=http://127.0.0.1:8080                                  # 只这一次
+reg add HKCU\Software\zhiqu\desktop /v server /d http://127.0.0.1:8080          # 一直有效
+reg delete HKCU\Software\zhiqu\desktop /v server /f                             # 改回去
+```
+
+> 老的那条路（jpackage + 包里的 Java 后端 + 用户自己装的 MySQL，`package-windows.ps1`）要 JDK 17 和 `mvn`，
+> 装 WiX Toolset 才出单文件安装程序，否则出免安装目录；界面在默认浏览器里打开。留着备查，不再发版。
 
 ## 命令行 `zhiqu`
 
@@ -129,9 +142,10 @@ Windows 版桌面应用里装着一个完整的后端（Mac 版第一百二十�
 
 ## 已知现状
 
-- macOS 版是原生窗口（Swift + WKWebView），打开网站；**Windows 版仍在默认浏览器里打开**，原生窗口要 WebView2 外壳，单独做。
-- Mac 版断网时看不了数据（和网页一样）；本机代码要等本机代码助手（方案第 2、3 步），在那之前用命令行。
-- Windows 版**不含数据库**：第一次用要先有一个可连的 MySQL（本机或远程）。端口固定为 **47615**（不是 8080，也不是随机）：
-  「记住登录」要求 origin 稳定，而浏览器的本地存储按端口隔离。
-- 带后端的桌面版（现在只有 Windows 版）的上传目录都配成了 `~/.zhiqu/` 下的绝对路径（`application-desktop.yml`）：
-  macOS 旧版从 Finder / Dock 启动时工作目录是 `/`，相对路径指向只读的根目录，上传全部失败。
+- 两个平台都是原生窗口打开网站：macOS（Swift + WKWebView，第一百二十五轮）和 Windows（C# + WebView2，第一百五十七轮）。
+- 断网时看不了数据（和网页一样）。
+- **本机代码助手只在 macOS 上有了**（第一百二十九到一百三十一轮：包里的 node 跑命令行那一份，页面经 zqLocal 桥叫它）。
+  Windows 版还没接，所以 Windows 桌面里的代码模式和网页一样只生成到产物；要在本机项目上用，走命令行 `zhiqu`。
+- Windows 版没有系统通知、迷你番茄钟悬浮胶囊、应用自更新 —— macOS 那几样（第一百三十二轮）以后按需要补。
+- 只有 Windows 版会读到 `~/.zhiqu/application.yml`（旧的带后端那一版遗留的约定）；原生外壳不看这个文件，
+  打开哪个网站由 `ZHIQU_DESKTOP_SERVER` 或注册表 `HKCU\Software\zhiqu\desktop` 的 `server` 决定。
