@@ -10,7 +10,7 @@
 - **迷你番茄钟**：300×68 DIP、TopMost、不进任务栏、不抢焦点；主窗和迷你窗共享 WebView2 Environment、Cookie 与 localStorage。加载发布版 `mini.html`、CSS 和 JS，圆环、按钮、圆角、透明、阴影不另画一套。原生拖动、展开和位置记忆。
 - **自更新**：读现有 `/api/desktop/downloads` 的 `windows` 项；数字版本段比较，下载地址限制同 origin，大小与 SHA-256 都必须对。左下角胶囊：用户点了才下载，再点一次才重启；可跳过某个版本。启动检查、每 6 小时、激活时隔至少 1 小时。一次性 PowerShell 等主进程退出，同卷先复制 `.new`，再换 `.old` / 新 exe，失败恢复旧版，成功重启并清理。
 - **打包**：官方 Node `22.23.2` Windows x64 ZIP 固定 SHA-256 `1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97`，LICENSE 一起进包；CLI `package.json` + `src/` 与 Node 组成嵌入 ZIP，首次运行按内容哈希释放。Costura 仍交付单 exe，不带 Java / MySQL。试跑使用本机假站、独立 profile 和独立实例，不开真实网站。
-- **Windows 发布入口**：`deploy/ubuntu/deploy-from-windows.ps1` 用 Windows OpenSSH + PowerShell 替代 Mac 的 rsync 流程；编译后端、上传 CLI 与 exe、原子替换、重启并核对公网下载。首次没有私钥时生成用户级 key，系统 SSH 密码提示只用于登记公钥，密码不落盘、不进命令或日志。
+- **Windows 发布入口**：`deploy/ubuntu/deploy-from-windows.ps1` 用 Windows OpenSSH + PowerShell 替代 Mac 的 rsync 流程；编译后端、上传 CLI 与 exe、原子替换、重启并核对公网下载。首次没有私钥时生成用户级 key，系统 SSH 密码提示只用于登记公钥，密码不落盘、不进命令或日志。host key 用 OpenSSH `accept-new` 只在首次记录，已有主机的密钥变化仍拒绝。
 
 ## 自审与修复
 

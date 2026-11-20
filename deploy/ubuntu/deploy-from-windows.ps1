@@ -36,7 +36,7 @@ if (-not $SkipNpmCheck) {
 $identity = @()
 $deployError = $null
 $stage = Join-Path $Root ("build\windows-deploy-" + [guid]::NewGuid().ToString("N"))
-$remoteOptions = @("-o", "ConnectTimeout=15")
+$remoteOptions = @("-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new")
 try {
 if ($KeyPath) {
     if (-not (Test-Path -LiteralPath $KeyPath -PathType Leaf)) { throw "找不到私钥：$KeyPath" }
