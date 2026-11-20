@@ -8,7 +8,8 @@
     理由见 docs/desktop-remote-plan.md（2026-11-08 用户定的 A 方案）和那一份的第 5 步「Windows 也做原生窗口」。
 
     为什么是 .NET Framework 4.8 而不是 .NET 8：
-    Windows 10 / 11 自带 4.8，WebView2 运行时又随 Edge 一起装（Evergreen），所以打出来的包只有几 MB，
+    Windows 10 / 11 自带 4.8，WebView2 运行时又随 Edge 一起装（Evergreen），外壳本身很小；
+    内嵌官方 Node 与 CLI 源码用于本机代码助手，用户不用先装 .NET / Node 运行时。
     用户不用先装 .NET 运行时。.NET 8 自包含版要多带 ~150MB 运行时，和「包里不带 Java」的理由正好相反。
     代价是构建时要 Microsoft.NETFramework.ReferenceAssemblies（下面那个 PrivateAssets=all 的包）——
     它只提供编译用的引用程序集，不进产物。
@@ -60,6 +61,8 @@
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Net.Http" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Web.Extensions" />
   </ItemGroup>
 
@@ -69,6 +72,9 @@
       为什么还要嵌一份：WinForms 的 Form.Icon 默认是 System.Windows.Forms 自带的那个彩色方块图标
       （第七十二轮换图标时漏了这一层的话，exe 在资源管理器里是对的、打开以后标题栏是 WinForms 的默认图标）。
     -->
+    <EmbeddedResource Include="$(LocalRuntimeZip)" Condition="Exists('$(LocalRuntimeZip)')">
+      <LogicalName>Zhiqu.Desktop.zhiqu-local.zip</LogicalName>
+    </EmbeddedResource>
     <EmbeddedResource Include="..\icon\zhiqu.ico">
       <LogicalName>Zhiqu.Desktop.zhiqu.ico</LogicalName>
     </EmbeddedResource>

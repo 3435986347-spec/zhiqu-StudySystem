@@ -63,6 +63,8 @@ deploy/desktop/windows-shell/bin/
 deploy/desktop/windows-shell/obj/
 # Fody 每次构建自动生成的 XSD，不是源码
 deploy/desktop/windows-shell/FodyWeavers.xsd
+deploy/desktop/windows-checks/bin/
+deploy/desktop/windows-checks/obj/
 
 # 真实密钥只应存在于服务器上那份未跟踪的配置里，永远不进仓库。
 # 模板是 deploy/windows/application-prod.example.yml（里面全是 CHANGE_ME_ 占位符，

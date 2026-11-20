@@ -94,8 +94,9 @@ export function childEnv(binary, cwd, platform = process.platform) {
  * env：在最小环境（childEnv）上再加的几项，不是整个替换（git 用它关掉配置里能叫起的程序）。
  * separateStderr：stderr 单独放（只留开头），不混进 output —— 要解析 stdout 时用，一行警告混进来就解析错了。
  */
-export function runProcess({ binary, args, cwd, env, timeoutMs, outputLimit = DEFAULT_OUTPUT_LIMIT, signal, onOutput, separateStderr = false }) {
+export function runProcess({ binary, args, cwd, env, timeoutMs, outputLimit = DEFAULT_OUTPUT_LIMIT, signal, onOutput, separateStderr = false, cleanupDir }) {
   return new Promise((resolve) => {
+    const cleanup = () => { if (cleanupDir) try { fs.rmSync(cleanupDir, { recursive: true, force: true }); } catch { /* 临时目录稍后会再清 */ } };
     const started = monotonic();
     const posix = process.platform !== 'win32';
     let child;
@@ -105,6 +106,7 @@ export function runProcess({ binary, args, cwd, env, timeoutMs, outputLimit = DE
         shell: false,
       });
     } catch (e) {
+      cleanup();
       resolve({ exitCode: -1, output: `启动失败：${e.message}`, truncated: false, timedOut: false, aborted: false, millis: 0 });
       return;
     }
@@ -139,6 +141,7 @@ export function runProcess({ binary, args, cwd, env, timeoutMs, outputLimit = DE
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
     child.on('error', (e) => { chunks.push(Buffer.from(`\n启动失败：${e.message}`)); });
     child.on('close', (code, sig) => {
+      cleanup();
       clearTimeout(timer);
       if (signal) signal.removeEventListener('abort', onAbort);
       let output = Buffer.concat(chunks).toString('utf8');

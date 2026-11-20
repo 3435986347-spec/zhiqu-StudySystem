@@ -242,36 +242,48 @@ export class ArtifactTools extends DraftTools {
  * 桌面版本机代码助手（第一百二十九轮，docs/desktop-remote-plan.md 第 2 步）：宿主是桌面外壳起的，旁边没有后端 ——
  * 命令在这台电脑上、在系统沙箱里跑，和命令行是同一份（LocalTools 的 shell / 后台命令、sandbox.js）。
  * 写照旧只成草稿、不落盘（「AI 写的东西一律先成草稿」；auto 档的 shell 直接写是用户定的例外，靠 shellWrite）；从来不给删。
- * 没有系统沙箱就不给命令（Mac 上都有）：不退回白名单，免得在别人电脑上靠一份规则表判断能不能跑。
+ * macOS / Linux 没有系统沙箱就不给命令。Windows auto 档按用户要求提供明确标注的本机直接命令，不把这种执行称为系统沙箱。
  */
 export class DesktopTools extends DraftTools {
-  constructor({ root, canWrite = false, sandbox = null, shellWrite = false, sandboxNetwork = 'off', home }) {
-    // 命令不经外壳：exec 只是兜底，正常走不到（下面的方法都换成了本机的）
-    super({ root, canWrite, canExec: false, canShell: Boolean(sandbox), shellWrite: Boolean(sandbox) && shellWrite, sandboxNetwork,
+  constructor({ root, canWrite = false, sandbox = null, shellWrite = false, sandboxNetwork = 'off', home, allowDirectShell = false }) {
+    const direct = !sandbox && allowDirectShell && shellWrite;
+    super({ root, canWrite, canExec: false, canShell: Boolean(sandbox) || direct, shellWrite: (Boolean(sandbox) || direct) && shellWrite, sandboxNetwork,
       exec: async () => ({ error: '本机代码助手不经外壳跑命令。' }) });
-    this.sandbox = sandbox || null;
+    this.sandbox = sandbox || (direct ? { kind: 'direct-windows' } : null);
     this.home = home;
+    this.directWindows = direct;
   }
 
   prepareShell(args = {}) {
     return LocalTools.prototype.prepareShell.call(this, args);
   }
 
-  /** 档位只认外壳给的（shellWrite），不认调用方传的；不带沙箱再跑一次（ask 档的那条）这里没有 */
   async commitShell(prep, { signal, onOutput } = {}) {
-    const r = await LocalTools.prototype.commitShell.call(this, prep, { policy: this.shellPolicy, unsandboxed: false, signal, onOutput });
+    if (!this.sandbox) return { error: '这一档没有可执行的命令通道。Windows 直接命令只在 auto 档提供。' };
+    const r = await LocalTools.prototype.commitShell.call(this, prep, { policy: this.shellPolicy, unsandboxed: this.directWindows,
+      plainOptions: { home: this.home }, signal, onOutput });
     if (!r.refused) this.ranCommand = true;
-    return { ...r, content: `${r.content}${this.pendingNote()}` };
+    const prefix = this.directWindows ? '【Windows 本机直接运行，不是系统沙箱】\n' : '';
+    return { ...r, content: `${prefix}${r.content}${this.pendingNote()}` };
   }
 
   async startJob(prep, { signal } = {}) {
-    const r = await LocalTools.prototype.startJob.call(this, prep, { policy: this.shellPolicy, signal });
-    if (!r.error) this.ranCommand = true;
+    if (!this.sandbox) return { error: '这一档没有可执行的命令通道。' };
+    const r = await LocalTools.prototype.startJob.call(this, prep, { policy: this.shellPolicy, unsandboxed: this.directWindows,
+      plainOptions: { home: this.home }, signal });
+    if (!r.error) {
+      this.ranCommand = true;
+      if (this.directWindows) r.content = '【Windows 本机直接运行，不是系统沙箱】\n' + r.content;
+    }
     return r;
   }
 
-  readJob(args = {}, opts = {}) {
-    return LocalTools.prototype.readJob.call(this, args, opts);
+  async readJob(args = {}, opts = {}) {
+    if (!this.directWindows) return LocalTools.prototype.readJob.call(this, args, opts);
+    const wait = Math.min(Math.max(Number(args.wait_seconds) || 0, 0), MAX_WAIT_SECONDS);
+    const snap = await this.jobs.read(String(args.id || ''), { waitMs: wait * 1000, signal: opts.signal });
+    if (snap.error) return { error: snap.error };
+    return { content: describeJob(snap), snap };
   }
 
   stopJob(args = {}) {
@@ -279,6 +291,6 @@ export class DesktopTools extends DraftTools {
   }
 
   prepareRun() {
-    return { error: '这台电脑没有可用的系统沙箱，本机代码助手不跑命令。' };
+    return { error: '这台电脑没有可用的系统沙箱；Windows 本机直接命令只在 auto 档通过 shell 提供。' };
   }
 }

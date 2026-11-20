@@ -57,6 +57,15 @@ namespace Zhiqu.Desktop
         /// 认得的地址：https 的任何主机，或者本机的 http；只要「协议 + 主机 + 端口」，
         /// 路径、查询、用户名密码一概不收（照 macOS 那份的规则，两边行为要一致）。
         /// </summary>
+        internal static bool IsOrigin(Uri server, string source)
+        {
+            Uri origin;
+            if (!Uri.TryCreate(source, UriKind.Absolute, out origin)) return false;
+            return string.Equals(origin.Scheme, server.Scheme, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(origin.Host, server.Host, StringComparison.OrdinalIgnoreCase)
+                   && origin.Port == server.Port;
+        }
+
         internal static Uri Acceptable(string text)
         {
             Uri parsed;

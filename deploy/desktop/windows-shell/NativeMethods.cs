@@ -19,5 +19,11 @@ namespace Zhiqu.Desktop
 
         [DllImport("user32.dll", SetLastError = true)]
         internal static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        internal static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        internal static extern IntPtr SendMessage(IntPtr hWnd, int message, IntPtr wParam, IntPtr lParam);
     }
 }

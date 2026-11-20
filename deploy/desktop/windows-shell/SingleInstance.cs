@@ -11,7 +11,7 @@ namespace Zhiqu.Desktop
     /// </summary>
     internal sealed class SingleInstance : IDisposable
     {
-        private const string MutexName = @"Local\zhiqu-desktop-shell";
+        private const string DefaultMutexName = @"Local\zhiqu-desktop-shell";
 
         private readonly Mutex _mutex;
 
@@ -24,7 +24,10 @@ namespace Zhiqu.Desktop
         internal static SingleInstance Acquire()
         {
             bool created;
-            var mutex = new Mutex(true, MutexName, out created);
+            string suffix = Environment.GetEnvironmentVariable("ZHIQU_DESKTOP_INSTANCE");
+            string name = !string.IsNullOrEmpty(suffix) && System.Text.RegularExpressions.Regex.IsMatch(suffix, "^[A-Za-z0-9-]{1,64}$")
+                ? DefaultMutexName + "-" + suffix : DefaultMutexName;
+            var mutex = new Mutex(true, name, out created);
             if (created)
             {
                 return new SingleInstance(mutex);

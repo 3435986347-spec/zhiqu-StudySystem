@@ -5,17 +5,18 @@
 包里不带 Java、JRE，也不需要 MySQL。比网页多的：系统通知、缩到桌面上的迷你番茄钟、文件选择和下载走系统的面板。
 
 **Windows**（第一百五十七轮起）：和 macOS 一样是原生窗口 —— C# + WebView2（`windows-shell/`），窗口里打开的也是网站，
-包里不带 Java、JRE、JAR，也不需要 MySQL。打出来是**一个 exe**（约 0.6MB），用户机器上有 .NET Framework 4.8 和
-WebView2 运行时（Windows 10 / 11 都自带）就能双击运行。本机代码助手还没接（见下面「已知现状」）。
+包里不带 Java、JRE、JAR，也不需要 MySQL。第一百五十八轮补上本机代码助手、系统通知、正式迷你番茄钟和应用自更新。
+打出来是**一个 exe**（含官方 Node 与 CLI 源码，约 37MB），用户机器上有 .NET Framework 4.8 和
+WebView2 运行时（Windows 10 / 11 都自带）就能双击运行。
 
 > 第一百五十七轮之前 Windows 走的是另一条路：jpackage 把整个 Java 后端打进安装包、连用户自己装的 MySQL，
 > 界面开在默认浏览器里（`package-windows.ps1`，留着作历史，不再发版）。
 
 ## 本机代码
 
-代码模式读写你磁盘上的项目、在系统沙箱里跑命令 —— 这件事不能交给服务器（服务器上没有你的代码，多用户的机器也不该读谁的磁盘）。
-Mac 版下一步由包里的 node 跑命令行那一份（「本机代码助手」，方案第 2、3 步）；在那之前，桌面版的代码模式和网页一样只生成到产物。
-现在要在本机项目上用，用命令行 `zhiqu`（下面）。
+代码模式读写你磁盘上的项目、在本机跑命令 —— 这件事不能交给服务器（服务器上没有你的代码，多用户的机器也不该读谁的磁盘）。
+Mac 版由包里的 node 跑命令行那一份（「本机代码助手」，方案第 2、3 步），命令在系统沙箱里执行。
+Windows 第一百五十八轮使用同一宿主与 `zqLocal` 桥；auto / EXEC 档明确使用本机 `cmd.exe` 直接命令，**不是系统沙箱**，能访问当前用户有权限的文件和网络。plan / manual 不直接执行任意 shell。写文件工具仍只生成草稿，确认后才落盘。
 
 ## 打包
 
@@ -55,7 +56,7 @@ NODE_BIN=/绝对路径/node-v22.23.2-darwin-arm64/bin/node bash deploy/desktop/p
 > 第一百二十五轮之前包里还有瘦 JAR + jlink 裁的 JRE + 启动加速的类归档（`~/.zhiqu/app`、`~/.zhiqu/cds`，共约 160MB）。
 > 装过旧版的，这两个目录可以删掉；`~/.zhiqu/application.yml`、本机的 MySQL 新版都不读了（旧数据用户定了不要，库留着不动）。
 
-**Windows —— 单个 `.exe`**：只能在 Windows 上打。和 macOS 那份一样，包里只有外壳，打开的是网站。
+**Windows —— 单个 `.exe`**：只能在 Windows 上打。窗口打开网站，外壳带系统通知、迷你番茄钟、本机代码助手和自更新。
 
 ```powershell
 cd deploy\desktop
@@ -66,7 +67,19 @@ cd deploy\desktop
 构建要 .NET SDK 8（`DOTNET_EXE` 指过去；编出来的是 .NET Framework 4.8，用户不用装 .NET）；
 第一次会联网取 NuGet（`Microsoft.Web.WebView2`、`Costura.Fody`），之后走本机缓存。
 托管程序集和 `WebView2Loader.dll` 由 Costura 嵌进 exe（`windows-shell/FodyWeavers.xml`），
-脚本会检查输出里真的没有剩下 dll，并试跑 3 秒确认起得来。
+官方 Node 22.23.2 Windows x64（固定 SHA-256）与 `zhiqu-cli/package.json`、`src/` 组成 `Zhiqu.Desktop.zhiqu-local.zip` 一并嵌入。
+Node 官方 ZIP 首次从 nodejs.org 下载；离线时 `-NodeZip C:\路径\node-v22.23.2-win-x64.zip` 仍会核哈希，不认 PATH 上未校验的 Node。
+脚本检查输出里真的没有剩下 dll，确认嵌入资源存在，再用本机假站、独立 WebView2 profile 和独立实例试跑，不连接真实网站。
+
+```powershell
+$env:DOTNET_EXE='C:\development\dotnet\dotnet.exe'
+.\package-windows-native.ps1 1.6.0
+# 已有打包产物后跑真 C# / Node / WebView2 / 更新检查（Maven 要能找到 JDK）：
+mvn -Dtest=WindowsDesktopShellTest test
+```
+
+`ZHIQU_DESKTOP_PROFILE` 可把验证数据重定向到独立目录；`ZHIQU_DESKTOP_INSTANCE` 隔离验证用单实例。
+`windows-checks/` 是测试检查项目，不进交付 exe。
 
 图标、窗口标题、记住窗口大小位置、站外链接交给系统浏览器、站内 `target=_blank` 留在窗口里、
 断网时说明 + 「重试」—— 这些都在 `windows-shell/ShellForm.cs` 里。要指到本机后端：
@@ -89,7 +102,7 @@ reg delete HKCU\Software\zhiqu\desktop /v server /f                             
 > 应用包里原来带着一个 Java 版的 `zhiqu`（`Contents/Resources/bin/zhiqu`），2026-10-04 删除了。
 > 以前照着这里建过软链的，删掉它：`rm /opt/homebrew/bin/zhiqu`（Intel Mac 是 `/usr/local/bin/zhiqu`），再按上面装 npm 版。
 
-## Windows 版的用户配置：`~/.zhiqu/application.yml`
+## Windows 旧后端版的用户配置：`~/.zhiqu/application.yml`
 
 （Mac 版第一百二十五轮起不读它了。）Windows 版应用启动时会读这个文件（有就读，没有就跳过），它的优先级高于打包进去的默认值。
 **改这里不需要重新打包。**
@@ -144,8 +157,8 @@ Windows 版桌面应用里装着一个完整的后端（Mac 版第一百二十�
 
 - 两个平台都是原生窗口打开网站：macOS（Swift + WKWebView，第一百二十五轮）和 Windows（C# + WebView2，第一百五十七轮）。
 - 断网时看不了数据（和网页一样）。
-- **本机代码助手只在 macOS 上有了**（第一百二十九到一百三十一轮：包里的 node 跑命令行那一份，页面经 zqLocal 桥叫它）。
-  Windows 版还没接，所以 Windows 桌面里的代码模式和网页一样只生成到产物；要在本机项目上用，走命令行 `zhiqu`。
-- Windows 版没有系统通知、迷你番茄钟悬浮胶囊、应用自更新 —— macOS 那几样（第一百三十二轮）以后按需要补。
-- 只有 Windows 版会读到 `~/.zhiqu/application.yml`（旧的带后端那一版遗留的约定）；原生外壳不看这个文件，
+- 本机代码助手两个平台都有（Mac 第一百二十九到一百三十一轮，Windows 第一百五十八轮）：包里的 node 跑命令行那一份，页面经 `zqLocal` 桥叫它。
+  Mac 命令走系统沙箱；Windows auto 档是本机直接命令，不冒充系统沙箱。写工具仍只成草稿，确认后写进用户选过的文件夹。
+- Windows 有系统通知、共享登录态的正式迷你番茄钟悬浮胶囊、应用自更新；迷你窗使用发布版 `mini.html` / CSS / JS，原生层负责 DWM 透明、拖动与记位置。
+- 只有旧的带后端 Windows 版会读到 `~/.zhiqu/application.yml`；原生外壳不看这个文件，
   打开哪个网站由 `ZHIQU_DESKTOP_SERVER` 或注册表 `HKCU\Software\zhiqu\desktop` 的 `server` 决定。

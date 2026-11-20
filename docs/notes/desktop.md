@@ -134,3 +134,12 @@ dmg 一百多 MB，超过 GitHub 单个文件的上限，也不能进 `static/`�
 - 页面（第一百三十一轮）：只有看得到 `zqLocal` 才有斜杠命令和选择文件夹。网页上这两处都不露，代码模式仍走服务器（生成到产物）。桌面里档位和文件夹记在这台电脑（`zq.desktop.mode` / `zq.desktop.folder`），一轮经桥跑，回答和草稿 `POST /api/ai/desktop-turn` 存回网站；确认先 `apply` 再带 `desktopApplied` 标已确认，服务器不写磁盘。
 - 判据：`DesktopLocalAgentTest`（真编译外壳、真起 node、真沙箱、Java 起的假网关，含确认写盘）、`zhiqu-cli/test/desktop-host.test.js`、`slash-check.js`（网页上面板不打开）。
 
+
+## Windows 原生外壳的完整能力（第一百五十八轮）
+
+- `deploy/desktop/windows-shell/`：WebView2 主文档注入 `zqNotify` / `zqMini` / `zqLocal`，消息只认 `ServerConfig` 的 scheme + host + port；iframe 不注入。迷你窗没有 `zqLocal`。
+- `LocalAgent` 从 exe 的 `Zhiqu.Desktop.zhiqu-local.zip` 释放固定官方 Node 与 CLI，跑同一份 `code-host.js`。系统选目录由 `LocalFolders` 持久保存；`LocalDrafts` 校验相对路径、最终路径、SHA-256 基线，确认后才写盘。
+- Windows auto / EXEC 档按用户要求走 `plainLaunch` 的 UTF-8 临时 `.cmd` + `cmd.exe`，**本机直接命令不是系统沙箱**，命令可访问当前用户的文件与网络。plan / manual 不直接执行任意 shell；干净环境、停止与 Job Object 进程树回收照常。模型和页面都标明这个区别。
+- `DesktopNotifications` 用 `NotifyIcon` 发系统气泡，点击回主窗。迷你窗与主窗共享 WebView2 Environment，加载发布版 `mini.html` / CSS / JS；DWM 提供透明背景，不能用 `TransparencyKey`（实测会鼠标穿透到桌面）。300×68 DIP、TopMost、不抢焦点、原生拖动、记位置。
+- `Updater` 读 `/api/desktop/downloads` 的 `windows` 项，数字版本段比较，同 origin 下载，强制大小 + SHA-256；用户点下载、再点重启。一次性 PowerShell 等进程退出，同卷 `.new` / `.old` 替换，失败恢复，成功重启并清理。
+- `package-windows-native.ps1` 固定 Node 22.23.2 Windows x64 及官方 SHA-256，交付单 exe。试跑和检查都使用本机假站、独立 profile / 实例；`windows-checks/` 是生产源码的检查项目，不进交付包。`WindowsDesktopShellTest` 在 Windows 真编译并运行，不拿源码扫描冒充通过。

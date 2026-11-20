@@ -99,13 +99,13 @@ ssh -t -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 "sudo mysql zhiqu_db -e \"U
   用户机器上有 .NET Framework 4.8 和 WebView2 运行时（Windows 10 / 11 都自带）就能双击运行。
 
 安装包放在 `data/downloads`（`app.desktop-downloads-dir`），网页上「下载桌面版」从这里拿**最新修改的那个**
-（macOS 认 `.dmg`，Windows 认 `.exe / .msi / .zip`）。文件名里的 `1.5.5` 会显示在页面上，所以版本号要写进文件名。
+（macOS 认 `.dmg`，Windows 认 `.exe / .msi / .zip`）。文件名里的 `1.6.0` 会显示在页面上，所以版本号要写进文件名。
 
 传一个新的：
 
 ```bash
-scp -i ~/.ssh/zhiqu_server 知趣象限-1.5.5-win-x64.exe ubuntu@134.175.110.207:incoming/
-ssh -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 'sudo mv ~/incoming/知趣象限-1.5.5-win-x64.exe /home/ubuntu/zhiqu-StudySystem/data/downloads/ && sudo chown zhiqu:zhiqu /home/ubuntu/zhiqu-StudySystem/data/downloads/知趣象限-1.5.5-win-x64.exe && sudo chmod 644 /home/ubuntu/zhiqu-StudySystem/data/downloads/知趣象限-1.5.5-win-x64.exe'
+scp -i ~/.ssh/zhiqu_server 知趣象限-1.6.0-win-x64.exe ubuntu@134.175.110.207:incoming/
+ssh -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 'sudo mv ~/incoming/知趣象限-1.6.0-win-x64.exe /home/ubuntu/zhiqu-StudySystem/data/downloads/ && sudo chown zhiqu:zhiqu /home/ubuntu/zhiqu-StudySystem/data/downloads/知趣象限-1.6.0-win-x64.exe && sudo chmod 644 /home/ubuntu/zhiqu-StudySystem/data/downloads/知趣象限-1.6.0-win-x64.exe'
 ```
 
 `data/downloads` 是 `zhiqu:zhiqu 750`，`ubuntu` 写不进去 —— 先传到自己家目录的 `incoming/`，再用 `sudo` 搬进去；
@@ -114,8 +114,19 @@ ssh -i ~/.ssh/zhiqu_server ubuntu@134.175.110.207 'sudo mv ~/incoming/知趣象�
 Windows 安装包没有代码签名（没有证书），下载后 SmartScreen 会拦一下（「更多信息 → 仍要运行」）。
 本机要验一下服务端发的确实是这一份：`curl -s https://zhiqustudy.com/api/desktop/downloads | ...` 里的 `sha256` 和 `sha256sum` 对得上就行。
 
-Windows 版还没有本机代码助手（macOS 第 129–131 轮那套 zqLocal 桥），所以桌面里的代码模式和网页一样只生成到产物；
-要在本机项目上用，还是命令行 `zhiqu`。
+Windows 第一百五十八轮起也有本机代码助手：包里的官方 Node + CLI 经 `zqLocal` 桥执行；auto 档使用明确标注的 Windows 本机直接命令，**不是系统沙箱**。系统通知、正式迷你番茄钟和应用自更新也都已接上。
+
+### 从 Windows 开发机部署
+
+不把 Mac 的 `rsync` 命令硬搬到 Windows。使用 Windows OpenSSH + PowerShell 脚本（脚本会编译 JAR、上传 CLI 与桌面 exe、原子替换、重启并核对公网下载哈希）：
+
+```powershell
+# 如果 mvn 不在 PATH，先指定；其余使用本机 node / ssh / scp
+$env:MVN_EXE='C:\development\apache-maven-3.9.16\bin\mvn.cmd'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File deploy\ubuntu\deploy-from-windows.ps1 -Version 1.6.0
+```
+
+`-KeyPath C:\Users\你的用户名\.ssh\id_ed25519` 可指定已有私钥；没有默认私钥时会在 `%USERPROFILE%\.ssh\zhiqu_server` 生成用户级 key，首次用系统 SSH 的密码提示登记公钥，后续使用私钥。密码不写进脚本、命令或日志；私钥不进仓库、不上传。`sudo` 沿用服务器现有免密规则，不改服务器账户权限。
 
 ## 以后更新
 

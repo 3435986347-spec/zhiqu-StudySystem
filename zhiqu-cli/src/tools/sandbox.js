@@ -23,7 +23,7 @@ const TOOLCHAIN_ENV = ['JAVA_HOME', 'GOROOT', 'GOPATH', 'GOMODCACHE', 'CARGO_HOM
   'CONDA_PREFIX', 'SDKROOT', 'DEVELOPER_DIR', 'LC_ALL', 'LANG'];
 // 家目录下放工具链和依赖缓存的地方：只读。子进程的 HOME 不是真家目录，有的工具（Java 的 user.home）还是认真家目录。
 const HOME_TOOLCHAINS = ['.m2/repository', '.gradle/caches', '.gradle/wrapper', '.cargo/registry', '.rustup', '.pyenv', '.nvm', '.sdkman', '.rbenv', '.asdf',
-  'go/pkg', 'Library/Java', 'Library/Python', '.local/lib', '.local/bin'];
+  'go/pkg', 'Library/Java', 'Library/Python', '.local/lib', '.local/bin', 'AppData/Roaming/npm', 'AppData/Local/Programs/Python'];
 // 放过了工具链，这些还要再挡一遍：.cargo/bin 在 PATH 里就放过了 .cargo，凭据也在那里；工作区就是家目录时也靠这一层。
 const HOME_SECRETS = ['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.azure', '.zhiqu', '.netrc', '.npmrc', '.pypirc', '.git-credentials',
   '.config/gcloud', '.config/gh', '.cargo/credentials', '.cargo/credentials.toml', '.m2/settings.xml', '.m2/settings-security.xml',
@@ -88,7 +88,7 @@ export function toolchainRoots({ home, env = process.env }) {
     add(dir);
     // ~/.local/node/bin → ~/.local/node（库在 lib 下）；但 ~/bin 不能带上整个家目录，~/.local/bin 不能带上 ~/.local/share
     const parent = path.dirname(real(dir));
-    if (path.basename(real(dir)) === 'bin' && parent !== home && parent !== path.join(home, '.local')) add(parent);
+    if (path.basename(real(dir)) === 'bin' && parent !== home && parent !== path.join(home, '.local') && !(process.platform === 'win32' && parent === path.join(home, '.cargo'))) add(parent);
   }
   for (const key of ['JAVA_HOME', 'GOROOT', 'GOPATH', 'GOMODCACHE', 'CARGO_HOME', 'RUSTUP_HOME', 'PYENV_ROOT', 'NVM_DIR', 'VIRTUAL_ENV', 'CONDA_PREFIX']) add(env[key]);
   for (const rel of HOME_TOOLCHAINS) {
@@ -303,7 +303,12 @@ function shellEnv({ home, env, privateDir }) {
   const tmp = path.join(privateDir, 'tmp');
   fs.mkdirSync(tmp, { recursive: true, mode: 0o700 });
   const childPath = String(env.PATH || '').split(path.delimiter).filter((d) => path.isAbsolute(d));
-  const extra = { PATH: childPath.join(path.delimiter) || '/usr/bin:/bin', TMPDIR: tmp, HOME: privateDir, GIT_PAGER: 'cat', PAGER: 'cat', npm_config_cache: path.join(privateDir, 'npm-cache') };
+  const extra = { PATH: childPath.join(path.delimiter) || (process.platform === 'win32' ? 'C:\\Windows\\System32' : '/usr/bin:/bin'), TMPDIR: tmp, HOME: privateDir, GIT_PAGER: 'cat', PAGER: 'cat', npm_config_cache: path.join(privateDir, 'npm-cache') };
+  if (process.platform === 'win32') Object.assign(extra, {
+    USERPROFILE: privateDir, TEMP: tmp, TMP: tmp, ComSpec: process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe',
+    SystemRoot: process.env.SystemRoot || 'C:\\Windows', WINDIR: process.env.WINDIR || 'C:\\Windows', PATHEXT: '.COM;.EXE;.BAT;.CMD',
+    LOCALAPPDATA: path.join(privateDir, 'AppData', 'Local'), APPDATA: path.join(privateDir, 'AppData', 'Roaming'), GIT_TERMINAL_PROMPT: '0',
+  });
   for (const key of TOOLCHAIN_ENV) if (env[key]) extra[key] = env[key];
   // 真家目录下的 rustup / cargo：HOME 换了就找不到了
   for (const [key, dir] of [['CARGO_HOME', '.cargo'], ['RUSTUP_HOME', '.rustup']]) {
@@ -314,9 +319,17 @@ function shellEnv({ home, env, privateDir }) {
   return extra;
 }
 
-/** ask 档用户点了「不带沙箱再跑一次」：不进沙箱，环境照样是干净的（令牌还是不给）。 */
+/** ask 档用户当场同意，或 Windows 桌面 auto 档明确要求时：本机直接执行；环境照样干净，令牌不给子进程。 */
 export function plainLaunch({ command, home = os.homedir(), env = process.env, privateDir = childHome() }) {
-  return { binary: shellBinary(), args: ['-c', reapJobs(command)], env: shellEnv({ home: real(home), env, privateDir: real(privateDir) }) };
+  const clean = shellEnv({ home: real(home), env, privateDir: real(privateDir) });
+  if (process.platform === 'win32') {
+    const binary = env.ComSpec || process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
+    const directory = fs.mkdtempSync(path.join(real(privateDir), 'windows-shell-'));
+    const file = path.join(directory, 'command.cmd');
+    fs.writeFileSync(file, '@echo off\r\n@chcp 65001>nul\r\n' + String(command) + '\r\n', 'utf8');
+    return { binary, args: ['/d', '/s', '/c', file], env: clean, cleanupDir: directory };
+  }
+  return { binary: shellBinary(), args: ['-c', reapJobs(command)], env: clean };
 }
 
 /**
@@ -402,7 +415,8 @@ export function looksBlocked(output) {
 }
 
 /** 给人和模型看的一句话：现在关在什么里面。 */
-export function describeBoundary({ policy = WORKSPACE_WRITE, network = 'off', hosted = false } = {}) {
+export function describeBoundary({ policy = WORKSPACE_WRITE, network = 'off', hosted = false, direct = false } = {}) {
+  if (direct) return 'Windows 本机直接运行，不是系统沙箱；只有用户选择 auto 档才执行；命令能访问当前用户有权限的文件和网络，不限于项目目录，改代码仍用草稿工具，shell 用来跑测试和构建';
   if (hosted) {
     return `服务器上的隔离环境，工作目录是 ${HOSTED_WORK}（就是工作区）；${policy === READ_ONLY ? '工作区只读，只能写 /tmp' : '只能写工作区和 /tmp'}；${network === 'off' ? '不能联网' : '能联网'}；只有系统目录，读不到别的文件；`
       + '一条命令最多 60 秒，内存和进程数有限，超了会被杀；不能起后台进程（background 用不了）；每条命令是一个新的 bash，/tmp 也不留到下一条（要留的放工作区）';

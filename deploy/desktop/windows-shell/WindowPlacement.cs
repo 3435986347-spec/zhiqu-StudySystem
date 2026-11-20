@@ -19,9 +19,7 @@ namespace Zhiqu.Desktop
         {
             get
             {
-                return Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "zhiqu", "window.ini");
+                return DesktopPaths.DataFolder("window.ini");
             }
         }
 

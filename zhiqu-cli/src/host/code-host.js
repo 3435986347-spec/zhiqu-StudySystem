@@ -11,6 +11,7 @@
 //
 // 桌面版本机代码助手（第一百二十九轮，docs/desktop-remote-plan.md 第 2 步）：Mac 桌面外壳也起这个进程，协议同一个（run → step / trace → result），
 // 只是旁边没有后端 —— run 里带 local: { server, token }，模型和远程工具直接走服务器网关（和命令行同一份 Api），命令在本机的系统沙箱里跑（DesktopTools），
+// Windows auto 档按用户要求也可走明确标注的 cmd.exe 本机直接命令，不把直接执行称为沙箱。
 // 不往外壳要 model / exec / tool。外壳可以叫停：一行 { type: 'stop' }、关掉 stdin、或者 SIGTERM。
 import { normalizeEffort } from '../config.js';
 import fs from 'node:fs';
@@ -172,8 +173,8 @@ export function appSessionId(run, desktop) {
 }
 
 /**
- * 网页输入框里的 /review（第一百一十八轮）：和命令行同一份 —— 取 diff 的 git 关在只读沙箱里、能叫起程序的配置都关掉，
- * 模型在单独的上下文里看，结论按格式核过。这里的 ctx.local.sandbox 只是「后端有沙箱」的记号，git 是这个进程自己跑的，要真的那一份。
+ * 网页输入框里的 /review（第一百一十八轮）：和命令行同一份 —— 有系统沙箱时用只读沙箱取 diff，否则沿用命令行的 Git 配置隔离，
+ * 模型在单独的上下文里看，结论按格式核过。这里的 ctx.local.sandbox 只是命令工具的记号，git 是这个进程自己跑的，要真的那一份。
  * 返回给用户看的结论。
  */
 const STOPPED = '审查没做完（到时间了或者被中断了），没有结论。';
@@ -234,10 +235,11 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
   const network = typeof run.sandboxNetwork === 'string' ? run.sandboxNetwork : 'off';
   let local;
   if (desktop) {
-    // 有系统沙箱才给命令；联网档认不出的照断网（sandbox.js 本身也这样算）
-    const box = run.canShell ? detectBox() : null;
+    // 系统沙箱优先；Windows 由外壳在 auto 档明确下发 direct，本机命令不会由网页自行开启。
+    const box = run.canShell ? detectBox({ network: NETWORK_MODES.includes(network) ? network : 'off' }) : null;
     local = new DesktopTools({ root: run.root, canWrite: Boolean(run.canWrite), sandbox: box, shellWrite: Boolean(run.shellWrite),
-      sandboxNetwork: NETWORK_MODES.includes(network) ? network : 'off', home: run.home });
+      sandboxNetwork: NETWORK_MODES.includes(network) ? network : 'off', home: run.home,
+      allowDirectShell: process.platform === 'win32' && run.shellMode === 'direct' && network === 'on' && Boolean(run.shellWrite) });
   } else {
     const Tools = run.artifact ? ArtifactTools : DraftTools;   // 生成到产物：写进临时空间，不走草稿
     local = new Tools({ root: run.root, exec: (req, opts) => bridge.exec(req, opts),

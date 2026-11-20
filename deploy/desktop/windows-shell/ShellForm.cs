@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Threading.Tasks;
@@ -9,17 +10,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace Zhiqu.Desktop
 {
-    /// <summary>
-    /// 知趣象限 —— Windows 原生外壳。
-    ///
-    /// <para>它做的事只有一件：在一个窗口里用 WebView2 打开这个应用的网站（默认 <c>https://zhiqustudy.com</c>）。
-    /// 和 macOS 外壳（<c>../macos-shell</c>，Swift + WKWebView）是同一个形状：数据只在服务器上，
-    /// 包里不带 Java、JRE、JAR，也不需要 MySQL。来龙去脉见 <c>docs/desktop-remote-plan.md</c>。</para>
-    ///
-    /// <para>和 macOS 那一版还差的本机能力（系统通知、迷你番茄钟、本机代码助手经 zqLocal 桥跑包里的 node）
-    /// 是后面几步 —— 现在 Windows 上「代码」和网页一样只生成到产物。这一点写在
-    /// <c>deploy/desktop/README.md</c> 里，别让它悄悄变成「桌面版什么都能碰你的磁盘」。</para>
-    /// </summary>
+    /// <summary>网站之外，外壳提供系统通知、迷你番茄钟、本机代码助手和经用户确认的应用自更新。</summary>
     internal sealed class ShellForm : Form
     {
         internal const string WindowTitle = "知趣象限";
@@ -49,6 +40,15 @@ namespace Zhiqu.Desktop
 
         private bool _webReady;
         private bool _placementRestored;
+        private CoreWebView2Environment _environment;
+        private DesktopNotifications _notifications;
+        private MiniWindow _mini;
+        private LocalBridge _local;
+        private Updater _updater;
+        private UpdateBadge _badge;
+        private Timer _updateTimer;
+        private DateTime _lastUpdateCheck;
+        private bool _closing;
         /// <summary>这台显示器上的缩放（96 DPI 是 1.0；125% 是 1.25）。窗口尺寸、字号都乘它。</summary>
         private float _scale = 1F;
 
@@ -226,6 +226,8 @@ namespace Zhiqu.Desktop
             grid.Controls.Add(stack, 0, 1);
             _overlay.Controls.Add(grid);
             Controls.Add(_overlay);
+            _badge = new UpdateBadge();
+            Controls.Add(_badge);
             _overlay.BringToFront();
         }
 
@@ -235,6 +237,9 @@ namespace Zhiqu.Desktop
             ApplyScale();
             ApplyDefaultPlacement();
             BuildUi();
+            _notifications = new DesktopNotifications(Icon ?? SystemIcons.Application, ShowMain);
+            _local = new LocalBridge(_server, () => _web == null ? null : _web.CoreWebView2, this);
+            StartUpdates();
             await StartAsync();
         }
 
@@ -245,10 +250,10 @@ namespace Zhiqu.Desktop
             ShowMessage("正在连接 " + _host + "…", false);
             try
             {
-                CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, UserDataFolder());
-                await _web.EnsureCoreWebView2Async(environment);
+                _environment = await CoreWebView2Environment.CreateAsync(null, UserDataFolder());
+                await _web.EnsureCoreWebView2Async(_environment);
                 _webReady = true;
-                Configure(_web.CoreWebView2);
+                await Configure(_web.CoreWebView2);
                 await ClearOfflineCacheAsync();
                 NavigateHome();
             }
@@ -266,14 +271,15 @@ namespace Zhiqu.Desktop
         {
             // 登录态（Cookie / localStorage）存在这里。放在 LocalAppData 而不是 exe 旁边：
             // 程序目录可能在 Program Files（只读），解压到哪里都能用同一个登录态、同一份缓存。
-            string folder = Path.Combine(
+            string folder = Environment.GetEnvironmentVariable("ZHIQU_DESKTOP_PROFILE");
+            if (string.IsNullOrEmpty(folder) || !Path.IsPathRooted(folder)) folder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "zhiqu", "webview2");
             Directory.CreateDirectory(folder);
             return folder;
         }
 
-        private void Configure(CoreWebView2 core)
+        private async Task Configure(CoreWebView2 core)
         {
             // 这是应用窗口，不是浏览器：不要状态栏、不要滑动前进后退
             core.Settings.IsStatusBarEnabled = false;
@@ -284,11 +290,115 @@ namespace Zhiqu.Desktop
             // Ctrl+R / F5 这些浏览器快捷键留着 —— 断网后重新载入靠它们（网页里也有「重试」按钮）
             core.Settings.AreBrowserAcceleratorKeysEnabled = true;
             core.Settings.AreDevToolsEnabled = true;
+            core.Settings.UserAgent += " ZhiquDesktop/1.0";
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(BridgeScript.For(true));
 
             core.NavigationStarting += OnNavigationStarting;
             core.NavigationCompleted += OnNavigationCompleted;
             core.NewWindowRequested += OnNewWindowRequested;
             core.ProcessFailed += OnProcessFailed;
+            core.WebMessageReceived += OnWebMessage;
+        }
+
+        private async void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            if (_closing || !ServerConfig.IsOrigin(_server, e.Source)) return;
+            Dictionary<string, object> message;
+            try { message = Json.Object(e.WebMessageAsJson); } catch { return; }
+            if (message == null) return;
+            string bridge = Json.Text(message, "bridge");
+            var body = Json.Object(message.ContainsKey("body") ? message["body"] : null);
+            string id = Json.Text(message, "id");
+            if (bridge == "zqLocal")
+            {
+                if (string.IsNullOrEmpty(id) || id.Length > 100 || body == null) return;
+                await _local.Handle(id, body);
+            }
+            else HandleBridge(bridge, body);
+        }
+
+        private void HandleBridge(string bridge, System.Collections.Generic.Dictionary<string, object> body)
+        {
+            string action = Json.Text(body, "action");
+            if (bridge == "zqMini" && action == "shrink") ShowMini();
+            else if (bridge == "zqMini" && action == "expand") ShowMain();
+            else if (bridge == "zqNotify" && action == "authorize") _notifications.Authorize();
+            else if (bridge == "zqNotify" && action == "notify")
+            {
+                _notifications.Notify(Json.Text(body, "title"), Json.Text(body, "body"), Json.Text(body, "tag"));
+            }
+        }
+
+        private void ShowMini()
+        {
+            if (_environment == null) return;
+            if (_mini == null || _mini.IsDisposed)
+            {
+                _mini = new MiniWindow(_environment, _server, Icon, _scale, ShowMain, raw =>
+                {
+                    try
+                    {
+                        var outer = Json.Object(raw);
+                        HandleBridge("zqNotify", Json.Object(outer.ContainsKey("body") ? outer["body"] : null));
+                    }
+                    catch { }
+                });
+            }
+            else _mini.ReloadPage();
+            _mini.Show();
+            Hide();
+        }
+
+        internal void ShowMain()
+        {
+            if (_mini != null && !_mini.IsDisposed) _mini.Hide();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Show(); Activate();
+        }
+
+        private void StartUpdates()
+        {
+            _updater = new Updater(_server);
+            _updater.Changed += ApplyUpdate;
+            _badge.Activated = () =>
+            {
+                if (_updater.Phase.State == UpdateState.Available)
+                {
+                    Task download = _updater.Download(); GC.KeepAlive(download);
+                }
+                else if (_updater.Phase.State == UpdateState.Ready) _updater.Restart();
+            };
+            _badge.Skipped = () => { _updater.Skip(); _badge.Visible = false; };
+            Task initial = _updater.Check(); GC.KeepAlive(initial);
+            _lastUpdateCheck = DateTime.UtcNow;
+            _updateTimer = new Timer { Interval = 6 * 60 * 60 * 1000 };
+            _updateTimer.Tick += delegate { CheckUpdates(); };
+            _updateTimer.Start();
+        }
+
+        private void CheckUpdates()
+        {
+            _lastUpdateCheck = DateTime.UtcNow;
+            Task checking = _updater.Check(); GC.KeepAlive(checking);
+        }
+
+        private void ApplyUpdate(UpdatePhase phase)
+        {
+            if (IsDisposed || _badge.IsDisposed) return;
+            if (phase.State == UpdateState.Available && phase.Release.Version == _updater.Skipped()) return;
+            _badge.Show(phase, _scale, ClientSize.Height);
+        }
+
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            if (_updater != null && (DateTime.UtcNow - _lastUpdateCheck).TotalHours >= 1) CheckUpdates();
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            if (_badge != null && _updater != null) ApplyUpdate(_updater.Phase);
         }
 
         /// <summary>
@@ -499,12 +609,19 @@ namespace Zhiqu.Desktop
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            _closing = true;
             WindowPlacement.Save(this);
+            if (_mini != null && !_mini.IsDisposed) _mini.SavePlacement();
+            if (_updateTimer != null) { _updateTimer.Stop(); _updateTimer.Dispose(); }
+            if (_local != null) _local.Dispose();
             base.OnFormClosing(e);
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            if (_mini != null && !_mini.IsDisposed) _mini.Dispose();
+            if (_notifications != null) _notifications.Dispose();
+            if (_updater != null) _updater.Dispose();
             if (_web != null)
             {
                 _web.Dispose();

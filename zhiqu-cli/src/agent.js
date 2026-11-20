@@ -175,7 +175,7 @@ export function toolset(ctx) {
   const out = [];
   // 草稿模式（第九十四轮）只下发后端这一次允许的那几个（没有写意图不给写、不能执行不给跑、从来不给删）
   const allowed = ctx.local && ctx.local.allowedTools;
-  // 有系统沙箱才给 shell（第一百零九轮），给了就不给 run_command；plan 档也给：沙箱是只读的，系统挡着写
+  // 有系统沙箱，或 Windows auto 档明确允许本机直接命令时给 shell；给了就不给 run_command
   const sandboxed = Boolean(ctx.local && ctx.local.sandbox);
   for (const t of localSchemas()) {
     if (allowed && !allowed.has(t.function.name)) continue;
@@ -186,7 +186,7 @@ export function toolset(ctx) {
   // 子 agent 也给（第一百二十六轮，用户定的：子 agent 能跑命令；但它停下之前，它自己起的后台命令要先停下 —— 见 subagents.js 的 settle）
   // 撤回草稿（第一百五十六轮）：只有草稿模式有草稿，按 allowedTools 认 —— 下发的和能执行的同一份清单
   if (allowed && allowed.has('discard_draft') && !plan) for (const t of draftSchemas()) out.push({ schema: t, kind: 'local' });
-  if (sandboxed) for (const t of shellSchemas({ background: offeredBackground(ctx), preview: !plan && ctx.local && !ctx.local.hosted && ctx.local.chrome })) out.push({ schema: t, kind: 'local' });
+  if (sandboxed) for (const t of shellSchemas({ background: offeredBackground(ctx), preview: !plan && ctx.local && !ctx.local.hosted && ctx.local.chrome, direct: ctx.local.sandbox.kind === 'direct-windows' })) out.push({ schema: t, kind: 'local' });
   // 预览截图（第一百三十四轮）：只在宿主机这一份给 —— 服务器 / 桌面后端那份（hosted）跑不了浏览器。
   // plan 档不给：它要起浏览器，是「动手」不是「想一想」。
   if (!plan && ctx.local && !ctx.local.hosted && ctx.local.chrome) out.push({ schema: previewSchema(), kind: 'local' });
@@ -269,7 +269,7 @@ export function systemText(ctx) {
   const frozen = frozenEnv(ctx);
   const env = environmentBlock({
     root: ctx.local.root, workspaceName: path.basename(ctx.local.root), mode: frozen.mode, commands: ctx.local.commands,
-    shell: ctx.local.sandbox ? describeBoundary({ policy: shellPolicy(ctx), network: ctx.local.sandboxNetwork, hosted: ctx.local.hosted }) : null,
+    shell: ctx.local.sandbox ? describeBoundary({ policy: shellPolicy(ctx), network: ctx.local.sandboxNetwork, hosted: ctx.local.hosted, direct: ctx.local.sandbox.kind === 'direct-windows' }) : null,
     shellWrites: Boolean(ctx.local.sandbox) && shellPolicy(ctx) === WORKSPACE_WRITE,
     today: frozen.today, draft: Boolean(ctx.local.drafts), artifact: Boolean(ctx.local.artifact),
   });

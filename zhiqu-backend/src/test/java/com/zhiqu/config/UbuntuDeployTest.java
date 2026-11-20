@@ -304,6 +304,27 @@ class UbuntuDeployTest {
     }
 
     @Test
+    @DisplayName("Windows 部署入口：使用系统 OpenSSH，不固化密码；PowerShell 真解析；原子替换并核对公网下载")
+    void Windows部署入口() throws Exception {
+        String script = read("deploy-from-windows.ps1");
+        String code = SourceText.stripComments(script);
+        assertTrue(code.contains("ssh.exe") && code.contains("scp.exe"), "Windows 没有用系统 OpenSSH");
+        assertTrue(code.contains("sudo -n bash -s"), "服务器 sudo 被改成会卡在密码提示的形式");
+        assertTrue(code.contains("systemctl restart zhiqu-backend"), "后端没有重启");
+        assertTrue(code.contains("/api/desktop/downloads") && code.contains("Get-FileHash"), "没有核对 Windows 下载");
+        assertFalse(code.contains("SSH_ASKPASS") || code.contains("ConvertTo-SecureString"), "不要在部署脚本里实现自己的密码通道");
+        if (!System.getProperty("os.name", "").toLowerCase().contains("windows")) return;
+        ProcessBuilder builder = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command",
+                "$e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $env:ZHIQU_SCRIPT_TO_PARSE).Path,[ref]$t,[ref]$e)|Out-Null;if($e.Count){$e|ForEach-Object{$_.ToString()};exit 1}");
+        builder.environment().put("ZHIQU_SCRIPT_TO_PARSE", DIR.resolve("deploy-from-windows.ps1").toAbsolutePath().toString());
+        Process process = builder.redirectErrorStream(true).start();
+        process.getOutputStream().close();
+        assertTrue(process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS), "PowerShell 解析没结束");
+        String out = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.exitValue(), "Windows 部署脚本语法错误：" + out);
+    }
+
+    @Test
     @DisplayName("脚本语法都对（bash -n）")
     void 脚本语法() throws Exception {
         try (var files = Files.list(DIR)) {

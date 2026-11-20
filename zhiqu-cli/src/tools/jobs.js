@@ -5,6 +5,7 @@
 //   - 进程组：detached + 杀负的 pid。npm run dev 下面还有一层，只杀 npm 的话下面的接着占端口。
 //   - unref：不然命令行答完了也退不出去。退出时全部收掉（process 'exit'），不留在用户电脑上。
 import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import { monotonic } from '../clock.js';
 import { childEnv } from './exec.js';
 import { looksBlocked } from './sandbox.js';
@@ -42,7 +43,7 @@ export class ShellJobs {
   }
 
   /** launch：sandboxedLaunch 的结果。返回 { id } 或 { error } */
-  start({ binary, args, env, cwd, command }) {
+  start({ binary, args, env, cwd, command, cleanupDir }) {
     if (this.running().length >= this.maxJobs) {
       return { error: `后台已经有 ${this.maxJobs} 个命令在跑了，先用 shell_stop 停掉不用的（shell_output 看它们）。` };
     }
@@ -51,10 +52,11 @@ export class ShellJobs {
     try {
       child = spawn(binary, args, { cwd, env: { ...childEnv(binary, cwd), ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: posix, windowsHide: true, shell: false });
     } catch (e) {
+      if (cleanupDir) try { fs.rmSync(cleanupDir, { recursive: true, force: true }); } catch { /* 临时目录稍后再清 */ }
       return { error: `启动失败：${e.message}` };
     }
     const id = `job-${++this.seq}`;
-    const job = { id, command, child, posix, buf: Buffer.alloc(0), total: 0, cursor: 0, started: monotonic(), exit: null, stopped: false, ended: null, waiters: new Set() };
+    const job = { id, command, child, posix, cleanup: () => { if (cleanupDir) try { fs.rmSync(cleanupDir, { recursive: true, force: true }); } catch { /* 稍后清理 */ } }, buf: Buffer.alloc(0), total: 0, cursor: 0, started: monotonic(), exit: null, stopped: false, ended: null, waiters: new Set() };
     const wake = () => { for (const w of job.waiters) w(); };
     const take = (data) => {
       job.total += data.length;
@@ -63,8 +65,8 @@ export class ShellJobs {
     };
     child.stdout.on('data', take);
     child.stderr.on('data', take);
-    child.on('error', (e) => { take(Buffer.from(`启动失败：${e.message}\n`)); job.exit = -1; job.ended = monotonic(); wake(); });
-    child.on('close', (code) => { if (job.exit == null) { job.exit = code == null ? -1 : code; job.ended = monotonic(); } wake(); });
+    child.on('error', (e) => { job.cleanup(); take(Buffer.from(`启动失败：${e.message}\n`)); job.exit = -1; job.ended = monotonic(); wake(); });
+    child.on('close', (code) => { job.cleanup(); if (job.exit == null) { job.exit = code == null ? -1 : code; job.ended = monotonic(); } wake(); });
     // 不拖着命令行不让退（zhiqu -p 答完就要退）
     child.unref();
     child.stdout.unref();

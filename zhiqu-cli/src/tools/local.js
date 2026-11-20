@@ -149,11 +149,13 @@ export function shellSeconds(value) {
   return Number.isFinite(n) && n > 0 ? Math.min(Math.ceil(n), MAX_SHELL_SECONDS) : DEFAULT_SHELL_SECONDS;
 }
 
-/** shell 工具（第一百零九轮）：有系统沙箱才下发，下发了就不再给 run_command（见 agent.js 的 toolset）。 */
-export function shellSchemas({ background = true, preview = false } = {}) {
+/** shell 工具：系统沙箱或 Windows auto 档的明确本机直接通道，下发了就不再给 run_command（见 agent.js 的 toolset）。 */
+export function shellSchemas({ background = true, preview = false, direct = false } = {}) {
+  const shellKind = direct ? 'Windows cmd' : 'bash';
+  const boundary = direct ? 'Windows 本机直接运行，不是系统沙箱，边界见「环境」一节。' : '命令跑在系统沙箱里，边界见「环境」一节。';
   const tools = [
-    fn('shell', '在工作区里运行一条 bash 命令：管道、重定向、&& 都能用。用来跑测试、构建、查 git、搜东西。命令跑在系统沙箱里，边界见「环境」一节。'
-      + (preview ? '不要在这里起浏览器或 headless-gl（沙箱里起不来）；看页面用 preview_page。' : '不要在这里起浏览器或 headless-gl（沙箱里起不来）。'),
+    fn('shell', `在工作区里运行一条 ${shellKind} 命令：管道、重定向、&& 都能用。用来跑测试、构建、查 git、搜东西。${boundary}`
+      + (direct ? '' : preview ? '不要在这里起浏览器或 headless-gl（沙箱里起不来）；看页面用 preview_page。' : '不要在这里起浏览器或 headless-gl（沙箱里起不来）。'),
       { command: { type: 'string', description: '一整条 shell 命令，字符串' },
         cwd: { type: 'string', description: '在哪个子目录里运行，默认工作区根' },
         timeout_seconds: { type: 'number', description: `最多跑多久，默认 ${DEFAULT_SHELL_SECONDS}，最多 ${MAX_SHELL_SECONDS}。到点连子进程一起杀` },
@@ -978,27 +980,30 @@ export class LocalTools {
   }
 
   /** unsandboxed：只有 ask 档用户当场点了才有（agent.js 的 shell 分支） */
-  async commitShell(prep, { policy = WORKSPACE_WRITE, unsandboxed = false, signal, onOutput } = {}) {
+  async commitShell(prep, { policy = WORKSPACE_WRITE, unsandboxed = false, plainOptions = {}, signal, onOutput } = {}) {
     if (!unsandboxed) {
       const why = browserInSandbox(prep.command);
       if (why) return { content: `$ ${prep.command}\n${why}`, summary: '没有运行', exitCode: 126, output: why, blocked: false, refused: true };
     }
-    const launch = unsandboxed ? plainLaunch({ command: prep.command })
+    const launch = unsandboxed ? plainLaunch({ command: prep.command, ...plainOptions })
       : sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork, home: this.home });
     const timeoutMs = prep.timeoutSeconds ? prep.timeoutSeconds * 1000 : this.execTimeoutMs;
-    const r = await runProcess({ binary: launch.binary, args: launch.args, cwd: prep.cwd, env: launch.env, timeoutMs, signal, onOutput });
+    const r = await runProcess({ binary: launch.binary, args: launch.args, cwd: prep.cwd, env: launch.env, timeoutMs, signal, onOutput, cleanupDir: launch.cleanupDir });
     return shellOutcome(prep, r, { boundary: describeBoundary({ policy, network: this.sandboxNetwork }), sandboxed: !unsandboxed });
   }
 
   /** background: true。起完等一小会儿：立刻失败的（端口被占、命令写错）当场看得到 */
-  async startJob(prep, { policy = WORKSPACE_WRITE, signal } = {}) {
-    const why = browserInSandbox(prep.command);
-    if (why) return { error: why };
-    const launch = sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork, home: this.home });
+  async startJob(prep, { policy = WORKSPACE_WRITE, unsandboxed = false, plainOptions = {}, signal } = {}) {
+    if (!unsandboxed) {
+      const why = browserInSandbox(prep.command);
+      if (why) return { error: why };
+    }
+    const launch = unsandboxed ? plainLaunch({ command: prep.command, ...plainOptions })
+      : sandboxedLaunch(this.sandbox, { command: prep.command, root: this.root, cwd: prep.cwd, policy, network: this.sandboxNetwork, home: this.home });
     const started = this.jobs.start({ ...launch, cwd: prep.cwd, command: prep.command });
     if (started.error) return { error: started.error };
     const snap = await this.jobs.read(started.id, { waitMs: START_WAIT_MS, signal });
-    return { id: started.id, content: describeJob(snap, { boundary: describeBoundary({ policy, network: this.sandboxNetwork }) }), snap, policy };
+    return { id: started.id, content: describeJob(snap, { boundary: describeBoundary({ policy, network: this.sandboxNetwork, direct: unsandboxed }) }), snap, policy };
   }
 
   async readJob(args = {}, { signal } = {}) {
