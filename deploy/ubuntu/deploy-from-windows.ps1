@@ -11,6 +11,7 @@ param(
     [switch]$SkipNpmCheck
 )
 $ErrorActionPreference = "Stop"
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
 function Assert-Exit([string]$What) {
     if ($LASTEXITCODE -ne 0) { throw "$What（退出码 $LASTEXITCODE）" }
 }
@@ -131,8 +132,10 @@ chmod 644 '$Base/data/downloads/$exeName'
 systemctl restart zhiqu-backend
 "@
     $remote = $remote.Replace("`r`n", "`n")
-    $remote | & $Ssh @identity @remoteOptions $Server "sudo -n bash -s"
-    Assert-Exit "服务器替换与重启"
+    $remoteOutput = $remote | & $Ssh @identity @remoteOptions $Server "sudo -n bash -s" 2>&1
+    $remoteCode = $LASTEXITCODE
+    if ($remoteCode -ne 0) { throw "服务器替换与重启（退出码 $remoteCode）：$($remoteOutput -join "`n")" }
+    $remoteOutput | Write-Host
 
     Write-Host "==> 6/6 公网验证"
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
