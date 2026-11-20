@@ -11,7 +11,6 @@ param(
     [switch]$SkipNpmCheck
 )
 $ErrorActionPreference = "Stop"
-$OutputEncoding = [Text.UTF8Encoding]::new($false)
 function Assert-Exit([string]$What) {
     if ($LASTEXITCODE -ne 0) { throw "$What（退出码 $LASTEXITCODE）" }
 }
@@ -132,9 +131,26 @@ chmod 644 '$Base/data/downloads/$exeName'
 systemctl restart zhiqu-backend
 "@
     $remote = $remote.Replace("`r`n", "`n")
-    $remoteOutput = $remote | & $Ssh @identity @remoteOptions $Server "sudo -n bash -s" 2>&1
-    $remoteCode = $LASTEXITCODE
-    if ($remoteCode -ne 0) { throw "服务器替换与重启（退出码 $remoteCode）：$($remoteOutput -join "`n")" }
+    $sshArguments = @($identity) + @($remoteOptions) + @($Server, "sudo -n bash -s")
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $Ssh
+    $psi.Arguments = (($sshArguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' ')
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $remoteProcess = [System.Diagnostics.Process]::Start($psi)
+    $remoteStdout = $remoteProcess.StandardOutput.ReadToEndAsync()
+    $remoteStderr = $remoteProcess.StandardError.ReadToEndAsync()
+    $remoteBytes = [Text.UTF8Encoding]::new($false).GetBytes($remote.Replace("`r`n", "`n").Replace("`r", "`n").TrimEnd() + "`n")
+    $remoteProcess.StandardInput.BaseStream.Write($remoteBytes, 0, $remoteBytes.Length)
+    $remoteProcess.StandardInput.Close()
+    $remoteProcess.WaitForExit()
+    $remoteCode = $remoteProcess.ExitCode
+    $remoteOutput = ($remoteStdout.Result + $remoteStderr.Result)
+    $remoteProcess.Dispose()
+    if ($remoteCode -ne 0) { throw "服务器替换与重启（退出码 $remoteCode）：$remoteOutput" }
     $remoteOutput | Write-Host
 
     Write-Host "==> 6/6 公网验证"
