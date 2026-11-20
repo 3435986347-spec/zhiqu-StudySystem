@@ -35,19 +35,36 @@ if (-not $SkipNpmCheck) {
 }
 $identity = @()
 $deployError = $null
+$stage = Join-Path $Root ("build\windows-deploy-" + [guid]::NewGuid().ToString("N"))
+$remoteOptions = @("-o", "ConnectTimeout=15")
+try {
 if ($KeyPath) {
     if (-not (Test-Path -LiteralPath $KeyPath -PathType Leaf)) { throw "找不到私钥：$KeyPath" }
     $identity = @("-i", (Resolve-Path -LiteralPath $KeyPath).Path, "-o", "BatchMode=yes")
-} elseif (Test-Path -LiteralPath "$HOME\.ssh\zhiqu_server" -PathType Leaf) {
-    $identity = @("-i", "$HOME\.ssh\zhiqu_server", "-o", "BatchMode=yes")
 } else {
     $defaultKey = "$HOME\.ssh\zhiqu_server"
-    if (-not (Test-Path -LiteralPath "$defaultKey.pub" -PathType Leaf)) {
+    $registered = $false
+    if ((Test-Path -LiteralPath $defaultKey -PathType Leaf) -and (Test-Path -LiteralPath "$defaultKey.pub" -PathType Leaf)) {
+        & $Ssh -i $defaultKey -o "BatchMode=yes" @remoteOptions $Server "true"
+        $registered = $LASTEXITCODE -eq 0
+    }
+    if (-not $registered) {
+        if (-not (Test-Path -LiteralPath "$defaultKey.pub" -PathType Leaf)) {
         $keygen = (Get-Command "ssh-keygen.exe" -ErrorAction SilentlyContinue).Source
         if (-not $keygen) { throw "找不到 ssh-keygen.exe" }
         New-Item -ItemType Directory -Path "$HOME\.ssh" -Force | Out-Null
-        & $keygen -q -t ed25519 -N "" -f $defaultKey -C "zhiqu-windows-deploy"
-        Assert-Exit "生成用户级 SSH key"
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = $keygen
+        $psi.Arguments = '-q -t ed25519 -N "" -f "' + $defaultKey + '" -C "zhiqu-windows-deploy"'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $keyProcess = [System.Diagnostics.Process]::Start($psi)
+        $keyOut = $keyProcess.StandardOutput.ReadToEnd()
+        $keyError = $keyProcess.StandardError.ReadToEnd()
+        $keyProcess.WaitForExit()
+        if ($keyProcess.ExitCode -ne 0) { throw "生成用户级 SSH key（退出码 $($keyProcess.ExitCode)）：$keyError$keyOut" }
+        $keyProcess.Dispose()
     }
     Write-Host "首次部署：请在本窗口确认服务器 host key，并输入一次 SSH 密码以登记公钥。密码不会传给脚本变量。"
     $publicKey = [IO.File]::ReadAllText("$defaultKey.pub").Trim()
@@ -55,11 +72,9 @@ if ($KeyPath) {
     $installKey = "umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; grep -qxF '$publicKey' ~/.ssh/authorized_keys || printf '%s\n' '$publicKey' >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys"
     & $Ssh @remoteOptions -o "PubkeyAuthentication=no" -o "PreferredAuthentications=password,keyboard-interactive" $Server $installKey
     Assert-Exit "登记 SSH 公钥"
+    }
     $identity = @("-i", $defaultKey, "-o", "BatchMode=yes")
 }
-$stage = Join-Path $Root ("build\windows-deploy-" + [guid]::NewGuid().ToString("N"))
-$remoteOptions = @("-o", "ConnectTimeout=15")
-try {
     if (-not $SkipBuild) {
         Write-Host "==> 1/6 编译后端"
         & $Mvn -o -q -f (Join-Path $Root "zhiqu-backend\pom.xml") clean package "-DskipTests"
