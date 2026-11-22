@@ -1,6 +1,7 @@
 package com.zhiqu.service.support;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhiqu.service.ai.DecisionPort;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -26,8 +27,17 @@ class ChatRunHubTest {
     private static final class Recorder extends SseEmitter {
         private final List<String> names = new ArrayList<>();
         private final List<String> payloads = new ArrayList<>();
+        private final List<String> sequence;
         private boolean broken;
         private boolean completed;
+
+        private Recorder() {
+            this(null);
+        }
+
+        private Recorder(List<String> sequence) {
+            this.sequence = sequence;
+        }
 
         @Override
         public void send(SseEventBuilder builder) throws IOException {
@@ -39,7 +49,11 @@ class ChatRunHubTest {
                 raw.append(part.getData());
             }
             String frame = raw.toString();
-            names.add(nameOf(frame));
+            String name = nameOf(frame);
+            names.add(name);
+            if (sequence != null) {
+                sequence.add("sse:" + name);
+            }
             payloads.add(dataOf(frame));
         }
 
@@ -193,6 +207,65 @@ class ChatRunHubTest {
         run.finish();
         assertEquals("next", hub.say(13L, "还在吗"));
         assertFalse(hub.say(404L, "没有这一轮") == null);
+    }
+
+    @Test
+    void 决策先回放解决事件再唤醒宿主_相同答案不重复发帧() {
+        DecisionPort decisions = new DecisionPort();
+        ChatRunHub.LiveRun run = hub.open(16L, text -> true);
+        run.useDecisions(decisions);
+        List<String> sequence = new ArrayList<>();
+        List<Map<String, Object>> delivered = new ArrayList<>();
+        Map<String, Object> question = new java.util.LinkedHashMap<>();
+        question.put("id", "q1");
+        question.put("header", "实现");
+        question.put("question", "怎么做？");
+        question.put("allowOther", false);
+        question.put("options", List.of(
+                Map.of("id", "o1", "label", "甲", "recommended", true),
+                Map.of("id", "o2", "label", "乙", "recommended", false)));
+        List<Map<String, Object>> questions = decisions.offer("d1", List.of(question), message -> {
+            delivered.add(message);
+            sequence.add("host");
+        });
+        run.emit("decision.ask", Map.of("decisionId", "d1", "questions", questions));
+        Recorder rec = new Recorder(sequence);
+        hub.attach(16L, rec, 0);
+
+        Map<String, Object> accepted = run.answerDecision("d1", Map.of("cancelled", false, "answers",
+                List.of(Map.of("questionId", "q1", "optionId", "o2"))));
+        assertEquals(true, accepted.get("accepted"));
+        assertEquals(List.of("decision.ask", "decision.resolved"), rec.names, "解决事件必须先于宿主继续");
+        assertEquals(List.of("sse:decision.ask", "sse:decision.resolved", "host"), sequence, "宿主在解决事件落回放之前就被唤醒了");
+        assertEquals(1, delivered.size());
+        assertEquals("question_result", delivered.get(0).get("type"));
+        Map<String, Object> duplicate = run.answerDecision("d1", Map.of("cancelled", false, "answers",
+                List.of(Map.of("questionId", "q1", "optionId", "o2"))));
+        assertEquals(true, duplicate.get("duplicate"));
+        assertEquals(2, rec.names.size());
+        assertEquals(1, delivered.size());
+        hub.finish(16L);
+    }
+
+    @Test
+    void 运行结束会取消仍待回答的问题() {
+        DecisionPort decisions = new DecisionPort();
+        ChatRunHub.LiveRun run = hub.open(17L, text -> true);
+        run.useDecisions(decisions);
+        List<Map<String, Object>> delivered = new ArrayList<>();
+        Map<String, Object> question = new java.util.LinkedHashMap<>();
+        question.put("id", "q1");
+        question.put("header", "");
+        question.put("question", "怎么做？");
+        question.put("allowOther", false);
+        question.put("options", List.of(
+                Map.of("id", "o1", "label", "甲", "recommended", true),
+                Map.of("id", "o2", "label", "乙", "recommended", false)));
+        decisions.offer("d2", List.of(question), delivered::add);
+        hub.finish(17L);
+        assertEquals(1, delivered.size());
+        assertEquals(true, delivered.get(0).get("cancelled"));
+        assertEquals(false, run.answerDecision("d2", Map.of("cancelled", true, "answers", List.of())).get("accepted"));
     }
 
     @Test

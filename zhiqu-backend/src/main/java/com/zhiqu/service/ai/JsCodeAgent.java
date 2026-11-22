@@ -26,6 +26,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -51,6 +52,7 @@ import java.util.function.Consumer;
  *   <li>子进程请调模型 → {@link HarnessModelGateway}（同一个进程里调，温度、输出上限、不思考、上下文裁剪和命令行同一条路）；
  *       用哪个模型这里说了算，子进程给的 modelId 不认。</li>
  *   <li>子进程请跑命令 → {@link WorkspaceExecutor}（服务器上执行命令只有这一处；不能执行时这里直接回拒绝）。</li>
+ *   <li>子进程请用户决策 → {@link DecisionPort}（问题与答案都再核一遍；解决事件先落回放，再回 question_result）。</li>
  *   <li>轨迹一步一句；收尾交回结论、草稿 —— 草稿的路径照写入规矩再判一遍，照旧成 CODE_DRAFT，用户确认才落盘。</li>
  * </ul>
  * 子进程不继承环境变量（HOME 是自己的临时目录、PATH 只有 node 那一个目录）；到了时间预算整组杀掉；协议里认不出的东西就停，不猜。
@@ -240,6 +242,13 @@ public class JsCodeAgent {
                                          boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
                                          Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode, Long conversationId,
                                          String command, SteerPort steer) {
+        return run(config, userId, userMessage, history, canWrite, canExec, budget, limits, onStep, remote, reasoningMode, conversationId, command, steer, null);
+    }
+
+    public CodeWorkspaceAgent.Result run(AiModelConfig config, Long userId, String userMessage, List<Map<String, Object>> history,
+                                         boolean canWrite, boolean canExec, CodeLoopBudget budget, ContextBudget limits,
+                                         Consumer<Map<String, Object>> onStep, RemoteTools remote, String reasoningMode, Long conversationId,
+                                         String command, SteerPort steer, DecisionPort decisions) {
         Path script = hostScript();
         String nodeBin = nodeBinary();
         // 这个账号自己的文件夹和档位（第一百一十五轮起分账号），或者这段对话的临时空间，这一轮从头到尾用同一份
@@ -321,6 +330,7 @@ public class JsCodeAgent {
         run.put("model", model);
         run.put("remoteTools", remote == null ? List.of() : remote.always());
         run.put("remoteToolsAfterRun", remote == null ? List.of() : remote.afterRun());
+        run.put("userDecision", decisions != null);
 
         Map<String, WorkspaceExecutor.Background> jobs = new LinkedHashMap<>();
         Map<String, CompletableFuture<Boolean>> acks = new ConcurrentHashMap<>();
@@ -392,7 +402,7 @@ public class JsCodeAgent {
                 JsonNode msg = json.readTree(line);
                 String type = msg.path("type").asText("");
                 // 宿主已经不收了：它要的东西（调模型、跑命令、远程工具）不再做，只把它写出来的读完（trace、result）
-                if (channel.gone() && ("model".equals(type) || "exec".equals(type) || "tool".equals(type))) {
+                if (channel.gone() && ("model".equals(type) || "exec".equals(type) || "tool".equals(type) || "question".equals(type))) {
                     continue;
                 }
                 try {
@@ -407,6 +417,8 @@ public class JsCodeAgent {
                             : exec(executor, msg, canExec && !canShell, channel);
                 } else if ("tool".equals(type)) {
                     tool(msg, remote, ranCommand[0], channel);
+                } else if ("question".equals(type)) {
+                    question(msg, decisions, onStep, channel);
                 } else if ("step".equals(type)) {
                     narrate(onStep, Map.of("phase", "call", "tool", "", "message", Texts.limitRaw(msg.path("text").asText(""), 400)));
                 } else if ("trace".equals(type)) {
@@ -595,6 +607,22 @@ public class JsCodeAgent {
         } catch (BusinessException e) {
             channel.send(error(id, e.getMessage(), false));
         }
+    }
+
+    private void question(JsonNode msg, DecisionPort decisions, Consumer<Map<String, Object>> onStep, Channel channel) throws IOException {
+        if (decisions == null) {
+            throw new BusinessException("这个客户端不支持结构化决策");
+        }
+        String id = msg.path("id").asText("");
+        List<Map<String, Object>> raw = json.convertValue(msg.path("questions"), new TypeReference<List<Map<String, Object>>>() {});
+        List<Map<String, Object>> questions = decisions.offer(id, raw, response -> {
+            try {
+                channel.send(response);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+        narrate(onStep, Map.of("phase", "decision", "decisionId", id, "questions", questions));
     }
 
     /** 远程工具：交给 CodeWorkspaceAgent 那一套执行；出错照实说给模型 */

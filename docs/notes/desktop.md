@@ -129,8 +129,11 @@ dmg 一百多 MB，超过 GitHub 单个文件的上限，也不能进 `static/`�
 - 宿主的环境只有 `PATH`、`HOME`、`TMPDIR`、`LANG`（HOME / TMPDIR 是这一轮自己的空目录）；沙箱挡的家目录经 `run.home` 另给 —— 照宿主自己的 HOME 算会挡错地方。
 - 执行预算（第一百三十四轮）：默认 80 轮 / 600 秒，与服务器显式代码任务一致；`defaults write com.zhiqu.quadrant maxRounds N` 可调 1–120，共用 JS 宿主也接受到 120。`run` 回包带 `timeoutMs` / `maxRounds`，页面按外壳预算 +30 秒等待，不再固定 250 秒；外壳在预算 +15 秒叫停。
 - 叫停：stdin 一行 `{"type":"stop"}` → 5 秒 SIGTERM → 3 秒 SIGKILL；宿主收到 stop / SIGTERM / stdin 关掉都中断、收掉后台命令、照实交 result。应用退出时 SIGTERM。
-- 桥 `zqLocal`（带回复）：`status` / `pick` / `run` / `stop` / `read` / `apply`；事件是 `window` 上的 `zq-local`（detail 是宿主的一行 + `runId`，最后一定有 `{type: 'exit'}`）。只认自己网站的主框架，只有主窗口接。
+- 桥 `zqLocal`（带回复）：`status` / `pick` / `run` / `resume` / `ack` / `stop` / `say` / `answer` / `read` / `apply`；事件是 `window` 上的 `zq-local`（detail 是宿主的一行 + `runId`，最后一定有 `{type: 'exit'}`）。只认自己网站的主框架，只有主窗口接。
   `apply` 把确认过的草稿写进选过的文件夹：相对路径、基线（SHA-256，没有文件是 `ABSENT`）不符就一个都不写；软链指到外面的不写。已经是要写的内容再确认一次算成功。
+- 结构化决策（第一百六十二轮）：新版页面在本机 run 里带 `userDecision: true`，外壳才给宿主回答能力。宿主 `question` 转给页面并记入快照；
+  `answer` 只认当前运行中已登记的批次，外壳复核全部答案、方案编号、其他输入和长度，然后写 `question_result`。规范化后的相同答案幂等，冲突不覆盖；停止、终态和退出后拒收。
+  `question_resolved` 也进 `resume` 快照；页面仍用输入框上方的 `decisionRuns` 面板，不调用服务器答案接口。新旧页面 / 外壳任一方没声明能力就不下发工具，退回文字提问。
 - 页面（第一百三十一轮）：只有看得到 `zqLocal` 才有斜杠命令和选择文件夹。网页上这两处都不露，代码模式仍走服务器（生成到产物）。桌面里档位和文件夹记在这台电脑（`zq.desktop.mode` / `zq.desktop.folder`），一轮经桥跑，回答和草稿 `POST /api/ai/desktop-turn` 存回网站；确认先 `apply` 再带 `desktopApplied` 标已确认，服务器不写磁盘。
 - 判据：`DesktopLocalAgentTest`（真编译外壳、真起 node、真沙箱、Java 起的假网关，含确认写盘）、`zhiqu-cli/test/desktop-host.test.js`、`slash-check.js`（网页上面板不打开）。
 
@@ -143,3 +146,6 @@ dmg 一百多 MB，超过 GitHub 单个文件的上限，也不能进 `static/`�
 - `DesktopNotifications` 用 `NotifyIcon` 发系统气泡，点击回主窗。迷你窗与主窗共享 WebView2 Environment，加载发布版 `mini.html` / CSS / JS；DWM 提供透明背景，不能用 `TransparencyKey`（实测会鼠标穿透到桌面）。300×68 DIP、TopMost、不抢焦点、原生拖动、记位置。
 - `Updater` 读 `/api/desktop/downloads` 的 `windows` 项，数字版本段比较，同 origin 下载，强制大小 + SHA-256；用户点下载、再点重启。一次性 PowerShell 等进程退出，同卷 `.new` / `.old` 替换，失败恢复，成功重启并清理。
 - `package-windows-native.ps1` 固定 Node 22.23.2 Windows x64 及官方 SHA-256，交付单 exe。试跑和检查都使用本机假站、独立 profile / 实例；`windows-checks/` 是生产源码的检查项目，不进交付包。`WindowsDesktopShellTest` 在 Windows 真编译并运行，不拿源码扫描冒充通过。
+- 结构化决策（第一百六十三轮，**Windows 源码已接、真机待验**）：`LocalRunRequest` 只认布尔 `userDecision: true`；`LocalAgent` 登记 `question`、校验完整答案并回 `question_result`。
+  `LocalBridge` 新增 `answer`，`question` / `question_resolved` 进快照；UI 线程内先落已答事件再回复。规范化后的相同答案幂等，冲突和停止 / 终态后的答案拒收。
+  `windows-checks` 已加入真实 Node / 假网关和 WebView2 场景，但在当前 macOS 开发机没有 C# 编译器，也没有运行 Windows 测试；待按 `docs/rounds/round-163.md` 在 Windows 重打包验收。

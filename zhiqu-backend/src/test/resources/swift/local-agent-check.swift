@@ -53,6 +53,13 @@ step("a", timeout: 40, {
     // 宿主看到的环境只有这四个（不继承外壳的：令牌、代理、别的应用塞进来的变量都不给）
     out("a.envKeys", LocalAgent.environment(node: nodeURL, home: tmp, tmp: tmp, userHome: home.path).keys.sorted().joined(separator: ","))
     out("a.payloadServer", ((LocalAgent.payload(request("x"), root: proj.path, config: config)["local"] as? [String: Any])?["server"] as? String) ?? "")
+    func decisionCapability(_ value: Any?) -> Bool {
+        var body: [String: Any] = ["folder": proj.path, "message": "x", "level": "READ", "token": token]
+        if let value { body["userDecision"] = value }
+        let req = LocalRunRequest.parse(body).0!
+        return LocalAgent.payload(req, root: proj.path, config: config)["userDecision"] as? Bool ?? false
+    }
+    out("a.decisionCapabilities", [decisionCapability(nil), decisionCapability(true), decisionCapability("true")].map { "\($0)" }.joined(separator: ","))
     // 会话记录的 id 和消息号（第一百四十五轮）：合规的照传，认不出的当没给
     func sessionPayload(_ id: Any, _ msgId: Any) -> [String: Any] {
         let req = LocalRunRequest.parse(["folder": proj.path, "message": "x", "level": "READ", "token": token, "sessionId": id,
@@ -456,6 +463,108 @@ step("steer.patient", timeout: 12, {
     patient.stop()
 }, until: { !patientAccepted.isEmpty && !patient.running })
 step("steer.patient.report", { out("steer.patientAccepted", patientAccepted.map { "\($0)" }.joined(separator: ",")) }, until: { true })
+
+// —— 八、本机结构化决策（第一百六十二轮）：真宿主 + 假网关 + 真 zqLocal 桥。问题进页面和快照；
+// 外壳校验完整答案，第一次有效、相同答案幂等、冲突不覆盖；停止后的迟到答案拒收 ——
+func decisionAnswer(_ runId: String, _ answers: [[String: Any]], id: String = "d1") -> [String: Any] {
+    ["action": "answer", "runId": runId, "decisionId": id, "answers": answers]
+}
+let decisionAnswers: [[String: Any]] = [
+    ["questionId": "q1", "optionId": "o1"],
+    ["questionId": "q2", "optionId": "__other__", "otherText": "用真 WebKit 验证"]
+]
+step("decision.start", {
+    web.localAgent = LocalAgent(config: config)
+    var body = snapshotRun("local-decision", "DECIDE-RUN")
+    body["model"] = 7
+    body["userDecision"] = true
+    bridgeCall("decisionRun", body)
+}, until: {
+    has("decisionRun:") && inbox.messages.contains { $0.hasPrefix("ev:") && $0.contains("\"runId\":\"local-decision\"") && $0.contains("\"type\":\"question\"") }
+})
+step("decision.invalid", { bridgeCall("decisionInvalid", decisionAnswer("local-decision", [decisionAnswers[0]])) }, until: { has("decisionInvalid:") })
+step("decision.emptyOther", {
+    bridgeCall("decisionEmptyOther", decisionAnswer("local-decision", [decisionAnswers[0], ["questionId": "q2", "optionId": "__other__", "otherText": "  "]]))
+}, until: { has("decisionEmptyOther:") })
+step("decision.wrongRun", { bridgeCall("decisionWrongRun", decisionAnswer("local-other", decisionAnswers)) }, until: { has("decisionWrongRun:") })
+step("decision.unknown", { bridgeCall("decisionUnknown", decisionAnswer("local-decision", decisionAnswers, id: "missing")) }, until: { has("decisionUnknown:") })
+step("decision.resumePending", { bridgeCall("decisionResumePending", ["action": "resume", "runId": "local-decision"]) }, until: { has("decisionResumePending:") })
+step("decision.answers", {
+    // 同一批连发，不能等第一轮收尾后才发 duplicate（那测到的是迟到答案，不是幂等）
+    bridgeCall("decisionAnswer", decisionAnswer("local-decision", decisionAnswers))
+    bridgeCall("decisionDuplicate", decisionAnswer("local-decision", [decisionAnswers[0],
+        ["questionId": "q2", "optionId": "__other__", "otherText": "  用真 WebKit 验证\n"]]))
+    bridgeCall("decisionConflict", decisionAnswer("local-decision", [["questionId": "q1", "optionId": "o2"], decisionAnswers[1]]))
+}, until: { has("decisionAnswer:") && has("decisionDuplicate:") && has("decisionConflict:") })
+step("decision.finish", timeout: 30, {}, until: {
+    inbox.messages.contains { $0.hasPrefix("ev:") && $0.contains("\"runId\":\"local-decision\"") && $0.contains("\"type\":\"exit\"") }
+})
+step("decision.after", { bridgeCall("decisionAfter", decisionAnswer("local-decision", decisionAnswers)) }, until: { has("decisionAfter:") })
+step("decision.resumeResolved", { bridgeCall("decisionResumeResolved", ["action": "resume", "runId": "local-decision"]) }, until: { has("decisionResumeResolved:") })
+step("decision.report", {
+    for tag in ["decisionRun", "decisionInvalid", "decisionEmptyOther", "decisionWrongRun", "decisionUnknown", "decisionAnswer", "decisionDuplicate", "decisionConflict", "decisionAfter"] {
+        out("decision." + tag, message(tag + ":"))
+    }
+    let events = inbox.messages.filter { $0.hasPrefix("ev:") && $0.contains("\"runId\":\"local-decision\"") }
+    out("decision.question", events.first { $0.contains("\"type\":\"question\"") } ?? "none")
+    out("decision.result", events.first { $0.contains("\"type\":\"result\"") } ?? "none")
+    let pending = replyBody("decisionResumePending"), resolved = replyBody("decisionResumeResolved")
+    out("decision.pendingSnapshot", ((pending["events"] as? [[String: Any]]) ?? []).contains { $0["type"] as? String == "question" })
+    out("decision.resolvedSnapshot", ((resolved["events"] as? [[String: Any]]) ?? []).contains { $0["type"] as? String == "question_resolved" })
+}, until: { true })
+step("decision.stopStart", {
+    web.localAgent = LocalAgent(config: config)
+    var body = snapshotRun("local-decision-stop", "DECIDE-WAIT")
+    body["model"] = 7
+    body["userDecision"] = true
+    bridgeCall("decisionStopRun", body)
+}, until: {
+    has("decisionStopRun:") && inbox.messages.contains { $0.hasPrefix("ev:") && $0.contains("\"runId\":\"local-decision-stop\"") && $0.contains("\"type\":\"question\"") }
+})
+step("decision.stop", timeout: 15, { bridgeCall("decisionStop", ["action": "stop"]) }, until: { web.localAgent?.running == false })
+step("decision.stopLate", { bridgeCall("decisionStopLate", decisionAnswer("local-decision-stop", decisionAnswers)) }, until: { has("decisionStopLate:") })
+step("decision.stopReport", {
+    out("decision.stopReply", message("decisionStopLate:"))
+    out("decision.stopResult", inbox.messages.first { $0.hasPrefix("ev:") && $0.contains("\"runId\":\"local-decision-stop\"") && $0.contains("\"type\":\"result\"") } ?? "none")
+}, until: { true })
+
+// 真 WKWebView 载入发布的 ai-assistant.js，用真实面板点选本机问题，不把它简化成只发 JSON。
+step("decision.nativeUiLoad", {
+    web.localAgent = LocalAgent(config: config)
+    navigate("native-ui")
+}, until: { has("nativeReady") })
+step("decision.nativeUiStart", {
+    js("startNativeDecision(\(json(projPath)), \(json(token)))")
+}, until: {
+    inbox.messages.contains { $0.hasPrefix("nativeEvent:") && $0.contains("\"runId\":\"local-native-ui\"") && $0.contains("\"type\":\"question\"") }
+})
+step("decision.nativeUiAnswer", {
+    js("""
+    (() => {
+      const p = document.querySelector('#zq-decision');
+      say('nativePanel:' + p.innerText.replace(/\\n/g, ' | '));
+      say('nativeInitialDisabled:' + p.querySelector('[data-decision-submit]').disabled);
+      p.querySelector('[data-decision-option="o1"]').click();
+      p.querySelector('[data-decision-move="1"]').click();
+      p.querySelector('[data-decision-option="__other__"]').click();
+      const input = p.querySelector('[data-decision-other]');
+      input.value = '用真 WebKit 验证';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      say('nativeComplete:' + !p.querySelector('[data-decision-submit]').disabled + ':' + p.querySelector('.zq-decision-progress').textContent);
+    })()
+    """)
+}, until: { has("nativeComplete:") })
+step("decision.nativeUiSubmit", timeout: 30, {
+    js("(() => { const b = document.querySelector('[data-decision-submit]'); b.click(); document.querySelector('[data-decision-submit]').click(); })()")
+}, until: { has("nativeResult:") && has("nativePanelHidden:") })
+step("decision.nativeUiReport", {
+    for tag in ["nativePanel", "nativeInitialDisabled", "nativeComplete", "nativeResult", "nativePanelHidden"] {
+        out("decision." + tag, message(tag + ":").replacingOccurrences(of: "\n", with: " "))
+    }
+    out("decision.nativeDiagnostics", inbox.messages.filter {
+        $0.hasPrefix("nativeError:") || $0 == "nativeModuleLoaded" || $0 == "nativeReady"
+    }.joined(separator: " | "))
+}, until: { true })
 
 // 迷你窗那样没设 localAgent 的页面：一律说没有
 let mini = PageView(frame: NSRect(x: 0, y: 0, width: 300, height: 68), persistent: false)

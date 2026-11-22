@@ -12,6 +12,13 @@
 - **三档权限 plan / ask / auto**（用户定的）：plan 只下发读工具 + `exit_plan_mode`，批准计划才切档；
   ask 写 / 跑前给 diff、问 y/n；auto 不问、做完再汇报。**「下发了什么」和「能执行什么」是同一份清单**，每轮重算。
   MCP 工具第一次用三档都问（第三方写的）。
+- **结构化决策 `ask_user`**（第一百六十轮）：协议在 `src/decisions.js`，只有有交互回答者的主 agent 才下发，必须单独调用；
+  与其他工具混发时整批不执行，避免还没决定就写文件或跑命令。CLI 面板在 `ui.js`：↑↓ 选、Enter 记录、←→ 切题、其他输入、
+  全部回答后提交；推荐只预高亮，Esc / abort 取消，不默认采用。`exec`、无人值守、非交互输入和子 agent 不下发；
+  模型硬调时明说这里没有回答者，不谎称工具不存在。网页代码模式的回答通道（第一百六十一轮）已接入：
+  `run.userDecision` 由客户端的 `contextOptions.userDecision` 决定，宿主协议是 `question` / `question_result`；
+  macOS 本机模式（第一百六十二轮）由页面在本机 run 里显式声明同一能力，外壳校验后回 `question_result`；Windows 外壳源码（第一百六十三轮）已对齐，
+  但当前开发机是 macOS，C# / WebView2 / Windows 进程行为尚未真机验收，见 `docs/rounds/round-163.md` 的待验清单。
 - **本地安全规则与服务器端是同一套**，共用 `conformance/workspace-rules.json`：Java 的
   `WorkspaceRulesConformanceTest` 与 JS 的 `zhiqu-cli/test/conformance.test.js` 跑同一份，
   `HarnessCliNodeSuiteTest` 把 JS 那一侧接进 Maven 全量 —— 两边各自绿不算数，结论一致才算。

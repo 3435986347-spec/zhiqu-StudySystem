@@ -26,6 +26,7 @@ import { Markdown } from './render/markdown.js';
 import { colorEnabled, displayWidth, painter, rowsIn, termSafe } from './render/term.js';
 import { matchCommands } from './commands.js';
 import { monotonic } from './clock.js';
+import { OTHER_OPTION } from './decisions.js';
 
 const MENU_ROWS = 8;
 // 同步输出（DEC 2026）：支持的终端在 h 与 l 之间攒着不画，整块换帧；不支持的按规矩忽略不认识的私有模式。
@@ -89,6 +90,7 @@ export class Ui {
     this.prompt = PROMPT;
     this.commands = commands;
     this.menu = null;        // { items, sel }：输入 / 时弹出的命令菜单
+    this.decision = null;
     this.idle = null;        // 空闲（没在干活）时只放菜单的那块区域，形状和 live 一样
     this.dismissed = null;   // Esc 关掉菜单时的那段输入：原样不再弹，接着打字才再弹
     this.pasting = null;     // 括号粘贴进行中攒的文字
@@ -113,6 +115,7 @@ export class Ui {
     this.rl.on('line', (line) => this.onLine(line));
     this.rl.on('close', () => {
       this.closed = true;
+      if (this.decision) this.finishDecision({ cancelled: true, answers: [] });
       this.dropQuestion('（输入结束，按不同意算）');
       for (const w of this.waiters.splice(0)) w.resolve(null);
     });
@@ -137,6 +140,7 @@ export class Ui {
     input.removeAllListeners('keypress');
     input.on('keypress', (s, key) => {
       if (this.closed) return;
+      if (this.decisionKey(s, key || {})) return;
       if (this.pasteKey(s, key || {})) return;
       if (this.menuKey(key || {})) return;
       if (this.liveKey(key || {})) return;
@@ -522,6 +526,239 @@ export class Ui {
     });
   }
 
+  decide(questions, { signal } = {}) {
+    const epoch = this.chooseEpoch;
+    const live = () => epoch === this.chooseEpoch && !(signal && signal.aborted);
+    const turn = this.chooseChain.then(() => (live() ? this.decideNow(questions, { signal }) : { cancelled: true, answers: [] }));
+    this.chooseChain = turn.catch(() => {});
+    return turn;
+  }
+
+  decideNow(questions, { signal } = {}) {
+    if (!this.interactive || this.closed) return Promise.resolve({ cancelled: true, answers: [] });
+    this.start();
+    return new Promise((resolve) => {
+      const draft = this.rl.line;
+      this.frame(() => {
+        this.setLine('');
+        this.menu = null;
+        this.decision = { questions, index: 0, selected: 0, answers: new Map(), editing: false, notice: '', draft, resolve, signal: signal || null, onAbort: null };
+        this.decision.selected = this.decisionFocus();
+        if (!this.live) this.idle = { partial: '', status: '', question: null, drawn: false, rowsAbove: 0 };
+        this.setDecisionPrompt();
+        this.eraseLive();
+        this.drawLive();
+        if (signal) {
+          this.decision.onAbort = () => this.finishDecision({ cancelled: true, answers: [] });
+          signal.addEventListener('abort', this.decision.onAbort, { once: true });
+        }
+      });
+    });
+  }
+
+  decisionEntries(question) {
+    return [
+      ...question.options,
+      ...(question.allowOther ? [{ id: OTHER_OPTION, label: '其他输入…' }] : []),
+      { id: '__submit__', label: '提交答案' },
+    ];
+  }
+
+  decisionFocus() {
+    const d = this.decision;
+    const question = d.questions[d.index];
+    const answer = d.answers.get(question.id);
+    if (answer) {
+      if (answer.optionId === OTHER_OPTION) return question.options.length;
+      const at = question.options.findIndex((option) => option.id === answer.optionId);
+      if (at >= 0) return at;
+    }
+    const recommended = question.options.findIndex((option) => option.recommended);
+    return recommended >= 0 ? recommended : 0;
+  }
+
+  decisionKey(_s, key) {
+    const d = this.decision;
+    if (!d) return false;
+    if ((key.ctrl && (key.name === 'c' || key.name === 'd'))) return false;
+    if (d.editing) {
+      if (key.name === 'escape') {
+        const twice = key.sequence === '\u001b\u001b';
+        d.editing = false;
+        d.notice = '';
+        this.setLine('');
+        this.setDecisionPrompt();
+        if (twice) this.finishDecision({ cancelled: true, answers: [] });
+        else this.repaintDecision();
+        return true;
+      }
+      if (key.name === 'return' || key.name === 'enter') {
+        const otherText = String(this.rl.line || '').trim();
+        if (!otherText) {
+          d.notice = '其他输入不能为空';
+        } else if (otherText.length > 2000) {
+          d.notice = '其他输入最多 2000 字';
+        } else {
+          const question = d.questions[d.index];
+          d.answers.set(question.id, { questionId: question.id, optionId: OTHER_OPTION, otherText });
+          d.editing = false;
+          d.notice = '';
+          this.setLine('');
+          this.setDecisionPrompt();
+          this.advanceDecision();
+        }
+        this.repaintDecision();
+        return true;
+      }
+      return false;
+    }
+    const entries = this.decisionEntries(d.questions[d.index]);
+    if (key.name === 'up' || key.name === 'down') {
+      const delta = key.name === 'up' ? -1 : 1;
+      d.selected = (d.selected + delta + entries.length) % entries.length;
+      d.notice = '';
+      this.repaintDecision();
+      return true;
+    }
+    if (key.name === 'left' || key.name === 'right') {
+      const delta = key.name === 'left' ? -1 : 1;
+      d.index = (d.index + delta + d.questions.length) % d.questions.length;
+      d.selected = this.decisionFocus();
+      d.notice = '';
+      this.repaintDecision();
+      return true;
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      this.acceptDecision();
+      return true;
+    }
+    if (key.name === 'escape') {
+      this.finishDecision({ cancelled: true, answers: [] });
+      return true;
+    }
+    return true;
+  }
+
+  acceptDecision() {
+    const d = this.decision;
+    const question = d.questions[d.index];
+    const entries = this.decisionEntries(question);
+    const picked = entries[d.selected];
+    if (picked.id === '__submit__') {
+      const missing = d.questions.length - d.answers.size;
+      if (missing) {
+        d.notice = `还有 ${missing} 题未答，不能提交`;
+        this.repaintDecision();
+        return;
+      }
+      const answers = d.questions.map((q) => d.answers.get(q.id));
+      this.finishDecision({ cancelled: false, answers });
+      return;
+    }
+    if (picked.id === OTHER_OPTION) {
+      d.editing = true;
+      d.notice = '';
+      const previous = d.answers.get(question.id);
+      this.setLine(previous && previous.optionId === OTHER_OPTION ? previous.otherText : '');
+      this.setDecisionPrompt();
+      this.repaintDecision();
+      return;
+    }
+    d.answers.set(question.id, { questionId: question.id, optionId: picked.id });
+    d.notice = '';
+    this.advanceDecision();
+    this.repaintDecision();
+  }
+
+  advanceDecision() {
+    const d = this.decision;
+    const unanswered = d.questions.findIndex((q) => !d.answers.has(q.id));
+    if (unanswered >= 0) {
+      d.index = unanswered;
+      d.selected = this.decisionFocus();
+      return;
+    }
+    d.selected = this.decisionEntries(d.questions[d.index]).length - 1;
+  }
+
+  setDecisionPrompt() {
+    const region = this.live || this.idle;
+    if (region && this.decision) region.question = this.decision.editing ? '其他输入（Enter 保存，Esc 返回）› ' : '请选择 › ';
+  }
+
+  repaintDecision() {
+    if (!this.decision) return;
+    this.frame(() => {
+      this.setDecisionPrompt();
+      this.eraseLive();
+      this.drawLive();
+    });
+  }
+
+  decisionLines() {
+    const d = this.decision;
+    const question = d.questions[d.index];
+    const room = this.cols() - 1;
+    const safeFit = (value) => fit(termSafe(String(value), { singleLine: true }), room);
+    const lines = [this.paint.bold(safeFit(`${question.header ? `【${question.header}】` : ''}第 ${d.index + 1} / ${d.questions.length} 题`))];
+    lines.push(safeFit(question.question));
+    const entries = this.decisionEntries(question);
+    entries.forEach((entry, index) => {
+      const on = index === d.selected && !d.editing;
+      const submit = entry.id === '__submit__';
+      const other = entry.id === OTHER_OPTION;
+      const answer = d.answers.get(question.id);
+      const chosen = answer && answer.optionId === entry.id;
+      let label = entry.label;
+      if (entry.recommended) label += '（推荐）';
+      if (other && chosen) label = `其他输入：${answer.otherText}`;
+      if (submit) {
+        const missing = d.questions.length - d.answers.size;
+        label = missing ? `提交答案（还有 ${missing} 题未答）` : '提交答案';
+      }
+      const line = safeFit(`${on ? '❯' : ' '} ${label}${chosen && !submit && !other ? ' ✓' : ''}`);
+      lines.push(on ? this.paint.cyan(line) : submit || (other && d.editing) ? this.paint.dim(line) : line);
+      if (entry.description) lines.push(this.paint.dim(safeFit(`   ${entry.description}`)));
+    });
+    if (d.notice) lines.push(this.paint.yellow(safeFit(d.notice)));
+    lines.push(this.paint.dim(safeFit(d.editing ? 'Enter 保存 · Esc 返回' : '↑↓ 选择 · Enter 确认 · ←→ 切题 · Esc 取消')));
+    return lines;
+  }
+
+  finishDecision(outcome) {
+    const d = this.decision;
+    if (!d) return;
+    if (d.onAbort && d.signal) d.signal.removeEventListener('abort', d.onAbort);
+    d.onAbort = null;
+    const lines = [];
+    if (outcome.cancelled) {
+      lines.push('（已取消这次决策，没有选择任何方案）');
+    } else {
+      lines.push(`已提交 ${d.questions.length} 个问题的答案：`);
+      d.questions.forEach((question, index) => {
+        const answer = outcome.answers[index];
+        const option = question.options.find((item) => item.id === answer.optionId);
+        const chosen = answer.optionId === OTHER_OPTION ? `其他输入：${answer.otherText}` : `${option.label}${option.recommended ? '（推荐）' : ''}`;
+        lines.push(`${index + 1}. ${question.question} → ${chosen}`);
+      });
+    }
+    this.frame(() => {
+      this.eraseLive();
+      if (this.live) this.live.question = null;
+      if (this.idle) this.idle = null;
+      this.decision = null;
+      const summary = `${lines.map((line) => termSafe(line)).join('\n')}\n`;
+      if (this.live) this.writeNow(summary);
+      else this.output.write(summary);
+      if (!this.closed) {
+        this.setLine(d.draft);
+        if (this.live) this.drawLive();
+        else this.promptAgain();
+      }
+      d.resolve(outcome);
+    });
+  }
+
   /**
    * 问一个单字母的选择；输入结束、或者回答不在选项里时返回 fallback。
    * 一次只问一个（第一百二十轮）：几个子 agent 同时要确认时，原来两个问题一起挂着 —— 屏幕上是后一个，回车交给的是前一个，
@@ -573,6 +810,7 @@ export class Ui {
    */
   cancelQuestion() {
     this.chooseEpoch += 1;     // 排着还没问出来的确认：轮到它们时直接按不同意（见 choose）
+    if (this.decision) this.finishDecision({ cancelled: true, answers: [] });
     const fresh = this.waiters.filter((w) => w.fresh);
     if (!fresh.length) return;
     this.waiters = this.waiters.filter((w) => !w.fresh);
@@ -632,10 +870,11 @@ export class Ui {
     if (l.partial) lines.push(l.partial);
     // 多行的（粘贴的）只显示一行摘要：原文里的换行会把活动区撑乱（擦的时候按一行算）
     const brief = (q) => (q.includes('\n') ? briefInput(q) : q.length > 60 ? `${q.slice(0, 60)}…` : q);
-    if (this.live) for (const m of this.steering) lines.push(this.paint.dim(`↳ 补充（下一步送到）：${brief(m.lines.join('\n'))}`));
-    if (this.live) for (const q of this.queue) lines.push(this.paint.dim(`⋯ 排队：${q.includes('\n') ? briefInput(q) : q.length > 60 ? `${q.slice(0, 60)}…` : q}`));
-    if (l.status) lines.push(l.status);
-    return lines.concat(this.menuLines());
+    if (this.decision) lines.push(...this.decisionLines());
+    if (!this.decision && this.live) for (const m of this.steering) lines.push(this.paint.dim(`↳ 补充（下一步送到）：${brief(m.lines.join('\n'))}`));
+    if (!this.decision && this.live) for (const q of this.queue) lines.push(this.paint.dim(`⋯ 排队：${q.includes('\n') ? briefInput(q) : q.length > 60 ? `${q.slice(0, 60)}…` : q}`));
+    if (!this.decision && l.status) lines.push(l.status);
+    return this.decision ? lines : lines.concat(this.menuLines());
   }
 
   /** 擦掉活动区。extraRows：readline 回车时已经往下走的那几行。 */

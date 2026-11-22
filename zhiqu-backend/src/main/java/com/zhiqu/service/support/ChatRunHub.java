@@ -1,6 +1,7 @@
 package com.zhiqu.service.support;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhiqu.service.ai.DecisionPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -18,7 +19,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 一轮回答的「直播 + 回放」（第一百三十三轮）。
+ * 一轮回答的「直播 + 回放」（第一百三十三轮），以及等待用户决策的问答交接（第一百六十一轮）。
  *
  * <h2>为什么需要它</h2>
  *
@@ -107,6 +108,7 @@ public class ChatRunHub {
         private boolean finished;
         private long finishedAt;
         private Turn turn;
+        private DecisionPort decisions;
 
         private LiveRun(Long runId, Turn turn) {
             this.runId = runId;
@@ -115,6 +117,26 @@ public class ChatRunHub {
 
         public Long runId() {
             return runId;
+        }
+
+        public synchronized void useDecisions(DecisionPort port) {
+            this.decisions = port;
+        }
+
+        public Map<String, Object> answerDecision(String decisionId, Map<String, Object> body) {
+            DecisionPort target;
+            synchronized (this) {
+                target = decisions;
+            }
+            if (target == null) {
+                return Map.of("accepted", false, "error", "这一轮不支持结构化决策");
+            }
+            DecisionPort.Result result = target.answer(decisionId, body);
+            if (result.resolved()) {
+                emit("decision.resolved", result.event());
+                result.deliver();
+            }
+            return result.payload();
         }
 
         /** 记一帧，顺手推给挂着的那条连接。任何异常都不往外抛 —— 生成不能因为没人看就停下。 */
@@ -240,20 +262,27 @@ public class ChatRunHub {
         }
 
         /** 这一轮结束了：收掉连接，留着缓冲等页面回来重放，过一会儿再清。 */
-        public synchronized void finish() {
-            if (finished) {
-                return;
-            }
-            finished = true;
-            finishedAt = System.currentTimeMillis();
-            turn = null;
-            if (attached != null) {
-                try {
-                    attached.complete();
-                } catch (Exception ignored) {
-                    // 已经断了
+        public void finish() {
+            DecisionPort target;
+            synchronized (this) {
+                if (finished) {
+                    return;
                 }
-                attached = null;
+                finished = true;
+                finishedAt = System.currentTimeMillis();
+                turn = null;
+                target = decisions;
+                if (attached != null) {
+                    try {
+                        attached.complete();
+                    } catch (Exception ignored) {
+                        // 已经断了
+                    }
+                    attached = null;
+                }
+            }
+            if (target != null) {
+                target.close();
             }
         }
 
@@ -263,17 +292,24 @@ public class ChatRunHub {
             }
         }
 
-        private synchronized void abort() {
-            finished = true;
-            finishedAt = System.currentTimeMillis();
-            turn = null;
-            if (attached != null) {
-                try {
-                    attached.complete();
-                } catch (Exception ignored) {
-                    // 已经断了
+        private void abort() {
+            DecisionPort target;
+            synchronized (this) {
+                finished = true;
+                finishedAt = System.currentTimeMillis();
+                turn = null;
+                target = decisions;
+                if (attached != null) {
+                    try {
+                        attached.complete();
+                    } catch (Exception ignored) {
+                        // 已经断了
+                    }
+                    attached = null;
                 }
-                attached = null;
+            }
+            if (target != null) {
+                target.close();
             }
         }
 
@@ -350,6 +386,14 @@ public class ChatRunHub {
         // 让页面和别的标签页都看到「这句是补进这一轮的」，而不是凭空消失
         run.emit("message.injected", Map.of("text", text));
         return "current";
+    }
+
+    public Map<String, Object> answer(Long runId, String decisionId, Map<String, Object> body) {
+        LiveRun run = find(runId);
+        if (run == null) {
+            return Map.of("accepted", false, "error", "这一轮已经结束");
+        }
+        return run.answerDecision(decisionId, body);
     }
 
     /** 内存里同时留太多 run 时，先把已经跑完的清掉。 */

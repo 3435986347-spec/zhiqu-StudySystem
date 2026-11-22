@@ -15,6 +15,7 @@ namespace Zhiqu.Desktop
         internal string Folder, Message, Level, Command, Token, Effort, SessionId;
         internal int? ModelId;
         internal object[] History;
+        internal bool UserDecision;
         private static readonly Regex TokenShape = new Regex(@"^zqp_[A-Za-z0-9_-]{16,200}$", RegexOptions.Compiled);
         private static readonly Regex SessionShape = new Regex(@"^[A-Za-z0-9_-]{1,64}$", RegexOptions.Compiled);
 
@@ -53,6 +54,7 @@ namespace Zhiqu.Desktop
             {
                 Folder = folder, Message = message, Level = level, Command = command, Token = token, History = history.ToArray(),
                 ModelId = Json.Integer(body, "model"), SessionId = session != null && SessionShape.IsMatch(session) ? session : null,
+                UserDecision = body.ContainsKey("userDecision") && body["userDecision"] is bool && (bool)body["userDecision"],
                 Effort = effort == "medium" || effort == "high" || effort == "extra" || effort == "max" ? effort : "instant",
             };
         }
@@ -72,6 +74,75 @@ namespace Zhiqu.Desktop
             internal string Host { get { return LocalRuntime.HostPath(Runtime ?? string.Empty); } }
         }
 
+        private sealed class DecisionBatch
+        {
+            internal Dictionary<string, object>[] Questions;
+            internal Dictionary<string, object>[] Answers;
+
+            internal static Dictionary<string, object>[] Normalize(Dictionary<string, object>[] questions, object[] raw, out string error)
+            {
+                error = null;
+                if (questions == null || raw == null || raw.Length != questions.Length) { error = "要回答全部问题，不能多答或漏答"; return null; }
+                var byId = new Dictionary<string, Dictionary<string, object>>();
+                foreach (object item in raw)
+                {
+                    var answer = Json.Object(item);
+                    string id = Json.Text(answer, "questionId");
+                    if (answer == null || id == null) { error = "每个答案都要有 questionId"; return null; }
+                    if (byId.ContainsKey(id)) { error = "问题 " + id + " 重复回答了"; return null; }
+                    byId[id] = answer;
+                }
+                var answers = new List<Dictionary<string, object>>();
+                foreach (var question in questions)
+                {
+                    string questionId = Json.Text(question, "id");
+                    Dictionary<string, object> answer;
+                    if (questionId == null || !byId.TryGetValue(questionId, out answer)) { error = "还有问题没有回答"; return null; }
+                    string optionId = Json.Text(answer, "optionId");
+                    if (optionId == null) { error = "问题 " + questionId + " 没有选择方案"; return null; }
+                    if (optionId == "__other__")
+                    {
+                        bool allowed = !question.ContainsKey("allowOther") || !(question["allowOther"] is bool) || (bool)question["allowOther"];
+                        if (!allowed) { error = "问题 " + questionId + " 不允许其他输入"; return null; }
+                        string other = Json.Text(answer, "otherText");
+                        if (other == null) { error = "问题 " + questionId + " 的其他输入必须是文字"; return null; }
+                        if (other.Length > 2000) { error = "问题 " + questionId + " 的其他输入最多 2000 字"; return null; }
+                        string trimmed = other.Trim();
+                        if (trimmed.Length == 0) { error = "问题 " + questionId + " 的其他输入不能为空"; return null; }
+                        answers.Add(new Dictionary<string, object> { { "questionId", questionId }, { "optionId", optionId }, { "otherText", trimmed } });
+                        continue;
+                    }
+                    IEnumerable options = question.ContainsKey("options") ? question["options"] as IEnumerable : null;
+                    bool exists = options != null && options.Cast<object>().Any(item =>
+                    {
+                        var option = Json.Object(item);
+                        return option != null && Json.Text(option, "id") == optionId;
+                    });
+                    if (!exists) { error = "问题 " + questionId + " 没有方案 " + optionId; return null; }
+                    if (answer.ContainsKey("otherText") && answer["otherText"] != null && !string.IsNullOrWhiteSpace(Convert.ToString(answer["otherText"])))
+                    { error = "问题 " + questionId + " 选择了已有方案，不能同时带其他输入"; return null; }
+                    answers.Add(new Dictionary<string, object> { { "questionId", questionId }, { "optionId", optionId } });
+                }
+                if (byId.Count != questions.Length) { error = "答案里有不认识的问题编号"; return null; }
+                return answers.ToArray();
+            }
+
+            internal static bool Same(Dictionary<string, object>[] left, Dictionary<string, object>[] right)
+            {
+                if (left == null || right == null || left.Length != right.Length) return false;
+                for (int i = 0; i < left.Length; i++)
+                {
+                    if (left[i].Count != right[i].Count) return false;
+                    foreach (var pair in left[i])
+                    {
+                        object value;
+                        if (!right[i].TryGetValue(pair.Key, out value) || Convert.ToString(pair.Value) != Convert.ToString(value)) return false;
+                    }
+                }
+                return true;
+            }
+        }
+
         private readonly object _gate = new object();
         private readonly Config _config;
         private readonly Dictionary<int, TaskCompletionSource<bool>> _sayWaiters = new Dictionary<int, TaskCompletionSource<bool>>();
@@ -86,6 +157,8 @@ namespace Zhiqu.Desktop
         private int _stderrCount;
         private bool _running, _gotResult, _stdoutDone, _exited, _stopping;
         private int _saySeq;
+        private static readonly Regex DecisionShape = new Regex(@"^[A-Za-z0-9_-]{1,64}$", RegexOptions.Compiled);
+        private readonly Dictionary<string, DecisionBatch> _decisions = new Dictionary<string, DecisionBatch>();
 
         private static string DefaultHome()
         {
@@ -134,7 +207,7 @@ namespace Zhiqu.Desktop
                 { "type", "run" }, { "root", root }, { "home", _config.Home }, { "message", req.Message }, { "history", req.History },
                 { "command", req.Command }, { "sessionId", req.SessionId }, { "canWrite", write }, { "canExec", false }, { "canShell", true },
                 { "shellWrite", write && req.Level == "EXEC" }, { "shellMode", write && req.Level == "EXEC" && _config.Network == "on" ? "direct" : null },
-                { "sandboxNetwork", _config.Network }, { "maxRounds", _config.MaxRounds },
+                { "userDecision", req.UserDecision }, { "sandboxNetwork", _config.Network }, { "maxRounds", _config.MaxRounds },
                 { "timeoutMs", _config.TimeoutMs }, { "model", new Dictionary<string, object> { { "id", req.ModelId } } }, { "effort", req.Effort },
                 { "local", new Dictionary<string, object> { { "server", _config.Server.AbsoluteUri }, { "token", req.Token } } },
             };
@@ -190,6 +263,7 @@ namespace Zhiqu.Desktop
                     if (_running) return "上一轮还没完，先停下它";
                     _process = process; _onMessage = onMessage; _work = work; _token = req.Token;
                     _bufferCount = 0; _stderrCount = 0; _gotResult = false; _stdoutDone = false; _exited = false; _stopping = false;
+                    _decisions.Clear();
                 }
                 process.Exited += delegate { Exited(); };
                 if (!process.Start()) throw new InvalidOperationException("进程没有启动");
@@ -307,7 +381,8 @@ namespace Zhiqu.Desktop
             Dictionary<string, object> message;
             try { message = Json.Object(Encoding.UTF8.GetString(bytes)); } catch { return; }
             string type = Json.Text(message, "type");
-            if (type == "step" || type == "trace" || type == "steered") Deliver(message);
+            if (type == "question") RegisterQuestion(message);
+            else if (type == "step" || type == "trace" || type == "steered") Deliver(message);
             else if (type == "result" || type == "fatal") { lock (_gate) _gotResult = true; Deliver(message); }
             else if (type == "say_ack")
             {
@@ -316,6 +391,31 @@ namespace Zhiqu.Desktop
                 if (waiter != null) waiter.TrySetResult(message.ContainsKey("accepted") && message["accepted"] is bool && (bool)message["accepted"]);
             }
             else if (type != null) Fail("本机代码助手要了外壳不做的事（" + Json.Limit(type, 20) + "），停下了");
+        }
+
+        private void RegisterQuestion(Dictionary<string, object> message)
+        {
+            string id = Json.Text(message, "id");
+            IEnumerable raw = message.ContainsKey("questions") ? message["questions"] as IEnumerable : null;
+            var questions = new List<Dictionary<string, object>>();
+            bool valid = id != null && DecisionShape.IsMatch(id) && raw != null && !(raw is string);
+            if (valid)
+            {
+                foreach (object item in raw)
+                {
+                    var question = Json.Object(item);
+                    if (question == null) { valid = false; break; }
+                    questions.Add(question);
+                }
+            }
+            valid = valid && questions.Count >= 1 && questions.Count <= 4;
+            lock (_gate)
+            {
+                if (!valid || !_running || _stopping || _gotResult || _decisions.ContainsKey(id)) valid = false;
+                else _decisions.Add(id, new DecisionBatch { Questions = questions.ToArray() });
+            }
+            if (!valid) { Fail("本机代码助手发来的问题格式不对，停下了"); return; }
+            Deliver(message);
         }
 
         private void Fail(string why)
@@ -364,6 +464,38 @@ namespace Zhiqu.Desktop
             await Task.Delay(_config.SayTimeoutMs).ConfigureAwait(false);
             lock (_gate) _sayWaiters.Remove(id);
             waiter.TrySetResult(false);
+        }
+
+        internal Dictionary<string, object> Answer(string decisionId, object[] raw)
+        {
+            lock (_gate)
+            {
+                if (!_running || _stopping || _gotResult || _exited || _input == null)
+                    return DecisionResponse(false, false, null, "这一轮已经结束或正在停止");
+                DecisionBatch batch;
+                if (decisionId == null || !_decisions.TryGetValue(decisionId, out batch))
+                    return DecisionResponse(false, false, null, "这批问题不存在或已经失效");
+                string error;
+                var answers = DecisionBatch.Normalize(batch.Questions, raw, out error);
+                if (batch.Answers != null)
+                {
+                    if (error == null && DecisionBatch.Same(batch.Answers, answers))
+                        return DecisionResponse(true, true, batch.Answers, null);
+                    return DecisionResponse(false, false, null, "这批问题已经提交过不同的答案");
+                }
+                if (error != null) return DecisionResponse(false, false, null, error);
+                batch.Answers = answers;
+                Send(new Dictionary<string, object> { { "type", "question_result" }, { "id", decisionId }, { "cancelled", false }, { "answers", answers } });
+                return DecisionResponse(true, false, answers, null);
+            }
+        }
+
+        private static Dictionary<string, object> DecisionResponse(bool accepted, bool duplicate, Dictionary<string, object>[] answers, string error)
+        {
+            var reply = new Dictionary<string, object> { { "accepted", accepted }, { "duplicate", duplicate } };
+            if (answers != null) reply["answers"] = answers;
+            if (error != null) reply["error"] = error;
+            return reply;
         }
 
         internal void Stop()
@@ -415,6 +547,7 @@ namespace Zhiqu.Desktop
                 _bufferCount = 0;
                 _running = false; _gotResult = true;
                 waiters.AddRange(_sayWaiters.Values); _sayWaiters.Clear();
+                _decisions.Clear();
                 _onMessage = null; _token = string.Empty; work = _work; _work = null;
                 try { if (_input != null) _input.Dispose(); } catch { } _input = null;
                 try { if (_job != null) _job.Dispose(); } catch { } _job = null;

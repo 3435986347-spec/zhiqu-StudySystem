@@ -19,11 +19,11 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.Map;
 
 /**
- * 一轮回答的重连与补充（第一百三十三轮）。
+ * 一轮回答的重连、补充与结构化决策（第一百三十三、一百六十一轮）。
  *
  * <h2>为什么另开一个控制器</h2>
  *
- * <p>这两个端点操作的是「已经在跑的那一轮」，不是「发一条新消息」。放在这里，{@code /api/ai/chat/stream}
+ * <p>这些端点操作的是「已经在跑的那一轮」，不是「发一条新消息」。放在这里，{@code /api/ai/chat/stream}
  * 那边一个字都不用动，读代码的人也能一眼看出这是另一件事。
  *
  * <h2>重连</h2>
@@ -93,5 +93,17 @@ public class AiRunController {
             text = text.substring(0, SAY_MAX_LENGTH);
         }
         return Result.success(Map.of("delivered", chatRunHub.say(runId, text)));
+    }
+
+    @PostMapping("/{runId}/decisions/{decisionId}/answer")
+    public Result<Map<String, Object>> answer(@PathVariable Long runId, @PathVariable String decisionId,
+                                               @RequestBody(required = false) Map<String, Object> body) {
+        aiWorkspaceService.getRun(SecurityUtils.getCurrentUserId(), runId);
+        Map<String, Object> answer = chatRunHub.answer(runId, decisionId, body == null ? Map.of() : body);
+        if (!Boolean.TRUE.equals(answer.get("accepted")) && answer.containsKey("error")
+                && !Boolean.TRUE.equals(answer.get("duplicate"))) {
+            throw new BusinessException(String.valueOf(answer.get("error")));
+        }
+        return Result.success(answer);
     }
 }

@@ -2,12 +2,10 @@
 给在这个仓库里干活的 Claude Code 看的规矩：怎么跑、怎么测、不能碰的地方、几条踩过就会再踩的坑。来龙去脉和各部分的细节在 `docs/`：各部分的说明在 `docs/notes/`，每一轮一份 `docs/rounds/round-NN.md`。（第三十八轮从 1529 行压到这里，原来的内容一字不改地挪进了那两处；`ClaudeMdTest` 管着这份不超过 200 行。）
 
 ## 这是什么
-
 **知趣·象限 AI 办公助手** —— 以四象限（艾森豪威尔）为骨架的个人 AI 办公助手，带个人知识 Wiki 和可选的语义检索（RAG）。
 2026-10-04 之前是给大学生的学习系统（第二十六轮改的定位）；内部名字 `StudyTask`、`study_record`、`create_study_plan` 故意没改。一个后端，三个入口：网页（Spring Boot 带着静态前端，**前端没有构建步骤**）、桌面应用（macOS 原生外壳 / Windows 原生外壳（WebView2））、npm 版命令行 `zhiqu`（`zhiqu-cli/`，循环与工具跑在用户电脑上，服务端只做登录、模型网关、存档、远程工具）。
 
 ## 怎么跑
-
 库结构由 Flyway 管（`zhiqu-backend/src/main/resources/db/migration`，现在到 `V49`），启动时自动迁移，**不要手动执行 `schema.sql`**。只需要库存在：
 
 ```sql
@@ -30,7 +28,6 @@ java -jar target/zhiqu-backend-0.0.1-SNAPSHOT.jar
 - 桌面应用：`bash deploy/desktop/package-macos-native.sh`；Windows 原生外壳 `.\deploy\desktop\package-windows-native.ps1`（要 .NET SDK 8，`DOTNET_EXE` 指过去；老的那份 `package-windows.ps1` 是 jpackage + 包里的后端，留着备查）。**外壳的改动要重新打包才到用户手里**，网页的改动不用。线上（`zhiqustudy.com`，Ubuntu）：`ZHIQU_SSH="-i $HOME/.ssh/zhiqu_server" bash deploy/ubuntu/deploy-from-dev.sh`，见 `deploy/ubuntu/README.md`。
 
 ## 怎么测
-
 ```bash
 cd zhiqu-backend
 mvn -o test                          # 第一次联网跑要先取 junit-platform-launcher
@@ -72,7 +69,6 @@ cd ../zhiqu-cli && npm test
 9. **替身照真实回包写，不照前端的假设写**：Wiki 健康检查的替身返回后端从来没有的 `issues`，判据和实现一起错、一起绿了许多轮（第六十九轮）。长期红着、被「解释」过去的判据要么修、要么写明原因显式跳过。
 
 ## 进行中的计划
-
 - 产品方案（2026-10-03）：[`docs/product-plan.md`](docs/product-plan.md)，五步按顺序做，标「要你定」的先问用户。
 - zhiqu harness（P0–P7）：[`docs/zhiqu-harness-plan.md`](docs/zhiqu-harness-plan.md)，严格按表执行、不擅自增删，做完一项更新「进度」列。npm 发布（P7）用户 2026-11-08 定了：包名 `zhiqu`，默认连 `https://zhiqustudy.com`，`"private"` 已去掉（`check-release` 在发布前挡本机地址、http）。做到 Codex 同一级别（2026-11-07 用户要的）：[`docs/codex-parity-plan.md`](docs/codex-parity-plan.md)，一步一轮，装 Codex、花钱的对比先问用户。
 - 界面打磨（2026-10-06）：[`docs/ui-plan.md`](docs/ui-plan.md)，「要你定」的三件用户已定（见那份末尾）；每一步做完给用户截图。
@@ -102,7 +98,7 @@ cd ../zhiqu-cli && npm test
 
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261120-r159`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261122-r162`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；**内联样式、写死的字号按文件只许降**（`InlineStyleRatchetTest`，`==` 钉着，少了就改小）；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -198,3 +194,7 @@ cd ../zhiqu-cli && npm test
 - [第一百三十轮](docs/rounds/round-130.md) 边做边说：调工具前一句判断马上显示（终端一行灰字、步骤里一条点不开的 note），思考原文照旧收着；[第一百三十一轮](docs/rounds/round-131.md) 斜杠命令和选择文件夹只在桌面应用里，确认写进选过的文件夹；[第一百三十二轮](docs/rounds/round-132.md) 桌面应用自己更新（左下角胶囊：比版本、核 sha256、一次性脚本先拷后换）、生成中还能发消息（队列 / 立即）、RAG 建索引有自己的读超时（1.8 秒是查询的预算）、工具循环 20 → 40；[第一百三十三轮](docs/rounds/round-133.md) 回答不再绑在那条 SSE 上（ChatRunHub + 重连 + 一份事件落地），「立即」改成补充信息；桌面轮数对齐、选完文件夹切不过去；[第一百三十四轮](docs/rounds/round-134.md) 显式代码任务 80 轮 / 10 分钟、整条回答 15 分钟，CLI 默认 80 轮、宿主可接 120 轮，页面按外壳真实预算等待；[第一百三十五轮](docs/rounds/round-135.md) 模型能自己看页面（`preview_page` 宿主侧截图，图进上下文；后端按 1200 token 估、Anthropic 转 image 块）；[第一百三十六轮](docs/rounds/round-136.md) 去掉限时和限轮次，没做完的活下一轮接上；[第一百三十七轮](docs/rounds/round-137.md) 记忆第 1 步止血：图按张记账、摘要保险、不转圈、监听泄漏、会话文件图外置、记忆满了拒绝；[第一百三十八轮](docs/rounds/round-138.md) 记忆第 2 步：工作状态卡（清单记账、`note`、压完还回去、取代 progress.md）；[第一百三十九轮](docs/rounds/round-139.md) 记忆第 3 步：先清再摘（可取回的占位、摘要锚定增量）；[第一百四十轮](docs/rounds/round-140.md) 记忆第 4 步：缓存（用量和命中看得见、系统提示定住、三处断点、直连也标）；[第一百四十一轮](docs/rounds/round-141.md) 记忆第 5 步：跨会话（开工时给最近三段、search_sessions / read_session）；[第一百四十二轮](docs/rounds/round-142.md) 记忆第 6 步：项目笔记（`.zhiqu/memory/`、程序维护的地图、`/memory`）；[第一百四十三轮](docs/rounds/round-143.md) 记忆第 7 步：用户记忆逐条（V49、加 / 改 / 作废的草稿、按预算读、命令行开工带上）；[第一百四十四轮](docs/rounds/round-144.md) 记忆第 8 步：尺子（3.2 万窗口的长活题、压缩后几步动手 / 重复读取 / 清单倒退 / 命中 / 花费）；[第一百四十五轮](docs/rounds/round-145.md) 应用的会话在命令行里接着做第 1 步：桌面代码模式写会话记录（`app-<对话号>`），命令行 `/resume` 看得见，记忆各层在应用里也有了；[第一百四十六轮](docs/rounds/round-146.md) 第 2 步：两边轮流说（一轮一把锁、命令行先读进应用说的）；[第一百四十七轮](docs/rounds/round-147.md) 第 3 步：没有文件夹的对话在 `/resume` 第二段接文字版；[第一百四十八轮](docs/rounds/round-148.md) 第 4 步：暴力测试（两边狂点、强杀、600MB 记录、挪文件夹、本机后端真库、真浏览器），修了回放攒工具输出全文、桌面开工带上长期记忆；[第一百四十九轮](docs/rounds/round-149.md) 背景换白、AI 助手右侧去掉执行轨迹（只留产物）、知识 Wiki 照 Obsidian 平铺；[第一百五十轮](docs/rounds/round-150.md) 干活中途补充第 1 步：循环里的收件箱（入口还没接）；[第一百五十一轮](docs/rounds/round-151.md) 第 2 步：终端里回车补充、Tab 排队（npm 0.2.6）；[第一百五十二轮](docs/rounds/round-152.md) 第 3 步：网页代码模式（宿主 say / say_ack、`SteerPort`、页面默认补充）；[第一百五十三轮](docs/rounds/round-153.md) 第 4 步：桌面本机（外壳认 say / say_ack / steered，页面走外壳）；[第一百五十四轮](docs/rounds/round-154.md) 第 5 步：普通聊天（Wiki 工具循环轮间读补充，桌面应用 1.5.5）；[第一百五十五轮](docs/rounds/round-155.md) 第 6 步（上）：进程级暴力测试；[第一百五十六轮](docs/rounds/round-156.md) 代码模式撤回这一轮的草稿（`discard_draft`）；直连 Claude 的截图不再变成 [object Object]
 - [第一百五十七轮](docs/rounds/round-157.md) Windows 原生外壳：C# + WinForms + WebView2（.NET Framework 4.8，用户不用装运行时），窗口里打开网站、不再带 Java / MySQL；Costura 打成单文件 exe（0.59MB），窗口图标和 exe 图标都是设计稿的 `zhiqu.ico`；单实例、记窗口位置、站外链接走系统浏览器、断网说明 + 重试；传上服务器 `data/downloads`，接口 sha256 对得上；[第一百五十八轮](docs/rounds/round-158.md) Windows 本机代码助手（内嵌官方 Node + CLI、选目录、草稿确认、离页恢复、停止与中途补充）、系统通知、同发布资源的迷你胶囊与真实拖动、自更新；auto 档本机直接命令明确不是系统沙箱；真 C# / Node / WebView2 / 更新检查
 - [第一百五十九轮](docs/rounds/round-159.md) 网页「下载桌面版」的 Windows 描述与现行原生外壳一致：和 Mac 一样打开网站、同一账号同一份数据、断网时看不了，删去旧的自带后端 / MySQL 配置；缓存令牌 `20261120-r159`
+- [第一百六十轮](docs/rounds/round-160.md) coding agent 用户决策第 1 步：统一 `ask_user` 协议与循环接线，CLI 多问题面板（↑↓ 选、Enter 记录、←→ 切题、其他输入、最后提交）；混发工具整批零副作用，推荐项不自动采用，exec / 子 agent / 无回答者不下发；网页 / 桌面桥后续轮次接入
+- [第一百六十一轮](docs/rounds/round-161.md) 第 2 步：网页代码模式结构化决策——宿主 `question` / `question_result`、`DecisionPort` 校验与幂等、SSE 回放、输入框上方多问题弹窗（切题、推荐项、其他输入、最后提交）；旧客户端能力降级，缓存令牌 `20261122-r161`；桌面本机桥后续轮次接入
+- [第一百六十二轮](docs/rounds/round-162.md) 第 3 步：macOS 本机决策桥——页面显式声明 `userDecision`，外壳转发问题、复核答案并幂等提交，待答 / 已答进 `resume` 快照；复用输入框上方多问题面板，停止与迟到答案有收尾
+- [第一百六十三轮](docs/rounds/round-163.md) 第 4 步：Windows 本机决策桥源码——能力声明、答案校验与幂等、已答快照；当前 macOS 环境只做共享层回归，C# / WebView2 与 Windows 进程验收明确留待 Windows 真机

@@ -22,6 +22,7 @@ async function bootAiAssistant() {
   // 必须包一层：直接写 sendBtn.onclick = sendAiMessage 会把点击事件当成 queuedText，
   // 用户打的字变成 "[object PointerEvent]"（第一百三十四轮线上）
   if (sendBtn) sendBtn.onclick = function () { sendAiMessage(); };
+  bindDecisionPanel();
   if (draft) {
     if (inDesktop()) draft.placeholder = '给 AI 发消息（⌘/Ctrl + 回车发送，回车换行，/ 看命令）';
     state.chatDraft = keepDraft(draft, chatDraftKey, growDraft);
@@ -413,7 +414,7 @@ function aiEmptyState() {
 var TRACE_ICON = {
   thinking: 'brain', list: 'folder', read: 'file', search: 'search', run: 'terminal', create: 'file-plus', edit: 'pencil', patch: 'pencil',
   delete: 'trash-2', web: 'globe', retrieve: 'book-open', tasks: 'list-checks', wiki: 'book-marked', plan: 'clipboard-check',
-  memory: 'lightbulb', check: 'check', agent: 'users', todo: 'list-checks', steer: 'message-square', other: 'sparkles'
+  memory: 'lightbulb', check: 'check', agent: 'users', todo: 'list-checks', steer: 'message-square', decision: 'message-square', other: 'sparkles'
 };
 var TRACE_SHOWN = 60;   // 一条回答默认列多少步；再多的折成「还有 N 步」，点开再看（上百步的一轮不把页面撑到几屏长）
 function traceDuration(ms) {
@@ -2221,17 +2222,25 @@ function waitLocal(runId, assistant, sameNb, timeoutMs, st) {
   var budget = Number(timeoutMs);
   if (!Number.isFinite(budget) || budget < 0) budget = 600000;
   return new Promise(function (resolve) {
-    var done = false, liveStepIds = new Set(), replayPending = true, terminal = null;
+    var done = false, liveStepIds = new Set(), replayPending = true, terminal = null, liveDecisionEvents = [];
     function finish(d) {
       if (done) return;
       done = true;
+      if (st) clearDecision(st);
       window.removeEventListener('zq-local', onEv);
       if (timer) clearTimeout(timer);
       resolve(d || { type: 'fatal', message: '本机代码助手没有交结果' });
     }
-    function onEv(e) {
+    function onEv(e, replay) {
       var d = (e && e.detail) || {};
       if (d.runId !== runId) return;
+      if (d.type === 'question' || d.type === 'question_resolved') {
+        // 取快照期间先存直播：已答可能先到，不能让快照里的旧问题随后复活。
+        if (replayPending && replay !== true) { liveDecisionEvents.push(d); return; }
+        if (st && d.type === 'question') {
+          receiveDecision(st, { decisionId: d.decisionId || d.id, questions: d.questions, local: true });
+        } else if (st) resolveDecision(st, d);
+      }
       if (d.type === 'trace' && d.step) {
         liveStepIds.add(d.step.id);
         mergeTraceStep(assistant, d.step);
@@ -2265,14 +2274,18 @@ function waitLocal(runId, assistant, sameNb, timeoutMs, st) {
       if (snapshot.found && st) clearSentDesktopDraft(st);
       // 快照取得期间直播可能更新同一步，不能用更旧的版本覆盖它。
       (snapshot.events || []).forEach(function (event) {
-        if ((event.step && !liveStepIds.has(event.step.id)) || event.type === 'steered') onEv({ detail: event });
+        if ((event.step && !liveStepIds.has(event.step.id)) || event.type === 'steered'
+            || event.type === 'question' || event.type === 'question_resolved') onEv({ detail: event }, true);
       });
       if (snapshot.result) terminal = terminal || snapshot.result;
       replayPending = false;
+      var decisions = liveDecisionEvents; liveDecisionEvents = [];
+      decisions.forEach(function (d) { onEv({ detail: d }, true); });
       if (terminal) finish(terminal);
     }).catch(function () {
-      // 旧外壳没有 resume，仍可接直播；不能让已收到的终态被挂起。
+      // 旧外壳没有 resume，仍可接直播；不能让已收到的终态或待答问题被挂起。
       replayPending = false;
+      liveDecisionEvents.splice(0).forEach(function (d) { onEv({ detail: d }, true); });
       if (terminal) finish(terminal);
     });
   });
@@ -2304,7 +2317,7 @@ async function sendDesktopTurn(txt, codeCommand) {
   var nbRow = (state.notebooks || []).find(function (x) { return sentNb != null && Number(x.id) === Number(sentNb); });
   var sessionId = nbRow && nbRow.clientSessionId ? String(nbRow.clientSessionId) : 'app-' + (sentNb == null ? 'default' : sentNb);
   var body = { action: 'run', folder: folder, message: txt, history: history, sessionId: sessionId,
-    model: modelSel && modelSel.value ? Number(modelSel.value) : null, effort: aiEffort, level: level };
+    model: modelSel && modelSel.value ? Number(modelSel.value) : null, effort: aiEffort, level: level, userDecision: true };
   if (codeCommand) body.command = codeCommand;
   var clientKey = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
   var user = { role: 'user', content: txt, _clientKey: clientKey + '-user' };
@@ -2388,6 +2401,7 @@ async function finishDesktopTurn(st, result) {
   assistant.status = result.type === 'fatal' ? 'ERROR' : 'DONE';
   if (result.type === 'fatal') assistant.errorMessage = result.message || '本机代码助手没有做完';
   info.result = result;
+  clearDecision(st);
   persistTurn(st, true); // 未存档成功的终态也保留，离页回来还能继续存档
   if (st.sameNb()) renderAiMessages();
   var saved = await api.post('/ai/desktop-turn', {
@@ -2504,6 +2518,7 @@ function syncTurnUi() {
     button.classList.toggle('is-busy', !!st);
     button.setAttribute('aria-label', st ? '生成中（发送 = 补充给这一轮）' : '发送（⌘/Ctrl + 回车）');
   }
+  renderDecision();
 }
 function beginTurn(st) {
   chatTurns[turnKey(st.nb)] = st;
@@ -2560,6 +2575,168 @@ function bindTurnLifecycle() {
   });
 }
 
+var decisionRuns = {};
+var DECISION_OTHER = '__other__';
+
+function createDecisionView(runId, nb, data) {
+  return { runId: runId, nb: nb || null, decisionId: String(data.decisionId || ''), local: data.local === true,
+    questions: Array.isArray(data.questions) ? data.questions : [], index: 0, answers: {}, submitting: false, error: '' };
+}
+
+function decisionComplete(view) {
+  return !!(view && view.questions.length && view.questions.every(function (q) {
+    var answer = view.answers[q.id];
+    return answer && (answer.optionId !== DECISION_OTHER || String(answer.otherText || '').trim().length > 0);
+  }));
+}
+
+function decisionPayload(view) {
+  return { cancelled: false, answers: view.questions.map(function (q) {
+    var answer = view.answers[q.id];
+    var out = { questionId: q.id, optionId: answer.optionId };
+    if (answer.optionId === DECISION_OTHER) out.otherText = String(answer.otherText || '').trim();
+    return out;
+  }) };
+}
+
+function currentDecision() {
+  var nb = state.notebookId || null;
+  var values = Object.keys(decisionRuns).map(function (key) { return decisionRuns[key]; });
+  for (var i = values.length - 1; i >= 0; i--) if (values[i].nb === nb) return values[i];
+  return null;
+}
+
+function receiveDecision(st, data) {
+  var view = createDecisionView(st.runId, st.nb, data);
+  decisionRuns[String(st.runId)] = view;
+  if (st.sameNb()) renderDecision();
+}
+
+function resolveDecision(st, data) {
+  var key = String(st.runId), view = decisionRuns[key];
+  if (view && String(data.decisionId || '') === view.decisionId) delete decisionRuns[key];
+  if (st.sameNb()) renderDecision();
+}
+
+function clearDecision(st) {
+  delete decisionRuns[String(st.runId)];
+  if (st.sameNb()) renderDecision();
+}
+
+function renderDecision() {
+  var panel = $('#zq-decision');
+  if (!panel) return;
+  var view = currentDecision();
+  panel.hidden = !view;
+  if (!view) { panel.innerHTML = ''; return; }
+  var question = view.questions[view.index];
+  if (!question) { panel.hidden = true; panel.innerHTML = ''; return; }
+  var answered = view.questions.filter(function (q) { return !!view.answers[q.id]; }).length;
+  var options = question.options.map(function (option) {
+    var selected = view.answers[question.id] && view.answers[question.id].optionId === option.id;
+    return '<button type="button" class="zq-decision-option" role="radio" aria-checked="' + (selected ? 'true' : 'false')
+      + '" data-decision-option="' + esc(option.id) + '"><span class="zq-decision-option-head">' + esc(option.label)
+      + (option.recommended ? '<span class="zq-decision-recommended">（推荐）</span>' : '') + '</span>'
+      + (option.description ? '<span class="zq-decision-option-desc">' + esc(option.description) + '</span>' : '') + '</button>';
+  }).join('');
+  if (question.allowOther) {
+    var otherSelected = view.answers[question.id] && view.answers[question.id].optionId === DECISION_OTHER;
+    options += '<button type="button" class="zq-decision-option" role="radio" aria-checked="' + (otherSelected ? 'true' : 'false')
+      + '" data-decision-option="' + DECISION_OTHER + '"><span class="zq-decision-option-head">其他输入…</span>'
+      + '<span class="zq-decision-option-desc">以上方案都不合适时，自己写一种</span></button>';
+    if (otherSelected) {
+      options += '<textarea class="zq-decision-other" data-decision-other rows="3" maxlength="2000" aria-label="其他输入" placeholder="写下你的方案或补充说明">'
+        + esc((view.answers[question.id] && view.answers[question.id].otherText) || '') + '</textarea>';
+    }
+  }
+  var complete = decisionComplete(view);
+  panel.innerHTML = '<div class="zq-decision-head"><div class="zq-decision-kicker">需要你决定'
+    + (question.header ? ' · ' + esc(question.header) : '') + '<span class="zq-decision-count">第 ' + (view.index + 1) + ' / ' + view.questions.length + ' 题</span></div>'
+    + '<div class="zq-decision-nav"><button type="button" class="zq-composer-icon" data-decision-move="-1" aria-label="上一题" title="上一题">' + icon('chevron-left') + '</button>'
+    + '<button type="button" class="zq-composer-icon" data-decision-move="1" aria-label="下一题" title="下一题">' + icon('chevron-right') + '</button></div></div>'
+    + '<div class="zq-decision-question">' + esc(question.question) + '</div>'
+    + '<div class="zq-decision-options" role="radiogroup" aria-label="候选方案">' + options + '</div>'
+    + (view.error ? '<div class="zq-decision-error" role="alert">' + esc(view.error) + '</div>' : '')
+    + '<div class="zq-decision-foot"><span class="zq-decision-progress">已答 ' + answered + ' / ' + view.questions.length + ' 题</span>'
+    + '<button type="button" class="zq-btn" data-decision-submit ' + (!complete || view.submitting ? 'disabled' : '') + '>'
+    + (view.submitting ? '提交中…' : '提交答案') + '</button></div>';
+}
+
+function bindDecisionPanel() {
+  var panel = $('#zq-decision');
+  if (!panel) return;
+  panel.addEventListener('click', function (event) {
+    var view = currentDecision();
+    if (!view || view.submitting) return;
+    var move = event.target.closest('[data-decision-move]');
+    if (move) {
+      var delta = Number(move.dataset.decisionMove) || 0;
+      view.index = (view.index + delta + view.questions.length) % view.questions.length;
+      view.error = '';
+      renderDecision();
+      return;
+    }
+    var option = event.target.closest('[data-decision-option]');
+    if (option) {
+      var question = view.questions[view.index], previous = view.answers[question.id];
+      view.answers[question.id] = { optionId: option.dataset.decisionOption };
+      if (option.dataset.decisionOption === DECISION_OTHER) view.answers[question.id].otherText = previous && previous.optionId === DECISION_OTHER ? previous.otherText || '' : '';
+      view.error = '';
+      renderDecision();
+      if (option.dataset.decisionOption === DECISION_OTHER) {
+        var input = panel.querySelector('[data-decision-other]');
+        if (input) input.focus();
+      }
+      return;
+    }
+    if (event.target.closest('[data-decision-submit]')) submitDecision(view);
+  });
+  panel.addEventListener('input', function (event) {
+    if (!event.target.matches('[data-decision-other]')) return;
+    var view = currentDecision();
+    if (!view) return;
+    var question = view.questions[view.index];
+    if (!view.answers[question.id] || view.answers[question.id].optionId !== DECISION_OTHER) return;
+    view.answers[question.id].otherText = event.target.value;
+    var submit = panel.querySelector('[data-decision-submit]');
+    if (submit) submit.disabled = !decisionComplete(view) || view.submitting;
+  });
+  panel.addEventListener('keydown', function (event) {
+    if (event.target.matches('textarea, input') || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+    var view = currentDecision();
+    if (!view || view.submitting) return;
+    event.preventDefault();
+    var delta = event.key === 'ArrowLeft' ? -1 : 1;
+    view.index = (view.index + delta + view.questions.length) % view.questions.length;
+    renderDecision();
+  });
+}
+
+async function submitDecision(view) {
+  if (!decisionComplete(view) || view.submitting) return;
+  view.submitting = true;
+  view.error = '';
+  renderDecision();
+  try {
+    var payload = decisionPayload(view);
+    var result = view.local
+      ? await localCall(Object.assign({ action: 'answer', runId: view.runId, decisionId: view.decisionId }, payload))
+      : await api.post('/ai/runs/' + encodeURIComponent(view.runId) + '/decisions/' + encodeURIComponent(view.decisionId) + '/answer', payload);
+    if (!result || result.accepted !== true) {
+      view.submitting = false;
+      view.error = result && result.error || '这批问题已经失效，请等当前回答结束';
+      renderDecision();
+      return;
+    }
+    delete decisionRuns[String(view.runId)];
+    renderDecision();
+  } catch (e) {
+    view.submitting = false;
+    view.error = '答案没有确认提交，请检查网络后重试';
+    renderDecision();
+  }
+}
+
 /**
  * 一条流事件的落地（第一百三十三轮）：发送时和「回来接上」时用的是同一份。
  *
@@ -2611,6 +2788,12 @@ function makeStreamApplier(st) {
       // 这一轮还在动，「产物」那块正在取的旧快照不能盖回去（renderAgentPanels 比这个版本号）
       if (st.sameNb()) state.agentArtifactRevision = (state.agentArtifactRevision || 0) + 1;
     }
+    else if (event === 'decision.ask') {
+      receiveDecision(st, data);
+    }
+    else if (event === 'decision.resolved') {
+      resolveDecision(st, data);
+    }
     else if (event === 'trace.step') {
       var step = data.step;
       var prior = (assistant.steps && assistant.steps.steps || []).find(function (s) { return step && s.id === step.id; });
@@ -2657,10 +2840,12 @@ function makeStreamApplier(st) {
     // 这一轮已经不在服务端内存里了（重启过 / 早就结束）：回去读消息列表
     else if (event === 'stream.gone') {
       clearRunningTurn(st.nb, st.runId);
+      clearDecision(st);
       st.gone = true;
     }
     else if (event === 'done') {
       clearRunningTurn(st.nb, st.runId);
+      clearDecision(st);
       assistant._processing = '';
       if (data && (data.dropped || data.status === 'CANCELED')) {
         st.dropped = true;
@@ -2682,6 +2867,7 @@ function makeStreamApplier(st) {
     }
     else if (event === 'error') {
       clearRunningTurn(st.nb, st.runId);
+      clearDecision(st);
       st.failed = true;
       assistant._processing = '';
       assistant.status = '';
@@ -2818,7 +3004,8 @@ async function sendAiMessage(queuedText) {
       includeWiki: true,
       selectedSourceIds: selectedSourceIds,
       codeMode: codeModeOn(),
-      codeCommand: codeCommand || undefined
+      codeCommand: codeCommand || undefined,
+      userDecision: true
     }
   };
   // SSE 回调期间用户可能切换 notebook:快照发送时的 id,不再渲染/改写新窗口的全局流式状态
@@ -3749,4 +3936,4 @@ function pumpSendQueue() {
 
 // 给测试直接 import 的纯函数（第三十七轮）：step-note-check.js（执行轨迹里一条叙述的转义）、diff-check.js（改动草稿的逐行对比）。
 // 它们只用到 esc —— 测试 bind 一个只有 esc 的 sh 就能跑。
-export { traceStepsHtml, mergeTraceStep, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard, parseSlash, slashMatches, slashBlocked, bindSlash, paintSlash, sendAiMessage, paintWorkspaceBar };
+export { traceStepsHtml, mergeTraceStep, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard, parseSlash, slashMatches, slashBlocked, bindSlash, paintSlash, sendAiMessage, paintWorkspaceBar, createDecisionView, decisionComplete, decisionPayload };

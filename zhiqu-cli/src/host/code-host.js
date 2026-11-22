@@ -2,9 +2,9 @@
 // 网页 / 桌面应用的代码模式跑的就是命令行这一份循环（第九十四轮，用户 2026-11-02 定的「一份 JS，后端用子进程跑」）。
 // 后端（Java 的 JsCodeAgent）起这个进程，stdin / stdout 一行一个 JSON：
 //   后端 → 这里：run（开始）、event / error（模型调用的回音）、exec_result（命令跑完了）、tool_result（远程工具的结果）、
-//                say（用户干活中途补的一句，第一百五十二轮；回 say_ack { id, accepted }）
+//                question_result（用户提交 / 取消一批决策，第一百六十一轮）、say（用户干活中途补的一句，回 say_ack { id, accepted }）
 //   这里 → 后端：model（请后端调一次模型）、exec（请后端跑一条命令）、tool（请后端执行一个 Wiki / 里程碑工具，第九十五轮）、
-//                step（轨迹里的一句）、trace（回答里按顺序列出的一步，第一百二十七轮，形状见 steps.js）、result（收尾）、fatal（出错了）、
+//                question（请用户决定一批问题）、step（轨迹里的一句）、trace（回答里按顺序列出的一步，形状见 steps.js）、result（收尾）、fatal（出错了）、
 //                say_ack（收没收下那句补充）、steered（模型读到了哪几句补充，原话）
 // 门（是不是管理员、工作区档位、写意图、能不能执行）后端判好了才起这个进程；模型和命令都回到后端去做 —— 这里只有循环和工作区的读、草稿。
 // 认不出的消息就停，不猜。
@@ -70,9 +70,9 @@ export function createBridge({ input, output }) {
       send({ type: 'say_ack', id: msg.id, accepted });
       return;
     }
-    if (retired.has(msg.id) && ['event', 'error', 'exec_result', 'tool_result'].includes(msg.type)) return;
+    if (retired.has(msg.id) && ['event', 'error', 'exec_result', 'tool_result', 'question_result'].includes(msg.type)) return;
     const waiter = pending.get(msg.id);
-    if (!waiter || !['event', 'error', 'exec_result', 'tool_result'].includes(msg.type)) { fail(`认不出的消息：${String(msg.type).slice(0, 40)}`); return; }
+    if (!waiter || !['event', 'error', 'exec_result', 'tool_result', 'question_result'].includes(msg.type)) { fail(`认不出的消息：${String(msg.type).slice(0, 40)}`); return; }
     waiter(msg);
   });
   lines.on('close', () => { for (const w of pending.values()) w({ type: 'error', message: '后端关掉了连接', retryable: false }); pending.clear(); stop(); });
@@ -128,6 +128,19 @@ export function createBridge({ input, output }) {
           else resolve({ content: String(msg.content ?? '') });
         });
         send({ type: 'tool', id, name, arguments: args });
+      });
+    },
+    decide(questions, { signal } = {}) {
+      const id = `d${++seq}`;
+      return new Promise((resolve, reject) => {
+        const abort = () => { retire(id); resolve({ cancelled: true, answers: [] }); };
+        if (signal) signal.addEventListener('abort', abort, { once: true });
+        pending.set(id, (msg) => {
+          retire(id); if (signal) signal.removeEventListener('abort', abort);
+          if (msg.type === 'error') reject(new ApiError(msg.message || '收集用户答案失败', { retryable: false }));
+          else resolve({ cancelled: Boolean(msg.cancelled), answers: Array.isArray(msg.answers) ? msg.answers : [] });
+        });
+        send({ type: 'question', id, questions });
       });
     },
     exec(request, { signal } = {}) {
@@ -271,6 +284,7 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
     verbose: true, model: run.model, stepLog,
     // 网页输入框下面选的思考档位（第一百零八轮）；明说，不听服务端给命令行的默认（第五十四轮：工具轮想起来，一问要等几分钟）
     effort: normalizeEffort(run.effort) || 'instant',
+    decide: run.userDecision === true ? (questions, opts) => bridge.decide(questions, opts) : null,
   };
   // 远程工具（第九十五轮）：一直给的那几个 + 真的跑过一次命令之后才给的（create_wiki_patch：判过题才许记薄弱点）。工具表每一轮重建，所以随时变
   // 桌面版（第一百二十九轮）没有后端替它挑：开工前问服务器要（和命令行同一份清单，执行的也是那一份），只读档只留读的

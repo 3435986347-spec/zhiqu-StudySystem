@@ -3,6 +3,7 @@ package com.zhiqu.service.ai;
 import com.zhiqu.service.ai.stream.ReasoningEffort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhiqu.entity.AiModelConfig;
+import com.zhiqu.service.ContextOptionKeys;
 import com.zhiqu.service.agent.AgentPlanDecision;
 import com.zhiqu.service.workspace.ArtifactFiles;
 import com.zhiqu.service.workspace.WorkspaceRegistry;
@@ -191,6 +192,12 @@ public class CodeWorkspaceAgent {
     public Result run(AiModelConfig config, Long userId, Long conversationId, String userMessage, List<Map<String, Object>> history,
                       Map<String, Object> contextOptions, ContextBudget contextBudget, String reasoningMode,
                       Consumer<Map<String, Object>> onStep, SteerPort steer) {
+        return run(config, userId, conversationId, userMessage, history, contextOptions, contextBudget, reasoningMode, onStep, steer, null);
+    }
+
+    public Result run(AiModelConfig config, Long userId, Long conversationId, String userMessage, List<Map<String, Object>> history,
+                      Map<String, Object> contextOptions, ContextBudget contextBudget, String reasoningMode,
+                      Consumer<Map<String, Object>> onStep, SteerPort steer, DecisionPort decisions) {
         ContextBudget limits = contextBudget == null ? ContextBudget.DEFAULT : contextBudget;
         if (!AgentPlanDecision.codeAgentIntent(userMessage, contextOptions) || !provider.supportsToolCalling(config)) {
             return Result.EMPTY;
@@ -212,7 +219,8 @@ public class CodeWorkspaceAgent {
         Result viaJs = jsEngine == null || !jsEngine.enabled() ? null
                 : jsEngine.run(config, userId, userMessage, recentHistory(history, limits.codeHistoryChars()),
                         canWrite, canExec, budget, limits, onStep, review ? null : remoteTools(userId, loop, canPlanMilestones), reasoningMode, conversationId,
-                        AgentPlanDecision.codeCommand(contextOptions), steer);
+                        AgentPlanDecision.codeCommand(contextOptions), steer,
+                        contextOptions != null && Boolean.TRUE.equals(contextOptions.get(ContextOptionKeys.USER_DECISION)) ? decisions : null);
         if (viaJs == null) {
             // 第九十七轮删了 Java 的循环，没有后路了：说清楚缺什么，主回答照常
             log.warn("代码模式起不来（找不到 node 或命令行源码），这一轮没有读工作区 userId={}", userId);

@@ -1,8 +1,9 @@
 // 本机代码助手（第一百二十九轮，docs/desktop-remote-plan.md 第 2 步）：外壳按需起包里的 node，跑命令行那一份宿主
 // （Resources/zhiqu-cli/src/host/code-host.js），在用户自己的磁盘上读、在系统沙箱里跑命令；模型和远程工具走服务器的网关，
 // 用页面签来的一张「本机代码」令牌（12 小时，只认那几个接口）。协议和后端起它的那一份同一个：stdin 一行 run，stdout 一行一个 JSON
-// （step / trace / result / fatal），叫停是一行 {"type":"stop"}。干活中途补充（第一百五十三轮，docs/steer-plan.md 第 4 步）：
+// （question / step / trace / result / fatal），叫停是一行 {"type":"stop"}。干活中途补充（第一百五十三轮，docs/steer-plan.md 第 4 步）：
 // 外壳写一行 {"type":"say", id, text}，宿主回 say_ack { id, accepted }；模型读到时宿主说 steered { texts }，没读到的随 result.leftover 交回。
+// 结构化决策（第一百六十二轮）：只有新版页面在 run 里声明 userDecision 才开启；外壳把 question 交给页面，复核 answer 后回 question_result。
 //
 // 页面从服务器来，里面有 AI 写的和导入的内容，不全信：run 里要紧的字段外壳自己定 ——
 //   - 根目录只认用户在系统选框里选过的文件夹（LocalFolders），页面说不出别的路径；
@@ -73,6 +74,7 @@ struct LocalRunRequest {
     let level: String
     let command: String?
     let token: String
+    let userDecision: Bool
     /// 这段对话的会话记录叫什么（第一百四十五轮）：宿主在项目的 .zhiqu/sessions/ 里开同名的记录，命令行的 /resume 看得见。
     /// 只认 [A-Za-z0-9_-]{1,64}（拼进文件名），认不出就当没给 —— 宿主照旧不记
     var sessionId: String? = nil
@@ -108,12 +110,56 @@ struct LocalRunRequest {
             $0.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil ? $0 : nil
         }
         return (LocalRunRequest(folder: folder, message: message, history: history, modelId: modelId, effort: effort,
-                                level: level, command: command, token: token, sessionId: sessionId), nil)
+                                level: level, command: command, token: token, userDecision: (body["userDecision"] as? Bool) == true,
+                                sessionId: sessionId), nil)
     }
 }
 
 /// 起宿主、读它的输出、叫停。一次一轮；所有回调都在主线程
 final class LocalAgent {
+    private struct DecisionBatch {
+        let questions: [[String: Any]]
+        var answers: [[String: Any]]?
+
+        static func normalize(questions: [[String: Any]], raw: [Any]) -> (answers: [[String: Any]]?, error: String?) {
+            guard raw.count == questions.count else { return (nil, "要回答全部 \(questions.count) 个问题，不能多答或漏答") }
+            var byId: [String: [String: Any]] = [:]
+            for item in raw {
+                guard let answer = item as? [String: Any], let id = answer["questionId"] as? String else {
+                    return (nil, "每个答案都要有 questionId")
+                }
+                guard byId[id] == nil else { return (nil, "问题 \(id) 重复回答了") }
+                byId[id] = answer
+            }
+            var answers: [[String: Any]] = []
+            for question in questions {
+                guard let id = question["id"] as? String, let answer = byId[id], let optionId = answer["optionId"] as? String else {
+                    return (nil, "还有问题没有回答")
+                }
+                if optionId == "__other__" {
+                    guard (question["allowOther"] as? Bool) ?? true else { return (nil, "问题 \(id) 不允许其他输入") }
+                    guard let other = answer["otherText"] as? String else { return (nil, "问题 \(id) 的其他输入必须是文字") }
+                    let trimmed = other.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return (nil, "问题 \(id) 的其他输入不能为空") }
+                    guard other.utf16.count <= 2000 else { return (nil, "问题 \(id) 的其他输入最多 2000 字") }
+                    answers.append(["questionId": id, "optionId": optionId, "otherText": trimmed])
+                    continue
+                }
+                guard let options = question["options"] as? [[String: Any]],
+                      options.contains(where: { ($0["id"] as? String) == optionId }) else {
+                    return (nil, "问题 \(id) 没有方案 \(optionId)")
+                }
+                if let other = answer["otherText"], !(other is NSNull),
+                   !String(describing: other).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return (nil, "问题 \(id) 选择了已有方案，不能同时带其他输入")
+                }
+                answers.append(["questionId": id, "optionId": optionId])
+            }
+            guard byId.count == questions.count else { return (nil, "答案里有不认识的问题编号") }
+            return (answers, nil)
+        }
+    }
+
     struct Config {
         var node: URL
         var host: URL
@@ -170,6 +216,8 @@ final class LocalAgent {
     /// 等 say_ack 的：编号 → 交回收没收下。这一轮收尾时没等到的一律 false
     private var sayWaiters: [Int: (Bool) -> Void] = [:]
     private var saySeq = 0
+    private var decisionBatches: [String: DecisionBatch] = [:]
+    private var stopping = false
 
     init(config: Config) {
         self.config = config
@@ -189,6 +237,7 @@ final class LocalAgent {
             "command": req.command ?? NSNull(), "sessionId": req.sessionId ?? NSNull(),
             // 没有系统沙箱宿主自己不给命令（canShell 只是「可以给」）；从来不给白名单命令和删除
             "canWrite": write, "canExec": false, "canShell": true, "shellWrite": write && req.level == "EXEC",
+            "userDecision": req.userDecision,
             "sandboxNetwork": config.network, "maxRounds": config.maxRounds, "timeoutMs": config.timeoutMs,
             "model": ["id": req.modelId.map { $0 as Any } ?? NSNull()], "effort": req.effort ?? "instant",
             "local": ["server": config.server.absoluteString, "token": req.token],
@@ -246,6 +295,7 @@ final class LocalAgent {
         self.onMessage = onMessage
         self.token = req.token
         buffer = Data(); stderrTail = Data(); gotResult = false; stdoutDone = false; exited = nil; finishedRun = false
+        decisionBatches = [:]; stopping = false
         // 读放在后台线程：阻塞读到 EOF，读到的交回主线程按行拆
         let out = stdoutPipe.fileHandleForReading, err = stderrPipe.fileHandleForReading
         DispatchQueue.global(qos: .userInitiated).async {
@@ -299,9 +349,36 @@ final class LocalAgent {
         }
     }
 
+    /// 回答一批本机决策。外壳保留宿主登记的问题并复核答案；相同答案可重试，但不会再次写给宿主。
+    func answer(_ decisionId: String, answers raw: [Any], done: @escaping ([String: Any]) -> Void) {
+        guard running, !stopping, !gotResult, exited == nil else {
+            done(["accepted": false, "error": "这一轮已经结束或正在停止"]); return
+        }
+        guard var batch = decisionBatches[decisionId] else {
+            done(["accepted": false, "error": "这批问题不存在或已经失效"]); return
+        }
+        let normalized = DecisionBatch.normalize(questions: batch.questions, raw: raw)
+        if let previous = batch.answers {
+            if let answers = normalized.answers, NSArray(array: previous).isEqual(to: answers) {
+                done(["accepted": true, "duplicate": true, "answers": previous])
+            } else {
+                done(["accepted": false, "error": "这批问题已经提交过不同的答案"])
+            }
+            return
+        }
+        guard let answers = normalized.answers else {
+            done(["accepted": false, "error": normalized.error ?? "答案不完整"]); return
+        }
+        batch.answers = answers
+        decisionBatches[decisionId] = batch
+        send(["type": "question_result", "id": decisionId, "cancelled": false, "answers": answers])
+        done(["accepted": true, "duplicate": false, "answers": answers])
+    }
+
     /// 叫停：先说 stop（宿主中断、收掉后台命令、照实交 result），5 秒还没退就 SIGTERM，再 3 秒 SIGKILL
     func stop() {
-        guard running, let p = process else { return }
+        guard running, let p = process, !stopping else { return }
+        stopping = true
         let gen = generation
         send(["type": "stop"])
         let pid = p.processIdentifier
@@ -318,6 +395,7 @@ final class LocalAgent {
     /// 应用要退出了：不等，直接 SIGTERM（宿主收到也是中断、收掉后台命令）
     func terminate() {
         guard running, let p = process, exited == nil else { return }
+        stopping = true
         kill(p.processIdentifier, SIGTERM)
     }
 
@@ -340,6 +418,18 @@ final class LocalAgent {
     private func handle(_ line: Data) {
         guard !line.isEmpty, let msg = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any], let type = msg["type"] as? String else { return }
         switch type {
+        case "question":
+            guard running, !stopping, !gotResult, let id = msg["id"] as? String,
+                  id.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil,
+                  let questions = msg["questions"] as? [[String: Any]], (1...4).contains(questions.count),
+                  decisionBatches[id] == nil else {
+                deliver(["type": "fatal", "message": "本机代码助手发来的问题格式不对，停下了"])
+                gotResult = true
+                stop()
+                return
+            }
+            decisionBatches[id] = DecisionBatch(questions: questions)
+            deliver(msg)
         case "step", "trace", "steered":
             // steered：模型读到了哪几句补充（原话）。页面据此把「待送达」那几行拿掉
             deliver(msg)
@@ -408,6 +498,7 @@ final class LocalAgent {
         process = nil
         onMessage = nil
         token = ""
+        decisionBatches = [:]
         if let work { try? FileManager.default.removeItem(at: work) }
         work = nil
     }

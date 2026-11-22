@@ -41,6 +41,7 @@ import com.zhiqu.service.ai.ChatImageAttachments;
 import com.zhiqu.service.ai.CodeContextPrompt;
 import com.zhiqu.service.ai.CodeWorkspaceAgent;
 import com.zhiqu.service.ai.SteerPort;
+import com.zhiqu.service.ai.DecisionPort;
 import com.zhiqu.service.ai.TraceSteps;
 import com.zhiqu.service.workspace.ArtifactFiles;
 import com.zhiqu.service.ai.AssistantTaskContext;
@@ -711,6 +712,9 @@ public class AiServiceImpl implements AiService {
         // 这一轮从此刻起可以重连（第一百三十三轮）：事件先记进 hub，再推给当前这条连接。
         // 页面关掉连接之后事件照样记、生成照样跑，回来 GET /api/ai/runs/{id}/stream?after=N 接着放。
         ChatRunHub.LiveRun liveRun = chatRunHub == null ? null : chatRunHub.open(agentRun.getId(), state::inject);
+        if (liveRun != null) {
+            liveRun.useDecisions(state.decisions);
+        }
         // 收尾统一挂在 leases 上：正常、业务错误、装配失败、意外异常，哪条路出去都会把 hub 标成结束
         if (chatRunHub != null) {
             leases.add(() -> chatRunHub.finish(agentRun.getId()));
@@ -1073,6 +1077,7 @@ public class AiServiceImpl implements AiService {
          * 而代码模式的最终回答是 agent 自己的结论、不再调模型 —— 补进来的话一律没用上。
          */
         private SteerPort codePort;
+        private final DecisionPort decisions = new DecisionPort();
 
         /**
          * @return true = 收下了（代码 agent 在跑：宿主收进了它的收件箱，跑完当前这一步就读到；否则最终写作时并进去）；
@@ -1736,6 +1741,11 @@ public class AiServiceImpl implements AiService {
                 codeResult = codeWorkspaceAgent.run(s.config, s.userId, conversationId, s.limitedMessage,
                         chatHistory, s.contextOptions, ContextBudget.forWindow(s.config.getContextWindowTokens()), s.reasoningMode,
                         note -> {
+                            if ("decision".equals(note.get("phase"))) {
+                                ctx.emit("decision.ask", Map.of("agentRunId", s.agentRun.getId(),
+                                        "decisionId", note.get("decisionId"), "questions", note.get("questions")));
+                                return;
+                            }
                             // 模型读到了这几句补充（原话）：页面把它们从「待送达」里拿掉
                             if ("steered".equals(note.get("phase"))) {
                                 ctx.emit("message.steer.delivered", Map.of("texts", note.get("texts")));
@@ -1754,7 +1764,7 @@ public class AiServiceImpl implements AiService {
                             payload.put("agentType", "CODE_AGENT");
                             payload.putAll(note);
                             ctx.emit("agent.step.note", payload);
-                        }, steer);
+                        }, steer, s.decisions);
             } finally {
                 // 宿主没读到的、宿主没起来时收着的：放回去，最终回答那一步用得上就用，用不上就交回页面
                 s.closeCodePort(steer);

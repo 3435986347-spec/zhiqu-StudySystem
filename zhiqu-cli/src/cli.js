@@ -503,6 +503,7 @@ async function runAgent(cwd, flags) {
     local: new LocalTools({ root, extensions: settings.extensions, commands: settings.allowedCommands, execTimeoutMs: settings.execTimeoutMs,
       sandbox: detectSandbox(), sandboxNetwork: settings.sandboxNetwork }),
     exec: Boolean(flags.exec), execReadOnly: Boolean(flags.execReadOnly), archiveDisabled: Boolean(flags.ephemeral) || Boolean(settings.direct),
+    decide: !flags.exec && ui.interactive ? (questions, opts) => ui.decide(questions, opts) : null,
     store: flags.ephemeral ? null : new SessionStore(root), allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() },
     usage: { prompt: 0, completion: 0, cached: 0 }, changedFiles: new Set(),
     // 子 agent（第一百二十三轮）：~/.zhiqu/config.json 的 agents 是 false 时关掉

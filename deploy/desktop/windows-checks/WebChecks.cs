@@ -193,6 +193,18 @@ namespace Zhiqu.Desktop
             Check(File.ReadAllText(Path.Combine(root, "command.txt")) == "ok" && File.ReadAllText(Path.Combine(root, "new.txt")) == "draft-content\n", "web local turn disk");
             Check(server.Streams.Count == 3, "duplicate clientRunId started another turn: " + server.Streams.Count);
             lock (notices) Check(notices.Any(n => n.StartsWith("CHECK-NOTIFY|")), "main notification not delivered");
+            await Eval(core, "window.runDecision();0");
+            await WaitUntil(async () =>
+            {
+                if (await EvalString(core, "window.decisionStatus || ''") == "error") throw new InvalidOperationException(await EvalString(core, "window.decisionError || ''"));
+                return await EvalString(core, "window.decisionStatus || ''") == "done";
+            });
+            var decision = Json.Object(await Eval(core, "window.decisionResults"));
+            Check((bool)decision["question"] && (bool)decision["pending"] && (bool)decision["resolved"], "decision snapshot events missing");
+            Check(!(bool)decision["invalid"] && (bool)decision["accepted"] && (bool)decision["duplicate"], "decision answer/idempotence");
+            Check(!(bool)decision["conflict"] && !(bool)decision["late"], "conflicting or late decision accepted");
+            Check((string)decision["conclusion"] == "WINDOWS-DECISION", "decision did not reach model");
+            Check(server.Streams.Count == 5, "decision bridge caused an extra model turn: " + server.Streams.Count);
             await WaitUntil(async () => frameReported());
             Check(!frameBridge(), "iframe received zqLocal");
 
@@ -220,6 +232,7 @@ namespace Zhiqu.Desktop
             await WaitUntil(async () => !mini.Visible && form.Visible);
             lock (notices) Check(!notices.Any(n => n.StartsWith("FRAME|")), "iframe notification accepted");
             Log("web.streams", server.Streams.Count);
+            Check(server.Streams.Count == 5, "unexpected total model turns");
             Log("web.notifications", notices.Count);
             Log("web.mini", "shared,expanded");
         }
@@ -259,8 +272,14 @@ namespace Zhiqu.Desktop
 
         private const string DashboardHtml = @"<!doctype html><meta charset='utf-8'><title>知趣象限</title><iframe src='/frame.html'></iframe>
 <script>
-window.localEvents=[];window.testStatus='starting';window.checkStatus='';
-window.addEventListener('zq-local',function(e){window.localEvents.push(e.detail);if(e.detail.type==='result')window.terminal=e.detail;if(e.detail.type==='exit')window.testStatus='done';});
+window.localEvents=[];window.testStatus='starting';window.checkStatus='';window.decisionStatus='';
+window.addEventListener('zq-local',function(e){
+  window.localEvents.push(e.detail);
+  if(e.detail.type==='question'&&window.onDecisionQuestion)window.onDecisionQuestion(e.detail);
+  if(e.detail.type==='result'&&e.detail.runId==='web-decision'&&window.onDecisionResult)window.onDecisionResult(e.detail);
+  if(e.detail.type==='result')window.terminal=e.detail;
+  if(e.detail.type==='exit')window.testStatus='done';
+});
 const local=body=>window.webkit.messageHandlers.zqLocal.postMessage(body);
 window.start=async function(){try{
   if(!window.webkit||!webkit.messageHandlers.zqLocal||!webkit.messageHandlers.zqNotify||!webkit.messageHandlers.zqMini)throw new Error('bridge missing');
@@ -284,6 +303,27 @@ window.finishChecks=async function(){try{
   window.checkResults={status:statusValue,folder:picked.folder,runId:runReply.runId,duplicate:duplicate.runId,staleError:staleError,applied:applied.written===1,read:read,resumeFound:resumed.found&&resumed.result.type==='result',acked:acked.acknowledged,missing:missing.found,tokenLeak:JSON.stringify(localEvents).includes('__TOKEN__')};
   window.checkStatus='done';
 }catch(e){window.testError=String(e&&e.stack||e);window.testStatus='error';window.checkStatus='error';}};
+window.runDecision=async function(){try{
+  window.decisionStatus='running';
+  const answers=[{questionId:'q1',optionId:'o1'},{questionId:'q2',optionId:'__other__',otherText:'真 WebView2 验证'}];
+  let questionResolve,resultResolve;
+  const question=new Promise(r=>{questionResolve=r;}),terminal=new Promise(r=>{resultResolve=r;});
+  window.onDecisionQuestion=questionResolve;window.onDecisionResult=resultResolve;
+  await local({action:'run',clientRunId:'web-decision',folder:picked.folder,message:'DECIDE-WINDOWS',history:[],model:1,effort:'instant',level:'READ',token:'__TOKEN__',userDecision:true});
+  const q=await question,decisionId=q.id;
+  const pending=await local({action:'resume',runId:'web-decision'});
+  const invalid=await local({action:'answer',runId:'web-decision',decisionId:decisionId,answers:[answers[0]]});
+  const accepted=local({action:'answer',runId:'web-decision',decisionId:decisionId,answers:answers});
+  const duplicate=local({action:'answer',runId:'web-decision',decisionId:decisionId,answers:[answers[0],{questionId:'q2',optionId:'__other__',otherText:'  真 WebView2 验证\n'}]});
+  const conflict=local({action:'answer',runId:'web-decision',decisionId:decisionId,answers:[{questionId:'q1',optionId:'o2'},answers[1]]});
+  const settled=await Promise.all([accepted,duplicate,conflict]);
+  const result=await terminal;
+  const resumed=await local({action:'resume',runId:'web-decision'});
+  const late=await local({action:'answer',runId:'web-decision',decisionId:decisionId,answers:answers});
+  window.decisionResults={question:q.questions.length===2,pending:pending.events.some(e=>e.type==='question'),resolved:resumed.events.some(e=>e.type==='question_resolved'),
+    invalid:invalid.accepted,accepted:settled[0].accepted,duplicate:settled[1].accepted&&settled[1].duplicate,conflict:settled[2].accepted,late:late.accepted,conclusion:result.conclusion};
+  window.decisionStatus='done';
+}catch(e){window.decisionError=String(e&&e.stack||e);window.decisionStatus='error';}};
 window.start();
 </script>";
     }

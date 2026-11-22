@@ -240,6 +240,7 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
     ///   {action: "ack", runId} → {acknowledged}（只有 terminal 已到才删除快照）
     ///   {action: "stop"} → {stopping: true}
     ///   {action: "say", runId, text} → {accepted}（第一百五十三轮：干活中途补的一句；不是正在跑的那一轮、宿主在收尾 / 不回音 → false，页面排到下一轮）
+    ///   {action: "answer", runId, decisionId, answers} → {accepted, duplicate?}（第一百六十二轮：本机结构化决策，外壳复核后才写给宿主）
     ///   {action: "read", folder, path} → {content, absent}（确认框里看 diff；只读选过的文件夹里的相对路径）
     ///   {action: "apply", folder, files:[{path, content, baseline}]} → {written}（基线不符一个都不写；路径出不了选过的文件夹）
     /// 和别的桥一样只认自己网站的主框架；根目录只认选过的文件夹，服务器地址用外壳自己的（见 LocalAgent.swift 开头）
@@ -327,6 +328,21 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
                 replyHandler(["accepted": false], nil); return
             }
             agent.say(text) { accepted in replyHandler(["accepted": accepted], nil) }
+        case "answer":
+            guard let runId = localRunId(body["runId"]), let decisionId = body["decisionId"] as? String else {
+                replyHandler(nil, "本机任务或问题编号不对"); return
+            }
+            guard let answers = body["answers"] as? [Any] else { replyHandler(nil, "答案必须是数组"); return }
+            guard runId == localCurrentRunId, let snapshot = localSnapshots[runId], snapshot.running, snapshot.result == nil, agent.running else {
+                replyHandler(["accepted": false, "error": "这一轮已经结束"], nil); return
+            }
+            agent.answer(decisionId, answers: answers) { [weak self] reply in
+                if reply["accepted"] as? Bool == true {
+                    self?.emitLocal(runId, ["type": "question_resolved", "decisionId": decisionId,
+                                            "answers": reply["answers"] as? [[String: Any]] ?? []], snapshot)
+                }
+                replyHandler(reply, nil)
+            }
         case "read":
             guard let folder = body["folder"] as? String, localFolders.contains(folder) else {
                 replyHandler(nil, "这个文件夹还没在「选文件夹」里选过"); return
@@ -362,8 +378,8 @@ final class PageView: WKWebView, WKNavigationDelegate, WKUIDelegate, WKDownloadD
                     if snapshot.events.count > 400 { snapshot.events.removeFirst() }
                 }
             }
-        case "steered":
-            // 记进快照：离页再回来，resume 的回放里看得出哪几句已经读到了（不然会当成没送到、这一轮结束又发一遍）
+        case "steered", "question", "question_resolved":
+            // 补充和决策都要随 resume 回放；已答事件避免旧面板在离页后重新出现。
             snapshot.events.append(detail)
             if snapshot.events.count > 400 { snapshot.events.removeFirst() }
         case "result", "fatal":

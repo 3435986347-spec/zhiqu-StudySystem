@@ -162,6 +162,28 @@ namespace Zhiqu.Desktop
                 Check(server.Seen.All(s => s.Auth == "Bearer " + Token && !s.Body.Contains(Token)), "token transport");
                 Check(server.Streams.Count >= 3 && server.Streams[0].Contains("Windows 本机直接运行"), "direct boundary absent from model prompt");
 
+                var decisionBody = RunBody(root, "DECIDE-WINDOWS");
+                decisionBody["userDecision"] = true;
+                var decisionRequest = LocalRunRequest.Parse(decisionBody, out parseError);
+                Check(decisionRequest.UserDecision && (bool)agent.Payload(decisionRequest, root)["userDecision"], "decision capability not forwarded");
+                Check(!LocalRunRequest.Parse(RunBody(root, "PLAIN"), out parseError).UserDecision, "decision enabled without page opt-in");
+                decisionBody["userDecision"] = "true";
+                Check(!LocalRunRequest.Parse(decisionBody, out parseError).UserDecision, "string opt-in accepted");
+                var decision = await DecisionTurn(agent, decisionRequest, root, false);
+                Check(Text(decision.Result, "conclusion") == "WINDOWS-DECISION", "decision result " + Json.Stringify(decision.Result));
+                Check(decision.Answers.Count == 4 && !((bool)decision.Answers[0]["accepted"]), "incomplete answers accepted");
+                Check((bool)decision.Answers[1]["accepted"] && !((bool)decision.Answers[1]["duplicate"]), "first answer rejected");
+                Check((bool)decision.Answers[2]["accepted"] && (bool)decision.Answers[2]["duplicate"], "normalized duplicate woke host");
+                Check(!((bool)decision.Answers[3]["accepted"]), "conflicting answer replaced first answer");
+                Check(server.Streams.Count(s => s.Contains("DECIDE-WINDOWS")) == 2, "duplicate answer caused another model turn");
+                Check(server.Streams.Any(s => s.Contains("DECIDE-WINDOWS") && s.Contains("保留现有") && s.Contains("其他输入：真 WebView2 验证")), "actual choices missing from model request");
+                var late = agent.Answer("d1", DecisionAnswers("真 WebView2 验证"));
+                Check(!((bool)late["accepted"]), "late answer accepted after result");
+                var waitBody = RunBody(root, "DECIDE-WAIT"); waitBody["userDecision"] = true;
+                var stoppedDecision = await DecisionTurn(agent, LocalRunRequest.Parse(waitBody, out parseError), root, true);
+                Check(stoppedDecision.Result != null && stoppedDecision.Result.ContainsKey("stopped"), "pending decision did not stop cleanly");
+                Check(!((bool)agent.Answer("d1", DecisionAnswers("真 WebView2 验证"))["accepted"]), "answer accepted after stop");
+
                 var stopping = await Turn(agent, LocalRunRequest.Parse(RunBody(root, "STOP"), out parseError), root, 1200, true);
                 Check(Text(stopping.Result, "conclusion").Contains("停") && stopping.Result.ContainsKey("stopped"), "stop result " + Json.Stringify(stopping.Result));
                 Check(!agent.Running, "agent still running after stop");
@@ -186,7 +208,12 @@ namespace Zhiqu.Desktop
                 { "level", "EXEC" }, { "effort", "instant" }, { "token", Token }, { "sessionId", message == "STOP" ? "stop-check" : "app-check" } };
         }
 
-        private sealed class TurnResult { internal Dictionary<string, object> Result; internal readonly List<Dictionary<string, object>> Events = new List<Dictionary<string, object>>(); }
+        private sealed class TurnResult
+        {
+            internal Dictionary<string, object> Result;
+            internal readonly List<Dictionary<string, object>> Events = new List<Dictionary<string, object>>();
+            internal readonly List<Dictionary<string, object>> Answers = new List<Dictionary<string, object>>();
+        }
         private static async Task<TurnResult> Turn(LocalAgent agent, LocalRunRequest request, string root, int waitMs, bool stop = false, bool allowFatal = false)
         {
             var result = new TurnResult();
@@ -201,6 +228,41 @@ namespace Zhiqu.Desktop
             if (stop) { await Task.Delay(waitMs); agent.Stop(); }
             Check(await Task.WhenAny(done.Task, Task.Delay(30000)) == done.Task, "agent turn timeout");
             Check(result.Result != null || allowFatal, "agent result missing");
+            return result;
+        }
+
+        private static object[] DecisionAnswers(string other)
+        {
+            return new object[] {
+                new Dictionary<string, object> { { "questionId", "q1" }, { "optionId", "o1" } },
+                new Dictionary<string, object> { { "questionId", "q2" }, { "optionId", "__other__" }, { "otherText", other } },
+            };
+        }
+
+        private static async Task<TurnResult> DecisionTurn(LocalAgent agent, LocalRunRequest request, string root, bool stop)
+        {
+            var result = new TurnResult();
+            var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            bool acted = false;
+            string failed = await agent.Start(request, root, message =>
+            {
+                lock (result.Events) result.Events.Add(message);
+                if (Text(message, "type") == "question" && !acted)
+                {
+                    acted = true;
+                    if (stop) { agent.Stop(); return; }
+                    result.Answers.Add(agent.Answer("d1", new object[] { DecisionAnswers("真 WebView2 验证")[0] }));
+                    result.Answers.Add(agent.Answer("d1", DecisionAnswers("真 WebView2 验证")));
+                    result.Answers.Add(agent.Answer("d1", DecisionAnswers("  真 WebView2 验证\n")));
+                    result.Answers.Add(agent.Answer("d1", new object[] {
+                        new Dictionary<string, object> { { "questionId", "q1" }, { "optionId", "o2" } }, DecisionAnswers("真 WebView2 验证")[1] }));
+                }
+                if (Text(message, "type") == "result") result.Result = message;
+                if (Text(message, "type") == "exit") done.TrySetResult(true);
+            });
+            Check(failed == null, failed);
+            Check(await Task.WhenAny(done.Task, Task.Delay(30000)) == done.Task, "decision turn timeout");
+            Check(result.Result != null, "decision result missing");
             return result;
         }
 
@@ -278,7 +340,11 @@ namespace Zhiqu.Desktop
                 int tools = Count(body, "\"role\":\"tool\"");
                 bool stopping = body.Contains("STOP");
                 Dictionary<string, object> message;
-                if (stopping && tools == 0) message = Call("shell", new Dictionary<string, object> { { "command", "node -e \"setTimeout(()=>require('fs').writeFileSync('late.txt','bad'),5000)\"" } });
+                bool decision = body.Contains("DECIDE-WINDOWS") || body.Contains("DECIDE-WAIT");
+                if (decision && tools == 0) message = Call("ask_user", DecisionSpec());
+                else if (decision && body.Contains("保留现有") && body.Contains("其他输入：真 WebView2 验证")) message = new Dictionary<string, object> { { "role", "assistant" }, { "content", "WINDOWS-DECISION" } };
+                else if (decision) message = new Dictionary<string, object> { { "role", "assistant" }, { "content", "WINDOWS-DECISION-MISSING" } };
+                else if (stopping && tools == 0) message = Call("shell", new Dictionary<string, object> { { "command", "node -e \"setTimeout(()=>require('fs').writeFileSync('late.txt','bad'),5000)\"" } });
                 else if (stopping) return;
                 else if (tools == 0) message = Call("write_file", new Dictionary<string, object> { { "path", "new.txt" }, { "content", "draft-content\n" } });
                 else if (tools == 1) message = Call("shell", new Dictionary<string, object> { { "command", "node -e \"require('fs').writeFileSync('command.txt','ok');console.log(process.env.ZHIQU_TOKEN||'clean')\"" } });
@@ -291,6 +357,20 @@ namespace Zhiqu.Desktop
                 context.Response.OutputStream.Write(bytes, 0, bytes.Length); context.Response.Close();
             }
             internal void Stop() { try { _listener.Close(); } catch { } }
+        }
+
+        private static Dictionary<string, object> DecisionSpec()
+        {
+            return new Dictionary<string, object> { { "questions", new object[] {
+                new Dictionary<string, object> { { "header", "实现" }, { "question", "采用哪种实现" }, { "allowOther", false }, { "options", new object[] {
+                    new Dictionary<string, object> { { "label", "保留现有" }, { "description", "非推荐项" } },
+                    new Dictionary<string, object> { { "label", "重写" }, { "recommended", true } },
+                } } },
+                new Dictionary<string, object> { { "header", "验证" }, { "question", "怎样验证" }, { "allowOther", true }, { "options", new object[] {
+                    new Dictionary<string, object> { { "label", "命令行" }, { "recommended", true } },
+                    new Dictionary<string, object> { { "label", "应用" } },
+                } } },
+            } } };
         }
 
         private static Dictionary<string, object> Call(string name, Dictionary<string, object> arguments)

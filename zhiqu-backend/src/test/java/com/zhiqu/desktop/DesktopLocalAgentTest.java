@@ -79,6 +79,7 @@ class DesktopLocalAgentTest {
         assertEquals("HOME,LANG,PATH,TMPDIR", r.get("a.envKeys"), "宿主继承了外壳的环境变量");
         assertEquals("ok", r.get("a.started"));
         assertEquals(gatewayUrl, r.get("a.payloadServer"), "交给宿主的服务器不是外壳自己的那个");
+        assertEquals("false,true,false", r.get("a.decisionCapabilities"), "只有页面显式传布尔 true 才能开启本机决策");
         // 第一百四十五轮：会话记录的 id、消息号照传给宿主；认不出的不传（id 拼进文件名）
         assertEquals("app-12", r.get("a.sessionId"), "会话 id 没交给宿主：命令行的 /resume 看不见应用里的会话");
         assertEquals("31", r.get("a.historyId"), "消息号没交给宿主：没法和会话记录对账");
@@ -159,6 +160,7 @@ class DesktopLocalAgentTest {
         assertTrue(seen.stream().anyMatch(s -> s[1].startsWith("/api/harness/model/stream") && s[3].contains("BRIDGE")),
                 "桥那一轮没到外壳自己的网关（页面塞的 http://127.0.0.1:1 被用上了？）");
         assertSteer(r);
+        assertDecision(r);
         assertTrue(r.get("bridge.mini").startsWith("mini:err") && r.get("bridge.mini").contains("没有本机代码助手"), "迷你窗也接了本机代码：" + r.get("bridge.mini"));
     }
 
@@ -177,6 +179,41 @@ class DesktopLocalAgentTest {
         assertTrue(script.contains("cp \"$ROOT/zhiqu-cli/package.json\" \"$APP/Contents/Resources/zhiqu-cli/package.json\""),
                 "没带 package.json：宿主是 ES 模块（type: module），少了它 node 不认 import");
         assertTrue(script.contains("macos-shell/LocalAgent.swift\""), "打包脚本没把 LocalAgent.swift 编进外壳");
+    }
+
+    /** 本机结构化决策（第一百六十二轮）：问题、完整答案、幂等、快照与停止后的迟到提交。 */
+    private void assertDecision(Map<String, String> r) {
+        assertTrue(r.get("decision.decisionRun").startsWith("decisionRun:ok"), r.get("decision.decisionRun"));
+        String question = r.get("decision.question");
+        assertTrue(question.contains("\"type\":\"question\"") && question.contains("采用哪种实现"), "本机问题没经外壳到页面：" + question);
+        assertTrue(question.contains("q1") && question.contains("q2"), "多问题没有完整交给页面");
+        assertTrue(r.get("decision.decisionInvalid").contains("\"accepted\":false"), "漏答也交给了宿主");
+        assertTrue(r.get("decision.decisionEmptyOther").contains("\"accepted\":false"), "空的其他输入也交给了宿主");
+        assertTrue(r.get("decision.decisionWrongRun").contains("\"accepted\":false"), "别的那一轮能回答当前问题");
+        assertTrue(r.get("decision.decisionUnknown").contains("\"accepted\":false"), "没登记的问题编号也能回答");
+        assertTrue(r.get("decision.decisionAnswer").contains("\"accepted\":true"), r.get("decision.decisionAnswer"));
+        assertTrue(r.get("decision.decisionDuplicate").contains("\"accepted\":true")
+                && r.get("decision.decisionDuplicate").contains("\"duplicate\":true"), "相同答案的重复提交不该再次唤醒宿主");
+        assertTrue(r.get("decision.decisionConflict").contains("\"accepted\":false"), "冲突答案覆盖了第一次提交");
+        assertTrue(r.get("decision.decisionAfter").contains("\"accepted\":false"), "运行结束后还接受迟到答案");
+        assertEquals("true", r.get("decision.pendingSnapshot"), "待答问题没进 resume 快照");
+        assertEquals("true", r.get("decision.resolvedSnapshot"), "已答事件没进 resume 快照，离页会重新弹出旧问题");
+        assertTrue(r.get("decision.result").contains("收到本机决定"), "宿主没有收到答案：" + r.get("decision.result"));
+        assertTrue(seen.stream().anyMatch(s -> s[1].startsWith("/api/harness/model/stream") && s[3].contains("DECIDE-RUN")
+                        && s[3].contains("保留现有") && s[3].contains("其他输入：用真 WebKit 验证")),
+                "下一次模型请求里没有用户实际选择和其他输入");
+        assertEquals(2, seen.stream().filter(s -> s[1].startsWith("/api/harness/model/stream") && s[3].contains("DECIDE-RUN")).count(),
+                "重复答案又唤醒了一次宿主");
+        assertTrue(r.get("decision.stopReply").contains("\"accepted\":false"), "待答时停止后仍接受答案");
+        assertTrue(r.get("decision.stopResult").contains("被你停下了"), "待答时停止没有正常收尾：" + r.get("decision.stopResult"));
+        assertTrue(r.get("decision.nativePanel").contains("采用哪种实现") && r.get("decision.nativePanel").contains("（推荐）"),
+                "真实 WKWebView 没画出本机问题或推荐标记：" + r.get("decision.nativePanel"));
+        assertEquals("nativeInitialDisabled:true", r.get("decision.nativeInitialDisabled"), "推荐项被自动当成答案");
+        assertEquals("nativeComplete:true:已答 2 / 2 题", r.get("decision.nativeComplete"), "真实面板的两题没有都答完");
+        assertTrue(r.get("decision.nativeResult").contains("收到本机决定"), "真实面板提交后宿主没收到答案：" + r.get("decision.nativeResult"));
+        assertEquals("nativePanelHidden:true", r.get("decision.nativePanelHidden"), "真实面板在本机运行结束后没有收起");
+        assertTrue(seen.stream().anyMatch(s -> s[1].startsWith("/api/harness/model/stream") && s[3].contains("DECIDE-UI")
+                && s[3].contains("保留现有") && s[3].contains("其他输入：用真 WebKit 验证")), "真实面板的选择没进下一次模型请求");
     }
 
     /** 干活中途补充（第一百五十三轮，docs/steer-plan.md 第 4 步）：页面 → 外壳 → 宿主 → 下一次模型调用；回音、送达、快照 */
@@ -321,6 +358,43 @@ class DesktopLocalAgentTest {
         seen.add(new String[]{ex.getRequestMethod(), path, auth == null ? "" : auth, body});
         if (path.startsWith("/desktop-local-check/")) {
             String page = path.substring("/desktop-local-check/".length());
+            if ("native-ui.js".equals(page)) {
+                String module = Files.readString(Path.of("src/main/resources/static/assets/pages/ai-assistant.js"))
+                        .replaceAll("(?m)^export function ", "function ")
+                        .replaceAll("(?m)^export const ", "const ")
+                        .replaceAll("(?m)^export \\{[^\\n]*\\};", "")
+                        + "\n;webkit.messageHandlers.t.postMessage('nativeModuleLoaded');";
+                reply(ex, 200, "application/javascript; charset=utf-8", module);
+                return;
+            }
+            if ("native-ui".equals(page)) {
+                String html = """
+                        <!doctype html><html><body><div id="zq-messages"></div><div id="zq-decision" hidden></div>
+                        <script>window.addEventListener('error', e => webkit.messageHandlers.t.postMessage('nativeError:' + e.message + ':' + e.filename + ':' + e.lineno), true);</script>
+                        <script src="/desktop-local-check/native-ui.js"></script><script>
+                        const say = s => webkit.messageHandlers.t.postMessage(s);
+                        window.addEventListener('zq-local', e => say('nativeEvent:' + JSON.stringify(e.detail)));
+                        const escapeHtml = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                        bind({ state: { user: { id: 1 }, notebookId: 5, messages: [] }, $: s => document.querySelector(s), esc: escapeHtml,
+                          icon: () => '', nowMs: Date.now, requestError: m => new Error(m), drafts: { clearIf: () => {} } });
+                        bindDecisionPanel();
+                        renderAiMessages = () => {};
+                        async function startNativeDecision(folder, token) {
+                          const assistant = { role: 'assistant', content: '', status: 'STREAMING', steps: { steps: [] } };
+                          const st = { nb: 5, assistant, user: null, desktopInfo: {}, sameNb: () => true };
+                          const reply = await localCall({ action: 'run', clientRunId: 'local-native-ui', folder, message: 'DECIDE-UI',
+                            level: 'READ', model: 7, token, userDecision: true });
+                          st.runId = reply.runId;
+                          const result = await waitLocal(reply.runId, assistant, st.sameNb, reply.timeoutMs, st);
+                          say('nativeResult:' + JSON.stringify(result));
+                          say('nativePanelHidden:' + document.querySelector('#zq-decision').hidden);
+                        }
+                        say('nativeReady');
+                        </script></body></html>
+                        """;
+                reply(ex, 200, "text/html; charset=utf-8", html);
+                return;
+            }
             String html = """
                     <!doctype html><html><body><script>
                     const say = s => webkit.messageHandlers.t.postMessage(s);
@@ -381,6 +455,18 @@ class DesktopLocalAgentTest {
             reply = call("write_file", Map.of("path", "new.txt", "content", "draft-content\n"));
         } else if (said.contains("A-RUN")) {
             reply = text("A 做完了");
+        } else if (said.contains("DECIDE-") && round == 0) {
+            reply = call("ask_user", Map.of("questions", List.of(
+                    Map.of("header", "实现", "question", "采用哪种实现", "allowOther", false, "options", List.of(
+                            Map.of("label", "保留现有", "description", "非推荐项"),
+                            Map.of("label", "重写", "recommended", true))),
+                    Map.of("header", "验证", "question", "怎样验证", "allowOther", true, "options", List.of(
+                            Map.of("label", "命令行", "recommended", true),
+                            Map.of("label", "应用"))))));
+        } else if (said.contains("DECIDE-") && body.contains("保留现有") && body.contains("其他输入：用真 WebKit 验证")) {
+            reply = text("收到本机决定");
+        } else if (said.contains("DECIDE-")) {
+            reply = text("没有收到本机决定");
         } else if (said.contains("STEER-RUN") && body.contains("STEER-ADD")) {
             // 中途补充（第一百五十三轮）：补的那句进了这次请求
             reply = text("读到补充：STEER-ADD");

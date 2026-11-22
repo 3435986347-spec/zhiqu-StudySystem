@@ -98,7 +98,7 @@ class WindowsDesktopShellTest {
         Path directory = work.resolve("web");
         Result result = check("web", directory, windowsPackage().toString());
         assertEquals("true", result.values.get("web.ok"), result.text);
-        assertEquals("3", result.values.get("web.streams"), "重复 runId 又起了一轮");
+        assertEquals("5", result.values.get("web.streams"), "重复 runId 或重复答案又起了一轮");
         assertEquals("2", result.values.get("web.notifications"), result.text);
         assertEquals("140,80", result.values.get("web.drag"), "原生拖动没有生效");
         assertEquals("running,paused", result.values.get("web.pomo"), "番茄钟开始/暂停没有共享生效");

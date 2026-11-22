@@ -18,7 +18,7 @@
 import { hunks, stat } from './render/diff.js';
 
 export const KINDS = Object.freeze(['thinking', 'list', 'read', 'search', 'run', 'create', 'edit', 'patch', 'delete',
-  'web', 'retrieve', 'tasks', 'wiki', 'plan', 'memory', 'check', 'agent', 'todo', 'note', 'steer', 'other']);
+  'web', 'retrieve', 'tasks', 'wiki', 'plan', 'memory', 'check', 'agent', 'todo', 'note', 'steer', 'decision', 'other']);
 
 /** 调工具前那一句判断最多留这么多字（和系统提示里说的一样；再长的截断）。后端 TraceSteps 的标题上限也是这个数 */
 export const NOTE_CHARS = 40;
@@ -60,7 +60,7 @@ const KIND_OF = {
   create_study_plan: 'plan', list_tasks: 'tasks', update_task_status: 'tasks',
   read_memory: 'memory', propose_memory: 'memory',
   spawn_agent: 'agent', wait_agent: 'agent', send_input: 'agent', close_agent: 'agent',
-  update_todos: 'todo',
+  update_todos: 'todo', ask_user: 'decision',
 };
 
 /** 这个工具算哪一种（write_file 覆盖已有文件时算 edit，见 noteWrite） */
@@ -92,6 +92,7 @@ export function titleOf(name, args = {}) {
     case 'read_memory': return { title: '读长期记忆', target: '' };
     case 'propose_memory': return { title: '记忆草稿', target: '' };
     case 'update_todos': return { title: '任务清单', target: '' };
+    case 'ask_user': return { title: '等待你决定', target: `${Array.isArray(args.questions) ? args.questions.length : 0} 个问题` };
     case 'spawn_agent': return { title: args.role === 'worker' ? '派子 agent（干活）' : '派子 agent（只读）', target: clip(args.task, 120) };
     case 'wait_agent': return { title: '等子 agent', target: Array.isArray(args.ids) ? args.ids.join('、') : '' };
     case 'send_input': return { title: '交代子 agent', target: String(args.id || '') };

@@ -201,3 +201,10 @@
 **输入框里的 `/` 命令**（第一百一十八轮）：命令表 `SLASH_COMMANDS` 在 `assets/pages/ai-assistant.js`。`parseSlash` 是唯一的判定：第一个词正好是命令才算，不接参数的（`bare`）后面跟了字是一句话。`turn: true` 的（`/init`、`/review`）发一轮，别的当场做完（发送中也能做）。按键只有 `slashKeydown` 一处。
 
 命令上色靠后面垫一层字（`#zq-draft-mirror`），`.has-command` 时启用。改 `.zq-composer textarea` 的字体、内边距、换行，要同步改 `.zq-draft-mirror`（`AiComposerTest` 比这两条规则，`DesktopWebKitLayoutTest` 在 WebKit 里比折出来的高度）。输入框的值被代码改过之后要调 `growDraft()` 或 `paintSlash()`：不然字是透明的，下一句就看不见了。
+
+**决策面板**（第一百六十一轮）：`#zq-decision` 在项目栏与 `#zq-composer` 之间。实时 SSE 与重连回放都经 `makeStreamApplier`
+的 `decision.ask` / `decision.resolved` 更新 `decisionRuns`，按 Notebook 显示当前那批；每次提问一批，左右切题，答案与各题的其他输入分开保存。
+推荐只显示标记，不自动填答案；全部回答后提交按钮才可用，提交中防连点，未确认失败不收起。样式只在 `zhiqu-ui.css` 的 `.zq-decision*`，
+行为在 `decision-check.js` / `AiDecisionTest`；轮播的 AI 助手浅、深截图也已换成真实提问面板。
+macOS 本机模式（第一百六十二轮）复用同一面板：`waitLocal` 把 `question` / `question_resolved` 落到同一批状态，提交走 `zqLocal answer`；
+直播与快照交错时先缓存决策事件，运行终态清掉待答。页面在本机 run 里显式带 `userDecision: true`，旧页面 / 旧外壳组合仍用文字提问。

@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -89,6 +90,25 @@ namespace Zhiqu.Desktop
                         if (text.Length > 4000) throw new InvalidOperationException("补充最多 4000 字");
                         bool accepted = sayId == _current && _agent.Running && _snapshots.ContainsKey(sayId) && _snapshots[sayId].Running && await _agent.Say(text);
                         value = new Dictionary<string, object> { { "accepted", accepted } };
+                        break;
+                    case "answer":
+                        string answerRunId = RunId(body), decisionId = Json.Text(body, "decisionId");
+                        if (answerRunId == null || decisionId == null) throw new InvalidOperationException("本机任务或问题编号不对");
+                        IEnumerable rawAnswers = body.ContainsKey("answers") ? body["answers"] as IEnumerable : null;
+                        if (rawAnswers == null || rawAnswers is string) throw new InvalidOperationException("答案必须是数组");
+                        Snapshot answerSnapshot = SnapshotFor(body);
+                        if (answerRunId != _current || answerSnapshot == null || !answerSnapshot.Running || answerSnapshot.Result != null || !_agent.Running)
+                        {
+                            value = new Dictionary<string, object> { { "accepted", false }, { "error", "这一轮已经结束" } };
+                            break;
+                        }
+                        var answerReply = _agent.Answer(decisionId, rawAnswers.Cast<object>().ToArray());
+                        if (answerReply["accepted"] is bool && (bool)answerReply["accepted"])
+                        {
+                            Emit(answerRunId, answerSnapshot, new Dictionary<string, object> { { "type", "question_resolved" },
+                                { "decisionId", decisionId }, { "answers", answerReply["answers"] } });
+                        }
+                        value = answerReply;
                         break;
                     case "read":
                         string folder = AuthorizedFolder(body);
@@ -205,7 +225,7 @@ namespace Zhiqu.Desktop
                         else { snapshot.Events.Add(detail); Trim(snapshot.Events); }
                     }
                 }
-                else if (type == "steered") { snapshot.Events.Add(detail); Trim(snapshot.Events); }
+                else if (type == "steered" || type == "question" || type == "question_resolved") { snapshot.Events.Add(detail); Trim(snapshot.Events); }
                 else if (type == "result" || type == "fatal") snapshot.Result = detail;
                 else if (type == "exit")
                 {
@@ -224,7 +244,8 @@ namespace Zhiqu.Desktop
                 }
                 catch { }
             };
-            if (_context != null) _context.Post(_ => deliver(), null);
+            if (_context != null && SynchronizationContext.Current == _context) deliver();
+            else if (_context != null) _context.Post(_ => deliver(), null);
             else if (SynchronizationContext.Current == null) deliver();
             else SynchronizationContext.Current.Send(_ => deliver(), null);
         }

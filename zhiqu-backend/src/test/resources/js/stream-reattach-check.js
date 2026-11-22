@@ -30,11 +30,11 @@ const state = { notebookId: 5, messages: [] };
 const noop = () => {};
 const factory = new Function(
   'state', 'toast', 'renderAiMessages', 'patchStreamingMessage',
-  'mergeTraceStep', 'receiveAgentArtifact', 'isPlanDraft', 'planDraftItems', 'sessionStorage', 'requestError',
+  'mergeTraceStep', 'receiveAgentArtifact', 'isPlanDraft', 'planDraftItems', 'sessionStorage', 'requestError', '$',
   src.slice(a, b) + '\nreturn { makeStreamApplier, runningTurn, markRunningTurn, clearRunningTurn, runningStorageKey };');
 const { makeStreamApplier, runningTurn, markRunningTurn, clearRunningTurn, runningStorageKey } = factory(
   state, (m) => toasts.push(m), noop, () => true, noop, noop, noop, noop, store,
-  (msg, flags) => Object.assign(new Error(msg), flags));
+  (msg, flags) => Object.assign(new Error(msg), flags), noop);
 
 function turn() {
   const assistant = { role: 'assistant', content: '', reasoningSummary: '', status: 'STREAMING' };
@@ -482,8 +482,46 @@ async function checkDesktopSteer() {
   h2.emit('zq-local', { runId: 'local-back', type: 'result', conclusion: 'ok' });
   await resumed;
 }
+// 桌面本机决策（第一百六十二轮）：question / question_resolved 复用现有 decisionRuns；
+// 直播的已答不能被子快照里的旧 question 覆盖，回放待答能恢复，终态一律收起。
+async function checkDesktopDecision() {
+  const h = harness();
+  const question = { runId: 'local-decision', type: 'question', id: 'd1', questions: [
+    { id: 'q1', question: '选哪种方案', options: [{ id: 'o1', label: '甲' }, { id: 'o2', label: '乙' }] }
+  ] };
+  const st = { nb: 5, runId: 'local-decision', desktopInfo: {}, sameNb: () => true };
+  let releaseResume;
+  h.ctx.localCall = (body) => body.action === 'resume'
+    ? new Promise((resolve) => { releaseResume = resolve; }) : Promise.resolve({ accepted: true });
+  const pending = h.ctx.waitLocal('local-decision', { steps: { steps: [] } }, () => true, 0, st);
+  h.emit('zq-local', question);
+  h.emit('zq-local', { runId: 'local-decision', type: 'question_resolved', decisionId: 'd1' });
+  releaseResume({ found: true, events: [question], result: null, running: true });
+  await settle();
+  assert.equal(h.ctx.decisionRuns['local-decision'], undefined, '直播已答后，快照里的旧问题又打开了');
+
+  h.emit('zq-local', Object.assign({}, question, { id: 'd2' }));
+  assert.equal(h.ctx.decisionRuns['local-decision'].decisionId, 'd2', '本机直播问题没有进入决策面板');
+  assert.equal(h.ctx.decisionRuns['local-decision'].local, true, '本机问题没有标记，提交会误走服务器');
+  h.emit('zq-local', { runId: 'local-decision', type: 'question_resolved', decisionId: 'd2' });
+  assert.equal(h.ctx.decisionRuns['local-decision'], undefined, '本机已答事件没有收起面板');
+  h.emit('zq-local', { runId: 'local-decision', type: 'result', conclusion: '完成' });
+  await pending;
+
+  const back = harness();
+  const backSt = { nb: 5, runId: 'local-back-decision', desktopInfo: {}, sameNb: () => true };
+  back.ctx.localCall = async () => ({ found: true, events: [
+    Object.assign({}, question, { runId: 'local-back-decision', id: 'd-back' })
+  ], result: null, running: true });
+  const resumed = back.ctx.waitLocal('local-back-decision', { steps: { steps: [] } }, () => true, 0, backSt);
+  await settle();
+  assert.equal(back.ctx.decisionRuns['local-back-decision'].decisionId, 'd-back', '离页回来后待答问题没有恢复');
+  back.emit('zq-local', { runId: 'local-back-decision', type: 'result', conclusion: '停止' });
+  await resumed;
+  assert.equal(back.ctx.decisionRuns['local-back-decision'], undefined, '运行结束后还留着待答面板');
+}
 (async () => {
-  await checkSteer(); await checkDesktopSteer();
+  await checkSteer(); await checkDesktopSteer(); await checkDesktopDecision();
   await checkNavigation(); await checkReplay(); await checkHeaderTimeout();
   await checkDesktopReturn(); await checkQueueIsolation(); await checkRaces(); await checkLocalWait();
   console.log('ALL-GREEN');

@@ -71,9 +71,12 @@ public final class ContextOptionKeys {
      */
     public static final String CODE_COMMAND = "codeCommand";
 
+    /** 客户端声明支持 user_decision_v1：结构化问题、答案提交与重连恢复；旧客户端不发，不下发 ask_user。 */
+    public static final String USER_DECISION = "userDecision";
+
     /** 由客户端提供的键 —— 覆盖测试要求活壳里至少有一处在发。 */
     public static final Set<String> CLIENT_SUPPLIED =
-            Set.of(SELECTED_SOURCE_IDS, INCLUDE_WIKI, SELECTED_WIKI_PAGE_IDS, CODE_MODE, CODE_COMMAND);
+            Set.of(SELECTED_SOURCE_IDS, INCLUDE_WIKI, SELECTED_WIKI_PAGE_IDS, CODE_MODE, CODE_COMMAND, USER_DECISION);
 
     /** 由服务端在调用前注入的键 —— 不参与前端覆盖检查。 */
     public static final Set<String> SERVER_INJECTED = Set.of(QUERY);

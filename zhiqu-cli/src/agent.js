@@ -36,6 +36,7 @@ import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
 import { judgmentText, listDetail, patchDetail, runDetail, writeDetail } from './steps.js';
 import { Inbox, steerMessage } from './steer.js';
+import { askUserSchema, formatDecisionResult, normalizeDecisionAnswers, normalizeDecisionQuestions } from './decisions.js';
 
 export const REMOTE_READ_TOOLS = new Set(['search_wiki', 'read_wiki_page', 'read_memory', 'list_tasks']);
 /** 远程工具里**直接生效**的（不是草稿）：plan 档不给，ask 档先问（第二十九轮，用户定的「改状态直接做」）。 */
@@ -197,6 +198,7 @@ export function toolset(ctx) {
   out.push({ schema: todoSchema(), kind: 'todo' });   // 三档都有：plan 档列计划正用得上
   // 往工作状态里记一条（第一百三十八轮）：只写状态卡，碰不到工作区，所以三档都给；子 agent 的状态不留，不给
   if (!ctx.subagent) out.push({ schema: noteSchema(), kind: 'note' });
+  if (ctx.decide && !ctx.subagent && !ctx.exec) out.push({ schema: askUserSchema(), kind: 'decision' });
   // 查这个项目以前的会话（第一百四十一轮）：只读，三档都给。这个项目里有别的会话才给 —— 没有就没什么可查，白占工具表；
   // 一段会话里只看一次（工具表半路变了，缓存跟着重来）
   if (hasPastSessions(ctx)) for (const t of sessionSchemas()) out.push({ schema: t, kind: 'session' });
@@ -691,6 +693,7 @@ export function describeCall(name, args) {
     case 'load_skill': return `读取 skill ${args.name}${args.file ? ` / ${args.file}` : ''}`;
     case 'find_mcp_tool': return `找 MCP 工具「${args.query}」`;
     case 'exit_plan_mode': return '提交计划';
+    case 'ask_user': return `等待你决定（${Array.isArray(args.questions) ? args.questions.length : 0} 个问题）`;
     case 'spawn_agent': case 'wait_agent': case 'send_input': case 'close_agent': return describeAgentCall(name, args);
     case TODO_TOOL: return '更新任务清单';
     case 'search_sessions': return `在以前的会话里找「${args.query}」`;
@@ -761,6 +764,11 @@ function refuseUnoffered(ctx, name, offered) {
     ui.step(`${name}（子 agent 不能再派子 agent）`);
     ui.result('已拒绝', false);
     return `你是子 agent，不能再派子 agent：自己做完，把结论交回去。能用的工具：${available}。`;
+  }
+  if (name === 'ask_user') {
+    ui.step('ask_user（这里没有人能用结构化面板回答）');
+    ui.result('已拒绝', false);
+    return '当前这个上下文没有人能用结构化面板回答问题（可能是无人值守、exec 或子 agent），ask_user 没有执行。请直接用文字说明需要决定什么；如果你是子 agent，把问题交回主 agent。';
   }
   if (existingToolNames(ctx).has(name)) {
     ui.step(`${name}（${ctx.mode} 档不给这个工具）`);
@@ -960,6 +968,38 @@ async function runTool(ctx, call, offered, signal) {
     ctx.turnStats[key] += 1;
   }
 
+  if (kind === 'decision') {
+    const normalized = normalizeDecisionQuestions(args);
+    if (normalized.error) {
+      ui.result(normalized.error, false);
+      stepNote(ctx, { ok: false, summary: normalized.error });
+      return `问题参数无效：${normalized.error}。请修正后单独调用 ask_user。`;
+    }
+    let outcome;
+    try {
+      outcome = await ctx.decide(normalized.questions, { signal });
+    } catch (e) {
+      const message = String((e && e.message) || e);
+      ui.result(message, false);
+      stepNote(ctx, { ok: false, summary: message });
+      return `收集用户答案时出错：${message}`;
+    }
+    if (signal && signal.aborted) {
+      stepNote(ctx, { ok: false, summary: '已中断' });
+      return '这次决策被中断，没有提交答案。';
+    }
+    const checked = outcome && outcome.cancelled === true ? { answers: [] } : normalizeDecisionAnswers(normalized.questions, outcome && outcome.answers);
+    if (checked.error) {
+      ui.result(checked.error, false);
+      stepNote(ctx, { ok: false, summary: checked.error });
+      return `收集到的答案无效：${checked.error}`;
+    }
+    const content = formatDecisionResult(normalized.questions, outcome && outcome.cancelled === true ? { cancelled: true, answers: [] } : checked);
+    const cancelled = Boolean(outcome && outcome.cancelled === true);
+    ui.result(cancelled ? '用户取消了这次决策' : `用户已回答 ${checked.answers.length} 个问题`, !cancelled);
+    stepNote(ctx, { ok: !cancelled, summary: cancelled ? '用户取消，未采用推荐项' : `已回答 ${checked.answers.length} 个问题`, detail: listDetail(content) });
+    return content;
+  }
   if (kind === 'local') {
     const local = ctx.local;
     if (name === 'preview_page') {
@@ -1663,6 +1703,14 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
         continue;
       }
       break;
+    }
+    const decisionCalls = calls.filter((call) => call.function && call.function.name === 'ask_user');
+    if (decisionCalls.length && calls.length > 1) {
+      const warning = decisionCalls.length > 1
+        ? '一次只能提出一批问题；请把需要决定的问题合并到一次 ask_user 调用里，其他工具等答案回来后再调用。'
+        : 'ask_user 必须单独调用：先等用户提交答案，再根据答案调用其他工具。刚才这一批没有执行任何工具。';
+      for (const call of calls) record(ctx, { role: 'tool', tool_call_id: call.id, content: warning });
+      continue;
     }
     prefetchRemoteReads(ctx, calls, offered, signal);
     const thought = (message.content || '').length;

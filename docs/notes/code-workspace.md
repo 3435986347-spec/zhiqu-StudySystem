@@ -69,6 +69,11 @@ normalize + `startsWith(root)` 防 `../`、拒绝符号链接、只许普通文�
 
 **两份 coding agent 合成一份（第九十四轮起，分三步）**：开关 `app.ai.code-agent.engine=js` 时，门在 `CodeWorkspaceAgent.run` 里判完，循环交给命令行那一份 —— `JsCodeAgent` 起 node 跑 `zhiqu-cli/src/host/code-host.js`（草稿模式的 `DraftTools`），模型回到 `HarnessModelGateway`、命令回到 `WorkspaceExecutor`，草稿照旧成 `CODE_DRAFT`。子进程只有 HOME 和 PATH、超时整组杀、协议里认不出的就停。三步见 `docs/rounds/round-94.md`；第九十七轮删了 Java 的循环（`CodeWorkspaceAgent` 只剩门和桥），找不到 node 时代码模式没有、轨迹里说清楚。第九十五轮起默认 js（`cli-dir` 留空按工作目录找），Wiki 工具和里程碑经桥回到这里执行；执行器给子进程的 HOME 是自己的空目录（原来是工作区：python3 往项目里写缓存、仓库里的 sitecustomize.py 会被执行）。
 
+**结构化用户决策（第一百六十一轮）**：网页声明 `contextOptions.userDecision: true` 时，后端才给宿主 `run.userDecision`。
+宿主经 `question` 提出一批问题，`DecisionPort` 校验后由 `ChatRunHub` 发 `decision.ask`；页面 `POST /api/ai/runs/{runId}/decisions/{decisionId}/answer`
+提交完整答案，归属先由 `AiRunController` 查。相同答案重复提交不重复唤醒，冲突第一次有效；`decision.resolved` 先落回放，再经 `question_result` 唤醒宿主。
+运行结束会取消等待，不自动采用推荐项。待答批次在运行内存中，不建表，刷新 / 重连靠 SSE 回放恢复；普通聊天和既有权限确认不走这条路。
+
 **工作区写入（阶段 2）走的是 Wiki 那条已经验证过的路：草稿 → 用户确认 → 落盘。**
 模型调 `write_workspace_file`（整份写）/ `edit_workspace_file`（改一段，第九十二轮拆开）只产出 `CODE_DRAFT` 工件，磁盘一个字节都不动；
 只有 `POST /api/ai/artifacts/{id}/confirm` 才会写。四条纪律各挡一件事：
