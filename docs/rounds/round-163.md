@@ -41,4 +41,11 @@
 - `decision-check.js` 与 `stream-reattach-check.js` 均 ALL-GREEN。
 - CLI 全量 700 项：678 通过、22 跳过、0 失败；其中 Windows 专属 3 项明确 SKIP。
 - 后端 `mvn -o clean test` 全量 1561 项：1561 通过、0 失败、0 错误、0 跳过，BUILD SUCCESS。Windows 平台在 `@BeforeAll` 拦截，未产生测试项计数，不能从这个总数推断 Windows 已验。
-- 未部署、未发布 npm、未提交 Git、未制作或上传 Windows 安装包。第 163 轮到这里只完成源码与 Mac 可执行回归；Windows 新增场景尚未执行、尚未见红，必须完成上面的真机验收，不能宣称 Windows 功能已通过。
+- 第 163 轮源码与 Mac 可执行回归完成后，Windows 新增场景仍未执行、尚未见红，必须完成上面的真机验收，不能宣称 Windows 功能已通过。
+
+## 交付（2026-11-22）
+
+- `39b01d7`（Coding agent 支持结构化用户决策）已推送 GitHub `master`；未创建 GitHub Release、未发布 npm，由用户自行发布。
+- 生产 JAR 已部署，SHA-256 `a11a9b27778dd8ca75c5ac54dd7dfb82ec20a4bb9f67eaeb5c55d033131a6e33`；zhiqu-backend / zhiqu-rag / caddy 均 active，公网缓存令牌 `20261122-r162`，新答案接口未登录回 403 而非 404。
+- macOS `1.6.0` DMG 已构建并上传，SHA-256 `4bea689c8fca204c5d5c9ec91dd96087280e187a1232983956be289c40bcce32`；公网下载清单已返回此版本与哈希。
+- 未制作或上传新的 Windows 安装包；线上 Windows `1.6.0-win-x64.exe` 保持原文件，Windows 决策源码仍需按上面的清单在 Windows 真机验收后发布。
