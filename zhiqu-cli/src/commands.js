@@ -5,14 +5,13 @@
 
 export const SLASH_COMMANDS = [
   { name: '/goal', args: '<目标>', desc: 'goal 模式：把它当圣目标，一直做到达成并核对通过（Ctrl+C 随时停）' },
-  { name: '/mode', args: '[plan|ask|auto]', desc: '切换档位（只读出计划 / 逐个确认 / 全自动）' },
-  { name: '/model', args: '[id|default]', desc: '查看 / 切换模型' },
-  { name: '/effort', args: '[instant|medium|high|extra|max]', desc: '思考档位：想得越久答得越稳，也越慢、越费 token' },
+  { name: '/mode', args: '[plan|ask|auto]', desc: '选择并切换档位（只读出计划 / 逐个确认 / 全自动）' },
+  { name: '/model', args: '[id|default]', desc: '↑↓ 选模型，←→ 选思考强度，Enter 应用' },
   { name: '/window', args: '[数，如 1m / 128k]', desc: '看 / 设当前模型的上下文窗口（没填就按默认 64K 算）' },
   { name: '/ps', desc: '后台在跑的命令' },
   { name: '/agents', args: '[编号]', desc: '这段会话派过的子 agent：在跑 / 做完 / 停了、花了多少；给编号看它的结论' },
   { name: '/stop', args: '<id|all>', desc: '停掉后台命令（连子进程）' },
-  { name: '/resume', desc: '列出这个工作区的会话和应用里的对话，挑一段接着做' },
+  { name: '/resume', desc: '↑↓ 选择这个工作区的会话或应用里的对话，Enter 接着做' },
   { name: '/new', desc: '开一段新会话' },
   { name: '/compact', desc: '现在就把较早的对话压成摘要' },
   { name: '/init', desc: '读项目，写一份 ZHIQU.md 初稿' },

@@ -91,6 +91,7 @@ export class Ui {
     this.commands = commands;
     this.menu = null;        // { items, sel }：输入 / 时弹出的命令菜单
     this.decision = null;
+    this.picker = null;
     this.idle = null;        // 空闲（没在干活）时只放菜单的那块区域，形状和 live 一样
     this.dismissed = null;   // Esc 关掉菜单时的那段输入：原样不再弹，接着打字才再弹
     this.pasting = null;     // 括号粘贴进行中攒的文字
@@ -116,10 +117,12 @@ export class Ui {
     this.rl.on('close', () => {
       this.closed = true;
       if (this.decision) this.finishDecision({ cancelled: true, answers: [] });
+      if (this.picker) this.finishPick(null);
       this.dropQuestion('（输入结束，按不同意算）');
       for (const w of this.waiters.splice(0)) w.resolve(null);
     });
     this.rl.on('SIGINT', () => {
+      if (this.picker) this.finishPick(null);
       if (this.onInterrupt) this.onInterrupt();
     });
     if (this.interactive) {
@@ -141,6 +144,7 @@ export class Ui {
     input.on('keypress', (s, key) => {
       if (this.closed) return;
       if (this.decisionKey(s, key || {})) return;
+      if (this.pickKey(s, key || {})) return;
       if (this.pasteKey(s, key || {})) return;
       if (this.menuKey(key || {})) return;
       if (this.liveKey(key || {})) return;
@@ -332,7 +336,7 @@ export class Ui {
       this.eraseLive();
       this.drawLive();
     });
-    if (!this.live && !this.menu) this.idle = null;
+    if (!this.live && !this.menu && !this.picker) this.idle = null;
   }
 
   onLine(raw) {
@@ -523,6 +527,111 @@ export class Ui {
       } else if (prompt) {
         this.output.write(prompt);
       }
+    });
+  }
+
+  pick(options) {
+    if (!this.interactive || this.closed || this.picker || this.decision) return Promise.resolve(null);
+    const items = Array.isArray(options && options.items) ? options.items : [];
+    if (!items.length) return Promise.resolve(null);
+    this.start();
+    return new Promise((resolve) => {
+      const draft = this.rl.line;
+      this.frame(() => {
+        this.setLine('');
+        this.menu = null;
+        const selected = Number.isInteger(options.selected) ? options.selected : 0;
+        this.picker = { ...options, items, index: (selected + items.length) % items.length, draft, resolve, done: false };
+        if (!this.live) this.idle = { partial: '', status: '', question: null, drawn: false, rowsAbove: 0 };
+        this.setPickerPrompt();
+        this.eraseLive();
+        this.drawLive();
+      });
+    });
+  }
+
+  pickKey(_s, key) {
+    const p = this.picker;
+    if (!p) return false;
+    if (key.ctrl && (key.name === 'c' || key.name === 'd')) return false;
+    if (key.name === 'up' || key.name === 'down') {
+      const delta = key.name === 'up' ? -1 : 1;
+      p.index = (p.index + delta + p.items.length) % p.items.length;
+      p.notice = '';
+      this.repaintPicker();
+      return true;
+    }
+    if (key.name === 'left' || key.name === 'right') {
+      if (p.horizontal) {
+        try { p.horizontal(key.name === 'left' ? -1 : 1, p); }
+        catch (e) { p.notice = String(e && e.message || e); }
+        this.repaintPicker();
+      }
+      return true;
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      const entry = p.items[p.index];
+      this.finishPick(Object.prototype.hasOwnProperty.call(entry, 'value') ? entry.value : entry);
+      return true;
+    }
+    if (key.name === 'escape') { this.finishPick(null); return true; }
+    return true;
+  }
+
+  setPickerPrompt() {
+    const region = this.live || this.idle;
+    if (region && this.picker) region.question = this.picker.prompt || '请选择 › ';
+  }
+
+  repaintPicker() {
+    if (!this.picker) return;
+    this.frame(() => {
+      this.setPickerPrompt();
+      this.eraseLive();
+      this.drawLive();
+    });
+  }
+
+  pickerLines() {
+    const p = this.picker;
+    if (!p) return [];
+    const room = this.cols() - 1;
+    const safeFit = (value) => fit(termSafe(String(value), { singleLine: true }), room);
+    const lines = [this.paint.bold(safeFit(p.title || '请选择'))];
+    const start = p.index >= MENU_ROWS ? p.index - MENU_ROWS + 1 : 0;
+    p.items.slice(start, start + MENU_ROWS).forEach((entry, i) => {
+      const at = start + i, on = at === p.index;
+      const current = entry.current ? ' ✓' : '';
+      const description = entry.description ? `  ${entry.description}` : '';
+      const line = safeFit(`${on ? '❯' : ' '} ${entry.label}${current}${description}`);
+      lines.push(on ? this.paint.cyan(line) : entry.muted ? this.paint.dim(line) : line);
+    });
+    const details = typeof p.detail === 'function' ? p.detail(p) : p.detail;
+    for (const line of (Array.isArray(details) ? details : details ? [details] : [])) {
+      for (const part of String(line).split('\n')) lines.push(this.paint.dim(safeFit(part)));
+    }
+    if (p.notice) lines.push(this.paint.yellow(safeFit(p.notice)));
+    const hint = p.hint || (p.horizontal ? '↑↓ 选择 · ←→ 调整 · Enter 应用 · Esc 取消' : '↑↓ 选择 · Enter 确认 · Esc 取消');
+    const more = p.items.length > MENU_ROWS ? ` · 共 ${p.items.length} 个` : '';
+    lines.push(this.paint.dim(safeFit(`${hint}${more}`)));
+    return lines;
+  }
+
+  finishPick(value) {
+    const p = this.picker;
+    if (!p || p.done) return;
+    p.done = true;
+    this.frame(() => {
+      this.eraseLive();
+      if (this.live) this.live.question = null;
+      if (this.idle) this.idle = null;
+      this.picker = null;
+      if (!this.closed) {
+        this.setLine(p.draft);
+        if (this.live) this.drawLive();
+        else this.promptAgain();
+      }
+      p.resolve(value);
     });
   }
 
@@ -871,10 +980,11 @@ export class Ui {
     // 多行的（粘贴的）只显示一行摘要：原文里的换行会把活动区撑乱（擦的时候按一行算）
     const brief = (q) => (q.includes('\n') ? briefInput(q) : q.length > 60 ? `${q.slice(0, 60)}…` : q);
     if (this.decision) lines.push(...this.decisionLines());
-    if (!this.decision && this.live) for (const m of this.steering) lines.push(this.paint.dim(`↳ 补充（下一步送到）：${brief(m.lines.join('\n'))}`));
-    if (!this.decision && this.live) for (const q of this.queue) lines.push(this.paint.dim(`⋯ 排队：${q.includes('\n') ? briefInput(q) : q.length > 60 ? `${q.slice(0, 60)}…` : q}`));
-    if (!this.decision && l.status) lines.push(l.status);
-    return this.decision ? lines : lines.concat(this.menuLines());
+    if (this.picker) lines.push(...this.pickerLines());
+    if (!this.decision && !this.picker && this.live) for (const m of this.steering) lines.push(this.paint.dim(`↳ 补充（下一步送到）：${brief(m.lines.join('\n'))}`));
+    if (!this.decision && !this.picker && this.live) for (const q of this.queue) lines.push(this.paint.dim(`⋯ 排队：${q.includes('\n') ? briefInput(q) : q.length > 60 ? `${q.slice(0, 60)}…` : q}`));
+    if (!this.decision && !this.picker && l.status) lines.push(l.status);
+    return this.decision || this.picker ? lines : lines.concat(this.menuLines());
   }
 
   /** 擦掉活动区。extraRows：readline 回车时已经往下走的那几行。 */
@@ -998,12 +1108,17 @@ export class Ui {
   writeNow(text) {
     if (!this.live) {
       if (this.idle) {
-        // 空闲时菜单开着又要打印（比如 Ctrl+C 的提示）：先收起菜单，打完再把输入行画回来
+        // 空闲时选择器上方来了输出：先擦掉，把输出放在上面，再重画同一个选择器，不丢当前项。
+        const picker = this.picker;
         this.menu = null;
         this.eraseLive();
         this.idle = null;
         this.output.write(text);
-        this.promptAgain();
+        if (picker) {
+          this.idle = { partial: '', status: '', question: null, drawn: false, rowsAbove: 0 };
+          this.setPickerPrompt();
+          this.drawLive();
+        } else this.promptAgain();
         return;
       }
       this.output.write(text);

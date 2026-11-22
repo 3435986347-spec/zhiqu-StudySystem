@@ -30,7 +30,7 @@ import { displayPath, initPrompt, instructionsBlock, loadInstructions } from './
 import { McpManager } from './mcp.js';
 import { BUILTIN_SYSTEM_PROMPT } from './prompt.js';
 import { hunks } from './render/diff.js';
-import { terminalWarnings } from './render/term.js';
+import { termSafe, terminalWarnings } from './render/term.js';
 import { projectMemory } from './memory.js';
 import { otherSessions } from './recall.js';
 import { SessionStore } from './session.js';
@@ -804,6 +804,46 @@ function turnNote(ctx, result) {
   if (used && (result.usage.reported || result.compactions || result.clears)) ctx.ui.note(used);
 }
 
+function canPick(ui) { return ui && ui.interactive === true && typeof ui.pick === 'function'; }
+
+function applyMode(ctx, mode) {
+  setMode(ctx, mode);
+  ctx.allow.write = false;
+  ctx.allow.run = false;
+  ctx.ui.line(`档位：${MODE_LABEL[mode]}`);
+}
+
+async function chooseModel(ctx) {
+  const { ui } = ctx;
+  let models = Array.isArray(ctx.models) ? ctx.models : [], defaultModelId = ctx.model && ctx.model.id;
+  if (!ctx.modelClient) {
+    try {
+      const data = await ctx.api.get('/api/harness/models', { timeoutMs: STARTUP_TIMEOUT_MS });
+      if (!data || !Array.isArray(data.models) || !data.models.length) throw new Error('这个账号还没有可用的模型');
+      models = data.models; defaultModelId = data.defaultModelId;
+    } catch (e) { ui.error(`模型清单没取到：${e.message}`); return; }
+  } else models = [ctx.model];
+  if (!models.length) { ui.line('没有可选模型。'); return; }
+  let initial = models.findIndex((m) => ctx.model && String(m.id) === String(ctx.model.id));
+  if (initial < 0) initial = Math.max(0, models.findIndex((m) => m.id === defaultModelId));
+  let effort = Math.max(0, EFFORTS.indexOf(normalizeEffort(ctx.effort) || 'instant'));
+  const picked = await ui.pick({
+    title: ctx.modelClient ? '思考强度（直连模型在本地配置中修改）' : '选择模型与思考强度',
+    selected: initial,
+    items: models.map((m) => ({ label: m.label, value: m, current: ctx.model && m.id === ctx.model.id,
+      description: `${m.modelName || ''}${m.toolCalling === false ? ' · 不支持工具调用' : ''}`, muted: Boolean(ctx.modelClient) })),
+    detail: () => `思考强度：${EFFORTS.map((name, i) => i === effort ? `[${name}]` : name).join('  ')}`,
+    horizontal: (delta) => { effort = (effort + delta + EFFORTS.length) % EFFORTS.length; },
+  });
+  if (picked == null) return;
+  ctx.models = models;
+  ctx.model = picked;
+  ctx.effort = EFFORTS[effort];
+  saveUserConfig({ effort: ctx.effort });
+  ui.line(`模型：${picked.label}\n思考强度：${ctx.effort}`);
+  if (picked.toolCalling === false) ui.warn('这个模型不支持工具调用，读写文件和跑命令会受影响');
+}
+
 export async function slash(ctx, text) {
   const { ui } = ctx;
   const [cmd, ...rest] = text.split(/\s+/);
@@ -814,7 +854,7 @@ export async function slash(ctx, text) {
       '/model': '直连模式：模型名在 ~/.zhiqu/config.json 的 direct.model 里改（或者重跑一次 zhiqu model）',
       '/window': '直连模式：上下文窗口在 ~/.zhiqu/config.json 的 direct.contextWindow 里改',
     }[cmd];
-    if (local) { ui.note(local); return null; }
+    if (local && !(cmd === '/model' && !arg)) { ui.note(local); return null; }
   }
   switch (cmd) {
     case '/exit': case '/quit': return 'exit';
@@ -840,13 +880,17 @@ export async function slash(ctx, text) {
       return 'goal';
     }
     case '/mode': {
-      if (!arg) { ui.line(`当前档位：${MODE_LABEL[ctx.mode]}\n可选：${MODES.map((m) => `${m} = ${MODE_LABEL[m]}`).join('；')}`); return null; }
+      if (!arg) {
+        if (canPick(ui)) {
+          const picked = await ui.pick({ title: '选择档位', selected: Math.max(0, MODES.indexOf(ctx.mode)),
+            items: MODES.map((m) => ({ label: `${m} = ${MODE_LABEL[m]}`, value: m, current: m === ctx.mode })) });
+          if (picked) applyMode(ctx, picked);
+        } else ui.line(`当前档位：${MODE_LABEL[ctx.mode]}\n可选：${MODES.map((m) => `${m} = ${MODE_LABEL[m]}`).join('；')}`);
+        return null;
+      }
       const m = normalizeMode(arg);
       if (!m) { ui.error('只有 plan / ask / auto 三档（read / write / exec 也认）'); return null; }
-      setMode(ctx, m);
-      ctx.allow.write = false;
-      ctx.allow.run = false;
-      ui.line(`档位：${MODE_LABEL[m]}`);
+      applyMode(ctx, m);
       return null;
     }
     case '/ps': {
@@ -867,12 +911,32 @@ export async function slash(ctx, text) {
       }
       const list = ctx.agents.list();
       if (!list.length) { ui.line('这段会话还没有派过子 agent。'); return null; }
+      if (canPick(ui)) {
+        const picked = await ui.pick({ title: '选择子 agent（Enter 看结论）',
+          items: list.map((a) => ({ label: ctx.agents.row(a), value: a })) });
+        if (picked) ui.line(ctx.agents.report(picked));
+        return null;
+      }
       for (const a of list) ui.line(ctx.agents.row(a));
       ui.line(ui.paint.dim('/agents <编号> 看它的结论'));
       return null;
     }
     case '/stop': {
-      if (!arg) { ui.line('要停哪个：/stop <id>，或者 /stop all（/ps 看有哪些）。'); return null; }
+      if (!arg) {
+        if (canPick(ui)) {
+          const jobs = ctx.local.jobs.running();
+          if (!jobs.length) { ui.line('后台没有在跑的命令。'); return null; }
+          const picked = await ui.pick({ title: '停止哪个后台任务？', items: [
+            ...jobs.map((j) => ({ label: j.id, description: j.command, value: j.id })),
+            { label: '全部停止', value: 'all', muted: true },
+          ] });
+          if (picked == null) return null;
+          const yes = await ui.ask(`确定停止${picked === 'all' ? '全部后台任务' : ` ${picked}`}？[y/N] › `);
+          if (/^y(es)?$/i.test(String(yes || '').trim())) return slash(ctx, `/stop ${picked}`);
+          return null;
+        }
+        ui.line('要停哪个：/stop <id>，或者 /stop all（/ps 看有哪些）。'); return null;
+      }
       const running = ctx.local.jobs.running().map((j) => j.id);
       for (const id of arg === 'all' ? running : [arg]) {
         const r = await ctx.local.stopJob({ id });
@@ -883,7 +947,8 @@ export async function slash(ctx, text) {
     }
     case '/effort': {
       if (!arg) {
-        ui.line(`思考档位：${ctx.effort || '跟服务端的默认'}\n可选：${EFFORTS.join(' / ')}（instant 不思考，往后越想越久、越费 token）`);
+        if (canPick(ui)) await chooseModel(ctx);
+        else ui.line(`思考档位：${ctx.effort || '跟服务端的默认'}\n可选：${EFFORTS.join(' / ')}（instant 不思考，往后越想越久、越费 token）`);
         return null;
       }
       const e = normalizeEffort(arg);
@@ -895,8 +960,11 @@ export async function slash(ctx, text) {
     }
     case '/model': {
       if (!arg) {
-        for (const m of ctx.models) ui.line(`${m.id === ctx.model.id ? '*' : ' '} ${m.id}  ${m.label}  ${ui.paint.dim(m.modelName)}${m.toolCalling ? '' : ui.paint.yellow('  不支持工具调用')}`);
-        ui.note('/model <id> 切换（只对这次会话有效）；/model default 回到默认');
+        if (canPick(ui)) await chooseModel(ctx);
+        else {
+          for (const m of ctx.models) ui.line(`${m.id === ctx.model.id ? '*' : ' '} ${m.id}  ${m.label}  ${ui.paint.dim(m.modelName)}${m.toolCalling ? '' : ui.paint.yellow('  不支持工具调用')}`);
+          ui.note('/model <id> 切换（只对这次会话有效）；/model default 回到默认');
+        }
         return null;
       }
       await pickModel(ctx, arg);
@@ -926,6 +994,18 @@ export async function slash(ctx, text) {
         return null;
       }
       if (!shown.length && !remote.length) { ui.line('这个工作区没有别的会话，应用里也没有可以接的对话'); return null; }
+      if (canPick(ui)) {
+        const picked = await ui.pick({ title: '选择要接着做的会话', items: [
+          ...shown.map((s) => ({ label: s.title || '（无标题）', value: { kind: 'local', row: s },
+            description: `${s.via === 'app' ? '应用记录' : '本地'} · ${localTime(s.updatedAt)} · ${s.messages || 0} 条` })),
+          ...remote.map((r) => ({ label: r.title || '（无标题）', value: { kind: 'remote', row: r },
+            description: `应用 · 只有文字${r.updatedAt ? ` · ${localTime(r.updatedAt)}` : ''}`, muted: true })),
+        ] });
+        if (!picked) return null;
+        if (picked.kind === 'local') resumeInto(ctx, picked.row.id);
+        else await importConversation(ctx, picked.row);
+        return null;
+      }
       shown.forEach((s, i) => ui.line(`${String(i + 1).padStart(2)}. ${s.via === 'app' ? ui.paint.dim('[应用] ') : ''}${s.title || '（无标题）'}  ${ui.paint.dim(`${localTime(s.updatedAt)} · ${s.messages || 0} 条`)}`));
       if (remote.length) {
         ui.line(ui.paint.dim('应用里的对话（这个文件夹里没有记录：接过来只有文字，没有工具记录）'));
@@ -988,14 +1068,30 @@ export async function slash(ctx, text) {
       const mem = projectMemory(ctx);
       if (!mem) { ui.line('这里没有项目笔记。'); return null; }
       const words = arg ? arg.split(/\s+/) : [];
+      const label = { map: '地图', convention: '约定', pitfall: '坑', decision: '定过的事', command: '命令' };
+      const picker = (title) => ui.pick({ title, items: mem.list().map((n) => ({ label: `[${label[n.type] || n.type}] ${n.title}`,
+        description: n.body.replace(/\s+/g, ' ').slice(0, 80), value: n })) });
       if (words[0] === 'rm' || words[0] === 'delete') {
-        const r = mem.remove(words.slice(1).join(' '));
+        let which = words.slice(1).join(' ');
+        if (!which && canPick(ui)) {
+          if (!mem.list().length) { ui.line('这个项目里还没有笔记。'); return null; }
+          const picked = await picker('选择要删除的项目笔记');
+          if (!picked) return null;
+          const yes = await ui.ask(`确定删除「${picked.title}」？[y/N] › `);
+          if (!/^y(es)?$/i.test(String(yes || '').trim())) return null;
+          which = picked.file;
+        }
+        const r = mem.remove(which);
         if (r.error) ui.error(r.error); else ui.line(`已删除「${r.removed.title}」`);
         return null;
       }
       const notes = mem.list();
       if (!notes.length) { ui.line('这个项目里还没有笔记。模型觉得值得以后每次开工都知道的事会自己记；也可以直接叫它「记进项目笔记」。'); return null; }
-      const label = { map: '地图', convention: '约定', pitfall: '坑', decision: '定过的事', command: '命令' };
+      if (canPick(ui)) {
+        const picked = await picker('选择项目笔记（Enter 看全文）');
+        if (picked) ui.line(termSafe(`[${label[picked.type] || picked.type}] ${picked.title}\n${picked.body}\n${picked.file}`));
+        return null;
+      }
       notes.forEach((n, i) => ui.line(`${String(i + 1).padStart(2)}. [${label[n.type] || n.type}] ${n.title}  ${ui.paint.dim(`${n.verified || n.created} · ${n.file}`)}\n    ${n.body.replace(/\s+/g, ' ').slice(0, 160)}`));
       ui.note(`· 文件在 ${path.relative(ctx.root, mem.dir)}/，可以直接改；/memory rm <编号> 删一条。新记的下一段会话起生效`);
       return null;

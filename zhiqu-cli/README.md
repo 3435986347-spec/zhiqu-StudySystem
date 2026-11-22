@@ -81,14 +81,16 @@ zhiqu mcp                   当 MCP 服务器，见下面
 常用选项：`--mode plan|ask|auto`、`--model <id>`、`--effort instant|medium|high|extra|max`（思考档位）、
 `--sandbox-network on|local|off`（沙箱里的命令能不能联网，默认 on；`local` 只能连本机，`off` 全断）。完整的用 `zhiqu help` 看。
 
-会话里输入 `/` 会弹出命令菜单：`/goal`、`/mode`、`/model`、`/effort`、`/window`、`/ps`、`/stop`、`/resume`、`/new`、`/compact`、
+会话里输入 `/` 会弹出命令菜单：`/goal`、`/mode`、`/model`、`/window`、`/ps`、`/stop`、`/resume`、`/new`、`/compact`、
 `/init`、`/review`、`/agents`、`/skills`、`/mcp`、`/system`、`/verbose`、`/usage`、`/help`、`/exit`。↑↓ 选、回车执行、Tab 补全、Esc 关掉。
+命令里的离散清单也能直接选：`/model` 用 ↑↓ 选模型、←→ 选思考强度，Enter 一次应用；`/mode`、`/resume`、`/agents`、`/stop`、`/memory` 用 ↑↓ 和 Enter。
+停止任务或删除笔记会再确认；Esc 不改变任何设置。`/model <id>`、`/effort <档位>` 等旧参数仍兼容，但 `/effort` 不再单列在菜单里。
 
 本地工具：`list_files`、`read_file`、`search`（正则、按文件类型过滤、跳过 `.gitignore` 的）、`write_file`、`edit_file`、
 `apply_patch`（一次改多个文件，全成或全不成）、`delete_file`（挪进 `.zhiqu/trash/`，能恢复）、`shell`（在系统沙箱里；
 可以放到后台，用 `/ps`、`/stop` 管）。
 
-**子 agent**：说「派两个 agent 分头查」这类话时，它能派子 agent 在单独的上下文里并行做事，做完只交回一段结论 —— explorer 只读（读、搜、跑只读命令），worker 和主 agent 同一档；子 agent 不能再派子 agent。子 agent 也能起后台命令，但只管得了自己起的，它停下之前这些命令会先停掉（要一直跑的 dev server 让主 agent 起）。同时最多 3 个、一句话最多 8 个、一句话里子 agent 一共最多花 200 万 token（到了就全停）。`/agents` 看派过的、`/agents <编号>` 看结论。`~/.zhiqu/config.json` 里 `"agents": false` 关掉，或者 `"agents": { "maxConcurrent": 2 }` 这样调（项目里的 `.zhiqu/settings.json` 调不了，克隆下来的仓库不能替你多花钱）。行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事；它干活时可以接着打字：回车是**补充给这一轮**（模型跑完当前这条命令、或者这次思考说完就读到，不用等整轮结束；读到时输出里有一行「↳ 补充：…」），Tab 是排到下一轮；这一轮结束时还没读到的自动作为下一句发出，Ctrl+C 停下时连同排队的一起放回输入框。
+**子 agent**：说「派两个 agent 分头查」这类话时，它能派子 agent 在单独的上下文里并行做事，做完只交回一段结论 —— explorer 只读（读、搜、跑只读命令），worker 和主 agent 同一档；子 agent 不能再派子 agent。子 agent 也能起后台命令，但只管得了自己起的，它停下之前这些命令会先停掉（要一直跑的 dev server 让主 agent 起）。同时最多 3 个、一句话最多 8 个、一句话里子 agent 一共最多花 200 万 token（到了就全停）。`/agents` 看派过的、选中后看结论（`/agents <编号>` 仍可直接打开）。`~/.zhiqu/config.json` 里 `"agents": false` 关掉，或者 `"agents": { "maxConcurrent": 2 }` 这样调（项目里的 `.zhiqu/settings.json` 调不了，克隆下来的仓库不能替你多花钱）。行尾加 `\` 换行接着输入；Ctrl+C 打断正在做的事；它干活时可以接着打字：回车是**补充给这一轮**（模型跑完当前这条命令、或者这次思考说完就读到，不用等整轮结束；读到时输出里有一行「↳ 补充：…」），Tab 是排到下一轮；这一轮结束时还没读到的自动作为下一句发出，Ctrl+C 停下时连同排队的一起放回输入框。
 
 ## 让它自己看页面（预览截图）
 
@@ -175,7 +177,7 @@ zhiqu model off        # 关掉，回到服务器网关
 - **配了就不用登录**：完全不连 zhiqustudy.com，只有本地工具（读写、搜索、跑命令）。代价是任务、Wiki、长期记忆、网页存档用不了。
 - 密钥存在 `~/.zhiqu/config.json`（600 权限），只认用户级配置 —— 项目里的 `.zhiqu/settings.json` 改不了它（克隆下来的仓库不能把你的模型地址换成它的服务器）。
 - `--protocol` 只有 `openai`（默认）和 `anthropic` 两种。上下文窗口默认按 64k 算，模型更大就加 `--context-window 128000`（小了会提前压缩，大了会超窗口被拒）。
-- 会话里的 `/model`、`/window` 在直连模式下不生效（它们改的是服务器上的配置），要改就重新跑一次 `zhiqu model set` 或者直接改 `~/.zhiqu/config.json`；`/usage` 只报本地算的 token 数。
+- 会话里的 `/model` 在直连模式下只能调整思考强度；换模型要重新跑一次 `zhiqu model set` 或者直接改 `~/.zhiqu/config.json`，窗口用 `/window` 或本地配置调整；`/usage` 只报本地算的 token 数。
 
 ## 对话在网页里也看得到
 

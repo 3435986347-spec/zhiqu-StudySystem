@@ -122,6 +122,8 @@
 - **输入 / 弹出命令菜单**（用户要的）：`src/commands.js` 是命令清单的唯一出处，`/help` 与菜单都从它来。菜单就是输入行上方
   的几行，和活动区同一套擦 / 画（空闲时临时建一块只放菜单的区域）；按键从 `keypress` 事件上截（包一层 readline 自己的
   监听器），菜单没开时 ↑↓ 照样翻历史。只在主提示符上弹 —— 续行（行尾 `\`）那一行是正文。
+- **业务列表选择器**（第一百六十四轮）：`Ui.pick` 与命令菜单、`ask_user` 分开，复用活动区擦画；↑↓ 移动、Enter 返回选中值、Esc 返回 null，最多 8 行并支持窄终端 / resize。
+  `/model` 用 horizontal 回调让 ←→ 调思考强度，Enter 才一起应用；`/mode`、`/resume`、`/agents`、`/stop`、`/memory` 复用选择器。停止和删除要二次确认；显式 id / 编号参数保留，非交互终端仍走原文字路径。`/effort` 只作隐藏兼容别名，不在菜单与帮助中单列。
 - **`/resume` 把那段会话的聊天记录原样显示出来**（用户要的）：读 `SessionStore.transcript()`，不是 `load()` ——
   后者是发给模型的那一份，压缩过就只剩摘要。不是用户打的 user 消息（goal 推的每一轮、截断时补的说明）记录时带
   `origin`，回放时不冒充「› …」；旧记录没有标记，靠那几句固定开头认。
@@ -156,7 +158,7 @@ npm 版 `zhiqu` 的循环和本地工具跑在用户电脑上；服务器只管�
   `/api/harness/**` 通配」都钉着。
 - **设备码登录**：命令行拿 deviceCode（库里存哈希），用户在「设置 → 命令行」里输入 8 位码、看过设备名和来源 IP
   之后点允许；命令行轮询换令牌，`WHERE status='APPROVED'` 的条件更新保证并发轮询只签出一张。
-- **思考档位**（第一百零八轮，Codex 同级第 1 步）：`--effort` / `/effort` / 设置里的 `effort`，名字是用户定的 instant / medium / high / extra / max；没选就不说，听 `app.ai.harness-reasoning`（默认 off）。各家的词只在 `ReasoningEffort`：DeepSeek 只有 low / high / max（medium → low、high 和 extra → high、max → max），Anthropic 用 `output_config.effort`。
+- **思考档位**（第一百零八轮，Codex 同级第 1 步；第一百六十四轮并入 `/model`）：`--effort`、`/model` 面板或设置里的 `effort`，旧 `/effort <档位>` 仍兼容，名字是用户定的 instant / medium / high / extra / max；没选就不说，听 `app.ai.harness-reasoning`（默认 off）。各家的词只在 `ReasoningEffort`：DeepSeek 只有 low / high / max（medium → low、high 和 extra → high、max → max），Anthropic 用 `output_config.effort`。
   不看代码想不到的：DeepSeek 开着思考、带工具时**之前每一轮的 `reasoning_content` 都要传回去，缺了 400**，关着档位时生成的旧消息补空串（官方文档）；Claude 的思考块带签名，改一个字就失效，只回放给想出它的那个模型（`reasoning_model` 记着，不发给供应商）。这三个字段只有 `ReasoningHistory` 认识，别的供应商见不到。思考算在输出上限里，开着时网关把上限翻倍（封顶 32000，不超过半个窗口）。参数被拒就关掉重试并记住这个模型，回放被拒就去掉回放重试。思考不打进终端，只显示「思考中 N」；会话存档里有思考内容（续接时要回传）。
   评测：验证库后端带 `--app.ai.harness-reasoning=high`，run-config 的 `rerun.output_reservation_tokens` 给 32768。不给的话网关翻倍的 `start` 会被代理当成违规，整场停下。
 - **模型网关**进出都是 OpenAI 格式；Anthropic 的翻译只在 `AnthropicFormat` 一处（服务器端 code agent 的

@@ -95,7 +95,6 @@ cd ../zhiqu-cli && npm test
 - 不要擅自启动桌面应用去碰用户的真实数据；验证用的数据在 `zhiqu_verify` 库里，留给用户删。
 
 ## 前端的规矩
-
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
 - **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261122-r162`。
@@ -198,3 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第一百六十一轮](docs/rounds/round-161.md) 第 2 步：网页代码模式结构化决策——宿主 `question` / `question_result`、`DecisionPort` 校验与幂等、SSE 回放、输入框上方多问题弹窗（切题、推荐项、其他输入、最后提交）；旧客户端能力降级，缓存令牌 `20261122-r161`；桌面本机桥后续轮次接入
 - [第一百六十二轮](docs/rounds/round-162.md) 第 3 步：macOS 本机决策桥——页面显式声明 `userDecision`，外壳转发问题、复核答案并幂等提交，待答 / 已答进 `resume` 快照；复用输入框上方多问题面板，停止与迟到答案有收尾
 - [第一百六十三轮](docs/rounds/round-163.md) 第 4 步：Windows 本机决策桥源码——能力声明、答案校验与幂等、已答快照；当前 macOS 环境只做共享层回归，C# / WebView2 与 Windows 进程验收明确留待 Windows 真机
+- [第一百六十四轮](docs/rounds/round-164.md) CLI 离散选项统一键盘交互：`/model` 上下选模型、左右选思考强度；模式、会话、子 agent、后台任务和项目笔记的编号操作改为选择器，旧参数兼容
