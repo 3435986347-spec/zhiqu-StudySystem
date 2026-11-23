@@ -6,11 +6,11 @@
   <title>知趣·象限 · AI 办公助手</title>
   <script>(function(){try{var h=document.documentElement,t=localStorage.getItem('zq.theme'),d=t==='dark'||(t!=='light'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);h.setAttribute('data-zq-mode',d?'dark':'light');h.setAttribute('data-zq-accent',localStorage.getItem('zq.accent')==='gold'?'gold':'mono');}catch(e){}})();</script>
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261122-r162" sizes="192x192">
-  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261122-r162">
-  <link rel="manifest" href="manifest.json?v=20261122-r162">
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png?v=20261123-r165" sizes="192x192">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png?v=20261123-r165">
+  <link rel="manifest" href="manifest.json?v=20261123-r165">
   <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261122-r162">
+  <link rel="stylesheet" href="assets/zhiqu-ui.css?v=20261123-r165">
   <style>
     .zq-home{min-height:100vh;display:flex;flex-direction:column;background:var(--zq-bg,var(--zq-card-soft));color:var(--zq-text);}
     .zq-home-bar{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 28px;background:color-mix(in srgb, var(--zq-card) 82%, transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--zq-border-soft);}
@@ -29,6 +29,7 @@
     .zq-hero p{margin:0;max-width:38em;font-size:15.5px;line-height:1.75;color:var(--zq-text2);}
     .zq-hero-cta{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:6px;}
     .zq-hero-cta .zq-btn,.zq-hero-cta .zq-btn-ghost{height:44px;padding:0 24px;font-size:14.5px;}
+    .zq-hero-cta a.zq-btn-ghost{text-decoration:none;}
     /* 首页轮播（第四十六轮重做）：上面一排页签、一行说明，图片干干净净放在框里（原来说明压在图片底部的深色渐变上、圆点也压在图上）；
        几张图叠在同一格里淡入淡出；每张有浅、深两张图，跟着页面的明暗换 —— 看不见的那一套 display:none，懒加载的图就不下载 */
     .zq-tour{display:flex;flex-direction:column;align-items:center;gap:var(--zq-sp-3);}
@@ -49,6 +50,36 @@
     .zq-feat .zq-fimg .zq-icon{width:18px;height:18px;}
     .zq-feat h3{margin:0;font-size:15px;font-weight:var(--zq-fw-medium);}
     .zq-feat p{margin:0;font-size:12.5px;line-height:1.6;color:var(--zq-text2);}
+    /* zhiqu code（命令行 coding agent）宣传区：仿 Claude Code 的落地页 —— 左边一句话 + 安装命令（点一下复制）+ 三步，右边一块终端。
+       终端不跟明暗走，一直是深色（终端本来的样子）；颜色只在这一块里定义 */
+    .zq-code{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:40px;align-items:center;margin-top:72px;padding:40px;border:1px solid var(--zq-border);border-radius:var(--zq-rl);background:var(--zq-card);scroll-margin-top:80px;}
+    .zq-code-copy{display:flex;flex-direction:column;gap:var(--zq-sp-4);min-width:0;}
+    .zq-code-copy .zq-eyebrow{margin:0;font-family:var(--zq-fontM);}
+    .zq-code h2{margin:0;font-size:var(--zq-fs-prose-h1);line-height:1.25;font-weight:var(--zq-fw-medium);letter-spacing:-.02em;}
+    .zq-code-lead{margin:0;font-size:var(--zq-fs-md);line-height:1.75;color:var(--zq-text2);}
+    .zq-code-install{display:flex;align-items:center;gap:var(--zq-sp-2);height:46px;padding:0 6px 0 16px;border:1px solid var(--zq-border);border-radius:var(--zq-rm);background:var(--zq-card-soft);font-family:var(--zq-fontM);font-size:var(--zq-fs-base);}
+    .zq-code-install code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:inherit;}
+    .zq-code-install code::before{content:"$ ";color:var(--zq-text3);}
+    .zq-code-install .zq-btn-ghost{flex:none;height:34px;}
+    .zq-code-steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:var(--zq-sp-2);font-size:var(--zq-fs-sm);color:var(--zq-text2);}
+    .zq-code-steps code{font-family:var(--zq-fontM);color:var(--zq-text);}
+    .zq-code-links{display:flex;flex-wrap:wrap;gap:var(--zq-sp-3);}
+    .zq-code-links a{color:var(--zq-text2);font-size:var(--zq-fs-sm);}
+    .zq-code-links a:hover{color:var(--zq-text);}
+    .zq-term{--t-bg:#141417;--t-bar:#1E1E22;--t-fg:#E6E6E9;--t-dim:#8E8E96;--t-ok:#6CC895;--t-add:#6CC895;--t-del:#E8817A;--t-acc:#E8B86A;
+      min-width:0;border-radius:var(--zq-rl);overflow:hidden;background:var(--t-bg);color:var(--t-fg);box-shadow:var(--zq-sh2);border:1px solid #2A2A2F;}
+    .zq-term-bar{display:flex;align-items:center;gap:6px;height:34px;padding:0 14px;background:var(--t-bar);}
+    .zq-term-bar i{width:10px;height:10px;border-radius:50%;background:#3A3A40;}
+    .zq-term-bar span{margin-left:auto;margin-right:auto;transform:translateX(-24px);color:var(--t-dim);font-size:var(--zq-fs-2xs);font-family:var(--zq-fontM);}
+    .zq-term pre{margin:0;padding:18px 20px 20px;font-family:var(--zq-fontM);font-size:var(--zq-fs-xs);line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere;}
+    .zq-term .d{color:var(--t-dim);} .zq-term .ok{color:var(--t-ok);} .zq-term .a{color:var(--t-add);} .zq-term .r{color:var(--t-del);} .zq-term .p{color:var(--t-acc);}
+    .zq-code-feat{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--zq-sp-5);padding-top:var(--zq-sp-6);border-top:1px solid var(--zq-border-soft);}
+    .zq-code-feat h3{display:flex;align-items:center;gap:var(--zq-sp-2);margin:0 0 6px;font-size:var(--zq-fs-base);font-weight:var(--zq-fw-medium);}
+    .zq-code-feat h3 .zq-icon{width:16px;height:16px;}
+    .zq-code-feat p{margin:0;font-size:var(--zq-fs-xs);line-height:1.65;color:var(--zq-text2);}
+    @media (max-width:900px){ .zq-code{grid-template-columns:minmax(0,1fr);padding:28px;gap:28px;} .zq-code-feat{grid-template-columns:repeat(2,minmax(0,1fr));} }
+    @media (max-width:560px){ .zq-code{padding:20px;margin-top:48px;} .zq-code h2{font-size:var(--zq-fs-2xl);} .zq-code-install{padding-left:12px;font-size:var(--zq-fs-xs);} .zq-code-feat{grid-template-columns:1fr;} }
+    @media (max-width:400px){ .zq-code{padding:16px;} .zq-code-install{font-size:var(--zq-fs-2xs);} .zq-code-install .zq-btn-ghost{width:34px;padding:0;} #zq-code-copy-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;} }
     .zq-home-foot{border-top:1px solid var(--zq-border-soft);padding:20px 28px;text-align:center;font-size:12px;color:var(--zq-text3);}
     .zq-home-foot .zq-beian{margin-top:6px;}
     .zq-home-foot .zq-beian a{color:inherit;text-decoration:none;}
@@ -77,6 +108,7 @@
           <button type="button" class="zq-btn" data-auth="login">立即登录</button>
           <button type="button" class="zq-btn-ghost" data-auth="register">注册新账号</button>
           <button type="button" class="zq-btn-ghost" data-zq-download><span data-zq-icon="download"></span>下载桌面版</button>
+          <a class="zq-btn-ghost" href="#zhiqu-code"><span data-zq-icon="terminal"></span>获取 zhiqu code</a>
         </div>
       </section>
 
@@ -95,20 +127,20 @@
         <p class="zq-tour-cap" id="zq-tour-cap">说一句，帮你按四象限理清这周的先后 —— 回答里带着表格和今天的安排</p>
         <div class="zq-tour-frame">
           <figure class="zq-tour-slide is-on" id="zq-tour-slide-0" role="tabpanel" aria-labelledby="zq-tour-tab-0" data-cap="说一句，帮你按四象限理清这周的先后 —— 回答里带着表格和今天的安排">
-            <img class="zq-shot-light" src="assets/shots/ai-assistant-light.webp?v=20261122-r162" alt="AI 助手：整理今天工作的先后顺序，下方输入区与对话同宽" width="2048" height="1280" loading="lazy" decoding="async">
-            <img class="zq-shot-dark" src="assets/shots/ai-assistant-dark.webp?v=20261122-r162" alt="AI 助手：整理今天工作的先后顺序，下方输入区与对话同宽" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-light" src="assets/shots/ai-assistant-light.webp?v=20261123-r165" alt="AI 助手：整理今天工作的先后顺序，下方输入区与对话同宽" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/ai-assistant-dark.webp?v=20261123-r165" alt="AI 助手：整理今天工作的先后顺序，下方输入区与对话同宽" width="2048" height="1280" loading="lazy" decoding="async">
           </figure>
           <figure class="zq-tour-slide" id="zq-tour-slide-1" role="tabpanel" aria-labelledby="zq-tour-tab-1" data-cap="先看今天，再看本周：今日待办、本周日历、番茄钟、临近的截止时间">
-            <img class="zq-shot-light" src="assets/shots/dashboard-light.webp?v=20261122-r162" alt="看板：今日待办、本周日历、番茄钟和临近截止的事" width="2048" height="1280" loading="lazy" decoding="async">
-            <img class="zq-shot-dark" src="assets/shots/dashboard-dark.webp?v=20261122-r162" alt="看板：今日待办、本周日历、番茄钟和临近截止的事" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-light" src="assets/shots/dashboard-light.webp?v=20261123-r165" alt="看板：今日待办、本周日历、番茄钟和临近截止的事" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/dashboard-dark.webp?v=20261123-r165" alt="看板：今日待办、本周日历、番茄钟和临近截止的事" width="2048" height="1280" loading="lazy" decoding="async">
           </figure>
           <figure class="zq-tour-slide" id="zq-tour-slide-2" role="tabpanel" aria-labelledby="zq-tour-tab-2" data-cap="重要与紧急一眼分清，截止时间、提醒、状态都在一张表里">
-            <img class="zq-shot-light" src="assets/shots/tasks-light.webp?v=20261122-r162" alt="任务列表：按四象限标注的任务、截止时间与状态" width="2048" height="1280" loading="lazy" decoding="async">
-            <img class="zq-shot-dark" src="assets/shots/tasks-dark.webp?v=20261122-r162" alt="任务列表：按四象限标注的任务、截止时间与状态" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-light" src="assets/shots/tasks-light.webp?v=20261123-r165" alt="任务列表：按四象限标注的任务、截止时间与状态" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/tasks-dark.webp?v=20261123-r165" alt="任务列表：按四象限标注的任务、截止时间与状态" width="2048" height="1280" loading="lazy" decoding="async">
           </figure>
           <figure class="zq-tour-slide" id="zq-tour-slide-3" role="tabpanel" aria-labelledby="zq-tour-tab-3" data-cap="资料、决定和偏好沉淀成页，双链互联；AI 的长期记忆有据可查">
-            <img class="zq-shot-light" src="assets/shots/knowledge-wiki-light.webp?v=20261122-r162" alt="知识 Wiki：点击正文编辑、可选只读开关、网址与 JSON 附件预览" width="2048" height="1280" loading="lazy" decoding="async">
-            <img class="zq-shot-dark" src="assets/shots/knowledge-wiki-dark.webp?v=20261122-r162" alt="知识 Wiki：点击正文编辑、可选只读开关、网址与 JSON 附件预览" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-light" src="assets/shots/knowledge-wiki-light.webp?v=20261123-r165" alt="知识 Wiki：点击正文编辑、可选只读开关、网址与 JSON 附件预览" width="2048" height="1280" loading="lazy" decoding="async">
+            <img class="zq-shot-dark" src="assets/shots/knowledge-wiki-dark.webp?v=20261123-r165" alt="知识 Wiki：点击正文编辑、可选只读开关、网址与 JSON 附件预览" width="2048" height="1280" loading="lazy" decoding="async">
           </figure>
         </div>
       </section>
@@ -118,6 +150,48 @@
         <article class="zq-card"><div class="zq-fimg" data-zq-icon="layout-dashboard"></div><h3>四象限看板</h3><p>按重要与紧急划分任务，配合番茄钟专注，到点在页面里提醒，进度一目了然。</p></article>
         <article class="zq-card"><div class="zq-fimg" data-zq-icon="book-open"></div><h3>知识 Wiki</h3><p>沉淀资料、决定和偏好，双链互联，AI 的长期记忆可追溯。</p></article>
         <article class="zq-card"><div class="zq-fimg" data-zq-icon="copy"></div><h3>参考计划</h3><p>套用别人分享的计划模板，一键生成到自己的日历。</p></article>
+      </section>
+
+      <section class="zq-code" id="zhiqu-code" aria-labelledby="zq-code-title">
+        <div class="zq-code-copy">
+          <p class="zq-eyebrow">zhiqu code · 命令行 coding agent</p>
+          <h2 id="zq-code-title">在终端里，让 AI 直接动手写代码</h2>
+          <p class="zq-code-lead">读代码、搜代码、改文件、跑测试，一句话交给它。循环和工具跑在你自己的电脑上，模型、登录和你的知识 Wiki、记忆和网页版是同一个账号。</p>
+          <div class="zq-code-install">
+            <code id="zq-code-cmd">npm install -g zhiqu</code>
+            <button type="button" class="zq-btn-ghost" id="zq-code-copy-btn" aria-describedby="zq-code-cmd"><span data-zq-icon="copy"></span><span id="zq-code-copy-label">复制</span></button>
+          </div>
+          <ol class="zq-code-steps">
+            <li>1. 安装：<code>npm install -g zhiqu</code>（Node.js 18.17 以上）</li>
+            <li>2. 登录：<code>zhiqu login</code>，浏览器里确认一下，不碰你的密码</li>
+            <li>3. 开工：<code>cd 你的项目 &amp;&amp; zhiqu</code></li>
+          </ol>
+          <div class="zq-code-links">
+            <a href="https://www.npmjs.com/package/zhiqu" target="_blank" rel="noopener noreferrer">在 npm 上查看</a>
+            <a href="https://npmmirror.com/package/zhiqu" target="_blank" rel="noopener noreferrer">国内镜像（npmmirror）</a>
+          </div>
+        </div>
+        <div class="zq-term" role="img" aria-label="终端示例：在项目里运行 zhiqu，让它给登录接口加限流，它读文件、修改、跑测试后给出结论">
+          <div class="zq-term-bar" aria-hidden="true"><i></i><i></i><i></i><span>~/my-project</span></div>
+<pre aria-hidden="true"><span class="d">$</span> zhiqu
+<span class="p">zhiqu code</span> <span class="d">· 档位 ask · 工作区 ~/my-project</span>
+
+<span class="p">&gt;</span> 给登录接口加上限流，同一 IP 每分钟最多 5 次
+
+<span class="d">  读取</span>  src/auth/login.js
+<span class="d">  搜索</span>  rateLimit
+<span class="d">  修改</span>  src/auth/login.js  <span class="a">+18</span> <span class="r">-2</span>
+<span class="d">  运行</span>  npm test  <span class="ok">通过</span>
+
+已加上限流：超过次数返回 429 和重试时间，
+原有测试全部通过，新增了两条限流的测试。</pre>
+        </div>
+        <div class="zq-code-feat">
+          <div><h3><span data-zq-icon="terminal"></span>跑在你的电脑上</h3><p>读、搜、改文件、跑命令都在本机工作区里；默认模型 Key 只存在服务器。</p></div>
+          <div><h3><span data-zq-icon="shield"></span>系统沙箱</h3><p>macOS / Linux 上命令只能写工作区，读不到家目录；plan、ask、auto 三档权限。</p></div>
+          <div><h3><span data-zq-icon="code"></span>exec 与 review</h3><p><code>zhiqu exec</code> 放进脚本和 CI，<code>zhiqu review</code> 帮你看改动、分出轻重。</p></div>
+          <div><h3><span data-zq-icon="sparkles"></span>直连自己的模型</h3><p>内网、公司网关、任何 OpenAI 兼容或 Anthropic 接口，配一次就不用登录。</p></div>
+        </div>
       </section>
     </main>
 
@@ -171,8 +245,22 @@
       var b=document.getElementById('zq-home-theme'); if(!b) return;
       b.onclick=function(){ var cur=document.documentElement.getAttribute('data-zq-mode')==='dark'?'light':'dark'; document.documentElement.setAttribute('data-zq-mode',cur); try{localStorage.setItem('zq.theme',cur);}catch(e){} };
     })();
+    /* zhiqu code 的安装命令：点一下复制（没有剪贴板接口时退回选中文字） */
+    (function(){
+      var b=document.getElementById('zq-code-copy-btn'), cmd=document.getElementById('zq-code-cmd'), label=document.getElementById('zq-code-copy-label');
+      if(!b || !cmd || !label) return;
+      var t=0;
+      function done(text){ label.textContent=text; clearTimeout(t); t=setTimeout(function(){ label.textContent='复制'; }, 1600); }
+      function select(){ try{ var r=document.createRange(); r.selectNodeContents(cmd); var s=window.getSelection(); s.removeAllRanges(); s.addRange(r); }catch(e){} }
+      b.onclick=function(){
+        var text=cmd.textContent;
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(text).then(function(){ done('已复制'); }, function(){ select(); done('已选中'); });
+        } else { select(); done('已选中'); }
+      };
+    })();
   </script>
-  <script src="assets/zhiqu-ui.js?v=20261122-r162"></script>
-  <script src="assets/zhiqu-api.js?v=20261122-r162"></script>
+  <script src="assets/zhiqu-ui.js?v=20261123-r165"></script>
+  <script src="assets/zhiqu-api.js?v=20261123-r165"></script>
 </body>
 </html>

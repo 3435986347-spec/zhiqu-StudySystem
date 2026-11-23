@@ -97,7 +97,7 @@ cd ../zhiqu-cli && npm test
 ## 前端的规矩
 - 静态文件在 `zhiqu-backend/src/main/resources/static/`。`assets/zhiqu-api.js` 是共用层（请求、登录与共享登录、业务时钟、草稿、页面提醒、番茄钟（全站一个钟 + 待补记）、任务表单、Markdown、设置弹窗的路由、`openModal`）。
   每一页是 `assets/pages/<页>.js` 的 ES 模块，`route()` 按 `PAGE_MODULES` 加载：模块导出 `boots[页面](zqShared)`，可选导出 `dayReload`；壳给模块的东西只走 `zqShared`；**模块顶层只许有声明**（`PageModulesTest`）。
-- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261122-r162`。
+- **改了任何静态资源就换缓存令牌**：所有 HTML 的 `?v=` 和 `service-worker.js` 的 `ZHIQU_CACHE` 一起换（`StaticAssetCacheTokenTest`）。现在是 `20261123-r165`。
 - **一套中性配色**（第四十、四十一轮）：`:root` 是浅色 + 黑白强调，`html[data-zq-mode="dark"]` 是深色，`data-zq-accent="gold"` 换成金色（可选）；外观默认跟随系统（`zq.theme`），每页头上同一行内联脚本先定明暗。
   浅深两块定义同一批颜色令牌，对比度按样式表的值算、≥ 4.5 : 1；字阶 / 间距 / 字重用 `--zq-fs-*` / `--zq-sp-*` / `--zq-fw-*`，**内联样式也不写死字重**；**内联样式、写死的字号按文件只许降**（`InlineStyleRatchetTest`，`==` 钉着，少了就改小）；
   字要细（用户要「像 Claude 那样」）：正文 400、标题和主按钮 500，600 只给品牌标志和加粗（`DesignTokensTest`）。
@@ -197,4 +197,4 @@ cd ../zhiqu-cli && npm test
 - [第一百六十一轮](docs/rounds/round-161.md) 第 2 步：网页代码模式结构化决策——宿主 `question` / `question_result`、`DecisionPort` 校验与幂等、SSE 回放、输入框上方多问题弹窗（切题、推荐项、其他输入、最后提交）；旧客户端能力降级，缓存令牌 `20261122-r161`；桌面本机桥后续轮次接入
 - [第一百六十二轮](docs/rounds/round-162.md) 第 3 步：macOS 本机决策桥——页面显式声明 `userDecision`，外壳转发问题、复核答案并幂等提交，待答 / 已答进 `resume` 快照；复用输入框上方多问题面板，停止与迟到答案有收尾
 - [第一百六十三轮](docs/rounds/round-163.md) 第 4 步：Windows 本机决策桥源码——能力声明、答案校验与幂等、已答快照；当前 macOS 环境只做共享层回归，C# / WebView2 与 Windows 进程验收明确留待 Windows 真机
-- [第一百六十四轮](docs/rounds/round-164.md) CLI 离散选项统一键盘交互：`/model` 上下选模型、左右选思考强度；模式、会话、子 agent、后台任务和项目笔记的编号操作改为选择器，旧参数兼容
+- [第一百六十四轮](docs/rounds/round-164.md) CLI 离散选项统一键盘交互：`/model` 上下选模型、左右选思考强度；模式、会话、子 agent、后台任务和项目笔记的编号操作改为选择器，旧参数兼容；[第一百六十五轮](docs/rounds/round-165.md) 首页加 zhiqu code 宣传区（仿 Claude Code，`npm install -g zhiqu` 一键复制、终端示例）

@@ -115,6 +115,6 @@ class HomeCarouselTest {
         Matcher ph = Pattern.compile("data-zq-icon=\"([a-z-]+)\"").matcher(html);
         int n = 0;
         while (ph.find()) n++;
-        assertEquals(6, n, "落地页应该有 6 个图标占位（四张功能卡片 + 深浅色按钮 + 第八十二轮的「下载桌面版」）");
+        assertEquals(12, n, "落地页应该有 12 个图标占位（四张功能卡片 + 深浅色按钮 + 第八十二轮的「下载桌面版」 + 第一百六十五轮 zhiqu code 区：「获取 zhiqu code」、复制按钮、四条特点）");
     }
 }
