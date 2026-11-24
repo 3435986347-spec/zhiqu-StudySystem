@@ -31,7 +31,7 @@ import { projectMemory, topDirs, userMemoryBlock } from './memory.js';
 import { otherSessions, readSession, recentBlock, searchSessions, sessionSchemas } from './recall.js';
 import { firstChangedLine, listFiles, NOTE_TOOL, noteSchema, statePath, WorkState } from './state.js';
 import { estimateMessages, estimateTokens } from './compact.js';
-import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
+import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, lastScreenshot, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
 import { judgmentText, listDetail, patchDetail, runDetail, writeDetail } from './steps.js';
@@ -1792,7 +1792,7 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
       record(ctx, {
         role: 'user',
         content: [
-          { type: 'text', text: '（下面的图就是刚才渲染的页面。看清楚：排版有没有错位、有没有空白或重叠、颜色和文字对不对。要改就改完再截一张。）' },
+          { type: 'text', text: '（下面的图就是刚才渲染的页面；报错、是不是白屏这些文字情况在上面的工具结果里，先看那几行。再看图：排版有没有错位、有没有空白或重叠、颜色和文字对不对。要改就改完再截一张。）' },
           ...shots.map((s) => ({ type: 'image_url', image_url: { url: `data:${s.mediaType};base64,${s.base64}` } })),
         ],
       }, 'system');
@@ -2029,11 +2029,20 @@ export function recordGoal(ctx) {
  * 没答好就再问一次；两次都没答好，结果带 unreadable，由 runGoal 照实说，不算执行者的。
  */
 export async function verifyGoal(ctx, signal) {
-  const ask = () => callModel(ctx, [], signal, {
-    render: false, maxTokens: 1024, effort: SUMMARY_EFFORT,
-    messages: [{ role: 'system', content: VERIFY_INSTRUCTIONS },
-      { role: 'user', content: verificationMaterial(ctx.goal, ctx.messages, [...(ctx.goalChangedFiles || [])]) }],
-  });
+  const material = verificationMaterial(ctx.goal, ctx.messages, [...(ctx.goalChangedFiles || [])]);
+  // 最后一张截图也给核对员（第一百六十八轮，用户定的）：原来它只读文字，画面类的目标核对不了，
+  // 模型为了凑文字证据专门写回传报告的服务器。带图被拒（模型不收图之类）就去掉图再问，不因为图把核对弄挂
+  let shot = lastScreenshot(ctx.messages);
+  const ask = async () => {
+    const content = shot ? [{ type: 'text', text: `${material}\n\n【执行者最后一次截的页面图】就是下面这张。` }, shot] : material;
+    const req = { render: false, maxTokens: 1024, effort: SUMMARY_EFFORT, messages: [{ role: 'system', content: VERIFY_INSTRUCTIONS }, { role: 'user', content }] };
+    if (!shot) return callModel(ctx, [], signal, req);
+    try { return await callModel(ctx, [], signal, req); } catch (e) {
+      if ((e && e.name === 'AbortError') || (signal && signal.aborted)) throw e;
+      shot = null;
+      return callModel(ctx, [], signal, { ...req, messages: [req.messages[0], { role: 'user', content: material }] });
+    }
+  };
   const first = parseVerdict((await ask()).text);
   if (!first.unreadable || (signal && signal.aborted)) return first;
   return parseVerdict((await ask()).text);

@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -83,12 +84,131 @@ export function compileWebKitHelper(dest = webKitHelperPath(), { exists = fs.exi
 
 const inside = (root, p) => p === root || p.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
 
-/** 只读的静态服务，只监听 127.0.0.1。用来给浏览器取页面和它引用的 css / js / 图片。 */
-export async function serveDir(root) {
+// ── 页面情况的文字版（第一百六十八轮，docs/agent-efficiency-plan.md 第 3 步）──
+// 原来 preview_page 只给一张图：报错、白屏只能靠模型看图猜；目标核对员只读文字，图看不到，
+// 用户那段会话里模型为了给核对员凑「文字证据」专门写了回传报告的服务器和自检页。
+// 现在静态服务给 html 注入一小段探针：收报错、未处理的 Promise 拒绝、console.error、标题、可见文字，
+// 加载完回传到同一个服务。用同步请求是保险：截完图浏览器就退；异步的在本机 Chrome 上量过也送得到（第一百六十八轮扰动），慢页面上没量过。像素情况从截图本身算（WebGL 的画布页面里读不到）。
+export const PROBE_PATH = '/__zhiqu_probe';
+// 整段是一行（.replace 去掉换行）：插在 <head> 那一行里，页面报错的行号和磁盘上的文件对得上（第一百六十八轮真跑时 bad.html 第 2 行报成了第 12 行）
+export const PROBE_SCRIPT = `<script data-zhiqu-probe>(function(){var R={errors:[],rejections:[],consoleErrors:[]};
+function push(a,v){if(a.length<10)a.push(String(v).slice(0,300));}
+function send(fin){try{R.final=fin;R.title=document.title;var b=document.body;R.text=b?(b.innerText||'').replace(/\\s+/g,' ').trim().slice(0,300):'';
+R.elements=document.getElementsByTagName('*').length;R.canvases=document.getElementsByTagName('canvas').length;
+var x=new XMLHttpRequest();x.open('POST','${PROBE_PATH}',false);x.setRequestHeader('Content-Type','text/plain');x.send(JSON.stringify(R));}catch(e){}}
+window.addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){push(R.errors,'资源加载失败：'+String(t.src||t.href).replace(location.origin,''));return;}
+push(R.errors,String(e.message||e.error)+(e.filename?' ('+String(e.filename).replace(location.origin,'')+':'+e.lineno+')':''));},true);
+window.addEventListener('unhandledrejection',function(e){var r=e.reason;push(R.rejections,r&&r.message?r.message:r);});
+var ce=console.error;console.error=function(){try{push(R.consoleErrors,Array.prototype.map.call(arguments,String).join(' '));}catch(e){}return ce.apply(console,arguments);};
+window.addEventListener('load',function(){setTimeout(function(){send(true);},1500);});
+setTimeout(function(){send(false);},3000);})();</script>`.replace(/\n/g, '');
+
+/** 把探针插进 html：放在 <head> 里最前面；没有 head 放在 doctype 之后（插到 doctype 前面会让页面掉进怪异模式） */
+export function injectProbe(html) {
+  const s = String(html);
+  for (const re of [/<head\b[^>]*>/i, /<html\b[^>]*>/i, /<!doctype[^>]*>/i]) {
+    const m = re.exec(s);
+    if (m) return s.slice(0, m.index + m[0].length) + PROBE_SCRIPT + s.slice(m.index + m[0].length);
+  }
+  return PROBE_SCRIPT + s;
+}
+
+/**
+ * 截图的像素情况：解 PNG（8 位 RGB / RGBA、不隔行；别的认不了返回 null），抽样数颜色。
+ * 返回 { share: 最多的那种颜色占多少, color: '#rrggbb'（按 16 级量化）, luma: 平均亮度 0–255 }。
+ */
+export function analyzePng(buf) {
+  try {
+    if (!buf || buf.length < 33 || buf.readUInt32BE(0) !== 0x89504e47) return null;
+    let off = 8; let w = 0; let h = 0; let depth = 0; let type = 0; let interlace = 0; const idat = [];
+    while (off + 8 <= buf.length) {
+      const len = buf.readUInt32BE(off); const kind = buf.toString('latin1', off + 4, off + 8);
+      const data = buf.subarray(off + 8, off + 8 + len);
+      if (kind === 'IHDR') { w = data.readUInt32BE(0); h = data.readUInt32BE(4); depth = data[8]; type = data[9]; interlace = data[12]; }
+      else if (kind === 'IDAT') idat.push(data);
+      else if (kind === 'IEND') break;
+      off += 12 + len;
+    }
+    const bpp = type === 6 ? 4 : type === 2 ? 3 : 0;
+    if (!w || !h || depth !== 8 || !bpp || interlace) return null;
+    const raw = zlib.inflateSync(Buffer.concat(idat));
+    const stride = w * bpp;
+    if (raw.length < h * (stride + 1)) return null;
+    const cur = Buffer.alloc(stride); const prev = Buffer.alloc(stride);
+    const counts = new Map(); let lumaSum = 0; let n = 0;
+    const step = Math.max(1, Math.floor(Math.sqrt((w * h) / 40_000)));
+    for (let y = 0; y < h; y++) {
+      const f = raw[y * (stride + 1)]; const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+      for (let i = 0; i < stride; i++) {
+        const a = i >= bpp ? cur[i - bpp] : 0; const b = prev[i]; const c = i >= bpp ? prev[i - bpp] : 0;
+        let v = line[i];
+        if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+        else if (f === 4) { const p = a + b - c; const pa = Math.abs(p - a); const pb = Math.abs(p - b); const pc = Math.abs(p - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+        cur[i] = v & 255;
+      }
+      if (y % step === 0) {
+        for (let x = 0; x < w; x += step) {
+          const r = cur[x * bpp]; const g = cur[x * bpp + 1]; const bl = cur[x * bpp + 2];
+          const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (bl >> 4);
+          counts.set(key, (counts.get(key) || 0) + 1);
+          lumaSum += 0.299 * r + 0.587 * g + 0.114 * bl; n++;
+        }
+      }
+      cur.copy(prev);
+    }
+    let top = 0; let topKey = 0;
+    for (const [k, v] of counts) if (v > top) { top = v; topKey = k; }
+    const hex = (q) => (q * 17).toString(16).padStart(2, '0');
+    return { share: top / n, color: `#${hex(topKey >> 8)}${hex((topKey >> 4) & 15)}${hex(topKey & 15)}`, luma: Math.round(lumaSum / n) };
+  } catch { return null; }
+}
+
+/** 一种颜色占到这么多算「几乎是单色」：3D 场景没画出来、白屏多半是这样 */
+export const FLAT_SHARE = 0.97;
+
+/** 给模型（和目标核对员）看的那几行 */
+export function describePage(probe, pixels) {
+  const lines = ['页面情况（页面里的探针回传 + 截图像素）：'];
+  if (!probe) {
+    lines.push('- 没收到页面的回传：页面可能在加载完之前就卡住 / 出错，或者内联脚本被 CSP 挡了。报错情况不知道，只能看图。');
+  } else {
+    const list = (xs) => xs.map((x) => `「${x}」`).join('；');
+    const errs = Array.isArray(probe.errors) ? probe.errors : [];
+    const rej = Array.isArray(probe.rejections) ? probe.rejections : [];
+    const ce = Array.isArray(probe.consoleErrors) ? probe.consoleErrors : [];
+    lines.push(errs.length ? `- 报错 ${errs.length} 条${errs.length >= 10 ? '（只记前 10 条）' : ''}：${list(errs)}` : '- 报错：没有');
+    if (rej.length) lines.push(`- 未处理的 Promise 拒绝 ${rej.length} 条：${list(rej)}`);
+    if (ce.length) lines.push(`- console.error ${ce.length} 条：${list(ce)}`);
+    const text = String(probe.text || '');
+    lines.push(`- 标题「${String(probe.title || '').slice(0, 100)}」；可见文字${text ? `（开头）「${text.slice(0, 200)}」` : '：没有'}；元素 ${Number(probe.elements) || 0} 个，canvas ${Number(probe.canvases) || 0} 个`);
+    if (!probe.final) lines.push('- 回传的是加载过程中的情况（页面没在时限里加载完）');
+  }
+  if (!pixels) lines.push('- 画面：截图的格式认不了，没算');
+  else if (pixels.share >= FLAT_SHARE) lines.push(`- 画面：${Math.round(pixels.share * 100)}% 是同一种颜色 ${pixels.color}，几乎是单色 —— 可能是白屏 / 黑屏，或者 3D 场景没画出来`);
+  else lines.push(`- 画面：有内容（占比最多的颜色 ${pixels.color} 占 ${Math.round(pixels.share * 100)}%，平均亮度 ${pixels.luma}/255）`);
+  return lines.join('\n');
+}
+
+/**
+ * 只读的静态服务，只监听 127.0.0.1。用来给浏览器取页面和它引用的 css / js / 图片。
+ * probe：html 里注入探针，收它 POST 回来的报告（reports 里，最后一份在最后）；只认 PROBE_PATH、最多 64KB。
+ */
+export async function serveDir(root, { probe = false } = {}) {
   // 惰性加载：node:http 在 ESM 里会顺带把 tls 拉进来（reliability 那条判据盯着「加载 cli 不许加载 tls」）
   const http = (await import('node:http')).default;
   const realRoot = fs.realpathSync(root);
+  const reports = [];
   const server = http.createServer((req, res) => {
+    if (probe && req.method === 'POST' && req.url === PROBE_PATH) {
+      let body = '';
+      let over = false;
+      req.on('data', (c) => { body += c; if (body.length > 65_536) { over = true; req.destroy(); } });
+      req.on('end', () => {
+        if (!over) { try { const r = JSON.parse(body); if (r && typeof r === 'object') reports.push(r); } catch { /* 坏的不收 */ } }
+        res.writeHead(204); res.end();
+      });
+      return;
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return; }
     let rel;
     try { rel = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname); } catch { res.writeHead(400); res.end(); return; }
@@ -98,8 +218,10 @@ export async function serveDir(root) {
       const file = !err && st.isDirectory() ? path.join(target, 'index.html') : target;
       fs.readFile(file, (e, buf) => {
         if (e) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('找不到这个文件'); return; }
+        const isHtml = /\.html?$/i.test(file);
+        const out = probe && isHtml ? Buffer.from(injectProbe(buf.toString('utf8')), 'utf8') : buf;
         res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-        res.end(req.method === 'HEAD' ? undefined : buf);
+        res.end(req.method === 'HEAD' ? undefined : out);
       });
     });
   });
@@ -107,6 +229,7 @@ export async function serveDir(root) {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => resolve({
       port: server.address().port,
+      reports,
       close: () => new Promise((r) => server.close(() => r())),
     }));
   });
@@ -276,7 +399,7 @@ export async function screenshotPage({ root, rel, width = 1200, height = 900, ch
   const h = Math.min(2000, Math.max(240, Number(height) || 900));
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-preview-'));
   const out = path.join(work, 'shot.png');
-  const site = await serveDir(realRoot);
+  const site = await serveDir(realRoot, { probe: true });
   try {
     const relUrl = path.relative(realRoot, page).split(path.sep).map(encodeURIComponent).join('/');
     const shot = await shoot({ chrome, url: `http://127.0.0.1:${site.port}/${relUrl}`, out, width: w, height: h, timeoutMs });
@@ -285,7 +408,11 @@ export async function screenshotPage({ root, rel, width = 1200, height = 900, ch
     if (!buf.length) return { error: '截图是空的' };
     // 图按固定 token 估，不按 base64 字数。上限只挡异常的大图，正常一屏要过得去
     if (buf.length > MAX_PREVIEW_BYTES) return { error: `截图 ${Math.round(buf.length / 1024)}KB，太大（上限 ${Math.round(MAX_PREVIEW_BYTES / 1_000_000)}MB）；把 width / height 调小再试` };
-    return { mediaType: 'image/png', base64: buf.toString('base64'), bytes: buf.length, width: w, height: h };
+    // 最后一份完整的（加载完那份）优先；没有就用加载中的那份
+    const reports = site.reports;
+    const probeReport = [...reports].reverse().find((r) => r.final) || reports[reports.length - 1] || null;
+    return { mediaType: 'image/png', base64: buf.toString('base64'), bytes: buf.length, width: w, height: h,
+      page: describePage(probeReport, analyzePng(buf)) };
   } finally {
     await site.close().catch(() => {});
     try { fs.rmSync(work, { recursive: true, force: true }); } catch { /* 同上 */ }

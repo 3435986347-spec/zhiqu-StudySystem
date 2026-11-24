@@ -344,7 +344,8 @@ export class LocalTools {
     const small = forContext(shot);
     if (small.error) return { error: small.error };
     this.pendingImage = small;
-    return { content: `已经把 ${rel} 渲染成一张图（${shot.width}×${shot.height}，${Math.round(shot.bytes / 1024)}KB${small.originalBytes ? `，给你看的是压小到 ${Math.round(small.bytes / 1024)}KB 的 JPEG` : ''}），就是下面这张。`,
+    // 页面情况的文字版跟在工具结果里（第一百六十八轮）：报错、白屏不用靠看图猜，目标核对员（只读文字）也看得到
+    return { content: `已经把 ${rel} 渲染成一张图（${shot.width}×${shot.height}，${Math.round(shot.bytes / 1024)}KB${small.originalBytes ? `，给你看的是压小到 ${Math.round(small.bytes / 1024)}KB 的 JPEG` : ''}），就是下面这张。${shot.page ? `\n${shot.page}` : ''}`,
       summary: `已截图 ${shot.width}×${shot.height}` };
   }
 
