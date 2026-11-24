@@ -14,6 +14,7 @@ import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
 import { localSchemas, previewSchema, READ_TOOLS, shellSchemas } from './tools/local.js';
+import { changeLine, diffSnapshots, dropUnchanged, editNudge, hashFiles, inlineEdit, mentionedFiles, NOOP_REPLACE, NUDGE_EVERY, snapshot, usesReplace } from './tools/shell-writes.js';
 import { draftSchemas } from './tools/drafts.js';
 import { patchFiles } from './tools/patch.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
@@ -348,6 +349,29 @@ export function recordRewrite(ctx, prev, extra = {}) {
   const edits = [];
   next.forEach((m, i) => { if (m !== prev[i]) edits.push({ i, key: messageKey(prev[i]), message: m }); });
   if (edits.length) ctx.store.append(ctx.session.id, { type: 'clear', length: next.length, edits, ...extra });
+}
+
+/**
+ * shell 改了文件之后（第一百六十九轮，tools/shell-writes.js）：记进改过的文件，工具结果里写一行改了哪些；
+ * 看着是内联脚本在改已有的源码就提醒改用编辑工具（第 1 次说，之后每 NUDGE_EVERY 次说一次）；
+ * 用字符串替换却一个文件都没改动，每次都说（多半是原文没对上，str.replace 不报错）。快照比不了（diff 为 null）就什么都不说。
+ */
+export function shellWriteNotes(ctx, command, diff, exitCode) {
+  if (!diff) return '';
+  ctx.changedFiles = ctx.changedFiles || new Set();
+  for (const p of [...diff.modified, ...diff.created]) ctx.changedFiles.add(p);
+  for (const p of diff.deleted) ctx.changedFiles.add(`${p}（已删除）`);
+  const line = changeLine(diff);
+  const notes = [];
+  if (inlineEdit(command)) {
+    if (diff.modified.length) {
+      ctx.shellEditCount = (ctx.shellEditCount || 0) + 1;
+      if ((ctx.shellEditCount - 1) % NUDGE_EVERY === 0) notes.push(editNudge(diff.modified));
+    } else if (exitCode === 0 && usesReplace(command) && !diff.created.length && !diff.deleted.length) {
+      notes.push(NOOP_REPLACE);
+    }
+  }
+  return `${line ? `\n${line}` : ''}${notes.map((n) => `\n\n【提醒】${n}`).join('')}`;
 }
 
 function record(ctx, message, origin = null) {
@@ -1129,6 +1153,10 @@ async function runTool(ctx, call, offered, signal) {
       }
       let tail = '';
       const onOutput = (s) => { tail = (tail + s).slice(-4000); };
+      // 命令前后各拍一次工作区的快照（第一百六十九轮）：比出这条命令改了哪些文件
+      const before = local.root ? snapshot(local.root) : null;
+      // 内联脚本改文件：它提到的文件再记一份内容哈希 —— 原样写回去的不算改了（替换没对上时就是这样）
+      const hashes = before && inlineEdit(prep.command) ? await hashFiles(local.root, mentionedFiles(local.root, prep.cwdRel, prep.command)) : null;
       // 跑命令期间状态行说「运行中 N 秒 · 命令」（第一百二十九轮）：原来一直是「思考中」，分不清在等模型还是在等命令
       ui.startRun(prep.command);
       let r;
@@ -1149,8 +1177,9 @@ async function runTool(ctx, call, offered, signal) {
       for (const l of shownOutput(r.output.split('\n').filter((x) => x.trim()))) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
       ui.result(r.summary, r.exitCode === 0);
       stepNote(ctx, { summary: r.summary, ok: r.exitCode === 0, detail: runDetail(prep, r) });
-      if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content; }
-      return failed(ctx, spinKey, r.content, runReminder(prep.command));
+      const writes = shellWriteNotes(ctx, prep.command, before ? await dropUnchanged(local.root, diffSnapshots(before, snapshot(local.root)), hashes) : null, r.exitCode);
+      if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content + writes; }
+      return failed(ctx, spinKey, r.content + writes, runReminder(prep.command));
     }
     if (name === 'shell_output' || name === 'shell_stop') {
       // 子 agent 只管自己起的（别人的 dev server 它停不得）

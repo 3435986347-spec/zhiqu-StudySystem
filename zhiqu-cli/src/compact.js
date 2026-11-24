@@ -12,6 +12,7 @@
 import { generatedOrigin, SUMMARY_PREFIX } from './origins.js';
 import { steerText } from './steer.js';
 import { patchFiles } from './tools/patch.js';
+import { writtenByShell } from './tools/shell-writes.js';
 
 export const THRESHOLD = 0.8;
 const QUOTES_HEADER = '【用户说过的原话（逐字，按时间先后）】';
@@ -185,7 +186,7 @@ function writtenPaths(call) {
   return call.args.path ? [cleanPath(call.args.path)] : [];
 }
 
-function recovery(call, chars, { staleByEdit = false, spilled = null } = {}) {
+function recovery(call, chars, { staleByEdit = false, spilled = null, shellMark = '' } = {}) {
   const size = `原来 ${chars} 字`;
   if (!call) return `（旧的工具输出已清理，${size}；需要就重新读取或重新运行）`;
   const a = call.args || {};
@@ -196,7 +197,8 @@ function recovery(call, chars, { staleByEdit = false, spilled = null } = {}) {
   const where = spilled ? `原文存在 ${spilled}（要看就读它，不用重新跑）` : '要看就再做一次';
   if (call.name === 'shell' || call.name === 'run_command') {
     const cmd = call.name === 'shell' ? String(a.command || '') : [a.command, ...(Array.isArray(a.args) ? a.args : [])].join(' ');
-    return `（旧的命令输出已清理：${cmd.replace(/\s+/g, ' ').slice(0, 200)}，${size}。${where}）`;
+    // 这条命令改了哪些文件跟着占位走（第一百六十九轮）：清掉之后「读过之后又改过」照样认得出
+    return `（旧的命令输出已清理：${cmd.replace(/\s+/g, ' ').slice(0, 200)}，${size}。${where}）${shellMark || ''}`;
   }
   const what = a.query ? `「${String(a.query).slice(0, 80)}」` : a.path ? cleanPath(a.path) : a.title ? `「${String(a.title).slice(0, 80)}」` : '';
   return `（旧的 ${call.name} 结果已清理${what ? `：${what}` : ''}，${size}。${where}）`;
@@ -248,6 +250,11 @@ export function clearStale(messages, { limit, minFree, spill = null } = {}) {
   // 哪些读取已经没用了：之后这个文件被写过，或者之后又读过盖住它的一段
   const laterWrites = new Map();   // path → 最后一次写它的调用所在的消息序号
   const reads = [];
+  // shell 写的文件从它的结果里认（第一百六十九轮：结果里有「这条命令改动了文件：…」那一行，清掉之后占位里也带着）
+  for (const i of toolAt) {
+    const c = calls.get(messages[i].tool_call_id);
+    if (c && c.name === 'shell') for (const p of writtenByShell(messages[i].content)) laterWrites.set(cleanPath(p), Math.max(laterWrites.get(cleanPath(p)) ?? -1, c.at));
+  }
   for (const c of calls.values()) {
     if (WRITE_TOOLS.has(c.name)) for (const p of writtenPaths(c)) laterWrites.set(p, Math.max(laterWrites.get(p) ?? -1, c.at));
     if (c.name === 'read_file' && c.args.path) {
@@ -322,7 +329,8 @@ export function clearStale(messages, { limit, minFree, spill = null } = {}) {
         const readable = call && call.name === 'read_file';
         let spilled = null;
         if (!readable && spill && text.length >= 2000) { try { spilled = spill(text); } catch { spilled = null; } }
-        const next = { ...m, content: recovery(call, text.length, { staleByEdit: stale(call) === 'edit', spilled }) };
+        const mark = /（这条命令改动了文件：[^）]*）/.exec(text);
+        const next = { ...m, content: recovery(call, text.length, { staleByEdit: stale(call) === 'edit', spilled, shellMark: mark ? mark[0] : '' }) };
         freed += estimateMessage(m) - estimateMessage(next);
         out[i] = next;
         cleared++;

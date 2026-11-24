@@ -155,6 +155,8 @@ export function shellSchemas({ background = true, preview = false, direct = fals
   const boundary = direct ? 'Windows 本机直接运行，不是系统沙箱，边界见「环境」一节。' : '命令跑在系统沙箱里，边界见「环境」一节。';
   const tools = [
     fn('shell', `在工作区里运行一条 ${shellKind} 命令：管道、重定向、&& 都能用。用来跑测试、构建、查 git、搜东西。${boundary}`
+      // 第一百六十九轮：用户那段会话里 158 / 201 次 shell 在用 Python 的 str.replace 改源码（找不到原文不报错）
+      + '改已有的源码用 apply_patch / edit_file，不要在这里用 python / sed / perl 替换字符串：找不到原文时它们不报错、什么都不做。'
       + (direct ? '' : preview ? '不要在这里起浏览器或 headless-gl（沙箱里起不来）；看页面用 preview_page。' : '不要在这里起浏览器或 headless-gl（沙箱里起不来）。'),
       { command: { type: 'string', description: '一整条 shell 命令，字符串' },
         cwd: { type: 'string', description: '在哪个子目录里运行，默认工作区根' },
