@@ -118,3 +118,22 @@ export function runZhiqu(sub, args, { url, root = tmpdir(), home = tmpdir(), std
     if (onSpawn) onSpawn(c);
   });
 }
+
+/**
+ * 替判据回答「是不是换了一件事」（第一百七十轮）：人说的新一句开头、上下文不小时命令行会先问模型一次。
+ * 测压缩本身的判据不关心这一问：这里直接答「不是」，不占它准备好的回答、不进 requests。问了几次记在 api.taskSwitchAsks。
+ */
+export function answerTaskSwitch(api, verdict = false) {
+  const real = api.stream.bind(api);
+  api.taskSwitchAsks = 0;
+  api.stream = async (pathname, body, onEvent) => {
+    if (!/判断刚说的这句/.test(String((body.messages && body.messages[0] && body.messages[0].content) || ''))) return real(pathname, body, onEvent);
+    api.taskSwitchAsks += 1;
+    const text = JSON.stringify({ new_task: verdict });
+    onEvent('start', { droppedMessages: 0, elidedToolOutputs: 0, contextWindow: 64000 });
+    onEvent('delta', { text });
+    onEvent('done', { message: { role: 'assistant', content: text }, finishReason: 'stop', maxTokens: 200, usage: { promptTokens: 10, completionTokens: 5, estimated: false } });
+    return undefined;
+  };
+  return api;
+}

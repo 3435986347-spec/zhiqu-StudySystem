@@ -153,7 +153,9 @@ function prose(rounds) {
   for (let i = 0; i < rounds; i++) ms.push({ role: 'assistant', content: `第 ${i + 1} 步的说明 ${'字'.repeat(10_000)}` }, { role: 'user', content: '继续' });
   return ms;
 }
-const summaryRequests = (ctx) => ctx.api.requests.filter((r) => !r.tools.length);
+// 人说的新一句开头会先问一次「是不是换了一件事」（第一百七十轮）：那一次不算摘要
+const NOT_NEW = { text: '{"new_task": false}' };
+const summaryRequests = (ctx) => ctx.api.requests.filter((r) => !r.tools.length && !/判断刚说的这句/.test(String(r.messages[0].content)));
 
 test('软上限：只对大窗口有意义；摘要留原文的预算是软上限的三分之一（不然摘完马上又过线）', () => {
   assert.equal(softCompactable(1_000_000), true);
@@ -163,7 +165,7 @@ test('软上限：只对大窗口有意义；摘要留原文的预算是软上�
 });
 
 test('1M 窗口过了软上限、先清清不出：这一轮就摘，摘完压到软上限以下；不等到八成', async () => {
-  const ctx = ctxWith([{ text: SUMMARY }, { text: '接着做完了' }], { window: 1_000_000 });
+  const ctx = ctxWith([NOT_NEW, { text: SUMMARY }, { text: '接着做完了' }], { window: 1_000_000 });
   ctx.messages = prose(36);
   const before = estimateMessages(ctx.messages);
   assert.ok(before > softLimit(1_000_000) && before < 600_000, `背着 ${before}：过了软上限、没到六成`);
@@ -176,7 +178,7 @@ test('1M 窗口过了软上限、先清清不出：这一轮就摘，摘完压�
 
 test('软上限那次摘要没写成：不一轮一摘，要再多背一截才再试', async () => {
   const call = { calls: [{ name: 'list_files', args: { path: '.' } }] };
-  const ctx = ctxWith([{ text: '' }, { text: '' }, call, call, { text: '做完了' }], { window: 1_000_000 });
+  const ctx = ctxWith([NOT_NEW, { text: '' }, { text: '' }, call, call, { text: '做完了' }], { window: 1_000_000 });
   ctx.messages = prose(36);
   await runTurn(ctx, '继续');
   assert.equal(summaryRequests(ctx).length, 2, `第一轮写了两次（第二次是重来）都是空的；之后两轮不再试：${summaryRequests(ctx).length}`);
@@ -184,7 +186,7 @@ test('软上限那次摘要没写成：不一轮一摘，要再多背一截才�
 });
 
 test('64K 窗口的行为不变：过了软上限、没到六成，不摘', async () => {
-  const ctx = ctxWith([{ text: '好' }], { window: 64_000 });
+  const ctx = ctxWith([NOT_NEW, { text: '好' }], { window: 64_000 });
   ctx.messages = prose(4);   // 约 4 万：过了 38400，没到 51200
   const before = estimateMessages(ctx.messages);
   assert.ok(before > softLimit(64_000) && before < 64_000 * 0.8, `${before}`);

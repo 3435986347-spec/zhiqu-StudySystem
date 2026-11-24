@@ -13,15 +13,32 @@ export const DEFAULT_MAX_GOAL_TURNS = 0;
 const MAX_VERIFY_FAILURES = 3;
 
 export function newGoal(text) {
-  return { text: String(text).trim(), status: 'active', startedAt: new Date().toISOString(), turns: 0, verifyFailures: 0, summary: '', evidence: '', blocker: '' };
+  return { text: String(text).trim(), status: 'active', startedAt: new Date().toISOString(), turns: 0, verifyFailures: 0, summary: '', evidence: '', blocker: '', criteria: '' };
 }
 
-export function goalBlock(goal) {
+/** 验收标准最多记这么多字 */
+export const CRITERIA_MAX = 1_000;
+
+/**
+ * canAsk：这一处有人能用 ask_user 回答（交互的终端、主 agent）。
+ * 验收标准（第一百七十轮，docs/agent-efficiency-plan.md 第 5 步）：目标含糊不含糊**让模型自己判断**（用户 2026-11-24 定的），
+ * 不写规则 —— 用户那段会话里「继续打磨黎曼」没有可判断的完成标准，核对员连拒三次才宣告卡住。
+ */
+export function goalBlock(goal, { canAsk = false } = {}) {
   if (!goal || goal.status !== 'active') return '';
+  const criteria = String(goal.criteria || '').trim();
   return [
     '## 当前目标（最高优先级）',
     goal.text,
+    ...(criteria ? ['', `验收标准（已经定下，照它做、照它验证，不要再问）：${criteria}`] : []),
     '',
+    ...(criteria ? [] : [
+      '开工之前先判断：这个目标有没有能判断「做完了」的标准（做到什么程度、怎么验证）？有就照着做，并用 goal_update（status=progress）把它写进 criteria。',
+      canAsk
+        ? '没有、含糊到做完了也说不清算不算达成时，先用 ask_user 问一次验收标准（给 2–4 个具体可检查的选项，标一个推荐），拿到答案后用 goal_update（status=progress）写进 criteria 再开工。只问这一次。'
+        : '没有的话这里问不了用户：自己定一个合理、可检查的标准，用 goal_update（status=progress）写进 criteria，再开工；收尾时照它验证。',
+      '',
+    ]),
     '这是这段会话的「圣目标」：你做的每一步都要服务于它。不要偏题，不要半路停下来问「要不要继续」「接下来你可以……」。',
     '只有两种情况可以停，而且都要先调用 goal_update：',
     '1. 目标已经达成，并且你亲自验证过（跑过、测过、读过结果）—— status=achieved，evidence 写清楚验证了什么、结果是什么；',
@@ -43,6 +60,7 @@ export function goalSchema() {
           summary: { type: 'string', description: '一两句话：做到哪了' },
           evidence: { type: 'string', description: 'achieved 时必填：验证了什么、怎么验证的、结果是什么' },
           blocker: { type: 'string', description: 'blocked 时必填：卡在哪、需要用户做什么' },
+          criteria: { type: 'string', description: '验收标准：做到什么、怎么验证（用户定的，或者你定的）。定下来时写一次；写过就会置顶在目标里、核对员也照它核对' },
         },
         required: ['status', 'summary'],
       },
@@ -54,6 +72,8 @@ export function goalSchema() {
 export function applyGoalUpdate(goal, args) {
   const status = String(args.status || '');
   goal.summary = String(args.summary || goal.summary || '');
+  const criteria = typeof args.criteria === 'string' ? args.criteria.trim().slice(0, CRITERIA_MAX) : '';
+  if (criteria) goal.criteria = criteria;
   if (status === 'achieved') {
     const evidence = String(args.evidence || '').trim();
     if (!evidence) return '宣告达成必须附上证据（evidence）：你验证了什么、怎么验证的、结果是什么。没有验证过就先去验证。';
@@ -68,7 +88,7 @@ export function applyGoalUpdate(goal, args) {
     goal.blocker = blocker;
     return '已记录：卡住了。请用几句话告诉用户卡在哪、需要他做什么，然后结束。';
   }
-  if (status === 'progress') return '已记录进展。继续做。';
+  if (status === 'progress') return criteria ? '已记下验收标准（之后置顶在目标里，核对员也照它核对）。照它做下去。' : '已记录进展。继续做。';
   return 'status 只能是 achieved / blocked / progress。';
 }
 
@@ -97,6 +117,7 @@ export function verificationMaterial(goal, messages, changedFiles = []) {
     .map((m) => { const s = String(m.content || ''); return s.length > 800 ? `${s.slice(0, 800)}…` : s; });
   return [
     `【目标】\n${goal.text}`,
+    `【验收标准】\n${String(goal.criteria || '').trim() || '（没有写下来：按目标本身判断）'}`,
     `【执行者给的证据】\n${goal.evidence || '（没有）'}`,
     `【这段会话里改过的文件】\n${changedFiles.length ? changedFiles.join('\n') : '（没有记录）'}`,
     `【最近的工具结果（节选）】\n${tools.length ? tools.map((t, i) => `(${i + 1}) ${t}`).join('\n---\n') : '（没有）'}`,

@@ -12,12 +12,12 @@ import { cacheBoundary, DirectModel, markAnthropic, markOpenAi } from '../src/di
 import { generatedOrigin } from '../src/origins.js';
 import { SessionStore } from '../src/session.js';
 import { LocalTools } from '../src/tools/local.js';
-import { fakeApi, fakeUi, tmpdir, write } from './helpers.js';
+import { answerTaskSwitch, fakeApi, fakeUi, tmpdir, write } from './helpers.js';
 
 function makeCtx({ replies = [{ text: '好' }], window = 64_000, root = tmpdir(), mode = 'auto' } = {}) {
   const store = new SessionStore(root);
   return {
-    ui: fakeUi([]), api: fakeApi(replies), root, mode, maxRounds: 40,
+    ui: fakeUi([]), api: answerTaskSwitch(fakeApi(replies)), root, mode, maxRounds: 40,
     local: new LocalTools({ root }), store, session: store.create(), messages: [],
     allow: { write: false, run: false, mcp: new Set() }, usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
     system: { text: '系统内容' }, instructionsText: '', skillsText: '', skills: [], remoteTools: [], todos: [],
@@ -101,7 +101,8 @@ test('服务器替我们裁过：下一轮开头自己压缩，不再照原样�
   for (let i = 0; i < 6; i++) ctx.messages.push({ role: 'user', content: `第 ${i} 件事` }, { role: 'assistant', content: '说'.repeat(1300) });
   const real = ctx.api.stream.bind(ctx.api);
   let n = 0;
-  ctx.api.stream = (p, body, on) => real(p, body, (name, data) => on(name, name === 'start' && ++n === 1 ? { ...data, droppedMessages: 4, contextWindow: 20_000, estimatedPromptTokens: 9_000 } : data));
+  // 第一次干活的请求（带工具表的）才说裁过：开头那一问「是不是换了一件事」不算
+  ctx.api.stream = (p, body, on) => real(p, body, (name, data) => on(name, name === 'start' && body.tools.length && ++n === 1 ? { ...data, droppedMessages: 4, contextWindow: 20_000, estimatedPromptTokens: 9_000 } : data));
   const r = await runTurn(ctx, '接着');
   assert.equal(ctx.api.requests.filter((x) => !x.tools.length).length, 1, '离八成还远，但服务器说它裁过：这边估少了，马上压');
   assert.equal(r.compactions, 1);

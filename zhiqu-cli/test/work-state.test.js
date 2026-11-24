@@ -10,12 +10,12 @@ import { generatedOrigin } from '../src/origins.js';
 import { SessionStore } from '../src/session.js';
 import { CHURN_WARN, firstChangedLine, sameItem, statePath, WorkState } from '../src/state.js';
 import { LocalTools } from '../src/tools/local.js';
-import { fakeApi, fakeUi, tmpdir, write } from './helpers.js';
+import { answerTaskSwitch, fakeApi, fakeUi, tmpdir, write } from './helpers.js';
 
 function makeCtx({ replies = [{ text: '好' }], window = 64_000, root = tmpdir(), store = true, maxRounds = 30 } = {}) {
   const s = store ? new SessionStore(root) : null;
   return {
-    ui: fakeUi([]), api: fakeApi(replies), root, mode: 'auto', maxRounds,
+    ui: fakeUi([]), api: answerTaskSwitch(fakeApi(replies)), root, mode: 'auto', maxRounds,
     local: new LocalTools({ root }), store: s, session: s ? s.create() : { id: 'web-code-agent' }, messages: [],
     allow: { write: false, run: false, mcp: new Set() }, usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
     system: { text: '系统内容' }, instructionsText: '', skillsText: '', skills: [], remoteTools: [], todos: [],
@@ -30,7 +30,8 @@ function answerSummaries(ctx, text = '## 目标\n摘要') {
   const real = ctx.api.stream.bind(ctx.api);
   ctx.summaries = 0;
   ctx.api.stream = async (p, body, on) => {
-    if (body.tools.length) return real(p, body, on);
+    // 开头那一问「是不是换了一件事」也不带工具：交给里层的 answerTaskSwitch，不算摘要
+    if (body.tools.length || /判断刚说的这句/.test(String(body.messages[0].content))) return real(p, body, on);
     ctx.summaries++;
     ctx.api.requests.push(JSON.parse(JSON.stringify(body)));
     on('start', {});

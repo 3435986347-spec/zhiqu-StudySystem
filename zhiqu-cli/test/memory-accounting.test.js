@@ -14,7 +14,7 @@ import { openStream, request, sleep } from '../src/http.js';
 import { eachLine, SessionStore } from '../src/session.js';
 import { LocalTools } from '../src/tools/local.js';
 import { CONTEXT_IMAGE_BYTES, forContext } from '../src/tools/preview.js';
-import { fakeApi, fakeUi, tmpdir } from './helpers.js';
+import { answerTaskSwitch, fakeApi, fakeUi, tmpdir } from './helpers.js';
 
 const shot = (bytes) => ({ role: 'user', content: [
   { type: 'text', text: '（下面的图就是刚才渲染的页面。）' },
@@ -28,7 +28,7 @@ const round = (i, out = 3000) => [
 function makeCtx({ replies = [{ text: '好' }], window = 64_000, root = tmpdir(), effort } = {}) {
   const store = new SessionStore(root);
   return {
-    ui: fakeUi([]), api: fakeApi(replies), root, mode: 'auto', maxRounds: 12, effort,
+    ui: fakeUi([]), api: answerTaskSwitch(fakeApi(replies)), root, mode: 'auto', maxRounds: 12, effort,
     local: new LocalTools({ root }), store, session: store.create(), messages: [],
     allow: { write: false, run: false, mcp: new Set() }, usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
     system: { text: '系统内容' }, instructionsText: '', skillsText: '', skills: [], remoteTools: [],
