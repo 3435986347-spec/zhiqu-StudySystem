@@ -169,7 +169,7 @@ test('给人看的启动提示：上一段没做完 / 没正常结束才说；�
   await runTurn(half, '把画面做成白天的');
   const next = makeCtx({ root });
   noteUnfinished(next);
-  assert.match(next.ui.text(), /上一段会话「把画面做成白天的」没做完，清单还剩 2 项：\/resume 接着那一段/);
+  assert.match(next.ui.text(), /上一段会话「把画面做成白天的」没做完，清单还剩 2 项：直接回车接着那一段（\/resume 也行）/);
   // 接线：命令行新开一段会话时就说（不是只有这个函数在）
   const opened = { ui: fakeUi([]), store: new SessionStore(root), root, model: { label: 'm' } };
   openSession(opened, {});
@@ -180,7 +180,7 @@ test('给人看的启动提示：上一段没做完 / 没正常结束才说；�
   await assert.rejects(runTurn(crashed, '刚说完就崩了'));
   const after = makeCtx({ root });
   noteUnfinished(after);
-  assert.match(after.ui.text(), /上一段会话「刚说完就崩了」没正常结束（进程中途没了）/);
+  assert.match(after.ui.text(), /上一段会话「刚说完就崩了」没正常结束：没来得及记下原因（可能是被强行杀掉，或者内存不够被系统结束）/, '没有退出记录：照实说没记下（第一百七十一轮）');
 });
 
 test('以前的记录很大（旧格式里图在行里）：搜索只看摘要、不去翻原文，不卡', async () => {

@@ -33,6 +33,7 @@ import { hunks } from './render/diff.js';
 import { termSafe, terminalWarnings } from './render/term.js';
 import { projectMemory } from './memory.js';
 import { otherSessions } from './recall.js';
+import { exitReason, installExitRecorder, lastExit } from './exitlog.js';
 import { SessionStore } from './session.js';
 import { discoverSkills, skillsBlock } from './skills.js';
 import { LocalTools } from './tools/local.js';
@@ -351,8 +352,11 @@ export function noteUnfinished(ctx) {
   let last = null;
   try { [last] = otherSessions(ctx.store, ctx.session, ctx.root, 1); } catch { return; }
   if (!last || (last.status !== 'unfinished' && last.status !== 'crashed')) return;
-  ctx.ui.note(`· 上一段会话「${last.title || '无标题'}」${last.status === 'crashed' ? '没正常结束（进程中途没了）' : '没做完'}`
-    + `${last.todosLeft.length ? `，清单还剩 ${last.todosLeft.length} 项` : ''}：/resume 接着那一段，或者直接说要做什么（它做到哪，新会话知道）`);
+  // 没正常结束：说出原因（第一百七十一轮，exitlog.js）；直接回车就接着那一段（原来用户把整段终端输出贴进来说「继续这个」）
+  const why = last.status === 'crashed' ? `没正常结束：${exitReason(lastExit(ctx.store.file(last.id)))}` : '没做完';
+  ctx.pendingResume = last.id;
+  ctx.ui.note(`· 上一段会话「${last.title || '无标题'}」${why}`
+    + `${last.todosLeft.length ? `，清单还剩 ${last.todosLeft.length} 项` : ''}：直接回车接着那一段（/resume 也行），或者直接说要做什么（它做到哪，新会话知道）`);
 }
 
 /**
@@ -560,6 +564,8 @@ async function runAgent(cwd, flags) {
     }
     openSession(ctx, flags);
   }
+  // 进程没正常结束时记下原因（第一百七十一轮，exitlog.js）：异常、终端被关、被结束
+  const uninstallExit = installExitRecorder(ctx);
   // resume 不继承上次的档位：exec 默认只读，交互模式没给 --mode 时才接着上次的
   if (modeFlag) ctx.mode = modeFlag;
   if (flags.goal) {
@@ -574,6 +580,7 @@ async function runAgent(cwd, flags) {
     await flushArchive(ctx);
     ctx.mcp && ctx.mcp.close();
     ui.close();
+    uninstallExit();
     return code;
   }
 
@@ -583,6 +590,7 @@ async function runAgent(cwd, flags) {
     await flushArchive(ctx);
     ctx.mcp && ctx.mcp.close();
     ui.close();
+    uninstallExit();
     return code;
   }
 
@@ -598,6 +606,7 @@ async function runAgent(cwd, flags) {
   await flushArchive(ctx);
   ctx.mcp && ctx.mcp.close();
   ui.close();
+  uninstallExit();
   return code;
 }
 
@@ -700,7 +709,15 @@ async function repl(ctx, flags = {}) {
     });
     if (input == null) break;
     const text = input.trim();
+    // 开工前直接回车：接着启动时说的那一段没做完的会话（noteUnfinished 记的）
+    if (!text && ctx.pendingResume && !ctx.messages.length) {
+      const id = ctx.pendingResume;
+      ctx.pendingResume = null;
+      resumeInto(ctx, id);
+      continue;
+    }
     if (!text) continue;
+    ctx.pendingResume = null;
     if (text.startsWith('/')) {
       const r = await slash(ctx, text);
       if (r === 'exit') break;

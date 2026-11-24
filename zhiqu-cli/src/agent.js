@@ -14,6 +14,7 @@ import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
 import { localSchemas, previewSchema, READ_TOOLS, shellSchemas } from './tools/local.js';
+import { rssMb } from './exitlog.js';
 import { changeLine, diffSnapshots, dropUnchanged, editNudge, hashFiles, inlineEdit, mentionedFiles, NOOP_REPLACE, NUDGE_EVERY, snapshot, usesReplace } from './tools/shell-writes.js';
 import { draftSchemas } from './tools/drafts.js';
 import { patchFiles } from './tools/patch.js';
@@ -553,7 +554,8 @@ function noteUsage(ctx, usage, sent) {
   t.prompt += prompt; t.completion += usage.completionTokens || 0; t.calls += 1;
   if (cached != null) { t.cached += cached; t.reported = true; }
   if (ctx.store && ctx.session && !ctx.subagent) {
-    ctx.store.append(ctx.session.id, { type: 'usage', prompt, completion: usage.completionTokens || 0, cached: cached ?? null, estimated: Boolean(usage.estimated) });
+    // rss（第一百七十一轮）：进程被强杀、内存不够被系统结束时来不及记原因 —— 下次启动至少说得出最后的内存占用
+    ctx.store.append(ctx.session.id, { type: 'usage', prompt, completion: usage.completionTokens || 0, cached: cached ?? null, estimated: Boolean(usage.estimated), rss: rssMb() });
   }
   if (cached != null && prompt >= LOW_HIT_MIN_PROMPT) {
     ctx.lowHit = cached / prompt < LOW_HIT_RATIO ? (ctx.lowHit || 0) + 1 : 0;
@@ -940,6 +942,7 @@ const runReminder = (line) => (n) => `同一条命令 ${line} 已经连续 ${n} 
  * 没补的就按给模型的那句话当小结。没有 ctx.stepLog（命令行的终端）就什么都不做 —— 终端的显示不变。
  */
 async function executeTool(ctx, call, offered, signal) {
+  ctx.lastTool = call.function && call.function.name;   // 进程没了时记进退出原因（exitlog.js）
   const log = ctx.stepLog;
   if (!log) return runTool(ctx, call, offered, signal);
   const name = call.function && call.function.name;
@@ -1547,10 +1550,12 @@ export async function runTurn(ctx, userText, opts = {}) {
   const lock = ctx.store.lockTurn(ctx.session.id, ctx.lockWho || 'cli');
   if (lock.busy) throw new TurnBusyError(lock.busy);
   ctx.heldLock = lock;
+  ctx.working = true;   // 进程没了时记进退出原因：当时是不是正在干活（exitlog.js）
   try {
     catchUp(ctx);
     return await runTurnBody(ctx, userText, opts);
   } finally {
+    ctx.working = false;
     ctx.heldLock = null;
     lock.release();
   }
@@ -2110,10 +2115,14 @@ export function recordGoal(ctx) {
 
 /**
  * 独立核对：不带工具，只看目标、证据与真实的工具结果。
- * 明说不思考（第一百六十六轮）：原来跟着用户的档位，思考把输出上限吃满、正文是空的 ——
- * 用户那段会话 6 次核对失败里 4 次是「没有给出可读的结论」，那 4 次输出都正好撞上限。
- * 没答好就再问一次；两次都没答好，结果带 unreadable，由 runGoal 照实说，不算执行者的。
+ * 用户那段会话 6 次核对失败里 4 次是「没有给出可读的结论」，那 4 次输出都正好撞上限（思考把额度吃满、正文是空的）。
+ * 第一百六十六轮改成不思考；第一百七十二轮拿真模型量（那段会话的 7 个核对点各 3 遍）推翻了：
+ *   思考 + 上限 2048（原来）：可读 17/21；不思考：可读 21/21，但判「达成」18/21 —— 太松，原来指出的实在缺口都放过了；
+ *   思考 + 上限 8192：可读 21/21、判「达成」11/21（和原来一样严），输出平均 1300、最多 3027（原来就是 2048 截断的）。
+ * 所以照用户的档位思考、上限放到 VERIFY_MAX_TOKENS。没答好再问一次；两次都没答好，结果带 unreadable，由 runGoal 照实说，不算执行者的。
  */
+/** 核对员的输出上限：思考要的额度（真模型量过最多 3027）加一行 JSON */
+export const VERIFY_MAX_TOKENS = 8_192;
 export async function verifyGoal(ctx, signal) {
   const material = verificationMaterial(ctx.goal, ctx.messages, [...(ctx.goalChangedFiles || [])]);
   // 最后一张截图也给核对员（第一百六十八轮，用户定的）：原来它只读文字，画面类的目标核对不了，
@@ -2121,7 +2130,7 @@ export async function verifyGoal(ctx, signal) {
   let shot = lastScreenshot(ctx.messages);
   const ask = async () => {
     const content = shot ? [{ type: 'text', text: `${material}\n\n【执行者最后一次截的页面图】就是下面这张。` }, shot] : material;
-    const req = { render: false, maxTokens: 1024, effort: SUMMARY_EFFORT, messages: [{ role: 'system', content: VERIFY_INSTRUCTIONS }, { role: 'user', content }] };
+    const req = { render: false, maxTokens: VERIFY_MAX_TOKENS, messages: [{ role: 'system', content: VERIFY_INSTRUCTIONS }, { role: 'user', content }] };
     if (!shot) return callModel(ctx, [], signal, req);
     try { return await callModel(ctx, [], signal, req); } catch (e) {
       if ((e && e.name === 'AbortError') || (signal && signal.aborted)) throw e;

@@ -4,7 +4,7 @@
 // 3. 大窗口过了软上限、先清又清不出：直接摘要，不等到八成（原来 1M 窗口背到 78 万才摘）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runGoal, runTurn, SUMMARY_EFFORT } from '../src/agent.js';
+import { runGoal, runTurn, VERIFY_MAX_TOKENS } from '../src/agent.js';
 import { ARGS_CLEAR_MIN, CLEAR_KEEP_RECENT, clearStale, estimateMessages, softCompactable, softKeep, softLimit } from '../src/compact.js';
 import { newGoal, parseVerdict } from '../src/goal.js';
 import { SUMMARY_PREFIX } from '../src/origins.js';
@@ -28,13 +28,14 @@ const verifyRequests = (ctx) => ctx.api.requests.filter((r) => !r.tools.length &
 
 // ── 1. 核对员 ──────────────────────────────────────────────────────────
 
-test('核对员明说不思考：用户开着 /effort max，核对那一次照样不思考（原来思考吃满输出上限、正文是空的）', async () => {
+test('核对员照用户的档位思考、输出上限 8192（第一百七十二轮真模型量过：不思考可读但太松，思考 + 2048 会被截断）', async () => {
   const ctx = ctxWith([ACHIEVED, { text: '好了' }, VERIFIED], { goal: '做个贪吃蛇', effort: 'max' });
   assert.equal(await runGoal(ctx), 'achieved');
   const v = verifyRequests(ctx);
   assert.equal(v.length, 1);
-  assert.equal(v[0].reasoning, SUMMARY_EFFORT, '核对请求要带不思考的档位，不跟用户的');
-  assert.equal(ctx.api.requests[0].reasoning, 'max', '干活的请求照旧跟用户的档位');
+  assert.equal(v[0].reasoning, 'max', '核对照用户的档位思考（不思考的核对员 21 次里判达成 18 次，太松）');
+  assert.equal(v[0].maxTokens, VERIFY_MAX_TOKENS);
+  assert.ok(VERIFY_MAX_TOKENS >= 4096, '上限要够思考用完再写结论（量过最多 3027）');
 });
 
 test('核对员第一次没答好：再问一次，答好了就照它的结论；不记失败', async () => {
