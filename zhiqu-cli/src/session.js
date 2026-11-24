@@ -249,6 +249,7 @@ export class SessionStore {
     let row = entry;
     if (entry && entry.message) row = { ...entry, message: this.externalize(id, entry.message) };
     else if (entry && Array.isArray(entry.messages)) row = { ...entry, messages: entry.messages.map((m) => this.externalize(id, m)) };
+    else if (entry && Array.isArray(entry.edits)) row = { ...entry, edits: entry.edits.map((e) => ({ ...e, message: this.externalize(id, e.message) })) };
     fs.appendFileSync(this.file(id), `${JSON.stringify({ at: new Date().toISOString(), ...row })}\n`);
     if (this.marks.has(id)) this.mark(id);
   }
@@ -372,6 +373,7 @@ export class SessionStore {
         else if (said.length && said[said.length - 1].pending) said[said.length - 1] = { text: said[said.length - 1].text };
       }
       else if (e.type === 'compact' && Array.isArray(e.messages)) messages = e.messages;
+      else if (e.type === 'clear' && Array.isArray(e.edits)) applyEdits(messages, e);
       else if (e.type === 'mode' && e.mode) mode = e.mode;
       else if (e.type === 'goal') goal = e.goal || null;
       else if (e.type === 'todos' && Array.isArray(e.todos)) todos = e.todos;
@@ -404,6 +406,44 @@ export class SessionStore {
     });
     return out;
   }
+}
+
+// ── 增量的清理记录（第一百六十六轮之后，docs/agent-efficiency-plan.md 第 2 步）──
+// 原来每清一次就把整份消息存一遍（{ type: 'compact', messages }）：用户那段会话 19 份快照约 2000 万字，记录涨到 28MB。
+// 清理（先清、截图、压过还超时拿掉最大的）不改条数，只换掉几条：记 { type: 'clear', length, edits: [{ i, key, message }] }。
+// 真摘要（条数变了）照旧记全量。
+// 内存里的那份和记录重放出来的不一定一条对一条（被打断时内存里去掉了悬空的工具调用、/resume 读回来也去掉）：
+// 工具结果、带调用的助手消息按调用 id 认（序号对不上就按 id 找）；别的只在条数和角色都对得上时才换 —— 对不上就不换，
+// 退回没清理的样子：多背一点，不会错。
+
+/** 认一条消息用的钥匙 */
+export function messageKey(m) {
+  if (!m) return 'r:';
+  if (m.role === 'tool' && m.tool_call_id) return `t:${m.tool_call_id}`;
+  if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) return `a:${m.tool_calls.map((c) => c.id).join(',')}`;
+  return `r:${m.role}`;
+}
+
+/** 把一条 clear 记录用到重放出来的消息上（原地改）；返回没用上的条数 */
+export function applyEdits(messages, entry) {
+  let byKey = null;
+  let missed = 0;
+  for (const e of entry.edits) {
+    if (!e || !e.message || !Number.isSafeInteger(e.i) || typeof e.key !== 'string') { missed++; continue; }
+    if (e.key.startsWith('r:')) {
+      if (messages.length === entry.length && messages[e.i] && messageKey(messages[e.i]) === e.key) messages[e.i] = e.message;
+      else missed++;
+      continue;
+    }
+    let at = messages[e.i] && messageKey(messages[e.i]) === e.key ? e.i : -1;
+    if (at < 0) {
+      if (!byKey) { byKey = new Map(); messages.forEach((m, j) => { const k = messageKey(m); if (!k.startsWith('r:')) byKey.set(k, j); }); }
+      at = byKey.has(e.key) ? byKey.get(e.key) : -1;
+    }
+    if (at >= 0) messages[at] = e.message;
+    else missed++;
+  }
+  return missed;
 }
 
 /**

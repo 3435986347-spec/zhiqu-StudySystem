@@ -20,7 +20,7 @@ import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js
 import { loadSkill, loadSkillSchema } from './skills.js';
 import { buildSystemMessage, environmentBlock, today } from './prompt.js';
 import { clearStale, compactMessages, minClear, needsCompaction, shedLargest, softCompactable, softKeep, softLimit, SUMMARY_INSTRUCTIONS } from './compact.js';
-import { dropDanglingToolCalls } from './session.js';
+import { dropDanglingToolCalls, messageKey } from './session.js';
 import { ApiError } from './api.js';
 import { sleep } from './http.js';
 import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todoSchema, unfinished } from './todos.js';
@@ -334,6 +334,22 @@ export function requestBlock(ctx) {
  * origin：这条 user 消息不是用户打的（goal 模式推的下一轮 'goal'、命令行自己补的说明 'system'）。
  * /resume 回放记录时靠它区分 —— 否则它们会显示成「› …」，像是用户说的。
  */
+/**
+ * 历史被换过之后记进会话（第 2 步，见 session.js 的 applyEdits）：条数没变就只记换掉的那几条（clear），变了（真摘要）才记全量。
+ * prev：换之前的那份数组（浅拷贝也行，比的是每一条是不是同一个对象）。
+ */
+export function recordRewrite(ctx, prev, extra = {}) {
+  if (!ctx.store || !ctx.session) return;
+  const next = ctx.messages;
+  if (!prev || prev.length !== next.length) {
+    ctx.store.append(ctx.session.id, { type: 'compact', messages: next, ...extra });
+    return;
+  }
+  const edits = [];
+  next.forEach((m, i) => { if (m !== prev[i]) edits.push({ i, key: messageKey(prev[i]), message: m }); });
+  if (edits.length) ctx.store.append(ctx.session.id, { type: 'clear', length: next.length, edits, ...extra });
+}
+
 function record(ctx, message, origin = null) {
   if (ctx.emit && message.role === 'assistant' && message.content) ctx.emit('completed', { id: ctx.nextItemId(), type: 'agent_message', text: message.content });
   ctx.messages.push(message);
@@ -1357,8 +1373,9 @@ export function clearNow(ctx, window) {
   } : null;
   const r = clearStale(ctx.messages, { limit: Math.max(1_000, softLimit(window) - system), minFree: minClear(window), spill });
   if (!r.cleared && !r.args && !r.images) return r;
+  const prev = ctx.messages;
   ctx.messages = r.messages;
-  if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages });
+  recordRewrite(ctx, prev);
   const bits = [r.cleared ? `${r.cleared} 段旧的工具输出` : '', r.args ? `${r.args} 个旧调用的参数（写过的内容、跑过的脚本）` : '',
     r.images ? `${r.images} 张旧截图` : ''].filter(Boolean).join('、');
   ctx.ui.note(`· 上下文占用过了 ${softLimit(window)} token：清理了 ${bits}（约 ${r.freed} token），要用时模型会重新读`);
@@ -1458,8 +1475,9 @@ export async function compactNow(ctx, signal, { manual = false, soft = false } =
   if (result.failed) {
     ui.warn(`这次摘要没写成（${result.failed}），没有压缩${result.elided ? `，只省略了 ${result.elided} 段旧的工具输出` : ''}`);
     if (result.elided) {
+      const prev = ctx.messages;
       ctx.messages = result.messages;
-      if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages, before: result.before, after: result.after });
+      recordRewrite(ctx, prev, { before: result.before, after: result.after });
     }
     return result;
   }
@@ -1468,10 +1486,10 @@ export async function compactNow(ctx, signal, { manual = false, soft = false } =
     return result;
   }
   if (!result.summarized && !manual) ui.step('对话快到上下文上限，省略较早的大段工具输出');
+  const prev = ctx.messages;
   ctx.messages = result.messages;
-  if (ctx.store && ctx.session) {
-    ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages, before: result.before, after: result.after });
-  }
+  // 真摘要条数变了，记全量；只省略了旧输出（条数没变）记那几条
+  recordRewrite(ctx, prev, { before: result.before, after: result.after });
   ui.result(`压掉 ${result.summarized} 条${result.elided ? `、省略 ${result.elided} 段旧的工具输出` : ''}，约 ${result.before} → ${result.after} token`);
   if (result.summarized) restoreAfterCompaction(ctx, window);
   return result;
@@ -1612,14 +1630,16 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
       if (squeezed.summarized) turnCompactions++;
       ctx.softCompactStuckAt = soft && (!squeezed.summarized || usedTokens(ctx) > softLimit(window)) ? usedTokens(ctx) : 0;
       // 服务器裁过、这边却没什么可压的（最近一步自己就太大）：把最大的那一条拿掉，不然下一次它还得裁
+      // shedLargest 原地改：先留一份换之前的，换完只记换掉的那几条（原来这一支拿掉了也不记，接回来又回来了）
+      const beforeShed = ctx.messages.slice();
       if (forced && !squeezed.summarized && !squeezed.elided) shedLargest(ctx.messages);
       // 压过了还超：把最大的几条换成占位，不留到下一轮再压一次（第一百三十七轮）
       let shed = 0;
       while (shed < 8 && needsCompaction(systemText(ctx), ctx.messages, window) && shedLargest(ctx.messages) > 0) shed++;
       if (shed) {
         ctx.ui.note(`· 压缩之后还是放不下：把最大的 ${shed} 条内容从上下文里拿掉了（需要的话模型会重新读 / 重新跑）`);
-        if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages });
       }
+      recordRewrite(ctx, beforeShed);
       compactStreak++;
       if (compactStreak >= COMPACT_STREAK_STOP) {
         stalled = true;
