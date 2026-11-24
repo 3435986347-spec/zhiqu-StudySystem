@@ -53,3 +53,10 @@
 
 - CLI 全量：740 过 / 22 跳 / 0 失败。
 - 没发 npm、没部署：命令行发了 0.2.9 才到用户手里；网页代码模式要部署到服务器；桌面本机代码助手要重打桌面应用。
+
+## 发版（同一天）
+
+- npm：`zhiqu@0.2.9` 已是 `latest`（用户发的）。提交 `e04ec0a` 推到 GitHub（这台机器的 HTTPS 没有凭据，用已经能认证的 SSH 地址推的，没改远端配置）。
+- 服务器：部署前跑了和命令行源码有关的后端判据 84 / 84；`deploy-from-dev.sh` 第一次在上传那步复用的 SSH 连接断了、没换任何东西，重连后 `SKIP_BUILD=1` 再跑成功。新后端 17:05 起来，`/api/harness/meta` 的 `cliLatest` 是 0.2.9。这台机器没有 `~/.ssh/zhiqu_server`，用用户给的密码建一条复用连接登的，密码文件建完连接就删了。
+- macOS 桌面应用 **1.6.1**（`package-macos-native.sh 1.6.1`）：包里的命令行 0.2.9、带这几轮的新文件，包里的 node 加载得了；签名、dmg 校验都过；没有启动应用（不碰用户数据）。传到 `data/downloads`（先用不带 `.dmg` 的临时名再改名，`zhiqu:zhiqu 644`），`/api/desktop/downloads` 的 macOS 是 1.6.1、sha256 `2c9a079d…b263f` 和本机一致，公开地址 HEAD 200、大小一致。装着 1.6.0 的会在左下角胶囊看到更新。
+- **Windows 没打**：只能在 Windows 上打（.NET SDK + PowerShell 脚本 + WebView2 试跑），线上还是 1.6.0，里面的本机代码助手还是旧版命令行。
