@@ -94,12 +94,14 @@ export function verificationMaterial(goal, messages, changedFiles = []) {
 /** 解析核对员的回答。解析不了按「没核对上」算，但会说原因。 */
 export function parseVerdict(text) {
   const m = /\{[\s\S]*\}/.exec(String(text || ''));
-  if (!m) return { achieved: false, missing: '核对员没有给出可读的结论' };
+  // unreadable：核对员自己没答好（思考吃满输出上限、正文是空的；第一百六十六轮，用户那段会话 6 次核对失败里 4 次是这个）。
+  // 这不是执行者没做到，调用方不能把它算进 verifyFailures、推执行者回去重做
+  if (!m) return { achieved: false, missing: '核对员没有给出可读的结论', unreadable: true };
   try {
     const v = JSON.parse(m[0]);
     return { achieved: v.achieved === true, missing: String(v.missing || '') };
   } catch {
-    return { achieved: false, missing: '核对员的结论不是合法的 JSON' };
+    return { achieved: false, missing: '核对员的结论不是合法的 JSON', unreadable: true };
   }
 }
 

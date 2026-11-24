@@ -144,6 +144,13 @@ export function shedLargest(messages) {
 // 成批做：每改一次前面的内容，后面的缓存全部重来，所以清不出一大块就不清。
 /** 占用过了这个数就清：不等于窗口 —— 1M 的窗口背着 80 万 token 干活，每次请求都贵、都慢，也更容易看漏 */
 export const softLimit = (window) => Math.min(Math.floor(window * 0.6), 300_000);
+/**
+ * 过了软上限、先清又清不出一大块：直接摘要，不等到窗口的八成（第一百六十六轮）。
+ * 只在软上限低于六成那条线的大窗口上有意义（1M 窗口：30 万 vs 60 万 / 80 万）；小窗口的软上限本来就是六成，照旧。
+ * 这次摘要留原文的预算是软上限的三分之一：留到三成（= 1M 的软上限）的话摘完马上又过线、一轮一摘。
+ */
+export const softCompactable = (window) => softLimit(window) < Math.floor(window * 0.6);
+export const softKeep = (window) => Math.floor(softLimit(window) / 3);
 /** 一次至少清出这么多才动手 */
 export const minClear = (window) => Math.min(Math.floor(window * 0.2), 30_000);
 /** 最近这么多条工具结果不清 */
@@ -173,7 +180,8 @@ function callIndex(messages) {
 
 /** 这次写动了哪些文件 */
 function writtenPaths(call) {
-  if (call.name === 'apply_patch') return patchFiles(call.args.patch).map(cleanPath);
+  // 参数清过的 apply_patch 只剩 files（见 clearedArgs）
+  if (call.name === 'apply_patch') return (call.args.patch ? patchFiles(call.args.patch) : Array.isArray(call.args.files) ? call.args.files : []).map(cleanPath);
   return call.args.path ? [cleanPath(call.args.path)] : [];
 }
 
@@ -194,8 +202,34 @@ function recovery(call, chars, { staleByEdit = false, spilled = null } = {}) {
   return `（旧的 ${call.name} 结果已清理${what ? `：${what}` : ''}，${size}。${where}）`;
 }
 
+// ── 旧调用的参数（第一百六十六轮）──
+// 原来只清工具的输出。可写文件的活里大头在调用的参数：write_file 的整份内容、apply_patch 的补丁、shell 里的 heredoc 脚本。
+// 用户那段会话到第 1384 条时参数累计 53.6 万字、一个字没清；能清的输出不到占用的四分之一，于是十六次先清都放弃了，
+// 上下文一路涨到 78 万。参数换成一份合法的 JSON 占位：调用还在、和结果还是一对，只是正文不在了。
+const ARG_TOOLS = new Set(['write_file', 'edit_file', 'apply_patch', 'shell']);
+/** 参数短于这么多字的不清 */
+export const ARGS_CLEAR_MIN = 2_000;
+const argsCleared = (args) => Boolean(args && typeof args === 'object' && args._cleared);
+
+/** 换成什么：保留认得出这次调用的那一点（路径、命令开头），正文换成一句怎么取回 */
+function clearedArgs(call, raw, spilled) {
+  const a = call.args || {};
+  const size = `原来 ${raw.length} 字`;
+  if (call.name === 'shell') {
+    const head = String(a.command || '').replace(/\s+/g, ' ').slice(0, 200);
+    const where = spilled ? `原文存在 ${spilled}` : '原文不在上下文里了';
+    return { command_head: head, _cleared: `（旧的命令参数已清理，${size}；${where}。这条命令已经跑过，不要照着这个占位再调用）` };
+  }
+  if (call.name === 'apply_patch') {
+    const files = writtenPaths(call);
+    return { files, _cleared: `（旧的补丁已清理，${size}；改动已经落在这些文件上，要看现在的内容就 read_file）` };
+  }
+  const p = a.path ? cleanPath(a.path) : '';
+  return { ...(p ? { path: p } : {}), _cleared: `（旧的 ${call.name} 参数已清理，${size}；${p ? `${p} 在磁盘上，` : ''}要看现在的内容就 read_file）` };
+}
+
 /**
- * 先清。返回 { messages, cleared, images, freed }；清不出一大块（minFree）时原样返回、cleared = 0。
+ * 先清。返回 { messages, cleared, args, images, freed }；清不出一大块（minFree）时原样返回、cleared = 0。
  * limit：占用（不含系统提示）过了它才清，清到它的一半为止；imagesOnly 时只管图。
  * spill(text)：把要清掉的命令输出另存一份、返回路径（没有就不存，占位里说「再做一次」）。
  */
@@ -205,7 +239,7 @@ export function clearStale(messages, { limit, minFree, spill = null } = {}) {
   const oldImages = images.slice(0, Math.max(0, images.length - KEEP_IMAGES));
   const over = total > limit;
   const imageBatch = oldImages.length >= IMAGE_BATCH;
-  if (!over && !imageBatch) return { messages, cleared: 0, images: 0, freed: 0 };
+  if (!over && !imageBatch) return { messages, cleared: 0, args: 0, images: 0, freed: 0 };
 
   const calls = callIndex(messages);
   const toolAt = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
@@ -234,28 +268,54 @@ export function clearStale(messages, { limit, minFree, spill = null } = {}) {
     const text = String(m.content || '');
     return m.role === 'tool' && typeof m.content === 'string' && text.length >= CLEAR_MIN_CHARS && !CLEARED.test(text);
   };
-  // 顺序：没用了的读取（除了最近 4 条）→ 旧的输出，从最早的清起（最近 8 条不动）
+  // 旧调用的参数：结果在最近 8 条里的那些调用不动（刚写的文件，模型可能还要照着改）
+  const recentCalls = new Set([...recent].map((i) => messages[i].tool_call_id));
+  const argPlan = [];   // { at: 消息序号, id: 调用 id }
+  for (const [id, c] of calls) {
+    if (!ARG_TOOLS.has(c.name) || recentCalls.has(id) || argsCleared(c.args)) continue;
+    const tc = messages[c.at].tool_calls.find((x) => x.id === id);
+    const raw = String((tc && tc.function && tc.function.arguments) || '');
+    if (raw.length >= ARGS_CLEAR_MIN) argPlan.push({ at: c.at, id, raw });
+  }
+  // 顺序：没用了的读取（除了最近 4 条）→ 旧的输出和旧调用的参数，从最早的清起（最近 8 条不动）
   const plan = [];
   for (const i of toolAt) if (!lastFew.has(i) && clearable(i) && stale(calls.get(messages[i].tool_call_id))) plan.push(i);
-  for (const i of toolAt) if (!recent.has(i) && clearable(i) && !plan.includes(i)) plan.push(i);
+  const later = [...toolAt.filter((i) => !recent.has(i) && clearable(i) && !plan.includes(i)), ...argPlan]
+    .sort((x, y) => (typeof x === 'number' ? x : x.at) - (typeof y === 'number' ? y : y.at));
+  plan.push(...later);
+  const argSaving = (item) => estimateTokens(item.raw) - estimateTokens(JSON.stringify(clearedArgs(calls.get(item.id), item.raw, null))) - 20;
 
   const out = messages.slice();
   let freed = 0;
   let cleared = 0;
+  let clearedArgCount = 0;
   if (over) {
     const target = Math.floor(limit / 2);
     const picked = [];
     let would = 0;
     for (const i of plan) {
       if (total - would <= target) break;
-      would += estimateMessage(messages[i]) - 60;
+      would += typeof i === 'number' ? estimateMessage(messages[i]) - 60 : argSaving(i);
       picked.push(i);
     }
     // 清不出一大块就不清：为一点地方打断缓存不值。「一大块」还要看现在背着多少（CLEAR_SHARE）：
     // 清理点之后的内容全部要按未命中价重算一遍，背着 40 万只清出 3 万，要一百多次请求才省得回来
     // （拿用户那段真实会话回放量的：只按 3 万算，1M 的窗口清了 48 批）
     if (would >= Math.max(minFree, Math.floor(total * CLEAR_SHARE))) {
-      for (const i of picked) {
+      for (const item of picked) {
+        if (typeof item !== 'number') {
+          // 参数：换掉这一条调用的 arguments；同一条 assistant 消息里别的调用不动
+          const call = calls.get(item.id);
+          let spilled = null;
+          if (call.name === 'shell' && spill) { try { spilled = spill(item.raw); } catch { spilled = null; } }
+          const before = estimateMessage(out[item.at]);
+          out[item.at] = { ...out[item.at], tool_calls: out[item.at].tool_calls.map((tc) => (tc.id === item.id
+            ? { ...tc, function: { ...tc.function, arguments: JSON.stringify(clearedArgs(call, item.raw, spilled)) } } : tc)) };
+          freed += before - estimateMessage(out[item.at]);
+          clearedArgCount++;
+          continue;
+        }
+        const i = item;
         const m = messages[i];
         const call = calls.get(m.tool_call_id);
         const text = String(m.content);
@@ -270,7 +330,7 @@ export function clearStale(messages, { limit, minFree, spill = null } = {}) {
     }
   }
   let droppedImages = 0;
-  if (oldImages.length && (cleared || imageBatch)) {
+  if (oldImages.length && (cleared || clearedArgCount || imageBatch)) {
     for (const i of oldImages) {
       const next = { role: 'user', content: '（旧截图已清理：上下文里只留最近 2 张。要看现在的样子就再截一张）' };
       freed += estimateMessage(messages[i]) - estimateMessage(next);
@@ -278,7 +338,9 @@ export function clearStale(messages, { limit, minFree, spill = null } = {}) {
       droppedImages++;
     }
   }
-  return cleared || droppedImages ? { messages: out, cleared, images: droppedImages, freed } : { messages, cleared: 0, images: 0, freed: 0 };
+  return cleared || clearedArgCount || droppedImages
+    ? { messages: out, cleared, args: clearedArgCount, images: droppedImages, freed }
+    : { messages, cleared: 0, args: 0, images: 0, freed: 0 };
 }
 
 /** 旧的大段工具输出换成占位；最近几条原样保留。结构（调用与结果成对）不动。 */
@@ -458,10 +520,11 @@ export function foldSegments(segments, window) {
  * 压缩。summarize(text) 由调用方给（它去调模型）；这里只管切、拼、换。
  * 返回 { messages, summarized: 被压掉的消息条数, elided, before, after }；没什么可压时 summarized = 0。
  */
-export async function compactMessages(messages, window, summarize, { whole = null } = {}) {
+export async function compactMessages(messages, window, summarize, { whole = null, keepTokens = null } = {}) {
   const before = estimateMessages(messages);
   const turns = splitRounds(messages);
-  const keptCount = pickKept(turns, Math.floor(window * 0.3));
+  // keepTokens：留原文的预算。默认窗口的三成；过了软上限才摘的那一种要少留（见 agent.js 的 softCompaction），不然摘完马上又过线
+  const keptCount = pickKept(turns, keepTokens != null ? keepTokens : Math.floor(window * 0.3));
   const old = turns.slice(0, turns.length - keptCount).flat();
   let kept = turns.slice(turns.length - keptCount).flat();
   const e = elideOldToolOutputs(kept);

@@ -19,7 +19,7 @@ import { patchFiles } from './tools/patch.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
 import { loadSkill, loadSkillSchema } from './skills.js';
 import { buildSystemMessage, environmentBlock, today } from './prompt.js';
-import { clearStale, compactMessages, minClear, needsCompaction, shedLargest, softLimit, SUMMARY_INSTRUCTIONS } from './compact.js';
+import { clearStale, compactMessages, minClear, needsCompaction, shedLargest, softCompactable, softKeep, softLimit, SUMMARY_INSTRUCTIONS } from './compact.js';
 import { dropDanglingToolCalls } from './session.js';
 import { ApiError } from './api.js';
 import { sleep } from './http.js';
@@ -1356,10 +1356,11 @@ export function clearNow(ctx, window) {
     return path.relative(ctx.root, file).split(path.sep).join('/');
   } : null;
   const r = clearStale(ctx.messages, { limit: Math.max(1_000, softLimit(window) - system), minFree: minClear(window), spill });
-  if (!r.cleared && !r.images) return r;
+  if (!r.cleared && !r.args && !r.images) return r;
   ctx.messages = r.messages;
   if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'compact', messages: ctx.messages });
-  const bits = [r.cleared ? `${r.cleared} 段旧的工具输出` : '', r.images ? `${r.images} 张旧截图` : ''].filter(Boolean).join('、');
+  const bits = [r.cleared ? `${r.cleared} 段旧的工具输出` : '', r.args ? `${r.args} 个旧调用的参数（写过的内容、跑过的脚本）` : '',
+    r.images ? `${r.images} 张旧截图` : ''].filter(Boolean).join('、');
   ctx.ui.note(`· 上下文占用过了 ${softLimit(window)} token：清理了 ${bits}（约 ${r.freed} token），要用时模型会重新读`);
   return r;
 }
@@ -1429,7 +1430,7 @@ export const COMPACT_STREAK_STOP = 3;
 /** 一项清单刚做完时，占用过了这么多就顺势压缩 */
 export const BOUNDARY_THRESHOLD = 0.6;
 
-export async function compactNow(ctx, signal, { manual = false } = {}) {
+export async function compactNow(ctx, signal, { manual = false, soft = false } = {}) {
   const ui = ctx.ui;
   const window = ctx.model ? ctx.model.effectiveContextWindow || 64_000 : 64_000;
   if (manual) ui.step('压缩对话');
@@ -1438,7 +1439,9 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
     // 真要调模型压摘要时才说：自动触发、又只有最近一轮可留的时候，这里一句话都不该打
     if (!manual && !announced) {
       announced = true;
-      ui.step(`对话快到上下文上限（窗口 ${window} token 的 80%），把较早的部分压成摘要`);
+      ui.step(soft
+        ? `上下文占用过了 ${softLimit(window)} token、旧的工具输出清不出多少，把较早的部分压成摘要（背得越多每次请求越贵、越慢）`
+        : `对话快到上下文上限（窗口 ${window} token 的 80%），把较早的部分压成摘要`);
       // 用户 2026-09-28：1M 的模型被按默认 64000 算、压缩了两次 —— 没填窗口时这里要说出来
       if (ctx.model && !ctx.model.contextWindowTokens) ui.note('    （这个模型没填上下文窗口，按默认算的；它实际更大的话用 /window 设，比如 /window 1m）');
     }
@@ -1451,7 +1454,7 @@ export async function compactNow(ctx, signal, { manual = false } = {}) {
       messages: [{ role: 'system', content: SUMMARY_INSTRUCTIONS }, { role: 'user', content: transcriptText }],
     });
     return r.text.trim();
-  }, { whole: summaryOnPrefix(ctx) ? () => summarizeOnPrefix(ctx, window, signal) : null });
+  }, { whole: summaryOnPrefix(ctx) ? () => summarizeOnPrefix(ctx, window, signal) : null, keepTokens: soft ? softKeep(window) : null });
   if (result.failed) {
     ui.warn(`这次摘要没写成（${result.failed}），没有压缩${result.elided ? `，只省略了 ${result.elided} 段旧的工具输出` : ''}`);
     if (result.elided) {
@@ -1593,16 +1596,21 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
     announceEnvChange(ctx);
     // 先清再摘（第一百三十九轮）：不调模型、能取回的清理先做；还不够才轮到下面的摘要
     const swept = clearNow(ctx, window);
-    if (swept.cleared || swept.images) turnClears++;
+    if (swept.cleared || swept.args || swept.images) turnClears++;
     // 服务器上一次替我们裁过：这边估少了，马上自己压（见 callModelOnce 里 start 那一支）
     const forced = Boolean(ctx.serverTrimmed);
     ctx.serverTrimmed = false;
     // 挑时机（第一百三十八轮）：过了六成、又正好有一项清单刚标完成，就在这里压 —— 这时的摘要最干净；否则等到八成
     const boundary = ctx.todoJustCompleted && over(ctx, window, BOUNDARY_THRESHOLD);
     ctx.todoJustCompleted = false;
-    if (forced || boundary || over(ctx, window)) {
-      const squeezed = await compactNow(ctx, signal);
+    // 过了软上限、先清清不出（第一百六十六轮）：直接摘，不等八成。上一次软摘没压下来的话，要再多背一截（minClear）才再试，不一轮一摘
+    const used = usedTokens(ctx);
+    const soft = !forced && !boundary && !over(ctx, window) && softCompactable(window) && !swept.cleared && !swept.args
+      && used > softLimit(window) && !(ctx.softCompactStuckAt && used < ctx.softCompactStuckAt + minClear(window));
+    if (forced || boundary || soft || over(ctx, window)) {
+      const squeezed = await compactNow(ctx, signal, { soft });
       if (squeezed.summarized) turnCompactions++;
+      ctx.softCompactStuckAt = soft && (!squeezed.summarized || usedTokens(ctx) > softLimit(window)) ? usedTokens(ctx) : 0;
       // 服务器裁过、这边却没什么可压的（最近一步自己就太大）：把最大的那一条拿掉，不然下一次它还得裁
       if (forced && !squeezed.summarized && !squeezed.elided) shedLargest(ctx.messages);
       // 压过了还超：把最大的几条换成占位，不留到下一轮再压一次（第一百三十七轮）
@@ -1994,14 +2002,21 @@ export function recordGoal(ctx) {
   if (ctx.store && ctx.session) ctx.store.append(ctx.session.id, { type: 'goal', goal: ctx.goal });
 }
 
-/** 独立核对：不带工具，只看目标、证据与真实的工具结果。 */
+/**
+ * 独立核对：不带工具，只看目标、证据与真实的工具结果。
+ * 明说不思考（第一百六十六轮）：原来跟着用户的档位，思考把输出上限吃满、正文是空的 ——
+ * 用户那段会话 6 次核对失败里 4 次是「没有给出可读的结论」，那 4 次输出都正好撞上限。
+ * 没答好就再问一次；两次都没答好，结果带 unreadable，由 runGoal 照实说，不算执行者的。
+ */
 export async function verifyGoal(ctx, signal) {
-  const r = await callModel(ctx, [], signal, {
-    render: false, maxTokens: 1024,
+  const ask = () => callModel(ctx, [], signal, {
+    render: false, maxTokens: 1024, effort: SUMMARY_EFFORT,
     messages: [{ role: 'system', content: VERIFY_INSTRUCTIONS },
       { role: 'user', content: verificationMaterial(ctx.goal, ctx.messages, [...(ctx.goalChangedFiles || [])]) }],
   });
-  return parseVerdict(r.text);
+  const first = parseVerdict((await ask()).text);
+  if (!first.unreadable || (signal && signal.aborted)) return first;
+  return parseVerdict((await ask()).text);
 }
 
 /**
@@ -2033,6 +2048,14 @@ export async function runGoal(ctx, { signal, maxTurns = DEFAULT_MAX_GOAL_TURNS, 
     if (goal.status === 'achieved') {
       ui.step('核对目标是否真的达成');
       const verdict = await verifyGoal(ctx, signal);
+      if (signal && signal.aborted) return 'aborted';
+      // 核对员两次都没答好：核对不了，不是执行者没做到 —— 不记失败、不推它回去重做，照实告诉用户
+      if (verdict.unreadable) {
+        ui.result(`核对员两次都没给出可读的结论（${verdict.missing}），这次没核对成；按执行者的证据收尾（请你自己再看一眼）`, false);
+        recordGoal(ctx);
+        ui.line(ui.paint.green(`🎯 目标达成（未经核对）：${goal.text}`));
+        return 'achieved';
+      }
       if (verdict.achieved || goal.verifyFailures >= MAX_VERIFY_FAILURES) {
         ui.result(verdict.achieved ? '核对通过' : `核对 ${MAX_VERIFY_FAILURES} 次都没通过，按执行者的证据收尾（请你自己再看一眼）`, verdict.achieved);
         recordGoal(ctx);
