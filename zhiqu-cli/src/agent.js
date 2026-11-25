@@ -14,7 +14,7 @@ import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
 import { localSchemas, previewSchema, READ_TOOLS, shellSchemas } from './tools/local.js';
-import { rssMb } from './exitlog.js';
+import { evidencePlan } from './evidence.js';
 import { changeLine, diffSnapshots, dropUnchanged, editNudge, firstDiffLine, hashFiles, inlineEdit, mentionedFiles, NOOP_REPLACE, NUDGE_EVERY, readTexts, snapshot, usesReplace } from './tools/shell-writes.js';
 import { draftSchemas } from './tools/drafts.js';
 import { patchFiles } from './tools/patch.js';
@@ -1847,6 +1847,22 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
     const looping = res.finishReason === 'length' && !calls.length && repeating(message.content);
     if (looping) message.content = loopTrimmed(message.content);
 
+    const ev = !calls.length && res.finishReason !== 'length' && !ctx.evidenceRan
+      ? evidencePlan(ctx.changedFiles, ctx.goal && ctx.goal.criteria) : null;
+    if (ev && ctx.local && ctx.local.sandbox && ctx.local.prepareShell) {
+      ctx.evidenceRan = true;
+      record(ctx, message);
+      const prep = ctx.local.prepareShell({ command: ev.text, timeout_seconds: 60 });
+      let text;
+      if (prep.error) text = `（检查没有跑：${prep.error}）`;
+      else {
+        const ran = await ctx.local.commitShell(prep, { policy: shellPolicy(ctx), signal });
+        const tail = String(ran.output || '').slice(-4000);
+        text = `（这是 harness 跑的检查，不是你说跑过了：${ev.text}\n退出码 ${ran.exitCode}\n${tail || '（没有输出）'}）`;
+      }
+      record(ctx, { role: 'user', content: text }, 'system');
+      continue;
+    }
     // 安静模式：不调工具的那条才是结论，收完才打（被截断的结论也是结论的一段）。调工具前的那一句已经在上面打过一行
     const nudge = calls.length || res.finishReason === 'length' ? null
       : pendingNudge(ctx, message.content, { nudged, claimChecked, lastRound: round === maxRounds - 1 });

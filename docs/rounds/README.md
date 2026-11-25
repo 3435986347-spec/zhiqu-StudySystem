@@ -192,3 +192,4 @@
 | [第一百七十九轮](round-179.md) | shell 替换没改到文件时，失败写在提醒外面并按失败记；改到的行计入第 3 回根因，拦住下一次内联修改。命令本身仍不拒绝 | 新断言先红；`holdOn` 返回 null 则第 4 次写成 color = 5，见红后改回；CLI 全量 761 过 / 23 跳（整包里 2 条偶发，单独再跑过） |
 | [第一百八十轮](round-180.md) | 按文件名找文件的 `glob`（最多 200 个路径），不再把这个名字指去 `list_files` | `test/glob.test.js`；plan 档和草稿层的工具表加上 glob |
 | [第一百八十一轮](round-181.md) | 同一批里的读、搜、glob 最多 4 个一起跑；写和命令仍按顺序，工具结果按调用顺序落盘 | `test/parallel.test.js` |
+| [第一百八十二轮](round-182.md) | 改了最多 3 个 `*.test.js` 时，收尾前由 harness 跑 `node --test`；不猜 npm / mvn | `test/evidence.test.js` |
