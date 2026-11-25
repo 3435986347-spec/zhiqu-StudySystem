@@ -26,6 +26,7 @@ import { dropDanglingToolCalls, messageKey } from './session.js';
 import { ApiError } from './api.js';
 import { sleep } from './http.js';
 import { parseTodos, TODO_TOOL, todoBlock, todoLines, todoNudge, todoReply, todoSchema, unfinished } from './todos.js';
+import { boundaryAsk, collectReadmeRisks, unansweredRisks } from './readme-risks.js';
 import { spillLongInput } from './longinput.js';
 import fs from 'node:fs';
 import { stat as diffStat } from './render/diff.js';
@@ -871,6 +872,15 @@ function runningOwnJobs(ctx) {
 const ownJobsNudge = (ids) => `（你起的后台命令 ${ids.join('、')} 还在跑。交结论之前先处理掉：要结果就用 shell_output 看完，不用了就 shell_stop 停掉。`
   + '你交了结论就算停下，到时还在跑的会被停掉。）';
 
+function canReadWorkspace(ctx) {
+  return Boolean(ctx.local && ctx.local.root);
+}
+function openReadmeRisks(ctx) {
+  if (!canReadWorkspace(ctx)) return [];
+  const changed = [...(ctx.changedFiles || []), ...(ctx.goalChangedFiles || [])];
+  return unansweredRisks(collectReadmeRisks(ctx.local.root, changed), ctx.riskAsked || '');
+}
+
 function pendingNudge(ctx, text, { nudged, claimChecked, lastRound }) {
   if (lastRound || /[？?]\s*$/.test((text || '').trim())) return null;
   // 派出去的子 agent 还在跑就收尾：推一次去 wait_agent（第一百二十三轮）
@@ -878,6 +888,7 @@ function pendingNudge(ctx, text, { nudged, claimChecked, lastRound }) {
   // 子 agent 要交结论时它起的后台命令还在跑：推一次「看完输出、停掉」（第一百二十六轮）；还不停，交结论时由 settle 停掉
   if (ctx.subagent && !ctx.jobsNudged && runningOwnJobs(ctx).length) return 'jobs';
   if (!nudged && ctx.mode !== 'plan' && unfinished(ctx.todos).length) return 'todo';
+  if (!ctx.riskNudged && ctx.mode !== 'plan' && !ctx.subagent && openReadmeRisks(ctx).length) return 'risk';
   // 交活时说的和这一轮做的对不上：宿主给的核对（第九十五轮：网页代码模式里一个工具没调就说「已生成三个文件的草稿」），只推一次。命令行里没有这个钩子
   if (!claimChecked && ctx.claimCheck && ctx.claimCheck(text)) return 'claim';
   return null;
@@ -1039,6 +1050,10 @@ async function runTool(ctx, call, offered, signal) {
     }
     const content = formatDecisionResult(normalized.questions, outcome && outcome.cancelled === true ? { cancelled: true, answers: [] } : checked);
     const cancelled = Boolean(outcome && outcome.cancelled === true);
+    if (!cancelled) {
+      const asked = normalized.questions.map((q) => [q.question, ...(q.options || []).map((o) => o.label)].join(' ')).join('\n');
+      ctx.riskAsked = `${ctx.riskAsked || ''}\n${asked}`;
+    }
     ui.result(cancelled ? '用户取消了这次决策' : `用户已回答 ${checked.answers.length} 个问题`, !cancelled);
     stepNote(ctx, { ok: !cancelled, summary: cancelled ? '用户取消，未采用推荐项' : `已回答 ${checked.answers.length} 个问题`, detail: listDetail(content) });
     return content;
@@ -1069,6 +1084,8 @@ async function runTool(ctx, call, offered, signal) {
       const spinKey = `write:${String(args.path || '')}`;
       const prep = name === 'edit_file' ? local.prepareEdit(args) : local.prepareWrite(args);
       if (prep.error) { ui.result(prep.error, false); stepNote(ctx, { ok: false, summary: prep.error }); return failed(ctx, spinKey, prep.error, (prep.unchanged ? sameEditReminder : writeReminder)(args.path)); }
+      const held = churnBlock(ctx, prep);
+      if (held) { ui.result(held, false); stepNote(ctx, { ok: false, summary: held }); return held; }
       if (prep.newDirectories.length) ui.note(`    （会连同新建目录 ${prep.newDirectories.join('、')}）`);
       if (!(await confirmWrite(ctx, prep))) {
         ui.result('用户没有同意，没写', false);
@@ -1091,6 +1108,8 @@ async function runTool(ctx, call, offered, signal) {
       const shown = patchFiles(args.patch).join('、') || '补丁';
       const prep = local.preparePatch(args);
       if (prep.error) { ui.result(prep.error, false); stepNote(ctx, { ok: false, summary: prep.error }); return failed(ctx, spinKey, prep.error, (prep.unchanged ? sameEditReminder : writeReminder)(shown)); }
+      const heldPatch = (prep.writes || []).map((w) => churnBlock(ctx, w)).find(Boolean);
+      if (heldPatch) { ui.result(heldPatch, false); stepNote(ctx, { ok: false, summary: heldPatch }); return heldPatch; }
       if (!(await confirmPatch(ctx, prep))) {
         ui.result('用户没有同意，没改', false);
         stepNote(ctx, { ok: false, summary: '用户没有同意，没改' });
@@ -1322,6 +1341,15 @@ async function runTool(ctx, call, offered, signal) {
     return r.content;
   }
   if (kind === 'goal') {
+    if (String(args.status) === 'achieved' && ctx.decide && !ctx.subagent && !ctx.exec) {
+      const open = openReadmeRisks(ctx);
+      if (open.length) {
+        const msg = boundaryAsk(open, { canAsk: true });
+        ui.result(msg, false);
+        stepNote(ctx, { ok: false, summary: '已知边界还没问用户' });
+        return msg;
+      }
+    }
     const reply = applyGoalUpdate(ctx.goal, args);
     recordGoal(ctx);
     const label = { achieved: '宣告达成', blocked: '宣告卡住', active: '进展' }[ctx.goal.status];
@@ -1369,8 +1397,12 @@ export function workOf(ctx) {
   return ctx.work;
 }
 
-const churnReminder = (w) => `\`${w.rel}\` 第 ${w.from}–${w.to} 行这一段，这段会话里已经改了 ${w.count} 回。停一下：这一处要改成什么样才算对？`
-  + '写下一条能检查的标准（拿不准就问用户），照它验一次；如果是这条路走不通，用 note 记一条 dead_end 再换做法，不要接着一版一版地试。';
+const churnReminder = (w) => `\`${w.rel}\` 第 ${w.from}–${w.to} 行这一段，这段会话里已经改了 ${w.count} 回。先用 note（kind=dead_end 或 decision）写下根因假设：这一处为什么改了还不对。没写下之前，这一段不能再改。`
+  + '不要为了让截图或测试赶上，去改播放速度、延时、动画时长这类产品参数；换验证办法。';
+function churnBlock(ctx, prep) {
+  if (!prep || prep.creating) return null;
+  return workOf(ctx).churnHold(prep.rel, firstChangedLine(prep.oldText, prep.newText));
+}
 function withChurn(content, warns) {
   const hit = warns.filter(Boolean);
   return hit.length ? `${content}${hit.map((w) => `\n\n【提醒】${churnReminder(w)}`).join('')}` : content;
@@ -1805,6 +1837,11 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
       if (nudge === 'todo') {
         nudged = true;
         record(ctx, { role: 'user', content: todoNudge(ctx.todos) }, 'system');
+        continue;
+      }
+      if (nudge === 'risk') {
+        ctx.riskNudged = true;
+        record(ctx, { role: 'user', content: boundaryAsk(openReadmeRisks(ctx), { canAsk: Boolean(ctx.decide && !ctx.exec) }) }, 'system');
         continue;
       }
       if (nudge === 'jobs') {

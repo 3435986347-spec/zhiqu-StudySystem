@@ -98,32 +98,60 @@ test('note：定过的事、走不通的路、位置、临时文件记进状态�
   assert.equal(w.data.notes.decision.length, 20);
 });
 
-test('同一处改到第 6 回提醒一次（跨压缩也数着）；新建的文件有名单，shell 建的也在', async () => {
+test('同一处改到第 3 回就要写下根因，没写下不能再改；新建的文件有名单，shell 建的也在', async () => {
   assert.equal(firstChangedLine('a\nb\nc', 'a\nB\nc'), 2);
   assert.equal(firstChangedLine('a\nb', 'a\nb\nc'), 3);
   assert.equal(firstChangedLine('a', 'a'), null);
+  assert.equal(CHURN_WARN[0], 3);
   const root = tmpdir();
   write(root, 'sky.js', `${'line\n'.repeat(300)}color = 0;\n${'tail\n'.repeat(300)}`);
-  const edits = Array.from({ length: 7 }, (_, i) => call('edit_file', { path: 'sky.js', old_string: `color = ${i};`, new_string: `color = ${i + 1};` }));
-  const ctx = makeCtx({ root, replies: [call('read_file', { path: 'sky.js' }), ...edits, call('write_file', { path: '_sky_v2.txt', content: 'x\n' }), { text: '改完了' }] });
-  // shell 建的文件工具那边看不到：这一句进行中在盘上多出一个
+  const edit = (i) => call('edit_file', { path: 'sky.js', old_string: `color = ${i};`, new_string: `color = ${i + 1};` });
+  const ctx = makeCtx({ root, replies: [
+    call('read_file', { path: 'sky.js' }), edit(0), edit(1), edit(2), edit(3),
+    call('note', { kind: 'dead_end', text: '回调没跑是因为滚动容器在写入之后才挂上，不是时长的问题' }),
+    edit(3),
+    call('write_file', { path: '_sky_v2.txt', content: 'x\n' }),
+    { text: '改完了' },
+  ] });
   const realStream = ctx.api.stream.bind(ctx.api);
   let n = 0;
   ctx.api.stream = async (...a) => { if (++n === 3) write(root, 'made-by-shell.py', 'print(1)\n'); return realStream(...a); };
   await runTurn(ctx, '调天空');
   const r = toolResults(ctx);
-  assert.equal(CHURN_WARN[0], 6);
-  const warned = r.map((t, i) => (/这段会话里已经改了 \d+ 回/.test(t) ? i : -1)).filter((i) => i >= 0);
-  assert.deepEqual(warned, [6], `只在第 6 回改完时提醒：${warned}`);
-  assert.match(r[6], /`sky\.js` 第 201–400 行这一段，这段会话里已经改了 6 回/);
+  assert.match(r[3], /【提醒】[\s\S]*已经改了 3 回[\s\S]*根因假设[\s\S]*播放速度/);
+  assert.match(r[4], /还没写下根因/);
+  assert.match(fs.readFileSync(path.join(root, 'sky.js'), 'utf8'), /color = 4;/);
   const saved = onDisk(ctx);
-  assert.equal(saved.files['sky.js'].edits, 7);
+  assert.equal(saved.files['sky.js'].edits, 4);
   assert.deepEqual(saved.created.sort(), ['_sky_v2.txt', 'made-by-shell.py']);
   const card = workOf(ctx).card();
-  assert.match(card, /`sky\.js`：改了 7 回（\+7 -7）/);
-  assert.match(card, /`sky\.js` 第 201 行起的 200 行：7 回/);
+  assert.match(card, /`sky\.js`：改了 4 回（\+4 -4）/);
+  assert.match(card, /`sky\.js` 第 201 行起的 200 行：4 回/);
   assert.match(card, /`_sky_v2\.txt`（临时）/);
   assert.match(card, /made-by-shell\.py/);
+});
+
+test('根因没写完：临时笔记和太短的话不解锁；别的 200 行段不受影响', () => {
+  const w = new WorkState(null);
+  for (let i = 0; i < 3; i++) {
+    assert.equal(w.churnHold('a.js', 10), null);
+    w.edited('a.js', { line: 10, added: 1, removed: 1 });
+  }
+  assert.match(w.churnHold('a.js', 10), /根因/);
+  assert.equal(w.churnHold('a.js', 250), null, '另一段还没到 3 回');
+  w.note({ kind: 'temp', text: '这只是个临时文件，不是这一处的根因' });
+  w.note({ kind: 'dead_end', text: '太短' });
+  assert.match(w.churnHold('a.js', 10), /根因/);
+  w.note({ kind: 'decision', text: '根因是监听加在了会被整段替换掉的节点上', path: 'b.js' });
+  assert.match(w.churnHold('a.js', 10), /根因/, '记在别的文件上不解这一个');
+  w.note({ kind: 'dead_end', text: '根因是监听加在了会被整段替换掉的节点上', path: 'a.js' });
+  assert.equal(w.churnHold('a.js', 10), null);
+  w.edited('a.js', { line: 10, added: 1, removed: 1 });
+  w.edited('a.js', { line: 10, added: 1, removed: 1 });
+  w.edited('a.js', { line: 10, added: 1, removed: 1 });
+  assert.match(w.churnHold('a.js', 10), /根因/);
+  w.discarded('a.js');
+  assert.equal(w.churnHold('a.js', 10), null, '撤回草稿后这一段的拦截也清掉');
 });
 
 test('压完还回去：状态卡 + 压缩前在看的那几段代码的当前内容；清单不再另补一条', async () => {

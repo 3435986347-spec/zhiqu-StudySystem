@@ -25,8 +25,10 @@ const MAX_STEPS = 15;
 const MAX_FOCUS = 5;
 const MAX_FILES = 60;
 const MAX_CREATED = 80;
-/** 同一处改到这么多回各提醒一次。按「文件 + 200 行一段」数：单文件项目里整份文件改几十回是常事，同一段改六回就该停下想想 */
-export const CHURN_WARN = [6, 12, 24];
+/** 同一处改到这么多回各提醒一次，并且在下一次再改这一段之前要先写下根因。第 3 回就拦，不等到第 6 回。 */
+export const CHURN_WARN = [3, 6, 12, 24];
+const CAUSE_KINDS = new Set(['decision', 'dead_end']);
+const CAUSE_MIN = 12;
 export const CHURN_SPAN = 200;
 /** 没做完的状态过这么久就不再接（那是上一次的活，不是接着做） */
 export const STALE_MS = 24 * 3600 * 1000;
@@ -49,7 +51,7 @@ export function sameItem(a, b) {
 
 const empty = () => ({
   v: 1, said: [], todos: [], done: [], notes: { decision: [], dead_end: [], anchor: [], temp: [] },
-  files: {}, created: [], churn: {}, steps: [], focus: [], turn: { status: 'idle', at: null }, answer: '',
+  files: {}, created: [], churn: {}, hold: {}, steps: [], focus: [], turn: { status: 'idle', at: null }, answer: '',
 });
 
 export function noteSchema() {
@@ -219,6 +221,7 @@ export class WorkState {
     if (same >= 0) list[same] = entry; else list.push(entry);
     if (list.length > MAX_NOTES) list.splice(0, list.length - MAX_NOTES);
     if (kind === 'temp' && where) this.created(where);
+    if (CAUSE_KINDS.has(kind) && said.length >= CAUSE_MIN) this.clearHold(where);
     this.save();
     return { content: `记下了（${KIND_LABEL[kind]}，这一类现在 ${list.length} 条）。`, summary: `${KIND_LABEL[kind]}：${clip(said, 60)}` };
   }
@@ -256,12 +259,40 @@ export class WorkState {
       const from = Math.floor((line - 1) / CHURN_SPAN) * CHURN_SPAN + 1;
       const key = `${rel}:${from}`;
       d.churn[key] = (d.churn[key] || 0) + 1;
-      if (CHURN_WARN.includes(d.churn[key])) warn = { rel, from, to: from + CHURN_SPAN - 1, count: d.churn[key] };
+      if (CHURN_WARN.includes(d.churn[key])) {
+        if (!d.hold) d.hold = {};
+        d.hold[key] = true;
+        warn = { rel, from, to: from + CHURN_SPAN - 1, count: d.churn[key] };
+      }
       this.focus(rel, Math.max(1, line - 40), 160);
     } else {
       this.save();
     }
     return warn;
+  }
+
+  /**
+   * 这一段已经到了提醒次数、根因还没写下：再改就拒。where 空则清掉全部（假设是对当前这一处说的）。
+   * 只认 decision / dead_end，而且要有一句完整的话；临时文件笔记、太短的「好」不算。
+   */
+  churnHold(rel, line) {
+    if (!Number.isInteger(line) || line <= 0) return null;
+    const d = this.data;
+    const from = Math.floor((line - 1) / CHURN_SPAN) * CHURN_SPAN + 1;
+    const key = `${rel}:${from}`;
+    if (!d.hold || !d.hold[key]) return null;
+    const n = d.churn[key] || 0;
+    return `\`${rel}\` 第 ${from}–${from + CHURN_SPAN - 1} 行这一段已经改了 ${n} 回，还没写下根因。先用 note（kind=dead_end 或 decision）写清这一处为什么改了还不对，再改。不要为了让截图或测试赶上，去改播放速度、延时、动画时长这类产品参数；换验证办法。`;
+  }
+
+  clearHold(rel) {
+    const d = this.data;
+    if (!d.hold) return;
+    if (!rel) { d.hold = {}; return; }
+    for (const key of Object.keys(d.hold)) {
+      const at = key.lastIndexOf(':');
+      if (at > 0 && key.slice(0, at) === rel) delete d.hold[key];
+    }
   }
 
   /** 撤回了这个文件的草稿（第一百五十六轮）：从「改过的文件」「新建的文件」「同一处改得多」「正在看的那段」里拿掉 —— 不然压缩之后卡上还写着改过它、还把它的内容塞回去 */
@@ -274,6 +305,7 @@ export class WorkState {
       const at = key.lastIndexOf(':');
       if (at > 0 && key.slice(0, at) === rel) delete d.churn[key];
     }
+    this.clearHold(rel);
     this.save();
   }
 
@@ -335,7 +367,7 @@ export class WorkState {
     }
     const hot = Object.entries(d.churn).filter(([, n]) => n >= CHURN_WARN[0]).sort((a, b) => b[1] - a[1]).slice(0, 5);
     if (hot.length) {
-      out.push('', '### 同一处改得多的（先想清楚验收是什么，或者问用户，再接着改）');
+      out.push('', '### 同一处改得多的（先写下根因再改；不要为了验证去改播放速度或延时）');
       for (const [key, n] of hot) { const at = key.lastIndexOf(':'); out.push(`- \`${key.slice(0, at)}\` 第 ${key.slice(at + 1)} 行起的 ${CHURN_SPAN} 行：${n} 回`); }
     }
     if (d.created.length) {

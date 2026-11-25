@@ -65,6 +65,8 @@
 - **工作状态卡**（第一百三十八轮，`src/state.js`，`work-state.test.js`）：压缩压不掉、进程崩了也在的那一份，每变一次落盘。有会话记录时在 `sessions/<id>.state.json`，没有（桌面 / 网页那一份）在项目的 `.zhiqu/state.json`、做完就删。
   事实由命令行记（原话、清单和**做完的记录**、改过 / 新建的文件、同一处改了几回、最近几步、在看哪），判断由模型用 `note` 记。`ctx.todos` 还是给模型复述用的那份，记账在 `workOf(ctx).setTodos`。
   什么时候进上下文：压缩之后（`restoreAfterCompaction`，连同刚在看的代码）、上一轮 / 上一段没做完的开工时（`inheritedCard`）。**不进系统提示**。这几条消息的开头在 `origins.js` 的 `LEGACY_SYSTEM` 里登记着，不然会被当成用户的原话。
+  同一段（文件 + 200 行）改到第 3 回（第一百七十六轮，原来第 6 回才提醒）工具结果里要求用 `note` 写下根因，没写下之前这一段不能再改；提醒里写明不要为了截图或测试去改播放速度、延时、动画时长。第 6、12、24 回再提醒一次，同样先拦住。临时笔记和短于 12 字的话不算根因。
+  收尾（第一百七十七轮，`readme-risks.js`）：这次改过的 `README.md` 里「已知边界 / 已知限制 / 已知缺陷 / 已知风险」那一节的条目，收尾前要先 `ask_user`。没问就宣告目标达成会被拒；普通收尾推一次。问过「已知边界」或某一条的开头才算问过。没改过的 README、plan 档、子 agent 不拦。
 - **子进程与 MCP 服务器都不继承命令行的环境**（那里有 `ZHIQU_TOKEN`）。子进程的 HOME 是这个进程自己的空目录（`childHome`，第九十轮；原来是工作区，仓库里带的 `.gitconfig`、Python 用户 site 里的 `sitecustomize.py` 会被当成用户自己的配置执行）。超时杀整个进程组（`detached` + `kill(-pid)`）：
   只杀父进程的话孙子进程攥着管道，close 永远等不到 —— 这条判据因此自带 15 秒时限。
 - **配置在 `.zhiqu/`**：`~/.zhiqu/config.json`（600）、`system.md`（第一次写一份内置系统提示，没改过的跟着内置更新，
@@ -78,6 +80,11 @@
   宣告 achieved（必须附证据）或 blocked（必须写 blocker）才能停，没宣告就收尾会被自动推着接着做；宣告达成后
   **再过一道不带工具的独立核对**（只看目标、证据与真实的工具结果），不过就带着缺口继续；轮数有上限；目标记进会话。
   无人值守（`--goal` 且输入不是终端）的退出码：0 达成 / 2 卡住 / 3 轮数用完。
+  网页版 agent 或带工具的服务（第一百七十三轮，`goal.js` 的 `toolWebFloor`）：目标提示和核对材料里另有四条底线
+  （会话落在服务端、谁能调用和工作目录由服务端定、密钥不进客户端、留下可重跑的测试）。有网页的说浏览器，只是带工具的服务说内存和客户端请求。
+  模型只写展示层、或写「不做持久化」，这四条仍在；不塞进 `criteria`（那里最多 1000 字，写满会把底线截掉）。
+  贪吃蛇网页、工具栏、命令行 agent、「不带工具」「不是工具服务」不带（第一百七十四、一百七十五轮复查）。
+  证据分级（第一百七十五轮，`todos.js` 的 `syntaxOnlyEvidence`）：`node --check`、`node -c`、`py_compile`、`tsc --noEmit` 只算 L0。清单项标完成、目标宣告达成，证据只有这些就拒。同一句里还有测试、请求、断言或跑过程序，就不算只有语法检查。没写证据、截图、读过不拦。
 - **速度：不要用全局 `fetch`，也不要 ESM `import 'node:http'`**（2026-09-24 实测）。调用过一次 fetch，进程退出就多等
   约 2.4 秒；根子是 TLS：环境里设了 `NODE_USE_SYSTEM_CA=1` 时加载 TLS 要把钥匙串里的系统证书全读一遍（1.1～1.5 秒），
   而 **ESM 的 `import 'node:http'` 会顺带把 tls 拉进来**（CommonJS 的 require 不会）。`src/http.js` 因此用
@@ -106,6 +113,7 @@
 - **`delete_file`**（用户要的）：规矩照写入 —— 这段会话读过或写过、之后没被改过才能删，确认期间被改过不删；
   不是抹掉而是挪进 `.zhiqu/trash/<时间>/`；ask 档单独一道确认、单独一个「本会话都允许删除」（允许了写不等于允许了删）。
   `run_command` 仍不许 `rm`，拒绝时指到 `delete_file`。
+  验证脚本（`.tmp-*.js`，第一百七十四轮）在收成 `tests/<名字>.test.js` 或 `test/<名字>.test.js` 并且引用了 `node:test` 或 `node:assert` 之前删不掉（补丁里的删除同一道）；只有 `node --check`、或写了 `assert` 但没引用这两个模块，不算收成。一次性的预览页（html）可以删。
 - **`shell` 和系统沙箱**（第一百零九轮，Codex 同级第 2 步）：有沙箱（`detectSandbox`，真跑一次）就给 `shell`、不给 `run_command`；plan 档也有，沙箱是只读的。边界、档位、踩过的坑在 `docs/notes/code-workspace.md`（网页同一份实现）。网络默认**开**（2026-11-10 用户定的「所有人都可以联网」，原来全断），`--sandbox-network local|off` 或用户级配置的 `sandboxNetwork` 才改；**项目里的 `.zhiqu/settings.json` 不算数**（两个方向都不算）：克隆下来的仓库不能给自己改网络档位。写范围、读范围不跟着网络变。
 - **`zhiqu review` 和 `/review`**（第一百一十四轮，Codex 同级第 7 步，`src/review.js`）：只读地看一段改动，按 P0–P3 列出这次改动引入的真问题（文件、行号、为什么、怎么改）。默认看没提交的（含新文件），`--base <分支>` 从分叉点算（含没提交的），`--commit <提交>` 和第一个父提交比。没改动、只改了类型不读的文件就不叫模型（连登录都不用）；不是仓库、ref 不对退出码 2。`zhiqu review` 的 stdout 给人看，`-o` 和 `--json` 的 `final_message` 是结构化的（`findings`、`summary`、`partial`、`skipped`）；有问题也是退出码 0，脚本看 `findings`。
   **模型在单独的上下文里干活**（`runReview` 的 worker）：只读，看不到会话说过的话，过程不进会话；只有结论回到会话（`recordExchange`，历史只追加），才能接着说「修第 1 条」。格式走 `rewriteUntilValid`（和 exec 的 `--output-schema` 同一个）。模型给的路径认回工作区的写法，不在改动里的标出来、不扔。

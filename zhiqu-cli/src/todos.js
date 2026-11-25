@@ -18,7 +18,7 @@ export function todoSchema() {
       description: [
         '维护这件事的任务清单（整份替换：每次都传完整的清单）。',
         '三步以上的活先列清单再动手：每一项是一件能验证的事（例如「给 login 加限流，并让 auth 测试通过」），不要写「看看代码」这种空话。',
-        '开始做某一项时把它标成 in_progress，做完并验证过才标 completed（带一句 evidence：怎么验证的）；发现要多做一步就加进去，不需要的就删掉。',
+        '开始做某一项时把它标成 in_progress，做完并验证过才标 completed（带一句 evidence：怎么验证的）。node --check、语法检查只算 L0，不能用来标完成；完成至少要 L2：真实请求和断言（跑了测试或打了请求，并看到结果）。发现要多做一步就加进去，不需要的就删掉。',
         '做完的项命令行另外记着，不会因为你重列清单就丢 —— 不要把做完的事再列成没做的。',
         '只有一两步的小事不用列。',
       ].join('\n'),
@@ -33,7 +33,7 @@ export function todoSchema() {
               properties: {
                 content: { type: 'string', description: '这一步要做成什么' },
                 status: { type: 'string', enum: STATUSES, description: 'pending / in_progress / completed' },
-                evidence: { type: 'string', description: '标 completed 时写一句：怎么验证的（跑了什么、看到什么）。命令行会记着，对话压缩之后你还看得到' },
+                evidence: { type: 'string', description: '标 completed 时写一句：怎么验证的。node --check / 语法检查是 L0，不能标完成；要有真实请求和断言（L2）' },
               },
               required: ['content', 'status'],
             },
@@ -57,9 +57,26 @@ export function parseTodos(args) {
     if (!content) return { error: `第 ${i + 1} 项没有 content。` };
     if (!STATUSES.includes(t.status)) return { error: `第 ${i + 1} 项的 status 是「${t.status}」—— 只能是 pending / in_progress / completed。` };
     const evidence = typeof t.evidence === 'string' ? t.evidence.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+    if (t.status === 'completed' && syntaxOnlyEvidence(evidence)) {
+      return { error: `第 ${i + 1} 项标了完成，但证据只是语法检查（L0）：「${evidence}」。完成至少要 L2：真实请求和断言（跑了测试或打了请求，并看到结果）。node --check 不算。` };
+    }
     todos.push({ content: content.length > 300 ? `${content.slice(0, 300)}…` : content, status: t.status, ...(evidence ? { evidence } : {}) });
   }
   return { todos };
+}
+
+/**
+ * 语法检查单独拿来当「做完了」的证据（testagent-review-plan 3.5 第 3 条）。
+ * 只拦 L0：node --check、node -c、py_compile、tsc --noEmit、写明的语法检查。
+ * 同一句里还有测试、请求、断言、截图、跑过程序，就不是只有语法检查。
+ * 没写证据、或写的是别的（读过、截图），这里不拦 —— 拦的是把语法检查当成功能证据。
+ */
+export function syntaxOnlyEvidence(text) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!s) return false;
+  if (!/node\s+--check|\bnode\s+-c\b|语法检查|语法通过|py_compile|tsc\s+--noEmit|syntax[- ]check|只检查了语法/i.test(s)) return false;
+  if (/node\s+--test|npm\s+(?:run\s+)?test|node:test|pytest|\bassert\b|断言|curl\b|fetch\s*\(|状态码|截图|退出码|打印出|跑了|运行了|请求/.test(s)) return false;
+  return true;
 }
 
 export const unfinished = (todos) => (todos || []).filter((t) => t.status !== 'completed');

@@ -266,7 +266,7 @@ export function localSchemas() {
     fn('delete_file', [
       '删除工作区里的一个文件（只能是文件，不能是目录）。',
       '和改文件一样：这段会话里读过或写过、之后没被改过的文件才能删。',
-      '不是直接抹掉：挪进 .zhiqu/trash/ 里，要恢复挪回来就行。自己建的临时文件（校验脚本之类）用完就删掉它。',
+      '不是直接抹掉：挪进 .zhiqu/trash/ 里，要恢复挪回来就行。验证脚本（.tmp-*.js）要先收成 tests/*.test.js 才能删；一次性的预览页可以删。',
     ].join('\n'), { path: { type: 'string', description: '相对工作区根的路径' } }, ['path']),
     fn('run_command', '在工作区里运行一条命令（命令名 + 参数数组，不经过 shell）。用来跑测试、构建、运行刚写好的程序。',
       { command: { type: 'string', description: '命令名，如 node、python3、npm' },
@@ -276,6 +276,30 @@ export function localSchemas() {
 }
 
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+
+/**
+ * 验证脚本默认留下（testagent-review-plan 3.5 第 2 条，第一百七十四轮）。
+ * `.tmp-*.js` 在收成 tests/<名字>.test.js（或已有的 test/ 目录）并且里面有断言之前，delete_file 和补丁里的删除都不放行。
+ * 一次性预览页（html）不在此列。收成之后临时副本可以删。
+ * 只有 node --check、或文件还是空的，不算收成。
+ */
+function importsTestRunner(body) {
+  const code = String(body || '').replace(/\/\*[\s\S]*?\*\//g, '');
+  return code.split('\n').some((line) => /(?:from|require\()\s*['"]node:(?:test|assert)/.test(line.replace(/\/\/.*$/, '')));
+}
+
+export function tempScriptHold(root, rel) {
+  const norm = String(rel || '').replace(/\\/g, '/');
+  if (!/(?:^|\/)\.tmp-[^/]+\.(?:js|mjs|cjs)$/i.test(norm)) return null;
+  const stem = path.posix.basename(norm).replace(/^\.tmp-/i, '').replace(/\.(?:mjs|cjs|js)$/i, '').replace(/\.test$/i, '') || 'check';
+  const candidates = [`tests/${stem}.test.js`, `test/${stem}.test.js`];
+  for (const kept of candidates) {
+    let body = '';
+    try { body = fs.readFileSync(path.join(root, ...kept.split('/')), 'utf8'); } catch { continue; }
+    if (body.trim().length >= 40 && importsTestRunner(body)) return null;
+  }
+  return `${norm} 是验证脚本，不能直接删。先收成 ${candidates[0]}（node:test，里面要有断言；这个项目若用 test/ 目录就放 ${candidates[1]}）。那个文件在了，才能删这个临时副本。一次性的预览页（html）可以删。`;
+}
 
 /*
  * 模型不许改、不许删的目录。.zhiqu 是命令行自己的配置：settings.json 里有允许跑的命令、mcp.json 里的服务器
@@ -932,6 +956,8 @@ export class LocalTools {
     const known = this.known.get(rel);
     if (!known) return { error: `删除一个文件之前必须先 read_file 看过它：${rel}。没看过就删，是拿想象中的文件做决定。` };
     if (known.hash !== sha(current)) return { error: `${rel} 在你读过之后被改过了（可能是用户在编辑器里改的），请重新 read_file 看过再决定删不删。` };
+    const held = tempScriptHold(this.root, rel);
+    if (held) return { error: held };
     const text = current.toString('utf8');
     return { rel, abs: w.path, baseline: known.hash, lines: lineCount(text), bytes: current.length };
   }
