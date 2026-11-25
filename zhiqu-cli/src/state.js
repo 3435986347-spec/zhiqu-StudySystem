@@ -275,6 +275,18 @@ export class WorkState {
    * 这一段已经到了提醒次数、根因还没写下：再改就拒。where 空则清掉全部（假设是对当前这一处说的）。
    * 只认 decision / dead_end，而且要有一句完整的话；临时文件笔记、太短的「好」不算。
    */
+  /** 这个文件上任意一段还被拦住：shell 改文件之前不知道会碰到哪一行，有一段拦住就先不跑。 */
+  holdOn(rel) {
+    const d = this.data;
+    if (!d.hold) return null;
+    for (const key of Object.keys(d.hold)) {
+      if (!d.hold[key]) continue;
+      const at = key.lastIndexOf(':');
+      if (at > 0 && key.slice(0, at) === rel) return this.churnHold(rel, Number(key.slice(at + 1)));
+    }
+    return null;
+  }
+
   churnHold(rel, line) {
     if (!Number.isInteger(line) || line <= 0) return null;
     const d = this.data;

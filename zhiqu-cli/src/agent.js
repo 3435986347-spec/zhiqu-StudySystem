@@ -15,7 +15,7 @@ import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
 import { localSchemas, previewSchema, READ_TOOLS, shellSchemas } from './tools/local.js';
 import { rssMb } from './exitlog.js';
-import { changeLine, diffSnapshots, dropUnchanged, editNudge, hashFiles, inlineEdit, mentionedFiles, NOOP_REPLACE, NUDGE_EVERY, snapshot, usesReplace } from './tools/shell-writes.js';
+import { changeLine, diffSnapshots, dropUnchanged, editNudge, firstDiffLine, hashFiles, inlineEdit, mentionedFiles, NOOP_REPLACE, NUDGE_EVERY, readTexts, snapshot, usesReplace } from './tools/shell-writes.js';
 import { draftSchemas } from './tools/drafts.js';
 import { patchFiles } from './tools/patch.js';
 import { describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './tools/sandbox.js';
@@ -373,7 +373,9 @@ export function shellWriteNotes(ctx, command, diff, exitCode) {
       notes.push(NOOP_REPLACE);
     }
   }
-  return `${line ? `\n${line}` : ''}${notes.map((n) => `\n\n【提醒】${n}`).join('')}`;
+  const missed = exitCode === 0 && inlineEdit(command) && usesReplace(command) && !diff.modified.length && !diff.created.length && !diff.deleted.length;
+  // 写在【提醒】外面：重复调用比的是提醒前面的那段，只写在提醒里就数不上「同一个结果」
+  return `${line ? `\n${line}` : ''}${missed ? '\n原文没对上，文件没变。' : ''}${notes.map((n) => `\n\n【提醒】${n}`).join('')}`;
 }
 
 function record(ctx, message, origin = null) {
@@ -1162,6 +1164,16 @@ async function runTool(ctx, call, offered, signal) {
         return `用户没有同意运行 ${prep.command}。不要原样重试；问问用户，或者换个做法。`;
       }
       // 没下发 background（服务器上）就不当后台命令起：模型照着别处的说法传了 background: true，原来照样起了（第一百二十六轮 review）
+      if (inlineEdit(prep.command) && local.root) {
+        for (const rel of mentionedFiles(local.root, prep.cwdRel, prep.command)) {
+          const held = workOf(ctx).holdOn(rel);
+          if (held) {
+            ui.result('同一处还没写下根因', false);
+            stepNote(ctx, { ok: false, summary: '同一处还没写下根因' });
+            return held;
+          }
+        }
+      }
       if (args.background && offeredBackground(ctx)) {
         const job = await local.startJob(prep, { policy: shellPolicy(ctx), signal });
         if (job.error) { ui.result(job.error, false); stepNote(ctx, { ok: false, summary: job.error }); return failed(ctx, spinKey, job.error, runReminder(prep.command)); }
@@ -1178,7 +1190,9 @@ async function runTool(ctx, call, offered, signal) {
       // 命令前后各拍一次工作区的快照（第一百六十九轮）：比出这条命令改了哪些文件
       const before = local.root ? snapshot(local.root) : null;
       // 内联脚本改文件：它提到的文件再记一份内容哈希 —— 原样写回去的不算改了（替换没对上时就是这样）
-      const hashes = before && inlineEdit(prep.command) ? await hashFiles(local.root, mentionedFiles(local.root, prep.cwdRel, prep.command)) : null;
+      const mentioned = before && inlineEdit(prep.command) ? mentionedFiles(local.root, prep.cwdRel, prep.command) : [];
+      const beforeTexts = mentioned.length ? readTexts(local.root, mentioned) : null;
+      const hashes = beforeTexts ? await hashFiles(local.root, mentioned) : null;
       // 跑命令期间状态行说「运行中 N 秒 · 命令」（第一百二十九轮）：原来一直是「思考中」，分不清在等模型还是在等命令
       ui.startRun(prep.command);
       let r;
@@ -1197,11 +1211,30 @@ async function runTool(ctx, call, offered, signal) {
         }
       }
       for (const l of shownOutput(r.output.split('\n').filter((x) => x.trim()))) ui.line(`    ${ui.paint.dim(termSafe(l.length > 200 ? `${l.slice(0, 200)}…` : l, { singleLine: true }))}`);
+      const diff = before ? await dropUnchanged(local.root, diffSnapshots(before, snapshot(local.root)), hashes) : null;
+      const writes = shellWriteNotes(ctx, prep.command, diff, r.exitCode);
+      const missed = writes.includes('\n原文没对上，文件没变。');
+      let churn = '';
+      if (diff && inlineEdit(prep.command) && !missed) {
+        const warns = [];
+        for (const rel of diff.modified) {
+          let after = '';
+          try { after = fs.readFileSync(path.join(local.root, rel), 'utf8'); } catch { continue; }
+          const line = firstDiffLine(beforeTexts && beforeTexts.get(rel), after) || 1;
+          warns.push(workOf(ctx).edited(rel, { line }));
+        }
+        churn = withChurn('', warns);
+      }
+      const content = r.content + writes + churn;
+      if (missed) {
+        ui.result('替换没改到文件', false);
+        stepNote(ctx, { ok: false, summary: '替换没改到文件', detail: runDetail(prep, r) });
+        return failed(ctx, spinKey, content, runReminder(prep.command));
+      }
       ui.result(r.summary, r.exitCode === 0);
       stepNote(ctx, { summary: r.summary, ok: r.exitCode === 0, detail: runDetail(prep, r) });
-      const writes = shellWriteNotes(ctx, prep.command, before ? await dropUnchanged(local.root, diffSnapshots(before, snapshot(local.root)), hashes) : null, r.exitCode);
-      if (r.exitCode === 0) { succeeded(ctx, spinKey); return r.content + writes; }
-      return failed(ctx, spinKey, r.content + writes, runReminder(prep.command));
+      if (r.exitCode === 0) { succeeded(ctx, spinKey); return content; }
+      return failed(ctx, spinKey, content, runReminder(prep.command));
     }
     if (name === 'shell_output' || name === 'shell_stop') {
       // 子 agent 只管自己起的（别人的 dev server 它停不得）

@@ -115,6 +115,29 @@ export function mentionedFiles(root, cwdRel, command) {
   }
   return [...out];
 }
+/** 两次正文的第一处不同在第几行（1 起）。一样就 null。不是字符串就当第 1 行。 */
+export function firstDiffLine(before, after) {
+  if (typeof before !== 'string' || typeof after !== 'string') return 1;
+  const a = before.split('\n');
+  const b = after.split('\n');
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i + 1;
+  return null;
+}
+
+/** 这几个文件的正文（含空字节的跳过）。给 shell 改动算落在第几行。 */
+export function readTexts(root, rels) {
+  const out = new Map();
+  for (const rel of rels || []) {
+    try {
+      const buf = fs.readFileSync(path.join(root, rel));
+      if (buf.includes(0)) continue;
+      out.set(rel, buf.toString('utf8'));
+    } catch { /* 没了 */ }
+  }
+  return out;
+}
+
 /** 这几个文件的内容哈希：Map<相对路径, sha1>（读不了的不放） */
 export async function hashFiles(root, rels) {
   const crypto = (await import('node:crypto')).default;

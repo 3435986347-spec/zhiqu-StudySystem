@@ -5,11 +5,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { runTurn, shellWriteNotes } from '../src/agent.js';
+import { runTurn, shellWriteNotes, workOf } from '../src/agent.js';
 import { CLEAR_KEEP_RECENT, clearStale, estimateMessages } from '../src/compact.js';
 import { LocalTools } from '../src/tools/local.js';
 import { detectSandbox } from '../src/tools/sandbox.js';
-import { changeLine, diffSnapshots, dropUnchanged, hashFiles, inlineEdit, mentionedFiles, NUDGE_EVERY, snapshot, usesReplace, writtenByShell } from '../src/tools/shell-writes.js';
+import { changeLine, diffSnapshots, dropUnchanged, firstDiffLine, hashFiles, inlineEdit, mentionedFiles, NUDGE_EVERY, snapshot, usesReplace, writtenByShell } from '../src/tools/shell-writes.js';
 import { fakeApi, fakeUi, tmpdir, write } from './helpers.js';
 
 const later = (file) => { const t = new Date(Date.now() + 5_000); fs.utimesSync(file, t, t); };
@@ -79,7 +79,11 @@ test('提醒：内联脚本改了已有的文件才提醒，第 1 次说、之�
 test('用字符串替换却一个文件都没改动：每次都说「原文多半没对上」（str.replace 不报错）', () => {
   const ctx = {};
   const noop = "python3 - <<'PY'\ns=open('a.js').read()\ns=s.replace('NOT THERE','y')\nopen('a.js','w').write(s)\nPY";
-  for (let i = 0; i < 3; i++) assert.match(shellWriteNotes(ctx, noop, { modified: [], created: [], deleted: [] }, 0), /【提醒】这条命令用字符串替换改文件，跑完了却一个文件都没改动/);
+  for (let i = 0; i < 3; i++) {
+    const text = shellWriteNotes(ctx, noop, { modified: [], created: [], deleted: [] }, 0);
+    assert.match(text, /【提醒】这条命令用字符串替换改文件，跑完了却一个文件都没改动/);
+    assert.match(text.split('\n\n【提醒】')[0], /原文没对上，文件没变/);
+  }
   assert.ok(!shellWriteNotes(ctx, noop, { modified: [], created: [], deleted: [] }, 1).includes('【提醒】'), '命令失败了另说（失败自己会报）');
 });
 
@@ -118,8 +122,36 @@ test('真跑：循环里 shell 用 Python 改文件 —— 结果里写着改了
   assert.match(tools[0], /（这条命令改动了文件：修改 src\/a\.js）/, tools[0]);
   assert.match(tools[0], /【提醒】你在用 shell 里的脚本改已有的源码（src\/a\.js）/);
   assert.match(tools[1], /【提醒】这条命令用字符串替换改文件，跑完了却一个文件都没改动/, tools[1]);
+  assert.match(tools[1].split('\n\n【提醒】')[0], /原文没对上，文件没变/, '失败要写在提醒外面，重复调用才数得上');
+  assert.equal(workOf(ctx).data.churn['src/a.js:1'], 1, 'shell 改到的行要计入同一处改了几回');
   assert.ok(!/这条命令改动了文件/.test(tools[1]), '第二条把一模一样的内容写回去了：修改时间变了，内容没变 —— 不算改了');
   assert.deepEqual(result.changedFiles, ['src/a.js']);
+});
+
+test('第一处不同的行；一样就是 null', () => {
+  assert.equal(firstDiffLine('a\nb\n', 'a\nc\n'), 2);
+  assert.equal(firstDiffLine('a\n', 'a\n'), null);
+  assert.equal(firstDiffLine(null, 'a'), 1);
+});
+
+test('同一处用 shell 改到第 3 回后，再对这个文件跑内联修改就不跑', { skip: box ? false : '这台机器没有系统沙箱' }, async () => {
+  const root = tmpdir();
+  write(root, 'sky.js', 'color = 1;\n');
+  const edit = (n) => `python3 - <<'PY'\ns=open('sky.js').read().replace('color = ${n};', 'color = ${n + 1};')\nopen('sky.js','w').write(s)\nPY`;
+  const calls = [1, 2, 3, 4].map((n) => ({ calls: [{ name: 'shell', args: { command: edit(n) } }] }));
+  const ctx = {
+    ui: fakeUi([]), api: fakeApi([...calls, { text: '停' }]),
+    root, mode: 'auto', maxRounds: 8, local: new LocalTools({ root, sandbox: box }), messages: [],
+    allow: { write: true, run: true, mcp: new Set() }, usage: { prompt: 0, completion: 0 }, changedFiles: new Set(),
+    system: { text: '系统内容' }, instructionsText: '', skillsText: '', skills: [], remoteTools: [], todos: [],
+    model: { id: 1, label: 'm', effectiveContextWindow: 64000 },
+  };
+  await runTurn(ctx, '把颜色改亮');
+  assert.equal(fs.readFileSync(path.join(root, 'sky.js'), 'utf8'), 'color = 4;\n', '第 4 次不该再改到文件');
+  const tools = ctx.messages.filter((m) => m.role === 'tool').map((m) => m.content);
+  assert.match(tools[2], /已经改了 3 回/);
+  assert.match(tools[3], /还没写下根因/);
+  assert.ok(!tools[3].includes('退出码'), '拦住的那次没有跑命令');
 });
 
 test('原样写回去的不算改了：命令里提到的文件（认 cd 前缀）前后比内容；真改了的照样算', async () => {
