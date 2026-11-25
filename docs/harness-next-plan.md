@@ -51,7 +51,7 @@ HumanEval 156/164 是工具改版前的冻结分，不能继承。Java / JS 补�
 | 3 | **C3**：命令照跑。内容哈希没变、且命令是内联替换时，回给模型的那段写成「原文没对上、文件没变」，并计入连续相同结果的停止器。shell 改到的行是否计入「第 3 回要写根因」，见要你定 | `shellWriteNotes`、`shell-writes.js`、`state.js` 的 churn | 计入 churn：推荐计入。命令仍不拒绝（第一百六十九轮已定） | 第一百七十九轮做完（算进去） |
 | 4 | **C4**：这一轮改了测试文件，或目标里写了一条工作区里能执行的检查命令，就由 harness 跑那一条，设时限，把退出码和尾部输出贴进上下文。认不出是哪一条就不跑，不跑整仓 `mvn test` / `npm test` | `agent.js` 收尾；命令仍走现有沙箱 | — | |
 | 5 | **C5**：新增只返回路径的 `glob`（有上限），删掉把 `glob` 这个名字指去 `list_files` 的别名。不做签名大纲 | `tools/local.js`、`agent.js` 的 `TOOL_ALIASES` | — | 第一百八十轮做完 |
-| 6 | **C6**：同一批里的 `list_files` / `read_file` / `search` 并行，并发有上限。写、补丁、shell、`preview_page`、`ask_user` 仍按顺序。历史里的 tool 结果按模型给出的顺序落盘，不按完成顺序 | `runTurnBody` 里执行那一轮的循环 | — | |
+| 6 | **C6**：同一批里的 `list_files` / `read_file` / `search` 并行，并发有上限。写、补丁、shell、`preview_page`、`ask_user` 仍按顺序。历史里的 tool 结果按模型给出的顺序落盘，不按完成顺序 | `runTurnBody` 里执行那一轮的循环 | — | 第一百八十一轮做完（加上 glob，上限 4） |
 | 7 | **C7**：先看页面有没有把档位放进 `run.effort`。没传时的默认跟用户档位，不要落成 `instant`。桌面本机选了项目目录才加载 skills；服务器上的产物空间没有项目技能就不给，不从别的目录找。子 agent 不接 | `code-host.js`、页面提交 run 的地方 | — | |
 | 8 | **C8**：只在第 2 步证明思考值得开、并且默认改开之后再做。旧思考随压缩离开；摘要接前缀单独量一次，不和第 2 步混在同一次对照里 | `compact.js`、`summarizeOnPrefix` | 花钱的那一次量，做到时再问 | |
 | 9 | **C9**：评测工作区放一个只有基线提交的 `.git`，四道不稳题再跑一遍。Codex 同题配对放在这次之后，装 Codex 另问 | `tools/benchmarks/`、`docs/codex-parity-plan.md` 第 10 步 | 重跑要花钱，先报预算 | |

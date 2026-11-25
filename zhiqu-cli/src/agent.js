@@ -303,6 +303,24 @@ function todoInHistory(messages) {
 export const REPEAT_WARN = 3;
 export const REPEAT_REFUSE = 5;
 export const REPEAT_STOP = 7;
+/** 同一批里可以一起跑的只读工具。写、命令、截图、问用户仍按顺序。 */
+export const PARALLEL_READS = new Set(['list_files', 'read_file', 'search', 'glob']);
+export const PARALLEL_LIMIT = 4;
+
+/** 同时最多 limit 个，返回值按下标对齐。 */
+export async function mapPool(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const workers = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: workers }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  }));
+  return out;
+}
 const sortKeys = (v) => (Array.isArray(v) ? v.map(sortKeys)
   : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])])) : v);
 function callKey(call) {
@@ -1073,7 +1091,7 @@ async function runTool(ctx, call, offered, signal) {
     if (name === 'list_files' || name === 'read_file' || name === 'search' || name === 'glob') {
       // 读文件按这个模型一次能看的量给（留一点给头部）：否则它以为看全了，其实后半截被截断了
       const cap = toolOutputCap(ctx.model ? ctx.model.effectiveContextWindow : null) - 300;
-      const r = name === 'list_files' ? local.listFiles(args) : name === 'read_file' ? local.readFile(args, { maxChars: cap }) : name === 'glob' ? local.glob(args) : local.search(args);
+      const r = await (name === 'list_files' ? local.listFiles(args) : name === 'read_file' ? local.readFile(args, { maxChars: cap }) : name === 'glob' ? local.glob(args) : local.search(args));
       if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
       ui.result(r.summary);
       // 刚才在看哪一段：压缩之后把它还回去（第一百三十八轮）
@@ -1908,26 +1926,22 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
     // OpenAI 要求 assistant(tool_calls) 后面紧跟每一条 tool 结果，中间插一条 user 就是
     // 「insufficient tool messages following tool_calls」400。一条消息里调两个工具时原来必踩。
     const shots = [];
-    for (const [i, call] of calls.entries()) {
-      if (signal && signal.aborted) break;
+    const settle = (i, call, made) => {
+      if (!made) return;
       const key = callKey(call);
       const again = ctx.repeat && ctx.repeat.key === key;
       const reminders = [];
       let content;
-      if (again && ctx.repeat.count >= REPEAT_REFUSE - 1) {
+      if (made.refused) {
         ctx.repeat.count += 1;
         ctx.ui.note(`· ${call.function.name} 和前面一模一样，没有执行（连续第 ${ctx.repeat.count} 次）`);
         content = repeatRefusal(ctx.repeat.count);
       } else {
-        const itemId = ctx.emit ? ctx.nextItemId() : null;
-        const item = ctx.emit ? { id: itemId, type: 'tool_call', name: call.function && call.function.name, arguments: call.function && call.function.arguments } : null;
-        if (ctx.emit) ctx.emit('started', item);
-        content = capToolOutput(await executeTool(ctx, call, offered, signal), window);
-        if (ctx.emit) ctx.emit('completed', { ...item, output: content });
+        content = made.content;
         const result = comparableResult(content);
         const count = again && ctx.repeat.result === result ? ctx.repeat.count + 1 : 1;
         ctx.repeat = { key, result, count };
-        if (count >= REPEAT_WARN && !content.includes('\n\n【提醒】')) reminders.push(repeatReminder(count));   // 同样的失败 failed 已经提醒过了
+        if (count >= REPEAT_WARN && !content.includes('\n\n【提醒】')) reminders.push(repeatReminder(count));
       }
       if (i === 0 && thought > LONG_THINKING) reminders.push(thinkingReminder(thought));
       const name = call.function && call.function.name;
@@ -1945,10 +1959,35 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
       }
       if (reminders.length) content += reminders.map((r) => `\n\n【提醒】${r}`).join('');
       record(ctx, { role: 'tool', tool_call_id: call.id, content });
-      // 截图跟着工具结果走：工具消息只能是文本，图另起一条 user 消息 —— OpenAI 和 Anthropic 都只在 user 里收图。
-      // 但要等这一批工具都回完（见上面 shots 的注释），否则会破坏 tool_calls 后面必须紧跟 tool 结果的规矩。
+      if (made.shot) shots.push(made.shot);
+    };
+    const produce = async (call) => {
+      if (signal && signal.aborted) return { content: '已中断', shot: null };
+      const key = callKey(call);
+      const again = ctx.repeat && ctx.repeat.key === key && ctx.repeat.count >= REPEAT_REFUSE - 1;
+      if (again) return { content: null, refused: true, shot: null };
+      const itemId = ctx.emit ? ctx.nextItemId() : null;
+      const item = ctx.emit ? { id: itemId, type: 'tool_call', name: call.function && call.function.name, arguments: call.function && call.function.arguments } : null;
+      if (ctx.emit) ctx.emit('started', item);
+      const content = capToolOutput(await executeTool(ctx, call, offered, signal), window);
+      if (ctx.emit) ctx.emit('completed', { ...item, output: content });
       const shot = ctx.local && ctx.local.takePendingImage ? ctx.local.takePendingImage() : null;
-      if (shot) shots.push(shot);
+      return { content, shot };
+    };
+    let cursor = 0;
+    while (cursor < calls.length) {
+      if (signal && signal.aborted) break;
+      const name = calls[cursor].function && calls[cursor].function.name;
+      if (!PARALLEL_READS.has(name)) {
+        settle(cursor, calls[cursor], await produce(calls[cursor]));
+        cursor += 1;
+        continue;
+      }
+      let end = cursor + 1;
+      while (end < calls.length && PARALLEL_READS.has(calls[end].function && calls[end].function.name)) end += 1;
+      const batch = await mapPool(calls.slice(cursor, end), PARALLEL_LIMIT, (call) => produce(call));
+      for (let k = 0; k < batch.length; k++) settle(cursor + k, calls[cursor + k], batch[k]);
+      cursor = end;
     }
     if (shots.length) {
       record(ctx, {
