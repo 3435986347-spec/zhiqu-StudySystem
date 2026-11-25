@@ -2009,7 +2009,7 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
       record(ctx, {
         role: 'user',
         content: [
-          { type: 'text', text: '（下面的图就是刚才渲染的页面；报错、是不是白屏这些文字情况在上面的工具结果里，先看那几行。再看图：排版有没有错位、有没有空白或重叠、颜色和文字对不对。要改就改完再截一张。）' },
+          { type: 'text', text: '（下面的图就是刚才渲染的页面。先看上面工具结果里的报错和亮度格：格子跟上次一样、也没有新报错，就不要为了看再截。要看排版再看图。）' },
           ...shots.map((s) => ({ type: 'image_url', image_url: { url: `data:${s.mediaType};base64,${s.base64}` } })),
         ],
       }, 'system');

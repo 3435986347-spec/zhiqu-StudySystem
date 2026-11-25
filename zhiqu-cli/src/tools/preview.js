@@ -137,6 +137,9 @@ export function analyzePng(buf) {
     const cur = Buffer.alloc(stride); const prev = Buffer.alloc(stride);
     const counts = new Map(); let lumaSum = 0; let n = 0;
     const step = Math.max(1, Math.floor(Math.sqrt((w * h) / 40_000)));
+    const gridN = 8;
+    const gridSum = Array.from({ length: gridN }, () => Array(gridN).fill(0));
+    const gridCount = Array.from({ length: gridN }, () => Array(gridN).fill(0));
     for (let y = 0; y < h; y++) {
       const f = raw[y * (stride + 1)]; const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
       for (let i = 0; i < stride; i++) {
@@ -152,14 +155,19 @@ export function analyzePng(buf) {
           const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (bl >> 4);
           counts.set(key, (counts.get(key) || 0) + 1);
           lumaSum += 0.299 * r + 0.587 * g + 0.114 * bl; n++;
+          const gy = Math.min(gridN - 1, Math.floor(y * gridN / h));
+          const gx = Math.min(gridN - 1, Math.floor(x * gridN / w));
+          gridSum[gy][gx] += 0.299 * r + 0.587 * g + 0.114 * bl;
+          gridCount[gy][gx] += 1;
         }
       }
       cur.copy(prev);
     }
     let top = 0; let topKey = 0;
     for (const [k, v] of counts) if (v > top) { top = v; topKey = k; }
+    const grid = gridSum.map((row, y) => row.map((sum, x) => (gridCount[y][x] ? Math.round(sum / gridCount[y][x] / 28.3) : 0)).join(''));
     const hex = (q) => (q * 17).toString(16).padStart(2, '0');
-    return { share: top / n, color: `#${hex(topKey >> 8)}${hex((topKey >> 4) & 15)}${hex(topKey & 15)}`, luma: Math.round(lumaSum / n) };
+    return { share: n ? top / n : 0, color: `#${hex(topKey >> 8)}${hex((topKey >> 4) & 15)}${hex(topKey & 15)}`, luma: n ? Math.round(lumaSum / n) : 0, grid };
   } catch { return null; }
 }
 
@@ -167,8 +175,9 @@ export function analyzePng(buf) {
 export const FLAT_SHARE = 0.97;
 
 /** 给模型（和目标核对员）看的那几行 */
-export function describePage(probe, pixels) {
+export function describePage(probe, pixels, { renderer = '' } = {}) {
   const lines = ['页面情况（页面里的探针回传 + 截图像素）：'];
+  if (renderer) lines.push(`- 渲染：${renderer}`);
   if (!probe) {
     lines.push('- 没收到页面的回传：页面可能在加载完之前就卡住 / 出错，或者内联脚本被 CSP 挡了。报错情况不知道，只能看图。');
   } else {
@@ -186,6 +195,7 @@ export function describePage(probe, pixels) {
   if (!pixels) lines.push('- 画面：截图的格式认不了，没算');
   else if (pixels.share >= FLAT_SHARE) lines.push(`- 画面：${Math.round(pixels.share * 100)}% 是同一种颜色 ${pixels.color}，几乎是单色 —— 可能是白屏 / 黑屏，或者 3D 场景没画出来`);
   else lines.push(`- 画面：有内容（占比最多的颜色 ${pixels.color} 占 ${Math.round(pixels.share * 100)}%，平均亮度 ${pixels.luma}/255）`);
+  if (pixels && pixels.grid) lines.push(`- 亮度格（8×8，0 黑到 9 白，从左上到右下）：\n${pixels.grid.join('\n')}`);
   return lines.join('\n');
 }
 
@@ -411,8 +421,10 @@ export async function screenshotPage({ root, rel, width = 1200, height = 900, ch
     // 最后一份完整的（加载完那份）优先；没有就用加载中的那份
     const reports = site.reports;
     const probeReport = [...reports].reverse().find((r) => r.final) || reports[reports.length - 1] || null;
+    const gl = process.env.ZHIQU_PREVIEW_GL || 'swiftshader';
+    const renderer = gl === 'swiftshader' ? '软件渲染（SwiftShader），不是这台机器的 GPU' : `硬件渲染（${gl}）`;
     return { mediaType: 'image/png', base64: buf.toString('base64'), bytes: buf.length, width: w, height: h,
-      page: describePage(probeReport, analyzePng(buf)) };
+      page: describePage(probeReport, analyzePng(buf), { renderer }) };
   } finally {
     await site.close().catch(() => {});
     try { fs.rmSync(work, { recursive: true, force: true }); } catch { /* 同上 */ }

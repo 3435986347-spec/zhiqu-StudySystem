@@ -118,6 +118,7 @@ test('静态服务：probe 开着才给 html 注入、才收回传（只认那�
 
 test('描述：没收到回传、有报错、几乎单色、正常，各说各的', () => {
   assert.match(describePage(null, analyzePng(BLACK)), /没收到页面的回传[\s\S]*100% 是同一种颜色 #000000，几乎是单色/);
+  assert.match(describePage(null, analyzePng(BLACK), { renderer: '软件渲染（SwiftShader），不是这台机器的 GPU' }), /软件渲染（SwiftShader）[\s\S]*亮度格[\s\S]*00000000/);
   const errs = describePage({ final: true, errors: ['Uncaught TypeError: x is undefined (/main.js:12)'], rejections: ['加载失败'], consoleErrors: ['THREE.WebGLRenderer: Error creating WebGL context.'],
     title: '鹈鹕', text: '开始骑车', elements: 40, canvases: 1 }, analyzePng(BUSY));
   assert.match(errs, /报错 1 条：「Uncaught TypeError: x is undefined \(\/main\.js:12\)」/);

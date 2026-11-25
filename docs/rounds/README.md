@@ -193,3 +193,4 @@
 | [第一百八十轮](round-180.md) | 按文件名找文件的 `glob`（最多 200 个路径），不再把这个名字指去 `list_files` | `test/glob.test.js`；plan 档和草稿层的工具表加上 glob |
 | [第一百八十一轮](round-181.md) | 同一批里的读、搜、glob 最多 4 个一起跑；写和命令仍按顺序，工具结果按调用顺序落盘 | `test/parallel.test.js` |
 | [第一百八十二轮](round-182.md) | 改了最多 3 个 `*.test.js` 时，收尾前由 harness 跑 `node --test`；不猜 npm / mvn | `test/evidence.test.js` |
+| [第一百八十三轮](round-183.md) | 截图的文字情况加上 8×8 亮度格，并写明是软件渲染还是硬件；格子没变就不要为了看再截 | 全黑图八行 `00000000` |
