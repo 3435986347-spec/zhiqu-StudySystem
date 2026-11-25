@@ -14,6 +14,7 @@ import zlib from 'node:zlib';
 import { hunks } from './render/diff.js';
 import { formatBytes, termSafe } from './render/term.js';
 import { localSchemas, previewSchema, READ_TOOLS, shellSchemas } from './tools/local.js';
+import { rssMb } from './exitlog.js';
 import { evidencePlan } from './evidence.js';
 import { changeLine, diffSnapshots, dropUnchanged, editNudge, firstDiffLine, hashFiles, inlineEdit, mentionedFiles, NOOP_REPLACE, NUDGE_EVERY, readTexts, snapshot, usesReplace } from './tools/shell-writes.js';
 import { draftSchemas } from './tools/drafts.js';
@@ -34,7 +35,7 @@ import { projectMemory, topDirs, userMemoryBlock } from './memory.js';
 import { otherSessions, readSession, recentBlock, searchSessions, sessionSchemas } from './recall.js';
 import { firstChangedLine, listFiles, NOTE_TOOL, noteSchema, statePath, WorkState } from './state.js';
 import { estimateMessages, estimateTokens } from './compact.js';
-import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, lastScreenshot, MAX_VERIFY_FAILURES, parseVerdict, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
+import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, lastScreenshot, MAX_VERIFY_FAILURES, parseVerdict, canClaimAchieved, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
 import { judgmentText, listDetail, patchDetail, runDetail, writeDetail } from './steps.js';
@@ -2306,6 +2307,13 @@ export async function runGoal(ctx, { signal, maxTurns = DEFAULT_MAX_GOAL_TURNS, 
         recordGoal(ctx);
         ui.line(ui.paint.green(`🎯 目标达成（未经核对）：${goal.text}`));
         return 'achieved';
+      }
+      if (verdict.achieved && !canClaimAchieved(goal)) {
+        goal.status = 'blocked';
+        goal.blocker = '验收标准里没有可执行的检查（测试命令、退出码、报错条数、亮度格或帧差），不能判达成。能问人就先问一次。';
+        recordGoal(ctx);
+        ui.line(ui.paint.yellow(`🎯 卡住了：${goal.blocker}`));
+        return 'blocked';
       }
       if (verdict.achieved || goal.verifyFailures >= MAX_VERIFY_FAILURES) {
         ui.result(verdict.achieved ? '核对通过' : `核对 ${MAX_VERIFY_FAILURES} 次都没通过，按执行者的证据收尾（请你自己再看一眼）`, verdict.achieved);

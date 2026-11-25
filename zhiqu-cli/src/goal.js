@@ -210,4 +210,13 @@ export function parseVerdict(text) {
   }
 }
 
+/** 验收标准或证据里有没有一项能执行、能看退出码的检查。只有形容词时不能判达成。 */
+const OBSERVABLE = /node\s+--test|node\s+\S+\.js|npm\s+test|pytest|mvn\s|退出码|\.test\.js|亮度格|帧差|报错\s*\d/;
+export function canClaimAchieved(goal) {
+  const criteria = String(goal && goal.criteria || '').trim();
+  const evidence = String(goal && goal.evidence || '');
+  if (criteria) return OBSERVABLE.test(criteria);
+  return OBSERVABLE.test(evidence);
+}
+
 export { MAX_VERIFY_FAILURES };

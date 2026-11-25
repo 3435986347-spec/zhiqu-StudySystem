@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { archiveTurn, runGoal, systemText, toolset } from '../src/agent.js';
-import { applyGoalUpdate, newGoal, parseVerdict } from '../src/goal.js';
+import { applyGoalUpdate, canClaimAchieved, newGoal, parseVerdict } from '../src/goal.js';
 import { SessionStore } from '../src/session.js';
 import { LocalTools } from '../src/tools/local.js';
 import { fakeApi, fakeUi, tmpdir } from './helpers.js';
@@ -83,6 +83,20 @@ test('核对员的回答解析：夹在文字里的 JSON 也认；解析不了�
   assert.deepEqual(parseVerdict('结论：{"achieved": true, "missing": ""} 完'), { achieved: true, missing: '' });
   assert.equal(parseVerdict('我觉得可以').achieved, false);
   assert.equal(parseVerdict('{"achieved": "yes"}').achieved, false, '只认布尔 true');
+});
+
+test('只有形容词的验收标准不能判达成；跑了 node 或写了退出码可以', async () => {
+  assert.equal(canClaimAchieved({ criteria: '画面要立体，细节要丰富', evidence: '我觉得好看' }), false);
+  assert.equal(canClaimAchieved({ criteria: '', evidence: '跑了 node snake.js，输出 ok' }), true);
+  assert.equal(canClaimAchieved({ criteria: 'node --test test/a.test.js 退出码 0', evidence: '好看' }), true);
+  const ctx = ctxWith([
+    { calls: [{ name: 'goal_update', args: { status: 'progress', criteria: '画面要立体，细节要丰富' } }] },
+    { calls: [{ name: 'goal_update', args: { status: 'achieved', summary: '好了', evidence: '看起来立体了' } }] },
+    { text: '好了' },
+    VERIFIED,
+  ]);
+  assert.equal(await runGoal(ctx), 'blocked');
+  assert.match(ctx.ui.text(), /没有可执行的检查/);
 });
 
 test('goal 推的每一轮（开头、没宣告就想停、核对没过）在会话记录里都标成 goal —— /resume 回放时不冒充用户说的话', async () => {
