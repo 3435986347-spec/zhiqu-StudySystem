@@ -726,6 +726,7 @@ export function describeCall(name, args) {
     case 'list_files': return `列出 ${args.path || '工作区根'}`;
     case 'read_file': return `读取 ${args.path}${args.offset ? `（从第 ${args.offset} 行）` : ''}`;
     case 'search': return `搜索「${args.query}」${args.path ? `（在 ${args.path}）` : ''}`;
+    case 'glob': return `找文件 ${args.pattern || ''}`;
     case 'write_file': return `${args.append ? '追加到' : '写入'} ${args.path}`;
     case 'edit_file': return `修改 ${args.path}`;
     case 'apply_patch': { const files = patchFiles(args.patch); return `打补丁 ${files.slice(0, 3).join('、')}${files.length > 3 ? ` 等 ${files.length} 个文件` : ''}`; }
@@ -772,7 +773,7 @@ const TOOL_ALIASES = [
     'delete_file', '删除文件用 delete_file（传 path；读过或写过的才能删，删掉的挪进 .zhiqu/trash/，能恢复）。'],
   [/^(bash|shell|sh|exec|execute|execute_command|run|run_shell|run_terminal_cmd|terminal)$/i,
     'run_command', '跑命令用 run_command：command 是命令名，args 是参数数组（不接受整行 shell 字符串）。'],
-  [/^(ls|list_dir|list_directory|glob|find_files)$/i, 'list_files', '列目录用 list_files。'],
+  [/^(ls|list_dir|list_directory|find_files)$/i, 'list_files', '列目录用 list_files。找某个名字的文件用 glob（pattern，比如 src/**/*Test.java），只返回路径。'],
   [/^(cat|view|view_file|open_file|read|read_text_file)$/i, 'read_file', '读文件用 read_file。'],
   [/^(grep|find|search_files|search_code|ripgrep|codebase_search)$/i, 'search', '搜内容用 search（regex: true 按正则，glob 限定文件）。'],
 ];
@@ -1069,10 +1070,10 @@ async function runTool(ctx, call, offered, signal) {
       stepNote(ctx, { summary: r.summary, title: '预览' });
       return r.content;
     }
-    if (name === 'list_files' || name === 'read_file' || name === 'search') {
+    if (name === 'list_files' || name === 'read_file' || name === 'search' || name === 'glob') {
       // 读文件按这个模型一次能看的量给（留一点给头部）：否则它以为看全了，其实后半截被截断了
       const cap = toolOutputCap(ctx.model ? ctx.model.effectiveContextWindow : null) - 300;
-      const r = name === 'list_files' ? local.listFiles(args) : name === 'read_file' ? local.readFile(args, { maxChars: cap }) : local.search(args);
+      const r = name === 'list_files' ? local.listFiles(args) : name === 'read_file' ? local.readFile(args, { maxChars: cap }) : name === 'glob' ? local.glob(args) : local.search(args);
       if (r.error) { ui.result(r.error, false); stepNote(ctx, { ok: false, summary: r.error }); return r.error; }
       ui.result(r.summary);
       // 刚才在看哪一段：压缩之后把它还回去（第一百三十八轮）

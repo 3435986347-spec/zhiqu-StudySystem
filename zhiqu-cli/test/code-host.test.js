@@ -49,9 +49,9 @@ test('草稿层：改动不落盘；之后读、改、搜看到的是草稿，�
 test('草稿层：没给的工具不下发（没有写意图不给写、不能执行不给跑、从来不给删）；删除拒绝；磁盘在读过之后被改过照样拒', () => {
   const root = tmpdir();
   write(root, 'a.js', 'x\n');
-  assert.deepEqual([...new DraftTools({ root }).allowedTools].sort(), ['list_files', 'read_file', 'search']);
+  assert.deepEqual([...new DraftTools({ root }).allowedTools].sort(), ['glob', 'list_files', 'read_file', 'search']);
   assert.deepEqual([...new DraftTools({ root, canWrite: true, canExec: true }).allowedTools].sort(),
-    ['apply_patch', 'discard_draft', 'edit_file', 'list_files', 'read_file', 'run_command', 'search', 'write_file']);
+    ['apply_patch', 'discard_draft', 'edit_file', 'glob', 'list_files', 'read_file', 'run_command', 'search', 'write_file']);
   const t = new DraftTools({ root, canWrite: true });
   assert.match(t.prepareDelete({ path: 'a.js' }).error, /不能删除文件/);
   t.readFile({ path: 'a.js' });

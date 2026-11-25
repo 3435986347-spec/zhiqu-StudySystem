@@ -34,6 +34,7 @@ const READ_MAX_CHARS = 100_000;
 // 「0 处」而要找的那个在后面；node_modules、build 这类本来就跳过）
 const SEARCH_MAX_FILES = 100000;
 const SEARCH_TIME_BUDGET_MS = 5000;
+const GLOB_MAX = 200;
 const SEARCH_MAX_HITS = 80;
 const SEARCH_MAX_LINE_CHARS = 400;
 /** 搜索时单个文件最多流式扫这么大；再大的跳过并说出来（同步扫，太大会让命令行卡住） */
@@ -134,7 +135,7 @@ export function readLarge(file, { offset, limit, cap }) {
   }
 }
 
-export const READ_TOOLS = new Set(['list_files', 'read_file', 'search']);
+export const READ_TOOLS = new Set(['list_files', 'read_file', 'search', 'glob']);
 
 const fn = (name, description, properties, required = []) => ({
   type: 'function',
@@ -229,6 +230,10 @@ export function localSchemas() {
         path: { type: 'string', description: '只在这个目录里找（或者只找这一个文件），默认整个工作区' },
         ignore_case: { type: 'boolean', description: '忽略大小写，默认否' },
         include_ignored: { type: 'boolean', description: '连 .gitignore 忽略的也搜，默认否' } }, ['query']),
+    fn('glob', '按文件名找文件，只返回路径（一行一个）。*.java 哪一层都算；src/**/*Test.java 从工作区根算。默认跳过 .gitignore 和 node_modules。找目录结构用 list_files，找文件里的字用 search。',
+      { pattern: { type: 'string', description: '文件名通配。*.py、src/**/*.js、*.{js,ts}' },
+        path: { type: 'string', description: '只在这个目录里找，默认整个工作区' },
+        include_ignored: { type: 'boolean', description: '连 .gitignore 忽略的也列，默认否' } }, ['pattern']),
     // 写整份和改一段是两个工具（第九十二轮拆开）：原来一个 write_file 三种用法、参数互相打架，
     // old_string + content 被当成「换成空」一声不响删代码（第八十六轮）。现在每个工具的参数都是必填的那几个
     fn('write_file', [
@@ -676,6 +681,63 @@ export class LocalTools {
     const partial = truncated || skipped.huge.length || skipped.denied;
     return { content: notes.length ? `${body}\n${notes.map((n) => `（${n}）`).join('\n')}` : body,
       summary: `${hits.length} 处${truncated ? '（已截断）' : partial ? '（有没搜到的）' : ''}` };
+  }
+
+  /** 按文件名找文件，只返回路径。上限 GLOB_MAX，多了就停并说出来。 */
+  glob(args = {}) {
+    args = this.inWorkspace(args, 'path');
+    const pattern = args.pattern == null ? '' : String(args.pattern).trim();
+    if (!pattern) return { error: '没有给出 pattern（比如 *.java、src/**/*Test.java）' };
+    const match = compileGlob(pattern);
+    if (!match) return { error: `pattern 写错了：${pattern}（比如 *.py、src/**/*.js、*.{js,ts}）` };
+    const dir = this.guard.resolveDirectory(args.path || '.');
+    if (dir.reason !== Reason.OK) return { error: describe(dir.reason, args.path || '.') };
+    const hits = [];
+    let truncated = null;
+    const useIgnore = !args.include_ignored;
+    const relOf = (abs) => path.relative(this.root, abs).split(path.sep).join('/');
+    const started = monotonic();
+    const consider = (abs) => {
+      const rel = relOf(abs);
+      if (!match(rel)) return;
+      if (hits.length >= GLOB_MAX) { truncated = `匹配太多，只列出了前 ${GLOB_MAX} 个`; return; }
+      hits.push(this.guard.display(abs));
+    };
+    const walk = (abs, rules) => {
+      if (truncated) return;
+      if (monotonic() - started > SEARCH_TIME_BUDGET_MS) { truncated = `找了 ${SEARCH_TIME_BUDGET_MS / 1000} 秒还没找完，先停在这里`; return; }
+      let names;
+      try { names = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
+      for (const d of names) {
+        if (truncated) return;
+        const child = path.join(abs, d.name);
+        if (d.isSymbolicLink()) continue;
+        if (d.isDirectory()) {
+          if (SKIPPED_DIRS.has(d.name)) continue;
+          if (useIgnore && isIgnored(rules, child, true)) continue;
+          walk(child, useIgnore ? rules.concat(rulesIn(child)) : rules);
+          continue;
+        }
+        if (!d.isFile() || !this.guard.extensionAllowed(child)) continue;
+        if (useIgnore && isIgnored(rules, child, false)) continue;
+        consider(child);
+      }
+    };
+    walk(dir.path, useIgnore ? rulesAt(dir.path) : []);
+    if (this.overlay) {
+      const prefix = dir.path.endsWith(path.sep) ? dir.path : dir.path + path.sep;
+      for (const abs of this.overlay.keys()) {
+        if (truncated) break;
+        if (abs !== dir.path && !abs.startsWith(prefix)) continue;
+        if (fs.existsSync(abs)) continue;
+        if (!this.guard.extensionAllowed(abs)) continue;
+        consider(abs);
+      }
+    }
+    hits.sort();
+    const body = hits.length ? hits.join('\n') : '（没有找到）';
+    const note = truncated ? `\n（${truncated} —— 这不是全部，请把 pattern 写窄一点）` : '';
+    return { content: body + note, summary: `${hits.length} 个${truncated ? '（已截断）' : ''}` };
   }
 
   // ── 写 ────────────────────────────────────────────────────────────────

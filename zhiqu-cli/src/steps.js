@@ -53,7 +53,7 @@ export function fileChange(path, oldText, newText, { added, removed } = {}) {
 }
 
 const KIND_OF = {
-  list_files: 'list', read_file: 'read', search: 'search',
+  list_files: 'list', read_file: 'read', search: 'search', glob: 'list',
   write_file: 'create', edit_file: 'edit', apply_patch: 'patch', delete_file: 'delete', discard_draft: 'delete',
   shell: 'run', run_command: 'run', shell_output: 'run', shell_stop: 'run',
   search_wiki: 'wiki', read_wiki_page: 'wiki', create_wiki_patch: 'wiki',
@@ -72,6 +72,7 @@ export function kindOf(name) {
 export function titleOf(name, args = {}) {
   switch (name) {
     case 'list_files': return { title: '列出', target: args.path || '.' };
+    case 'glob': return { title: '找文件', target: String(args.pattern || '') };
     case 'read_file': return { title: '读取', target: String(args.path || '') };
     case 'search': return { title: '搜索', target: `「${clip(args.query, 120)}」${args.path ? ` 在 ${args.path}` : ''}` };
     case 'write_file': return { title: args.append ? '追加' : '写入', target: String(args.path || '') };
