@@ -15,12 +15,21 @@ import { USER_AGENT } from './version.js';
 
 const fail = (message, extra = {}) => new ApiError(message, { beforeOutput: true, ...extra });
 
-/** 服务器那套 done 的形状：{ message: { role, content, tool_calls }, finishReason, maxTokens, usage } */
-const doneEvent = ({ text, calls, finishReason, usage, maxTokens }) => ({
-  message: { role: 'assistant', content: text, ...(calls.length ? { tool_calls: calls } : {}) },
-  finishReason, maxTokens,
-  usage: usage || undefined,
-});
+/**
+ * 服务器那套 done 的形状。这一轮的思考挂在 message 上（reasoning_content 或 reasoning_blocks + reasoning_model），
+ * 命令行原样记进历史，下一轮才能带回 —— 和网关 ReasoningHistory.attach 同一个规矩。
+ */
+const doneEvent = ({ text, calls, finishReason, usage, maxTokens, reasoning, blocks, model }) => {
+  const message = { role: 'assistant', content: text, ...(calls.length ? { tool_calls: calls } : {}) };
+  if (blocks && blocks.length) {
+    message.reasoning_blocks = blocks;
+    message.reasoning_model = model;
+  } else if (reasoning) {
+    message.reasoning_content = reasoning;
+    message.reasoning_model = model;
+  }
+  return { message, finishReason, maxTokens, usage: usage || undefined };
+};
 
 /** OpenAI 的 tool_calls 分片按 index 攒；有的网关连 index 都不给，按出现顺序编 */
 function toolSink() {
@@ -109,8 +118,8 @@ export class DirectModel {
     this.cacheMode = this.protocol === 'anthropic' || /claude/i.test(String(model || '')) ? 2 : 0;
   }
 
-  payload(body, mode) {
-    const plain = this.protocol === 'anthropic' ? anthropicBody(this, body) : openaiBody(this, body);
+  payload(body, mode, dropReasoning = false) {
+    const plain = this.protocol === 'anthropic' ? anthropicBody(this, body, dropReasoning) : openaiBody(this, body, dropReasoning);
     if (!mode) return plain;
     return this.protocol === 'anthropic' ? markAnthropic(plain, mode === 2) : markOpenAi(plain, mode === 2);
   }
@@ -135,10 +144,14 @@ export class DirectModel {
   async stream(body, onEvent, { signal } = {}) {
     const host = hostOf(this.url);
     const started = this.cacheMode;
+    // 这家不收思考参数就记住，下次直接不发（和网关 noReasoning 同一条路）。缓存标记的退档另算。
+    let dropReasoning = this.reasoningOff === true;
     let res;
     for (let mode = started; ; mode--) {
+      let payload;
       try {
-        res = await openStream(this.url, { headers: this.headers(), body: JSON.stringify(this.payload(body, mode)), signal });
+        payload = this.payload(body, mode, dropReasoning);
+        res = await openStream(this.url, { headers: this.headers(), body: JSON.stringify(payload), signal });
       } catch (e) {
         if (e && e.name === 'AbortError') throw e;
         // 和 Api.networkError 一个口径：连不上/断了可以重来，地址写错（ECONNREFUSED）也照实说
@@ -147,8 +160,18 @@ export class DirectModel {
           : code === 'NO_RESPONSE' || code === 'IDLE_TIMEOUT' ? e.message : code || e.message;
         throw new ApiError(`连不上 ${host}（${why}）—— 地址是 ${this.url}`, { retryable: e instanceof HttpError ? e.retryable : false, code });
       }
-      if (res.status === 200) { this.cacheMode = mode; break; }   // 退了一档才成：这家不认，记住
+      if (res.status === 200) {
+        this.cacheMode = mode;
+        if (dropReasoning) this.reasoningOff = true;
+        break;
+      }   // 退了一档才成：这家不认，记住
       const text = await res.readAll().catch(() => '');
+      // 思考参数被拒：去掉再试一次，不把它当成缓存标记的错（两边的 400 长得不一样）
+      if (!dropReasoning && payloadHasReasoning(payload) && reasoningRejected(res.status, text)) {
+        dropReasoning = true;
+        mode += 1;   // continue 仍会 mode--，加回去才是同一档缓存再试
+        continue;
+      }
       // 带着缓存标记被 400：先退回 5 分钟，再去掉，各重试一次（中转报的错不一定提到它）。去掉了还是 400 就照常报错，也不记
       if (mode > 0 && (res.status === 400 || res.status === 422)) continue;
       throw new ApiError(httpMessage(res.status, text), { status: res.status, retryable: res.status === 429 || RETRYABLE_STATUS.has(res.status) });
@@ -158,8 +181,8 @@ export class DirectModel {
     let substantive = false;
     const emit = (name, data) => { if (name !== 'start') substantive = true; onEvent(name, data); };
     try {
-      if (this.protocol === 'anthropic') return await readAnthropic(res, emit, this.maxTokens);
-      return await readOpenAI(res, emit, this.maxTokens);
+      if (this.protocol === 'anthropic') return await readAnthropic(res, emit, this.maxTokens, this.model);
+      return await readOpenAI(res, emit, this.maxTokens, this.model);
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
       if (e instanceof ApiError) throw e;
@@ -181,21 +204,102 @@ function httpMessage(status, text) {
   return `模型接口返回 HTTP ${status}${hint}${snippet ? `：${snippet}` : ''}`;
 }
 
-function openaiBody(self, body) {
+/**
+ * 思考档位的词和网关是同一张表（ReasoningEffort / AiStreamAdapterSupport.applyOpenAiReasoningOptions）。
+ * 改一边要改另一边。没选档位（body.reasoning 空）什么都不加：直连没有「服务端默认」可听。
+ * 选了 instant 才是关。DeepSeek 不说就自己想，所以关的时候显式 thinking: disabled；reasoner 那个名字不收这个字段。
+ * @returns {{ fields: object, echo: boolean }}
+ */
+export function openAiReasoning(modelName, effort) {
+  const level = effortLevel(effort);
+  const name = String(modelName || '').toLowerCase();
+  const deepSeek = name.includes('deepseek');
+  if (level == null) return { fields: {}, echo: false };
+  if (level === 'off') {
+    return { fields: deepSeek && !name.includes('reasoner') ? { thinking: { type: 'disabled' } } : {}, echo: false };
+  }
+  const fields = {};
+  if (deepSeek) {
+    if (!name.includes('reasoner')) fields.thinking = { type: 'enabled' };
+    fields.reasoning_effort = deepSeekEffort(level);
+    return { fields, echo: true };
+  }
+  if (openAiReasoner(name) || name.includes('claude')) fields.reasoning_effort = openAiEffort(name, level);
+  return { fields, echo: false };
+}
+
+/** 和 ReasoningEffort.forAnthropic / applyAnthropicThinking 同一张表。没选或关着就不发（Claude 关不掉，发 disabled 会 400）。 */
+export function anthropicReasoning(modelName, effort) {
+  const level = effortLevel(effort);
+  if (level == null || level === 'off') return {};
+  const name = String(modelName || '').toLowerCase();
+  if (name.includes('claude-2') || name.includes('claude-3')) {
+    const budget = level === 'medium' ? 1024 : level === 'extra' ? 4096 : level === 'max' ? 8192 : 2048;
+    return { thinking: { type: 'enabled', budget_tokens: budget } };
+  }
+  const effortName = level === 'medium' ? 'medium' : level === 'extra' ? 'xhigh' : level === 'max' ? 'max' : 'high';
+  return { thinking: { type: 'adaptive' }, output_config: { effort: effortName } };
+}
+
+/** null = 没选；off = instant / 认不出的值。 */
+function effortLevel(effort) {
+  if (effort == null || effort === '') return null;
+  switch (String(effort).trim().toLowerCase()) {
+    case 'medium': return 'medium';
+    case 'high': return 'high';
+    case 'extra': return 'extra';
+    case 'max': return 'max';
+    case 'instant':
+    case 'off': return 'off';
+    default: return 'off';
+  }
+}
+const deepSeekEffort = (level) => (level === 'medium' ? 'low' : level === 'max' ? 'max' : 'high');
+const openAiReasoner = (name) => /(?:^|\/)(?:o[134]|gpt-[5-9])/.test(name);
+const openAiEffort = (name, level) => (level === 'medium' ? 'medium' : level === 'extra' ? 'xhigh' : level === 'max' ? (openAiReasoner(name) ? 'xhigh' : 'max') : 'high');
+
+/** 发给 OpenAI 兼容接口的历史。echo 时每条助手消息都有 reasoning_content（不是这个模型想的就给空串）。三个内部字段不原样送出去。 */
+function wireOpenAiMessages(messages, { echo, model }) {
+  return (messages || []).map((m) => {
+    if (!m || typeof m !== 'object') return m;
+    const has = m.reasoning_content != null || m.reasoning_blocks != null || m.reasoning_model != null;
+    if (!has && !(echo && m.role === 'assistant')) return m;
+    const copy = { ...m };
+    delete copy.reasoning_content;
+    delete copy.reasoning_blocks;
+    delete copy.reasoning_model;
+    if (echo && m.role === 'assistant') {
+      copy.reasoning_content = m.reasoning_model === model && typeof m.reasoning_content === 'string' ? m.reasoning_content : '';
+    }
+    return copy;
+  });
+}
+
+function openaiBody(self, body, dropReasoning = false) {
   const tools = (body.tools || []).filter(Boolean);
+  const spec = dropReasoning ? { fields: {}, echo: false } : openAiReasoning(self.model, body.reasoning);
   return {
     model: self.model,
-    messages: body.messages || [],
+    messages: wireOpenAiMessages(body.messages, { echo: spec.echo, model: self.model }),
     stream: true,
     ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
     ...(body.maxTokens ? { max_tokens: body.maxTokens } : {}),
+    ...spec.fields,
   };
 }
 
-async function readOpenAI(res, onEvent, maxTokens) {
+const payloadHasReasoning = (payload) => Boolean(payload && (payload.thinking || payload.reasoning_effort || payload.output_config));
+const reasoningRejected = (status, text) => {
+  if (status !== 400 && status !== 422) return false;
+  const t = String(text || '').toLowerCase();
+  return t.includes('reasoning') || t.includes('thinking') || t.includes('output_config') || t.includes('effort');
+};
+
+async function readOpenAI(res, onEvent, maxTokens, modelName) {
   const sink = toolSink();
   const announced = new Set();
   let text = '';
+  let reasoning = '';
   let finish = null;
   let usage = null;
   const parser = new SseParser((_name, raw) => {
@@ -209,7 +313,7 @@ async function readOpenAI(res, onEvent, maxTokens) {
     const d = choice.delta || {};
     // 思考：DeepSeek 用 reasoning_content，vLLM 一类用 reasoning，别家可能叫 thinking
     const think = d.reasoning_content ?? d.reasoning ?? d.thinking;
-    if (think) onEvent('reasoning', { text: String(think) });
+    if (think) { reasoning += String(think); onEvent('reasoning', { text: String(think) }); }
     if (d.content) { text += d.content; onEvent('delta', { text: String(d.content) }); }
     for (const [i, part] of (d.tool_calls || []).entries()) {
       const slot = sink.add(Number.isInteger(part.index) ? part.index : i, {
@@ -222,7 +326,7 @@ async function readOpenAI(res, onEvent, maxTokens) {
   });
   for await (const chunk of res.body) parser.feed(chunk);
   parser.end();
-  onEvent('done', doneEvent({ text, calls: sink.list(), finishReason: finish, usage, maxTokens }));
+  onEvent('done', doneEvent({ text, calls: sink.list(), finishReason: finish, usage, maxTokens, reasoning, model: modelName }));
 }
 
 function openaiUsage(u) {
@@ -235,11 +339,14 @@ function openaiUsage(u) {
 
 // ── Anthropic ────────────────────────────────────────────────────────────
 
-function anthropicBody(self, body) {
-  const { system, messages } = toAnthropicMessages(body.messages || []);
+function anthropicBody(self, body, dropReasoning = false) {
+  const level = dropReasoning ? null : effortLevel(body.reasoning);
+  const replay = !dropReasoning && level && level !== 'off' ? self.model : '';
+  const { system, messages } = toAnthropicMessages(body.messages || [], replay);
   const tools = (body.tools || []).filter(Boolean).map((t) => ({
     name: t.function.name, description: t.function.description || '', input_schema: t.function.parameters || { type: 'object', properties: {} },
   }));
+  const reasoning = dropReasoning ? {} : anthropicReasoning(self.model, body.reasoning);
   return {
     model: self.model,
     max_tokens: body.maxTokens || self.maxTokens,
@@ -247,6 +354,7 @@ function anthropicBody(self, body) {
     messages,
     stream: true,
     ...(tools.length ? { tools } : {}),
+    ...reasoning,
   };
 }
 
@@ -287,7 +395,7 @@ function userBlocks(content) {
   return blocks.length ? blocks : [{ type: 'text', text: '（空）' }];
 }
 
-export function toAnthropicMessages(messages) {
+export function toAnthropicMessages(messages, modelName = '') {
   const system = messages.filter((m) => m.role === 'system').map((m) => String(m.content || '')).filter(Boolean).join('\n\n');
   const out = [];
   // 相邻的 user 并成一条（后端 AnthropicFormat.append 同一个规矩）：工具结果、紧跟着的截图、再紧跟着的补充，
@@ -313,6 +421,10 @@ export function toAnthropicMessages(messages) {
     }
     if (m.role === 'assistant') {
       const blocks = [];
+      // 思考块在最前面、原样（带签名）。只回给想出它的那个模型；reasoning_content 是 OpenAI 那条路的，这里不送
+      if (modelName && m.reasoning_model === modelName && Array.isArray(m.reasoning_blocks)) {
+        for (const b of m.reasoning_blocks) if (b && typeof b === 'object') blocks.push({ ...b });
+      }
       if (m.content) blocks.push({ type: 'text', text: String(m.content) });
       for (const c of m.tool_calls || []) {
         let input = {};
@@ -334,10 +446,12 @@ const mergeUsage = (prev, u) => ({
   cachedTokens: u.cache_read_input_tokens ?? (prev ? prev.cachedTokens : 0),
 });
 
-async function readAnthropic(res, onEvent, maxTokens) {  let text = '';
+async function readAnthropic(res, onEvent, maxTokens, modelName) {
+  let text = '';
   let finish = null;
   let usage = null;
   const blocks = new Map();   // index → { id, name, json }
+  const thoughts = new Map();   // index → 要原样回放的思考块
   const parser = new SseParser((name, raw) => {
     let json;
     try { json = raw ? JSON.parse(raw) : {}; } catch { return; }
@@ -346,13 +460,24 @@ async function readAnthropic(res, onEvent, maxTokens) {  let text = '';
       if (b.type === 'tool_use') {
         blocks.set(json.index, { id: b.id, name: b.name, json: '' });
         onEvent('tool_call', { index: json.index, name: b.name });
+      } else if (b.type === 'thinking') {
+        thoughts.set(json.index, { type: 'thinking', thinking: b.thinking || '', signature: b.signature || '' });
+      } else if (b.type === 'redacted_thinking') {
+        thoughts.set(json.index, { type: 'redacted_thinking', data: b.data || '' });
       }
       return;
     }
     if (name === 'content_block_delta') {
       const d = json.delta || {};
       if (d.type === 'text_delta' && d.text) { text += d.text; onEvent('delta', { text: d.text }); }
-      else if (d.type === 'thinking_delta' && d.thinking) onEvent('reasoning', { text: d.thinking });
+      else if (d.type === 'thinking_delta' && d.thinking) {
+        onEvent('reasoning', { text: d.thinking });
+        const slot = thoughts.get(json.index);
+        if (slot && slot.type === 'thinking') slot.thinking += d.thinking;
+      } else if (d.type === 'signature_delta' && d.signature) {
+        const slot = thoughts.get(json.index);
+        if (slot && slot.type === 'thinking') slot.signature += d.signature;
+      }
       else if (d.type === 'input_json_delta' && d.partial_json != null) {
         const slot = blocks.get(json.index);
         if (slot) slot.json += d.partial_json;
@@ -376,5 +501,6 @@ async function readAnthropic(res, onEvent, maxTokens) {  let text = '';
   const calls = [...blocks.entries()].sort((a, b) => a[0] - b[0]).map(([i, s]) => ({
     id: s.id || `call_${i}`, type: 'function', function: { name: s.name, arguments: s.json || '{}' },
   }));
-  onEvent('done', doneEvent({ text, calls, finishReason: finish, usage, maxTokens }));
+  const thoughtBlocks = [...thoughts.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+  onEvent('done', doneEvent({ text, calls, finishReason: finish, usage, maxTokens, blocks: thoughtBlocks, model: modelName }));
 }

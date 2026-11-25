@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { DirectModel, toAnthropicMessages } from '../src/direct.js';
+import { DirectModel, openAiReasoning, toAnthropicMessages } from '../src/direct.js';
 import { ApiError } from '../src/api.js';
 import { normalizeDirect } from '../src/config.js';
 
@@ -207,5 +207,128 @@ test('说了一半断掉：标成 beforeOutput=false，别自动重来（会重�
       assert.match(e.message, /回复中断了/);
       return true;
     });
+  } finally { await new Promise((r) => server.close(r)); }
+});
+
+const assistant = (content, extra) => ({ role: 'assistant', content, ...extra });
+
+test('直连 OpenAI：选了档位才按网关同一张表发；DeepSeek 开着思考要把上一轮的 reasoning_content 原样带回', async () => {
+  const p = await fakeProvider(['data: {"choices":[{"delta":{"content":"好"}}]}\n\n', 'data: [DONE]\n\n']);
+  try {
+    const model = new DirectModel({ url: p.url, model: 'deepseek-v4-flash' });
+    const history = [
+      { role: 'user', content: '先做' },
+      assistant('做了', { reasoning_content: '想过', reasoning_model: 'deepseek-v4-flash', reasoning_blocks: [{ type: 'thinking', thinking: '不该走这条' }] }),
+      assistant('别人想的', { reasoning_content: '别的', reasoning_model: 'other-model' }),
+    ];
+    await collect(model, { reasoning: 'high', messages: history });
+    const sent = p.seen[0].body;
+    assert.deepEqual(sent.thinking, { type: 'enabled' });
+    assert.equal(sent.reasoning_effort, 'high');
+    assert.equal(sent.messages[1].reasoning_content, '想过');
+    assert.equal(sent.messages[2].reasoning_content, '', '不是这个模型想的，回空串，缺了字段 DeepSeek 会 400');
+    assert.equal(sent.messages[1].reasoning_model, undefined);
+    assert.equal(sent.messages[1].reasoning_blocks, undefined);
+    await collect(model, { reasoning: 'medium', messages: [{ role: 'user', content: '再' }] });
+    assert.equal(p.seen[1].body.reasoning_effort, 'low', 'DeepSeek 没有 medium，网关映成 low');
+    await collect(model, { reasoning: 'extra', messages: [{ role: 'user', content: '再' }] });
+    assert.equal(p.seen[2].body.reasoning_effort, 'high', 'extra 和 high 在 DeepSeek 是同一档');
+    await collect(model, { reasoning: 'max', messages: [{ role: 'user', content: '再' }] });
+    assert.equal(p.seen[3].body.reasoning_effort, 'max');
+    await collect(model, { reasoning: 'instant', messages: history });
+    assert.deepEqual(p.seen[4].body.thinking, { type: 'disabled' });
+    assert.equal(p.seen[4].body.reasoning_effort, undefined);
+    assert.equal(p.seen[4].body.messages[1].reasoning_content, undefined, '关着思考不把思考原文送回去');
+  } finally { await p.close(); }
+});
+
+test('认不出的模型不发明思考参数；没选档位一个字都不加', async () => {
+  const p = await fakeProvider(['data: {"choices":[{"delta":{"content":"好"}}]}\n\n', 'data: [DONE]\n\n']);
+  try {
+    const named = new DirectModel({ url: p.url, model: 'qwen' });
+    await collect(named, { reasoning: 'high', messages: [{ role: 'user', content: '问' }] });
+    assert.equal(p.seen[0].body.thinking, undefined);
+    assert.equal(p.seen[0].body.reasoning_effort, undefined);
+    const deep = new DirectModel({ url: p.url, model: 'deepseek-chat' });
+    await collect(deep, { messages: [assistant('旧', { reasoning_content: '留下的', reasoning_model: 'deepseek-chat' })] });
+    assert.equal(p.seen[1].body.thinking, undefined, '没选档位就不要替用户关或开');
+    assert.equal(p.seen[1].body.messages[0].reasoning_content, undefined);
+    assert.equal(openAiReasoning('gpt-5.4', 'max').fields.reasoning_effort, 'xhigh', 'o 系和 gpt-5 起的 max 是 xhigh');
+    assert.equal(openAiReasoning('deepseek-reasoner', 'high').fields.thinking, undefined, 'reasoner 不收 thinking 这个字段');
+    assert.equal(openAiReasoning('deepseek-reasoner', 'high').fields.reasoning_effort, 'high');
+  } finally { await p.close(); }
+});
+
+test('直连 Anthropic：新模型用 adaptive + effort，旧模型用 budget；思考块只回给想出它的那个模型', async () => {
+  const p = await fakeProvider([
+    'event: message_start\ndata: {"message":{"usage":{"input_tokens":1}}}\n\n',
+    'event: message_stop\ndata: {}\n\n',
+  ]);
+  try {
+    const blocks = [{ type: 'thinking', thinking: '想', signature: 'sig' }];
+    const prior = assistant('', { reasoning_blocks: blocks, reasoning_model: 'claude-opus-5', reasoning_content: '不走这条' });
+    const modern = new DirectModel({ protocol: 'anthropic', url: p.url, model: 'claude-opus-5' });
+    await collect(modern, { reasoning: 'max', messages: [{ role: 'user', content: '问' }, prior] });
+    assert.deepEqual(p.seen[0].body.thinking, { type: 'adaptive' });
+    assert.deepEqual(p.seen[0].body.output_config, { effort: 'max' });
+    const replayed = p.seen[0].body.messages.find((m) => m.role === 'assistant').content;
+    assert.equal(replayed[0].type, 'thinking');
+    assert.equal(replayed[0].signature, 'sig');
+    const legacy = new DirectModel({ protocol: 'anthropic', url: p.url, model: 'claude-3-5-sonnet' });
+    await collect(legacy, { reasoning: 'high', messages: [{ role: 'user', content: '问' }, { ...prior, reasoning_model: '别的模型' }] });
+    assert.deepEqual(p.seen[1].body.thinking, { type: 'enabled', budget_tokens: 2048 });
+    assert.equal(p.seen[1].body.output_config, undefined);
+    const skipped = p.seen[1].body.messages.find((m) => m.role === 'assistant');
+    assert.ok(!skipped || !skipped.content.some((b) => b.type === 'thinking'), '换了模型不回放签名');
+  } finally { await p.close(); }
+});
+
+test('供应商收下思考时，done 上的原文会在下一次请求里原样回去', async () => {
+  const p = await fakeProvider([
+    'data: {"choices":[{"delta":{"reasoning_content":"在想"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"好"},"finish_reason":"stop"}]}\n\n',
+    'data: [DONE]\n\n',
+  ]);
+  try {
+    const model = new DirectModel({ url: p.url, model: 'deepseek-chat' });
+    const first = await collect(model, { reasoning: 'high', messages: [{ role: 'user', content: '问' }] });
+    const done = first.find((e) => e.name === 'done').data.message;
+    await collect(model, { reasoning: 'high', messages: [{ role: 'user', content: '问' }, done] });
+    assert.equal(p.seen[1].body.messages[1].reasoning_content, '在想');
+    assert.equal(p.seen[1].body.messages[1].reasoning_model, undefined);
+  } finally { await p.close(); }
+});
+
+test('思考原文挂在 done 的 message 上；供应商拒绝思考参数就去掉再试并记住', async () => {
+  let calls = 0;
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      calls += 1;
+      const body = JSON.parse(raw);
+      if (body.reasoning_effort) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'reasoning_effort is not supported' } }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"reasoning_content":"在想"},"finish_reason":null}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"content":"好"},"finish_reason":"stop"}]}\n\n');
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}/v1/chat`;
+  try {
+    const model = new DirectModel({ url, model: 'deepseek-chat' });
+    const events = await collect(model, { reasoning: 'high', messages: [{ role: 'user', content: '问' }] });
+    assert.equal(calls, 2, '第一次被拒，去掉思考参数再试一次');
+    const done = events.find((e) => e.name === 'done').data.message;
+    assert.equal(done.reasoning_content, '在想');
+    assert.equal(done.reasoning_model, 'deepseek-chat');
+    await collect(model, { reasoning: 'high', messages: [{ role: 'user', content: '又' }, done] });
+    assert.equal(calls, 3, '记住了这家不收，不再先撞一次 400');
   } finally { await new Promise((r) => server.close(r)); }
 });
