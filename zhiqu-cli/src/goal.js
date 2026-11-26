@@ -8,6 +8,7 @@
 //   - 宣告已达成之后再过一道独立核对（不带工具，只看目标、证据、这一路的工具结果）；核对不过就带着缺口继续；
 //   - 轮数默认不限（用户 2026-11-12：限轮次等于把活切成半截），Ctrl+C 随时停；目标与状态记进会话记录，/goal continue、/resume 能接着追。
 import { syntaxOnlyEvidence } from './todos.js';
+import { normalizeDecisionAnswers, normalizeDecisionQuestions, OTHER_OPTION } from './decisions.js';
 
 export const GOAL_TOOL = 'goal_update';
 /** 0 = 不限：目标没达成、没宣告卡住就一直推进。原来 25 轮，一个像样的目标做到一半就撞上限。 */
@@ -15,7 +16,7 @@ export const DEFAULT_MAX_GOAL_TURNS = 0;
 const MAX_VERIFY_FAILURES = 3;
 
 export function newGoal(text) {
-  return { text: String(text).trim(), status: 'active', startedAt: new Date().toISOString(), turns: 0, verifyFailures: 0, summary: '', evidence: '', blocker: '', criteria: '' };
+  return { text: String(text).trim(), status: 'active', startedAt: new Date().toISOString(), turns: 0, verifyFailures: 0, summary: '', evidence: '', blocker: '', criteria: '', askedObservable: false };
 }
 
 /** 验收标准最多记这么多字 */
@@ -217,6 +218,35 @@ export function canClaimAchieved(goal) {
   const evidence = String(goal && goal.evidence || '');
   if (criteria) return OBSERVABLE.test(criteria);
   return OBSERVABLE.test(evidence);
+}
+
+/** 没有可执行检查时问人的那一题。有截图就让人看最后一张预览。 */
+export function observableQuestion(hasShot) {
+  return {
+    header: '验收',
+    question: hasShot
+      ? '验收标准里没有可执行的检查，不能判达成。请看最后一张预览，在「其他」里写下测试命令、退出码、报错条数、亮度格或帧差。'
+      : '验收标准里没有可执行的检查，不能判达成。在「其他」里写下测试命令、退出码、报错条数、亮度格或帧差。',
+    options: [
+      { label: '先停在这里', description: '不判达成' },
+      { label: '我在其他里写检查', description: '写一条能跑或能数的标准' },
+    ],
+    allowOther: true,
+  };
+}
+
+/** 用户写下的标准能核对才继续。选「先停」、取消、或写的仍不可执行，都停。 */
+export function applyObservableAnswer(goal, outcome) {
+  const built = normalizeDecisionQuestions({ questions: [observableQuestion(false)] });
+  if (!outcome || outcome.cancelled) return 'stop';
+  const checked = normalizeDecisionAnswers(built.questions, outcome.answers);
+  if (checked.error) return 'stop';
+  const answer = checked.answers[0];
+  if (answer.optionId !== OTHER_OPTION) return 'stop';
+  const next = { criteria: answer.otherText, evidence: '' };
+  if (!canClaimAchieved(next)) return 'stop';
+  goal.criteria = answer.otherText;
+  return 'continue';
 }
 
 export { MAX_VERIFY_FAILURES };

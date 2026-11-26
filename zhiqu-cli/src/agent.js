@@ -35,7 +35,7 @@ import { projectMemory, topDirs, userMemoryBlock } from './memory.js';
 import { otherSessions, readSession, recentBlock, searchSessions, sessionSchemas } from './recall.js';
 import { firstChangedLine, listFiles, NOTE_TOOL, noteSchema, statePath, WorkState } from './state.js';
 import { estimateMessages, estimateTokens } from './compact.js';
-import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, lastScreenshot, MAX_VERIFY_FAILURES, parseVerdict, canClaimAchieved, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
+import { applyGoalUpdate, DEFAULT_MAX_GOAL_TURNS, GOAL_TOOL, goalBlock, goalSchema, lastScreenshot, MAX_VERIFY_FAILURES, parseVerdict, canClaimAchieved, observableQuestion, applyObservableAnswer, verificationMaterial, VERIFY_INSTRUCTIONS } from './goal.js';
 import { monotonic } from './clock.js';
 import { AGENT_TOOLS, agentSchemas, describeAgentCall } from './subagents.js';
 import { judgmentText, listDetail, patchDetail, runDetail, writeDetail } from './steps.js';
@@ -2312,8 +2312,28 @@ export async function runGoal(ctx, { signal, maxTurns = DEFAULT_MAX_GOAL_TURNS, 
         return 'achieved';
       }
       if (verdict.achieved && !canClaimAchieved(goal)) {
+        if (ctx.decide && !ctx.subagent && !ctx.exec && !goal.askedObservable) {
+          goal.askedObservable = true;
+          const shot = lastScreenshot(ctx.messages);
+          const built = normalizeDecisionQuestions({ questions: [observableQuestion(Boolean(shot))] });
+          let outcome = null;
+          try { outcome = await ctx.decide(built.questions, { signal }); }
+          catch (e) {
+            if ((e && e.name === 'AbortError') || (signal && signal.aborted)) throw e;
+          }
+          if (signal && signal.aborted) return 'aborted';
+          if (applyObservableAnswer(goal, outcome) === 'continue') {
+            goal.status = 'active';
+            recordGoal(ctx);
+            ui.line(ui.paint.yellow(`🎯 先不定达成。验收改成：${goal.criteria}`));
+            text = `用户定了可执行的验收：${goal.criteria}\n按这个做完再宣告达成。不要用形容词代替检查。`;
+            continue;
+          }
+        }
         goal.status = 'blocked';
-        goal.blocker = '验收标准里没有可执行的检查（测试命令、退出码、报错条数、亮度格或帧差），不能判达成。能问人就先问一次。';
+        goal.blocker = goal.askedObservable
+          ? '问过了，没有拿到可执行的检查（测试命令、退出码、报错条数、亮度格或帧差），不能判达成。'
+          : '验收标准里没有可执行的检查（测试命令、退出码、报错条数、亮度格或帧差），不能判达成。这里问不了人。';
         recordGoal(ctx);
         ui.line(ui.paint.yellow(`🎯 卡住了：${goal.blocker}`));
         return 'blocked';

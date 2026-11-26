@@ -99,6 +99,28 @@ test('只有形容词的验收标准不能判达成；跑了 node 或写了退�
   assert.match(ctx.ui.text(), /没有可执行的检查/);
 });
 
+test('没有可执行检查、又有人能答：问一次，把最后一张预览指给人；写出能核对的标准才继续', async () => {
+  const ctx = ctxWith([
+    { calls: [{ name: 'goal_update', args: { status: 'progress', criteria: '画面要立体，细节要丰富' } }] },
+    { calls: [{ name: 'goal_update', args: { status: 'achieved', summary: '好了', evidence: '看起来立体了' } }] },
+    { text: '好了' },
+    VERIFIED,
+    { calls: [{ name: 'goal_update', args: { status: 'achieved', summary: '测过了', evidence: 'node --test test/view.test.js 退出码 0' } }] },
+    { text: '测过了' },
+    VERIFIED,
+  ]);
+  ctx.messages.push({ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,aaaa' } }] });
+  const asked = [];
+  ctx.decide = async (questions) => {
+    asked.push(questions[0].question);
+    return { cancelled: false, answers: [{ questionId: 'q1', optionId: '__other__', otherText: 'node --test test/view.test.js 退出码 0' }] };
+  };
+  assert.equal(await runGoal(ctx), 'achieved');
+  assert.equal(asked.length, 1);
+  assert.match(asked[0], /最后一张预览/);
+  assert.match(ctx.goal.criteria, /node --test/);
+});
+
 test('goal 推的每一轮（开头、没宣告就想停、核对没过）在会话记录里都标成 goal —— /resume 回放时不冒充用户说的话', async () => {
   const ctx = ctxWith([{ text: '先这样。' }, ACHIEVED, { text: '好了' }, { text: '{"achieved": false, "missing": "没跑测试"}' },
     ACHIEVED, { text: '跑过了' }, VERIFIED]);
