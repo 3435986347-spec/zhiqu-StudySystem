@@ -54,28 +54,24 @@ class AiComposerTest {
         String textarea = box.substring(draft, box.indexOf('>', draft));
         assertFalse(textarea.contains("style="), "输入框又写了内联样式（原来 min-width:200px，和按钮挤在一排）：" + textarea);
         String tools = PageHeadTest.elementAt(box, bar, "div");
-        for (String id : List.of("zq-chat-upload", "zq-tier", "zq-web", "zq-effort", "zq-model", "zq-send")) {
+        for (String id : List.of("zq-chat-upload", "zq-tier", "zq-effort", "zq-model", "zq-send")) {
             assertEquals(1, html.split("id=\"" + id + "\"", -1).length - 1, "#" + id + " 在页面上应该恰好一个");
             assertTrue(tools.contains("id=\"" + id + "\""), "#" + id + " 不在输入框底下那条工具里");
         }
+        assertFalse(html.contains("id=\"zq-web\"") || html.contains(">联网<"), "联网按钮还在页面上");
         assertFalse(box.contains("id=\"zq-drop-zone\""), "拖拽框又进了输入框");
-        for (String id : List.of("zq-web")) {
-            Matcher b = Pattern.compile("<button id=\"" + id + "\"[^>]*>").matcher(tools);
-            assertTrue(b.find() && b.group().contains("class=\"zq-chip\"") && b.group().contains("aria-pressed=\"false\"") && b.group().contains("aria-label=\""),
-                    "#" + id + " 要是 .zq-chip、带 aria-pressed 和 aria-label（手机上只剩图标）");
-        }
         Matcher send = Pattern.compile("<button id=\"zq-send\"[^>]*>(.*?)</button>").matcher(tools);
         assertTrue(send.find() && send.group().contains("class=\"zq-send\"") && send.group().contains("aria-label=\""), "发送键要是 .zq-send、有 aria-label");
         assertEquals("", send.group(1).replaceAll("<[^>]*>", "").trim(), "发送键只有一个箭头图标");
     }
 
     @Test
-    @DisplayName("模型、思考档位、联网刷新后还在（用户：「每次刷新后…回到默认模型，深度思考等状态也没有保留」）；思考是五档、点开向上拉起（用户定的名字）：打开页面时读记下的，行为在 composer-prefs-check.js 里真跑")
+    @DisplayName("模型、思考档位刷新后还在（用户：「每次刷新后…回到默认模型，深度思考等状态也没有保留」）；思考是五档、点开向上拉起（用户定的名字）：打开页面时读记下的，行为在 composer-prefs-check.js 里真跑")
     void 输入框下面的选择刷新后还在() throws Exception {
         String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
         String boot = SourceText.functionBody(js, "async function bootAiAssistant()");
-        assertTrue(boot.contains("restoreAiToggles();"), "打开页面时没有读记下的开关");
-        assertFalse(boot.contains("setAiToggleState('web', false)"), "打开页面又把开关写死成关");
+        assertTrue(boot.contains("restoreAiToggles();"), "打开页面时没有读记下的档位");
+        assertFalse(js.contains("zq-web") || js.contains("aiToggle"), "联网开关还在脚本里");
         assertTrue(boot.contains("effortBtn.onclick = toggleEffortMenu"), "思考档位的按钮没接上面板");
         assertFalse(js.contains("zq-think") || js.contains("'DEEP'"), "「深度思考」的开关还在");
         String html = html();
@@ -86,11 +82,12 @@ class AiComposerTest {
         assertTrue(tools.contains("<div id=\"zq-effort-pick\" class=\"zq-tier-pick\">"), "思考档位不在输入框下面那条工具里，或者被藏起来了（它不是只给管理员的）");
         assertTrue(tools.contains("id=\"zq-effort\" type=\"button\" class=\"zq-chip zq-tier\" aria-haspopup=\"menu\" aria-expanded=\"false\""), "思考档位不是一个会弹面板的按钮");
         assertTrue(tools.contains("id=\"zq-effort-menu\" class=\"zq-tier-menu\" role=\"menu\""), "没有思考档位的面板");
-        assertTrue(rule(css(), ".zq-tier.is-on").contains("background:var(--zq-tint)"), "开着思考时按钮要看得出来（和联网按下一个样子）");
+        assertTrue(rule(css(), ".zq-tier.is-on").contains("background:var(--zq-tint)"), "开着思考时按钮要看得出来");
         assertTrue(boot.contains("loadAiModelSelect()"), "打开页面没有取模型列表");
         String send = SourceText.functionBody(js, "async function sendAiMessage(queuedText)");
         assertTrue(send.contains("var reasoningMode = reasoningModeForRequest();"), "发消息时没有用选的档位");
         assertEquals(2, send.split("reasoningMode: reasoningMode,", -1).length - 1, "乐观显示的消息和发给后端的请求都要带档位");
+        assertTrue(send.contains("enableWebSearch: false"), "发消息还在看联网按钮");
         assertTrue(NodeRunner.run(Path.of("src/test/resources/js/composer-prefs-check.js"), STATIC.resolve("assets/pages/ai-assistant.js")),
                 "composer-prefs-check.js 没有全绿");
     }
@@ -119,12 +116,10 @@ class AiComposerTest {
     }
 
     @Test
-    @DisplayName("联网按下的样子只在样式表里（按 aria-pressed）；JS 不再写内联样式、不写死字重")
+    @DisplayName("思考档位按下的样子在样式表里；脚本不再为联网开关写内联样式")
     void 开关的样子在样式表里() throws IOException {
         String js = SourceText.stripComments(SourceText.pageModule("ai-assistant.js"));
-        String toggle = SourceText.functionBody(js, "function setAiToggleState(kind, on)");
-        assertTrue(toggle.contains("button.setAttribute('aria-pressed', on ? 'true' : 'false');"), "开关没写 aria-pressed");
-        assertFalse(toggle.contains(".style."), "开关又在 JS 里写内联样式了：\n" + toggle);
+        assertFalse(js.contains("function setAiToggleState"), "联网开关的状态函数还在");
         assertFalse(js.contains("fontWeight"), "AI 助手的脚本里又写死了字重");
         String pressed = rule(css(), ".zq-chip[aria-pressed=\"true\"]");
         assertTrue(pressed.contains("background:var(--zq-tint)") && pressed.contains("color:var(--zq-primary)"), "按下的开关没有自己的样子：" + pressed);

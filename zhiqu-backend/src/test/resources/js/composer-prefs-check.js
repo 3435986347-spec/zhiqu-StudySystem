@@ -4,14 +4,14 @@
 //   用法：node src/test/resources/js/composer-prefs-check.js <ai-assistant.js 的路径>
 //   用户 2026-11-06：「每次刷新后ai助手下面的模型就会回到默认模型，深度思考等状态也没有保留，很影响体验」。
 //   2026-11-07：「把深度思考的按钮换成思考档位切换（instant-medium-high-extra-max）同样还是点击之后上方拉出页面点击切换」。
-//   盯的是：模型、思考档位、联网各自记住；记的模型没了回到默认（下拉不能是空白）；列表没取回来不擦记的；按用户分开；存不了、存的是坏数据都不炸。
+//   盯的是：模型、思考档位各自记住；记的模型没了回到默认（下拉不能是空白）；列表没取回来不擦记的；按用户分开；存不了、存的是坏数据都不炸。
 //   由 AiComposerTest 调用；打印 ALL-GREEN 且退出码 0 = 全绿。
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
 
 const src = fs.readFileSync(process.argv[2], 'utf8');
-const a = src.indexOf('// ───────────────────────── 输入框下面的选择（模型、思考档位、联网）');
+const a = src.indexOf('// ───────────────────────── 输入框下面的选择（模型、思考档位）');
 const b = src.indexOf('// ───────────────────────── 输入框下面的选择到此为止', a);
 if (a < 0 || b < 0) throw new Error('抠不到那一段');
 const shell = fs.readFileSync(path.join(path.dirname(process.argv[2]), '..', 'zhiqu-api.js'), 'utf8');
@@ -69,7 +69,7 @@ function open({ storage, userId = 1, models = MODELS, modelsFail = false, storag
   const fakes = [state, (s) => nodes[s] || null, (s, root) => (s === '[data-effort]' ? root.items : []), { getElementById: (id) => (id === 'zq-web' ? web : null) },
     { get: async () => { if (modelsFail) throw new Error('网络断了'); return models; } }, (v) => String(v), normalizeModelList, () => {},
     null, (m) => { m.hidden = false; }, () => { menu.hidden = true; }];
-  const code = new Function(...names, src.slice(a, b) + '\nreturn { restoreAiToggles, aiToggle, loadAiModelSelect, toggleEffortMenu, reasoningModeForRequest, AI_EFFORTS, AI_EFFORT_DESC };')(...fakes);
+  const code = new Function(...names, src.slice(a, b) + '\nreturn { restoreAiToggles, loadAiModelSelect, toggleEffortMenu, reasoningModeForRequest, AI_EFFORTS, AI_EFFORT_DESC };')(...fakes);
   const page = { web, sel, state, code, effort, effortName, menu,
     on: (b) => b.dataset.on === '1' && b.getAttribute('aria-pressed') === 'true', off: (b) => b.dataset.on === '0' && b.getAttribute('aria-pressed') === 'false',
     pick(v) { sel.value = v; sel.onchange(); },
@@ -81,9 +81,8 @@ async function boot(opts) { const p = open(opts); p.code.restoreAiToggles(); awa
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
 
-check('第一次进来：联网关着、思考是 instant（发 OFF）、模型是默认', async () => {
+check('第一次进来：思考是 instant（发 OFF）、模型是默认', async () => {
   const p = await boot({ storage: memoryStore() });
-  assert.ok(p.off(p.web));
   assert.equal(p.effortName.textContent, 'instant');
   assert.equal(p.code.reasoningModeForRequest(), 'OFF');
   assert.equal(p.effort.classList.contains('is-on'), false);
@@ -116,14 +115,13 @@ check('每一档发给后端的词：instant = OFF，其余大写；选了面板
   }
 });
 
-check('选的档位刷新还在（用户：「深度思考等状态也没有保留」）；联网不跟着变；选回 instant 刷新还是 instant', async () => {
+check('选的档位刷新还在（用户：「深度思考等状态也没有保留」）；选回 instant 刷新还是 instant', async () => {
   const storage = memoryStore();
   let p = await boot({ storage });
   p.choose('extra');
   p = await boot({ storage });
   assert.equal(p.effortName.textContent, 'extra', '刷新以后档位没了');
   assert.equal(p.code.reasoningModeForRequest(), 'EXTRA');
-  assert.ok(p.off(p.web), '联网不该跟着开');
   p.choose('instant');
   p = await boot({ storage });
   assert.equal(p.effortName.textContent, 'instant', '选回 instant 以后刷新又开了');
@@ -138,13 +136,14 @@ check('第一百零七轮记的「深度思考开着」接着算 high；两个�
   assert.equal(p.effortName.textContent, 'instant');
 });
 
-check('联网按下、刷新还按着；思考档位不跟着变', async () => {
+check('模型和思考档位互不覆盖：记一样不会把另一样冲掉', async () => {
   const storage = memoryStore();
   let p = await boot({ storage });
-  p.code.aiToggle('web');
+  p.pick('7');
+  p.choose('high');
   p = await boot({ storage });
-  assert.ok(p.on(p.web), '刷新以后联网没了');
-  assert.equal(p.effortName.textContent, 'instant');
+  assert.equal(p.sel.value, '7');
+  assert.equal(p.effortName.textContent, 'high');
 });
 
 check('选的模型刷新还在（自己的、系统的都算）；选回「默认模型」刷新还是默认', async () => {
@@ -160,18 +159,6 @@ check('选的模型刷新还在（自己的、系统的都算）；选回「默�
   p = await boot({ storage });
   assert.equal(p.sel.value, '', '选回默认以后刷新又跳回上一个');
   assert.equal(p.sel.selectedIndex, 0);
-});
-
-check('三样互不覆盖：记一样不会把另外两样冲掉', async () => {
-  const storage = memoryStore();
-  let p = await boot({ storage });
-  p.pick('7');
-  p.choose('high');
-  p.code.aiToggle('web');
-  p = await boot({ storage });
-  assert.equal(p.sel.value, '7');
-  assert.equal(p.effortName.textContent, 'high');
-  assert.ok(p.on(p.web));
 });
 
 check('记的模型被删了：回到默认，下拉不能是空白；不乱选一个别的', async () => {
@@ -210,11 +197,10 @@ check('按用户分开：同一台浏览器换个人登录不接上一个人的�
   p = await boot({ storage, userId: 2 });
   assert.equal(p.sel.value, '', '接上了上一个人选的模型');
   assert.equal(p.effortName.textContent, 'instant', '接上了上一个人的思考档位');
-  p.code.aiToggle('web');
+  p.choose('high');
   p = await boot({ storage, userId: 1 });
   assert.equal(p.sel.value, '9');
   assert.equal(p.effortName.textContent, 'max');
-  assert.ok(p.off(p.web), '第二个人的联网串到第一个人');
 });
 
 check('还不知道是谁（state.user 没有）：不炸，也不写一条 undefined 的记录', async () => {
@@ -237,15 +223,15 @@ check('存不了：读写都抛（存储满了）时不炸，当页照样能按'
 
 check('站点数据被禁用（localStorage 这个名字一碰就抛）：不炸，当页照样能按', async () => {
   const p = await boot({ storageThrows: true });
-  p.code.aiToggle('web');
-  assert.ok(p.on(p.web));
+  p.choose('high');
+  assert.equal(p.code.reasoningModeForRequest(), 'HIGH');
 });
 
 check('只有写抛（配额满）：按下去不炸', async () => {
   const storage = { getItem: () => null, setItem() { throw new Error('满了'); } };
   const p = await boot({ storage });
-  p.code.aiToggle('web');
-  assert.ok(p.on(p.web));
+  p.choose('high');
+  assert.equal(p.code.reasoningModeForRequest(), 'HIGH');
 });
 
 for (const bad of ['{坏', '[]', 'null', '7', '"x"', '{"think":"1","web":1,"model":{},"effort":"ultra"}', '{"effort":5}', '{"effort":"constructor"}']) {
@@ -253,7 +239,6 @@ for (const bad of ['{坏', '[]', 'null', '7', '"x"', '{"think":"1","web":1,"mode
     const storage = memoryStore({ 'zq.ai.composer.1': bad });
     let p = await boot({ storage });
     assert.equal(p.effortName.textContent, 'instant', '坏数据被当成开着');
-    assert.ok(p.off(p.web), '坏数据被当成开着');
     assert.equal(p.sel.selectedIndex, 0);
     p.choose('high');
     p = await boot({ storage });

@@ -113,7 +113,6 @@ function fresh(wsOverride) {
     normalizeModelList: (x) => x, renderMarkdown: (t) => esc(t), renderMathIn() {}, icon: () => '<svg></svg>' });
   const sel = $('#zq-model');
   sel.options = [{ value: '', textContent: '默认模型' }, { value: '11', textContent: 'DeepSeek Pro' }, { value: '12', textContent: 'DeepSeek Flash' }, { value: '13', textContent: 'Claude' }];
-  $('#zq-web').dataset.on = '0';
   mod.bindSlash(draft());
   status(wsOverride);
 }
@@ -153,7 +152,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   await check('打 / 拉出全部命令，每一项有名字和作用；边打边筛；对不上就收起', () => {
     fresh();
     type('/');
-    assert.deepEqual(names(), ['/mode', '/effort', '/model', '/project', '/web', '/new', '/compact', '/init', '/review', '/help']);
+    assert.deepEqual(names(), ['/mode', '/effort', '/model', '/project', '/new', '/compact', '/init', '/review', '/help']);
     assert.ok($('#zq-slash-menu').innerHTML.includes('只读地审查改动'), '要写作用');
     assert.equal(selected(), '/mode');
     type('/mo');
@@ -251,7 +250,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     assert.equal(puts.length, 0);
   });
 
-  await check('/effort、/web、/new、/help 走现有的功能', () => {
+  await check('/effort、/new、/help 走现有的功能', () => {
     fresh();
     type('/effort max');
     key('Enter');
@@ -261,22 +260,13 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     type('/effort 乱写');
     key('Enter');
     assert.equal(draft().value, '/effort 乱写');
-    type('/web');
-    key('Enter');
-    assert.equal($('#zq-web').dataset.on, '1');
-    type('/web on');
-    key('Enter');
-    assert.equal($('#zq-web').dataset.on, '1', '已经开着，on 不该关掉');
-    type('/web off');
-    key('Enter');
-    assert.equal($('#zq-web').dataset.on, '0');
     type('/new');
     key('Enter');
     assert.equal($('#zq-new-notebook').clicks, 1);
     type('/help');
     key('Enter');
     assert.equal(draft().value, '/');
-    assert.equal(names().length, 10, '/help 列出全部，含已发布的 /compact');
+    assert.equal(names().length, 9, '/help 列出全部，含已发布的 /compact');
   });
 
   await check('/model：唯一对得上就切；几个都对得上、一个都没有都说清楚，不乱切', () => {
@@ -519,14 +509,14 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     const row = new El('row');
     row.setAttribute('data-slash-i', '4');
     $('#zq-slash-menu').dispatchEvent({ type: 'click', target: { closest: () => row } });
-    assert.equal($('#zq-web').dataset.on, '1', '第 5 行是 /web');
+    assert.equal($('#zq-new-notebook').clicks, 1, '第 5 行是 /new');
     assert.equal(draft().value, '');
   });
 
   await check('桌面应用连着只有产物的网站：要文件夹的命令照样列（文件夹在这台电脑上）', () => {
     fresh({ artifactOnly: true, selectedRoot: '' });
     type('/');
-    assert.deepEqual(names(), ['/mode', '/effort', '/model', '/project', '/web', '/new', '/compact', '/init', '/review', '/help']);
+    assert.deepEqual(names(), ['/mode', '/effort', '/model', '/project', '/new', '/compact', '/init', '/review', '/help']);
   });
 
   await check('网页上没有命令面板，也没有选择文件夹：/ 就是一句话', async () => {

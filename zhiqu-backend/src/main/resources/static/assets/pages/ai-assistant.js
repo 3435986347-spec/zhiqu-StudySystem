@@ -16,8 +16,7 @@ async function bootAiAssistant() {
   bindTurnLifecycle();
   restoreAiToggles();
   restoreSendQueue();
-  var webBtn = $('#zq-web'), effortBtn = $('#zq-effort'), sendBtn = $('#zq-send'), draft = $('#zq-draft');
-  if (webBtn) webBtn.onclick = function () { aiToggle('web'); };
+  var effortBtn = $('#zq-effort'), sendBtn = $('#zq-send'), draft = $('#zq-draft');
   if (effortBtn) effortBtn.onclick = toggleEffortMenu;
   // 必须包一层：直接写 sendBtn.onclick = sendAiMessage 会把点击事件当成 queuedText，
   // 用户打的字变成 "[object PointerEvent]"（第一百三十四轮线上）
@@ -290,7 +289,7 @@ async function uploadAiFiles(files, attachToNextMessage) {
   toast('上传完成：' + summary + (firstError ? '（' + firstError + '）' : ''),
     errorCount && !(readyCount || imageCount) ? 'error' : undefined);
 }
-// ───────────────────────── 输入框下面的选择（模型、思考档位、联网）：刷新、重开都还在
+// ───────────────────────── 输入框下面的选择（模型、思考档位）：刷新、重开都还在
 // 用户 2026-11-06：「每次刷新后ai助手下面的模型就会回到默认模型，深度思考等状态也没有保留，很影响体验」。
 // 只记在这台浏览器。按用户分开：模型 ID 是各人的，公用电脑上换个人登录不接上一个人的。存不了（隐私窗口）、存的是坏数据都不炸，只管这一页。
 // 退出登录不删：这不是内容，重新登录还接着用（草稿才要删）。
@@ -313,17 +312,8 @@ function saveComposerPref(name, value) {
     localStorage.setItem(key, JSON.stringify(p));
   } catch (e) { /* 存不了就只管这一页 */ }
 }
-var AI_TOGGLE_IDS = { web: 'zq-web' };
-function setAiToggleState(kind, on) {
-  var button = document.getElementById(AI_TOGGLE_IDS[kind]);
-  if (!button) return;
-  button.dataset.on = on ? '1' : '0';
-  // 按下的样子由样式表按 aria-pressed 画（.zq-chip，第四十四轮）；原来在这里一项一项写内联样式，还写死了字重 600
-  button.setAttribute('aria-pressed', on ? 'true' : 'false');
-}
 function restoreAiToggles() {
   var p = composerPrefs();
-  setAiToggleState('web', p.web === true);
   // 第一百零七轮记的是「深度思考」开没开（think），当时的深度思考就是 high
   paintEffort(AI_EFFORTS.indexOf(p.effort) >= 0 ? p.effort : (p.think === true ? 'high' : 'instant'));
 }
@@ -364,13 +354,6 @@ function chooseEffort(effort) {
   closeWorkspaceMenu();
   paintEffort(effort);
   saveComposerPref('effort', effort);
-}
-function aiToggle(k) {
-  var button = document.getElementById(AI_TOGGLE_IDS[k]);
-  if (!button) return;
-  var on = button.dataset.on !== '1';
-  setAiToggleState(k, on);
-  saveComposerPref(k, on);
 }
 async function loadAiModelSelect() {
   var sel = $('#zq-model'); if (!sel) return;
@@ -2996,7 +2979,7 @@ async function sendAiMessage(queuedText) {
   var body = {
     message: txt,
     modelConfigId: modelSel && modelSel.value ? Number(modelSel.value) : null,
-    enableWebSearch: !!($('#zq-web') && $('#zq-web').dataset.on === '1'),
+    enableWebSearch: false,
     reasoningMode: reasoningMode,
     notebookId: state.notebookId || null,
     agentMode: 'AUTO',
@@ -3208,7 +3191,6 @@ var SLASH_COMMANDS = [
   } },
   { name: '/model', args: '模型名', desc: '查看 / 切换模型', choices: function () { return slashModels().map(function (m) { return { value: m.label, desc: '' }; }); } },
   { name: '/project', args: '文件夹路径', desc: '选项目；不写路径就打开选择', folder: true },
-  { name: '/web', args: 'on | off', desc: '联网搜索开 / 关', choices: function () { return [{ value: 'on', desc: '打开联网搜索' }, { value: 'off', desc: '关掉联网搜索' }]; } },
   { name: '/new', desc: '新建一个 Notebook', bare: true },
   { name: '/compact', desc: '把较早的对话压成摘要（只影响发给模型的上下文，聊天记录不变）', bare: true },
   { name: '/init', desc: '读项目，写一份 ZHIQU.md 初稿', bare: true, turn: true, folder: true },
@@ -3311,13 +3293,6 @@ var localSlashActions = {
     // 不是路径就不去切（「/project 这个目录怎么样」）：切了，这句话就没了
     if (!/^(\/|[A-Za-z]:[\\/])/.test(folder)) return slashNo('/project 接文件夹的绝对路径，收到 ' + arg);
     switchWorkspace(modeForProject(wsStatus.selectedMode), folder);
-    return true;
-  },
-  '/web': function (arg) {
-    if (arg && arg !== 'on' && arg !== 'off') return slashNo('/web 接 on 或 off，收到 ' + arg);
-    var on = $('#' + AI_TOGGLE_IDS.web).dataset.on === '1';
-    if (!arg || (arg === 'on') !== on) aiToggle('web');
-    toast('联网搜索：' + ($('#' + AI_TOGGLE_IDS.web).dataset.on === '1' ? '开' : '关'));
     return true;
   },
   '/new': function () { $('#zq-new-notebook').click(); return true; },
