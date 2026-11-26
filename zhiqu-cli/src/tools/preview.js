@@ -100,6 +100,7 @@ window.addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&(t.
 push(R.errors,String(e.message||e.error)+(e.filename?' ('+String(e.filename).replace(location.origin,'')+':'+e.lineno+')':''));},true);
 window.addEventListener('unhandledrejection',function(e){var r=e.reason;push(R.rejections,r&&r.message?r.message:r);});
 var ce=console.error;console.error=function(){try{push(R.consoleErrors,Array.prototype.map.call(arguments,String).join(' '));}catch(e){}return ce.apply(console,arguments);};
+try{var gp=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(t){var c=gp.apply(this,arguments);if(c&&/webgl/i.test(String(t))&&!c.__zhiqu){c.__zhiqu=1;var cs=c.compileShader.bind(c);c.compileShader=function(sh){cs(sh);try{if(!c.getShaderParameter(sh,c.COMPILE_STATUS))push(R.errors,'着色器编译失败：'+(c.getShaderInfoLog(sh)||''));}catch(e){}};var cl=c.linkProgram.bind(c);c.linkProgram=function(p){cl(p);try{if(!c.getProgramParameter(p,c.LINK_STATUS))push(R.errors,'着色器链接失败：'+(c.getProgramInfoLog(p)||''));}catch(e){}};}return c;};}catch(e){}
 window.addEventListener('load',function(){setTimeout(function(){send(true);},1500);});
 setTimeout(function(){send(false);},3000);})();</script>`.replace(/\n/g, '');
 

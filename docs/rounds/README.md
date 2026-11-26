@@ -197,3 +197,4 @@
 | [第一百八十四轮](round-184.md) | 验收标准只有形容词时，核对员说达成也会被拦住，改成卡住。自动问人还没有 | `goal.test.js` 新增一条 |
 | [第一百八十五轮](round-185.md) | 网页宿主没传思考档位不再改成 instant；桌面选了项目目录才加载 skills | `effort.test.js`；页面本来就传 effort |
 | [第一百八十六轮](round-186.md) | 直接 shell 拒绝命令里写明的工作区外路径和 .git / .zhiqu。自己算出的路径挡不住 | `windows-direct.test.js` 新增一条，macOS 上也跑 |
+| [第一百八十七轮](round-187.md) | 探针记下着色器编译和链接失败，仍是一行，不从画布读像素 | `page-report.test.js` |

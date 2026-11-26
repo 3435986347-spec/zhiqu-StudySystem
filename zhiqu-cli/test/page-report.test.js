@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import vm from 'node:vm';
 import { runGoal, verifyGoal } from '../src/agent.js';
 import { ApiError } from '../src/api.js';
 import { lastScreenshot, newGoal } from '../src/goal.js';
@@ -92,6 +93,47 @@ test('注入：放在 <head> 最前面；没有 head 放在 doctype 后面（放
   assert.ok(injectProbe('<p>hi</p>').startsWith(PROBE_SCRIPT));
   assert.doesNotThrow(() => new Function(PROBE_SCRIPT.replace(/<\/?script[^>]*>/g, '')), '探针本身是合法的脚本');
   assert.ok(!PROBE_SCRIPT.includes('\n'), '探针是一行：不推后页面的行号');
+  const page = '<!doctype html>\n<script>throw new Error("boom")</script>\n';
+  assert.equal(injectProbe(page).split('\n')[1], '<script>throw new Error("boom")</script>', '探针不另起一行，页面脚本仍在第 2 行');
+  assert.match(PROBE_SCRIPT, /着色器编译失败/);
+  assert.match(PROBE_SCRIPT, /着色器链接失败/);
+});
+
+test('探针：WebGL 编译或链接失败记进报错，成功的不记，条数仍最多 10', () => {
+  const sent = [];
+  const gl = {
+    COMPILE_STATUS: 1, LINK_STATUS: 2,
+    compileShader() {}, linkProgram() {},
+    getShaderParameter(sh) { return sh.ok; },
+    getProgramParameter(p) { return p.ok; },
+    getShaderInfoLog(sh) { return sh.log; },
+    getProgramInfoLog(p) { return p.log; },
+  };
+  const later = [];
+  const listeners = {};
+  const sandbox = {
+    HTMLCanvasElement: { prototype: { getContext(type) { return /webgl/i.test(String(type)) ? gl : null; } } },
+    document: { title: 't', body: { innerText: '' }, getElementsByTagName: () => [] },
+    console,
+    location: { origin: 'http://127.0.0.1' },
+    setTimeout(fn) { later.push(fn); return 0; },
+    XMLHttpRequest: class { open() {} setRequestHeader() {} send(body) { sent.push(JSON.parse(body)); } },
+  };
+  sandbox.window = sandbox;
+  sandbox.window.addEventListener = (name, fn) => { (listeners[name] ||= []).push(fn); };
+  vm.runInNewContext(PROBE_SCRIPT.replace(/<\/?script[^>]*>/g, ''), sandbox);
+  const c = sandbox.HTMLCanvasElement.prototype.getContext('webgl');
+  c.compileShader({ ok: false, log: 'C100' });
+  c.compileShader({ ok: true, log: '' });
+  c.linkProgram({ ok: false, log: '未链接' });
+  for (const fn of later) fn();
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].errors, ['着色器编译失败：C100', '着色器链接失败：未链接']);
+  for (let i = 0; i < 12; i++) c.compileShader({ ok: false, log: 'x' + i });
+  sent.length = 0;
+  listeners.load.forEach((fn) => fn());
+  for (const fn of later) fn();
+  assert.ok(sent.at(-1).errors.length <= 10);
 });
 
 test('静态服务：probe 开着才给 html 注入、才收回传（只认那一个路径、64KB 以内）；别的文件原样给', async () => {
