@@ -18,7 +18,8 @@ export const PUBLIC_REPOSITORY_FIELDS = ['repo', 'instance_id', 'base_commit', '
 // 2026-10-18 ID 6 那组按预算停下后，用户要求用 ID 1「DeepseekV4pro」（同一个模型、另一份配置）补被打断的题。只认这两个 ID、这一个模型。
 export const REPOSITORY_MODEL = Object.freeze({ id: 6, modelName: 'deepseek-v4-pro', contextWindowTokens: 1_000_000 });
 // 和 broker 同一份名单（第九十八轮加了验证库里配着用户测试 key 的 23、25；见 repository-broker.mjs）
-export const APPROVED_MODEL_IDS = Object.freeze([6, 1, 23, 25]);
+export const APPROVED_MODEL_IDS = Object.freeze([6, 1, 23, 25, 42]);
+const APPROVED_MODEL_NAMES = new Map([[6, 'deepseek-v4-pro'], [1, 'deepseek-v4-pro'], [23, 'deepseek-v4-pro'], [25, 'deepseek-v4-pro'], [42, 'deepseek-flash']]);
 export const REPOSITORY_LIMITS = Object.freeze({ maxRounds: 60, timeoutMs: 1_800_000,
   execTimeoutMs: 180_000, minRequestIntervalMs: 1200, maxRequests: 200 });
 
@@ -69,10 +70,10 @@ export function validateRepositoryPayload(payload) {
       || url.pathname !== '/') throw new Error('Broker must be a fixed private IPv4 HTTP endpoint');
   keysOnly(payload.model, ['id', 'label', 'modelName', 'providerType', 'toolCalling', 'contextWindowTokens',
     'effectiveContextWindow'], 'model metadata');
-  if (!APPROVED_MODEL_IDS.includes(payload.model.id) || payload.model.modelName !== REPOSITORY_MODEL.modelName
+  if (APPROVED_MODEL_NAMES.get(payload.model.id) !== payload.model.modelName
       || payload.model.toolCalling !== true || payload.model.contextWindowTokens !== REPOSITORY_MODEL.contextWindowTokens
       || payload.model.effectiveContextWindow !== REPOSITORY_MODEL.contextWindowTokens) {
-    throw new Error(`Repository protocol requires DeepSeek ID ${APPROVED_MODEL_IDS.join(' / ')} / deepseek-v4-pro / 1000000-token context`);
+    throw new Error(`Repository protocol requires DeepSeek ID ${APPROVED_MODEL_IDS.join(' / ')} / deepseek-v4-pro or 42 / deepseek-flash / 1000000-token context`);
   }
   keysOnly(payload.limits || {}, Object.keys(REPOSITORY_LIMITS), 'episode limits');
   const limits = { ...REPOSITORY_LIMITS, ...payload.limits };

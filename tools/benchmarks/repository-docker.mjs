@@ -907,7 +907,7 @@ async function formalRun(ctx, { continuation = false } = {}) {
   const broker = new BrokerContainer({ name: `zq-eval-broker-${runId}`, runtime: ctx.runtime, ledgerDir: path.join(ctx.root, 'ledger'), logFile: path.join(dir, 'broker.log') });
   // 开着思考跑（第一百零八轮）：后端带 --app.ai.harness-reasoning=high，run-config 里 output_reservation_tokens 给 32768；请求体一个字不变
   const reservation = (plan || again)?.output_reservation_tokens;
-  await broker.start({ server: upstream, token, ledgerName: ledger.ledgerName, limits: { ...ledger.limits, modelId, ...(reservation ? { outputReservationTokens: reservation } : {}) } });
+  await broker.start({ server: upstream, token, ledgerName: ledger.ledgerName, limits: { ...ledger.limits, modelId, modelName: model.modelName, contextWindow: model.effectiveContextWindow, ...(reservation ? { outputReservationTokens: reservation } : {}) } });
   const results = {};
   let hostGatewayIp = null;
   const manifest = { run_id: runId, started_at: new Date().toISOString(), model, continuation: plan, config_sha256: sha(fs.readFileSync(ctx.configPath)),
@@ -925,8 +925,8 @@ async function formalRun(ctx, { continuation = false } = {}) {
     await broker.revoke('calibration'); await calibrationEnv.kill(); await calibrationEnv.down();
     let calibration = null; try { calibration = JSON.parse(cal.stdout.trim().split('\n').at(-1)); } catch { /* 下面判 */ }
     writeJson(path.join(dir, 'calibration.json'), { calibration, exit: cal.code, stderr: cal.stderr.slice(-1000), budget: await broker.status() });
-    if (calibration?.start?.id !== modelId || calibration.start.modelName !== 'deepseek-v4-pro' || calibration.start.contextWindow !== 1_000_000 || !calibration.done) {
-      throw new Error(`Calibration did not verify model ${modelId} / deepseek-v4-pro / 1M through the broker`);
+    if (calibration?.start?.id !== modelId || calibration.start.modelName !== ctx.config.model.model_name || calibration.start.contextWindow !== ctx.config.model.expected_context_window_tokens || !calibration.done) {
+      throw new Error(`Calibration did not verify model ${modelId} / ${ctx.config.model.model_name} / ${ctx.config.model.expected_context_window_tokens} through the broker`);
     }
 
     for (const { task, repeat, episodeId, rel } of schedule) {

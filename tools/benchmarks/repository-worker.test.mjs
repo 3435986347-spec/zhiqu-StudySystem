@@ -130,9 +130,13 @@ test('only the approved DeepSeek IDs pass validation (6, 1; 23 / 25 are the veri
     const data = fixture(t, [{ text: 'Finished.' }]);
     assert.doesNotThrow(() => validateRepositoryPayload({ ...data.payload, model: { ...data.payload.model, id } }), String(id));
   }
+  {
+    const data = fixture(t, [{ text: 'Finished.' }]);
+    assert.doesNotThrow(() => validateRepositoryPayload({ ...data.payload, model: { ...data.payload.model, id: 42, modelName: 'deepseek-flash' } }));
+  }
   for (const id of [2, 3, 0, '6', 24]) {
     const data = fixture(t, [{ text: 'Finished.' }]);
-    assert.throws(() => validateRepositoryPayload({ ...data.payload, model: { ...data.payload.model, id } }), /ID 6 \/ 1 \/ 23 \/ 25/, String(id));
+    assert.throws(() => validateRepositoryPayload({ ...data.payload, model: { ...data.payload.model, id } }), /ID 6 \/ 1 \/ 23 \/ 25 \/ 42/, String(id));
   }
 });
 

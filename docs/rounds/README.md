@@ -200,3 +200,4 @@
 | [第一百八十七轮](round-187.md) | 探针记下着色器编译和链接失败，仍是一行，不从画布读像素 | `page-report.test.js` |
 | [第一百八十八轮](round-188.md) | 这一轮留一个 Chrome（CDP），能点能拖能连拍；没有虚拟时间。这台机器没有 Chrome，真浏览器没跑 | `preview-session.test.js` |
 | [第一百八十九轮](round-189.md) | 没有可执行检查时问人一次，并指到最后一张预览；写出能核对的标准才继续 | `goal.test.js` |
+| [第一百九十轮](round-190.md) | 评测账本认得验证库的 deepseek-flash。思考关着的 12 遍接着跑，分数还没出来 | broker / worker 名单先红后绿；隔离烟测 10/10 |

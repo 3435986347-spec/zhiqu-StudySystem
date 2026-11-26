@@ -125,8 +125,13 @@ test('a ledger is for one approved model: ID 6, 1, 23 or 25 (all deepseek-v4-pro
     assert.equal(broker.snapshot().modelId, modelId);
     broker.releaseLock();
   }
+  {
+    const broker = new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, 'ok-42.jsonl'), modelId: 42, modelName: 'deepseek-flash' });
+    assert.equal(broker.snapshot().modelId, 42);
+    broker.releaseLock();
+  }
   for (const [name, options] of [['id2', { modelId: 2 }], ['name', { modelId: 1, modelName: 'deepseek-chat' }], ['window', { modelId: 1, contextWindow: 64_000 }]]) {
-    assert.throws(() => new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, name + '.jsonl'), ...options }), /6 \/ 1 \/ 23 \/ 25/);
+    assert.throws(() => new RepositoryBroker({ api: { stream() {} }, ledgerPath: path.join(directory, name + '.jsonl'), ...options }), /6 \/ 1 \/ 23 \/ 25 \/ 42/);
   }
 });
 
