@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { LocalTools, READ_TOOLS, shellOutcome, shellSeconds } from './local.js';
 import { describeJob, MAX_WAIT_SECONDS, START_WAIT_MS } from './jobs.js';
-import { browserInSandbox, describeBoundary, READ_ONLY, WORKSPACE_WRITE } from './sandbox.js';
+import { browserInSandbox, describeBoundary, directWriteRefusal, READ_ONLY, WORKSPACE_WRITE } from './sandbox.js';
 import { syntaxProblem } from './syntax.js';
 import { stat as diffStat } from '../render/diff.js';
 import { describe, Reason } from './guard.js';
@@ -260,6 +260,11 @@ export class DesktopTools extends DraftTools {
 
   async commitShell(prep, { signal, onOutput } = {}) {
     if (!this.sandbox) return { error: '这一档没有可执行的命令通道。Windows 直接命令只在 auto 档提供。' };
+    if (prep && prep.error) return { error: prep.error };
+    if (this.directWindows) {
+      const why = directWriteRefusal(prep.command, this.root);
+      if (why) return { content: `【Windows 本机直接运行，不是系统沙箱】\n$ ${prep.command}\n${why}`, summary: '没有运行', exitCode: 126, output: why, refused: true };
+    }
     const r = await LocalTools.prototype.commitShell.call(this, prep, { policy: this.shellPolicy, unsandboxed: this.directWindows,
       plainOptions: { home: this.home }, signal, onOutput });
     if (!r.refused) this.ranCommand = true;
@@ -269,6 +274,11 @@ export class DesktopTools extends DraftTools {
 
   async startJob(prep, { signal } = {}) {
     if (!this.sandbox) return { error: '这一档没有可执行的命令通道。' };
+    if (prep && prep.error) return { error: prep.error };
+    if (this.directWindows) {
+      const why = directWriteRefusal(prep.command, this.root);
+      if (why) return { error: why, refused: true };
+    }
     const r = await LocalTools.prototype.startJob.call(this, prep, { policy: this.shellPolicy, unsandboxed: this.directWindows,
       plainOptions: { home: this.home }, signal });
     if (!r.error) {

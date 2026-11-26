@@ -414,9 +414,46 @@ export function looksBlocked(output) {
     || /(?:\/home\/|\/root\/|\/tmp\/|\/var\/tmp\/|\/mnt\/|\/media\/|\/run\/user\/)[^\n]*No such file or directory|No such file or directory[^\n]*(?:\/home\/|\/root\/|\/tmp\/|\/var\/tmp\/|\/mnt\/|\/media\/|\/run\/user\/)/.test(text);
 }
 
+/**
+ * 没有系统沙箱的直接 shell：命令文本里写明要写到工作区外、或写进 .git / .zhiqu，就不执行。
+ * 挡不住程序运行起来之后自己算出的路径。相对路径、以及只读的工作区外路径，这里不拦。
+ */
+export function directWriteRefusal(command, root) {
+  const text = String(command || '');
+  let base;
+  try { base = fs.realpathSync(root); } catch { base = path.resolve(root); }
+  const hits = [];
+  const consider = (raw) => {
+    let s = String(raw || '').trim().replace(/^['"]|['"]$/g, '');
+    if (!s || s === '-' || s.startsWith('-')) return;
+    const outsideShaped = s.startsWith('/') || s.startsWith('~') || /^[A-Za-z]:[\\/]/.test(s) || s.split(/[\\/]/).includes('..');
+    const sensitive = /(^|[\\/])\.(?:git|zhiqu)([\\/]|$)/.test(s);
+    if (!outsideShaped && !sensitive) return;
+    let resolved;
+    if (s === '~' || s.startsWith('~/') || s.startsWith('~\\')) resolved = path.resolve(os.homedir(), s.replace(/^~[\\/]?/, ''));
+    else resolved = path.resolve(base, s);
+    const rel = path.relative(base, resolved);
+    const norm = rel.split(path.sep).join('/');
+    const leaves = rel.startsWith('..') || path.isAbsolute(rel);
+    const reserved = norm === '.git' || norm.startsWith('.git/') || norm === '.zhiqu' || norm.startsWith('.zhiqu/');
+    if ((leaves || reserved) && !hits.includes(s)) hits.push(s);
+  };
+  for (const seg of text.split(/&&|\|\||[;&|\n]/)) {
+    const cd = /^\s*cd\s+([^\s]+)/.exec(seg);
+    if (cd) consider(cd[1]);
+    const parts = seg.trim().split(/\s+/).filter(Boolean);
+    const cmd = (parts[0] || '').replace(/^.*[\\/]/, '');
+    if (/^(cp|mv|move|copy|install|tee|rm|del|rmdir|erase)$/i.test(cmd) && parts.length >= 2) consider(parts[parts.length - 1]);
+  }
+  for (const m of text.matchAll(/(?<![=])(\d?>>?)\s*([^\s|&;]+)/g)) consider(m[2]);
+  for (const m of text.matchAll(/(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|copyFileSync|copyFile)\s*\(\s*(['"])([^'"]+)\1/g)) consider(m[2]);
+  if (!hits.length) return null;
+  return `这条命令要写到工作区外或 .git / .zhiqu（${hits.join('、')}），直接 shell 没有系统沙箱，这种写入不执行。写工作区里的文件，或改用草稿工具。程序在运行中自己算出的路径，这一层看不到。`;
+}
+
 /** 给人和模型看的一句话：现在关在什么里面。 */
 export function describeBoundary({ policy = WORKSPACE_WRITE, network = 'off', hosted = false, direct = false } = {}) {
-  if (direct) return 'Windows 本机直接运行，不是系统沙箱；只有用户选择 auto 档才执行；命令能访问当前用户有权限的文件和网络，不限于项目目录，改代码仍用草稿工具，shell 用来跑测试和构建';
+  if (direct) return 'Windows 本机直接运行，不是系统沙箱；只有用户选择 auto 档才执行；命令里写明的工作区外路径、以及 .git / .zhiqu，会被拒绝。程序自己算出来的路径挡不住。改代码仍用草稿工具，shell 用来跑测试和构建';
   if (hosted) {
     return `服务器上的隔离环境，工作目录是 ${HOSTED_WORK}（就是工作区）；${policy === READ_ONLY ? '工作区只读，只能写 /tmp' : '只能写工作区和 /tmp'}；${network === 'off' ? '不能联网' : '能联网'}；只有系统目录，读不到别的文件；`
       + '一条命令最多 60 秒，内存和进程数有限，超了会被杀；不能起后台进程（background 用不了）；每条命令是一个新的 bash，/tmp 也不留到下一条（要留的放工作区）';

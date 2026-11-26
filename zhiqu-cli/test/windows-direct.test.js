@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { plainLaunch, describeBoundary } from '../src/tools/sandbox.js';
+import { plainLaunch, describeBoundary, directWriteRefusal } from '../src/tools/sandbox.js';
 import { runProcess } from '../src/tools/exec.js';
 import { DesktopTools } from '../src/tools/drafts.js';
 import { runHosted } from '../src/host/code-host.js';
@@ -99,4 +99,27 @@ test('Windows runHosted：假模型网关驱动真本机命令，令牌只走 Au
     assert.ok(!request.body.includes(token));
   }
   assert.ok(events.some(event => event.type === 'trace'));
+});
+
+test('直接 shell：命令里写明的工作区外路径和 .git 不执行，工作区里的相对路径照常写', async () => {
+  const root = tmpdir();
+  const outside = path.join(tmpdir(), 'outside.txt');
+  const tools = new DesktopTools({ root, canWrite: true, shellWrite: true, allowDirectShell: true, home: os.homedir() });
+  const blocked = await tools.commitShell(tools.prepareShell({ command: `echo no > ${outside}` }));
+  assert.equal(blocked.exitCode, 126);
+  assert.match(blocked.content, /工作区外/);
+  assert.equal(fs.existsSync(outside), false);
+  const hook = path.join(root, '.git', 'hooks', 'pre-commit');
+  const gitWrite = await tools.commitShell(tools.prepareShell({ command: 'echo bad > .git/hooks/pre-commit' }));
+  assert.equal(gitWrite.exitCode, 126);
+  assert.equal(fs.existsSync(hook), false);
+  const script = `node -e "require('fs').writeFileSync(${JSON.stringify(outside)}, 'x')"`;
+  const coded = await tools.commitShell(tools.prepareShell({ command: script }));
+  assert.equal(coded.exitCode, 126);
+  assert.equal(fs.existsSync(outside), false);
+  assert.equal(directWriteRefusal('node -p "process.version"', root), null);
+  const ok = await tools.commitShell(tools.prepareShell({ command: 'echo yes > inside.txt' }));
+  assert.equal(ok.exitCode, 0, ok.content);
+  assert.equal(fs.readFileSync(path.join(root, 'inside.txt'), 'utf8').trim(), 'yes');
+  assert.match(describeBoundary({ direct: true }), /工作区外/);
 });
