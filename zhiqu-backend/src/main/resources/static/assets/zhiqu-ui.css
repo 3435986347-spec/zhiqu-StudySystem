@@ -896,6 +896,10 @@ textarea#zq-ask-input{min-height:100px;}   /* 单行的输入框也是这个 id�
 .zq-msg-body>:last-child,.zq-msg-body>:last-child>:last-child,.zq-msg-body>:last-child>:last-child>:last-child{margin-bottom:0!important;}
 /* 回答里的每一步（第一百二十七轮，像 Codex）：一步一行，有细节的点开（<details>）。颜色、字号都是令牌；JS 只给 data-state / data-kind */
 .zq-trace{display:flex;flex-direction:column;gap:1px;margin-bottom:12px;}
+.zq-trace-fold{margin:0 0 10px;}
+.zq-trace-fold>summary{cursor:pointer;list-style:none;user-select:none;font-size:var(--zq-fs-xs);color:var(--zq-text3);line-height:1.5;}
+.zq-trace-fold>summary::-webkit-details-marker{display:none;}
+.zq-trace-fold[open]>.zq-trace{margin-top:6px;}
 .zq-trace-step{border-radius:var(--zq-rs);}
 .zq-trace-line{display:flex;align-items:center;gap:8px;min-width:0;padding:3px 6px;font-size:var(--zq-fs-sm);color:var(--zq-text2);line-height:1.5;border-radius:var(--zq-rs);}
 details.zq-trace-step>summary{cursor:pointer;list-style:none;user-select:none;}

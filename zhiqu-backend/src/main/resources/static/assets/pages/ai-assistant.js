@@ -483,6 +483,39 @@ function traceStepHtml(s, key) {
  * 一条回答的步骤列表。key 是这条消息的键（展开状态记在 state.reasoningExpanded[key + ':' + 步骤 id]，
  * 和思考摘要同一套：全量重画时 renderAiMessages 先存再还原）。
  */
+function traceActivitySummary(steps) {
+  var list = steps || [];
+  function files(kinds) {
+    var seen = {};
+    list.forEach(function (s) {
+      if (kinds.indexOf(s.kind) < 0) return;
+      var name = String(s.target || '').trim();
+      if (name) seen[name] = 1;
+    });
+    return Object.keys(seen).length;
+  }
+  function times(kind) {
+    var n = 0;
+    list.forEach(function (s) { if (s.kind === kind) n += 1; });
+    return n;
+  }
+  var parts = [];
+  var edited = files(['create', 'edit', 'patch', 'delete']);
+  var read = files(['read']);
+  var looked = files(['list']);
+  var searched = times('search');
+  var ran = times('run');
+  if (edited) parts.push('改了 ' + edited + ' 个文件');
+  if (read) parts.push('读了 ' + read + ' 个文件');
+  if (looked) parts.push('看了 ' + looked + ' 处');
+  if (searched) parts.push('搜了 ' + searched + ' 次');
+  if (ran) parts.push('跑了 ' + ran + ' 条命令');
+  if (parts.length) return parts.join('，');
+  var thinking = times('thinking');
+  if (thinking && list.every(function (s) { return s.kind === 'thinking' || s.kind === 'note' || s.kind === 'steer'; })) return '思考了';
+  var work = list.filter(function (s) { return s.kind !== 'note' && s.kind !== 'steer'; }).length;
+  return work ? '做了 ' + work + ' 步' : '';
+}
 function traceStepsHtml(trace, key) {
   var steps = (trace && trace.steps) || [];
   var allKey = key + ':all';
@@ -1594,7 +1627,18 @@ function messageBodyHtml(m, i) {
   // 回答里按顺序列出的每一步（第一百二十七轮）：在正文上面；没有步骤时这里是空串，什么都不多
   // 步骤的展开状态按 requestId 记（流式时是 _clientKey、收尾重新拉列表后是 id —— 两者都会变，requestId 两边都有）
   var traceKey = String(m.requestId || reasonKey);
-  var steps = (!me && m.steps && m.steps.steps && m.steps.steps.length) ? traceStepsHtml(m.steps, traceKey) : '';
+  var steps = '';
+  if (!me && m.steps && m.steps.steps && m.steps.steps.length) {
+    var inner = traceStepsHtml(m.steps, traceKey);
+    var summary = traceActivitySummary(m.steps.steps);
+    var foldKey = traceKey + ':fold';
+    var live = m.steps.steps.some(function (s) { return s.status === 'running'; });
+    var opened = state.reasoningExpanded[foldKey];
+    var open = opened == null ? live : opened;
+    steps = '<details class="zq-trace-fold" data-reason-key="' + esc(foldKey) + '"' + (open ? ' open' : '') + '>'
+      + '<summary class="zq-trace-fold-sum">' + esc(summary || '做了 ' + m.steps.steps.length + ' 步') + '</summary>'
+      + inner + '</details>';
+  }
   if (legacy) body += '<div class="zq-msg-note">（命令行那一轮做了 ' + esc(legacy.count) + ' 步，旧的存档没有分步记下）</div>';
   return steps + reason + body;
 }
@@ -1656,6 +1700,11 @@ function patchStreamingMessage(index) {
 }
 /** 这一块里的步骤：点开 / 合上记下来，点开时画细节（没有就去拿）；「还有 N 步」点了列全部 */
 function bindTraceToggles(scope) {
+  $all('details.zq-trace-fold[data-reason-key]', scope).forEach(function (details) {
+    details.ontoggle = function () {
+      state.reasoningExpanded[details.dataset.reasonKey] = details.open;
+    };
+  });
   $all('details.zq-trace-step[data-reason-key]', scope).forEach(function (details) {
     details.ontoggle = function () {
       var was = Boolean(state.reasoningExpanded[details.dataset.reasonKey]);
@@ -3911,4 +3960,4 @@ function pumpSendQueue() {
 
 // 给测试直接 import 的纯函数（第三十七轮）：step-note-check.js（执行轨迹里一条叙述的转义）、diff-check.js（改动草稿的逐行对比）。
 // 它们只用到 esc —— 测试 bind 一个只有 esc 的 sh 就能跑。
-export { traceStepsHtml, mergeTraceStep, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard, parseSlash, slashMatches, slashBlocked, bindSlash, paintSlash, sendAiMessage, paintWorkspaceBar, createDecisionView, decisionComplete, decisionPayload };
+export { traceStepsHtml, traceActivitySummary, mergeTraceStep, diffLines, diffHtml, generatedFilesHtml, genPreviewKind, genPreviewNode, humanSize, earlierGeneratedFiles, earlierFilesCard, parseSlash, slashMatches, slashBlocked, bindSlash, paintSlash, sendAiMessage, paintWorkspaceBar, createDecisionView, decisionComplete, decisionPayload };

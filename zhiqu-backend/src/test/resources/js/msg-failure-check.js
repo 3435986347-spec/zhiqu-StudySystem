@@ -40,6 +40,7 @@ const mod = new Function(
   + 'function renderMarkdown(s) { return "<p>" + esc(s) + "</p>"; }\n'
   + 'function reflowFlatMarkdown(s) { return s; }\n'
   + 'function traceStepsHtml() { return ""; }\n'
+  + 'function traceActivitySummary() { return ""; }\n'
   + escSrc + '\n' + clockSrc + '\n' + bodySrc + '\nreturn { messageBodyHtml, waitText };')();
 
 let fail = 0;

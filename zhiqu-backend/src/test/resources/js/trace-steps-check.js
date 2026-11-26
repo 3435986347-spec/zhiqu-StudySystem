@@ -158,6 +158,21 @@ const tags = (h) => [...h.matchAll(/<\/?([a-z0-9]+)[\s>]/gi)].map((m) => m[1].to
     delete state.reasoningExpanded['req-1:all'];
   });
 
+  check('正文前面的一串收成一行灰字：改了几个文件、读了几个、搜了几次、跑了几条；同一个文件改两回只算一个', () => {
+    assert.equal(mod.traceActivitySummary([
+      { id: 'a', kind: 'thinking', title: '思考', status: 'ok' },
+      { id: 'b', kind: 'read', title: '读取', target: 'a.js', status: 'ok' },
+      { id: 'c', kind: 'read', title: '读取', target: 'a.js', status: 'ok' },
+      { id: 'd', kind: 'search', title: '搜索', target: '「颜色」', status: 'ok' },
+      { id: 'e', kind: 'edit', title: '修改', target: 'a.js', status: 'ok' },
+      { id: 'f', kind: 'edit', title: '修改', target: 'a.js', status: 'ok' },
+      { id: 'g', kind: 'create', title: '写入', target: 'b.js', status: 'ok' },
+      { id: 'h', kind: 'run', title: '运行', target: 'node test.js', status: 'ok' },
+      { id: 'i', kind: 'run', title: '运行', target: 'node test.js', status: 'ok' },
+    ]), '改了 2 个文件，读了 1 个文件，搜了 1 次，跑了 2 条命令');
+    assert.equal(mod.traceActivitySummary([{ id: 't', kind: 'thinking', title: '思考', status: 'ok' }]), '思考了');
+  });
+
   check('SSE 合并：同一步先 running 后 ok，替换、位置不变；新的接在后面；坏的不收', () => {
     const m = {};
     mod.mergeTraceStep(m, { id: 's1', kind: 'run', status: 'running' });
