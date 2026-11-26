@@ -186,7 +186,7 @@ fs.writeFileSync(out, Buffer.from('${PNG.toString('base64')}', 'base64'));
   assert.ok(argv.some((a) => a.startsWith('--use-angle=swiftshader')), '没有指定 ANGLE 的软件后端');
   assert.ok(argv.some((a) => a.startsWith('--crash-dumps-dir=') && a.slice('--crash-dumps-dir='.length).length > 0),
     '崩溃上报目录没指到可写的临时目录：目录不可写时 Chrome 直接起不来');
-  assert.ok(argv.some((a) => a.startsWith('--virtual-time-budget=') && Number(a.split('=')[1]) >= 5000), '3D 场景给的时间太短');
+  assert.ok(!argv.some((a) => a.startsWith('--virtual-time-budget=')), '还写着虚拟时间：timeout_seconds 不会多画出动画');
   // 用户 2026-11-13：「发起 preview_page 的时候提示找不到用于存储 chrome 的钥匙串」。
   // 我们把 HOME 换成了临时目录，Chrome 找不到 ~/Library/Keychains 就会去要 Chrome Safe Storage。
   assert.ok(argv.includes('--use-mock-keychain'), '没带 --use-mock-keychain：HOME 是临时目录，Chrome 会去找系统钥匙串并提示「找不到」');

@@ -2033,6 +2033,9 @@ async function runTurnBody(ctx, userText, { signal, origin = null, inbox: given 
     if (inbox) leftover = given ? inbox.items.slice() : inbox.close();
     // 这一句结束时还在跑的子 agent 停掉，不留到下一句（Codex 有完成了的子 agent 一直占名额的 issue）
     if (lead) await ctx.agents.endTurn(ctx);
+    if (!ctx.subagent && ctx.local && typeof ctx.local.closePreview === 'function') {
+      try { await ctx.local.closePreview(); } catch { /* 浏览器关不掉不挡这一轮收尾 */ }
+    }
     ctx.ui.stopThinking();
   }
   if (signal && signal.aborted) ctx.messages = dropDanglingToolCalls(ctx.messages);

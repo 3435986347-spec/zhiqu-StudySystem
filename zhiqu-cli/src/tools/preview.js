@@ -14,6 +14,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
+import { connectCdp } from './cdp.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -255,16 +256,36 @@ export const DEFAULT_TIMEOUT_MS = 90_000;
 /** 截图字节上限。图按固定 token 估，不按 base64 字数；1.5MB 会把正常的一屏拒掉（用户 2026-11-13）。 */
 export const MAX_PREVIEW_BYTES = 8_000_000;
 
+/** 无头 Chrome 的参数。port 给了才开调试端口（常驻会话）。一次截一张的那条不带虚拟时间。 */
+export function chromeArgs({ profile, crashes, width, height, gl = 'swiftshader', port = null, screenshot = '', url = '' } = {}) {
+  const args = [
+    '--headless=new',
+    // 不要 --disable-gpu：它会把 GPU 进程整个关掉，headless 里就等于没有 WebGL。
+    // 软件渲染必须显式 --enable-unsafe-swiftshader（Chrome 129 起默认不给）。
+    '--enable-unsafe-swiftshader', '--use-gl=angle', `--use-angle=${gl}`,
+    '--hide-scrollbars', '--mute-audio', '--no-first-run', '--no-default-browser-check',
+    // HOME 换成临时目录后，Chrome 会去找钥匙串。用内存里的假钥匙串，不弹系统对话框。
+    '--use-mock-keychain', '--password-store=basic',
+    '--disable-extensions', '--disable-sync', '--disable-background-networking', '--disable-component-update',
+    '--disable-breakpad', '--disable-crash-reporter', `--crash-dumps-dir=${crashes}`, '--disable-background-mode', '--no-pings',
+    '--disable-logging', '--log-level=3',
+    '--run-all-compositor-stages-before-draw',
+    `--user-data-dir=${profile}`, `--window-size=${width},${height}`,
+  ];
+  if (port != null) args.push(`--remote-debugging-port=${port}`, '--remote-allow-origins=*');
+  if (screenshot) args.push(`--screenshot=${screenshot}`);
+  if (url) args.push(url);
+  return args;
+}
+
 /**
  * 跑一次无头 Chrome 截图。返回 { ok } 或 { error }。
+ * WebKit 助手仍是这一次一开一关。Chrome 的常驻会话不走这里。
  *
- * <p>两个坑（用户 2026-11-12 报「浏览器退出码 null」）：
- * <ul>
- *   <li>Chrome 会拉起更新器 / 崩溃上报这类子进程，它们<b>继承着我们的 stderr 管道</b>。只看 <code>close</code>
- *       的话，主进程早退出了、管道还开着，事件永远不来 —— 只能等我们的超时把它杀掉，于是 code 是 null。
- *       所以认 <code>exit</code>（主进程一退就到），并立刻把管道拆掉。</li>
- *   <li>超时被杀要照实说「渲染超时」，不要报一个「退出码 null」让人猜。</li>
- * </ul>
+ * 两个坑（用户 2026-11-12 报「浏览器退出码 null」）：
+ * Chrome 会拉起更新器 / 崩溃上报这类子进程，它们继承着我们的 stderr 管道。只看 close
+ * 的话，主进程早退出了、管道还开着，事件永远不来 —— 只能等超时把它杀掉，于是 code 是 null。
+ * 所以认 exit（主进程一退就到），并立刻把管道拆掉。超时被杀要照实说「渲染超时」。
  */
 export function shoot({ chrome, url, out, width, height, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   return new Promise((resolve) => {
@@ -284,24 +305,7 @@ export function shoot({ chrome, url, out, width, height, timeoutMs = DEFAULT_TIM
     fs.mkdirSync(crashes, { recursive: true });
     const args = webkit
       ? [url, out, String(width), String(height), String(Math.ceil(timeoutMs / 1000))]
-      : [
-      '--headless=new',
-      // 不要 --disable-gpu：它会把 GPU 进程整个关掉，headless 里就等于没有 WebGL，3D 页面截出来是空白。
-      // 没有显卡 / 不允许用真 GPU 时让 ANGLE 走 SwiftShader 软件渲染；Chrome 129 起软件 WebGL 默认被禁，
-      // 必须显式 --enable-unsafe-swiftshader 才拿得到上下文（用户 2026-11-12：3D 画面看不到）。
-      '--enable-unsafe-swiftshader', '--use-gl=angle', `--use-angle=${process.env.ZHIQU_PREVIEW_GL || 'swiftshader'}`,
-      '--hide-scrollbars', '--mute-audio', '--no-first-run', '--no-default-browser-check',
-      // HOME 在下面被换成了临时目录，Chrome 在 macOS 上会去 ~/Library/Keychains 找「Chrome Safe Storage」，
-      // 找不到就提示「找不到用于存储 chrome 的钥匙串」（用户 2026-11-13）。用内存里的假钥匙串 + basic
-      // 密码存储：完全不碰系统钥匙串，也不弹系统对话框。CI / 容器里跑无头 Chrome 也是这两条。
-      '--use-mock-keychain', '--password-store=basic',
-      '--disable-extensions', '--disable-sync', '--disable-background-networking', '--disable-component-update',
-      '--disable-breakpad', '--disable-crash-reporter', `--crash-dumps-dir=${crashes}`, '--disable-background-mode', '--no-pings',
-      // 别把更新器 / 组件的日志倒进我们的管道（那些 VERBOSE1 就是它）
-      '--disable-logging', '--log-level=3',
-      '--run-all-compositor-stages-before-draw', '--virtual-time-budget=5000',
-      `--user-data-dir=${profile}`, `--window-size=${width},${height}`, `--screenshot=${out}`, url,
-    ];
+      : chromeArgs({ profile, crashes, width, height, gl: process.env.ZHIQU_PREVIEW_GL || 'swiftshader', screenshot: out, url });
     let stderr = '';
     let settled = false;
     let timedOut = false;
@@ -395,9 +399,320 @@ export function forContext(shot, { shrink = shrinkImage, maxBytes = CONTEXT_IMAG
   }
 }
 
+const NAMED_KEYS = new Set(['Enter', 'Escape', 'Tab', 'Backspace', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space']);
+
+/** 先试这台机器的 GPU，失败再退回 SwiftShader。用户用 ZHIQU_PREVIEW_GL 指定时只试那一个。 */
+export function glCandidates({ env = process.env, platform = process.platform } = {}) {
+  if (env.ZHIQU_PREVIEW_GL) return [String(env.ZHIQU_PREVIEW_GL)];
+  return [platform === 'linux' ? 'gl' : 'metal', 'swiftshader'];
+}
+
+export function rendererLabel(gl) {
+  return gl === 'swiftshader' ? '软件渲染（SwiftShader），不是这台机器的 GPU' : `硬件渲染（${gl}）`;
+}
+
+/** 连续几张亮度格的平均差（0–9）。不到两张就没有帧差。 */
+export function meanGridDelta(grids) {
+  const rows = (grids || []).filter((g) => Array.isArray(g) && g.length === 8 && g.every((r) => /^[0-9]{8}$/.test(r)));
+  if (rows.length < 2) return null;
+  let sum = 0;
+  let n = 0;
+  for (let i = 1; i < rows.length; i++) {
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        sum += Math.abs(Number(rows[i][y][x]) - Number(rows[i - 1][y][x]));
+        n += 1;
+      }
+    }
+  }
+  return n ? Math.round((sum / n) * 100) / 100 : null;
+}
+
+/** lsof 的 LISTEN 行里取出端口。 */
+export function parseListenPorts(text) {
+  const ports = [];
+  for (const line of String(text || '').split('\n')) {
+    if (!line.includes('LISTEN')) continue;
+    const m = /:(\d+)\s+\(LISTEN\)/.exec(line);
+    if (m) ports.push(Number(m[1]));
+  }
+  return [...new Set(ports)];
+}
+
+/** 命令文本里写明要听的端口。不把 curl 的地址算进去。 */
+export function commandPorts(command) {
+  const ports = [];
+  const s = String(command || '');
+  for (const m of s.matchAll(/--port(?:=|\s+)(\d{2,5})\b/g)) ports.push(Number(m[1]));
+  for (const m of s.matchAll(/\bhttp\.server\s+(\d{2,5})\b/g)) ports.push(Number(m[1]));
+  return [...new Set(ports)];
+}
+
+/** 这一轮后台任务正在听的端口。lsofTextForPid 拿不到就只认命令里写明的。 */
+export function portsFromJobs(jobs, lsofTextForPid = () => '') {
+  const ports = new Set();
+  for (const job of jobs || []) {
+    for (const p of commandPorts(job.command)) ports.add(p);
+    const text = job.child && job.child.pid ? lsofTextForPid(job.child.pid) : '';
+    for (const p of parseListenPorts(text)) ports.add(p);
+  }
+  return ports;
+}
+
+/**
+ * 是网址就只认 127.0.0.1 / localhost，而且端口必须是这一轮后台命令拉起的。
+ * 不是网址返回 null，调用方按工作区里的 html 处理。
+ */
+export function previewAddress(input, ports) {
+  const text = String(input || '').trim();
+  if (!/^https?:\/\//i.test(text)) return null;
+  let url;
+  try { url = new URL(text); } catch { return { error: '这个地址不是合法的 URL' }; }
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host !== '127.0.0.1' && host !== 'localhost') {
+    return { error: '只能预览工作区里的 html，或这一轮后台命令拉起的 127.0.0.1 / localhost。不打开别的网址。' };
+  }
+  const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+  const allowed = ports instanceof Set ? ports : new Set(ports || []);
+  if (!allowed.has(port)) return { error: `端口 ${port} 不是这一轮后台命令拉起的，不能打开。` };
+  return { url: url.href };
+}
+
+export function normalizeActions(actions) {
+  if (actions == null) return [];
+  if (!Array.isArray(actions)) return { error: 'actions 要是数组' };
+  if (actions.length > 8) return { error: '一次最多 8 个动作' };
+  const out = [];
+  const coord = (n) => Number.isFinite(n) && n >= 0 && n <= 2000;
+  for (const a of actions) {
+    if (!a || typeof a !== 'object') return { error: '动作要是对象' };
+    if (a.type === 'wait') {
+      const ms = Number(a.ms);
+      if (!Number.isFinite(ms) || ms < 0 || ms > 5000) return { error: '等待要在 0 到 5000 毫秒' };
+      out.push({ type: 'wait', ms });
+    } else if (a.type === 'click') {
+      const x = Number(a.x); const y = Number(a.y);
+      if (!coord(x) || !coord(y)) return { error: '点击坐标要在 0 到 2000' };
+      out.push({ type: 'click', x, y });
+    } else if (a.type === 'drag') {
+      const x = Number(a.x); const y = Number(a.y); const x2 = Number(a.x2); const y2 = Number(a.y2);
+      if (![x, y, x2, y2].every(coord)) return { error: '拖动坐标要在 0 到 2000' };
+      out.push({ type: 'drag', x, y, x2, y2 });
+    } else if (a.type === 'key') {
+      const key = String(a.text || '');
+      if (!key || key.length > 32) return { error: '按键最多 32 个字符' };
+      out.push({ type: 'key', text: key });
+    } else return { error: `不认识的动作 ${a.type}` };
+  }
+  return out;
+}
+
+async function readDebugPort(profile, timeoutMs) {
+  const file = path.join(profile, 'DevToolsActivePort');
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const port = Number(String(fs.readFileSync(file, 'utf8')).split('\n')[0]);
+      if (port) return port;
+    } catch { /* 还没写出来 */ }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error('浏览器没有打开调试端口');
+}
+
+async function fetchJson(url) {
+  const http = (await import('node:http')).default;
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+  });
+}
+
+/**
+ * 这一轮留一个 Chrome。WebKit 不走这里。
+ * startBrowser / connect / fetchJson / sleep 可以换掉，测试不必真开浏览器。
+ */
+export class PreviewSession {
+  constructor({ chrome, root, startBrowser, connect = connectCdp, fetchJson: fetchImpl = fetchJson, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), glOrder } = {}) {
+    this.chrome = chrome;
+    this.root = root;
+    this.startBrowser = startBrowser || null;
+    this.connect = connect;
+    this.fetchJson = fetchImpl;
+    this.sleep = sleep;
+    this.glOrder = glOrder || glCandidates();
+    this.child = null;
+    this.cdp = null;
+    this.site = null;
+    this.profile = null;
+    this.renderer = '';
+    this.gl = null;
+    this.opened = false;
+  }
+
+  async ensure(width, height) {
+    if (this.cdp) return;
+    let last = null;
+    for (const gl of this.glOrder) {
+      try {
+        await this.launch(gl, width, height);
+        const ok = await this.webglOk();
+        if (ok || gl === 'swiftshader' || this.glOrder.length === 1) {
+          this.gl = gl;
+          this.renderer = rendererLabel(gl);
+          return;
+        }
+        await this.killBrowser();
+      } catch (e) {
+        last = e;
+        await this.killBrowser();
+      }
+    }
+    throw last || new Error('浏览器起不来');
+  }
+
+  async launch(gl, width, height) {
+    if (this.startBrowser) {
+      const started = await this.startBrowser(gl, { width, height });
+      this.child = { kill: () => started.kill && started.kill() };
+      this.cdp = await this.connect(started.ws);
+      return;
+    }
+    this.profile = fs.mkdtempSync(path.join(os.tmpdir(), 'zhiqu-preview-browser-'));
+    const crashes = path.join(this.profile, 'crashes');
+    fs.mkdirSync(crashes, { recursive: true });
+    const args = chromeArgs({ profile: this.profile, crashes, width, height, gl, port: 0 });
+    const child = spawn(this.chrome, args, {
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { PATH: process.env.PATH || '/usr/bin:/bin', HOME: this.profile, TMPDIR: this.profile, XDG_CONFIG_HOME: this.profile, XDG_CACHE_HOME: this.profile },
+    });
+    child.unref();
+    if (child.stderr) child.stderr.unref();
+    this.child = child;
+    const port = await readDebugPort(this.profile, 8000);
+    const createdRaw = await this.fetchJson(`http://127.0.0.1:${port}/json/new?${encodeURIComponent('about:blank')}`);
+    const created = Array.isArray(createdRaw) ? createdRaw[0] : createdRaw;
+    if (!created || !created.webSocketDebuggerUrl) throw new Error('浏览器没有给出调试连接');
+    this.cdp = await this.connect(created.webSocketDebuggerUrl);
+    await this.cdp.call('Page.enable');
+    await this.cdp.call('Runtime.enable');
+  }
+
+  async webglOk() {
+    const r = await this.cdp.call('Runtime.evaluate', {
+      expression: "(() => { try { const c = document.createElement('canvas'); return !!(c.getContext('webgl') || c.getContext('webgl2')); } catch (e) { return false; } })()",
+      returnByValue: true,
+    });
+    return Boolean(r && r.result && r.result.value);
+  }
+
+  async killBrowser() {
+    if (this.cdp) { try { this.cdp.close(); } catch { /* 已经断了 */ } this.cdp = null; }
+    if (this.child) {
+      try {
+        if (this.child.pid && process.platform !== 'win32') process.kill(-this.child.pid, 'SIGKILL');
+      } catch { /* 进程组不在了 */ }
+      try { if (typeof this.child.kill === 'function') this.child.kill('SIGKILL'); } catch { /* 同上 */ }
+      this.child = null;
+    }
+    if (this.profile) { try { fs.rmSync(this.profile, { recursive: true, force: true }); } catch { /* 留着也没关系 */ } this.profile = null; }
+    this.opened = false;
+  }
+
+  async pageUrl(rel) {
+    const realRoot = fs.realpathSync(this.root);
+    const file = path.resolve(realRoot, rel || '.');
+    if (!inside(realRoot, file)) return { error: '只能预览工作区里的文件' };
+    const page = fs.existsSync(file) && fs.statSync(file).isDirectory() ? path.join(file, 'index.html') : file;
+    if (!fs.existsSync(page)) return { error: `找不到要预览的文件：${rel}` };
+    if (!/\.html?$/i.test(page)) return { error: '只支持预览 .html 文件（目录的话里面要有 index.html）' };
+    if (!this.site) this.site = await serveDir(realRoot, { probe: true });
+    const relUrl = path.relative(realRoot, page).split(path.sep).map(encodeURIComponent).join('/');
+    return { url: `http://127.0.0.1:${this.site.port}/${relUrl}`, reports: this.site.reports };
+  }
+
+  async act(actions) {
+    for (const a of actions) {
+      if (a.type === 'wait') await this.sleep(a.ms);
+      else if (a.type === 'click') {
+        await this.cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', clickCount: 1 });
+        await this.cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: a.x, y: a.y, button: 'left', clickCount: 1 });
+      } else if (a.type === 'drag') {
+        await this.cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', clickCount: 1 });
+        await this.cdp.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x2, y: a.y2, button: 'left' });
+        await this.cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: a.x2, y: a.y2, button: 'left', clickCount: 1 });
+      } else if (a.type === 'key') {
+        const keys = NAMED_KEYS.has(a.text) ? [a.text === 'Space' ? ' ' : a.text] : [...a.text];
+        for (const text of keys) {
+          const named = NAMED_KEYS.has(a.text) && text !== ' ';
+          await this.cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', text, key: named ? a.text : text });
+          await this.cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: named ? a.text : text });
+        }
+      }
+    }
+  }
+
+  async show({ path: rel, url, actions = [], frames = 1, width = 1200, height = 900, timeoutMs = 15_000 }) {
+    const w = Math.min(2000, Math.max(320, Number(width) || 1200));
+    const h = Math.min(2000, Math.max(240, Number(height) || 900));
+    await this.ensure(w, h);
+    let target = url;
+    let reports = null;
+    if (!target) {
+      const page = await this.pageUrl(rel);
+      if (page.error) return page;
+      target = page.url;
+      reports = page.reports;
+    }
+    const loaded = this.cdp.once('Page.loadEventFired', Math.min(timeoutMs, 15_000));
+    await this.cdp.call('Page.navigate', { url: target });
+    await loaded;
+    this.opened = true;
+    await this.act(actions);
+    if (reports) {
+      const start = Date.now();
+      while (reports.length === 0 && Date.now() - start < 1600) await this.sleep(50);
+    }
+    const n = Math.min(4, Math.max(1, Number(frames) || 1));
+    const pngs = [];
+    for (let i = 0; i < n; i++) {
+      if (i) await this.sleep(200);
+      const shot = await this.cdp.call('Page.captureScreenshot', { format: 'png' });
+      const buf = Buffer.from(String(shot.data || ''), 'base64');
+      if (!buf.length) return { error: '截图是空的' };
+      pngs.push(buf);
+    }
+    const last = pngs[pngs.length - 1];
+    if (last.length > MAX_PREVIEW_BYTES) return { error: `截图 ${Math.round(last.length / 1024)}KB，太大（上限 ${Math.round(MAX_PREVIEW_BYTES / 1_000_000)}MB）；把 width / height 调小再试` };
+    const grids = pngs.map((buf) => analyzePng(buf)).map((p) => p && p.grid);
+    const delta = meanGridDelta(grids);
+    const probeReport = reports ? ([...reports].reverse().find((r) => r.final) || reports[reports.length - 1] || null) : null;
+    const pixels = analyzePng(last);
+    const page = describePage(probeReport, pixels, { renderer: this.renderer });
+    const motion = delta == null ? '' : `\n帧差 ${delta}（${n} 张，间隔 200ms，真实时间）。图只附最后一张。`;
+    return {
+      mediaType: 'image/png', base64: last.toString('base64'), bytes: last.length, width: w, height: h,
+      page: `${page}${motion}`, delta, frames: n, renderer: this.renderer,
+    };
+  }
+
+  async close() {
+    await this.killBrowser();
+    if (this.site) { await this.site.close().catch(() => {}); this.site = null; }
+  }
+}
+
 /**
  * 截一张页面。rel 相对工作区，可以是 .html 文件，也可以是带 index.html 的目录。
  * 返回 { mediaType, base64, bytes, width, height } 或 { error }。
+ * 系统 WebKit 走这一次一开一关。Chrome 的预览由 PreviewSession 留到回合结束。
  */
 export async function screenshotPage({ root, rel, width = 1200, height = 900, chrome, timeoutMs }) {
   const realRoot = fs.realpathSync(root);

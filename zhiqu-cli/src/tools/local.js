@@ -11,8 +11,9 @@ import os from 'node:os';
 import { StringDecoder } from 'node:string_decoder';
 import vm from 'node:vm';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { WorkspaceGuard, Reason, describe, DEFAULT_EXTENSIONS, DEFAULT_MAX_FILE_BYTES } from './guard.js';
-import { findChrome, forContext, screenshotPage } from './preview.js';
+import { findChrome, forContext, isWebKitHelper, normalizeActions, portsFromJobs, previewAddress, PreviewSession, screenshotPage } from './preview.js';
 import { checkLocalCommand, describeRefusal, LOCAL_DEFAULT_COMMANDS, ExecRefusal, gitLaunch } from './execrules.js';
 import { planLaunch, resolveOnPath, runProcess } from './exec.js';
 import { browserInSandbox, describeBoundary, looksBlocked, plainLaunch, sandboxedLaunch, WORKSPACE_WRITE } from './sandbox.js';
@@ -202,15 +203,19 @@ function scanRegex(context, re, lines) {
 
 export function previewSchema() {
   return fn('preview_page', [
-    '把工作区里的一个 .html 页面渲染出来截图，你自己看结果（排版、颜色、WebGL / 3D、有没有空白或错位）。',
-    '写完页面先调它看一眼，再决定要不要改；它只读，不改任何文件。',
-    '在沙箱外面跑，软件渲染。不要用 shell 起 Playwright、Chrome、Chromium 或 headless-gl，那些在沙箱里会因崩溃上报目录和系统服务起不来。',
-    '目录的话里面要有 index.html；页面引用的 css / js / 图片一起能加载。',
+    '把工作区里的一个 .html 页面渲染出来给你看（排版、颜色、WebGL / 3D）。',
+    '这一轮留着同一个浏览器，回合结束才关。按真实时间画，没有虚拟时间。timeout_seconds 是墙钟，到点就停，不会多画出那段时间的动画。',
+    'actions 按顺序做：wait（ms，最多 5000）、click（x、y）、drag（x、y、x2、y2）、key（text：Enter、Escape 这类名字，或一串字符）。一次最多 8 个。',
+    'frames 取 2 到 4 时隔 200ms 连拍，只把帧差数字给你，图只附最后一张。',
+    'path 只能是工作区里的 html，或这一轮后台命令拉起的 http://127.0.0.1 / localhost。',
+    '在沙箱外面跑。不要用 shell 起 Playwright、Chrome、Chromium 或 headless-gl。',
   ].join('\n'), {
-    path: { type: 'string', description: '相对工作区根的 .html 文件（或带 index.html 的目录）' },
+    path: { type: 'string', description: '相对工作区根的 .html（或带 index.html 的目录），或本会话后台拉起的 127.0.0.1 / localhost 地址' },
     width: { type: 'integer', description: '视口宽度，默认 1200（320–2000）' },
     height: { type: 'integer', description: '视口高度，默认 900（240–2000）' },
-    timeout_seconds: { type: 'integer', description: '最多等多久渲染，默认 90，最多 300。3D / 动画多的页面给长一点' },
+    actions: { type: 'array', description: '打开之后按顺序做的动作', items: { type: 'object' } },
+    frames: { type: 'integer', description: '连拍几张，1–4，默认 1。大于 1 只附最后一张，并给出帧差' },
+    timeout_seconds: { type: 'integer', description: '这一次最多等多少秒（墙钟），默认 90，最多 300' },
   }, ['path']);
 }
 
@@ -357,25 +362,69 @@ export class LocalTools {
     this.overlay = null;
   }
 
+  /** 这一轮后台命令正在听的端口（命令里写明的，加上 lsof 看见的）。 */
+  localPorts() {
+    const jobs = this.jobs && typeof this.jobs.running === 'function' ? this.jobs.running() : [];
+    return portsFromJobs(jobs, (pid) => {
+      try {
+        const r = spawnSync('lsof', ['-nP', '-a', `-g${pid}`, '-iTCP', '-sTCP:LISTEN'], { encoding: 'utf8', timeout: 2000 });
+        return (r && r.stdout) || '';
+      } catch { return ''; }
+    });
+  }
+
+  async closePreview() {
+    if (!this.previewSession) return;
+    const session = this.previewSession;
+    this.previewSession = null;
+    await session.close();
+  }
+
   /**
-   * 预览截图（第一百三十四轮）：起一个只监听 127.0.0.1 的静态服务，让宿主机的无头 Chrome 截图，
+   * 预览。Chrome 这一轮留着同一个调试会话；系统 WebKit 和测试里的假浏览器仍是截完就关。
    * 图先挂在这里，由 agent 循环跟着工具结果补一条带图的 user 消息（工具结果本身只能是文本）。
    */
   async previewPage(args) {
     if (!this.chrome) return { error: '这台机器上没找到 Chrome / Chromium，也没有系统 WebKit（macOS 需要 swiftc）。可以用环境变量 ZHIQU_CHROME 指定浏览器' };
     const rel = String((args && args.path) || '').trim();
     if (!rel) return { error: '没说预览哪个页面' };
-    // 桌面 / 网页的代码模式里改动只在草稿层：磁盘上还是旧内容，截出来的是上一版 —— 不如直接说清楚
-    if (this.draftOf(rel)) return { error: `${rel} 还只是草稿（没落盘），预览看到的是磁盘上的旧版本。先在草稿卡片上确认写入，再看。` };
-    const shot = await screenshotPage({ root: this.root, rel, width: args.width, height: args.height, chrome: this.chrome,
-      // 模型可以单独申请更长（15–300 秒）；不给就用默认的 90 秒
-      timeoutMs: args.timeout_seconds ? Math.min(300, Math.max(15, Number(args.timeout_seconds) || 0)) * 1000 : undefined });
+    const address = previewAddress(rel, this.localPorts());
+    if (address && address.error) return { error: address.error };
+    const actions = normalizeActions(args && args.actions);
+    if (actions && actions.error) return { error: actions.error };
+    const frames = args && args.frames != null ? Number(args.frames) : 1;
+    if (!Number.isInteger(frames) || frames < 1 || frames > 4) return { error: 'frames 要是 1 到 4 的整数' };
+    const oneShot = isWebKitHelper(this.chrome) || /\.(mjs|js|sh)$/i.test(this.chrome);
+    if (oneShot) {
+      if (address || (actions && actions.length) || frames > 1) {
+        return { error: '这个浏览器只能截工作区里的一张图，不能点、不能连拍，也不能打开本机端口。' };
+      }
+      if (this.draftOf(rel)) return { error: `${rel} 还只是草稿（没落盘），预览看到的是磁盘上的旧版本。先在草稿卡片上确认写入，再看。` };
+      const shot = await screenshotPage({ root: this.root, rel, width: args.width, height: args.height, chrome: this.chrome,
+        timeoutMs: args.timeout_seconds ? Math.min(300, Math.max(15, Number(args.timeout_seconds) || 0)) * 1000 : undefined });
+      if (shot.error) return { error: shot.error };
+      const small = forContext(shot);
+      if (small.error) return { error: small.error };
+      this.pendingImage = small;
+      return { content: `已经把 ${rel} 渲染成一张图（${shot.width}×${shot.height}，${Math.round(shot.bytes / 1024)}KB${small.originalBytes ? `，给你看的是压小到 ${Math.round(small.bytes / 1024)}KB 的 JPEG` : ''}），就是下面这张。${shot.page ? `\n${shot.page}` : ''}`,
+        summary: `已截图 ${shot.width}×${shot.height}` };
+    }
+    if (!address && this.draftOf(rel)) return { error: `${rel} 还只是草稿（没落盘），预览看到的是磁盘上的旧版本。先在草稿卡片上确认写入，再看。` };
+    if (!this.previewSession) this.previewSession = new PreviewSession({ chrome: this.chrome, root: this.root });
+    let shot;
+    try {
+      shot = await this.previewSession.show({
+        path: address ? null : rel, url: address ? address.url : null, actions: actions || [], frames,
+        width: args.width, height: args.height,
+        timeoutMs: args.timeout_seconds ? Math.min(300, Math.max(15, Number(args.timeout_seconds) || 0)) * 1000 : undefined,
+      });
+    } catch (e) {
+      return { error: `预览没做成：${e.message}` };
+    }
     if (shot.error) return { error: shot.error };
-    // 进上下文之前压小（第一百三十七轮）；压不了又太大的照实说
     const small = forContext(shot);
     if (small.error) return { error: small.error };
     this.pendingImage = small;
-    // 页面情况的文字版跟在工具结果里（第一百六十八轮）：报错、白屏不用靠看图猜，目标核对员（只读文字）也看得到
     return { content: `已经把 ${rel} 渲染成一张图（${shot.width}×${shot.height}，${Math.round(shot.bytes / 1024)}KB${small.originalBytes ? `，给你看的是压小到 ${Math.round(small.bytes / 1024)}KB 的 JPEG` : ''}），就是下面这张。${shot.page ? `\n${shot.page}` : ''}`,
       summary: `已截图 ${shot.width}×${shot.height}` };
   }

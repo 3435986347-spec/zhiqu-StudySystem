@@ -198,3 +198,4 @@
 | [第一百八十五轮](round-185.md) | 网页宿主没传思考档位不再改成 instant；桌面选了项目目录才加载 skills | `effort.test.js`；页面本来就传 effort |
 | [第一百八十六轮](round-186.md) | 直接 shell 拒绝命令里写明的工作区外路径和 .git / .zhiqu。自己算出的路径挡不住 | `windows-direct.test.js` 新增一条，macOS 上也跑 |
 | [第一百八十七轮](round-187.md) | 探针记下着色器编译和链接失败，仍是一行，不从画布读像素 | `page-report.test.js` |
+| [第一百八十八轮](round-188.md) | 这一轮留一个 Chrome（CDP），能点能拖能连拍；没有虚拟时间。这台机器没有 Chrome，真浏览器没跑 | `preview-session.test.js` |
