@@ -13,7 +13,8 @@
 // 只是旁边没有后端 —— run 里带 local: { server, token }，模型和远程工具直接走服务器网关（和命令行同一份 Api），命令在本机的系统沙箱里跑（DesktopTools），
 // Windows auto 档按用户要求也可走明确标注的 cmd.exe 本机直接命令，不把直接执行称为沙箱。
 // 不往外壳要 model / exec / tool。外壳可以叫停：一行 { type: 'stop' }、关掉 stdin、或者 SIGTERM。
-import { normalizeEffort } from '../config.js';
+import { normalizeEffort, loadUserConfig, userDir } from '../config.js';
+import { discoverSkills, skillsBlock } from '../skills.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -221,6 +222,25 @@ export function desktopTarget(run) {
   return { server: url.origin, token };
 }
 
+/**
+ * 网页 / 桌面宿主的思考档位。页面或后端传了就用那个。
+ * 没传：桌面本机读用户配置里的档位；服务器上的宿主不读这台机器的配置，也不改写成 instant。
+ * 传了认不出的值：不当成 instant。
+ */
+export function hostEffort(run, { desktop = false, userEffort = null } = {}) {
+  const given = normalizeEffort(run && run.effort);
+  if (given) return given;
+  if (run && run.effort != null && String(run.effort).trim() !== '') return undefined;
+  if (!desktop) return undefined;
+  return normalizeEffort(userEffort != null ? userEffort : loadUserConfig().effort) || undefined;
+}
+
+/** 只有桌面本机、而且选了项目目录，才加载这个目录和用户自己的 skills。产物空间、服务器宿主不从别的目录找。 */
+export function hostSkills(run, { desktop = false, userHome = null } = {}) {
+  if (!desktop || !run || run.artifact || typeof run.root !== 'string' || !run.root) return [];
+  return discoverSkills(run.root, userHome || run.root);
+}
+
 /** 桌面版：用哪个模型 —— 页面选的那个（没有就用账号的默认），和命令行的 pickModel 同一个口径 */
 async function desktopModel(api, wanted, signal) {
   const { models, defaultModelId } = await api.get('/api/harness/models', { signal, timeoutMs: 15_000 });
@@ -282,10 +302,12 @@ export async function runHosted(bridge, run, { detectBox = detectSandbox } = {})
     allow: { write: false, run: false, delete: false, tasks: false, mcp: new Set() }, usage: { prompt: 0, completion: 0, cached: 0 },
     changedFiles: new Set(), todos: [], system: { text: BUILTIN_SYSTEM_PROMPT }, instructionsText: '', skillsText: '', skills: [],
     verbose: true, model: run.model, stepLog,
-    // 网页输入框下面选的思考档位（第一百零八轮）；明说，不听服务端给命令行的默认（第五十四轮：工具轮想起来，一问要等几分钟）
-    effort: normalizeEffort(run.effort) || 'instant',
+    // 页面传了档位就用那个。没传时桌面读用户配置；服务器上不落成 instant（第一百八十五轮）
+    effort: hostEffort(run, { desktop: Boolean(desktop) }),
     decide: run.userDecision === true ? (questions, opts) => bridge.decide(questions, opts) : null,
   };
+  ctx.skills = hostSkills(run, { desktop: Boolean(desktop), userHome: userDir() });
+  ctx.skillsText = skillsBlock(ctx.skills);
   // 远程工具（第九十五轮）：一直给的那几个 + 真的跑过一次命令之后才给的（create_wiki_patch：判过题才许记薄弱点）。工具表每一轮重建，所以随时变
   // 桌面版（第一百二十九轮）没有后端替它挑：开工前问服务器要（和命令行同一份清单，执行的也是那一份），只读档只留读的
   if (!desktop) {

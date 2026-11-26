@@ -52,7 +52,7 @@ HumanEval 156/164 是工具改版前的冻结分，不能继承。Java / JS 补�
 | 4 | **C4**：这一轮改了测试文件，或目标里写了一条工作区里能执行的检查命令，就由 harness 跑那一条，设时限，把退出码和尾部输出贴进上下文。认不出是哪一条就不跑，不跑整仓 `mvn test` / `npm test` | `agent.js` 收尾；命令仍走现有沙箱 | — | 第一百八十二轮做完（只认 `node --test` 的 `*.test.js`，最多 3 个；没有沙箱不跑） |
 | 5 | **C5**：新增只返回路径的 `glob`（有上限），删掉把 `glob` 这个名字指去 `list_files` 的别名。不做签名大纲 | `tools/local.js`、`agent.js` 的 `TOOL_ALIASES` | — | 第一百八十轮做完 |
 | 6 | **C6**：同一批里的 `list_files` / `read_file` / `search` 并行，并发有上限。写、补丁、shell、`preview_page`、`ask_user` 仍按顺序。历史里的 tool 结果按模型给出的顺序落盘，不按完成顺序 | `runTurnBody` 里执行那一轮的循环 | — | 第一百八十一轮做完（加上 glob，上限 4） |
-| 7 | **C7**：先看页面有没有把档位放进 `run.effort`。没传时的默认跟用户档位，不要落成 `instant`。桌面本机选了项目目录才加载 skills；服务器上的产物空间没有项目技能就不给，不从别的目录找。子 agent 不接 | `code-host.js`、页面提交 run 的地方 | — | |
+| 7 | **C7**：先看页面有没有把档位放进 `run.effort`。没传时的默认跟用户档位，不要落成 `instant`。桌面本机选了项目目录才加载 skills；服务器上的产物空间没有项目技能就不给，不从别的目录找。子 agent 不接 | `code-host.js`、页面提交 run 的地方 | — | 第一百八十五轮做完（页面本来就传 `effort`；没传时服务器不改写成 instant，桌面读用户配置。子 agent 没接） |
 | 8 | **C8**：只在第 2 步证明思考值得开、并且默认改开之后再做。旧思考随压缩离开；摘要接前缀单独量一次，不和第 2 步混在同一次对照里 | `compact.js`、`summarizeOnPrefix` | 花钱的那一次量，做到时再问 | |
 | 9 | **C9**：评测工作区放一个只有基线提交的 `.git`，四道不稳题再跑一遍。Codex 同题配对放在这次之后，装 Codex 另问 | `tools/benchmarks/`、`docs/codex-parity-plan.md` 第 10 步 | 重跑要花钱，先报预算 | |
 | 10 | **C10**：没有系统沙箱时，桌面 auto 的直接 shell 仍限制写范围；做不到系统沙箱之前，不把「能碰工作区外」当成 auto | `drafts.js`、`shellPolicy` | — | |

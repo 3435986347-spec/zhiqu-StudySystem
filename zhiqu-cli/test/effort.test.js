@@ -8,7 +8,7 @@ import { runTurn } from '../src/agent.js';
 import { parseArgs, slash } from '../src/cli.js';
 import { estimateMessage, needsCompaction } from '../src/compact.js';
 import { EFFORTS, normalizeEffort, resolveSettings } from '../src/config.js';
-import { runHosted } from '../src/host/code-host.js';
+import { runHosted, hostEffort, hostSkills } from '../src/host/code-host.js';
 import { SessionStore } from '../src/session.js';
 import { LocalTools } from '../src/tools/local.js';
 import { fakeApi, fakeUi, tmpdir, write } from './helpers.js';
@@ -111,7 +111,7 @@ test('/effort：不带参数说当前和可选的；选了立刻生效；坏值�
   }
 });
 
-test('网页代码模式：听后端传来的档位；没传是 instant，不听服务端给命令行的默认（第五十四轮：工具轮想起来，一问要等几分钟）', async () => {
+test('网页代码模式：听传来的档位；没传不改写成 instant，桌面才读用户自己的档位', async () => {
   const bridgeFor = () => {
     const bodies = [];
     return { bodies, stream: async (_p, body, onEvent) => {
@@ -125,10 +125,26 @@ test('网页代码模式：听后端传来的档位；没传是 instant，不听
   assert.equal(a.bodies[0].reasoning, 'extra');
   const b = bridgeFor();
   await runHosted(b, { type: 'run', root: tmpdir(), message: '看看', model: MODEL });
-  assert.equal(b.bodies[0].reasoning, 'instant');
+  assert.equal(b.bodies[0].reasoning, undefined);
   const c = bridgeFor();
   await runHosted(c, { type: 'run', root: tmpdir(), message: '看看', model: MODEL, effort: 'ultra' });
-  assert.equal(c.bodies[0].reasoning, 'instant');
+  assert.equal(c.bodies[0].reasoning, undefined);
+  assert.equal(hostEffort({}, { desktop: true, userEffort: 'medium' }), 'medium');
+  assert.equal(hostEffort({}, { desktop: false, userEffort: 'high' }), undefined);
+  const root = tmpdir();
+  const home = tmpdir();
+  fs.mkdirSync(path.join(root, '.zhiqu', 'skills', 'demo'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.zhiqu', 'skills', 'demo', 'SKILL.md'), '---\nname: demo\ndescription: 项目里的做法\n---\n先看这里。\n');
+  fs.mkdirSync(path.join(home, 'skills', 'mine'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'skills', 'mine', 'SKILL.md'), '---\nname: mine\ndescription: 用户自己的做法\n---\n再看这里。\n');
+  assert.deepEqual(hostSkills({ root }, { desktop: false, userHome: home }), []);
+  assert.deepEqual(hostSkills({ root, artifact: true }, { desktop: true, userHome: home }), []);
+  const names = hostSkills({ root }, { desktop: true, userHome: home }).map((s) => s.name);
+  assert.ok(names.includes('demo'));
+  assert.ok(names.includes('mine'));
+  const hosted = bridgeFor();
+  await runHosted(hosted, { type: 'run', root, message: '看看', model: MODEL, effort: 'instant' });
+  assert.equal(hosted.bodies[0].tools.some((t) => t.function.name === 'load_skill'), false);
 });
 
 test('思考内容算进上下文估算（和服务端同一个算法）：不算的话压缩来得太晚，最后由服务端按轮丢', () => {
